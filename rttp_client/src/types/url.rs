@@ -1,17 +1,21 @@
+use std::{cmp, fmt, hash};
+use std::fmt::Debug;
+
 use url::Url;
 
 use crate::error;
 use crate::error::Error;
-use crate::types::{Para, IntoPara};
+use crate::types::{IntoPara, Para};
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct RoUrl {
-  //  url: Url
   url: String,
   paths: Vec<String>,
   username: String,
   password: Option<String>,
   paras: Vec<Para>,
+  fragment: Option<String>,
+  traditional: bool,
 }
 
 
@@ -29,8 +33,15 @@ impl RoUrl {
       paths: Default::default(),
       username: Default::default(),
       password: None,
-      paras: vec![]
+      paras: vec![],
+      traditional: true,
+      fragment: None
     }
+  }
+
+  pub fn fragment<S: AsRef<str>>(mut self, fragment: S) -> Self {
+    self.fragment = Some(fragment.as_ref().into());
+    self
   }
 
   pub fn username<S: AsRef<str>>(mut self, username: S) -> Self {
@@ -51,6 +62,11 @@ impl RoUrl {
   pub fn para<P: IntoPara>(mut self, para: P) -> Self {
     let paras = para.into_para();
     self.paras.extend(paras);
+    self
+  }
+
+  pub fn traditional(mut self, traditional: bool) -> Self {
+    self.traditional = traditional;
     self
   }
 
@@ -76,7 +92,21 @@ impl RoUrl {
       return None;
     }
     let para_string = all_paras.iter()
-      .map(|p| format!("{}={}", p.name(), p.value()))
+      .filter(|&p| p.is_form())
+      .map(|p| {
+        let name = p.name();
+        if self.traditional {
+          return format!("{}={}", name, p.text().clone().map_or("".to_string(), |t| t));
+        }
+        let is_array = all_paras.iter()
+          .filter(|&item| item.name() == name)
+          .collect::<Vec<&Para>>()
+          .len() > 1;
+        let ends_with_bracket = name.ends_with("[]");
+        return format!("{}{}={}", name,
+                       if is_array && !ends_with_bracket { "[]" } else { "" },
+                       p.text().clone().map_or("".to_string(), |t| t));
+      })
       .collect::<Vec<String>>()
       .join("&");
     Some(para_string)
@@ -99,9 +129,94 @@ impl IntoUrl for RoUrl {
     if let Some(paras) = &self.join_paras(&url) {
       url.set_query(Some(&paras[..]));
     }
+    if let Some(fragment) = &self.fragment {
+      url.set_fragment(Some(&fragment[..]));
+    }
     Ok(url)
   }
 }
+
+
+impl From<Url> for RoUrl {
+  fn from(url: Url) -> Self {
+    Self::with(url.as_str())
+  }
+}
+
+/// Display the serialization of this URL.
+impl fmt::Display for RoUrl {
+  #[inline]
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    fmt::Display::fmt(&self.clone().into_url().expect("Can't convert RoUrl to Url"), formatter)
+  }
+}
+
+/// Debug the serialization of this URL.
+impl fmt::Debug for RoUrl {
+  #[inline]
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    fmt::Debug::fmt(&self.clone().into_url().expect("Can't convert RoUrl to Url"), formatter)
+  }
+}
+
+
+
+/// URLs compare like their serialization.
+impl Eq for RoUrl {}
+
+/// URLs compare like their serialization.
+impl PartialEq for RoUrl {
+  #[inline]
+  fn eq(&self, other: &Self) -> bool {
+    self.clone().into_url().expect("Can't convert RoUrl to Url")
+      == other.clone().into_url().expect("Can't convert RoUrl to Url")
+  }
+}
+
+/// URLs compare like their serialization.
+impl Ord for RoUrl {
+  #[inline]
+  fn cmp(&self, other: &Self) -> cmp::Ordering {
+    self.clone().into_url().expect("Can't convert RoUrl to Url")
+      .cmp(&other.clone().into_url().expect("Can't convert RoUrl to Url"))
+  }
+}
+
+/// URLs compare like their serialization.
+impl PartialOrd for RoUrl {
+  #[inline]
+  fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+    self.clone().into_url().expect("Can't convert RoUrl to Url")
+      .partial_cmp(&other.clone().into_url().expect("Can't convert RoUrl to Url"))
+  }
+}
+
+/// URLs hash like their serialization.
+impl hash::Hash for RoUrl {
+  #[inline]
+  fn hash<H>(&self, state: &mut H)
+    where
+      H: hash::Hasher,
+  {
+    hash::Hash::hash(&self.clone().into_url().expect("Can't convert RoUrl to Url"), state)
+  }
+}
+
+/// Return the serialization of this URL.
+impl AsRef<str> for RoUrl {
+  #[inline]
+  fn as_ref(&self) -> &str {
+    &self.url
+  }
+}
+
+
+
+
+
+
+
+
 
 
 impl IntoUrl for Url {
@@ -117,7 +232,7 @@ impl IntoUrl for Url {
 
 impl<'a> IntoUrl for &'a str {
   fn into_url(self) -> Result<Url, Error> {
-    unimplemented!()
+    Url::parse(self).map_err(error::builder)?.into_url()
   }
 }
 

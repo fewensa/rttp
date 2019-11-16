@@ -1,13 +1,22 @@
-use crate::types::IntoUrl;
+use crate::error;
+use crate::types::{IntoUrl, RoUrl, Para, IntoPara};
 
 pub struct HttpClient {
-  method: String
+  url: error::Result<RoUrl>,
+  method: String,
+  paths: Vec<String>,
+  paras: Vec<Para>,
+  traditional: bool,
 }
 
 impl Default for HttpClient {
   fn default() -> Self {
     HttpClient {
-      method: "GET".to_string()
+      url: Err(error::none_url()),
+      method: "GET".to_string(),
+      paths: vec![],
+      paras: vec![],
+      traditional: true
     }
   }
 }
@@ -19,14 +28,17 @@ impl HttpClient {
   }
 
   pub fn url<U: IntoUrl>(&mut self, url: U) -> &mut Self {
+    self.url = url.into_url().map(|u| RoUrl::from(u));
     self
   }
 
-  pub fn charset(&mut self) -> &mut Self {
+  pub fn traditional(&mut self, traditional: bool) -> &mut Self {
+    self.traditional = traditional;
     self
   }
 
-  pub fn traditional(&mut self) -> &mut Self {
+  pub fn path<S: AsRef<str>>(&mut self, path: S) -> &mut Self {
+    self.paths.push(path.as_ref().into());
     self
   }
 
@@ -56,9 +68,11 @@ impl HttpClient {
     self
   }
 
-  pub fn para(&mut self) -> &mut Self {
+  pub fn para<P: IntoPara>(&mut self, para: P) -> &Self {
+    let paras = para.into_para();
+    self.paras.extend(paras);
     self
-   }
+  }
 
   pub fn raw(&mut self) -> &mut Self {
     self
@@ -68,7 +82,9 @@ impl HttpClient {
     self
   }
 
-  pub fn emit(&self) {}
+  pub fn emit(&self) {
+    println!("{} {:?}", self.method, self.url)
+  }
 
   pub fn enqueue(&self) {}
 }

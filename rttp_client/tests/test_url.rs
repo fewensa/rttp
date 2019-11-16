@@ -13,10 +13,18 @@ fn test_rourl_gen() {
   let url = RoUrl::with("https://httpbin.org/get/?name=a&name=b")
     .path("//test/")
     .path("/a")
-    .para("name=f")
+    .para("name[]=文")
+    .para(("name", "I"))
+    .para(("name", "Z", "name=K", "name=O&name=P"))
     .username("Tom")
     .password("1123")
+    .traditional(true)
     .into_url()
     .expect("BAD URL");
   println!("{}", url);
+
+
+  let rourl: RoUrl = url.into();
+  println!("{}", rourl);
+  println!("{}", rourl.into_url().expect("BAD URL"));
 }

@@ -7,7 +7,7 @@ use url::Url;
 
 use crate::types::StatusCode;
 
-/// A `Result` alias where the `Err` case is `reqwest::Error`.
+/// A `Result` alias where the `Err` case is `rttp_client::Error`.
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// The Errors that may occur when processing a `Request`.
@@ -110,7 +110,7 @@ impl Error {
 
 impl fmt::Debug for Error {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    let mut builder = f.debug_struct("reqwest::Error");
+    let mut builder = f.debug_struct("rhttp_client::Error");
 
     builder.field("kind", &self.inner.kind);
 
@@ -232,6 +232,10 @@ pub(crate) fn status_code(url: Url, status: StatusCode) -> Error {
 
 pub(crate) fn bad_url<S: AsRef<str>>(url: Url, message: S) -> Error {
   Error::new(Kind::Builder, Some(message.as_ref())).with_url(url)
+}
+
+pub(crate) fn none_url() -> Error {
+  Error::new(Kind::Builder, Some("None request url"))
 }
 
 //if_wasm! {
