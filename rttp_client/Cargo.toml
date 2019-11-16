@@ -1,0 +1,38 @@
+[package]
+name = "rttp_client"
+version = "0.1.0"
+authors = ["fewensa <fewensa@protonmail.com>"]
+description = "Rust http client lib"
+homepage = "https://github.com/fewensa/rttp"
+repository = "https://github.com/fewensa/rttp"
+license = "MIT"
+keywords = ["http"]
+include = [
+  "Cargo.toml",
+  "**/*.rs",
+  "README.md",
+  "LICENSE"
+]
+
+readme = "README.md"
+edition = "2018"
+
+[dependencies]
+native-tls = "0.2"
+url = "2"
+
+mime = "0.3.14"
+
+
+[dependencies.rustls]
+version = "0.16"
+features = ["dangerous_configuration"]
+optional = true
+
+[dev-dependencies]
+reqwest = "0.9.22"
+
+
+[features]
+#rustls-tls = ["hyper-rustls", "tokio-rustls", "webpki-roots", "rustls", "tls"]
+rustls-tls = ["rustls"]
