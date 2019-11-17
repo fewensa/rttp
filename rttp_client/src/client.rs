@@ -1,48 +1,45 @@
 use crate::error;
-use crate::types::{IntoUrl, RoUrl, Para, IntoPara};
+use crate::request::Request;
+use crate::types::{Header, IntoHeader, IntoPara, Para, RoUrl, ToRoUrl, ToUrl};
+use crate::connection::Connection;
 
+#[derive(Debug)]
 pub struct HttpClient {
-  url: error::Result<RoUrl>,
-  method: String,
-  paths: Vec<String>,
-  paras: Vec<Para>,
-  traditional: bool,
+  request: Request,
 }
 
 impl Default for HttpClient {
   fn default() -> Self {
-    HttpClient {
-      url: Err(error::none_url()),
-      method: "GET".to_string(),
-      paths: vec![],
-      paras: vec![],
-      traditional: true
+    Self {
+      request: Request::new()
     }
   }
 }
 
 impl HttpClient {
   pub fn method<S: AsRef<str>>(&mut self, method: S) -> &mut Self {
-    self.method = method.as_ref().to_owned();
+    *self.request.method_mut() = method.as_ref().to_owned();
     self
   }
 
-  pub fn url<U: IntoUrl>(&mut self, url: U) -> &mut Self {
-    self.url = url.into_url().map(|u| RoUrl::from(u));
+  pub fn url<U: ToRoUrl>(&mut self, url: U) -> &mut Self {
+    *self.request.url_mut() = Some(url.to_rourl());
     self
   }
 
   pub fn traditional(&mut self, traditional: bool) -> &mut Self {
-    self.traditional = traditional;
+    *self.request.traditional_mut() = traditional;
     self
   }
 
   pub fn path<S: AsRef<str>>(&mut self, path: S) -> &mut Self {
-    self.paths.push(path.as_ref().into());
+    let mut paths = self.request.paths_mut();
+    paths.push(path.as_ref().into());
     self
   }
 
-  pub fn encode(&mut self) -> &mut Self {
+  pub fn encode(&mut self, encode: bool) -> &mut Self {
+    *self.request.encode_mut() = encode;
     self
   }
 
@@ -55,35 +52,53 @@ impl HttpClient {
   }
 
 
+  pub fn header<P: IntoHeader>(&mut self, header: P) -> &mut Self {
+    let mut headers = self.request.headers_mut();
+    for h in header.into_headers() {
+      let mut exi = headers.iter_mut()
+        .find(|d| d.name().eq_ignore_ascii_case(h.name()));
 
-  pub fn header(&mut self) -> &mut Self {
+      if let Some(eh) = exi {
+        if h.name().eq_ignore_ascii_case("cookie") {
+          let new_cookie_value = format!("{};{}", eh.value(), h.value());
+          eh.replace(Header::new("Cookie", new_cookie_value));
+          continue;
+        }
+
+        eh.replace(h);
+        continue;
+      }
+      headers.push(h);
+    }
     self
   }
 
-  pub fn cookie(&mut self) -> &mut Self {
+  pub fn cookie<S: AsRef<str>>(&mut self, cookie: S) -> &mut Self {
+    self.header(("Cookie", cookie.as_ref()))
+  }
+
+  pub fn content_type<S: AsRef<str>>(&mut self, content_type: S) -> &mut Self {
+    self.header(("Content-Type", content_type.as_ref()))
+  }
+
+  pub fn para<P: IntoPara>(&mut self, para: P) -> &mut Self {
+    let paras = para.into_paras();
+    let mut req_paras = self.request.paras_mut();
+    req_paras.extend(paras);
     self
   }
 
-  pub fn content_type(&mut self) -> &mut Self {
+  pub fn raw<S: AsRef<str>>(&mut self, raw: S) -> &mut Self {
+    *self.request.raw_mut() = Some(raw.as_ref().into());
     self
   }
 
-  pub fn para<P: IntoPara>(&mut self, para: P) -> &Self {
-    let paras = para.into_para();
-    self.paras.extend(paras);
-    self
-  }
+//  pub fn binary(&mut self) -> &mut Self {
+//    self
+//  }
 
-  pub fn raw(&mut self) -> &mut Self {
-    self
-  }
-
-  pub fn binary(&mut self) -> &mut Self {
-    self
-  }
-
-  pub fn emit(&self) {
-    println!("{} {:?}", self.method, self.url)
+  pub fn emit(&self) -> error::Result<()> {
+    Connection::new(&self.request).call()
   }
 
   pub fn enqueue(&self) {}

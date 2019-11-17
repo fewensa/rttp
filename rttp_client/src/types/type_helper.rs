@@ -1,7 +1,7 @@
 
 
 
-pub fn safe_uri(uri: String) -> String {
+pub fn stand_uri(uri: String) -> String {
   uri.split("/")
     .collect::<Vec<&str>>()
     .iter()

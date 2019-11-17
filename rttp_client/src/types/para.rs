@@ -21,7 +21,7 @@ pub struct Para {
 pub trait IntoPara {
   // Besides parsing as a valid `Url`, the `Url` must be a valid
   // `http::Uri`, in that it makes sense to use in a network request.
-  fn into_para(self) -> Vec<Para>;
+  fn into_paras(&self) -> Vec<Para>;
 }
 
 impl Para {
@@ -69,20 +69,20 @@ impl Para {
 }
 
 impl IntoPara for Para {
-  fn into_para(self) -> Vec<Para> {
-    vec![self]
+  fn into_paras(&self) -> Vec<Para> {
+    vec![self.clone()]
   }
 }
 
 impl<'a> IntoPara for &'a str {
-  fn into_para(self) -> Vec<Para> {
+  fn into_paras(&self) -> Vec<Para> {
     self.split("&").collect::<Vec<&str>>()
       .iter()
       .map(|part: &&str| {
         let pvs: Vec<&str> = part.split("=").collect::<Vec<&str>>();
         Para::with_form(
-          pvs.get(0).map_or("".to_string(), |v| v.to_string()),
-          pvs.get(1).map_or("".to_string(), |v| v.to_string()),
+          pvs.get(0).map_or("".to_string(), |v| v.to_string()).trim(),
+          pvs.get(1).map_or("".to_string(), |v| v.to_string()).trim(),
         )
       })
       .filter(|para: &Para| !para.name.is_empty())
@@ -91,20 +91,32 @@ impl<'a> IntoPara for &'a str {
 }
 
 impl<'a> IntoPara for &'a String {
-  fn into_para(self) -> Vec<Para> {
-    (&**self).into_para()
+  fn into_paras(&self) -> Vec<Para> {
+    (&self[..]).into_paras()
+  }
+}
+
+impl<'a, IU: IntoPara> IntoPara for &'a IU {
+  fn into_paras(&self) -> Vec<Para> {
+    (*self).into_paras()
+  }
+}
+
+impl<'a, IU: IntoPara> IntoPara for &'a mut IU {
+  fn into_paras(&self) -> Vec<Para> {
+    (**self).into_paras()
   }
 }
 
 //impl IntoPara for (&str, &str) {
-//  fn into_para(self) -> Vec<Para> {
+//  fn into_paras(self) -> Vec<Para> {
 //    let para = Para::with_form(self.0, self.1);
 //    vec![para]
 //  }
 //}
 
 //impl<T: AsRef<str>> IntoPara for (T, T) {
-//  fn into_para(self) -> Vec<Para> {
+//  fn into_paras(self) -> Vec<Para> {
 //    let para = Para::with_form(self.0.as_ref(), self.1.as_ref());
 //    vec![para]
 //  }
@@ -123,13 +135,13 @@ macro_rules! tuple_to_para {
       ),)+
     )
     {
-      fn into_para(self) -> Vec<Para> {
+      fn into_paras(&self) -> Vec<Para> {
         let mut rets = vec![];
         let ($($item,)+) = self;
         let mut name = "".to_string();
         let mut position = 0;
         $(
-          let paras = $item.into_para();
+          let paras = $item.into_paras();
           if !paras.is_empty() {
 
             // check first para have text(value), if true, is an independent para
