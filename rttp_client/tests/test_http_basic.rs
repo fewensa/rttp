@@ -6,7 +6,7 @@ fn test_http() {
   Http::client()
     .method("get")
 //    .url(&format!("Host:{}", "httpbin.org")[..])
-    .url("https://httpbin.org")
+    .url("http://httpbin.org/get?id=1&name=jack")
     .path("get")
     .header("User-Agent: Mozilla/5.0")
     .header(&format!("Host:{}", "httpbin.org"))

@@ -38,22 +38,6 @@ impl Error {
   }
 
   /// Returns a possible URL related to this error.
-  ///
-  /// # Examples
-  ///
-  /// ```
-  /// # async fn run() {
-  /// // displays last stop of a redirect loop
-  /// let response = reqwest::get("http://site.with.redirect.loop").await;
-  /// if let Err(e) = response {
-  ///     if e.is_redirect() {
-  ///         if let Some(final_stop) = e.url() {
-  ///             println!("redirect loop at {}", final_stop);
-  ///         }
-  ///     }
-  /// }
-  /// # }
-  /// ```
   pub fn url(&self) -> Option<&Url> {
     self.inner.url.as_ref()
   }
@@ -226,9 +210,13 @@ pub(crate) fn status_code(url: Url, status: StatusCode) -> Error {
   Error::new(Kind::Status(status), None::<Error>).with_url(url)
 }
 
-//pub(crate) fn url_bad_scheme(url: Url) -> Error {
-//  Error::new(Kind::Builder, Some("URL scheme is not allowed")).with_url(url)
-//}
+pub(crate) fn url_bad_scheme(url: Url) -> Error {
+  Error::new(Kind::Builder, Some("URL scheme is not allowed")).with_url(url)
+}
+
+pub(crate) fn url_bad_host(url: Url) -> Error {
+  Error::new(Kind::Builder, Some("URL host is not allowed")).with_url(url)
+}
 
 pub(crate) fn bad_url<S: AsRef<str>>(url: Url, message: S) -> Error {
   Error::new(Kind::Builder, Some(message.as_ref())).with_url(url)
