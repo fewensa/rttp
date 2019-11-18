@@ -16,6 +16,8 @@ steps:
       - name: cargo
         path: /root/.cargo
     commands:
+      - apt update -y
+      - apt install -y libssl-dev pkg-config
       - cargo test
       - cargo package
 
