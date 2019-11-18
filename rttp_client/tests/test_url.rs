@@ -1,5 +1,5 @@
 use url::Url;
-use rttp_client::types::{RoUrl, IntoUrl};
+use rttp_client::types::{RoUrl, ToUrl};
 
 #[test]
 fn test_url_gen() {
@@ -19,12 +19,12 @@ fn test_rourl_gen() {
     .username("Tom")
     .password("1123")
     .traditional(true)
-    .into_url()
+    .to_url()
     .expect("BAD URL");
   println!("{}", url);
 
 
   let rourl: RoUrl = url.into();
-  println!("{}", rourl);
-  println!("{}", rourl.into_url().expect("BAD URL"));
+  println!("{:?}", rourl);
+  println!("{}", rourl.to_url().expect("BAD URL"));
 }

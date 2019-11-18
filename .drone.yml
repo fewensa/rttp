@@ -1,0 +1,26 @@
+---
+kind: pipeline
+type: docker
+name: default
+
+
+---
+kind: pipeline
+type: docker
+name: build
+
+steps:
+  - name: package
+    image: rust:1.39-slim
+    volumes:
+      - name: cargo
+        path: /root/.cargo
+    commands:
+      - cargo test
+      - cargo package
+
+volumes:
+  - name: cargo
+    host:
+      path: /data/mount/cargo
+
