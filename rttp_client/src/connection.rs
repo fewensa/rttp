@@ -14,7 +14,7 @@ impl<'a> Connection<'a> {
     Self { request }
   }
 
-  pub fn call(self) -> error::Result<()> {
+  pub fn call(mut self) -> error::Result<()> {
     let url = self.request.url()
       .clone()
       .ok_or(error::none_url())?
@@ -67,10 +67,11 @@ impl<'a> Connection<'a> {
     let host = url.host_str().ok_or(error::url_bad_host(url.clone()))?;
     let port: u16 = url.port().map_or_else(|| {
       match url.scheme() {
-        "https" => 443,
-        _ => 80
+        "https" => Ok(443),
+        "http" => Ok(80),
+        _ => Err(error::url_bad_scheme(url.clone()))
       }
-    }, |v| v);
+    }, |v| Ok(v))?;
 
     builder.push_str(&format!("{} {} HTTP/1.1\r\n", self.request.method().to_uppercase(), request_url));
 
@@ -79,12 +80,10 @@ impl<'a> Connection<'a> {
     for header in self.request.headers() {
       let name = header.name();
       let value = header.value().replace("\r\n", "");
-      if name.eq_ignore_ascii_case("host") {
-        found_host = true;
-      }
-      if name.eq_ignore_ascii_case("connection") {
-        found_connection = true;
-      }
+
+      if name.eq_ignore_ascii_case("host") { found_host = true; }
+      if name.eq_ignore_ascii_case("connection") { found_connection = true; }
+
       builder.push_str(&format!("{}: {}\r\n", name, value))
     }
     if !found_host {

@@ -16,7 +16,6 @@ pub struct Request {
 impl Request {
   pub fn new() -> Self {
     Self {
-//      url: Err(error::none_url()),
       url: None,
       method: "GET".to_string(),
       paths: vec![],
@@ -46,4 +45,35 @@ impl Request {
   pub(crate) fn traditional_mut(&mut self) -> &mut bool { &mut self.traditional }
   pub(crate) fn encode_mut(&mut self) -> &mut bool { &mut self.encode }
   pub(crate) fn raw_mut(&mut self) -> &mut Option<String> { &mut self.raw }
+}
+
+pub struct RequestBody {
+  binary: Vec<u8>
+}
+
+impl RequestBody {
+
+  pub fn with_vec(vec: Vec<u8>) -> Self {
+    Self { binary: vec }
+  }
+
+  pub fn with_text<S: AsRef<str>>(text: S) -> Self {
+    Self::with_slice(text.as_ref().to_owned().as_bytes())
+  }
+
+  pub fn with_slice(slice: &[u8]) -> Self {
+    Self::with_vec(slice.to_vec())
+  }
+
+  pub fn bytes(&self) -> &[u8] {
+    self.binary.as_slice()
+  }
+
+  pub fn string(&self) -> error::Result<String> {
+    String::from_utf8(self.binary.clone()).map_err(error::request)
+  }
+
+  pub fn len(&self) -> usize {
+    self.binary.len()
+  }
 }
