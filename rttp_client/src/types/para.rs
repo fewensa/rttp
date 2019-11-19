@@ -6,6 +6,7 @@ use crate::types::ParaType::FORM;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum ParaType {
+  URL,
   FORM,
   FILE,
 }
@@ -16,6 +17,7 @@ pub struct Para {
   text: Option<String>,
   file: Option<PathBuf>,
   type_: ParaType,
+  array: bool
 }
 
 pub trait IntoPara {
@@ -25,12 +27,23 @@ pub trait IntoPara {
 }
 
 impl Para {
+  pub(crate) fn with_url<N: AsRef<str>, V: AsRef<str>>(name: N, value: V) -> Self {
+    Self {
+      name: name.as_ref().into(),
+      text: Some(value.as_ref().into()),
+      file: None,
+      type_: ParaType::URL,
+      array: false
+    }
+  }
+
   pub fn with_form<N: AsRef<str>, V: AsRef<str>>(name: N, value: V) -> Self {
     Self {
       name: name.as_ref().into(),
       text: Some(value.as_ref().into()),
       file: None,
-      type_: ParaType::FORM
+      type_: ParaType::FORM,
+      array: false
     }
   }
 
@@ -39,33 +52,26 @@ impl Para {
       name: name.as_ref().into(),
       text: None,
       file: Some(path.as_ref().into()),
-      type_: ParaType::FILE
+      type_: ParaType::FILE,
+      array: false
     }
   }
 
-  pub fn name(&self) -> &String {
-    &self.name
-  }
+  pub fn name(&self) -> &String { &self.name }
+  pub fn type_(&self) -> &ParaType { &self.type_ }
+  pub fn text(&self) -> &Option<String> { &self.text }
+  pub fn file(&self) -> &Option<PathBuf> { &self.file }
+  pub fn array(&self) -> bool { self.array }
 
-  pub fn type_(&self) -> &ParaType {
-    &self.type_
-  }
+  pub fn is_url(&self) -> bool { self.type_ == ParaType::URL }
+  pub fn is_form(&self) -> bool { self.type_ == ParaType::FORM }
+  pub fn is_file(&self) -> bool { self.type_ == ParaType::FILE }
 
-  pub fn text(&self) -> &Option<String> {
-    &self.text
-  }
-
-  pub fn file(&self) -> &Option<PathBuf> {
-    &self.file
-  }
-
-  pub fn is_form(&self) -> bool {
-    self.type_ == ParaType::FORM
-  }
-
-  pub fn is_file(&self) -> bool {
-    self.type_ == ParaType::FILE
-  }
+  pub(crate) fn name_mut(&mut self) -> &mut String { &mut self.name }
+  pub(crate) fn type_mut(&mut self) -> &mut ParaType { &mut self.type_ }
+  pub(crate) fn text_mut(&mut self) -> &mut Option<String> { &mut self.text }
+  pub(crate) fn file_mut(&mut self) -> &mut Option<PathBuf> { &mut self.file }
+  pub(crate) fn array_mut(&mut self) -> &mut bool { &mut self.array }
 }
 
 impl IntoPara for Para {

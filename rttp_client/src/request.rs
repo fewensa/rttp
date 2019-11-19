@@ -11,6 +11,7 @@ pub struct Request {
   traditional: bool,
   encode: bool,
   raw: Option<String>,
+  binary: Vec<u8>,
 }
 
 impl Request {
@@ -24,6 +25,7 @@ impl Request {
       traditional: true,
       encode: true,
       raw: None,
+      binary: vec![],
     }
   }
 
@@ -35,7 +37,7 @@ impl Request {
   pub fn traditional(&self) -> bool { self.traditional }
   pub fn encode(&self) -> bool { self.encode }
   pub fn raw(&self) -> &Option<String> { &self.raw }
-
+  pub fn binary(&self) -> &Vec<u8> { &self.binary }
 
   pub(crate) fn url_mut(&mut self) -> &mut Option<RoUrl> { &mut self.url }
   pub(crate) fn method_mut(&mut self) -> &mut String { &mut self.method }
@@ -45,8 +47,10 @@ impl Request {
   pub(crate) fn traditional_mut(&mut self) -> &mut bool { &mut self.traditional }
   pub(crate) fn encode_mut(&mut self) -> &mut bool { &mut self.encode }
   pub(crate) fn raw_mut(&mut self) -> &mut Option<String> { &mut self.raw }
+  pub(crate) fn binary_mut(&mut self) -> &mut Vec<u8> { &mut self.binary }
 }
 
+#[derive(Clone, Debug)]
 pub struct RequestBody {
   binary: Vec<u8>
 }

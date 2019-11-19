@@ -1,7 +1,7 @@
+use crate::connection::Connection;
 use crate::error;
 use crate::request::Request;
 use crate::types::{Header, IntoHeader, IntoPara, Para, RoUrl, ToRoUrl, ToUrl};
-use crate::connection::Connection;
 
 #[derive(Debug)]
 pub struct HttpClient {
@@ -93,12 +93,13 @@ impl HttpClient {
     self
   }
 
-//  pub fn binary(&mut self) -> &mut Self {
-//    self
-//  }
+  pub fn binary(&mut self, binary: Vec<u8>) -> &mut Self {
+    *self.request.binary_mut() = binary;
+    self
+  }
 
   pub fn emit(&self) -> error::Result<()> {
-    Connection::new(&self.request).call()
+    Connection::new(self.request.clone()).call()
   }
 
   pub fn enqueue(&self) {}

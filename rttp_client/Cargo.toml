@@ -20,6 +20,7 @@ edition = "2018"
 [dependencies]
 native-tls = "0.2"
 url = "2"
+percent-encoding = "2"
 
 mime = "0.3.14"
 

@@ -5,7 +5,7 @@ use url::Url;
 
 use crate::error;
 use crate::error::Error;
-use crate::types::{IntoPara, Para};
+use crate::types::{IntoPara, Para, ParaType};
 
 #[derive(Clone, Debug)]
 pub struct RoUrl {
@@ -32,16 +32,62 @@ pub trait ToUrl: Debug {
 
 impl RoUrl {
   pub fn with<S: AsRef<str>>(url: S) -> RoUrl {
+    let url = url.as_ref();
+    let netloc_and_para: Vec<&str> = url.split("?").collect::<Vec<&str>>();
+    let url = netloc_and_para.get(0).map_or("".to_string(), |v| v.to_string());
+    let mut para_string = String::new();
+    let mut fragment = None;
+    for (i, nap) in netloc_and_para.iter().enumerate() {
+      if i == 0 { continue; }
+      let para_and_fragment: Vec<&str> = nap.split("#").collect::<Vec<&str>>();
+      if para_and_fragment.is_empty() {
+        para_string.push_str(nap);
+      } else {
+        if let Some(last_para) = para_and_fragment.get(0) {
+          para_string.push_str(last_para);
+        }
+
+        let fragment_string = para_and_fragment.iter()
+          .enumerate()
+          .filter(|(ix, _)| *ix > 0)
+          .map(|(_, v)| *v)
+          .collect::<Vec<&str>>()
+          .join("#");
+        if !fragment_string.is_empty() {
+          fragment = Some(fragment_string);
+        }
+      }
+    }
+    let mut paras = (&para_string).into_paras();
+    for para in &mut paras {
+      *para.type_mut() = ParaType::URL;
+    }
     Self {
-      url: url.as_ref().into(),
+      url,
       paths: Default::default(),
       username: Default::default(),
       password: None,
-      paras: vec![],
+      paras,
       traditional: true,
-      fragment: None,
+      fragment,
     }
   }
+
+  pub(crate) fn url_get(&self) -> &String { &self.url }
+  pub(crate) fn paths_get(&self) -> &Vec<String> { &self.paths }
+  pub(crate) fn username_get(&self) -> &String { &self.username }
+  pub(crate) fn password_get(&self) -> &Option<String> { &self.password }
+  pub(crate) fn paras_get(&self) -> &Vec<Para> { &self.paras }
+  pub(crate) fn fragment_get(&self) -> &Option<String> { &self.fragment }
+  pub(crate) fn traditional_get(&self) -> bool { self.traditional }
+
+  pub(crate) fn url_mut(&mut self) -> &mut String { &mut self.url }
+  pub(crate) fn paths_mut(&mut self) -> &mut Vec<String> { &mut self.paths }
+  pub(crate) fn username_mut(&mut self) -> &mut String { &mut self.username }
+  pub(crate) fn password_mut(&mut self) -> &mut Option<String> { &mut self.password }
+  pub(crate) fn paras_mut(&mut self) -> &mut Vec<Para> { &mut self.paras }
+  pub(crate) fn fragment_mut(&mut self) -> &mut Option<String> { &mut self.fragment }
+  pub(crate) fn traditional_mut(&mut self) -> &mut bool { &mut self.traditional }
 
   pub fn fragment<S: AsRef<str>>(&mut self, fragment: S) -> &mut Self {
     self.fragment = Some(fragment.as_ref().into());
@@ -64,8 +110,16 @@ impl RoUrl {
   }
 
   pub fn para<P: IntoPara>(&mut self, para: P) -> &mut Self {
-    let paras = para.into_paras();
+    let mut paras = para.into_paras();
+    for para in &mut paras {
+      *para.type_mut() = ParaType::URL;
+    }
     self.paras.extend(paras);
+    self
+  }
+
+  pub fn paras(&mut self, paras: Vec<Para>) -> &mut Self {
+    self.paras = paras;
     self
   }
 
@@ -98,7 +152,7 @@ impl RoUrl {
       return None;
     }
     let para_string = all_paras.iter()
-      .filter(|&p| p.is_form())
+      .filter(|&p| p.is_url() || p.is_form())
       .map(|p| {
         let name = p.name();
         if self.traditional {
@@ -110,7 +164,7 @@ impl RoUrl {
           .len() > 1;
         let ends_with_bracket = name.ends_with("[]");
         return format!("{}{}={}", name,
-                       if is_array && !ends_with_bracket { "[]" } else { "" },
+                       if !ends_with_bracket && (is_array || p.array()) { "[]" } else { "" },
                        p.text().clone().map_or("".to_string(), |t| t));
       })
       .collect::<Vec<String>>()
@@ -238,12 +292,6 @@ impl From<Url> for RoUrl {
 //}
 
 
-
-
-
-
-
-
 impl<'a, IU: ToRoUrl> ToRoUrl for &'a IU {
   fn to_rourl(&self) -> RoUrl {
     (*self).to_rourl()
@@ -255,8 +303,6 @@ impl<'a, IU: ToRoUrl> ToRoUrl for &'a mut IU {
     (**self).to_rourl()
   }
 }
-
-
 
 
 //pub trait IntoUrl: Debug {

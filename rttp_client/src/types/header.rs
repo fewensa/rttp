@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 #[derive(Clone, Debug)]
 pub struct Header {
   name: String,
@@ -12,8 +14,8 @@ pub trait IntoHeader {
 impl Header {
   pub fn new<N: AsRef<str>, V: AsRef<str>>(name: N, value: V) -> Self {
     Self {
-      name: name.as_ref().into(),
-      value: value.as_ref().into(),
+      name: name.as_ref().trim().into(),
+      value: value.as_ref().trim().into(),
     }
   }
 
@@ -65,6 +67,18 @@ impl<'a> IntoHeader for &'a String {
 impl IntoHeader for Header {
   fn into_headers(&self) -> Vec<Header> {
     vec![self.clone()]
+  }
+}
+
+impl<K: AsRef<str> + Eq + std::hash::Hash, V: AsRef<str>> IntoHeader for HashMap<K, V> {
+  fn into_headers(&self) -> Vec<Header> {
+    let mut rets = Vec::with_capacity(self.len());
+    for key in self.keys() {
+      if let Some(value) = self.get(key) {
+        rets.push(Header::new(key, value))
+      }
+    }
+    rets
   }
 }
 
