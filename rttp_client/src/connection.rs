@@ -55,12 +55,13 @@ impl Connection {
 
     // paras
     if !paras.is_empty() && raw.is_none() && binary.is_empty() && !is_get {
-      let has_file = self.request.paras().iter().find(|&para| para.is_file()).is_some();
-      return if has_file {
-        self.build_body_with_form_data(rourl)
-      } else {
-        self.build_body_with_form_urlencoded(rourl)
-      };
+      // todo use form data
+//      let has_file = self.request.paras().iter().find(|&para| para.is_file()).is_some();
+//      return if has_file {
+//        self.build_body_with_form_data(rourl)
+//      } else {
+//        self.build_body_with_form_urlencoded(rourl)
+//      };
     }
 
     // raw
@@ -92,7 +93,7 @@ impl Connection {
     let mut body = String::new();
     for (i, para) in paras.iter().enumerate() {
       let name = percent_encoding::percent_encode(para.name().as_bytes(), percent_encoding::NON_ALPHANUMERIC);
-      let value = if let Some(text) = para.text() {
+      let value = if let Some(text) = para.value() {
         let value = percent_encoding::percent_encode(text.as_bytes(), percent_encoding::NON_ALPHANUMERIC);
         Some(value)
       } else {
@@ -110,6 +111,7 @@ impl Connection {
   }
 
   fn build_body_with_form_data(&mut self, rourl: &mut RoUrl) -> error::Result<Option<RequestBody>> {
+//    let buffer = vec![];
     Ok(None)
   }
 
@@ -140,13 +142,13 @@ impl Connection {
     });
 
     for para in paras_req {
-      if let Some((_, is_array)) = names.iter().find(|(n, _)| n == para.name()) {
+      if let Some((_, is_array)) = names.iter().find(|(key, _)| key == para.name()) {
         *para.array_mut() = *is_array;
       }
     }
 
     for para in paras_url {
-      if let Some((_, is_array)) = names.iter().find(|(n, _)| n == para.name()) {
+      if let Some((_, is_array)) = names.iter().find(|(key, _)| key == para.name()) {
         *para.array_mut() = *is_array;
       }
     }

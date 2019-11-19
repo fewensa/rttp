@@ -1,5 +1,7 @@
+use std::fmt;
+
 use crate::error;
-use crate::types::{Header, Para, RoUrl};
+use crate::types::{Header, Para, RoUrl, FormData};
 
 #[derive(Clone, Debug)]
 pub struct Request {
@@ -7,6 +9,7 @@ pub struct Request {
   method: String,
   paths: Vec<String>,
   paras: Vec<Para>,
+  formdatas: Vec<FormData>,
   headers: Vec<Header>,
   traditional: bool,
   encode: bool,
@@ -21,6 +24,7 @@ impl Request {
       method: "GET".to_string(),
       paths: vec![],
       paras: vec![],
+      formdatas: vec![],
       headers: vec![],
       traditional: true,
       encode: true,
@@ -33,6 +37,7 @@ impl Request {
   pub fn method(&self) -> &String { &self.method }
   pub fn paths(&self) -> &Vec<String> { &self.paths }
   pub fn paras(&self) -> &Vec<Para> { &self.paras }
+  pub fn formdatas(&self) -> &Vec<FormData> { &self.formdatas }
   pub fn headers(&self) -> &Vec<Header> { &self.headers }
   pub fn traditional(&self) -> bool { self.traditional }
   pub fn encode(&self) -> bool { self.encode }
@@ -43,6 +48,7 @@ impl Request {
   pub(crate) fn method_mut(&mut self) -> &mut String { &mut self.method }
   pub(crate) fn paths_mut(&mut self) -> &mut Vec<String> { &mut self.paths }
   pub(crate) fn paras_mut(&mut self) -> &mut Vec<Para> { &mut self.paras }
+  pub(crate) fn formdatas_mut(&mut self) -> &mut Vec<FormData> { &mut self.formdatas }
   pub(crate) fn headers_mut(&mut self) -> &mut Vec<Header> { &mut self.headers }
   pub(crate) fn traditional_mut(&mut self) -> &mut bool { &mut self.traditional }
   pub(crate) fn encode_mut(&mut self) -> &mut bool { &mut self.encode }
@@ -50,7 +56,7 @@ impl Request {
   pub(crate) fn binary_mut(&mut self) -> &mut Vec<u8> { &mut self.binary }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct RequestBody {
   binary: Vec<u8>
 }
@@ -81,3 +87,20 @@ impl RequestBody {
     self.binary.len()
   }
 }
+
+impl fmt::Display for RequestBody {
+  #[inline]
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    let text = self.string().unwrap_or_default();
+    fmt::Display::fmt(&text, formatter)
+  }
+}
+
+impl fmt::Debug for RequestBody {
+  #[inline]
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    let text = self.string().unwrap_or_default();
+    fmt::Debug::fmt(&text, formatter)
+  }
+}
+

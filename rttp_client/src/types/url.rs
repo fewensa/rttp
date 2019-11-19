@@ -156,7 +156,7 @@ impl RoUrl {
       .map(|p| {
         let name = p.name();
         if self.traditional {
-          return format!("{}={}", name, p.text().clone().map_or("".to_string(), |t| t));
+          return format!("{}={}", name, p.value().clone().map_or("".to_string(), |t| t));
         }
         let is_array = all_paras.iter()
           .filter(|&item| item.name() == name)
@@ -165,7 +165,7 @@ impl RoUrl {
         let ends_with_bracket = name.ends_with("[]");
         return format!("{}{}={}", name,
                        if !ends_with_bracket && (is_array || p.array()) { "[]" } else { "" },
-                       p.text().clone().map_or("".to_string(), |t| t));
+                       p.value().clone().map_or("".to_string(), |t| t));
       })
       .collect::<Vec<String>>()
       .join("&");

@@ -1,7 +1,7 @@
 use crate::connection::Connection;
 use crate::error;
 use crate::request::Request;
-use crate::types::{Header, IntoHeader, IntoPara, Para, RoUrl, ToRoUrl, ToUrl};
+use crate::types::{Header, IntoHeader, IntoPara, Para, RoUrl, ToFormData, ToRoUrl, ToUrl};
 
 #[derive(Debug)]
 pub struct HttpClient {
@@ -85,6 +85,13 @@ impl HttpClient {
     let paras = para.into_paras();
     let mut req_paras = self.request.paras_mut();
     req_paras.extend(paras);
+    self
+  }
+
+  pub fn form<S: ToFormData>(&mut self, formdata: S) -> &mut Self {
+    let formdatas = formdata.to_formdatas();
+    let mut req_formdatas = self.request.formdatas_mut();
+    req_formdatas.extend(formdatas);
     self
   }
 

@@ -3,19 +3,18 @@ use std::path::PathBuf;
 use crate::error;
 use crate::error::Error;
 use crate::types::ParaType::FORM;
+use crate::types::FormData;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum ParaType {
   URL,
   FORM,
-  FILE,
 }
 
 #[derive(Clone, Debug)]
 pub struct Para {
   name: String,
-  text: Option<String>,
-  file: Option<PathBuf>,
+  value: Option<String>,
   type_: ParaType,
   array: bool
 }
@@ -30,48 +29,43 @@ impl Para {
   pub(crate) fn with_url<N: AsRef<str>, V: AsRef<str>>(name: N, value: V) -> Self {
     Self {
       name: name.as_ref().into(),
-      text: Some(value.as_ref().into()),
-      file: None,
+      value: Some(value.as_ref().into()),
       type_: ParaType::URL,
       array: false
     }
   }
 
-  pub fn with_form<N: AsRef<str>, V: AsRef<str>>(name: N, value: V) -> Self {
+  pub fn new<N: AsRef<str>, V: AsRef<str>>(name: N, value: V) -> Self {
     Self {
       name: name.as_ref().into(),
-      text: Some(value.as_ref().into()),
-      file: None,
+      value: Some(value.as_ref().into()),
       type_: ParaType::FORM,
-      array: false
-    }
-  }
-
-  pub fn with_file<N: AsRef<str>, V: AsRef<PathBuf>>(name: N, path: V) -> Self {
-    Self {
-      name: name.as_ref().into(),
-      text: None,
-      file: Some(path.as_ref().into()),
-      type_: ParaType::FILE,
       array: false
     }
   }
 
   pub fn name(&self) -> &String { &self.name }
   pub fn type_(&self) -> &ParaType { &self.type_ }
-  pub fn text(&self) -> &Option<String> { &self.text }
-  pub fn file(&self) -> &Option<PathBuf> { &self.file }
+  pub fn value(&self) -> &Option<String> { &self.value }
   pub fn array(&self) -> bool { self.array }
 
   pub fn is_url(&self) -> bool { self.type_ == ParaType::URL }
   pub fn is_form(&self) -> bool { self.type_ == ParaType::FORM }
-  pub fn is_file(&self) -> bool { self.type_ == ParaType::FILE }
 
   pub(crate) fn name_mut(&mut self) -> &mut String { &mut self.name }
   pub(crate) fn type_mut(&mut self) -> &mut ParaType { &mut self.type_ }
-  pub(crate) fn text_mut(&mut self) -> &mut Option<String> { &mut self.text }
-  pub(crate) fn file_mut(&mut self) -> &mut Option<PathBuf> { &mut self.file }
+  pub(crate) fn value_mut(&mut self) -> &mut Option<String> { &mut self.value }
   pub(crate) fn array_mut(&mut self) -> &mut bool { &mut self.array }
+}
+
+impl Para {
+  pub fn to_formdata(&self) -> FormData {
+    if let Some(value) = self.value() {
+      FormData::with_text(self.name(), value)
+    } else {
+      FormData::with_text(self.name(), "")
+    }
+  }
 }
 
 impl IntoPara for Para {
@@ -86,7 +80,7 @@ impl<'a> IntoPara for &'a str {
       .iter()
       .map(|part: &&str| {
         let pvs: Vec<&str> = part.split("=").collect::<Vec<&str>>();
-        Para::with_form(
+        Para::new(
           pvs.get(0).map_or("".to_string(), |v| v.to_string()).trim(),
           pvs.get(1).map_or("".to_string(), |v| v.to_string()).trim(),
         )
@@ -154,7 +148,7 @@ macro_rules! tuple_to_para {
             let first = paras.get(0);
             let mut first_value_not_empty = false;
             if let Some(v) = first {
-              let first_text = v.text();
+              let first_text = v.value();
               if let Some(t) = first_text {
                 if !t.is_empty() {
                   first_value_not_empty = true;
@@ -163,7 +157,7 @@ macro_rules! tuple_to_para {
             }
 
             if paras.len() > 1 ||
-              paras.get(0).filter(|&v| v.text().is_some() && first_value_not_empty).is_some()
+              paras.get(0).filter(|&v| v.value().is_some() && first_value_not_empty).is_some()
             {
               rets.extend(paras);
               position = 0;
@@ -173,7 +167,7 @@ macro_rules! tuple_to_para {
                   name = para_first.name().clone();
                   position = 1;
                 } else {
-                  rets.push(Para::with_form(&name, para_first.name()));
+                  rets.push(Para::new(&name, para_first.name()));
                   position = 0;
                 }
               }
