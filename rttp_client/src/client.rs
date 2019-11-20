@@ -17,18 +17,43 @@ impl Default for HttpClient {
 }
 
 impl HttpClient {
+
+  pub fn get(&mut self) -> &mut Self {
+    self.method("GET")
+  }
+
+  pub fn post(&mut self) -> &mut Self {
+    self.method("POST")
+  }
+
+  pub fn put(&mut self) -> &mut Self {
+    self.method("PUT")
+  }
+
+  pub fn delete(&mut self) -> &mut Self {
+    self.method("DELETE")
+  }
+
+  pub fn options(&mut self) -> &mut Self {
+    self.method("OPTIONS")
+  }
+
+  pub fn head(&mut self) -> &mut Self {
+    self.method("HEAD")
+  }
+
   pub fn method<S: AsRef<str>>(&mut self, method: S) -> &mut Self {
-    *self.request.method_mut() = method.as_ref().to_owned();
+    self.request.method_set(method);
     self
   }
 
   pub fn url<U: ToRoUrl>(&mut self, url: U) -> &mut Self {
-    *self.request.url_mut() = Some(url.to_rourl());
+    self.request.url_set(url.to_rourl());
     self
   }
 
   pub fn traditional(&mut self, traditional: bool) -> &mut Self {
-    *self.request.traditional_mut() = traditional;
+    self.request.traditional_set(traditional);
     self
   }
 
@@ -96,12 +121,12 @@ impl HttpClient {
   }
 
   pub fn raw<S: AsRef<str>>(&mut self, raw: S) -> &mut Self {
-    *self.request.raw_mut() = Some(raw.as_ref().into());
+    self.request.raw_set(raw);
     self
   }
 
   pub fn binary(&mut self, binary: Vec<u8>) -> &mut Self {
-    *self.request.binary_mut() = binary;
+    self.request.binary_set(binary);
     self
   }
 

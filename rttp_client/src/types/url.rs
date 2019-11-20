@@ -89,6 +89,35 @@ impl RoUrl {
   pub(crate) fn fragment_mut(&mut self) -> &mut Option<String> { &mut self.fragment }
   pub(crate) fn traditional_mut(&mut self) -> &mut bool { &mut self.traditional }
 
+  pub(crate) fn url_set<S: AsRef<str>>(&mut self, url: S) -> &mut Self {
+    self.url = url.as_ref().into();
+    self
+  }
+  pub(crate) fn paths_set(&mut self, paths: Vec<String>) -> &mut Self {
+    self.paths = paths;
+    self
+  }
+  pub(crate) fn username_set<S: AsRef<str>>(&mut self, username: S) -> &mut Self {
+    self.username = username.as_ref().into();
+    self
+  }
+  pub(crate) fn password_set<S: AsRef<str>>(&mut self, password: S) -> &mut Self {
+    self.password = Some(password.as_ref().into());
+    self
+  }
+  pub(crate) fn paras_set(&mut self, paras: Vec<Para>) -> &mut Self {
+    self.paras = paras;
+    self
+  }
+  pub(crate) fn fragment_set<S: AsRef<str>>(&mut self, fragment: S) -> &mut Self {
+    self.fragment = Some(fragment.as_ref().into());
+    self
+  }
+  pub(crate) fn traditional_set(&mut self, traditional: bool) -> &mut Self {
+    self.traditional = traditional;
+    self
+  }
+
   pub fn fragment<S: AsRef<str>>(&mut self, fragment: S) -> &mut Self {
     self.fragment = Some(fragment.as_ref().into());
     self
@@ -232,6 +261,11 @@ impl From<Url> for RoUrl {
   }
 }
 
+impl AsRef<RoUrl> for RoUrl {
+  fn as_ref(&self) -> &RoUrl {
+    self
+  }
+}
 
 ///// Display the serialization of this URL.
 //impl fmt::Display for RoUrl {

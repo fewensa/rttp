@@ -1,7 +1,8 @@
 use std::fmt;
 
 use crate::error;
-use crate::types::{Header, Para, RoUrl, FormData};
+use crate::types::{FormData, Header, Para, RoUrl, ToRoUrl};
+
 
 #[derive(Clone, Debug)]
 pub struct Request {
@@ -54,6 +55,54 @@ impl Request {
   pub(crate) fn encode_mut(&mut self) -> &mut bool { &mut self.encode }
   pub(crate) fn raw_mut(&mut self) -> &mut Option<String> { &mut self.raw }
   pub(crate) fn binary_mut(&mut self) -> &mut Vec<u8> { &mut self.binary }
+
+
+  pub(crate) fn url_set<S: AsRef<RoUrl>>(&mut self, rourl: S) -> &mut Self {
+    self.url = Some(rourl.as_ref().to_rourl());
+    self
+  }
+  pub(crate) fn method_set<S: AsRef<str>>(&mut self, method: S) -> &mut Self {
+    self.method = method.as_ref().into();
+    self
+  }
+  pub(crate) fn paths_set(&mut self, paths: Vec<String>) -> &mut Self {
+    self.paths = paths;
+    self
+  }
+  pub(crate) fn paras_set(&mut self, paras: Vec<Para>) -> &mut Self {
+    self.paras = paras;
+    self
+  }
+  pub(crate) fn formdatas_set(&mut self, formdatas: Vec<FormData>) -> &mut Self {
+    self.formdatas = formdatas;
+    self
+  }
+  pub(crate) fn headers_set(&mut self, headers: Vec<Header>) -> &mut Self {
+    self.headers = headers;
+    self
+  }
+  pub(crate) fn traditional_set(&mut self, traditional: bool) -> &mut Self {
+    self.traditional = traditional;
+    self
+  }
+  pub(crate) fn encode_set(&mut self, encode: bool) -> &mut Self {
+    self.encode = encode;
+    self
+  }
+  pub(crate) fn raw_set<S: AsRef<str>>(&mut self, raw: S) -> &mut Self {
+    self.raw = Some(raw.as_ref().into());
+    self
+  }
+  pub(crate) fn binary_set(&mut self, binary: Vec<u8>) -> &mut Self {
+    self.binary = binary;
+    self
+  }
+
+  pub fn header<S: AsRef<str>>(&self, name: S) -> Option<String> {
+    self.headers.iter()
+      .find(|h| h.name().eq_ignore_ascii_case(name.as_ref()))
+      .map(|h| h.value().clone())
+  }
 }
 
 #[derive(Clone)]
@@ -62,7 +111,6 @@ pub struct RequestBody {
 }
 
 impl RequestBody {
-
   pub fn with_vec(vec: Vec<u8>) -> Self {
     Self { binary: vec }
   }

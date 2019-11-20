@@ -98,8 +98,37 @@ impl ToFormData for FormData {
 }
 
 impl<'a> ToFormData for &'a str {
+  /// Support format text
+  /// ## sample
+  /// ```text
+  /// name=Nick&file=@/path/to/file&file_and_filename=@filename#/path/to/file
+  /// ```
   fn to_formdatas(&self) -> Vec<FormData> {
-    unimplemented!()
+    self.split("&").collect::<Vec<&str>>()
+      .iter()
+      .map(|part: &&str| {
+        let pvs: Vec<&str> = part.split("=").collect::<Vec<&str>>();
+        let name = pvs.get(0).map_or("".to_string(), |v| v.trim().to_string());
+        let value = pvs.get(1).map_or("".to_string(), |v| v.trim().to_string());
+        if !value.starts_with("@") {
+          return FormData::with_text(name, value);
+        }
+        if !value.contains("#") {
+          let path = Path::new(&value[1..]);
+          return FormData::with_file(name, path);
+        }
+        let hasps: Vec<&str> = (&value[1..]).split("#").collect::<Vec<&str>>();
+        let len = hasps.len();
+        let filename = hasps.iter().enumerate().filter(|(ix, _)| ix + 1 < len)
+          .map(|(_, &v)| v)
+          .collect::<Vec<&str>>()
+          .join("#");
+        let path = hasps.get(len - 1).map_or("".to_string(), |v| v.trim().to_string());
+        let path = Path::new(&path);
+        FormData::with_file_and_name(name, path, filename)
+      })
+      .filter(|para: &FormData| !para.name.is_empty())
+      .collect::<Vec<FormData>>()
   }
 }
 
