@@ -81,3 +81,13 @@ fn test_with_proxy_http() {
     .expect("REQUEST FAIL");
 }
 
+#[test]
+fn test_with_proxy_socks5() {
+  Http::client()
+    .get()
+    .url("http://google.com")
+    .proxy(Proxy::socks5("127.0.0.1", 1080))
+    .emit()
+    .expect("REQUEST FAIL");
+}
+

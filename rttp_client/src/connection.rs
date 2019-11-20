@@ -1,6 +1,6 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::time;
+use std::{time, io};
 
 use native_tls::TlsConnector;
 use url::Url;
@@ -8,6 +8,7 @@ use url::Url;
 use crate::error;
 use crate::request::RawRequest;
 use crate::types::{Proxy, ProxyType, ToUrl};
+use socks::{Socks4Stream, Socks5Stream};
 
 pub struct Connection {
   request: RawRequest
@@ -72,7 +73,10 @@ impl Connection {
 
 
 impl Connection {
-  fn call_tcp_stream_http(&self, mut stream: TcpStream) -> error::Result<Vec<u8>> {
+  fn call_tcp_stream_http<S>(&self, mut stream: S) -> error::Result<Vec<u8>>
+    where
+      S: io::Read + io::Write,
+  {
     let header = self.request.header();
     let body = self.request.body();
     stream.write(header.as_bytes()).map_err(error::request)?;
@@ -85,7 +89,10 @@ impl Connection {
     Ok(binary)
   }
 
-  fn call_tcp_stream_https(&self, url: &Url, stream: TcpStream) -> error::Result<Vec<u8>> {
+  fn call_tcp_stream_https<S>(&self, url: &Url, stream: S) -> error::Result<Vec<u8>>
+    where
+      S: 'static + io::Read + io::Write + std::marker::Sync + std::marker::Send + std::fmt::Debug,
+  {
     let header = self.request.header();
     let body = self.request.body();
 
@@ -135,8 +142,8 @@ impl Connection {
     match proxy.type_() {
       ProxyType::HTTP => self.call_with_proxy_https(url, proxy),
       ProxyType::HTTPS => self.call_with_proxy_https(url, proxy),
-      ProxyType::SOCKS4 => Ok(vec![]), // todo: socks proxy support
-      ProxyType::SOCKS5 => Ok(vec![]),
+      ProxyType::SOCKS4 => self.call_with_proxy_socks4(url, proxy),
+      ProxyType::SOCKS5 => self.call_with_proxy_socks5(url, proxy),
     }
   }
 
@@ -152,7 +159,6 @@ impl Connection {
   fn call_with_proxy_https(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
     let header = self.request.header();
     let body = self.request.body();
-
 
     let host = self.host(url)?;
     let port = self.port(url)?;
@@ -201,6 +207,37 @@ impl Connection {
     }
   }
 
+  fn call_with_proxy_socks4(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
+    let addr_proxy = format!("{}:{}", proxy.host(), proxy.port());
+    let addr_target = self.addr(url)?;
+    let user = if let Some(u) = proxy.username() { u.to_string() } else { "".to_string() };
+    let mut stream = Socks4Stream::connect(&addr_proxy[..], &addr_target[..], &user[..])
+      .map_err(error::request)?;
+    match url.scheme() {
+      "http" => self.call_tcp_stream_http(stream),
+      "https" => self.call_tcp_stream_https(url, stream),
+      _ => Err(error::url_bad_scheme(url.clone()))
+    }
+  }
+
+  fn call_with_proxy_socks5(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
+    let addr_proxy = format!("{}:{}", proxy.host(), proxy.port());
+    let addr_target = self.addr(url)?;
+    let mut stream = if let Some(u) = proxy.username() {
+      if let Some(p) = proxy.password() {
+        Socks5Stream::connect_with_password(&addr_proxy[..], &addr_target[..], &u[..], &p[..])
+      } else {
+        Socks5Stream::connect_with_password(&addr_proxy[..], &addr_target[..], &u[..], "")
+      }
+    } else {
+      Socks5Stream::connect(&addr_proxy[..], &addr_target[..])
+    }.map_err(error::request)?;
+    match url.scheme() {
+      "http" => self.call_tcp_stream_http(stream),
+      "https" => self.call_tcp_stream_https(url, stream),
+      _ => Err(error::url_bad_scheme(url.clone()))
+    }
+  }
 }
 
 
