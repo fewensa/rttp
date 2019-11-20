@@ -1,6 +1,6 @@
 use crate::connection::Connection;
 use crate::error;
-use crate::request::Request;
+use crate::request::{RawRequest, Request};
 use crate::types::{Header, IntoHeader, IntoPara, Para, RoUrl, ToFormData, ToRoUrl, ToUrl};
 
 #[derive(Debug)]
@@ -17,7 +17,6 @@ impl Default for HttpClient {
 }
 
 impl HttpClient {
-
   pub fn get(&mut self) -> &mut Self {
     self.method("GET")
   }
@@ -131,7 +130,10 @@ impl HttpClient {
   }
 
   pub fn emit(&self) -> error::Result<()> {
-    Connection::new(self.request.clone()).call()
+//    Standardization::new(self.request.clone()).standard()
+    let request = RawRequest::new(self.request.clone())?;
+    let connection = Connection::new(request);
+    connection.call()
   }
 
   pub fn enqueue(&self) {}

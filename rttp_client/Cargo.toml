@@ -26,6 +26,7 @@ mime = "0.3"
 mime_guess = "2"
 
 rand = "0.7"
+socks = "0.3"
 
 [dependencies.rustls]
 version = "0.16"
