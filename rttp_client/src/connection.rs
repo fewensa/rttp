@@ -48,15 +48,16 @@ impl Connection {
       println!("{}", b.string()?);
     }
 
+    let host = url.host_str().ok_or(error::url_bad_host(url.clone()))?;
+    let port = url.port_or_known_default().ok_or(error::url_bad_host(url.clone()))?;
+    let addr = format!("{}:{}", host, port);
+
+    let mut stream = TcpStream::connect(addr).map_err(error::request)?;
+    stream.set_read_timeout(Some(time::Duration::from_secs(5000))).map_err(error::request)?;
+    stream.set_write_timeout(Some(time::Duration::from_secs(5000))).map_err(error::request)?;
+
     match url.scheme() {
       "http" => {
-        let host = url.host_str().ok_or(error::url_bad_host(url.clone()))?;
-        let port = url.port_or_known_default().ok_or(error::url_bad_host(url.clone()))?;
-        let addr = format!("{}:{}", host, port);
-
-        let mut stream = TcpStream::connect(addr).map_err(error::request)?;
-        stream.set_read_timeout(Some(time::Duration::from_secs(5000))).map_err(error::request)?;
-        stream.set_write_timeout(Some(time::Duration::from_secs(5000))).map_err(error::request)?;
         stream.write(header.as_bytes()).map_err(error::request)?;
 
         if let Some(body) = body {
@@ -70,14 +71,6 @@ impl Connection {
         println!("{}", st);
       },
       "https" => {
-        let host = url.host_str().ok_or(error::url_bad_host(url.clone()))?;
-        let port = url.port_or_known_default().ok_or(error::url_bad_host(url.clone()))?;
-        let addr = format!("{}:{}", host, port);
-
-        let mut stream = TcpStream::connect(addr).map_err(error::request)?;
-        stream.set_read_timeout(Some(time::Duration::from_secs(5000))).map_err(error::request)?;
-        stream.set_write_timeout(Some(time::Duration::from_secs(5000))).map_err(error::request)?;
-
         let connector = TlsConnector::builder().build().map_err(error::request)?;
 
         let mut ssl_stream;

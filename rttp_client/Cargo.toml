@@ -33,7 +33,7 @@ features = ["dangerous_configuration"]
 optional = true
 
 [dev-dependencies]
-reqwest = "0.9.22"
+#reqwest = "0.9.22"
 
 
 [features]

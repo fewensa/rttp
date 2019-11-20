@@ -106,7 +106,7 @@ impl StatusCode {
   /// # Example
   ///
   /// ```
-  /// let status = http_client::types::StatusCode::OK;
+  /// let status = rttp_client::types::StatusCode::OK;
   /// assert_eq!(status.as_u16(), 200);
   /// ```
   #[inline]
@@ -122,7 +122,7 @@ impl StatusCode {
   /// # Example
   ///
   /// ```
-  /// let status = http_client::types::StatusCode::OK;
+  /// let status = rttp_client::types::StatusCode::OK;
   /// assert_eq!(status.as_str(), "200");
   /// ```
   #[inline]
@@ -144,7 +144,7 @@ impl StatusCode {
   /// # Example
   ///
   /// ```
-  /// let status = http_client::types::StatusCode::OK;
+  /// let status = rttp_client::types::StatusCode::OK;
   /// assert_eq!(status.canonical_reason(), Some("OK"));
   /// ```
   pub fn canonical_reason(&self) -> Option<&'static str> {
@@ -194,7 +194,7 @@ impl fmt::Debug for StatusCode {
 /// # Example
 ///
 /// ```
-/// # use http_client::types::StatusCode;
+/// # use rttp_client::types::StatusCode;
 /// assert_eq!(format!("{}", StatusCode::OK), "200 OK");
 /// ```
 impl fmt::Display for StatusCode {
