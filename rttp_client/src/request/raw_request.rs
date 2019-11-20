@@ -1,11 +1,7 @@
 use std::collections::HashMap;
-use std::io::{Read, Write};
-use std::net::TcpStream;
 use std::str::FromStr;
-use std::time;
 
 use mime::Mime;
-use native_tls::TlsConnector;
 use rand::Rng;
 use url::Url;
 
@@ -29,9 +25,15 @@ pub struct RawRequest {
 
 impl RawRequest {
   pub fn new(request: Request) -> error::Result<Self> {
-    crate::request::raw_request::Standardization::new(request).standard()
+    Standardization::new(request).standard()
   }
+
+  pub fn origin(&self) -> &Request { &self.origin }
+  pub fn url(&self) -> &RoUrl { &self.url }
+  pub fn header(&self) -> &String { &self.header }
+  pub fn body(&self) -> &Option<RequestBody> { &self.body }
 }
+
 
 #[derive(Clone, Debug)]
 pub struct Standardization {
@@ -39,6 +41,7 @@ pub struct Standardization {
   request: Request,
 }
 
+// create
 impl Standardization {
   pub fn new(request: Request) -> Self {
     Self {
@@ -62,65 +65,10 @@ impl Standardization {
       header,
       body,
     })
-
-//    let url = rourl.to_url().map_err(error::builder)?;
-//
-//    println!("{}", header);
-//    if let Some(b) = &body {
-//      println!("{}", b.string()?);
-//    }
-//
-//    let host = url.host_str().ok_or(error::url_bad_host(url.clone()))?;
-//    let port = url.port_or_known_default().ok_or(error::url_bad_host(url.clone()))?;
-//    let addr = format!("{}:{}", host, port);
-//
-//    let mut stream = TcpStream::connect(addr).map_err(error::request)?;
-//    stream.set_read_timeout(Some(time::Duration::from_secs(5000))).map_err(error::request)?;
-//    stream.set_write_timeout(Some(time::Duration::from_secs(5000))).map_err(error::request)?;
-//
-//    match url.scheme() {
-//      "http" => {
-//        stream.write(header.as_bytes()).map_err(error::request)?;
-//
-//        if let Some(body) = body {
-//          stream.write(body.bytes()).map_err(error::request)?;
-//        }
-//        stream.flush().map_err(error::request)?;
-//
-//        let mut res :Vec<u8>= Vec::new();
-//        stream.read_to_end(&mut res).map_err(error::request)?;
-//        let st = String::from_utf8_lossy(res.as_slice());
-//        println!("{}", st);
-//      },
-//      "https" => {
-//        let connector = TlsConnector::builder().build().map_err(error::request)?;
-//
-//        let mut ssl_stream;
-////        if self.verify {
-//          ssl_stream = connector.connect(host, stream).map_err(error::request)?;
-////        } else {
-////          ssl_stream = connector.danger_connect_without_providing_domain_for_certificate_verification_and_server_name_indication(stream).map_err(error::request)?;
-////        }
-//
-//        ssl_stream.write(header.as_bytes()).map_err(error::request)?;
-//        if let Some(body) = body {
-//          ssl_stream.write(body.bytes()).map_err(error::request)?;
-//        }
-//        ssl_stream.flush().map_err(error::request)?;
-//
-//        let mut res :Vec<u8>= Vec::new();
-//        ssl_stream.read_to_end(&mut res).map_err(error::request)?;
-//        let st = String::from_utf8_lossy(res.as_slice());
-//        println!("{}", st);
-//      },
-//      _ => return Err(error::url_bad_scheme(url.clone()))
-//    }
-//
-//    Ok(())
   }
 }
 
-
+// build body && rebuild para/url
 impl Standardization {
   fn build_body(&mut self, rourl: &mut RoUrl) -> error::Result<Option<RequestBody>> {
     let method = self.request.method();
@@ -335,6 +283,7 @@ impl Standardization {
   }
 }
 
+// build header
 impl Standardization {
   fn request_url(&self, url: &Url, full: bool) -> String {
     if full {
