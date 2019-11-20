@@ -61,5 +61,6 @@ fn test_http_with_url() {
   Http::client()
     .method("get")
     .url(RoUrl::with("https://httpbin.org").path("/get").para(("name", "Chico")))
-    .emit();
+    .emit()
+    .expect("REQUEST FAIL");
 }
