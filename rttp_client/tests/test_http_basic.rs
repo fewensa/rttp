@@ -1,8 +1,12 @@
 use rttp_client::Http;
 use rttp_client::types::{RoUrl, Para};
+use std::collections::HashMap;
 
 #[test]
 fn test_http() {
+  let mut para_map = HashMap::new();
+  para_map.insert("id", "1");
+  para_map.insert("relation", "eq");
   Http::client()
     .method("post")
     .url(RoUrl::with("http://httpbin.org?id=1&name=jack#none").para("name=Julia"))
@@ -10,8 +14,9 @@ fn test_http() {
     .header("User-Agent: Mozilla/5.0")
     .header(&format!("Host:{}", "httpbin.org"))
     .para("name=Chico")
-    .para("name=文")
-    .form("name=Form&file=@cargo#/opt/data/dev/rfen/rttp/Cargo.toml")
+    .para(&"name=文".to_string())
+    .para(para_map)
+    .form(("debug", "true", "name=Form&file=@cargo#../Cargo.toml"))
     .cookie("token=123234")
     .cookie("uid=abcdef")
     .content_type("application/x-www-form-urlencoded")
@@ -64,3 +69,14 @@ fn test_http_with_url() {
     .emit()
     .expect("REQUEST FAIL");
 }
+
+#[test]
+fn test_with_proxy_http() {
+  Http::client()
+    .get()
+    .url("https://httpbin.org/get")
+    .proxy()
+    .emit()
+    .expect("REQUEST FAIL");
+}
+

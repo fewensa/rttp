@@ -1,9 +1,10 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::error;
 use crate::error::Error;
-use crate::types::ParaType::FORM;
 use crate::types::FormData;
+use crate::types::ParaType::FORM;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum ParaType {
@@ -90,11 +91,25 @@ impl<'a> IntoPara for &'a str {
   }
 }
 
-impl<'a> IntoPara for &'a String {
+impl IntoPara for String {
   fn into_paras(&self) -> Vec<Para> {
     (&self[..]).into_paras()
   }
 }
+
+impl<K: AsRef<str> + Eq + std::hash::Hash, V: AsRef<str>> IntoPara for HashMap<K, V> {
+  fn into_paras(&self) -> Vec<Para> {
+    let mut rets = Vec::with_capacity(self.len());
+    for key in self.keys() {
+      if let Some(value) = self.get(key) {
+        rets.push(Para::new(key, value))
+      }
+    }
+    rets
+  }
+}
+
+
 
 impl<'a, IU: IntoPara> IntoPara for &'a IU {
   fn into_paras(&self) -> Vec<Para> {

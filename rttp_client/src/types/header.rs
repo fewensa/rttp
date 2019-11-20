@@ -57,7 +57,7 @@ impl<'a> IntoHeader for &'a str {
 }
 
 
-impl<'a> IntoHeader for &'a String {
+impl IntoHeader for String {
   fn into_headers(&self) -> Vec<Header> {
     (&self[..]).into_headers()
   }

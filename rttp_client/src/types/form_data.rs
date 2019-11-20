@@ -1,6 +1,5 @@
 use std::path::{Path, PathBuf};
-
-use crate::types::Para;
+use std::collections::HashMap;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum FormDataType {
@@ -132,9 +131,39 @@ impl<'a> ToFormData for &'a str {
   }
 }
 
-impl<'a> ToFormData for &'a String {
+impl ToFormData for String {
   fn to_formdatas(&self) -> Vec<FormData> {
     (&self[..]).to_formdatas()
+  }
+}
+
+
+impl<K: AsRef<str> + Eq + std::hash::Hash, V: AsRef<str>> ToFormData for HashMap<K, V> {
+  fn to_formdatas(&self) -> Vec<FormData> {
+    let mut rets = Vec::with_capacity(self.len());
+    for name in self.keys() {
+      if let Some(value) = self.get(name) {
+        let value = value.as_ref();
+        if !value.starts_with("@") {
+          rets.push(FormData::with_text(&name, value));
+          continue;
+        }
+        if !value.contains("#") {
+          let path = Path::new(&value[1..]);
+          rets.push(FormData::with_file(&name, path));
+        }
+        let hasps: Vec<&str> = (&value[1..]).split("#").collect::<Vec<&str>>();
+        let len = hasps.len();
+        let filename = hasps.iter().enumerate().filter(|(ix, _)| ix + 1 < len)
+          .map(|(_, &v)| v)
+          .collect::<Vec<&str>>()
+          .join("#");
+        let path = hasps.get(len - 1).map_or("".to_string(), |v| v.trim().to_string());
+        let path = Path::new(&path);
+        rets.push(FormData::with_file_and_name(&name, path, filename));
+      }
+    }
+    rets
   }
 }
 
@@ -150,4 +179,111 @@ impl<'a, IU: ToFormData> ToFormData for &'a mut IU {
     (**self).to_formdatas()
   }
 }
+
+
+
+
+macro_rules! replace_expr {
+  ($_t:tt $sub:ty) => {$sub};
+}
+
+macro_rules! tuple_to_formdata {
+  ( $( $item:ident )+ ) => {
+    impl<T: ToFormData> ToFormData for (
+      $(replace_expr!(
+        ($item)
+        T
+      ),)+
+    )
+    {
+      fn to_formdatas(&self) -> Vec<FormData> {
+        let mut rets = vec![];
+        let ($($item,)+) = self;
+        let mut name = "".to_string();
+        let mut position = 0;
+        $(
+          let paras = $item.to_formdatas();
+          if !paras.is_empty() {
+
+            let first = paras.get(0);
+            let mut first_value_not_empty = false;
+            if let Some(v) = first {
+              let first_text = v.text();
+              if let Some(t) = first_text {
+                if !t.is_empty() {
+                  first_value_not_empty = true;
+                }
+              }
+            }
+
+            if paras.len() > 1 ||
+              paras.get(0).filter(|&v| v.text().is_some() && first_value_not_empty).is_some()
+            {
+              rets.extend(paras);
+              position = 0;
+            } else {
+              if let Some(para_first) = paras.get(0) {
+                if position == 0 {
+                  name = para_first.name().clone();
+                  position = 1;
+                } else {
+                  let value = para_first.name();
+                  if !value.starts_with("@") {
+                    rets.push(FormData::with_text(&name, value));
+                  } else {
+                    if !value.contains("#") {
+                      let path = Path::new(&value[1..]);
+                      rets.push(FormData::with_file(&name, path));
+                    } else {
+                      let hasps: Vec<&str> = (&value[1..]).split("#").collect::<Vec<&str>>();
+                      let len = hasps.len();
+                      let filename = hasps.iter().enumerate().filter(|(ix, _)| ix + 1 < len)
+                        .map(|(_, &v)| v)
+                        .collect::<Vec<&str>>()
+                        .join("#");
+                      let path = hasps.get(len - 1).map_or("".to_string(), |v| v.trim().to_string());
+                      let path = Path::new(&path);
+                      rets.push(FormData::with_file_and_name(&name, path, filename));
+                    }
+                  }
+                  position = 0;
+                }
+              }
+            }
+
+          }
+        )+
+        rets
+      }
+    }
+  };
+}
+
+
+tuple_to_formdata! { A }
+tuple_to_formdata! { A B }
+tuple_to_formdata! { A B C }
+tuple_to_formdata! { A B C D }
+tuple_to_formdata! { A B C D E }
+tuple_to_formdata! { A B C D E F }
+tuple_to_formdata! { A B C D E F G }
+tuple_to_formdata! { A B C D E F G H }
+tuple_to_formdata! { A B C D E F G H I }
+tuple_to_formdata! { A B C D E F G H I J }
+tuple_to_formdata! { A B C D E F G H I J K }
+tuple_to_formdata! { A B C D E F G H I J K L }
+tuple_to_formdata! { A B C D E F G H I J K L M }
+tuple_to_formdata! { A B C D E F G H I J K L M N }
+tuple_to_formdata! { A B C D E F G H I J K L M N O }
+tuple_to_formdata! { A B C D E F G H I J K L M N O P }
+tuple_to_formdata! { A B C D E F G H I J K L M N O P Q }
+tuple_to_formdata! { A B C D E F G H I J K L M N O P Q R }
+tuple_to_formdata! { A B C D E F G H I J K L M N O P Q R S }
+tuple_to_formdata! { A B C D E F G H I J K L M N O P Q R S T }
+tuple_to_formdata! { A B C D E F G H I J K L M N O P Q R S T U }
+tuple_to_formdata! { A B C D E F G H I J K L M N O P Q R S T U V }
+tuple_to_formdata! { A B C D E F G H I J K L M N O P Q R S T U V W }
+tuple_to_formdata! { A B C D E F G H I J K L M N O P Q R S T U V W X }
+tuple_to_formdata! { A B C D E F G H I J K L M N O P Q R S T U V W X Y }
+tuple_to_formdata! { A B C D E F G H I J K L M N O P Q R S T U V W X Y Z }
 

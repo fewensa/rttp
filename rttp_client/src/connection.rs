@@ -83,7 +83,7 @@ impl Connection {
 
     let addr= self.addr(url)?;
 
-    let mut stream = TcpStream::connect(addr).map_err(error::request)?;
+    let stream = TcpStream::connect(addr).map_err(error::request)?;
     stream.set_read_timeout(Some(time::Duration::from_secs(5000))).map_err(error::request)?;
     stream.set_write_timeout(Some(time::Duration::from_secs(5000))).map_err(error::request)?;
 
