@@ -195,12 +195,8 @@ impl Connection {
     }
 
     match url.scheme() {
-      "http" => {
-        self.call_tcp_stream_http(stream)
-      }
-      "https" => {
-        self.call_tcp_stream_https(url, stream)
-      }
+      "http" => self.call_tcp_stream_http(stream),
+      "https" => self.call_tcp_stream_https(url, stream),
       _ => Err(error::url_bad_scheme(url.clone()))
     }
   }
