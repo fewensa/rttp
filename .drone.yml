@@ -19,6 +19,7 @@ steps:
       - apt update -y
       - apt install -y libssl-dev pkg-config
       - cargo test
+      - cd rttp_client
       - cargo package
 
 volumes:
