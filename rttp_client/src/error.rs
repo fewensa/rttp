@@ -230,6 +230,10 @@ pub(crate) fn builder_with_message<S: AsRef<str>>(message: S) -> Error {
   Error::new(Kind::Builder, Some(message.as_ref()))
 }
 
+pub(crate) fn bad_proxy<S: AsRef<str>>(message: S) -> Error {
+  Error::new(Kind::Request, Some(message.as_ref()))
+}
+
 //if_wasm! {
 //    pub(crate) fn wasm(js_val: wasm_bindgen::JsValue) -> BoxError {
 //        format!("{:?}", js_val).into()

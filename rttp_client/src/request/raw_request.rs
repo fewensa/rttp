@@ -304,7 +304,8 @@ impl Standardization {
     let url = rourl.to_url()?;
 
     let mut builder = String::new();
-    let request_url = self.request_url(&url, true);
+    let is_http = url.scheme() == "http";
+    let request_url = self.request_url(&url, is_http);
 
     builder.push_str(&format!("{} {} HTTP/1.1{}", self.request.method().to_uppercase(), request_url, DISPOSITION_END));
 

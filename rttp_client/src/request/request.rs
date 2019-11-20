@@ -1,8 +1,7 @@
 use std::fmt;
 
 use crate::error;
-use crate::types::{FormData, Header, Para, RoUrl, ToRoUrl};
-
+use crate::types::{FormData, Header, Para, Proxy, RoUrl, ToRoUrl};
 
 #[derive(Clone, Debug)]
 pub struct Request {
@@ -16,6 +15,7 @@ pub struct Request {
   encode: bool,
   raw: Option<String>,
   binary: Vec<u8>,
+  proxy: Option<Proxy>,
 }
 
 impl Request {
@@ -31,6 +31,7 @@ impl Request {
       encode: true,
       raw: None,
       binary: vec![],
+      proxy: None,
     }
   }
 
@@ -44,6 +45,7 @@ impl Request {
   pub fn encode(&self) -> bool { self.encode }
   pub fn raw(&self) -> &Option<String> { &self.raw }
   pub fn binary(&self) -> &Vec<u8> { &self.binary }
+  pub fn proxy(&self) -> &Option<Proxy> { &self.proxy }
 
   pub(crate) fn url_mut(&mut self) -> &mut Option<RoUrl> { &mut self.url }
   pub(crate) fn method_mut(&mut self) -> &mut String { &mut self.method }
@@ -55,6 +57,7 @@ impl Request {
   pub(crate) fn encode_mut(&mut self) -> &mut bool { &mut self.encode }
   pub(crate) fn raw_mut(&mut self) -> &mut Option<String> { &mut self.raw }
   pub(crate) fn binary_mut(&mut self) -> &mut Vec<u8> { &mut self.binary }
+  pub(crate) fn proxy_mut(&mut self) -> &mut Option<Proxy> { &mut self.proxy }
 
 
   pub(crate) fn url_set<S: AsRef<RoUrl>>(&mut self, rourl: S) -> &mut Self {
@@ -97,6 +100,10 @@ impl Request {
     self.binary = binary;
     self
   }
+  pub(crate) fn proxy_set(&mut self, proxy: Proxy) -> &mut Self {
+    self.proxy = Some(proxy);
+    self
+  }
 
   pub fn header<S: AsRef<str>>(&self, name: S) -> Option<String> {
     self.headers.iter()
@@ -104,7 +111,6 @@ impl Request {
       .map(|h| h.value().clone())
   }
 }
-
 
 
 #[derive(Clone)]

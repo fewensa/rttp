@@ -1,7 +1,7 @@
 use crate::connection::Connection;
 use crate::error;
 use crate::request::{RawRequest, Request};
-use crate::types::{Header, IntoHeader, IntoPara, Para, RoUrl, ToFormData, ToRoUrl, ToUrl};
+use crate::types::{Header, IntoHeader, IntoPara, Para, Proxy, RoUrl, ToFormData, ToRoUrl, ToUrl};
 
 #[derive(Debug)]
 pub struct HttpClient {
@@ -63,11 +63,12 @@ impl HttpClient {
   }
 
   pub fn encode(&mut self, encode: bool) -> &mut Self {
-    *self.request.encode_mut() = encode;
+    self.request.encode_set(encode);
     self
   }
 
-  pub fn proxy(&mut self) -> &mut Self {
+  pub fn proxy<P: AsRef<Proxy>>(&mut self, proxy: P) -> &mut Self {
+    self.request.proxy_set(proxy.as_ref().clone());
     self
   }
 

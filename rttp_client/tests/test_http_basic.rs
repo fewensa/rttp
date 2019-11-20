@@ -1,5 +1,5 @@
 use rttp_client::Http;
-use rttp_client::types::{RoUrl, Para};
+use rttp_client::types::{RoUrl, Para, Proxy};
 use std::collections::HashMap;
 
 #[test]
@@ -71,11 +71,12 @@ fn test_http_with_url() {
 }
 
 #[test]
+#[ignore]
 fn test_with_proxy_http() {
   Http::client()
     .get()
-    .url("https://httpbin.org/get")
-    .proxy()
+    .url("https://google.com")
+    .proxy(Proxy::http("127.0.0.1", 1081))
     .emit()
     .expect("REQUEST FAIL");
 }
