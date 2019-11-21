@@ -19,7 +19,7 @@ impl Header {
     }
   }
 
-  pub fn replace(&mut self, header: Header) -> &mut Self {
+  pub(crate) fn replace(&mut self, header: Header) -> &mut Self {
     self.name = header.name().clone();
     self.value = header.value().clone();
     self
@@ -31,6 +31,14 @@ impl Header {
 
   pub fn value(&self) -> &String {
     &self.value
+  }
+
+  pub fn value_as_isize(&self) -> Result<isize, std::num::ParseIntError> {
+    self.value.parse()
+  }
+
+  pub fn value_as_usize(&self) -> Result<usize, std::num::ParseIntError> {
+    self.value.parse()
   }
 }
 
@@ -45,7 +53,7 @@ impl<'a> IntoHeader for &'a str {
           .filter(|(ix, _)| *ix > 0)
           .map(|(_, v)| v.to_string())
           .collect::<Vec<String>>()
-          .join("");
+          .join(":");
         Header::new(
           name.map_or("".to_string(), |v| v.to_string()).trim(),
           value.trim(),

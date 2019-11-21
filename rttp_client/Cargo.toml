@@ -28,6 +28,9 @@ mime_guess = "2"
 rand = "0.7"
 socks = "0.3"
 base64 = "0.11"
+flate2 = "1.0"
+httpdate = "0.3"
+#once_cell = "1.2"
 
 [dependencies.rustls]
 version = "0.16"

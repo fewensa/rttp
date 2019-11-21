@@ -1,6 +1,7 @@
+use crate::{Config, error};
 use crate::connection::Connection;
-use crate::error;
 use crate::request::{RawRequest, Request};
+use crate::response::Response;
 use crate::types::{Header, IntoHeader, IntoPara, Para, Proxy, RoUrl, ToFormData, ToRoUrl, ToUrl};
 
 #[derive(Debug)]
@@ -17,6 +18,20 @@ impl Default for HttpClient {
 }
 
 impl HttpClient {
+  pub(crate) fn with_request(request: Request) -> Self {
+    Self {
+      request
+    }
+  }
+}
+
+impl HttpClient {
+
+  pub(crate) fn count(&mut self, count: u32) -> &mut Self {
+    self.request.count_set(count);
+    self
+  }
+
   pub fn get(&mut self) -> &mut Self {
     self.method("GET")
   }
@@ -48,6 +63,11 @@ impl HttpClient {
 
   pub fn url<U: ToRoUrl>(&mut self, url: U) -> &mut Self {
     self.request.url_set(url.to_rourl());
+    self
+  }
+
+  pub fn config<C: AsRef<Config>>(&mut self, config: C) -> &mut Self {
+    self.request.config_set(config);
     self
   }
 
@@ -130,7 +150,7 @@ impl HttpClient {
     self
   }
 
-  pub fn emit(&self) -> error::Result<()> {
+  pub fn emit(&self) -> error::Result<Response> {
 //    Standardization::new(self.request.clone()).standard()
     let request = RawRequest::new(self.request.clone())?;
     let connection = Connection::new(request);

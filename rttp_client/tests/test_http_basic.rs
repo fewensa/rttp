@@ -1,13 +1,25 @@
-use rttp_client::Http;
-use rttp_client::types::{RoUrl, Para, Proxy};
 use std::collections::HashMap;
+
+use rttp_client::{Http, Config};
+use rttp_client::types::{Para, Proxy, RoUrl};
 
 #[test]
 fn test_http() {
+  let response = Http::client()
+    .url("https://httpbin.org/get")
+    .emit();
+  assert!(response.is_ok());
+  let response = response.unwrap();
+  assert_eq!("httpbin.org", response.host());
+  println!("{}", response);
+}
+
+#[test]
+fn test_multi() {
   let mut para_map = HashMap::new();
   para_map.insert("id", "1");
   para_map.insert("relation", "eq");
-  Http::client()
+  let response = Http::client()
     .method("post")
     .url(RoUrl::with("http://httpbin.org?id=1&name=jack#none").para("name=Julia"))
     .path("post")
@@ -22,8 +34,35 @@ fn test_http() {
     .content_type("application/x-www-form-urlencoded")
     .encode(true)
     .traditional(true)
-    .emit()
-    .expect("REQUEST FAIL");
+    .emit();
+  assert!(response.is_ok());
+  let response = response.unwrap();
+  println!("{}", response);
+}
+
+#[test]
+fn test_gzip() {
+  let response = Http::client()
+    .get()
+    .url("https://httpbin.org/get")
+    .header(("Accept-Encoding", "gzip, deflate"))
+    .emit();
+  assert!(response.is_ok());
+  let response = response.unwrap();
+  println!("{}", response);
+}
+
+#[test]
+fn test_upload() {
+  let response = Http::client()
+    .method("post")
+    .url("http://httpbin.org")
+    .path("post")
+    .form(("debug", "true", "name=Form&file=@cargo#../Cargo.toml"))
+    .emit();
+  assert!(response.is_ok());
+  let response = response.unwrap();
+  println!("{}", response);
 }
 
 
@@ -82,6 +121,7 @@ fn test_with_proxy_http() {
 }
 
 #[test]
+#[ignore]
 fn test_with_proxy_socks5() {
   Http::client()
     .get()
@@ -91,3 +131,14 @@ fn test_with_proxy_socks5() {
     .expect("REQUEST FAIL");
 }
 
+#[test]
+fn test_auto_redirect() {
+  let response = Http::client()
+    .config(Config::builder().auto_redirect(true))
+    .get()
+    .url("http://bing.com")
+    .emit();
+  assert!(response.is_ok());
+  let response = response.unwrap();
+  assert_ne!("bing.com", response.host());
+}

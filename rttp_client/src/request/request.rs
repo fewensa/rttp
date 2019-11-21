@@ -1,10 +1,12 @@
 use std::fmt;
 
-use crate::error;
+use crate::{error, Config};
 use crate::types::{FormData, Header, Para, Proxy, RoUrl, ToRoUrl};
 
 #[derive(Clone, Debug)]
 pub struct Request {
+  count: u32,
+  config: Config,
   url: Option<RoUrl>,
   method: String,
   paths: Vec<String>,
@@ -21,6 +23,8 @@ pub struct Request {
 impl Request {
   pub fn new() -> Self {
     Self {
+      count: 1,
+      config: Default::default(),
       url: None,
       method: "GET".to_string(),
       paths: vec![],
@@ -35,6 +39,8 @@ impl Request {
     }
   }
 
+  pub fn config(&self) -> &Config { &self.config }
+  pub fn count(&self) -> u32 { self.count }
   pub fn url(&self) -> &Option<RoUrl> { &self.url }
   pub fn method(&self) -> &String { &self.method }
   pub fn paths(&self) -> &Vec<String> { &self.paths }
@@ -47,6 +53,8 @@ impl Request {
   pub fn binary(&self) -> &Vec<u8> { &self.binary }
   pub fn proxy(&self) -> &Option<Proxy> { &self.proxy }
 
+  pub(crate) fn config_mut(&mut self) -> &mut Config { &mut self.config }
+  pub(crate) fn count_mut(&mut self) -> &mut u32 { &mut self.count }
   pub(crate) fn url_mut(&mut self) -> &mut Option<RoUrl> { &mut self.url }
   pub(crate) fn method_mut(&mut self) -> &mut String { &mut self.method }
   pub(crate) fn paths_mut(&mut self) -> &mut Vec<String> { &mut self.paths }
@@ -60,6 +68,14 @@ impl Request {
   pub(crate) fn proxy_mut(&mut self) -> &mut Option<Proxy> { &mut self.proxy }
 
 
+  pub(crate) fn config_set<C: AsRef<Config>>(&mut self, config: C) -> &mut Self {
+    self.config = config.as_ref().clone();
+    self
+  }
+  pub(crate) fn count_set(&mut self, count: u32) -> &mut Self {
+    self.count = count;
+    self
+  }
   pub(crate) fn url_set<S: AsRef<RoUrl>>(&mut self, rourl: S) -> &mut Self {
     self.url = Some(rourl.as_ref().to_rourl());
     self

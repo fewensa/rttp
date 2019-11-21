@@ -1,14 +1,15 @@
+use std::{io, time};
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::{time, io};
 
 use native_tls::TlsConnector;
+use socks::{Socks4Stream, Socks5Stream};
 use url::Url;
 
-use crate::error;
+use crate::{error, HttpClient};
 use crate::request::RawRequest;
+use crate::response::Response;
 use crate::types::{Proxy, ProxyType, ToUrl};
-use socks::{Socks4Stream, Socks5Stream};
 
 pub struct Connection {
   request: RawRequest
@@ -19,15 +20,15 @@ impl Connection {
     Self { request }
   }
 
-  pub fn call(&self) -> error::Result<()> {
+  pub fn call(&self) -> error::Result<Response> {
     let url = self.request.url().to_url().map_err(error::builder)?;
 
     let header = self.request.header();
     let body = self.request.body();
-    println!("{}", header);
-    if let Some(b) = body {
-      println!("{}", b.string()?);
-    }
+//    println!("{}", header);
+//    if let Some(b) = body {
+//      println!("{}", b.string()?);
+//    }
 
     let proxy = self.request.origin().proxy();
 
@@ -42,11 +43,29 @@ impl Connection {
       };
     }
 
+    let config = self.request.origin().config();
+    let response = Response::new(self.request.url().clone(), binary)?;
 
-    let st = String::from_utf8_lossy(binary.as_slice());
-    println!("{}", st);
+    if let Some(location) = response.location() {
+      let req_url = url.as_str();
+      if req_url == location {
+        return Err(error::loop_detected(url));
+      }
+      if !config.auto_redirect() {
+        return Ok(response);
+      }
+      let count = self.request.origin().count();
+      if count > config.max_redirect() {
+        return Err(error::too_many_redirects(url));
+      }
 
-    Ok(())
+      return HttpClient::with_request(self.request.origin().clone())
+        .url(location)
+        .count(count + 1)
+        .emit();
+    }
+
+    Ok(response)
   }
 
   fn addr(&self, url: &Url) -> error::Result<String> {
@@ -64,9 +83,10 @@ impl Connection {
   }
 
   fn tcp_stream(&self, addr: &String) -> error::Result<TcpStream> {
+    let config = self.request.origin().config();
     let stream = TcpStream::connect(addr).map_err(error::request)?;
-    stream.set_read_timeout(Some(time::Duration::from_secs(5000))).map_err(error::request)?;
-    stream.set_write_timeout(Some(time::Duration::from_secs(5000))).map_err(error::request)?;
+    stream.set_read_timeout(Some(time::Duration::from_millis(config.read_timeout()))).map_err(error::request)?;
+    stream.set_write_timeout(Some(time::Duration::from_millis(config.write_timeout()))).map_err(error::request)?;
     Ok(stream)
   }
 }

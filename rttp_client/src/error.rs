@@ -126,6 +126,7 @@ impl fmt::Display for Error {
     match self.inner.kind {
       Kind::Builder => f.write_str("builder error")?,
       Kind::Request => f.write_str("error sending request")?,
+      Kind::Response => f.write_str("error receive response")?,
       Kind::Body => f.write_str("request or response body error")?,
       Kind::Decode => f.write_str("error decoding response body")?,
       Kind::Redirect => f.write_str("error following redirect")?,
@@ -174,6 +175,7 @@ impl From<crate::error::Error> for js_sys::Error {
 pub(crate) enum Kind {
   Builder,
   Request,
+  Response,
   Redirect,
   Status(StatusCode),
   Body,
@@ -196,6 +198,10 @@ pub(crate) fn decode<E: Into<BoxError>>(e: E) -> Error {
 
 pub(crate) fn request<E: Into<BoxError>>(e: E) -> Error {
   Error::new(Kind::Request, Some(e))
+}
+
+pub(crate) fn response<E: Into<BoxError>>(e: E) -> Error{
+  Error::new(Kind::Response, Some(e))
 }
 
 pub(crate) fn loop_detected(url: Url) -> Error {
@@ -232,6 +238,14 @@ pub(crate) fn builder_with_message<S: AsRef<str>>(message: S) -> Error {
 
 pub(crate) fn bad_proxy<S: AsRef<str>>(message: S) -> Error {
   Error::new(Kind::Request, Some(message.as_ref()))
+}
+
+pub(crate) fn bad_response<S: AsRef<str>>(message: S) -> Error {
+  Error::new(Kind::Response, Some(message.as_ref()))
+}
+
+pub(crate) fn bad_cookie<S: AsRef<str>>(message: S) -> Error {
+  Error::new(Kind::Decode, Some(message.as_ref()))
 }
 
 //if_wasm! {
