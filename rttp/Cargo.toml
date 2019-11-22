@@ -1,0 +1,31 @@
+[package]
+name = "rttp"
+version = "0.1.0"
+authors = ["fewensa <fewensa@protonmail.com>"]
+description = "Rust http lib"
+homepage = "https://github.com/fewensa/rttp"
+repository = "https://github.com/fewensa/rttp"
+license = "MIT"
+keywords = ["http"]
+include = [
+  "Cargo.toml",
+  "**/*.rs",
+  "README.md",
+  "LICENSE"
+]
+
+readme = "README.md"
+edition = "2018"
+
+[dependencies]
+
+[dependencies.rttp_client]
+version = "=0.1.0"
+optional = true
+path = "../rttp_client"
+
+
+[features]
+default = []
+
+client = ["rttp_client"]

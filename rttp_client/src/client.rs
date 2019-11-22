@@ -18,6 +18,10 @@ impl Default for HttpClient {
 }
 
 impl HttpClient {
+  pub fn new() -> Self {
+    Default::default()
+  }
+
   pub(crate) fn with_request(request: Request) -> Self {
     Self {
       request
@@ -26,7 +30,6 @@ impl HttpClient {
 }
 
 impl HttpClient {
-
   pub(crate) fn count(&mut self, count: u32) -> &mut Self {
     self.request.count_set(count);
     self
