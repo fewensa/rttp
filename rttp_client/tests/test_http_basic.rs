@@ -1,11 +1,15 @@
 use std::collections::HashMap;
 
-use rttp_client::{Http, Config};
+use rttp_client::{Http, Config, HttpClient};
 use rttp_client::types::{Para, Proxy, RoUrl};
+
+fn client() -> HttpClient {
+  HttpClient::new()
+}
 
 #[test]
 fn test_http() {
-  let response = Http::client()
+  let response = client()
     .url("https://httpbin.org/get")
     .emit();
   assert!(response.is_ok());
@@ -19,7 +23,7 @@ fn test_multi() {
   let mut para_map = HashMap::new();
   para_map.insert("id", "1");
   para_map.insert("relation", "eq");
-  let response = Http::client()
+  let response = client()
     .method("post")
     .url(RoUrl::with("http://httpbin.org?id=1&name=jack#none").para("name=Julia"))
     .path("post")
@@ -42,7 +46,7 @@ fn test_multi() {
 
 #[test]
 fn test_gzip() {
-  let response = Http::client()
+  let response = client()
     .get()
     .url("https://httpbin.org/get")
     .header(("Accept-Encoding", "gzip, deflate"))
@@ -54,7 +58,7 @@ fn test_gzip() {
 
 #[test]
 fn test_upload() {
-  let response = Http::client()
+  let response = client()
     .method("post")
     .url("http://httpbin.org")
     .path("post")
@@ -68,7 +72,7 @@ fn test_upload() {
 
 #[test]
 fn test_raw_json() {
-  Http::client()
+  client()
     .method("post")
     .url("http://httpbin.org/post?raw=json")
     .para("name=Chico")
@@ -80,7 +84,7 @@ fn test_raw_json() {
 
 #[test]
 fn test_raw_form_urlencoded() {
-  Http::client()
+  client()
     .method("post")
     .url("http://httpbin.org/post")
     .para(Para::new("name", "Chico"))
@@ -92,7 +96,7 @@ fn test_raw_form_urlencoded() {
 
 #[test]
 fn test_https() {
-  Http::client()
+  client()
     .get()
     .url("https://httpbin.org/get")
     .para(Para::new("name", "Chico"))
@@ -102,7 +106,7 @@ fn test_https() {
 
 #[test]
 fn test_http_with_url() {
-  Http::client()
+  client()
     .method("get")
     .url(RoUrl::with("https://httpbin.org").path("/get").para(("name", "Chico")))
     .emit()
@@ -112,7 +116,7 @@ fn test_http_with_url() {
 #[test]
 #[ignore]
 fn test_with_proxy_http() {
-  Http::client()
+  client()
     .get()
     .url("https://google.com")
     .proxy(Proxy::http("127.0.0.1", 1081))
@@ -123,7 +127,7 @@ fn test_with_proxy_http() {
 #[test]
 #[ignore]
 fn test_with_proxy_socks5() {
-  Http::client()
+  client()
     .get()
     .url("http://google.com")
     .proxy(Proxy::socks5("127.0.0.1", 1080))
@@ -133,7 +137,7 @@ fn test_with_proxy_socks5() {
 
 #[test]
 fn test_auto_redirect() {
-  let response = Http::client()
+  let response = client()
     .config(Config::builder().auto_redirect(true))
     .get()
     .url("http://bing.com")

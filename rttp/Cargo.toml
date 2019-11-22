@@ -28,4 +28,5 @@ path = "../rttp_client"
 [features]
 default = []
 
+all = ["rttp_client"]
 client = ["rttp_client"]
