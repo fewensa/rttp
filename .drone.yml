@@ -20,7 +20,9 @@ steps:
       - apt install -y libssl-dev pkg-config
       - cargo test
       - cd rttp_client
-      - cargo test  --release
+      - cargo test --release
+      - cargo test --features "tls-native" --release
+      - cargo test --features "tls-rustls" --release
       - cd ../rttp
       - cargo test --features "all" --release
 
