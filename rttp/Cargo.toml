@@ -21,6 +21,10 @@ edition = "2018"
 
 rttp_client = { version = "=0.1.0", optional = true, path = "../rttp_client", features = [ "tls-native" ] }
 
+[dev-dependencies]
+
+
+async-std = { version = "1" }
 
 [features]
 default = []

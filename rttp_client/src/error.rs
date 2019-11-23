@@ -256,6 +256,10 @@ pub(crate) fn connection_closed() -> Error {
   Error::new(Kind::Request, Some("The connection is closed."))
 }
 
+pub(crate) fn bad_ssl<S: AsRef<str>>(message: S) -> Error {
+  Error::new(Kind::Request, Some(message.as_ref()))
+}
+
 //if_wasm! {
 //    pub(crate) fn wasm(js_val: wasm_bindgen::JsValue) -> BoxError {
 //        format!("{:?}", js_val).into()

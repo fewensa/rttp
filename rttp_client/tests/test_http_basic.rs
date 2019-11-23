@@ -133,12 +133,15 @@ fn test_with_proxy_http() {
 #[test]
 #[ignore]
 fn test_with_proxy_socks5() {
-  client()
+  let response = client()
     .get()
     .url("http://google.com")
     .proxy(Proxy::socks5("127.0.0.1", 1080))
-    .emit()
-    .expect("REQUEST FAIL");
+    .emit();
+  assert!(response.is_ok());
+  let response = response.unwrap();
+  assert_eq!("google.com", response.host());
+  println!("{}", response);
 }
 
 #[test]

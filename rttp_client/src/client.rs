@@ -1,6 +1,6 @@
 use crate::{Config, error};
-use crate::connection::Connection;
-use crate::request::{RawRequest, Request, AsyncRawRequest};
+use crate::connection::{AsyncConnection, BlockConnection};
+use crate::request::{RawRequest, Request};
 use crate::response::Response;
 use crate::types::{Header, IntoHeader, IntoPara, Proxy, ToFormData, ToRoUrl};
 
@@ -162,12 +162,15 @@ impl HttpClient {
     if self.request.closed() {
       return Err(error::connection_closed());
     }
-    let request = RawRequest::new(&mut self.request)?;
-    Connection::new(request).call()
+    let request = RawRequest::block_new(&mut self.request)?;
+    BlockConnection::new(request).block_call()
   }
 
-  pub fn enqueue(&mut self) -> error::Result<()> {
-    let request = AsyncRawRequest::new(&mut self.request)?;
-    Ok(())
+  pub async fn enqueue(&mut self) -> error::Result<Response> {
+    if self.request.closed() {
+      return Err(error::connection_closed());
+    }
+    let request = RawRequest::async_new(&mut self.request).await?;
+    AsyncConnection::new(request).async_call().await
   }
 }
