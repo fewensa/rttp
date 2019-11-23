@@ -23,6 +23,8 @@ steps:
       - cargo test --release
       - cargo test --features "tls-native" --release
       - cargo test --features "tls-rustls" --release
+      - cargo test --features "async" --release
+      - cargo test --features "tls-native async" --release
       - cd ../rttp
       - cargo test --features "all" --release
 
