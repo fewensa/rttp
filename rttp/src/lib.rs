@@ -1,13 +1,14 @@
-
-#[cfg(any(feature = "all", feature = "client"))]
-use rttp_client::HttpClient;
-
 pub struct Http {}
 
 
 impl Http {
-  #[cfg(any(feature = "all", feature = "client"))]
-  pub fn client() -> HttpClient {
-    HttpClient::new()
+  #[cfg(any(
+  feature = "all",
+  feature = "client",
+  feature = "client_tls_rustls",
+  feature = "client_tls_native",
+  ))]
+  pub fn client() -> rttp_client::HttpClient {
+    rttp_client::HttpClient::new()
   }
 }

@@ -19,10 +19,7 @@ edition = "2018"
 
 [dependencies]
 
-[dependencies.rttp_client]
-version = "=0.1.0"
-optional = true
-path = "../rttp_client"
+rttp_client = { version = "=0.1.0", optional = true, path = "../rttp_client", features = [ "tls-native" ] }
 
 
 [features]
@@ -30,3 +27,19 @@ default = []
 
 all = ["rttp_client"]
 client = ["rttp_client"]
+#client_tls_native = ["rttp_client"]
+#client_tls_rustls = ["rttp_client"]
+
+
+#[target.'cfg(feature = "all")'.dependencies]
+#rttp_client = { version = "=0.1.0", path = "../rttp_client", optional = true, default-features = false, features = [ "tls-native" ] }
+#
+#[target.'cfg(feature = "client")'.dependencies]
+#rttp_client = { version = "=0.1.0", path = "../rttp_client", optional = true, default-features = false, features = [] }
+#
+#[target.'cfg(feature = "client_tls_native")'.dependencies]
+#rttp_client = { version = "=0.1.0", path = "../rttp_client", optional = true, default-features = false, features = [ "tls-native" ] }
+#
+#[target.'cfg(feature = "client_tls_rustls")'.dependencies]
+#rttp_client = { version = "=0.1.0", path = "../rttp_client", optional = true, default-features = false, features = [ "tls-rustls" ] }
+
