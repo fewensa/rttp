@@ -14,16 +14,16 @@ use crate::request::RawRequest;
 use crate::response::Response;
 use crate::types::{Proxy, ProxyType, ToUrl};
 
-pub struct Connection {
-  request: RawRequest
+pub struct Connection<'a> {
+  request: RawRequest<'a>
 }
 
-impl Connection {
-  pub fn new(request: RawRequest) -> Self {
+impl<'a> Connection<'a> {
+  pub fn new(request: RawRequest<'a>) -> Connection<'a> {
     Self { request }
   }
 
-  pub fn call(&self) -> error::Result<Response> {
+  pub fn call(mut self) -> error::Result<Response> {
     let url = self.request.url().to_url().map_err(error::builder)?;
 
     let header = self.request.header();
@@ -63,6 +63,7 @@ impl Connection {
         .emit();
     }
 
+    self.request.origin_mut().closed_set(true);
     Ok(response)
   }
 
@@ -90,7 +91,7 @@ impl Connection {
 }
 
 
-impl Connection {
+impl<'a> Connection<'a> {
   fn send(&self, url: &Url) -> error::Result<Vec<u8>> {
     let header = self.request.header();
     let body = self.request.body();
@@ -182,7 +183,7 @@ impl Connection {
 }
 
 // proxy connection
-impl Connection {
+impl<'a> Connection<'a> {
   fn call_with_proxy(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
     match proxy.type_() {
       ProxyType::HTTP => self.call_with_proxy_https(url, proxy),

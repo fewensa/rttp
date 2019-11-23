@@ -13,17 +13,17 @@ const DISPOSITION_PREFIX: &'static str = "--";
 const DISPOSITION_END: &'static str = "\r\n";
 
 
-#[derive(Clone, Debug)]
-pub struct RawRequest {
-  origin: Request,
+#[derive(Debug)]
+pub struct RawRequest<'a> {
+  origin: &'a mut Request,
 
   url: RoUrl,
   header: String,
   body: Option<RequestBody>,
 }
 
-impl RawRequest {
-  pub fn new(request: Request) -> error::Result<Self> {
+impl<'a> RawRequest<'a> {
+  pub fn new(request: &'a mut Request) -> error::Result<RawRequest<'a>> {
     Standardization::new(request).standard()
   }
 
@@ -31,25 +31,27 @@ impl RawRequest {
   pub fn url(&self) -> &RoUrl { &self.url }
   pub fn header(&self) -> &String { &self.header }
   pub fn body(&self) -> &Option<RequestBody> { &self.body }
+
+  pub(crate) fn origin_mut(&mut self) -> &mut Request { &mut self.origin }
 }
 
 
-#[derive(Clone, Debug)]
-pub struct Standardization {
+#[derive(Debug)]
+pub struct Standardization<'a> {
   content_type: Option<Mime>,
-  request: Request,
+  request: &'a mut Request,
 }
 
 // create
-impl Standardization {
-  pub fn new(request: Request) -> Self {
+impl<'a> Standardization<'a> {
+  pub fn new(request: &'a mut Request) -> Self {
     Self {
       content_type: None,
       request,
     }
   }
 
-  pub fn standard(mut self) -> error::Result<RawRequest> {
+  pub fn standard(mut self) -> error::Result<RawRequest<'a>> {
     let mut rourl = self.request.url()
       .clone()
       .ok_or(error::none_url())?;
@@ -68,7 +70,7 @@ impl Standardization {
 }
 
 // build body && rebuild para/url
-impl Standardization {
+impl<'a> Standardization<'a> {
   fn build_body(&mut self, rourl: &mut RoUrl) -> error::Result<Option<RequestBody>> {
     let method = self.request.method();
     let raw = self.request.raw();
@@ -283,7 +285,7 @@ impl Standardization {
 }
 
 // build header
-impl Standardization {
+impl<'a> Standardization<'a> {
   fn request_url(&self, url: &Url, full: bool) -> String {
     if full {
       return url.as_str().to_owned();

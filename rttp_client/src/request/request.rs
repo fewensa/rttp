@@ -5,6 +5,7 @@ use crate::types::{FormData, Header, Para, Proxy, RoUrl, ToRoUrl};
 
 #[derive(Clone, Debug)]
 pub struct Request {
+  closed: bool,
   count: u32,
   config: Config,
   url: Option<RoUrl>,
@@ -23,6 +24,7 @@ pub struct Request {
 impl Request {
   pub fn new() -> Self {
     Self {
+      closed: false,
       count: 1,
       config: Default::default(),
       url: None,
@@ -39,6 +41,7 @@ impl Request {
     }
   }
 
+  pub fn closed(&self) -> bool { self.closed }
   pub fn config(&self) -> &Config { &self.config }
   pub fn count(&self) -> u32 { self.count }
   pub fn url(&self) -> &Option<RoUrl> { &self.url }
@@ -53,6 +56,7 @@ impl Request {
   pub fn binary(&self) -> &Vec<u8> { &self.binary }
   pub fn proxy(&self) -> &Option<Proxy> { &self.proxy }
 
+  pub(crate) fn closed_mut(&mut self) -> &mut bool { &mut self.closed }
   pub(crate) fn config_mut(&mut self) -> &mut Config { &mut self.config }
   pub(crate) fn count_mut(&mut self) -> &mut u32 { &mut self.count }
   pub(crate) fn url_mut(&mut self) -> &mut Option<RoUrl> { &mut self.url }
@@ -68,6 +72,10 @@ impl Request {
   pub(crate) fn proxy_mut(&mut self) -> &mut Option<Proxy> { &mut self.proxy }
 
 
+  pub(crate) fn closed_set(&mut self, closed: bool) -> &mut Self {
+    self.closed = closed;
+    self
+  }
   pub(crate) fn config_set<C: AsRef<Config>>(&mut self, config: C) -> &mut Self {
     self.config = config.as_ref().clone();
     self

@@ -152,3 +152,18 @@ fn test_auto_redirect() {
   let response = response.unwrap();
   assert_ne!("bing.com", response.host());
 }
+
+#[test]
+fn test_connection_closed() {
+  let mut client = client();
+  let resp0 = client.url("http://httpbin.org/get").emit();
+  assert!(resp0.is_ok());
+  let resp1 = client.post().url("http://httpbin.org/post").emit();
+  assert!(resp1.is_err());
+  let resp2 = self::client().url("http://httpbin.org/get").emit();
+  assert!(resp2.is_ok());
+  let resp3 = self::client().post().url("http://httpbin.org/post").emit();
+  assert!(resp3.is_ok());
+  let resp4 = client.reset().post().url("http://httpbin.org/post").emit();
+  assert!(resp4.is_ok());
+}
