@@ -30,7 +30,7 @@ fn test_client_async_http() {
       .post()
       .url("http://httpbin.org/post")
       .form(("debug", "true", "name=Form&file=@cargo#../Cargo.toml"))
-      .enqueue()
+      .rasync()
       .await;
     assert!(response.is_ok());
     let response = response.unwrap();
@@ -46,7 +46,7 @@ fn test_client_async_https() {
     let response = Http::client()
       .post()
       .url("https://httpbin.org/get")
-      .enqueue()
+      .rasync()
       .await;
     assert!(response.is_ok());
     let response = response.unwrap();

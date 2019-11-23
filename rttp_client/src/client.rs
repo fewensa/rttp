@@ -1,5 +1,7 @@
 use crate::{Config, error};
-use crate::connection::{AsyncConnection, BlockConnection};
+#[cfg(feature = "async")]
+use crate::connection::AsyncConnection;
+use crate::connection::BlockConnection;
 use crate::request::{RawRequest, Request};
 use crate::response::Response;
 use crate::types::{Header, IntoHeader, IntoPara, Proxy, ToFormData, ToRoUrl};
@@ -166,7 +168,8 @@ impl HttpClient {
     BlockConnection::new(request).block_call()
   }
 
-  pub async fn enqueue(&mut self) -> error::Result<Response> {
+  #[cfg(feature = "async")]
+  pub async fn rasync(&mut self) -> error::Result<Response> {
     if self.request.closed() {
       return Err(error::connection_closed());
     }

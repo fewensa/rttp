@@ -36,11 +36,11 @@ rustls = { version = "0.16", optional = true }
 webpki-roots = { version = "0.18", optional = true }
 webpki = { version = "0.21", optional = true }
 
-async-std = { version = "1" }
+async-std = { version = "1", optional = true }
 
 [features]
 default = []
 
 tls-native = ["native-tls"]
 tls-rustls = ["rustls", "webpki", "webpki-roots"]
-
+async = ["async-std"]

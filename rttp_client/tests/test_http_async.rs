@@ -1,3 +1,5 @@
+
+#[cfg(feature = "async")]
 use async_std::task;
 
 use rttp_client::{Config, HttpClient};
@@ -8,13 +10,14 @@ fn client() -> HttpClient {
 }
 
 #[test]
+#[cfg(feature = "async")]
 fn test_async_http() {
   task::block_on(async {
     let response = client()
       .post()
       .url("http://httpbin.org/post")
       .form(("debug", "true", "name=Form&file=@cargo#../Cargo.toml"))
-      .enqueue()
+      .rasync()
       .await;
     assert!(response.is_ok());
     let response = response.unwrap();
@@ -24,13 +27,13 @@ fn test_async_http() {
 }
 
 #[test]
-#[cfg(any(feature = "tls-rustls", feature = "tls-native"))]
+#[cfg(all(feature = "async", any(feature = "tls-rustls", feature = "tls-native")))]
 fn test_async_https() {
   task::block_on(async {
     let response = client()
       .post()
       .url("https://httpbin.org/get")
-      .enqueue()
+      .rasync()
       .await;
     assert!(response.is_ok());
     let response = response.unwrap();
@@ -41,13 +44,14 @@ fn test_async_https() {
 
 #[test]
 #[ignore]
+#[cfg(feature = "async")]
 fn test_async_proxy_socks5() {
   task::block_on(async {
     let response = client()
       .get()
       .url("http://google.com")
       .proxy(Proxy::socks5("127.0.0.1", 1080))
-      .enqueue()
+      .rasync()
       .await;
     assert!(response.is_ok());
     let response = response.unwrap();

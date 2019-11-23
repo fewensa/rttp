@@ -46,6 +46,7 @@ impl<'a> RawBuilder<'a> {
     })
   }
 
+  #[cfg(feature = "async")]
   pub async fn async_raw_request(mut self) -> error::Result<RawRequest<'a>> {
     let mut rourl = self.request.url()
       .clone()
@@ -436,6 +437,8 @@ impl<'a> RawBuilder<'a> {
 
 // build async body
 impl<'a> RawBuilder<'a> {
+
+  #[cfg(feature = "async")]
   async fn build_body_async(&mut self, rourl: &mut RoUrl) -> error::Result<Option<RequestBody>> {
     let method = self.request.method();
     let raw = self.request.raw();
@@ -498,6 +501,7 @@ impl<'a> RawBuilder<'a> {
     Ok(None)
   }
 
+  #[cfg(feature = "async")]
   async fn build_body_with_form_data_async(&mut self, rourl: &mut RoUrl) -> error::Result<Option<RequestBody>> {
     let fdw = self.build_body_with_form_data_sync_common(rourl)?;
     let mut disposition = fdw.disposition;
