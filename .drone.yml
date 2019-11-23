@@ -20,9 +20,9 @@ steps:
       - apt install -y libssl-dev pkg-config
       - cargo test
       - cd rttp_client
-      - cargo test --features "all" --release
+      - cargo test  --release
       - cd ../rttp
-      - cargo test --release
+      - cargo test --features "all" --release
 
 volumes:
   - name: cargo
