@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use rttp_client::{Http, Config, HttpClient};
+use rttp_client::{Config, HttpClient};
 use rttp_client::types::{Para, Proxy, RoUrl};
 
 fn client() -> HttpClient {
@@ -10,7 +10,7 @@ fn client() -> HttpClient {
 #[test]
 fn test_http() {
   let response = client()
-    .url("https://httpbin.org/get")
+    .url("http://httpbin.org/get")
     .emit();
   assert!(response.is_ok());
   let response = response.unwrap();
@@ -48,7 +48,7 @@ fn test_multi() {
 fn test_gzip() {
   let response = client()
     .get()
-    .url("https://httpbin.org/get")
+    .url("http://httpbin.org/get")
     .header(("Accept-Encoding", "gzip, deflate"))
     .emit();
   assert!(response.is_ok());
@@ -95,16 +95,20 @@ fn test_raw_form_urlencoded() {
 }
 
 #[test]
+#[cfg(any(feature = "tls-rustls", feature = "tls-native"))]
 fn test_https() {
-  client()
+  let response = client()
     .get()
-    .url("https://httpbin.org/get")
-    .para(Para::new("name", "Chico"))
-    .emit()
-    .expect("REQUEST FAIL");
+    .url("https://bing.com")
+    .para(Para::new("q", "News"))
+    .emit();
+  assert!(response.is_ok());
+  let response = response.unwrap();
+  println!("{:?}", response);
 }
 
 #[test]
+#[cfg(any(feature = "tls-rustls", feature = "tls-native"))]
 fn test_http_with_url() {
   client()
     .method("get")
@@ -114,6 +118,7 @@ fn test_http_with_url() {
 }
 
 #[test]
+#[cfg(any(feature = "tls-rustls", feature = "tls-native"))]
 #[ignore]
 fn test_with_proxy_http() {
   client()

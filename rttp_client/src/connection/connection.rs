@@ -1,7 +1,9 @@
 use std::{io, time};
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::sync::Arc;
 
+#[cfg(feature = "tls-native")]
 use native_tls::TlsConnector;
 use socks::{Socks4Stream, Socks5Stream};
 use url::Url;
@@ -10,6 +12,8 @@ use crate::{error, HttpClient};
 use crate::request::RawRequest;
 use crate::response::Response;
 use crate::types::{Proxy, ProxyType, ToUrl};
+#[cfg(feature = "tls-rustls")]
+use rustls::{Session, TLSError};
 
 pub struct Connection {
   request: RawRequest
@@ -32,16 +36,11 @@ impl Connection {
 
     let proxy = self.request.origin().proxy();
 
-    let binary;
-    if let Some(proxy) = proxy {
-      binary = self.call_with_proxy(&url, proxy)?;
+    let binary = if let Some(proxy) = proxy {
+      self.call_with_proxy(&url, proxy)?
     } else {
-      binary = match url.scheme() {
-        "http" => self.call_http(&url)?,
-        "https" => self.call_https(&url)?,
-        _ => return Err(error::url_bad_scheme(url.clone()))
-      };
-    }
+      self.send(&url)?
+    };
 
     let config = self.request.origin().config();
     let response = Response::new(self.request.url().clone(), binary)?;
@@ -93,7 +92,28 @@ impl Connection {
 
 
 impl Connection {
-  fn call_tcp_stream_http<S>(&self, mut stream: S) -> error::Result<Vec<u8>>
+  fn send(&self, url: &Url) -> error::Result<Vec<u8>> {
+    let header = self.request.header();
+    let body = self.request.body();
+
+    let addr = self.addr(url)?;
+    let mut stream = self.tcp_stream(&addr)?;
+//    self.call_tcp_stream_http(stream)
+    self.send_with_stream(url, stream)
+  }
+
+  fn send_with_stream<S>(&self, url: &Url, mut stream: S) -> error::Result<Vec<u8>>
+    where
+      S: 'static + io::Read + io::Write + std::marker::Sync + std::marker::Send + std::fmt::Debug,
+  {
+    match url.scheme() {
+      "http" => self.send_http(stream),
+      "https" => self.send_https(url, stream),
+      _ => return Err(error::url_bad_scheme(url.clone()))
+    }
+  }
+
+  fn send_http<S>(&self, mut stream: S) -> error::Result<Vec<u8>>
     where
       S: io::Read + io::Write,
   {
@@ -109,7 +129,16 @@ impl Connection {
     Ok(binary)
   }
 
-  fn call_tcp_stream_https<S>(&self, url: &Url, stream: S) -> error::Result<Vec<u8>>
+  #[cfg(not(any(feature = "tls-native", feature = "tls-rustls")))]
+  fn send_https<S>(&self, url: &Url, mut stream: S) -> error::Result<Vec<u8>>
+    where
+      S: 'static + io::Read + io::Write + std::marker::Sync + std::marker::Send + std::fmt::Debug,
+  {
+    return Err(error::no_request_features("Not have any tls features, Can't request a https url"));
+  }
+
+  #[cfg(feature = "tls-native")]
+  fn send_https<S>(&self, url: &Url, mut stream: S) -> error::Result<Vec<u8>>
     where
       S: 'static + io::Read + io::Write + std::marker::Sync + std::marker::Send + std::fmt::Debug,
   {
@@ -134,25 +163,34 @@ impl Connection {
     ssl_stream.read_to_end(&mut binary).map_err(error::request)?;
     Ok(binary)
   }
-}
 
-impl Connection {
-  fn call_http(&self, url: &Url) -> error::Result<Vec<u8>> {
+  #[cfg(feature = "tls-rustls")]
+  fn send_https<S>(&self, url: &Url, mut stream: S) -> error::Result<Vec<u8>>
+    where
+      S: 'static + io::Read + io::Write + std::marker::Sync + std::marker::Send + std::fmt::Debug,
+  {
+    let mut config = rustls::ClientConfig::new();
+    config
+      .root_store
+      .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+    let rc_config = Arc::new(config);
+    let host = self.host(url)?;
+    let dns_name = webpki::DNSNameRef::try_from_ascii_str(&host[..]).unwrap();
+    let mut client = rustls::ClientSession::new(&rc_config, dns_name);
+    let mut tls = rustls::Stream::new(&mut client, &mut stream);
+
     let header = self.request.header();
     let body = self.request.body();
 
-    let addr = self.addr(url)?;
-    let mut stream = self.tcp_stream(&addr)?;
-    self.call_tcp_stream_http(stream)
-  }
+    tls.write(header.as_bytes()).map_err(error::request)?;
+    if let Some(body) = body {
+      tls.write(body.bytes()).map_err(error::request)?;
+    }
+    tls.flush().map_err(error::request)?;
 
-  fn call_https(&self, url: &Url) -> error::Result<Vec<u8>> {
-    let header = self.request.header();
-    let body = self.request.body();
-
-    let addr = self.addr(url)?;
-    let stream = self.tcp_stream(&addr)?;
-    self.call_tcp_stream_https(url, stream)
+    let mut binary: Vec<u8> = Vec::new();
+    tls.read_to_end(&mut binary).map_err(error::request)?;
+    Ok(binary)
   }
 }
 
@@ -220,11 +258,7 @@ impl Connection {
       return Err(error::bad_proxy("Proxy server response error."));
     }
 
-    match url.scheme() {
-      "http" => self.call_tcp_stream_http(stream),
-      "https" => self.call_tcp_stream_https(url, stream),
-      _ => Err(error::url_bad_scheme(url.clone()))
-    }
+    self.send_with_stream(url, stream)
   }
 
   fn call_with_proxy_socks4(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
@@ -233,11 +267,7 @@ impl Connection {
     let user = if let Some(u) = proxy.username() { u.to_string() } else { "".to_string() };
     let mut stream = Socks4Stream::connect(&addr_proxy[..], &addr_target[..], &user[..])
       .map_err(error::request)?;
-    match url.scheme() {
-      "http" => self.call_tcp_stream_http(stream),
-      "https" => self.call_tcp_stream_https(url, stream),
-      _ => Err(error::url_bad_scheme(url.clone()))
-    }
+    self.send_with_stream(url, stream)
   }
 
   fn call_with_proxy_socks5(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
@@ -252,11 +282,7 @@ impl Connection {
     } else {
       Socks5Stream::connect(&addr_proxy[..], &addr_target[..])
     }.map_err(error::request)?;
-    match url.scheme() {
-      "http" => self.call_tcp_stream_http(stream),
-      "https" => self.call_tcp_stream_https(url, stream),
-      _ => Err(error::url_bad_scheme(url.clone()))
-    }
+    self.send_with_stream(url, stream)
   }
 }
 

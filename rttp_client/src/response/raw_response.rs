@@ -124,13 +124,23 @@ impl Parser {
   }
 
   pub fn parse(self, response: &mut RawResponse) -> error::Result<()> {
+    if self.binary.is_empty() {
+      return Ok(())
+    }
     // find \r\n\r\n position
     let mut position: usize = 0;
     for i in 0..self.binary.len() - 1 {
-      if self.binary[i] == CR && self.binary[i + 1] == LF && self.binary[i + 2] == CR && self.binary[i + 3] == LF {
+      if self.binary.get(i) == Some(&CR) &&
+        self.binary.get(i + 1) == Some(&LF) &&
+        self.binary.get(i + 2) == Some(&CR) &&
+        self.binary.get(i + 3) == Some(&LF) {
         position = i + 3;
         break;
       }
+//      if self.binary[i] == CR && self.binary[i + 1] == LF && self.binary[i + 2] == CR && self.binary[i + 3] == LF {
+//        position = i + 3;
+//        break;
+//      }
     }
     if position == 0 {
       return Err(error::bad_response("No http response"));

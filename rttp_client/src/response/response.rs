@@ -25,7 +25,11 @@ impl Response {
   }
 
   pub fn is_redirect(&self) -> bool {
-    self.code() == 301 || self.header_value("Location").is_some()
+    self.code() == 301 ||
+      self.code() == 302 ||
+      self.code() == 303 ||
+      self.code() == 307 ||
+      self.header_value("Location").is_some()
   }
 
   pub fn code(&self) -> u32 {
