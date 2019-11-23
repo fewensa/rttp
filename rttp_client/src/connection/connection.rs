@@ -9,11 +9,10 @@ use socks::{Socks4Stream, Socks5Stream};
 use url::Url;
 
 use crate::{error, HttpClient};
+use crate::connection::connction_reader::ConnectionReader;
 use crate::request::RawRequest;
 use crate::response::Response;
 use crate::types::{Proxy, ProxyType, ToUrl};
-#[cfg(feature = "tls-rustls")]
-use rustls::{Session, TLSError};
 
 pub struct Connection {
   request: RawRequest
@@ -99,52 +98,41 @@ impl Connection {
     let addr = self.addr(url)?;
     let mut stream = self.tcp_stream(&addr)?;
 //    self.call_tcp_stream_http(stream)
-    self.send_with_stream(url, stream)
+    self.send_with_stream(url, &mut stream)
   }
 
-  fn send_with_stream<S>(&self, url: &Url, mut stream: S) -> error::Result<Vec<u8>>
+  fn send_with_stream<S>(&self, url: &Url, stream: &mut S) -> error::Result<Vec<u8>>
     where
-      S: 'static + io::Read + io::Write + std::marker::Sync + std::marker::Send + std::fmt::Debug,
+      S: io::Read + io::Write,
   {
     match url.scheme() {
-      "http" => self.send_http(stream),
+      "http" => self.send_http(url, stream),
       "https" => self.send_https(url, stream),
       _ => return Err(error::url_bad_scheme(url.clone()))
     }
   }
 
-  fn send_http<S>(&self, mut stream: S) -> error::Result<Vec<u8>>
+  fn send_http<S>(&self, url: &Url, stream: &mut S) -> error::Result<Vec<u8>>
     where
       S: io::Read + io::Write,
   {
-    let header = self.request.header();
-    let body = self.request.body();
-    stream.write(header.as_bytes()).map_err(error::request)?;
-    if let Some(body) = body {
-      stream.write(body.bytes()).map_err(error::request)?;
-    }
-    stream.flush().map_err(error::request)?;
-    let mut binary: Vec<u8> = Vec::new();
-    stream.read_to_end(&mut binary).map_err(error::request)?;
-    Ok(binary)
+    self.write_stream(stream)?;
+    self.read_stream(url, stream)
   }
 
   #[cfg(not(any(feature = "tls-native", feature = "tls-rustls")))]
-  fn send_https<S>(&self, url: &Url, mut stream: S) -> error::Result<Vec<u8>>
+  fn send_https<S>(&self, url: &Url, stream: &mut S) -> error::Result<Vec<u8>>
     where
-      S: 'static + io::Read + io::Write + std::marker::Sync + std::marker::Send + std::fmt::Debug,
+      S: io::Read + io::Write,
   {
     return Err(error::no_request_features("Not have any tls features, Can't request a https url"));
   }
 
   #[cfg(feature = "tls-native")]
-  fn send_https<S>(&self, url: &Url, mut stream: S) -> error::Result<Vec<u8>>
+  fn send_https<S>(&self, url: &Url, stream: &mut S) -> error::Result<Vec<u8>>
     where
-      S: 'static + io::Read + io::Write + std::marker::Sync + std::marker::Send + std::fmt::Debug,
+      S: io::Read + io::Write,
   {
-    let header = self.request.header();
-    let body = self.request.body();
-
     let connector = TlsConnector::builder().build().map_err(error::request)?;
     let mut ssl_stream;
 //  if self.verify {
@@ -153,21 +141,14 @@ impl Connection {
 //    ssl_stream = connector.danger_connect_without_providing_domain_for_certificate_verification_and_server_name_indication(stream).map_err(error::request)?;
 //  }
 
-    ssl_stream.write(header.as_bytes()).map_err(error::request)?;
-    if let Some(body) = body {
-      ssl_stream.write(body.bytes()).map_err(error::request)?;
-    }
-    ssl_stream.flush().map_err(error::request)?;
-
-    let mut binary: Vec<u8> = Vec::new();
-    ssl_stream.read_to_end(&mut binary).map_err(error::request)?;
-    Ok(binary)
+    self.write_stream(&mut ssl_stream)?;
+    self.read_stream(url, &mut ssl_stream)
   }
 
   #[cfg(feature = "tls-rustls")]
-  fn send_https<S>(&self, url: &Url, mut stream: S) -> error::Result<Vec<u8>>
+  fn send_https<S>(&self, url: &Url, stream: &mut S) -> error::Result<Vec<u8>>
     where
-      S: 'static + io::Read + io::Write + std::marker::Sync + std::marker::Send + std::fmt::Debug,
+      S: io::Read + io::Write,
   {
     let mut config = rustls::ClientConfig::new();
     config
@@ -177,20 +158,26 @@ impl Connection {
     let host = self.host(url)?;
     let dns_name = webpki::DNSNameRef::try_from_ascii_str(&host[..]).unwrap();
     let mut client = rustls::ClientSession::new(&rc_config, dns_name);
-    let mut tls = rustls::Stream::new(&mut client, &mut stream);
+    let mut tls = rustls::Stream::new(&mut client, stream);
 
+    self.write_stream(&mut tls)?;
+    self.read_stream(url, &mut tls)
+  }
+
+  fn write_stream<S>(&self, stream: &mut S) -> error::Result<()> where S: io::Write, {
     let header = self.request.header();
     let body = self.request.body();
-
-    tls.write(header.as_bytes()).map_err(error::request)?;
+    stream.write(header.as_bytes()).map_err(error::request)?;
     if let Some(body) = body {
-      tls.write(body.bytes()).map_err(error::request)?;
+      stream.write(body.bytes()).map_err(error::request)?;
     }
-    tls.flush().map_err(error::request)?;
+    stream.flush().map_err(error::request)?;
+    Ok(())
+  }
 
-    let mut binary: Vec<u8> = Vec::new();
-    tls.read_to_end(&mut binary).map_err(error::request)?;
-    Ok(binary)
+  fn read_stream<S>(&self, url: &Url, stream: &mut S) -> error::Result<Vec<u8>> where S: io::Read, {
+    let mut reader = ConnectionReader::new(url, stream);
+    reader.binary()
   }
 }
 
@@ -258,7 +245,7 @@ impl Connection {
       return Err(error::bad_proxy("Proxy server response error."));
     }
 
-    self.send_with_stream(url, stream)
+    self.send_with_stream(url, &mut stream)
   }
 
   fn call_with_proxy_socks4(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
@@ -267,7 +254,7 @@ impl Connection {
     let user = if let Some(u) = proxy.username() { u.to_string() } else { "".to_string() };
     let mut stream = Socks4Stream::connect(&addr_proxy[..], &addr_target[..], &user[..])
       .map_err(error::request)?;
-    self.send_with_stream(url, stream)
+    self.send_with_stream(url, &mut stream)
   }
 
   fn call_with_proxy_socks5(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
@@ -282,7 +269,7 @@ impl Connection {
     } else {
       Socks5Stream::connect(&addr_proxy[..], &addr_target[..])
     }.map_err(error::request)?;
-    self.send_with_stream(url, stream)
+    self.send_with_stream(url, &mut stream)
   }
 }
 

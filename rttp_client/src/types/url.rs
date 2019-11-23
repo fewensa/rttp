@@ -1,4 +1,4 @@
-use std::{cmp, fmt, hash};
+//use std::{cmp, fmt, hash};
 use std::fmt::Debug;
 
 use url::Url;

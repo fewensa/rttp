@@ -104,7 +104,7 @@ fn test_https() {
     .emit();
   assert!(response.is_ok());
   let response = response.unwrap();
-  println!("{:?}", response);
+  println!("{}", response);
 }
 
 #[test]

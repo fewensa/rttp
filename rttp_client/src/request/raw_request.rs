@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::str::FromStr;
 
 use mime::Mime;
@@ -7,7 +6,7 @@ use url::Url;
 
 use crate::error;
 use crate::request::{Request, RequestBody};
-use crate::types::{FormDataType, Header, Para, RoUrl, ToUrl};
+use crate::types::{FormDataType, Header, RoUrl, ToUrl};
 
 const HYPHENS: &'static str = "---------------------------";
 const DISPOSITION_PREFIX: &'static str = "--";

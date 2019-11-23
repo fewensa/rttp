@@ -2,7 +2,7 @@ use crate::{Config, error};
 use crate::connection::Connection;
 use crate::request::{RawRequest, Request};
 use crate::response::Response;
-use crate::types::{Header, IntoHeader, IntoPara, Para, Proxy, RoUrl, ToFormData, ToRoUrl, ToUrl};
+use crate::types::{Header, IntoHeader, IntoPara, Proxy, ToFormData, ToRoUrl};
 
 #[derive(Debug)]
 pub struct HttpClient {
@@ -160,5 +160,7 @@ impl HttpClient {
     connection.call()
   }
 
-  pub fn enqueue(&self) {}
+  pub fn enqueue(&self) -> error::Result<Response> {
+    self.emit()
+  }
 }
