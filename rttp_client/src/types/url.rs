@@ -7,6 +7,19 @@ use crate::error;
 use crate::error::Error;
 use crate::types::{IntoPara, Para, ParaType};
 
+/// Url builder
+///
+/// # Examples
+///
+/// ```rust
+/// # use rttp_client::types::{RoUrl, Para};
+/// let rourl = RoUrl::with("http://httpbin.org")
+///   .path("get")
+///   .para("name=value")
+///   .para("name=value&name=value")
+///   .para(("name", "value", "name=value&name=value"))
+///   .para(Para::new("name", "value"));
+/// ```
 #[derive(Clone, Debug)]
 pub struct RoUrl {
   url: String,
@@ -31,6 +44,12 @@ pub trait ToUrl: Debug {
 
 
 impl RoUrl {
+  /// Create a rourl
+  /// # Examples
+  /// ```rust
+  /// use rttp_client::types::RoUrl;
+  /// RoUrl::with("http://httpbin.org/get");
+  /// ```
   pub fn with<S: AsRef<str>>(url: S) -> RoUrl {
     let url = url.as_ref();
     let netloc_and_para: Vec<&str> = url.split("?").collect::<Vec<&str>>();
@@ -118,26 +137,31 @@ impl RoUrl {
     self
   }
 
+  /// Set fragment to url
   pub fn fragment<S: AsRef<str>>(&mut self, fragment: S) -> &mut Self {
     self.fragment = Some(fragment.as_ref().into());
     self
   }
 
+  /// Set username
   pub fn username<S: AsRef<str>>(&mut self, username: S) -> &mut Self {
     self.username = username.as_ref().into();
     self
   }
 
+  /// Set password
   pub fn password<S: AsRef<str>>(&mut self, password: S) -> &mut Self {
     self.password = Some(password.as_ref().into());
     self
   }
 
+  /// Add path to url
   pub fn path<S: AsRef<str>>(&mut self, path: S) -> &mut Self {
     self.paths.push(path.as_ref().into());
     self
   }
 
+  /// Add para to url
   pub fn para<P: IntoPara>(&mut self, para: P) -> &mut Self {
     let mut paras = para.into_paras();
     for para in &mut paras {
@@ -147,11 +171,13 @@ impl RoUrl {
     self
   }
 
+  /// Set paras fo rurl
   pub fn paras(&mut self, paras: Vec<Para>) -> &mut Self {
     self.paras = paras;
     self
   }
 
+  /// Set is traditional
   pub fn traditional(&mut self, traditional: bool) -> &mut Self {
     self.traditional = traditional;
     self
