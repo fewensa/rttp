@@ -1,5 +1,4 @@
 use std::io::{Read, stdout, Write};
-use std::net::TcpStream;
 use std::sync::Arc;
 
 #[cfg(feature = "tls-rustls")]

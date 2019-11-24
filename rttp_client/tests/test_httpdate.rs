@@ -1,7 +1,6 @@
-
-use std::str;
 use std::time::{Duration, UNIX_EPOCH};
-use httpdate::{HttpDate, parse_http_date, fmt_http_date};
+
+use httpdate::parse_http_date;
 
 #[test]
 fn test_rfc_example() {

@@ -1,8 +1,7 @@
-
 #[cfg(feature = "async")]
 use async_std::task;
 
-use rttp_client::{Config, HttpClient};
+use rttp_client::HttpClient;
 use rttp_client::types::Proxy;
 
 fn client() -> HttpClient {

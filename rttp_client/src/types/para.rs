@@ -151,7 +151,7 @@ macro_rules! tuple_to_para {
         let mut rets = vec![];
         let ($($item,)+) = self;
         let mut name = "".to_string();
-        let mut position = 0;
+        let mut _position = 0;
         $(
           let paras = $item.into_paras();
           if !paras.is_empty() {
@@ -172,15 +172,15 @@ macro_rules! tuple_to_para {
               paras.get(0).filter(|&v| v.value().is_some() && first_value_not_empty).is_some()
             {
               rets.extend(paras);
-              position = 0;
+              _position = 0;
             } else {
               if let Some(para_first) = paras.get(0) {
-                if position == 0 {
+                if _position == 0 {
                   name = para_first.name().clone();
-                  position = 1;
+                  _position = 1;
                 } else {
                   rets.push(Para::new(&name, para_first.name()));
-                  position = 0;
+                  _position = 0;
                 }
               }
             }
@@ -192,31 +192,31 @@ macro_rules! tuple_to_para {
   };
 }
 
-tuple_to_para! { A }
-tuple_to_para! { A B }
-tuple_to_para! { A B C }
-tuple_to_para! { A B C D }
-tuple_to_para! { A B C D E }
-tuple_to_para! { A B C D E F }
-tuple_to_para! { A B C D E F G }
-tuple_to_para! { A B C D E F G H }
-tuple_to_para! { A B C D E F G H I }
-tuple_to_para! { A B C D E F G H I J }
-tuple_to_para! { A B C D E F G H I J K }
-tuple_to_para! { A B C D E F G H I J K L }
-tuple_to_para! { A B C D E F G H I J K L M }
-tuple_to_para! { A B C D E F G H I J K L M N }
-tuple_to_para! { A B C D E F G H I J K L M N O }
-tuple_to_para! { A B C D E F G H I J K L M N O P }
-tuple_to_para! { A B C D E F G H I J K L M N O P Q }
-tuple_to_para! { A B C D E F G H I J K L M N O P Q R }
-tuple_to_para! { A B C D E F G H I J K L M N O P Q R S }
-tuple_to_para! { A B C D E F G H I J K L M N O P Q R S T }
-tuple_to_para! { A B C D E F G H I J K L M N O P Q R S T U }
-tuple_to_para! { A B C D E F G H I J K L M N O P Q R S T U V }
-tuple_to_para! { A B C D E F G H I J K L M N O P Q R S T U V W }
-tuple_to_para! { A B C D E F G H I J K L M N O P Q R S T U V W X }
-tuple_to_para! { A B C D E F G H I J K L M N O P Q R S T U V W X Y }
-tuple_to_para! { A B C D E F G H I J K L M N O P Q R S T U V W X Y Z }
+tuple_to_para! { a }
+tuple_to_para! { a b }
+tuple_to_para! { a b c }
+tuple_to_para! { a b c d }
+tuple_to_para! { a b c d e }
+tuple_to_para! { a b c d e f }
+tuple_to_para! { a b c d e f g }
+tuple_to_para! { a b c d e f g h }
+tuple_to_para! { a b c d e f g h i }
+tuple_to_para! { a b c d e f g h i j }
+tuple_to_para! { a b c d e f g h i j k }
+tuple_to_para! { a b c d e f g h i j k l }
+tuple_to_para! { a b c d e f g h i j k l m }
+tuple_to_para! { a b c d e f g h i j k l m n }
+tuple_to_para! { a b c d e f g h i j k l m n o }
+tuple_to_para! { a b c d e f g h i j k l m n o p }
+tuple_to_para! { a b c d e f g h i j k l m n o p q }
+tuple_to_para! { a b c d e f g h i j k l m n o p q r }
+tuple_to_para! { a b c d e f g h i j k l m n o p q r s }
+tuple_to_para! { a b c d e f g h i j k l m n o p q r s t }
+tuple_to_para! { a b c d e f g h i j k l m n o p q r s t u }
+tuple_to_para! { a b c d e f g h i j k l m n o p q r s t u v }
+tuple_to_para! { a b c d e f g h i j k l m n o p q r s t u v w }
+tuple_to_para! { a b c d e f g h i j k l m n o p q r s t u v w x }
+tuple_to_para! { a b c d e f g h i j k l m n o p q r s t u v w x y }
+tuple_to_para! { a b c d e f g h i j k l m n o p q r s t u v w x y z }
 
 
