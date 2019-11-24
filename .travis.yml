@@ -13,8 +13,8 @@ jobs:
     - stage: usually
       name: test
       script:
-        - apt update -y
-        - apt install -y libssl-dev pkg-config
+        - sudo apt update -y
+        - sudo apt install -y libssl-dev pkg-config
         - cd rttp_client
         - cargo test --release
         - cargo test --features "tls-native" --release
