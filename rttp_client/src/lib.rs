@@ -82,8 +82,8 @@
 //! multi_headers.insert("name", "value");
 //! HttpClient::new().get()
 //!  .url("http://httpbin.org/get")
-//!  .header("name=value&name=value")
-//!  .header(("name", "value", "name=value&name=value"))
+//!  .header("name: value\nname: value")
+//!  .header(("name", "value", "name: value\nname: value"))
 //!  .header(Header::new("name", "value"))
 //!  .header(multi_headers)
 //!  .emit();
