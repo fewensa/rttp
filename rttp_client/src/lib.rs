@@ -200,7 +200,7 @@
 //! ```rust
 //! # use rttp_client::HttpClient;
 //! # #[cfg(feature = "async")]
-//! # async fn main() {
+//! # async fn test_async() {
 //! let response = HttpClient::new().post()
 //!   .url("http://httpbin.org/post")
 //!   .rasync()

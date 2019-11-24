@@ -214,7 +214,7 @@ impl HttpClient {
   /// ```rust
   /// # use rttp_client::HttpClient;
   /// # #[cfg(feature = "async")]
-  /// # async fn main() {
+  /// # async fn test_async() {
   /// HttpClient::new()
   ///   .url("http://httpbin.org.get")
   ///   .rasync()
