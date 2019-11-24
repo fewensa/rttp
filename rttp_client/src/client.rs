@@ -214,10 +214,12 @@ impl HttpClient {
   /// ```rust
   /// # use rttp_client::HttpClient;
   /// # #[cfg(feature = "async")]
+  /// # async fn main() {
   /// HttpClient::new()
   ///   .url("http://httpbin.org.get")
   ///   .rasync()
   ///   .await;
+  /// # }
   /// ```
   #[cfg(feature = "async")]
   pub async fn rasync(&mut self) -> error::Result<Response> {
