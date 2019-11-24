@@ -20,21 +20,21 @@ The default use
 
 ```toml
 [dependencies]
-rttp_client = "*"
+rttp_client = "0.1"
 ```
 
 With tls-native
 
 ```toml
 [dependencies]
-rttp_client = { version = "*", features = ["tls-native"] }
+rttp_client = { version = "0.1", features = ["tls-native"] }
 ```
 
 With tls-rustls
 
 ```toml
 [dependencies]
-rttp_client = { version = "*", features = ["tls-rustls"] }
+rttp_client = { version = "0.1", features = ["tls-rustls"] }
 ```
 
 Async support
@@ -42,14 +42,14 @@ Async support
 
 ```toml
 [dependencies]
-rttp_client = { version = "*", features = ["async"] }
+rttp_client = { version = "0.1", features = ["async"] }
 ```
 
 Full support
 
 ```toml
 [dependencies]
-rttp_client = { version = "*", features = ["async", "tls-native"] }
+rttp_client = { version = "0.1", features = ["async", "tls-native"] }
 ```
 
 *Important*
