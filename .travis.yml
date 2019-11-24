@@ -27,6 +27,8 @@ jobs:
     - stage: publish
       name: Publish rttp to crates.io
       script:
+        - sudo apt update -y
+        - sudo apt install -y libssl-dev pkg-config
         - cargo login $CRATES_TOKEN
         - cd rttp_client
         - cargo publish
