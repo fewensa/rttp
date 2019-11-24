@@ -199,7 +199,7 @@ macro_rules! tuple_to_formdata {
       fn to_formdatas(&self) -> Vec<FormData> {
         let mut rets = vec![];
         let ($($item,)+) = self;
-        let mut name = "".to_string();
+        let mut _name = "".to_string();
         let mut _position = 0;
         $(
           let paras = $item.to_formdatas();
@@ -224,16 +224,16 @@ macro_rules! tuple_to_formdata {
             } else {
               if let Some(para_first) = paras.get(0) {
                 if _position == 0 {
-                  name = para_first.name().clone();
+                  _name = para_first.name().clone();
                   _position = 1;
                 } else {
                   let value = para_first.name();
                   if !value.starts_with("@") {
-                    rets.push(FormData::with_text(&name, value));
+                    rets.push(FormData::with_text(&_name, value));
                   } else {
                     if !value.contains("#") {
                       let path = Path::new(&value[1..]);
-                      rets.push(FormData::with_file(&name, path));
+                      rets.push(FormData::with_file(&_name, path));
                     } else {
                       let hasps: Vec<&str> = (&value[1..]).split("#").collect::<Vec<&str>>();
                       let len = hasps.len();
@@ -243,7 +243,7 @@ macro_rules! tuple_to_formdata {
                         .join("#");
                       let path = hasps.get(len - 1).map_or("".to_string(), |v| v.trim().to_string());
                       let path = Path::new(&path);
-                      rets.push(FormData::with_file_and_name(&name, path, filename));
+                      rets.push(FormData::with_file_and_name(&_name, path, filename));
                     }
                   }
                   _position = 0;

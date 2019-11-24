@@ -124,7 +124,7 @@ macro_rules! tuple_to_header {
       fn into_headers(&self) -> Vec<Header> {
         let mut rets = vec![];
         let ($($item,)+) = self;
-        let mut name = "".to_string();
+        let mut _name = "".to_string();
         let mut _position = 0;
         $(
           let headers = $item.into_headers();
@@ -138,10 +138,10 @@ macro_rules! tuple_to_header {
             } else {
               if let Some(first) = headers.get(0) {
                 if _position == 0 {
-                  name = first.name().clone();
+                  _name = first.name().clone();
                   _position = 1;
                 } else {
-                  rets.push(Header::new(&name, first.name()));
+                  rets.push(Header::new(&_name, first.name()));
                   _position = 0;
                 }
               }

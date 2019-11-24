@@ -150,7 +150,7 @@ macro_rules! tuple_to_para {
       fn into_paras(&self) -> Vec<Para> {
         let mut rets = vec![];
         let ($($item,)+) = self;
-        let mut name = "".to_string();
+        let mut _name = "".to_string();
         let mut _position = 0;
         $(
           let paras = $item.into_paras();
@@ -176,10 +176,10 @@ macro_rules! tuple_to_para {
             } else {
               if let Some(para_first) = paras.get(0) {
                 if _position == 0 {
-                  name = para_first.name().clone();
+                  _name = para_first.name().clone();
                   _position = 1;
                 } else {
-                  rets.push(Para::new(&name, para_first.name()));
+                  rets.push(Para::new(&_name, para_first.name()));
                   _position = 0;
                 }
               }
