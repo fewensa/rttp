@@ -24,7 +24,6 @@ jobs:
         - cargo package
         - cd ../rttp
         - cargo test --features "all" --release
-        - cargo package
     - stage: publish
       name: Publish rttp to crates.io
       script:
