@@ -1,0 +1,35 @@
+language: rust
+
+rust:
+  - stable
+
+stages:
+  - usually
+  - name: publish
+    if: tag IS present
+
+jobs:
+  include:
+    - stage: usually
+      name: test
+      script:
+        - apt update -y
+        - apt install -y libssl-dev pkg-config
+        - cd rttp_client
+        - cargo test --release
+        - cargo test --features "tls-native" --release
+        - cargo test --features "tls-rustls" --release
+        - cargo test --features "async" --release
+        - cargo test --features "tls-native async" --release
+        - cargo package
+        - cd ../rttp
+        - cargo test --features "all" --release
+        - cargo package
+    - stage: publish
+      name: Publish rttp to crates.io
+      script:
+        - cargo login $CRATES_TOKEN
+        - cd rttp_client
+        - cargo publish
+        - cd ../rttp
+        - cargo publish
