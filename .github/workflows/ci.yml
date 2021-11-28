@@ -10,15 +10,14 @@ jobs:
   build:
     name: Build and Test
     runs-on: ubuntu-latest
-    container:
-      image: rust:1
     steps:
       - uses: actions/checkout@v2
 
-      - name: Specify toolchain
-        run: |
-          rustup default stable
-          rustup component add clippy
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          default: true
 
       - name: Lint
         run: cargo clippy --all --locked -- -D warnings
