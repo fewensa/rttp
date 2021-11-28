@@ -105,8 +105,8 @@ impl<'a> Connection<'a> {
   pub fn block_tcp_stream(&self, addr: &String) -> error::Result<std::net::TcpStream> {
     let config = self.config();
 
-    let server: Vec<_> = addr.to_socket_addrs().map_err(error::request)?.collect();
-    println!("{:?}", server);
+    // let server: Vec<_> = addr.to_socket_addrs().map_err(error::request)?.collect();
+    // println!("{:?}", server);
     let stream = std::net::TcpStream::connect(addr).map_err(error::request)?;
     stream
       .set_read_timeout(Some(time::Duration::from_millis(config.read_timeout())))
@@ -114,7 +114,6 @@ impl<'a> Connection<'a> {
     stream
       .set_write_timeout(Some(time::Duration::from_millis(config.write_timeout())))
       .map_err(error::request)?;
-    println!("Connected to the server!");
     Ok(stream)
   }
 
@@ -125,25 +124,25 @@ impl<'a> Connection<'a> {
     let header = self.header();
     let body = self.body();
 
-    println!("{}", header);
-    if let Some(body) = body {
-      println!("\n\n");
-      let content_type = self
-        .content_type()
-        .map(|v| v.to_lowercase())
-        .unwrap_or("".to_string());
-      let mut raw_types = vec![
-        "application/x-www-form-urlencoded",
-        "application/json",
-        "text/plain",
-      ];
-      raw_types.retain(|item| content_type.contains(item));
-      if raw_types.is_empty() {
-      } else {
-        let body_text = String::from_utf8(body.bytes().to_vec()).map_err(error::request)?;
-        println!("{}", body_text);
-      }
-    }
+    // println!("{}", header);
+    // if let Some(body) = body {
+    //   println!("\n\n");
+    //   let content_type = self
+    //     .content_type()
+    //     .map(|v| v.to_lowercase())
+    //     .unwrap_or("".to_string());
+    //   let mut raw_types = vec![
+    //     "application/x-www-form-urlencoded",
+    //     "application/json",
+    //     "text/plain",
+    //   ];
+    //   raw_types.retain(|item| content_type.contains(item));
+    //   if raw_types.is_empty() {
+    //   } else {
+    //     let body_text = String::from_utf8(body.bytes().to_vec()).map_err(error::request)?;
+    //     println!("{}", body_text);
+    //   }
+    // }
 
     stream.write(header.as_bytes()).map_err(error::request)?;
     if let Some(body) = body {
@@ -165,7 +164,6 @@ impl<'a> Connection<'a> {
   pub fn block_send(&self, url: &Url) -> error::Result<Vec<u8>> {
     let addr = self.addr(url)?;
     let mut stream = self.block_tcp_stream(&addr)?;
-    //    self.call_tcp_stream_http(stream)
     self.block_send_with_stream(url, &mut stream)
   }
 
@@ -203,18 +201,15 @@ impl<'a> Connection<'a> {
   where
     S: io::Read + io::Write,
   {
+    let config = self.config();
     let connector = native_tls::TlsConnector::builder()
+      .danger_accept_invalid_certs(!config.verify_ssl_cert())
+      .danger_accept_invalid_hostnames(!config.verify_ssl_host_name())
       .build()
       .map_err(error::request)?;
-    let mut ssl_stream;
-    //  if self.verify {
-    ssl_stream = connector
+    let mut ssl_stream = connector
       .connect(&self.host(url)?[..], stream)
-      .map_err(|_| error::bad_ssl("Native tls error."))?;
-    //    ssl_stream = connector.connect(&self.host(url)?[..], stream).map_err(error::request)?;
-    //  } else {
-    //    ssl_stream = connector.danger_connect_without_providing_domain_for_certificate_verification_and_server_name_indication(stream).map_err(error::request)?;
-    //  }
+      .map_err(|e| error::bad_ssl(format!("Native tls error: {:?}", e)))?;
 
     self.block_write_stream(&mut ssl_stream)?;
     self.block_read_stream(url, &mut ssl_stream)

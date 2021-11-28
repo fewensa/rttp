@@ -27,18 +27,9 @@ impl<'a> BlockConnection<'a> {
     }
   }
 
-  pub fn block_call(mut self) -> error::Result<Response> {
+  pub fn call(mut self) -> error::Result<Response> {
     let url = self.conn.url().map_err(error::builder)?;
-
-    //    let header = self.request.header();
-    //    let body = self.request.body();
-    //    println!("{}", header);
-    //    if let Some(b) = body {
-    //      println!("{}", b.string()?);
-    //    }
-
     let proxy = self.conn.proxy();
-
     let binary = if let Some(proxy) = proxy {
       self.call_with_proxy(&url, proxy)?
     } else {

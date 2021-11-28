@@ -201,7 +201,7 @@ impl HttpClient {
       return Err(error::connection_closed());
     }
     let request = RawRequest::block_new(&mut self.request)?;
-    BlockConnection::new(request).block_call()
+    BlockConnection::new(request).call()
   }
 
   /// Async request emit
