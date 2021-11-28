@@ -20,13 +20,6 @@ jobs:
           rustup default stable
           rustup component add clippy
 
-      - name: Cache target
-        uses: actions/cache@v2
-        with:
-          path: target
-          key: ${{ runner.os }}-target-${{ hashFiles('Cargo.toml') }}
-          restore-keys: ${{ runner.os }}-target-
-
       - name: Lint
         run: cargo clippy --all --locked -- -D warnings
 
