@@ -3,9 +3,9 @@ use mime::Mime;
 use crate::error;
 use crate::request::{RawRequest, Request};
 
-pub static HYPHENS: &'static str = "---------------------------";
-pub static DISPOSITION_PREFIX: &'static str = "--";
-pub static DISPOSITION_END: &'static str = "\r\n";
+pub static HYPHENS: &str = "---------------------------";
+pub static DISPOSITION_PREFIX: &str = "--";
+pub static DISPOSITION_END: &str = "\r\n";
 
 #[derive(Debug)]
 pub struct RawBuilder<'a> {
