@@ -1,4 +1,4 @@
-#[cfg(feature = "async")]
+#[cfg(feature = "async-std")]
 use crate::connection::AsyncConnection;
 use crate::connection::BlockConnection;
 use crate::request::{RawRequest, Request};
@@ -207,7 +207,7 @@ impl HttpClient {
   ///
   /// ```rust
   /// # use rttp_client::HttpClient;
-  /// # #[cfg(feature = "async")]
+  /// # #[cfg(feature = "async-std")]
   /// # async fn test_async() {
   /// HttpClient::new()
   ///   .url("http://httpbin.org.get")
@@ -215,7 +215,7 @@ impl HttpClient {
   ///   .await;
   /// # }
   /// ```
-  #[cfg(feature = "async")]
+  #[cfg(feature = "async-std")]
   pub async fn rasync(&mut self) -> error::Result<Response> {
     if self.request.closed() {
       return Err(error::connection_closed());

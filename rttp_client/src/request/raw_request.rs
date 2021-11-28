@@ -16,7 +16,7 @@ impl<'a> RawRequest<'a> {
     RawBuilder::new(request).raw_request_block()
   }
 
-  #[cfg(feature = "async")]
+  #[cfg(feature = "async-std")]
   pub async fn async_new(request: &'a mut Request) -> error::Result<RawRequest<'a>> {
     RawBuilder::new(request).raw_request_async_std().await
   }

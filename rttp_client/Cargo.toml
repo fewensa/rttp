@@ -33,15 +33,31 @@ flate2   = "1.0"
 httpdate = "0.3"
 
 
-native-tls   = { optional = true, version = "0.2" }
-rustls       = { optional = true, version = "0.16" }
-webpki-roots = { optional = true, version = "0.18" }
-webpki       = { optional = true, version = "0.21" }
+native-tls       = { optional = true, version = "0.2" }
+async-native-tls = { optional = true, version = "0.4" }
+
+rustls           = { optional = true, version = "0.16" }
+webpki-roots     = { optional = true, version = "0.18" }
+webpki           = { optional = true, version = "0.21" }
+async-rustls     = { optional = true, version = "0.2" }
+
 async-std    = { optional = true, version = "1", features = ["std"] }
+tokio        = { optional = true, version = "1", features = ["io-std"] }
 
 [features]
 default = []
 
-tls-native = ["native-tls"]
-tls-rustls = ["rustls", "webpki", "webpki-roots"]
-async = ["async-std"]
+async-tokio = ["tokio"]
+
+tls-native  = ["native-tls", "async-native-tls"]
+tls-rustls  = ["rustls", "webpki", "webpki-roots", "async-rustls"]
+
+##
+# warning: /data/rttp/rttp_client/Cargo.toml: Found `feature = ...` in `target.'cfg(...)'.dependencies`.
+#  This key is not supported for selecting dependencies and will not work as expected.
+#  Use the [features] section instead: https://doc.rust-lang.org/cargo/reference/features.html
+##
+
+#[target.'cfg(any(feature = "async-std", feature = "async-tokio"))'.features]
+#tls-native  = ["async-native-tls"]
+#tls-rustls  = ["async-rustls", "webpki", "webpki-roots"]

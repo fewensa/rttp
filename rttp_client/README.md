@@ -199,7 +199,7 @@ assert_ne!("bing.com", response.host());
 
 ```rust
 # use rttp_client::HttpClient;
-# #[cfg(feature = "async")]
+# #[cfg(feature = "async-std")]
 let response = HttpClient::new().post()
   .url("http://httpbin.org/post")
   .rasync()

@@ -19,7 +19,7 @@ edition = "2018"
 
 [dependencies]
 
-rttp_client = { version = "=0.1.0", optional = true, path = "../rttp_client", features = [ "tls-native", "async" ] }
+rttp_client = { optional = true, path = "../rttp_client", features = [ "tls-native", "async-std" ] }
 
 [dev-dependencies]
 

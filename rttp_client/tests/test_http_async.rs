@@ -1,15 +1,15 @@
-#[cfg(feature = "async")]
+#[cfg(feature = "async-std")]
 use async_std::task;
 
-use rttp_client::HttpClient;
 use rttp_client::types::Proxy;
+use rttp_client::HttpClient;
 
 fn client() -> HttpClient {
   HttpClient::new()
 }
 
 #[test]
-#[cfg(feature = "async")]
+#[cfg(feature = "async-std")]
 fn test_async_http() {
   task::block_on(async {
     let response = client()
@@ -26,7 +26,10 @@ fn test_async_http() {
 }
 
 #[test]
-#[cfg(all(feature = "async", any(feature = "tls-rustls", feature = "tls-native")))]
+#[cfg(all(
+  feature = "async-std",
+  any(feature = "tls-rustls", feature = "tls-native")
+))]
 fn test_async_https() {
   task::block_on(async {
     let response = client()
@@ -43,7 +46,7 @@ fn test_async_https() {
 
 #[test]
 #[ignore]
-#[cfg(feature = "async")]
+#[cfg(feature = "async-std")]
 fn test_async_proxy_socks5() {
   task::block_on(async {
     let response = client()
@@ -58,4 +61,3 @@ fn test_async_proxy_socks5() {
     println!("{}", response);
   });
 }
-

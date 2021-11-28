@@ -6,9 +6,9 @@ use crate::response::ResponseBody;
 use crate::types::{Cookie, Header, IntoHeader, RoUrl, ToUrl};
 use url::Url;
 
-const CR: u8 = b'\r';
-const LF: u8 = b'\n';
-const CRLF: &'static str = "\r\n";
+static CR: u8 = b'\r';
+static LF: u8 = b'\n';
+static CRLF: &str = "\r\n";
 
 #[derive(Clone)]
 pub struct RawResponse {

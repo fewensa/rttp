@@ -56,7 +56,7 @@ impl<'a> RawBuilder<'a> {
     })
   }
 
-  #[cfg(feature = "async")]
+  #[cfg(feature = "async-std")]
   pub async fn raw_request_async_std(mut self) -> error::Result<RawRequest<'a>> {
     let mut rourl = self.request.url().clone().ok_or(error::none_url())?;
     if rourl.traditional_get().is_none() {
