@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    container:
+      image: rust:1
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Specify toolchain
+        run: |
+          rustup default stable
+          rustup component add clippy
+
+      - name: Cache target
+        uses: actions/cache@v2
+        with:
+          path: target
+          key: ${{ runner.os }}-target-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-target-
+
+      - name: Lint
+        run: cargo clippy --all --locked -- -D warnings
+
+      - name: Run tests
+        run: cargo test
