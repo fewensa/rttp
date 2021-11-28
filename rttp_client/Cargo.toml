@@ -18,25 +18,26 @@ readme = "README.md"
 edition = "2018"
 
 [dependencies]
-url = "2"
+tracing = "0.1"
+
+url              = "2"
 percent-encoding = "2"
 
-mime = "0.3"
+mime       = "0.3"
 mime_guess = "2"
 
-rand = "0.7"
-socks = "0.3"
-base64 = "0.11"
-flate2 = "1.0"
+rand     = "0.7"
+socks    = "0.3"
+base64   = "0.11"
+flate2   = "1.0"
 httpdate = "0.3"
 
 
-native-tls = { version = "0.2", optional = true }
-rustls = { version = "0.16", optional = true }
-webpki-roots = { version = "0.18", optional = true }
-webpki = { version = "0.21", optional = true }
-
-async-std = { version = "1", optional = true }
+native-tls   = { optional = true, version = "0.2" }
+rustls       = { optional = true, version = "0.16" }
+webpki-roots = { optional = true, version = "0.18" }
+webpki       = { optional = true, version = "0.21" }
+async-std    = { optional = true, version = "1", features = ["std"] }
 
 [features]
 default = []

@@ -1,15 +1,16 @@
-use std::{io, time};
+use std::net::ToSocketAddrs;
 use std::sync::Arc;
+use std::{io, time};
 
 use url::Url;
 
-use crate::{Config, error};
 use crate::connection::connection_reader::ConnectionReader;
 use crate::request::{RawRequest, RequestBody};
 use crate::types::{Proxy, RoUrl, ToUrl};
+use crate::{error, Config};
 
 pub struct Connection<'a> {
-  request: RawRequest<'a>
+  request: RawRequest<'a>,
 }
 
 impl<'a> Connection<'a> {
@@ -30,6 +31,9 @@ impl<'a> Connection<'a> {
   }
   pub fn header(&self) -> &String {
     self.request.header()
+  }
+  pub fn content_type(&self) -> Option<String> {
+    self.request.content_type()
   }
   pub fn body(&self) -> &Option<RequestBody> {
     self.request.body()
@@ -57,11 +61,18 @@ impl<'a> Connection<'a> {
   }
 
   pub fn host(&self, url: &Url) -> error::Result<String> {
-    Ok(url.host_str().ok_or(error::url_bad_host(url.clone()))?.to_string())
+    Ok(
+      url
+        .host_str()
+        .ok_or(error::url_bad_host(url.clone()))?
+        .to_string(),
+    )
   }
 
   pub fn port(&self, url: &Url) -> error::Result<u16> {
-    url.port_or_known_default().ok_or(error::url_bad_host(url.clone()))
+    url
+      .port_or_known_default()
+      .ok_or(error::url_bad_host(url.clone()))
   }
 
   pub fn proxy_header(&self, url: &Url, proxy: &Proxy) -> error::Result<String> {
@@ -93,15 +104,47 @@ impl<'a> Connection<'a> {
 impl<'a> Connection<'a> {
   pub fn block_tcp_stream(&self, addr: &String) -> error::Result<std::net::TcpStream> {
     let config = self.config();
+
+    let server: Vec<_> = addr.to_socket_addrs().map_err(error::request)?.collect();
+    println!("{:?}", server);
     let stream = std::net::TcpStream::connect(addr).map_err(error::request)?;
-    stream.set_read_timeout(Some(time::Duration::from_millis(config.read_timeout()))).map_err(error::request)?;
-    stream.set_write_timeout(Some(time::Duration::from_millis(config.write_timeout()))).map_err(error::request)?;
+    stream
+      .set_read_timeout(Some(time::Duration::from_millis(config.read_timeout())))
+      .map_err(error::request)?;
+    stream
+      .set_write_timeout(Some(time::Duration::from_millis(config.write_timeout())))
+      .map_err(error::request)?;
+    println!("Connected to the server!");
     Ok(stream)
   }
 
-  pub fn block_write_stream<S>(&self, stream: &mut S) -> error::Result<()> where S: io::Write, {
+  pub fn block_write_stream<S>(&self, stream: &mut S) -> error::Result<()>
+  where
+    S: io::Write,
+  {
     let header = self.header();
     let body = self.body();
+
+    println!("{}", header);
+    if let Some(body) = body {
+      println!("\n\n");
+      let content_type = self
+        .content_type()
+        .map(|v| v.to_lowercase())
+        .unwrap_or("".to_string());
+      let mut raw_types = vec![
+        "application/x-www-form-urlencoded",
+        "application/json",
+        "text/plain",
+      ];
+      raw_types.retain(|item| content_type.contains(item));
+      if raw_types.is_empty() {
+      } else {
+        let body_text = String::from_utf8(body.bytes().to_vec()).map_err(error::request)?;
+        println!("{}", body_text);
+      }
+    }
+
     stream.write(header.as_bytes()).map_err(error::request)?;
     if let Some(body) = body {
       stream.write(body.bytes()).map_err(error::request)?;
@@ -111,7 +154,10 @@ impl<'a> Connection<'a> {
     Ok(())
   }
 
-  pub fn block_read_stream<S>(&self, url: &Url, stream: &mut S) -> error::Result<Vec<u8>> where S: io::Read, {
+  pub fn block_read_stream<S>(&self, url: &Url, stream: &mut S) -> error::Result<Vec<u8>>
+  where
+    S: io::Read,
+  {
     let mut reader = ConnectionReader::new(url, stream);
     reader.binary()
   }
@@ -119,24 +165,24 @@ impl<'a> Connection<'a> {
   pub fn block_send(&self, url: &Url) -> error::Result<Vec<u8>> {
     let addr = self.addr(url)?;
     let mut stream = self.block_tcp_stream(&addr)?;
-//    self.call_tcp_stream_http(stream)
+    //    self.call_tcp_stream_http(stream)
     self.block_send_with_stream(url, &mut stream)
   }
 
   pub fn block_send_with_stream<S>(&self, url: &Url, stream: &mut S) -> error::Result<Vec<u8>>
-    where
-      S: io::Read + io::Write,
+  where
+    S: io::Read + io::Write,
   {
     match url.scheme() {
       "http" => self.block_send_http(url, stream),
       "https" => self.block_send_https(url, stream),
-      _ => return Err(error::url_bad_scheme(url.clone()))
+      _ => return Err(error::url_bad_scheme(url.clone())),
     }
   }
 
   pub fn block_send_http<S>(&self, url: &Url, stream: &mut S) -> error::Result<Vec<u8>>
-    where
-      S: io::Read + io::Write,
+  where
+    S: io::Read + io::Write,
   {
     self.block_write_stream(stream)?;
     self.block_read_stream(url, stream)
@@ -144,26 +190,31 @@ impl<'a> Connection<'a> {
 
   #[cfg(not(any(feature = "tls-native", feature = "tls-rustls")))]
   pub fn block_send_https<S>(&self, url: &Url, stream: &mut S) -> error::Result<Vec<u8>>
-    where
-      S: io::Read + io::Write,
+  where
+    S: io::Read + io::Write,
   {
-    return Err(error::no_request_features("Not have any tls features, Can't request a https url"));
+    return Err(error::no_request_features(
+      "Not have any tls features, Can't request a https url",
+    ));
   }
 
   #[cfg(feature = "tls-native")]
   pub fn block_send_https<S>(&self, url: &Url, stream: &mut S) -> error::Result<Vec<u8>>
-    where
-      S: io::Read + io::Write,
+  where
+    S: io::Read + io::Write,
   {
-    let connector = native_tls::TlsConnector::builder().build().map_err(error::request)?;
+    let connector = native_tls::TlsConnector::builder()
+      .build()
+      .map_err(error::request)?;
     let mut ssl_stream;
-//  if self.verify {
-    ssl_stream = connector.connect(&self.host(url)?[..], stream)
+    //  if self.verify {
+    ssl_stream = connector
+      .connect(&self.host(url)?[..], stream)
       .map_err(|_| error::bad_ssl("Native tls error."))?;
-//    ssl_stream = connector.connect(&self.host(url)?[..], stream).map_err(error::request)?;
-//  } else {
-//    ssl_stream = connector.danger_connect_without_providing_domain_for_certificate_verification_and_server_name_indication(stream).map_err(error::request)?;
-//  }
+    //    ssl_stream = connector.connect(&self.host(url)?[..], stream).map_err(error::request)?;
+    //  } else {
+    //    ssl_stream = connector.danger_connect_without_providing_domain_for_certificate_verification_and_server_name_indication(stream).map_err(error::request)?;
+    //  }
 
     self.block_write_stream(&mut ssl_stream)?;
     self.block_read_stream(url, &mut ssl_stream)
@@ -171,8 +222,8 @@ impl<'a> Connection<'a> {
 
   #[cfg(feature = "tls-rustls")]
   pub fn block_send_https<S>(&self, url: &Url, stream: &mut S) -> error::Result<Vec<u8>>
-    where
-      S: io::Read + io::Write,
+  where
+    S: io::Read + io::Write,
   {
     let mut config = rustls::ClientConfig::new();
     config
@@ -188,6 +239,3 @@ impl<'a> Connection<'a> {
     self.block_read_stream(url, &mut tls)
   }
 }
-
-
-

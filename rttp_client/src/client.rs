@@ -1,10 +1,10 @@
-use crate::{Config, error};
 #[cfg(feature = "async")]
 use crate::connection::AsyncConnection;
 use crate::connection::BlockConnection;
 use crate::request::{RawRequest, Request};
 use crate::response::Response;
 use crate::types::{Header, IntoHeader, IntoPara, Proxy, ToFormData, ToRoUrl};
+use crate::{error, Config};
 
 #[derive(Debug)]
 pub struct HttpClient {
@@ -14,13 +14,12 @@ pub struct HttpClient {
 impl Default for HttpClient {
   fn default() -> Self {
     Self {
-      request: Request::new()
+      request: Request::new(),
     }
   }
 }
 
 impl HttpClient {
-
   /// Create a `HttpClient` object.
   /// # Examples
   /// ```rust
@@ -32,14 +31,11 @@ impl HttpClient {
   }
 
   pub(crate) fn with_request(request: Request) -> Self {
-    Self {
-      request
-    }
+    Self { request }
   }
 }
 
 impl HttpClient {
-
   /// Set count of this request auto redirect times.
   pub(crate) fn count(&mut self, count: u32) -> &mut Self {
     self.request.count_set(count);
@@ -130,11 +126,12 @@ impl HttpClient {
     unimplemented!()
   }
 
- ///  Add request header
+  ///  Add request header
   pub fn header<P: IntoHeader>(&mut self, header: P) -> &mut Self {
     let mut headers = self.request.headers_mut();
     for h in header.into_headers() {
-      let mut exi = headers.iter_mut()
+      let mut exi = headers
+        .iter_mut()
         .find(|d| d.name().eq_ignore_ascii_case(h.name()));
 
       if let Some(eh) = exi {

@@ -21,7 +21,10 @@ impl<'a> ConnectionReader<'a> {
 
   pub fn binary(&mut self) -> error::Result<Vec<u8>> {
     let mut binary: Vec<u8> = Vec::new();
-    let _ = self.reader.read_to_end(&mut binary).map_err(error::request)?;
+    let _ = self
+      .reader
+      .read_to_end(&mut binary)
+      .map_err(error::request)?;
     Ok(binary)
   }
 

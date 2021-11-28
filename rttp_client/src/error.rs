@@ -25,8 +25,8 @@ struct Inner {
 
 impl Error {
   pub(crate) fn new<E>(kind: Kind, source: Option<E>) -> Error
-    where
-      E: Into<BoxError>,
+  where
+    E: Into<BoxError>,
   {
     Error {
       inner: Box::new(Inner {
@@ -94,7 +94,7 @@ impl Error {
 
 impl fmt::Debug for Error {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    let mut builder = f.debug_struct("rhttp_client::Error");
+    let mut builder = f.debug_struct("rttp_client::Error");
 
     builder.field("kind", &self.inner.kind);
 
@@ -200,7 +200,7 @@ pub(crate) fn request<E: Into<BoxError>>(e: E) -> Error {
   Error::new(Kind::Request, Some(e))
 }
 
-pub(crate) fn response<E: Into<BoxError>>(e: E) -> Error{
+pub(crate) fn response<E: Into<BoxError>>(e: E) -> Error {
   Error::new(Kind::Response, Some(e))
 }
 
@@ -232,23 +232,23 @@ pub(crate) fn none_url() -> Error {
   Error::new(Kind::Builder, Some("None request url"))
 }
 
-pub(crate) fn builder_with_message<S: AsRef<str>>(message: S) -> Error {
+pub(crate) fn builder_with_message(message: impl AsRef<str>) -> Error {
   Error::new(Kind::Builder, Some(message.as_ref()))
 }
 
-pub(crate) fn bad_proxy<S: AsRef<str>>(message: S) -> Error {
+pub(crate) fn bad_proxy(message: impl AsRef<str>) -> Error {
   Error::new(Kind::Request, Some(message.as_ref()))
 }
 
-pub(crate) fn bad_response<S: AsRef<str>>(message: S) -> Error {
+pub(crate) fn bad_response(message: impl AsRef<str>) -> Error {
   Error::new(Kind::Response, Some(message.as_ref()))
 }
 
-pub(crate) fn bad_cookie<S: AsRef<str>>(message: S) -> Error {
+pub(crate) fn bad_cookie(message: impl AsRef<str>) -> Error {
   Error::new(Kind::Decode, Some(message.as_ref()))
 }
 
-pub(crate) fn no_request_features<S: AsRef<str>>(message: S) -> Error {
+pub(crate) fn no_request_features(message: impl AsRef<str>) -> Error {
   Error::new(Kind::Request, Some(message.as_ref()))
 }
 
@@ -256,15 +256,9 @@ pub(crate) fn connection_closed() -> Error {
   Error::new(Kind::Request, Some("The connection is closed."))
 }
 
-pub(crate) fn bad_ssl<S: AsRef<str>>(message: S) -> Error {
+pub(crate) fn bad_ssl(message: impl AsRef<str>) -> Error {
   Error::new(Kind::Request, Some(message.as_ref()))
 }
-
-//if_wasm! {
-//    pub(crate) fn wasm(js_val: wasm_bindgen::JsValue) -> BoxError {
-//        format!("{:?}", js_val).into()
-//    }
-//}
 
 // io::Error helpers
 
@@ -308,4 +302,3 @@ impl fmt::Display for BlockingClientInAsyncContext {
 }
 
 impl StdError for BlockingClientInAsyncContext {}
-

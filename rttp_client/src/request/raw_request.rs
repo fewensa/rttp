@@ -1,6 +1,6 @@
 use crate::error;
+use crate::request::builder::RawBuilder;
 use crate::request::{Request, RequestBody};
-use crate::request::raw_builder::RawBuilder;
 use crate::types::RoUrl;
 
 #[derive(Debug)]
@@ -13,20 +13,35 @@ pub struct RawRequest<'a> {
 
 impl<'a> RawRequest<'a> {
   pub fn block_new(request: &'a mut Request) -> error::Result<RawRequest<'a>> {
-    RawBuilder::new(request).block_raw_request()
+    RawBuilder::new(request).raw_request_block()
   }
 
   #[cfg(feature = "async")]
   pub async fn async_new(request: &'a mut Request) -> error::Result<RawRequest<'a>> {
-    RawBuilder::new(request).async_raw_request().await
+    RawBuilder::new(request).raw_request_async_std().await
   }
 
-  pub fn origin(&self) -> &Request { &self.origin }
-  pub fn url(&self) -> &RoUrl { &self.url }
-  pub fn header(&self) -> &String { &self.header }
-  pub fn body(&self) -> &Option<RequestBody> { &self.body }
+  pub fn origin(&self) -> &Request {
+    &self.origin
+  }
 
-  pub(crate) fn origin_mut(&mut self) -> &mut Request { &mut self.origin }
+  pub fn url(&self) -> &RoUrl {
+    &self.url
+  }
+
+  pub fn header(&self) -> &String {
+    &self.header
+  }
+
+  pub fn body(&self) -> &Option<RequestBody> {
+    &self.body
+  }
+
+  pub fn content_type(&self) -> Option<String> {
+    self.origin.header("content-type")
+  }
+
+  pub(crate) fn origin_mut(&mut self) -> &mut Request {
+    &mut self.origin
+  }
 }
-
-

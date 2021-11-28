@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use rttp_client::{Config, HttpClient};
 use rttp_client::types::{Para, Proxy, RoUrl};
+use rttp_client::{Config, HttpClient};
 
 fn client() -> HttpClient {
   HttpClient::new()
@@ -9,12 +9,12 @@ fn client() -> HttpClient {
 
 #[test]
 fn test_http() {
-  let response = client()
-    .url("http://httpbin.org/get")
-    .emit();
+  // let response = client().url("http://httpbin.org/get").emit();
+  let response = client().url("http://debian:1234/get").emit();
+  println!("{:?}", response);
   assert!(response.is_ok());
   let response = response.unwrap();
-  assert_eq!("httpbin.org", response.host());
+  assert_eq!("debian", response.host());
   println!("{}", response);
 }
 
@@ -69,7 +69,6 @@ fn test_upload() {
   println!("{}", response);
 }
 
-
 #[test]
 fn test_raw_json() {
   client()
@@ -113,7 +112,11 @@ fn test_https() {
 fn test_http_with_url() {
   client()
     .method("get")
-    .url(RoUrl::with("https://httpbin.org").path("/get").para(("name", "Chico")))
+    .url(
+      RoUrl::with("https://httpbin.org")
+        .path("/get")
+        .para(("name", "Chico")),
+    )
     .emit()
     .expect("REQUEST FAIL");
 }
@@ -135,12 +138,12 @@ fn test_with_proxy_http() {
 fn test_with_proxy_socks5() {
   let response = client()
     .get()
-    .url("http://google.com")
-    .proxy(Proxy::socks5("127.0.0.1", 1080))
+    .url("http://httpbin.org/get")
+    .proxy(Proxy::socks5("127.0.0.1", 2801))
     .emit();
   assert!(response.is_ok());
   let response = response.unwrap();
-  assert_eq!("google.com", response.host());
+  assert_eq!("httpbin.org", response.host());
   println!("{}", response);
 }
 
