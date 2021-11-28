@@ -21,6 +21,7 @@ pub struct Request {
   proxy: Option<Proxy>,
 }
 
+#[allow(dead_code)]
 impl Request {
   pub fn new() -> Self {
     Self {

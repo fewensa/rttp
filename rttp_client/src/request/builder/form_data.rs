@@ -21,6 +21,7 @@ impl Disposition {
     Self { boundary }
   }
 
+  #[allow(dead_code)]
   pub fn boundary(&self) -> &String {
     &self.boundary
   }

@@ -103,7 +103,7 @@ impl<'a> RawBuilder<'a> {
 
   fn build_body_with_form_data_block(&mut self) -> error::Result<Option<RequestBody>> {
     let fdw = self.build_body_with_form_data_sync_common()?;
-    let mut disposition = fdw.disposition;
+    let disposition = fdw.disposition;
     let mut buffer = fdw.buffer;
 
     let traditional = self.request.traditional();

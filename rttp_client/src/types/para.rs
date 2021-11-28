@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use crate::types::FormData;
-use crate::types::ParaType::FORM;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum ParaType {
@@ -14,7 +13,7 @@ pub struct Para {
   name: String,
   value: Option<String>,
   type_: ParaType,
-  array: bool
+  array: bool,
 }
 
 pub trait IntoPara {
@@ -24,36 +23,58 @@ pub trait IntoPara {
 }
 
 impl Para {
-  pub(crate) fn with_url<N: AsRef<str>, V: AsRef<str>>(name: N, value: V) -> Self {
+  pub fn with_url(name: impl AsRef<str>, value: impl AsRef<str>) -> Self {
     Self {
       name: name.as_ref().into(),
       value: Some(value.as_ref().into()),
       type_: ParaType::URL,
-      array: false
+      array: false,
     }
   }
 
-  pub fn new<N: AsRef<str>, V: AsRef<str>>(name: N, value: V) -> Self {
+  pub fn with_form(name: impl AsRef<str>, value: impl AsRef<str>) -> Self {
     Self {
       name: name.as_ref().into(),
       value: Some(value.as_ref().into()),
       type_: ParaType::FORM,
-      array: false
+      array: false,
     }
   }
 
-  pub fn name(&self) -> &String { &self.name }
-  pub fn type_(&self) -> &ParaType { &self.type_ }
-  pub fn value(&self) -> &Option<String> { &self.value }
-  pub fn array(&self) -> bool { self.array }
+  pub fn name(&self) -> &String {
+    &self.name
+  }
+  pub fn type_(&self) -> &ParaType {
+    &self.type_
+  }
+  pub fn value(&self) -> &Option<String> {
+    &self.value
+  }
+  pub fn array(&self) -> bool {
+    self.array
+  }
 
-  pub fn is_url(&self) -> bool { self.type_ == ParaType::URL }
-  pub fn is_form(&self) -> bool { self.type_ == ParaType::FORM }
+  pub fn is_url(&self) -> bool {
+    self.type_ == ParaType::URL
+  }
+  pub fn is_form(&self) -> bool {
+    self.type_ == ParaType::FORM
+  }
 
-  pub(crate) fn name_mut(&mut self) -> &mut String { &mut self.name }
-  pub(crate) fn type_mut(&mut self) -> &mut ParaType { &mut self.type_ }
-  pub(crate) fn value_mut(&mut self) -> &mut Option<String> { &mut self.value }
-  pub(crate) fn array_mut(&mut self) -> &mut bool { &mut self.array }
+  #[allow(dead_code)]
+  pub(crate) fn name_mut(&mut self) -> &mut String {
+    &mut self.name
+  }
+  pub(crate) fn type_mut(&mut self) -> &mut ParaType {
+    &mut self.type_
+  }
+  #[allow(dead_code)]
+  pub(crate) fn value_mut(&mut self) -> &mut Option<String> {
+    &mut self.value
+  }
+  pub(crate) fn array_mut(&mut self) -> &mut bool {
+    &mut self.array
+  }
 }
 
 impl Para {
@@ -74,11 +95,13 @@ impl IntoPara for Para {
 
 impl<'a> IntoPara for &'a str {
   fn into_paras(&self) -> Vec<Para> {
-    self.split("&").collect::<Vec<&str>>()
+    self
+      .split("&")
+      .collect::<Vec<&str>>()
       .iter()
       .map(|part: &&str| {
         let pvs: Vec<&str> = part.split("=").collect::<Vec<&str>>();
-        Para::new(
+        Para::with_form(
           pvs.get(0).map_or("".to_string(), |v| v.to_string()).trim(),
           pvs.get(1).map_or("".to_string(), |v| v.to_string()).trim(),
         )
@@ -99,14 +122,12 @@ impl<K: AsRef<str> + Eq + std::hash::Hash, V: AsRef<str>> IntoPara for HashMap<K
     let mut rets = Vec::with_capacity(self.len());
     for key in self.keys() {
       if let Some(value) = self.get(key) {
-        rets.push(Para::new(key, value))
+        rets.push(Para::with_form(key, value))
       }
     }
     rets
   }
 }
-
-
 
 impl<'a, IU: IntoPara> IntoPara for &'a IU {
   fn into_paras(&self) -> Vec<Para> {
@@ -120,22 +141,10 @@ impl<'a, IU: IntoPara> IntoPara for &'a mut IU {
   }
 }
 
-//impl IntoPara for (&str, &str) {
-//  fn into_paras(self) -> Vec<Para> {
-//    let para = Para::with_form(self.0, self.1);
-//    vec![para]
-//  }
-//}
-
-//impl<T: AsRef<str>> IntoPara for (T, T) {
-//  fn into_paras(self) -> Vec<Para> {
-//    let para = Para::with_form(self.0.as_ref(), self.1.as_ref());
-//    vec![para]
-//  }
-//}
-
 macro_rules! replace_expr {
-  ($_t:tt $sub:ty) => {$sub};
+  ($_t:tt $sub:ty) => {
+    $sub
+  };
 }
 
 macro_rules! tuple_to_para {
@@ -179,7 +188,7 @@ macro_rules! tuple_to_para {
                   _name = para_first.name().clone();
                   _position = 1;
                 } else {
-                  rets.push(Para::new(&_name, para_first.name()));
+                  rets.push(Para::with_form(&_name, para_first.name()));
                   _position = 0;
                 }
               }
@@ -218,5 +227,3 @@ tuple_to_para! { a b c d e f g h i j k l m n o p q r s t u v w }
 tuple_to_para! { a b c d e f g h i j k l m n o p q r s t u v w x }
 tuple_to_para! { a b c d e f g h i j k l m n o p q r s t u v w x y }
 tuple_to_para! { a b c d e f g h i j k l m n o p q r s t u v w x y z }
-
-

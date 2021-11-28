@@ -86,7 +86,7 @@ fn test_raw_form_urlencoded() {
   client()
     .method("post")
     .url("http://httpbin.org/post")
-    .para(Para::new("name", "Chico"))
+    .para(Para::with_form("name", "Chico"))
     .raw("name=Nick&name=Wendy")
     .content_type("application/x-www-form-urlencoded")
     .emit()
@@ -99,7 +99,7 @@ fn test_https() {
   let response = client()
     .get()
     .url("https://bing.com")
-    .para(Para::new("q", "News"))
+    .para(Para::with_form("q", "News"))
     .emit();
   assert!(response.is_ok());
   let response = response.unwrap();

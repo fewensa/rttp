@@ -1,6 +1,10 @@
+#[cfg(feature = "async")]
 use crate::error;
+#[cfg(feature = "async")]
 use crate::request::builder::common::RawBuilder;
+#[cfg(feature = "async")]
 use crate::request::RequestBody;
+#[cfg(feature = "async")]
 use crate::types::{FormDataType, RoUrl};
 
 #[cfg(feature = "async")]

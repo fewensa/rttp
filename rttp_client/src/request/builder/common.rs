@@ -1,11 +1,7 @@
-use std::str::FromStr;
-
 use mime::Mime;
 
 use crate::error;
-use crate::request::builder::form_data::{self, Disposition, FormDataWrap};
-use crate::request::{RawRequest, Request, RequestBody};
-use crate::types::{FormDataType, RoUrl};
+use crate::request::{RawRequest, Request};
 
 pub static HYPHENS: &'static str = "---------------------------";
 pub static DISPOSITION_PREFIX: &'static str = "--";

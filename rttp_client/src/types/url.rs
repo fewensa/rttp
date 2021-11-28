@@ -19,7 +19,7 @@ use crate::types::{IntoPara, Para, ParaType};
 ///   .para("name=value")
 ///   .para("name=value&name=value")
 ///   .para(("name", "value", "name=value&name=value"))
-///   .para(Para::new("name", "value"));
+///   .para(Para::with_form("name", "value"));
 /// ```
 #[derive(Clone, Debug)]
 pub struct RoUrl {
@@ -42,6 +42,7 @@ pub trait ToUrl: Debug {
   fn to_url(&self) -> error::Result<Url>;
 }
 
+#[allow(dead_code)]
 impl RoUrl {
   /// Create a rourl
   /// # Examples
@@ -116,28 +117,6 @@ impl RoUrl {
   }
   pub(crate) fn traditional_get(&self) -> Option<bool> {
     self.traditional.clone()
-  }
-
-  pub(crate) fn url_mut(&mut self) -> &mut String {
-    &mut self.url
-  }
-  pub(crate) fn paths_mut(&mut self) -> &mut Vec<String> {
-    &mut self.paths
-  }
-  pub(crate) fn username_mut(&mut self) -> &mut String {
-    &mut self.username
-  }
-  pub(crate) fn password_mut(&mut self) -> &mut Option<String> {
-    &mut self.password
-  }
-  pub(crate) fn paras_mut(&mut self) -> &mut Vec<Para> {
-    &mut self.paras
-  }
-  pub(crate) fn fragment_mut(&mut self) -> &mut Option<String> {
-    &mut self.fragment
-  }
-  pub(crate) fn traditional_mut(&mut self) -> &mut Option<bool> {
-    &mut self.traditional
   }
 
   /// Set fragment to url

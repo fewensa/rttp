@@ -1,5 +1,5 @@
-use std::path::{Path, PathBuf};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum FormDataType {
@@ -23,6 +23,7 @@ pub struct FormData {
   array: bool,
 }
 
+#[allow(dead_code)]
 impl FormData {
   pub fn with_text<S: AsRef<str>, T: AsRef<str>>(name: S, text: T) -> Self {
     Self {
@@ -38,14 +39,23 @@ impl FormData {
 
   pub fn with_file<S: AsRef<str>, P: AsRef<Path>>(name: S, file: P) -> Self {
     let file = file.as_ref();
-    let filename = file.file_name()
+    let filename = file
+      .file_name()
       .map_or("".to_string(), |v| v.to_string_lossy().to_string());
     Self::with_file_and_name(name, file, filename)
   }
 
-  pub fn with_file_and_name<S: AsRef<str>, N: AsRef<str>, P: AsRef<Path>>(name: S, file: P, filename: N) -> Self {
+  pub fn with_file_and_name<S: AsRef<str>, N: AsRef<str>, P: AsRef<Path>>(
+    name: S,
+    file: P,
+    filename: N,
+  ) -> Self {
     let filename = filename.as_ref();
-    let filename = if filename.is_empty() { None } else { Some(filename.to_string()) };
+    let filename = if filename.is_empty() {
+      None
+    } else {
+      Some(filename.to_string())
+    };
     Self {
       name: name.as_ref().into(),
       text: None,
@@ -69,25 +79,59 @@ impl FormData {
     }
   }
 
-  pub fn name(&self) -> &String { &self.name }
-  pub fn text(&self) -> &Option<String> { &self.text }
-  pub fn file(&self) -> &Option<PathBuf> { &self.file }
-  pub fn filename(&self) -> &Option<String> { &self.filename }
-  pub fn binary(&self) -> &Vec<u8> { &self.binary }
-  pub fn type_(&self) -> &FormDataType { &self.type_ }
-  pub fn array(&self) -> bool { self.array }
+  pub fn name(&self) -> &String {
+    &self.name
+  }
+  pub fn text(&self) -> &Option<String> {
+    &self.text
+  }
+  pub fn file(&self) -> &Option<PathBuf> {
+    &self.file
+  }
+  pub fn filename(&self) -> &Option<String> {
+    &self.filename
+  }
+  pub fn binary(&self) -> &Vec<u8> {
+    &self.binary
+  }
+  pub fn type_(&self) -> &FormDataType {
+    &self.type_
+  }
+  pub fn array(&self) -> bool {
+    self.array
+  }
 
-  pub fn is_text(&self) -> bool { self.type_ == FormDataType::TEXT }
-  pub fn is_file(&self) -> bool { self.type_ == FormDataType::FILE }
-  pub fn is_binary(&self) -> bool { self.type_ == FormDataType::BINARY }
+  pub fn is_text(&self) -> bool {
+    self.type_ == FormDataType::TEXT
+  }
+  pub fn is_file(&self) -> bool {
+    self.type_ == FormDataType::FILE
+  }
+  pub fn is_binary(&self) -> bool {
+    self.type_ == FormDataType::BINARY
+  }
 
-  pub(crate) fn name_mut(&mut self) -> &mut String { &mut self.name }
-  pub(crate) fn text_mut(&mut self) -> &mut Option<String> { &mut self.text }
-  pub(crate) fn file_mut(&mut self) -> &mut Option<PathBuf> { &mut self.file }
-  pub(crate) fn filename_mut(&mut self) -> &mut Option<String> { &mut self.filename }
-  pub(crate) fn binary_mut(&mut self) -> &mut Vec<u8> { &mut self.binary }
-  pub(crate) fn type_mut(&mut self) -> &mut FormDataType { &mut self.type_ }
-  pub(crate) fn array_mut(&mut self) -> &mut bool { &mut self.array }
+  pub(crate) fn name_mut(&mut self) -> &mut String {
+    &mut self.name
+  }
+  pub(crate) fn text_mut(&mut self) -> &mut Option<String> {
+    &mut self.text
+  }
+  pub(crate) fn file_mut(&mut self) -> &mut Option<PathBuf> {
+    &mut self.file
+  }
+  pub(crate) fn filename_mut(&mut self) -> &mut Option<String> {
+    &mut self.filename
+  }
+  pub(crate) fn binary_mut(&mut self) -> &mut Vec<u8> {
+    &mut self.binary
+  }
+  pub(crate) fn type_mut(&mut self) -> &mut FormDataType {
+    &mut self.type_
+  }
+  pub(crate) fn array_mut(&mut self) -> &mut bool {
+    &mut self.array
+  }
 }
 
 impl ToFormData for FormData {
@@ -103,7 +147,9 @@ impl<'a> ToFormData for &'a str {
   /// name=Nick&file=@/path/to/file&file_and_filename=@filename#/path/to/file
   /// ```
   fn to_formdatas(&self) -> Vec<FormData> {
-    self.split("&").collect::<Vec<&str>>()
+    self
+      .split("&")
+      .collect::<Vec<&str>>()
       .iter()
       .map(|part: &&str| {
         let pvs: Vec<&str> = part.split("=").collect::<Vec<&str>>();
@@ -118,11 +164,16 @@ impl<'a> ToFormData for &'a str {
         }
         let hasps: Vec<&str> = (&value[1..]).split("#").collect::<Vec<&str>>();
         let len = hasps.len();
-        let filename = hasps.iter().enumerate().filter(|(ix, _)| ix + 1 < len)
+        let filename = hasps
+          .iter()
+          .enumerate()
+          .filter(|(ix, _)| ix + 1 < len)
           .map(|(_, &v)| v)
           .collect::<Vec<&str>>()
           .join("#");
-        let path = hasps.get(len - 1).map_or("".to_string(), |v| v.trim().to_string());
+        let path = hasps
+          .get(len - 1)
+          .map_or("".to_string(), |v| v.trim().to_string());
         let path = Path::new(&path);
         FormData::with_file_and_name(name, path, filename)
       })
@@ -136,7 +187,6 @@ impl ToFormData for String {
     (&self[..]).to_formdatas()
   }
 }
-
 
 impl<K: AsRef<str> + Eq + std::hash::Hash, V: AsRef<str>> ToFormData for HashMap<K, V> {
   fn to_formdatas(&self) -> Vec<FormData> {
@@ -154,11 +204,16 @@ impl<K: AsRef<str> + Eq + std::hash::Hash, V: AsRef<str>> ToFormData for HashMap
         }
         let hasps: Vec<&str> = (&value[1..]).split("#").collect::<Vec<&str>>();
         let len = hasps.len();
-        let filename = hasps.iter().enumerate().filter(|(ix, _)| ix + 1 < len)
+        let filename = hasps
+          .iter()
+          .enumerate()
+          .filter(|(ix, _)| ix + 1 < len)
           .map(|(_, &v)| v)
           .collect::<Vec<&str>>()
           .join("#");
-        let path = hasps.get(len - 1).map_or("".to_string(), |v| v.trim().to_string());
+        let path = hasps
+          .get(len - 1)
+          .map_or("".to_string(), |v| v.trim().to_string());
         let path = Path::new(&path);
         rets.push(FormData::with_file_and_name(&name, path, filename));
       }
@@ -166,7 +221,6 @@ impl<K: AsRef<str> + Eq + std::hash::Hash, V: AsRef<str>> ToFormData for HashMap
     rets
   }
 }
-
 
 impl<'a, IU: ToFormData> ToFormData for &'a IU {
   fn to_formdatas(&self) -> Vec<FormData> {
@@ -180,11 +234,10 @@ impl<'a, IU: ToFormData> ToFormData for &'a mut IU {
   }
 }
 
-
-
-
 macro_rules! replace_expr {
-  ($_t:tt $sub:ty) => {$sub};
+  ($_t:tt $sub:ty) => {
+    $sub
+  };
 }
 
 macro_rules! tuple_to_formdata {
@@ -259,7 +312,6 @@ macro_rules! tuple_to_formdata {
   };
 }
 
-
 tuple_to_formdata! { a }
 tuple_to_formdata! { a b }
 tuple_to_formdata! { a b c }
@@ -286,4 +338,3 @@ tuple_to_formdata! { a b c d e f g h i j k l m n o p q r s t u v w }
 tuple_to_formdata! { a b c d e f g h i j k l m n o p q r s t u v w x }
 tuple_to_formdata! { a b c d e f g h i j k l m n o p q r s t u v w x y }
 tuple_to_formdata! { a b c d e f g h i j k l m n o p q r s t u v w x y z }
-

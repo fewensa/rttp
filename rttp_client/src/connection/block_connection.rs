@@ -1,7 +1,4 @@
 use std::io::{Read, Write};
-use std::net::TcpStream;
-use std::sync::Arc;
-use std::{io, time};
 
 #[cfg(feature = "tls-native")]
 use native_tls::TlsConnector;

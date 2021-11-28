@@ -171,6 +171,7 @@ impl From<crate::error::Error> for js_sys::Error {
   }
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) enum Kind {
   Builder,
@@ -212,6 +213,7 @@ pub(crate) fn too_many_redirects(url: Url) -> Error {
   Error::new(Kind::Redirect, Some("too many redirects")).with_url(url)
 }
 
+#[allow(dead_code)]
 pub(crate) fn status_code(url: Url, status: StatusCode) -> Error {
   Error::new(Kind::Status(status), None::<Error>).with_url(url)
 }
@@ -256,6 +258,7 @@ pub(crate) fn connection_closed() -> Error {
   Error::new(Kind::Request, Some("The connection is closed."))
 }
 
+#[allow(dead_code)]
 pub(crate) fn bad_ssl(message: impl AsRef<str>) -> Error {
   Error::new(Kind::Request, Some(message.as_ref()))
 }

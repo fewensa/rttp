@@ -1,5 +1,3 @@
-use std::net::ToSocketAddrs;
-use std::sync::Arc;
 use std::{io, time};
 
 use url::Url;
@@ -19,6 +17,7 @@ impl<'a> Connection<'a> {
   }
 }
 
+#[allow(dead_code)]
 impl<'a> Connection<'a> {
   pub fn request(&self) -> &RawRequest {
     &self.request
@@ -187,7 +186,7 @@ impl<'a> Connection<'a> {
   }
 
   #[cfg(not(any(feature = "tls-native", feature = "tls-rustls")))]
-  pub fn block_send_https<S>(&self, url: &Url, stream: &mut S) -> error::Result<Vec<u8>>
+  pub fn block_send_https<S>(&self, _url: &Url, _stream: &mut S) -> error::Result<Vec<u8>>
   where
     S: io::Read + io::Write,
   {
