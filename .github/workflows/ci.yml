@@ -20,7 +20,7 @@ jobs:
           default: true
 
       - name: Lint
-        run: cargo clippy --all --locked -- -D warnings
+        run: cargo clippy --all -- -D warnings
 
       - name: Run tests
         run: cargo test
