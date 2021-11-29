@@ -57,7 +57,11 @@ tls-rustls  = ["rustls", "webpki", "webpki-roots", "async-rustls"]
 #  This key is not supported for selecting dependencies and will not work as expected.
 #  Use the [features] section instead: https://doc.rust-lang.org/cargo/reference/features.html
 ##
-
 #[target.'cfg(any(feature = "async-std", feature = "async-tokio"))'.features]
 #tls-native  = ["async-native-tls"]
 #tls-rustls  = ["async-rustls", "webpki", "webpki-roots"]
+
+## Not good way
+#[target.'cfg(any(feature = "async-std", feature = "async-tokio"))'.dependencies]
+#tls-native = { optional = true, package = "async-native-tls", version = "0.4" }
+#tls-rustls = { optional = true, package = "async-rustls", version = "0.2" }
