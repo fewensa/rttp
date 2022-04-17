@@ -6,6 +6,7 @@ use crate::error;
 use crate::response::Response;
 use crate::types::RoUrl;
 
+#[allow(dead_code)]
 pub struct ConnectionReader<'a> {
   url: &'a Url,
   reader: Box<&'a mut dyn io::Read>,
@@ -21,10 +22,14 @@ impl<'a> ConnectionReader<'a> {
 
   pub fn binary(&mut self) -> error::Result<Vec<u8>> {
     let mut binary: Vec<u8> = Vec::new();
-    let _ = self.reader.read_to_end(&mut binary).map_err(error::request)?;
+    let _ = self
+      .reader
+      .read_to_end(&mut binary)
+      .map_err(error::request)?;
     Ok(binary)
   }
 
+  #[allow(dead_code)]
   pub fn response(&mut self) -> error::Result<Response> {
     Response::new(RoUrl::from(self.url.clone()), self.binary()?)
   }

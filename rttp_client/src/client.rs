@@ -1,10 +1,10 @@
-use crate::{Config, error};
-#[cfg(feature = "async")]
+#[cfg(feature = "async-std")]
 use crate::connection::AsyncConnection;
 use crate::connection::BlockConnection;
 use crate::request::{RawRequest, Request};
 use crate::response::Response;
 use crate::types::{Header, IntoHeader, IntoPara, Proxy, ToFormData, ToRoUrl};
+use crate::{error, Config};
 
 #[derive(Debug)]
 pub struct HttpClient {
@@ -14,13 +14,12 @@ pub struct HttpClient {
 impl Default for HttpClient {
   fn default() -> Self {
     Self {
-      request: Request::new()
+      request: Request::new(),
     }
   }
 }
 
 impl HttpClient {
-
   /// Create a `HttpClient` object.
   /// # Examples
   /// ```rust
@@ -32,14 +31,11 @@ impl HttpClient {
   }
 
   pub(crate) fn with_request(request: Request) -> Self {
-    Self {
-      request
-    }
+    Self { request }
   }
 }
 
 impl HttpClient {
-
   /// Set count of this request auto redirect times.
   pub(crate) fn count(&mut self, count: u32) -> &mut Self {
     self.request.count_set(count);
@@ -108,8 +104,7 @@ impl HttpClient {
 
   /// Add url path
   pub fn path<S: AsRef<str>>(&mut self, path: S) -> &mut Self {
-    let mut paths = self.request.paths_mut();
-    paths.push(path.as_ref().into());
+    self.request.paths_mut().push(path.as_ref().into());
     self
   }
 
@@ -130,14 +125,15 @@ impl HttpClient {
     unimplemented!()
   }
 
- ///  Add request header
+  ///  Add request header
   pub fn header<P: IntoHeader>(&mut self, header: P) -> &mut Self {
-    let mut headers = self.request.headers_mut();
+    let headers = self.request.headers_mut();
     for h in header.into_headers() {
-      let mut exi = headers.iter_mut()
+      let exit = headers
+        .iter_mut()
         .find(|d| d.name().eq_ignore_ascii_case(h.name()));
 
-      if let Some(eh) = exi {
+      if let Some(eh) = exit {
         if h.name().eq_ignore_ascii_case("cookie") {
           let new_cookie_value = format!("{};{}", eh.value(), h.value());
           eh.replace(Header::new("Cookie", new_cookie_value));
@@ -165,16 +161,14 @@ impl HttpClient {
   /// Add request para
   pub fn para<P: IntoPara>(&mut self, para: P) -> &mut Self {
     let paras = para.into_paras();
-    let mut req_paras = self.request.paras_mut();
-    req_paras.extend(paras);
+    self.request.paras_mut().extend(paras);
     self
   }
 
   /// Add request form data. include file
   pub fn form<S: ToFormData>(&mut self, formdata: S) -> &mut Self {
     let formdatas = formdata.to_formdatas();
-    let mut req_formdatas = self.request.formdatas_mut();
-    req_formdatas.extend(formdatas);
+    self.request.formdatas_mut().extend(formdatas);
     self
   }
 
@@ -204,7 +198,7 @@ impl HttpClient {
       return Err(error::connection_closed());
     }
     let request = RawRequest::block_new(&mut self.request)?;
-    BlockConnection::new(request).block_call()
+    BlockConnection::new(request).call()
   }
 
   /// Async request emit
@@ -213,7 +207,7 @@ impl HttpClient {
   ///
   /// ```rust
   /// # use rttp_client::HttpClient;
-  /// # #[cfg(feature = "async")]
+  /// # #[cfg(feature = "async-std")]
   /// # async fn test_async() {
   /// HttpClient::new()
   ///   .url("http://httpbin.org.get")
@@ -221,7 +215,7 @@ impl HttpClient {
   ///   .await;
   /// # }
   /// ```
-  #[cfg(feature = "async")]
+  #[cfg(feature = "async-std")]
   pub async fn rasync(&mut self) -> error::Result<Response> {
     if self.request.closed() {
       return Err(error::connection_closed());

@@ -3,12 +3,12 @@ use std::io::Read;
 
 use crate::error;
 use crate::response::ResponseBody;
-use crate::types::{Header, IntoHeader, Cookie, RoUrl, ToUrl};
+use crate::types::{Cookie, Header, IntoHeader, RoUrl, ToUrl};
 use url::Url;
 
-const CR: u8 = b'\r';
-const LF: u8 = b'\n';
-const CRLF: &'static str = "\r\n";
+static CR: u8 = b'\r';
+static LF: u8 = b'\n';
+static CRLF: &str = "\r\n";
 
 #[derive(Clone)]
 pub struct RawResponse {
@@ -41,6 +41,7 @@ impl RawResponse {
     Ok(response)
   }
 
+  #[allow(dead_code)]
   pub fn binary(&mut self, binary: Vec<u8>) -> &mut Self {
     self.binary = binary;
     self
@@ -70,19 +71,37 @@ impl RawResponse {
     self
   }
 
-
-  pub(crate) fn url_get(&self) -> &Url { &self._url }
-  pub fn binary_get(&self) -> &[u8] { self.binary.as_slice() }
-  pub fn code_get(&self) -> u32 { self.code }
-  pub fn version_get(&self) -> &String { &self.version }
-  pub fn reason_get(&self) -> &String { &self.reason }
-  pub fn headers_get(&self) -> &Vec<Header> { &self.headers }
-  pub fn body_get(&self) -> &ResponseBody { &self.body }
-  pub fn cookies_get(&self) -> &Vec<Cookie> { &self.cookies }
+  pub(crate) fn url_get(&self) -> &Url {
+    &self._url
+  }
+  pub fn binary_get(&self) -> &[u8] {
+    self.binary.as_slice()
+  }
+  pub fn code_get(&self) -> u32 {
+    self.code
+  }
+  pub fn version_get(&self) -> &String {
+    &self.version
+  }
+  pub fn reason_get(&self) -> &String {
+    &self.reason
+  }
+  pub fn headers_get(&self) -> &Vec<Header> {
+    &self.headers
+  }
+  pub fn body_get(&self) -> &ResponseBody {
+    &self.body
+  }
+  pub fn cookies_get(&self) -> &Vec<Cookie> {
+    &self.cookies
+  }
 
   pub fn string(&self) -> error::Result<String> {
     let mut text = String::new();
-    text.push_str(&format!("{} {} {}\r\n", self.version, self.code, self.reason));
+    text.push_str(&format!(
+      "{} {} {}\r\n",
+      self.version, self.code, self.reason
+    ));
     self.headers.iter().for_each(|h| {
       text.push_str(&format!("{}: {}\r\n", h.name(), h.value()));
     });
@@ -91,7 +110,6 @@ impl RawResponse {
     Ok(text)
   }
 }
-
 
 impl fmt::Debug for RawResponse {
   #[inline]
@@ -113,7 +131,6 @@ impl fmt::Display for RawResponse {
   }
 }
 
-
 struct Parser {
   binary: Vec<u8>,
 }
@@ -125,22 +142,23 @@ impl Parser {
 
   pub fn parse(self, response: &mut RawResponse) -> error::Result<()> {
     if self.binary.is_empty() {
-      return Ok(())
+      return Ok(());
     }
     // find \r\n\r\n position
     let mut position: usize = 0;
     for i in 0..self.binary.len() - 1 {
-      if self.binary.get(i) == Some(&CR) &&
-        self.binary.get(i + 1) == Some(&LF) &&
-        self.binary.get(i + 2) == Some(&CR) &&
-        self.binary.get(i + 3) == Some(&LF) {
+      if self.binary.get(i) == Some(&CR)
+        && self.binary.get(i + 1) == Some(&LF)
+        && self.binary.get(i + 2) == Some(&CR)
+        && self.binary.get(i + 3) == Some(&LF)
+      {
         position = i + 3;
         break;
       }
-//      if self.binary[i] == CR && self.binary[i + 1] == LF && self.binary[i + 2] == CR && self.binary[i + 3] == LF {
-//        position = i + 3;
-//        break;
-//      }
+      //      if self.binary[i] == CR && self.binary[i + 1] == LF && self.binary[i + 2] == CR && self.binary[i + 3] == LF {
+      //        position = i + 3;
+      //        break;
+      //      }
     }
     if position == 0 {
       return Err(error::bad_response("No http response"));
@@ -158,37 +176,46 @@ impl Parser {
   }
 
   fn parse_header(&self, response: &mut RawResponse, text: String) -> error::Result<()> {
-
     let parts: Vec<&str> = text.split(CRLF).collect();
-    let status_line = parts.get(0).ok_or(error::bad_response("Response not have status line"))?;
+    let status_line = parts
+      .get(0)
+      .ok_or(error::bad_response("Response not have status line"))?;
     let status_parts: Vec<&str> = status_line.splitn(3, " ").collect();
 
-    let http_version = status_parts.get(0).ok_or(error::bad_response("Response status not have http version"))?;
-    let status_code: u32 = match status_parts.get(1).ok_or(error::bad_response("Response status not have code"))?.parse() {
+    let http_version = status_parts
+      .get(0)
+      .ok_or(error::bad_response("Response status not have http version"))?;
+    let status_code: u32 = match status_parts
+      .get(1)
+      .ok_or(error::bad_response("Response status not have code"))?
+      .parse()
+    {
       Ok(c) => c,
       Err(_) => return Err(error::bad_response("Response status code is not a number")),
     };
     let reason = status_parts.get(2).unwrap_or(&"");
-    response.version(http_version)
+    response
+      .version(http_version)
       .code(status_code)
       .reason(reason);
 
-    let headers = parts.iter().enumerate()
+    let headers = parts
+      .iter()
+      .enumerate()
       .filter(|(ix, _)| *ix > 0)
       .filter(|(_, v)| !v.is_empty())
       .map(|(_, v)| v.into_headers())
       .filter(|hs| !hs.is_empty())
-      .map(|hs| {
-        match hs.get(0) {
-          Some(h) => Some(h.clone()),
-          None => None
-        }
+      .map(|hs| match hs.get(0) {
+        Some(h) => Some(h.clone()),
+        None => None,
       })
       .filter(Option::is_some)
       .map(|h| h.unwrap())
       .collect::<Vec<Header>>();
 
-    let cookies: Vec<Cookie> = headers.iter()
+    let cookies: Vec<Cookie> = headers
+      .iter()
       .filter(|header| header.name().eq_ignore_ascii_case("set-cookie"))
       .map(|header| Cookie::parse(header.value()).ok())
       .filter(|ck| ck.is_some())
@@ -201,9 +228,13 @@ impl Parser {
   }
 
   fn parse_body(&self, response: &mut RawResponse, binary: Vec<u8>) -> error::Result<()> {
-    if binary.is_empty() { return Ok(()); }
+    if binary.is_empty() {
+      return Ok(());
+    }
 
-    let content_encoding = response.headers_get().iter()
+    let content_encoding = response
+      .headers_get()
+      .iter()
       .find(|header| header.name().eq_ignore_ascii_case("Content-Encoding"));
 
     if let Some(header) = content_encoding {
@@ -222,5 +253,3 @@ impl Parser {
     Ok(())
   }
 }
-
-

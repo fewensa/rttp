@@ -1,19 +1,13 @@
-//use std::{collections::HashMap, sync::Mutex};
-//
-//use once_cell::sync::Lazy;
-//
-//static DEFAULT_CONFIG: Lazy<Mutex<Config>> = Lazy::new(|| {
-//  let mut config = ;
-//  Mutex::new(config)
-//});
-
-
 #[derive(Clone, Debug)]
 pub struct Config {
   read_timeout: u64,
   write_timeout: u64,
   auto_redirect: bool,
   max_redirect: u32,
+  #[cfg(feature = "tls-native")]
+  verify_ssl_hostname: bool,
+  #[cfg(feature = "tls-native")]
+  verify_ssl_cert: bool,
 }
 
 impl Default for Config {
@@ -34,16 +28,31 @@ impl Config {
 }
 
 impl Config {
-  pub fn read_timeout(&self) -> u64 { self.read_timeout }
-  pub fn write_timeout(&self) -> u64 { self.write_timeout }
-  pub fn auto_redirect(&self) -> bool { self.auto_redirect }
-  pub fn max_redirect(&self) -> u32 { self.max_redirect }
+  pub fn read_timeout(&self) -> u64 {
+    self.read_timeout
+  }
+  pub fn write_timeout(&self) -> u64 {
+    self.write_timeout
+  }
+  pub fn auto_redirect(&self) -> bool {
+    self.auto_redirect
+  }
+  pub fn max_redirect(&self) -> u32 {
+    self.max_redirect
+  }
+  #[cfg(feature = "tls-native")]
+  pub fn verify_ssl_cert(&self) -> bool {
+    self.verify_ssl_cert
+  }
+  #[cfg(feature = "tls-native")]
+  pub fn verify_ssl_hostname(&self) -> bool {
+    self.verify_ssl_hostname
+  }
 }
-
 
 #[derive(Clone, Debug)]
 pub struct ConfigBuilder {
-  config: Config
+  config: Config,
 }
 
 impl ConfigBuilder {
@@ -54,7 +63,11 @@ impl ConfigBuilder {
         write_timeout: 5000,
         auto_redirect: false,
         max_redirect: 3,
-      }
+        #[cfg(feature = "tls-native")]
+        verify_ssl_hostname: true,
+        #[cfg(feature = "tls-native")]
+        verify_ssl_cert: true,
+      },
     }
   }
 
@@ -76,6 +89,16 @@ impl ConfigBuilder {
   }
   pub fn max_redirect(&mut self, max_redirect: u32) -> &mut Self {
     self.config.max_redirect = max_redirect;
+    self
+  }
+  #[cfg(feature = "tls-native")]
+  pub fn verify_ssl_hostname(&mut self, verify_ssl_hostname: bool) -> &mut Self {
+    self.config.verify_ssl_hostname = verify_ssl_hostname;
+    self
+  }
+  #[cfg(feature = "tls-native")]
+  pub fn verify_ssl_cert(&mut self, verify_ssl_cert: bool) -> &mut Self {
+    self.config.verify_ssl_cert = verify_ssl_cert;
     self
   }
 }

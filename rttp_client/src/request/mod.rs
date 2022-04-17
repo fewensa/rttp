@@ -1,6 +1,6 @@
 pub use self::raw_request::RawRequest;
 pub use self::request::*;
 
-mod request;
+mod builder;
 mod raw_request;
-mod raw_builder;
+mod request;
