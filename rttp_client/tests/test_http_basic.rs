@@ -9,12 +9,12 @@ fn client() -> HttpClient {
 
 #[test]
 fn test_http() {
-  // let response = client().url("http://httpbin.org/get").emit();
-  let response = client().url("http://debian:1234/get").emit();
+  let response = client().url("http://httpbin.org/get").emit();
+  // let response = client().url("http://debian:1234/get").emit();
   println!("{:?}", response);
   assert!(response.is_ok());
   let response = response.unwrap();
-  assert_eq!("debian", response.host());
+  assert_eq!("httpbin.org", response.host());
   println!("{}", response);
 }
 
