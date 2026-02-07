@@ -2,8 +2,6 @@ use std::io::{Read, Write};
 
 #[cfg(feature = "tls-native")]
 use native_tls::TlsConnector;
-#[cfg(feature = "tls-rustls")]
-use rustls::{Session, TLSError};
 use socks::{Socks4Stream, Socks5Stream};
 use url::Url;
 

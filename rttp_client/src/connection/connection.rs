@@ -2,6 +2,8 @@ use std::{io, net::ToSocketAddrs, time};
 
 use socket2::{Domain, Protocol, Socket, Type};
 
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 #[cfg(feature = "tls-rustls")]
 use std::sync::Arc;
 
@@ -13,18 +15,26 @@ use crate::types::{Proxy, RoUrl, ToUrl};
 use crate::{error, Config};
 
 #[cfg(feature = "tls-rustls")]
+use rustls::client::danger::{ServerCertVerified, ServerCertVerifier};
+#[cfg(feature = "tls-rustls")]
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+#[cfg(feature = "tls-rustls")]
+use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
+
+#[cfg(feature = "tls-rustls")]
 struct NoCertificateVerification;
 
 #[cfg(feature = "tls-rustls")]
-impl rustls::ServerCertVerifier for NoCertificateVerification {
+impl ServerCertVerifier for NoCertificateVerification {
   fn verify_server_cert(
     &self,
-    _roots: &rustls::RootCertStore,
-    _presented_certs: &[rustls::Certificate],
-    _dns_name: webpki::DNSNameRef,
+    _end_entity: &CertificateDer<'_>,
+    _intermediates: &[CertificateDer<'_>],
+    _server_name: &ServerName<'_>,
     _ocsp_response: &[u8],
-  ) -> Result<rustls::ServerCertVerified, rustls::TLSError> {
-    Ok(rustls::ServerCertVerified::assertion())
+    _now: UnixTime,
+  ) -> Result<ServerCertVerified, rustls::Error> {
+    Ok(ServerCertVerified::assertion())
   }
 }
 
@@ -112,7 +122,7 @@ impl<'a> Connection<'a> {
       } else {
         format!("{}:", username)
       };
-      let auth = base64::encode(&auth);
+      let auth = STANDARD.encode(auth.as_bytes());
       proxy_header.push_str(&format!("Authorization: Basic {}\r\n", auth));
     }
 
@@ -259,27 +269,33 @@ impl<'a> Connection<'a> {
     self.block_write_stream(&mut ssl_stream)?;
     self.block_read_stream(url, &mut ssl_stream)
   }
-#[cfg(feature = "tls-rustls")]
+  #[cfg(feature = "tls-rustls")]
   pub fn block_send_https<S>(&self, url: &Url, stream: &mut S) -> error::Result<Vec<u8>>
   where
     S: io::Read + io::Write,
   {
     let config = self.config();
-    let mut rustls_config = rustls::ClientConfig::new();
+    let mut root_store = RootCertStore::empty();
     if config.verify_ssl_cert() {
-      rustls_config
-        .root_store
-        .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
-    } else {
-      rustls_config
-        .dangerous()
-        .set_certificate_verifier(Arc::new(NoCertificateVerification));
+      root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
     }
+
+    let builder = ClientConfig::builder();
+    let rustls_config = if config.verify_ssl_cert() {
+      builder.with_root_certificates(root_store).with_no_client_auth()
+    } else {
+      builder
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoCertificateVerification))
+        .with_no_client_auth()
+    };
     let rc_config = Arc::new(rustls_config);
     let host = self.host(url)?;
-    let dns_name = webpki::DNSNameRef::try_from_ascii_str(&host[..]).unwrap();
-    let mut client = rustls::ClientSession::new(&rc_config, dns_name);
-    let mut tls = rustls::Stream::new(&mut client, stream);
+    let server_name = ServerName::try_from(host.as_str())
+      .map_err(|_| error::bad_ssl(format!("Invalid server name: {}", host)))?;
+    let client =
+      ClientConnection::new(rc_config, server_name).map_err(|e| error::bad_ssl(e.to_string()))?;
+    let mut tls = StreamOwned::new(client, stream);
 
     self.block_write_stream(&mut tls)?;
     self.block_read_stream(url, &mut tls)
