@@ -1,4 +1,9 @@
-use std::{io, time};
+use std::{io, net::ToSocketAddrs, time};
+
+use socket2::{Domain, Protocol, Socket, Type};
+
+#[cfg(feature = "tls-rustls")]
+use std::sync::Arc;
 
 use url::Url;
 
@@ -6,6 +11,22 @@ use crate::connection::connection_reader::ConnectionReader;
 use crate::request::{RawRequest, RequestBody};
 use crate::types::{Proxy, RoUrl, ToUrl};
 use crate::{error, Config};
+
+#[cfg(feature = "tls-rustls")]
+struct NoCertificateVerification;
+
+#[cfg(feature = "tls-rustls")]
+impl rustls::ServerCertVerifier for NoCertificateVerification {
+  fn verify_server_cert(
+    &self,
+    _roots: &rustls::RootCertStore,
+    _presented_certs: &[rustls::Certificate],
+    _dns_name: webpki::DNSNameRef,
+    _ocsp_response: &[u8],
+  ) -> Result<rustls::ServerCertVerified, rustls::TLSError> {
+    Ok(rustls::ServerCertVerified::assertion())
+  }
+}
 
 pub struct Connection<'a> {
   request: RawRequest<'a>,
@@ -103,17 +124,42 @@ impl<'a> Connection<'a> {
 impl<'a> Connection<'a> {
   pub fn block_tcp_stream(&self, addr: &String) -> error::Result<std::net::TcpStream> {
     let config = self.config();
+    let timeout_read = time::Duration::from_millis(config.read_timeout());
+    let timeout_write = time::Duration::from_millis(config.write_timeout());
+    let mut last_err = None;
 
-    // let server: Vec<_> = addr.to_socket_addrs().map_err(error::request)?.collect();
-    // println!("{:?}", server);
-    let stream = std::net::TcpStream::connect(addr).map_err(error::request)?;
-    stream
-      .set_read_timeout(Some(time::Duration::from_millis(config.read_timeout())))
-      .map_err(error::request)?;
-    stream
-      .set_write_timeout(Some(time::Duration::from_millis(config.write_timeout())))
-      .map_err(error::request)?;
-    Ok(stream)
+    let addrs = addr.to_socket_addrs().map_err(error::request)?;
+    for addr in addrs {
+      let domain = Domain::for_address(addr);
+      let socket = match Socket::new(domain, Type::STREAM, Some(Protocol::TCP)) {
+        Ok(socket) => socket,
+        Err(err) => {
+          last_err = Some(err);
+          continue;
+        }
+      };
+
+      if let Err(err) = socket.set_read_timeout(Some(timeout_read)) {
+        last_err = Some(err);
+        continue;
+      }
+      if let Err(err) = socket.set_write_timeout(Some(timeout_write)) {
+        last_err = Some(err);
+        continue;
+      }
+
+      if let Err(err) = socket.connect(&addr.into()) {
+        last_err = Some(err);
+        continue;
+      }
+
+      let stream = socket.into_tcp_stream();
+      return Ok(stream);
+    }
+
+    Err(error::request(last_err.unwrap_or_else(|| {
+      io::Error::new(io::ErrorKind::Other, "failed to connect")
+    })))
   }
 
   pub fn block_write_stream<S>(&self, stream: &mut S) -> error::Result<()>
@@ -203,7 +249,7 @@ impl<'a> Connection<'a> {
     let config = self.config();
     let connector = native_tls::TlsConnector::builder()
       .danger_accept_invalid_certs(!config.verify_ssl_cert())
-      .danger_accept_invalid_hostnames(!config.verify_ssl_host_name())
+      .danger_accept_invalid_hostnames(!config.verify_ssl_hostname())
       .build()
       .map_err(error::request)?;
     let mut ssl_stream = connector
@@ -213,17 +259,23 @@ impl<'a> Connection<'a> {
     self.block_write_stream(&mut ssl_stream)?;
     self.block_read_stream(url, &mut ssl_stream)
   }
-
-  #[cfg(feature = "tls-rustls")]
+#[cfg(feature = "tls-rustls")]
   pub fn block_send_https<S>(&self, url: &Url, stream: &mut S) -> error::Result<Vec<u8>>
   where
     S: io::Read + io::Write,
   {
-    let mut config = rustls::ClientConfig::new();
-    config
-      .root_store
-      .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
-    let rc_config = Arc::new(config);
+    let config = self.config();
+    let mut rustls_config = rustls::ClientConfig::new();
+    if config.verify_ssl_cert() {
+      rustls_config
+        .root_store
+        .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+    } else {
+      rustls_config
+        .dangerous()
+        .set_certificate_verifier(Arc::new(NoCertificateVerification));
+    }
+    let rc_config = Arc::new(rustls_config);
     let host = self.host(url)?;
     let dns_name = webpki::DNSNameRef::try_from_ascii_str(&host[..]).unwrap();
     let mut client = rustls::ClientSession::new(&rc_config, dns_name);
