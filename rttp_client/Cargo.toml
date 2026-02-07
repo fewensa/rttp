@@ -44,6 +44,9 @@ async-rustls     = { optional = true, version = "0.2" }
 async-std    = { optional = true, version = "1", features = ["std"] }
 tokio        = { optional = true, version = "1", features = ["io-std"] }
 
+[dev-dependencies]
+rcgen = "0.9"
+
 [features]
 default = []
 
