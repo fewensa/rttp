@@ -19,6 +19,8 @@ edition = "2018"
 
 [dependencies]
 tracing = "0.1"
+socket2 = "0.5"
+futures = "0.3"
 
 url              = "2"
 percent-encoding = "2"
@@ -41,14 +43,10 @@ webpki-roots     = { optional = true, version = "0.18" }
 webpki           = { optional = true, version = "0.21" }
 async-rustls     = { optional = true, version = "0.2" }
 
-async-std    = { optional = true, version = "1", features = ["std"] }
-tokio        = { optional = true, version = "1", features = ["io-std"] }
 
 [features]
 default = []
-
-async-tokio = ["tokio"]
-
+async = []
 tls-native  = ["native-tls", "async-native-tls"]
 tls-rustls  = ["rustls", "webpki", "webpki-roots", "async-rustls"]
 
@@ -65,3 +63,6 @@ tls-rustls  = ["rustls", "webpki", "webpki-roots", "async-rustls"]
 #[target.'cfg(any(feature = "async-std", feature = "async-tokio"))'.dependencies]
 #tls-native = { optional = true, package = "async-native-tls", version = "0.4" }
 #tls-rustls = { optional = true, package = "async-rustls", version = "0.2" }
+
+[dev-dependencies]
+rcgen = "0.11"

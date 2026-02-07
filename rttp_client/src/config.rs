@@ -4,9 +4,7 @@ pub struct Config {
   write_timeout: u64,
   auto_redirect: bool,
   max_redirect: u32,
-  #[cfg(feature = "tls-native")]
-  verify_ssl_hostname: bool,
-  #[cfg(feature = "tls-native")]
+    verify_ssl_hostname: bool,
   verify_ssl_cert: bool,
 }
 
@@ -40,11 +38,9 @@ impl Config {
   pub fn max_redirect(&self) -> u32 {
     self.max_redirect
   }
-  #[cfg(feature = "tls-native")]
-  pub fn verify_ssl_cert(&self) -> bool {
+    pub fn verify_ssl_cert(&self) -> bool {
     self.verify_ssl_cert
   }
-  #[cfg(feature = "tls-native")]
   pub fn verify_ssl_hostname(&self) -> bool {
     self.verify_ssl_hostname
   }
@@ -63,9 +59,7 @@ impl ConfigBuilder {
         write_timeout: 5000,
         auto_redirect: false,
         max_redirect: 3,
-        #[cfg(feature = "tls-native")]
-        verify_ssl_hostname: true,
-        #[cfg(feature = "tls-native")]
+                verify_ssl_hostname: true,
         verify_ssl_cert: true,
       },
     }
@@ -91,12 +85,10 @@ impl ConfigBuilder {
     self.config.max_redirect = max_redirect;
     self
   }
-  #[cfg(feature = "tls-native")]
-  pub fn verify_ssl_hostname(&mut self, verify_ssl_hostname: bool) -> &mut Self {
+    pub fn verify_ssl_hostname(&mut self, verify_ssl_hostname: bool) -> &mut Self {
     self.config.verify_ssl_hostname = verify_ssl_hostname;
     self
   }
-  #[cfg(feature = "tls-native")]
   pub fn verify_ssl_cert(&mut self, verify_ssl_cert: bool) -> &mut Self {
     self.config.verify_ssl_cert = verify_ssl_cert;
     self

@@ -1,6 +1,6 @@
-#[cfg(feature = "async-std")]
-use async_std::task;
+mod support;
 
+use futures::executor::block_on;
 use rttp_client::types::Proxy;
 use rttp_client::HttpClient;
 
@@ -9,46 +9,50 @@ fn client() -> HttpClient {
 }
 
 #[test]
-#[cfg(feature = "async-std")]
+#[cfg(feature = "async")]
 fn test_async_http() {
-  task::block_on(async {
+  let (addr, _handle) = support::spawn_http_server();
+  block_on(async {
     let response = client()
       .post()
-      .url("http://httpbin.org/post")
-      .form(("debug", "true", "name=Form&file=@cargo#../Cargo.toml"))
+      .url(format!("http://{}/post", addr))
+      .form("debug=true")
       .rasync()
       .await;
     assert!(response.is_ok());
     let response = response.unwrap();
-    assert_eq!("httpbin.org", response.host());
+    assert_eq!("127.0.0.1", response.host());
     println!("{}", response);
   });
 }
 
 #[test]
-#[cfg(all(
-  feature = "async-std",
-  any(feature = "tls-rustls", feature = "tls-native")
-))]
+#[cfg(all(feature = "async", feature = "tls-rustls"))]
 fn test_async_https() {
-  task::block_on(async {
+  let (addr, _handle) = support::spawn_tls_server();
+  block_on(async {
     let response = client()
       .post()
-      .url("https://httpbin.org/get")
+      .url(format!("https://{}/get", addr))
+      .config(
+        rttp_client::Config::builder()
+          .verify_ssl_cert(false)
+          .verify_ssl_hostname(false),
+      )
       .rasync()
       .await;
     assert!(response.is_ok());
     let response = response.unwrap();
-    assert_eq!("httpbin.org", response.host());
+    assert_eq!("127.0.0.1", response.host());
     println!("{}", response);
   });
 }
 
 #[test]
 #[ignore]
-#[cfg(feature = "async-std")]
+#[cfg(feature = "async")]
 fn test_async_proxy_socks5() {
-  task::block_on(async {
+  block_on(async {
     let response = client()
       .get()
       .url("http://google.com")
