@@ -1,11 +1,13 @@
 use std::io::{Read, stdout, Write};
-use std::net::TcpStream;
+use std::net::ToSocketAddrs;
 use std::sync::Arc;
 
 #[cfg(feature = "tls-rustls")]
 use rustls;
 #[cfg(feature = "tls-rustls")]
 use rustls::Session;
+#[cfg(feature = "tls-rustls")]
+use socket2::{Domain, Protocol, Socket, Type};
 #[cfg(feature = "tls-rustls")]
 use webpki;
 #[cfg(feature = "tls-rustls")]
@@ -19,7 +21,15 @@ fn test_rustls() {
 
   let dns_name = webpki::DNSNameRef::try_from_ascii_str("bing.com").unwrap();
   let mut sess = rustls::ClientSession::new(&Arc::new(config), dns_name);
-  let mut sock = TcpStream::connect("bing.com:443").unwrap();
+  let socket_addr = "bing.com:443"
+    .to_socket_addrs()
+    .unwrap()
+    .next()
+    .expect("resolve address");
+  let domain = Domain::for_address(socket_addr);
+  let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP)).unwrap();
+  socket.connect(&socket_addr.into()).unwrap();
+  let mut sock = socket.into_tcp_stream();
   let mut tls = rustls::Stream::new(&mut sess, &mut sock);
   tls.write(concat!("GET / HTTP/1.1\r\n",
   "Host: bing.com\r\n",

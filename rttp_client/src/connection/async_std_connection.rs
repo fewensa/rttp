@@ -1,7 +1,9 @@
+use std::net::ToSocketAddrs;
 use std::sync::Arc;
 
 use async_std::prelude::*;
 use socks::{Socks4Stream, Socks5Stream};
+use socket2::{Domain, Protocol, Socket, Type};
 use url::Url;
 
 use crate::connection::connection::Connection;
@@ -42,9 +44,30 @@ impl<'a> AsyncConnection<'a> {
 //    let async_stream = self.async_tcp_stream(addr)?;
 //    Ok(async_std::net::TcpStream::from(async_stream))
 
-    let stream = async_std::net::TcpStream::connect(addr).await.map_err(error::request)?;
-    // todo: async_std tcp stream set timeout?
-    Ok(stream)
+    let addr = addr.clone();
+    let config = self.conn.config().clone();
+    let std_stream = async_std::task::spawn_blocking(move || {
+      let socket_addr = addr
+        .to_socket_addrs()
+        .map_err(error::request)?
+        .next()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "resolve address"))
+        .map_err(error::request)?;
+      let domain = Domain::for_address(socket_addr);
+      let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP)).map_err(error::request)?;
+      socket.connect(&socket_addr.into()).map_err(error::request)?;
+      socket
+        .set_read_timeout(Some(std::time::Duration::from_millis(config.read_timeout())))
+        .map_err(error::request)?;
+      socket
+        .set_write_timeout(Some(std::time::Duration::from_millis(config.write_timeout())))
+        .map_err(error::request)?;
+      let stream = socket.into_tcp_stream();
+      stream.set_nonblocking(true).map_err(error::request)?;
+      Ok(stream)
+    })
+    .await?;
+    Ok(async_std::net::TcpStream::from(std_stream))
   }
 
   async fn async_write_stream<S>(&self, stream: &mut S) -> error::Result<()>
@@ -221,4 +244,3 @@ impl<'a> AsyncConnection<'a> {
     self.conn.block_send_with_stream(url, &mut stream)
   }
 }
-

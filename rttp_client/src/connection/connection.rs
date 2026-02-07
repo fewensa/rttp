@@ -1,5 +1,6 @@
-use std::{io, time};
+use std::{io, net::ToSocketAddrs, time};
 
+use socket2::{Domain, Protocol, Socket, Type};
 use url::Url;
 
 use crate::connection::connection_reader::ConnectionReader;
@@ -106,14 +107,22 @@ impl<'a> Connection<'a> {
 
     // let server: Vec<_> = addr.to_socket_addrs().map_err(error::request)?.collect();
     // println!("{:?}", server);
-    let stream = std::net::TcpStream::connect(addr).map_err(error::request)?;
-    stream
+    let socket_addr = addr
+      .to_socket_addrs()
+      .map_err(error::request)?
+      .next()
+      .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "resolve address"))
+      .map_err(error::request)?;
+    let domain = Domain::for_address(socket_addr);
+    let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP)).map_err(error::request)?;
+    socket.connect(&socket_addr.into()).map_err(error::request)?;
+    socket
       .set_read_timeout(Some(time::Duration::from_millis(config.read_timeout())))
       .map_err(error::request)?;
-    stream
+    socket
       .set_write_timeout(Some(time::Duration::from_millis(config.write_timeout())))
       .map_err(error::request)?;
-    Ok(stream)
+    Ok(socket.into_tcp_stream())
   }
 
   pub fn block_write_stream<S>(&self, stream: &mut S) -> error::Result<()>
