@@ -70,8 +70,8 @@ impl<'a> AsyncConnection<'a> {
 //    let mut reader = ConnectionReader::new(url, stream);
 //    reader.binary()
 
-    let mut buffer = vec![0u8; 1024];
-    let _ = stream.read(&mut buffer).await.map_err(error::request)?;
+    let mut buffer = Vec::new();
+    let _ = stream.read_to_end(&mut buffer).await.map_err(error::request)?;
     Ok(buffer)
   }
 }
@@ -221,4 +221,3 @@ impl<'a> AsyncConnection<'a> {
     self.conn.block_send_with_stream(url, &mut stream)
   }
 }
-
