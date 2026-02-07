@@ -15,7 +15,7 @@ include = [
 ]
 
 readme = "README.md"
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 tracing = "0.1"
@@ -28,27 +28,26 @@ percent-encoding = "2"
 mime       = "0.3"
 mime_guess = "2"
 
-rand     = "0.7"
+rand     = "0.8"
 socks    = "0.3"
-base64   = "0.11"
+base64   = "0.22"
 flate2   = "1.0"
-httpdate = "0.3"
+httpdate = "1.0"
 
 
 native-tls       = { optional = true, version = "0.2" }
-async-native-tls = { optional = true, version = "0.4" }
+async-native-tls = { optional = true, version = "0.5" }
 
-rustls           = { optional = true, version = "0.16" }
-webpki-roots     = { optional = true, version = "0.18" }
-webpki           = { optional = true, version = "0.21" }
-async-rustls     = { optional = true, version = "0.2" }
+rustls           = { optional = true, version = "0.23" }
+webpki-roots     = { optional = true, version = "0.26" }
+async-rustls     = { optional = true, version = "0.4" }
 
 
 [features]
 default = []
 async = []
 tls-native  = ["native-tls", "async-native-tls"]
-tls-rustls  = ["rustls", "webpki", "webpki-roots", "async-rustls"]
+tls-rustls  = ["rustls", "webpki-roots", "async-rustls"]
 
 ##
 # warning: /data/rttp/rttp_client/Cargo.toml: Found `feature = ...` in `target.'cfg(...)'.dependencies`.

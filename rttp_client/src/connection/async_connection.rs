@@ -96,21 +96,20 @@ impl<'a> AsyncConnection<'a> {
     self.async_read_stream(url, stream).await
   }
 
-  #[cfg(not(any(feature = "tls-native", feature = "tls-rustls")))]
-  async fn async_send_https(&self, _url: &Url, _stream: TcpStream) -> error::Result<Vec<u8>> {
-    Err(error::no_request_features(
-      "Not have any tls features, Can't request a https url",
-    ))
-  }
-
-  #[cfg(feature = "tls-native")]
   async fn async_send_https(&self, url: &Url, mut stream: TcpStream) -> error::Result<Vec<u8>> {
-    self.conn.block_send_https(url, &mut stream)
-  }
+    #[cfg(any(feature = "tls-native", feature = "tls-rustls"))]
+    {
+      return self.conn.block_send_https(url, &mut stream);
+    }
 
-  #[cfg(feature = "tls-rustls")]
-  async fn async_send_https(&self, url: &Url, mut stream: TcpStream) -> error::Result<Vec<u8>> {
-    self.conn.block_send_https(url, &mut stream)
+    #[cfg(not(any(feature = "tls-native", feature = "tls-rustls")))]
+    {
+      let _ = url;
+      let _ = stream;
+      return Err(error::no_request_features(
+        "Not have any tls features, Can't request a https url",
+      ));
+    }
   }
 }
 
