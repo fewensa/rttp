@@ -251,8 +251,27 @@ impl<'a> Connection<'a> {
     ));
   }
 
-  #[cfg(feature = "tls-native")]
+  #[cfg(any(feature = "tls-native", feature = "tls-rustls"))]
   pub fn block_send_https<S>(&self, url: &Url, stream: &mut S) -> error::Result<Vec<u8>>
+  where
+    S: io::Read + io::Write,
+  {
+    #[cfg(all(feature = "tls-native", feature = "tls-rustls"))]
+    {
+      return self.block_send_https_rustls(url, stream);
+    }
+    #[cfg(all(feature = "tls-native", not(feature = "tls-rustls")))]
+    {
+      return self.block_send_https_native(url, stream);
+    }
+    #[cfg(all(feature = "tls-rustls", not(feature = "tls-native")))]
+    {
+      return self.block_send_https_rustls(url, stream);
+    }
+  }
+
+  #[cfg(feature = "tls-native")]
+  fn block_send_https_native<S>(&self, url: &Url, stream: &mut S) -> error::Result<Vec<u8>>
   where
     S: io::Read + io::Write,
   {
@@ -269,8 +288,9 @@ impl<'a> Connection<'a> {
     self.block_write_stream(&mut ssl_stream)?;
     self.block_read_stream(url, &mut ssl_stream)
   }
+
   #[cfg(feature = "tls-rustls")]
-  pub fn block_send_https<S>(&self, url: &Url, stream: &mut S) -> error::Result<Vec<u8>>
+  fn block_send_https_rustls<S>(&self, url: &Url, stream: &mut S) -> error::Result<Vec<u8>>
   where
     S: io::Read + io::Write,
   {
