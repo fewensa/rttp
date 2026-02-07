@@ -15,7 +15,7 @@ include = [
 ]
 
 readme = "README.md"
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 
@@ -27,10 +27,11 @@ rttp_client = { optional = true, path = "../rttp_client", features = [ "tls-nati
 [features]
 default = []
 
-all = ["rttp_client"]
 client = ["rttp_client"]
-#client_tls_native = ["rttp_client"]
-#client_tls_rustls = ["rttp_client"]
+async = ["client", "rttp_client/async"]
+tls-native = ["client", "rttp_client/tls-native"]
+tls-rustls = ["client", "rttp_client/tls-rustls"]
+all = ["client", "async", "tls-native", "tls-rustls"]
 
 
 #[target.'cfg(feature = "all")'.dependencies]
@@ -44,4 +45,3 @@ client = ["rttp_client"]
 #
 #[target.'cfg(feature = "client_tls_rustls")'.dependencies]
 #rttp_client = { version = "=0.1.0", path = "../rttp_client", optional = true, default-features = false, features = [ "tls-rustls" ] }
-

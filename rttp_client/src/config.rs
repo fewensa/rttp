@@ -4,7 +4,7 @@ pub struct Config {
   write_timeout: u64,
   auto_redirect: bool,
   max_redirect: u32,
-    verify_ssl_hostname: bool,
+  verify_ssl_hostname: bool,
   verify_ssl_cert: bool,
 }
 
@@ -38,7 +38,7 @@ impl Config {
   pub fn max_redirect(&self) -> u32 {
     self.max_redirect
   }
-    pub fn verify_ssl_cert(&self) -> bool {
+  pub fn verify_ssl_cert(&self) -> bool {
     self.verify_ssl_cert
   }
   pub fn verify_ssl_hostname(&self) -> bool {
@@ -55,11 +55,11 @@ impl ConfigBuilder {
   pub fn new() -> Self {
     Self {
       config: Config {
-        read_timeout: 5000,
-        write_timeout: 5000,
+        read_timeout: 10000,
+        write_timeout: 10000,
         auto_redirect: false,
-        max_redirect: 3,
-                verify_ssl_hostname: true,
+        max_redirect: 0,
+        verify_ssl_hostname: true,
         verify_ssl_cert: true,
       },
     }
@@ -85,7 +85,7 @@ impl ConfigBuilder {
     self.config.max_redirect = max_redirect;
     self
   }
-    pub fn verify_ssl_hostname(&mut self, verify_ssl_hostname: bool) -> &mut Self {
+  pub fn verify_ssl_hostname(&mut self, verify_ssl_hostname: bool) -> &mut Self {
     self.config.verify_ssl_hostname = verify_ssl_hostname;
     self
   }
@@ -104,5 +104,48 @@ impl AsRef<Config> for Config {
 impl AsRef<Config> for ConfigBuilder {
   fn as_ref(&self) -> &Config {
     &self.config
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn builder_updates_values() {
+    let config = Config::builder()
+      .read_timeout(1234)
+      .write_timeout(4321)
+      .auto_redirect(true)
+      .max_redirect(5)
+      .verify_ssl_hostname(false)
+      .verify_ssl_cert(false)
+      .build();
+
+    assert_eq!(config.read_timeout(), 1234);
+    assert_eq!(config.write_timeout(), 4321);
+    assert!(config.auto_redirect());
+    assert_eq!(config.max_redirect(), 5);
+    assert!(!config.verify_ssl_hostname());
+    assert!(!config.verify_ssl_cert());
+  }
+
+  #[test]
+  fn default_config_matches_builder_defaults() {
+    let default_config = Config::default();
+    let builder_config = Config::builder().build();
+
+    assert_eq!(default_config.read_timeout(), builder_config.read_timeout());
+    assert_eq!(default_config.write_timeout(), builder_config.write_timeout());
+    assert_eq!(default_config.auto_redirect(), builder_config.auto_redirect());
+    assert_eq!(default_config.max_redirect(), builder_config.max_redirect());
+    assert_eq!(
+      default_config.verify_ssl_hostname(),
+      builder_config.verify_ssl_hostname()
+    );
+    assert_eq!(
+      default_config.verify_ssl_cert(),
+      builder_config.verify_ssl_cert()
+    );
   }
 }
