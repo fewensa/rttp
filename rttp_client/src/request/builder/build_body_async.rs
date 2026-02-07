@@ -1,18 +1,15 @@
-#[cfg(feature = "async-std")]
+#[cfg(feature = "async")]
 use crate::error;
-#[cfg(feature = "async-std")]
+#[cfg(feature = "async")]
 use crate::request::builder::common::RawBuilder;
-#[cfg(feature = "async-std")]
+#[cfg(feature = "async")]
 use crate::request::RequestBody;
-#[cfg(feature = "async-std")]
+#[cfg(feature = "async")]
 use crate::types::{FormDataType, RoUrl};
 
-#[cfg(feature = "async-std")]
+#[cfg(feature = "async")]
 impl<'a> RawBuilder<'a> {
-  pub async fn build_body_async_std(
-    &mut self,
-    rourl: &mut RoUrl,
-  ) -> error::Result<Option<RequestBody>> {
+  pub async fn build_body_async(&mut self, rourl: &mut RoUrl) -> error::Result<Option<RequestBody>> {
     if let Some(body) = self.build_body_common(rourl)? {
       return Ok(Some(body));
     }
@@ -21,13 +18,13 @@ impl<'a> RawBuilder<'a> {
 
     // form-data
     if !formdatas.is_empty() {
-      return self.build_body_with_form_data_async_std().await;
+      return self.build_body_with_form_data_async().await;
     }
 
-    return Ok(None);
+    Ok(None)
   }
 
-  async fn build_body_with_form_data_async_std(&mut self) -> error::Result<Option<RequestBody>> {
+  async fn build_body_with_form_data_async(&mut self) -> error::Result<Option<RequestBody>> {
     let fdw = self.build_body_with_form_data_sync_common()?;
     let mut disposition = fdw.disposition;
     let mut buffer = fdw.buffer;
@@ -56,7 +53,7 @@ impl<'a> RawBuilder<'a> {
           guess.first_or_octet_stream(),
         );
         buffer.extend_from_slice(item.as_bytes());
-        let file_content = async_std::fs::read(&file).await.map_err(error::builder)?;
+        let file_content = std::fs::read(&file).map_err(error::builder)?;
         buffer.extend(file_content);
       }
     }
