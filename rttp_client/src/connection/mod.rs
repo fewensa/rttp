@@ -4,7 +4,6 @@ pub use self::block_connection::*;
 
 #[cfg(feature = "async")]
 mod async_connection;
-#[cfg(feature = "async")]
 mod block_connection;
 mod connection;
 mod connection_reader;
