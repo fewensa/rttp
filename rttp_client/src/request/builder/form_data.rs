@@ -15,7 +15,7 @@ impl Disposition {
   pub fn new() -> Self {
     let mut rng = rand::thread_rng();
     let boundary: String = std::iter::repeat(())
-      .map(|()| rng.sample(rand::distributions::Alphanumeric))
+      .map(|()| rng.sample(rand::distributions::Alphanumeric) as char)
       .take(20)
       .collect();
     Self { boundary }

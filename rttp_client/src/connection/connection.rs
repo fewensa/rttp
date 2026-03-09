@@ -15,13 +15,14 @@ use crate::types::{Proxy, RoUrl, ToUrl};
 use crate::{error, Config};
 
 #[cfg(feature = "tls-rustls")]
-use rustls::client::danger::{ServerCertVerified, ServerCertVerifier};
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 #[cfg(feature = "tls-rustls")]
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 #[cfg(feature = "tls-rustls")]
-use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
+use rustls::{ClientConfig, ClientConnection, DigitallySignedStruct, RootCertStore, SignatureScheme, StreamOwned};
 
 #[cfg(feature = "tls-rustls")]
+#[derive(Debug)]
 struct NoCertificateVerification;
 
 #[cfg(feature = "tls-rustls")]
@@ -35,6 +36,40 @@ impl ServerCertVerifier for NoCertificateVerification {
     _now: UnixTime,
   ) -> Result<ServerCertVerified, rustls::Error> {
     Ok(ServerCertVerified::assertion())
+  }
+
+  fn verify_tls12_signature(
+    &self,
+    _message: &[u8],
+    _cert: &CertificateDer<'_>,
+    _dss: &DigitallySignedStruct,
+  ) -> Result<HandshakeSignatureValid, rustls::Error> {
+    Ok(HandshakeSignatureValid::assertion())
+  }
+
+  fn verify_tls13_signature(
+    &self,
+    _message: &[u8],
+    _cert: &CertificateDer<'_>,
+    _dss: &DigitallySignedStruct,
+  ) -> Result<HandshakeSignatureValid, rustls::Error> {
+    Ok(HandshakeSignatureValid::assertion())
+  }
+
+  fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+    vec![
+      SignatureScheme::RSA_PKCS1_SHA1,
+      SignatureScheme::RSA_PKCS1_SHA256,
+      SignatureScheme::RSA_PKCS1_SHA384,
+      SignatureScheme::RSA_PKCS1_SHA512,
+      SignatureScheme::ECDSA_NISTP256_SHA256,
+      SignatureScheme::ECDSA_NISTP384_SHA384,
+      SignatureScheme::ECDSA_NISTP521_SHA512,
+      SignatureScheme::RSA_PSS_SHA256,
+      SignatureScheme::RSA_PSS_SHA384,
+      SignatureScheme::RSA_PSS_SHA512,
+      SignatureScheme::ED25519,
+    ]
   }
 }
 
@@ -163,7 +198,7 @@ impl<'a> Connection<'a> {
         continue;
       }
 
-      let stream = socket.into_tcp_stream();
+      let stream = std::net::TcpStream::from(socket);
       return Ok(stream);
     }
 
@@ -283,7 +318,7 @@ impl<'a> Connection<'a> {
       .map_err(error::request)?;
     let mut ssl_stream = connector
       .connect(&self.host(url)?[..], stream)
-      .map_err(|e| error::bad_ssl(format!("Native tls error: {:?}", e)))?;
+      .map_err(|_| error::bad_ssl("Native tls handshake error"))?;
 
     self.block_write_stream(&mut ssl_stream)?;
     self.block_read_stream(url, &mut ssl_stream)
@@ -312,7 +347,8 @@ impl<'a> Connection<'a> {
     let rc_config = Arc::new(rustls_config);
     let host = self.host(url)?;
     let server_name = ServerName::try_from(host.as_str())
-      .map_err(|_| error::bad_ssl(format!("Invalid server name: {}", host)))?;
+      .map_err(|_| error::bad_ssl(format!("Invalid server name: {}", host)))?
+      .to_owned();
     let client =
       ClientConnection::new(rc_config, server_name).map_err(|e| error::bad_ssl(e.to_string()))?;
     let mut tls = StreamOwned::new(client, stream);

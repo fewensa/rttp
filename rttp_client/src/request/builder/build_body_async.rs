@@ -14,7 +14,7 @@ impl<'a> RawBuilder<'a> {
       return Ok(Some(body));
     }
 
-    let formdatas = self.request().formdatas();
+    let formdatas = self.request.formdatas();
 
     // form-data
     if !formdatas.is_empty() {
@@ -29,8 +29,8 @@ impl<'a> RawBuilder<'a> {
     let mut disposition = fdw.disposition;
     let mut buffer = fdw.buffer;
 
-    let traditional = self.request().traditional();
-    let formdatas = self.request().formdatas();
+    let traditional = self.request.traditional();
+    let formdatas = self.request.formdatas();
     for formdata in formdatas {
       let field_name = if formdata.array() && !traditional {
         format!("{}[]", formdata.name())
