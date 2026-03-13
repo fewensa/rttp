@@ -6,6 +6,7 @@ pub struct Header {
   value: String,
 }
 
+#[allow(clippy::wrong_self_convention)]
 pub trait IntoHeader {
   fn into_headers(&self) -> Vec<Header>;
 }
@@ -41,7 +42,7 @@ impl Header {
   }
 }
 
-impl<'a> IntoHeader for &'a str {
+impl IntoHeader for &str {
   fn into_headers(&self) -> Vec<Header> {
     self
       .split("\n")
@@ -49,7 +50,7 @@ impl<'a> IntoHeader for &'a str {
       .iter()
       .map(|part: &&str| {
         let pvs: Vec<&str> = part.split(":").collect::<Vec<&str>>();
-        let name = pvs.get(0);
+        let name = pvs.first();
         let value = pvs
           .iter()
           .enumerate()
@@ -91,13 +92,13 @@ impl<K: AsRef<str> + Eq + std::hash::Hash, V: AsRef<str>> IntoHeader for HashMap
   }
 }
 
-impl<'a, IU: IntoHeader> IntoHeader for &'a IU {
+impl<IU: IntoHeader> IntoHeader for &IU {
   fn into_headers(&self) -> Vec<Header> {
     (*self).into_headers()
   }
 }
 
-impl<'a, IU: IntoHeader> IntoHeader for &'a mut IU {
+impl<IU: IntoHeader> IntoHeader for &mut IU {
   fn into_headers(&self) -> Vec<Header> {
     (**self).into_headers()
   }

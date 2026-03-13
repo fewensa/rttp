@@ -88,7 +88,7 @@ impl<'a> Connection<'a> {
 
 #[allow(dead_code)]
 impl<'a> Connection<'a> {
-  pub fn request(&self) -> &RawRequest {
+  pub fn request(&self) -> &RawRequest<'_> {
     &self.request
   }
   pub fn rourl(&self) -> &RoUrl {
@@ -205,9 +205,9 @@ impl<'a> Connection<'a> {
       return Ok(stream);
     }
 
-    Err(error::request(last_err.unwrap_or_else(|| {
-      io::Error::new(io::ErrorKind::Other, "failed to connect")
-    })))
+    Err(error::request(
+      last_err.unwrap_or_else(|| io::Error::other("failed to connect")),
+    ))
   }
 
   pub fn block_write_stream<S>(&self, stream: &mut S) -> error::Result<()>
@@ -267,7 +267,7 @@ impl<'a> Connection<'a> {
     match url.scheme() {
       "http" => self.block_send_http(url, stream),
       "https" => self.block_send_https(url, stream),
-      _ => return Err(error::url_bad_scheme(url.clone())),
+      _ => Err(error::url_bad_scheme(url.clone())),
     }
   }
 
@@ -284,9 +284,9 @@ impl<'a> Connection<'a> {
   where
     S: io::Read + io::Write,
   {
-    return Err(error::no_request_features(
+    Err(error::no_request_features(
       "Not have any tls features, Can't request a https url",
-    ));
+    ))
   }
 
   #[cfg(any(feature = "tls-native", feature = "tls-rustls"))]

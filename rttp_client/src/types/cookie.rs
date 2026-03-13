@@ -92,7 +92,7 @@ impl Cookie {
     for item in parts {
       let nvs: Vec<&str> = item.split("=").collect();
       let name = nvs
-        .get(0)
+        .first()
         .ok_or(error::bad_cookie("Cookie not have name"))?
         .trim();
       let value: String = nvs
@@ -179,6 +179,8 @@ impl fmt::Display for Cookie {
   }
 }
 
+#[allow(dead_code)]
+#[allow(clippy::wrong_self_convention)]
 pub trait ToCookie {
   fn to_cookie(&self) -> error::Result<Cookie>;
 }

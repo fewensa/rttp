@@ -13,7 +13,6 @@ static CRLF: &str = "\r\n";
 #[derive(Clone)]
 pub struct RawResponse {
   _url: Url,
-  url: RoUrl,
   binary: Vec<u8>,
   code: u32,
   version: String,
@@ -28,7 +27,6 @@ impl RawResponse {
     let _url = url.to_url().map_err(error::builder)?;
     let mut response = RawResponse {
       _url,
-      url,
       binary: vec![],
       code: 0,
       version: "".to_string(),
@@ -178,12 +176,12 @@ impl Parser {
   fn parse_header(&self, response: &mut RawResponse, text: String) -> error::Result<()> {
     let parts: Vec<&str> = text.split(CRLF).collect();
     let status_line = parts
-      .get(0)
+      .first()
       .ok_or(error::bad_response("Response not have status line"))?;
     let status_parts: Vec<&str> = status_line.splitn(3, " ").collect();
 
     let http_version = status_parts
-      .get(0)
+      .first()
       .ok_or(error::bad_response("Response status not have http version"))?;
     let status_code: u32 = match status_parts
       .get(1)
@@ -206,20 +204,13 @@ impl Parser {
       .filter(|(_, v)| !v.is_empty())
       .map(|(_, v)| v.into_headers())
       .filter(|hs| !hs.is_empty())
-      .map(|hs| match hs.get(0) {
-        Some(h) => Some(h.clone()),
-        None => None,
-      })
-      .filter(Option::is_some)
-      .map(|h| h.unwrap())
+      .filter_map(|hs| hs.first().cloned())
       .collect::<Vec<Header>>();
 
     let cookies: Vec<Cookie> = headers
       .iter()
       .filter(|header| header.name().eq_ignore_ascii_case("set-cookie"))
-      .map(|header| Cookie::parse(header.value()).ok())
-      .filter(|ck| ck.is_some())
-      .map(|ck| ck.unwrap())
+      .filter_map(|header| Cookie::parse(header.value()).ok())
       .collect();
 
     response.headers(headers);

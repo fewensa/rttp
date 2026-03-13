@@ -51,6 +51,12 @@ pub struct ConfigBuilder {
   config: Config,
 }
 
+impl Default for ConfigBuilder {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
 impl ConfigBuilder {
   pub fn new() -> Self {
     Self {

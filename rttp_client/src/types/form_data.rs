@@ -140,7 +140,7 @@ impl ToFormData for FormData {
   }
 }
 
-impl<'a> ToFormData for &'a str {
+impl ToFormData for &str {
   /// Support format text
   /// ## sample
   /// ```text
@@ -153,7 +153,7 @@ impl<'a> ToFormData for &'a str {
       .iter()
       .map(|part: &&str| {
         let pvs: Vec<&str> = part.split("=").collect::<Vec<&str>>();
-        let name = pvs.get(0).map_or("".to_string(), |v| v.trim().to_string());
+        let name = pvs.first().map_or("".to_string(), |v| v.trim().to_string());
         let value = pvs.get(1).map_or("".to_string(), |v| v.trim().to_string());
         if !value.starts_with("@") {
           return FormData::with_text(name, value);
@@ -162,7 +162,7 @@ impl<'a> ToFormData for &'a str {
           let path = Path::new(&value[1..]);
           return FormData::with_file(name, path);
         }
-        let hasps: Vec<&str> = (&value[1..]).split("#").collect::<Vec<&str>>();
+        let hasps: Vec<&str> = value[1..].split("#").collect::<Vec<&str>>();
         let len = hasps.len();
         let filename = hasps
           .iter()
@@ -195,14 +195,14 @@ impl<K: AsRef<str> + Eq + std::hash::Hash, V: AsRef<str>> ToFormData for HashMap
       if let Some(value) = self.get(name) {
         let value = value.as_ref();
         if !value.starts_with("@") {
-          rets.push(FormData::with_text(&name, value));
+          rets.push(FormData::with_text(name, value));
           continue;
         }
         if !value.contains("#") {
           let path = Path::new(&value[1..]);
-          rets.push(FormData::with_file(&name, path));
+          rets.push(FormData::with_file(name, path));
         }
-        let hasps: Vec<&str> = (&value[1..]).split("#").collect::<Vec<&str>>();
+        let hasps: Vec<&str> = value[1..].split("#").collect::<Vec<&str>>();
         let len = hasps.len();
         let filename = hasps
           .iter()
@@ -215,20 +215,20 @@ impl<K: AsRef<str> + Eq + std::hash::Hash, V: AsRef<str>> ToFormData for HashMap
           .get(len - 1)
           .map_or("".to_string(), |v| v.trim().to_string());
         let path = Path::new(&path);
-        rets.push(FormData::with_file_and_name(&name, path, filename));
+        rets.push(FormData::with_file_and_name(name, path, filename));
       }
     }
     rets
   }
 }
 
-impl<'a, IU: ToFormData> ToFormData for &'a IU {
+impl<IU: ToFormData> ToFormData for &IU {
   fn to_formdatas(&self) -> Vec<FormData> {
     (*self).to_formdatas()
   }
 }
 
-impl<'a, IU: ToFormData> ToFormData for &'a mut IU {
+impl<IU: ToFormData> ToFormData for &mut IU {
   fn to_formdatas(&self) -> Vec<FormData> {
     (**self).to_formdatas()
   }

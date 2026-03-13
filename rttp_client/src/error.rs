@@ -44,26 +44,17 @@ impl Error {
 
   /// Returns true if the error is from a type Builder.
   pub fn is_builder(&self) -> bool {
-    match self.inner.kind {
-      Kind::Builder => true,
-      _ => false,
-    }
+    matches!(self.inner.kind, Kind::Builder)
   }
 
   /// Returns true if the error is from a `RedirectPolicy`.
   pub fn is_redirect(&self) -> bool {
-    match self.inner.kind {
-      Kind::Redirect => true,
-      _ => false,
-    }
+    matches!(self.inner.kind, Kind::Redirect)
   }
 
   /// Returns true if the error is from `Response::error_for_status`.
   pub fn is_status(&self) -> bool {
-    match self.inner.kind {
-      Kind::Status(_) => true,
-      _ => false,
-    }
+    matches!(self.inner.kind, Kind::Status(_))
   }
 
   /// Returns true if the error is related to a timeout.
@@ -88,7 +79,7 @@ impl Error {
 
   #[allow(unused)]
   pub(crate) fn into_io(self) -> io::Error {
-    io::Error::new(io::ErrorKind::Other, self)
+    io::Error::other(self)
   }
 }
 
@@ -287,9 +278,6 @@ pub(crate) fn decode_io(e: io::Error) -> Error {
 #[derive(Debug)]
 pub(crate) struct TimedOut;
 
-#[derive(Debug)]
-pub(crate) struct BlockingClientInAsyncContext;
-
 impl fmt::Display for TimedOut {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     f.write_str("operation timed out")
@@ -297,11 +285,3 @@ impl fmt::Display for TimedOut {
 }
 
 impl StdError for TimedOut {}
-
-impl fmt::Display for BlockingClientInAsyncContext {
-  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    f.write_str("blocking Client used inside a Future context")
-  }
-}
-
-impl StdError for BlockingClientInAsyncContext {}

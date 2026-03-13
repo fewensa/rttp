@@ -1,3 +1,5 @@
+#![allow(clippy::module_inception)]
+
 pub use self::raw_request::RawRequest;
 pub use self::request::*;
 

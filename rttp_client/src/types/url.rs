@@ -54,7 +54,7 @@ impl RoUrl {
     let url = url.as_ref();
     let netloc_and_para: Vec<&str> = url.split("?").collect::<Vec<&str>>();
     let url = netloc_and_para
-      .get(0)
+      .first()
       .map_or("".to_string(), |v| v.to_string());
     let mut para_string = String::new();
     let mut fragment = None;
@@ -66,7 +66,7 @@ impl RoUrl {
       if para_and_fragment.is_empty() {
         para_string.push_str(nap);
       } else {
-        if let Some(last_para) = para_and_fragment.get(0) {
+        if let Some(last_para) = para_and_fragment.first() {
           para_string.push_str(last_para);
         }
 
@@ -82,7 +82,7 @@ impl RoUrl {
         }
       }
     }
-    let mut paras = (&para_string).into_paras();
+    let mut paras = para_string.into_paras();
     for para in &mut paras {
       *para.type_mut() = ParaType::URL;
     }
@@ -116,7 +116,7 @@ impl RoUrl {
     &self.fragment
   }
   pub(crate) fn traditional_get(&self) -> Option<bool> {
-    self.traditional.clone()
+    self.traditional
   }
 
   /// Set fragment to url
@@ -192,10 +192,7 @@ impl RoUrl {
       .filter(|&p| p.is_url() || p.is_form())
       .map(|p| {
         let name = p.name();
-        let traditional = match self.traditional {
-          Some(v) => v,
-          None => true,
-        };
+        let traditional = self.traditional.unwrap_or(true);
         if traditional {
           return format!(
             "{}={}",
@@ -210,7 +207,7 @@ impl RoUrl {
           .len()
           > 1;
         let ends_with_bracket = name.ends_with("[]");
-        return format!(
+        format!(
           "{}{}={}",
           name,
           if !ends_with_bracket && (is_array || p.array()) {
@@ -219,7 +216,7 @@ impl RoUrl {
             ""
           },
           p.value().clone().map_or("".to_string(), |t| t)
-        );
+        )
       })
       .collect::<Vec<String>>()
       .join("&");
@@ -292,13 +289,13 @@ impl AsRef<RoUrl> for RoUrl {
   }
 }
 
-impl<'a, IU: ToRoUrl> ToRoUrl for &'a IU {
+impl<IU: ToRoUrl> ToRoUrl for &IU {
   fn to_rourl(&self) -> RoUrl {
     (*self).to_rourl()
   }
 }
 
-impl<'a, IU: ToRoUrl> ToRoUrl for &'a mut IU {
+impl<IU: ToRoUrl> ToRoUrl for &mut IU {
   fn to_rourl(&self) -> RoUrl {
     (**self).to_rourl()
   }
