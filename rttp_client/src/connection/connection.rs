@@ -19,7 +19,10 @@ use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, Server
 #[cfg(feature = "tls-rustls")]
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 #[cfg(feature = "tls-rustls")]
-use rustls::{ClientConfig, ClientConnection, DigitallySignedStruct, RootCertStore, SignatureScheme, StreamOwned};
+use rustls::{
+  ClientConfig, ClientConnection, DigitallySignedStruct, RootCertStore, SignatureScheme,
+  StreamOwned,
+};
 
 #[cfg(feature = "tls-rustls")]
 #[derive(Debug)]
@@ -337,7 +340,9 @@ impl<'a> Connection<'a> {
 
     let builder = ClientConfig::builder();
     let rustls_config = if config.verify_ssl_cert() {
-      builder.with_root_certificates(root_store).with_no_client_auth()
+      builder
+        .with_root_certificates(root_store)
+        .with_no_client_auth()
     } else {
       builder
         .dangerous()
@@ -346,9 +351,12 @@ impl<'a> Connection<'a> {
     };
     let rc_config = Arc::new(rustls_config);
     let host = self.host(url)?;
-    let server_name = ServerName::try_from(host.as_str())
-      .map_err(|_| error::bad_ssl(format!("Invalid server name: {}", host)))?
-      .to_owned();
+    let server_name = match host.parse::<std::net::IpAddr>() {
+      Ok(ip) => ServerName::IpAddress(ip.into()),
+      Err(_) => ServerName::try_from(host.as_str())
+        .map_err(|_| error::bad_ssl(format!("Invalid server name: {}", host)))?
+        .to_owned(),
+    };
     let client =
       ClientConnection::new(rc_config, server_name).map_err(|e| error::bad_ssl(e.to_string()))?;
     let mut tls = StreamOwned::new(client, stream);

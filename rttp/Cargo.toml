@@ -22,6 +22,7 @@ edition = "2021"
 rttp_client = { optional = true, path = "../rttp_client", features = [ "tls-native", "async" ] }
 
 [dev-dependencies]
+async-std = { version = "1" }
 
 
 [features]
