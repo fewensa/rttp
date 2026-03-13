@@ -9,7 +9,10 @@ use crate::types::{FormDataType, RoUrl};
 
 #[cfg(feature = "async")]
 impl<'a> RawBuilder<'a> {
-  pub async fn build_body_async(&mut self, rourl: &mut RoUrl) -> error::Result<Option<RequestBody>> {
+  pub async fn build_body_async(
+    &mut self,
+    rourl: &mut RoUrl,
+  ) -> error::Result<Option<RequestBody>> {
     if let Some(body) = self.build_body_common(rourl)? {
       return Ok(Some(body));
     }

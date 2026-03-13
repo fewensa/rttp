@@ -116,7 +116,11 @@ fn test_http_with_url() {
   let (addr, _handle) = support::spawn_http_server();
   client()
     .method("get")
-    .url(RoUrl::with(format!("http://{}", addr)).path("/get").para(("name", "Chico")))
+    .url(
+      RoUrl::with(format!("http://{}", addr))
+        .path("/get")
+        .para(("name", "Chico")),
+    )
     .emit()
     .expect("REQUEST FAIL");
 }
@@ -169,8 +173,15 @@ fn test_connection_closed() {
   assert!(resp1.is_err());
   let resp2 = self::client().url(format!("http://{}/get", addr)).emit();
   assert!(resp2.is_ok());
-  let resp3 = self::client().post().url(format!("http://{}/post", addr)).emit();
+  let resp3 = self::client()
+    .post()
+    .url(format!("http://{}/post", addr))
+    .emit();
   assert!(resp3.is_ok());
-  let resp4 = client.reset().post().url(format!("http://{}/post", addr)).emit();
+  let resp4 = client
+    .reset()
+    .post()
+    .url(format!("http://{}/post", addr))
+    .emit();
   assert!(resp4.is_ok());
 }

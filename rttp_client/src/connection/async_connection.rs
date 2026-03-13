@@ -1,8 +1,8 @@
 use std::net::TcpStream;
 
-use futures::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, AllowStdIo};
-use std::io::{Read, Write};
+use futures::io::{AllowStdIo, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use socks::{Socks4Stream, Socks5Stream};
+use std::io::{Read, Write};
 use url::Url;
 
 use crate::connection::connection::Connection;
@@ -49,9 +49,15 @@ impl<'a> AsyncConnection<'a> {
     let header = self.conn.header();
     let body = self.conn.body();
 
-    stream.write_all(header.as_bytes()).await.map_err(error::request)?;
+    stream
+      .write_all(header.as_bytes())
+      .await
+      .map_err(error::request)?;
     if let Some(body) = body {
-      stream.write_all(body.bytes()).await.map_err(error::request)?;
+      stream
+        .write_all(body.bytes())
+        .await
+        .map_err(error::request)?;
     }
     stream.flush().await.map_err(error::request)?;
 
@@ -63,7 +69,10 @@ impl<'a> AsyncConnection<'a> {
     S: AsyncRead + Unpin,
   {
     let mut buffer = Vec::new();
-    stream.read_to_end(&mut buffer).await.map_err(error::request)?;
+    stream
+      .read_to_end(&mut buffer)
+      .await
+      .map_err(error::request)?;
     Ok(buffer)
   }
 }
@@ -130,7 +139,9 @@ impl<'a> AsyncConnection<'a> {
     let addr = format!("{}:{}", proxy.host(), proxy.port());
     let mut stream = self.async_tcp_stream(&addr).await?;
 
-    stream.write_all(connect_header.as_bytes()).map_err(error::request)?;
+    stream
+      .write_all(connect_header.as_bytes())
+      .map_err(error::request)?;
     stream.flush().map_err(error::request)?;
 
     // HTTP/1.1 200 Connection Established
@@ -141,7 +152,10 @@ impl<'a> AsyncConnection<'a> {
       Ok(r) => r,
       Err(_) => return Err(error::bad_proxy("parse proxy server response error.")),
     };
-    if !res_s.to_ascii_lowercase().contains("connection established") {
+    if !res_s
+      .to_ascii_lowercase()
+      .contains("connection established")
+    {
       return Err(error::bad_proxy("Proxy server response error."));
     }
 

@@ -6,7 +6,6 @@ pub struct Header {
   value: String,
 }
 
-
 pub trait IntoHeader {
   fn into_headers(&self) -> Vec<Header>;
 }
@@ -44,12 +43,16 @@ impl Header {
 
 impl<'a> IntoHeader for &'a str {
   fn into_headers(&self) -> Vec<Header> {
-    self.split("\n").collect::<Vec<&str>>()
+    self
+      .split("\n")
+      .collect::<Vec<&str>>()
       .iter()
       .map(|part: &&str| {
         let pvs: Vec<&str> = part.split(":").collect::<Vec<&str>>();
         let name = pvs.get(0);
-        let value = pvs.iter().enumerate()
+        let value = pvs
+          .iter()
+          .enumerate()
           .filter(|(ix, _)| *ix > 0)
           .map(|(_, v)| v.to_string())
           .collect::<Vec<String>>()
@@ -64,13 +67,11 @@ impl<'a> IntoHeader for &'a str {
   }
 }
 
-
 impl IntoHeader for String {
   fn into_headers(&self) -> Vec<Header> {
     (&self[..]).into_headers()
   }
 }
-
 
 impl IntoHeader for Header {
   fn into_headers(&self) -> Vec<Header> {
@@ -90,7 +91,6 @@ impl<K: AsRef<str> + Eq + std::hash::Hash, V: AsRef<str>> IntoHeader for HashMap
   }
 }
 
-
 impl<'a, IU: IntoHeader> IntoHeader for &'a IU {
   fn into_headers(&self) -> Vec<Header> {
     (*self).into_headers()
@@ -103,13 +103,10 @@ impl<'a, IU: IntoHeader> IntoHeader for &'a mut IU {
   }
 }
 
-
-
-
-
-
 macro_rules! replace_expr {
-  ($_t:tt $sub:ty) => {$sub};
+  ($_t:tt $sub:ty) => {
+    $sub
+  };
 }
 
 macro_rules! tuple_to_header {
@@ -180,6 +177,3 @@ tuple_to_header! { a b c d e f g h i j k l m n o p q r s t u v w }
 tuple_to_header! { a b c d e f g h i j k l m n o p q r s t u v w x }
 tuple_to_header! { a b c d e f g h i j k l m n o p q r s t u v w x y }
 tuple_to_header! { a b c d e f g h i j k l m n o p q r s t u v w x y z }
-
-
-

@@ -1,5 +1,5 @@
-use url::Url;
 use rttp_client::types::{RoUrl, ToUrl};
+use url::Url;
 
 #[test]
 fn test_url_gen() {
@@ -22,7 +22,6 @@ fn test_rourl_gen() {
     .to_url()
     .expect("BAD URL");
   println!("{}", url);
-
 
   let rourl: RoUrl = url.into();
   println!("{:?}", rourl);
