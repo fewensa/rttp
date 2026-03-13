@@ -49,7 +49,7 @@ impl<'a> RawBuilder<'a> {
         .map_err(error::builder)?,
       );
 
-      let body = raw.clone().map(|raw| RequestBody::with_text(raw));
+      let body = raw.clone().map(RequestBody::with_text);
       if !paras.is_empty() {
         for para in paras {
           rourl.para(para);
@@ -98,7 +98,7 @@ impl<'a> RawBuilder<'a> {
       return self.build_body_with_form_data_block();
     }
 
-    return Ok(None);
+    Ok(None)
   }
 
   fn build_body_with_form_data_block(&mut self) -> error::Result<Option<RequestBody>> {
@@ -118,7 +118,7 @@ impl<'a> RawBuilder<'a> {
         let file = formdata
           .file()
           .clone()
-          .ok_or(error::builder_with_message(&format!(
+          .ok_or(error::builder_with_message(format!(
             "Missing file path for field: {}",
             formdata.name()
           )))?;
@@ -244,7 +244,7 @@ impl<'a> RawBuilder<'a> {
         value
       ));
       if i + 1 < len {
-        body.push_str("&");
+        body.push('&');
       }
     }
     let req_body = RequestBody::with_text(body);

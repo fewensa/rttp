@@ -1,4 +1,3 @@
-
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum ProxyType {
   HTTP,
@@ -17,12 +16,16 @@ pub struct Proxy {
 }
 
 impl Proxy {
-
   pub fn builder(type_: ProxyType) -> ProxyBuilder {
     ProxyBuilder::new(type_)
   }
 
-  pub fn http_with_authorization<H: AsRef<str>, U: AsRef<str>, P: AsRef<str>>(host: H, port: u32, username: U, password: P) -> Self {
+  pub fn http_with_authorization<H: AsRef<str>, U: AsRef<str>, P: AsRef<str>>(
+    host: H,
+    port: u32,
+    username: U,
+    password: P,
+  ) -> Self {
     Self::builder(ProxyType::HTTP)
       .host(host)
       .port(port)
@@ -32,13 +35,15 @@ impl Proxy {
   }
 
   pub fn http<H: AsRef<str>>(host: H, port: u32) -> Self {
-    Self::builder(ProxyType::HTTP)
-      .host(host)
-      .port(port)
-      .build()
+    Self::builder(ProxyType::HTTP).host(host).port(port).build()
   }
 
-  pub fn https_with_authorization<H: AsRef<str>, U: AsRef<str>, P: AsRef<str>>(host: H, port: u32, username: U, password: P) -> Self {
+  pub fn https_with_authorization<H: AsRef<str>, U: AsRef<str>, P: AsRef<str>>(
+    host: H,
+    port: u32,
+    username: U,
+    password: P,
+  ) -> Self {
     Self::builder(ProxyType::HTTPS)
       .host(host)
       .port(port)
@@ -61,7 +66,12 @@ impl Proxy {
       .build()
   }
 
-  pub fn socks4_with_authorization<H: AsRef<str>, U: AsRef<str>, P: AsRef<str>>(host: H, port: u32, username: U, password: P) -> Self {
+  pub fn socks4_with_authorization<H: AsRef<str>, U: AsRef<str>, P: AsRef<str>>(
+    host: H,
+    port: u32,
+    username: U,
+    password: P,
+  ) -> Self {
     Self::builder(ProxyType::SOCKS4)
       .host(host)
       .port(port)
@@ -77,7 +87,12 @@ impl Proxy {
       .build()
   }
 
-  pub fn socks5_with_authorization<H: AsRef<str>, U: AsRef<str>, P: AsRef<str>>(host: H, port: u32, username: U, password: P) -> Self {
+  pub fn socks5_with_authorization<H: AsRef<str>, U: AsRef<str>, P: AsRef<str>>(
+    host: H,
+    port: u32,
+    username: U,
+    password: P,
+  ) -> Self {
     Self::builder(ProxyType::SOCKS5)
       .host(host)
       .port(port)
@@ -86,15 +101,25 @@ impl Proxy {
       .build()
   }
 
-  pub fn host(&self) -> &String { &self.host }
-  pub fn port(&self) -> u32 { self.port }
-  pub fn username(&self) -> &Option<String> { &self.username }
-  pub fn password(&self) -> &Option<String> { &self.password }
-  pub fn type_(&self) -> &ProxyType { &self.type_ }
+  pub fn host(&self) -> &String {
+    &self.host
+  }
+  pub fn port(&self) -> u32 {
+    self.port
+  }
+  pub fn username(&self) -> &Option<String> {
+    &self.username
+  }
+  pub fn password(&self) -> &Option<String> {
+    &self.password
+  }
+  pub fn type_(&self) -> &ProxyType {
+    &self.type_
+  }
 }
 
 pub struct ProxyBuilder {
-  proxy: Proxy
+  proxy: Proxy,
 }
 
 impl ProxyBuilder {
@@ -106,7 +131,7 @@ impl ProxyBuilder {
         username: None,
         password: None,
         type_,
-      }
+      },
     }
   }
 
@@ -133,9 +158,7 @@ impl ProxyBuilder {
     self.proxy.password = Some(password.as_ref().into());
     self
   }
-
 }
-
 
 impl AsRef<Proxy> for Proxy {
   fn as_ref(&self) -> &Proxy {
@@ -148,4 +171,3 @@ impl AsRef<Proxy> for ProxyBuilder {
     &self.proxy
   }
 }
-

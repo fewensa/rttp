@@ -1,3 +1,5 @@
+#![allow(clippy::module_inception)]
+
 #[cfg(feature = "async")]
 pub use self::async_connection::*;
 pub use self::block_connection::*;

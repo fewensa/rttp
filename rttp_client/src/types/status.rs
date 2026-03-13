@@ -69,7 +69,7 @@ impl StatusCode {
   /// ```
   #[inline]
   pub fn from_u16(src: u16) -> Result<StatusCode, InvalidStatusCode> {
-    if src < 100 || src >= 600 {
+    if !(100..600).contains(&src) {
       return Err(InvalidStatusCode::new());
     }
 
@@ -246,7 +246,7 @@ impl FromStr for StatusCode {
 impl<'a> From<&'a StatusCode> for StatusCode {
   #[inline]
   fn from(t: &'a StatusCode) -> Self {
-    t.clone()
+    *t
   }
 }
 
@@ -486,7 +486,7 @@ impl fmt::Debug for InvalidStatusCode {
 
 impl fmt::Display for InvalidStatusCode {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    f.write_str(&self.to_string())
+    f.write_str("invalid status code")
   }
 }
 

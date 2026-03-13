@@ -19,7 +19,10 @@ use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, Server
 #[cfg(feature = "tls-rustls")]
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 #[cfg(feature = "tls-rustls")]
-use rustls::{ClientConfig, ClientConnection, DigitallySignedStruct, RootCertStore, SignatureScheme, StreamOwned};
+use rustls::{
+  ClientConfig, ClientConnection, DigitallySignedStruct, RootCertStore, SignatureScheme,
+  StreamOwned,
+};
 
 #[cfg(feature = "tls-rustls")]
 #[derive(Debug)]
@@ -85,7 +88,7 @@ impl<'a> Connection<'a> {
 
 #[allow(dead_code)]
 impl<'a> Connection<'a> {
-  pub fn request(&self) -> &RawRequest {
+  pub fn request(&self) -> &RawRequest<'_> {
     &self.request
   }
   pub fn rourl(&self) -> &RoUrl {
@@ -202,9 +205,9 @@ impl<'a> Connection<'a> {
       return Ok(stream);
     }
 
-    Err(error::request(last_err.unwrap_or_else(|| {
-      io::Error::new(io::ErrorKind::Other, "failed to connect")
-    })))
+    Err(error::request(
+      last_err.unwrap_or_else(|| io::Error::other("failed to connect")),
+    ))
   }
 
   pub fn block_write_stream<S>(&self, stream: &mut S) -> error::Result<()>
@@ -264,7 +267,7 @@ impl<'a> Connection<'a> {
     match url.scheme() {
       "http" => self.block_send_http(url, stream),
       "https" => self.block_send_https(url, stream),
-      _ => return Err(error::url_bad_scheme(url.clone())),
+      _ => Err(error::url_bad_scheme(url.clone())),
     }
   }
 
@@ -281,9 +284,9 @@ impl<'a> Connection<'a> {
   where
     S: io::Read + io::Write,
   {
-    return Err(error::no_request_features(
+    Err(error::no_request_features(
       "Not have any tls features, Can't request a https url",
-    ));
+    ))
   }
 
   #[cfg(any(feature = "tls-native", feature = "tls-rustls"))]
@@ -337,7 +340,9 @@ impl<'a> Connection<'a> {
 
     let builder = ClientConfig::builder();
     let rustls_config = if config.verify_ssl_cert() {
-      builder.with_root_certificates(root_store).with_no_client_auth()
+      builder
+        .with_root_certificates(root_store)
+        .with_no_client_auth()
     } else {
       builder
         .dangerous()
@@ -346,9 +351,12 @@ impl<'a> Connection<'a> {
     };
     let rc_config = Arc::new(rustls_config);
     let host = self.host(url)?;
-    let server_name = ServerName::try_from(host.as_str())
-      .map_err(|_| error::bad_ssl(format!("Invalid server name: {}", host)))?
-      .to_owned();
+    let server_name = match host.parse::<std::net::IpAddr>() {
+      Ok(ip) => ServerName::IpAddress(ip.into()),
+      Err(_) => ServerName::try_from(host.as_str())
+        .map_err(|_| error::bad_ssl(format!("Invalid server name: {}", host)))?
+        .to_owned(),
+    };
     let client =
       ClientConnection::new(rc_config, server_name).map_err(|e| error::bad_ssl(e.to_string()))?;
     let mut tls = StreamOwned::new(client, stream);

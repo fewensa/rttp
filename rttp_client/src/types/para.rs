@@ -16,6 +16,7 @@ pub struct Para {
   array: bool,
 }
 
+#[allow(clippy::wrong_self_convention)]
 pub trait IntoPara {
   // Besides parsing as a valid `Url`, the `Url` must be a valid
   // `http::Uri`, in that it makes sense to use in a network request.
@@ -93,7 +94,7 @@ impl IntoPara for Para {
   }
 }
 
-impl<'a> IntoPara for &'a str {
+impl IntoPara for &str {
   fn into_paras(&self) -> Vec<Para> {
     self
       .split("&")
@@ -102,7 +103,7 @@ impl<'a> IntoPara for &'a str {
       .map(|part: &&str| {
         let pvs: Vec<&str> = part.split("=").collect::<Vec<&str>>();
         Para::with_form(
-          pvs.get(0).map_or("".to_string(), |v| v.to_string()).trim(),
+          pvs.first().map_or("".to_string(), |v| v.to_string()).trim(),
           pvs.get(1).map_or("".to_string(), |v| v.to_string()).trim(),
         )
       })
@@ -129,13 +130,13 @@ impl<K: AsRef<str> + Eq + std::hash::Hash, V: AsRef<str>> IntoPara for HashMap<K
   }
 }
 
-impl<'a, IU: IntoPara> IntoPara for &'a IU {
+impl<IU: IntoPara> IntoPara for &IU {
   fn into_paras(&self) -> Vec<Para> {
     (*self).into_paras()
   }
 }
 
-impl<'a, IU: IntoPara> IntoPara for &'a mut IU {
+impl<IU: IntoPara> IntoPara for &mut IU {
   fn into_paras(&self) -> Vec<Para> {
     (**self).into_paras()
   }

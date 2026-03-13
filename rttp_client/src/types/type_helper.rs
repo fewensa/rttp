@@ -1,8 +1,6 @@
-
-
-
 pub fn stand_uri(uri: String) -> String {
-  uri.split("/")
+  uri
+    .split("/")
     .collect::<Vec<&str>>()
     .iter()
     .filter(|v| !v.is_empty())
@@ -10,4 +8,3 @@ pub fn stand_uri(uri: String) -> String {
     .collect::<Vec<String>>()
     .join("/")
 }
-

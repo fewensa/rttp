@@ -49,7 +49,7 @@ impl<'a> RawBuilder<'a> {
       return url.as_str().to_owned();
     }
 
-    let mut result = format!("{}", url.path());
+    let mut result = url.path().to_string();
     if let Some(query) = url.query() {
       result.push_str(&format!("?{}", query));
     }
@@ -64,8 +64,7 @@ impl<'a> RawBuilder<'a> {
       .request
       .headers()
       .iter()
-      .find(|item| item.name().eq_ignore_ascii_case(name.as_ref()))
-      .is_some()
+      .any(|item| item.name().eq_ignore_ascii_case(name.as_ref()))
   }
 }
 
@@ -77,7 +76,7 @@ impl<'a> RawBuilder<'a> {
     let host = url.host_str().ok_or(error::url_bad_host(url.clone()))?;
     let header = match url.port() {
       Some(port) => Header::new("Host", format!("{}:{}", host, port)),
-      None => Header::new("Host", format!("{}", host)),
+      None => Header::new("Host", host),
     };
 
     self.request.headers_mut().push(header);
@@ -122,11 +121,8 @@ impl<'a> RawBuilder<'a> {
     // not form-data request
     if self.request.formdatas().is_empty() && !self.found_header("content-type") {
       let header = match &self.content_type {
-        Some(ct) => Header::new("Content-Type", ct.to_string()),
-        None => Header::new(
-          "Content-Type",
-          mime::APPLICATION_WWW_FORM_URLENCODED.to_string(),
-        ),
+        Some(ct) => Header::new("Content-Type", ct),
+        None => Header::new("Content-Type", &mime::APPLICATION_WWW_FORM_URLENCODED),
       };
 
       self.request.headers_mut().push(header);
@@ -143,9 +139,10 @@ impl<'a> RawBuilder<'a> {
     headers.retain(|item| !item.name().eq_ignore_ascii_case("content-type"));
 
     let header = match &self.content_type {
-      Some(ct) => Header::new("Content-Type", ct.to_string()),
-      None => origin
-        .unwrap_or_else(|| Header::new("Content-Type", mime::APPLICATION_OCTET_STREAM.to_string())),
+      Some(ct) => Header::new("Content-Type", ct),
+      None => {
+        origin.unwrap_or_else(|| Header::new("Content-Type", &mime::APPLICATION_OCTET_STREAM))
+      }
     };
     headers.push(header);
 

@@ -1,5 +1,6 @@
+#![allow(clippy::module_inception)]
 
 pub use self::response::*;
 
-mod response;
 mod raw_response;
+mod response;

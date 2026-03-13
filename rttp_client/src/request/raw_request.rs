@@ -22,7 +22,7 @@ impl<'a> RawRequest<'a> {
   }
 
   pub fn origin(&self) -> &Request {
-    &self.origin
+    self.origin
   }
 
   pub fn url(&self) -> &RoUrl {
@@ -42,6 +42,6 @@ impl<'a> RawRequest<'a> {
   }
 
   pub(crate) fn origin_mut(&mut self) -> &mut Request {
-    &mut self.origin
+    self.origin
   }
 }

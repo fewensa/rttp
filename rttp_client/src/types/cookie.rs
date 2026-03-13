@@ -18,23 +18,39 @@ pub struct Cookie {
 }
 
 impl Cookie {
-  pub fn name(&self) -> &String { &self.name }
-  pub fn value(&self) -> &String { &self.value }
-  pub fn expires(&self) -> &Option<SystemTime> { &self.expires }
-  pub fn path(&self) -> &Option<String> { &self.path }
-  pub fn domain(&self) -> &Option<String> { &self.domain }
-  pub fn secure(&self) -> bool { self.secure }
-  pub fn http_only(&self) -> bool { self.http_only }
-  pub fn persistent(&self) -> bool { self.persistent }
-  pub fn host_only(&self) -> bool { self.host_only }
-  pub fn same_site(&self) -> &Option<String> { &self.same_site }
+  pub fn name(&self) -> &String {
+    &self.name
+  }
+  pub fn value(&self) -> &String {
+    &self.value
+  }
+  pub fn expires(&self) -> &Option<SystemTime> {
+    &self.expires
+  }
+  pub fn path(&self) -> &Option<String> {
+    &self.path
+  }
+  pub fn domain(&self) -> &Option<String> {
+    &self.domain
+  }
+  pub fn secure(&self) -> bool {
+    self.secure
+  }
+  pub fn http_only(&self) -> bool {
+    self.http_only
+  }
+  pub fn persistent(&self) -> bool {
+    self.persistent
+  }
+  pub fn host_only(&self) -> bool {
+    self.host_only
+  }
+  pub fn same_site(&self) -> &Option<String> {
+    &self.same_site
+  }
 
   pub fn string(&self) -> String {
-    let mut text = format!(
-      "{}={}",
-      self.name,
-      self.value,
-    );
+    let mut text = format!("{}={}", self.name, self.value,);
     if let Some(path) = &self.path {
       text.push_str(&format!("; path={}", path));
     }
@@ -75,8 +91,13 @@ impl Cookie {
     let parts: Vec<&str> = text.as_ref().split(";").collect();
     for item in parts {
       let nvs: Vec<&str> = item.split("=").collect();
-      let name = nvs.get(0).ok_or(error::bad_cookie("Cookie not have name"))?.trim();
-      let value: String = nvs.iter().enumerate()
+      let name = nvs
+        .first()
+        .ok_or(error::bad_cookie("Cookie not have name"))?
+        .trim();
+      let value: String = nvs
+        .iter()
+        .enumerate()
         .filter(|(ix, _)| *ix > 0)
         .map(|(_, v)| *v)
         .collect::<Vec<&str>>()
@@ -89,7 +110,7 @@ impl Cookie {
             Ok(v) => {
               builder.expires(v);
             }
-            Err(e) => eprintln!("=> {:?}", e)
+            Err(e) => eprintln!("=> {:?}", e),
           }
         }
         "path" => {
@@ -102,21 +123,33 @@ impl Cookie {
           if value.is_empty() {
             builder.secure(true);
           } else {
-            builder.secure(value.parse().map_err(|_| error::bad_cookie("Cookie secure can not parse to bool"))?);
+            builder.secure(
+              value
+                .parse()
+                .map_err(|_| error::bad_cookie("Cookie secure can not parse to bool"))?,
+            );
           }
         }
         "http_only" | "httponly" | "httpOnly" => {
           if value.is_empty() {
             builder.http_only(true);
           } else {
-            builder.http_only(value.parse().map_err(|_| error::bad_cookie("Cookie httpOnly can not parse to bool"))?);
+            builder.http_only(
+              value
+                .parse()
+                .map_err(|_| error::bad_cookie("Cookie httpOnly can not parse to bool"))?,
+            );
           }
         }
         "host_only" | "hostonly" | "hostOnly" => {
           if value.is_empty() {
             builder.host_only(true);
           } else {
-            builder.host_only(value.parse().map_err(|_| error::bad_cookie("Cookie hostOnly can not parse to bool"))?);
+            builder.host_only(
+              value
+                .parse()
+                .map_err(|_| error::bad_cookie("Cookie hostOnly can not parse to bool"))?,
+            );
           }
         }
         "same_site" | "SameSite" | "samSite" => {
@@ -132,7 +165,6 @@ impl Cookie {
   }
 }
 
-
 impl fmt::Debug for Cookie {
   #[inline]
   fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -147,7 +179,8 @@ impl fmt::Display for Cookie {
   }
 }
 
-
+#[allow(dead_code)]
+#[allow(clippy::wrong_self_convention)]
 pub trait ToCookie {
   fn to_cookie(&self) -> error::Result<Cookie>;
 }
@@ -170,10 +203,9 @@ impl ToCookie for &str {
   }
 }
 
-
 #[derive(Clone)]
 pub struct CookieBuilder {
-  cookie: Cookie
+  cookie: Cookie,
 }
 
 impl CookieBuilder {
@@ -190,7 +222,7 @@ impl CookieBuilder {
         persistent: false,
         host_only: false,
         same_site: None,
-      }
+      },
     }
   }
 
@@ -248,4 +280,3 @@ impl AsRef<Cookie> for CookieBuilder {
     &self.cookie
   }
 }
-

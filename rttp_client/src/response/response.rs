@@ -8,13 +8,13 @@ use crate::types::{Cookie, Header, RoUrl};
 
 #[derive(Clone)]
 pub struct Response {
-  raw: RawResponse
+  raw: RawResponse,
 }
 
 impl Response {
   pub fn new(url: RoUrl, binary: Vec<u8>) -> error::Result<Self> {
     Ok(Self {
-      raw: RawResponse::new(url, binary)?
+      raw: RawResponse::new(url, binary)?,
     })
   }
 }
@@ -25,11 +25,11 @@ impl Response {
   }
 
   pub fn is_redirect(&self) -> bool {
-    self.code() == 301 ||
-      self.code() == 302 ||
-      self.code() == 303 ||
-      self.code() == 307 ||
-      self.header_value("Location").is_some()
+    self.code() == 301
+      || self.code() == 302
+      || self.code() == 303
+      || self.code() == 307
+      || self.header_value("Location").is_some()
   }
 
   pub fn code(&self) -> u32 {
@@ -69,18 +69,24 @@ impl Response {
   }
 
   pub fn headers_of_name<S: AsRef<str>>(&self, name: S) -> Vec<&Header> {
-    self.headers().iter()
+    self
+      .headers()
+      .iter()
       .filter(|header| header.name().eq_ignore_ascii_case(name.as_ref()))
       .collect()
   }
 
   pub fn header<S: AsRef<str>>(&self, name: S) -> Option<&Header> {
-    self.headers().iter()
+    self
+      .headers()
+      .iter()
       .find(|header| header.name().eq_ignore_ascii_case(name.as_ref()))
   }
 
   pub fn header_values<S: AsRef<str>>(&self, name: S) -> Vec<&String> {
-    self.headers().iter()
+    self
+      .headers()
+      .iter()
       .filter(|header| header.name().eq_ignore_ascii_case(name.as_ref()))
       .map(|header| header.value())
       .collect()
@@ -95,10 +101,12 @@ impl Response {
   }
 
   pub fn cookie<S: AsRef<str>>(&self, name: S) -> Option<&Cookie> {
-    self.cookies().iter().find(|cookie| cookie.name().eq_ignore_ascii_case(name.as_ref()))
+    self
+      .cookies()
+      .iter()
+      .find(|cookie| cookie.name().eq_ignore_ascii_case(name.as_ref()))
   }
 }
-
 
 impl fmt::Debug for Response {
   #[inline]
@@ -114,12 +122,10 @@ impl fmt::Display for Response {
   }
 }
 
-
 #[derive(Clone)]
 pub struct ResponseBody {
-  binary: Vec<u8>
+  binary: Vec<u8>,
 }
-
 
 impl ResponseBody {
   pub fn new(binary: Vec<u8>) -> Self {

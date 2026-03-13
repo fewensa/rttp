@@ -9,15 +9,12 @@ use crate::types::RoUrl;
 #[allow(dead_code)]
 pub struct ConnectionReader<'a> {
   url: &'a Url,
-  reader: Box<&'a mut dyn io::Read>,
+  reader: &'a mut dyn io::Read,
 }
 
 impl<'a> ConnectionReader<'a> {
   pub fn new(url: &'a Url, reader: &'a mut dyn io::Read) -> ConnectionReader<'a> {
-    Self {
-      url,
-      reader: Box::new(reader),
-    }
+    Self { url, reader }
   }
 
   pub fn binary(&mut self) -> error::Result<Vec<u8>> {

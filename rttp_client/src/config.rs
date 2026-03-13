@@ -51,6 +51,12 @@ pub struct ConfigBuilder {
   config: Config,
 }
 
+impl Default for ConfigBuilder {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
 impl ConfigBuilder {
   pub fn new() -> Self {
     Self {
@@ -79,6 +85,9 @@ impl ConfigBuilder {
   }
   pub fn auto_redirect(&mut self, auto_redirect: bool) -> &mut Self {
     self.config.auto_redirect = auto_redirect;
+    if auto_redirect && self.config.max_redirect == 0 {
+      self.config.max_redirect = 5;
+    }
     self
   }
   pub fn max_redirect(&mut self, max_redirect: u32) -> &mut Self {
@@ -136,8 +145,14 @@ mod tests {
     let builder_config = Config::builder().build();
 
     assert_eq!(default_config.read_timeout(), builder_config.read_timeout());
-    assert_eq!(default_config.write_timeout(), builder_config.write_timeout());
-    assert_eq!(default_config.auto_redirect(), builder_config.auto_redirect());
+    assert_eq!(
+      default_config.write_timeout(),
+      builder_config.write_timeout()
+    );
+    assert_eq!(
+      default_config.auto_redirect(),
+      builder_config.auto_redirect()
+    );
     assert_eq!(default_config.max_redirect(), builder_config.max_redirect());
     assert_eq!(
       default_config.verify_ssl_hostname(),
@@ -147,5 +162,13 @@ mod tests {
       default_config.verify_ssl_cert(),
       builder_config.verify_ssl_cert()
     );
+  }
+
+  #[test]
+  fn enabling_redirects_sets_a_reasonable_default_limit() {
+    let config = Config::builder().auto_redirect(true).build();
+
+    assert!(config.auto_redirect());
+    assert_eq!(config.max_redirect(), 5);
   }
 }

@@ -54,11 +54,7 @@ impl Disposition {
       DISPOSITION_PREFIX, HYPHENS, self.boundary, DISPOSITION_END, name, filename, DISPOSITION_END
     );
 
-    disposition.push_str(&format!(
-      "Content-Type: {}{}",
-      mime.to_string(),
-      DISPOSITION_END
-    ));
+    disposition.push_str(&format!("Content-Type: {}{}", mime, DISPOSITION_END));
     disposition.push_str(DISPOSITION_END);
     disposition
   }
