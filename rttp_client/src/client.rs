@@ -3,7 +3,7 @@ use crate::connection::AsyncConnection;
 use crate::connection::BlockConnection;
 use crate::request::{RawRequest, Request};
 use crate::response::Response;
-use crate::types::{Header, IntoHeader, IntoPara, Proxy, ToFormData, ToRoUrl};
+use crate::types::{Auth, Header, IntoHeader, IntoPara, Proxy, ToFormData, ToRoUrl};
 use crate::{error, Config};
 
 #[derive(Debug)]
@@ -120,9 +120,20 @@ impl HttpClient {
     self
   }
 
-  /// Not support now
-  pub fn auth(&mut self) -> &mut Self {
-    unimplemented!()
+  /// Set HTTP authentication. Supports Basic Auth and Bearer Token.
+  ///
+  /// # Examples
+  ///
+  /// ```rust
+  /// use rttp_client::HttpClient;
+  /// use rttp_client::types::Auth;
+  ///
+  /// let mut client = HttpClient::new();
+  /// client.auth(Auth::basic("user", "secret"));
+  /// client.auth(Auth::bearer("my-token"));
+  /// ```
+  pub fn auth<A: AsRef<Auth>>(&mut self, auth: A) -> &mut Self {
+    self.header(("Authorization", auth.as_ref().header_value().as_str()))
   }
 
   ///  Add request header

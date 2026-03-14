@@ -1,3 +1,4 @@
+pub use self::auth::Auth;
 pub use self::cookie::Cookie;
 pub use self::form_data::*;
 pub use self::header::*;
@@ -6,6 +7,7 @@ pub use self::proxy::*;
 pub use self::status::*;
 pub use self::url::*;
 
+mod auth;
 mod cookie;
 mod form_data;
 mod header;

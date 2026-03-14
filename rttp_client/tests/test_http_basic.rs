@@ -2,7 +2,7 @@ mod support;
 
 use std::collections::HashMap;
 
-use rttp_client::types::{Para, Proxy, RoUrl};
+use rttp_client::types::{Auth, Para, Proxy, RoUrl};
 use rttp_client::{Config, HttpClient};
 
 fn client() -> HttpClient {
@@ -201,4 +201,31 @@ fn test_connection_closed() {
     .url(format!("http://{}/post", addr))
     .emit();
   assert!(resp4.is_ok());
+}
+
+#[test]
+fn test_basic_auth() {
+  let (addr, _handle) = support::spawn_auth_echo_server();
+  let response = client()
+    .get()
+    .url(format!("http://{}/", addr))
+    .auth(Auth::basic("user", "secret"))
+    .emit();
+  assert!(response.is_ok());
+  let response = response.unwrap();
+  // base64("user:secret") = "dXNlcjpzZWNyZXQ="
+  assert_eq!("Basic dXNlcjpzZWNyZXQ=", response.body().string().unwrap());
+}
+
+#[test]
+fn test_bearer_auth() {
+  let (addr, _handle) = support::spawn_auth_echo_server();
+  let response = client()
+    .get()
+    .url(format!("http://{}/", addr))
+    .auth(Auth::bearer("my-token-abc"))
+    .emit();
+  assert!(response.is_ok());
+  let response = response.unwrap();
+  assert_eq!("Bearer my-token-abc", response.body().string().unwrap());
 }

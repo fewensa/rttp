@@ -108,6 +108,51 @@ pub fn spawn_redirect_server() -> (SocketAddr, JoinHandle<()>) {
   (addr, handle)
 }
 
+pub fn spawn_auth_echo_server() -> (SocketAddr, JoinHandle<()>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind auth echo server");
+  let addr = listener.local_addr().expect("auth echo addr");
+  let handle = thread::spawn(move || {
+    if let Ok((mut stream, _)) = listener.accept() {
+      let mut request = Vec::new();
+      let mut buf = [0u8; 1024];
+      loop {
+        let Ok(read) = stream.read(&mut buf) else {
+          break;
+        };
+        if read == 0 {
+          break;
+        }
+        request.extend_from_slice(&buf[..read]);
+        if request.windows(4).any(|w| w == b"\r\n\r\n") {
+          break;
+        }
+      }
+
+      let req_str = String::from_utf8_lossy(&request);
+      let auth_value = req_str
+        .lines()
+        .find_map(|line| {
+          let (name, value) = line.split_once(':')?;
+          if name.eq_ignore_ascii_case("authorization") {
+            Some(value.trim().to_string())
+          } else {
+            None
+          }
+        })
+        .unwrap_or_default();
+
+      let body = auth_value.as_bytes();
+      let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+      );
+      let _ = stream.write_all(response.as_bytes());
+      let _ = stream.write_all(body);
+    }
+  });
+  (addr, handle)
+}
+
 #[cfg(feature = "tls-rustls")]
 pub fn spawn_tls_server() -> (SocketAddr, JoinHandle<()>) {
   use rcgen::generate_simple_self_signed;
