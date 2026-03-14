@@ -50,7 +50,8 @@
 //! ```
 //!
 //! *Important*
-//! `tls-native` and `tls-rustls` only support choose on features, do not same to use.
+//! `tls-native` and `tls-rustls` can be enabled together; when both are enabled,
+//! the client prefers the rustls implementation for HTTPS requests.
 //!
 //! ## Examples
 //!
@@ -101,7 +102,7 @@
 //!   .url("http://httpbin.org/post")
 //!   .para("name=value&name=value")
 //!   .para(("name", "value", "name=value&name=value"))
-//!   .para(Para::new("name", "value"))
+//!   .para(Para::with_form("name", "value"))
 //!   .para(multi_para)
 //!   .emit();
 //! ```
@@ -216,11 +217,10 @@ pub use self::client::*;
 pub use self::config::*;
 
 mod client;
-mod request;
-mod connection;
 mod config;
+mod connection;
+mod request;
 
-pub mod types;
 pub mod error;
 pub mod response;
-
+pub mod types;

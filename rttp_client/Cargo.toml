@@ -1,6 +1,6 @@
 [package]
 name = "rttp_client"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["fewensa <fewensa@protonmail.com>"]
 description = "Rust http client lib"
 homepage = "https://github.com/fewensa/rttp"
@@ -15,32 +15,53 @@ include = [
 ]
 
 readme = "README.md"
-edition = "2018"
+edition = "2021"
 
 [dependencies]
-url = "2"
+tracing = "0.1"
+socket2 = "0.5"
+futures = "0.3"
+
+url              = "2"
 percent-encoding = "2"
 
-mime = "0.3"
+mime       = "0.3"
 mime_guess = "2"
 
-rand = "0.7"
-socks = "0.3"
-base64 = "0.11"
-flate2 = "1.0"
-httpdate = "0.3"
+rand     = "0.8"
+socks    = "0.3"
+base64   = "0.22"
+flate2   = "1.0"
+httpdate = "1.0"
 
 
-native-tls = { version = "0.2", optional = true }
-rustls = { version = "0.16", optional = true }
-webpki-roots = { version = "0.18", optional = true }
-webpki = { version = "0.21", optional = true }
+native-tls       = { optional = true, version = "0.2" }
+async-native-tls = { optional = true, version = "0.5" }
 
-async-std = { version = "1", optional = true }
+rustls           = { optional = true, version = "0.23" }
+webpki-roots     = { optional = true, version = "0.26" }
+futures-rustls   = { optional = true, version = "0.26" }
+
 
 [features]
 default = []
+async = []
+tls-native  = ["native-tls", "async-native-tls"]
+tls-rustls  = ["rustls", "webpki-roots", "futures-rustls"]
 
-tls-native = ["native-tls"]
-tls-rustls = ["rustls", "webpki", "webpki-roots"]
-async = ["async-std"]
+##
+# warning: /data/rttp/rttp_client/Cargo.toml: Found `feature = ...` in `target.'cfg(...)'.dependencies`.
+#  This key is not supported for selecting dependencies and will not work as expected.
+#  Use the [features] section instead: https://doc.rust-lang.org/cargo/reference/features.html
+##
+#[target.'cfg(any(feature = "async-std", feature = "async-tokio"))'.features]
+#tls-native  = ["async-native-tls"]
+#tls-rustls  = ["async-rustls", "webpki", "webpki-roots"]
+
+## Not good way
+#[target.'cfg(any(feature = "async-std", feature = "async-tokio"))'.dependencies]
+#tls-native = { optional = true, package = "async-native-tls", version = "0.4" }
+#tls-rustls = { optional = true, package = "async-rustls", version = "0.2" }
+
+[dev-dependencies]
+rcgen = "0.11"

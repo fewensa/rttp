@@ -1,7 +1,9 @@
+mod support;
+
 use std::collections::HashMap;
 
+use rttp_client::types::{Auth, Para, Proxy, RoUrl};
 use rttp_client::{Config, HttpClient};
-use rttp_client::types::{Para, Proxy, RoUrl};
 
 fn client() -> HttpClient {
   HttpClient::new()
@@ -9,30 +11,30 @@ fn client() -> HttpClient {
 
 #[test]
 fn test_http() {
-  let response = client()
-    .url("http://httpbin.org/get")
-    .emit();
+  let (addr, _handle) = support::spawn_http_server();
+  let response = client().url(format!("http://{}/get", addr)).emit();
   assert!(response.is_ok());
   let response = response.unwrap();
-  assert_eq!("httpbin.org", response.host());
+  assert_eq!("127.0.0.1", response.host());
   println!("{}", response);
 }
 
 #[test]
 fn test_multi() {
+  let (addr, _handle) = support::spawn_http_server();
   let mut para_map = HashMap::new();
   para_map.insert("id", "1");
   para_map.insert("relation", "eq");
   let response = client()
     .method("post")
-    .url(RoUrl::with("http://httpbin.org?id=1&name=jack#none").para("name=Julia"))
+    .url(RoUrl::with(format!("http://{}/?id=1&name=jack#none", addr)).para("name=Julia"))
     .path("post")
     .header("User-Agent: Mozilla/5.0")
-    .header(&format!("Host:{}", "httpbin.org"))
+    .header("Host: localhost")
     .para("name=Chico")
     .para(&"name=文".to_string())
     .para(para_map)
-    .form(("debug", "true", "name=Form&file=@cargo#../Cargo.toml"))
+    .form(("debug", "true", "name=Form"))
     .cookie("token=123234")
     .cookie("uid=abcdef")
     .content_type("application/x-www-form-urlencoded")
@@ -41,40 +43,78 @@ fn test_multi() {
     .emit();
   assert!(response.is_ok());
   let response = response.unwrap();
-  println!("{}", response);
+  assert_eq!("127.0.0.1", response.host());
 }
 
 #[test]
 fn test_gzip() {
+  let (addr, _handle) = support::spawn_http_server();
   let response = client()
     .get()
-    .url("http://httpbin.org/get")
+    .url(format!("http://{}/get", addr))
     .header(("Accept-Encoding", "gzip, deflate"))
     .emit();
   assert!(response.is_ok());
+}
+
+#[test]
+fn test_invalid_gzip_returns_error_instead_of_panicking() {
+  let (addr, _handle) = support::spawn_invalid_gzip_server();
+  let result =
+    std::panic::catch_unwind(|| client().get().url(format!("http://{}/gzip", addr)).emit());
+
+  assert!(result.is_ok());
+  assert!(result.unwrap().is_err());
+}
+
+#[test]
+fn test_chunked() {
+  let (addr, _handle) = support::spawn_chunked_server();
+  let response = client()
+    .get()
+    .url(format!("http://{}/chunked", addr))
+    .emit();
+  assert!(response.is_ok());
+
   let response = response.unwrap();
-  println!("{}", response);
+  assert_eq!("chunked body!", response.body().string().unwrap());
+  assert_eq!(
+    Some(&"chunked".to_string()),
+    response.header_value("Transfer-Encoding")
+  );
+}
+
+#[test]
+fn test_content_length_response_does_not_wait_for_eof() {
+  let (addr, _handle) = support::spawn_keep_alive_server();
+  let response = client()
+    .get()
+    .config(Config::builder().read_timeout(100))
+    .url(format!("http://{}/keep-alive", addr))
+    .emit();
+  assert!(response.is_ok());
+
+  let response = response.unwrap();
+  assert_eq!("OK", response.body().string().unwrap());
 }
 
 #[test]
 fn test_upload() {
+  let (addr, _handle) = support::spawn_http_server();
   let response = client()
     .method("post")
-    .url("http://httpbin.org")
-    .path("post")
-    .form(("debug", "true", "name=Form&file=@cargo#../Cargo.toml"))
+    .url(format!("http://{}/post", addr))
+    .form(("debug", "true", "name=Form"))
     .emit();
   assert!(response.is_ok());
-  let response = response.unwrap();
-  println!("{}", response);
 }
-
 
 #[test]
 fn test_raw_json() {
+  let (addr, _handle) = support::spawn_http_server();
   client()
     .method("post")
-    .url("http://httpbin.org/post?raw=json")
+    .url(format!("http://{}/post?raw=json", addr))
     .para("name=Chico")
     .content_type("application/json")
     .raw(r#"  {"from": "rttp"} "#)
@@ -84,10 +124,11 @@ fn test_raw_json() {
 
 #[test]
 fn test_raw_form_urlencoded() {
+  let (addr, _handle) = support::spawn_http_server();
   client()
     .method("post")
-    .url("http://httpbin.org/post")
-    .para(Para::new("name", "Chico"))
+    .url(format!("http://{}/post", addr))
+    .para(Para::with_form("name", "Chico"))
     .raw("name=Nick&name=Wendy")
     .content_type("application/x-www-form-urlencoded")
     .emit()
@@ -95,25 +136,32 @@ fn test_raw_form_urlencoded() {
 }
 
 #[test]
-#[cfg(any(feature = "tls-rustls", feature = "tls-native"))]
+#[cfg(feature = "tls-rustls")]
 fn test_https() {
+  let (addr, _handle) = support::spawn_tls_server();
   let response = client()
     .get()
-    .url("https://bing.com")
-    .para(Para::new("q", "News"))
+    .url(format!("https://{}/", addr))
+    .config(
+      Config::builder()
+        .verify_ssl_cert(false)
+        .verify_ssl_hostname(false),
+    )
+    .para(Para::with_form("q", "News"))
     .emit();
   assert!(response.is_ok());
-  let response = response.unwrap();
-  println!("{}", response);
 }
 
 #[test]
-#[cfg(any(feature = "tls-native"))]
-// feature = "tls-rustls",  // rustls request httpbin.org will throw exception // "CloseNotify alert received"
 fn test_http_with_url() {
+  let (addr, _handle) = support::spawn_http_server();
   client()
     .method("get")
-    .url(RoUrl::with("https://httpbin.org").path("/get").para(("name", "Chico")))
+    .url(
+      RoUrl::with(format!("http://{}", addr))
+        .path("/get")
+        .para(("name", "Chico")),
+    )
     .emit()
     .expect("REQUEST FAIL");
 }
@@ -131,42 +179,115 @@ fn test_with_proxy_http() {
 }
 
 #[test]
-#[ignore]
 fn test_with_proxy_socks5() {
+  let (addr, _handle) = support::spawn_http_server();
+  let (proxy_addr, _proxy_handle) = support::spawn_socks5_proxy_server();
   let response = client()
     .get()
-    .url("http://google.com")
-    .proxy(Proxy::socks5("127.0.0.1", 1080))
+    .url(format!("http://{}/get", addr))
+    .proxy(Proxy::socks5("127.0.0.1", proxy_addr.port().into()))
     .emit();
   assert!(response.is_ok());
   let response = response.unwrap();
-  assert_eq!("google.com", response.host());
-  println!("{}", response);
+  assert_eq!("127.0.0.1", response.host());
+}
+
+#[test]
+fn test_with_proxy_socks5_auth() {
+  let (addr, _handle) = support::spawn_http_server();
+  let (proxy_addr, _proxy_handle) =
+    support::spawn_socks5_proxy_server_with_credentials("username", "password");
+  let response = client()
+    .get()
+    .url(format!("http://{}/get", addr))
+    .proxy(Proxy::socks5_with_authorization(
+      "127.0.0.1",
+      proxy_addr.port().into(),
+      "username",
+      "password",
+    ))
+    .emit();
+  assert!(response.is_ok());
+  let response = response.unwrap();
+  assert_eq!("127.0.0.1", response.host());
 }
 
 #[test]
 fn test_auto_redirect() {
+  let (addr, _handle) = support::spawn_redirect_server();
   let response = client()
     .config(Config::builder().auto_redirect(true))
     .get()
-    .url("http://bing.com")
+    .url(format!("http://{}/", addr))
     .emit();
   assert!(response.is_ok());
   let response = response.unwrap();
-  assert_ne!("bing.com", response.host());
+  assert!(response.ok());
+}
+
+#[test]
+fn test_http_proxy_uses_absolute_form_for_http_requests() {
+  let (addr, _handle) = support::spawn_http_proxy_server();
+  let response = client()
+    .get()
+    .url("http://example.com/proxy?q=1")
+    .proxy(Proxy::http("127.0.0.1", u32::from(addr.port())))
+    .emit();
+  assert!(response.is_ok());
+
+  let response = response.unwrap();
+  assert_eq!(
+    "GET http://example.com/proxy?q=1 HTTP/1.1",
+    response.body().string().unwrap()
+  );
 }
 
 #[test]
 fn test_connection_closed() {
+  let (addr, _handle) = support::spawn_http_server_count(5);
   let mut client = client();
-  let resp0 = client.url("http://httpbin.org/get").emit();
+  let resp0 = client.url(format!("http://{}/get", addr)).emit();
   assert!(resp0.is_ok());
-  let resp1 = client.post().url("http://httpbin.org/post").emit();
+  let resp1 = client.post().url(format!("http://{}/post", addr)).emit();
   assert!(resp1.is_err());
-  let resp2 = self::client().url("http://httpbin.org/get").emit();
+  let resp2 = self::client().url(format!("http://{}/get", addr)).emit();
   assert!(resp2.is_ok());
-  let resp3 = self::client().post().url("http://httpbin.org/post").emit();
+  let resp3 = self::client()
+    .post()
+    .url(format!("http://{}/post", addr))
+    .emit();
   assert!(resp3.is_ok());
-  let resp4 = client.reset().post().url("http://httpbin.org/post").emit();
+  let resp4 = client
+    .reset()
+    .post()
+    .url(format!("http://{}/post", addr))
+    .emit();
   assert!(resp4.is_ok());
+}
+
+#[test]
+fn test_basic_auth() {
+  let (addr, _handle) = support::spawn_auth_echo_server();
+  let response = client()
+    .get()
+    .url(format!("http://{}/", addr))
+    .auth(Auth::basic("user", "secret"))
+    .emit();
+  assert!(response.is_ok());
+  let response = response.unwrap();
+  // base64("user:secret") = "dXNlcjpzZWNyZXQ="
+  assert_eq!("Basic dXNlcjpzZWNyZXQ=", response.body().string().unwrap());
+}
+
+#[test]
+fn test_bearer_auth() {
+  let (addr, _handle) = support::spawn_auth_echo_server();
+  let response = client()
+    .get()
+    .url(format!("http://{}/", addr))
+    .auth(Auth::bearer("my-token-abc"))
+    .emit();
+  assert!(response.is_ok());
+  let response = response.unwrap();
+  assert_eq!("Bearer my-token-abc", response.body().string().unwrap());
 }

@@ -1,43 +1,29 @@
-use std::{io, time};
 use std::io::{Read, Write};
-use std::net::TcpStream;
-use std::sync::Arc;
 
-#[cfg(feature = "tls-native")]
-use native_tls::TlsConnector;
-#[cfg(feature = "tls-rustls")]
-use rustls::{Session, TLSError};
 use socks::{Socks4Stream, Socks5Stream};
 use url::Url;
 
-use crate::{error, HttpClient};
 use crate::connection::connection::Connection;
 use crate::request::RawRequest;
 use crate::response::Response;
 use crate::types::{Proxy, ProxyType};
+use crate::{error, HttpClient};
 
 pub struct BlockConnection<'a> {
-  conn: Connection<'a>
+  conn: Connection<'a>,
 }
 
 impl<'a> BlockConnection<'a> {
   pub fn new(request: RawRequest<'a>) -> Self {
-    Self { conn: Connection::new(request) }
+    Self {
+      conn: Connection::new(request),
+    }
   }
 
-  pub fn block_call(mut self) -> error::Result<Response> {
+  pub fn call(mut self) -> error::Result<Response> {
     let url = self.conn.url().map_err(error::builder)?;
-
-//    let header = self.request.header();
-//    let body = self.request.body();
-//    println!("{}", header);
-//    if let Some(b) = body {
-//      println!("{}", b.string()?);
-//    }
-
-    let proxy = self.conn.proxy();
-
-    let binary = if let Some(proxy) = proxy {
+    let proxy = self.conn.proxy().clone();
+    let binary = if let Some(proxy) = proxy.as_ref() {
       self.call_with_proxy(&url, proxy)?
     } else {
       self.conn.block_send(&url)?
@@ -52,6 +38,7 @@ impl<'a> BlockConnection<'a> {
         return Err(error::loop_detected(url));
       }
       if !config.auto_redirect() {
+        self.conn.closed_set(true);
         return Ok(response);
       }
       let count = self.conn.count();
@@ -59,8 +46,9 @@ impl<'a> BlockConnection<'a> {
         return Err(error::too_many_redirects(url));
       }
 
+      let redirect_url = self.conn.redirect_url(&url, location)?;
       return HttpClient::with_request(self.conn.request().origin().clone())
-        .url(location)
+        .url(redirect_url)
         .count(count + 1)
         .emit();
     }
@@ -74,26 +62,36 @@ impl<'a> BlockConnection<'a> {
 impl<'a> BlockConnection<'a> {
   fn call_with_proxy(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
     match proxy.type_() {
-      ProxyType::HTTP => self.call_with_proxy_https(url, proxy),
+      ProxyType::HTTP => {
+        if url.scheme() == "http" {
+          self.call_with_proxy_http(url, proxy)
+        } else {
+          self.call_with_proxy_https(url, proxy)
+        }
+      }
       ProxyType::HTTPS => self.call_with_proxy_https(url, proxy),
       ProxyType::SOCKS4 => self.call_with_proxy_socks4(url, proxy),
       ProxyType::SOCKS5 => self.call_with_proxy_socks5(url, proxy),
     }
   }
 
-//  fn call_with_proxy_http(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
-//    let header = self.request.header();
-//    let body = self.request.body();
-//
-//    let addr = format!("{}:{}", proxy.host(), proxy.port());
-//    let mut stream = self.tcp_stream(&addr)?;
-//    self.call_tcp_stream_http(stream)
-//  }
+  fn call_with_proxy_http(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
+    let addr = format!("{}:{}", proxy.host(), proxy.port());
+    let mut stream = self.conn.block_tcp_stream(&addr)?;
+    let header = self.conn.proxy_http_header(url);
+
+    stream
+      .write_all(header.as_bytes())
+      .map_err(error::request)?;
+    if let Some(body) = self.conn.body() {
+      stream.write_all(body.bytes()).map_err(error::request)?;
+    }
+    stream.flush().map_err(error::request)?;
+
+    self.conn.block_read_stream(url, &mut stream)
+  }
 
   fn call_with_proxy_https(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
-    let host = self.conn.host(url)?;
-    let port = self.conn.port(url)?;
-
     //CONNECT proxy.google.com:443 HTTP/1.1
     //Host: www.google.com:443
     //Proxy-Connection: keep-alive
@@ -102,34 +100,48 @@ impl<'a> BlockConnection<'a> {
     let addr = format!("{}:{}", proxy.host(), proxy.port());
     let mut stream = self.conn.block_tcp_stream(&addr)?;
 
-    stream.write(connect_header.as_bytes()).map_err(error::request)?;
+    stream
+      .write(connect_header.as_bytes())
+      .map_err(error::request)?;
     stream.flush().map_err(error::request)?;
 
     //HTTP/1.1 200 Connection Established
     let mut res = [0u8; 1024];
     stream.read(&mut res).map_err(error::request)?;
 
-    let res_s = match String::from_utf8(res.to_vec()) {
-      Ok(r) => r,
-      Err(_) => return Err(error::bad_proxy("parse proxy server response error."))
-    };
-    if !res_s.to_ascii_lowercase().contains("connection established") {
-      return Err(error::bad_proxy("Proxy server response error."));
+    let res_s = String::from_utf8(res.to_vec())
+      .map_err(|_| error::bad_proxy("parse proxy server response error."))?;
+    if !res_s
+      .to_ascii_lowercase()
+      .contains("connection established")
+    {
+      return Err(error::bad_proxy(format!(
+        "Proxy server response error: {}",
+        res_s
+      )));
     }
 
     self.conn.block_send_with_stream(url, &mut stream)
   }
 
   fn call_with_proxy_socks4(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
+    // Keep the `socks` crate for SOCKS handshakes: it owns the proxy connection setup and
+    // returns a stream that already satisfies the shared `Read + Write` send path.
     let addr_proxy = format!("{}:{}", proxy.host(), proxy.port());
     let addr_target = self.conn.addr(url)?;
-    let user = if let Some(u) = proxy.username() { u.to_string() } else { "".to_string() };
+    let user = if let Some(u) = proxy.username() {
+      u.to_string()
+    } else {
+      "".to_string()
+    };
     let mut stream = Socks4Stream::connect(&addr_proxy[..], &addr_target[..], &user[..])
       .map_err(error::request)?;
     self.conn.block_send_with_stream(url, &mut stream)
   }
 
   fn call_with_proxy_socks5(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
+    // Reimplementing SOCKS on top of socket2 would duplicate protocol logic without changing
+    // how the rest of the client reads and writes the established stream.
     let addr_proxy = format!("{}:{}", proxy.host(), proxy.port());
     let addr_target = self.conn.addr(url)?;
     let mut stream = if let Some(u) = proxy.username() {
@@ -140,7 +152,8 @@ impl<'a> BlockConnection<'a> {
       }
     } else {
       Socks5Stream::connect(&addr_proxy[..], &addr_target[..])
-    }.map_err(error::request)?;
+    }
+    .map_err(error::request)?;
     self.conn.block_send_with_stream(url, &mut stream)
   }
 }

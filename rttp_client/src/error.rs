@@ -25,8 +25,8 @@ struct Inner {
 
 impl Error {
   pub(crate) fn new<E>(kind: Kind, source: Option<E>) -> Error
-    where
-      E: Into<BoxError>,
+  where
+    E: Into<BoxError>,
   {
     Error {
       inner: Box::new(Inner {
@@ -44,26 +44,17 @@ impl Error {
 
   /// Returns true if the error is from a type Builder.
   pub fn is_builder(&self) -> bool {
-    match self.inner.kind {
-      Kind::Builder => true,
-      _ => false,
-    }
+    matches!(self.inner.kind, Kind::Builder)
   }
 
   /// Returns true if the error is from a `RedirectPolicy`.
   pub fn is_redirect(&self) -> bool {
-    match self.inner.kind {
-      Kind::Redirect => true,
-      _ => false,
-    }
+    matches!(self.inner.kind, Kind::Redirect)
   }
 
   /// Returns true if the error is from `Response::error_for_status`.
   pub fn is_status(&self) -> bool {
-    match self.inner.kind {
-      Kind::Status(_) => true,
-      _ => false,
-    }
+    matches!(self.inner.kind, Kind::Status(_))
   }
 
   /// Returns true if the error is related to a timeout.
@@ -88,13 +79,13 @@ impl Error {
 
   #[allow(unused)]
   pub(crate) fn into_io(self) -> io::Error {
-    io::Error::new(io::ErrorKind::Other, self)
+    io::Error::other(self)
   }
 }
 
 impl fmt::Debug for Error {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    let mut builder = f.debug_struct("rhttp_client::Error");
+    let mut builder = f.debug_struct("rttp_client::Error");
 
     builder.field("kind", &self.inner.kind);
 
@@ -171,6 +162,7 @@ impl From<crate::error::Error> for js_sys::Error {
   }
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) enum Kind {
   Builder,
@@ -200,7 +192,7 @@ pub(crate) fn request<E: Into<BoxError>>(e: E) -> Error {
   Error::new(Kind::Request, Some(e))
 }
 
-pub(crate) fn response<E: Into<BoxError>>(e: E) -> Error{
+pub(crate) fn response<E: Into<BoxError>>(e: E) -> Error {
   Error::new(Kind::Response, Some(e))
 }
 
@@ -212,6 +204,7 @@ pub(crate) fn too_many_redirects(url: Url) -> Error {
   Error::new(Kind::Redirect, Some("too many redirects")).with_url(url)
 }
 
+#[allow(dead_code)]
 pub(crate) fn status_code(url: Url, status: StatusCode) -> Error {
   Error::new(Kind::Status(status), None::<Error>).with_url(url)
 }
@@ -232,23 +225,24 @@ pub(crate) fn none_url() -> Error {
   Error::new(Kind::Builder, Some("None request url"))
 }
 
-pub(crate) fn builder_with_message<S: AsRef<str>>(message: S) -> Error {
+pub(crate) fn builder_with_message(message: impl AsRef<str>) -> Error {
   Error::new(Kind::Builder, Some(message.as_ref()))
 }
 
-pub(crate) fn bad_proxy<S: AsRef<str>>(message: S) -> Error {
+pub(crate) fn bad_proxy(message: impl AsRef<str>) -> Error {
   Error::new(Kind::Request, Some(message.as_ref()))
 }
 
-pub(crate) fn bad_response<S: AsRef<str>>(message: S) -> Error {
+pub(crate) fn bad_response(message: impl AsRef<str>) -> Error {
   Error::new(Kind::Response, Some(message.as_ref()))
 }
 
-pub(crate) fn bad_cookie<S: AsRef<str>>(message: S) -> Error {
+pub(crate) fn bad_cookie(message: impl AsRef<str>) -> Error {
   Error::new(Kind::Decode, Some(message.as_ref()))
 }
 
-pub(crate) fn no_request_features<S: AsRef<str>>(message: S) -> Error {
+#[cfg(not(all(feature = "tls-native", feature = "tls-rustls")))]
+pub(crate) fn no_request_features(message: impl AsRef<str>) -> Error {
   Error::new(Kind::Request, Some(message.as_ref()))
 }
 
@@ -256,15 +250,10 @@ pub(crate) fn connection_closed() -> Error {
   Error::new(Kind::Request, Some("The connection is closed."))
 }
 
-pub(crate) fn bad_ssl<S: AsRef<str>>(message: S) -> Error {
+#[allow(dead_code)]
+pub(crate) fn bad_ssl(message: impl AsRef<str>) -> Error {
   Error::new(Kind::Request, Some(message.as_ref()))
 }
-
-//if_wasm! {
-//    pub(crate) fn wasm(js_val: wasm_bindgen::JsValue) -> BoxError {
-//        format!("{:?}", js_val).into()
-//    }
-//}
 
 // io::Error helpers
 
@@ -290,9 +279,6 @@ pub(crate) fn decode_io(e: io::Error) -> Error {
 #[derive(Debug)]
 pub(crate) struct TimedOut;
 
-#[derive(Debug)]
-pub(crate) struct BlockingClientInAsyncContext;
-
 impl fmt::Display for TimedOut {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     f.write_str("operation timed out")
@@ -300,12 +286,3 @@ impl fmt::Display for TimedOut {
 }
 
 impl StdError for TimedOut {}
-
-impl fmt::Display for BlockingClientInAsyncContext {
-  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    f.write_str("blocking Client used inside a Future context")
-  }
-}
-
-impl StdError for BlockingClientInAsyncContext {}
-

@@ -3,3 +3,4 @@ members = [
   "rttp",
   "rttp_client",
 ]
+resolver = "2"

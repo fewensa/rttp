@@ -69,7 +69,10 @@ fn test_parse_response_1() {
     \"origin\": \"222.69.134.133, 222.69.134.133\",
     \"url\": \"https://httpbin.org/post?id=1&name=jack&name=Julia\"
   }";
-  let response = Response::new(RoUrl::with("https://httpbin.org/post"), s.as_bytes().to_vec());
+  let response = Response::new(
+    RoUrl::with("https://httpbin.org/post"),
+    s.as_bytes().to_vec(),
+  );
   assert!(response.is_ok());
   let response = response.unwrap();
   println!("{}", response);

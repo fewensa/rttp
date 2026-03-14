@@ -1,7 +1,7 @@
 use std::fmt;
 
-use crate::{error, Config};
 use crate::types::{FormData, Header, Para, Proxy, RoUrl, ToRoUrl};
+use crate::{error, Config};
 
 #[derive(Clone, Debug)]
 pub struct Request {
@@ -21,6 +21,7 @@ pub struct Request {
   proxy: Option<Proxy>,
 }
 
+#[allow(dead_code)]
 impl Request {
   pub fn new() -> Self {
     Self {
@@ -41,36 +42,91 @@ impl Request {
     }
   }
 
-  pub fn closed(&self) -> bool { self.closed }
-  pub fn config(&self) -> &Config { &self.config }
-  pub fn count(&self) -> u32 { self.count }
-  pub fn url(&self) -> &Option<RoUrl> { &self.url }
-  pub fn method(&self) -> &String { &self.method }
-  pub fn paths(&self) -> &Vec<String> { &self.paths }
-  pub fn paras(&self) -> &Vec<Para> { &self.paras }
-  pub fn formdatas(&self) -> &Vec<FormData> { &self.formdatas }
-  pub fn headers(&self) -> &Vec<Header> { &self.headers }
-  pub fn traditional(&self) -> bool { self.traditional }
-  pub fn encode(&self) -> bool { self.encode }
-  pub fn raw(&self) -> &Option<String> { &self.raw }
-  pub fn binary(&self) -> &Vec<u8> { &self.binary }
-  pub fn proxy(&self) -> &Option<Proxy> { &self.proxy }
+  pub fn closed(&self) -> bool {
+    self.closed
+  }
+  pub fn config(&self) -> &Config {
+    &self.config
+  }
+  pub fn count(&self) -> u32 {
+    self.count
+  }
+  pub fn url(&self) -> &Option<RoUrl> {
+    &self.url
+  }
+  pub fn method(&self) -> &String {
+    &self.method
+  }
+  pub fn paths(&self) -> &Vec<String> {
+    &self.paths
+  }
+  pub fn paras(&self) -> &Vec<Para> {
+    &self.paras
+  }
+  pub fn formdatas(&self) -> &Vec<FormData> {
+    &self.formdatas
+  }
+  pub fn headers(&self) -> &Vec<Header> {
+    &self.headers
+  }
+  pub fn traditional(&self) -> bool {
+    self.traditional
+  }
+  pub fn encode(&self) -> bool {
+    self.encode
+  }
+  pub fn raw(&self) -> &Option<String> {
+    &self.raw
+  }
+  pub fn binary(&self) -> &Vec<u8> {
+    &self.binary
+  }
+  pub fn proxy(&self) -> &Option<Proxy> {
+    &self.proxy
+  }
 
-  pub(crate) fn closed_mut(&mut self) -> &mut bool { &mut self.closed }
-  pub(crate) fn config_mut(&mut self) -> &mut Config { &mut self.config }
-  pub(crate) fn count_mut(&mut self) -> &mut u32 { &mut self.count }
-  pub(crate) fn url_mut(&mut self) -> &mut Option<RoUrl> { &mut self.url }
-  pub(crate) fn method_mut(&mut self) -> &mut String { &mut self.method }
-  pub(crate) fn paths_mut(&mut self) -> &mut Vec<String> { &mut self.paths }
-  pub(crate) fn paras_mut(&mut self) -> &mut Vec<Para> { &mut self.paras }
-  pub(crate) fn formdatas_mut(&mut self) -> &mut Vec<FormData> { &mut self.formdatas }
-  pub(crate) fn headers_mut(&mut self) -> &mut Vec<Header> { &mut self.headers }
-  pub(crate) fn traditional_mut(&mut self) -> &mut bool { &mut self.traditional }
-  pub(crate) fn encode_mut(&mut self) -> &mut bool { &mut self.encode }
-  pub(crate) fn raw_mut(&mut self) -> &mut Option<String> { &mut self.raw }
-  pub(crate) fn binary_mut(&mut self) -> &mut Vec<u8> { &mut self.binary }
-  pub(crate) fn proxy_mut(&mut self) -> &mut Option<Proxy> { &mut self.proxy }
-
+  pub(crate) fn closed_mut(&mut self) -> &mut bool {
+    &mut self.closed
+  }
+  pub(crate) fn config_mut(&mut self) -> &mut Config {
+    &mut self.config
+  }
+  pub(crate) fn count_mut(&mut self) -> &mut u32 {
+    &mut self.count
+  }
+  pub(crate) fn url_mut(&mut self) -> &mut Option<RoUrl> {
+    &mut self.url
+  }
+  pub(crate) fn method_mut(&mut self) -> &mut String {
+    &mut self.method
+  }
+  pub(crate) fn paths_mut(&mut self) -> &mut Vec<String> {
+    &mut self.paths
+  }
+  pub(crate) fn paras_mut(&mut self) -> &mut Vec<Para> {
+    &mut self.paras
+  }
+  pub(crate) fn formdatas_mut(&mut self) -> &mut Vec<FormData> {
+    &mut self.formdatas
+  }
+  pub(crate) fn headers_mut(&mut self) -> &mut Vec<Header> {
+    &mut self.headers
+  }
+  pub(crate) fn traditional_mut(&mut self) -> &mut bool {
+    &mut self.traditional
+  }
+  pub(crate) fn encode_mut(&mut self) -> &mut bool {
+    &mut self.encode
+  }
+  pub(crate) fn raw_mut(&mut self) -> &mut Option<String> {
+    &mut self.raw
+  }
+  pub(crate) fn binary_mut(&mut self) -> &mut Vec<u8> {
+    &mut self.binary
+  }
+  pub(crate) fn proxy_mut(&mut self) -> &mut Option<Proxy> {
+    &mut self.proxy
+  }
 
   pub(crate) fn closed_set(&mut self, closed: bool) -> &mut Self {
     self.closed = closed;
@@ -130,16 +186,17 @@ impl Request {
   }
 
   pub fn header<S: AsRef<str>>(&self, name: S) -> Option<String> {
-    self.headers.iter()
+    self
+      .headers
+      .iter()
       .find(|h| h.name().eq_ignore_ascii_case(name.as_ref()))
       .map(|h| h.value().clone())
   }
 }
 
-
 #[derive(Clone)]
 pub struct RequestBody {
-  binary: Vec<u8>
+  binary: Vec<u8>,
 }
 
 impl RequestBody {
@@ -183,4 +240,3 @@ impl fmt::Debug for RequestBody {
     fmt::Debug::fmt(&text, formatter)
   }
 }
-
