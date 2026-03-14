@@ -308,7 +308,7 @@ impl<'a> Connection<'a> {
     }
   }
 
-  #[cfg(feature = "tls-native")]
+  #[cfg(all(feature = "tls-native", not(feature = "tls-rustls")))]
   fn block_send_https_native<S>(&self, url: &Url, stream: &mut S) -> error::Result<Vec<u8>>
   where
     S: io::Read + io::Write,
