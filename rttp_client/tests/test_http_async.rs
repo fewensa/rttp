@@ -2,7 +2,7 @@ mod support;
 
 use futures::executor::block_on;
 use rttp_client::types::Proxy;
-use rttp_client::HttpClient;
+use rttp_client::{Config, HttpClient};
 
 fn client() -> HttpClient {
   HttpClient::new()
@@ -44,6 +44,42 @@ fn test_async_chunked() {
 }
 
 #[test]
+#[cfg(feature = "async")]
+fn test_async_content_length_response_does_not_wait_for_eof() {
+  let (addr, _handle) = support::spawn_keep_alive_server();
+  block_on(async {
+    let response = client()
+      .get()
+      .config(Config::builder().read_timeout(100))
+      .url(format!("http://{}/keep-alive", addr))
+      .rasync()
+      .await;
+    assert!(response.is_ok());
+
+    let response = response.unwrap();
+    assert_eq!("OK", response.body().string().unwrap());
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_auto_redirect() {
+  let (addr, _handle) = support::spawn_redirect_server();
+  block_on(async {
+    let response = client()
+      .config(Config::builder().auto_redirect(true))
+      .get()
+      .url(format!("http://{}/", addr))
+      .rasync()
+      .await;
+    assert!(response.is_ok());
+
+    let response = response.unwrap();
+    assert!(response.ok());
+  });
+}
+
+#[test]
 #[cfg(all(feature = "async", feature = "tls-rustls"))]
 fn test_async_https() {
   let (addr, _handle) = support::spawn_tls_server();
@@ -62,6 +98,26 @@ fn test_async_https() {
     let response = response.unwrap();
     assert_eq!("127.0.0.1", response.host());
     println!("{}", response);
+  });
+}
+
+#[cfg(feature = "async")]
+fn test_async_http_proxy_uses_absolute_form_for_http_requests() {
+  let (addr, _handle) = support::spawn_http_proxy_server();
+  block_on(async {
+    let response = client()
+      .get()
+      .url("http://example.com/proxy?q=1")
+      .proxy(Proxy::http("127.0.0.1", u32::from(addr.port())))
+      .rasync()
+      .await;
+    assert!(response.is_ok());
+
+    let response = response.unwrap();
+    assert_eq!(
+      "GET http://example.com/proxy?q=1 HTTP/1.1",
+      response.body().string().unwrap()
+    );
   });
 }
 

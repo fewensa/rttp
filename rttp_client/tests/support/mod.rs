@@ -1,6 +1,7 @@
 use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 fn read_http_request<R: Read>(stream: &mut R) -> Vec<u8> {
   let mut request = Vec::new();
@@ -155,7 +156,7 @@ pub fn spawn_chunked_server() -> (SocketAddr, JoinHandle<()>) {
   let addr = listener.local_addr().expect("chunked addr");
   let handle = thread::spawn(move || {
     if let Ok((mut stream, _)) = listener.accept() {
-      read_http_request(&mut stream);
+      let _ = read_http_request(&mut stream);
       let response = concat!(
         "HTTP/1.1 200 OK\r\n",
         "Transfer-Encoding: chunked\r\n",
@@ -190,6 +191,61 @@ pub fn spawn_redirect_server() -> (SocketAddr, JoinHandle<()>) {
       let _ = read_http_request(&mut stream);
       let response = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK";
       let _ = stream.write_all(response);
+    }
+  });
+  (addr, handle)
+}
+
+pub fn spawn_keep_alive_server() -> (SocketAddr, JoinHandle<()>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind keep-alive server");
+  let addr = listener.local_addr().expect("keep-alive addr");
+  let handle = thread::spawn(move || {
+    if let Ok((mut stream, _)) = listener.accept() {
+      let _ = read_http_request(&mut stream);
+      let response = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nOK";
+      let _ = stream.write_all(response);
+      thread::sleep(Duration::from_millis(300));
+    }
+  });
+  (addr, handle)
+}
+
+pub fn spawn_http_proxy_server() -> (SocketAddr, JoinHandle<()>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind http proxy server");
+  let addr = listener.local_addr().expect("http proxy addr");
+  let handle = thread::spawn(move || {
+    if let Ok((mut stream, _)) = listener.accept() {
+      let request = read_http_request(&mut stream);
+      let request_line = String::from_utf8_lossy(&request)
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .to_string();
+      let body = request_line.as_bytes();
+      let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+      );
+      let _ = stream.write_all(response.as_bytes());
+      let _ = stream.write_all(body);
+    }
+  });
+  (addr, handle)
+}
+
+pub fn spawn_invalid_gzip_server() -> (SocketAddr, JoinHandle<()>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind invalid gzip server");
+  let addr = listener.local_addr().expect("invalid gzip addr");
+  let handle = thread::spawn(move || {
+    if let Ok((mut stream, _)) = listener.accept() {
+      let _ = read_http_request(&mut stream);
+      let body = b"not-gzip";
+      let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+      );
+      let _ = stream.write_all(response.as_bytes());
+      let _ = stream.write_all(body);
     }
   });
   (addr, handle)

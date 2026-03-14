@@ -22,8 +22,8 @@ impl<'a> BlockConnection<'a> {
 
   pub fn call(mut self) -> error::Result<Response> {
     let url = self.conn.url().map_err(error::builder)?;
-    let proxy = self.conn.proxy();
-    let binary = if let Some(proxy) = proxy {
+    let proxy = self.conn.proxy().clone();
+    let binary = if let Some(proxy) = proxy.as_ref() {
       self.call_with_proxy(&url, proxy)?
     } else {
       self.conn.block_send(&url)?
@@ -38,6 +38,7 @@ impl<'a> BlockConnection<'a> {
         return Err(error::loop_detected(url));
       }
       if !config.auto_redirect() {
+        self.conn.closed_set(true);
         return Ok(response);
       }
       let count = self.conn.count();
@@ -45,8 +46,9 @@ impl<'a> BlockConnection<'a> {
         return Err(error::too_many_redirects(url));
       }
 
+      let redirect_url = self.conn.redirect_url(&url, location)?;
       return HttpClient::with_request(self.conn.request().origin().clone())
-        .url(location)
+        .url(redirect_url)
         .count(count + 1)
         .emit();
     }
@@ -60,10 +62,33 @@ impl<'a> BlockConnection<'a> {
 impl<'a> BlockConnection<'a> {
   fn call_with_proxy(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
     match proxy.type_() {
-      ProxyType::HTTP | ProxyType::HTTPS => self.call_with_proxy_https(url, proxy),
+      ProxyType::HTTP => {
+        if url.scheme() == "http" {
+          self.call_with_proxy_http(url, proxy)
+        } else {
+          self.call_with_proxy_https(url, proxy)
+        }
+      }
+      ProxyType::HTTPS => self.call_with_proxy_https(url, proxy),
       ProxyType::SOCKS4 => self.call_with_proxy_socks4(url, proxy),
       ProxyType::SOCKS5 => self.call_with_proxy_socks5(url, proxy),
     }
+  }
+
+  fn call_with_proxy_http(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
+    let addr = format!("{}:{}", proxy.host(), proxy.port());
+    let mut stream = self.conn.block_tcp_stream(&addr)?;
+    let header = self.conn.proxy_http_header(url);
+
+    stream
+      .write_all(header.as_bytes())
+      .map_err(error::request)?;
+    if let Some(body) = self.conn.body() {
+      stream.write_all(body.bytes()).map_err(error::request)?;
+    }
+    stream.flush().map_err(error::request)?;
+
+    self.conn.block_read_stream(url, &mut stream)
   }
 
   fn call_with_proxy_https(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {

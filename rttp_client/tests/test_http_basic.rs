@@ -58,6 +58,16 @@ fn test_gzip() {
 }
 
 #[test]
+fn test_invalid_gzip_returns_error_instead_of_panicking() {
+  let (addr, _handle) = support::spawn_invalid_gzip_server();
+  let result =
+    std::panic::catch_unwind(|| client().get().url(format!("http://{}/gzip", addr)).emit());
+
+  assert!(result.is_ok());
+  assert!(result.unwrap().is_err());
+}
+
+#[test]
 fn test_chunked() {
   let (addr, _handle) = support::spawn_chunked_server();
   let response = client()
@@ -72,6 +82,20 @@ fn test_chunked() {
     Some(&"chunked".to_string()),
     response.header_value("Transfer-Encoding")
   );
+}
+
+#[test]
+fn test_content_length_response_does_not_wait_for_eof() {
+  let (addr, _handle) = support::spawn_keep_alive_server();
+  let response = client()
+    .get()
+    .config(Config::builder().read_timeout(100))
+    .url(format!("http://{}/keep-alive", addr))
+    .emit();
+  assert!(response.is_ok());
+
+  let response = response.unwrap();
+  assert_eq!("OK", response.body().string().unwrap());
 }
 
 #[test]
@@ -199,6 +223,23 @@ fn test_auto_redirect() {
   assert!(response.is_ok());
   let response = response.unwrap();
   assert!(response.ok());
+}
+
+#[test]
+fn test_http_proxy_uses_absolute_form_for_http_requests() {
+  let (addr, _handle) = support::spawn_http_proxy_server();
+  let response = client()
+    .get()
+    .url("http://example.com/proxy?q=1")
+    .proxy(Proxy::http("127.0.0.1", u32::from(addr.port())))
+    .emit();
+  assert!(response.is_ok());
+
+  let response = response.unwrap();
+  assert_eq!(
+    "GET http://example.com/proxy?q=1 HTTP/1.1",
+    response.body().string().unwrap()
+  );
 }
 
 #[test]

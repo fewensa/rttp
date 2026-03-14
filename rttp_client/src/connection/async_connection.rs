@@ -11,12 +11,11 @@ use url::Url;
 use std::sync::Arc;
 
 use crate::connection::connection::Connection;
+use crate::connection::connection_reader::{response_body_kind, ResponseBodyKind};
 use crate::error;
 use crate::request::RawRequest;
 use crate::response::Response;
-use crate::types::{Proxy, ProxyType};
-
-const HEADER_END: &[u8] = b"\r\n\r\n";
+use crate::types::{Proxy, ProxyType, RoUrl};
 const CRLF: &[u8] = b"\r\n";
 
 pub struct AsyncConnection<'a> {
@@ -31,17 +30,43 @@ impl<'a> AsyncConnection<'a> {
   }
 
   pub async fn async_call(mut self) -> error::Result<Response> {
-    let url = self.conn.url().map_err(error::builder)?;
-    let proxy = self.conn.proxy();
-    let binary = if let Some(proxy) = proxy {
-      self.call_with_proxy(&url, proxy).await?
-    } else {
-      self.async_send(&url).await?
-    };
+    loop {
+      let url = self.conn.url().map_err(error::builder)?;
+      let proxy = self.conn.proxy().clone();
+      let binary = if let Some(proxy) = proxy.as_ref() {
+        self.call_with_proxy(&url, proxy).await?
+      } else {
+        self.async_send(&url).await?
+      };
 
-    let response = Response::new(self.conn.rourl().clone(), binary)?;
-    self.conn.closed_set(true);
-    Ok(response)
+      let response = Response::new(self.conn.rourl().clone(), binary)?;
+      let config = self.conn.config().clone();
+
+      if let Some(location) = response.location() {
+        if url.as_str() == location {
+          return Err(error::loop_detected(url));
+        }
+
+        if config.auto_redirect() {
+          let count = self.conn.count();
+          if count > config.max_redirect() {
+            return Err(error::too_many_redirects(url));
+          }
+
+          let redirect_url = self.conn.redirect_url(&url, location)?;
+          self
+            .conn
+            .request_mut()
+            .origin_mut()
+            .url_set(RoUrl::with(redirect_url));
+          self.conn.request_mut().origin_mut().count_set(count + 1);
+          continue;
+        }
+      }
+
+      self.conn.closed_set(true);
+      return Ok(response);
+    }
   }
 }
 
@@ -89,7 +114,13 @@ impl<'a> AsyncConnection<'a> {
   where
     S: AsyncWrite + Unpin,
   {
-    let header = self.conn.header();
+    self.async_write_request(stream, self.conn.header()).await
+  }
+
+  async fn async_write_request<S>(&self, stream: &mut S, header: &str) -> error::Result<()>
+  where
+    S: AsyncWrite + Unpin,
+  {
     let body = self.conn.body();
 
     stream
@@ -112,13 +143,25 @@ impl<'a> AsyncConnection<'a> {
     S: AsyncRead + Unpin,
   {
     let mut binary = async_read_response_header(stream).await?;
-    if is_chunked_encoded(&binary) {
-      binary.extend_from_slice(&async_read_chunked_body(stream).await?);
-    } else {
-      stream
-        .read_to_end(&mut binary)
-        .await
-        .map_err(error::request)?;
+    match response_body_kind(&binary, self.conn.expect_no_response_body())? {
+      ResponseBodyKind::NoBody => {}
+      ResponseBodyKind::Chunked => {
+        binary.extend_from_slice(&async_read_chunked_body(stream).await?);
+      }
+      ResponseBodyKind::ContentLength(content_length) => {
+        let current_len = binary.len();
+        binary.resize(current_len + content_length, 0);
+        stream
+          .read_exact(&mut binary[current_len..])
+          .await
+          .map_err(error::request)?;
+      }
+      ResponseBodyKind::UntilEof => {
+        stream
+          .read_to_end(&mut binary)
+          .await
+          .map_err(error::request)?;
+      }
     }
     Ok(binary)
   }
@@ -141,23 +184,10 @@ where
     }
 
     header.push(byte[0]);
-    if header.ends_with(HEADER_END) {
+    if header.ends_with(b"\r\n\r\n") {
       return Ok(header);
     }
   }
-}
-
-fn is_chunked_encoded(header: &[u8]) -> bool {
-  String::from_utf8_lossy(header).lines().any(|line| {
-    let Some((name, value)) = line.split_once(':') else {
-      return false;
-    };
-
-    name.eq_ignore_ascii_case("Transfer-Encoding")
-      && value
-        .split(',')
-        .any(|token| token.trim().eq_ignore_ascii_case("chunked"))
-  })
 }
 
 async fn async_read_chunked_body<S>(stream: &mut S) -> error::Result<Vec<u8>>
@@ -302,7 +332,7 @@ impl<'a> AsyncConnection<'a> {
     use rustls::pki_types::ServerName;
     use rustls::{ClientConfig, RootCertStore};
 
-    use crate::connection::connection::NoCertificateVerification;
+    use crate::connection::connection::{NoCertificateVerification, NoHostnameVerification};
 
     let config = self.conn.config();
     let mut root_store = RootCertStore::empty();
@@ -311,14 +341,22 @@ impl<'a> AsyncConnection<'a> {
     }
 
     let builder = ClientConfig::builder();
-    let rustls_config = if config.verify_ssl_cert() {
-      builder
-        .with_root_certificates(root_store)
-        .with_no_client_auth()
-    } else {
+    let rustls_config = if !config.verify_ssl_cert() {
       builder
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(NoCertificateVerification))
+        .with_no_client_auth()
+    } else if !config.verify_ssl_hostname() {
+      let verifier = rustls::client::WebPkiServerVerifier::builder(Arc::new(root_store))
+        .build()
+        .map_err(|e| error::bad_ssl(e.to_string()))?;
+      builder
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoHostnameVerification::new(verifier)))
+        .with_no_client_auth()
+    } else {
+      builder
+        .with_root_certificates(root_store)
         .with_no_client_auth()
     };
 
@@ -346,11 +384,27 @@ impl<'a> AsyncConnection<'a> {
 impl<'a> AsyncConnection<'a> {
   async fn call_with_proxy(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
     match proxy.type_() {
-      ProxyType::HTTP => self.call_with_proxy_https(url, proxy).await,
+      ProxyType::HTTP => {
+        if url.scheme() == "http" {
+          self.call_with_proxy_http(url, proxy).await
+        } else {
+          self.call_with_proxy_https(url, proxy).await
+        }
+      }
       ProxyType::HTTPS => self.call_with_proxy_https(url, proxy).await,
       ProxyType::SOCKS4 => self.call_with_proxy_socks4(url, proxy).await,
       ProxyType::SOCKS5 => self.call_with_proxy_socks5(url, proxy).await,
     }
+  }
+
+  async fn call_with_proxy_http(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
+    let addr = format!("{}:{}", proxy.host(), proxy.port());
+    let stream = self.async_tcp_stream(&addr).await?;
+    let mut stream = AllowStdIo::new(stream);
+    let header = self.conn.proxy_http_header(url);
+
+    self.async_write_request(&mut stream, &header).await?;
+    self.async_read_stream(url, &mut stream).await
   }
 
   async fn call_with_proxy_https(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {

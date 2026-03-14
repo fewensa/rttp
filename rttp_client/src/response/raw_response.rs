@@ -229,10 +229,14 @@ impl Parser {
       .find(|header| header.name().eq_ignore_ascii_case("Content-Encoding"));
 
     if let Some(header) = content_encoding {
-      if header.value().eq_ignore_ascii_case("gzip") {
+      if header
+        .value()
+        .split(',')
+        .any(|value| value.trim().eq_ignore_ascii_case("gzip"))
+      {
         let mut decoder = flate2::read::GzDecoder::new(binary.as_slice());
         let mut buffer = Vec::new();
-        decoder.read_to_end(&mut buffer).unwrap();
+        decoder.read_to_end(&mut buffer).map_err(error::decode)?;
         let body = ResponseBody::new(buffer);
         response.body(body);
         return Ok(());

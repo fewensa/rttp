@@ -53,9 +53,6 @@ impl<'a> RawBuilder<'a> {
     if let Some(query) = url.query() {
       result.push_str(&format!("?{}", query));
     }
-    if let Some(fragment) = url.fragment() {
-      result.push_str(&format!("#{}", fragment));
-    }
     result
   }
 

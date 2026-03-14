@@ -17,11 +17,13 @@ use crate::{error, Config};
 #[cfg(feature = "tls-rustls")]
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 #[cfg(feature = "tls-rustls")]
+use rustls::client::WebPkiServerVerifier;
+#[cfg(feature = "tls-rustls")]
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 #[cfg(feature = "tls-rustls")]
 use rustls::{
-  ClientConfig, ClientConnection, DigitallySignedStruct, RootCertStore, SignatureScheme,
-  StreamOwned,
+  CertificateError, ClientConfig, ClientConnection, DigitallySignedStruct, RootCertStore,
+  SignatureScheme, StreamOwned,
 };
 
 #[cfg(feature = "tls-rustls")]
@@ -76,6 +78,66 @@ impl ServerCertVerifier for NoCertificateVerification {
   }
 }
 
+#[cfg(feature = "tls-rustls")]
+#[derive(Debug)]
+pub(crate) struct NoHostnameVerification {
+  verifier: Arc<WebPkiServerVerifier>,
+}
+
+#[cfg(feature = "tls-rustls")]
+impl NoHostnameVerification {
+  pub(crate) fn new(verifier: Arc<WebPkiServerVerifier>) -> Self {
+    Self { verifier }
+  }
+}
+
+#[cfg(feature = "tls-rustls")]
+impl ServerCertVerifier for NoHostnameVerification {
+  fn verify_server_cert(
+    &self,
+    end_entity: &CertificateDer<'_>,
+    intermediates: &[CertificateDer<'_>],
+    server_name: &ServerName<'_>,
+    ocsp_response: &[u8],
+    now: UnixTime,
+  ) -> Result<ServerCertVerified, rustls::Error> {
+    match self.verifier.verify_server_cert(
+      end_entity,
+      intermediates,
+      server_name,
+      ocsp_response,
+      now,
+    ) {
+      Err(rustls::Error::InvalidCertificate(CertificateError::NotValidForName)) => {
+        Ok(ServerCertVerified::assertion())
+      }
+      result => result,
+    }
+  }
+
+  fn verify_tls12_signature(
+    &self,
+    message: &[u8],
+    cert: &CertificateDer<'_>,
+    dss: &DigitallySignedStruct,
+  ) -> Result<HandshakeSignatureValid, rustls::Error> {
+    self.verifier.verify_tls12_signature(message, cert, dss)
+  }
+
+  fn verify_tls13_signature(
+    &self,
+    message: &[u8],
+    cert: &CertificateDer<'_>,
+    dss: &DigitallySignedStruct,
+  ) -> Result<HandshakeSignatureValid, rustls::Error> {
+    self.verifier.verify_tls13_signature(message, cert, dss)
+  }
+
+  fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+    self.verifier.supported_verify_schemes()
+  }
+}
+
 pub struct Connection<'a> {
   request: RawRequest<'a>,
 }
@@ -90,6 +152,9 @@ impl<'a> Connection<'a> {
 impl<'a> Connection<'a> {
   pub fn request(&self) -> &RawRequest<'_> {
     &self.request
+  }
+  pub fn request_mut(&mut self) -> &mut RawRequest<'a> {
+    &mut self.request
   }
   pub fn rourl(&self) -> &RoUrl {
     self.request.url()
@@ -167,6 +232,34 @@ impl<'a> Connection<'a> {
     proxy_header.push_str("\r\n");
     Ok(proxy_header)
   }
+
+  pub fn proxy_http_header(&self, url: &Url) -> String {
+    let header = self.header();
+    let (_, rest) = header.split_once("\r\n").unwrap_or(("", ""));
+    format!(
+      "{} {} HTTP/1.1\r\n{}",
+      self.request.origin().method().to_uppercase(),
+      absolute_url(url),
+      rest
+    )
+  }
+
+  pub fn redirect_url(&self, url: &Url, location: &str) -> error::Result<String> {
+    url
+      .join(location)
+      .map(|redirect| redirect.to_string())
+      .map_err(|_| error::bad_url(url.clone(), "Bad redirect location"))
+  }
+
+  pub fn expect_no_response_body(&self) -> bool {
+    self.request.origin().method().eq_ignore_ascii_case("head")
+  }
+}
+
+fn absolute_url(url: &Url) -> String {
+  let mut absolute = url.clone();
+  absolute.set_fragment(None);
+  absolute.to_string()
 }
 
 impl<'a> Connection<'a> {
@@ -250,7 +343,7 @@ impl<'a> Connection<'a> {
   where
     S: io::Read,
   {
-    let mut reader = ConnectionReader::new(url, stream);
+    let mut reader = ConnectionReader::new(url, stream, self.expect_no_response_body());
     reader.binary()
   }
 
@@ -339,14 +432,22 @@ impl<'a> Connection<'a> {
     }
 
     let builder = ClientConfig::builder();
-    let rustls_config = if config.verify_ssl_cert() {
-      builder
-        .with_root_certificates(root_store)
-        .with_no_client_auth()
-    } else {
+    let rustls_config = if !config.verify_ssl_cert() {
       builder
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(NoCertificateVerification))
+        .with_no_client_auth()
+    } else if !config.verify_ssl_hostname() {
+      let verifier = WebPkiServerVerifier::builder(Arc::new(root_store))
+        .build()
+        .map_err(|e| error::bad_ssl(e.to_string()))?;
+      builder
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoHostnameVerification::new(verifier)))
+        .with_no_client_auth()
+    } else {
+      builder
+        .with_root_certificates(root_store)
         .with_no_client_auth()
     };
     let rc_config = Arc::new(rustls_config);
