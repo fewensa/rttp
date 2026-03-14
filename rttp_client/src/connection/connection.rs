@@ -26,7 +26,7 @@ use rustls::{
 
 #[cfg(feature = "tls-rustls")]
 #[derive(Debug)]
-struct NoCertificateVerification;
+pub(crate) struct NoCertificateVerification;
 
 #[cfg(feature = "tls-rustls")]
 impl ServerCertVerifier for NoCertificateVerification {

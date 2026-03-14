@@ -40,14 +40,14 @@ async-native-tls = { optional = true, version = "0.5" }
 
 rustls           = { optional = true, version = "0.23" }
 webpki-roots     = { optional = true, version = "0.26" }
-async-rustls     = { optional = true, version = "0.4" }
+futures-rustls   = { optional = true, version = "0.26" }
 
 
 [features]
 default = []
 async = []
 tls-native  = ["native-tls", "async-native-tls"]
-tls-rustls  = ["rustls", "webpki-roots", "async-rustls"]
+tls-rustls  = ["rustls", "webpki-roots", "futures-rustls"]
 
 ##
 # warning: /data/rttp/rttp_client/Cargo.toml: Found `feature = ...` in `target.'cfg(...)'.dependencies`.

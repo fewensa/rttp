@@ -58,6 +58,23 @@ fn test_gzip() {
 }
 
 #[test]
+fn test_chunked() {
+  let (addr, _handle) = support::spawn_chunked_server();
+  let response = client()
+    .get()
+    .url(format!("http://{}/chunked", addr))
+    .emit();
+  assert!(response.is_ok());
+
+  let response = response.unwrap();
+  assert_eq!("chunked body!", response.body().string().unwrap());
+  assert_eq!(
+    Some(&"chunked".to_string()),
+    response.header_value("Transfer-Encoding")
+  );
+}
+
+#[test]
 fn test_upload() {
   let (addr, _handle) = support::spawn_http_server();
   let response = client()
