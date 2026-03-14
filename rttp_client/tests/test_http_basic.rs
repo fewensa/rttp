@@ -155,16 +155,37 @@ fn test_with_proxy_http() {
 }
 
 #[test]
-#[ignore]
 fn test_with_proxy_socks5() {
+  let (addr, _handle) = support::spawn_http_server();
+  let (proxy_addr, _proxy_handle) = support::spawn_socks5_proxy_server();
   let response = client()
     .get()
-    .url("http://google.com")
-    .proxy(Proxy::socks5("127.0.0.1", 2801))
+    .url(format!("http://{}/get", addr))
+    .proxy(Proxy::socks5("127.0.0.1", proxy_addr.port().into()))
     .emit();
   assert!(response.is_ok());
   let response = response.unwrap();
-  assert_eq!("google.com", response.host());
+  assert_eq!("127.0.0.1", response.host());
+}
+
+#[test]
+fn test_with_proxy_socks5_auth() {
+  let (addr, _handle) = support::spawn_http_server();
+  let (proxy_addr, _proxy_handle) =
+    support::spawn_socks5_proxy_server_with_credentials("username", "password");
+  let response = client()
+    .get()
+    .url(format!("http://{}/get", addr))
+    .proxy(Proxy::socks5_with_authorization(
+      "127.0.0.1",
+      proxy_addr.port().into(),
+      "username",
+      "password",
+    ))
+    .emit();
+  assert!(response.is_ok());
+  let response = response.unwrap();
+  assert_eq!("127.0.0.1", response.host());
 }
 
 #[test]

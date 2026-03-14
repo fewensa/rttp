@@ -100,6 +100,8 @@ impl<'a> BlockConnection<'a> {
   }
 
   fn call_with_proxy_socks4(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
+    // Keep the `socks` crate for SOCKS handshakes: it owns the proxy connection setup and
+    // returns a stream that already satisfies the shared `Read + Write` send path.
     let addr_proxy = format!("{}:{}", proxy.host(), proxy.port());
     let addr_target = self.conn.addr(url)?;
     let user = if let Some(u) = proxy.username() {
@@ -113,6 +115,8 @@ impl<'a> BlockConnection<'a> {
   }
 
   fn call_with_proxy_socks5(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
+    // Reimplementing SOCKS on top of socket2 would duplicate protocol logic without changing
+    // how the rest of the client reads and writes the established stream.
     let addr_proxy = format!("{}:{}", proxy.host(), proxy.port());
     let addr_target = self.conn.addr(url)?;
     let mut stream = if let Some(u) = proxy.username() {

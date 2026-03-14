@@ -66,19 +66,20 @@ fn test_async_https() {
 }
 
 #[test]
-#[ignore]
 #[cfg(feature = "async")]
 fn test_async_proxy_socks5() {
+  let (addr, _handle) = support::spawn_http_server();
+  let (proxy_addr, _proxy_handle) = support::spawn_socks5_proxy_server();
   block_on(async {
     let response = client()
       .get()
-      .url("http://google.com")
-      .proxy(Proxy::socks5("127.0.0.1", 1080))
+      .url(format!("http://{}/get", addr))
+      .proxy(Proxy::socks5("127.0.0.1", proxy_addr.port().into()))
       .rasync()
       .await;
     assert!(response.is_ok());
     let response = response.unwrap();
-    assert_eq!("google.com", response.host());
+    assert_eq!("127.0.0.1", response.host());
     println!("{}", response);
   });
 }
