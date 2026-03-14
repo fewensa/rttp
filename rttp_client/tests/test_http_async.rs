@@ -27,6 +27,23 @@ fn test_async_http() {
 }
 
 #[test]
+#[cfg(feature = "async")]
+fn test_async_chunked() {
+  let (addr, _handle) = support::spawn_chunked_server();
+  block_on(async {
+    let response = client()
+      .get()
+      .url(format!("http://{}/chunked", addr))
+      .rasync()
+      .await;
+    assert!(response.is_ok());
+
+    let response = response.unwrap();
+    assert_eq!("chunked body!", response.body().string().unwrap());
+  });
+}
+
+#[test]
 #[cfg(all(feature = "async", feature = "tls-rustls"))]
 fn test_async_https() {
   let (addr, _handle) = support::spawn_tls_server();

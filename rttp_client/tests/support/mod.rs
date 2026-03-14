@@ -63,6 +63,29 @@ pub fn spawn_http_server_count(count: usize) -> (SocketAddr, JoinHandle<()>) {
   (addr, handle)
 }
 
+pub fn spawn_chunked_server() -> (SocketAddr, JoinHandle<()>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind chunked server");
+  let addr = listener.local_addr().expect("chunked addr");
+  let handle = thread::spawn(move || {
+    if let Ok((mut stream, _)) = listener.accept() {
+      read_http_request(&mut stream);
+      let response = concat!(
+        "HTTP/1.1 200 OK\r\n",
+        "Transfer-Encoding: chunked\r\n",
+        "Connection: close\r\n",
+        "\r\n",
+        "7;foo=bar\r\nchunked\r\n",
+        "6\r\n body!\r\n",
+        "0\r\n",
+        "X-Trailer: ignored\r\n",
+        "\r\n"
+      );
+      let _ = stream.write_all(response.as_bytes());
+    }
+  });
+  (addr, handle)
+}
+
 pub fn spawn_redirect_server() -> (SocketAddr, JoinHandle<()>) {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind redirect server");
   let addr = listener.local_addr().expect("redirect addr");
