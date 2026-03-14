@@ -101,6 +101,7 @@ fn test_async_https() {
   });
 }
 
+#[test]
 #[cfg(feature = "async")]
 fn test_async_http_proxy_uses_absolute_form_for_http_requests() {
   let (addr, _handle) = support::spawn_http_proxy_server();
