@@ -1,8 +1,8 @@
 use std::net::{TcpStream, ToSocketAddrs};
 
 use futures::io::{AllowStdIo, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use socks::{Socks4Stream, Socks5Stream};
 use socket2::{Domain, Protocol, Socket, Type};
+use socks::{Socks4Stream, Socks5Stream};
 use std::io::{self, Read, Write};
 use std::time;
 use url::Url;
@@ -297,11 +297,7 @@ impl<'a> AsyncConnection<'a> {
   }
 
   #[cfg(feature = "tls-rustls")]
-  async fn async_send_https_rustls(
-    &self,
-    url: &Url,
-    stream: TcpStream,
-  ) -> error::Result<Vec<u8>> {
+  async fn async_send_https_rustls(&self, url: &Url, stream: TcpStream) -> error::Result<Vec<u8>> {
     use futures_rustls::TlsConnector;
     use rustls::pki_types::ServerName;
     use rustls::{ClientConfig, RootCertStore};
@@ -387,6 +383,8 @@ impl<'a> AsyncConnection<'a> {
   }
 
   async fn call_with_proxy_socks4(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
+    // The SOCKS crate is sync-only, but its established stream still plugs into the existing
+    // response path. Keeping it avoids duplicating the handshake state machine here.
     let addr_proxy = format!("{}:{}", proxy.host(), proxy.port());
     let addr_target = self.conn.addr(url)?;
     let user = if let Some(u) = proxy.username() {
@@ -400,6 +398,8 @@ impl<'a> AsyncConnection<'a> {
   }
 
   async fn call_with_proxy_socks5(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
+    // socket2 already covers the direct TCP path; the SOCKS exception stays isolated to the
+    // proxy handshake and keeps the async API surface unchanged.
     let addr_proxy = format!("{}:{}", proxy.host(), proxy.port());
     let addr_target = self.conn.addr(url)?;
     let mut stream = if let Some(u) = proxy.username() {

@@ -1,8 +1,8 @@
-use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener};
+use std::io::{self, Read, Write};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
 use std::thread::{self, JoinHandle};
 
-fn read_http_request<R: Read>(stream: &mut R) {
+fn read_http_request<R: Read>(stream: &mut R) -> Vec<u8> {
   let mut request = Vec::new();
   let mut buf = [0u8; 1024];
   let mut content_length = None;
@@ -42,6 +42,93 @@ fn read_http_request<R: Read>(stream: &mut R) {
       }
     }
   }
+
+  request
+}
+
+fn read_exact_bytes<R: Read>(stream: &mut R, len: usize) -> io::Result<Vec<u8>> {
+  let mut bytes = vec![0u8; len];
+  stream.read_exact(&mut bytes)?;
+  Ok(bytes)
+}
+
+fn socks5_target_addr(stream: &mut TcpStream, auth: Option<(&str, &str)>) -> io::Result<String> {
+  let header = read_exact_bytes(stream, 2)?;
+  let methods = read_exact_bytes(stream, header[1] as usize)?;
+
+  match auth {
+    Some((username, password)) => {
+      if !methods.contains(&0x02) {
+        return Err(io::Error::other(
+          "client does not support username/password auth",
+        ));
+      }
+      stream.write_all(&[0x05, 0x02])?;
+
+      let auth_header = read_exact_bytes(stream, 2)?;
+      let user = read_exact_bytes(stream, auth_header[1] as usize)?;
+      let password_len = read_exact_bytes(stream, 1)?[0] as usize;
+      let password_bytes = read_exact_bytes(stream, password_len)?;
+      let auth_ok = user == username.as_bytes() && password_bytes == password.as_bytes();
+      stream.write_all(&[0x01, if auth_ok { 0x00 } else { 0x01 }])?;
+      if !auth_ok {
+        return Err(io::Error::other("invalid socks5 credentials"));
+      }
+    }
+    None => {
+      if !methods.contains(&0x00) {
+        return Err(io::Error::other("client does not support no-auth socks5"));
+      }
+      stream.write_all(&[0x05, 0x00])?;
+    }
+  }
+
+  let request = read_exact_bytes(stream, 4)?;
+  if request[0] != 0x05 || request[1] != 0x01 {
+    return Err(io::Error::other("unsupported socks5 command"));
+  }
+
+  let host = match request[3] {
+    0x01 => {
+      let ip = read_exact_bytes(stream, 4)?;
+      Ipv4Addr::new(ip[0], ip[1], ip[2], ip[3]).to_string()
+    }
+    0x03 => {
+      let len = read_exact_bytes(stream, 1)?[0] as usize;
+      String::from_utf8(read_exact_bytes(stream, len)?)
+        .map_err(|_| io::Error::other("invalid domain name"))?
+    }
+    0x04 => {
+      let ip = read_exact_bytes(stream, 16)?;
+      let mut segments = [0u16; 8];
+      for (idx, chunk) in ip.chunks_exact(2).enumerate() {
+        segments[idx] = u16::from_be_bytes([chunk[0], chunk[1]]);
+      }
+      Ipv6Addr::from(segments).to_string()
+    }
+    _ => return Err(io::Error::other("unsupported socks5 address type")),
+  };
+
+  let port = read_exact_bytes(stream, 2)?;
+  let port = u16::from_be_bytes([port[0], port[1]]);
+
+  stream.write_all(&[0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0, 0])?;
+
+  Ok(format!("{}:{}", host, port))
+}
+
+fn proxy_http_request(mut stream: TcpStream, auth: Option<(&str, &str)>) -> io::Result<()> {
+  let target_addr = socks5_target_addr(&mut stream, auth)?;
+  let mut target = TcpStream::connect(target_addr)?;
+  let request = read_http_request(&mut stream);
+  target.write_all(&request)?;
+  target.flush()?;
+
+  let mut response = Vec::new();
+  target.read_to_end(&mut response)?;
+  stream.write_all(&response)?;
+  stream.flush()?;
+  Ok(())
 }
 
 pub fn spawn_http_server() -> (SocketAddr, JoinHandle<()>) {
@@ -54,7 +141,7 @@ pub fn spawn_http_server_count(count: usize) -> (SocketAddr, JoinHandle<()>) {
   let handle = thread::spawn(move || {
     for _ in 0..count {
       if let Ok((mut stream, _)) = listener.accept() {
-        read_http_request(&mut stream);
+        let _ = read_http_request(&mut stream);
         let response = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK";
         let _ = stream.write_all(response);
       }
@@ -91,7 +178,7 @@ pub fn spawn_redirect_server() -> (SocketAddr, JoinHandle<()>) {
   let addr = listener.local_addr().expect("redirect addr");
   let handle = thread::spawn(move || {
     if let Ok((mut stream, _)) = listener.accept() {
-      read_http_request(&mut stream);
+      let _ = read_http_request(&mut stream);
       let response = format!(
         "HTTP/1.1 302 Found\r\nLocation: http://{}/final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
         addr
@@ -100,7 +187,7 @@ pub fn spawn_redirect_server() -> (SocketAddr, JoinHandle<()>) {
     }
 
     if let Ok((mut stream, _)) = listener.accept() {
-      read_http_request(&mut stream);
+      let _ = read_http_request(&mut stream);
       let response = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK";
       let _ = stream.write_all(response);
     }
@@ -153,6 +240,30 @@ pub fn spawn_auth_echo_server() -> (SocketAddr, JoinHandle<()>) {
   (addr, handle)
 }
 
+pub fn spawn_socks5_proxy_server() -> (SocketAddr, JoinHandle<()>) {
+  spawn_socks5_proxy_server_with_auth(None)
+}
+
+pub fn spawn_socks5_proxy_server_with_credentials(
+  username: &'static str,
+  password: &'static str,
+) -> (SocketAddr, JoinHandle<()>) {
+  spawn_socks5_proxy_server_with_auth(Some((username, password)))
+}
+
+fn spawn_socks5_proxy_server_with_auth(
+  auth: Option<(&'static str, &'static str)>,
+) -> (SocketAddr, JoinHandle<()>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind socks5 proxy");
+  let addr = listener.local_addr().expect("socks5 proxy addr");
+  let handle = thread::spawn(move || {
+    if let Ok((stream, _)) = listener.accept() {
+      proxy_http_request(stream, auth).expect("proxy socks5 request");
+    }
+  });
+  (addr, handle)
+}
+
 #[cfg(feature = "tls-rustls")]
 pub fn spawn_tls_server() -> (SocketAddr, JoinHandle<()>) {
   use rcgen::generate_simple_self_signed;
@@ -179,7 +290,7 @@ pub fn spawn_tls_server() -> (SocketAddr, JoinHandle<()>) {
     if let Ok((stream, _)) = listener.accept() {
       let session = ServerConnection::new(config.clone()).expect("server connection");
       let mut tls = StreamOwned::new(session, stream);
-      read_http_request(&mut tls);
+      let _ = read_http_request(&mut tls);
       let response = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK";
       let _ = tls.write_all(response);
       let _ = tls.flush();
