@@ -1,6 +1,6 @@
 [package]
 name = "rttp"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["fewensa <fewensa@protonmail.com>"]
 description = "Rust http lib"
 homepage = "https://github.com/fewensa/rttp"
