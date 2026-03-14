@@ -310,26 +310,6 @@ impl<'a> Connection<'a> {
     let header = self.header();
     let body = self.body();
 
-    // println!("{}", header);
-    // if let Some(body) = body {
-    //   println!("\n\n");
-    //   let content_type = self
-    //     .content_type()
-    //     .map(|v| v.to_lowercase())
-    //     .unwrap_or("".to_string());
-    //   let mut raw_types = vec![
-    //     "application/x-www-form-urlencoded",
-    //     "application/json",
-    //     "text/plain",
-    //   ];
-    //   raw_types.retain(|item| content_type.contains(item));
-    //   if raw_types.is_empty() {
-    //   } else {
-    //     let body_text = String::from_utf8(body.bytes().to_vec()).map_err(error::request)?;
-    //     println!("{}", body_text);
-    //   }
-    // }
-
     stream.write(header.as_bytes()).map_err(error::request)?;
     if let Some(body) = body {
       stream.write(body.bytes()).map_err(error::request)?;
