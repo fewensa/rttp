@@ -243,6 +243,51 @@ fn test_http_proxy_uses_absolute_form_for_http_requests() {
 }
 
 #[test]
+fn test_http_proxy_with_auth_uses_proxy_authorization_header() {
+  let (addr, _handle) = support::spawn_http_proxy_auth_echo_server();
+  let response = client()
+    .get()
+    .url("http://example.com/proxy?q=1")
+    .proxy(Proxy::http_with_authorization(
+      "127.0.0.1",
+      u32::from(addr.port()),
+      "user",
+      "secret",
+    ))
+    .emit();
+  assert!(response.is_ok());
+
+  let response = response.unwrap();
+  assert_eq!("Basic dXNlcjpzZWNyZXQ=", response.body().string().unwrap());
+}
+
+#[test]
+#[cfg(feature = "tls-rustls")]
+fn test_https_proxy_with_auth_uses_connect_tunnel() {
+  let (proxy_addr, target_addr, _proxy_handle) =
+    support::spawn_https_proxy_server_with_credentials("user", "secret");
+  let response = client()
+    .get()
+    .url(format!("https://localhost:{}/", target_addr.port()))
+    .proxy(Proxy::http_with_authorization(
+      "127.0.0.1",
+      u32::from(proxy_addr.port()),
+      "user",
+      "secret",
+    ))
+    .config(
+      Config::builder()
+        .verify_ssl_cert(false)
+        .verify_ssl_hostname(false),
+    )
+    .emit();
+  assert!(response.is_ok());
+
+  let response = response.unwrap();
+  assert_eq!("OK", response.body().string().unwrap());
+}
+
+#[test]
 fn test_connection_closed() {
   let (addr, _handle) = support::spawn_http_server_count(5);
   let mut client = client();

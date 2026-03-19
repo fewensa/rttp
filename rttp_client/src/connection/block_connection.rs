@@ -1,4 +1,4 @@
-use std::io::{Read, Write};
+use std::io::Write;
 
 use socks::{Socks4Stream, Socks5Stream};
 use url::Url;
@@ -78,7 +78,7 @@ impl<'a> BlockConnection<'a> {
   fn call_with_proxy_http(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
     let addr = format!("{}:{}", proxy.host(), proxy.port());
     let mut stream = self.conn.block_tcp_stream(&addr)?;
-    let header = self.conn.proxy_http_header(url);
+    let header = self.conn.proxy_http_header(url, proxy);
 
     stream
       .write_all(header.as_bytes())
@@ -101,25 +101,10 @@ impl<'a> BlockConnection<'a> {
     let mut stream = self.conn.block_tcp_stream(&addr)?;
 
     stream
-      .write(connect_header.as_bytes())
+      .write_all(connect_header.as_bytes())
       .map_err(error::request)?;
     stream.flush().map_err(error::request)?;
-
-    //HTTP/1.1 200 Connection Established
-    let mut res = [0u8; 1024];
-    stream.read(&mut res).map_err(error::request)?;
-
-    let res_s = String::from_utf8(res.to_vec())
-      .map_err(|_| error::bad_proxy("parse proxy server response error."))?;
-    if !res_s
-      .to_ascii_lowercase()
-      .contains("connection established")
-    {
-      return Err(error::bad_proxy(format!(
-        "Proxy server response error: {}",
-        res_s
-      )));
-    }
+    crate::connection::connection::read_proxy_connect_response(&mut stream)?;
 
     self.conn.block_send_with_stream(url, &mut stream)
   }
