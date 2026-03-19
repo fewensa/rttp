@@ -132,6 +132,17 @@ fn proxy_http_request(mut stream: TcpStream, auth: Option<(&str, &str)>) -> io::
   Ok(())
 }
 
+fn header_value(request: &[u8], name: &str) -> Option<String> {
+  String::from_utf8_lossy(request).lines().find_map(|line| {
+    let (header_name, value) = line.split_once(':')?;
+    if header_name.eq_ignore_ascii_case(name) {
+      Some(value.trim().to_string())
+    } else {
+      None
+    }
+  })
+}
+
 pub fn spawn_http_server() -> (SocketAddr, JoinHandle<()>) {
   spawn_http_server_count(1)
 }
@@ -233,6 +244,25 @@ pub fn spawn_http_proxy_server() -> (SocketAddr, JoinHandle<()>) {
   (addr, handle)
 }
 
+pub fn spawn_http_proxy_auth_echo_server() -> (SocketAddr, JoinHandle<()>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind http proxy auth server");
+  let addr = listener.local_addr().expect("http proxy auth addr");
+  let handle = thread::spawn(move || {
+    if let Ok((mut stream, _)) = listener.accept() {
+      let request = read_http_request(&mut stream);
+      let auth = header_value(&request, "Proxy-Authorization").unwrap_or_default();
+      let body = auth.as_bytes();
+      let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+      );
+      let _ = stream.write_all(response.as_bytes());
+      let _ = stream.write_all(body);
+    }
+  });
+  (addr, handle)
+}
+
 pub fn spawn_invalid_gzip_server() -> (SocketAddr, JoinHandle<()>) {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind invalid gzip server");
   let addr = listener.local_addr().expect("invalid gzip addr");
@@ -318,6 +348,61 @@ fn spawn_socks5_proxy_server_with_auth(
     }
   });
   (addr, handle)
+}
+
+#[cfg(feature = "tls-rustls")]
+pub fn spawn_https_proxy_server_with_credentials(
+  username: &'static str,
+  password: &'static str,
+) -> (SocketAddr, SocketAddr, JoinHandle<()>) {
+  use base64::Engine;
+  use std::io::copy;
+
+  let (target_addr, _target_handle) = spawn_tls_server();
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind https proxy server");
+  let proxy_addr = listener.local_addr().expect("https proxy addr");
+  let handle = thread::spawn(move || {
+    if let Ok((mut client, _)) = listener.accept() {
+      let request = read_http_request(&mut client);
+      let request_str = String::from_utf8_lossy(&request);
+      let request_line = request_str.lines().next().unwrap_or_default().to_string();
+      let proxy_auth = header_value(&request, "Proxy-Authorization").unwrap_or_default();
+      let expected_auth = format!(
+        "Basic {}",
+        base64::engine::general_purpose::STANDARD.encode(format!("{}:{}", username, password))
+      );
+
+      if proxy_auth != expected_auth {
+        let _ = client
+          .write_all(b"HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n");
+        return;
+      }
+
+      let target = request_line
+        .split_whitespace()
+        .nth(1)
+        .unwrap_or_default()
+        .to_string();
+      let mut server = TcpStream::connect(&target).expect("connect tls target");
+
+      let _ = client.write_all(b"HTTP/1.1 200 Conne");
+      let _ = client.flush();
+      thread::sleep(Duration::from_millis(20));
+      let _ = client.write_all(b"ction Established\r\nProxy-Agent: test\r\n\r\n");
+      let _ = client.flush();
+
+      let mut client_reader = client.try_clone().expect("clone client");
+      let mut server_writer = server.try_clone().expect("clone target");
+      let relay = thread::spawn(move || {
+        let _ = copy(&mut client_reader, &mut server_writer);
+      });
+
+      let _ = copy(&mut server, &mut client);
+      let _ = relay.join();
+    }
+  });
+
+  (proxy_addr, target_addr, handle)
 }
 
 #[cfg(feature = "tls-rustls")]

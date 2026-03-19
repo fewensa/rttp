@@ -3,14 +3,14 @@ use std::net::{TcpStream, ToSocketAddrs};
 use futures::io::{AllowStdIo, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use socket2::{Domain, Protocol, Socket, Type};
 use socks::{Socks4Stream, Socks5Stream};
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::time;
 use url::Url;
 
 #[cfg(feature = "tls-rustls")]
 use std::sync::Arc;
 
-use crate::connection::connection::Connection;
+use crate::connection::connection::{read_proxy_connect_response, Connection};
 use crate::connection::connection_reader::{response_body_kind, ResponseBodyKind};
 use crate::error;
 use crate::request::RawRequest;
@@ -401,7 +401,7 @@ impl<'a> AsyncConnection<'a> {
     let addr = format!("{}:{}", proxy.host(), proxy.port());
     let stream = self.async_tcp_stream(&addr).await?;
     let mut stream = AllowStdIo::new(stream);
-    let header = self.conn.proxy_http_header(url);
+    let header = self.conn.proxy_http_header(url, proxy);
 
     self.async_write_request(&mut stream, &header).await?;
     self.async_read_stream(url, &mut stream).await
@@ -417,21 +417,7 @@ impl<'a> AsyncConnection<'a> {
       .write_all(connect_header.as_bytes())
       .map_err(error::request)?;
     stream.flush().map_err(error::request)?;
-
-    // HTTP/1.1 200 Connection Established
-    let mut res = vec![0u8; 1024];
-    let bytes = stream.read(&mut res).map_err(error::request)?;
-
-    let res_s = match String::from_utf8(res[..bytes].to_vec()) {
-      Ok(r) => r,
-      Err(_) => return Err(error::bad_proxy("parse proxy server response error.")),
-    };
-    if !res_s
-      .to_ascii_lowercase()
-      .contains("connection established")
-    {
-      return Err(error::bad_proxy("Proxy server response error."));
-    }
+    read_proxy_connect_response(&mut stream)?;
 
     self.async_send_with_stream(url, stream).await
   }

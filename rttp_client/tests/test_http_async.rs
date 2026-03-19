@@ -124,6 +124,29 @@ fn test_async_http_proxy_uses_absolute_form_for_http_requests() {
 
 #[test]
 #[cfg(feature = "async")]
+fn test_async_http_proxy_with_auth_uses_proxy_authorization_header() {
+  let (addr, _handle) = support::spawn_http_proxy_auth_echo_server();
+  block_on(async {
+    let response = client()
+      .get()
+      .url("http://example.com/proxy?q=1")
+      .proxy(Proxy::http_with_authorization(
+        "127.0.0.1",
+        u32::from(addr.port()),
+        "user",
+        "secret",
+      ))
+      .rasync()
+      .await;
+    assert!(response.is_ok());
+
+    let response = response.unwrap();
+    assert_eq!("Basic dXNlcjpzZWNyZXQ=", response.body().string().unwrap());
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
 fn test_async_proxy_socks5() {
   let (addr, _handle) = support::spawn_http_server();
   let (proxy_addr, _proxy_handle) = support::spawn_socks5_proxy_server();
@@ -138,5 +161,33 @@ fn test_async_proxy_socks5() {
     let response = response.unwrap();
     assert_eq!("127.0.0.1", response.host());
     println!("{}", response);
+  });
+}
+
+#[test]
+#[cfg(all(feature = "async", feature = "tls-rustls"))]
+fn test_async_https_proxy_with_auth_uses_connect_tunnel() {
+  let (proxy_addr, target_addr, _proxy_handle) =
+    support::spawn_https_proxy_server_with_credentials("user", "secret");
+  block_on(async {
+    let response = client()
+      .get()
+      .url(format!("https://localhost:{}/", target_addr.port()))
+      .proxy(Proxy::http_with_authorization(
+        "127.0.0.1",
+        u32::from(proxy_addr.port()),
+        "user",
+        "secret",
+      ))
+      .config(
+        rttp_client::Config::builder()
+          .verify_ssl_cert(false)
+          .verify_ssl_hostname(false),
+      )
+      .rasync()
+      .await;
+    assert!(response.is_ok());
+    let response = response.unwrap();
+    assert_eq!("OK", response.body().string().unwrap());
   });
 }
