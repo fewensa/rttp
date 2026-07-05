@@ -155,6 +155,7 @@ pub struct Request {
   target: String,
   version: String,
   headers: Vec<(String, String)>,
+  trailers: Vec<(String, String)>,
   body: Vec<u8>,
 }
 
@@ -174,6 +175,18 @@ impl Request {
   pub fn header(&self, name: &str) -> Option<&str> {
     self
       .headers
+      .iter()
+      .find(|(key, _)| key.eq_ignore_ascii_case(name))
+      .map(|(_, value)| value.as_str())
+  }
+
+  pub fn trailers(&self) -> &[(String, String)] {
+    &self.trailers
+  }
+
+  pub fn trailer(&self, name: &str) -> Option<&str> {
+    self
+      .trailers
       .iter()
       .find(|(key, _)| key.eq_ignore_ascii_case(name))
       .map(|(_, value)| value.as_str())
@@ -273,8 +286,12 @@ impl Request {
               body_kind = Some(RequestBodyKind::ContentLength(content_length));
             }
             RequestBodyKind::Chunked => {
-              let body = read_chunked_request_body(reader)?;
-              return Ok(Some(Self::from_head_and_body(head, body)));
+              let chunked = read_chunked_request_body(reader)?;
+              return Ok(Some(Self::from_head_body_and_trailers(
+                head,
+                chunked.body,
+                chunked.trailers,
+              )));
             }
           }
         }
@@ -318,16 +335,26 @@ impl Request {
       target: head.target,
       version: head.version,
       headers: head.headers,
+      trailers: Vec::new(),
       body,
     })
   }
 
   fn from_head_and_body(head: RequestHead, body: Vec<u8>) -> Self {
+    Self::from_head_body_and_trailers(head, body, Vec::new())
+  }
+
+  fn from_head_body_and_trailers(
+    head: RequestHead,
+    body: Vec<u8>,
+    trailers: Vec<(String, String)>,
+  ) -> Self {
     Self {
       method: head.method,
       target: head.target,
       version: head.version,
       headers: head.headers,
+      trailers,
       body,
     }
   }
@@ -665,6 +692,11 @@ enum RequestBodyKind {
   Chunked,
 }
 
+struct ChunkedRequestBody {
+  body: Vec<u8>,
+  trailers: Vec<(String, String)>,
+}
+
 fn parse_request_head(raw: &[u8]) -> io::Result<RequestHead> {
   let text = std::str::from_utf8(raw)
     .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "request head is not UTF-8"))?;
@@ -777,7 +809,7 @@ fn request_body_kind(headers: &[(String, String)]) -> io::Result<RequestBodyKind
   }
 }
 
-fn read_chunked_request_body<R>(reader: &mut R) -> io::Result<Vec<u8>>
+fn read_chunked_request_body<R>(reader: &mut R) -> io::Result<ChunkedRequestBody>
 where
   R: BufRead,
 {
@@ -788,8 +820,8 @@ where
     let chunk_size = parse_chunk_size(&line)?;
 
     if chunk_size == 0 {
-      consume_trailers(reader)?;
-      return Ok(body);
+      let trailers = read_trailers(reader)?;
+      return Ok(ChunkedRequestBody { body, trailers });
     }
 
     let copied = {
@@ -870,15 +902,21 @@ where
   }
 }
 
-fn consume_trailers<R>(reader: &mut R) -> io::Result<()>
+fn read_trailers<R>(reader: &mut R) -> io::Result<Vec<(String, String)>>
 where
   R: BufRead,
 {
+  let mut lines = Vec::new();
+
   loop {
     let line = read_crlf_line(reader)?;
     if line == b"\r\n" {
-      return Ok(());
+      return parse_header_lines(lines.iter().map(String::as_str));
     }
+    let line = line.strip_suffix(b"\r\n").unwrap_or(&line);
+    let line = std::str::from_utf8(line)
+      .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "trailer line is not UTF-8"))?;
+    lines.push(line.to_string());
   }
 }
 
