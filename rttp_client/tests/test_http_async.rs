@@ -45,6 +45,40 @@ fn test_async_chunked() {
 
 #[test]
 #[cfg(feature = "async")]
+fn test_async_duplicate_set_cookie_headers_are_preserved() {
+  let (addr, _handle) = support::spawn_duplicate_set_cookie_server();
+  block_on(async {
+    let response = client()
+      .get()
+      .url(format!("http://{}/cookies", addr))
+      .rasync()
+      .await;
+    assert!(response.is_ok());
+
+    let response = response.unwrap();
+    assert_eq!(
+      vec![
+        &"session=abc; Path=/; HttpOnly".to_string(),
+        &"theme=dark; Path=/; SameSite=Lax".to_string()
+      ],
+      response.header_values("set-cookie")
+    );
+    assert_eq!(
+      Some(&"session=abc; Path=/; HttpOnly".to_string()),
+      response.header_value("set-cookie")
+    );
+    assert_eq!(2, response.cookies().len());
+    assert!(response.cookie("session").is_some());
+    assert!(response.cookie("theme").is_some());
+    assert_eq!(
+      Some(&"text/plain".to_string()),
+      response.header_value("content-type")
+    );
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
 fn test_async_content_length_response_does_not_wait_for_eof() {
   let (addr, _handle) = support::spawn_keep_alive_server();
   block_on(async {

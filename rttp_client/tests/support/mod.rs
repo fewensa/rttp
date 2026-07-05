@@ -134,6 +134,27 @@ pub fn spawn_chunked_server() -> (SocketAddr, JoinHandle<()>) {
   (addr, handle)
 }
 
+pub fn spawn_duplicate_set_cookie_server() -> (SocketAddr, JoinHandle<()>) {
+  let (listener, addr) = bind_local_http_listener("duplicate set-cookie server");
+  let handle = thread::spawn(move || {
+    if let Ok((mut stream, _)) = listener.accept() {
+      let _ = read_http_request(&mut stream);
+      let response = concat!(
+        "HTTP/1.1 200 OK\r\n",
+        "Content-Type: text/plain\r\n",
+        "Set-Cookie: session=abc; Path=/; HttpOnly\r\n",
+        "Set-Cookie: theme=dark; Path=/; SameSite=Lax\r\n",
+        "Content-Length: 2\r\n",
+        "Connection: close\r\n",
+        "\r\n",
+        "OK"
+      );
+      let _ = stream.write_all(response.as_bytes());
+    }
+  });
+  (addr, handle)
+}
+
 pub fn spawn_redirect_server() -> (SocketAddr, JoinHandle<()>) {
   let (listener, addr) = bind_local_http_listener("redirect server");
   let handle = thread::spawn(move || {
