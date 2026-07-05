@@ -3,14 +3,14 @@ use url::Url;
 
 #[test]
 fn test_url_gen() {
-  let result = Url::parse("https://httpbin.org/get?name=文山");
+  let result = Url::parse("https://example.test/get?name=文山");
   let url = result.expect("INVALID URL");
   println!("{}  ", url.as_str());
 }
 
 #[test]
 fn test_rourl_gen() {
-  let url = RoUrl::with("https://httpbin.org/get/?name=a&name=b")
+  let url = RoUrl::with("https://example.test/get/?name=a&name=b")
     .path("//test/")
     .path("/a")
     .para("name[]=文")
