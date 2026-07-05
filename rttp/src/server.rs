@@ -76,7 +76,13 @@ impl HttpServer {
     F: FnOnce(Request) -> HttpResponse,
   {
     let (mut stream, _) = self.listener.accept()?;
-    let request = Request::read_from(&mut stream)?;
+    let request = match Request::read_from(&mut stream) {
+      Ok(request) => request,
+      Err(err) if is_bad_request_error(&err) => {
+        return bad_request_response().write_to(&mut stream);
+      }
+      Err(err) => return Err(err),
+    };
     let response = handler(request);
     response.write_to(&mut stream)
   }
@@ -183,9 +189,9 @@ impl Request {
           let take = header_end + 4 - raw.len();
           raw.extend_from_slice(&available[..take]);
           reader.consume(take);
-          let headers = parse_headers(&raw[..header_end])?;
-          reject_transfer_encoding(&headers)?;
-          content_length = Some(header_content_length(&headers)?);
+          let head = parse_request_head(&raw[..header_end])?;
+          reject_transfer_encoding(&head.headers)?;
+          content_length = Some(header_content_length(&head.headers)?);
         }
         None => {
           let take = available.len();
@@ -531,12 +537,6 @@ fn parse_request_head(raw: &[u8]) -> io::Result<RequestHead> {
   })
 }
 
-fn parse_headers(raw: &[u8]) -> io::Result<Vec<(String, String)>> {
-  let text = std::str::from_utf8(raw)
-    .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "request head is not UTF-8"))?;
-  parse_header_lines(text.split("\r\n").skip(1))
-}
-
 fn parse_header_lines<'a>(
   lines: impl Iterator<Item = &'a str>,
 ) -> io::Result<Vec<(String, String)>> {
@@ -602,6 +602,17 @@ fn assert_valid_header_component(component: &str) {
 
 fn response_status_allows_body(status_code: u16) -> bool {
   !(status_code / 100 == 1 || status_code == 204 || status_code == 304)
+}
+
+fn is_bad_request_error(err: &io::Error) -> bool {
+  matches!(
+    err.kind(),
+    io::ErrorKind::InvalidData | io::ErrorKind::UnexpectedEof
+  )
+}
+
+fn bad_request_response() -> HttpResponse {
+  HttpResponse::new(400, "Bad Request").body("Bad Request")
 }
 
 #[cfg(test)]
