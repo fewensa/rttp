@@ -1,4 +1,4 @@
-#[path = "../../../tests/support/local_http.rs"]
+#[path = "local_http.rs"]
 mod local_http;
 
 use std::io::Write;

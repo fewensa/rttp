@@ -3,7 +3,7 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-#[path = "../../../tests/support/local_http.rs"]
+#[path = "local_http.rs"]
 mod local_http;
 
 use local_http::{bind_local_http_listener, read_http_request, HTTP_OK_RESPONSE};
