@@ -5,6 +5,9 @@ use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 
 use socket2::{Domain, Protocol, Socket, Type};
 
+const MAX_REQUEST_HEAD_BYTES: usize = 64 * 1024;
+const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
+
 pub struct HttpServer {
   listener: TcpListener,
 }
@@ -232,7 +235,7 @@ impl Request {
       if let (Some(header_end), Some(RequestBodyKind::ContentLength(content_length))) =
         (find_header_end(&raw), body_kind)
       {
-        let message_len = header_end + 4 + content_length;
+        let message_len = checked_request_message_len(header_end, content_length)?;
         if raw.len() == message_len {
           return Ok(Some(Self::from_raw_frame(&raw)?));
         }
@@ -247,7 +250,8 @@ impl Request {
           (find_header_end(&raw), body_kind)
         {
           let body_start = header_end + 4;
-          if raw.len() < body_start + content_length {
+          let body_end = checked_request_message_len(header_end, content_length)?;
+          if raw.len() < body_end || body_end < body_start {
             return Err(io::Error::new(
               io::ErrorKind::UnexpectedEof,
               "incomplete HTTP request body",
@@ -263,7 +267,7 @@ impl Request {
       if let (Some(header_end), Some(RequestBodyKind::ContentLength(content_length))) =
         (find_header_end(&raw), body_kind)
       {
-        let message_len = header_end + 4 + content_length;
+        let message_len = checked_request_message_len(header_end, content_length)?;
         let take = (message_len - raw.len()).min(available.len());
         raw.extend_from_slice(&available[..take]);
         reader.consume(take);
@@ -275,6 +279,7 @@ impl Request {
       match find_header_end(&combined) {
         Some(header_end) => {
           let take = header_end + 4 - raw.len();
+          reject_oversized_request_head(header_end + 4)?;
           raw.extend_from_slice(&available[..take]);
           reader.consume(take);
           let head = parse_request_head(&raw[..header_end])?;
@@ -283,6 +288,7 @@ impl Request {
               return Ok(Some(Self::from_head_and_body(head, Vec::new())));
             }
             RequestBodyKind::ContentLength(content_length) => {
+              reject_oversized_request_body(content_length)?;
               body_kind = Some(RequestBodyKind::ContentLength(content_length));
             }
             RequestBodyKind::Chunked => {
@@ -297,6 +303,7 @@ impl Request {
         }
         None => {
           let take = available.len();
+          reject_oversized_request_head(raw.len().saturating_add(take))?;
           raw.extend_from_slice(available);
           reader.consume(take);
         }
@@ -307,11 +314,13 @@ impl Request {
   fn from_raw_frame(raw: &[u8]) -> io::Result<Self> {
     let header_end = find_header_end(raw)
       .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))?;
+    reject_oversized_request_head(header_end + 4)?;
     let head = parse_request_head(&raw[..header_end])?;
     let body_start = header_end + 4;
     let body = match request_body_kind(&head.headers)? {
       RequestBodyKind::ContentLength(content_length) => {
-        let body_end = body_start + content_length;
+        reject_oversized_request_body(content_length)?;
+        let body_end = checked_request_message_len(header_end, content_length)?;
 
         if raw.len() < body_end {
           return Err(io::Error::new(
@@ -679,6 +688,35 @@ fn find_header_end(raw: &[u8]) -> Option<usize> {
   raw.windows(4).position(|window| window == b"\r\n\r\n")
 }
 
+fn reject_oversized_request_head(length: usize) -> io::Result<()> {
+  if length > MAX_REQUEST_HEAD_BYTES {
+    Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "request head is too large",
+    ))
+  } else {
+    Ok(())
+  }
+}
+
+fn reject_oversized_request_body(length: usize) -> io::Result<()> {
+  if length > MAX_REQUEST_BODY_BYTES {
+    Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "request body is too large",
+    ))
+  } else {
+    Ok(())
+  }
+}
+
+fn checked_request_message_len(header_end: usize, content_length: usize) -> io::Result<usize> {
+  header_end
+    .checked_add(4)
+    .and_then(|body_start| body_start.checked_add(content_length))
+    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "request body is too large"))
+}
+
 struct RequestHead {
   method: String,
   target: String,
@@ -814,15 +852,18 @@ where
   R: BufRead,
 {
   let mut body = Vec::new();
+  let mut body_bytes_read = 0;
 
   loop {
-    let line = read_crlf_line(reader)?;
+    let line = read_bounded_crlf_line(reader, &mut body_bytes_read)?;
     let chunk_size = parse_chunk_size(&line)?;
 
     if chunk_size == 0 {
-      let trailers = read_trailers(reader)?;
+      let trailers = read_trailers(reader, &mut body_bytes_read)?;
       return Ok(ChunkedRequestBody { body, trailers });
     }
+
+    add_request_body_bytes(&mut body_bytes_read, chunk_size)?;
 
     let copied = {
       let mut chunk_reader = reader.take(chunk_size as u64);
@@ -840,22 +881,36 @@ where
         "incomplete chunked request body",
       ));
     };
-    consume_crlf(reader)?;
+    consume_crlf(reader, &mut body_bytes_read)?;
   }
 }
 
-fn read_crlf_line<R>(reader: &mut R) -> io::Result<Vec<u8>>
+fn add_request_body_bytes(total: &mut usize, length: usize) -> io::Result<()> {
+  *total = total
+    .checked_add(length)
+    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "request body is too large"))?;
+  reject_oversized_request_body(*total)
+}
+
+fn read_bounded_crlf_line<R>(reader: &mut R, body_bytes_read: &mut usize) -> io::Result<Vec<u8>>
 where
   R: BufRead,
 {
   let mut line = Vec::new();
-  let read = reader.read_until(b'\n', &mut line)?;
+  let remaining = MAX_REQUEST_BODY_BYTES
+    .checked_sub(*body_bytes_read)
+    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "request body is too large"))?;
+  let read = {
+    let mut limited_reader = reader.take(remaining.saturating_add(1) as u64);
+    limited_reader.read_until(b'\n', &mut line)?
+  };
   if read == 0 {
     return Err(io::Error::new(
       io::ErrorKind::UnexpectedEof,
       "incomplete chunked request body",
     ));
   }
+  add_request_body_bytes(body_bytes_read, read)?;
   if line.ends_with(b"\r\n") {
     Ok(line)
   } else {
@@ -881,10 +936,11 @@ fn parse_chunk_size(line: &[u8]) -> io::Result<usize> {
     .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid chunk size"))
 }
 
-fn consume_crlf<R>(reader: &mut R) -> io::Result<()>
+fn consume_crlf<R>(reader: &mut R, body_bytes_read: &mut usize) -> io::Result<()>
 where
   R: BufRead,
 {
+  add_request_body_bytes(body_bytes_read, 2)?;
   let mut suffix = [0u8; 2];
   reader.read_exact(&mut suffix).map_err(|_| {
     io::Error::new(
@@ -902,14 +958,17 @@ where
   }
 }
 
-fn read_trailers<R>(reader: &mut R) -> io::Result<Vec<(String, String)>>
+fn read_trailers<R>(
+  reader: &mut R,
+  body_bytes_read: &mut usize,
+) -> io::Result<Vec<(String, String)>>
 where
   R: BufRead,
 {
   let mut lines = Vec::new();
 
   loop {
-    let line = read_crlf_line(reader)?;
+    let line = read_bounded_crlf_line(reader, body_bytes_read)?;
     if line == b"\r\n" {
       return parse_header_lines(lines.iter().map(String::as_str));
     }
@@ -1069,6 +1128,51 @@ mod tests {
     assert_eq!("/first", first.target());
     assert_eq!(io::ErrorKind::UnexpectedEof, error.kind());
     assert_eq!("incomplete HTTP request body", error.to_string());
+  }
+
+  #[test]
+  fn chunk_extension_bytes_count_toward_request_body_limit() {
+    let chunk_extension = "a".repeat(MAX_REQUEST_BODY_BYTES);
+    let raw = format!(
+      concat!(
+        "POST /chunked HTTP/1.1\r\n",
+        "Host: example.test\r\n",
+        "Transfer-Encoding: chunked\r\n",
+        "\r\n",
+        "0;{}\r\n",
+        "\r\n"
+      ),
+      chunk_extension
+    );
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+
+    let error = Request::read_next_from(&mut reader).expect_err("chunk extension should be capped");
+
+    assert_eq!(io::ErrorKind::InvalidData, error.kind());
+    assert_eq!("request body is too large", error.to_string());
+  }
+
+  #[test]
+  fn chunk_trailer_bytes_count_toward_request_body_limit() {
+    let trailer_value = "a".repeat(MAX_REQUEST_BODY_BYTES);
+    let raw = format!(
+      concat!(
+        "POST /chunked HTTP/1.1\r\n",
+        "Host: example.test\r\n",
+        "Transfer-Encoding: chunked\r\n",
+        "\r\n",
+        "0\r\n",
+        "X-Trace: {}\r\n",
+        "\r\n"
+      ),
+      trailer_value
+    );
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+
+    let error = Request::read_next_from(&mut reader).expect_err("chunk trailer should be capped");
+
+    assert_eq!(io::ErrorKind::InvalidData, error.kind());
+    assert_eq!("request body is too large", error.to_string());
   }
 
   #[test]
