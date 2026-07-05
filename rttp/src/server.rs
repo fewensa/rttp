@@ -179,7 +179,7 @@ impl Request {
   }
 
   fn from_raw_frame(raw: &[u8]) -> io::Result<Self> {
-    let header_end = find_header_end(&raw)
+    let header_end = find_header_end(raw)
       .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))?;
     let head = parse_request_head(&raw[..header_end])?;
     reject_transfer_encoding(&head.headers)?;
