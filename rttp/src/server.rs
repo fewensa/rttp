@@ -91,7 +91,7 @@ impl HttpServer {
     let mut served = 0;
 
     while served < request_limit {
-      let request = match Request::read_next_from(&mut reader) {
+      let request = match Request::read_next_from_with_continue(&mut reader) {
         Ok(Some(request)) => request,
         Ok(None) => break,
         Err(err) if is_bad_request_error(&err) => {
@@ -134,18 +134,21 @@ impl HttpServer {
   where
     F: FnOnce(Request) -> HttpResponse,
   {
-    let (mut stream, _) = self.listener.accept()?;
-    let request = match Request::read_from(&mut stream) {
+    let (stream, _) = self.listener.accept()?;
+    let mut reader = BufReader::new(stream);
+    let request = match Request::read_next_from_with_continue(&mut reader).and_then(|request| {
+      request.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))
+    }) {
       Ok(request) => request,
       Err(err) if is_bad_request_error(&err) => {
-        return bad_request_response().write_to(&mut stream);
+        return bad_request_response().write_to(reader.get_mut());
       }
       Err(err) => return Err(err),
     };
     let request_is_head = request.method() == "HEAD";
     let response = handler(request);
     response.write_to_with_default_connection_and_body(
-      &mut stream,
+      reader.get_mut(),
       DefaultConnectionHeader::Close,
       !request_is_head,
     )
@@ -202,16 +205,99 @@ impl Request {
       .any(|(_, value)| connection_header_has_token(Some(value), token))
   }
 
-  fn read_from<R>(reader: &mut R) -> io::Result<Self>
+  #[cfg(test)]
+  fn read_next_from<R>(reader: &mut R) -> io::Result<Option<Self>>
   where
-    R: Read,
+    R: BufRead,
   {
-    let mut reader = BufReader::new(reader);
-    Self::read_next_from(&mut reader)?
-      .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))
+    Self::read_next_from_without_continue(reader)
   }
 
-  fn read_next_from<R>(reader: &mut R) -> io::Result<Option<Self>>
+  fn read_next_from_with_continue<S>(reader: &mut BufReader<S>) -> io::Result<Option<Self>>
+  where
+    S: Read + Write,
+  {
+    let mut raw = Vec::new();
+    let mut body_kind: Option<RequestBodyKind> = None;
+
+    loop {
+      if let (Some(header_end), Some(RequestBodyKind::ContentLength(content_length))) =
+        (find_header_end(&raw), body_kind)
+      {
+        let message_len = header_end + 4 + content_length;
+        if raw.len() == message_len {
+          return Ok(Some(Self::from_raw_frame(&raw)?));
+        }
+      }
+
+      let available = reader.fill_buf()?;
+      if available.is_empty() {
+        if raw.is_empty() {
+          return Ok(None);
+        }
+        if let (Some(header_end), Some(RequestBodyKind::ContentLength(content_length))) =
+          (find_header_end(&raw), body_kind)
+        {
+          let body_start = header_end + 4;
+          if raw.len() < body_start + content_length {
+            return Err(io::Error::new(
+              io::ErrorKind::UnexpectedEof,
+              "incomplete HTTP request body",
+            ));
+          }
+        }
+        return Err(io::Error::new(
+          io::ErrorKind::InvalidData,
+          "incomplete HTTP request",
+        ));
+      }
+
+      if let (Some(header_end), Some(RequestBodyKind::ContentLength(content_length))) =
+        (find_header_end(&raw), body_kind)
+      {
+        let message_len = header_end + 4 + content_length;
+        let take = (message_len - raw.len()).min(available.len());
+        raw.extend_from_slice(&available[..take]);
+        reader.consume(take);
+        continue;
+      }
+
+      let mut combined = raw.clone();
+      combined.extend_from_slice(available);
+      match find_header_end(&combined) {
+        Some(header_end) => {
+          let take = header_end + 4 - raw.len();
+          raw.extend_from_slice(&available[..take]);
+          reader.consume(take);
+          let head = parse_request_head(&raw[..header_end])?;
+          let parsed_body_kind = request_body_kind(&head.headers)?;
+          if request_needs_continue(&head.headers, parsed_body_kind)? {
+            write_continue_response(reader.get_mut())?;
+          }
+          match parsed_body_kind {
+            RequestBodyKind::ContentLength(0) => {
+              return Ok(Some(Self::from_head_and_body(head, Vec::new())));
+            }
+            RequestBodyKind::ContentLength(content_length) => {
+              body_kind = Some(RequestBodyKind::ContentLength(content_length));
+            }
+            RequestBodyKind::Chunked => {
+              let body = read_chunked_request_body(reader)?;
+              return Ok(Some(Self::from_head_and_body(head, body)));
+            }
+          }
+        }
+        None => {
+          let take = available.len();
+          raw.extend_from_slice(available);
+          reader.consume(take);
+        }
+      }
+    }
+  }
+
+  #[cfg(test)]
+  fn read_next_from_without_continue<R>(reader: &mut R) -> io::Result<Option<Self>>
   where
     R: BufRead,
   {
@@ -813,6 +899,42 @@ fn request_body_kind(headers: &[(String, String)]) -> io::Result<RequestBodyKind
       "unsupported Transfer-Encoding request body",
     ))
   }
+}
+
+fn request_needs_continue(
+  headers: &[(String, String)],
+  body_kind: RequestBodyKind,
+) -> io::Result<bool> {
+  let mut has_expect = false;
+
+  for (_, value) in headers
+    .iter()
+    .filter(|(name, _)| name.eq_ignore_ascii_case("Expect"))
+  {
+    has_expect = true;
+    if !value.eq_ignore_ascii_case("100-continue") {
+      return Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        "unsupported Expect header",
+      ));
+    }
+  }
+
+  Ok(
+    has_expect
+      && (matches!(
+        body_kind,
+        RequestBodyKind::ContentLength(content_length) if content_length > 0
+      ) || body_kind == RequestBodyKind::Chunked),
+  )
+}
+
+fn write_continue_response<W>(writer: &mut W) -> io::Result<()>
+where
+  W: Write,
+{
+  writer.write_all(b"HTTP/1.1 100 Continue\r\n\r\n")?;
+  writer.flush()
 }
 
 fn read_chunked_request_body<R>(reader: &mut R) -> io::Result<Vec<u8>>

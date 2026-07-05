@@ -114,6 +114,140 @@ fn server_request_body_stops_at_declared_content_length() {
 }
 
 #[test]
+fn server_sends_continue_before_reading_expected_content_length_body() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request).expect("send parsed request");
+        HttpResponse::ok("accepted")
+      })
+      .expect("serve one request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .set_read_timeout(Some(Duration::from_millis(250)))
+    .expect("set read timeout");
+  stream
+    .write_all(
+      concat!(
+        "POST /submit HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Expect: 100-continue\r\n",
+        "Content-Length: 5\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write request head");
+
+  let mut interim = [0u8; 25];
+  stream
+    .read_exact(&mut interim)
+    .expect("read interim response");
+  assert_eq!(b"HTTP/1.1 100 Continue\r\n\r\n", &interim);
+
+  stream.write_all(b"hello").expect("write request body");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  let request: Request = rx.recv().expect("receive parsed request");
+  assert_eq!(b"hello", request.body());
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\naccepted",
+    response
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_sends_continue_before_reading_expected_chunked_body() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request).expect("send parsed request");
+        HttpResponse::ok("accepted")
+      })
+      .expect("serve one request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .set_read_timeout(Some(Duration::from_millis(250)))
+    .expect("set read timeout");
+  stream
+    .write_all(
+      concat!(
+        "POST /upload HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Expect: 100-continue\r\n",
+        "Transfer-Encoding: chunked\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write request head");
+
+  let mut interim = [0u8; 25];
+  stream
+    .read_exact(&mut interim)
+    .expect("read interim response");
+  assert_eq!(b"HTTP/1.1 100 Continue\r\n\r\n", &interim);
+
+  stream
+    .write_all(b"4\r\nWiki\r\n5\r\npedia\r\n0\r\n\r\n")
+    .expect("write chunked body");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  let request: Request = rx.recv().expect("receive parsed request");
+  assert_eq!(b"Wikipedia", request.body());
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\naccepted",
+    response
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_returns_bad_request_for_unsupported_expectation_without_calling_handler() {
+  let (response, handler_called) = send_raw_request(
+    concat!(
+      "POST /submit HTTP/1.1\r\n",
+      "Expect: magic\r\n",
+      "Content-Length: 5\r\n",
+      "\r\n",
+      "hello"
+    )
+    .as_bytes(),
+  );
+
+  assert!(!handler_called);
+  assert_eq!(
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
+}
+
+#[test]
 fn server_accept_one_sends_head_headers_without_body() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
