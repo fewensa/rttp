@@ -130,9 +130,9 @@ impl Request {
 
     let header_end = find_header_end(&raw)
       .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))?;
-    let (method, target, version, headers) = parse_request_head(&raw[..header_end])?;
+    let head = parse_request_head(&raw[..header_end])?;
     let body_start = header_end + 4;
-    let content_length = header_content_length(&headers)?;
+    let content_length = header_content_length(&head.headers)?;
     let body_end = body_start + content_length;
 
     if raw.len() < body_end {
@@ -143,10 +143,10 @@ impl Request {
     }
 
     Ok(Self {
-      method,
-      target,
-      version,
-      headers,
+      method: head.method,
+      target: head.target,
+      version: head.version,
+      headers: head.headers,
       body: raw[body_start..body_end].to_vec(),
     })
   }
@@ -213,7 +213,14 @@ fn find_header_end(raw: &[u8]) -> Option<usize> {
   raw.windows(4).position(|window| window == b"\r\n\r\n")
 }
 
-fn parse_request_head(raw: &[u8]) -> io::Result<(String, String, String, Vec<(String, String)>)> {
+struct RequestHead {
+  method: String,
+  target: String,
+  version: String,
+  headers: Vec<(String, String)>,
+}
+
+fn parse_request_head(raw: &[u8]) -> io::Result<RequestHead> {
   let text = std::str::from_utf8(raw)
     .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "request head is not UTF-8"))?;
   let mut lines = text.split("\r\n");
@@ -238,12 +245,12 @@ fn parse_request_head(raw: &[u8]) -> io::Result<(String, String, String, Vec<(St
     ));
   }
 
-  Ok((
-    method.to_string(),
-    target.to_string(),
-    version.to_string(),
-    parse_header_lines(lines)?,
-  ))
+  Ok(RequestHead {
+    method: method.to_string(),
+    target: target.to_string(),
+    version: version.to_string(),
+    headers: parse_header_lines(lines)?,
+  })
 }
 
 fn parse_headers(raw: &[u8]) -> io::Result<Vec<(String, String)>> {
