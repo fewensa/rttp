@@ -53,6 +53,15 @@ impl HttpRequest {
       headers.push(HttpHeader::new(name.trim(), value.trim()));
     }
 
+    if headers
+      .iter()
+      .any(|header| header.name.eq_ignore_ascii_case("Transfer-Encoding"))
+    {
+      return Err(HttpParseError::new(
+        "Transfer-Encoding request bodies are not supported",
+      ));
+    }
+
     let body = match headers
       .iter()
       .find(|header| header.name.eq_ignore_ascii_case("Content-Length"))
@@ -69,17 +78,7 @@ impl HttpRequest {
         }
         body_bytes.to_vec()
       }
-      None => {
-        if headers
-          .iter()
-          .any(|header| header.name.eq_ignore_ascii_case("Transfer-Encoding"))
-        {
-          return Err(HttpParseError::new(
-            "Transfer-Encoding request bodies are not supported",
-          ));
-        }
-        body_bytes.to_vec()
-      }
+      None => body_bytes.to_vec(),
     };
 
     Ok(Self {

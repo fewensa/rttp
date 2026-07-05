@@ -75,6 +75,25 @@ fn rejects_request_body_longer_than_content_length() {
 }
 
 #[test]
+fn rejects_transfer_encoding_request_even_with_content_length() {
+  let raw = concat!(
+    "POST /submit HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "Content-Length: 5\r\n",
+    "\r\n",
+    "hello"
+  );
+
+  let error = HttpRequest::parse(raw.as_bytes()).expect_err("request should be rejected");
+
+  assert_eq!(
+    "Transfer-Encoding request bodies are not supported",
+    error.to_string()
+  );
+}
+
+#[test]
 fn parses_http_request_without_query_or_body() {
   let raw = concat!(
     "GET /health HTTP/1.0\r\n",
