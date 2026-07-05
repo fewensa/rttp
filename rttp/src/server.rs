@@ -123,9 +123,9 @@ impl Request {
 
       if content_length.is_none() {
         if let Some(header_end) = header_end {
-          let headers = parse_headers(&raw[..header_end])?;
-          reject_transfer_encoding(&headers)?;
-          content_length = Some(header_content_length(&headers)?);
+          let head = parse_request_head(&raw[..header_end])?;
+          reject_transfer_encoding(&head.headers)?;
+          content_length = Some(header_content_length(&head.headers)?);
         }
       }
 
@@ -469,12 +469,6 @@ fn parse_request_head(raw: &[u8]) -> io::Result<RequestHead> {
     version: version.to_string(),
     headers: parse_header_lines(lines)?,
   })
-}
-
-fn parse_headers(raw: &[u8]) -> io::Result<Vec<(String, String)>> {
-  let text = std::str::from_utf8(raw)
-    .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "request head is not UTF-8"))?;
-  parse_header_lines(text.split("\r\n").skip(1))
 }
 
 fn parse_header_lines<'a>(
