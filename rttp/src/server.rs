@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt;
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::net::{SocketAddr, TcpListener, ToSocketAddrs};
+use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 
 use socket2::{Domain, Protocol, Socket, Type};
 
@@ -64,11 +64,56 @@ impl HttpServer {
   where
     F: FnMut(Request) -> HttpResponse,
   {
-    for _ in 0..request_count {
-      self.handle_next_connection(&mut handler)?;
+    let mut served = 0;
+
+    while served < request_count {
+      let (stream, _) = self.listener.accept()?;
+      served += self.handle_connection(stream, request_count - served, &mut handler)?;
     }
 
     Ok(())
+  }
+
+  fn handle_connection<F>(
+    &self,
+    stream: TcpStream,
+    request_limit: usize,
+    handler: &mut F,
+  ) -> io::Result<usize>
+  where
+    F: FnMut(Request) -> HttpResponse,
+  {
+    let mut reader = BufReader::new(stream);
+    let mut served = 0;
+
+    while served < request_limit {
+      let request = match Request::read_next_from(&mut reader) {
+        Ok(Some(request)) => request,
+        Ok(None) => break,
+        Err(err) if is_bad_request_error(&err) => {
+          bad_request_response().write_to(reader.get_mut())?;
+          break;
+        }
+        Err(err) => return Err(err),
+      };
+      let request_closes_connection = request.closes_connection();
+      let request_keeps_connection_alive = request.keeps_connection_alive();
+      let response = handler(request);
+      let response_closes_connection = response.closes_connection();
+      served += 1;
+
+      let close_after_response = request_closes_connection
+        || response_closes_connection
+        || !request_keeps_connection_alive
+        || served == request_limit;
+      response.write_to_with_default_connection(reader.get_mut(), close_after_response)?;
+
+      if close_after_response {
+        break;
+      }
+    }
+
+    Ok(served)
   }
 
   fn handle_next_connection<F>(&self, handler: F) -> io::Result<()>
@@ -123,11 +168,11 @@ impl Request {
   }
 
   pub fn closes_connection(&self) -> bool {
-    self.header("Connection").is_some_and(|value| {
-      value
-        .split(',')
-        .any(|token| token.trim().eq_ignore_ascii_case("close"))
-    })
+    connection_header_has_token(self.header("Connection"), "close")
+  }
+
+  fn keeps_connection_alive(&self) -> bool {
+    connection_header_has_token(self.header("Connection"), "keep-alive")
   }
 
   fn read_from<R>(reader: &mut R) -> io::Result<Self>
@@ -404,7 +449,18 @@ impl HttpResponse {
   where
     W: Write,
   {
-    self.write_head_to(writer, true)?;
+    self.write_to_with_default_connection(writer, true)
+  }
+
+  fn write_to_with_default_connection<W>(
+    &self,
+    writer: &mut W,
+    close_by_default: bool,
+  ) -> io::Result<()>
+  where
+    W: Write,
+  {
+    self.write_head_to(writer, close_by_default)?;
     if self.allows_body() {
       writer.write_all(&self.body)?;
     }
@@ -446,6 +502,15 @@ impl HttpResponse {
       .headers
       .iter()
       .any(|header| header.name.eq_ignore_ascii_case(name))
+  }
+
+  fn closes_connection(&self) -> bool {
+    let connection = self
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Connection"))
+      .map(|header| header.value.as_str());
+    connection_header_has_token(connection, "close")
   }
 }
 
@@ -591,6 +656,14 @@ fn reject_transfer_encoding(headers: &[(String, String)]) -> io::Result<()> {
   }
 
   Ok(())
+}
+
+fn connection_header_has_token(value: Option<&str>, expected: &str) -> bool {
+  value.is_some_and(|value| {
+    value
+      .split(',')
+      .any(|token| token.trim().eq_ignore_ascii_case(expected))
+  })
 }
 
 fn assert_valid_header_component(component: &str) {
