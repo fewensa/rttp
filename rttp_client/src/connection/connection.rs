@@ -337,45 +337,60 @@ where
   }
 }
 
-impl<'a> Connection<'a> {
-  pub fn block_tcp_stream(&self, addr: &String) -> error::Result<std::net::TcpStream> {
-    let config = self.config();
-    let timeout_read = time::Duration::from_millis(config.read_timeout());
-    let timeout_write = time::Duration::from_millis(config.write_timeout());
-    let mut last_err = None;
+pub(crate) fn connect_tcp_stream<A>(addr: A, config: &Config) -> error::Result<std::net::TcpStream>
+where
+  A: ToSocketAddrs,
+{
+  let timeout_read = tcp_timeout_duration("read", config.read_timeout())?;
+  let timeout_write = tcp_timeout_duration("write", config.write_timeout())?;
+  let mut last_err = None;
 
-    let addrs = addr.to_socket_addrs().map_err(error::request)?;
-    for addr in addrs {
-      let domain = Domain::for_address(addr);
-      let socket = match Socket::new(domain, Type::STREAM, Some(Protocol::TCP)) {
-        Ok(socket) => socket,
-        Err(err) => {
-          last_err = Some(err);
-          continue;
-        }
-      };
-
-      if let Err(err) = socket.set_read_timeout(Some(timeout_read)) {
+  let addrs = addr.to_socket_addrs().map_err(error::request)?;
+  for addr in addrs {
+    let domain = Domain::for_address(addr);
+    let socket = match Socket::new(domain, Type::STREAM, Some(Protocol::TCP)) {
+      Ok(socket) => socket,
+      Err(err) => {
         last_err = Some(err);
         continue;
       }
-      if let Err(err) = socket.set_write_timeout(Some(timeout_write)) {
-        last_err = Some(err);
-        continue;
-      }
+    };
 
-      if let Err(err) = socket.connect(&addr.into()) {
-        last_err = Some(err);
-        continue;
-      }
-
-      let stream = std::net::TcpStream::from(socket);
-      return Ok(stream);
+    if let Err(err) = socket.set_read_timeout(Some(timeout_read)) {
+      last_err = Some(err);
+      continue;
+    }
+    if let Err(err) = socket.set_write_timeout(Some(timeout_write)) {
+      last_err = Some(err);
+      continue;
     }
 
-    Err(error::request(
-      last_err.unwrap_or_else(|| io::Error::other("failed to connect")),
-    ))
+    if let Err(err) = socket.connect(&addr.into()) {
+      last_err = Some(err);
+      continue;
+    }
+
+    return Ok(std::net::TcpStream::from(socket));
+  }
+
+  Err(error::request(
+    last_err.unwrap_or_else(|| io::Error::other("failed to connect")),
+  ))
+}
+
+fn tcp_timeout_duration(name: &str, millis: u64) -> error::Result<time::Duration> {
+  if millis > i64::MAX as u64 {
+    return Err(error::request(io::Error::new(
+      io::ErrorKind::InvalidInput,
+      format!("{} timeout is too large", name),
+    )));
+  }
+  Ok(time::Duration::from_millis(millis))
+}
+
+impl<'a> Connection<'a> {
+  pub fn block_tcp_stream(&self, addr: &String) -> error::Result<std::net::TcpStream> {
+    connect_tcp_stream(addr, self.config())
   }
 
   pub fn block_write_stream<S>(&self, stream: &mut S) -> error::Result<()>
@@ -515,14 +530,17 @@ impl<'a> Connection<'a> {
 
 #[cfg(test)]
 mod tests {
-  use std::io::{self, Cursor, Write};
+  use std::io::{self, Cursor, Read, Write};
+  use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener};
+  use std::thread;
 
   use crate::request::RequestBody;
   use crate::types::Proxy;
+  use crate::Config;
 
   use super::{
-    parse_proxy_connect_response, proxy_authorization_value, read_proxy_connect_response,
-    write_http_request,
+    connect_tcp_stream, parse_proxy_connect_response, proxy_authorization_value,
+    read_proxy_connect_response, write_http_request,
   };
 
   struct PartialWriter {
@@ -591,5 +609,54 @@ mod tests {
     let mut reader = Cursor::new(header);
 
     read_proxy_connect_response(&mut reader).unwrap();
+  }
+
+  #[test]
+  fn test_connect_tcp_stream_iterates_ipv4_and_ipv6_addresses_until_connects() {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let addrs = [
+      SocketAddr::new(Ipv6Addr::LOCALHOST.into(), port),
+      SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port),
+    ];
+    let server = thread::spawn(move || {
+      let (mut stream, _) = listener.accept().unwrap();
+      let mut byte = [0];
+      stream.read_exact(&mut byte).unwrap();
+      byte[0]
+    });
+
+    let mut stream = connect_tcp_stream(&addrs[..], &Config::default()).unwrap();
+    stream.write_all(&[42]).unwrap();
+
+    assert_eq!(42, server.join().unwrap());
+  }
+
+  #[test]
+  fn test_connect_tcp_stream_reports_timeout_configuration_errors() {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let addr = listener.local_addr().unwrap();
+    let config = Config::builder()
+      .read_timeout(u64::MAX)
+      .write_timeout(u64::MAX)
+      .build();
+
+    let err = connect_tcp_stream(&[addr][..], &config).unwrap_err();
+
+    assert!(err.to_string().contains("too large"));
+  }
+
+  #[test]
+  fn test_connect_tcp_stream_reports_write_timeout_configuration_errors() {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let addr = listener.local_addr().unwrap();
+    let config = Config::builder()
+      .read_timeout(1000)
+      .write_timeout(u64::MAX)
+      .build();
+
+    let err = connect_tcp_stream(&[addr][..], &config).unwrap_err();
+
+    assert!(err.to_string().contains("write timeout is too large"));
   }
 }
