@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::fmt;
-use std::io::{self, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, ToSocketAddrs};
 
 use socket2::{Domain, Protocol, Socket, Type};
@@ -122,40 +122,88 @@ impl Request {
     &self.body
   }
 
+  pub fn closes_connection(&self) -> bool {
+    self.header("Connection").is_some_and(|value| {
+      value
+        .split(',')
+        .any(|token| token.trim().eq_ignore_ascii_case("close"))
+    })
+  }
+
   fn read_from<R>(reader: &mut R) -> io::Result<Self>
   where
     R: Read,
   {
+    let mut reader = BufReader::new(reader);
+    Self::read_next_from(&mut reader)?
+      .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))
+  }
+
+  fn read_next_from<R>(reader: &mut R) -> io::Result<Option<Self>>
+  where
+    R: BufRead,
+  {
     let mut raw = Vec::new();
-    let mut buf = [0u8; 1024];
-    let mut content_length = None;
+    let mut content_length: Option<usize> = None;
 
     loop {
-      let read = reader.read(&mut buf)?;
-      if read == 0 {
-        break;
+      if let (Some(header_end), Some(content_length)) = (find_header_end(&raw), content_length) {
+        let message_len = header_end + 4 + content_length;
+        if raw.len() == message_len {
+          return Ok(Some(Self::from_raw_frame(&raw)?));
+        }
       }
 
-      raw.extend_from_slice(&buf[..read]);
-      let header_end = find_header_end(&raw);
+      let available = reader.fill_buf()?;
+      if available.is_empty() {
+        if raw.is_empty() {
+          return Ok(None);
+        }
+        if let (Some(header_end), Some(content_length)) = (find_header_end(&raw), content_length) {
+          let body_start = header_end + 4;
+          if raw.len() < body_start + content_length {
+            return Err(io::Error::new(
+              io::ErrorKind::UnexpectedEof,
+              "incomplete HTTP request body",
+            ));
+          }
+        }
+        return Err(io::Error::new(
+          io::ErrorKind::InvalidData,
+          "incomplete HTTP request",
+        ));
+      }
 
-      if content_length.is_none() {
-        if let Some(header_end) = header_end {
+      if let (Some(header_end), Some(content_length)) = (find_header_end(&raw), content_length) {
+        let message_len = header_end + 4 + content_length;
+        let take = (message_len - raw.len()).min(available.len());
+        raw.extend_from_slice(&available[..take]);
+        reader.consume(take);
+        continue;
+      }
+
+      let mut combined = raw.clone();
+      combined.extend_from_slice(available);
+      match find_header_end(&combined) {
+        Some(header_end) => {
+          let take = header_end + 4 - raw.len();
+          raw.extend_from_slice(&available[..take]);
+          reader.consume(take);
           let head = parse_request_head(&raw[..header_end])?;
           reject_transfer_encoding(&head.headers)?;
           content_length = Some(header_content_length(&head.headers)?);
         }
-      }
-
-      if let (Some(header_end), Some(content_length)) = (header_end, content_length) {
-        let message_len = header_end + 4 + content_length;
-        if raw.len() >= message_len {
-          break;
+        None => {
+          let take = available.len();
+          raw.extend_from_slice(available);
+          reader.consume(take);
         }
       }
     }
+  }
 
-    let header_end = find_header_end(&raw)
+  fn from_raw_frame(raw: &[u8]) -> io::Result<Self> {
+    let header_end = find_header_end(raw)
       .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))?;
     let head = parse_request_head(&raw[..header_end])?;
     reject_transfer_encoding(&head.headers)?;
@@ -565,4 +613,116 @@ fn is_bad_request_error(err: &io::Error) -> bool {
 
 fn bad_request_response() -> HttpResponse {
   HttpResponse::new(400, "Bad Request").body("Bad Request")
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use std::io::{BufRead, BufReader, Cursor};
+
+  #[test]
+  fn read_next_from_consumes_one_fully_framed_request_at_a_time() {
+    let raw = concat!(
+      "POST /first HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Content-Length: 5\r\n",
+      "\r\n",
+      "hello",
+      "POST /second HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Content-Length: 5\r\n",
+      "\r\n",
+      "world"
+    );
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+
+    let first = Request::read_next_from(&mut reader)
+      .expect("first frame should parse")
+      .expect("first request should be present");
+    let second = Request::read_next_from(&mut reader)
+      .expect("second frame should parse")
+      .expect("second request should be present");
+
+    assert_eq!("POST", first.method());
+    assert_eq!("/first", first.target());
+    assert_eq!(b"hello", first.body());
+    assert_eq!("POST", second.method());
+    assert_eq!("/second", second.target());
+    assert_eq!(b"world", second.body());
+    assert!(reader.fill_buf().expect("remaining bytes").is_empty());
+  }
+
+  #[test]
+  fn connection_close_request_marks_keep_alive_loop_terminal() {
+    let raw = concat!(
+      "POST /final HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Connection: close\r\n",
+      "Content-Length: 4\r\n",
+      "\r\n",
+      "done",
+      "GET /ignored HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "\r\n"
+    );
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+
+    let request = Request::read_next_from(&mut reader)
+      .expect("request frame should parse")
+      .expect("request should be present");
+
+    assert_eq!("/final", request.target());
+    assert_eq!(b"done", request.body());
+    assert!(request.closes_connection());
+    assert!(reader
+      .fill_buf()
+      .expect("remaining bytes")
+      .starts_with(b"GET /ignored"));
+  }
+
+  #[test]
+  fn partial_second_request_returns_unexpected_eof_after_first_frame() {
+    let raw = concat!(
+      "GET /first HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "\r\n",
+      "POST /partial HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Content-Length: 4\r\n",
+      "\r\n",
+      "he"
+    );
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+
+    let first = Request::read_next_from(&mut reader)
+      .expect("first frame should parse")
+      .expect("first request should be present");
+    let error = Request::read_next_from(&mut reader).expect_err("second frame should fail");
+
+    assert_eq!("/first", first.target());
+    assert_eq!(io::ErrorKind::UnexpectedEof, error.kind());
+    assert_eq!("incomplete HTTP request body", error.to_string());
+  }
+
+  #[test]
+  fn malformed_second_request_returns_invalid_data_after_first_frame() {
+    let raw = concat!(
+      "GET /first HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "\r\n",
+      "GET /broken HTTP/1.1\r\n",
+      "Host example.test\r\n",
+      "\r\n"
+    );
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+
+    let first = Request::read_next_from(&mut reader)
+      .expect("first frame should parse")
+      .expect("first request should be present");
+    let error = Request::read_next_from(&mut reader).expect_err("second frame should fail");
+
+    assert_eq!("/first", first.target());
+    assert_eq!(io::ErrorKind::InvalidData, error.kind());
+    assert_eq!("invalid request header", error.to_string());
+  }
 }
