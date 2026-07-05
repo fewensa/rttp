@@ -114,6 +114,42 @@ fn server_request_body_stops_at_declared_content_length() {
 }
 
 #[test]
+fn server_accept_one_sends_head_headers_without_body() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request.method().to_string())
+          .expect("send parsed method");
+        HttpResponse::ok("head body")
+      })
+      .expect("serve one request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(b"HEAD /resource HTTP/1.1\r\nHost: localhost\r\n\r\n")
+    .expect("write request");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  assert_eq!("HEAD", rx.recv().expect("receive parsed method"));
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 9\r\nConnection: close\r\n\r\n",
+    response
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn server_returns_bad_request_for_malformed_request_line() {
   let (response, handler_called) = send_raw_request(b"GET /too many parts HTTP/1.1\r\n\r\n");
 
@@ -545,6 +581,65 @@ fn server_serves_multiple_requests_on_one_kept_alive_connection() {
 }
 
 #[test]
+fn server_keeps_head_connection_framed_for_following_request() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        let method = request.method().to_string();
+        let target = request.target().to_string();
+        tx.send((method.clone(), target.clone()))
+          .expect("send parsed request");
+        HttpResponse::ok(format!("{method} {target} body"))
+      })
+      .expect("serve requests");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(
+      concat!(
+        "HEAD /first HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Connection: keep-alive\r\n",
+        "\r\n",
+        "GET /second HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write pipelined requests");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  assert_eq!(
+    concat!(
+      "HTTP/1.1 200 OK\r\nContent-Length: 16\r\n\r\n",
+      "HTTP/1.1 200 OK\r\nContent-Length: 16\r\nConnection: close\r\n\r\nGET /second body",
+    ),
+    response
+  );
+  assert_eq!(
+    ("HEAD".to_string(), "/first".to_string()),
+    rx.recv().expect("receive first request")
+  );
+  assert_eq!(
+    ("GET".to_string(), "/second".to_string()),
+    rx.recv().expect("receive second request")
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn server_keeps_http11_connection_alive_by_default() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
@@ -767,6 +862,21 @@ fn response_write_to_omits_content_length_and_body_for_204() {
 
   assert_eq!(
     b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n",
+    serialized.as_slice()
+  );
+}
+
+#[test]
+fn response_write_to_omits_content_length_and_body_for_304() {
+  let response = HttpResponse::new(304, "Not Modified").body("ignored");
+  let mut serialized = Vec::new();
+
+  response
+    .write_to(&mut serialized)
+    .expect("serialize response");
+
+  assert_eq!(
+    b"HTTP/1.1 304 Not Modified\r\nConnection: close\r\n\r\n",
     serialized.as_slice()
   );
 }
