@@ -176,6 +176,53 @@ fn server_returns_bad_request_for_invalid_header_syntax() {
 }
 
 #[test]
+fn server_returns_bad_request_for_oversized_request_head() {
+  let header_value = "x".repeat(70 * 1024);
+  let raw = format!("GET / HTTP/1.1\r\nX-Large: {header_value}\r\n\r\n");
+  let (response, handler_called) = send_raw_request(raw.as_bytes());
+
+  assert!(!handler_called);
+  assert_eq!(
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
+}
+
+#[test]
+fn server_returns_bad_request_for_oversized_content_length_body() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request).expect("send parsed request");
+        HttpResponse::ok("unexpected")
+      })
+      .expect("serve one request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .set_read_timeout(Some(Duration::from_millis(250)))
+    .expect("set read timeout");
+  stream
+    .write_all(b"POST /upload HTTP/1.1\r\nContent-Length: 1048577\r\n\r\n")
+    .expect("write request head");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  handle.join().expect("server thread");
+  assert!(rx.try_recv().is_err());
+  assert_eq!(
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
+}
+
+#[test]
 fn server_decodes_chunked_request_body() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
@@ -222,6 +269,80 @@ fn server_decodes_chunked_request_body() {
   );
 
   handle.join().expect("server thread");
+}
+
+#[test]
+fn server_accepts_small_content_length_request_body() {
+  let (response, handler_called) =
+    send_raw_request(b"POST /upload HTTP/1.1\r\nContent-Length: 4\r\n\r\nbody");
+
+  assert!(handler_called);
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nunexpected",
+    response
+  );
+}
+
+#[test]
+fn server_accepts_small_chunked_request_body() {
+  let (response, handler_called) = send_raw_request(
+    concat!(
+      "POST /upload HTTP/1.1\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "\r\n",
+      "4\r\nbody\r\n",
+      "0\r\n\r\n"
+    )
+    .as_bytes(),
+  );
+
+  assert!(handler_called);
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nunexpected",
+    response
+  );
+}
+
+#[test]
+fn server_returns_bad_request_for_oversized_chunked_request_body() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request).expect("send parsed request");
+        HttpResponse::ok("unexpected")
+      })
+      .expect("serve one request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .set_read_timeout(Some(Duration::from_millis(250)))
+    .expect("set read timeout");
+  stream
+    .write_all(
+      concat!(
+        "POST /upload HTTP/1.1\r\n",
+        "Transfer-Encoding: chunked\r\n",
+        "\r\n",
+        "100001\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write oversized chunk header");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  handle.join().expect("server thread");
+  assert!(rx.try_recv().is_err());
+  assert_eq!(
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
 }
 
 #[test]
