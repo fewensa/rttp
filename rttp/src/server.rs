@@ -673,14 +673,22 @@ where
       return Ok(body);
     }
 
-    let current_len = body.len();
-    body.resize(current_len + chunk_size, 0);
-    reader.read_exact(&mut body[current_len..]).map_err(|_| {
-      io::Error::new(
+    let copied = {
+      let mut chunk_reader = reader.take(chunk_size as u64);
+      io::copy(&mut chunk_reader, &mut body).map_err(|_| {
+        io::Error::new(
+          io::ErrorKind::UnexpectedEof,
+          "incomplete chunked request body",
+        )
+      })?
+    };
+
+    if copied != chunk_size as u64 {
+      return Err(io::Error::new(
         io::ErrorKind::UnexpectedEof,
         "incomplete chunked request body",
-      )
-    })?;
+      ));
+    };
     consume_crlf(reader)?;
   }
 }

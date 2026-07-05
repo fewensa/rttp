@@ -313,6 +313,25 @@ fn server_returns_bad_request_for_truncated_chunked_request_body() {
 }
 
 #[test]
+fn server_returns_bad_request_for_huge_truncated_chunked_request_body() {
+  let (response, handler_called) = send_raw_request(
+    concat!(
+      "POST /upload HTTP/1.1\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "\r\n",
+      "4000000000000000\r\nhel"
+    )
+    .as_bytes(),
+  );
+
+  assert!(!handler_called);
+  assert_eq!(
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
+}
+
+#[test]
 fn server_returns_bad_request_for_invalid_chunk_terminator() {
   let (response, handler_called) = send_raw_request(
     concat!(
