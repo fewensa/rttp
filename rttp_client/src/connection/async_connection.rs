@@ -1,16 +1,14 @@
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::TcpStream;
 
 use futures::io::{AllowStdIo, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use socket2::{Domain, Protocol, Socket, Type};
 use socks::{Socks4Stream, Socks5Stream};
-use std::io::{self, Write};
-use std::time;
+use std::io::Write;
 use url::Url;
 
 #[cfg(feature = "tls-rustls")]
 use std::sync::Arc;
 
-use crate::connection::connection::{read_proxy_connect_response, Connection};
+use crate::connection::connection::{connect_tcp_stream, read_proxy_connect_response, Connection};
 use crate::connection::connection_reader::{response_body_kind, ResponseBodyKind};
 use crate::error;
 use crate::request::RawRequest;
@@ -72,42 +70,7 @@ impl<'a> AsyncConnection<'a> {
 
 impl<'a> AsyncConnection<'a> {
   async fn async_tcp_stream(&self, addr: &str) -> error::Result<TcpStream> {
-    let config = self.conn.config();
-    let timeout_read = time::Duration::from_millis(config.read_timeout());
-    let timeout_write = time::Duration::from_millis(config.write_timeout());
-    let mut last_err = None;
-
-    let addrs = addr.to_socket_addrs().map_err(error::request)?;
-    for addr in addrs {
-      let domain = Domain::for_address(addr);
-      let socket = match Socket::new(domain, Type::STREAM, Some(Protocol::TCP)) {
-        Ok(s) => s,
-        Err(e) => {
-          last_err = Some(e);
-          continue;
-        }
-      };
-
-      if let Err(e) = socket.set_read_timeout(Some(timeout_read)) {
-        last_err = Some(e);
-        continue;
-      }
-      if let Err(e) = socket.set_write_timeout(Some(timeout_write)) {
-        last_err = Some(e);
-        continue;
-      }
-
-      if let Err(e) = socket.connect(&addr.into()) {
-        last_err = Some(e);
-        continue;
-      }
-
-      return Ok(TcpStream::from(socket));
-    }
-
-    Err(error::request(
-      last_err.unwrap_or_else(|| io::Error::other("failed to connect")),
-    ))
+    connect_tcp_stream(addr, self.conn.config())
   }
 
   async fn async_write_stream<S>(&self, stream: &mut S) -> error::Result<()>
