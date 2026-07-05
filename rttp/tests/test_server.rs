@@ -396,6 +396,70 @@ fn server_returns_bad_request_for_short_request_body() {
 }
 
 #[test]
+fn serve_requests_counts_malformed_connection_toward_limit() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (handler_tx, handler_rx) = mpsc::channel();
+  let (done_tx, done_rx) = mpsc::channel();
+
+  thread::spawn(move || {
+    let result = server.serve_requests(1, |request| {
+      handler_tx.send(request).expect("send parsed request");
+      HttpResponse::ok("unexpected")
+    });
+    done_tx.send(result).expect("send server result");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(b"GET /too many parts HTTP/1.1\r\n\r\n")
+    .expect("write malformed request");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  assert!(handler_rx.try_recv().is_err());
+  assert_eq!(
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
+  let result = done_rx
+    .recv_timeout(Duration::from_millis(250))
+    .expect("serve_requests returned after rejected connection");
+  assert!(result.is_ok(), "serve_requests failed: {result:?}");
+}
+
+#[test]
+fn serve_requests_counts_empty_connection_toward_limit() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (handler_tx, handler_rx) = mpsc::channel();
+  let (done_tx, done_rx) = mpsc::channel();
+
+  thread::spawn(move || {
+    let result = server.serve_requests(1, |request| {
+      handler_tx.send(request).expect("send parsed request");
+      HttpResponse::ok("unexpected")
+    });
+    done_tx.send(result).expect("send server result");
+  });
+
+  let stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .shutdown(std::net::Shutdown::Both)
+    .expect("close connection");
+
+  assert!(handler_rx.try_recv().is_err());
+  let result = done_rx
+    .recv_timeout(Duration::from_millis(250))
+    .expect("serve_requests returned after empty connection");
+  assert!(result.is_ok(), "serve_requests failed: {result:?}");
+}
+
+#[test]
 fn server_accepts_multiple_sequential_connections_on_one_listener() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
@@ -424,6 +488,114 @@ fn server_accepts_multiple_sequential_connections_on_one_listener() {
   );
   assert_eq!("/first", rx.recv().expect("receive first target"));
   assert_eq!("/second", rx.recv().expect("receive second target"));
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_serves_multiple_requests_on_one_kept_alive_connection() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        let target = request.target().to_string();
+        tx.send(target.clone()).expect("send parsed target");
+        HttpResponse::ok(format!("served {target}"))
+      })
+      .expect("serve requests");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(
+      concat!(
+        "GET /first HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Connection: keep-alive\r\n",
+        "\r\n",
+        "GET /second HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Connection: keep-alive\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write pipelined requests");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  assert_eq!(
+    concat!(
+      "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nserved /first",
+      "HTTP/1.1 200 OK\r\nContent-Length: 14\r\nConnection: close\r\n\r\nserved /second",
+    ),
+    response
+  );
+  assert_eq!("/first", rx.recv().expect("receive first target"));
+  assert_eq!("/second", rx.recv().expect("receive second target"));
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_stops_one_connection_after_connection_close_request() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        let target = request.target().to_string();
+        tx.send(target.clone()).expect("send parsed target");
+        HttpResponse::ok(format!("served {target}"))
+      })
+      .expect("serve requests");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(
+      concat!(
+        "GET /final HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Connection: close\r\n",
+        "\r\n",
+        "GET /ignored HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Connection: keep-alive\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write pipelined requests");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: close\r\n\r\nserved /final",
+    response
+  );
+  assert_eq!("/final", rx.recv().expect("receive final target"));
+
+  let second = send_request(addr, b"GET /next HTTP/1.1\r\nHost: localhost\r\n\r\n");
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 12\r\nConnection: close\r\n\r\nserved /next",
+    second
+  );
+  assert_eq!("/next", rx.recv().expect("receive next target"));
+  assert!(rx.try_recv().is_err());
 
   handle.join().expect("server thread");
 }
