@@ -33,6 +33,16 @@ fn send_raw_request(raw: &[u8]) -> (String, bool) {
   (response, rx.try_recv().is_ok())
 }
 
+fn assert_bad_request_without_handler(raw: &[u8]) {
+  let (response, handler_called) = send_raw_request(raw);
+
+  assert!(!handler_called);
+  assert_eq!(
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
+}
+
 #[test]
 fn server_accepts_get_request_and_writes_response() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
@@ -285,13 +295,68 @@ fn server_accept_one_sends_head_headers_without_body() {
 
 #[test]
 fn server_returns_bad_request_for_malformed_request_line() {
-  let (response, handler_called) = send_raw_request(b"GET /too many parts HTTP/1.1\r\n\r\n");
+  assert_bad_request_without_handler(b"GET /too many parts HTTP/1.1\r\n\r\n");
+}
 
-  assert!(!handler_called);
+#[test]
+fn server_returns_bad_request_for_invalid_http_version() {
+  assert_bad_request_without_handler(b"GET / HTTP/2.0\r\nHost: localhost\r\n\r\n");
+}
+
+#[test]
+fn server_returns_bad_request_for_invalid_method_token() {
+  assert_bad_request_without_handler(b"GE(T / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+}
+
+#[test]
+fn server_returns_bad_request_for_header_name_with_whitespace() {
+  assert_bad_request_without_handler(b"GET / HTTP/1.1\r\nBad Name: value\r\n\r\n");
+}
+
+#[test]
+fn server_returns_bad_request_for_obsolete_folded_header() {
+  assert_bad_request_without_handler(
+    b"GET / HTTP/1.1\r\nHost: localhost\r\n folded: value\r\n\r\n",
+  );
+}
+
+#[test]
+fn server_accepts_mixed_case_header_names() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request.header("x-custom-header").map(str::to_string))
+          .expect("send parsed header");
+        HttpResponse::ok("accepted")
+      })
+      .expect("serve one request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(b"GET / HTTP/1.1\r\nX-Custom-Header: Mixed\r\n\r\n")
+    .expect("write request");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
   assert_eq!(
-    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    Some("Mixed".to_string()),
+    rx.recv().expect("receive header")
+  );
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\naccepted",
     response
   );
+
+  handle.join().expect("server thread");
 }
 
 #[test]
@@ -336,13 +401,7 @@ fn server_rejects_malformed_request_line_before_reading_declared_body() {
 
 #[test]
 fn server_returns_bad_request_for_invalid_header_syntax() {
-  let (response, handler_called) = send_raw_request(b"GET / HTTP/1.1\r\nHost localhost\r\n\r\n");
-
-  assert!(!handler_called);
-  assert_eq!(
-    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
-    response
-  );
+  assert_bad_request_without_handler(b"GET / HTTP/1.1\r\nHost localhost\r\n\r\n");
 }
 
 #[test]

@@ -796,7 +796,7 @@ fn parse_request_head(raw: &[u8]) -> io::Result<RequestHead> {
   let request_line = lines
     .next()
     .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing request line"))?;
-  let mut parts = request_line.split_whitespace();
+  let mut parts = request_line.split(' ');
   let method = parts
     .next()
     .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing request method"))?;
@@ -813,6 +813,7 @@ fn parse_request_head(raw: &[u8]) -> io::Result<RequestHead> {
       "invalid request line",
     ));
   }
+  validate_request_line(method, target, version)?;
 
   Ok(RequestHead {
     method: method.to_string(),
@@ -820,6 +821,29 @@ fn parse_request_head(raw: &[u8]) -> io::Result<RequestHead> {
     version: version.to_string(),
     headers: parse_header_lines(lines)?,
   })
+}
+
+fn validate_request_line(method: &str, target: &str, version: &str) -> io::Result<()> {
+  if !is_http_token(method) {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "invalid request method",
+    ));
+  }
+  if target.is_empty() || !target.bytes().all(is_request_target_byte) {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "invalid request target",
+    ));
+  }
+  if !matches!(version, "HTTP/1.0" | "HTTP/1.1") {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "invalid request version",
+    ));
+  }
+
+  Ok(())
 }
 
 fn parse_header_lines<'a>(
@@ -831,13 +855,59 @@ fn parse_header_lines<'a>(
     if line.is_empty() {
       continue;
     }
+    if line.starts_with(' ') || line.starts_with('\t') {
+      return Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        "invalid request header",
+      ));
+    }
     let (name, value) = line
       .split_once(':')
       .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid request header"))?;
+    if !is_http_token(name) || !value.bytes().all(is_header_value_byte) {
+      return Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        "invalid request header",
+      ));
+    }
     headers.push((name.trim().to_string(), value.trim().to_string()));
   }
 
   Ok(headers)
+}
+
+fn is_http_token(value: &str) -> bool {
+  !value.is_empty() && value.bytes().all(is_token_byte)
+}
+
+fn is_token_byte(byte: u8) -> bool {
+  byte.is_ascii_alphanumeric()
+    || matches!(
+      byte,
+      b'!'
+        | b'#'
+        | b'$'
+        | b'%'
+        | b'&'
+        | b'\''
+        | b'*'
+        | b'+'
+        | b'-'
+        | b'.'
+        | b'^'
+        | b'_'
+        | b'`'
+        | b'|'
+        | b'~'
+    )
+}
+
+fn is_request_target_byte(byte: u8) -> bool {
+  byte > 0x20 && byte != 0x7f
+}
+
+fn is_header_value_byte(byte: u8) -> bool {
+  byte == b'\t' || byte == b' ' || (0x21..=0x7e).contains(&byte) || byte >= 0x80
 }
 
 fn optional_header_content_length(headers: &[(String, String)]) -> io::Result<Option<usize>> {
