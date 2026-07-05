@@ -144,10 +144,12 @@ impl Request {
     R: BufRead,
   {
     let mut raw = Vec::new();
-    let mut content_length: Option<usize> = None;
+    let mut body_kind: Option<RequestBodyKind> = None;
 
     loop {
-      if let (Some(header_end), Some(content_length)) = (find_header_end(&raw), content_length) {
+      if let (Some(header_end), Some(RequestBodyKind::ContentLength(content_length))) =
+        (find_header_end(&raw), body_kind)
+      {
         let message_len = header_end + 4 + content_length;
         if raw.len() == message_len {
           return Ok(Some(Self::from_raw_frame(&raw)?));
@@ -159,7 +161,9 @@ impl Request {
         if raw.is_empty() {
           return Ok(None);
         }
-        if let (Some(header_end), Some(content_length)) = (find_header_end(&raw), content_length) {
+        if let (Some(header_end), Some(RequestBodyKind::ContentLength(content_length))) =
+          (find_header_end(&raw), body_kind)
+        {
           let body_start = header_end + 4;
           if raw.len() < body_start + content_length {
             return Err(io::Error::new(
@@ -174,7 +178,9 @@ impl Request {
         ));
       }
 
-      if let (Some(header_end), Some(content_length)) = (find_header_end(&raw), content_length) {
+      if let (Some(header_end), Some(RequestBodyKind::ContentLength(content_length))) =
+        (find_header_end(&raw), body_kind)
+      {
         let message_len = header_end + 4 + content_length;
         let take = (message_len - raw.len()).min(available.len());
         raw.extend_from_slice(&available[..take]);
@@ -190,8 +196,18 @@ impl Request {
           raw.extend_from_slice(&available[..take]);
           reader.consume(take);
           let head = parse_request_head(&raw[..header_end])?;
-          reject_transfer_encoding(&head.headers)?;
-          content_length = Some(header_content_length(&head.headers)?);
+          match request_body_kind(&head.headers)? {
+            RequestBodyKind::ContentLength(0) => {
+              return Ok(Some(Self::from_head_and_body(head, Vec::new())));
+            }
+            RequestBodyKind::ContentLength(content_length) => {
+              body_kind = Some(RequestBodyKind::ContentLength(content_length));
+            }
+            RequestBodyKind::Chunked => {
+              let body = read_chunked_request_body(reader)?;
+              return Ok(Some(Self::from_head_and_body(head, body)));
+            }
+          }
         }
         None => {
           let take = available.len();
@@ -206,25 +222,45 @@ impl Request {
     let header_end = find_header_end(raw)
       .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))?;
     let head = parse_request_head(&raw[..header_end])?;
-    reject_transfer_encoding(&head.headers)?;
     let body_start = header_end + 4;
-    let content_length = header_content_length(&head.headers)?;
-    let body_end = body_start + content_length;
+    let body = match request_body_kind(&head.headers)? {
+      RequestBodyKind::ContentLength(content_length) => {
+        let body_end = body_start + content_length;
 
-    if raw.len() < body_end {
-      return Err(io::Error::new(
-        io::ErrorKind::UnexpectedEof,
-        "incomplete HTTP request body",
-      ));
-    }
+        if raw.len() < body_end {
+          return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "incomplete HTTP request body",
+          ));
+        }
+
+        raw[body_start..body_end].to_vec()
+      }
+      RequestBodyKind::Chunked => {
+        return Err(io::Error::new(
+          io::ErrorKind::InvalidData,
+          "chunked request body requires streaming reader",
+        ));
+      }
+    };
 
     Ok(Self {
       method: head.method,
       target: head.target,
       version: head.version,
       headers: head.headers,
-      body: raw[body_start..body_end].to_vec(),
+      body,
     })
+  }
+
+  fn from_head_and_body(head: RequestHead, body: Vec<u8>) -> Self {
+    Self {
+      method: head.method,
+      target: head.target,
+      version: head.version,
+      headers: head.headers,
+      body,
+    }
   }
 }
 
@@ -504,6 +540,12 @@ struct RequestHead {
   headers: Vec<(String, String)>,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum RequestBodyKind {
+  ContentLength(usize),
+  Chunked,
+}
+
 fn parse_request_head(raw: &[u8]) -> io::Result<RequestHead> {
   let text = std::str::from_utf8(raw)
     .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "request head is not UTF-8"))?;
@@ -555,7 +597,7 @@ fn parse_header_lines<'a>(
   Ok(headers)
 }
 
-fn header_content_length(headers: &[(String, String)]) -> io::Result<usize> {
+fn optional_header_content_length(headers: &[(String, String)]) -> io::Result<Option<usize>> {
   let mut length = None;
 
   for (_, value) in headers
@@ -576,21 +618,141 @@ fn header_content_length(headers: &[(String, String)]) -> io::Result<usize> {
     }
   }
 
-  Ok(length.unwrap_or(0))
+  Ok(length)
 }
 
-fn reject_transfer_encoding(headers: &[(String, String)]) -> io::Result<()> {
-  if headers
+fn request_body_kind(headers: &[(String, String)]) -> io::Result<RequestBodyKind> {
+  let content_length = optional_header_content_length(headers)?;
+  let mut transfer_codings = Vec::new();
+
+  for (_, value) in headers
     .iter()
-    .any(|(name, _)| name.eq_ignore_ascii_case("Transfer-Encoding"))
+    .filter(|(name, _)| name.eq_ignore_ascii_case("Transfer-Encoding"))
   {
+    transfer_codings.extend(
+      value
+        .split(',')
+        .map(str::trim)
+        .filter(|token| !token.is_empty()),
+    );
+  }
+
+  if transfer_codings.is_empty() {
+    return Ok(RequestBodyKind::ContentLength(content_length.unwrap_or(0)));
+  }
+
+  if content_length.is_some() {
     return Err(io::Error::new(
       io::ErrorKind::InvalidData,
-      "Transfer-Encoding request bodies are not supported",
+      "Transfer-Encoding conflicts with Content-Length",
     ));
   }
 
-  Ok(())
+  if transfer_codings.len() == 1 && transfer_codings[0].eq_ignore_ascii_case("chunked") {
+    Ok(RequestBodyKind::Chunked)
+  } else {
+    Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "unsupported Transfer-Encoding request body",
+    ))
+  }
+}
+
+fn read_chunked_request_body<R>(reader: &mut R) -> io::Result<Vec<u8>>
+where
+  R: BufRead,
+{
+  let mut body = Vec::new();
+
+  loop {
+    let line = read_crlf_line(reader)?;
+    let chunk_size = parse_chunk_size(&line)?;
+
+    if chunk_size == 0 {
+      consume_trailers(reader)?;
+      return Ok(body);
+    }
+
+    let current_len = body.len();
+    body.resize(current_len + chunk_size, 0);
+    reader.read_exact(&mut body[current_len..]).map_err(|_| {
+      io::Error::new(
+        io::ErrorKind::UnexpectedEof,
+        "incomplete chunked request body",
+      )
+    })?;
+    consume_crlf(reader)?;
+  }
+}
+
+fn read_crlf_line<R>(reader: &mut R) -> io::Result<Vec<u8>>
+where
+  R: BufRead,
+{
+  let mut line = Vec::new();
+  let read = reader.read_until(b'\n', &mut line)?;
+  if read == 0 {
+    return Err(io::Error::new(
+      io::ErrorKind::UnexpectedEof,
+      "incomplete chunked request body",
+    ));
+  }
+  if line.ends_with(b"\r\n") {
+    Ok(line)
+  } else {
+    Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "invalid chunked request line terminator",
+    ))
+  }
+}
+
+fn parse_chunk_size(line: &[u8]) -> io::Result<usize> {
+  let line = std::str::from_utf8(line)
+    .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "chunk size is not UTF-8"))?;
+  let size = line
+    .trim_end_matches("\r\n")
+    .split(';')
+    .next()
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "empty chunk size"))?;
+
+  usize::from_str_radix(size, 16)
+    .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid chunk size"))
+}
+
+fn consume_crlf<R>(reader: &mut R) -> io::Result<()>
+where
+  R: BufRead,
+{
+  let mut suffix = [0u8; 2];
+  reader.read_exact(&mut suffix).map_err(|_| {
+    io::Error::new(
+      io::ErrorKind::UnexpectedEof,
+      "incomplete chunked request body",
+    )
+  })?;
+  if suffix == *b"\r\n" {
+    Ok(())
+  } else {
+    Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "invalid chunk terminator",
+    ))
+  }
+}
+
+fn consume_trailers<R>(reader: &mut R) -> io::Result<()>
+where
+  R: BufRead,
+{
+  loop {
+    let line = read_crlf_line(reader)?;
+    if line == b"\r\n" {
+      return Ok(());
+    }
+  }
 }
 
 fn assert_valid_header_component(component: &str) {
@@ -649,6 +811,38 @@ mod tests {
     assert_eq!("POST", second.method());
     assert_eq!("/second", second.target());
     assert_eq!(b"world", second.body());
+    assert!(reader.fill_buf().expect("remaining bytes").is_empty());
+  }
+
+  #[test]
+  fn read_next_from_consumes_one_chunked_request_at_a_time() {
+    let raw = concat!(
+      "POST /first HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "\r\n",
+      "5\r\nhello\r\n",
+      "0\r\n",
+      "X-Trace: abc\r\n",
+      "\r\n",
+      "GET /second HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "\r\n"
+    );
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+
+    let first = Request::read_next_from(&mut reader)
+      .expect("first frame should parse")
+      .expect("first request should be present");
+    let second = Request::read_next_from(&mut reader)
+      .expect("second frame should parse")
+      .expect("second request should be present");
+
+    assert_eq!("POST", first.method());
+    assert_eq!("/first", first.target());
+    assert_eq!(b"hello", first.body());
+    assert_eq!("GET", second.method());
+    assert_eq!("/second", second.target());
     assert!(reader.fill_buf().expect("remaining bytes").is_empty());
   }
 
