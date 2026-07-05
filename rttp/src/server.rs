@@ -57,6 +57,24 @@ impl HttpServer {
   where
     F: FnOnce(Request) -> HttpResponse,
   {
+    self.handle_next_connection(handler)
+  }
+
+  pub fn serve_requests<F>(&self, request_count: usize, mut handler: F) -> io::Result<()>
+  where
+    F: FnMut(Request) -> HttpResponse,
+  {
+    for _ in 0..request_count {
+      self.handle_next_connection(&mut handler)?;
+    }
+
+    Ok(())
+  }
+
+  fn handle_next_connection<F>(&self, handler: F) -> io::Result<()>
+  where
+    F: FnOnce(Request) -> HttpResponse,
+  {
     let (mut stream, _) = self.listener.accept()?;
     let request = Request::read_from(&mut stream)?;
     let response = handler(request);
