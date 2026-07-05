@@ -3,7 +3,7 @@
 //#[test]
 //fn test_reqwest_basic() {
 //  let resp: HashMap<String, String> = reqwest::Client::new()
-//    .get("https://httpbin.org/ip")
+//    .get("https://example.test/ip")
 //    .header("k", "v")
 //    .header("z", "y")
 //    .form(&[("one", "1")])
@@ -17,7 +17,7 @@
 //#[test]
 //fn test_reqwest_ip2() {
 //  let mut client = reqwest::Client::new()
-//    .get("https://httpbin.org/ip");
+//    .get("https://example.test/ip");
 //  client = client.header("k", "v")
 //    .header("z", "y")
 //    .form(&[("one", "1")]);

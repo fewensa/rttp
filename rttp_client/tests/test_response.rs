@@ -9,11 +9,11 @@ fn test_parse_response() {
         Date: Sat, 11 Jan 2003 02:44:04 GMT\r\n\
         Content-Type: text/html\r\n\
         Cache-control: private\r\n\
-        Set-Cookie: 1P_JAR=2019-11-21-07; expires=Sat, 21-Dec-2019 07:23:44 GMT; path=/; domain=.google.com; SameSite=none\r\n\
+        Set-Cookie: 1P_JAR=2019-11-21-07; expires=Sat, 21-Dec-2019 07:23:44 GMT; path=/; domain=.example.test; SameSite=none\r\n\
         Connection: keep-alive\r\n\
         \r\n\
         <html>hello</html>";
-  let response = Response::new(RoUrl::with("https://google.com"), s.as_bytes().to_vec());
+  let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec());
   assert!(response.is_ok());
   let response = response.unwrap();
   println!("{}", response);
@@ -62,15 +62,15 @@ fn test_parse_response_1() {
       \"Content-Length\": \"863\",
       \"Content-Type\": \"multipart/form-data; boundary=---------------------------5jl1RuC429HeXVP2GOoO\",
       \"Cookie\": \"token=123234;uid=abcdef\",
-      \"Host\": \"httpbin.org\",
+      \"Host\": \"example.test\",
       \"User-Agent\": \"Mozilla/5.0\"
     },
     \"json\": null,
     \"origin\": \"222.69.134.133, 222.69.134.133\",
-    \"url\": \"https://httpbin.org/post?id=1&name=jack&name=Julia\"
+    \"url\": \"https://example.test/post?id=1&name=jack&name=Julia\"
   }";
   let response = Response::new(
-    RoUrl::with("https://httpbin.org/post"),
+    RoUrl::with("https://example.test/post"),
     s.as_bytes().to_vec(),
   );
   assert!(response.is_ok());
