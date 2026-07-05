@@ -122,6 +122,8 @@ pub(crate) fn response_body_kind(
   }
 
   let mut content_length = None;
+  let mut invalid_content_length = false;
+  let mut conflicting_content_length = false;
   let mut chunked = false;
 
   for line in lines {
@@ -136,12 +138,27 @@ pub(crate) fn response_body_kind(
     }
 
     if name.eq_ignore_ascii_case("Content-Length") {
-      content_length = value.trim().parse::<usize>().ok();
+      for token in value.split(',') {
+        let Ok(length) = token.trim().parse::<usize>() else {
+          invalid_content_length = true;
+          continue;
+        };
+
+        if content_length.is_some_and(|existing| existing != length) {
+          conflicting_content_length = true;
+        } else {
+          content_length = Some(length);
+        }
+      }
     }
   }
 
   if chunked {
     Ok(ResponseBodyKind::Chunked)
+  } else if conflicting_content_length {
+    Err(error::bad_response("Conflicting Content-Length headers"))
+  } else if invalid_content_length {
+    Err(error::bad_response("Invalid Content-Length header"))
   } else if let Some(content_length) = content_length {
     Ok(ResponseBodyKind::ContentLength(content_length))
   } else {
@@ -296,5 +313,106 @@ mod tests {
     let kind = super::response_body_kind(raw.as_bytes(), true).unwrap();
 
     assert_eq!(ResponseBodyKind::NoBody, kind);
+  }
+
+  #[test]
+  fn test_head_response_body_bytes_are_not_consumed() {
+    let raw = concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Content-Length: 7\r\n",
+      "\r\n",
+      "ignored"
+    );
+    let url = url::Url::parse("http://localhost").unwrap();
+    let mut cursor = Cursor::new(raw.as_bytes());
+    let mut reader = ConnectionReader::new(&url, &mut cursor, true);
+
+    let response = reader.response().unwrap();
+
+    assert_eq!("", response.body().string().unwrap());
+    assert_eq!(
+      (raw.len() - "ignored".len()) as u64,
+      cursor.position(),
+      "HEAD responses are framed by the header block only"
+    );
+  }
+
+  #[test]
+  fn test_no_body_status_codes_ignore_framing_headers() {
+    for status_line in [
+      "HTTP/1.1 100 Continue",
+      "HTTP/1.1 101 Switching Protocols",
+      "HTTP/1.1 204 No Content",
+      "HTTP/1.1 304 Not Modified",
+    ] {
+      let raw = format!("{status_line}\r\nContent-Length: 7\r\n\r\nignored");
+      let url = url::Url::parse("http://localhost").unwrap();
+      let mut cursor = Cursor::new(raw.as_bytes());
+      let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+
+      let response = reader.response().unwrap();
+
+      assert_eq!("", response.body().string().unwrap());
+      assert_eq!(
+        (raw.len() - "ignored".len()) as u64,
+        cursor.position(),
+        "{status_line} responses must not consume body bytes"
+      );
+    }
+  }
+
+  #[test]
+  fn test_duplicate_content_length_with_same_value_is_allowed() {
+    let raw = concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Content-Length: 2\r\n",
+      "Content-Length: 2\r\n",
+      "\r\n",
+      "OK"
+    );
+    let url = url::Url::parse("http://localhost").unwrap();
+    let mut cursor = Cursor::new(raw.as_bytes());
+    let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+
+    let response = reader.response().unwrap();
+
+    assert_eq!("OK", response.body().string().unwrap());
+  }
+
+  #[test]
+  fn test_duplicate_content_length_with_different_values_is_rejected() {
+    let raw = concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Content-Length: 2\r\n",
+      "Content-Length: 3\r\n",
+      "\r\n",
+      "OK!"
+    );
+
+    let err = super::response_body_kind(raw.as_bytes(), false).unwrap_err();
+
+    assert!(
+      err.to_string().contains("Conflicting Content-Length"),
+      "unexpected error: {err}"
+    );
+  }
+
+  #[test]
+  fn test_transfer_encoding_chunked_takes_precedence_over_content_length() {
+    let raw = concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Content-Length: 999\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "\r\n",
+      "2\r\nOK\r\n",
+      "0\r\n\r\n"
+    );
+    let url = url::Url::parse("http://localhost").unwrap();
+    let mut cursor = Cursor::new(raw.as_bytes());
+    let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+
+    let response = reader.response().unwrap();
+
+    assert_eq!("OK", response.body().string().unwrap());
   }
 }
