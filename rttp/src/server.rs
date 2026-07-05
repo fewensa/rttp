@@ -1,3 +1,5 @@
+use std::error::Error;
+use std::fmt;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, ToSocketAddrs};
 
@@ -116,6 +118,7 @@ impl Request {
       if content_length.is_none() {
         if let Some(header_end) = header_end {
           let headers = parse_headers(&raw[..header_end])?;
+          reject_transfer_encoding(&headers)?;
           content_length = Some(header_content_length(&headers)?);
         }
       }
@@ -131,6 +134,7 @@ impl Request {
     let header_end = find_header_end(&raw)
       .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))?;
     let head = parse_request_head(&raw[..header_end])?;
+    reject_transfer_encoding(&head.headers)?;
     let body_start = header_end + 4;
     let content_length = header_content_length(&head.headers)?;
     let body_end = body_start + content_length;
@@ -152,62 +156,270 @@ impl Request {
   }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpRequest {
+  method: String,
+  path: String,
+  query: Option<String>,
+  version: String,
+  headers: Vec<HttpHeader>,
+  body: Vec<u8>,
+}
+
+impl HttpRequest {
+  pub fn parse(raw: &[u8]) -> Result<Self, HttpParseError> {
+    let header_end = raw
+      .windows(4)
+      .position(|window| window == b"\r\n\r\n")
+      .ok_or_else(|| HttpParseError::new("request is missing header terminator"))?;
+    let head = std::str::from_utf8(&raw[..header_end])
+      .map_err(|_| HttpParseError::new("request headers are not valid UTF-8"))?;
+    let body_bytes = &raw[(header_end + 4)..];
+
+    let mut lines = head.split("\r\n");
+    let request_line = lines
+      .next()
+      .ok_or_else(|| HttpParseError::new("request line is missing"))?;
+    let mut request_parts = request_line.split_whitespace();
+    let method = request_parts
+      .next()
+      .ok_or_else(|| HttpParseError::new("request method is missing"))?;
+    let target = request_parts
+      .next()
+      .ok_or_else(|| HttpParseError::new("request target is missing"))?;
+    let version = request_parts
+      .next()
+      .ok_or_else(|| HttpParseError::new("request version is missing"))?;
+
+    if request_parts.next().is_some() {
+      return Err(HttpParseError::new("request line has too many parts"));
+    }
+
+    let (path, query) = match target.split_once('?') {
+      Some((path, query)) => (path.to_string(), Some(query.to_string())),
+      None => (target.to_string(), None),
+    };
+
+    let mut headers = Vec::new();
+    for line in lines {
+      let (name, value) = line
+        .split_once(':')
+        .ok_or_else(|| HttpParseError::new("header line is missing ':'"))?;
+      headers.push(HttpHeader::new(name.trim(), value.trim()));
+    }
+
+    if headers
+      .iter()
+      .any(|header| header.name.eq_ignore_ascii_case("Transfer-Encoding"))
+    {
+      return Err(HttpParseError::new(
+        "Transfer-Encoding request bodies are not supported",
+      ));
+    }
+
+    let body = match headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Content-Length"))
+    {
+      Some(header) => {
+        let content_length = header
+          .value
+          .parse::<usize>()
+          .map_err(|_| HttpParseError::new("Content-Length is not a valid length"))?;
+        if body_bytes.len() != content_length {
+          return Err(HttpParseError::new(
+            "request body length does not match Content-Length",
+          ));
+        }
+        body_bytes.to_vec()
+      }
+      None => body_bytes.to_vec(),
+    };
+
+    Ok(Self {
+      method: method.to_string(),
+      path,
+      query,
+      version: version.to_string(),
+      headers,
+      body,
+    })
+  }
+
+  pub fn method(&self) -> &str {
+    &self.method
+  }
+
+  pub fn path(&self) -> &str {
+    &self.path
+  }
+
+  pub fn query(&self) -> Option<&str> {
+    self.query.as_deref()
+  }
+
+  pub fn version(&self) -> &str {
+    &self.version
+  }
+
+  pub fn headers(&self) -> &[HttpHeader] {
+    &self.headers
+  }
+
+  pub fn header<S: AsRef<str>>(&self, name: S) -> Option<&str> {
+    self
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case(name.as_ref()))
+      .map(|header| header.value.as_str())
+  }
+
+  pub fn body(&self) -> &[u8] {
+    &self.body
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HttpResponse {
-  status: u16,
+  version: String,
+  status_code: u16,
   reason: String,
-  headers: Vec<(String, String)>,
+  headers: Vec<HttpHeader>,
   body: Vec<u8>,
 }
 
 impl HttpResponse {
-  pub fn new(status: u16, reason: impl Into<String>, body: impl AsRef<[u8]>) -> Self {
+  pub fn new<S: AsRef<str>>(status_code: u16, reason: S) -> Self {
     Self {
-      status,
-      reason: reason.into(),
+      version: "HTTP/1.1".to_string(),
+      status_code,
+      reason: reason.as_ref().to_string(),
       headers: Vec::new(),
-      body: body.as_ref().to_vec(),
+      body: Vec::new(),
     }
   }
 
   pub fn ok(body: impl AsRef<[u8]>) -> Self {
-    Self::new(200, "OK", body)
+    Self::new(200, "OK").body(body)
   }
 
-  pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
-    self.headers.push((name.into(), value.into()));
+  pub fn header<N: AsRef<str>, V: AsRef<str>>(mut self, name: N, value: V) -> Self {
+    let name = name.as_ref();
+    let value = value.as_ref();
+    assert_valid_header_component(name);
+    assert_valid_header_component(value);
+    self.headers.push(HttpHeader::new(name, value));
     self
+  }
+
+  pub fn body<B: AsRef<[u8]>>(mut self, body: B) -> Self {
+    self.body = body.as_ref().to_vec();
+    self
+  }
+
+  pub fn to_bytes(&self) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    self
+      .write_head_to(&mut bytes, false)
+      .expect("write to Vec cannot fail");
+    if self.allows_body() {
+      bytes.extend_from_slice(&self.body);
+    }
+    bytes
   }
 
   pub fn write_to<W>(&self, writer: &mut W) -> io::Result<()>
   where
     W: Write,
   {
-    write!(writer, "HTTP/1.1 {} {}\r\n", self.status, self.reason)?;
+    self.write_head_to(writer, true)?;
+    if self.allows_body() {
+      writer.write_all(&self.body)?;
+    }
+    writer.flush()
+  }
 
-    for (name, value) in &self.headers {
-      write!(writer, "{}: {}\r\n", name, value)?;
+  fn write_head_to<W>(&self, writer: &mut W, include_default_connection: bool) -> io::Result<()>
+  where
+    W: Write,
+  {
+    write!(
+      writer,
+      "{} {} {}\r\n",
+      self.version, self.status_code, self.reason
+    )?;
+
+    for header in &self.headers {
+      if !header.name.eq_ignore_ascii_case("Content-Length") {
+        write!(writer, "{}: {}\r\n", header.name, header.value)?;
+      }
     }
 
-    if !self.has_header("Content-Length") {
+    if self.allows_body() {
       write!(writer, "Content-Length: {}\r\n", self.body.len())?;
     }
-    if !self.has_header("Connection") {
+    if include_default_connection && !self.has_header("Connection") {
       writer.write_all(b"Connection: close\r\n")?;
     }
 
-    writer.write_all(b"\r\n")?;
-    writer.write_all(&self.body)?;
-    writer.flush()
+    writer.write_all(b"\r\n")
+  }
+
+  fn allows_body(&self) -> bool {
+    response_status_allows_body(self.status_code)
   }
 
   fn has_header(&self, name: &str) -> bool {
     self
       .headers
       .iter()
-      .any(|(key, _)| key.eq_ignore_ascii_case(name))
+      .any(|header| header.name.eq_ignore_ascii_case(name))
   }
 }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpHeader {
+  name: String,
+  value: String,
+}
+
+impl HttpHeader {
+  pub fn new<N: AsRef<str>, V: AsRef<str>>(name: N, value: V) -> Self {
+    Self {
+      name: name.as_ref().to_string(),
+      value: value.as_ref().to_string(),
+    }
+  }
+
+  pub fn name(&self) -> &str {
+    &self.name
+  }
+
+  pub fn value(&self) -> &str {
+    &self.value
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpParseError {
+  message: String,
+}
+
+impl HttpParseError {
+  fn new<S: AsRef<str>>(message: S) -> Self {
+    Self {
+      message: message.as_ref().to_string(),
+    }
+  }
+}
+
+impl fmt::Display for HttpParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpParseError {}
 
 fn find_header_end(raw: &[u8]) -> Option<usize> {
   raw.windows(4).position(|window| window == b"\r\n\r\n")
@@ -299,4 +511,29 @@ fn header_content_length(headers: &[(String, String)]) -> io::Result<usize> {
   }
 
   Ok(length.unwrap_or(0))
+}
+
+fn reject_transfer_encoding(headers: &[(String, String)]) -> io::Result<()> {
+  if headers
+    .iter()
+    .any(|(name, _)| name.eq_ignore_ascii_case("Transfer-Encoding"))
+  {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "Transfer-Encoding request bodies are not supported",
+    ));
+  }
+
+  Ok(())
+}
+
+fn assert_valid_header_component(component: &str) {
+  assert!(
+    !component.contains('\r') && !component.contains('\n'),
+    "response headers must not contain CR or LF"
+  );
+}
+
+fn response_status_allows_body(status_code: u16) -> bool {
+  !(status_code / 100 == 1 || status_code == 204 || status_code == 304)
 }

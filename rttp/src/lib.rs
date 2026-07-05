@@ -1,6 +1,6 @@
-pub mod server;
-
 pub struct Http {}
+
+pub mod server;
 
 impl Http {
   #[cfg(feature = "client")]
