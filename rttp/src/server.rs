@@ -19,7 +19,7 @@ impl HttpRequest {
       .ok_or_else(|| HttpParseError::new("request is missing header terminator"))?;
     let head = std::str::from_utf8(&raw[..header_end])
       .map_err(|_| HttpParseError::new("request headers are not valid UTF-8"))?;
-    let body = raw[(header_end + 4)..].to_vec();
+    let body_bytes = &raw[(header_end + 4)..];
 
     let mut lines = head.split("\r\n");
     let request_line = lines
@@ -52,6 +52,35 @@ impl HttpRequest {
         .ok_or_else(|| HttpParseError::new("header line is missing ':'"))?;
       headers.push(HttpHeader::new(name.trim(), value.trim()));
     }
+
+    let body = match headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Content-Length"))
+    {
+      Some(header) => {
+        let content_length = header
+          .value
+          .parse::<usize>()
+          .map_err(|_| HttpParseError::new("Content-Length is not a valid length"))?;
+        if body_bytes.len() != content_length {
+          return Err(HttpParseError::new(
+            "request body length does not match Content-Length",
+          ));
+        }
+        body_bytes.to_vec()
+      }
+      None => {
+        if headers
+          .iter()
+          .any(|header| header.name.eq_ignore_ascii_case("Transfer-Encoding"))
+        {
+          return Err(HttpParseError::new(
+            "Transfer-Encoding request bodies are not supported",
+          ));
+        }
+        body_bytes.to_vec()
+      }
+    };
 
     Ok(Self {
       method: method.to_string(),
@@ -117,6 +146,10 @@ impl HttpResponse {
   }
 
   pub fn header<N: AsRef<str>, V: AsRef<str>>(mut self, name: N, value: V) -> Self {
+    let name = name.as_ref();
+    let value = value.as_ref();
+    assert_valid_header_component(name);
+    assert_valid_header_component(value);
     self.headers.push(HttpHeader::new(name, value));
     self
   }
@@ -138,9 +171,14 @@ impl HttpResponse {
       }
     }
 
-    bytes.extend_from_slice(format!("Content-Length: {}\r\n", self.body.len()).as_bytes());
+    let allows_body = response_status_allows_body(self.status_code);
+    if allows_body {
+      bytes.extend_from_slice(format!("Content-Length: {}\r\n", self.body.len()).as_bytes());
+    }
     bytes.extend_from_slice(b"\r\n");
-    bytes.extend_from_slice(&self.body);
+    if allows_body {
+      bytes.extend_from_slice(&self.body);
+    }
     bytes
   }
 }
@@ -188,3 +226,14 @@ impl fmt::Display for HttpParseError {
 }
 
 impl Error for HttpParseError {}
+
+fn assert_valid_header_component(component: &str) {
+  assert!(
+    !component.contains('\r') && !component.contains('\n'),
+    "response headers must not contain CR or LF"
+  );
+}
+
+fn response_status_allows_body(status_code: u16) -> bool {
+  !(status_code / 100 == 1 || status_code == 204 || status_code == 304)
+}
