@@ -862,11 +862,10 @@ fn request_needs_continue(
 
   Ok(
     has_expect
-      && matches!(
+      && (matches!(
         body_kind,
         RequestBodyKind::ContentLength(content_length) if content_length > 0
-      )
-      || has_expect && body_kind == RequestBodyKind::Chunked,
+      ) || body_kind == RequestBodyKind::Chunked),
   )
 }
 
