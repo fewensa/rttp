@@ -3,49 +3,10 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-fn read_http_request<R: Read>(stream: &mut R) -> Vec<u8> {
-  let mut request = Vec::new();
-  let mut buf = [0u8; 1024];
-  let mut content_length = None;
+#[path = "local_http.rs"]
+mod local_http;
 
-  loop {
-    let Ok(read) = stream.read(&mut buf) else {
-      break;
-    };
-    if read == 0 {
-      break;
-    }
-
-    request.extend_from_slice(&buf[..read]);
-
-    let header_end = request.windows(4).position(|window| window == b"\r\n\r\n");
-    if content_length.is_none() {
-      if let Some(header_end) = header_end {
-        let headers = String::from_utf8_lossy(&request[..header_end + 4]);
-        content_length = headers
-          .lines()
-          .find_map(|line| {
-            let (name, value) = line.split_once(':')?;
-            if name.eq_ignore_ascii_case("content-length") {
-              value.trim().parse::<usize>().ok()
-            } else {
-              None
-            }
-          })
-          .or(Some(0));
-      }
-    }
-
-    if let (Some(header_end), Some(content_length)) = (header_end, content_length) {
-      let expected_len = header_end + 4 + content_length;
-      if request.len() >= expected_len {
-        break;
-      }
-    }
-  }
-
-  request
-}
+use local_http::{bind_local_http_listener, read_http_request, HTTP_OK_RESPONSE};
 
 fn read_exact_bytes<R: Read>(stream: &mut R, len: usize) -> io::Result<Vec<u8>> {
   let mut bytes = vec![0u8; len];
@@ -144,27 +105,15 @@ fn header_value(request: &[u8], name: &str) -> Option<String> {
 }
 
 pub fn spawn_http_server() -> (SocketAddr, JoinHandle<()>) {
-  spawn_http_server_count(1)
+  local_http::spawn_ok_http_server()
 }
 
 pub fn spawn_http_server_count(count: usize) -> (SocketAddr, JoinHandle<()>) {
-  let listener = TcpListener::bind("127.0.0.1:0").expect("bind http server");
-  let addr = listener.local_addr().expect("local addr");
-  let handle = thread::spawn(move || {
-    for _ in 0..count {
-      if let Ok((mut stream, _)) = listener.accept() {
-        let _ = read_http_request(&mut stream);
-        let response = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK";
-        let _ = stream.write_all(response);
-      }
-    }
-  });
-  (addr, handle)
+  local_http::spawn_ok_http_server_count(count)
 }
 
 pub fn spawn_chunked_server() -> (SocketAddr, JoinHandle<()>) {
-  let listener = TcpListener::bind("127.0.0.1:0").expect("bind chunked server");
-  let addr = listener.local_addr().expect("chunked addr");
+  let (listener, addr) = bind_local_http_listener("chunked server");
   let handle = thread::spawn(move || {
     if let Ok((mut stream, _)) = listener.accept() {
       let _ = read_http_request(&mut stream);
@@ -186,8 +135,7 @@ pub fn spawn_chunked_server() -> (SocketAddr, JoinHandle<()>) {
 }
 
 pub fn spawn_redirect_server() -> (SocketAddr, JoinHandle<()>) {
-  let listener = TcpListener::bind("127.0.0.1:0").expect("bind redirect server");
-  let addr = listener.local_addr().expect("redirect addr");
+  let (listener, addr) = bind_local_http_listener("redirect server");
   let handle = thread::spawn(move || {
     if let Ok((mut stream, _)) = listener.accept() {
       let _ = read_http_request(&mut stream);
@@ -200,16 +148,14 @@ pub fn spawn_redirect_server() -> (SocketAddr, JoinHandle<()>) {
 
     if let Ok((mut stream, _)) = listener.accept() {
       let _ = read_http_request(&mut stream);
-      let response = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK";
-      let _ = stream.write_all(response);
+      let _ = stream.write_all(HTTP_OK_RESPONSE);
     }
   });
   (addr, handle)
 }
 
 pub fn spawn_keep_alive_server() -> (SocketAddr, JoinHandle<()>) {
-  let listener = TcpListener::bind("127.0.0.1:0").expect("bind keep-alive server");
-  let addr = listener.local_addr().expect("keep-alive addr");
+  let (listener, addr) = bind_local_http_listener("keep-alive server");
   let handle = thread::spawn(move || {
     if let Ok((mut stream, _)) = listener.accept() {
       let _ = read_http_request(&mut stream);
@@ -222,8 +168,7 @@ pub fn spawn_keep_alive_server() -> (SocketAddr, JoinHandle<()>) {
 }
 
 pub fn spawn_http_proxy_server() -> (SocketAddr, JoinHandle<()>) {
-  let listener = TcpListener::bind("127.0.0.1:0").expect("bind http proxy server");
-  let addr = listener.local_addr().expect("http proxy addr");
+  let (listener, addr) = bind_local_http_listener("http proxy server");
   let handle = thread::spawn(move || {
     if let Ok((mut stream, _)) = listener.accept() {
       let request = read_http_request(&mut stream);
@@ -245,8 +190,7 @@ pub fn spawn_http_proxy_server() -> (SocketAddr, JoinHandle<()>) {
 }
 
 pub fn spawn_http_proxy_auth_echo_server() -> (SocketAddr, JoinHandle<()>) {
-  let listener = TcpListener::bind("127.0.0.1:0").expect("bind http proxy auth server");
-  let addr = listener.local_addr().expect("http proxy auth addr");
+  let (listener, addr) = bind_local_http_listener("http proxy auth server");
   let handle = thread::spawn(move || {
     if let Ok((mut stream, _)) = listener.accept() {
       let request = read_http_request(&mut stream);
@@ -264,8 +208,7 @@ pub fn spawn_http_proxy_auth_echo_server() -> (SocketAddr, JoinHandle<()>) {
 }
 
 pub fn spawn_invalid_gzip_server() -> (SocketAddr, JoinHandle<()>) {
-  let listener = TcpListener::bind("127.0.0.1:0").expect("bind invalid gzip server");
-  let addr = listener.local_addr().expect("invalid gzip addr");
+  let (listener, addr) = bind_local_http_listener("invalid gzip server");
   let handle = thread::spawn(move || {
     if let Ok((mut stream, _)) = listener.accept() {
       let _ = read_http_request(&mut stream);
@@ -282,8 +225,7 @@ pub fn spawn_invalid_gzip_server() -> (SocketAddr, JoinHandle<()>) {
 }
 
 pub fn spawn_auth_echo_server() -> (SocketAddr, JoinHandle<()>) {
-  let listener = TcpListener::bind("127.0.0.1:0").expect("bind auth echo server");
-  let addr = listener.local_addr().expect("auth echo addr");
+  let (listener, addr) = bind_local_http_listener("auth echo server");
   let handle = thread::spawn(move || {
     if let Ok((mut stream, _)) = listener.accept() {
       let mut request = Vec::new();
@@ -359,8 +301,7 @@ pub fn spawn_https_proxy_server_with_credentials(
   use std::io::copy;
 
   let (target_addr, _target_handle) = spawn_tls_server();
-  let listener = TcpListener::bind("127.0.0.1:0").expect("bind https proxy server");
-  let proxy_addr = listener.local_addr().expect("https proxy addr");
+  let (listener, proxy_addr) = bind_local_http_listener("https proxy server");
   let handle = thread::spawn(move || {
     if let Ok((mut client, _)) = listener.accept() {
       let request = read_http_request(&mut client);
@@ -425,15 +366,13 @@ pub fn spawn_tls_server() -> (SocketAddr, JoinHandle<()>) {
     .expect("set cert");
   let config = Arc::new(config);
 
-  let listener = TcpListener::bind("127.0.0.1:0").expect("bind tls server");
-  let addr = listener.local_addr().expect("tls addr");
+  let (listener, addr) = bind_local_http_listener("tls server");
   let handle = thread::spawn(move || {
     if let Ok((stream, _)) = listener.accept() {
       let session = ServerConnection::new(config.clone()).expect("server connection");
       let mut tls = StreamOwned::new(session, stream);
       let _ = read_http_request(&mut tls);
-      let response = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK";
-      let _ = tls.write_all(response);
+      let _ = tls.write_all(HTTP_OK_RESPONSE);
       let _ = tls.flush();
       tls.conn.send_close_notify();
       let _ = tls.flush();
