@@ -58,7 +58,13 @@ impl HttpServer {
     F: FnOnce(Request) -> HttpResponse,
   {
     let (mut stream, _) = self.listener.accept()?;
-    let request = Request::read_from(&mut stream)?;
+    let request = match Request::read_from(&mut stream) {
+      Ok(request) => request,
+      Err(err) if is_bad_request_error(&err) => {
+        return bad_request_response().write_to(&mut stream);
+      }
+      Err(err) => return Err(err),
+    };
     let response = handler(request);
     response.write_to(&mut stream)
   }
@@ -536,4 +542,15 @@ fn assert_valid_header_component(component: &str) {
 
 fn response_status_allows_body(status_code: u16) -> bool {
   !(status_code / 100 == 1 || status_code == 204 || status_code == 304)
+}
+
+fn is_bad_request_error(err: &io::Error) -> bool {
+  matches!(
+    err.kind(),
+    io::ErrorKind::InvalidData | io::ErrorKind::UnexpectedEof
+  )
+}
+
+fn bad_request_response() -> HttpResponse {
+  HttpResponse::new(400, "Bad Request").body("Bad Request")
 }

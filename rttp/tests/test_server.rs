@@ -5,6 +5,33 @@ use std::thread;
 
 use rttp::server::{HttpResponse, Request};
 
+fn send_raw_request(raw: &[u8]) -> (String, bool) {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request).expect("send parsed request");
+        HttpResponse::ok("unexpected")
+      })
+      .expect("serve one request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream.write_all(raw).expect("write request");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  handle.join().expect("server thread");
+  (response, rx.try_recv().is_ok())
+}
+
 #[test]
 fn server_accepts_get_request_and_writes_response() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
@@ -83,6 +110,52 @@ fn server_request_body_stops_at_declared_content_length() {
   );
 
   handle.join().expect("server thread");
+}
+
+#[test]
+fn server_returns_bad_request_for_malformed_request_line() {
+  let (response, handler_called) = send_raw_request(b"GET /too many parts HTTP/1.1\r\n\r\n");
+
+  assert!(!handler_called);
+  assert_eq!(
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
+}
+
+#[test]
+fn server_returns_bad_request_for_invalid_header_syntax() {
+  let (response, handler_called) = send_raw_request(b"GET / HTTP/1.1\r\nHost localhost\r\n\r\n");
+
+  assert!(!handler_called);
+  assert_eq!(
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
+}
+
+#[test]
+fn server_returns_bad_request_for_unsupported_transfer_encoding() {
+  let (response, handler_called) =
+    send_raw_request(b"POST /upload HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n");
+
+  assert!(!handler_called);
+  assert_eq!(
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
+}
+
+#[test]
+fn server_returns_bad_request_for_short_request_body() {
+  let (response, handler_called) =
+    send_raw_request(b"POST /upload HTTP/1.1\r\nContent-Length: 5\r\n\r\nhel");
+
+  assert!(!handler_called);
+  assert_eq!(
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
 }
 
 #[test]
