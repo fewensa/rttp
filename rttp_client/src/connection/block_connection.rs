@@ -4,6 +4,7 @@ use socks::{Socks4Stream, Socks5Stream};
 use url::Url;
 
 use crate::connection::connection::Connection;
+use crate::connection::connection_reader::ResponseParts;
 use crate::request::RawRequest;
 use crate::response::Response;
 use crate::types::{Proxy, ProxyType};
@@ -23,14 +24,15 @@ impl<'a> BlockConnection<'a> {
   pub fn call(mut self) -> error::Result<Response> {
     let url = self.conn.url().map_err(error::builder)?;
     let proxy = self.conn.proxy().clone();
-    let binary = if let Some(proxy) = proxy.as_ref() {
+    let parts = if let Some(proxy) = proxy.as_ref() {
       self.call_with_proxy(&url, proxy)?
     } else {
-      self.conn.block_send(&url)?
+      self.conn.block_send_parts(&url)?
     };
 
     let config = self.conn.config();
-    let response = Response::new(self.conn.rourl().clone(), binary)?;
+    let response =
+      Response::with_trailers(self.conn.rourl().clone(), parts.binary, parts.trailers)?;
 
     if let Some(location) = response.location() {
       let req_url = url.as_str();
@@ -60,7 +62,7 @@ impl<'a> BlockConnection<'a> {
 
 // proxy connection
 impl<'a> BlockConnection<'a> {
-  fn call_with_proxy(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
+  fn call_with_proxy(&self, url: &Url, proxy: &Proxy) -> error::Result<ResponseParts> {
     match proxy.type_() {
       ProxyType::HTTP => {
         if url.scheme() == "http" {
@@ -75,7 +77,7 @@ impl<'a> BlockConnection<'a> {
     }
   }
 
-  fn call_with_proxy_http(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
+  fn call_with_proxy_http(&self, url: &Url, proxy: &Proxy) -> error::Result<ResponseParts> {
     let addr = format!("{}:{}", proxy.host(), proxy.port());
     let mut stream = self.conn.block_tcp_stream(&addr)?;
     let header = self.conn.proxy_http_header(url, proxy);
@@ -88,10 +90,10 @@ impl<'a> BlockConnection<'a> {
     }
     stream.flush().map_err(error::request)?;
 
-    self.conn.block_read_stream(url, &mut stream)
+    self.conn.block_read_stream_parts(url, &mut stream)
   }
 
-  fn call_with_proxy_https(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
+  fn call_with_proxy_https(&self, url: &Url, proxy: &Proxy) -> error::Result<ResponseParts> {
     //CONNECT proxy.google.com:443 HTTP/1.1
     //Host: www.google.com:443
     //Proxy-Connection: keep-alive
@@ -106,10 +108,10 @@ impl<'a> BlockConnection<'a> {
     stream.flush().map_err(error::request)?;
     crate::connection::connection::read_proxy_connect_response(&mut stream)?;
 
-    self.conn.block_send_with_stream(url, &mut stream)
+    self.conn.block_send_with_stream_parts(url, &mut stream)
   }
 
-  fn call_with_proxy_socks4(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
+  fn call_with_proxy_socks4(&self, url: &Url, proxy: &Proxy) -> error::Result<ResponseParts> {
     // Keep the `socks` crate for SOCKS handshakes: it owns the proxy connection setup and
     // returns a stream that already satisfies the shared `Read + Write` send path.
     let addr_proxy = format!("{}:{}", proxy.host(), proxy.port());
@@ -121,10 +123,10 @@ impl<'a> BlockConnection<'a> {
     };
     let mut stream = Socks4Stream::connect(&addr_proxy[..], &addr_target[..], &user[..])
       .map_err(error::request)?;
-    self.conn.block_send_with_stream(url, &mut stream)
+    self.conn.block_send_with_stream_parts(url, &mut stream)
   }
 
-  fn call_with_proxy_socks5(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
+  fn call_with_proxy_socks5(&self, url: &Url, proxy: &Proxy) -> error::Result<ResponseParts> {
     // Reimplementing SOCKS on top of socket2 would duplicate protocol logic without changing
     // how the rest of the client reads and writes the established stream.
     let addr_proxy = format!("{}:{}", proxy.host(), proxy.port());
@@ -139,6 +141,6 @@ impl<'a> BlockConnection<'a> {
       Socks5Stream::connect(&addr_proxy[..], &addr_target[..])
     }
     .map_err(error::request)?;
-    self.conn.block_send_with_stream(url, &mut stream)
+    self.conn.block_send_with_stream_parts(url, &mut stream)
   }
 }

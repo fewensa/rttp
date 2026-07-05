@@ -5,7 +5,7 @@ use url::Url;
 
 use crate::error;
 use crate::response::Response;
-use crate::types::RoUrl;
+use crate::types::{Header, RoUrl};
 
 const HEADER_END: &[u8] = b"\r\n\r\n";
 const CRLF: &[u8] = b"\r\n";
@@ -16,6 +16,11 @@ pub(crate) enum ResponseBodyKind {
   Chunked,
   ContentLength(usize),
   UntilEof,
+}
+
+pub(crate) struct ResponseParts {
+  pub(crate) binary: Vec<u8>,
+  pub(crate) trailers: Vec<Header>,
 }
 
 #[allow(dead_code)]
@@ -38,27 +43,39 @@ impl<'a> ConnectionReader<'a> {
     }
   }
 
+  #[allow(dead_code)]
   pub fn binary(&mut self) -> error::Result<Vec<u8>> {
-    read_response_binary(self.reader, self.expect_no_body)
+    Ok(read_response_parts(self.reader, self.expect_no_body)?.binary)
+  }
+
+  pub(crate) fn response_parts(&mut self) -> error::Result<ResponseParts> {
+    read_response_parts(self.reader, self.expect_no_body)
   }
 
   #[allow(dead_code)]
   pub fn response(&mut self) -> error::Result<Response> {
-    Response::new(RoUrl::from(self.url.clone()), self.binary()?)
+    let parts = self.response_parts()?;
+    Response::with_trailers(RoUrl::from(self.url.clone()), parts.binary, parts.trailers)
   }
 
   // todo Connection reader will read more type from io::Reader, like Chunk data, and Stream data.
 }
 
-fn read_response_binary<R>(reader: &mut R, expect_no_body: bool) -> error::Result<Vec<u8>>
+pub(crate) fn read_response_parts<R>(
+  reader: &mut R,
+  expect_no_body: bool,
+) -> error::Result<ResponseParts>
 where
   R: Read + ?Sized,
 {
   let mut binary = read_response_header(reader)?;
+  let mut trailers = Vec::new();
   match response_body_kind(&binary, expect_no_body)? {
     ResponseBodyKind::NoBody => {}
     ResponseBodyKind::Chunked => {
-      binary.extend_from_slice(&read_chunked_body(reader)?);
+      let chunked = read_chunked_response_body(reader)?;
+      binary.extend_from_slice(&chunked.body);
+      trailers = chunked.trailers;
     }
     ResponseBodyKind::ContentLength(content_length) => {
       let current_len = binary.len();
@@ -71,7 +88,7 @@ where
       reader.read_to_end(&mut binary).map_err(error::request)?;
     }
   }
-  Ok(binary)
+  Ok(ResponseParts { binary, trailers })
 }
 
 fn read_response_header<R>(reader: &mut R) -> error::Result<Vec<u8>>
@@ -166,7 +183,12 @@ pub(crate) fn response_body_kind(
   }
 }
 
-fn read_chunked_body<R>(reader: &mut R) -> error::Result<Vec<u8>>
+struct ChunkedResponseBody {
+  body: Vec<u8>,
+  trailers: Vec<Header>,
+}
+
+fn read_chunked_response_body<R>(reader: &mut R) -> error::Result<ChunkedResponseBody>
 where
   R: Read + ?Sized,
 {
@@ -177,8 +199,8 @@ where
     let chunk_size = parse_chunk_size(&line)?;
 
     if chunk_size == 0 {
-      consume_trailers(reader)?;
-      return Ok(body);
+      let trailers = read_trailers(reader)?;
+      return Ok(ChunkedResponseBody { body, trailers });
     }
 
     let current_len = body.len();
@@ -236,16 +258,29 @@ where
   }
 }
 
-fn consume_trailers<R>(reader: &mut R) -> error::Result<()>
+fn read_trailers<R>(reader: &mut R) -> error::Result<Vec<Header>>
 where
   R: Read + ?Sized,
 {
+  let mut trailers = Vec::new();
   loop {
     let line = read_crlf_line(reader)?;
     if line == CRLF {
-      return Ok(());
+      return Ok(trailers);
     }
+
+    trailers.push(parse_trailer_line(&line)?);
   }
+}
+
+fn parse_trailer_line(line: &[u8]) -> error::Result<Header> {
+  let line = std::str::from_utf8(line).map_err(error::response)?;
+  let line = line.trim_end_matches("\r\n");
+  let (name, value) = line
+    .split_once(':')
+    .ok_or_else(|| error::bad_response("Invalid trailer header"))?;
+
+  Ok(Header::new(name, value))
 }
 
 #[cfg(test)]
@@ -276,7 +311,7 @@ mod tests {
   }
 
   #[test]
-  fn test_chunked_extensions_and_trailers_are_ignored() {
+  fn test_chunked_extensions_and_trailers_are_preserved() {
     let raw = concat!(
       "HTTP/1.1 200 OK\r\n",
       "Transfer-Encoding: gzip, chunked\r\n",
@@ -296,6 +331,10 @@ mod tests {
     assert_eq!(
       Some(&"gzip, chunked".to_string()),
       response.header_value("Transfer-Encoding")
+    );
+    assert_eq!(
+      Some("abc"),
+      response.trailer_value("x-trace").map(String::as_str)
     );
   }
 

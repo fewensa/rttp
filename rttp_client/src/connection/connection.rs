@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use url::Url;
 
-use crate::connection::connection_reader::ConnectionReader;
+use crate::connection::connection_reader::{ConnectionReader, ResponseParts};
 use crate::request::{RawRequest, RequestBody};
 use crate::types::{Proxy, RoUrl, ToUrl};
 use crate::{error, Config};
@@ -400,41 +400,57 @@ impl<'a> Connection<'a> {
     write_http_request(stream, self.header(), self.body().as_ref())
   }
 
-  pub fn block_read_stream<S>(&self, url: &Url, stream: &mut S) -> error::Result<Vec<u8>>
+  pub(crate) fn block_read_stream_parts<S>(
+    &self,
+    url: &Url,
+    stream: &mut S,
+  ) -> error::Result<ResponseParts>
   where
     S: io::Read,
   {
     let mut reader = ConnectionReader::new(url, stream, self.expect_no_response_body());
-    reader.binary()
+    reader.response_parts()
   }
 
-  pub fn block_send(&self, url: &Url) -> error::Result<Vec<u8>> {
+  pub(crate) fn block_send_parts(&self, url: &Url) -> error::Result<ResponseParts> {
     let addr = self.addr(url)?;
     let mut stream = self.block_tcp_stream(&addr)?;
-    self.block_send_with_stream(url, &mut stream)
+    self.block_send_with_stream_parts(url, &mut stream)
   }
 
-  pub fn block_send_with_stream<S>(&self, url: &Url, stream: &mut S) -> error::Result<Vec<u8>>
+  pub(crate) fn block_send_with_stream_parts<S>(
+    &self,
+    url: &Url,
+    stream: &mut S,
+  ) -> error::Result<ResponseParts>
   where
     S: io::Read + io::Write,
   {
     match url.scheme() {
-      "http" => self.block_send_http(url, stream),
-      "https" => self.block_send_https(url, stream),
+      "http" => self.block_send_http_parts(url, stream),
+      "https" => self.block_send_https_parts(url, stream),
       _ => Err(error::url_bad_scheme(url.clone())),
     }
   }
 
-  pub fn block_send_http<S>(&self, url: &Url, stream: &mut S) -> error::Result<Vec<u8>>
+  pub(crate) fn block_send_http_parts<S>(
+    &self,
+    url: &Url,
+    stream: &mut S,
+  ) -> error::Result<ResponseParts>
   where
     S: io::Read + io::Write,
   {
     self.block_write_stream(stream)?;
-    self.block_read_stream(url, stream)
+    self.block_read_stream_parts(url, stream)
   }
 
   #[cfg(not(any(feature = "tls-native", feature = "tls-rustls")))]
-  pub fn block_send_https<S>(&self, _url: &Url, _stream: &mut S) -> error::Result<Vec<u8>>
+  pub(crate) fn block_send_https_parts<S>(
+    &self,
+    _url: &Url,
+    _stream: &mut S,
+  ) -> error::Result<ResponseParts>
   where
     S: io::Read + io::Write,
   {
@@ -444,26 +460,34 @@ impl<'a> Connection<'a> {
   }
 
   #[cfg(any(feature = "tls-native", feature = "tls-rustls"))]
-  pub fn block_send_https<S>(&self, url: &Url, stream: &mut S) -> error::Result<Vec<u8>>
+  pub(crate) fn block_send_https_parts<S>(
+    &self,
+    url: &Url,
+    stream: &mut S,
+  ) -> error::Result<ResponseParts>
   where
     S: io::Read + io::Write,
   {
     #[cfg(all(feature = "tls-native", feature = "tls-rustls"))]
     {
-      return self.block_send_https_rustls(url, stream);
+      return self.block_send_https_rustls_parts(url, stream);
     }
     #[cfg(all(feature = "tls-native", not(feature = "tls-rustls")))]
     {
-      return self.block_send_https_native(url, stream);
+      return self.block_send_https_native_parts(url, stream);
     }
     #[cfg(all(feature = "tls-rustls", not(feature = "tls-native")))]
     {
-      return self.block_send_https_rustls(url, stream);
+      return self.block_send_https_rustls_parts(url, stream);
     }
   }
 
   #[cfg(all(feature = "tls-native", not(feature = "tls-rustls")))]
-  fn block_send_https_native<S>(&self, url: &Url, stream: &mut S) -> error::Result<Vec<u8>>
+  fn block_send_https_native_parts<S>(
+    &self,
+    url: &Url,
+    stream: &mut S,
+  ) -> error::Result<ResponseParts>
   where
     S: io::Read + io::Write,
   {
@@ -478,11 +502,15 @@ impl<'a> Connection<'a> {
       .map_err(|_| error::bad_ssl("Native tls handshake error"))?;
 
     self.block_write_stream(&mut ssl_stream)?;
-    self.block_read_stream(url, &mut ssl_stream)
+    self.block_read_stream_parts(url, &mut ssl_stream)
   }
 
   #[cfg(feature = "tls-rustls")]
-  fn block_send_https_rustls<S>(&self, url: &Url, stream: &mut S) -> error::Result<Vec<u8>>
+  fn block_send_https_rustls_parts<S>(
+    &self,
+    url: &Url,
+    stream: &mut S,
+  ) -> error::Result<ResponseParts>
   where
     S: io::Read + io::Write,
   {
@@ -524,7 +552,7 @@ impl<'a> Connection<'a> {
     let mut tls = StreamOwned::new(client, stream);
 
     self.block_write_stream(&mut tls)?;
-    self.block_read_stream(url, &mut tls)
+    self.block_read_stream_parts(url, &mut tls)
   }
 }
 
