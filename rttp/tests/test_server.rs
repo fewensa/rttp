@@ -200,6 +200,39 @@ fn server_returns_bad_request_for_short_request_body() {
 }
 
 #[test]
+fn server_accepts_multiple_sequential_connections_on_one_listener() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        let target = request.target().to_string();
+        tx.send(target.clone()).expect("send parsed target");
+        HttpResponse::ok(format!("served {target}"))
+      })
+      .expect("serve sequential requests");
+  });
+
+  let first = send_request(addr, b"GET /first HTTP/1.1\r\nHost: localhost\r\n\r\n");
+  let second = send_request(addr, b"GET /second HTTP/1.1\r\nHost: localhost\r\n\r\n");
+
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: close\r\n\r\nserved /first",
+    first
+  );
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 14\r\nConnection: close\r\n\r\nserved /second",
+    second
+  );
+  assert_eq!("/first", rx.recv().expect("receive first target"));
+  assert_eq!("/second", rx.recv().expect("receive second target"));
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn response_write_to_omits_content_length_and_body_for_204() {
   let response = HttpResponse::new(204, "No Content").body("ignored");
   let mut serialized = Vec::new();
@@ -227,4 +260,16 @@ fn response_write_to_omits_content_length_and_body_for_1xx() {
     b"HTTP/1.1 101 Switching Protocols\r\nConnection: close\r\n\r\n",
     serialized.as_slice()
   );
+}
+
+fn send_request(addr: std::net::SocketAddr, request: &[u8]) -> String {
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream.write_all(request).expect("write request");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+  response
 }
