@@ -68,7 +68,8 @@ impl HttpServer {
 
     while served < request_count {
       let (stream, _) = self.listener.accept()?;
-      served += self.handle_connection(stream, request_count - served, &mut handler)?;
+      let handled = self.handle_connection(stream, request_count - served, &mut handler)?;
+      served += handled.max(1);
     }
 
     Ok(())
