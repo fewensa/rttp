@@ -479,7 +479,7 @@ fn server_accepts_multiple_sequential_connections_on_one_listener() {
   let second = send_request(addr, b"GET /second HTTP/1.1\r\nHost: localhost\r\n\r\n");
 
   assert_eq!(
-    "HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: close\r\n\r\nserved /first",
+    "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nserved /first",
     first
   );
   assert_eq!(
@@ -534,6 +534,162 @@ fn server_serves_multiple_requests_on_one_kept_alive_connection() {
   assert_eq!(
     concat!(
       "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nserved /first",
+      "HTTP/1.1 200 OK\r\nContent-Length: 14\r\nConnection: close\r\n\r\nserved /second",
+    ),
+    response
+  );
+  assert_eq!("/first", rx.recv().expect("receive first target"));
+  assert_eq!("/second", rx.recv().expect("receive second target"));
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_keeps_http11_connection_alive_by_default() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        let target = request.target().to_string();
+        tx.send(target.clone()).expect("send parsed target");
+        HttpResponse::ok(format!("served {target}"))
+      })
+      .expect("serve requests");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(
+      concat!(
+        "GET /first HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "\r\n",
+        "GET /second HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write pipelined requests");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  assert_eq!(
+    concat!(
+      "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nserved /first",
+      "HTTP/1.1 200 OK\r\nContent-Length: 14\r\nConnection: close\r\n\r\nserved /second",
+    ),
+    response
+  );
+  assert_eq!("/first", rx.recv().expect("receive first target"));
+  assert_eq!("/second", rx.recv().expect("receive second target"));
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_closes_http10_connection_by_default() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        let target = request.target().to_string();
+        tx.send(target.clone()).expect("send parsed target");
+        HttpResponse::ok(format!("served {target}"))
+      })
+      .expect("serve requests");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(
+      concat!(
+        "GET /first HTTP/1.0\r\n",
+        "Host: localhost\r\n",
+        "\r\n",
+        "GET /ignored HTTP/1.0\r\n",
+        "Host: localhost\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write pipelined requests");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: close\r\n\r\nserved /first",
+    response
+  );
+  assert_eq!("/first", rx.recv().expect("receive first target"));
+
+  let second = send_request(addr, b"GET /second HTTP/1.0\r\nHost: localhost\r\n\r\n");
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 14\r\nConnection: close\r\n\r\nserved /second",
+    second
+  );
+  assert_eq!("/second", rx.recv().expect("receive second target"));
+  assert!(rx.try_recv().is_err());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_keeps_http10_connection_alive_when_requested() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        let target = request.target().to_string();
+        tx.send(target.clone()).expect("send parsed target");
+        HttpResponse::ok(format!("served {target}"))
+      })
+      .expect("serve requests");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(
+      concat!(
+        "GET /first HTTP/1.0\r\n",
+        "Host: localhost\r\n",
+        "Connection: keep-alive\r\n",
+        "\r\n",
+        "GET /second HTTP/1.0\r\n",
+        "Host: localhost\r\n",
+        "Connection: keep-alive\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write pipelined requests");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  assert_eq!(
+    concat!(
+      "HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: keep-alive\r\n\r\nserved /first",
       "HTTP/1.1 200 OK\r\nContent-Length: 14\r\nConnection: close\r\n\r\nserved /second",
     ),
     response

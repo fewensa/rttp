@@ -98,16 +98,21 @@ impl HttpServer {
         Err(err) => return Err(err),
       };
       let request_closes_connection = request.closes_connection();
-      let request_keeps_connection_alive = request.keeps_connection_alive();
+      let request_uses_http10_defaults = request.version() == "HTTP/1.0";
       let response = handler(request);
       let response_closes_connection = response.closes_connection();
       served += 1;
 
-      let close_after_response = request_closes_connection
-        || response_closes_connection
-        || !request_keeps_connection_alive
-        || served == request_limit;
-      response.write_to_with_default_connection(reader.get_mut(), close_after_response)?;
+      let close_after_response =
+        request_closes_connection || response_closes_connection || served == request_limit;
+      let default_connection = if close_after_response {
+        DefaultConnectionHeader::Close
+      } else if request_uses_http10_defaults {
+        DefaultConnectionHeader::KeepAlive
+      } else {
+        DefaultConnectionHeader::Omit
+      };
+      response.write_to_with_default_connection(reader.get_mut(), default_connection)?;
 
       if close_after_response {
         break;
@@ -169,11 +174,19 @@ impl Request {
   }
 
   pub fn closes_connection(&self) -> bool {
-    connection_header_has_token(self.header("Connection"), "close")
+    if self.connection_header_has_token("close") {
+      return true;
+    }
+
+    self.version == "HTTP/1.0" && !self.connection_header_has_token("keep-alive")
   }
 
-  fn keeps_connection_alive(&self) -> bool {
-    connection_header_has_token(self.header("Connection"), "keep-alive")
+  fn connection_header_has_token(&self, token: &str) -> bool {
+    self
+      .headers
+      .iter()
+      .filter(|(name, _)| name.eq_ignore_ascii_case("Connection"))
+      .any(|(_, value)| connection_header_has_token(Some(value), token))
   }
 
   fn read_from<R>(reader: &mut R) -> io::Result<Self>
@@ -442,6 +455,13 @@ pub struct HttpResponse {
   body: Vec<u8>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DefaultConnectionHeader {
+  Close,
+  KeepAlive,
+  Omit,
+}
+
 impl HttpResponse {
   pub fn new<S: AsRef<str>>(status_code: u16, reason: S) -> Self {
     Self {
@@ -474,7 +494,7 @@ impl HttpResponse {
   pub fn to_bytes(&self) -> Vec<u8> {
     let mut bytes = Vec::new();
     self
-      .write_head_to(&mut bytes, false)
+      .write_head_to(&mut bytes, DefaultConnectionHeader::Omit)
       .expect("write to Vec cannot fail");
     if self.allows_body() {
       bytes.extend_from_slice(&self.body);
@@ -486,25 +506,29 @@ impl HttpResponse {
   where
     W: Write,
   {
-    self.write_to_with_default_connection(writer, true)
+    self.write_to_with_default_connection(writer, DefaultConnectionHeader::Close)
   }
 
   fn write_to_with_default_connection<W>(
     &self,
     writer: &mut W,
-    close_by_default: bool,
+    default_connection: DefaultConnectionHeader,
   ) -> io::Result<()>
   where
     W: Write,
   {
-    self.write_head_to(writer, close_by_default)?;
+    self.write_head_to(writer, default_connection)?;
     if self.allows_body() {
       writer.write_all(&self.body)?;
     }
     writer.flush()
   }
 
-  fn write_head_to<W>(&self, writer: &mut W, include_default_connection: bool) -> io::Result<()>
+  fn write_head_to<W>(
+    &self,
+    writer: &mut W,
+    default_connection: DefaultConnectionHeader,
+  ) -> io::Result<()>
   where
     W: Write,
   {
@@ -514,8 +538,12 @@ impl HttpResponse {
       self.version, self.status_code, self.reason
     )?;
 
-    for header in &self.headers {
-      if !header.name.eq_ignore_ascii_case("Content-Length") {
+    let connection_header_index = self.connection_header_index();
+    for (index, header) in self.headers.iter().enumerate() {
+      if !header.name.eq_ignore_ascii_case("Content-Length")
+        && (!header.name.eq_ignore_ascii_case("Connection")
+          || Some(index) == connection_header_index)
+      {
         write!(writer, "{}: {}\r\n", header.name, header.value)?;
       }
     }
@@ -523,8 +551,12 @@ impl HttpResponse {
     if self.allows_body() {
       write!(writer, "Content-Length: {}\r\n", self.body.len())?;
     }
-    if include_default_connection && !self.has_header("Connection") {
-      writer.write_all(b"Connection: close\r\n")?;
+    if connection_header_index.is_none() {
+      match default_connection {
+        DefaultConnectionHeader::Close => writer.write_all(b"Connection: close\r\n")?,
+        DefaultConnectionHeader::KeepAlive => writer.write_all(b"Connection: keep-alive\r\n")?,
+        DefaultConnectionHeader::Omit => {}
+      }
     }
 
     writer.write_all(b"\r\n")
@@ -534,20 +566,19 @@ impl HttpResponse {
     response_status_allows_body(self.status_code)
   }
 
-  fn has_header(&self, name: &str) -> bool {
+  fn connection_header_index(&self) -> Option<usize> {
     self
       .headers
       .iter()
-      .any(|header| header.name.eq_ignore_ascii_case(name))
+      .rposition(|header| header.name.eq_ignore_ascii_case("Connection"))
   }
 
   fn closes_connection(&self) -> bool {
-    let connection = self
+    self
       .headers
       .iter()
-      .find(|header| header.name.eq_ignore_ascii_case("Connection"))
-      .map(|header| header.value.as_str());
-    connection_header_has_token(connection, "close")
+      .filter(|header| header.name.eq_ignore_ascii_case("Connection"))
+      .any(|header| connection_header_has_token(Some(header.value.as_str()), "close"))
   }
 }
 
