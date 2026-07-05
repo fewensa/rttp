@@ -575,7 +575,7 @@ fn server_returns_bad_request_for_oversized_chunked_request_body() {
 }
 
 #[test]
-fn server_ignores_chunk_extensions_and_trailers() {
+fn server_preserves_chunked_request_trailers() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
   let (tx, rx) = mpsc::channel();
@@ -601,6 +601,7 @@ fn server_ignores_chunk_extensions_and_trailers() {
         "6\r\n body!\r\n",
         "0\r\n",
         "X-Trace: abc\r\n",
+        "X-Signature: signed\r\n",
         "\r\n"
       )
       .as_bytes(),
@@ -615,12 +616,112 @@ fn server_ignores_chunk_extensions_and_trailers() {
 
   let request: Request = rx.recv().expect("receive parsed request");
   assert_eq!(b"chunked body!", request.body());
+  assert_eq!(Some("abc"), request.trailer("x-trace"));
+  assert_eq!(Some("signed"), request.trailer("X-SIGNATURE"));
+  assert_eq!(
+    &[
+      ("X-Trace".to_string(), "abc".to_string()),
+      ("X-Signature".to_string(), "signed".to_string())
+    ],
+    request.trailers()
+  );
   assert_eq!(
     "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\naccepted",
     response
   );
 
   handle.join().expect("server thread");
+}
+
+#[test]
+fn server_exposes_empty_trailers_for_chunked_request_without_trailers() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request).expect("send parsed request");
+        HttpResponse::ok("accepted")
+      })
+      .expect("serve one request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(
+      concat!(
+        "POST /upload HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Transfer-Encoding: chunked\r\n",
+        "\r\n",
+        "4\r\nbody\r\n",
+        "0\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write request");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  let request: Request = rx.recv().expect("receive parsed request");
+  assert_eq!(b"body", request.body());
+  assert!(request.trailers().is_empty());
+  assert_eq!(None, request.trailer("x-trace"));
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\naccepted",
+    response
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_returns_bad_request_for_malformed_chunked_request_trailer() {
+  let (response, handler_called) = send_raw_request(
+    concat!(
+      "POST /upload HTTP/1.1\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "\r\n",
+      "5\r\nhello\r\n",
+      "0\r\n",
+      "X-Trace abc\r\n",
+      "\r\n"
+    )
+    .as_bytes(),
+  );
+
+  assert!(!handler_called);
+  assert_eq!(
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
+}
+
+#[test]
+fn server_returns_bad_request_for_oversized_chunked_request_trailer() {
+  let trailer_value = "x".repeat(1024 * 1024);
+  let raw = format!(
+    "POST /upload HTTP/1.1\r\n\
+     Transfer-Encoding: chunked\r\n\
+     \r\n\
+     0\r\n\
+     X-Trace: {trailer_value}\r\n\
+     \r\n"
+  );
+  let (response, handler_called) = send_raw_request(raw.as_bytes());
+
+  assert!(!handler_called);
+  assert_eq!(
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
 }
 
 #[test]
