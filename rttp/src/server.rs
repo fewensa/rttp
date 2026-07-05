@@ -99,6 +99,7 @@ impl HttpServer {
       };
       let request_closes_connection = request.closes_connection();
       let request_uses_http10_defaults = request.version() == "HTTP/1.0";
+      let request_is_head = request.method() == "HEAD";
       let response = handler(request);
       let response_closes_connection = response.closes_connection();
       served += 1;
@@ -112,7 +113,11 @@ impl HttpServer {
       } else {
         DefaultConnectionHeader::Omit
       };
-      response.write_to_with_default_connection(reader.get_mut(), default_connection)?;
+      response.write_to_with_default_connection_and_body(
+        reader.get_mut(),
+        default_connection,
+        !request_is_head,
+      )?;
 
       if close_after_response {
         break;
@@ -134,8 +139,13 @@ impl HttpServer {
       }
       Err(err) => return Err(err),
     };
+    let request_is_head = request.method() == "HEAD";
     let response = handler(request);
-    response.write_to(&mut stream)
+    response.write_to_with_default_connection_and_body(
+      &mut stream,
+      DefaultConnectionHeader::Close,
+      !request_is_head,
+    )
   }
 }
 
@@ -517,8 +527,20 @@ impl HttpResponse {
   where
     W: Write,
   {
+    self.write_to_with_default_connection_and_body(writer, default_connection, true)
+  }
+
+  fn write_to_with_default_connection_and_body<W>(
+    &self,
+    writer: &mut W,
+    default_connection: DefaultConnectionHeader,
+    write_body: bool,
+  ) -> io::Result<()>
+  where
+    W: Write,
+  {
     self.write_head_to(writer, default_connection)?;
-    if self.allows_body() {
+    if write_body && self.allows_body() {
       writer.write_all(&self.body)?;
     }
     writer.flush()
