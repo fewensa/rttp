@@ -136,6 +136,24 @@ fn serializes_http_response_status_headers_content_length_and_body() {
 }
 
 #[test]
+fn serializes_at_most_one_connection_header() {
+  let response = HttpResponse::new(200, "OK")
+    .header("Connection", "keep-alive")
+    .header("Connection", "close")
+    .body("ok");
+
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+  let connection_headers = serialized
+    .lines()
+    .filter(|line| line.to_ascii_lowercase().starts_with("connection:"))
+    .count();
+
+  assert_eq!(1, connection_headers);
+  assert!(serialized.contains("\r\nConnection: close\r\n"));
+  assert!(!serialized.contains("\r\nConnection: keep-alive\r\n"));
+}
+
+#[test]
 fn rejects_response_headers_with_crlf() {
   let result = std::panic::catch_unwind(|| {
     let _response = HttpResponse::new(302, "Found").header("Location", "/safe\r\nX-Evil: true");
