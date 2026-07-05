@@ -6,11 +6,9 @@ fn package_includes_client_tests_and_support_files() {
     .arg("package")
     .arg("--list")
     .arg("--allow-dirty")
-    .arg("-p")
-    .arg("rttp_client")
-    .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/.."))
+    .current_dir(env!("CARGO_MANIFEST_DIR"))
     .output()
-    .expect("run cargo package --list -p rttp_client");
+    .expect("run cargo package --list");
 
   assert!(
     output.status.success(),
