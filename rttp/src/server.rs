@@ -1,5 +1,160 @@
 use std::error::Error;
 use std::fmt;
+use std::io::{self, Read, Write};
+use std::net::{SocketAddr, TcpListener, ToSocketAddrs};
+
+use socket2::{Domain, Protocol, Socket, Type};
+
+pub struct HttpServer {
+  listener: TcpListener,
+}
+
+impl HttpServer {
+  pub fn bind<A>(addr: A) -> io::Result<Self>
+  where
+    A: ToSocketAddrs,
+  {
+    let mut last_err = None;
+
+    for addr in addr.to_socket_addrs()? {
+      let socket = match Socket::new(Domain::for_address(addr), Type::STREAM, Some(Protocol::TCP)) {
+        Ok(socket) => socket,
+        Err(err) => {
+          last_err = Some(err);
+          continue;
+        }
+      };
+
+      if let Err(err) = socket.set_reuse_address(true) {
+        last_err = Some(err);
+        continue;
+      }
+      if let Err(err) = socket.bind(&addr.into()) {
+        last_err = Some(err);
+        continue;
+      }
+      if let Err(err) = socket.listen(128) {
+        last_err = Some(err);
+        continue;
+      }
+
+      return Ok(Self {
+        listener: TcpListener::from(socket),
+      });
+    }
+
+    Err(
+      last_err
+        .unwrap_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "address did not resolve")),
+    )
+  }
+
+  pub fn local_addr(&self) -> io::Result<SocketAddr> {
+    self.listener.local_addr()
+  }
+
+  pub fn accept_one<F>(&self, handler: F) -> io::Result<()>
+  where
+    F: FnOnce(Request) -> HttpResponse,
+  {
+    let (mut stream, _) = self.listener.accept()?;
+    let request = Request::read_from(&mut stream)?;
+    let response = handler(request);
+    response.write_to(&mut stream)
+  }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Request {
+  method: String,
+  target: String,
+  version: String,
+  headers: Vec<(String, String)>,
+  body: Vec<u8>,
+}
+
+impl Request {
+  pub fn method(&self) -> &str {
+    &self.method
+  }
+
+  pub fn target(&self) -> &str {
+    &self.target
+  }
+
+  pub fn version(&self) -> &str {
+    &self.version
+  }
+
+  pub fn header(&self, name: &str) -> Option<&str> {
+    self
+      .headers
+      .iter()
+      .find(|(key, _)| key.eq_ignore_ascii_case(name))
+      .map(|(_, value)| value.as_str())
+  }
+
+  pub fn body(&self) -> &[u8] {
+    &self.body
+  }
+
+  fn read_from<R>(reader: &mut R) -> io::Result<Self>
+  where
+    R: Read,
+  {
+    let mut raw = Vec::new();
+    let mut buf = [0u8; 1024];
+    let mut content_length = None;
+
+    loop {
+      let read = reader.read(&mut buf)?;
+      if read == 0 {
+        break;
+      }
+
+      raw.extend_from_slice(&buf[..read]);
+      let header_end = find_header_end(&raw);
+
+      if content_length.is_none() {
+        if let Some(header_end) = header_end {
+          let headers = parse_headers(&raw[..header_end])?;
+          reject_transfer_encoding(&headers)?;
+          content_length = Some(header_content_length(&headers)?);
+        }
+      }
+
+      if let (Some(header_end), Some(content_length)) = (header_end, content_length) {
+        let message_len = header_end + 4 + content_length;
+        if raw.len() >= message_len {
+          break;
+        }
+      }
+    }
+
+    let header_end = find_header_end(&raw)
+      .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))?;
+    let head = parse_request_head(&raw[..header_end])?;
+    reject_transfer_encoding(&head.headers)?;
+    let body_start = header_end + 4;
+    let content_length = header_content_length(&head.headers)?;
+    let body_end = body_start + content_length;
+
+    if raw.len() < body_end {
+      return Err(io::Error::new(
+        io::ErrorKind::UnexpectedEof,
+        "incomplete HTTP request body",
+      ));
+    }
+
+    Ok(Self {
+      method: head.method,
+      target: head.target,
+      version: head.version,
+      headers: head.headers,
+      body: raw[body_start..body_end].to_vec(),
+    })
+  }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HttpRequest {
@@ -144,6 +299,10 @@ impl HttpResponse {
     }
   }
 
+  pub fn ok(body: impl AsRef<[u8]>) -> Self {
+    Self::new(200, "OK").body(body)
+  }
+
   pub fn header<N: AsRef<str>, V: AsRef<str>>(mut self, name: N, value: V) -> Self {
     let name = name.as_ref();
     let value = value.as_ref();
@@ -160,25 +319,61 @@ impl HttpResponse {
 
   pub fn to_bytes(&self) -> Vec<u8> {
     let mut bytes = Vec::new();
-    bytes.extend_from_slice(
-      format!("{} {} {}\r\n", self.version, self.status_code, self.reason).as_bytes(),
-    );
-
-    for header in &self.headers {
-      if !header.name.eq_ignore_ascii_case("Content-Length") {
-        bytes.extend_from_slice(format!("{}: {}\r\n", header.name, header.value).as_bytes());
-      }
-    }
-
-    let allows_body = response_status_allows_body(self.status_code);
-    if allows_body {
-      bytes.extend_from_slice(format!("Content-Length: {}\r\n", self.body.len()).as_bytes());
-    }
-    bytes.extend_from_slice(b"\r\n");
-    if allows_body {
+    self
+      .write_head_to(&mut bytes, false)
+      .expect("write to Vec cannot fail");
+    if self.allows_body() {
       bytes.extend_from_slice(&self.body);
     }
     bytes
+  }
+
+  pub fn write_to<W>(&self, writer: &mut W) -> io::Result<()>
+  where
+    W: Write,
+  {
+    self.write_head_to(writer, true)?;
+    if self.allows_body() {
+      writer.write_all(&self.body)?;
+    }
+    writer.flush()
+  }
+
+  fn write_head_to<W>(&self, writer: &mut W, include_default_connection: bool) -> io::Result<()>
+  where
+    W: Write,
+  {
+    write!(
+      writer,
+      "{} {} {}\r\n",
+      self.version, self.status_code, self.reason
+    )?;
+
+    for header in &self.headers {
+      if !header.name.eq_ignore_ascii_case("Content-Length") {
+        write!(writer, "{}: {}\r\n", header.name, header.value)?;
+      }
+    }
+
+    if self.allows_body() {
+      write!(writer, "Content-Length: {}\r\n", self.body.len())?;
+    }
+    if include_default_connection && !self.has_header("Connection") {
+      writer.write_all(b"Connection: close\r\n")?;
+    }
+
+    writer.write_all(b"\r\n")
+  }
+
+  fn allows_body(&self) -> bool {
+    response_status_allows_body(self.status_code)
+  }
+
+  fn has_header(&self, name: &str) -> bool {
+    self
+      .headers
+      .iter()
+      .any(|header| header.name.eq_ignore_ascii_case(name))
   }
 }
 
@@ -225,6 +420,112 @@ impl fmt::Display for HttpParseError {
 }
 
 impl Error for HttpParseError {}
+
+fn find_header_end(raw: &[u8]) -> Option<usize> {
+  raw.windows(4).position(|window| window == b"\r\n\r\n")
+}
+
+struct RequestHead {
+  method: String,
+  target: String,
+  version: String,
+  headers: Vec<(String, String)>,
+}
+
+fn parse_request_head(raw: &[u8]) -> io::Result<RequestHead> {
+  let text = std::str::from_utf8(raw)
+    .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "request head is not UTF-8"))?;
+  let mut lines = text.split("\r\n");
+  let request_line = lines
+    .next()
+    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing request line"))?;
+  let mut parts = request_line.split_whitespace();
+  let method = parts
+    .next()
+    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing request method"))?;
+  let target = parts
+    .next()
+    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing request target"))?;
+  let version = parts
+    .next()
+    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing request version"))?;
+
+  if parts.next().is_some() {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "invalid request line",
+    ));
+  }
+
+  Ok(RequestHead {
+    method: method.to_string(),
+    target: target.to_string(),
+    version: version.to_string(),
+    headers: parse_header_lines(lines)?,
+  })
+}
+
+fn parse_headers(raw: &[u8]) -> io::Result<Vec<(String, String)>> {
+  let text = std::str::from_utf8(raw)
+    .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "request head is not UTF-8"))?;
+  parse_header_lines(text.split("\r\n").skip(1))
+}
+
+fn parse_header_lines<'a>(
+  lines: impl Iterator<Item = &'a str>,
+) -> io::Result<Vec<(String, String)>> {
+  let mut headers = Vec::new();
+
+  for line in lines {
+    if line.is_empty() {
+      continue;
+    }
+    let (name, value) = line
+      .split_once(':')
+      .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid request header"))?;
+    headers.push((name.trim().to_string(), value.trim().to_string()));
+  }
+
+  Ok(headers)
+}
+
+fn header_content_length(headers: &[(String, String)]) -> io::Result<usize> {
+  let mut length = None;
+
+  for (_, value) in headers
+    .iter()
+    .filter(|(name, _)| name.eq_ignore_ascii_case("Content-Length"))
+  {
+    let parsed = value
+      .parse::<usize>()
+      .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid Content-Length header"))?;
+    if length
+      .replace(parsed)
+      .is_some_and(|previous| previous != parsed)
+    {
+      return Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        "conflicting Content-Length headers",
+      ));
+    }
+  }
+
+  Ok(length.unwrap_or(0))
+}
+
+fn reject_transfer_encoding(headers: &[(String, String)]) -> io::Result<()> {
+  if headers
+    .iter()
+    .any(|(name, _)| name.eq_ignore_ascii_case("Transfer-Encoding"))
+  {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "Transfer-Encoding request bodies are not supported",
+    ));
+  }
+
+  Ok(())
+}
 
 fn assert_valid_header_component(component: &str) {
   assert!(
