@@ -1,219 +1,68 @@
 rttp
-===
+====
 
-# rttp
-A simple to use http lib for rust.
+A small Rust HTTP workspace with a client crate (`rttp_client`) and a wrapper
+crate (`rttp`) that also provides a minimal blocking HTTP server.
 
-# rttp_client
+## Client
 
-## Additional features
-rttp_client is a minimal http client, the default features only support
-http request, but you can add features to support https request, and async support
+`rttp_client` supports plain HTTP by default. Optional features add async
+request APIs and TLS implementations:
 
 | name | comment |
 |------|---------|
-| async | Async request features |
-| tls-native | support https request use `native-tls` crate |
-| tls-rustls | support https request use `rustls` crate |
-
-The default use
+| async | Async request APIs |
+| tls-native | HTTPS with `native-tls` |
+| tls-rustls | HTTPS with `rustls` |
 
 ```toml
 [dependencies]
-rttp_client = "0.1"
+rttp_client = "0.2"
 ```
 
-With tls-native
+Direct TCP client connections are opened with `socket2`. SOCKS proxy handshakes
+are still delegated to the `socks` crate.
 
-```toml
-[dependencies]
-rttp_client = { version = "0.1", features = ["tls-native"] }
-```
+```rust,no_run
+use rttp_client::HttpClient;
 
-With tls-rustls
-
-```toml
-[dependencies]
-rttp_client = { version = "0.1", features = ["tls-rustls"] }
-```
-
-Async support
-
-
-```toml
-[dependencies]
-rttp_client = { version = "0.1", features = ["async"] }
-```
-
-Full support
-
-```toml
-[dependencies]
-rttp_client = { version = "0.1", features = ["async", "tls-native"] }
-```
-
-*Important*
-`tls-native` and `tls-rustls` only support choose on features, do not same to use.
-
-## Examples
-
-### GET
-
-```rust
-# use rttp_client::HttpClient;
-HttpClient::new().get()
-  .url("http://httpbin.org/get")
-  .emit();
-```
-
-### POST
-
-```rust
-# use rttp_client::HttpClient;
-HttpClient::new().post()
-  .url("http://httpbin.org/post")
-  .emit();
-```
-
-### Header
-
-```rust
-# use rttp_client::HttpClient;
-# use rttp_client::types::Header;
-# use std::collections::HashMap;
-let mut multi_headers = HashMap::new();
-multi_headers.insert("name", "value");
-HttpClient::new().get()
- .url("http://httpbin.org/get")
- .header("name: value\nname: value")
- .header(("name", "value", "name: value\nname: value"))
- .header(Header::new("name", "value"))
- .header(multi_headers)
- .emit();
-```
-
-### Para
-
-```rust
-# use rttp_client::HttpClient;
-# use rttp_client::types::Para;
-# use std::collections::HashMap;
-let mut multi_para = HashMap::new();
-multi_para.insert("name", "value");
-HttpClient::new().post()
-  .url("http://httpbin.org/post")
-  .para("name=value&name=value")
-  .para(("name", "value", "name=value&name=value"))
-  .para(Para::new("name", "value"))
-  .para(multi_para)
-  .emit();
-```
-
-### Url
-
-```rust
-# use rttp_client::HttpClient;
-# use rttp_client::types::RoUrl;
-HttpClient::new().get()
-  .url(RoUrl::with("http://httpbin.org").path("get").para("name=value").para(("from", "rttp")))
-  .emit();
-```
-
-### POST JSON
-
-```rust
-# use rttp_client::HttpClient;
-HttpClient::new().post()
-  .url("http://httpbin.org/post")
-  .content_type("application/json")
-  .raw(r#" {"id": 1, "from": "rttp"} "#)
-  .emit();
-```
-
-### Form && Upload file
-
-```rust
-# use rttp_client::HttpClient;
-# use rttp_client::types::FormData;
-# use std::collections::HashMap;
-let mut multi_form = HashMap::new();
-multi_form.insert("name", "value");
-HttpClient::new().post()
-  .url("http://httpbin.org/post")
-  .para("name=value")
-  .form("name=value")
-  .form("name=value&name=value")
-  .form(("name", "value", "name=value&name=value"))
-  .form("file=@filename#/path/to/file")
-  .form("file=@/path/to/file")
-  .form(multi_form)
-  .form(FormData::with_text("name", "value"))
-  .form(FormData::with_file("name", "/path/to/file"))
-  .form(FormData::with_file_and_name("name", "/path/to/file", "filename"))
-  .form(FormData::with_binary("name", vec![]))  // Vec<u8>
-  .emit();
-```
-Para and form can be mixed, para does not support file parsing
-
-### Proxy
-
-*BASIC*
-
-```rust
-# use rttp_client::HttpClient;
-# use rttp_client::types::Proxy;
-HttpClient::new().post()
-  .url("http://httpbin.org/post")
-  .content_type("application/json")
-  .raw(r#" {"id": 1, "from": "rttp"} "#)
-  .proxy(Proxy::http("127.0.0.1", 1081))
-  .emit();
-```
-
-*BASIC WITH AUTHORIZATION*
-
-```rust
-# use rttp_client::HttpClient;
-# use rttp_client::types::Proxy;
-HttpClient::new().post()
-  .url("http://httpbin.org/post")
-  .content_type("application/json")
-  .raw(r#" {"id": 1, "from": "rttp"} "#)
-  .proxy(Proxy::socks5_with_authorization("127.0.0.1", 1081, "username", "password"))
-  .emit();
-```
-
-### Auto redirect
-
-```rust
-# use rttp_client::HttpClient;
-# use rttp_client::Config;
-let response = HttpClient::new().post()
-  .config(Config::builder().auto_redirect(true))
+let response = HttpClient::new()
   .get()
-  .url("http://bing.com")
-  .emit();
-assert!(response.is_ok());
-let response = response.unwrap();
-assert_ne!("bing.com", response.host());
+  .url("http://127.0.0.1:8080/health")
+  .emit()?;
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-### Async
+## Server
 
-```rust
-# use rttp_client::HttpClient;
-# #[cfg(feature = "async")]
-let response = HttpClient::new().post()
-  .url("http://httpbin.org/post")
-  .rasync()
-  .await;
+The `rttp` crate exposes `rttp::Http::server`, which creates a blocking
+`HttpServer` listener.
+
+```toml
+[dependencies]
+rttp = "0.2"
 ```
 
+```rust,no_run
+use rttp::server::HttpResponse;
 
+fn main() -> std::io::Result<()> {
+  let server = rttp::Http::server("127.0.0.1:0")?;
+  println!("listening on {}", server.local_addr()?);
 
+  server.accept_one(|request| {
+    println!("{} {}", request.method(), request.target());
+    HttpResponse::ok("hello")
+  })
+}
+```
 
+Use `HttpServer::bind` directly when you already want the server type,
+`HttpServer::local_addr` to read the bound address, `accept_one` for one
+connection, and `serve_requests` for a fixed number of sequential connections.
+The listener path uses `socket2`.
 
-
-
-
-
+The server is intentionally small: it handles blocking HTTP/1.x request parsing
+for local tests and simple embedded use, closes each connection after one
+response, and does not implement chunked request bodies, keep-alive serving, TLS,
+or async accept loops.
