@@ -85,6 +85,89 @@ fn test_chunked() {
 }
 
 #[test]
+fn test_chunked_with_trailers_decodes_body() {
+  let (addr, _handle) = support::spawn_chunked_response_server(concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "7;foo=bar\r\nchunked\r\n",
+    "6\r\n body!\r\n",
+    "0\r\n",
+    "X-Trace: abc\r\n",
+    "X-Signature: signed\r\n",
+    "\r\n"
+  ));
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/chunked", addr))
+    .emit()
+    .unwrap();
+
+  assert_eq!("chunked body!", response.body().string().unwrap());
+}
+
+#[test]
+fn test_chunked_oversized_extension_is_rejected() {
+  let extension = "a".repeat(16 * 1024);
+  let response = format!(
+    "HTTP/1.1 200 OK\r\n\
+     Transfer-Encoding: chunked\r\n\
+     Connection: close\r\n\
+     \r\n\
+     7;foo={extension}\r\n\
+     chunked\r\n\
+     0\r\n\
+     \r\n"
+  );
+  let (addr, _handle) = support::spawn_chunked_response_server(response);
+
+  let error = client()
+    .get()
+    .url(format!("http://{}/chunked", addr))
+    .emit()
+    .expect_err("oversized chunk extension should be rejected");
+
+  assert!(
+    error
+      .to_string()
+      .contains("chunked response line is too large"),
+    "unexpected error: {error}"
+  );
+}
+
+#[test]
+fn test_chunked_oversized_trailer_is_rejected() {
+  let trailer = "a".repeat(16 * 1024);
+  let response = format!(
+    "HTTP/1.1 200 OK\r\n\
+     Transfer-Encoding: chunked\r\n\
+     Connection: close\r\n\
+     \r\n\
+     7\r\n\
+     chunked\r\n\
+     0\r\n\
+     X-Trace: {trailer}\r\n\
+     \r\n"
+  );
+  let (addr, _handle) = support::spawn_chunked_response_server(response);
+
+  let error = client()
+    .get()
+    .url(format!("http://{}/chunked", addr))
+    .emit()
+    .expect_err("oversized chunk trailer should be rejected");
+
+  assert!(
+    error
+      .to_string()
+      .contains("chunked response line is too large"),
+    "unexpected error: {error}"
+  );
+}
+
+#[test]
 fn test_content_length_response_does_not_wait_for_eof() {
   let (addr, _handle) = support::spawn_keep_alive_server();
   let response = client()

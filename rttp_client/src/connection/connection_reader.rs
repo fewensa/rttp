@@ -9,6 +9,7 @@ use crate::types::RoUrl;
 
 const HEADER_END: &[u8] = b"\r\n\r\n";
 const CRLF: &[u8] = b"\r\n";
+const MAX_CHUNKED_RESPONSE_LINE_BYTES: usize = 8 * 1024;
 
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum ResponseBodyKind {
@@ -173,7 +174,7 @@ where
   let mut body = Vec::new();
 
   loop {
-    let line = read_crlf_line(reader)?;
+    let line = read_bounded_crlf_line(reader, MAX_CHUNKED_RESPONSE_LINE_BYTES)?;
     let chunk_size = parse_chunk_size(&line)?;
 
     if chunk_size == 0 {
@@ -190,7 +191,7 @@ where
   }
 }
 
-fn read_crlf_line<R>(reader: &mut R) -> error::Result<Vec<u8>>
+fn read_bounded_crlf_line<R>(reader: &mut R, max_len: usize) -> error::Result<Vec<u8>>
 where
   R: Read + ?Sized,
 {
@@ -201,6 +202,10 @@ where
     let read = reader.read(&mut byte).map_err(error::request)?;
     if read == 0 {
       return Err(error::bad_response("Unexpected end of chunked body"));
+    }
+
+    if line.len() == max_len {
+      return Err(error::bad_response("chunked response line is too large"));
     }
 
     line.push(byte[0]);
@@ -228,7 +233,9 @@ where
   R: Read + ?Sized,
 {
   let mut suffix = [0u8; 2];
-  reader.read_exact(&mut suffix).map_err(error::request)?;
+  reader
+    .read_exact(&mut suffix)
+    .map_err(|_| error::bad_response("Unexpected end of chunked body"))?;
   if suffix == *CRLF {
     Ok(())
   } else {
@@ -241,7 +248,7 @@ where
   R: Read + ?Sized,
 {
   loop {
-    let line = read_crlf_line(reader)?;
+    let line = read_bounded_crlf_line(reader, MAX_CHUNKED_RESPONSE_LINE_BYTES)?;
     if line == CRLF {
       return Ok(());
     }
