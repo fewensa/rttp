@@ -101,11 +101,8 @@ impl IntoPara for &str {
       .collect::<Vec<&str>>()
       .iter()
       .map(|part: &&str| {
-        let pvs: Vec<&str> = part.split("=").collect::<Vec<&str>>();
-        Para::with_form(
-          pvs.first().map_or("".to_string(), |v| v.to_string()).trim(),
-          pvs.get(1).map_or("".to_string(), |v| v.to_string()).trim(),
-        )
+        let (name, value) = part.split_once("=").unwrap_or((part, ""));
+        Para::with_form(name.trim(), value.trim())
       })
       .filter(|para: &Para| !para.name.is_empty())
       .collect::<Vec<Para>>()
