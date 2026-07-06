@@ -22,6 +22,8 @@ rttp_client = { version = "0.2", features = ["async", "tls-rustls"] }
 
 Direct TCP connections use `socket2`. SOCKS proxy handshakes remain delegated to
 the `socks` crate.
+Chunked responses are decoded, and response trailers are exposed through
+`Response::trailers` and `Response::trailer`.
 
 ## Examples
 

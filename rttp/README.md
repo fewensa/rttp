@@ -28,10 +28,15 @@ to port `0` in tests. `HttpServer::accept_one` serves one connection.
 `HttpServer::serve_requests` serves a fixed number of sequential connections on
 the same listener.
 
-The server currently parses blocking HTTP/1.x requests, supports fixed
-`Content-Length` request bodies, writes one response, and closes the connection.
-It does not implement chunked request bodies, keep-alive serving, TLS, or async
-accept loops.
+The server currently parses blocking HTTP/1.x requests for local tests and
+simple embedded use. It supports fixed `Content-Length` and chunked request
+bodies, preserves chunked request trailers on `Request`, bounds request
+head/body parsing, handles `HEAD` without writing a response body, honors
+`Connection` close/keep-alive semantics across a bounded `serve_requests` loop,
+and accepts `Expect: 100-continue`.
+
+The server is intentionally not a full RFC-covering web server and still does
+not implement server TLS or async accept loops.
 
 ## Client feature
 
