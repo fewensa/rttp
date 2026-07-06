@@ -30,18 +30,6 @@ impl HttpClient {
     Default::default()
   }
 
-  pub(crate) fn with_request(request: Request) -> Self {
-    Self { request }
-  }
-}
-
-impl HttpClient {
-  /// Set count of this request auto redirect times.
-  pub(crate) fn count(&mut self, count: u32) -> &mut Self {
-    self.request.count_set(count);
-    self
-  }
-
   /// Reset this request, The request only use once, This function can reset request.
   pub fn reset(&mut self) -> &mut Self {
     self.request = Request::new();

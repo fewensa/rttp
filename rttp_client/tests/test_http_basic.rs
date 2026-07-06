@@ -802,8 +802,49 @@ fn test_auto_redirect_resolves_relative_path_location() {
 }
 
 #[test]
+fn test_auto_redirect_preserves_trailing_slash_for_dot_segment_location() {
+  assert_redirect_resolves_to_target(|_| ".".to_string(), "/redirect/");
+}
+
+#[test]
+fn test_auto_redirect_preserves_trailing_slash_for_parent_dot_segment_location() {
+  assert_redirect_resolves_to_target(|_| "/a/b/..".to_string(), "/a/");
+}
+
+#[test]
 fn test_auto_redirect_resolves_query_only_location() {
   assert_redirect_resolves_to_target(|_| "?page=2".to_string(), "/redirect/from?page=2");
+}
+
+#[test]
+fn test_auto_redirect_preserves_percent_encoded_path_and_query_octets() {
+  assert_redirect_resolves_to_target(
+    |_| "/files/%2e%2e/a%2fb/c%FF?next=%2fdone%3fx%3d1%FF&space=a%20b".to_string(),
+    "/files/%2e%2e/a%2fb/c%FF?next=%2fdone%3fx%3d1%FF&space=a%20b",
+  );
+}
+
+#[test]
+fn test_auto_redirect_uses_preserved_percent_encoded_path_as_relative_base() {
+  let (addr, _handle) = support::spawn_redirect_chain_server(
+    vec![
+      ("/start", "/files/%2e%2e/a/"),
+      ("/files/%2e%2e/a/", "next%2fhop?token=%2e%2e"),
+    ],
+    3,
+  );
+  let response = client()
+    .config(Config::builder().auto_redirect(true).max_redirect(2))
+    .get()
+    .url(format!("http://{}/start", addr))
+    .emit();
+
+  assert!(response.is_ok());
+  let response = response.unwrap();
+  assert_eq!(
+    "/files/%2e%2e/a/next%2fhop?token=%2e%2e",
+    response.body().string().unwrap()
+  );
 }
 
 #[test]

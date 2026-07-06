@@ -1,12 +1,9 @@
 use crate::error;
 use crate::request::builder::RawBuilder;
-#[cfg(feature = "async")]
 use crate::request::is_sensitive_redirect_header;
 use crate::request::{Request, RequestBody};
-#[cfg(feature = "async")]
 use crate::types::Header;
 use crate::types::RoUrl;
-#[cfg(feature = "async")]
 use crate::types::{ToRoUrl, ToUrl};
 
 #[derive(Debug)]
@@ -39,6 +36,14 @@ impl<'a> RawRequest<'a> {
     &self.header
   }
 
+  pub(crate) fn request_target(&self) -> Option<&str> {
+    self
+      .header
+      .lines()
+      .next()
+      .and_then(|line| line.split_whitespace().nth(1))
+  }
+
   pub fn body(&self) -> &Option<RequestBody> {
     &self.body
   }
@@ -51,7 +56,6 @@ impl<'a> RawRequest<'a> {
     self.origin
   }
 
-  #[cfg(feature = "async")]
   pub(crate) fn redirect_status_set(&mut self, status_code: u32) {
     self.origin.redirect_status_set(status_code);
     if status_code == 303 && !self.origin.method().eq_ignore_ascii_case("head") {
@@ -60,19 +64,25 @@ impl<'a> RawRequest<'a> {
     }
   }
 
-  #[cfg(feature = "async")]
   pub(crate) fn redirect_url_set<S: ToRoUrl>(
     &mut self,
     rourl: S,
     strip_sensitive_headers: bool,
+    request_target: Option<&str>,
   ) -> error::Result<()> {
     let rourl = rourl.to_rourl();
     let url = rourl.to_url()?;
     let host_header = Self::redirect_host_header(&url)?;
-    let mut request_target = url.path().to_string();
-    if let Some(query) = url.query() {
-      request_target.push_str(&format!("?{}", query));
-    }
+    let request_target = request_target.map_or_else(
+      || {
+        let mut request_target = url.path().to_string();
+        if let Some(query) = url.query() {
+          request_target.push_str(&format!("?{}", query));
+        }
+        request_target
+      },
+      str::to_string,
+    );
 
     self.origin.url_set(&rourl);
     if strip_sensitive_headers {
@@ -99,7 +109,6 @@ impl<'a> RawRequest<'a> {
     Ok(())
   }
 
-  #[cfg(feature = "async")]
   fn redirect_host_header(url: &url::Url) -> error::Result<Header> {
     let host = url.host_str().ok_or(error::url_bad_host(url.clone()))?;
     Ok(match url.port() {
@@ -108,7 +117,6 @@ impl<'a> RawRequest<'a> {
     })
   }
 
-  #[cfg(feature = "async")]
   fn redirect_host_set(&mut self, header: Header) {
     if let Some(origin_header) = self
       .origin
@@ -122,7 +130,6 @@ impl<'a> RawRequest<'a> {
     }
   }
 
-  #[cfg(feature = "async")]
   fn redirect_header_host_set(rest: &str, header: &Header) -> String {
     let mut rewritten = String::new();
     let mut replaced = false;
@@ -148,7 +155,6 @@ impl<'a> RawRequest<'a> {
     }
   }
 
-  #[cfg(feature = "async")]
   fn redirect_sensitive_headers_strip(rest: &str) -> String {
     let mut rewritten = String::new();
 
@@ -168,7 +174,6 @@ impl<'a> RawRequest<'a> {
     rewritten
   }
 
-  #[cfg(feature = "async")]
   fn redirect_body_headers_remove(header: &str) -> String {
     let Some((request_line, rest)) = header.split_once("\r\n") else {
       return header.to_string();
