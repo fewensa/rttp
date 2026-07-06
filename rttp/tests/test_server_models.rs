@@ -115,6 +115,44 @@ fn rejects_invalid_and_folded_request_headers() {
 }
 
 #[test]
+fn rejects_http_11_request_without_host_header() {
+  let error =
+    HttpRequest::parse(b"GET / HTTP/1.1\r\n\r\n").expect_err("request should be rejected");
+
+  assert_eq!(
+    "HTTP/1.1 request requires exactly one Host header",
+    error.to_string()
+  );
+}
+
+#[test]
+fn rejects_http_11_request_with_multiple_host_headers() {
+  let error = HttpRequest::parse(
+    concat!(
+      "GET / HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "hOSt: other.test\r\n",
+      "\r\n"
+    )
+    .as_bytes(),
+  )
+  .expect_err("request should be rejected");
+
+  assert_eq!(
+    "HTTP/1.1 request requires exactly one Host header",
+    error.to_string()
+  );
+}
+
+#[test]
+fn accepts_http_10_request_without_host_header() {
+  let request = HttpRequest::parse(b"GET /legacy HTTP/1.0\r\n\r\n").expect("request should parse");
+
+  assert_eq!("HTTP/1.0", request.version());
+  assert_eq!(None, request.header("host"));
+}
+
+#[test]
 fn rejects_conflicting_duplicate_content_length() {
   let raw = concat!(
     "POST /submit HTTP/1.1\r\n",
