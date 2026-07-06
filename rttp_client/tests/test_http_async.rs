@@ -237,6 +237,34 @@ fn test_async_chunked_malformed_extension_is_rejected() {
 
 #[test]
 #[cfg(feature = "async")]
+fn test_async_chunked_missing_crlf_after_chunk_data_is_rejected() {
+  let (addr, _handle) = support::spawn_chunked_response_server(concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "2\r\nOK",
+    "0\r\n",
+    "\r\n"
+  ));
+
+  block_on(async {
+    let error = client()
+      .get()
+      .url(format!("http://{}/chunked", addr))
+      .rasync()
+      .await
+      .expect_err("missing chunk data terminator should be rejected");
+
+    assert!(
+      error.to_string().contains("Invalid chunk terminator"),
+      "unexpected error: {error}"
+    );
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
 fn test_async_chunked_oversized_extension_is_rejected() {
   let extension = "a".repeat(16 * 1024);
   let response = format!(

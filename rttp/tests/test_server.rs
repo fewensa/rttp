@@ -1586,6 +1586,71 @@ fn server_returns_bad_request_for_invalid_chunk_terminator() {
 }
 
 #[test]
+fn server_closes_keep_alive_after_malformed_chunked_request() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (handler_tx, handler_rx) = mpsc::channel();
+  let (done_tx, done_rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    let result = server.serve_requests(2, |request| {
+      handler_tx
+        .send(request.target().to_string())
+        .expect("send parsed target");
+      HttpResponse::ok(format!("served {}", request.target()))
+    });
+    done_tx.send(result).expect("send server result");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .set_read_timeout(Some(Duration::from_millis(250)))
+    .expect("set read timeout");
+  stream
+    .write_all(
+      concat!(
+        "POST /broken HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Connection: keep-alive\r\n",
+        "Transfer-Encoding: chunked\r\n",
+        "\r\n",
+        "5\r\nhello",
+        "XX",
+        "GET /leaked HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Connection: keep-alive\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write malformed pipelined request");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  assert!(handler_rx.try_recv().is_err());
+  assert_eq!(
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
+
+  let second_stream = TcpStream::connect(addr).expect("connect second client");
+  second_stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown second write");
+
+  let result = done_rx
+    .recv_timeout(Duration::from_millis(250))
+    .expect("serve_requests returned after second connection");
+  assert!(result.is_ok(), "serve_requests failed: {result:?}");
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn server_returns_bad_request_for_unsupported_transfer_encoding() {
   let (response, handler_called) =
     send_raw_request(b"POST /upload HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: gzip, chunked\r\n\r\n0\r\n\r\n");
