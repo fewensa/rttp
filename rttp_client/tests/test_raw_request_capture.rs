@@ -51,6 +51,65 @@ fn get_with_query_parameters_sends_request_target_without_body() {
   let text = request_text(&request);
 
   assert!(text.starts_with("GET /search?name=Julia&debug=true HTTP/1.1\r\n"));
+  assert_eq!(None, header_value(&text, "Content-Type"));
+  assert_eq!(None, header_value(&text, "Content-Length"));
+  assert_eq!(b"", request_body(&request));
+}
+
+#[test]
+fn head_without_body_omits_content_type_and_content_length() {
+  let request = capture_request(|base_url| {
+    client()
+      .head()
+      .url(format!("{}/metadata", base_url))
+      .emit()
+      .expect("request should succeed");
+  });
+
+  let text = request_text(&request);
+
+  assert!(text.starts_with("HEAD /metadata HTTP/1.1\r\n"));
+  assert_eq!(None, header_value(&text, "Content-Type"));
+  assert_eq!(None, header_value(&text, "Content-Length"));
+  assert_eq!(b"", request_body(&request));
+}
+
+#[test]
+fn delete_without_body_omits_content_type_and_content_length() {
+  let request = capture_request(|base_url| {
+    client()
+      .delete()
+      .url(format!("{}/resource", base_url))
+      .emit()
+      .expect("request should succeed");
+  });
+
+  let text = request_text(&request);
+
+  assert!(text.starts_with("DELETE /resource HTTP/1.1\r\n"));
+  assert_eq!(None, header_value(&text, "Content-Type"));
+  assert_eq!(None, header_value(&text, "Content-Length"));
+  assert_eq!(b"", request_body(&request));
+}
+
+#[test]
+fn bodyless_request_preserves_explicit_content_type_without_content_length() {
+  let request = capture_request(|base_url| {
+    client()
+      .head()
+      .url(format!("{}/metadata", base_url))
+      .content_type("application/json")
+      .emit()
+      .expect("request should succeed");
+  });
+
+  let text = request_text(&request);
+
+  assert!(text.starts_with("HEAD /metadata HTTP/1.1\r\n"));
+  assert_eq!(
+    Some("application/json"),
+    header_value(&text, "Content-Type")
+  );
   assert_eq!(None, header_value(&text, "Content-Length"));
   assert_eq!(b"", request_body(&request));
 }
@@ -83,6 +142,30 @@ fn post_para_sends_form_urlencoded_body_and_matching_content_length() {
 }
 
 #[test]
+fn raw_body_without_explicit_content_type_sends_text_plain() {
+  let raw_body = "plain body";
+  let request = capture_request(|base_url| {
+    client()
+      .post()
+      .url(format!("{}/raw", base_url))
+      .raw(raw_body)
+      .emit()
+      .expect("request should succeed");
+  });
+
+  let text = request_text(&request);
+  let body = request_body(&request);
+
+  assert!(text.starts_with("POST /raw HTTP/1.1\r\n"));
+  assert_eq!(Some("text/plain"), header_value(&text, "Content-Type"));
+  assert_eq!(
+    Some(raw_body.len().to_string().as_str()),
+    header_value(&text, "Content-Length")
+  );
+  assert_eq!(raw_body.as_bytes(), body);
+}
+
+#[test]
 fn raw_json_preserves_explicit_content_type_and_content_length() {
   let raw_body = r#"{"from":"rttp"}"#;
   let request = capture_request(|base_url| {
@@ -108,6 +191,58 @@ fn raw_json_preserves_explicit_content_type_and_content_length() {
     header_value(&text, "Content-Length")
   );
   assert_eq!(raw_body.as_bytes(), body);
+}
+
+#[test]
+fn binary_body_without_explicit_content_type_sends_octet_stream() {
+  let binary_body = vec![0, 1, 2, 3];
+  let request = capture_request(|base_url| {
+    client()
+      .post()
+      .url(format!("{}/binary", base_url))
+      .binary(binary_body.clone())
+      .emit()
+      .expect("request should succeed");
+  });
+
+  let text = request_text(&request);
+  let body = request_body(&request);
+
+  assert!(text.starts_with("POST /binary HTTP/1.1\r\n"));
+  assert_eq!(
+    Some("application/octet-stream"),
+    header_value(&text, "Content-Type")
+  );
+  assert_eq!(
+    Some(binary_body.len().to_string().as_str()),
+    header_value(&text, "Content-Length")
+  );
+  assert_eq!(binary_body.as_slice(), body);
+}
+
+#[test]
+fn multipart_form_body_sends_generated_content_type_and_content_length() {
+  let request = capture_request(|base_url| {
+    client()
+      .post()
+      .url(format!("{}/form", base_url))
+      .form("name=Julia")
+      .emit()
+      .expect("request should succeed");
+  });
+
+  let text = request_text(&request);
+  let body = request_body(&request);
+  let content_type = header_value(&text, "Content-Type").expect("content type header");
+
+  assert!(text.starts_with("POST /form HTTP/1.1\r\n"));
+  assert!(content_type.starts_with("multipart/form-data; boundary="));
+  assert_eq!(
+    Some(body.len().to_string().as_str()),
+    header_value(&text, "Content-Length")
+  );
+  assert!(body.starts_with(b"-----------------------------"));
+  assert!(body.ends_with(b"--\r\n"));
 }
 
 #[test]
