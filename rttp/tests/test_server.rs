@@ -753,7 +753,7 @@ fn server_returns_bad_request_for_conflicting_duplicate_content_length() {
       "Content-Length: 5\r\n",
       "Content-Length: 6\r\n",
       "\r\n",
-      "hello"
+      "hello!"
     )
     .as_bytes(),
   );
