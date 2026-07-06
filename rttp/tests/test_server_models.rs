@@ -271,9 +271,48 @@ fn serializes_chunked_response_body_when_transfer_encoding_is_chunked() {
 }
 
 #[test]
+fn serializes_chunked_response_trailers() {
+  let response = HttpResponse::new(200, "OK")
+    .header("Transfer-Encoding", "chunked")
+    .trailer("X-Trace", "abc")
+    .trailer("X-Signature", "signed")
+    .body("hello");
+
+  let serialized = response.to_bytes();
+
+  assert_eq!(2, response.trailers().len());
+  assert_eq!(Some("abc"), response.trailer_value("x-trace"));
+  assert_eq!(Some("signed"), response.trailer_value("X-SIGNATURE"));
+  assert_eq!(
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "\r\n",
+      "5\r\n",
+      "hello\r\n",
+      "0\r\n",
+      "X-Trace: abc\r\n",
+      "X-Signature: signed\r\n",
+      "\r\n"
+    )
+    .as_bytes(),
+    serialized.as_slice()
+  );
+}
+
+#[test]
 fn rejects_response_headers_with_crlf() {
   let result = std::panic::catch_unwind(|| {
     let _response = HttpResponse::new(302, "Found").header("Location", "/safe\r\nX-Evil: true");
+  });
+
+  assert!(result.is_err());
+}
+
+#[test]
+fn rejects_response_trailers_with_crlf() {
+  let result = std::panic::catch_unwind(|| {
+    let _response = HttpResponse::new(200, "OK").trailer("X-Trace", "safe\r\nX-Evil: true");
   });
 
   assert!(result.is_err());

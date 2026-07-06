@@ -597,6 +597,7 @@ pub struct HttpResponse {
   status_code: u16,
   reason: String,
   headers: Vec<HttpHeader>,
+  trailers: Vec<HttpHeader>,
   body: Vec<u8>,
 }
 
@@ -614,6 +615,7 @@ impl HttpResponse {
       status_code,
       reason: reason.as_ref().to_string(),
       headers: Vec::new(),
+      trailers: Vec::new(),
       body: Vec::new(),
     }
   }
@@ -629,6 +631,27 @@ impl HttpResponse {
     assert_valid_header_component(value);
     self.headers.push(HttpHeader::new(name, value));
     self
+  }
+
+  pub fn trailer<N: AsRef<str>, V: AsRef<str>>(mut self, name: N, value: V) -> Self {
+    let name = name.as_ref();
+    let value = value.as_ref();
+    assert_valid_header_component(name);
+    assert_valid_header_component(value);
+    self.trailers.push(HttpHeader::new(name, value));
+    self
+  }
+
+  pub fn trailers(&self) -> &[HttpHeader] {
+    &self.trailers
+  }
+
+  pub fn trailer_value<S: AsRef<str>>(&self, name: S) -> Option<&str> {
+    self
+      .trailers
+      .iter()
+      .find(|trailer| trailer.name.eq_ignore_ascii_case(name.as_ref()))
+      .map(|trailer| trailer.value.as_str())
   }
 
   pub fn body<B: AsRef<[u8]>>(mut self, body: B) -> Self {
@@ -729,7 +752,11 @@ impl HttpResponse {
     if self.uses_chunked_transfer_encoding() {
       write!(writer, "{:x}\r\n", self.body.len())?;
       writer.write_all(&self.body)?;
-      writer.write_all(b"\r\n0\r\n\r\n")
+      writer.write_all(b"\r\n0\r\n")?;
+      for trailer in &self.trailers {
+        write!(writer, "{}: {}\r\n", trailer.name, trailer.value)?;
+      }
+      writer.write_all(b"\r\n")
     } else {
       writer.write_all(&self.body)
     }

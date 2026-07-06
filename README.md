@@ -58,7 +58,9 @@ fn main() -> std::io::Result<()> {
 
   server.accept_one(|request| {
     println!("{} {}", request.method(), request.target());
-    HttpResponse::ok("hello").header("Transfer-Encoding", "chunked")
+    HttpResponse::ok("hello")
+      .header("Transfer-Encoding", "chunked")
+      .trailer("X-Trace", "abc")
   })
 }
 ```
@@ -70,7 +72,9 @@ Use `with_read_timeout` and `with_write_timeout` to apply socket-level
 timeouts to each accepted connection; pass `None` to leave the corresponding
 socket timeout unset. Add `Transfer-Encoding: chunked` to an `HttpResponse` to
 write the complete response body with chunked transfer framing instead of an
-automatic `Content-Length`. The listener path uses `socket2`.
+automatic `Content-Length`; response trailers added with
+`HttpResponse::trailer` are written at the end of that chunked framing. The
+listener path uses `socket2`.
 
 The server is intentionally small: it handles blocking HTTP/1.x request parsing
 for local tests and simple embedded use. It accepts fixed `Content-Length` and
