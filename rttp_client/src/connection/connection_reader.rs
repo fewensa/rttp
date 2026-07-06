@@ -71,7 +71,8 @@ where
 {
   let mut binary = loop {
     let header = read_response_header(reader)?;
-    if response_status_code(&header)? == 100 {
+    let status_code = response_status_code(&header)?;
+    if status_code == 100 || (102..200).contains(&status_code) {
       continue;
     }
     break header;
@@ -121,7 +122,7 @@ where
   }
 }
 
-fn response_status_code(header: &[u8]) -> error::Result<u16> {
+pub(crate) fn response_status_code(header: &[u8]) -> error::Result<u16> {
   let header = String::from_utf8_lossy(header);
   let status_line = header
     .lines()

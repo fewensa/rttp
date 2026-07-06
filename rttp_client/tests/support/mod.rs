@@ -222,6 +222,10 @@ pub fn spawn_keep_alive_server() -> (SocketAddr, JoinHandle<()>) {
 }
 
 pub fn spawn_continue_then_ok_server() -> (SocketAddr, JoinHandle<()>) {
+  spawn_informational_then_ok_server("100 Continue")
+}
+
+pub fn spawn_informational_then_ok_server(status: &'static str) -> (SocketAddr, JoinHandle<()>) {
   let socket = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))
     .expect("create continue server socket");
   socket
@@ -234,17 +238,20 @@ pub fn spawn_continue_then_ok_server() -> (SocketAddr, JoinHandle<()>) {
   let handle = thread::spawn(move || {
     if let Ok((mut stream, _)) = listener.accept() {
       let _ = read_http_request(&mut stream);
-      let response = concat!(
-        "HTTP/1.1 100 Continue\r\n",
-        "X-Interim: ignored\r\n",
-        "\r\n",
-        "HTTP/1.1 200 OK\r\n",
-        "Content-Type: text/plain\r\n",
-        "X-Final: yes\r\n",
-        "Content-Length: 10\r\n",
-        "Connection: close\r\n",
-        "\r\n",
-        "final body"
+      let response = format!(
+        concat!(
+          "HTTP/1.1 {}\r\n",
+          "X-Interim: ignored\r\n",
+          "\r\n",
+          "HTTP/1.1 200 OK\r\n",
+          "Content-Type: text/plain\r\n",
+          "X-Final: yes\r\n",
+          "Content-Length: 10\r\n",
+          "Connection: close\r\n",
+          "\r\n",
+          "final body"
+        ),
+        status
       );
       let _ = stream.write_all(response.as_bytes());
     }
