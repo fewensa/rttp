@@ -121,7 +121,7 @@ where
   }
 }
 
-fn response_status_code(header: &[u8]) -> error::Result<u16> {
+pub(crate) fn response_status_code(header: &[u8]) -> error::Result<u16> {
   let header = String::from_utf8_lossy(header);
   let status_line = header
     .lines()

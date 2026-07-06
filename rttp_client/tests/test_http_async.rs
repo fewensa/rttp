@@ -177,6 +177,32 @@ fn test_async_content_length_response_does_not_wait_for_eof() {
 
 #[test]
 #[cfg(feature = "async")]
+fn test_async_client_skips_100_continue_before_final_response() {
+  let (addr, _handle) = support::spawn_continue_then_ok_server();
+  block_on(async {
+    let response = client()
+      .post()
+      .url(format!("http://{}/continue", addr))
+      .header(("Expect", "100-continue"))
+      .raw("request body")
+      .rasync()
+      .await
+      .unwrap();
+
+    assert_eq!(200, response.code());
+    assert_eq!("OK", response.reason());
+    assert_eq!(
+      Some(&"text/plain".to_string()),
+      response.header_value("Content-Type")
+    );
+    assert_eq!(Some(&"yes".to_string()), response.header_value("X-Final"));
+    assert!(response.header_value("X-Interim").is_none());
+    assert_eq!("final body", response.body().string().unwrap());
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
 fn test_async_auto_redirect() {
   let (addr, _handle) = support::spawn_redirect_server();
   block_on(async {

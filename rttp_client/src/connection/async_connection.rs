@@ -10,7 +10,8 @@ use std::sync::Arc;
 
 use crate::connection::connection::{connect_tcp_stream, read_proxy_connect_response, Connection};
 use crate::connection::connection_reader::{
-  response_body_kind, ResponseBodyKind, ResponseParts, MAX_CHUNKED_RESPONSE_LINE_BYTES,
+  response_body_kind, response_status_code, ResponseBodyKind, ResponseParts,
+  MAX_CHUNKED_RESPONSE_LINE_BYTES,
 };
 use crate::error;
 use crate::request::RawRequest;
@@ -112,7 +113,13 @@ impl<'a> AsyncConnection<'a> {
   where
     S: AsyncRead + Unpin,
   {
-    let mut binary = async_read_response_header(stream).await?;
+    let mut binary = loop {
+      let header = async_read_response_header(stream).await?;
+      if response_status_code(&header)? == 100 {
+        continue;
+      }
+      break header;
+    };
     let mut trailers = Vec::new();
     match response_body_kind(&binary, self.conn.expect_no_response_body())? {
       ResponseBodyKind::NoBody => {}
