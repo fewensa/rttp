@@ -637,7 +637,9 @@ impl HttpResponse {
       .write_head_to(&mut bytes, DefaultConnectionHeader::Omit)
       .expect("write to Vec cannot fail");
     if self.allows_body() {
-      bytes.extend_from_slice(&self.body);
+      self
+        .write_body_to(&mut bytes)
+        .expect("write to Vec cannot fail");
     }
     bytes
   }
@@ -671,7 +673,7 @@ impl HttpResponse {
   {
     self.write_head_to(writer, default_connection)?;
     if write_body && self.allows_body() {
-      writer.write_all(&self.body)?;
+      self.write_body_to(writer)?;
     }
     writer.flush()
   }
@@ -700,7 +702,7 @@ impl HttpResponse {
       }
     }
 
-    if self.allows_body() {
+    if self.allows_body() && !self.uses_chunked_transfer_encoding() {
       write!(writer, "Content-Length: {}\r\n", self.body.len())?;
     }
     if connection_header_index.is_none() {
@@ -714,8 +716,31 @@ impl HttpResponse {
     writer.write_all(b"\r\n")
   }
 
+  fn write_body_to<W>(&self, writer: &mut W) -> io::Result<()>
+  where
+    W: Write,
+  {
+    if self.uses_chunked_transfer_encoding() {
+      write!(writer, "{:x}\r\n", self.body.len())?;
+      writer.write_all(&self.body)?;
+      writer.write_all(b"\r\n0\r\n\r\n")
+    } else {
+      writer.write_all(&self.body)
+    }
+  }
+
   fn allows_body(&self) -> bool {
     response_status_allows_body(self.status_code)
+  }
+
+  fn uses_chunked_transfer_encoding(&self) -> bool {
+    self.headers.iter().any(|header| {
+      header.name.eq_ignore_ascii_case("Transfer-Encoding")
+        && header
+          .value
+          .split(',')
+          .any(|token| token.trim().eq_ignore_ascii_case("chunked"))
+    })
   }
 
   fn connection_header_index(&self) -> Option<usize> {

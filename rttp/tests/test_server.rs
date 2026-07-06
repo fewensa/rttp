@@ -84,6 +84,45 @@ fn server_accepts_get_request_and_writes_response() {
 }
 
 #[test]
+fn server_writes_chunked_response_framing() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_request| HttpResponse::ok("hello").header("Transfer-Encoding", "chunked"))
+      .expect("serve one request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(b"GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n")
+    .expect("write request");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  assert_eq!(
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "Connection: close\r\n",
+      "\r\n",
+      "5\r\n",
+      "hello\r\n",
+      "0\r\n",
+      "\r\n"
+    ),
+    response
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn server_request_body_stops_at_declared_content_length() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
