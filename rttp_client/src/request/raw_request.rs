@@ -50,7 +50,11 @@ impl<'a> RawRequest<'a> {
   }
 
   #[cfg(feature = "async")]
-  pub(crate) fn redirect_url_set<S: ToRoUrl>(&mut self, rourl: S) -> error::Result<()> {
+  pub(crate) fn redirect_url_set<S: ToRoUrl>(
+    &mut self,
+    rourl: S,
+    strip_sensitive_headers: bool,
+  ) -> error::Result<()> {
     let rourl = rourl.to_rourl();
     let url = rourl.to_url()?;
     let host_header = Self::redirect_host_header(&url)?;
@@ -60,11 +64,19 @@ impl<'a> RawRequest<'a> {
     }
 
     self.origin.url_set(&rourl);
+    if strip_sensitive_headers {
+      self.origin.remove_sensitive_redirect_headers();
+    }
     self.redirect_host_set(host_header.clone());
     self.url = rourl;
 
     if let Some((_, rest)) = self.header.split_once("\r\n") {
       let rest = Self::redirect_header_host_set(rest, &host_header);
+      let rest = if strip_sensitive_headers {
+        Self::redirect_sensitive_headers_strip(&rest)
+      } else {
+        rest
+      };
       self.header = format!(
         "{} {} HTTP/1.1\r\n{}",
         self.origin.method().to_uppercase(),
@@ -123,5 +135,27 @@ impl<'a> RawRequest<'a> {
     } else {
       format!("{}: {}\r\n{}", header.name(), header.value(), rewritten)
     }
+  }
+
+  #[cfg(feature = "async")]
+  fn redirect_sensitive_headers_strip(rest: &str) -> String {
+    let mut rewritten = String::new();
+
+    for line in rest.split_inclusive("\r\n") {
+      let header_name = line
+        .trim_end_matches("\r\n")
+        .split_once(':')
+        .map(|(name, _)| name);
+
+      if header_name.is_some_and(|name| {
+        name.eq_ignore_ascii_case("authorization") || name.eq_ignore_ascii_case("cookie")
+      }) {
+        continue;
+      }
+
+      rewritten.push_str(line);
+    }
+
+    rewritten
   }
 }

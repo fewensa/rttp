@@ -192,6 +192,13 @@ impl Request {
       .find(|h| h.name().eq_ignore_ascii_case(name.as_ref()))
       .map(|h| h.value().clone())
   }
+
+  pub(crate) fn remove_sensitive_redirect_headers(&mut self) {
+    self.headers.retain(|header| {
+      !header.name().eq_ignore_ascii_case("authorization")
+        && !header.name().eq_ignore_ascii_case("cookie")
+    });
+  }
 }
 
 #[derive(Clone)]

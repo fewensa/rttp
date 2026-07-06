@@ -56,7 +56,11 @@ impl<'a> AsyncConnection<'a> {
           }
 
           let redirect_url = self.conn.redirect_url(&url, location)?;
-          self.conn.request_mut().redirect_url_set(redirect_url)?;
+          let strip_sensitive_headers = !self.conn.is_same_origin_redirect(&url, location)?;
+          self
+            .conn
+            .request_mut()
+            .redirect_url_set(redirect_url, strip_sensitive_headers)?;
           self.conn.request_mut().origin_mut().count_set(count + 1);
           continue;
         }

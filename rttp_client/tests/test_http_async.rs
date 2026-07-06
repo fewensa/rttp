@@ -345,6 +345,55 @@ fn test_async_auto_redirect_rebuilds_host_for_cross_authority_location() {
 }
 
 #[test]
+#[cfg(feature = "async")]
+fn test_async_auto_redirect_strips_sensitive_headers_for_cross_authority_location() {
+  let (origin_addr, _target_addr, _handle) =
+    support::spawn_cross_authority_redirect_header_echo_server();
+  block_on(async {
+    let response = client()
+      .config(Config::builder().auto_redirect(true))
+      .get()
+      .url(format!("http://{}/redirect", origin_addr))
+      .header(("Authorization", "Bearer secret"))
+      .header(("Cookie", "session=secret"))
+      .header(("X-Trace", "trace-123"))
+      .rasync()
+      .await;
+
+    assert!(response.is_ok());
+    let response = response.unwrap();
+    assert_eq!(
+      "authorization=\ncookie=\nx-trace=trace-123",
+      response.body().string().unwrap()
+    );
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_auto_redirect_preserves_sensitive_headers_for_same_authority_location() {
+  let (addr, _handle) = support::spawn_same_authority_redirect_header_echo_server();
+  block_on(async {
+    let response = client()
+      .config(Config::builder().auto_redirect(true))
+      .get()
+      .url(format!("http://{}/redirect", addr))
+      .header(("Authorization", "Bearer secret"))
+      .header(("Cookie", "session=secret"))
+      .header(("X-Trace", "trace-123"))
+      .rasync()
+      .await;
+
+    assert!(response.is_ok());
+    let response = response.unwrap();
+    assert_eq!(
+      "authorization=Bearer secret\ncookie=session=secret\nx-trace=trace-123",
+      response.body().string().unwrap()
+    );
+  });
+}
+
+#[test]
 #[cfg(all(feature = "async", feature = "tls-rustls"))]
 fn test_async_https() {
   let (addr, _handle) = support::spawn_tls_server();
