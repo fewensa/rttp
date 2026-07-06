@@ -84,6 +84,73 @@ fn server_accepts_get_request_and_writes_response() {
 }
 
 #[test]
+fn server_accepts_get_request_with_default_timeout_configuration() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_request| HttpResponse::ok("default"))
+      .expect("serve one request");
+  });
+
+  let response = send_request(addr, b"GET /default HTTP/1.1\r\nHost: localhost\r\n\r\n");
+
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\ndefault",
+    response
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn configured_read_timeout_bounds_idle_accepted_connection() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_millis(100)));
+  let addr = server.local_addr().expect("server addr");
+  let (result_tx, result_rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    let result = server.accept_one(|_request| HttpResponse::ok("unexpected"));
+    result_tx.send(result).expect("send server result");
+  });
+
+  let _stream = TcpStream::connect(addr).expect("connect server");
+  let result = result_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server returned after read timeout");
+  let err = result.expect_err("idle accepted connection should time out");
+  assert_eq!(std::io::ErrorKind::TimedOut, err.kind());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn configured_write_timeout_preserves_normal_response_behavior() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_write_timeout(Some(Duration::from_secs(1)));
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_request| HttpResponse::ok("write bounded"))
+      .expect("serve one request");
+  });
+
+  let response = send_request(addr, b"GET /write HTTP/1.1\r\nHost: localhost\r\n\r\n");
+
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: close\r\n\r\nwrite bounded",
+    response
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn server_writes_chunked_response_framing() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
@@ -800,6 +867,41 @@ fn server_returns_bad_request_for_truncated_chunked_request_body() {
     "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
     response
   );
+}
+
+#[test]
+fn configured_read_timeout_is_preserved_for_stalled_chunked_request_body() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_millis(100)));
+  let addr = server.local_addr().expect("server addr");
+  let (result_tx, result_rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    let result = server.accept_one(|_request| HttpResponse::ok("unexpected"));
+    result_tx.send(result).expect("send server result");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(
+      concat!(
+        "POST /upload HTTP/1.1\r\n",
+        "Transfer-Encoding: chunked\r\n",
+        "\r\n",
+        "5\r\nhel"
+      )
+      .as_bytes(),
+    )
+    .expect("write partial chunked request body");
+
+  let result = result_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server returned after chunked request body timeout");
+  let err = result.expect_err("stalled chunked request body should time out");
+  assert_eq!(std::io::ErrorKind::TimedOut, err.kind());
+
+  handle.join().expect("server thread");
 }
 
 #[test]

@@ -2,6 +2,7 @@ use std::error::Error;
 use std::fmt;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
+use std::time::Duration;
 
 use socket2::{Domain, Protocol, Socket, Type};
 
@@ -10,6 +11,8 @@ const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 
 pub struct HttpServer {
   listener: TcpListener,
+  read_timeout: Option<Duration>,
+  write_timeout: Option<Duration>,
 }
 
 impl HttpServer {
@@ -43,6 +46,8 @@ impl HttpServer {
 
       return Ok(Self {
         listener: TcpListener::from(socket),
+        read_timeout: None,
+        write_timeout: None,
       });
     }
 
@@ -54,6 +59,18 @@ impl HttpServer {
 
   pub fn local_addr(&self) -> io::Result<SocketAddr> {
     self.listener.local_addr()
+  }
+
+  /// Sets the read timeout applied to each accepted connection before parsing requests.
+  pub fn with_read_timeout(mut self, timeout: Option<Duration>) -> Self {
+    self.read_timeout = timeout;
+    self
+  }
+
+  /// Sets the write timeout applied to each accepted connection before writing responses.
+  pub fn with_write_timeout(mut self, timeout: Option<Duration>) -> Self {
+    self.write_timeout = timeout;
+    self
   }
 
   pub fn accept_one<F>(&self, handler: F) -> io::Result<()>
@@ -71,6 +88,7 @@ impl HttpServer {
 
     while served < request_count {
       let (stream, _) = self.listener.accept()?;
+      self.configure_stream(&stream)?;
       let handled = self.handle_connection(stream, request_count - served, &mut handler)?;
       served += handled.max(1);
     }
@@ -91,15 +109,16 @@ impl HttpServer {
     let mut served = 0;
 
     while served < request_limit {
-      let request = match Request::read_next_from_with_continue(&mut reader) {
-        Ok(Some(request)) => request,
-        Ok(None) => break,
-        Err(err) if is_bad_request_error(&err) => {
-          bad_request_response().write_to(reader.get_mut())?;
-          break;
-        }
-        Err(err) => return Err(err),
-      };
+      let request =
+        match self.normalize_connection_error(Request::read_next_from_with_continue(&mut reader)) {
+          Ok(Some(request)) => request,
+          Ok(None) => break,
+          Err(err) if is_bad_request_error(&err) => {
+            self.normalize_connection_error(bad_request_response().write_to(reader.get_mut()))?;
+            break;
+          }
+          Err(err) => return Err(err),
+        };
       let request_closes_connection = request.closes_connection();
       let request_uses_http10_defaults = request.version() == "HTTP/1.0";
       let request_is_head = request.method() == "HEAD";
@@ -116,11 +135,11 @@ impl HttpServer {
       } else {
         DefaultConnectionHeader::Omit
       };
-      response.write_to_with_default_connection_and_body(
+      self.normalize_connection_error(response.write_to_with_default_connection_and_body(
         reader.get_mut(),
         default_connection,
         !request_is_head,
-      )?;
+      ))?;
 
       if close_after_response {
         break;
@@ -135,23 +154,43 @@ impl HttpServer {
     F: FnOnce(Request) -> HttpResponse,
   {
     let (stream, _) = self.listener.accept()?;
+    self.configure_stream(&stream)?;
     let mut reader = BufReader::new(stream);
-    let request = match Request::read_next_from_with_continue(&mut reader).and_then(|request| {
-      request.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))
-    }) {
+    let request = match self.normalize_connection_error(
+      Request::read_next_from_with_continue(&mut reader).and_then(|request| {
+        request.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))
+      }),
+    ) {
       Ok(request) => request,
       Err(err) if is_bad_request_error(&err) => {
-        return bad_request_response().write_to(reader.get_mut());
+        return self.normalize_connection_error(bad_request_response().write_to(reader.get_mut()));
       }
       Err(err) => return Err(err),
     };
     let request_is_head = request.method() == "HEAD";
     let response = handler(request);
-    response.write_to_with_default_connection_and_body(
+    self.normalize_connection_error(response.write_to_with_default_connection_and_body(
       reader.get_mut(),
       DefaultConnectionHeader::Close,
       !request_is_head,
-    )
+    ))
+  }
+
+  fn configure_stream(&self, stream: &TcpStream) -> io::Result<()> {
+    stream.set_read_timeout(self.read_timeout)?;
+    stream.set_write_timeout(self.write_timeout)
+  }
+
+  fn normalize_connection_error<T>(&self, result: io::Result<T>) -> io::Result<T> {
+    result.map_err(|err| {
+      if err.kind() == io::ErrorKind::WouldBlock
+        && (self.read_timeout.is_some() || self.write_timeout.is_some())
+      {
+        io::Error::new(io::ErrorKind::TimedOut, err)
+      } else {
+        err
+      }
+    })
   }
 }
 
@@ -1092,12 +1131,7 @@ where
 
     let copied = {
       let mut chunk_reader = reader.take(chunk_size as u64);
-      io::copy(&mut chunk_reader, &mut body).map_err(|_| {
-        io::Error::new(
-          io::ErrorKind::UnexpectedEof,
-          "incomplete chunked request body",
-        )
-      })?
+      io::copy(&mut chunk_reader, &mut body)?
     };
 
     if copied != chunk_size as u64 {
@@ -1167,11 +1201,15 @@ where
 {
   add_request_body_bytes(body_bytes_read, 2)?;
   let mut suffix = [0u8; 2];
-  reader.read_exact(&mut suffix).map_err(|_| {
-    io::Error::new(
-      io::ErrorKind::UnexpectedEof,
-      "incomplete chunked request body",
-    )
+  reader.read_exact(&mut suffix).map_err(|err| {
+    if err.kind() == io::ErrorKind::UnexpectedEof {
+      io::Error::new(
+        io::ErrorKind::UnexpectedEof,
+        "incomplete chunked request body",
+      )
+    } else {
+      err
+    }
   })?;
   if suffix == *b"\r\n" {
     Ok(())

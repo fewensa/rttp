@@ -26,7 +26,9 @@ fn main() -> std::io::Result<()> {
 `HttpServer::local_addr` returns the bound address, which is useful when binding
 to port `0` in tests. `HttpServer::accept_one` serves one connection.
 `HttpServer::serve_requests` serves a fixed number of sequential connections on
-the same listener.
+the same listener. `HttpServer::with_read_timeout` and
+`HttpServer::with_write_timeout` apply socket-level timeouts to each accepted
+connection.
 
 The server currently parses blocking HTTP/1.x requests for local tests and
 simple embedded use. It supports fixed `Content-Length` and chunked request

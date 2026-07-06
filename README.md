@@ -62,7 +62,8 @@ fn main() -> std::io::Result<()> {
 Use `HttpServer::bind` directly when you already want the server type,
 `HttpServer::local_addr` to read the bound address, `accept_one` for one
 connection, and `serve_requests` for a fixed number of sequential connections.
-The listener path uses `socket2`.
+Use `with_read_timeout` and `with_write_timeout` to apply socket-level
+timeouts to each accepted connection. The listener path uses `socket2`.
 
 The server is intentionally small: it handles blocking HTTP/1.x request parsing
 for local tests and simple embedded use. It accepts fixed `Content-Length` and
