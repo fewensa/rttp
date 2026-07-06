@@ -88,31 +88,27 @@ fn format_host_for_authority(host: &str) -> String {
 
 impl<'a> RawBuilder<'a> {
   fn auto_add_host(&mut self, url: &Url) -> error::Result<()> {
-    if self.found_header("host") {
-      return Ok(());
-    }
-    let host = url.host_str().ok_or(error::url_bad_host(url.clone()))?;
-    let host = format_host_for_authority(host);
-    let header = match (
-      self.request.method().eq_ignore_ascii_case("connect"),
-      url.port(),
-    ) {
-      (true, Some(port)) => Header::new("Host", format!("{}:{}", host, port)),
-      (true, None) => Header::new(
-        "Host",
+    let host = expected_host_header(url, self.request.method())?;
+    if let Some(header) = self
+      .request
+      .headers()
+      .iter()
+      .find(|item| item.name().eq_ignore_ascii_case("host"))
+    {
+      if header.value().eq_ignore_ascii_case(host.value()) {
+        return Ok(());
+      }
+      return Err(error::bad_url(
+        url.clone(),
         format!(
-          "{}:{}",
-          host,
-          url
-            .port_or_known_default()
-            .ok_or(error::url_bad_host(url.clone()))?
+          "Host header '{}' conflicts with URL authority '{}'",
+          header.value(),
+          host.value()
         ),
-      ),
-      (false, Some(port)) => Header::new("Host", format!("{}:{}", host, port)),
-      (false, None) => Header::new("Host", host),
-    };
+      ));
+    }
 
-    self.request.headers_mut().push(header);
+    self.request.headers_mut().push(host);
     Ok(())
   }
 
@@ -126,7 +122,29 @@ impl<'a> RawBuilder<'a> {
       .push(Header::new("Connection", "Close"));
     Ok(())
   }
+}
 
+fn expected_host_header(url: &Url, method: &str) -> error::Result<Header> {
+  let host = url.host_str().ok_or(error::url_bad_host(url.clone()))?;
+  let host = format_host_for_authority(host);
+  Ok(match (method.eq_ignore_ascii_case("connect"), url.port()) {
+    (true, Some(port)) => Header::new("Host", format!("{}:{}", host, port)),
+    (true, None) => Header::new(
+      "Host",
+      format!(
+        "{}:{}",
+        host,
+        url
+          .port_or_known_default()
+          .ok_or(error::url_bad_host(url.clone()))?
+      ),
+    ),
+    (false, Some(port)) => Header::new("Host", format!("{}:{}", host, port)),
+    (false, None) => Header::new("Host", host),
+  })
+}
+
+impl<'a> RawBuilder<'a> {
   fn auto_add_ua(&mut self) -> error::Result<()> {
     if self.found_header("user-agent") {
       return Ok(());

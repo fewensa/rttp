@@ -1,6 +1,7 @@
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener};
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 pub const HTTP_OK_RESPONSE: &[u8] =
   b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK";
@@ -83,6 +84,33 @@ pub fn capture_raw_http_request() -> (SocketAddr, JoinHandle<Vec<u8>>) {
     let request = read_http_request(&mut stream);
     let _ = stream.write_all(HTTP_OK_RESPONSE);
     request
+  });
+  (addr, handle)
+}
+
+pub fn capture_optional_raw_http_request(timeout: Duration) -> (SocketAddr, JoinHandle<Vec<u8>>) {
+  let (listener, addr) = bind_local_http_listener("optional raw request capture server");
+  listener
+    .set_nonblocking(true)
+    .expect("set optional raw request capture server nonblocking");
+  let handle = thread::spawn(move || {
+    let deadline = Instant::now() + timeout;
+    loop {
+      match listener.accept() {
+        Ok((mut stream, _)) => {
+          let request = read_http_request(&mut stream);
+          let _ = stream.write_all(HTTP_OK_RESPONSE);
+          return request;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+          if Instant::now() >= deadline {
+            return Vec::new();
+          }
+          thread::sleep(Duration::from_millis(10));
+        }
+        Err(_) => return Vec::new(),
+      }
+    }
   });
   (addr, handle)
 }

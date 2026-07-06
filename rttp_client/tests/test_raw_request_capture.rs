@@ -1,6 +1,9 @@
 mod support;
 
+#[cfg(feature = "async")]
+use futures::executor::block_on;
 use rttp_client::HttpClient;
+use std::time::Duration;
 
 fn client() -> HttpClient {
   HttpClient::new()
@@ -10,6 +13,12 @@ fn capture_request(request: impl FnOnce(String)) -> Vec<u8> {
   let (addr, handle) = support::capture_raw_http_request();
   request(format!("http://{}", addr));
   handle.join().expect("raw request capture server")
+}
+
+fn capture_optional_request(request: impl FnOnce(String)) -> Vec<u8> {
+  let (addr, handle) = support::capture_optional_raw_http_request(Duration::from_millis(250));
+  request(format!("http://{}", addr));
+  handle.join().expect("optional raw request capture server")
 }
 
 fn request_text(request: &[u8]) -> String {
@@ -299,10 +308,13 @@ fn multipart_form_body_sends_generated_content_type_and_content_length() {
 #[test]
 fn custom_common_headers_are_not_overwritten_by_auto_headers() {
   let request = capture_request(|base_url| {
+    let authority = base_url
+      .strip_prefix("http://")
+      .expect("test URL should be http");
     client()
       .get()
       .url(format!("{}/headers", base_url))
-      .header("Host: example.test")
+      .header(("Host", authority))
       .header("User-Agent: custom-agent/1.0")
       .header("Accept: application/json")
       .header("Connection: keep-alive")
@@ -311,11 +323,144 @@ fn custom_common_headers_are_not_overwritten_by_auto_headers() {
   });
 
   let text = request_text(&request);
+  let authority = header_value(&text, "Host").expect("host header");
 
-  assert_eq!(Some("example.test"), header_value(&text, "Host"));
+  assert!(authority.starts_with("127.0.0.1:"));
   assert_eq!(Some("custom-agent/1.0"), header_value(&text, "User-Agent"));
   assert_eq!(Some("application/json"), header_value(&text, "Accept"));
   assert_eq!(Some("keep-alive"), header_value(&text, "Connection"));
+}
+
+#[test]
+fn matching_explicit_host_header_is_preserved() {
+  let request = capture_request(|base_url| {
+    let authority = base_url
+      .strip_prefix("http://")
+      .expect("test URL should be http");
+    client()
+      .get()
+      .url(format!("{}/headers", base_url))
+      .header(("Host", authority))
+      .emit()
+      .expect("request should succeed");
+  });
+
+  let text = request_text(&request);
+  let authority = header_value(&text, "Host").expect("host header");
+
+  assert!(authority.starts_with("127.0.0.1:"));
+  assert!(text.starts_with("GET /headers HTTP/1.1\r\n"));
+}
+
+#[test]
+fn conflicting_explicit_host_header_is_rejected_before_sending_request() {
+  let request = capture_optional_request(|base_url| {
+    let error = client()
+      .get()
+      .url(format!("{}/headers", base_url))
+      .header(("Host", "example.test"))
+      .emit()
+      .expect_err("conflicting host should be rejected");
+
+    assert!(error.is_builder());
+    assert!(error.to_string().contains("Host header"));
+  });
+
+  assert_eq!(b"", request.as_slice());
+}
+
+#[test]
+fn missing_host_header_is_generated_from_url_authority() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/headers", base_url))
+      .emit()
+      .expect("request should succeed");
+  });
+
+  let text = request_text(&request);
+  let authority = text
+    .lines()
+    .find_map(|line| line.strip_prefix("Host: "))
+    .expect("generated host header");
+
+  assert!(authority.starts_with("127.0.0.1:"));
+  assert!(text.starts_with("GET /headers HTTP/1.1\r\n"));
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn async_matching_explicit_host_header_is_preserved() {
+  let request = {
+    let (addr, handle) = support::capture_raw_http_request();
+    block_on(async {
+      let base_url = format!("http://{}", addr);
+      let authority = base_url
+        .strip_prefix("http://")
+        .expect("test URL should be http");
+      client()
+        .get()
+        .url(format!("{}/headers", base_url))
+        .header(("Host", authority))
+        .rasync()
+        .await
+        .expect("request should succeed");
+    });
+    handle.join().expect("raw request capture server")
+  };
+
+  let text = request_text(&request);
+  let authority = header_value(&text, "Host").expect("host header");
+
+  assert!(authority.starts_with("127.0.0.1:"));
+  assert!(text.starts_with("GET /headers HTTP/1.1\r\n"));
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn async_conflicting_explicit_host_header_is_rejected_before_sending_request() {
+  let request = {
+    let (addr, handle) = support::capture_optional_raw_http_request(Duration::from_millis(250));
+    block_on(async {
+      let error = client()
+        .get()
+        .url(format!("http://{}/headers", addr))
+        .header(("Host", "example.test"))
+        .rasync()
+        .await
+        .expect_err("conflicting host should be rejected");
+
+      assert!(error.is_builder());
+      assert!(error.to_string().contains("Host header"));
+    });
+    handle.join().expect("optional raw request capture server")
+  };
+
+  assert_eq!(b"", request.as_slice());
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn async_missing_host_header_is_generated_from_url_authority() {
+  let request = {
+    let (addr, handle) = support::capture_raw_http_request();
+    block_on(async {
+      client()
+        .get()
+        .url(format!("http://{}/headers", addr))
+        .rasync()
+        .await
+        .expect("request should succeed");
+    });
+    handle.join().expect("raw request capture server")
+  };
+
+  let text = request_text(&request);
+  let authority = header_value(&text, "Host").expect("generated host header");
+
+  assert!(authority.starts_with("127.0.0.1:"));
+  assert!(text.starts_with("GET /headers HTTP/1.1\r\n"));
 }
 
 #[test]

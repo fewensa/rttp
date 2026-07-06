@@ -122,6 +122,10 @@ pub fn capture_raw_http_request() -> (SocketAddr, JoinHandle<Vec<u8>>) {
   local_http::capture_raw_http_request()
 }
 
+pub fn capture_optional_raw_http_request(timeout: Duration) -> (SocketAddr, JoinHandle<Vec<u8>>) {
+  local_http::capture_optional_raw_http_request(timeout)
+}
+
 pub fn spawn_chunked_server() -> (SocketAddr, JoinHandle<()>) {
   spawn_chunked_response_server(concat!(
     "HTTP/1.1 200 OK\r\n",
