@@ -168,9 +168,10 @@ pub(crate) fn response_body_kind(
   let header = String::from_utf8_lossy(header);
   let lines = header.lines().skip(1);
   let mut content_length = None;
+  let mut has_content_length = false;
   let mut invalid_content_length = false;
   let mut conflicting_content_length = false;
-  let mut chunked = false;
+  let mut transfer_codings = Vec::new();
 
   for line in lines {
     let Some((name, value)) = line.split_once(':') else {
@@ -178,12 +179,18 @@ pub(crate) fn response_body_kind(
     };
 
     if name.eq_ignore_ascii_case("Transfer-Encoding") {
-      chunked = value
-        .split(',')
-        .any(|token| token.trim().eq_ignore_ascii_case("chunked"));
+      for token in value.split(',').map(str::trim) {
+        if token.is_empty() {
+          return Err(error::bad_response(
+            "Unsupported Transfer-Encoding response body",
+          ));
+        }
+        transfer_codings.push(token);
+      }
     }
 
     if name.eq_ignore_ascii_case("Content-Length") {
+      has_content_length = true;
       for token in value.split(',') {
         let Ok(length) = token.trim().parse::<usize>() else {
           invalid_content_length = true;
@@ -199,9 +206,21 @@ pub(crate) fn response_body_kind(
     }
   }
 
-  if chunked {
-    Ok(ResponseBodyKind::Chunked)
-  } else if conflicting_content_length {
+  if !transfer_codings.is_empty() {
+    if has_content_length {
+      return Err(error::bad_response(
+        "Transfer-Encoding conflicts with Content-Length",
+      ));
+    }
+    if transfer_codings.len() == 1 && transfer_codings[0].eq_ignore_ascii_case("chunked") {
+      return Ok(ResponseBodyKind::Chunked);
+    }
+    return Err(error::bad_response(
+      "Unsupported Transfer-Encoding response body",
+    ));
+  }
+
+  if conflicting_content_length {
     Err(error::bad_response("Conflicting Content-Length headers"))
   } else if invalid_content_length {
     Err(error::bad_response("Invalid Content-Length header"))
@@ -518,7 +537,7 @@ mod tests {
   }
 
   #[test]
-  fn test_chunked_extensions_and_trailers_are_preserved() {
+  fn test_non_chunked_transfer_coding_before_chunked_is_rejected() {
     let raw = concat!(
       "HTTP/1.1 200 OK\r\n",
       "Transfer-Encoding: gzip, chunked\r\n",
@@ -532,16 +551,16 @@ mod tests {
     let url = url::Url::parse("http://localhost").unwrap();
     let mut cursor = Cursor::new(raw.as_bytes());
     let mut reader = ConnectionReader::new(&url, &mut cursor, false);
-    let response = reader.response().unwrap();
 
-    assert_eq!("chunked body!", response.body().string().unwrap());
-    assert_eq!(
-      Some(&"gzip, chunked".to_string()),
-      response.header_value("Transfer-Encoding")
-    );
-    assert_eq!(
-      Some("abc"),
-      response.trailer_value("x-trace").map(String::as_str)
+    let error = reader
+      .response()
+      .expect_err("unsupported transfer coding should be rejected");
+
+    assert!(
+      error
+        .to_string()
+        .contains("Unsupported Transfer-Encoding response body"),
+      "unexpected error: {error}"
     );
   }
 
@@ -750,7 +769,7 @@ mod tests {
   }
 
   #[test]
-  fn test_transfer_encoding_chunked_takes_precedence_over_content_length() {
+  fn test_transfer_encoding_chunked_with_content_length_is_rejected() {
     let raw = concat!(
       "HTTP/1.1 200 OK\r\n",
       "Content-Length: 999\r\n",
@@ -763,8 +782,15 @@ mod tests {
     let mut cursor = Cursor::new(raw.as_bytes());
     let mut reader = ConnectionReader::new(&url, &mut cursor, false);
 
-    let response = reader.response().unwrap();
+    let error = reader
+      .response()
+      .expect_err("Transfer-Encoding with Content-Length should be rejected");
 
-    assert_eq!("OK", response.body().string().unwrap());
+    assert!(
+      error
+        .to_string()
+        .contains("Transfer-Encoding conflicts with Content-Length"),
+      "unexpected error: {error}"
+    );
   }
 }

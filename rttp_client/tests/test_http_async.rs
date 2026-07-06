@@ -117,6 +117,65 @@ Connection: close\r\n\
 
 #[test]
 #[cfg(feature = "async")]
+fn test_async_transfer_encoding_chunked_with_content_length_is_rejected() {
+  let (addr, _handle) = support::spawn_chunked_response_server(concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "Content-Length: 2\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "2\r\nOK\r\n",
+    "0\r\n\r\n"
+  ));
+
+  block_on(async {
+    let error = client()
+      .get()
+      .url(format!("http://{}/chunked", addr))
+      .rasync()
+      .await
+      .expect_err("ambiguous response framing should be rejected");
+
+    assert!(
+      error
+        .to_string()
+        .contains("Transfer-Encoding conflicts with Content-Length"),
+      "unexpected error: {error}"
+    );
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_non_chunked_transfer_coding_before_chunked_is_rejected() {
+  let (addr, _handle) = support::spawn_chunked_response_server(concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Transfer-Encoding: gzip, chunked\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "2\r\nOK\r\n",
+    "0\r\n\r\n"
+  ));
+
+  block_on(async {
+    let error = client()
+      .get()
+      .url(format!("http://{}/chunked", addr))
+      .rasync()
+      .await
+      .expect_err("unsupported transfer coding should be rejected");
+
+    assert!(
+      error
+        .to_string()
+        .contains("Unsupported Transfer-Encoding response body"),
+      "unexpected error: {error}"
+    );
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
 fn test_async_chunked_malformed_extension_is_rejected() {
   let (addr, _handle) = support::spawn_chunked_response_server(concat!(
     "HTTP/1.1 200 OK\r\n",
