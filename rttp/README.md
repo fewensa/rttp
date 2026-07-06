@@ -22,7 +22,9 @@ fn main() -> std::io::Result<()> {
 
   server.accept_one(|request| {
     println!("{} {}", request.method(), request.target());
-    HttpResponse::ok("hello").header("Transfer-Encoding", "chunked")
+    HttpResponse::ok("hello")
+      .header("Transfer-Encoding", "chunked")
+      .trailer("X-Trace", "abc")
   })
 }
 ```
@@ -36,7 +38,9 @@ connection; pass `None` to leave the corresponding socket timeout unset.
 
 Add `Transfer-Encoding: chunked` to an `HttpResponse` to write the complete
 response body with chunked transfer framing instead of an automatic
-`Content-Length` when the response status permits a message body.
+`Content-Length` when the response status permits a message body. Response
+trailers added with `HttpResponse::trailer` are written at the end of that
+chunked framing.
 
 The server currently parses blocking HTTP/1.x requests for local tests and
 simple embedded use. It supports fixed `Content-Length` and chunked request
