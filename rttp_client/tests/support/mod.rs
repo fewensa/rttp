@@ -114,6 +114,10 @@ pub fn spawn_http_server_count(count: usize) -> (SocketAddr, JoinHandle<()>) {
   local_http::spawn_ok_http_server_count(count)
 }
 
+pub fn capture_raw_http_request() -> (SocketAddr, JoinHandle<Vec<u8>>) {
+  local_http::capture_raw_http_request()
+}
+
 pub fn spawn_chunked_server() -> (SocketAddr, JoinHandle<()>) {
   spawn_chunked_response_server(concat!(
     "HTTP/1.1 200 OK\r\n",

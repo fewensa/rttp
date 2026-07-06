@@ -73,3 +73,16 @@ pub fn spawn_ok_http_server_count(count: usize) -> (SocketAddr, JoinHandle<()>) 
   });
   (addr, handle)
 }
+
+pub fn capture_raw_http_request() -> (SocketAddr, JoinHandle<Vec<u8>>) {
+  let (listener, addr) = bind_local_http_listener("raw request capture server");
+  let handle = thread::spawn(move || {
+    let Ok((mut stream, _)) = listener.accept() else {
+      return Vec::new();
+    };
+    let request = read_http_request(&mut stream);
+    let _ = stream.write_all(HTTP_OK_RESPONSE);
+    request
+  });
+  (addr, handle)
+}
