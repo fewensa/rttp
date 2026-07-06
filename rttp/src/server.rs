@@ -115,6 +115,7 @@ impl HttpServer {
           Ok(None) => break,
           Err(err) if is_bad_request_error(&err) => {
             self.normalize_connection_error(bad_request_response().write_to(reader.get_mut()))?;
+            served += 1;
             break;
           }
           Err(err) => return Err(err),
