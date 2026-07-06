@@ -585,6 +585,51 @@ fn server_returns_bad_request_for_unsupported_expectation_without_calling_handle
 }
 
 #[test]
+fn server_rejects_unsupported_expectation_before_body_is_sent() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request).expect("send parsed request");
+        HttpResponse::ok("unexpected")
+      })
+      .expect("serve one request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .set_read_timeout(Some(Duration::from_millis(250)))
+    .expect("set read timeout");
+  stream
+    .write_all(
+      concat!(
+        "POST /submit HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Expect: magic\r\n",
+        "Content-Length: 5\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write request head");
+
+  let expected =
+    b"HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request";
+  let mut response = vec![0; expected.len()];
+  stream
+    .read_exact(&mut response)
+    .expect("read final response");
+
+  assert_eq!(expected, response.as_slice());
+  assert!(rx.try_recv().is_err());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn server_returns_bad_request_for_expect_with_conflicting_body_framing_without_continue() {
   let (response, handler_called) = send_raw_request(
     concat!(

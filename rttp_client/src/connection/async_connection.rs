@@ -8,7 +8,10 @@ use url::Url;
 #[cfg(feature = "tls-rustls")]
 use std::sync::Arc;
 
-use crate::connection::connection::{connect_tcp_stream, read_proxy_connect_response, Connection};
+use crate::connection::connection::{
+  connect_tcp_stream, read_proxy_connect_response, request_expects_continue, Connection,
+  ExpectContinueResult,
+};
 use crate::connection::connection_reader::{
   is_skippable_informational_status, response_body_kind, response_status_code, ResponseBodyKind,
   ResponseParts, MAX_CHUNKED_RESPONSE_LINE_BYTES,
@@ -109,6 +112,34 @@ impl<'a> AsyncConnection<'a> {
     Ok(())
   }
 
+  async fn async_write_request_header_with<S>(
+    &self,
+    stream: &mut S,
+    header: &str,
+  ) -> error::Result<()>
+  where
+    S: AsyncWrite + Unpin,
+  {
+    stream
+      .write_all(header.as_bytes())
+      .await
+      .map_err(error::request)?;
+    stream.flush().await.map_err(error::request)
+  }
+
+  async fn async_write_request_body<S>(&self, stream: &mut S) -> error::Result<()>
+  where
+    S: AsyncWrite + Unpin,
+  {
+    if let Some(body) = self.conn.body() {
+      stream
+        .write_all(body.bytes())
+        .await
+        .map_err(error::request)?;
+    }
+    stream.flush().await.map_err(error::request)
+  }
+
   async fn async_read_stream_parts<S>(
     &self,
     _url: &Url,
@@ -117,7 +148,7 @@ impl<'a> AsyncConnection<'a> {
   where
     S: AsyncRead + Unpin,
   {
-    let mut binary = loop {
+    let binary = loop {
       let header = async_read_response_header(stream).await?;
       let status_code = response_status_code(&header)?;
       if is_skippable_informational_status(status_code) {
@@ -125,6 +156,19 @@ impl<'a> AsyncConnection<'a> {
       }
       break header;
     };
+    self
+      .async_read_stream_parts_after_header(stream, binary)
+      .await
+  }
+
+  async fn async_read_stream_parts_after_header<S>(
+    &self,
+    stream: &mut S,
+    mut binary: Vec<u8>,
+  ) -> error::Result<ResponseParts>
+  where
+    S: AsyncRead + Unpin,
+  {
     let mut trailers = Vec::new();
     match response_body_kind(&binary, self.conn.expect_no_response_body())? {
       ResponseBodyKind::NoBody => {}
@@ -149,6 +193,48 @@ impl<'a> AsyncConnection<'a> {
       }
     }
     Ok(ResponseParts { binary, trailers })
+  }
+
+  async fn async_send_expect_continue_parts<S>(
+    &self,
+    stream: &mut S,
+  ) -> error::Result<ExpectContinueResult>
+  where
+    S: AsyncRead + AsyncWrite + Unpin,
+  {
+    self
+      .async_send_expect_continue_parts_with_header(stream, self.conn.header())
+      .await
+  }
+
+  async fn async_send_expect_continue_parts_with_header<S>(
+    &self,
+    stream: &mut S,
+    header: &str,
+  ) -> error::Result<ExpectContinueResult>
+  where
+    S: AsyncRead + AsyncWrite + Unpin,
+  {
+    if !request_expects_continue(header, self.conn.body().as_ref()) {
+      return Ok(ExpectContinueResult::NotUsed);
+    }
+
+    self.async_write_request_header_with(stream, header).await?;
+    loop {
+      let header = async_read_response_header(stream).await?;
+      let status_code = response_status_code(&header)?;
+      if status_code == 100 {
+        self.async_write_request_body(stream).await?;
+        return Ok(ExpectContinueResult::BodySent);
+      }
+      if is_skippable_informational_status(status_code) {
+        continue;
+      }
+      return self
+        .async_read_stream_parts_after_header(stream, header)
+        .await
+        .map(ExpectContinueResult::Final);
+    }
   }
 }
 
@@ -318,7 +404,11 @@ impl<'a> AsyncConnection<'a> {
   where
     S: AsyncRead + AsyncWrite + Unpin,
   {
-    self.async_write_stream(stream).await?;
+    match self.async_send_expect_continue_parts(stream).await? {
+      ExpectContinueResult::NotUsed => self.async_write_stream(stream).await?,
+      ExpectContinueResult::BodySent => {}
+      ExpectContinueResult::Final(parts) => return Ok(parts),
+    }
     self.async_read_stream_parts(url, stream).await
   }
 
@@ -401,7 +491,14 @@ impl<'a> AsyncConnection<'a> {
       .await
       .map_err(|e| error::bad_ssl(e.to_string()))?;
 
-    self.async_write_stream(&mut tls_stream).await?;
+    match self
+      .async_send_expect_continue_parts(&mut tls_stream)
+      .await?
+    {
+      ExpectContinueResult::NotUsed => self.async_write_stream(&mut tls_stream).await?,
+      ExpectContinueResult::BodySent => {}
+      ExpectContinueResult::Final(parts) => return Ok(parts),
+    }
     self.async_read_stream_parts(url, &mut tls_stream).await
   }
 }
@@ -429,7 +526,14 @@ impl<'a> AsyncConnection<'a> {
     let mut stream = AllowStdIo::new(stream);
     let header = self.conn.proxy_http_header(url, proxy);
 
-    self.async_write_request(&mut stream, &header).await?;
+    match self
+      .async_send_expect_continue_parts_with_header(&mut stream, &header)
+      .await?
+    {
+      ExpectContinueResult::NotUsed => self.async_write_request(&mut stream, &header).await?,
+      ExpectContinueResult::BodySent => {}
+      ExpectContinueResult::Final(parts) => return Ok(parts),
+    }
     self.async_read_stream_parts(url, &mut stream).await
   }
 

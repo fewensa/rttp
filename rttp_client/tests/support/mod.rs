@@ -452,6 +452,115 @@ pub fn spawn_continue_then_ok_server() -> (SocketAddr, JoinHandle<()>) {
   spawn_informational_then_ok_server("100 Continue")
 }
 
+pub fn spawn_expect_continue_gate_server() -> (SocketAddr, JoinHandle<Vec<u8>>) {
+  let (listener, addr) = bind_local_http_listener("expect continue gate server");
+  let handle = thread::spawn(move || {
+    let Ok((mut stream, _)) = listener.accept() else {
+      return Vec::new();
+    };
+
+    stream
+      .set_read_timeout(Some(Duration::from_millis(100)))
+      .expect("set gate read timeout");
+
+    let mut request_head = Vec::new();
+    let mut byte = [0u8; 1];
+    while !request_head.ends_with(b"\r\n\r\n") {
+      stream
+        .read_exact(&mut byte)
+        .expect("read expect request head");
+      request_head.push(byte[0]);
+    }
+
+    let mut premature_body = [0u8; 1];
+    match stream.read(&mut premature_body) {
+      Err(err)
+        if matches!(
+          err.kind(),
+          io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+        ) => {}
+      Ok(0) => {}
+      Ok(_) => return Vec::new(),
+      Err(err) => panic!("unexpected gate read error: {err}"),
+    }
+
+    stream
+      .write_all(b"HTTP/1.1 100 Continue\r\n\r\n")
+      .expect("write continue");
+
+    let mut request = request_head;
+    let mut body = [0u8; 12];
+    stream.read_exact(&mut body).expect("read expect body");
+    request.extend_from_slice(&body);
+
+    stream
+      .write_all(
+        concat!(
+          "HTTP/1.1 200 OK\r\n",
+          "Content-Length: 8\r\n",
+          "Connection: close\r\n",
+          "\r\n",
+          "accepted"
+        )
+        .as_bytes(),
+      )
+      .expect("write final response");
+
+    request
+  });
+  (addr, handle)
+}
+
+pub fn spawn_expect_continue_reject_gate_server() -> (SocketAddr, JoinHandle<Vec<u8>>) {
+  let (listener, addr) = bind_local_http_listener("expect continue reject gate server");
+  let handle = thread::spawn(move || {
+    let Ok((mut stream, _)) = listener.accept() else {
+      return Vec::new();
+    };
+
+    stream
+      .set_read_timeout(Some(Duration::from_millis(100)))
+      .expect("set reject gate read timeout");
+
+    let mut request_head = Vec::new();
+    let mut byte = [0u8; 1];
+    while !request_head.ends_with(b"\r\n\r\n") {
+      stream
+        .read_exact(&mut byte)
+        .expect("read expect request head");
+      request_head.push(byte[0]);
+    }
+
+    let mut premature_body = [0u8; 1];
+    match stream.read(&mut premature_body) {
+      Err(err)
+        if matches!(
+          err.kind(),
+          io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+        ) => {}
+      Ok(0) => {}
+      Ok(_) => return Vec::new(),
+      Err(err) => panic!("unexpected reject gate read error: {err}"),
+    }
+
+    stream
+      .write_all(
+        concat!(
+          "HTTP/1.1 417 Expectation Failed\r\n",
+          "Content-Length: 18\r\n",
+          "Connection: close\r\n",
+          "\r\n",
+          "Expectation Failed"
+        )
+        .as_bytes(),
+      )
+      .expect("write expectation failed");
+
+    request_head
+  });
+  (addr, handle)
+}
+
 pub fn spawn_informational_then_ok_server(status: &'static str) -> (SocketAddr, JoinHandle<()>) {
   let socket = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))
     .expect("create continue server socket");
@@ -464,7 +573,15 @@ pub fn spawn_informational_then_ok_server(status: &'static str) -> (SocketAddr, 
 
   let handle = thread::spawn(move || {
     if let Ok((mut stream, _)) = listener.accept() {
-      let _ = read_http_request(&mut stream);
+      let mut request_head = Vec::new();
+      let mut byte = [0u8; 1];
+      while !request_head.ends_with(b"\r\n\r\n") {
+        if stream.read_exact(&mut byte).is_err() {
+          return;
+        }
+        request_head.push(byte[0]);
+      }
+
       let response = format!(
         concat!(
           "HTTP/1.1 {}\r\n",
@@ -480,7 +597,29 @@ pub fn spawn_informational_then_ok_server(status: &'static str) -> (SocketAddr, 
         ),
         status
       );
-      let _ = stream.write_all(response.as_bytes());
+      let Some((interim, final_response)) = response.split_once("HTTP/1.1 200 OK\r\n") else {
+        return;
+      };
+      let _ = stream.write_all(interim.as_bytes());
+
+      let content_length = String::from_utf8_lossy(&request_head)
+        .lines()
+        .find_map(|line| {
+          let (name, value) = line.split_once(':')?;
+          if name.eq_ignore_ascii_case("content-length") {
+            value.trim().parse::<usize>().ok()
+          } else {
+            None
+          }
+        })
+        .unwrap_or(0);
+      let mut body = vec![0u8; content_length];
+      if stream.read_exact(&mut body).is_err() {
+        return;
+      }
+
+      let final_response = format!("HTTP/1.1 200 OK\r\n{final_response}");
+      let _ = stream.write_all(final_response.as_bytes());
     }
   });
 

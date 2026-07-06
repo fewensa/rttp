@@ -69,7 +69,7 @@ pub(crate) fn read_response_parts<R>(
 where
   R: Read + ?Sized,
 {
-  let mut binary = loop {
+  let binary = loop {
     let header = read_response_header(reader)?;
     let status_code = response_status_code(&header)?;
     if is_skippable_informational_status(status_code) {
@@ -77,6 +77,17 @@ where
     }
     break header;
   };
+  read_response_parts_after_header(reader, expect_no_body, binary)
+}
+
+pub(crate) fn read_response_parts_after_header<R>(
+  reader: &mut R,
+  expect_no_body: bool,
+  mut binary: Vec<u8>,
+) -> error::Result<ResponseParts>
+where
+  R: Read + ?Sized,
+{
   let mut trailers = Vec::new();
   match response_body_kind(&binary, expect_no_body)? {
     ResponseBodyKind::NoBody => {}
@@ -99,7 +110,7 @@ where
   Ok(ResponseParts { binary, trailers })
 }
 
-fn read_response_header<R>(reader: &mut R) -> error::Result<Vec<u8>>
+pub(crate) fn read_response_header<R>(reader: &mut R) -> error::Result<Vec<u8>>
 where
   R: Read + ?Sized,
 {

@@ -3,7 +3,7 @@ use std::io::Write;
 use socks::{Socks4Stream, Socks5Stream};
 use url::Url;
 
-use crate::connection::connection::Connection;
+use crate::connection::connection::{Connection, ExpectContinueResult};
 use crate::connection::connection_reader::ResponseParts;
 use crate::request::RawRequest;
 use crate::response::Response;
@@ -90,13 +90,22 @@ impl<'a> BlockConnection<'a> {
     let mut stream = self.conn.block_tcp_stream(&addr)?;
     let header = self.conn.proxy_http_header(url, proxy);
 
-    stream
-      .write_all(header.as_bytes())
-      .map_err(error::request)?;
-    if let Some(body) = self.conn.body() {
-      stream.write_all(body.bytes()).map_err(error::request)?;
+    match self
+      .conn
+      .block_send_expect_continue_parts_with_header(&mut stream, &header)?
+    {
+      ExpectContinueResult::NotUsed => {
+        stream
+          .write_all(header.as_bytes())
+          .map_err(error::request)?;
+        if let Some(body) = self.conn.body() {
+          stream.write_all(body.bytes()).map_err(error::request)?;
+        }
+        stream.flush().map_err(error::request)?;
+      }
+      ExpectContinueResult::BodySent => {}
+      ExpectContinueResult::Final(parts) => return Ok(parts),
     }
-    stream.flush().map_err(error::request)?;
 
     self.conn.block_read_stream_parts(url, &mut stream)
   }
