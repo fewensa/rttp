@@ -130,7 +130,7 @@ impl HttpServer {
       let close_after_response =
         request_closes_connection || response_closes_connection || served == request_limit;
       let default_connection = if close_after_response {
-        DefaultConnectionHeader::Close
+        DefaultConnectionHeader::ForceClose
       } else if request_uses_http10_defaults {
         DefaultConnectionHeader::KeepAlive
       } else {
@@ -172,7 +172,7 @@ impl HttpServer {
     let response = handler(request);
     self.normalize_connection_error(response.write_to_with_default_connection_and_body(
       reader.get_mut(),
-      DefaultConnectionHeader::Close,
+      DefaultConnectionHeader::ForceClose,
       !request_is_head,
     ))
   }
@@ -604,6 +604,7 @@ pub struct HttpResponse {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DefaultConnectionHeader {
   Close,
+  ForceClose,
   KeepAlive,
   Omit,
 }
@@ -726,7 +727,8 @@ impl HttpResponse {
       if !header.name.eq_ignore_ascii_case("Content-Length")
         && (self.allows_body() || !header.name.eq_ignore_ascii_case("Transfer-Encoding"))
         && (!header.name.eq_ignore_ascii_case("Connection")
-          || Some(index) == connection_header_index)
+          || (default_connection != DefaultConnectionHeader::ForceClose
+            && Some(index) == connection_header_index))
       {
         write!(writer, "{}: {}\r\n", header.name, header.value)?;
       }
@@ -735,9 +737,13 @@ impl HttpResponse {
     if self.allows_body() && !self.uses_chunked_transfer_encoding() {
       write!(writer, "Content-Length: {}\r\n", self.body.len())?;
     }
-    if connection_header_index.is_none() {
+    if default_connection == DefaultConnectionHeader::ForceClose
+      || connection_header_index.is_none()
+    {
       match default_connection {
-        DefaultConnectionHeader::Close => writer.write_all(b"Connection: close\r\n")?,
+        DefaultConnectionHeader::Close | DefaultConnectionHeader::ForceClose => {
+          writer.write_all(b"Connection: close\r\n")?
+        }
         DefaultConnectionHeader::KeepAlive => writer.write_all(b"Connection: keep-alive\r\n")?,
         DefaultConnectionHeader::Omit => {}
       }

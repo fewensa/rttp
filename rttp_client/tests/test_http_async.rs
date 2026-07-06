@@ -691,6 +691,42 @@ fn test_async_http_proxy_with_auth_uses_proxy_authorization_header() {
 
 #[test]
 #[cfg(feature = "async")]
+fn test_async_eof_delimited_response_body_is_read_to_connection_close() {
+  let (addr, _handle) = support::spawn_eof_delimited_response_server("async eof body");
+  block_on(async {
+    let response = client().url(format!("http://{}/eof", addr)).rasync().await;
+
+    assert!(response.is_ok());
+    let response = response.unwrap();
+    assert_eq!("async eof body", response.body().string().unwrap());
+    assert_eq!(
+      Some(&"close".to_string()),
+      response.header_value("Connection")
+    );
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_truncated_content_length_response_is_rejected() {
+  let (addr, _handle) = support::spawn_truncated_content_length_server();
+  block_on(async {
+    let error = client()
+      .url(format!("http://{}/truncated", addr))
+      .rasync()
+      .await
+      .expect_err("truncated fixed-length body should be rejected");
+
+    assert!(
+      error.to_string().contains("failed to fill whole buffer")
+        || error.to_string().contains("unexpected end of file"),
+      "unexpected error: {error}"
+    );
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
 fn test_async_proxy_socks5() {
   let (addr, _handle) = support::spawn_http_server();
   let (proxy_addr, _proxy_handle) = support::spawn_socks5_proxy_server();

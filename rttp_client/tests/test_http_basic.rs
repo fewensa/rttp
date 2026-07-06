@@ -786,6 +786,35 @@ fn test_connection_closed() {
 }
 
 #[test]
+fn test_eof_delimited_response_body_is_read_to_connection_close() {
+  let (addr, _handle) = support::spawn_eof_delimited_response_server("connection delimited");
+  let response = client().url(format!("http://{}/eof", addr)).emit();
+
+  assert!(response.is_ok());
+  let response = response.unwrap();
+  assert_eq!("connection delimited", response.body().string().unwrap());
+  assert_eq!(
+    Some(&"close".to_string()),
+    response.header_value("Connection")
+  );
+}
+
+#[test]
+fn test_truncated_content_length_response_is_rejected() {
+  let (addr, _handle) = support::spawn_truncated_content_length_server();
+  let error = client()
+    .url(format!("http://{}/truncated", addr))
+    .emit()
+    .expect_err("truncated fixed-length body should be rejected");
+
+  assert!(
+    error.to_string().contains("failed to fill whole buffer")
+      || error.to_string().contains("unexpected end of file"),
+    "unexpected error: {error}"
+  );
+}
+
+#[test]
 fn test_basic_auth() {
   let (addr, _handle) = support::spawn_auth_echo_server();
   let response = client()

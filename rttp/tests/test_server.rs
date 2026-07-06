@@ -1968,6 +1968,29 @@ fn server_stops_one_connection_after_connection_close_request() {
 }
 
 #[test]
+fn server_overrides_keep_alive_response_header_when_it_will_close() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(1, |_request| {
+        HttpResponse::ok("terminal").header("Connection", "keep-alive")
+      })
+      .expect("serve request");
+  });
+
+  let response = send_request(addr, b"GET /terminal HTTP/1.1\r\nHost: localhost\r\n\r\n");
+
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\nterminal",
+    response
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn response_write_to_omits_content_length_and_body_for_204() {
   let response = HttpResponse::new(204, "No Content").body("ignored");
   let mut serialized = Vec::new();

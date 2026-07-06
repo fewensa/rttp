@@ -417,6 +417,37 @@ pub fn spawn_keep_alive_server() -> (SocketAddr, JoinHandle<()>) {
   (addr, handle)
 }
 
+pub fn spawn_eof_delimited_response_server(body: &'static str) -> (SocketAddr, JoinHandle<()>) {
+  let (listener, addr) = bind_local_http_listener("eof delimited response server");
+  let handle = thread::spawn(move || {
+    if let Ok((mut stream, _)) = listener.accept() {
+      let _ = read_http_request(&mut stream);
+      let response = concat!("HTTP/1.1 200 OK\r\n", "Connection: close\r\n", "\r\n");
+      let _ = stream.write_all(response.as_bytes());
+      let _ = stream.write_all(body.as_bytes());
+    }
+  });
+  (addr, handle)
+}
+
+pub fn spawn_truncated_content_length_server() -> (SocketAddr, JoinHandle<()>) {
+  let (listener, addr) = bind_local_http_listener("truncated content length server");
+  let handle = thread::spawn(move || {
+    if let Ok((mut stream, _)) = listener.accept() {
+      let _ = read_http_request(&mut stream);
+      let response = concat!(
+        "HTTP/1.1 200 OK\r\n",
+        "Content-Length: 10\r\n",
+        "Connection: close\r\n",
+        "\r\n",
+        "short"
+      );
+      let _ = stream.write_all(response.as_bytes());
+    }
+  });
+  (addr, handle)
+}
+
 pub fn spawn_continue_then_ok_server() -> (SocketAddr, JoinHandle<()>) {
   spawn_informational_then_ok_server("100 Continue")
 }
