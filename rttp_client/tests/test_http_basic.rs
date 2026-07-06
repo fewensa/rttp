@@ -446,6 +446,125 @@ where
   assert_eq!(expected_target, response.body().string().unwrap());
 }
 
+struct CapturedRequest {
+  method: String,
+  target: String,
+  headers: HashMap<String, String>,
+  body: Vec<u8>,
+}
+
+fn captured_request(request: Vec<u8>) -> CapturedRequest {
+  let header_end = request
+    .windows(4)
+    .position(|window| window == b"\r\n\r\n")
+    .expect("captured request headers");
+  let header = String::from_utf8_lossy(&request[..header_end]);
+  let mut lines = header.lines();
+  let request_line = lines.next().expect("captured request line");
+  let mut request_line_parts = request_line.split_whitespace();
+  let method = request_line_parts
+    .next()
+    .expect("captured request method")
+    .to_string();
+  let target = request_line_parts
+    .nth(0)
+    .expect("captured request target")
+    .to_string();
+  let headers = lines
+    .filter_map(|line| {
+      let (name, value) = line.split_once(':')?;
+      Some((name.to_ascii_lowercase(), value.trim().to_string()))
+    })
+    .collect();
+  let body = request[header_end + 4..].to_vec();
+
+  CapturedRequest {
+    method,
+    target,
+    headers,
+    body,
+  }
+}
+
+fn captured_redirected_post(status_code: u16, reason: &'static str) -> CapturedRequest {
+  let (addr, handle) = support::spawn_status_redirect_request_capture_server(status_code, reason);
+  let response = client()
+    .config(Config::builder().auto_redirect(true))
+    .post()
+    .url(format!("http://{}/redirect", addr))
+    .raw("redirect-body")
+    .emit();
+
+  assert!(response.is_ok());
+  captured_request(handle.join().expect("redirect capture thread"))
+}
+
+fn captured_redirected_head(status_code: u16, reason: &'static str) -> CapturedRequest {
+  let (addr, handle) = support::spawn_status_redirect_request_capture_server(status_code, reason);
+  let response = client()
+    .config(Config::builder().auto_redirect(true))
+    .head()
+    .url(format!("http://{}/redirect", addr))
+    .emit();
+
+  assert!(response.is_ok());
+  captured_request(handle.join().expect("redirect capture thread"))
+}
+
+#[test]
+fn test_auto_redirect_303_post_becomes_get_without_body_or_body_framing() {
+  let request = captured_redirected_post(303, "See Other");
+
+  assert_eq!("GET", request.method);
+  assert_eq!("/final?via=redirect", request.target);
+  assert_eq!(b"", request.body.as_slice());
+  assert!(!request.headers.contains_key("content-length"));
+  assert!(!request.headers.contains_key("content-type"));
+  assert!(!request.headers.contains_key("transfer-encoding"));
+}
+
+#[test]
+fn test_auto_redirect_303_head_preserves_method() {
+  let request = captured_redirected_head(303, "See Other");
+
+  assert_eq!("HEAD", request.method);
+  assert_eq!("/final?via=redirect", request.target);
+}
+
+#[test]
+fn test_auto_redirect_307_post_preserves_method_body_and_body_framing() {
+  let request = captured_redirected_post(307, "Temporary Redirect");
+
+  assert_eq!("POST", request.method);
+  assert_eq!("/final?via=redirect", request.target);
+  assert_eq!(b"redirect-body", request.body.as_slice());
+  assert_eq!(
+    Some("13"),
+    request.headers.get("content-length").map(String::as_str)
+  );
+  assert_eq!(
+    Some("text/plain"),
+    request.headers.get("content-type").map(String::as_str)
+  );
+}
+
+#[test]
+fn test_auto_redirect_308_post_preserves_method_body_and_body_framing() {
+  let request = captured_redirected_post(308, "Permanent Redirect");
+
+  assert_eq!("POST", request.method);
+  assert_eq!("/final?via=redirect", request.target);
+  assert_eq!(b"redirect-body", request.body.as_slice());
+  assert_eq!(
+    Some("13"),
+    request.headers.get("content-length").map(String::as_str)
+  );
+  assert_eq!(
+    Some("text/plain"),
+    request.headers.get("content-type").map(String::as_str)
+  );
+}
+
 #[test]
 fn test_auto_redirect_resolves_absolute_location() {
   assert_redirect_resolves_to_target(|addr| format!("http://{}/final", addr), "/final");

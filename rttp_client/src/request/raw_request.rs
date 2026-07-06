@@ -52,6 +52,15 @@ impl<'a> RawRequest<'a> {
   }
 
   #[cfg(feature = "async")]
+  pub(crate) fn redirect_status_set(&mut self, status_code: u32) {
+    self.origin.redirect_status_set(status_code);
+    if status_code == 303 && !self.origin.method().eq_ignore_ascii_case("head") {
+      self.body = None;
+      self.header = Self::redirect_body_headers_remove(&self.header);
+    }
+  }
+
+  #[cfg(feature = "async")]
   pub(crate) fn redirect_url_set<S: ToRoUrl>(
     &mut self,
     rourl: S,
@@ -150,6 +159,33 @@ impl<'a> RawRequest<'a> {
         .map(|(name, _)| name);
 
       if header_name.is_some_and(is_sensitive_redirect_header) {
+        continue;
+      }
+
+      rewritten.push_str(line);
+    }
+
+    rewritten
+  }
+
+  #[cfg(feature = "async")]
+  fn redirect_body_headers_remove(header: &str) -> String {
+    let Some((request_line, rest)) = header.split_once("\r\n") else {
+      return header.to_string();
+    };
+    let mut rewritten = format!("{}\r\n", request_line);
+
+    for line in rest.split_inclusive("\r\n") {
+      let header_name = line
+        .trim_end_matches("\r\n")
+        .split_once(':')
+        .map(|(name, _)| name);
+
+      if header_name.is_some_and(|name| {
+        name.eq_ignore_ascii_case("content-length")
+          || name.eq_ignore_ascii_case("content-type")
+          || name.eq_ignore_ascii_case("transfer-encoding")
+      }) {
         continue;
       }
 

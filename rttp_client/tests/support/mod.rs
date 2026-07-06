@@ -243,6 +243,32 @@ where
   (addr, handle)
 }
 
+pub fn spawn_status_redirect_request_capture_server(
+  status_code: u16,
+  reason: &'static str,
+) -> (SocketAddr, JoinHandle<Vec<u8>>) {
+  let (listener, addr) = bind_local_http_listener("status redirect request capture server");
+  let handle = thread::spawn(move || {
+    if let Ok((mut stream, _)) = listener.accept() {
+      let _ = read_http_request(&mut stream);
+      let response = format!(
+        "HTTP/1.1 {} {}\r\nLocation: http://{}/final?via=redirect\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        status_code, reason, addr
+      );
+      let _ = stream.write_all(response.as_bytes());
+    }
+
+    if let Ok((mut stream, _)) = listener.accept() {
+      let request = read_http_request(&mut stream);
+      let _ = stream.write_all(HTTP_OK_RESPONSE);
+      return request;
+    }
+
+    Vec::new()
+  });
+  (addr, handle)
+}
+
 pub fn spawn_cross_authority_redirect_host_echo_server() -> (SocketAddr, SocketAddr, JoinHandle<()>)
 {
   let (origin_listener, origin_addr) = bind_local_http_listener("cross authority redirect origin");
