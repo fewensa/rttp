@@ -13,7 +13,7 @@ use crate::connection::connection::{
   ExpectContinueResult,
 };
 use crate::connection::connection_reader::{
-  is_skippable_informational_status, response_body_kind, response_status_code,
+  is_skippable_informational_status, response_body_kind, response_headers, response_status_code,
   validate_response_trailer_header, ResponseBodyKind, ResponseParts,
   MAX_CHUNKED_RESPONSE_LINE_BYTES,
 };
@@ -22,6 +22,175 @@ use crate::request::RawRequest;
 use crate::response::Response;
 use crate::types::{Header, Proxy, ProxyType};
 const CRLF: &[u8] = b"\r\n";
+
+pub struct AsyncStreamingResponse<'a, S: AsyncRead + Unpin + ?Sized> {
+  head: Vec<u8>,
+  body: AsyncResponseBodyReader<'a, S>,
+}
+
+impl<'a, S: AsyncRead + Unpin + ?Sized> AsyncStreamingResponse<'a, S> {
+  pub fn code(&self) -> error::Result<u16> {
+    response_status_code(&self.head)
+  }
+
+  pub fn headers(&self) -> error::Result<Vec<Header>> {
+    response_headers(&self.head)
+  }
+
+  pub fn head(&self) -> &[u8] {
+    &self.head
+  }
+
+  pub fn body_mut(&mut self) -> &mut AsyncResponseBodyReader<'a, S> {
+    &mut self.body
+  }
+
+  pub fn trailers(&self) -> &Vec<Header> {
+    self.body.trailers()
+  }
+
+  pub fn trailer<SName: AsRef<str>>(&self, name: SName) -> Option<&Header> {
+    self
+      .trailers()
+      .iter()
+      .find(|header| header.name().eq_ignore_ascii_case(name.as_ref()))
+  }
+
+  pub fn trailer_value<SName: AsRef<str>>(&self, name: SName) -> Option<&String> {
+    self.trailer(name).map(|header| header.value())
+  }
+
+  async fn read_to_parts(mut self) -> error::Result<ResponseParts> {
+    let mut binary = self.head;
+    self.body.read_to_end(&mut binary).await?;
+    Ok(ResponseParts {
+      binary,
+      trailers: self.body.trailers().clone(),
+    })
+  }
+}
+
+pub struct AsyncResponseBodyReader<'a, S: AsyncRead + Unpin + ?Sized> {
+  stream: &'a mut S,
+  kind: ResponseBodyKind,
+  remaining: usize,
+  chunk_remaining: usize,
+  chunk_needs_crlf: bool,
+  trailers: Vec<Header>,
+  eof: bool,
+}
+
+impl<'a, S: AsyncRead + Unpin + ?Sized> AsyncResponseBodyReader<'a, S> {
+  fn new(stream: &'a mut S, kind: ResponseBodyKind) -> Self {
+    let remaining = match kind {
+      ResponseBodyKind::ContentLength(length) => length,
+      _ => 0,
+    };
+    let eof = matches!(kind, ResponseBodyKind::NoBody);
+    Self {
+      stream,
+      kind,
+      remaining,
+      chunk_remaining: 0,
+      chunk_needs_crlf: false,
+      trailers: Vec::new(),
+      eof,
+    }
+  }
+
+  pub fn trailers(&self) -> &Vec<Header> {
+    &self.trailers
+  }
+
+  pub async fn read(&mut self, buf: &mut [u8]) -> error::Result<usize> {
+    match self.kind {
+      ResponseBodyKind::NoBody => Ok(0),
+      ResponseBodyKind::ContentLength(_) => self.read_fixed_length(buf).await,
+      ResponseBodyKind::Chunked => self.read_chunked(buf).await,
+      ResponseBodyKind::UntilEof => {
+        let read = self.stream.read(buf).await.map_err(error::request)?;
+        if read == 0 {
+          self.eof = true;
+        }
+        Ok(read)
+      }
+    }
+  }
+
+  pub async fn read_to_end(&mut self, body: &mut Vec<u8>) -> error::Result<usize> {
+    let start = body.len();
+    let mut buf = [0u8; 8 * 1024];
+    loop {
+      let read = self.read(&mut buf).await?;
+      if read == 0 {
+        return Ok(body.len() - start);
+      }
+      body.extend_from_slice(&buf[..read]);
+    }
+  }
+
+  async fn read_fixed_length(&mut self, buf: &mut [u8]) -> error::Result<usize> {
+    if self.remaining == 0 || buf.is_empty() {
+      self.eof = self.remaining == 0;
+      return Ok(0);
+    }
+
+    let limit = buf.len().min(self.remaining);
+    let read = self
+      .stream
+      .read(&mut buf[..limit])
+      .await
+      .map_err(error::request)?;
+    if read == 0 {
+      return Err(error::request(io::Error::new(
+        io::ErrorKind::UnexpectedEof,
+        "failed to fill whole buffer",
+      )));
+    }
+    self.remaining -= read;
+    if self.remaining == 0 {
+      self.eof = true;
+    }
+    Ok(read)
+  }
+
+  async fn read_chunked(&mut self, buf: &mut [u8]) -> error::Result<usize> {
+    if self.eof || buf.is_empty() {
+      return Ok(0);
+    }
+
+    if self.chunk_needs_crlf {
+      async_consume_crlf(self.stream).await?;
+      self.chunk_needs_crlf = false;
+    }
+
+    while self.chunk_remaining == 0 {
+      let line = async_read_bounded_crlf_line(self.stream, MAX_CHUNKED_RESPONSE_LINE_BYTES).await?;
+      let chunk_size = parse_chunk_size(&line)?;
+      if chunk_size == 0 {
+        self.trailers = async_read_trailers(self.stream).await?;
+        self.eof = true;
+        return Ok(0);
+      }
+      self.chunk_remaining = chunk_size;
+    }
+
+    let limit = buf.len().min(self.chunk_remaining);
+    let read = self
+      .stream
+      .read(&mut buf[..limit])
+      .await
+      .map_err(error::request)?;
+    if read == 0 {
+      return Err(error::bad_response("Unexpected end of chunked body"));
+    }
+    self.chunk_remaining -= read;
+    if self.chunk_remaining == 0 {
+      self.chunk_needs_crlf = true;
+    }
+    Ok(read)
+  }
+}
 
 pub struct AsyncConnection<'a> {
   conn: Connection<'a>,
@@ -150,14 +319,7 @@ impl<'a> AsyncConnection<'a> {
   where
     S: AsyncRead + Unpin,
   {
-    let binary = loop {
-      let header = async_read_response_header(stream).await?;
-      let status_code = response_status_code(&header)?;
-      if is_skippable_informational_status(status_code) {
-        continue;
-      }
-      break header;
-    };
+    let binary = async_read_response_head(stream).await?;
     self
       .async_read_stream_parts_after_header(stream, binary)
       .await
@@ -166,35 +328,15 @@ impl<'a> AsyncConnection<'a> {
   async fn async_read_stream_parts_after_header<S>(
     &self,
     stream: &mut S,
-    mut binary: Vec<u8>,
+    binary: Vec<u8>,
   ) -> error::Result<ResponseParts>
   where
     S: AsyncRead + Unpin,
   {
-    let mut trailers = Vec::new();
-    match response_body_kind(&binary, self.conn.expect_no_response_body())? {
-      ResponseBodyKind::NoBody => {}
-      ResponseBodyKind::Chunked => {
-        let chunked = async_read_chunked_response_body(stream).await?;
-        binary.extend_from_slice(&chunked.body);
-        trailers = chunked.trailers;
-      }
-      ResponseBodyKind::ContentLength(content_length) => {
-        let current_len = binary.len();
-        binary.resize(current_len + content_length, 0);
-        stream
-          .read_exact(&mut binary[current_len..])
-          .await
-          .map_err(error::request)?;
-      }
-      ResponseBodyKind::UntilEof => {
-        stream
-          .read_to_end(&mut binary)
-          .await
-          .map_err(error::request)?;
-      }
-    }
-    Ok(ResponseParts { binary, trailers })
+    async_streaming_response_after_header(stream, self.conn.expect_no_response_body(), binary)
+      .await?
+      .read_to_parts()
+      .await
   }
 
   async fn async_send_expect_continue_parts<S>(
@@ -240,9 +382,38 @@ impl<'a> AsyncConnection<'a> {
   }
 }
 
+async fn async_read_response_head<S>(stream: &mut S) -> error::Result<Vec<u8>>
+where
+  S: AsyncRead + Unpin + ?Sized,
+{
+  loop {
+    let header = async_read_response_header(stream).await?;
+    let status_code = response_status_code(&header)?;
+    if is_skippable_informational_status(status_code) {
+      continue;
+    }
+    return Ok(header);
+  }
+}
+
+pub async fn async_streaming_response_after_header<S>(
+  stream: &mut S,
+  expect_no_body: bool,
+  head: Vec<u8>,
+) -> error::Result<AsyncStreamingResponse<'_, S>>
+where
+  S: AsyncRead + Unpin + ?Sized,
+{
+  let kind = response_body_kind(&head, expect_no_body)?;
+  Ok(AsyncStreamingResponse {
+    head,
+    body: AsyncResponseBodyReader::new(stream, kind),
+  })
+}
+
 async fn async_read_response_header<S>(stream: &mut S) -> error::Result<Vec<u8>>
 where
-  S: AsyncRead + Unpin,
+  S: AsyncRead + Unpin + ?Sized,
 {
   let mut header = Vec::new();
   let mut byte = [0u8; 1];
@@ -263,39 +434,9 @@ where
   }
 }
 
-struct ChunkedResponseBody {
-  body: Vec<u8>,
-  trailers: Vec<Header>,
-}
-
-async fn async_read_chunked_response_body<S>(stream: &mut S) -> error::Result<ChunkedResponseBody>
-where
-  S: AsyncRead + Unpin,
-{
-  let mut body = Vec::new();
-
-  loop {
-    let line = async_read_bounded_crlf_line(stream, MAX_CHUNKED_RESPONSE_LINE_BYTES).await?;
-    let chunk_size = parse_chunk_size(&line)?;
-
-    if chunk_size == 0 {
-      let trailers = async_read_trailers(stream).await?;
-      return Ok(ChunkedResponseBody { body, trailers });
-    }
-
-    let current_len = body.len();
-    body.resize(current_len + chunk_size, 0);
-    stream
-      .read_exact(&mut body[current_len..])
-      .await
-      .map_err(error::request)?;
-    async_consume_crlf(stream).await?;
-  }
-}
-
 async fn async_read_bounded_crlf_line<S>(stream: &mut S, max_len: usize) -> error::Result<Vec<u8>>
 where
-  S: AsyncRead + Unpin,
+  S: AsyncRead + Unpin + ?Sized,
 {
   let mut line = Vec::new();
   let mut byte = [0u8; 1];
@@ -438,7 +579,7 @@ fn is_quoted_pair_char(byte: u8) -> bool {
 
 async fn async_consume_crlf<S>(stream: &mut S) -> error::Result<()>
 where
-  S: AsyncRead + Unpin,
+  S: AsyncRead + Unpin + ?Sized,
 {
   let mut suffix = [0u8; 2];
   stream.read_exact(&mut suffix).await.map_err(|err| {
@@ -457,7 +598,7 @@ where
 
 async fn async_read_trailers<S>(stream: &mut S) -> error::Result<Vec<Header>>
 where
-  S: AsyncRead + Unpin,
+  S: AsyncRead + Unpin + ?Sized,
 {
   let mut trailers = Vec::new();
   loop {
@@ -692,5 +833,84 @@ impl<'a> AsyncConnection<'a> {
     }
     .map_err(error::request)?;
     self.conn.block_send_with_stream_parts(url, &mut stream)
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use std::io::Cursor;
+
+  use futures::executor::block_on;
+  use futures::io::AllowStdIo;
+
+  use super::{async_read_response_head, async_streaming_response_after_header};
+
+  #[test]
+  fn async_streaming_response_reads_fixed_length_body_incrementally() {
+    block_on(async {
+      let raw = concat!(
+        "HTTP/1.1 200 OK\r\n",
+        "Content-Length: 5\r\n",
+        "X-Trace: head\r\n",
+        "\r\n",
+        "hello",
+        "next"
+      );
+      let mut cursor = AllowStdIo::new(Cursor::new(raw.as_bytes()));
+      let head = async_read_response_head(&mut cursor).await.unwrap();
+      let mut response = async_streaming_response_after_header(&mut cursor, false, head)
+        .await
+        .unwrap();
+      let mut buf = [0; 2];
+
+      assert_eq!(200, response.code().unwrap());
+      assert_eq!(
+        Some("head"),
+        response
+          .headers()
+          .unwrap()
+          .iter()
+          .find(|header| header.name().eq_ignore_ascii_case("x-trace"))
+          .map(|header| header.value().as_str())
+      );
+      assert_eq!(2, response.body_mut().read(&mut buf).await.unwrap());
+      assert_eq!(b"he", &buf);
+      assert_eq!(2, response.body_mut().read(&mut buf).await.unwrap());
+      assert_eq!(b"ll", &buf);
+      assert_eq!(1, response.body_mut().read(&mut buf).await.unwrap());
+      assert_eq!(b"o", &buf[..1]);
+      assert_eq!(0, response.body_mut().read(&mut buf).await.unwrap());
+      assert!(response.trailers().is_empty());
+    });
+  }
+
+  #[test]
+  fn async_streaming_response_reads_chunked_body_and_exposes_trailers_after_eof() {
+    block_on(async {
+      let raw = concat!(
+        "HTTP/1.1 200 OK\r\n",
+        "Transfer-Encoding: chunked\r\n",
+        "\r\n",
+        "2\r\nhe\r\n",
+        "3\r\nllo\r\n",
+        "0\r\n",
+        "X-Trace: abc\r\n",
+        "\r\n"
+      );
+      let mut cursor = AllowStdIo::new(Cursor::new(raw.as_bytes()));
+      let head = async_read_response_head(&mut cursor).await.unwrap();
+      let mut response = async_streaming_response_after_header(&mut cursor, false, head)
+        .await
+        .unwrap();
+      let mut body = Vec::new();
+
+      response.body_mut().read_to_end(&mut body).await.unwrap();
+
+      assert_eq!(b"hello", body.as_slice());
+      assert_eq!(
+        Some("abc"),
+        response.trailer_value("x-trace").map(String::as_str)
+      );
+    });
   }
 }

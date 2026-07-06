@@ -3,6 +3,7 @@
 #[cfg(feature = "async")]
 pub use self::async_connection::*;
 pub use self::block_connection::*;
+pub use self::connection_reader::{ConnectionReader, ResponseBodyReader, StreamingResponse};
 
 #[cfg(feature = "async")]
 mod async_connection;

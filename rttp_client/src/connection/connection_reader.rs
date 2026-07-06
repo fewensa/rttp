@@ -5,7 +5,7 @@ use url::Url;
 
 use crate::error;
 use crate::response::Response;
-use crate::types::{Header, RoUrl};
+use crate::types::{Header, IntoHeader, RoUrl};
 
 const HEADER_END: &[u8] = b"\r\n\r\n";
 const CRLF: &[u8] = b"\r\n";
@@ -22,6 +22,159 @@ pub(crate) enum ResponseBodyKind {
 pub(crate) struct ResponseParts {
   pub(crate) binary: Vec<u8>,
   pub(crate) trailers: Vec<Header>,
+}
+
+pub struct StreamingResponse<'a, R: Read + ?Sized> {
+  url: RoUrl,
+  head: Vec<u8>,
+  body: ResponseBodyReader<'a, R>,
+}
+
+impl<'a, R: Read + ?Sized> StreamingResponse<'a, R> {
+  pub fn code(&self) -> error::Result<u16> {
+    response_status_code(&self.head)
+  }
+
+  pub fn headers(&self) -> error::Result<Vec<Header>> {
+    response_headers(&self.head)
+  }
+
+  pub fn head(&self) -> &[u8] {
+    &self.head
+  }
+
+  pub fn body_mut(&mut self) -> &mut ResponseBodyReader<'a, R> {
+    &mut self.body
+  }
+
+  pub fn trailers(&self) -> &Vec<Header> {
+    self.body.trailers()
+  }
+
+  pub fn trailer<S: AsRef<str>>(&self, name: S) -> Option<&Header> {
+    self
+      .trailers()
+      .iter()
+      .find(|header| header.name().eq_ignore_ascii_case(name.as_ref()))
+  }
+
+  pub fn trailer_value<S: AsRef<str>>(&self, name: S) -> Option<&String> {
+    self.trailer(name).map(|header| header.value())
+  }
+
+  pub fn read_to_response(mut self) -> error::Result<Response> {
+    let mut binary = self.head.clone();
+    self.body.read_to_end(&mut binary).map_err(error::request)?;
+    Response::with_trailers(self.url, binary, self.body.trailers().clone())
+  }
+}
+
+pub struct ResponseBodyReader<'a, R: Read + ?Sized> {
+  reader: &'a mut R,
+  kind: ResponseBodyKind,
+  remaining: usize,
+  chunk_remaining: usize,
+  chunk_needs_crlf: bool,
+  trailers: Vec<Header>,
+  eof: bool,
+}
+
+impl<'a, R: Read + ?Sized> ResponseBodyReader<'a, R> {
+  fn new(reader: &'a mut R, kind: ResponseBodyKind) -> Self {
+    let remaining = match kind {
+      ResponseBodyKind::ContentLength(length) => length,
+      _ => 0,
+    };
+    let eof = matches!(kind, ResponseBodyKind::NoBody);
+    Self {
+      reader,
+      kind,
+      remaining,
+      chunk_remaining: 0,
+      chunk_needs_crlf: false,
+      trailers: Vec::new(),
+      eof,
+    }
+  }
+
+  pub fn trailers(&self) -> &Vec<Header> {
+    &self.trailers
+  }
+
+  fn read_fixed_length(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    if self.remaining == 0 || buf.is_empty() {
+      self.eof = self.remaining == 0;
+      return Ok(0);
+    }
+
+    let limit = buf.len().min(self.remaining);
+    let read = self.reader.read(&mut buf[..limit])?;
+    if read == 0 {
+      return Err(io::Error::new(
+        io::ErrorKind::UnexpectedEof,
+        "failed to fill whole buffer",
+      ));
+    }
+    self.remaining -= read;
+    if self.remaining == 0 {
+      self.eof = true;
+    }
+    Ok(read)
+  }
+
+  fn read_chunked(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    if self.eof || buf.is_empty() {
+      return Ok(0);
+    }
+
+    if self.chunk_needs_crlf {
+      consume_crlf(self.reader).map_err(to_io_error)?;
+      self.chunk_needs_crlf = false;
+    }
+
+    while self.chunk_remaining == 0 {
+      let line = read_bounded_crlf_line(self.reader, MAX_CHUNKED_RESPONSE_LINE_BYTES)
+        .map_err(to_io_error)?;
+      let chunk_size = parse_chunk_size(&line).map_err(to_io_error)?;
+      if chunk_size == 0 {
+        self.trailers = read_trailers(self.reader).map_err(to_io_error)?;
+        self.eof = true;
+        return Ok(0);
+      }
+      self.chunk_remaining = chunk_size;
+    }
+
+    let limit = buf.len().min(self.chunk_remaining);
+    let read = self.reader.read(&mut buf[..limit])?;
+    if read == 0 {
+      return Err(io::Error::new(
+        io::ErrorKind::UnexpectedEof,
+        "Unexpected end of chunked body",
+      ));
+    }
+    self.chunk_remaining -= read;
+    if self.chunk_remaining == 0 {
+      self.chunk_needs_crlf = true;
+    }
+    Ok(read)
+  }
+}
+
+impl<R: Read + ?Sized> Read for ResponseBodyReader<'_, R> {
+  fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    match self.kind {
+      ResponseBodyKind::NoBody => Ok(0),
+      ResponseBodyKind::ContentLength(_) => self.read_fixed_length(buf),
+      ResponseBodyKind::Chunked => self.read_chunked(buf),
+      ResponseBodyKind::UntilEof => {
+        let read = self.reader.read(buf)?;
+        if read == 0 {
+          self.eof = true;
+        }
+        Ok(read)
+      }
+    }
+  }
 }
 
 #[allow(dead_code)]
@@ -53,10 +206,19 @@ impl<'a> ConnectionReader<'a> {
     read_response_parts(self.reader, self.expect_no_body)
   }
 
+  pub fn streaming_response(&mut self) -> error::Result<StreamingResponse<'_, dyn io::Read + '_>> {
+    let head = read_response_head(self.reader)?;
+    let kind = response_body_kind(&head, self.expect_no_body)?;
+    Ok(StreamingResponse {
+      url: RoUrl::from(self.url.clone()),
+      head,
+      body: ResponseBodyReader::new(self.reader, kind),
+    })
+  }
+
   #[allow(dead_code)]
   pub fn response(&mut self) -> error::Result<Response> {
-    let parts = self.response_parts()?;
-    Response::with_trailers(RoUrl::from(self.url.clone()), parts.binary, parts.trailers)
+    self.streaming_response()?.read_to_response()
   }
 
   // todo Connection reader will read more type from io::Reader, like Chunk data, and Stream data.
@@ -69,15 +231,22 @@ pub(crate) fn read_response_parts<R>(
 where
   R: Read + ?Sized,
 {
-  let binary = loop {
+  let binary = read_response_head(reader)?;
+  read_response_parts_after_header(reader, expect_no_body, binary)
+}
+
+fn read_response_head<R>(reader: &mut R) -> error::Result<Vec<u8>>
+where
+  R: Read + ?Sized,
+{
+  loop {
     let header = read_response_header(reader)?;
     let status_code = response_status_code(&header)?;
     if is_skippable_informational_status(status_code) {
       continue;
     }
-    break header;
-  };
-  read_response_parts_after_header(reader, expect_no_body, binary)
+    return Ok(header);
+  }
 }
 
 pub(crate) fn read_response_parts_after_header<R>(
@@ -92,15 +261,17 @@ where
   match response_body_kind(&binary, expect_no_body)? {
     ResponseBodyKind::NoBody => {}
     ResponseBodyKind::Chunked => {
-      let chunked = read_chunked_response_body(reader)?;
-      binary.extend_from_slice(&chunked.body);
-      trailers = chunked.trailers;
+      let mut body_reader = ResponseBodyReader::new(reader, ResponseBodyKind::Chunked);
+      body_reader
+        .read_to_end(&mut binary)
+        .map_err(error::request)?;
+      trailers = body_reader.trailers().clone();
     }
     ResponseBodyKind::ContentLength(content_length) => {
-      let current_len = binary.len();
-      binary.resize(current_len + content_length, 0);
-      reader
-        .read_exact(&mut binary[current_len..])
+      let mut body_reader =
+        ResponseBodyReader::new(reader, ResponseBodyKind::ContentLength(content_length));
+      body_reader
+        .read_to_end(&mut binary)
         .map_err(error::request)?;
     }
     ResponseBodyKind::UntilEof => {
@@ -108,6 +279,18 @@ where
     }
   }
   Ok(ResponseParts { binary, trailers })
+}
+
+pub(crate) fn response_headers(header: &[u8]) -> error::Result<Vec<Header>> {
+  let header = String::from_utf8(header.to_vec()).map_err(error::response)?;
+  Ok(
+    header
+      .lines()
+      .skip(1)
+      .filter(|line| !line.is_empty())
+      .flat_map(|line| line.into_headers())
+      .collect(),
+  )
 }
 
 pub(crate) fn read_response_header<R>(reader: &mut R) -> error::Result<Vec<u8>>
@@ -228,36 +411,6 @@ pub(crate) fn response_body_kind(
     Ok(ResponseBodyKind::ContentLength(content_length))
   } else {
     Ok(ResponseBodyKind::UntilEof)
-  }
-}
-
-#[derive(Debug)]
-struct ChunkedResponseBody {
-  body: Vec<u8>,
-  trailers: Vec<Header>,
-}
-
-fn read_chunked_response_body<R>(reader: &mut R) -> error::Result<ChunkedResponseBody>
-where
-  R: Read + ?Sized,
-{
-  let mut body = Vec::new();
-
-  loop {
-    let line = read_bounded_crlf_line(reader, MAX_CHUNKED_RESPONSE_LINE_BYTES)?;
-    let chunk_size = parse_chunk_size(&line)?;
-
-    if chunk_size == 0 {
-      let trailers = read_trailers(reader)?;
-      return Ok(ChunkedResponseBody { body, trailers });
-    }
-
-    let current_len = body.len();
-    body.resize(current_len + chunk_size, 0);
-    reader
-      .read_exact(&mut body[current_len..])
-      .map_err(error::request)?;
-    consume_crlf(reader)?;
   }
 }
 
@@ -449,6 +602,10 @@ fn parse_trailer_line(line: &[u8]) -> error::Result<Header> {
   Ok(Header::new(name, value))
 }
 
+fn to_io_error(err: error::Error) -> io::Error {
+  io::Error::new(io::ErrorKind::InvalidData, err)
+}
+
 pub(crate) fn validate_response_trailer_header(name: &str, value: &str) -> error::Result<()> {
   if !is_http_token(name) || !value.bytes().all(is_header_value_byte) {
     return Err(error::bad_response("Invalid trailer header"));
@@ -534,6 +691,72 @@ mod tests {
     let text = String::from_utf8(binary).unwrap();
 
     assert!(text.ends_with("\r\n\r\nWikipedia"));
+  }
+
+  #[test]
+  fn streaming_response_reads_fixed_length_body_incrementally() {
+    let raw = concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Content-Length: 5\r\n",
+      "X-Trace: head\r\n",
+      "\r\n",
+      "hello",
+      "next"
+    );
+    let url = url::Url::parse("http://localhost").unwrap();
+    let mut cursor = Cursor::new(raw.as_bytes());
+    let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+
+    let mut response = reader.streaming_response().unwrap();
+    let mut buf = [0; 2];
+
+    assert_eq!(200, response.code().unwrap());
+    assert_eq!(
+      Some("head"),
+      response
+        .headers()
+        .unwrap()
+        .iter()
+        .find(|header| header.name().eq_ignore_ascii_case("x-trace"))
+        .map(|header| header.value().as_str())
+    );
+    assert_eq!(2, response.body_mut().read(&mut buf).unwrap());
+    assert_eq!(b"he", &buf);
+    assert_eq!(2, response.body_mut().read(&mut buf).unwrap());
+    assert_eq!(b"ll", &buf);
+    assert_eq!(1, response.body_mut().read(&mut buf).unwrap());
+    assert_eq!(b"o", &buf[..1]);
+    assert_eq!(0, response.body_mut().read(&mut buf).unwrap());
+    assert!(response.trailers().is_empty());
+    drop(response);
+    assert_eq!((raw.len() - "next".len()) as u64, cursor.position());
+  }
+
+  #[test]
+  fn streaming_response_reads_chunked_body_and_exposes_trailers_after_eof() {
+    let raw = concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "\r\n",
+      "2\r\nhe\r\n",
+      "3\r\nllo\r\n",
+      "0\r\n",
+      "X-Trace: abc\r\n",
+      "\r\n"
+    );
+    let url = url::Url::parse("http://localhost").unwrap();
+    let mut cursor = Cursor::new(raw.as_bytes());
+    let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+
+    let mut response = reader.streaming_response().unwrap();
+    let mut body = Vec::new();
+    response.body_mut().read_to_end(&mut body).unwrap();
+
+    assert_eq!(b"hello", body.as_slice());
+    assert_eq!(
+      Some("abc"),
+      response.trailer_value("x-trace").map(String::as_str)
+    );
   }
 
   #[test]
@@ -656,7 +879,10 @@ mod tests {
       bytes: Cursor::new(b"4\r\nWiki"),
     };
 
-    let err = super::read_chunked_response_body(&mut reader).unwrap_err();
+    let mut body_reader = super::ResponseBodyReader::new(&mut reader, ResponseBodyKind::Chunked);
+    let mut body = Vec::new();
+
+    let err = body_reader.read_to_end(&mut body).unwrap_err();
 
     assert!(
       err.to_string().contains("terminator read timed out"),
