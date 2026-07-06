@@ -227,6 +227,36 @@ fn test_async_client_skips_103_early_hints_before_final_response() {
 
 #[test]
 #[cfg(feature = "async")]
+fn test_async_client_returns_101_switching_protocols_as_terminal_response() {
+  let (addr, _handle) = support::spawn_switching_protocols_server();
+  block_on(async {
+    let response = client()
+      .get()
+      .url(format!("http://{}/upgrade", addr))
+      .rasync()
+      .await
+      .unwrap();
+
+    assert_eq!(101, response.code());
+    assert_eq!("Switching Protocols", response.reason());
+    assert_eq!(
+      Some(&"Upgrade".to_string()),
+      response.header_value("Connection")
+    );
+    assert_eq!(
+      Some(&"websocket".to_string()),
+      response.header_value("Upgrade")
+    );
+    assert_eq!(
+      Some(&"test-accept".to_string()),
+      response.header_value("Sec-WebSocket-Accept")
+    );
+    assert_eq!("", response.body().string().unwrap());
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
 fn test_async_auto_redirect() {
   let (addr, _handle) = support::spawn_redirect_server();
   block_on(async {

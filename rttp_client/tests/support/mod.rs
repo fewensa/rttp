@@ -260,6 +260,29 @@ pub fn spawn_informational_then_ok_server(status: &'static str) -> (SocketAddr, 
   (addr, handle)
 }
 
+pub fn spawn_switching_protocols_server() -> (SocketAddr, JoinHandle<()>) {
+  let (listener, addr) = bind_local_http_listener("switching protocols server");
+  let handle = thread::spawn(move || {
+    if let Ok((mut stream, _)) = listener.accept() {
+      let _ = read_http_request(&mut stream);
+      let response = concat!(
+        "HTTP/1.1 101 Switching Protocols\r\n",
+        "Connection: Upgrade\r\n",
+        "Upgrade: websocket\r\n",
+        "Sec-WebSocket-Accept: test-accept\r\n",
+        "\r\n",
+        "HTTP/1.1 200 OK\r\n",
+        "Content-Length: 18\r\n",
+        "\r\n",
+        "must not be read\r\n"
+      );
+      let _ = stream.write_all(response.as_bytes());
+    }
+  });
+
+  (addr, handle)
+}
+
 pub fn spawn_http_proxy_server() -> (SocketAddr, JoinHandle<()>) {
   let (listener, addr) = bind_local_http_listener("http proxy server");
   let handle = thread::spawn(move || {

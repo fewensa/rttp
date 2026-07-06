@@ -278,6 +278,32 @@ fn test_sync_client_skips_103_early_hints_before_final_response() {
 }
 
 #[test]
+fn test_sync_client_returns_101_switching_protocols_as_terminal_response() {
+  let (addr, _handle) = support::spawn_switching_protocols_server();
+  let response = client()
+    .get()
+    .url(format!("http://{}/upgrade", addr))
+    .emit()
+    .unwrap();
+
+  assert_eq!(101, response.code());
+  assert_eq!("Switching Protocols", response.reason());
+  assert_eq!(
+    Some(&"Upgrade".to_string()),
+    response.header_value("Connection")
+  );
+  assert_eq!(
+    Some(&"websocket".to_string()),
+    response.header_value("Upgrade")
+  );
+  assert_eq!(
+    Some(&"test-accept".to_string()),
+    response.header_value("Sec-WebSocket-Accept")
+  );
+  assert_eq!("", response.body().string().unwrap());
+}
+
+#[test]
 fn test_upload() {
   let (addr, _handle) = support::spawn_http_server();
   let response = client()
