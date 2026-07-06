@@ -2092,6 +2092,117 @@ fn server_keeps_204_connection_framed_for_following_request() {
 }
 
 #[test]
+fn server_keeps_304_connection_framed_for_following_request() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        let target = request.target().to_string();
+        tx.send(target.clone()).expect("send parsed target");
+        if target == "/cached" {
+          HttpResponse::new(304, "Not Modified").body("ignored body")
+        } else {
+          HttpResponse::ok(format!("served {target}"))
+        }
+      })
+      .expect("serve requests");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(
+      concat!(
+        "GET /cached HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Connection: keep-alive\r\n",
+        "\r\n",
+        "GET /second HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write pipelined requests");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  assert_eq!(
+    concat!(
+      "HTTP/1.1 304 Not Modified\r\n\r\n",
+      "HTTP/1.1 200 OK\r\nContent-Length: 14\r\nConnection: close\r\n\r\nserved /second",
+    ),
+    response
+  );
+  assert_eq!("/cached", rx.recv().expect("receive first target"));
+  assert_eq!("/second", rx.recv().expect("receive second target"));
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_keeps_chunked_response_framed_for_following_request() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        let target = request.target().to_string();
+        tx.send(target.clone()).expect("send parsed target");
+        if target == "/chunked" {
+          HttpResponse::ok("chunk body").header("Transfer-Encoding", "chunked")
+        } else {
+          HttpResponse::ok(format!("served {target}"))
+        }
+      })
+      .expect("serve requests");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(
+      concat!(
+        "GET /chunked HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Connection: keep-alive\r\n",
+        "\r\n",
+        "GET /second HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write pipelined requests");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  assert_eq!(
+    concat!(
+      "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n",
+      "a\r\nchunk body\r\n0\r\n\r\n",
+      "HTTP/1.1 200 OK\r\nContent-Length: 14\r\nConnection: close\r\n\r\nserved /second",
+    ),
+    response
+  );
+  assert_eq!("/chunked", rx.recv().expect("receive first target"));
+  assert_eq!("/second", rx.recv().expect("receive second target"));
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn server_keeps_http11_connection_alive_by_default() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
@@ -2298,6 +2409,58 @@ fn server_stops_one_connection_after_connection_close_request() {
     second
   );
   assert_eq!("/next", rx.recv().expect("receive next target"));
+  assert!(rx.try_recv().is_err());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_completes_chunked_response_before_connection_close_request_stops_pipeline() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(1, |request| {
+        let target = request.target().to_string();
+        tx.send(target.clone()).expect("send parsed target");
+        HttpResponse::ok(format!("served {target}")).header("Transfer-Encoding", "chunked")
+      })
+      .expect("serve requests");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(
+      concat!(
+        "GET /final HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Connection: close\r\n",
+        "\r\n",
+        "GET /ignored HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Connection: keep-alive\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write pipelined requests");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  assert_eq!(
+    concat!(
+      "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+      "d\r\nserved /final\r\n0\r\n\r\n",
+    ),
+    response
+  );
+  assert_eq!("/final", rx.recv().expect("receive final target"));
   assert!(rx.try_recv().is_err());
 
   handle.join().expect("server thread");
