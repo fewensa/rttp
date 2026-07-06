@@ -383,13 +383,13 @@ fn remove_literal_dot_segments(path: &str) -> String {
   let mut segments: Vec<&str> = Vec::new();
   for (index, segment) in raw_segments.iter().enumerate() {
     let is_last = index + 1 == raw_segments.len();
-    match segment {
-      &"." => {
+    match *segment {
+      "." => {
         if is_last {
           segments.push("");
         }
       }
-      &".." => {
+      ".." => {
         if segments.last().is_some_and(|last| !last.is_empty()) {
           segments.pop();
         }
