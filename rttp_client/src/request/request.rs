@@ -192,6 +192,22 @@ impl Request {
       .find(|h| h.name().eq_ignore_ascii_case(name.as_ref()))
       .map(|h| h.value().clone())
   }
+
+  pub(crate) fn redirect_status_set(&mut self, status_code: u32) -> &mut Self {
+    if status_code == 303 {
+      self.method_set("GET");
+      self.paras.clear();
+      self.formdatas.clear();
+      self.raw = None;
+      self.binary.clear();
+      self.headers.retain(|header| {
+        !header.name().eq_ignore_ascii_case("content-length")
+          && !header.name().eq_ignore_ascii_case("content-type")
+          && !header.name().eq_ignore_ascii_case("transfer-encoding")
+      });
+    }
+    self
+  }
 }
 
 #[derive(Clone)]
