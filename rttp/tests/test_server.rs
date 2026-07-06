@@ -1477,6 +1477,83 @@ fn server_serves_multiple_requests_on_one_kept_alive_connection() {
 }
 
 #[test]
+fn server_rejects_invalid_second_request_target_on_kept_alive_connection() {
+  for (invalid_request, expected_first_target) in [
+    (
+      concat!(
+        "GET /first HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Connection: keep-alive\r\n",
+        "\r\n",
+        "CONNECT /tunnel HTTP/1.1\r\n",
+        "Host: example.test\r\n",
+        "Connection: keep-alive\r\n",
+        "\r\n"
+      ),
+      "/first",
+    ),
+    (
+      concat!(
+        "GET http://example.test/first HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Connection: keep-alive\r\n",
+        "\r\n",
+        "GET * HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Connection: keep-alive\r\n",
+        "\r\n"
+      ),
+      "http://example.test/first",
+    ),
+  ] {
+    let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+    let addr = server.local_addr().expect("server addr");
+    let (handler_tx, handler_rx) = mpsc::channel();
+    let (done_tx, done_rx) = mpsc::channel();
+
+    let handle = thread::spawn(move || {
+      let result = server.serve_requests(2, |request| {
+        let target = request.target().to_string();
+        handler_tx.send(target.clone()).expect("send parsed target");
+        HttpResponse::ok(format!("served {target}"))
+      });
+      done_tx.send(result).expect("send server result");
+    });
+
+    let mut stream = TcpStream::connect(addr).expect("connect server");
+    stream
+      .write_all(invalid_request.as_bytes())
+      .expect("write pipelined requests");
+    stream
+      .shutdown(std::net::Shutdown::Write)
+      .expect("shutdown write");
+
+    let mut response = String::new();
+    stream.read_to_string(&mut response).expect("read response");
+
+    assert_eq!(
+      format!(
+        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\nserved {}HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+        7 + expected_first_target.len(),
+        expected_first_target
+      ),
+      response
+    );
+    assert_eq!(
+      expected_first_target,
+      handler_rx.recv().expect("receive first target")
+    );
+    assert!(handler_rx.try_recv().is_err());
+    let result = done_rx
+      .recv_timeout(Duration::from_millis(250))
+      .expect("serve_requests returned after rejected second request");
+    assert!(result.is_ok(), "serve_requests failed: {result:?}");
+
+    handle.join().expect("server thread");
+  }
+}
+
+#[test]
 fn server_keeps_head_connection_framed_for_following_request() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
