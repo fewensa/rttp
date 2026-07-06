@@ -355,9 +355,7 @@ fn strip_absolute_url_scheme(location: &str) -> Option<&str> {
 }
 
 fn raw_path_and_query_after_authority(rest: &str) -> (String, Option<String>) {
-  let path_start = rest
-    .find(|ch| matches!(ch, '/' | '?' | '#'))
-    .unwrap_or(rest.len());
+  let path_start = rest.find(['/', '?', '#']).unwrap_or(rest.len());
   let path_and_query = &rest[path_start..];
   if path_and_query.is_empty() {
     return ("/".to_string(), None);
