@@ -30,7 +30,7 @@ fn test_multi() {
     .url(RoUrl::with(format!("http://{}/?id=1&name=jack#none", addr)).para("name=Julia"))
     .path("post")
     .header("User-Agent: Mozilla/5.0")
-    .header("Host: localhost")
+    .header(("Host", addr.to_string().as_str()))
     .para("name=Chico")
     .para(&"name=文".to_string())
     .para(para_map)
