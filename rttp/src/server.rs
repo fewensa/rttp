@@ -1103,23 +1103,22 @@ fn validate_host_header(
     ));
   }
 
-  if matches!(
-    request_target_form(target),
-    Some(
-      RequestTargetForm::Origin
-        | RequestTargetForm::Absolute
-        | RequestTargetForm::Asterisk
-        | RequestTargetForm::Authority
-    )
-  ) && is_valid_host_authority(host, false)
-  {
-    Ok(())
-  } else {
-    Err(io::Error::new(
+  let host_matches_target = match request_target_form(target) {
+    Some(RequestTargetForm::Origin | RequestTargetForm::Absolute | RequestTargetForm::Asterisk) => {
+      true
+    }
+    Some(RequestTargetForm::Authority) => host == target,
+    None => false,
+  };
+
+  if !host_matches_target || !is_valid_host_authority(host, false) {
+    return Err(io::Error::new(
       io::ErrorKind::InvalidData,
       "invalid Host header",
-    ))
+    ));
   }
+
+  Ok(())
 }
 
 fn is_http_token(value: &str) -> bool {

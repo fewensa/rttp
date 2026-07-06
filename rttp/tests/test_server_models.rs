@@ -163,6 +163,18 @@ fn rejects_http_11_request_with_invalid_host_header_value() {
 }
 
 #[test]
+fn rejects_connect_request_when_host_does_not_match_authority_target() {
+  for raw in [
+    b"CONNECT example.test:443 HTTP/1.1\r\nHost: other.test\r\n\r\n".as_slice(),
+    b"CONNECT example.test:443 HTTP/1.1\r\nHost: example.test\r\n\r\n",
+  ] {
+    let error = HttpRequest::parse(raw).expect_err("request should be rejected");
+
+    assert_eq!("invalid Host header", error.to_string());
+  }
+}
+
+#[test]
 fn accepts_http_10_request_without_host_header() {
   let request = HttpRequest::parse(b"GET /legacy HTTP/1.0\r\n\r\n").expect("request should parse");
 

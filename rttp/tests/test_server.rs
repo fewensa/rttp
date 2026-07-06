@@ -728,7 +728,7 @@ fn server_accepts_options_asterisk_request_target() {
 #[test]
 fn server_accepts_connect_authority_request_target() {
   let (response, handler_called) =
-    send_raw_request(b"CONNECT example.test:443 HTTP/1.1\r\nHost: example.test\r\n\r\n");
+    send_raw_request(b"CONNECT example.test:443 HTTP/1.1\r\nHost: example.test:443\r\n\r\n");
 
   assert!(handler_called);
   assert_eq!(
