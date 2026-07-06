@@ -115,7 +115,8 @@ impl<'a> AsyncConnection<'a> {
   {
     let mut binary = loop {
       let header = async_read_response_header(stream).await?;
-      if response_status_code(&header)? == 100 {
+      let status_code = response_status_code(&header)?;
+      if status_code == 100 || (102..200).contains(&status_code) {
         continue;
       }
       break header;

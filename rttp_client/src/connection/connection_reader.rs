@@ -71,7 +71,8 @@ where
 {
   let mut binary = loop {
     let header = read_response_header(reader)?;
-    if response_status_code(&header)? == 100 {
+    let status_code = response_status_code(&header)?;
+    if status_code == 100 || (102..200).contains(&status_code) {
       continue;
     }
     break header;
