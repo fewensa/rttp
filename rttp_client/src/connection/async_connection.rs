@@ -55,13 +55,16 @@ impl<'a> AsyncConnection<'a> {
             return Err(error::too_many_redirects(url));
           }
 
-          let redirect_url = self.conn.redirect_url(&url, location)?;
-          let strip_sensitive_headers = !self.conn.is_same_origin_redirect(&url, location)?;
+          let redirect_url = self.conn.resolve_redirect_url(&url, location)?;
+          if url == redirect_url {
+            return Err(error::loop_detected(url));
+          }
+          let strip_sensitive_headers = !self.conn.is_same_origin_url(&url, &redirect_url);
           self.conn.request_mut().redirect_status_set(response.code());
           self
             .conn
             .request_mut()
-            .redirect_url_set(redirect_url, strip_sensitive_headers)?;
+            .redirect_url_set(redirect_url.to_string(), strip_sensitive_headers)?;
           self.conn.request_mut().origin_mut().count_set(count + 1);
           continue;
         }
