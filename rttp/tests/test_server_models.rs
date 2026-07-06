@@ -248,6 +248,28 @@ fn serializes_at_most_one_connection_header() {
 }
 
 #[test]
+fn write_to_preserves_explicit_connection_header() {
+  let response = HttpResponse::ok("ok").header("Connection", "keep-alive");
+  let mut serialized = Vec::new();
+
+  response
+    .write_to(&mut serialized)
+    .expect("response should serialize");
+
+  assert_eq!(
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Connection: keep-alive\r\n",
+      "Content-Length: 2\r\n",
+      "\r\n",
+      "ok"
+    )
+    .as_bytes(),
+    serialized.as_slice()
+  );
+}
+
+#[test]
 fn serializes_chunked_response_body_when_transfer_encoding_is_chunked() {
   let response = HttpResponse::new(200, "OK")
     .header("Transfer-Encoding", "chunked")
