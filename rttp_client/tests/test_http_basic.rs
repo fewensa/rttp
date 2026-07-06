@@ -430,6 +430,42 @@ fn test_auto_redirect() {
   assert!(response.ok());
 }
 
+fn assert_redirect_resolves_to_target<F>(location: F, expected_target: &str)
+where
+  F: FnOnce(std::net::SocketAddr) -> String + Send + 'static,
+{
+  let (addr, _handle) = support::spawn_redirect_target_echo_server(location);
+  let response = client()
+    .config(Config::builder().auto_redirect(true))
+    .get()
+    .url(format!("http://{}/redirect/from?old=1", addr))
+    .emit();
+
+  assert!(response.is_ok());
+  let response = response.unwrap();
+  assert_eq!(expected_target, response.body().string().unwrap());
+}
+
+#[test]
+fn test_auto_redirect_resolves_absolute_location() {
+  assert_redirect_resolves_to_target(|addr| format!("http://{}/final", addr), "/final");
+}
+
+#[test]
+fn test_auto_redirect_resolves_absolute_path_location() {
+  assert_redirect_resolves_to_target(|_| "/final?x=1".to_string(), "/final?x=1");
+}
+
+#[test]
+fn test_auto_redirect_resolves_relative_path_location() {
+  assert_redirect_resolves_to_target(|_| "../final".to_string(), "/final");
+}
+
+#[test]
+fn test_auto_redirect_resolves_query_only_location() {
+  assert_redirect_resolves_to_target(|_| "?page=2".to_string(), "/redirect/from?page=2");
+}
+
 #[test]
 fn test_http_proxy_uses_absolute_form_for_http_requests() {
   let (addr, _handle) = support::spawn_http_proxy_server();

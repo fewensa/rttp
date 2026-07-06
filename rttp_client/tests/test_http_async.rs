@@ -273,6 +273,77 @@ fn test_async_auto_redirect() {
   });
 }
 
+#[cfg(feature = "async")]
+async fn assert_async_redirect_resolves_to_target<F>(location: F, expected_target: &str)
+where
+  F: FnOnce(std::net::SocketAddr) -> String + Send + 'static,
+{
+  let (addr, _handle) = support::spawn_redirect_target_echo_server(location);
+  let response = client()
+    .config(Config::builder().auto_redirect(true))
+    .get()
+    .url(format!("http://{}/redirect/from?old=1", addr))
+    .rasync()
+    .await;
+
+  assert!(response.is_ok());
+  let response = response.unwrap();
+  assert_eq!(expected_target, response.body().string().unwrap());
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_auto_redirect_resolves_absolute_location() {
+  block_on(async {
+    assert_async_redirect_resolves_to_target(|addr| format!("http://{}/final", addr), "/final")
+      .await;
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_auto_redirect_resolves_absolute_path_location() {
+  block_on(async {
+    assert_async_redirect_resolves_to_target(|_| "/final?x=1".to_string(), "/final?x=1").await;
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_auto_redirect_resolves_relative_path_location() {
+  block_on(async {
+    assert_async_redirect_resolves_to_target(|_| "../final".to_string(), "/final").await;
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_auto_redirect_resolves_query_only_location() {
+  block_on(async {
+    assert_async_redirect_resolves_to_target(|_| "?page=2".to_string(), "/redirect/from?page=2")
+      .await;
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_auto_redirect_rebuilds_host_for_cross_authority_location() {
+  let (origin_addr, target_addr, _handle) =
+    support::spawn_cross_authority_redirect_host_echo_server();
+  block_on(async {
+    let response = client()
+      .config(Config::builder().auto_redirect(true))
+      .get()
+      .url(format!("http://{}/redirect", origin_addr))
+      .rasync()
+      .await;
+    assert!(response.is_ok());
+
+    let response = response.unwrap();
+    assert_eq!(target_addr.to_string(), response.body().string().unwrap());
+  });
+}
+
 #[test]
 #[cfg(all(feature = "async", feature = "tls-rustls"))]
 fn test_async_https() {
