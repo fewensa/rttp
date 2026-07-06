@@ -337,6 +337,8 @@ fn rejects_forbidden_response_trailer_names() {
     "Host",
     "Authorization",
     "Proxy-Authorization",
+    "WWW-Authenticate",
+    "Proxy-Authenticate",
     "Connection",
     "Cookie",
     "Set-Cookie",

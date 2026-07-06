@@ -331,7 +331,9 @@ fn is_forbidden_response_trailer_name(name: &str) -> bool {
       | "content-length"
       | "cookie"
       | "host"
+      | "proxy-authenticate"
       | "proxy-authorization"
+      | "www-authenticate"
       | "set-cookie"
       | "te"
       | "trailer"
@@ -434,6 +436,8 @@ mod tests {
       "Host",
       "Authorization",
       "Proxy-Authorization",
+      "WWW-Authenticate",
+      "Proxy-Authenticate",
       "Cookie",
       "Connection",
       "TE",

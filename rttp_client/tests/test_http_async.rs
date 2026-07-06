@@ -136,7 +136,7 @@ fn test_async_forbidden_chunked_response_trailer_is_rejected() {
     "\r\n",
     "2\r\nOK\r\n",
     "0\r\n",
-    "Authorization: unsafe\r\n",
+    "WWW-Authenticate: unsafe\r\n",
     "\r\n"
   );
   let (addr, _handle) = support::spawn_chunked_response_server(response);
