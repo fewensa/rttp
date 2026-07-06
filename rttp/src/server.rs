@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::fmt;
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, Cursor, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
@@ -85,6 +85,13 @@ impl HttpServer {
     F: FnOnce(Request, RequestBodyReader<'_, BufReader<TcpStream>>) -> HttpResponse,
   {
     self.handle_next_streaming_connection(handler)
+  }
+
+  pub fn accept_one_handoff<F>(&self, handler: F) -> io::Result<()>
+  where
+    F: FnOnce(Request) -> HttpHandoff,
+  {
+    self.handle_next_handoff_connection(handler)
   }
 
   pub fn serve_requests<F>(&self, request_count: usize, mut handler: F) -> io::Result<()>
@@ -212,6 +219,45 @@ impl HttpServer {
     ))
   }
 
+  fn handle_next_handoff_connection<F>(&self, handler: F) -> io::Result<()>
+  where
+    F: FnOnce(Request) -> HttpHandoff,
+  {
+    let (stream, _) = self.listener.accept()?;
+    self.configure_stream(&stream)?;
+    let mut reader = BufReader::new(stream);
+    let request = match self.normalize_connection_error(
+      Request::read_next_head_from_with_continue(&mut reader).and_then(|request| {
+        request
+          .map(|(request, _)| request)
+          .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))
+      }),
+    ) {
+      Ok(request) => request,
+      Err(err) if is_bad_request_error(&err) => {
+        return self.normalize_connection_error(bad_request_response().write_to(reader.get_mut()));
+      }
+      Err(err) => return Err(err),
+    };
+
+    let handoff = handler(request.clone());
+    if !handoff.valid_for(&request) {
+      return self.normalize_connection_error(bad_request_response().write_to(reader.get_mut()));
+    }
+
+    match handoff {
+      HttpHandoff::Response(response) => self.normalize_connection_error(
+        response.write_to_with_default_connection(reader.get_mut(), DefaultConnectionHeader::Close),
+      ),
+      HttpHandoff::Connect { response, handler } | HttpHandoff::Upgrade { response, handler } => {
+        self.normalize_connection_error(response.write_handoff_head_to(reader.get_mut()))?;
+        let buffered = reader.buffer().to_vec();
+        let stream = HandoffStream::new(buffered, reader.into_inner());
+        handler(stream)
+      }
+    }
+  }
+
   fn configure_stream(&self, stream: &TcpStream) -> io::Result<()> {
     stream.set_read_timeout(self.read_timeout)?;
     stream.set_write_timeout(self.write_timeout)
@@ -227,6 +273,108 @@ impl HttpServer {
         err
       }
     })
+  }
+}
+
+pub struct HandoffStream {
+  buffered: Cursor<Vec<u8>>,
+  stream: TcpStream,
+}
+
+impl HandoffStream {
+  fn new(buffered: Vec<u8>, stream: TcpStream) -> Self {
+    Self {
+      buffered: Cursor::new(buffered),
+      stream,
+    }
+  }
+
+  pub fn get_ref(&self) -> &TcpStream {
+    &self.stream
+  }
+
+  pub fn get_mut(&mut self) -> &mut TcpStream {
+    &mut self.stream
+  }
+
+  pub fn into_inner(self) -> TcpStream {
+    self.stream
+  }
+}
+
+impl Read for HandoffStream {
+  fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    let read = self.buffered.read(buf)?;
+    if read == 0 {
+      self.stream.read(buf)
+    } else {
+      Ok(read)
+    }
+  }
+}
+
+impl Write for HandoffStream {
+  fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+    self.stream.write(buf)
+  }
+
+  fn flush(&mut self) -> io::Result<()> {
+    self.stream.flush()
+  }
+}
+
+type HandoffHandler = Box<dyn FnOnce(HandoffStream) -> io::Result<()> + Send + 'static>;
+
+pub enum HttpHandoff {
+  Response(HttpResponse),
+  Connect {
+    response: HttpResponse,
+    handler: HandoffHandler,
+  },
+  Upgrade {
+    response: HttpResponse,
+    handler: HandoffHandler,
+  },
+}
+
+impl HttpHandoff {
+  pub fn response(response: HttpResponse) -> Self {
+    Self::Response(response)
+  }
+
+  pub fn connect<F>(response: HttpResponse, handler: F) -> Self
+  where
+    F: FnOnce(HandoffStream) -> io::Result<()> + Send + 'static,
+  {
+    Self::Connect {
+      response,
+      handler: Box::new(handler),
+    }
+  }
+
+  pub fn upgrade<F>(response: HttpResponse, handler: F) -> Self
+  where
+    F: FnOnce(HandoffStream) -> io::Result<()> + Send + 'static,
+  {
+    Self::Upgrade {
+      response,
+      handler: Box::new(handler),
+    }
+  }
+
+  fn valid_for(&self, request: &Request) -> bool {
+    match self {
+      Self::Response(_) => true,
+      Self::Connect { .. } => {
+        request.method().eq_ignore_ascii_case("CONNECT")
+          && is_authority_form_request_target(request.target())
+      }
+      Self::Upgrade { .. } => {
+        !request.method().eq_ignore_ascii_case("CONNECT")
+          && request.header("Upgrade").is_some()
+          && request.connection_header_has_token("upgrade")
+      }
+    }
   }
 }
 
@@ -961,6 +1109,30 @@ impl HttpResponse {
     writer.write_all(b"\r\n")
   }
 
+  fn write_handoff_head_to<W>(&self, writer: &mut W) -> io::Result<()>
+  where
+    W: Write,
+  {
+    write!(
+      writer,
+      "{} {} {}\r\n",
+      self.version, self.status_code, self.reason
+    )?;
+
+    let connection_header_index = self.connection_header_index();
+    for (index, header) in self.headers.iter().enumerate() {
+      if !header.name.eq_ignore_ascii_case("Content-Length")
+        && (!header.name.eq_ignore_ascii_case("Connection")
+          || Some(index) == connection_header_index)
+      {
+        write!(writer, "{}: {}\r\n", header.name, header.value)?;
+      }
+    }
+
+    writer.write_all(b"\r\n")?;
+    writer.flush()
+  }
+
   fn write_body_to<W>(&self, writer: &mut W) -> io::Result<()>
   where
     W: Write,
@@ -1080,6 +1252,22 @@ fn reject_oversized_request_body(length: usize) -> io::Result<()> {
   } else {
     Ok(())
   }
+}
+
+fn is_authority_form_request_target(target: &str) -> bool {
+  if target.is_empty()
+    || target.starts_with('/')
+    || target.starts_with('*')
+    || target.contains("://")
+    || target.contains(['/', '?', '#'])
+  {
+    return false;
+  }
+
+  let Some((host, port)) = target.rsplit_once(':') else {
+    return false;
+  };
+  !host.is_empty() && !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 fn checked_request_message_len(header_end: usize, content_length: usize) -> io::Result<usize> {

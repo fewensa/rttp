@@ -1,4 +1,4 @@
-use std::{io, net::ToSocketAddrs, time};
+use std::{io, net::TcpStream, net::ToSocketAddrs, time};
 
 use socket2::{Domain, Protocol, Socket, Type};
 
@@ -14,6 +14,7 @@ use crate::connection::connection_reader::{
   response_status_code, ConnectionReader, ResponseParts,
 };
 use crate::request::{RawRequest, RequestBody};
+use crate::response::Response;
 use crate::types::{Proxy, RoUrl, ToUrl};
 use crate::{error, Config};
 
@@ -143,6 +144,34 @@ impl ServerCertVerifier for NoHostnameVerification {
 
 pub struct Connection<'a> {
   request: RawRequest<'a>,
+}
+
+#[derive(Debug)]
+pub struct HandoffConnection {
+  response: Response,
+  stream: TcpStream,
+}
+
+impl HandoffConnection {
+  pub(crate) fn new(response: Response, stream: TcpStream) -> Self {
+    Self { response, stream }
+  }
+
+  pub fn response(&self) -> &Response {
+    &self.response
+  }
+
+  pub fn stream(&self) -> &TcpStream {
+    &self.stream
+  }
+
+  pub fn stream_mut(&mut self) -> &mut TcpStream {
+    &mut self.stream
+  }
+
+  pub fn into_parts(self) -> (Response, TcpStream) {
+    (self.response, self.stream)
+  }
 }
 
 pub(crate) struct RedirectUrl {
@@ -282,6 +311,11 @@ impl<'a> Connection<'a> {
 
   pub fn expect_no_response_body(&self) -> bool {
     self.request.origin().method().eq_ignore_ascii_case("head")
+      || self
+        .request
+        .origin()
+        .method()
+        .eq_ignore_ascii_case("connect")
   }
 }
 
@@ -462,10 +496,39 @@ pub(crate) fn request_expects_continue(header: &str, body: Option<&RequestBody>)
   })
 }
 
+fn response_header_has_upgrade(header: &[u8]) -> error::Result<bool> {
+  let header = String::from_utf8(header.to_vec()).map_err(error::response)?;
+  let mut has_upgrade_header = false;
+  let mut connection_has_upgrade = false;
+
+  for line in header.lines().skip(1) {
+    let Some((name, value)) = line.split_once(':') else {
+      continue;
+    };
+    if name.eq_ignore_ascii_case("Upgrade") && !value.trim().is_empty() {
+      has_upgrade_header = true;
+    }
+    if name.eq_ignore_ascii_case("Connection")
+      && value
+        .split(',')
+        .any(|token| token.trim().eq_ignore_ascii_case("upgrade"))
+    {
+      connection_has_upgrade = true;
+    }
+  }
+
+  Ok(has_upgrade_header && connection_has_upgrade)
+}
+
 pub(crate) enum ExpectContinueResult {
   NotUsed,
   BodySent,
   Final(ResponseParts),
+}
+
+pub(crate) enum HandoffKind {
+  Connect,
+  Upgrade,
 }
 
 pub(crate) enum StreamingRequestBody<'a> {
@@ -687,6 +750,49 @@ impl<'a> Connection<'a> {
     let addr = self.addr(url)?;
     let mut stream = self.block_tcp_stream(&addr)?;
     self.block_send_with_stream_parts(url, &mut stream)
+  }
+
+  pub(crate) fn block_send_handoff(
+    &self,
+    url: &Url,
+    kind: HandoffKind,
+  ) -> error::Result<HandoffConnection> {
+    if url.scheme() != "http" {
+      return Err(error::builder_with_message(
+        "socket handoff only supports plain http URLs",
+      ));
+    }
+
+    let addr = self.addr(url)?;
+    let mut stream = self.block_tcp_stream(&addr)?;
+    self.block_write_stream(&mut stream)?;
+
+    let header = read_response_header(&mut stream)?;
+    let status_code = response_status_code(&header)?;
+    match kind {
+      HandoffKind::Connect if (200..300).contains(&status_code) => {
+        let response = Response::with_trailers(self.rourl().clone(), header, Vec::new())?;
+        Ok(HandoffConnection::new(response, stream))
+      }
+      HandoffKind::Upgrade if status_code == 101 && response_header_has_upgrade(&header)? => {
+        let response = Response::with_trailers(self.rourl().clone(), header, Vec::new())?;
+        Ok(HandoffConnection::new(response, stream))
+      }
+      HandoffKind::Connect => {
+        let _ = read_response_parts_after_header(&mut stream, false, header)?;
+        Err(error::bad_response(format!(
+          "CONNECT failed with HTTP status {}",
+          status_code
+        )))
+      }
+      HandoffKind::Upgrade => {
+        let _ = read_response_parts_after_header(&mut stream, false, header)?;
+        Err(error::bad_response(format!(
+          "Upgrade failed with HTTP status {}",
+          status_code
+        )))
+      }
+    }
   }
 
   pub(crate) fn block_send_streaming_parts(
