@@ -46,15 +46,19 @@ rttp = "0.2"
 ```
 
 ```rust,no_run
+use std::time::Duration;
+
 use rttp::server::HttpResponse;
 
 fn main() -> std::io::Result<()> {
-  let server = rttp::Http::server("127.0.0.1:0")?;
+  let server = rttp::Http::server("127.0.0.1:0")?
+    .with_read_timeout(Some(Duration::from_secs(5)))
+    .with_write_timeout(Some(Duration::from_secs(5)));
   println!("listening on {}", server.local_addr()?);
 
   server.accept_one(|request| {
     println!("{} {}", request.method(), request.target());
-    HttpResponse::ok("hello")
+    HttpResponse::ok("hello").header("Transfer-Encoding", "chunked")
   })
 }
 ```
@@ -63,14 +67,18 @@ Use `HttpServer::bind` directly when you already want the server type,
 `HttpServer::local_addr` to read the bound address, `accept_one` for one
 connection, and `serve_requests` for a fixed number of sequential connections.
 Use `with_read_timeout` and `with_write_timeout` to apply socket-level
-timeouts to each accepted connection. The listener path uses `socket2`.
+timeouts to each accepted connection; pass `None` to leave the corresponding
+socket timeout unset. Add `Transfer-Encoding: chunked` to an `HttpResponse` to
+write the complete response body with chunked transfer framing instead of an
+automatic `Content-Length`. The listener path uses `socket2`.
 
 The server is intentionally small: it handles blocking HTTP/1.x request parsing
 for local tests and simple embedded use. It accepts fixed `Content-Length` and
 chunked request bodies, exposes chunked request trailers, applies bounded
 request head/body validation, handles `HEAD` without writing a response body,
 honors `Connection` close/keep-alive semantics across a bounded
-`serve_requests` loop, and accepts `Expect: 100-continue`.
+`serve_requests` loop, writes response body framing consistently, and accepts
+`Expect: 100-continue`.
 
 It is not a full RFC-covering web server and still does not implement server
 TLS or async accept loops.
