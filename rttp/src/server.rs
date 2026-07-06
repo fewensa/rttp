@@ -1356,13 +1356,16 @@ where
 }
 
 fn parse_chunk_size(line: &[u8]) -> io::Result<usize> {
-  let line = std::str::from_utf8(line)
-    .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "chunk size is not UTF-8"))?;
-  let line = line.trim_end_matches("\r\n");
+  let line = line.strip_suffix(b"\r\n").unwrap_or(line);
   let (size, extensions) = line
-    .split_once(';')
-    .map_or((line, None), |(size, extensions)| (size, Some(extensions)));
-  let size = size.trim();
+    .iter()
+    .position(|byte| *byte == b';')
+    .map_or((line, None), |index| {
+      (&line[..index], Some(&line[index + 1..]))
+    });
+  let size = std::str::from_utf8(size)
+    .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "chunk size is not UTF-8"))?
+    .trim();
   if size.is_empty() {
     return Err(io::Error::new(
       io::ErrorKind::InvalidData,
@@ -1370,7 +1373,7 @@ fn parse_chunk_size(line: &[u8]) -> io::Result<usize> {
     ));
   }
   if let Some(extensions) = extensions {
-    validate_chunk_extensions(extensions.as_bytes())?;
+    validate_chunk_extensions(extensions)?;
   }
 
   usize::from_str_radix(size, 16)
@@ -1671,6 +1674,26 @@ mod tests {
     assert_eq!("GET", second.method());
     assert_eq!("/second", second.target());
     assert!(reader.fill_buf().expect("remaining bytes").is_empty());
+  }
+
+  #[test]
+  fn read_next_from_accepts_obs_text_in_quoted_chunk_extensions() {
+    let raw = b"POST /chunked HTTP/1.1\r\n\
+Host: example.test\r\n\
+Transfer-Encoding: chunked\r\n\
+\r\n\
+5;meta=\"\xff\"\r\n\
+hello\r\n\
+0\r\n\
+\r\n";
+    let mut reader = BufReader::new(Cursor::new(raw));
+
+    let request = Request::read_next_from(&mut reader)
+      .expect("chunk extension with obs-text should parse")
+      .expect("request should be present");
+
+    assert_eq!("/chunked", request.target());
+    assert_eq!(b"hello", request.body());
   }
 
   #[test]

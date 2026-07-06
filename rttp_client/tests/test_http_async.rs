@@ -92,6 +92,31 @@ fn test_async_chunked_quoted_extensions_are_accepted() {
 
 #[test]
 #[cfg(feature = "async")]
+fn test_async_chunked_quoted_extensions_accept_obs_text() {
+  let mut response = b"HTTP/1.1 200 OK\r\n\
+Transfer-Encoding: chunked\r\n\
+Connection: close\r\n\
+\r\n\
+7;meta=\""
+    .to_vec();
+  response.push(0xff);
+  response.extend_from_slice(b"\"\r\nchunked\r\n0\r\n\r\n");
+
+  let (addr, _handle) = support::spawn_chunked_response_server(response);
+  block_on(async {
+    let response = client()
+      .get()
+      .url(format!("http://{}/chunked", addr))
+      .rasync()
+      .await
+      .unwrap();
+
+    assert_eq!("chunked", response.body().string().unwrap());
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
 fn test_async_chunked_malformed_extension_is_rejected() {
   let (addr, _handle) = support::spawn_chunked_response_server(concat!(
     "HTTP/1.1 200 OK\r\n",

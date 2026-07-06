@@ -267,17 +267,19 @@ where
 }
 
 fn parse_chunk_size(line: &[u8]) -> error::Result<usize> {
-  let line = std::str::from_utf8(line).map_err(error::response)?;
-  let line = line.trim_end_matches("\r\n");
+  let line = line.strip_suffix(CRLF).unwrap_or(line);
   let (size, extensions) = line
-    .split_once(';')
-    .map_or((line, None), |(size, extensions)| (size, Some(extensions)));
-  let size = size.trim();
+    .iter()
+    .position(|byte| *byte == b';')
+    .map_or((line, None), |index| {
+      (&line[..index], Some(&line[index + 1..]))
+    });
+  let size = std::str::from_utf8(size).map_err(error::response)?.trim();
   if size.is_empty() {
     return Err(error::bad_response("Chunk size line is empty"));
   }
   if let Some(extensions) = extensions {
-    validate_chunk_extensions(extensions.as_bytes())?;
+    validate_chunk_extensions(extensions)?;
   }
 
   usize::from_str_radix(size, 16).map_err(|_| error::bad_response("Invalid chunk size"))
