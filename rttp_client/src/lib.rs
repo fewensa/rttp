@@ -50,6 +50,11 @@
 
 pub use self::client::*;
 pub use self::config::*;
+#[cfg(feature = "async")]
+pub use self::connection::{
+  async_streaming_response_after_header, AsyncResponseBodyReader, AsyncStreamingResponse,
+};
+pub use self::connection::{ConnectionReader, ResponseBodyReader, StreamingResponse};
 
 mod client;
 mod config;
