@@ -1,0 +1,8 @@
+[package]
+name = "rttp_http11_test_fixtures"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+socket2 = "0.5"

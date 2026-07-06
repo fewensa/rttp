@@ -2,5 +2,6 @@
 members = [
   "rttp",
   "rttp_client",
+  "rttp_http11_test_fixtures",
 ]
 resolver = "2"
