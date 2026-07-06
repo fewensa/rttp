@@ -46,6 +46,7 @@ futures-rustls   = { optional = true, version = "0.26" }
 [features]
 default = []
 async = []
+http2 = []
 tls-native  = ["native-tls", "async-native-tls"]
 tls-rustls  = ["rustls", "webpki-roots", "futures-rustls"]
 
