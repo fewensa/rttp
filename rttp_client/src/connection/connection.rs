@@ -9,7 +9,10 @@ use std::sync::Arc;
 
 use url::Url;
 
-use crate::connection::connection_reader::{ConnectionReader, ResponseParts};
+use crate::connection::connection_reader::{
+  is_skippable_informational_status, read_response_header, read_response_parts_after_header,
+  response_status_code, ConnectionReader, ResponseParts,
+};
 use crate::request::{RawRequest, RequestBody};
 use crate::types::{Proxy, RoUrl, ToUrl};
 use crate::{error, Config};
@@ -299,6 +302,25 @@ where
   Ok(())
 }
 
+pub(crate) fn request_expects_continue(header: &str, body: Option<&RequestBody>) -> bool {
+  if body.is_none_or(|body| body.len() == 0) {
+    return false;
+  }
+
+  header.lines().skip(1).any(|line| {
+    let Some((name, value)) = line.split_once(':') else {
+      return false;
+    };
+    name.eq_ignore_ascii_case("Expect") && value.trim().eq_ignore_ascii_case("100-continue")
+  })
+}
+
+pub(crate) enum ExpectContinueResult {
+  NotUsed,
+  BodySent,
+  Final(ResponseParts),
+}
+
 pub(crate) fn parse_proxy_connect_response(header: &[u8]) -> error::Result<()> {
   let header = String::from_utf8(header.to_vec())
     .map_err(|_| error::bad_proxy("parse proxy server response error."))?;
@@ -409,6 +431,30 @@ impl<'a> Connection<'a> {
     write_http_request(stream, self.header(), self.body().as_ref())
   }
 
+  pub(crate) fn block_write_request_header_with<S>(
+    &self,
+    stream: &mut S,
+    header: &str,
+  ) -> error::Result<()>
+  where
+    S: io::Write,
+  {
+    stream
+      .write_all(header.as_bytes())
+      .map_err(error::request)?;
+    stream.flush().map_err(error::request)
+  }
+
+  fn block_write_request_body<S>(&self, stream: &mut S) -> error::Result<()>
+  where
+    S: io::Write,
+  {
+    if let Some(body) = self.body() {
+      stream.write_all(body.bytes()).map_err(error::request)?;
+    }
+    stream.flush().map_err(error::request)
+  }
+
   pub(crate) fn block_read_stream_parts<S>(
     &self,
     url: &Url,
@@ -419,6 +465,44 @@ impl<'a> Connection<'a> {
   {
     let mut reader = ConnectionReader::new(url, stream, self.expect_no_response_body());
     reader.response_parts()
+  }
+
+  pub(crate) fn block_send_expect_continue_parts<S>(
+    &self,
+    stream: &mut S,
+  ) -> error::Result<ExpectContinueResult>
+  where
+    S: io::Read + io::Write,
+  {
+    self.block_send_expect_continue_parts_with_header(stream, self.header())
+  }
+
+  pub(crate) fn block_send_expect_continue_parts_with_header<S>(
+    &self,
+    stream: &mut S,
+    header: &str,
+  ) -> error::Result<ExpectContinueResult>
+  where
+    S: io::Read + io::Write,
+  {
+    if !request_expects_continue(header, self.body().as_ref()) {
+      return Ok(ExpectContinueResult::NotUsed);
+    }
+
+    self.block_write_request_header_with(stream, header)?;
+    loop {
+      let header = read_response_header(stream)?;
+      let status_code = response_status_code(&header)?;
+      if status_code == 100 {
+        self.block_write_request_body(stream)?;
+        return Ok(ExpectContinueResult::BodySent);
+      }
+      if is_skippable_informational_status(status_code) {
+        continue;
+      }
+      return read_response_parts_after_header(stream, self.expect_no_response_body(), header)
+        .map(ExpectContinueResult::Final);
+    }
   }
 
   pub(crate) fn block_send_parts(&self, url: &Url) -> error::Result<ResponseParts> {
@@ -450,7 +534,11 @@ impl<'a> Connection<'a> {
   where
     S: io::Read + io::Write,
   {
-    self.block_write_stream(stream)?;
+    match self.block_send_expect_continue_parts(stream)? {
+      ExpectContinueResult::NotUsed => self.block_write_stream(stream)?,
+      ExpectContinueResult::BodySent => {}
+      ExpectContinueResult::Final(parts) => return Ok(parts),
+    }
     self.block_read_stream_parts(url, stream)
   }
 
@@ -510,7 +598,11 @@ impl<'a> Connection<'a> {
       .connect(&self.host(url)?[..], stream)
       .map_err(|_| error::bad_ssl("Native tls handshake error"))?;
 
-    self.block_write_stream(&mut ssl_stream)?;
+    match self.block_send_expect_continue_parts(&mut ssl_stream)? {
+      ExpectContinueResult::NotUsed => self.block_write_stream(&mut ssl_stream)?,
+      ExpectContinueResult::BodySent => {}
+      ExpectContinueResult::Final(parts) => return Ok(parts),
+    }
     self.block_read_stream_parts(url, &mut ssl_stream)
   }
 
@@ -560,7 +652,11 @@ impl<'a> Connection<'a> {
       ClientConnection::new(rc_config, server_name).map_err(|e| error::bad_ssl(e.to_string()))?;
     let mut tls = StreamOwned::new(client, stream);
 
-    self.block_write_stream(&mut tls)?;
+    match self.block_send_expect_continue_parts(&mut tls)? {
+      ExpectContinueResult::NotUsed => self.block_write_stream(&mut tls)?,
+      ExpectContinueResult::BodySent => {}
+      ExpectContinueResult::Final(parts) => return Ok(parts),
+    }
     self.block_read_stream_parts(url, &mut tls)
   }
 }

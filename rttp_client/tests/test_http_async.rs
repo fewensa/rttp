@@ -206,6 +206,57 @@ fn test_async_client_skips_100_continue_before_final_response() {
 
 #[test]
 #[cfg(feature = "async")]
+fn test_async_client_waits_for_100_continue_before_sending_body() {
+  let (addr, handle) = support::spawn_expect_continue_gate_server();
+  block_on(async {
+    let response = client()
+      .post()
+      .url(format!("http://{}/continue-gate", addr))
+      .header(("Expect", "100-continue"))
+      .raw("request body")
+      .rasync()
+      .await
+      .unwrap();
+
+    assert_eq!(200, response.code());
+    assert_eq!("accepted", response.body().string().unwrap());
+  });
+
+  let request = handle.join().expect("expect continue gate thread");
+  assert!(!request.is_empty(), "body was sent before 100 Continue");
+  assert!(String::from_utf8_lossy(&request).contains("Expect: 100-continue"));
+  assert!(request.ends_with(b"request body"));
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_client_does_not_send_body_when_expect_continue_gets_final_response() {
+  let (addr, handle) = support::spawn_expect_continue_reject_gate_server();
+  block_on(async {
+    let response = client()
+      .post()
+      .url(format!("http://{}/continue-reject", addr))
+      .header(("Expect", "100-continue"))
+      .raw("request body")
+      .rasync()
+      .await
+      .unwrap();
+
+    assert_eq!(417, response.code());
+    assert_eq!("Expectation Failed", response.body().string().unwrap());
+  });
+
+  let request = handle.join().expect("expect continue reject gate thread");
+  assert!(
+    !request.is_empty(),
+    "body was sent before final expectation response"
+  );
+  assert!(String::from_utf8_lossy(&request).contains("Expect: 100-continue"));
+  assert!(!request.ends_with(b"request body"));
+}
+
+#[test]
+#[cfg(feature = "async")]
 fn test_async_client_skips_103_early_hints_before_final_response() {
   let (addr, _handle) = support::spawn_informational_then_ok_server("103 Early Hints");
   block_on(async {
