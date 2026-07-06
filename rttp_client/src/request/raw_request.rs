@@ -1,5 +1,6 @@
 use crate::error;
 use crate::request::builder::RawBuilder;
+use crate::request::is_sensitive_redirect_header;
 use crate::request::{Request, RequestBody};
 #[cfg(feature = "async")]
 use crate::types::Header;
@@ -147,9 +148,7 @@ impl<'a> RawRequest<'a> {
         .split_once(':')
         .map(|(name, _)| name);
 
-      if header_name.is_some_and(|name| {
-        name.eq_ignore_ascii_case("authorization") || name.eq_ignore_ascii_case("cookie")
-      }) {
+      if header_name.is_some_and(is_sensitive_redirect_header) {
         continue;
       }
 
