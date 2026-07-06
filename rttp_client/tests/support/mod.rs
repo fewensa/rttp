@@ -6,6 +6,7 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use rttp::server::HttpResponse;
 use socket2::{Domain, Protocol, Socket, Type};
 
 #[path = "local_http.rs"]
@@ -134,6 +135,22 @@ pub fn spawn_chunked_server() -> (SocketAddr, JoinHandle<()>) {
     "X-Signature: signed\r\n",
     "\r\n"
   ))
+}
+
+pub fn spawn_socket2_chunked_trailer_server() -> (SocketAddr, JoinHandle<()>) {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind socket2 trailer server");
+  let addr = server.local_addr().expect("socket2 trailer server addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_request| {
+        HttpResponse::ok("socket2 chunked body")
+          .header("Transfer-Encoding", "chunked")
+          .trailer("X-Trace", "abc")
+          .trailer("X-Signature", "signed")
+      })
+      .expect("serve socket2 trailer response");
+  });
+  (addr, handle)
 }
 
 pub fn spawn_chunked_response_server(response: impl Into<Vec<u8>>) -> (SocketAddr, JoinHandle<()>) {

@@ -94,6 +94,35 @@ fn test_chunked() {
 }
 
 #[test]
+fn test_socket2_server_chunked_trailers_are_exposed_case_insensitively() {
+  let (addr, _handle) = support::spawn_socket2_chunked_trailer_server();
+  let response = client()
+    .get()
+    .url(format!("http://{}/chunked", addr))
+    .emit()
+    .unwrap();
+
+  assert_eq!("socket2 chunked body", response.body().string().unwrap());
+  assert_eq!(2, response.trailers().len());
+  assert_eq!(
+    Some("abc"),
+    response.trailer("x-trace").map(|h| h.value().as_str())
+  );
+  assert_eq!(
+    Some("abc"),
+    response.trailer_value("X-TRACE").map(String::as_str)
+  );
+  assert_eq!(
+    Some("signed"),
+    response.trailer("X-SIGNATURE").map(|h| h.value().as_str())
+  );
+  assert_eq!(
+    Some("signed"),
+    response.trailer_value("x-signature").map(String::as_str)
+  );
+}
+
+#[test]
 fn test_chunked_without_trailers_exposes_empty_trailers() {
   let (addr, _handle) = support::spawn_chunked_server_without_trailers();
   let response = client()
@@ -310,6 +339,32 @@ fn test_chunked_oversized_trailer_is_rejected() {
     error
       .to_string()
       .contains("chunked response line is too large"),
+    "unexpected error: {error}"
+  );
+}
+
+#[test]
+fn test_forbidden_chunked_response_trailer_is_rejected() {
+  let response = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "2\r\nOK\r\n",
+    "0\r\n",
+    "WWW-Authenticate: unsafe\r\n",
+    "\r\n"
+  );
+  let (addr, _handle) = support::spawn_chunked_response_server(response);
+
+  let error = client()
+    .get()
+    .url(format!("http://{}/chunked", addr))
+    .emit()
+    .expect_err("forbidden chunk trailer should be rejected");
+
+  assert!(
+    error.to_string().contains("Forbidden trailer header"),
     "unexpected error: {error}"
   );
 }
