@@ -194,6 +194,30 @@ fn raw_json_preserves_explicit_content_type_and_content_length() {
 }
 
 #[test]
+fn raw_body_preserves_existing_query_parameters_in_request_target() {
+  let raw_body = "plain body";
+  let request = capture_request(|base_url| {
+    client()
+      .post()
+      .url(format!("{}/raw?trace=abc&debug=true", base_url))
+      .raw(raw_body)
+      .emit()
+      .expect("request should succeed");
+  });
+
+  let text = request_text(&request);
+  let body = request_body(&request);
+
+  assert!(text.starts_with("POST /raw?trace=abc&debug=true HTTP/1.1\r\n"));
+  assert_eq!(Some("text/plain"), header_value(&text, "Content-Type"));
+  assert_eq!(
+    Some(raw_body.len().to_string().as_str()),
+    header_value(&text, "Content-Length")
+  );
+  assert_eq!(raw_body.as_bytes(), body);
+}
+
+#[test]
 fn binary_body_without_explicit_content_type_sends_octet_stream() {
   let binary_body = vec![0, 1, 2, 3];
   let request = capture_request(|base_url| {
@@ -209,6 +233,33 @@ fn binary_body_without_explicit_content_type_sends_octet_stream() {
   let body = request_body(&request);
 
   assert!(text.starts_with("POST /binary HTTP/1.1\r\n"));
+  assert_eq!(
+    Some("application/octet-stream"),
+    header_value(&text, "Content-Type")
+  );
+  assert_eq!(
+    Some(binary_body.len().to_string().as_str()),
+    header_value(&text, "Content-Length")
+  );
+  assert_eq!(binary_body.as_slice(), body);
+}
+
+#[test]
+fn binary_body_preserves_existing_query_parameters_in_request_target() {
+  let binary_body = vec![0, 1, 2, 3];
+  let request = capture_request(|base_url| {
+    client()
+      .post()
+      .url(format!("{}/binary?trace=abc&debug=true", base_url))
+      .binary(binary_body.clone())
+      .emit()
+      .expect("request should succeed");
+  });
+
+  let text = request_text(&request);
+  let body = request_body(&request);
+
+  assert!(text.starts_with("POST /binary?trace=abc&debug=true HTTP/1.1\r\n"));
   assert_eq!(
     Some("application/octet-stream"),
     header_value(&text, "Content-Type")
