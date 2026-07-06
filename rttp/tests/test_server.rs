@@ -380,6 +380,94 @@ fn server_sends_continue_before_reading_expected_content_length_body() {
 }
 
 #[test]
+fn server_keeps_continue_request_body_aligned_before_follow_up_request() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        let observed = (request.target().to_string(), request.body().to_vec());
+        tx.send(observed).expect("send parsed request");
+        HttpResponse::ok(format!("served {}", request.target()))
+      })
+      .expect("serve requests");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .set_read_timeout(Some(Duration::from_millis(250)))
+    .expect("set read timeout");
+  stream
+    .write_all(
+      concat!(
+        "POST /first HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Connection: keep-alive\r\n",
+        "Expect: 100-continue\r\n",
+        "Content-Length: 5\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write first request head");
+
+  let expected_interim = b"HTTP/1.1 100 Continue\r\n\r\n";
+  let mut interim = vec![0u8; expected_interim.len()];
+  stream
+    .read_exact(&mut interim)
+    .expect("read interim response");
+  assert_eq!(expected_interim, interim.as_slice());
+
+  stream
+    .write_all(
+      concat!(
+        "hello",
+        "POST /second HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Connection: keep-alive\r\n",
+        "Content-Length: 6\r\n",
+        "\r\n",
+        "second"
+      )
+      .as_bytes(),
+    )
+    .expect("write first body and follow-up request");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let expected_first = b"HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nserved /first";
+  let mut first = vec![0u8; expected_first.len()];
+  stream.read_exact(&mut first).expect("read first response");
+  assert_eq!(expected_first, first.as_slice());
+
+  let expected_second =
+    b"HTTP/1.1 200 OK\r\nContent-Length: 14\r\nConnection: close\r\n\r\nserved /second";
+  let mut second = vec![0u8; expected_second.len()];
+  stream
+    .read_exact(&mut second)
+    .expect("read second response");
+  assert_eq!(expected_second, second.as_slice());
+
+  let mut trailing = [0u8; 1];
+  let bytes_read = stream.read(&mut trailing).expect("read trailing bytes");
+  assert_eq!(0, bytes_read);
+
+  assert_eq!(
+    ("/first".to_string(), b"hello".to_vec()),
+    rx.recv().expect("receive first request")
+  );
+  assert_eq!(
+    ("/second".to_string(), b"second".to_vec()),
+    rx.recv().expect("receive second request")
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn server_sends_continue_before_reading_expected_chunked_body() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
