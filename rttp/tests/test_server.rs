@@ -1507,6 +1507,61 @@ fn response_write_to_omits_content_length_and_body_for_1xx() {
   );
 }
 
+#[test]
+fn response_write_to_omits_transfer_encoding_and_chunk_framing_for_no_body_statuses() {
+  for (status_code, reason) in [
+    (101, "Switching Protocols"),
+    (204, "No Content"),
+    (304, "Not Modified"),
+  ] {
+    let response = HttpResponse::new(status_code, reason)
+      .header("Transfer-Encoding", "chunked")
+      .body("ignored");
+    let mut serialized = Vec::new();
+
+    response
+      .write_to(&mut serialized)
+      .expect("serialize response");
+
+    assert_eq!(
+      format!("HTTP/1.1 {status_code} {reason}\r\nConnection: close\r\n\r\n").as_bytes(),
+      serialized.as_slice()
+    );
+  }
+}
+
+#[test]
+fn server_omits_transfer_encoding_and_chunk_framing_for_no_body_statuses() {
+  for (status_code, reason) in [
+    (101, "Switching Protocols"),
+    (204, "No Content"),
+    (304, "Not Modified"),
+  ] {
+    let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+    let addr = server.local_addr().expect("server addr");
+    let response_reason = reason.to_string();
+
+    let handle = thread::spawn(move || {
+      server
+        .accept_one(|_request| {
+          HttpResponse::new(status_code, response_reason)
+            .header("Transfer-Encoding", "chunked")
+            .body("ignored")
+        })
+        .expect("serve one request");
+    });
+
+    let response = send_request(addr, b"GET /empty HTTP/1.1\r\nHost: localhost\r\n\r\n");
+
+    assert_eq!(
+      format!("HTTP/1.1 {status_code} {reason}\r\nConnection: close\r\n\r\n"),
+      response
+    );
+
+    handle.join().expect("server thread");
+  }
+}
+
 fn send_request(addr: std::net::SocketAddr, request: &[u8]) -> String {
   let mut stream = TcpStream::connect(addr).expect("connect server");
   stream.write_all(request).expect("write request");
