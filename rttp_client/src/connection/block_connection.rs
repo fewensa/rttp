@@ -5,10 +5,10 @@ use url::Url;
 
 use crate::connection::connection::{Connection, ExpectContinueResult};
 use crate::connection::connection_reader::ResponseParts;
+use crate::error;
 use crate::request::RawRequest;
 use crate::response::Response;
 use crate::types::{Proxy, ProxyType};
-use crate::{error, HttpClient};
 
 pub struct BlockConnection<'a> {
   conn: Connection<'a>,
@@ -22,49 +22,51 @@ impl<'a> BlockConnection<'a> {
   }
 
   pub fn call(mut self) -> error::Result<Response> {
-    let url = self.conn.url().map_err(error::builder)?;
-    let proxy = self.conn.proxy().clone();
-    let parts = if let Some(proxy) = proxy.as_ref() {
-      self.call_with_proxy(&url, proxy)?
-    } else {
-      self.conn.block_send_parts(&url)?
-    };
+    loop {
+      let url = self.conn.url().map_err(error::builder)?;
+      let proxy = self.conn.proxy().clone();
+      let parts = if let Some(proxy) = proxy.as_ref() {
+        self.call_with_proxy(&url, proxy)?
+      } else {
+        self.conn.block_send_parts(&url)?
+      };
 
-    let config = self.conn.config();
-    let response =
-      Response::with_trailers(self.conn.rourl().clone(), parts.binary, parts.trailers)?;
+      let response =
+        Response::with_trailers(self.conn.rourl().clone(), parts.binary, parts.trailers)?;
+      let config = self.conn.config().clone();
 
-    if let Some(location) = response.location() {
-      let req_url = url.as_str();
-      if req_url == location {
-        return Err(error::loop_detected(url));
-      }
-      if !config.auto_redirect() {
-        self.conn.closed_set(true);
-        return Ok(response);
-      }
-      let count = self.conn.count();
-      if count > config.max_redirect() {
-        return Err(error::too_many_redirects(url));
+      if let Some(location) = response.location() {
+        let req_url = url.as_str();
+        if req_url == location {
+          return Err(error::loop_detected(url));
+        }
+        if !config.auto_redirect() {
+          self.conn.closed_set(true);
+          return Ok(response);
+        }
+        let count = self.conn.count();
+        if count > config.max_redirect() {
+          return Err(error::too_many_redirects(url));
+        }
+
+        let redirect_url = self.conn.resolve_redirect_url(&url, location)?;
+        if url == redirect_url.url {
+          return Err(error::loop_detected(url));
+        }
+        let strip_sensitive_headers = !self.conn.is_same_origin_url(&url, &redirect_url.url);
+        self.conn.request_mut().redirect_status_set(response.code());
+        self.conn.request_mut().redirect_url_set(
+          redirect_url.url.to_string(),
+          strip_sensitive_headers,
+          Some(&redirect_url.request_target),
+        )?;
+        self.conn.request_mut().origin_mut().count_set(count + 1);
+        continue;
       }
 
-      let redirect_url = self.conn.resolve_redirect_url(&url, location)?;
-      if url == redirect_url {
-        return Err(error::loop_detected(url));
-      }
-      let mut request = self.conn.request().origin().clone();
-      request.redirect_status_set(response.code());
-      if !self.conn.is_same_origin_url(&url, &redirect_url) {
-        request.remove_sensitive_redirect_headers();
-      }
-      return HttpClient::with_request(request)
-        .url(redirect_url.to_string())
-        .count(count + 1)
-        .emit();
+      self.conn.closed_set(true);
+      return Ok(response);
     }
-
-    self.conn.closed_set(true);
-    Ok(response)
   }
 }
 

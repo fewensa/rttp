@@ -145,6 +145,11 @@ pub struct Connection<'a> {
   request: RawRequest<'a>,
 }
 
+pub(crate) struct RedirectUrl {
+  pub(crate) url: Url,
+  pub(crate) request_target: String,
+}
+
 impl<'a> Connection<'a> {
   pub fn new(request: RawRequest<'a>) -> Connection<'a> {
     Self { request }
@@ -230,20 +235,45 @@ impl<'a> Connection<'a> {
   pub fn proxy_http_header(&self, url: &Url, proxy: &Proxy) -> String {
     let header = self.header();
     let (_, rest) = header.split_once("\r\n").unwrap_or(("", ""));
+    let request_target = self
+      .request
+      .request_target()
+      .map(|target| format!("{}{}", &url[..url::Position::BeforePath], target))
+      .unwrap_or_else(|| absolute_url(url));
     let mut proxy_header = format!(
       "{} {} HTTP/1.1\r\n{}",
       self.request.origin().method().to_uppercase(),
-      absolute_url(url),
+      request_target,
       rest
     );
     append_proxy_authorization_header(&mut proxy_header, proxy);
     proxy_header
   }
 
-  pub fn resolve_redirect_url(&self, url: &Url, location: &str) -> error::Result<Url> {
-    url
+  pub fn resolve_redirect_url(&self, url: &Url, location: &str) -> error::Result<RedirectUrl> {
+    let mut redirect = url
       .join(location)
-      .map_err(|_| error::bad_url(url.clone(), "Bad redirect location"))
+      .map_err(|_| error::bad_url(url.clone(), "Bad redirect location"))?;
+    let (path, query) = raw_redirect_path_and_query(url, self.request.request_target(), location)
+      .unwrap_or_else(|| {
+        (
+          redirect.path().to_string(),
+          redirect.query().map(str::to_string),
+        )
+      });
+    redirect.set_path(&path);
+    redirect.set_query(query.as_deref());
+
+    let mut request_target = path;
+    if let Some(query) = query {
+      request_target.push('?');
+      request_target.push_str(&query);
+    }
+
+    Ok(RedirectUrl {
+      url: redirect,
+      request_target,
+    })
   }
 
   pub fn is_same_origin_url(&self, url: &Url, redirect: &Url) -> bool {
@@ -259,6 +289,116 @@ fn absolute_url(url: &Url) -> String {
   let mut absolute = url.clone();
   absolute.set_fragment(None);
   absolute.to_string()
+}
+
+fn raw_redirect_path_and_query(
+  base: &Url,
+  base_request_target: Option<&str>,
+  location: &str,
+) -> Option<(String, Option<String>)> {
+  let (base_path, base_query) = base_request_target
+    .and_then(raw_request_target_path_and_query)
+    .unwrap_or_else(|| (base.path(), base.query()));
+  let location = location.trim();
+  let location = location
+    .split_once('#')
+    .map_or(location, |(before, _)| before);
+  if location.is_empty() {
+    return Some((base_path.to_string(), base_query.map(str::to_string)));
+  }
+  if let Some(rest) = location.strip_prefix("//") {
+    return Some(raw_path_and_query_after_authority(rest));
+  }
+  if let Some(rest) = strip_absolute_url_scheme(location) {
+    if let Some(rest) = rest.strip_prefix("//") {
+      return Some(raw_path_and_query_after_authority(rest));
+    }
+    return None;
+  }
+  if let Some(query) = location.strip_prefix('?') {
+    return Some((base_path.to_string(), Some(query.to_string())));
+  }
+
+  let (path, query) = split_path_and_query(location);
+  if path.starts_with('/') {
+    return Some((remove_literal_dot_segments(path), query.map(str::to_string)));
+  }
+
+  let mut merged = base_path_directory(base_path);
+  merged.push_str(path);
+  Some((
+    remove_literal_dot_segments(&merged),
+    query.map(str::to_string),
+  ))
+}
+
+fn raw_request_target_path_and_query(target: &str) -> Option<(&str, Option<&str>)> {
+  if target.starts_with('/') {
+    return Some(split_path_and_query(target));
+  }
+  None
+}
+
+fn strip_absolute_url_scheme(location: &str) -> Option<&str> {
+  let scheme_end = location.find(':')?;
+  let scheme = &location[..scheme_end];
+  if scheme.is_empty() || !scheme.as_bytes()[0].is_ascii_alphabetic() {
+    return None;
+  }
+  if !scheme
+    .bytes()
+    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.'))
+  {
+    return None;
+  }
+  Some(&location[scheme_end + 1..])
+}
+
+fn raw_path_and_query_after_authority(rest: &str) -> (String, Option<String>) {
+  let path_start = rest
+    .find(|ch| matches!(ch, '/' | '?' | '#'))
+    .unwrap_or(rest.len());
+  let path_and_query = &rest[path_start..];
+  if path_and_query.is_empty() {
+    return ("/".to_string(), None);
+  }
+  if let Some(query) = path_and_query.strip_prefix('?') {
+    return ("/".to_string(), Some(query.to_string()));
+  }
+  let (path, query) = split_path_and_query(path_and_query);
+  (remove_literal_dot_segments(path), query.map(str::to_string))
+}
+
+fn split_path_and_query(value: &str) -> (&str, Option<&str>) {
+  value
+    .split_once('?')
+    .map_or((value, None), |(path, query)| (path, Some(query)))
+}
+
+fn base_path_directory(path: &str) -> String {
+  let directory_end = path.rfind('/').map_or(0, |index| index + 1);
+  path[..directory_end].to_string()
+}
+
+fn remove_literal_dot_segments(path: &str) -> String {
+  let mut segments: Vec<&str> = Vec::new();
+  for segment in path.split('/') {
+    match segment {
+      "." => {}
+      ".." => {
+        if segments.last().is_some_and(|last| !last.is_empty()) {
+          segments.pop();
+        }
+      }
+      _ => segments.push(segment),
+    }
+  }
+  let normalized = segments.join("/");
+  if normalized.is_empty() {
+    "/".to_string()
+  } else {
+    normalized
+  }
 }
 
 fn is_same_origin(left: &Url, right: &Url) -> bool {

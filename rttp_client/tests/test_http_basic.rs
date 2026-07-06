@@ -807,6 +807,37 @@ fn test_auto_redirect_resolves_query_only_location() {
 }
 
 #[test]
+fn test_auto_redirect_preserves_percent_encoded_path_and_query_octets() {
+  assert_redirect_resolves_to_target(
+    |_| "/files/%2e%2e/a%2fb/c%FF?next=%2fdone%3fx%3d1%FF&space=a%20b".to_string(),
+    "/files/%2e%2e/a%2fb/c%FF?next=%2fdone%3fx%3d1%FF&space=a%20b",
+  );
+}
+
+#[test]
+fn test_auto_redirect_uses_preserved_percent_encoded_path_as_relative_base() {
+  let (addr, _handle) = support::spawn_redirect_chain_server(
+    vec![
+      ("/start", "/files/%2e%2e/a/"),
+      ("/files/%2e%2e/a/", "next%2fhop?token=%2e%2e"),
+    ],
+    3,
+  );
+  let response = client()
+    .config(Config::builder().auto_redirect(true).max_redirect(2))
+    .get()
+    .url(format!("http://{}/start", addr))
+    .emit();
+
+  assert!(response.is_ok());
+  let response = response.unwrap();
+  assert_eq!(
+    "/files/%2e%2e/a/next%2fhop?token=%2e%2e",
+    response.body().string().unwrap()
+  );
+}
+
+#[test]
 fn test_auto_redirect_preserves_chain_that_finishes_within_max_redirect() {
   let (addr, _handle) = support::spawn_redirect_chain_server(
     vec![("/start", "/hop-one"), ("/hop-one", "/final?done=1")],
