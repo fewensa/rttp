@@ -1613,6 +1613,61 @@ fn server_keeps_head_connection_framed_for_following_request() {
 }
 
 #[test]
+fn server_keeps_204_connection_framed_for_following_request() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        let target = request.target().to_string();
+        tx.send(target.clone()).expect("send parsed target");
+        if target == "/empty" {
+          HttpResponse::new(204, "No Content").body("ignored body")
+        } else {
+          HttpResponse::ok(format!("served {target}"))
+        }
+      })
+      .expect("serve requests");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(
+      concat!(
+        "GET /empty HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Connection: keep-alive\r\n",
+        "\r\n",
+        "GET /second HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write pipelined requests");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  assert_eq!(
+    concat!(
+      "HTTP/1.1 204 No Content\r\n\r\n",
+      "HTTP/1.1 200 OK\r\nContent-Length: 14\r\nConnection: close\r\n\r\nserved /second",
+    ),
+    response
+  );
+  assert_eq!("/empty", rx.recv().expect("receive first target"));
+  assert_eq!("/second", rx.recv().expect("receive second target"));
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn server_keeps_http11_connection_alive_by_default() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
