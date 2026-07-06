@@ -18,12 +18,21 @@ pub struct RawResponse {
   version: String,
   reason: String,
   headers: Vec<Header>,
+  trailers: Vec<Header>,
   cookies: Vec<Cookie>,
   body: ResponseBody,
 }
 
 impl RawResponse {
   pub fn new(url: RoUrl, binary: Vec<u8>) -> error::Result<Self> {
+    Self::with_trailers(url, binary, Vec::new())
+  }
+
+  pub(crate) fn with_trailers(
+    url: RoUrl,
+    binary: Vec<u8>,
+    trailers: Vec<Header>,
+  ) -> error::Result<Self> {
     let _url = url.to_url().map_err(error::builder)?;
     let mut response = RawResponse {
       _url,
@@ -32,6 +41,7 @@ impl RawResponse {
       version: "".to_string(),
       reason: "".to_string(),
       headers: vec![],
+      trailers,
       cookies: vec![],
       body: ResponseBody::new(vec![]),
     };
@@ -86,6 +96,9 @@ impl RawResponse {
   }
   pub fn headers_get(&self) -> &Vec<Header> {
     &self.headers
+  }
+  pub fn trailers_get(&self) -> &Vec<Header> {
+    &self.trailers
   }
   pub fn body_get(&self) -> &ResponseBody {
     &self.body

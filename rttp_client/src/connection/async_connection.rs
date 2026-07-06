@@ -9,11 +9,11 @@ use url::Url;
 use std::sync::Arc;
 
 use crate::connection::connection::{connect_tcp_stream, read_proxy_connect_response, Connection};
-use crate::connection::connection_reader::{response_body_kind, ResponseBodyKind};
+use crate::connection::connection_reader::{response_body_kind, ResponseBodyKind, ResponseParts};
 use crate::error;
 use crate::request::RawRequest;
 use crate::response::Response;
-use crate::types::{Proxy, ProxyType, RoUrl};
+use crate::types::{Header, Proxy, ProxyType, RoUrl};
 const CRLF: &[u8] = b"\r\n";
 
 pub struct AsyncConnection<'a> {
@@ -31,13 +31,14 @@ impl<'a> AsyncConnection<'a> {
     loop {
       let url = self.conn.url().map_err(error::builder)?;
       let proxy = self.conn.proxy().clone();
-      let binary = if let Some(proxy) = proxy.as_ref() {
+      let parts = if let Some(proxy) = proxy.as_ref() {
         self.call_with_proxy(&url, proxy).await?
       } else {
-        self.async_send(&url).await?
+        self.async_send_parts(&url).await?
       };
 
-      let response = Response::new(self.conn.rourl().clone(), binary)?;
+      let response =
+        Response::with_trailers(self.conn.rourl().clone(), parts.binary, parts.trailers)?;
       let config = self.conn.config().clone();
 
       if let Some(location) = response.location() {
@@ -101,15 +102,22 @@ impl<'a> AsyncConnection<'a> {
     Ok(())
   }
 
-  async fn async_read_stream<S>(&self, _url: &Url, stream: &mut S) -> error::Result<Vec<u8>>
+  async fn async_read_stream_parts<S>(
+    &self,
+    _url: &Url,
+    stream: &mut S,
+  ) -> error::Result<ResponseParts>
   where
     S: AsyncRead + Unpin,
   {
     let mut binary = async_read_response_header(stream).await?;
+    let mut trailers = Vec::new();
     match response_body_kind(&binary, self.conn.expect_no_response_body())? {
       ResponseBodyKind::NoBody => {}
       ResponseBodyKind::Chunked => {
-        binary.extend_from_slice(&async_read_chunked_body(stream).await?);
+        let chunked = async_read_chunked_response_body(stream).await?;
+        binary.extend_from_slice(&chunked.body);
+        trailers = chunked.trailers;
       }
       ResponseBodyKind::ContentLength(content_length) => {
         let current_len = binary.len();
@@ -126,7 +134,7 @@ impl<'a> AsyncConnection<'a> {
           .map_err(error::request)?;
       }
     }
-    Ok(binary)
+    Ok(ResponseParts { binary, trailers })
   }
 }
 
@@ -153,7 +161,12 @@ where
   }
 }
 
-async fn async_read_chunked_body<S>(stream: &mut S) -> error::Result<Vec<u8>>
+struct ChunkedResponseBody {
+  body: Vec<u8>,
+  trailers: Vec<Header>,
+}
+
+async fn async_read_chunked_response_body<S>(stream: &mut S) -> error::Result<ChunkedResponseBody>
 where
   S: AsyncRead + Unpin,
 {
@@ -164,8 +177,8 @@ where
     let chunk_size = parse_chunk_size(&line)?;
 
     if chunk_size == 0 {
-      async_consume_trailers(stream).await?;
-      return Ok(body);
+      let trailers = async_read_trailers(stream).await?;
+      return Ok(ChunkedResponseBody { body, trailers });
     }
 
     let current_len = body.len();
@@ -227,56 +240,81 @@ where
   }
 }
 
-async fn async_consume_trailers<S>(stream: &mut S) -> error::Result<()>
+async fn async_read_trailers<S>(stream: &mut S) -> error::Result<Vec<Header>>
 where
   S: AsyncRead + Unpin,
 {
+  let mut trailers = Vec::new();
   loop {
     let line = async_read_crlf_line(stream).await?;
     if line == CRLF {
-      return Ok(());
+      return Ok(trailers);
     }
+
+    trailers.push(parse_trailer_line(&line)?);
   }
+}
+
+fn parse_trailer_line(line: &[u8]) -> error::Result<Header> {
+  let line = std::str::from_utf8(line).map_err(error::response)?;
+  let line = line.trim_end_matches("\r\n");
+  let (name, value) = line
+    .split_once(':')
+    .ok_or_else(|| error::bad_response("Invalid trailer header"))?;
+
+  Ok(Header::new(name, value))
 }
 
 // connection send
 impl<'a> AsyncConnection<'a> {
-  async fn async_send(&self, url: &Url) -> error::Result<Vec<u8>> {
+  async fn async_send_parts(&self, url: &Url) -> error::Result<ResponseParts> {
     let addr = self.conn.addr(url)?;
     let stream = self.async_tcp_stream(&addr).await?;
 
-    self.async_send_with_stream(url, stream).await
+    self.async_send_with_stream_parts(url, stream).await
   }
 
-  async fn async_send_with_stream(&self, url: &Url, stream: TcpStream) -> error::Result<Vec<u8>> {
+  async fn async_send_with_stream_parts(
+    &self,
+    url: &Url,
+    stream: TcpStream,
+  ) -> error::Result<ResponseParts> {
     match url.scheme() {
       "http" => {
         let mut stream = AllowStdIo::new(stream);
-        self.async_send_http(url, &mut stream).await
+        self.async_send_http_parts(url, &mut stream).await
       }
-      "https" => self.async_send_https(url, stream).await,
+      "https" => self.async_send_https_parts(url, stream).await,
       _ => Err(error::url_bad_scheme(url.clone())),
     }
   }
 
-  async fn async_send_http<S>(&self, url: &Url, stream: &mut S) -> error::Result<Vec<u8>>
+  async fn async_send_http_parts<S>(
+    &self,
+    url: &Url,
+    stream: &mut S,
+  ) -> error::Result<ResponseParts>
   where
     S: AsyncRead + AsyncWrite + Unpin,
   {
     self.async_write_stream(stream).await?;
-    self.async_read_stream(url, stream).await
+    self.async_read_stream_parts(url, stream).await
   }
 
-  async fn async_send_https(&self, url: &Url, stream: TcpStream) -> error::Result<Vec<u8>> {
+  async fn async_send_https_parts(
+    &self,
+    url: &Url,
+    stream: TcpStream,
+  ) -> error::Result<ResponseParts> {
     #[cfg(feature = "tls-rustls")]
     {
-      return self.async_send_https_rustls(url, stream).await;
+      return self.async_send_https_rustls_parts(url, stream).await;
     }
 
     #[cfg(all(feature = "tls-native", not(feature = "tls-rustls")))]
     {
       let mut stream = stream;
-      return self.conn.block_send_https(url, &mut stream);
+      return self.conn.block_send_https_parts(url, &mut stream);
     }
 
     #[cfg(not(any(feature = "tls-native", feature = "tls-rustls")))]
@@ -290,7 +328,11 @@ impl<'a> AsyncConnection<'a> {
   }
 
   #[cfg(feature = "tls-rustls")]
-  async fn async_send_https_rustls(&self, url: &Url, stream: TcpStream) -> error::Result<Vec<u8>> {
+  async fn async_send_https_rustls_parts(
+    &self,
+    url: &Url,
+    stream: TcpStream,
+  ) -> error::Result<ResponseParts> {
     use futures_rustls::TlsConnector;
     use rustls::pki_types::ServerName;
     use rustls::{ClientConfig, RootCertStore};
@@ -339,13 +381,13 @@ impl<'a> AsyncConnection<'a> {
       .map_err(|e| error::bad_ssl(e.to_string()))?;
 
     self.async_write_stream(&mut tls_stream).await?;
-    self.async_read_stream(url, &mut tls_stream).await
+    self.async_read_stream_parts(url, &mut tls_stream).await
   }
 }
 
 // proxy connection
 impl<'a> AsyncConnection<'a> {
-  async fn call_with_proxy(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
+  async fn call_with_proxy(&self, url: &Url, proxy: &Proxy) -> error::Result<ResponseParts> {
     match proxy.type_() {
       ProxyType::HTTP => {
         if url.scheme() == "http" {
@@ -360,17 +402,17 @@ impl<'a> AsyncConnection<'a> {
     }
   }
 
-  async fn call_with_proxy_http(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
+  async fn call_with_proxy_http(&self, url: &Url, proxy: &Proxy) -> error::Result<ResponseParts> {
     let addr = format!("{}:{}", proxy.host(), proxy.port());
     let stream = self.async_tcp_stream(&addr).await?;
     let mut stream = AllowStdIo::new(stream);
     let header = self.conn.proxy_http_header(url, proxy);
 
     self.async_write_request(&mut stream, &header).await?;
-    self.async_read_stream(url, &mut stream).await
+    self.async_read_stream_parts(url, &mut stream).await
   }
 
-  async fn call_with_proxy_https(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
+  async fn call_with_proxy_https(&self, url: &Url, proxy: &Proxy) -> error::Result<ResponseParts> {
     let connect_header = self.conn.proxy_header(url, proxy)?;
 
     let addr = format!("{}:{}", proxy.host(), proxy.port());
@@ -382,10 +424,10 @@ impl<'a> AsyncConnection<'a> {
     stream.flush().map_err(error::request)?;
     read_proxy_connect_response(&mut stream)?;
 
-    self.async_send_with_stream(url, stream).await
+    self.async_send_with_stream_parts(url, stream).await
   }
 
-  async fn call_with_proxy_socks4(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
+  async fn call_with_proxy_socks4(&self, url: &Url, proxy: &Proxy) -> error::Result<ResponseParts> {
     // The SOCKS crate is sync-only, but its established stream still plugs into the existing
     // response path. Keeping it avoids duplicating the handshake state machine here.
     let addr_proxy = format!("{}:{}", proxy.host(), proxy.port());
@@ -397,10 +439,10 @@ impl<'a> AsyncConnection<'a> {
     };
     let mut stream = Socks4Stream::connect(&addr_proxy[..], &addr_target[..], &user[..])
       .map_err(error::request)?;
-    self.conn.block_send_with_stream(url, &mut stream)
+    self.conn.block_send_with_stream_parts(url, &mut stream)
   }
 
-  async fn call_with_proxy_socks5(&self, url: &Url, proxy: &Proxy) -> error::Result<Vec<u8>> {
+  async fn call_with_proxy_socks5(&self, url: &Url, proxy: &Proxy) -> error::Result<ResponseParts> {
     // socket2 already covers the direct TCP path; the SOCKS exception stays isolated to the
     // proxy handshake and keeps the async API surface unchanged.
     let addr_proxy = format!("{}:{}", proxy.host(), proxy.port());
@@ -415,6 +457,6 @@ impl<'a> AsyncConnection<'a> {
       Socks5Stream::connect(&addr_proxy[..], &addr_target[..])
     }
     .map_err(error::request)?;
-    self.conn.block_send_with_stream(url, &mut stream)
+    self.conn.block_send_with_stream_parts(url, &mut stream)
   }
 }

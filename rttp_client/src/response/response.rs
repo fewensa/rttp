@@ -17,6 +17,16 @@ impl Response {
       raw: RawResponse::new(url, binary)?,
     })
   }
+
+  pub(crate) fn with_trailers(
+    url: RoUrl,
+    binary: Vec<u8>,
+    trailers: Vec<Header>,
+  ) -> error::Result<Self> {
+    Ok(Self {
+      raw: RawResponse::with_trailers(url, binary, trailers)?,
+    })
+  }
 }
 
 impl Response {
@@ -68,6 +78,10 @@ impl Response {
     self.raw.headers_get()
   }
 
+  pub fn trailers(&self) -> &Vec<Header> {
+    self.raw.trailers_get()
+  }
+
   pub fn headers_of_name<S: AsRef<str>>(&self, name: S) -> Vec<&Header> {
     self
       .headers()
@@ -94,6 +108,17 @@ impl Response {
 
   pub fn header_value<S: AsRef<str>>(&self, name: S) -> Option<&String> {
     self.header(name).map(|header| header.value())
+  }
+
+  pub fn trailer<S: AsRef<str>>(&self, name: S) -> Option<&Header> {
+    self
+      .trailers()
+      .iter()
+      .find(|header| header.name().eq_ignore_ascii_case(name.as_ref()))
+  }
+
+  pub fn trailer_value<S: AsRef<str>>(&self, name: S) -> Option<&String> {
+    self.trailer(name).map(|header| header.value())
   }
 
   pub fn cookies(&self) -> &Vec<Cookie> {

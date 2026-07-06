@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
 use std::thread::{self, JoinHandle};
@@ -125,7 +127,28 @@ pub fn spawn_chunked_server() -> (SocketAddr, JoinHandle<()>) {
         "7;foo=bar\r\nchunked\r\n",
         "6\r\n body!\r\n",
         "0\r\n",
-        "X-Trailer: ignored\r\n",
+        "X-Trace: abc\r\n",
+        "X-Signature: signed\r\n",
+        "\r\n"
+      );
+      let _ = stream.write_all(response.as_bytes());
+    }
+  });
+  (addr, handle)
+}
+
+pub fn spawn_chunked_server_without_trailers() -> (SocketAddr, JoinHandle<()>) {
+  let (listener, addr) = bind_local_http_listener("chunked server without trailers");
+  let handle = thread::spawn(move || {
+    if let Ok((mut stream, _)) = listener.accept() {
+      let _ = read_http_request(&mut stream);
+      let response = concat!(
+        "HTTP/1.1 200 OK\r\n",
+        "Transfer-Encoding: chunked\r\n",
+        "Connection: close\r\n",
+        "\r\n",
+        "2\r\nOK\r\n",
+        "0\r\n",
         "\r\n"
       );
       let _ = stream.write_all(response.as_bytes());

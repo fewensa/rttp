@@ -77,3 +77,17 @@ fn test_parse_response_1() {
   let response = response.unwrap();
   println!("{}", response);
 }
+
+#[test]
+fn test_non_chunked_response_exposes_empty_trailers() {
+  let s = "HTTP/1.1 200 OK\r\n\
+        Content-Length: 2\r\n\
+        \r\n\
+        OK";
+  let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec());
+
+  assert!(response.is_ok());
+  let response = response.unwrap();
+  assert!(response.trailers().is_empty());
+  assert!(response.trailer("x-trace").is_none());
+}

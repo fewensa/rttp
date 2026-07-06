@@ -82,6 +82,30 @@ fn test_chunked() {
     Some(&"chunked".to_string()),
     response.header_value("Transfer-Encoding")
   );
+  assert_eq!(2, response.trailers().len());
+  assert_eq!(
+    Some("abc"),
+    response.trailer("x-trace").map(|h| h.value().as_str())
+  );
+  assert_eq!(
+    Some("signed"),
+    response.trailer("X-SIGNATURE").map(|h| h.value().as_str())
+  );
+}
+
+#[test]
+fn test_chunked_without_trailers_exposes_empty_trailers() {
+  let (addr, _handle) = support::spawn_chunked_server_without_trailers();
+  let response = client()
+    .get()
+    .url(format!("http://{}/chunked", addr))
+    .emit();
+  assert!(response.is_ok());
+
+  let response = response.unwrap();
+  assert_eq!("OK", response.body().string().unwrap());
+  assert!(response.trailers().is_empty());
+  assert!(response.trailer("x-trace").is_none());
 }
 
 #[test]

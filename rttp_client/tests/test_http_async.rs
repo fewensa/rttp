@@ -1,9 +1,13 @@
 mod support;
 
+#[cfg(feature = "async")]
 use futures::executor::block_on;
+#[cfg(feature = "async")]
 use rttp_client::types::Proxy;
+#[cfg(feature = "async")]
 use rttp_client::{Config, HttpClient};
 
+#[cfg(feature = "async")]
 fn client() -> HttpClient {
   HttpClient::new()
 }
@@ -40,6 +44,15 @@ fn test_async_chunked() {
 
     let response = response.unwrap();
     assert_eq!("chunked body!", response.body().string().unwrap());
+    assert_eq!(2, response.trailers().len());
+    assert_eq!(
+      Some("abc"),
+      response.trailer("X-TRACE").map(|h| h.value().as_str())
+    );
+    assert_eq!(
+      Some("signed"),
+      response.trailer("x-signature").map(|h| h.value().as_str())
+    );
   });
 }
 
