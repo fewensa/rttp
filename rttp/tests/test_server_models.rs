@@ -319,12 +319,27 @@ fn rejects_response_trailers_with_crlf() {
 }
 
 #[test]
+fn rejects_response_trailers_with_malformed_names() {
+  for name in ["", "Bad Name", "Bad:Name"] {
+    let result = std::panic::catch_unwind(|| {
+      let _response = HttpResponse::new(200, "OK").trailer(name, "unsafe");
+    });
+
+    assert!(result.is_err(), "{name:?} trailer should be rejected");
+  }
+}
+
+#[test]
 fn rejects_forbidden_response_trailer_names() {
   for name in [
     "Content-Length",
     "transfer-encoding",
     "Host",
+    "Authorization",
+    "Proxy-Authorization",
     "Connection",
+    "Cookie",
+    "Set-Cookie",
     "TE",
     "Trailer",
     "Upgrade",

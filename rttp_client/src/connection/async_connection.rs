@@ -10,8 +10,9 @@ use std::sync::Arc;
 
 use crate::connection::connection::{connect_tcp_stream, read_proxy_connect_response, Connection};
 use crate::connection::connection_reader::{
-  is_skippable_informational_status, response_body_kind, response_status_code, ResponseBodyKind,
-  ResponseParts, MAX_CHUNKED_RESPONSE_LINE_BYTES,
+  is_skippable_informational_status, response_body_kind, response_status_code,
+  validate_response_trailer_header, ResponseBodyKind, ResponseParts,
+  MAX_CHUNKED_RESPONSE_LINE_BYTES,
 };
 use crate::error;
 use crate::request::RawRequest;
@@ -282,6 +283,7 @@ fn parse_trailer_line(line: &[u8]) -> error::Result<Header> {
   let (name, value) = line
     .split_once(':')
     .ok_or_else(|| error::bad_response("Invalid trailer header"))?;
+  validate_response_trailer_header(name, value)?;
 
   Ok(Header::new(name, value))
 }
