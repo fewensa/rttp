@@ -22,6 +22,8 @@ rttp_client = "0.2"
 
 Direct TCP client connections are opened with `socket2`. SOCKS proxy handshakes
 are still delegated to the `socks` crate.
+Chunked responses are decoded by the client, and response trailers are available
+through the response trailer accessors.
 
 ```rust,no_run
 use rttp_client::HttpClient;
@@ -63,6 +65,11 @@ connection, and `serve_requests` for a fixed number of sequential connections.
 The listener path uses `socket2`.
 
 The server is intentionally small: it handles blocking HTTP/1.x request parsing
-for local tests and simple embedded use, closes each connection after one
-response, and does not implement chunked request bodies, keep-alive serving, TLS,
-or async accept loops.
+for local tests and simple embedded use. It accepts fixed `Content-Length` and
+chunked request bodies, exposes chunked request trailers, applies bounded
+request head/body validation, handles `HEAD` without writing a response body,
+honors `Connection` close/keep-alive semantics across a bounded
+`serve_requests` loop, and accepts `Expect: 100-continue`.
+
+It is not a full RFC-covering web server and still does not implement server
+TLS or async accept loops.
