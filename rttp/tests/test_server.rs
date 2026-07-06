@@ -464,6 +464,9 @@ fn server_rejects_request_target_forms_for_wrong_methods() {
 #[test]
 fn server_returns_bad_request_for_invalid_absolute_form_target() {
   assert_bad_request_without_handler(b"GET http:///path HTTP/1.1\r\nHost: localhost\r\n\r\n");
+  assert_bad_request_without_handler(
+    b"GET http://example.test/path#frag HTTP/1.1\r\nHost: localhost\r\n\r\n",
+  );
 }
 
 #[test]

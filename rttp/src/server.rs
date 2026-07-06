@@ -966,8 +966,11 @@ fn is_absolute_form_target(target: &str) -> bool {
   if !is_uri_scheme(scheme) {
     return false;
   }
+  if rest.contains('#') {
+    return false;
+  }
 
-  let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+  let authority_end = rest.find(['/', '?']).unwrap_or(rest.len());
   authority_end > 0
 }
 
