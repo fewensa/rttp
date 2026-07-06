@@ -802,6 +802,16 @@ fn test_auto_redirect_resolves_relative_path_location() {
 }
 
 #[test]
+fn test_auto_redirect_preserves_trailing_slash_for_dot_segment_location() {
+  assert_redirect_resolves_to_target(|_| ".".to_string(), "/redirect/");
+}
+
+#[test]
+fn test_auto_redirect_preserves_trailing_slash_for_parent_dot_segment_location() {
+  assert_redirect_resolves_to_target(|_| "/a/b/..".to_string(), "/a/");
+}
+
+#[test]
 fn test_auto_redirect_resolves_query_only_location() {
   assert_redirect_resolves_to_target(|_| "?page=2".to_string(), "/redirect/from?page=2");
 }
