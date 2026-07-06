@@ -181,6 +181,47 @@ fn configured_read_timeout_bounds_idle_accepted_connection() {
 }
 
 #[test]
+fn configured_read_timeout_bounds_idle_keep_alive_connection_after_response() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_millis(100)));
+  let addr = server.local_addr().expect("server addr");
+  let (handler_tx, handler_rx) = mpsc::channel();
+  let (result_tx, result_rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    let result = server.serve_requests(2, |request| {
+      let target = request.target().to_string();
+      handler_tx.send(target.clone()).expect("send parsed target");
+      HttpResponse::ok(format!("served {target}"))
+    });
+    result_tx.send(result).expect("send server result");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(b"GET /first HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n")
+    .expect("write first request");
+
+  let expected_response = b"HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nserved /first";
+  let mut response = vec![0; expected_response.len()];
+  stream
+    .read_exact(&mut response)
+    .expect("read first response");
+  assert_eq!(expected_response, response.as_slice());
+
+  let result = result_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server returned after keep-alive read timeout");
+  let err = result.expect_err("idle keep-alive connection should time out");
+  assert_eq!(std::io::ErrorKind::TimedOut, err.kind());
+  assert_eq!("/first", handler_rx.recv().expect("receive first target"));
+  assert!(handler_rx.try_recv().is_err());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn configured_write_timeout_preserves_normal_response_behavior() {
   let server = rttp::Http::server("127.0.0.1:0")
     .expect("bind server")
