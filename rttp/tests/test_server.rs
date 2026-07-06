@@ -415,6 +415,58 @@ fn server_returns_bad_request_for_invalid_method_token() {
 }
 
 #[test]
+fn server_accepts_absolute_form_request_target() {
+  let (response, handler_called) =
+    send_raw_request(b"GET http://example.test/path?query=1 HTTP/1.1\r\nHost: localhost\r\n\r\n");
+
+  assert!(handler_called);
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nunexpected",
+    response
+  );
+}
+
+#[test]
+fn server_accepts_options_asterisk_request_target() {
+  let (response, handler_called) =
+    send_raw_request(b"OPTIONS * HTTP/1.1\r\nHost: localhost\r\n\r\n");
+
+  assert!(handler_called);
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nunexpected",
+    response
+  );
+}
+
+#[test]
+fn server_accepts_connect_authority_request_target() {
+  let (response, handler_called) =
+    send_raw_request(b"CONNECT example.test:443 HTTP/1.1\r\nHost: example.test\r\n\r\n");
+
+  assert!(handler_called);
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nunexpected",
+    response
+  );
+}
+
+#[test]
+fn server_rejects_request_target_forms_for_wrong_methods() {
+  for raw in [
+    b"GET * HTTP/1.1\r\nHost: localhost\r\n\r\n".as_slice(),
+    b"GET example.test:443 HTTP/1.1\r\nHost: example.test\r\n\r\n",
+    b"CONNECT /tunnel HTTP/1.1\r\nHost: example.test\r\n\r\n",
+  ] {
+    assert_bad_request_without_handler(raw);
+  }
+}
+
+#[test]
+fn server_returns_bad_request_for_invalid_absolute_form_target() {
+  assert_bad_request_without_handler(b"GET http:///path HTTP/1.1\r\nHost: localhost\r\n\r\n");
+}
+
+#[test]
 fn server_returns_bad_request_for_header_name_with_whitespace() {
   assert_bad_request_without_handler(b"GET / HTTP/1.1\r\nBad Name: value\r\n\r\n");
 }

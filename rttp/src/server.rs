@@ -909,6 +909,12 @@ fn validate_request_line(method: &str, target: &str, version: &str) -> io::Resul
       "invalid request target",
     ));
   }
+  if !is_valid_request_target_for_method(method, target) {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "invalid request target",
+    ));
+  }
   if !matches!(version, "HTTP/1.0" | "HTTP/1.1") {
     return Err(io::Error::new(
       io::ErrorKind::InvalidData,
@@ -917,6 +923,75 @@ fn validate_request_line(method: &str, target: &str, version: &str) -> io::Resul
   }
 
   Ok(())
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum RequestTargetForm {
+  Origin,
+  Absolute,
+  Asterisk,
+  Authority,
+}
+
+fn is_valid_request_target_for_method(method: &str, target: &str) -> bool {
+  let Some(form) = request_target_form(target) else {
+    return false;
+  };
+
+  match form {
+    RequestTargetForm::Origin | RequestTargetForm::Absolute => method != "CONNECT",
+    RequestTargetForm::Asterisk => method == "OPTIONS",
+    RequestTargetForm::Authority => method == "CONNECT",
+  }
+}
+
+fn request_target_form(target: &str) -> Option<RequestTargetForm> {
+  if target == "*" {
+    Some(RequestTargetForm::Asterisk)
+  } else if target.starts_with('/') {
+    Some(RequestTargetForm::Origin)
+  } else if is_absolute_form_target(target) {
+    Some(RequestTargetForm::Absolute)
+  } else if is_authority_form_target(target) {
+    Some(RequestTargetForm::Authority)
+  } else {
+    None
+  }
+}
+
+fn is_absolute_form_target(target: &str) -> bool {
+  let Some((scheme, rest)) = target.split_once("://") else {
+    return false;
+  };
+  if !is_uri_scheme(scheme) {
+    return false;
+  }
+
+  let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+  authority_end > 0
+}
+
+fn is_uri_scheme(scheme: &str) -> bool {
+  let mut bytes = scheme.bytes();
+  let Some(first) = bytes.next() else {
+    return false;
+  };
+  first.is_ascii_alphabetic()
+    && bytes.all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.'))
+}
+
+fn is_authority_form_target(target: &str) -> bool {
+  if target
+    .bytes()
+    .any(|byte| matches!(byte, b'/' | b'?' | b'#'))
+  {
+    return false;
+  }
+
+  let Some((host, port)) = target.rsplit_once(':') else {
+    return false;
+  };
+  !host.is_empty() && !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 fn parse_header_lines<'a>(
