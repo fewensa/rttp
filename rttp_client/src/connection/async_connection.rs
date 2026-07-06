@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use crate::connection::connection::{connect_tcp_stream, read_proxy_connect_response, Connection};
 use crate::connection::connection_reader::{
-  response_body_kind, response_status_code, ResponseBodyKind, ResponseParts,
-  MAX_CHUNKED_RESPONSE_LINE_BYTES,
+  is_skippable_informational_status, response_body_kind, response_status_code, ResponseBodyKind,
+  ResponseParts, MAX_CHUNKED_RESPONSE_LINE_BYTES,
 };
 use crate::error;
 use crate::request::RawRequest;
@@ -116,7 +116,7 @@ impl<'a> AsyncConnection<'a> {
     let mut binary = loop {
       let header = async_read_response_header(stream).await?;
       let status_code = response_status_code(&header)?;
-      if status_code == 100 || (102..200).contains(&status_code) {
+      if is_skippable_informational_status(status_code) {
         continue;
       }
       break header;

@@ -72,7 +72,7 @@ where
   let mut binary = loop {
     let header = read_response_header(reader)?;
     let status_code = response_status_code(&header)?;
-    if status_code == 100 || (102..200).contains(&status_code) {
+    if is_skippable_informational_status(status_code) {
       continue;
     }
     break header;
@@ -120,6 +120,10 @@ where
       return Ok(header);
     }
   }
+}
+
+pub(crate) fn is_skippable_informational_status(status_code: u16) -> bool {
+  status_code == 100 || (102..200).contains(&status_code)
 }
 
 pub(crate) fn response_status_code(header: &[u8]) -> error::Result<u16> {
