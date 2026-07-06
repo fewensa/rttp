@@ -925,7 +925,7 @@ fn parse_request_head(raw: &[u8]) -> io::Result<RequestHead> {
   validate_request_line(method, target, version)?;
 
   let headers = parse_header_lines(lines)?;
-  validate_host_header_count(version, &headers)?;
+  validate_host_header(version, target, &headers)?;
 
   Ok(RequestHead {
     method: method.to_string(),
@@ -1010,7 +1010,7 @@ fn is_absolute_form_target(target: &str) -> bool {
   }
 
   let authority_end = rest.find(['/', '?']).unwrap_or(rest.len());
-  authority_end > 0
+  is_valid_host_authority(&rest[..authority_end], false)
 }
 
 fn is_uri_scheme(scheme: &str) -> bool {
@@ -1023,17 +1023,62 @@ fn is_uri_scheme(scheme: &str) -> bool {
 }
 
 fn is_authority_form_target(target: &str) -> bool {
-  if target
-    .bytes()
-    .any(|byte| matches!(byte, b'/' | b'?' | b'#'))
+  is_valid_host_authority(target, true)
+}
+
+fn is_valid_host_authority(authority: &str, require_port: bool) -> bool {
+  if authority.is_empty()
+    || authority
+      .bytes()
+      .any(|byte| matches!(byte, b'/' | b'?' | b'#' | b'@'))
   {
     return false;
   }
 
-  let Some((host, port)) = target.rsplit_once(':') else {
+  if let Some(rest) = authority.strip_prefix('[') {
+    let Some(end) = rest.find(']') else {
+      return false;
+    };
+    let host = &rest[..end];
+    let suffix = &rest[end + 1..];
+    if host.is_empty() || host.bytes().any(|byte| matches!(byte, b'[' | b']')) {
+      return false;
+    }
+    return validate_host_port_suffix(suffix, require_port);
+  }
+
+  let colon_count = authority.bytes().filter(|byte| *byte == b':').count();
+  match colon_count {
+    0 => !require_port && is_valid_reg_name_or_ipv4(authority),
+    1 => {
+      let Some((host, port)) = authority.rsplit_once(':') else {
+        return false;
+      };
+      is_valid_reg_name_or_ipv4(host) && is_valid_port(port)
+    }
+    _ => false,
+  }
+}
+
+fn validate_host_port_suffix(suffix: &str, require_port: bool) -> bool {
+  if suffix.is_empty() {
+    return !require_port;
+  }
+  let Some(port) = suffix.strip_prefix(':') else {
     return false;
   };
-  !host.is_empty() && !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit())
+  is_valid_port(port)
+}
+
+fn is_valid_reg_name_or_ipv4(host: &str) -> bool {
+  !host.is_empty()
+    && host
+      .bytes()
+      .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_'))
+}
+
+fn is_valid_port(port: &str) -> bool {
+  !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 fn parse_header_lines<'a>(
@@ -1066,24 +1111,48 @@ fn parse_header_lines<'a>(
   Ok(headers)
 }
 
-fn validate_host_header_count(version: &str, headers: &[(String, String)]) -> io::Result<()> {
+fn validate_host_header(
+  version: &str,
+  target: &str,
+  headers: &[(String, String)],
+) -> io::Result<()> {
   if version != "HTTP/1.1" {
     return Ok(());
   }
 
-  let host_header_count = headers
+  let mut host_headers = headers
     .iter()
-    .filter(|(name, _)| name.eq_ignore_ascii_case("Host"))
-    .count();
-
-  if host_header_count == 1 {
-    Ok(())
-  } else {
-    Err(io::Error::new(
+    .filter(|(name, _)| name.eq_ignore_ascii_case("Host"));
+  let Some((_, host)) = host_headers.next() else {
+    return Err(io::Error::new(
       io::ErrorKind::InvalidData,
       "HTTP/1.1 request requires exactly one Host header",
-    ))
+    ));
+  };
+
+  if host_headers.next().is_some() {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "HTTP/1.1 request requires exactly one Host header",
+    ));
   }
+
+  let host_matches_target = match request_target_form(target) {
+    Some(RequestTargetForm::Origin | RequestTargetForm::Absolute | RequestTargetForm::Asterisk) => {
+      true
+    }
+    Some(RequestTargetForm::Authority) => host == target,
+    None => false,
+  };
+
+  if !host_matches_target || !is_valid_host_authority(host, false) {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "invalid Host header",
+    ));
+  }
+
+  Ok(())
 }
 
 fn is_http_token(value: &str) -> bool {

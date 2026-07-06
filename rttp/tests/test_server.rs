@@ -728,7 +728,7 @@ fn server_accepts_options_asterisk_request_target() {
 #[test]
 fn server_accepts_connect_authority_request_target() {
   let (response, handler_called) =
-    send_raw_request(b"CONNECT example.test:443 HTTP/1.1\r\nHost: example.test\r\n\r\n");
+    send_raw_request(b"CONNECT example.test:443 HTTP/1.1\r\nHost: example.test:443\r\n\r\n");
 
   assert!(handler_called);
   assert_eq!(
@@ -751,6 +751,10 @@ fn server_rejects_request_target_forms_for_wrong_methods() {
 #[test]
 fn server_returns_bad_request_for_invalid_absolute_form_target() {
   assert_bad_request_without_handler(b"GET http:///path HTTP/1.1\r\nHost: localhost\r\n\r\n");
+  assert_bad_request_without_handler(b"GET http://:80/path HTTP/1.1\r\nHost: localhost\r\n\r\n");
+  assert_bad_request_without_handler(
+    b"GET http://example.test:port/path HTTP/1.1\r\nHost: localhost\r\n\r\n",
+  );
   assert_bad_request_without_handler(
     b"GET http://example.test/path#frag HTTP/1.1\r\nHost: localhost\r\n\r\n",
   );
@@ -1639,6 +1643,62 @@ fn server_rejects_invalid_second_request_target_on_kept_alive_connection() {
 
     handle.join().expect("server thread");
   }
+}
+
+#[test]
+fn server_rejects_invalid_second_host_without_corrupting_kept_alive_connection() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (handler_tx, handler_rx) = mpsc::channel();
+  let (done_tx, done_rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    let result = server.serve_requests(2, |request| {
+      let target = request.target().to_string();
+      handler_tx.send(target.clone()).expect("send parsed target");
+      HttpResponse::ok(format!("served {target}"))
+    });
+    done_tx.send(result).expect("send server result");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(
+      concat!(
+        "GET /first HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Connection: keep-alive\r\n",
+        "\r\n",
+        "GET /second HTTP/1.1\r\n",
+        "Host: localhost/path\r\n",
+        "Connection: keep-alive\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write pipelined requests");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  assert_eq!(
+    concat!(
+      "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nserved /first",
+      "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    ),
+    response
+  );
+  assert_eq!("/first", handler_rx.recv().expect("receive first target"));
+  assert!(handler_rx.try_recv().is_err());
+  let result = done_rx
+    .recv_timeout(Duration::from_millis(250))
+    .expect("serve_requests returned after rejected second request");
+  assert!(result.is_ok(), "serve_requests failed: {result:?}");
+
+  handle.join().expect("server thread");
 }
 
 #[test]
