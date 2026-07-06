@@ -514,64 +514,20 @@ pub struct HttpRequest {
 
 impl HttpRequest {
   pub fn parse(raw: &[u8]) -> Result<Self, HttpParseError> {
-    let header_end = raw
-      .windows(4)
-      .position(|window| window == b"\r\n\r\n")
+    let header_end = find_header_end(raw)
       .ok_or_else(|| HttpParseError::new("request is missing header terminator"))?;
-    let head = std::str::from_utf8(&raw[..header_end])
-      .map_err(|_| HttpParseError::new("request headers are not valid UTF-8"))?;
+    reject_oversized_request_head(header_end + 4).map_err(HttpParseError::from_io_error)?;
+    let head = parse_request_head(&raw[..header_end]).map_err(HttpParseError::from_io_error)?;
     let body_bytes = &raw[(header_end + 4)..];
 
-    let mut lines = head.split("\r\n");
-    let request_line = lines
-      .next()
-      .ok_or_else(|| HttpParseError::new("request line is missing"))?;
-    let mut request_parts = request_line.split_whitespace();
-    let method = request_parts
-      .next()
-      .ok_or_else(|| HttpParseError::new("request method is missing"))?;
-    let target = request_parts
-      .next()
-      .ok_or_else(|| HttpParseError::new("request target is missing"))?;
-    let version = request_parts
-      .next()
-      .ok_or_else(|| HttpParseError::new("request version is missing"))?;
-
-    if request_parts.next().is_some() {
-      return Err(HttpParseError::new("request line has too many parts"));
-    }
-
-    let (path, query) = match target.split_once('?') {
+    let (path, query) = match head.target.split_once('?') {
       Some((path, query)) => (path.to_string(), Some(query.to_string())),
-      None => (target.to_string(), None),
+      None => (head.target.clone(), None),
     };
 
-    let mut headers = Vec::new();
-    for line in lines {
-      let (name, value) = line
-        .split_once(':')
-        .ok_or_else(|| HttpParseError::new("header line is missing ':'"))?;
-      headers.push(HttpHeader::new(name.trim(), value.trim()));
-    }
-
-    if headers
-      .iter()
-      .any(|header| header.name.eq_ignore_ascii_case("Transfer-Encoding"))
-    {
-      return Err(HttpParseError::new(
-        "Transfer-Encoding request bodies are not supported",
-      ));
-    }
-
-    let body = match headers
-      .iter()
-      .find(|header| header.name.eq_ignore_ascii_case("Content-Length"))
-    {
-      Some(header) => {
-        let content_length = header
-          .value
-          .parse::<usize>()
-          .map_err(|_| HttpParseError::new("Content-Length is not a valid length"))?;
+    let body = match request_body_kind(&head.headers).map_err(HttpParseError::from_io_error)? {
+      RequestBodyKind::ContentLength(content_length) => {
+        reject_oversized_request_body(content_length).map_err(HttpParseError::from_io_error)?;
         if body_bytes.len() != content_length {
           return Err(HttpParseError::new(
             "request body length does not match Content-Length",
@@ -579,14 +535,23 @@ impl HttpRequest {
         }
         body_bytes.to_vec()
       }
-      None => body_bytes.to_vec(),
+      RequestBodyKind::Chunked => {
+        return Err(HttpParseError::new(
+          "chunked request body requires streaming reader",
+        ));
+      }
     };
+    let headers = head
+      .headers
+      .into_iter()
+      .map(|(name, value)| HttpHeader::new(name, value))
+      .collect();
 
     Ok(Self {
-      method: method.to_string(),
+      method: head.method,
       path,
       query,
-      version: version.to_string(),
+      version: head.version,
       headers,
       body,
     })
@@ -831,6 +796,10 @@ impl HttpParseError {
     Self {
       message: message.as_ref().to_string(),
     }
+  }
+
+  fn from_io_error(error: io::Error) -> Self {
+    Self::new(error.to_string())
   }
 }
 
