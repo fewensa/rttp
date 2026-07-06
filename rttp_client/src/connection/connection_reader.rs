@@ -233,9 +233,13 @@ where
   R: Read + ?Sized,
 {
   let mut suffix = [0u8; 2];
-  reader
-    .read_exact(&mut suffix)
-    .map_err(|_| error::bad_response("Unexpected end of chunked body"))?;
+  reader.read_exact(&mut suffix).map_err(|err| {
+    if err.kind() == io::ErrorKind::UnexpectedEof {
+      error::bad_response("Unexpected end of chunked body")
+    } else {
+      error::request(err)
+    }
+  })?;
   if suffix == *CRLF {
     Ok(())
   } else {
@@ -257,7 +261,8 @@ where
 
 #[cfg(test)]
 mod tests {
-  use std::io::Cursor;
+  use std::error::Error as StdError;
+  use std::io::{self, Cursor, Read};
 
   use super::{ConnectionReader, ResponseBodyKind};
 
@@ -303,6 +308,45 @@ mod tests {
     assert_eq!(
       Some(&"gzip, chunked".to_string()),
       response.header_value("Transfer-Encoding")
+    );
+  }
+
+  #[test]
+  fn test_chunked_terminator_read_error_is_preserved() {
+    struct FailingTerminator {
+      bytes: Cursor<&'static [u8]>,
+    }
+
+    impl Read for FailingTerminator {
+      fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let read = self.bytes.read(buf)?;
+        if read == 0 {
+          Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "terminator read timed out",
+          ))
+        } else {
+          Ok(read)
+        }
+      }
+    }
+
+    let mut reader = FailingTerminator {
+      bytes: Cursor::new(b"4\r\nWiki"),
+    };
+
+    let err = super::read_chunked_body(&mut reader).unwrap_err();
+
+    assert!(
+      err.to_string().contains("terminator read timed out"),
+      "unexpected error: {err}"
+    );
+    assert!(
+      err
+        .source()
+        .and_then(|source| source.downcast_ref::<io::Error>())
+        .is_some_and(|io_error| io_error.kind() == io::ErrorKind::TimedOut),
+      "expected timed out io source: {err:?}"
     );
   }
 
