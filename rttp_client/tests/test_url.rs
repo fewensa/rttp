@@ -104,6 +104,66 @@ fn rourl_preserves_equals_signs_in_initial_url_query_values() {
 }
 
 #[test]
+fn rourl_preserves_query_values_and_fragment_from_initial_url() {
+  let url = RoUrl::with("https://example.test/a?token=a=b#frag")
+    .to_url()
+    .expect("BAD URL");
+
+  let query_pairs: Vec<_> = url.query_pairs().into_owned().collect();
+
+  assert_eq!(query_pairs, vec![("token".to_string(), "a=b".to_string())]);
+  assert_eq!(url.fragment(), Some("frag"));
+}
+
+#[test]
+fn rourl_keeps_empty_initial_query_values_before_fragment() {
+  let url = RoUrl::with("https://example.test/get?empty=&present=value#section")
+    .to_url()
+    .expect("BAD URL");
+
+  let query_pairs: Vec<_> = url.query_pairs().into_owned().collect();
+
+  assert_eq!(
+    query_pairs,
+    vec![
+      ("empty".to_string(), "".to_string()),
+      ("present".to_string(), "value".to_string()),
+    ]
+  );
+  assert_eq!(url.fragment(), Some("section"));
+}
+
+#[test]
+fn rourl_preserves_raw_question_marks_in_initial_query_values() {
+  let url = RoUrl::with("https://example.test/search?redirect=/next?token=a=b&mode=raw#done")
+    .to_url()
+    .expect("BAD URL");
+
+  let query_pairs: Vec<_> = url.query_pairs().into_owned().collect();
+
+  assert_eq!(
+    query_pairs,
+    vec![
+      ("redirect".to_string(), "/next?token=a=b".to_string()),
+      ("mode".to_string(), "raw".to_string()),
+    ]
+  );
+  assert_eq!(url.fragment(), Some("done"));
+}
+
+#[test]
+fn rourl_preserves_hashes_inside_initial_url_fragment() {
+  let url = RoUrl::with("https://example.test/get?token=a=b#outer#inner")
+    .to_url()
+    .expect("BAD URL");
+
+  let query_pairs: Vec<_> = url.query_pairs().into_owned().collect();
+
+  assert_eq!(query_pairs, vec![("token".to_string(), "a=b".to_string())]);
+  assert_eq!(url.fragment(), Some("outer#inner"));
+}
+
+#[test]
 fn string_form_parameters_preserve_equals_signs_in_values() {
   let paras = "token=a=b&empty=&key-only&signed=part1=part2".into_paras();
   let parsed: Vec<_> = paras

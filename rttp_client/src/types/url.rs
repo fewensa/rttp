@@ -52,42 +52,19 @@ impl RoUrl {
   /// ```
   pub fn with(url: impl AsRef<str>) -> RoUrl {
     let url = url.as_ref();
-    let netloc_and_para: Vec<&str> = url.split("?").collect::<Vec<&str>>();
-    let url = netloc_and_para
-      .first()
-      .map_or("".to_string(), |v| v.to_string());
-    let mut para_string = String::new();
-    let mut fragment = None;
-    for (i, nap) in netloc_and_para.iter().enumerate() {
-      if i == 0 {
-        continue;
-      }
-      let para_and_fragment: Vec<&str> = nap.split("#").collect::<Vec<&str>>();
-      if para_and_fragment.is_empty() {
-        para_string.push_str(nap);
-      } else {
-        if let Some(last_para) = para_and_fragment.first() {
-          para_string.push_str(last_para);
-        }
-
-        let fragment_string = para_and_fragment
-          .iter()
-          .enumerate()
-          .filter(|(ix, _)| *ix > 0)
-          .map(|(_, v)| *v)
-          .collect::<Vec<&str>>()
-          .join("#");
-        if !fragment_string.is_empty() {
-          fragment = Some(fragment_string);
-        }
-      }
-    }
+    let (url_without_fragment, fragment) =
+      url.split_once("#").map_or((url, None), |(url, fragment)| {
+        (url, Some(fragment.to_string()))
+      });
+    let (url, para_string) = url_without_fragment
+      .split_once("?")
+      .map_or((url_without_fragment, ""), |(url, para)| (url, para));
     let mut paras = para_string.into_paras();
     for para in &mut paras {
       *para.type_mut() = ParaType::URL;
     }
     Self {
-      url,
+      url: url.to_string(),
       paths: Default::default(),
       username: Default::default(),
       password: None,
