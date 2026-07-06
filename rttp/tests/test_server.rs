@@ -344,6 +344,45 @@ fn server_sends_continue_before_reading_expected_chunked_body() {
 }
 
 #[test]
+fn server_does_not_send_continue_for_expect_without_request_body() {
+  let (response, handler_called) = send_raw_request(
+    concat!(
+      "GET /empty HTTP/1.1\r\n",
+      "Host: localhost\r\n",
+      "Expect: 100-continue\r\n",
+      "\r\n"
+    )
+    .as_bytes(),
+  );
+
+  assert!(handler_called);
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nunexpected",
+    response
+  );
+}
+
+#[test]
+fn server_does_not_send_continue_for_expect_with_zero_content_length() {
+  let (response, handler_called) = send_raw_request(
+    concat!(
+      "POST /empty HTTP/1.1\r\n",
+      "Host: localhost\r\n",
+      "Expect: 100-continue\r\n",
+      "Content-Length: 0\r\n",
+      "\r\n"
+    )
+    .as_bytes(),
+  );
+
+  assert!(handler_called);
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nunexpected",
+    response
+  );
+}
+
+#[test]
 fn server_returns_bad_request_for_unsupported_expectation_without_calling_handler() {
   let (response, handler_called) = send_raw_request(
     concat!(
@@ -352,6 +391,49 @@ fn server_returns_bad_request_for_unsupported_expectation_without_calling_handle
       "Content-Length: 5\r\n",
       "\r\n",
       "hello"
+    )
+    .as_bytes(),
+  );
+
+  assert!(!handler_called);
+  assert_eq!(
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
+}
+
+#[test]
+fn server_returns_bad_request_for_expect_with_conflicting_body_framing_without_continue() {
+  let (response, handler_called) = send_raw_request(
+    concat!(
+      "POST /upload HTTP/1.1\r\n",
+      "Host: localhost\r\n",
+      "Expect: 100-continue\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "Content-Length: 0\r\n",
+      "\r\n",
+      "0\r\n\r\n"
+    )
+    .as_bytes(),
+  );
+
+  assert!(!handler_called);
+  assert_eq!(
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
+}
+
+#[test]
+fn server_returns_bad_request_for_expect_with_unsupported_transfer_encoding_without_continue() {
+  let (response, handler_called) = send_raw_request(
+    concat!(
+      "POST /upload HTTP/1.1\r\n",
+      "Host: localhost\r\n",
+      "Expect: 100-continue\r\n",
+      "Transfer-Encoding: gzip, chunked\r\n",
+      "\r\n",
+      "0\r\n\r\n"
     )
     .as_bytes(),
   );
