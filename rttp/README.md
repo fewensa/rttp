@@ -36,7 +36,7 @@ connection; pass `None` to leave the corresponding socket timeout unset.
 
 Add `Transfer-Encoding: chunked` to an `HttpResponse` to write the complete
 response body with chunked transfer framing instead of an automatic
-`Content-Length`.
+`Content-Length` when the response status permits a message body.
 
 The server currently parses blocking HTTP/1.x requests for local tests and
 simple embedded use. It supports fixed `Content-Length` and chunked request

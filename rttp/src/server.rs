@@ -699,6 +699,7 @@ impl HttpResponse {
     let connection_header_index = self.connection_header_index();
     for (index, header) in self.headers.iter().enumerate() {
       if !header.name.eq_ignore_ascii_case("Content-Length")
+        && (self.allows_body() || !header.name.eq_ignore_ascii_case("Transfer-Encoding"))
         && (!header.name.eq_ignore_ascii_case("Connection")
           || Some(index) == connection_header_index)
       {
