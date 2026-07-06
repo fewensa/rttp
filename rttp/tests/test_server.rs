@@ -415,6 +415,29 @@ fn server_returns_bad_request_for_invalid_method_token() {
 }
 
 #[test]
+fn server_returns_bad_request_for_http_11_request_without_host_before_handler() {
+  assert_bad_request_without_handler(b"GET / HTTP/1.1\r\n\r\n");
+}
+
+#[test]
+fn server_returns_bad_request_for_http_11_request_with_multiple_host_headers_before_handler() {
+  assert_bad_request_without_handler(
+    b"GET / HTTP/1.1\r\nHost: localhost\r\nhOSt: other.localhost\r\n\r\n",
+  );
+}
+
+#[test]
+fn server_accepts_http_10_request_without_host() {
+  let (response, handler_called) = send_raw_request(b"GET /legacy HTTP/1.0\r\n\r\n");
+
+  assert!(handler_called);
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nunexpected",
+    response
+  );
+}
+
+#[test]
 fn server_accepts_absolute_form_request_target() {
   let (response, handler_called) =
     send_raw_request(b"GET http://example.test/path?query=1 HTTP/1.1\r\nHost: localhost\r\n\r\n");
@@ -499,7 +522,7 @@ fn server_accepts_mixed_case_header_names() {
 
   let mut stream = TcpStream::connect(addr).expect("connect server");
   stream
-    .write_all(b"GET / HTTP/1.1\r\nX-Custom-Header: Mixed\r\n\r\n")
+    .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nX-Custom-Header: Mixed\r\n\r\n")
     .expect("write request");
   stream
     .shutdown(std::net::Shutdown::Write)
@@ -664,7 +687,7 @@ fn server_decodes_chunked_request_body() {
 #[test]
 fn server_accepts_small_content_length_request_body() {
   let (response, handler_called) =
-    send_raw_request(b"POST /upload HTTP/1.1\r\nContent-Length: 4\r\n\r\nbody");
+    send_raw_request(b"POST /upload HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4\r\n\r\nbody");
 
   assert!(handler_called);
   assert_eq!(
@@ -678,6 +701,7 @@ fn server_accepts_small_chunked_request_body() {
   let (response, handler_called) = send_raw_request(
     concat!(
       "POST /upload HTTP/1.1\r\n",
+      "Host: localhost\r\n",
       "Transfer-Encoding: chunked\r\n",
       "\r\n",
       "4\r\nbody\r\n",
@@ -716,6 +740,7 @@ fn server_returns_bad_request_for_oversized_chunked_request_body() {
     .write_all(
       concat!(
         "POST /upload HTTP/1.1\r\n",
+        "Host: localhost\r\n",
         "Transfer-Encoding: chunked\r\n",
         "\r\n",
         "100001\r\n"
@@ -848,6 +873,7 @@ fn server_returns_bad_request_for_malformed_chunked_request_trailer() {
   let (response, handler_called) = send_raw_request(
     concat!(
       "POST /upload HTTP/1.1\r\n",
+      "Host: localhost\r\n",
       "Transfer-Encoding: chunked\r\n",
       "\r\n",
       "5\r\nhello\r\n",
@@ -870,6 +896,7 @@ fn server_returns_bad_request_for_oversized_chunked_request_trailer() {
   let trailer_value = "x".repeat(1024 * 1024);
   let raw = format!(
     "POST /upload HTTP/1.1\r\n\
+     Host: localhost\r\n\
      Transfer-Encoding: chunked\r\n\
      \r\n\
      0\r\n\
@@ -890,6 +917,7 @@ fn server_returns_bad_request_for_malformed_chunk_size() {
   let (response, handler_called) = send_raw_request(
     concat!(
       "POST /upload HTTP/1.1\r\n",
+      "Host: localhost\r\n",
       "Transfer-Encoding: chunked\r\n",
       "\r\n",
       "not-hex\r\nhello\r\n",
@@ -910,6 +938,7 @@ fn server_returns_bad_request_for_truncated_chunked_request_body() {
   let (response, handler_called) = send_raw_request(
     concat!(
       "POST /upload HTTP/1.1\r\n",
+      "Host: localhost\r\n",
       "Transfer-Encoding: chunked\r\n",
       "\r\n",
       "5\r\nhel"
@@ -942,6 +971,7 @@ fn configured_read_timeout_is_preserved_for_stalled_chunked_request_body() {
     .write_all(
       concat!(
         "POST /upload HTTP/1.1\r\n",
+        "Host: localhost\r\n",
         "Transfer-Encoding: chunked\r\n",
         "\r\n",
         "5\r\nhel"
@@ -983,6 +1013,7 @@ fn server_returns_bad_request_for_invalid_chunk_terminator() {
   let (response, handler_called) = send_raw_request(
     concat!(
       "POST /upload HTTP/1.1\r\n",
+      "Host: localhost\r\n",
       "Transfer-Encoding: chunked\r\n",
       "\r\n",
       "5\r\nhelloXX",
@@ -1001,7 +1032,7 @@ fn server_returns_bad_request_for_invalid_chunk_terminator() {
 #[test]
 fn server_returns_bad_request_for_unsupported_transfer_encoding() {
   let (response, handler_called) =
-    send_raw_request(b"POST /upload HTTP/1.1\r\nTransfer-Encoding: gzip, chunked\r\n\r\n0\r\n\r\n");
+    send_raw_request(b"POST /upload HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: gzip, chunked\r\n\r\n0\r\n\r\n");
 
   assert!(!handler_called);
   assert_eq!(
@@ -1015,6 +1046,7 @@ fn server_returns_bad_request_for_transfer_encoding_with_content_length() {
   let (response, handler_called) = send_raw_request(
     concat!(
       "POST /upload HTTP/1.1\r\n",
+      "Host: localhost\r\n",
       "Transfer-Encoding: chunked\r\n",
       "Content-Length: 0\r\n",
       "\r\n",
@@ -1033,7 +1065,7 @@ fn server_returns_bad_request_for_transfer_encoding_with_content_length() {
 #[test]
 fn server_returns_bad_request_for_short_request_body() {
   let (response, handler_called) =
-    send_raw_request(b"POST /upload HTTP/1.1\r\nContent-Length: 5\r\n\r\nhel");
+    send_raw_request(b"POST /upload HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nhel");
 
   assert!(!handler_called);
   assert_eq!(

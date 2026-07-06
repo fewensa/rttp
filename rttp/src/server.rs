@@ -889,11 +889,14 @@ fn parse_request_head(raw: &[u8]) -> io::Result<RequestHead> {
   }
   validate_request_line(method, target, version)?;
 
+  let headers = parse_header_lines(lines)?;
+  validate_host_header_count(version, &headers)?;
+
   Ok(RequestHead {
     method: method.to_string(),
     target: target.to_string(),
     version: version.to_string(),
-    headers: parse_header_lines(lines)?,
+    headers,
   })
 }
 
@@ -1026,6 +1029,26 @@ fn parse_header_lines<'a>(
   }
 
   Ok(headers)
+}
+
+fn validate_host_header_count(version: &str, headers: &[(String, String)]) -> io::Result<()> {
+  if version != "HTTP/1.1" {
+    return Ok(());
+  }
+
+  let host_header_count = headers
+    .iter()
+    .filter(|(name, _)| name.eq_ignore_ascii_case("Host"))
+    .count();
+
+  if host_header_count == 1 {
+    Ok(())
+  } else {
+    Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "HTTP/1.1 request requires exactly one Host header",
+    ))
+  }
 }
 
 fn is_http_token(value: &str) -> bool {
