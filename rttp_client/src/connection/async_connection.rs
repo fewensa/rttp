@@ -317,16 +317,122 @@ where
 }
 
 fn parse_chunk_size(line: &[u8]) -> error::Result<usize> {
-  let line = std::str::from_utf8(line).map_err(error::response)?;
-  let size = line
-    .trim_end_matches("\r\n")
-    .split(';')
-    .next()
-    .map(str::trim)
-    .filter(|value| !value.is_empty())
-    .ok_or_else(|| error::bad_response("Chunk size line is empty"))?;
+  let line = line.strip_suffix(CRLF).unwrap_or(line);
+  let (size, extensions) = line
+    .iter()
+    .position(|byte| *byte == b';')
+    .map_or((line, None), |index| {
+      (&line[..index], Some(&line[index + 1..]))
+    });
+  let size = std::str::from_utf8(size).map_err(error::response)?.trim();
+  if size.is_empty() {
+    return Err(error::bad_response("Chunk size line is empty"));
+  }
+  if let Some(extensions) = extensions {
+    validate_chunk_extensions(extensions)?;
+  }
 
   usize::from_str_radix(size, 16).map_err(|_| error::bad_response("Invalid chunk size"))
+}
+
+fn validate_chunk_extensions(mut bytes: &[u8]) -> error::Result<()> {
+  loop {
+    bytes = trim_bws(bytes);
+    let token_len = bytes
+      .iter()
+      .position(|byte| !is_tchar(*byte))
+      .unwrap_or(bytes.len());
+    if token_len == 0 {
+      return Err(error::bad_response("Invalid chunk extension"));
+    }
+    bytes = trim_bws(&bytes[token_len..]);
+
+    if let Some(rest) = bytes.strip_prefix(b"=") {
+      bytes = trim_bws(rest);
+      if let Some(rest) = bytes.strip_prefix(b"\"") {
+        bytes = parse_quoted_chunk_extension(rest)?;
+      } else {
+        let value_len = bytes
+          .iter()
+          .position(|byte| !is_tchar(*byte))
+          .unwrap_or(bytes.len());
+        if value_len == 0 {
+          return Err(error::bad_response("Invalid chunk extension"));
+        }
+        bytes = &bytes[value_len..];
+      }
+      bytes = trim_bws(bytes);
+    }
+
+    if bytes.is_empty() {
+      return Ok(());
+    }
+    if let Some(rest) = bytes.strip_prefix(b";") {
+      bytes = rest;
+    } else {
+      return Err(error::bad_response("Invalid chunk extension"));
+    }
+  }
+}
+
+fn parse_quoted_chunk_extension(mut bytes: &[u8]) -> error::Result<&[u8]> {
+  loop {
+    let Some((&byte, rest)) = bytes.split_first() else {
+      return Err(error::bad_response("Invalid chunk extension"));
+    };
+    match byte {
+      b'"' => return Ok(rest),
+      b'\\' => {
+        let Some((&escaped, rest)) = rest.split_first() else {
+          return Err(error::bad_response("Invalid chunk extension"));
+        };
+        if !is_quoted_pair_char(escaped) {
+          return Err(error::bad_response("Invalid chunk extension"));
+        }
+        bytes = rest;
+      }
+      byte if is_qdtext(byte) => bytes = rest,
+      _ => return Err(error::bad_response("Invalid chunk extension")),
+    }
+  }
+}
+
+fn trim_bws(bytes: &[u8]) -> &[u8] {
+  let start = bytes
+    .iter()
+    .position(|byte| *byte != b' ' && *byte != b'\t')
+    .unwrap_or(bytes.len());
+  &bytes[start..]
+}
+
+fn is_tchar(byte: u8) -> bool {
+  byte.is_ascii_alphanumeric()
+    || matches!(
+      byte,
+      b'!'
+        | b'#'
+        | b'$'
+        | b'%'
+        | b'&'
+        | b'\''
+        | b'*'
+        | b'+'
+        | b'-'
+        | b'.'
+        | b'^'
+        | b'_'
+        | b'`'
+        | b'|'
+        | b'~'
+    )
+}
+
+fn is_qdtext(byte: u8) -> bool {
+  matches!(byte, b'\t' | b' ' | b'!' | 0x23..=0x5b | 0x5d..=0x7e | 0x80..=0xff)
+}
+
+fn is_quoted_pair_char(byte: u8) -> bool {
+  matches!(byte, b'\t' | b' ' | 0x21..=0x7e | 0x80..=0xff)
 }
 
 async fn async_consume_crlf<S>(stream: &mut S) -> error::Result<()>

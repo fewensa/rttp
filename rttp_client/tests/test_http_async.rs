@@ -61,6 +61,90 @@ fn test_async_chunked() {
 
 #[test]
 #[cfg(feature = "async")]
+fn test_async_chunked_quoted_extensions_are_accepted() {
+  let (addr, _handle) = support::spawn_chunked_response_server(concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "7;foo=\"bar;baz\";answer=42\r\nchunked\r\n",
+    "6;empty;quoted=\"\\\\\\\"\"\r\n body!\r\n",
+    "0;done=\"yes\"\r\n",
+    "X-Trace: abc\r\n",
+    "\r\n"
+  ));
+
+  block_on(async {
+    let response = client()
+      .get()
+      .url(format!("http://{}/chunked", addr))
+      .rasync()
+      .await
+      .unwrap();
+
+    assert_eq!("chunked body!", response.body().string().unwrap());
+    assert_eq!(
+      Some("abc"),
+      response.trailer("x-trace").map(|h| h.value().as_str())
+    );
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_chunked_quoted_extensions_accept_obs_text() {
+  let mut response = b"HTTP/1.1 200 OK\r\n\
+Transfer-Encoding: chunked\r\n\
+Connection: close\r\n\
+\r\n\
+7;meta=\""
+    .to_vec();
+  response.push(0xff);
+  response.extend_from_slice(b"\"\r\nchunked\r\n0\r\n\r\n");
+
+  let (addr, _handle) = support::spawn_chunked_response_server(response);
+  block_on(async {
+    let response = client()
+      .get()
+      .url(format!("http://{}/chunked", addr))
+      .rasync()
+      .await
+      .unwrap();
+
+    assert_eq!("chunked", response.body().string().unwrap());
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_chunked_malformed_extension_is_rejected() {
+  let (addr, _handle) = support::spawn_chunked_response_server(concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "7;bad name=value\r\nchunked\r\n",
+    "0\r\n",
+    "\r\n"
+  ));
+
+  block_on(async {
+    let error = client()
+      .get()
+      .url(format!("http://{}/chunked", addr))
+      .rasync()
+      .await
+      .expect_err("malformed chunk extension should be rejected");
+
+    assert!(
+      error.to_string().contains("Invalid chunk extension"),
+      "unexpected error: {error}"
+    );
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
 fn test_async_chunked_oversized_extension_is_rejected() {
   let extension = "a".repeat(16 * 1024);
   let response = format!(
