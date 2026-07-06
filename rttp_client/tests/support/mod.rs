@@ -5,6 +5,8 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use socket2::{Domain, Protocol, Socket, Type};
+
 #[path = "local_http.rs"]
 mod local_http;
 
@@ -216,6 +218,38 @@ pub fn spawn_keep_alive_server() -> (SocketAddr, JoinHandle<()>) {
       thread::sleep(Duration::from_millis(300));
     }
   });
+  (addr, handle)
+}
+
+pub fn spawn_continue_then_ok_server() -> (SocketAddr, JoinHandle<()>) {
+  let socket = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))
+    .expect("create continue server socket");
+  socket
+    .bind(&SocketAddr::from((Ipv4Addr::LOCALHOST, 0)).into())
+    .expect("bind continue server");
+  socket.listen(1).expect("listen continue server");
+  let listener = TcpListener::from(socket);
+  let addr = listener.local_addr().expect("continue server addr");
+
+  let handle = thread::spawn(move || {
+    if let Ok((mut stream, _)) = listener.accept() {
+      let _ = read_http_request(&mut stream);
+      let response = concat!(
+        "HTTP/1.1 100 Continue\r\n",
+        "X-Interim: ignored\r\n",
+        "\r\n",
+        "HTTP/1.1 200 OK\r\n",
+        "Content-Type: text/plain\r\n",
+        "X-Final: yes\r\n",
+        "Content-Length: 10\r\n",
+        "Connection: close\r\n",
+        "\r\n",
+        "final body"
+      );
+      let _ = stream.write_all(response.as_bytes());
+    }
+  });
+
   (addr, handle)
 }
 

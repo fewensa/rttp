@@ -69,7 +69,13 @@ pub(crate) fn read_response_parts<R>(
 where
   R: Read + ?Sized,
 {
-  let mut binary = read_response_header(reader)?;
+  let mut binary = loop {
+    let header = read_response_header(reader)?;
+    if response_status_code(&header)? == 100 {
+      continue;
+    }
+    break header;
+  };
   let mut trailers = Vec::new();
   match response_body_kind(&binary, expect_no_body)? {
     ResponseBodyKind::NoBody => {}
@@ -115,6 +121,20 @@ where
   }
 }
 
+fn response_status_code(header: &[u8]) -> error::Result<u16> {
+  let header = String::from_utf8_lossy(header);
+  let status_line = header
+    .lines()
+    .next()
+    .ok_or_else(|| error::bad_response("Response not have status line"))?;
+  status_line
+    .split_whitespace()
+    .nth(1)
+    .ok_or_else(|| error::bad_response("Response status not have code"))?
+    .parse::<u16>()
+    .map_err(|_| error::bad_response("Response status code is not a number"))
+}
+
 pub(crate) fn response_body_kind(
   header: &[u8],
   expect_no_body: bool,
@@ -123,22 +143,14 @@ pub(crate) fn response_body_kind(
     return Ok(ResponseBodyKind::NoBody);
   }
 
-  let header = String::from_utf8_lossy(header);
-  let mut lines = header.lines();
-  let status_line = lines
-    .next()
-    .ok_or_else(|| error::bad_response("Response not have status line"))?;
-  let status_code = status_line
-    .split_whitespace()
-    .nth(1)
-    .ok_or_else(|| error::bad_response("Response status not have code"))?
-    .parse::<u16>()
-    .map_err(|_| error::bad_response("Response status code is not a number"))?;
+  let status_code = response_status_code(header)?;
 
   if (100..200).contains(&status_code) || status_code == 204 || status_code == 304 {
     return Ok(ResponseBodyKind::NoBody);
   }
 
+  let header = String::from_utf8_lossy(header);
+  let lines = header.lines().skip(1);
   let mut content_length = None;
   let mut invalid_content_length = false;
   let mut conflicting_content_length = false;
@@ -431,7 +443,6 @@ mod tests {
   #[test]
   fn test_no_body_status_codes_ignore_framing_headers() {
     for status_line in [
-      "HTTP/1.1 100 Continue",
       "HTTP/1.1 101 Switching Protocols",
       "HTTP/1.1 204 No Content",
       "HTTP/1.1 304 Not Modified",

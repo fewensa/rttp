@@ -236,6 +236,28 @@ fn test_content_length_response_does_not_wait_for_eof() {
 }
 
 #[test]
+fn test_sync_client_skips_100_continue_before_final_response() {
+  let (addr, _handle) = support::spawn_continue_then_ok_server();
+  let response = client()
+    .post()
+    .url(format!("http://{}/continue", addr))
+    .header(("Expect", "100-continue"))
+    .raw("request body")
+    .emit()
+    .unwrap();
+
+  assert_eq!(200, response.code());
+  assert_eq!("OK", response.reason());
+  assert_eq!(
+    Some(&"text/plain".to_string()),
+    response.header_value("Content-Type")
+  );
+  assert_eq!(Some(&"yes".to_string()), response.header_value("X-Final"));
+  assert!(response.header_value("X-Interim").is_none());
+  assert_eq!("final body", response.body().string().unwrap());
+}
+
+#[test]
 fn test_upload() {
   let (addr, _handle) = support::spawn_http_server();
   let response = client()
