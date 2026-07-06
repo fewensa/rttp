@@ -1210,6 +1210,56 @@ fn server_preserves_chunked_request_trailers() {
 }
 
 #[test]
+fn server_accepts_quoted_chunk_extensions() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request).expect("send parsed request");
+        HttpResponse::ok("accepted")
+      })
+      .expect("serve one request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(
+      concat!(
+        "POST /upload HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Transfer-Encoding: chunked\r\n",
+        "\r\n",
+        "7;foo=\"bar;baz\";answer=42\r\nchunked\r\n",
+        "6;empty;quoted=\"\\\\\\\"\"\r\n body!\r\n",
+        "0;done=\"yes\"\r\n",
+        "X-Trace: abc\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write request");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  let request: Request = rx.recv().expect("receive parsed request");
+  assert_eq!(b"chunked body!", request.body());
+  assert_eq!(Some("abc"), request.trailer("x-trace"));
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\naccepted",
+    response
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn server_exposes_empty_trailers_for_chunked_request_without_trailers() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
@@ -1256,6 +1306,33 @@ fn server_exposes_empty_trailers_for_chunked_request_without_trailers() {
   );
 
   handle.join().expect("server thread");
+}
+
+#[test]
+fn server_returns_bad_request_for_malformed_chunk_extension() {
+  assert_bad_request_without_handler(
+    concat!(
+      "POST /upload HTTP/1.1\r\n",
+      "Host: localhost\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "\r\n",
+      "7;bad name=value\r\nchunked\r\n",
+      "0\r\n\r\n"
+    )
+    .as_bytes(),
+  );
+
+  assert_bad_request_without_handler(
+    concat!(
+      "POST /upload HTTP/1.1\r\n",
+      "Host: localhost\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "\r\n",
+      "7;foo=\"unterminated\r\nchunked\r\n",
+      "0\r\n\r\n"
+    )
+    .as_bytes(),
+  );
 }
 
 #[test]

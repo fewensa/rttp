@@ -1358,16 +1358,127 @@ where
 fn parse_chunk_size(line: &[u8]) -> io::Result<usize> {
   let line = std::str::from_utf8(line)
     .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "chunk size is not UTF-8"))?;
-  let size = line
-    .trim_end_matches("\r\n")
-    .split(';')
-    .next()
-    .map(str::trim)
-    .filter(|value| !value.is_empty())
-    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "empty chunk size"))?;
+  let line = line.trim_end_matches("\r\n");
+  let (size, extensions) = line
+    .split_once(';')
+    .map_or((line, None), |(size, extensions)| (size, Some(extensions)));
+  let size = size.trim();
+  if size.is_empty() {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "empty chunk size",
+    ));
+  }
+  if let Some(extensions) = extensions {
+    validate_chunk_extensions(extensions.as_bytes())?;
+  }
 
   usize::from_str_radix(size, 16)
     .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid chunk size"))
+}
+
+fn validate_chunk_extensions(mut bytes: &[u8]) -> io::Result<()> {
+  loop {
+    bytes = trim_bws(bytes);
+    let token_len = bytes
+      .iter()
+      .position(|byte| !is_tchar(*byte))
+      .unwrap_or(bytes.len());
+    if token_len == 0 {
+      return Err(invalid_chunk_extension());
+    }
+    bytes = trim_bws(&bytes[token_len..]);
+
+    if let Some(rest) = bytes.strip_prefix(b"=") {
+      bytes = trim_bws(rest);
+      if let Some(rest) = bytes.strip_prefix(b"\"") {
+        bytes = parse_quoted_chunk_extension(rest)?;
+      } else {
+        let value_len = bytes
+          .iter()
+          .position(|byte| !is_tchar(*byte))
+          .unwrap_or(bytes.len());
+        if value_len == 0 {
+          return Err(invalid_chunk_extension());
+        }
+        bytes = &bytes[value_len..];
+      }
+      bytes = trim_bws(bytes);
+    }
+
+    if bytes.is_empty() {
+      return Ok(());
+    }
+    if let Some(rest) = bytes.strip_prefix(b";") {
+      bytes = rest;
+    } else {
+      return Err(invalid_chunk_extension());
+    }
+  }
+}
+
+fn parse_quoted_chunk_extension(mut bytes: &[u8]) -> io::Result<&[u8]> {
+  loop {
+    let Some((&byte, rest)) = bytes.split_first() else {
+      return Err(invalid_chunk_extension());
+    };
+    match byte {
+      b'"' => return Ok(rest),
+      b'\\' => {
+        let Some((&escaped, rest)) = rest.split_first() else {
+          return Err(invalid_chunk_extension());
+        };
+        if !is_quoted_pair_char(escaped) {
+          return Err(invalid_chunk_extension());
+        }
+        bytes = rest;
+      }
+      byte if is_qdtext(byte) => bytes = rest,
+      _ => return Err(invalid_chunk_extension()),
+    }
+  }
+}
+
+fn trim_bws(bytes: &[u8]) -> &[u8] {
+  let start = bytes
+    .iter()
+    .position(|byte| *byte != b' ' && *byte != b'\t')
+    .unwrap_or(bytes.len());
+  &bytes[start..]
+}
+
+fn is_tchar(byte: u8) -> bool {
+  byte.is_ascii_alphanumeric()
+    || matches!(
+      byte,
+      b'!'
+        | b'#'
+        | b'$'
+        | b'%'
+        | b'&'
+        | b'\''
+        | b'*'
+        | b'+'
+        | b'-'
+        | b'.'
+        | b'^'
+        | b'_'
+        | b'`'
+        | b'|'
+        | b'~'
+    )
+}
+
+fn is_qdtext(byte: u8) -> bool {
+  matches!(byte, b'\t' | b' ' | b'!' | 0x23..=0x5b | 0x5d..=0x7e | 0x80..=0xff)
+}
+
+fn is_quoted_pair_char(byte: u8) -> bool {
+  matches!(byte, b'\t' | b' ' | 0x21..=0x7e | 0x80..=0xff)
+}
+
+fn invalid_chunk_extension() -> io::Error {
+  io::Error::new(io::ErrorKind::InvalidData, "invalid chunk extension")
 }
 
 fn consume_crlf<R>(reader: &mut R, body_bytes_read: &mut usize) -> io::Result<()>
