@@ -7,6 +7,7 @@ fn parses_http_request_target_headers_and_body() {
     "Host: example.test\r\n",
     "Content-Type: text/plain\r\n",
     "X-Trace-Id: abc-123\r\n",
+    "Content-Length: 11\r\n",
     "\r\n",
     "hello=world"
   );
@@ -28,6 +29,22 @@ fn parses_body_only_when_content_length_matches() {
   let raw = concat!(
     "POST /submit HTTP/1.1\r\n",
     "Host: example.test\r\n",
+    "Content-Length: 5\r\n",
+    "\r\n",
+    "hello"
+  );
+
+  let request = HttpRequest::parse(raw.as_bytes()).expect("request should parse");
+
+  assert_eq!(b"hello", request.body());
+}
+
+#[test]
+fn parses_fixed_length_request_with_duplicate_matching_content_length() {
+  let raw = concat!(
+    "POST /submit HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Content-Length: 5\r\n",
     "Content-Length: 5\r\n",
     "\r\n",
     "hello"
@@ -75,6 +92,45 @@ fn rejects_request_body_longer_than_content_length() {
 }
 
 #[test]
+fn rejects_malformed_request_line_and_request_metadata() {
+  for raw in [
+    b"GET  HTTP/1.1\r\nHost: example.test\r\n\r\n".as_slice(),
+    b"GET / HTTP/2.0\r\nHost: example.test\r\n\r\n",
+    b"GE(T / HTTP/1.1\r\nHost: example.test\r\n\r\n",
+    b"GET /bad path HTTP/1.1\r\nHost: example.test\r\n\r\n",
+  ] {
+    let _error = HttpRequest::parse(raw).expect_err("request should be rejected");
+  }
+}
+
+#[test]
+fn rejects_invalid_and_folded_request_headers() {
+  for raw in [
+    b"GET / HTTP/1.1\r\nBad Header: value\r\n\r\n".as_slice(),
+    b"GET / HTTP/1.1\r\nHost: bad\rvalue\r\n\r\n",
+    b"GET / HTTP/1.1\r\nHost: example.test\r\n folded: value\r\n\r\n",
+  ] {
+    let _error = HttpRequest::parse(raw).expect_err("request should be rejected");
+  }
+}
+
+#[test]
+fn rejects_conflicting_duplicate_content_length() {
+  let raw = concat!(
+    "POST /submit HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Content-Length: 5\r\n",
+    "Content-Length: 6\r\n",
+    "\r\n",
+    "hello"
+  );
+
+  let error = HttpRequest::parse(raw.as_bytes()).expect_err("request should be rejected");
+
+  assert_eq!("conflicting Content-Length headers", error.to_string());
+}
+
+#[test]
 fn rejects_transfer_encoding_request_even_with_content_length() {
   let raw = concat!(
     "POST /submit HTTP/1.1\r\n",
@@ -88,7 +144,7 @@ fn rejects_transfer_encoding_request_even_with_content_length() {
   let error = HttpRequest::parse(raw.as_bytes()).expect_err("request should be rejected");
 
   assert_eq!(
-    "Transfer-Encoding request bodies are not supported",
+    "Transfer-Encoding conflicts with Content-Length",
     error.to_string()
   );
 }
