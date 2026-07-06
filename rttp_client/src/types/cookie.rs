@@ -89,7 +89,7 @@ impl Cookie {
   pub fn parse<S: AsRef<str>>(text: S) -> error::Result<Self> {
     let mut builder = Cookie::builder();
     let parts: Vec<&str> = text.as_ref().split(";").collect();
-    for item in parts {
+    for (index, item) in parts.iter().enumerate() {
       let nvs: Vec<&str> = item.split("=").collect();
       let name = nvs
         .first()
@@ -103,6 +103,11 @@ impl Cookie {
         .collect::<Vec<&str>>()
         .join("=");
       let value = value.trim();
+      if index == 0 {
+        builder.name(name);
+        builder.value(value);
+        continue;
+      }
       match name.to_ascii_lowercase().as_str() {
         "expires" => {
           let value = value.replace("-", " ");
