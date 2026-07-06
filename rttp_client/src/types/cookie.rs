@@ -89,7 +89,7 @@ impl Cookie {
   pub fn parse<S: AsRef<str>>(text: S) -> error::Result<Self> {
     let mut builder = Cookie::builder();
     let parts: Vec<&str> = text.as_ref().split(";").collect();
-    for item in parts {
+    for (index, item) in parts.iter().enumerate() {
       let nvs: Vec<&str> = item.split("=").collect();
       let name = nvs
         .first()
@@ -103,7 +103,12 @@ impl Cookie {
         .collect::<Vec<&str>>()
         .join("=");
       let value = value.trim();
-      match name {
+      if index == 0 {
+        builder.name(name);
+        builder.value(value);
+        continue;
+      }
+      match name.to_ascii_lowercase().as_str() {
         "expires" => {
           let value = value.replace("-", " ");
           match httpdate::parse_http_date(&value[..]) {
@@ -130,7 +135,7 @@ impl Cookie {
             );
           }
         }
-        "http_only" | "httponly" | "httpOnly" => {
+        "http_only" | "httponly" => {
           if value.is_empty() {
             builder.http_only(true);
           } else {
@@ -141,7 +146,7 @@ impl Cookie {
             );
           }
         }
-        "host_only" | "hostonly" | "hostOnly" => {
+        "host_only" | "hostonly" => {
           if value.is_empty() {
             builder.host_only(true);
           } else {
@@ -152,7 +157,7 @@ impl Cookie {
             );
           }
         }
-        "same_site" | "SameSite" | "samSite" => {
+        "same_site" | "samesite" => {
           builder.same_site(value);
         }
         _ => {

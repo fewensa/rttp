@@ -1,5 +1,18 @@
 use rttp_client::response::Response;
-use rttp_client::types::RoUrl;
+use rttp_client::types::{Cookie, RoUrl};
+
+#[test]
+fn test_parse_cookie_name_can_match_attribute_name() {
+  let same_site = Cookie::parse("SameSite=choice; Path=/").unwrap();
+  assert_eq!("SameSite", same_site.name());
+  assert_eq!("choice", same_site.value());
+  assert_eq!(Some(&"/".to_string()), same_site.path().as_ref());
+
+  let path = Cookie::parse("Path=value; HttpOnly").unwrap();
+  assert_eq!("Path", path.name());
+  assert_eq!("value", path.value());
+  assert!(path.http_only());
+}
 
 #[test]
 fn test_parse_response() {
