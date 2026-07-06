@@ -220,6 +220,30 @@ impl Request {
       .headers
       .retain(|header| !is_sensitive_redirect_header(header.name()));
   }
+
+  pub(crate) fn has_configured_body(&self) -> bool {
+    self.raw.is_some() || !self.binary.is_empty() || !self.formdatas.is_empty()
+  }
+
+  pub(crate) fn prepare_streaming_fixed_body(&mut self, content_length: u64) {
+    self.headers.retain(|header| {
+      !header.name().eq_ignore_ascii_case("content-length")
+        && !header.name().eq_ignore_ascii_case("transfer-encoding")
+    });
+    self
+      .headers
+      .push(Header::new("Content-Length", content_length.to_string()));
+  }
+
+  pub(crate) fn prepare_streaming_chunked_body(&mut self) {
+    self.headers.retain(|header| {
+      !header.name().eq_ignore_ascii_case("content-length")
+        && !header.name().eq_ignore_ascii_case("transfer-encoding")
+    });
+    self
+      .headers
+      .push(Header::new("Transfer-Encoding", "chunked"));
+  }
 }
 
 #[derive(Clone)]

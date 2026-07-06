@@ -468,6 +468,16 @@ pub(crate) enum ExpectContinueResult {
   Final(ResponseParts),
 }
 
+pub(crate) enum StreamingRequestBody<'a> {
+  Fixed {
+    reader: &'a mut dyn io::Read,
+    content_length: u64,
+  },
+  Chunked {
+    reader: &'a mut dyn io::Read,
+  },
+}
+
 pub(crate) fn parse_proxy_connect_response(header: &[u8]) -> error::Result<()> {
   let header = String::from_utf8(header.to_vec())
     .map_err(|_| error::bad_proxy("parse proxy server response error."))?;
@@ -602,6 +612,27 @@ impl<'a> Connection<'a> {
     stream.flush().map_err(error::request)
   }
 
+  fn block_write_streaming_request<S>(
+    &self,
+    stream: &mut S,
+    mut body: StreamingRequestBody<'_>,
+  ) -> error::Result<()>
+  where
+    S: io::Write,
+  {
+    stream
+      .write_all(self.header().as_bytes())
+      .map_err(error::request)?;
+    match &mut body {
+      StreamingRequestBody::Fixed {
+        reader,
+        content_length,
+      } => write_fixed_streaming_body(stream, *reader, *content_length)?,
+      StreamingRequestBody::Chunked { reader } => write_chunked_streaming_body(stream, *reader)?,
+    }
+    stream.flush().map_err(error::request)
+  }
+
   pub(crate) fn block_read_stream_parts<S>(
     &self,
     url: &Url,
@@ -658,6 +689,35 @@ impl<'a> Connection<'a> {
     self.block_send_with_stream_parts(url, &mut stream)
   }
 
+  pub(crate) fn block_send_streaming_parts(
+    &self,
+    url: &Url,
+    body: StreamingRequestBody<'_>,
+  ) -> error::Result<ResponseParts> {
+    let addr = self.addr(url)?;
+    let mut stream = self.block_tcp_stream(&addr)?;
+    self.block_send_streaming_with_stream_parts(url, &mut stream, body)
+  }
+
+  fn block_send_streaming_with_stream_parts<S>(
+    &self,
+    url: &Url,
+    stream: &mut S,
+    body: StreamingRequestBody<'_>,
+  ) -> error::Result<ResponseParts>
+  where
+    S: io::Read + io::Write,
+  {
+    match url.scheme() {
+      "http" => {
+        self.block_write_streaming_request(stream, body)?;
+        self.block_read_stream_parts(url, stream)
+      }
+      "https" => self.block_send_https_streaming_parts(url, stream, body),
+      _ => Err(error::url_bad_scheme(url.clone())),
+    }
+  }
+
   pub(crate) fn block_send_with_stream_parts<S>(
     &self,
     url: &Url,
@@ -703,6 +763,21 @@ impl<'a> Connection<'a> {
     ))
   }
 
+  #[cfg(not(any(feature = "tls-native", feature = "tls-rustls")))]
+  fn block_send_https_streaming_parts<S>(
+    &self,
+    _url: &Url,
+    _stream: &mut S,
+    _body: StreamingRequestBody<'_>,
+  ) -> error::Result<ResponseParts>
+  where
+    S: io::Read + io::Write,
+  {
+    Err(error::no_request_features(
+      "Not have any tls features, Can't request a https url",
+    ))
+  }
+
   #[cfg(any(feature = "tls-native", feature = "tls-rustls"))]
   pub(crate) fn block_send_https_parts<S>(
     &self,
@@ -723,6 +798,30 @@ impl<'a> Connection<'a> {
     #[cfg(all(feature = "tls-rustls", not(feature = "tls-native")))]
     {
       return self.block_send_https_rustls_parts(url, stream);
+    }
+  }
+
+  #[cfg(any(feature = "tls-native", feature = "tls-rustls"))]
+  fn block_send_https_streaming_parts<S>(
+    &self,
+    url: &Url,
+    stream: &mut S,
+    body: StreamingRequestBody<'_>,
+  ) -> error::Result<ResponseParts>
+  where
+    S: io::Read + io::Write,
+  {
+    #[cfg(all(feature = "tls-native", feature = "tls-rustls"))]
+    {
+      return self.block_send_https_rustls_streaming_parts(url, stream, body);
+    }
+    #[cfg(all(feature = "tls-native", not(feature = "tls-rustls")))]
+    {
+      return self.block_send_https_native_streaming_parts(url, stream, body);
+    }
+    #[cfg(all(feature = "tls-rustls", not(feature = "tls-native")))]
+    {
+      return self.block_send_https_rustls_streaming_parts(url, stream, body);
     }
   }
 
@@ -750,6 +849,30 @@ impl<'a> Connection<'a> {
       ExpectContinueResult::BodySent => {}
       ExpectContinueResult::Final(parts) => return Ok(parts),
     }
+    self.block_read_stream_parts(url, &mut ssl_stream)
+  }
+
+  #[cfg(all(feature = "tls-native", not(feature = "tls-rustls")))]
+  fn block_send_https_native_streaming_parts<S>(
+    &self,
+    url: &Url,
+    stream: &mut S,
+    body: StreamingRequestBody<'_>,
+  ) -> error::Result<ResponseParts>
+  where
+    S: io::Read + io::Write,
+  {
+    let config = self.config();
+    let connector = native_tls::TlsConnector::builder()
+      .danger_accept_invalid_certs(!config.verify_ssl_cert())
+      .danger_accept_invalid_hostnames(!config.verify_ssl_hostname())
+      .build()
+      .map_err(error::request)?;
+    let mut ssl_stream = connector
+      .connect(&self.host(url)?[..], stream)
+      .map_err(|_| error::bad_ssl("Native tls handshake error"))?;
+
+    self.block_write_streaming_request(&mut ssl_stream, body)?;
     self.block_read_stream_parts(url, &mut ssl_stream)
   }
 
@@ -805,6 +928,99 @@ impl<'a> Connection<'a> {
       ExpectContinueResult::Final(parts) => return Ok(parts),
     }
     self.block_read_stream_parts(url, &mut tls)
+  }
+
+  #[cfg(feature = "tls-rustls")]
+  fn block_send_https_rustls_streaming_parts<S>(
+    &self,
+    url: &Url,
+    stream: &mut S,
+    body: StreamingRequestBody<'_>,
+  ) -> error::Result<ResponseParts>
+  where
+    S: io::Read + io::Write,
+  {
+    let config = self.config();
+    let mut root_store = RootCertStore::empty();
+    if config.verify_ssl_cert() {
+      root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    }
+
+    let builder = ClientConfig::builder();
+    let rustls_config = if !config.verify_ssl_cert() {
+      builder
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoCertificateVerification))
+        .with_no_client_auth()
+    } else if !config.verify_ssl_hostname() {
+      let verifier = WebPkiServerVerifier::builder(Arc::new(root_store))
+        .build()
+        .map_err(|e| error::bad_ssl(e.to_string()))?;
+      builder
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoHostnameVerification::new(verifier)))
+        .with_no_client_auth()
+    } else {
+      builder
+        .with_root_certificates(root_store)
+        .with_no_client_auth()
+    };
+    let rc_config = Arc::new(rustls_config);
+    let host = self.host(url)?;
+    let server_name = match host.parse::<std::net::IpAddr>() {
+      Ok(ip) => ServerName::IpAddress(ip.into()),
+      Err(_) => ServerName::try_from(host.as_str())
+        .map_err(|_| error::bad_ssl(format!("Invalid server name: {}", host)))?
+        .to_owned(),
+    };
+    let client =
+      ClientConnection::new(rc_config, server_name).map_err(|e| error::bad_ssl(e.to_string()))?;
+    let mut tls = StreamOwned::new(client, stream);
+
+    self.block_write_streaming_request(&mut tls, body)?;
+    self.block_read_stream_parts(url, &mut tls)
+  }
+}
+
+fn write_fixed_streaming_body<W>(
+  writer: &mut W,
+  reader: &mut dyn io::Read,
+  content_length: u64,
+) -> error::Result<()>
+where
+  W: io::Write,
+{
+  let mut remaining = content_length;
+  let mut buffer = [0u8; 8 * 1024];
+  while remaining > 0 {
+    let limit = buffer.len().min(remaining as usize);
+    let read = reader.read(&mut buffer[..limit]).map_err(error::request)?;
+    if read == 0 {
+      return Err(error::request(io::Error::new(
+        io::ErrorKind::UnexpectedEof,
+        "streaming request body ended before Content-Length",
+      )));
+    }
+    writer.write_all(&buffer[..read]).map_err(error::request)?;
+    remaining -= read as u64;
+  }
+  Ok(())
+}
+
+fn write_chunked_streaming_body<W>(writer: &mut W, reader: &mut dyn io::Read) -> error::Result<()>
+where
+  W: io::Write,
+{
+  let mut buffer = [0u8; 8 * 1024];
+  loop {
+    let read = reader.read(&mut buffer).map_err(error::request)?;
+    if read == 0 {
+      writer.write_all(b"0\r\n\r\n").map_err(error::request)?;
+      return Ok(());
+    }
+    write!(writer, "{:x}\r\n", read).map_err(error::request)?;
+    writer.write_all(&buffer[..read]).map_err(error::request)?;
+    writer.write_all(b"\r\n").map_err(error::request)?;
   }
 }
 

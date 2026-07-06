@@ -1,12 +1,80 @@
 mod support;
 
 use std::collections::HashMap;
+use std::io::{self, Cursor, Read, Write};
+use std::net::TcpListener;
+use std::thread;
 
 use rttp_client::types::{Auth, Para, Proxy, RoUrl};
 use rttp_client::{Config, HttpClient};
 
 fn client() -> HttpClient {
   HttpClient::new()
+}
+
+fn spawn_streaming_upload_capture_server() -> (std::net::SocketAddr, thread::JoinHandle<Vec<u8>>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind upload capture server");
+  let addr = listener.local_addr().expect("upload capture addr");
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept upload");
+    let mut request = Vec::new();
+    let mut byte = [0u8; 1];
+    while !request.ends_with(b"\r\n\r\n") {
+      stream.read_exact(&mut byte).expect("read request head");
+      request.push(byte[0]);
+    }
+    while !request.ends_with(b"\r\n0\r\n\r\n") {
+      if stream.read_exact(&mut byte).is_err() {
+        return request;
+      }
+      request.push(byte[0]);
+    }
+    stream
+      .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\nuploaded")
+      .expect("write response");
+    request
+  });
+  (addr, handle)
+}
+
+fn spawn_fixed_upload_capture_server() -> (std::net::SocketAddr, thread::JoinHandle<Vec<u8>>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind fixed upload capture server");
+  let addr = listener.local_addr().expect("fixed upload capture addr");
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept fixed upload");
+    let mut request = Vec::new();
+    let mut byte = [0u8; 1];
+    while !request.ends_with(b"\r\n\r\n") {
+      stream.read_exact(&mut byte).expect("read request head");
+      request.push(byte[0]);
+    }
+    let mut body = [0u8; 12];
+    stream.read_exact(&mut body).expect("read fixed body");
+    request.extend_from_slice(&body);
+    stream
+      .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK")
+      .expect("write response");
+    request
+  });
+  (addr, handle)
+}
+
+struct FailingReader {
+  sent: bool,
+}
+
+impl Read for FailingReader {
+  fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    if self.sent {
+      return Err(io::Error::new(
+        io::ErrorKind::BrokenPipe,
+        "client cancelled",
+      ));
+    }
+    self.sent = true;
+    buf[..5].copy_from_slice(b"hello");
+    Ok(5)
+  }
 }
 
 #[test]
@@ -17,6 +85,54 @@ fn test_http() {
   let response = response.unwrap();
   assert_eq!("127.0.0.1", response.host());
   println!("{}", response);
+}
+
+#[test]
+fn test_streaming_chunked_upload_writes_incremental_framing() {
+  let (addr, handle) = spawn_streaming_upload_capture_server();
+  let payload = vec![b'a'; 96 * 1024];
+  let response = client()
+    .post()
+    .url(format!("http://{}/upload", addr))
+    .emit_streaming_chunked(Cursor::new(payload.clone()))
+    .expect("stream chunked upload");
+
+  assert_eq!("uploaded", response.body().string().unwrap());
+
+  let request = handle.join().expect("upload server thread");
+  let request = String::from_utf8(request).expect("request utf8");
+  assert!(request.starts_with("POST /upload HTTP/1.1\r\n"));
+  assert!(request.contains("\r\nTransfer-Encoding: chunked\r\n"));
+  assert!(!request.contains("\r\nContent-Length:"));
+  assert!(request.ends_with("\r\n0\r\n\r\n"));
+}
+
+#[test]
+fn test_streaming_fixed_upload_writes_content_length() {
+  let (addr, handle) = spawn_fixed_upload_capture_server();
+  let response = client()
+    .post()
+    .url(format!("http://{}/fixed", addr))
+    .emit_streaming_fixed(Cursor::new(b"request body".to_vec()), 12)
+    .expect("stream fixed upload");
+
+  assert_eq!("OK", response.body().string().unwrap());
+
+  let request = handle.join().expect("expect server thread");
+  assert!(String::from_utf8_lossy(&request).contains("\r\nContent-Length: 12\r\n"));
+  assert!(request.ends_with(b"request body"));
+}
+
+#[test]
+fn test_streaming_upload_returns_reader_eof_error() {
+  let (addr, _handle) = spawn_streaming_upload_capture_server();
+  let error = client()
+    .post()
+    .url(format!("http://{}/cancel", addr))
+    .emit_streaming_chunked(FailingReader { sent: false })
+    .expect_err("streaming reader error should abort upload");
+
+  assert!(error.to_string().contains("client cancelled"));
 }
 
 #[test]

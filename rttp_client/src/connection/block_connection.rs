@@ -3,7 +3,7 @@ use std::io::Write;
 use socks::{Socks4Stream, Socks5Stream};
 use url::Url;
 
-use crate::connection::connection::{Connection, ExpectContinueResult};
+use crate::connection::connection::{Connection, ExpectContinueResult, StreamingRequestBody};
 use crate::connection::connection_reader::ResponseParts;
 use crate::error;
 use crate::request::RawRequest;
@@ -67,6 +67,21 @@ impl<'a> BlockConnection<'a> {
       self.conn.closed_set(true);
       return Ok(response);
     }
+  }
+
+  pub fn call_streaming_body(mut self, body: StreamingRequestBody<'_>) -> error::Result<Response> {
+    if self.conn.proxy().is_some() {
+      return Err(error::builder_with_message(
+        "streaming request bodies do not support proxies",
+      ));
+    }
+
+    let url = self.conn.url().map_err(error::builder)?;
+    let parts = self.conn.block_send_streaming_parts(&url, body)?;
+    let response =
+      Response::with_trailers(self.conn.rourl().clone(), parts.binary, parts.trailers)?;
+    self.conn.closed_set(true);
+    Ok(response)
   }
 }
 

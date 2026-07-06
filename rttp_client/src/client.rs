@@ -1,10 +1,13 @@
 #[cfg(feature = "async")]
-use crate::connection::AsyncConnection;
-use crate::connection::BlockConnection;
+use crate::connection::{AsyncConnection, AsyncStreamingRequestBody};
+use crate::connection::{BlockConnection, StreamingRequestBody};
 use crate::request::{RawRequest, Request};
 use crate::response::Response;
 use crate::types::{Auth, Header, IntoHeader, IntoPara, Proxy, ToFormData, ToRoUrl};
 use crate::{error, Config};
+#[cfg(feature = "async")]
+use futures::io::AsyncRead;
+use std::io;
 
 #[derive(Debug)]
 pub struct HttpClient {
@@ -200,6 +203,49 @@ impl HttpClient {
     BlockConnection::new(request).call()
   }
 
+  pub fn emit_streaming_fixed<R>(
+    &mut self,
+    mut reader: R,
+    content_length: u64,
+  ) -> error::Result<Response>
+  where
+    R: io::Read,
+  {
+    if self.request.closed() {
+      return Err(error::connection_closed());
+    }
+    if self.request.has_configured_body() {
+      return Err(error::builder_with_message(
+        "streaming request body cannot be combined with buffered body fields",
+      ));
+    }
+    self.request.prepare_streaming_fixed_body(content_length);
+    let request = RawRequest::block_new(&mut self.request)?;
+    BlockConnection::new(request).call_streaming_body(StreamingRequestBody::Fixed {
+      reader: &mut reader,
+      content_length,
+    })
+  }
+
+  pub fn emit_streaming_chunked<R>(&mut self, mut reader: R) -> error::Result<Response>
+  where
+    R: io::Read,
+  {
+    if self.request.closed() {
+      return Err(error::connection_closed());
+    }
+    if self.request.has_configured_body() {
+      return Err(error::builder_with_message(
+        "streaming request body cannot be combined with buffered body fields",
+      ));
+    }
+    self.request.prepare_streaming_chunked_body();
+    let request = RawRequest::block_new(&mut self.request)?;
+    BlockConnection::new(request).call_streaming_body(StreamingRequestBody::Chunked {
+      reader: &mut reader,
+    })
+  }
+
   /// Async request emit
   ///
   /// # Examples
@@ -221,5 +267,54 @@ impl HttpClient {
     }
     let request = RawRequest::async_new(&mut self.request).await?;
     AsyncConnection::new(request).async_call().await
+  }
+
+  #[cfg(feature = "async")]
+  pub async fn rasync_streaming_fixed<R>(
+    &mut self,
+    mut reader: R,
+    content_length: u64,
+  ) -> error::Result<Response>
+  where
+    R: AsyncRead + Unpin,
+  {
+    if self.request.closed() {
+      return Err(error::connection_closed());
+    }
+    if self.request.has_configured_body() {
+      return Err(error::builder_with_message(
+        "streaming request body cannot be combined with buffered body fields",
+      ));
+    }
+    self.request.prepare_streaming_fixed_body(content_length);
+    let request = RawRequest::async_new(&mut self.request).await?;
+    AsyncConnection::new(request)
+      .async_call_streaming_body(AsyncStreamingRequestBody::Fixed {
+        reader: &mut reader,
+        content_length,
+      })
+      .await
+  }
+
+  #[cfg(feature = "async")]
+  pub async fn rasync_streaming_chunked<R>(&mut self, mut reader: R) -> error::Result<Response>
+  where
+    R: AsyncRead + Unpin,
+  {
+    if self.request.closed() {
+      return Err(error::connection_closed());
+    }
+    if self.request.has_configured_body() {
+      return Err(error::builder_with_message(
+        "streaming request body cannot be combined with buffered body fields",
+      ));
+    }
+    self.request.prepare_streaming_chunked_body();
+    let request = RawRequest::async_new(&mut self.request).await?;
+    AsyncConnection::new(request)
+      .async_call_streaming_body(AsyncStreamingRequestBody::Chunked {
+        reader: &mut reader,
+      })
+      .await
   }
 }
