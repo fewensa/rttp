@@ -61,6 +61,39 @@ fn test_async_chunked() {
 
 #[test]
 #[cfg(feature = "async")]
+fn test_async_socket2_server_chunked_trailers_match_sync_accessors() {
+  let (addr, _handle) = support::spawn_socket2_chunked_trailer_server();
+  block_on(async {
+    let response = client()
+      .get()
+      .url(format!("http://{}/chunked", addr))
+      .rasync()
+      .await
+      .unwrap();
+
+    assert_eq!("socket2 chunked body", response.body().string().unwrap());
+    assert_eq!(2, response.trailers().len());
+    assert_eq!(
+      Some("abc"),
+      response.trailer("X-TRACE").map(|h| h.value().as_str())
+    );
+    assert_eq!(
+      Some("abc"),
+      response.trailer_value("x-trace").map(String::as_str)
+    );
+    assert_eq!(
+      Some("signed"),
+      response.trailer("x-signature").map(|h| h.value().as_str())
+    );
+    assert_eq!(
+      Some("signed"),
+      response.trailer_value("X-SIGNATURE").map(String::as_str)
+    );
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
 fn test_async_chunked_quoted_extensions_are_accepted() {
   let (addr, _handle) = support::spawn_chunked_response_server(concat!(
     "HTTP/1.1 200 OK\r\n",
