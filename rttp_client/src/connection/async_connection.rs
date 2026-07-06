@@ -16,7 +16,7 @@ use crate::connection::connection_reader::{
 use crate::error;
 use crate::request::RawRequest;
 use crate::response::Response;
-use crate::types::{Header, Proxy, ProxyType, RoUrl};
+use crate::types::{Header, Proxy, ProxyType};
 const CRLF: &[u8] = b"\r\n";
 
 pub struct AsyncConnection<'a> {
@@ -56,11 +56,7 @@ impl<'a> AsyncConnection<'a> {
           }
 
           let redirect_url = self.conn.redirect_url(&url, location)?;
-          self
-            .conn
-            .request_mut()
-            .origin_mut()
-            .url_set(RoUrl::with(redirect_url));
+          self.conn.request_mut().redirect_url_set(redirect_url)?;
           self.conn.request_mut().origin_mut().count_set(count + 1);
           continue;
         }

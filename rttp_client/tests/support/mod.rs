@@ -208,6 +208,41 @@ pub fn spawn_redirect_server() -> (SocketAddr, JoinHandle<()>) {
   (addr, handle)
 }
 
+pub fn spawn_redirect_target_echo_server<F>(location: F) -> (SocketAddr, JoinHandle<()>)
+where
+  F: FnOnce(SocketAddr) -> String + Send + 'static,
+{
+  let (listener, addr) = bind_local_http_listener("redirect target echo server");
+  let handle = thread::spawn(move || {
+    let location = location(addr);
+    if let Ok((mut stream, _)) = listener.accept() {
+      let _ = read_http_request(&mut stream);
+      let response = format!(
+        "HTTP/1.1 302 Found\r\nLocation: {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        location
+      );
+      let _ = stream.write_all(response.as_bytes());
+    }
+
+    if let Ok((mut stream, _)) = listener.accept() {
+      let request = read_http_request(&mut stream);
+      let target = String::from_utf8_lossy(&request)
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .unwrap_or("")
+        .to_string();
+      let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        target.len(),
+        target
+      );
+      let _ = stream.write_all(response.as_bytes());
+    }
+  });
+  (addr, handle)
+}
+
 pub fn spawn_keep_alive_server() -> (SocketAddr, JoinHandle<()>) {
   let (listener, addr) = bind_local_http_listener("keep-alive server");
   let handle = thread::spawn(move || {
