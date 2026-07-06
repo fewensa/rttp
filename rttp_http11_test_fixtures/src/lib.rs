@@ -269,27 +269,36 @@ pub fn spawn_socket2_expect_continue_server(
       .set_read_timeout(Some(Duration::from_secs(2)))
       .expect("set read timeout");
 
-    let mut request = read_until_header_end(&mut stream);
-    let content_length = request_content_length(&request).unwrap_or(0);
-    let _ = stream.write_all(response::CONTINUE);
-
-    let header_end = request
-      .windows(4)
-      .position(|window| window == b"\r\n\r\n")
-      .map(|position| position + 4)
-      .unwrap_or(request.len());
-    let body_bytes_read = request.len().saturating_sub(header_end);
-    if body_bytes_read < content_length {
-      let mut body = vec![0; content_length - body_bytes_read];
-      if stream.read_exact(&mut body).is_ok() {
-        request.extend_from_slice(&body);
-      }
-    }
-
-    let _ = stream.write_all(final_response);
-    request
+    serve_expect_continue_stream(&mut stream, final_response)
   });
   (addr, handle)
+}
+
+fn serve_expect_continue_stream<S: Read + Write>(stream: &mut S, final_response: &[u8]) -> Vec<u8> {
+  let mut request = read_until_header_end(stream);
+  let content_length = request_content_length(&request).unwrap_or(0);
+
+  let header_end = request
+    .windows(4)
+    .position(|window| window == b"\r\n\r\n")
+    .map(|position| position + 4)
+    .unwrap_or(request.len());
+  let body_bytes_read = request.len().saturating_sub(header_end);
+  if body_bytes_read != 0 {
+    return Vec::new();
+  }
+
+  let _ = stream.write_all(response::CONTINUE);
+
+  if body_bytes_read < content_length {
+    let mut body = vec![0; content_length - body_bytes_read];
+    if stream.read_exact(&mut body).is_ok() {
+      request.extend_from_slice(&body);
+    }
+  }
+
+  let _ = stream.write_all(final_response);
+  request
 }
 
 fn read_until_header_end<R: Read>(stream: &mut R) -> Vec<u8> {
@@ -325,4 +334,65 @@ fn request_content_length(request: &[u8]) -> Option<usize> {
       None
     }
   })
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{request, serve_expect_continue_stream};
+  use std::io::{self, Read, Write};
+
+  struct InMemoryStream {
+    read: Vec<u8>,
+    written: Vec<u8>,
+  }
+
+  impl InMemoryStream {
+    fn new(read: Vec<u8>) -> Self {
+      Self {
+        read,
+        written: Vec::new(),
+      }
+    }
+  }
+
+  impl Read for InMemoryStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+      let read = buf.len().min(self.read.len());
+      buf[..read].copy_from_slice(&self.read[..read]);
+      self.read.drain(..read);
+      Ok(read)
+    }
+  }
+
+  impl Write for InMemoryStream {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+      self.written.extend_from_slice(buf);
+      Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+      Ok(())
+    }
+  }
+
+  #[test]
+  fn expect_continue_server_rejects_premature_body_bytes() {
+    let fixture = request::expect_continue_fixed_length();
+    let mut request = Vec::new();
+    request.extend_from_slice(fixture.head);
+    request.extend_from_slice(fixture.body);
+    let mut stream = InMemoryStream::new(request);
+
+    assert_eq!(
+      Vec::<u8>::new(),
+      serve_expect_continue_stream(&mut stream, b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+    );
+    assert!(
+      !stream
+        .written
+        .windows(super::response::CONTINUE.len())
+        .any(|window| window == super::response::CONTINUE),
+      "server must not send 100 Continue after premature body"
+    );
+  }
 }
