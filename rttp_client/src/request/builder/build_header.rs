@@ -23,7 +23,7 @@ impl<'a> RawBuilder<'a> {
     let mut builder = String::new();
 
     // let is_http = url.scheme() == "http";
-    let request_url = self.request_url(&url, false);
+    let request_url = self.request_url(&url, false)?;
     builder.push_str(&format!(
       "{} {} HTTP/1.1{}",
       self.request.method().to_uppercase(),
@@ -44,16 +44,20 @@ impl<'a> RawBuilder<'a> {
 }
 
 impl<'a> RawBuilder<'a> {
-  fn request_url(&self, url: &Url, full: bool) -> String {
+  fn request_url(&self, url: &Url, full: bool) -> error::Result<String> {
     if full {
-      return url.as_str().to_owned();
+      return Ok(url.as_str().to_owned());
+    }
+
+    if self.request.method().eq_ignore_ascii_case("connect") {
+      return connect_authority(url);
     }
 
     let mut result = url.path().to_string();
     if let Some(query) = url.query() {
       result.push_str(&format!("?{}", query));
     }
-    result
+    Ok(result)
   }
 
   fn found_header(&mut self, name: impl AsRef<str>) -> bool {
@@ -65,15 +69,47 @@ impl<'a> RawBuilder<'a> {
   }
 }
 
+fn connect_authority(url: &Url) -> error::Result<String> {
+  let host = url.host_str().ok_or(error::url_bad_host(url.clone()))?;
+  let port = url
+    .port_or_known_default()
+    .ok_or(error::url_bad_host(url.clone()))?;
+
+  Ok(format!("{}:{}", format_host_for_authority(host), port))
+}
+
+fn format_host_for_authority(host: &str) -> String {
+  if host.contains(':') && !host.starts_with('[') {
+    format!("[{}]", host)
+  } else {
+    host.to_string()
+  }
+}
+
 impl<'a> RawBuilder<'a> {
   fn auto_add_host(&mut self, url: &Url) -> error::Result<()> {
     if self.found_header("host") {
       return Ok(());
     }
     let host = url.host_str().ok_or(error::url_bad_host(url.clone()))?;
-    let header = match url.port() {
-      Some(port) => Header::new("Host", format!("{}:{}", host, port)),
-      None => Header::new("Host", host),
+    let host = format_host_for_authority(host);
+    let header = match (
+      self.request.method().eq_ignore_ascii_case("connect"),
+      url.port(),
+    ) {
+      (true, Some(port)) => Header::new("Host", format!("{}:{}", host, port)),
+      (true, None) => Header::new(
+        "Host",
+        format!(
+          "{}:{}",
+          host,
+          url
+            .port_or_known_default()
+            .ok_or(error::url_bad_host(url.clone()))?
+        ),
+      ),
+      (false, Some(port)) => Header::new("Host", format!("{}:{}", host, port)),
+      (false, None) => Header::new("Host", host),
     };
 
     self.request.headers_mut().push(header);

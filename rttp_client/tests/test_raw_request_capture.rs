@@ -317,3 +317,20 @@ fn custom_common_headers_are_not_overwritten_by_auto_headers() {
   assert_eq!(Some("application/json"), header_value(&text, "Accept"));
   assert_eq!(Some("keep-alive"), header_value(&text, "Connection"));
 }
+
+#[test]
+fn connect_method_uses_authority_form_request_target() {
+  let request = capture_request(|base_url| {
+    client()
+      .method("CONNECT")
+      .url(base_url)
+      .emit()
+      .expect("request should succeed");
+  });
+
+  let text = request_text(&request);
+  let request_line = text.lines().next().expect("request line");
+  let host = header_value(&text, "Host").expect("host header");
+
+  assert_eq!(format!("CONNECT {} HTTP/1.1", host), request_line);
+}

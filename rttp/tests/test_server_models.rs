@@ -98,6 +98,10 @@ fn rejects_malformed_request_line_and_request_metadata() {
     b"GET / HTTP/2.0\r\nHost: example.test\r\n\r\n",
     b"GE(T / HTTP/1.1\r\nHost: example.test\r\n\r\n",
     b"GET /bad path HTTP/1.1\r\nHost: example.test\r\n\r\n",
+    b"GET http://:80/path HTTP/1.1\r\nHost: example.test\r\n\r\n",
+    b"GET http://example.test:port/path HTTP/1.1\r\nHost: example.test\r\n\r\n",
+    b"CONNECT example.test HTTP/1.1\r\nHost: example.test\r\n\r\n",
+    b"CONNECT example.test:port HTTP/1.1\r\nHost: example.test\r\n\r\n",
   ] {
     let _error = HttpRequest::parse(raw).expect_err("request should be rejected");
   }
@@ -142,6 +146,20 @@ fn rejects_http_11_request_with_multiple_host_headers() {
     "HTTP/1.1 request requires exactly one Host header",
     error.to_string()
   );
+}
+
+#[test]
+fn rejects_http_11_request_with_invalid_host_header_value() {
+  for raw in [
+    b"GET / HTTP/1.1\r\nHost: \r\n\r\n".as_slice(),
+    b"GET / HTTP/1.1\r\nHost: http://example.test\r\n\r\n",
+    b"GET / HTTP/1.1\r\nHost: example.test/path\r\n\r\n",
+    b"GET / HTTP/1.1\r\nHost: example.test:port\r\n\r\n",
+  ] {
+    let error = HttpRequest::parse(raw).expect_err("request should be rejected");
+
+    assert_eq!("invalid Host header", error.to_string());
+  }
 }
 
 #[test]
