@@ -1058,6 +1058,26 @@ fn server_accepts_duplicate_matching_content_length_request_body() {
 }
 
 #[test]
+fn server_accepts_matching_comma_separated_content_length_values() {
+  let (response, handler_called) = send_raw_request(
+    concat!(
+      "POST /upload HTTP/1.1\r\n",
+      "Host: localhost\r\n",
+      "Content-Length: 5, 5\r\n",
+      "\r\n",
+      "hello"
+    )
+    .as_bytes(),
+  );
+
+  assert!(handler_called);
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nunexpected",
+    response
+  );
+}
+
+#[test]
 fn server_returns_bad_request_for_conflicting_duplicate_content_length() {
   assert_bad_request_without_handler(
     concat!(
@@ -1065,6 +1085,20 @@ fn server_returns_bad_request_for_conflicting_duplicate_content_length() {
       "Host: localhost\r\n",
       "Content-Length: 5\r\n",
       "Content-Length: 6\r\n",
+      "\r\n",
+      "hello!"
+    )
+    .as_bytes(),
+  );
+}
+
+#[test]
+fn server_returns_bad_request_for_conflicting_comma_separated_content_length_values() {
+  assert_bad_request_without_handler(
+    concat!(
+      "POST /upload HTTP/1.1\r\n",
+      "Host: localhost\r\n",
+      "Content-Length: 5, 6\r\n",
       "\r\n",
       "hello!"
     )

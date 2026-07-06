@@ -1196,17 +1196,20 @@ fn optional_header_content_length(headers: &[(String, String)]) -> io::Result<Op
     .iter()
     .filter(|(name, _)| name.eq_ignore_ascii_case("Content-Length"))
   {
-    let parsed = value
-      .parse::<usize>()
-      .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid Content-Length header"))?;
-    if length
-      .replace(parsed)
-      .is_some_and(|previous| previous != parsed)
-    {
-      return Err(io::Error::new(
-        io::ErrorKind::InvalidData,
-        "conflicting Content-Length headers",
-      ));
+    for token in value.split(',') {
+      let parsed = token
+        .trim()
+        .parse::<usize>()
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid Content-Length header"))?;
+      if length
+        .replace(parsed)
+        .is_some_and(|previous| previous != parsed)
+      {
+        return Err(io::Error::new(
+          io::ErrorKind::InvalidData,
+          "conflicting Content-Length headers",
+        ));
+      }
     }
   }
 
@@ -1221,12 +1224,15 @@ fn request_body_kind(headers: &[(String, String)]) -> io::Result<RequestBodyKind
     .iter()
     .filter(|(name, _)| name.eq_ignore_ascii_case("Transfer-Encoding"))
   {
-    transfer_codings.extend(
-      value
-        .split(',')
-        .map(str::trim)
-        .filter(|token| !token.is_empty()),
-    );
+    for token in value.split(',').map(str::trim) {
+      if token.is_empty() {
+        return Err(io::Error::new(
+          io::ErrorKind::InvalidData,
+          "unsupported Transfer-Encoding request body",
+        ));
+      }
+      transfer_codings.push(token);
+    }
   }
 
   if transfer_codings.is_empty() {
