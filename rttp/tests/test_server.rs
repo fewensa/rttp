@@ -284,6 +284,43 @@ fn server_writes_chunked_response_framing() {
 }
 
 #[test]
+fn server_writes_chunked_response_trailers_on_live_connection() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_request| {
+        HttpResponse::ok("hello")
+          .header("Transfer-Encoding", "chunked")
+          .trailer("X-Trace", "abc")
+          .trailer("X-Signature", "signed")
+      })
+      .expect("serve one request");
+  });
+
+  let response = send_request(addr, b"GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n");
+
+  assert_eq!(
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "Connection: close\r\n",
+      "\r\n",
+      "5\r\n",
+      "hello\r\n",
+      "0\r\n",
+      "X-Trace: abc\r\n",
+      "X-Signature: signed\r\n",
+      "\r\n"
+    ),
+    response
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn server_request_body_stops_at_declared_content_length() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
