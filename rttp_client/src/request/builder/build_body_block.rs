@@ -30,8 +30,6 @@ impl<'a> RawBuilder<'a> {
         rourl.para(para);
       }
     }
-    self.content_type = Some(mime::APPLICATION_WWW_FORM_URLENCODED);
-
     // paras
     if !paras.is_empty() && raw.is_none() && binary.is_empty() && formdatas.is_empty() && !is_get {
       return self.build_body_with_form_urlencoded();
@@ -211,6 +209,8 @@ impl<'a> RawBuilder<'a> {
 // build body common
 impl<'a> RawBuilder<'a> {
   fn build_body_with_form_urlencoded(&mut self) -> error::Result<Option<RequestBody>> {
+    self.content_type = Some(mime::APPLICATION_WWW_FORM_URLENCODED);
+
     let encode = self.request.encode();
     let traditional = self.request.traditional();
     let paras = self.request.paras();

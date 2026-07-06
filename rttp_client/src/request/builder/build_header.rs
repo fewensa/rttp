@@ -17,7 +17,7 @@ impl<'a> RawBuilder<'a> {
     self.auto_add_connection()?;
     self.auto_add_ua()?;
     self.auto_add_accept()?;
-    self.auto_add_content_type()?;
+    self.auto_add_content_type(body)?;
     self.auto_add_content_length(body)?;
 
     let mut builder = String::new();
@@ -114,19 +114,27 @@ impl<'a> RawBuilder<'a> {
     Ok(())
   }
 
-  fn auto_add_content_type(&mut self) -> error::Result<()> {
-    // not form-data request
-    if self.request.formdatas().is_empty() && !self.found_header("content-type") {
-      let header = match &self.content_type {
-        Some(ct) => Header::new("Content-Type", ct),
-        None => Header::new("Content-Type", &mime::APPLICATION_WWW_FORM_URLENCODED),
-      };
+  fn auto_add_content_type(&mut self, body: &Option<RequestBody>) -> error::Result<()> {
+    let is_form_data = !self.request.formdatas().is_empty();
+    let has_content_type = self.found_header("content-type");
 
-      self.request.headers_mut().push(header);
+    if !is_form_data {
+      if has_content_type || body.is_none() {
+        return Ok(());
+      }
+
+      let content_type = self
+        .content_type
+        .clone()
+        .unwrap_or(mime::APPLICATION_WWW_FORM_URLENCODED);
+      self
+        .request
+        .headers_mut()
+        .push(Header::new("Content-Type", content_type));
       return Ok(());
     }
 
-    // if it's form data request, replace header use generate header
+    // if it's form data request, replace header with generated multipart header
     let mut headers = self.request.headers().clone();
     let origin = headers
       .iter()
