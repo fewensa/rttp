@@ -1,5 +1,5 @@
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
@@ -43,6 +43,12 @@ fn assert_bad_request_without_handler(raw: &[u8]) {
   );
 }
 
+fn reserve_local_addr() -> (TcpListener, SocketAddr) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("reserve local addr");
+  let addr = listener.local_addr().expect("reserved addr");
+  (listener, addr)
+}
+
 #[test]
 fn server_accepts_get_request_and_writes_response() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
@@ -81,6 +87,53 @@ fn server_accepts_get_request_and_writes_response() {
   );
 
   handle.join().expect("server thread");
+}
+
+#[test]
+fn server_bind_falls_back_to_later_candidate_when_first_addr_is_occupied() {
+  let (_occupied_listener, occupied_addr) = reserve_local_addr();
+  let (available_listener, available_addr) = reserve_local_addr();
+  drop(available_listener);
+
+  let candidates = [occupied_addr, available_addr];
+  let server = rttp::Http::server(candidates.as_slice()).expect("bind later candidate");
+
+  assert_eq!(available_addr, server.local_addr().expect("server addr"));
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        assert_eq!("/fallback", request.target());
+        HttpResponse::ok("fallback")
+      })
+      .expect("serve one request");
+  });
+
+  let response = send_request(
+    available_addr,
+    b"GET /fallback HTTP/1.1\r\nHost: localhost\r\n\r\n",
+  );
+
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\nfallback",
+    response
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_bind_returns_io_error_when_all_candidates_fail() {
+  let (_first_listener, first_addr) = reserve_local_addr();
+  let (_second_listener, second_addr) = reserve_local_addr();
+  let candidates = [first_addr, second_addr];
+
+  let err = match rttp::Http::server(candidates.as_slice()) {
+    Ok(_) => panic!("all candidates should fail"),
+    Err(err) => err,
+  };
+
+  assert_eq!(std::io::ErrorKind::AddrInUse, err.kind());
 }
 
 #[test]
