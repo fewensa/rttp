@@ -702,7 +702,8 @@ impl HttpResponse {
       if !header.name.eq_ignore_ascii_case("Content-Length")
         && (self.allows_body() || !header.name.eq_ignore_ascii_case("Transfer-Encoding"))
         && (!header.name.eq_ignore_ascii_case("Connection")
-          || Some(index) == connection_header_index)
+          || (default_connection != DefaultConnectionHeader::Close
+            && Some(index) == connection_header_index))
       {
         write!(writer, "{}: {}\r\n", header.name, header.value)?;
       }
@@ -711,7 +712,7 @@ impl HttpResponse {
     if self.allows_body() && !self.uses_chunked_transfer_encoding() {
       write!(writer, "Content-Length: {}\r\n", self.body.len())?;
     }
-    if connection_header_index.is_none() {
+    if default_connection == DefaultConnectionHeader::Close || connection_header_index.is_none() {
       match default_connection {
         DefaultConnectionHeader::Close => writer.write_all(b"Connection: close\r\n")?,
         DefaultConnectionHeader::KeepAlive => writer.write_all(b"Connection: keep-alive\r\n")?,
