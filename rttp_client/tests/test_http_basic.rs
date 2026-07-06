@@ -586,6 +586,78 @@ fn test_auto_redirect_resolves_query_only_location() {
 }
 
 #[test]
+fn test_auto_redirect_preserves_chain_that_finishes_within_max_redirect() {
+  let (addr, _handle) = support::spawn_redirect_chain_server(
+    vec![("/start", "/hop-one"), ("/hop-one", "/final?done=1")],
+    3,
+  );
+  let response = client()
+    .config(Config::builder().auto_redirect(true).max_redirect(2))
+    .get()
+    .url(format!("http://{}/start", addr))
+    .emit();
+
+  assert!(response.is_ok());
+  let response = response.unwrap();
+  assert_eq!("/final?done=1", response.body().string().unwrap());
+}
+
+#[test]
+fn test_auto_redirect_enforces_max_redirect_bound() {
+  let (addr, _handle) = support::spawn_redirect_chain_server(
+    vec![
+      ("/start", "/hop-one"),
+      ("/hop-one", "/hop-two"),
+      ("/hop-two", "/final"),
+    ],
+    3,
+  );
+  let error = client()
+    .config(Config::builder().auto_redirect(true).max_redirect(2))
+    .get()
+    .url(format!("http://{}/start", addr))
+    .emit()
+    .expect_err("redirect chain should exceed max_redirect");
+
+  assert!(error.is_redirect());
+  assert!(error.to_string().contains("too many redirects"));
+}
+
+#[test]
+fn test_auto_redirect_detects_loop_after_relative_location_is_normalized() {
+  let (addr, _handle) =
+    support::spawn_redirect_chain_server(vec![("/redirect/from?old=1", "?old=1")], 8);
+  let error = client()
+    .config(Config::builder().auto_redirect(true))
+    .get()
+    .url(format!("http://{}/redirect/from?old=1", addr))
+    .emit()
+    .expect_err("redirect should resolve back to current URL");
+
+  assert!(error.is_redirect());
+  assert!(error
+    .to_string()
+    .contains("infinite redirect loop detected"));
+}
+
+#[test]
+fn test_auto_redirect_detects_loop_after_dot_segments_are_normalized() {
+  let (addr, _handle) =
+    support::spawn_redirect_chain_server(vec![("/a/current", "../a/current")], 8);
+  let error = client()
+    .config(Config::builder().auto_redirect(true))
+    .get()
+    .url(format!("http://{}/a/current", addr))
+    .emit()
+    .expect_err("redirect should normalize back to current URL");
+
+  assert!(error.is_redirect());
+  assert!(error
+    .to_string()
+    .contains("infinite redirect loop detected"));
+}
+
+#[test]
 fn test_auto_redirect_strips_sensitive_headers_for_cross_authority_location() {
   let (origin_addr, _target_addr, _handle) =
     support::spawn_cross_authority_redirect_header_echo_server();

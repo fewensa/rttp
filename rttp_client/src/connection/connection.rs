@@ -237,18 +237,14 @@ impl<'a> Connection<'a> {
     proxy_header
   }
 
-  pub fn redirect_url(&self, url: &Url, location: &str) -> error::Result<String> {
+  pub fn resolve_redirect_url(&self, url: &Url, location: &str) -> error::Result<Url> {
     url
       .join(location)
-      .map(|redirect| redirect.to_string())
       .map_err(|_| error::bad_url(url.clone(), "Bad redirect location"))
   }
 
-  pub fn is_same_origin_redirect(&self, url: &Url, redirect_url: &str) -> error::Result<bool> {
-    let redirect = url
-      .join(redirect_url)
-      .map_err(|_| error::bad_url(url.clone(), "Bad redirect location"))?;
-    Ok(is_same_origin(url, &redirect))
+  pub fn is_same_origin_url(&self, url: &Url, redirect: &Url) -> bool {
+    is_same_origin(url, redirect)
   }
 
   pub fn expect_no_response_body(&self) -> bool {

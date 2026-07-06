@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
 use std::thread::{self, JoinHandle};
@@ -238,6 +239,44 @@ where
         target
       );
       let _ = stream.write_all(response.as_bytes());
+    }
+  });
+  (addr, handle)
+}
+
+pub fn spawn_redirect_chain_server(
+  redirects: Vec<(&'static str, &'static str)>,
+  max_requests: usize,
+) -> (SocketAddr, JoinHandle<()>) {
+  let (listener, addr) = bind_local_http_listener("redirect chain server");
+  let handle = thread::spawn(move || {
+    let redirects: HashMap<&'static str, &'static str> = redirects.into_iter().collect();
+
+    for _ in 0..max_requests {
+      if let Ok((mut stream, _)) = listener.accept() {
+        let request = read_http_request(&mut stream);
+        let target = String::from_utf8_lossy(&request)
+          .lines()
+          .next()
+          .and_then(|line| line.split_whitespace().nth(1))
+          .unwrap_or("")
+          .to_string();
+
+        if let Some(location) = redirects.get(target.as_str()) {
+          let response = format!(
+            "HTTP/1.1 302 Found\r\nLocation: {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            location
+          );
+          let _ = stream.write_all(response.as_bytes());
+        } else {
+          let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            target.len(),
+            target
+          );
+          let _ = stream.write_all(response.as_bytes());
+        }
+      }
     }
   });
   (addr, handle)

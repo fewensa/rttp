@@ -48,14 +48,17 @@ impl<'a> BlockConnection<'a> {
         return Err(error::too_many_redirects(url));
       }
 
-      let redirect_url = self.conn.redirect_url(&url, location)?;
+      let redirect_url = self.conn.resolve_redirect_url(&url, location)?;
+      if url == redirect_url {
+        return Err(error::loop_detected(url));
+      }
       let mut request = self.conn.request().origin().clone();
       request.redirect_status_set(response.code());
-      if !self.conn.is_same_origin_redirect(&url, location)? {
+      if !self.conn.is_same_origin_url(&url, &redirect_url) {
         request.remove_sensitive_redirect_headers();
       }
       return HttpClient::with_request(request)
-        .url(redirect_url)
+        .url(redirect_url.to_string())
         .count(count + 1)
         .emit();
     }
