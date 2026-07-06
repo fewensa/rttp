@@ -697,6 +697,83 @@ fn server_accepts_small_content_length_request_body() {
 }
 
 #[test]
+fn server_accepts_duplicate_matching_content_length_request_body() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request).expect("send parsed request");
+        HttpResponse::ok("accepted")
+      })
+      .expect("serve one request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(
+      concat!(
+        "POST /upload HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Content-Length: 5\r\n",
+        "Content-Length: 5\r\n",
+        "\r\n",
+        "hello"
+      )
+      .as_bytes(),
+    )
+    .expect("write request");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  let request: Request = rx.recv().expect("receive parsed request");
+  assert_eq!("POST", request.method());
+  assert_eq!("/upload", request.target());
+  assert_eq!(b"hello", request.body());
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\naccepted",
+    response
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_returns_bad_request_for_conflicting_duplicate_content_length() {
+  assert_bad_request_without_handler(
+    concat!(
+      "POST /upload HTTP/1.1\r\n",
+      "Host: localhost\r\n",
+      "Content-Length: 5\r\n",
+      "Content-Length: 6\r\n",
+      "\r\n",
+      "hello!"
+    )
+    .as_bytes(),
+  );
+}
+
+#[test]
+fn server_returns_bad_request_for_malformed_content_length() {
+  assert_bad_request_without_handler(
+    concat!(
+      "POST /upload HTTP/1.1\r\n",
+      "Host: localhost\r\n",
+      "Content-Length: five\r\n",
+      "\r\n",
+      "hello"
+    )
+    .as_bytes(),
+  );
+}
+
+#[test]
 fn server_accepts_small_chunked_request_body() {
   let (response, handler_called) = send_raw_request(
     concat!(
