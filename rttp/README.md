@@ -24,7 +24,9 @@ fn main() -> std::io::Result<()> {
     println!("{} {}", request.method(), request.target());
     HttpResponse::ok("hello")
       .header("Transfer-Encoding", "chunked")
+      .header("Trailer", "X-Trace, X-Signature")
       .trailer("X-Trace", "abc")
+      .trailer("X-Signature", "signed")
   })
 }
 ```
@@ -37,17 +39,20 @@ the same listener. `HttpServer::with_read_timeout` and
 connection; pass `None` to leave the corresponding socket timeout unset.
 
 Add `Transfer-Encoding: chunked` to an `HttpResponse` to write the complete
-response body with chunked transfer framing instead of an automatic
+response body with HTTP/1.x chunked transfer framing instead of an automatic
 `Content-Length` when the response status permits a message body. Response
-trailers added with `HttpResponse::trailer` are written at the end of that
-chunked framing.
+trailers added with `HttpResponse::trailer` are written after the terminating
+zero-size chunk, and can be inspected before serialization with
+`HttpResponse::trailers` or `HttpResponse::trailer_value`. Add a `Trailer`
+response header when advertising which trailer fields will follow.
 
 The server currently parses blocking HTTP/1.x requests for local tests and
 simple embedded use. It supports fixed `Content-Length` and chunked request
 bodies, preserves chunked request trailers on `Request`, bounds request
 head/body parsing, handles `HEAD` without writing a response body, honors
 `Connection` close/keep-alive semantics across a bounded `serve_requests` loop,
-writes response body framing consistently, and accepts `Expect: 100-continue`.
+writes response body framing and response trailers consistently, and accepts
+`Expect: 100-continue`.
 
 The server is intentionally not a full RFC-covering web server and still does
 not implement server TLS or async accept loops.

@@ -22,8 +22,9 @@ rttp_client = "0.2"
 
 Direct TCP client connections are opened with `socket2`. SOCKS proxy handshakes
 are still delegated to the `socks` crate.
-Chunked responses are decoded by the client, and response trailers are available
-through the response trailer accessors.
+HTTP/1.x chunked responses are decoded by the client, and response trailers are
+available through `Response::trailers`, `Response::trailer`, and
+`Response::trailer_value`.
 
 ```rust,no_run
 use rttp_client::HttpClient;
@@ -60,6 +61,7 @@ fn main() -> std::io::Result<()> {
     println!("{} {}", request.method(), request.target());
     HttpResponse::ok("hello")
       .header("Transfer-Encoding", "chunked")
+      .header("Trailer", "X-Trace")
       .trailer("X-Trace", "abc")
   })
 }
@@ -71,18 +73,19 @@ connection, and `serve_requests` for a fixed number of sequential connections.
 Use `with_read_timeout` and `with_write_timeout` to apply socket-level
 timeouts to each accepted connection; pass `None` to leave the corresponding
 socket timeout unset. Add `Transfer-Encoding: chunked` to an `HttpResponse` to
-write the complete response body with chunked transfer framing instead of an
-automatic `Content-Length`; response trailers added with
-`HttpResponse::trailer` are written at the end of that chunked framing. The
-listener path uses `socket2`.
+write the complete response body with HTTP/1.x chunked transfer framing instead
+of an automatic `Content-Length`; response trailers added with
+`HttpResponse::trailer` are written after the terminating zero-size chunk. Add a
+`Trailer` response header when advertising which trailer fields will follow.
+The listener path uses `socket2`.
 
 The server is intentionally small: it handles blocking HTTP/1.x request parsing
 for local tests and simple embedded use. It accepts fixed `Content-Length` and
 chunked request bodies, exposes chunked request trailers, applies bounded
 request head/body validation, handles `HEAD` without writing a response body,
 honors `Connection` close/keep-alive semantics across a bounded
-`serve_requests` loop, writes response body framing consistently, and accepts
-`Expect: 100-continue`.
+`serve_requests` loop, writes response body framing and response trailers
+consistently, and accepts `Expect: 100-continue`.
 
 It is not a full RFC-covering web server and still does not implement server
 TLS or async accept loops.
