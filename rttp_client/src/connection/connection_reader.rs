@@ -9,6 +9,7 @@ use crate::types::{Header, RoUrl};
 
 const HEADER_END: &[u8] = b"\r\n\r\n";
 const CRLF: &[u8] = b"\r\n";
+const MAX_CHUNKED_RESPONSE_LINE_BYTES: usize = 8 * 1024;
 
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum ResponseBodyKind {
@@ -183,6 +184,7 @@ pub(crate) fn response_body_kind(
   }
 }
 
+#[derive(Debug)]
 struct ChunkedResponseBody {
   body: Vec<u8>,
   trailers: Vec<Header>,
@@ -195,7 +197,7 @@ where
   let mut body = Vec::new();
 
   loop {
-    let line = read_crlf_line(reader)?;
+    let line = read_bounded_crlf_line(reader, MAX_CHUNKED_RESPONSE_LINE_BYTES)?;
     let chunk_size = parse_chunk_size(&line)?;
 
     if chunk_size == 0 {
@@ -212,7 +214,7 @@ where
   }
 }
 
-fn read_crlf_line<R>(reader: &mut R) -> error::Result<Vec<u8>>
+fn read_bounded_crlf_line<R>(reader: &mut R, max_len: usize) -> error::Result<Vec<u8>>
 where
   R: Read + ?Sized,
 {
@@ -223,6 +225,10 @@ where
     let read = reader.read(&mut byte).map_err(error::request)?;
     if read == 0 {
       return Err(error::bad_response("Unexpected end of chunked body"));
+    }
+
+    if line.len() == max_len {
+      return Err(error::bad_response("chunked response line is too large"));
     }
 
     line.push(byte[0]);
@@ -250,7 +256,13 @@ where
   R: Read + ?Sized,
 {
   let mut suffix = [0u8; 2];
-  reader.read_exact(&mut suffix).map_err(error::request)?;
+  reader.read_exact(&mut suffix).map_err(|err| {
+    if err.kind() == io::ErrorKind::UnexpectedEof {
+      error::bad_response("Unexpected end of chunked body")
+    } else {
+      error::request(err)
+    }
+  })?;
   if suffix == *CRLF {
     Ok(())
   } else {
@@ -264,7 +276,7 @@ where
 {
   let mut trailers = Vec::new();
   loop {
-    let line = read_crlf_line(reader)?;
+    let line = read_bounded_crlf_line(reader, MAX_CHUNKED_RESPONSE_LINE_BYTES)?;
     if line == CRLF {
       return Ok(trailers);
     }
@@ -285,7 +297,8 @@ fn parse_trailer_line(line: &[u8]) -> error::Result<Header> {
 
 #[cfg(test)]
 mod tests {
-  use std::io::Cursor;
+  use std::error::Error as StdError;
+  use std::io::{self, Cursor, Read};
 
   use super::{ConnectionReader, ResponseBodyKind};
 
@@ -335,6 +348,45 @@ mod tests {
     assert_eq!(
       Some("abc"),
       response.trailer_value("x-trace").map(String::as_str)
+    );
+  }
+
+  #[test]
+  fn test_chunked_terminator_read_error_is_preserved() {
+    struct FailingTerminator {
+      bytes: Cursor<&'static [u8]>,
+    }
+
+    impl Read for FailingTerminator {
+      fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let read = self.bytes.read(buf)?;
+        if read == 0 {
+          Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "terminator read timed out",
+          ))
+        } else {
+          Ok(read)
+        }
+      }
+    }
+
+    let mut reader = FailingTerminator {
+      bytes: Cursor::new(b"4\r\nWiki"),
+    };
+
+    let err = super::read_chunked_response_body(&mut reader).unwrap_err();
+
+    assert!(
+      err.to_string().contains("terminator read timed out"),
+      "unexpected error: {err}"
+    );
+    assert!(
+      err
+        .source()
+        .and_then(|source| source.downcast_ref::<io::Error>())
+        .is_some_and(|io_error| io_error.kind() == io::ErrorKind::TimedOut),
+      "expected timed out io source: {err:?}"
     );
   }
 
