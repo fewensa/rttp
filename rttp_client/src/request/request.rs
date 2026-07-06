@@ -194,7 +194,7 @@ impl Request {
   }
 
   pub(crate) fn redirect_status_set(&mut self, status_code: u32) -> &mut Self {
-    if status_code == 303 {
+    if status_code == 303 && !self.method.eq_ignore_ascii_case("head") {
       self.method_set("GET");
       self.paras.clear();
       self.formdatas.clear();

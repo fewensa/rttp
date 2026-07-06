@@ -499,6 +499,18 @@ fn captured_redirected_post(status_code: u16, reason: &'static str) -> CapturedR
   captured_request(handle.join().expect("redirect capture thread"))
 }
 
+fn captured_redirected_head(status_code: u16, reason: &'static str) -> CapturedRequest {
+  let (addr, handle) = support::spawn_status_redirect_request_capture_server(status_code, reason);
+  let response = client()
+    .config(Config::builder().auto_redirect(true))
+    .head()
+    .url(format!("http://{}/redirect", addr))
+    .emit();
+
+  assert!(response.is_ok());
+  captured_request(handle.join().expect("redirect capture thread"))
+}
+
 #[test]
 fn test_auto_redirect_303_post_becomes_get_without_body_or_body_framing() {
   let request = captured_redirected_post(303, "See Other");
@@ -509,6 +521,14 @@ fn test_auto_redirect_303_post_becomes_get_without_body_or_body_framing() {
   assert!(!request.headers.contains_key("content-length"));
   assert!(!request.headers.contains_key("content-type"));
   assert!(!request.headers.contains_key("transfer-encoding"));
+}
+
+#[test]
+fn test_auto_redirect_303_head_preserves_method() {
+  let request = captured_redirected_head(303, "See Other");
+
+  assert_eq!("HEAD", request.method);
+  assert_eq!("/final?via=redirect", request.target);
 }
 
 #[test]

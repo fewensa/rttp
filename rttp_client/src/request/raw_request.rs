@@ -52,7 +52,7 @@ impl<'a> RawRequest<'a> {
   #[cfg(feature = "async")]
   pub(crate) fn redirect_status_set(&mut self, status_code: u32) {
     self.origin.redirect_status_set(status_code);
-    if status_code == 303 {
+    if status_code == 303 && !self.origin.method().eq_ignore_ascii_case("head") {
       self.body = None;
       self.header = Self::redirect_body_headers_remove(&self.header);
     }
