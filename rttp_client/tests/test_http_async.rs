@@ -6,9 +6,13 @@ use std::collections::HashMap;
 #[cfg(feature = "async")]
 use futures::executor::block_on;
 #[cfg(feature = "async")]
+use futures::io::AllowStdIo;
+#[cfg(feature = "async")]
 use rttp_client::types::Proxy;
 #[cfg(feature = "async")]
-use rttp_client::{Config, HttpClient};
+use rttp_client::{async_streaming_response_after_header, Config, HttpClient};
+#[cfg(feature = "async")]
+use std::io::Cursor;
 
 #[cfg(feature = "async")]
 fn client() -> HttpClient {
@@ -56,6 +60,25 @@ fn test_async_chunked() {
       Some("signed"),
       response.trailer("x-signature").map(|h| h.value().as_str())
     );
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_streaming_response_constructor_is_exported() {
+  block_on(async {
+    let head = concat!("HTTP/1.1 200 OK\r\n", "Content-Length: 5\r\n", "\r\n")
+      .as_bytes()
+      .to_vec();
+    let mut stream = AllowStdIo::new(Cursor::new(b"hello"));
+    let mut response = async_streaming_response_after_header(&mut stream, false, head)
+      .await
+      .unwrap();
+    let mut body = Vec::new();
+
+    response.body_mut().read_to_end(&mut body).await.unwrap();
+
+    assert_eq!(b"hello", body.as_slice());
   });
 }
 

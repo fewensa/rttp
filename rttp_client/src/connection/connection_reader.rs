@@ -603,7 +603,14 @@ fn parse_trailer_line(line: &[u8]) -> error::Result<Header> {
 }
 
 fn to_io_error(err: error::Error) -> io::Error {
-  io::Error::new(io::ErrorKind::InvalidData, err)
+  if let Some(kind) = std::error::Error::source(&err)
+    .and_then(|source| source.downcast_ref::<io::Error>())
+    .map(|source| source.kind())
+  {
+    io::Error::new(kind, err)
+  } else {
+    io::Error::new(io::ErrorKind::InvalidData, err)
+  }
 }
 
 pub(crate) fn validate_response_trailer_header(name: &str, value: &str) -> error::Result<()> {
@@ -884,6 +891,7 @@ mod tests {
 
     let err = body_reader.read_to_end(&mut body).unwrap_err();
 
+    assert_eq!(io::ErrorKind::TimedOut, err.kind());
     assert!(
       err.to_string().contains("terminator read timed out"),
       "unexpected error: {err}"
