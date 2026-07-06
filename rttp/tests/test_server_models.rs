@@ -154,6 +154,29 @@ fn serializes_at_most_one_connection_header() {
 }
 
 #[test]
+fn serializes_chunked_response_body_when_transfer_encoding_is_chunked() {
+  let response = HttpResponse::new(200, "OK")
+    .header("Transfer-Encoding", "chunked")
+    .body("hello");
+
+  let serialized = response.to_bytes();
+
+  assert_eq!(
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "\r\n",
+      "5\r\n",
+      "hello\r\n",
+      "0\r\n",
+      "\r\n"
+    )
+    .as_bytes(),
+    serialized.as_slice()
+  );
+}
+
+#[test]
 fn rejects_response_headers_with_crlf() {
   let result = std::panic::catch_unwind(|| {
     let _response = HttpResponse::new(302, "Found").header("Location", "/safe\r\nX-Evil: true");
