@@ -58,6 +58,73 @@ fn test_async_chunked() {
 
 #[test]
 #[cfg(feature = "async")]
+fn test_async_chunked_oversized_extension_is_rejected() {
+  let extension = "a".repeat(16 * 1024);
+  let response = format!(
+    "HTTP/1.1 200 OK\r\n\
+     Transfer-Encoding: chunked\r\n\
+     Connection: close\r\n\
+     \r\n\
+     7;foo={extension}\r\n\
+     chunked\r\n\
+     0\r\n\
+     \r\n"
+  );
+  let (addr, _handle) = support::spawn_chunked_response_server(response);
+
+  block_on(async {
+    let error = client()
+      .get()
+      .url(format!("http://{}/chunked", addr))
+      .rasync()
+      .await
+      .expect_err("oversized chunk extension should be rejected");
+
+    assert!(
+      error
+        .to_string()
+        .contains("chunked response line is too large"),
+      "unexpected error: {error}"
+    );
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_chunked_oversized_trailer_is_rejected() {
+  let trailer = "a".repeat(16 * 1024);
+  let response = format!(
+    "HTTP/1.1 200 OK\r\n\
+     Transfer-Encoding: chunked\r\n\
+     Connection: close\r\n\
+     \r\n\
+     7\r\n\
+     chunked\r\n\
+     0\r\n\
+     X-Trace: {trailer}\r\n\
+     \r\n"
+  );
+  let (addr, _handle) = support::spawn_chunked_response_server(response);
+
+  block_on(async {
+    let error = client()
+      .get()
+      .url(format!("http://{}/chunked", addr))
+      .rasync()
+      .await
+      .expect_err("oversized chunk trailer should be rejected");
+
+    assert!(
+      error
+        .to_string()
+        .contains("chunked response line is too large"),
+      "unexpected error: {error}"
+    );
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
 fn test_async_duplicate_set_cookie_headers_are_preserved() {
   let (addr, _handle) = support::spawn_duplicate_set_cookie_server();
   block_on(async {

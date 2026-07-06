@@ -2,14 +2,16 @@ use std::net::TcpStream;
 
 use futures::io::{AllowStdIo, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use socks::{Socks4Stream, Socks5Stream};
-use std::io::Write;
+use std::io::{self, Write};
 use url::Url;
 
 #[cfg(feature = "tls-rustls")]
 use std::sync::Arc;
 
 use crate::connection::connection::{connect_tcp_stream, read_proxy_connect_response, Connection};
-use crate::connection::connection_reader::{response_body_kind, ResponseBodyKind, ResponseParts};
+use crate::connection::connection_reader::{
+  response_body_kind, ResponseBodyKind, ResponseParts, MAX_CHUNKED_RESPONSE_LINE_BYTES,
+};
 use crate::error;
 use crate::request::RawRequest;
 use crate::response::Response;
@@ -173,7 +175,7 @@ where
   let mut body = Vec::new();
 
   loop {
-    let line = async_read_crlf_line(stream).await?;
+    let line = async_read_bounded_crlf_line(stream, MAX_CHUNKED_RESPONSE_LINE_BYTES).await?;
     let chunk_size = parse_chunk_size(&line)?;
 
     if chunk_size == 0 {
@@ -191,7 +193,7 @@ where
   }
 }
 
-async fn async_read_crlf_line<S>(stream: &mut S) -> error::Result<Vec<u8>>
+async fn async_read_bounded_crlf_line<S>(stream: &mut S, max_len: usize) -> error::Result<Vec<u8>>
 where
   S: AsyncRead + Unpin,
 {
@@ -202,6 +204,10 @@ where
     let read = stream.read(&mut byte).await.map_err(error::request)?;
     if read == 0 {
       return Err(error::bad_response("Unexpected end of chunked body"));
+    }
+
+    if line.len() == max_len {
+      return Err(error::bad_response("chunked response line is too large"));
     }
 
     line.push(byte[0]);
@@ -229,10 +235,13 @@ where
   S: AsyncRead + Unpin,
 {
   let mut suffix = [0u8; 2];
-  stream
-    .read_exact(&mut suffix)
-    .await
-    .map_err(error::request)?;
+  stream.read_exact(&mut suffix).await.map_err(|err| {
+    if err.kind() == io::ErrorKind::UnexpectedEof {
+      error::bad_response("Unexpected end of chunked body")
+    } else {
+      error::request(err)
+    }
+  })?;
   if suffix == *CRLF {
     Ok(())
   } else {
@@ -246,7 +255,7 @@ where
 {
   let mut trailers = Vec::new();
   loop {
-    let line = async_read_crlf_line(stream).await?;
+    let line = async_read_bounded_crlf_line(stream, MAX_CHUNKED_RESPONSE_LINE_BYTES).await?;
     if line == CRLF {
       return Ok(trailers);
     }
