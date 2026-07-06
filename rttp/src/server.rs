@@ -80,6 +80,13 @@ impl HttpServer {
     self.handle_next_connection(handler)
   }
 
+  pub fn accept_one_streaming<F>(&self, handler: F) -> io::Result<()>
+  where
+    F: FnOnce(Request, RequestBodyReader<'_, BufReader<TcpStream>>) -> HttpResponse,
+  {
+    self.handle_next_streaming_connection(handler)
+  }
+
   pub fn serve_requests<F>(&self, request_count: usize, mut handler: F) -> io::Result<()>
   where
     F: FnMut(Request) -> HttpResponse,
@@ -170,6 +177,34 @@ impl HttpServer {
     };
     let request_is_head = request.method() == "HEAD";
     let response = handler(request);
+    self.normalize_connection_error(response.write_to_with_default_connection_and_body(
+      reader.get_mut(),
+      DefaultConnectionHeader::ForceClose,
+      !request_is_head,
+    ))
+  }
+
+  fn handle_next_streaming_connection<F>(&self, handler: F) -> io::Result<()>
+  where
+    F: FnOnce(Request, RequestBodyReader<'_, BufReader<TcpStream>>) -> HttpResponse,
+  {
+    let (stream, _) = self.listener.accept()?;
+    self.configure_stream(&stream)?;
+    let mut reader = BufReader::new(stream);
+    let (request, body_kind) = match self.normalize_connection_error(
+      Request::read_next_head_from_with_continue(&mut reader).and_then(|request| {
+        request.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))
+      }),
+    ) {
+      Ok(request) => request,
+      Err(err) if is_bad_request_error(&err) => {
+        return self.normalize_connection_error(bad_request_response().write_to(reader.get_mut()));
+      }
+      Err(err) => return Err(err),
+    };
+    let request_is_head = request.method() == "HEAD";
+    let body = RequestBodyReader::new(&mut reader, body_kind, self.read_timeout.is_some());
+    let response = handler(request, body);
     self.normalize_connection_error(response.write_to_with_default_connection_and_body(
       reader.get_mut(),
       DefaultConnectionHeader::ForceClose,
@@ -357,6 +392,60 @@ impl Request {
     }
   }
 
+  fn read_next_head_from_with_continue<S>(
+    reader: &mut BufReader<S>,
+  ) -> io::Result<Option<(Self, RequestBodyKind)>>
+  where
+    S: Read + Write,
+  {
+    let mut raw = Vec::new();
+
+    loop {
+      let available = reader.fill_buf()?;
+      if available.is_empty() {
+        if raw.is_empty() {
+          return Ok(None);
+        }
+        return Err(io::Error::new(
+          io::ErrorKind::InvalidData,
+          "incomplete HTTP request",
+        ));
+      }
+
+      let mut combined = raw.clone();
+      combined.extend_from_slice(available);
+      match find_header_end(&combined) {
+        Some(header_end) => {
+          let take = header_end + 4 - raw.len();
+          reject_oversized_request_head(header_end + 4)?;
+          raw.extend_from_slice(&available[..take]);
+          reader.consume(take);
+          let head = parse_request_head(&raw[..header_end])?;
+          let body_kind = request_body_kind(&head.headers)?;
+          match body_kind {
+            RequestBodyKind::ContentLength(content_length) => {
+              reject_oversized_request_body(content_length)?;
+            }
+            RequestBodyKind::Chunked => {}
+          }
+          if request_needs_continue(&head.headers, body_kind)? {
+            write_continue_response(reader.get_mut())?;
+          }
+          return Ok(Some((
+            Self::from_head_and_body(head, Vec::new()),
+            body_kind,
+          )));
+        }
+        None => {
+          let take = available.len();
+          reject_oversized_request_head(raw.len().saturating_add(take))?;
+          raw.extend_from_slice(available);
+          reader.consume(take);
+        }
+      }
+    }
+  }
+
   #[cfg(test)]
   fn read_next_from_without_continue<R>(reader: &mut R) -> io::Result<Option<Self>>
   where
@@ -499,6 +588,126 @@ impl Request {
       headers: head.headers,
       trailers,
       body,
+    }
+  }
+}
+
+pub struct RequestBodyReader<'a, R: BufRead> {
+  reader: &'a mut R,
+  kind: RequestBodyKind,
+  remaining: usize,
+  chunk_remaining: usize,
+  chunk_needs_crlf: bool,
+  body_bytes_read: usize,
+  trailers: Vec<(String, String)>,
+  eof: bool,
+  normalize_timeouts: bool,
+}
+
+impl<'a, R: BufRead> RequestBodyReader<'a, R> {
+  fn new(reader: &'a mut R, kind: RequestBodyKind, normalize_timeouts: bool) -> Self {
+    let remaining = match kind {
+      RequestBodyKind::ContentLength(length) => length,
+      RequestBodyKind::Chunked => 0,
+    };
+    Self {
+      reader,
+      kind,
+      remaining,
+      chunk_remaining: 0,
+      chunk_needs_crlf: false,
+      body_bytes_read: 0,
+      trailers: Vec::new(),
+      eof: matches!(kind, RequestBodyKind::ContentLength(0)),
+      normalize_timeouts,
+    }
+  }
+
+  pub fn trailers(&self) -> &[(String, String)] {
+    &self.trailers
+  }
+
+  fn read_fixed_length(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    if self.remaining == 0 || buf.is_empty() {
+      self.eof = self.remaining == 0;
+      return Ok(0);
+    }
+
+    let limit = buf.len().min(self.remaining);
+    let read = self
+      .reader
+      .read(&mut buf[..limit])
+      .map_err(|err| self.normalize_error(err))?;
+    if read == 0 {
+      return Err(io::Error::new(
+        io::ErrorKind::UnexpectedEof,
+        "incomplete HTTP request body",
+      ));
+    }
+    self.remaining -= read;
+    if self.remaining == 0 {
+      self.eof = true;
+    }
+    Ok(read)
+  }
+
+  fn read_chunked(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    if self.eof || buf.is_empty() {
+      return Ok(0);
+    }
+
+    if self.chunk_needs_crlf {
+      consume_crlf(self.reader, &mut self.body_bytes_read)
+        .map_err(|err| self.normalize_error(err))?;
+      self.chunk_needs_crlf = false;
+    }
+
+    while self.chunk_remaining == 0 {
+      let line = read_bounded_crlf_line(self.reader, &mut self.body_bytes_read)
+        .map_err(|err| self.normalize_error(err))?;
+      let chunk_size = parse_chunk_size(&line)?;
+      if chunk_size == 0 {
+        self.trailers = read_trailers(self.reader, &mut self.body_bytes_read)
+          .map_err(|err| self.normalize_error(err))?;
+        self.eof = true;
+        return Ok(0);
+      }
+      add_request_body_bytes(&mut self.body_bytes_read, chunk_size)?;
+      self.chunk_remaining = chunk_size;
+    }
+
+    let limit = buf.len().min(self.chunk_remaining);
+    let read = self
+      .reader
+      .read(&mut buf[..limit])
+      .map_err(|err| self.normalize_error(err))?;
+    if read == 0 {
+      return Err(io::Error::new(
+        io::ErrorKind::UnexpectedEof,
+        "incomplete chunked request body",
+      ));
+    }
+    self.chunk_remaining -= read;
+    if self.chunk_remaining == 0 {
+      self.chunk_needs_crlf = true;
+    }
+    Ok(read)
+  }
+
+  fn normalize_error(&self, err: io::Error) -> io::Error {
+    if self.normalize_timeouts && err.kind() == io::ErrorKind::WouldBlock {
+      io::Error::new(io::ErrorKind::TimedOut, err)
+    } else {
+      err
+    }
+  }
+}
+
+impl<R: BufRead> Read for RequestBodyReader<'_, R> {
+  fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    match self.kind {
+      RequestBodyKind::ContentLength(_) => self.read_fixed_length(buf),
+      RequestBodyKind::Chunked => self.read_chunked(buf),
     }
   }
 }

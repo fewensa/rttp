@@ -196,6 +196,16 @@ pub struct AsyncConnection<'a> {
   conn: Connection<'a>,
 }
 
+pub(crate) enum AsyncStreamingRequestBody<'a> {
+  Fixed {
+    reader: &'a mut (dyn AsyncRead + Unpin),
+    content_length: u64,
+  },
+  Chunked {
+    reader: &'a mut (dyn AsyncRead + Unpin),
+  },
+}
+
 impl<'a> AsyncConnection<'a> {
   pub fn new(request: RawRequest<'a>) -> AsyncConnection<'a> {
     Self {
@@ -247,6 +257,24 @@ impl<'a> AsyncConnection<'a> {
       self.conn.closed_set(true);
       return Ok(response);
     }
+  }
+
+  pub async fn async_call_streaming_body(
+    mut self,
+    body: AsyncStreamingRequestBody<'_>,
+  ) -> error::Result<Response> {
+    if self.conn.proxy().is_some() {
+      return Err(error::builder_with_message(
+        "streaming request bodies do not support proxies",
+      ));
+    }
+
+    let url = self.conn.url().map_err(error::builder)?;
+    let parts = self.async_send_streaming_parts(&url, body).await?;
+    let response =
+      Response::with_trailers(self.conn.rourl().clone(), parts.binary, parts.trailers)?;
+    self.conn.closed_set(true);
+    Ok(response)
   }
 }
 
@@ -307,6 +335,30 @@ impl<'a> AsyncConnection<'a> {
         .write_all(body.bytes())
         .await
         .map_err(error::request)?;
+    }
+    stream.flush().await.map_err(error::request)
+  }
+
+  async fn async_write_streaming_request<S>(
+    &self,
+    stream: &mut S,
+    mut body: AsyncStreamingRequestBody<'_>,
+  ) -> error::Result<()>
+  where
+    S: AsyncWrite + Unpin,
+  {
+    stream
+      .write_all(self.conn.header().as_bytes())
+      .await
+      .map_err(error::request)?;
+    match &mut body {
+      AsyncStreamingRequestBody::Fixed {
+        reader,
+        content_length,
+      } => async_write_fixed_streaming_body(stream, *reader, *content_length).await?,
+      AsyncStreamingRequestBody::Chunked { reader } => {
+        async_write_chunked_streaming_body(stream, *reader).await?
+      }
     }
     stream.flush().await.map_err(error::request)
   }
@@ -631,6 +683,42 @@ impl<'a> AsyncConnection<'a> {
     self.async_send_with_stream_parts(url, stream).await
   }
 
+  async fn async_send_streaming_parts(
+    &self,
+    url: &Url,
+    body: AsyncStreamingRequestBody<'_>,
+  ) -> error::Result<ResponseParts> {
+    let addr = self.conn.addr(url)?;
+    let stream = self.async_tcp_stream(&addr).await?;
+
+    self
+      .async_send_streaming_with_stream_parts(url, stream, body)
+      .await
+  }
+
+  async fn async_send_streaming_with_stream_parts(
+    &self,
+    url: &Url,
+    stream: TcpStream,
+    body: AsyncStreamingRequestBody<'_>,
+  ) -> error::Result<ResponseParts> {
+    match url.scheme() {
+      "http" => {
+        let mut stream = AllowStdIo::new(stream);
+        self
+          .async_write_streaming_request(&mut stream, body)
+          .await?;
+        self.async_read_stream_parts(url, &mut stream).await
+      }
+      "https" => {
+        self
+          .async_send_https_streaming_parts(url, stream, body)
+          .await
+      }
+      _ => Err(error::url_bad_scheme(url.clone())),
+    }
+  }
+
   async fn async_send_with_stream_parts(
     &self,
     url: &Url,
@@ -682,6 +770,40 @@ impl<'a> AsyncConnection<'a> {
     {
       let _ = url;
       let _ = stream;
+      return Err(error::no_request_features(
+        "Not have any tls features, Can't request a https url",
+      ));
+    }
+  }
+
+  async fn async_send_https_streaming_parts(
+    &self,
+    url: &Url,
+    stream: TcpStream,
+    body: AsyncStreamingRequestBody<'_>,
+  ) -> error::Result<ResponseParts> {
+    #[cfg(feature = "tls-rustls")]
+    {
+      return self
+        .async_send_https_rustls_streaming_parts(url, stream, body)
+        .await;
+    }
+
+    #[cfg(all(feature = "tls-native", not(feature = "tls-rustls")))]
+    {
+      let _ = url;
+      let _ = stream;
+      let _ = body;
+      return Err(error::no_request_features(
+        "Async streaming HTTPS request bodies require the tls-rustls feature",
+      ));
+    }
+
+    #[cfg(not(any(feature = "tls-native", feature = "tls-rustls")))]
+    {
+      let _ = url;
+      let _ = stream;
+      let _ = body;
       return Err(error::no_request_features(
         "Not have any tls features, Can't request a https url",
       ));
@@ -750,6 +872,126 @@ impl<'a> AsyncConnection<'a> {
       ExpectContinueResult::Final(parts) => return Ok(parts),
     }
     self.async_read_stream_parts(url, &mut tls_stream).await
+  }
+
+  #[cfg(feature = "tls-rustls")]
+  async fn async_send_https_rustls_streaming_parts(
+    &self,
+    url: &Url,
+    stream: TcpStream,
+    body: AsyncStreamingRequestBody<'_>,
+  ) -> error::Result<ResponseParts> {
+    use futures_rustls::TlsConnector;
+    use rustls::pki_types::ServerName;
+    use rustls::{ClientConfig, RootCertStore};
+
+    use crate::connection::connection::{NoCertificateVerification, NoHostnameVerification};
+
+    let config = self.conn.config();
+    let mut root_store = RootCertStore::empty();
+    if config.verify_ssl_cert() {
+      root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    }
+
+    let builder = ClientConfig::builder();
+    let rustls_config = if !config.verify_ssl_cert() {
+      builder
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoCertificateVerification))
+        .with_no_client_auth()
+    } else if !config.verify_ssl_hostname() {
+      let verifier = rustls::client::WebPkiServerVerifier::builder(Arc::new(root_store))
+        .build()
+        .map_err(|e| error::bad_ssl(e.to_string()))?;
+      builder
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoHostnameVerification::new(verifier)))
+        .with_no_client_auth()
+    } else {
+      builder
+        .with_root_certificates(root_store)
+        .with_no_client_auth()
+    };
+
+    let host = self.conn.host(url)?;
+    let server_name: ServerName<'static> = match host.parse::<std::net::IpAddr>() {
+      Ok(ip) => ServerName::IpAddress(ip.into()),
+      Err(_) => ServerName::try_from(host.as_str())
+        .map_err(|_| error::bad_ssl(format!("Invalid server name: {}", host)))?
+        .to_owned(),
+    };
+
+    let connector = TlsConnector::from(Arc::new(rustls_config));
+    let async_tcp = AllowStdIo::new(stream);
+    let mut tls_stream = connector
+      .connect(server_name, async_tcp)
+      .await
+      .map_err(|e| error::bad_ssl(e.to_string()))?;
+
+    self
+      .async_write_streaming_request(&mut tls_stream, body)
+      .await?;
+    self.async_read_stream_parts(url, &mut tls_stream).await
+  }
+}
+
+async fn async_write_fixed_streaming_body<S>(
+  writer: &mut S,
+  reader: &mut (dyn AsyncRead + Unpin),
+  content_length: u64,
+) -> error::Result<()>
+where
+  S: AsyncWrite + Unpin,
+{
+  let mut remaining = content_length;
+  let mut buffer = [0u8; 8 * 1024];
+  while remaining > 0 {
+    let limit = buffer.len().min(remaining as usize);
+    let read = reader
+      .read(&mut buffer[..limit])
+      .await
+      .map_err(error::request)?;
+    if read == 0 {
+      return Err(error::request(io::Error::new(
+        io::ErrorKind::UnexpectedEof,
+        "streaming request body ended before Content-Length",
+      )));
+    }
+    writer
+      .write_all(&buffer[..read])
+      .await
+      .map_err(error::request)?;
+    remaining -= read as u64;
+  }
+  Ok(())
+}
+
+async fn async_write_chunked_streaming_body<S>(
+  writer: &mut S,
+  reader: &mut (dyn AsyncRead + Unpin),
+) -> error::Result<()>
+where
+  S: AsyncWrite + Unpin,
+{
+  let mut buffer = [0u8; 8 * 1024];
+  loop {
+    let read = reader.read(&mut buffer).await.map_err(error::request)?;
+    if read == 0 {
+      writer
+        .write_all(b"0\r\n\r\n")
+        .await
+        .map_err(error::request)?;
+      return Ok(());
+    }
+    writer
+      .write_all(format!("{:x}\r\n", read).as_bytes())
+      .await
+      .map_err(error::request)?;
+    writer
+      .write_all(&buffer[..read])
+      .await
+      .map_err(error::request)?;
+    writer.write_all(CRLF).await.map_err(error::request)?;
   }
 }
 

@@ -90,6 +90,87 @@ fn server_accepts_get_request_and_writes_response() {
 }
 
 #[test]
+fn streaming_handler_reads_large_chunked_request_body_incrementally() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one_streaming(|request, mut body| {
+        assert_eq!("POST", request.method());
+        assert_eq!("/upload", request.target());
+        let mut total = 0usize;
+        let mut buffer = [0u8; 8192];
+        loop {
+          let read = body.read(&mut buffer).expect("read streaming body");
+          if read == 0 {
+            break;
+          }
+          total += read;
+        }
+        tx.send(total).expect("send streamed byte count");
+        HttpResponse::ok(total.to_string())
+      })
+      .expect("serve streaming request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(b"POST /upload HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n")
+    .expect("write request head");
+  for _ in 0..128 {
+    stream.write_all(b"1000\r\n").expect("write chunk size");
+    stream.write_all(&vec![b'x'; 4096]).expect("write chunk");
+    stream.write_all(b"\r\n").expect("write chunk terminator");
+  }
+  stream
+    .write_all(b"0\r\nX-Done: yes\r\n\r\n")
+    .expect("write terminating chunk");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  assert_eq!(128 * 4096, rx.recv().expect("receive streamed byte count"));
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\n524288",
+    response
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn streaming_handler_can_reject_before_reading_request_body() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one_streaming(|request, _body| {
+        assert_eq!("/reject", request.target());
+        HttpResponse::new(413, "Payload Too Large").body("rejected")
+      })
+      .expect("serve streaming rejection");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(b"POST /reject HTTP/1.1\r\nHost: localhost\r\nContent-Length: 1048576\r\n\r\nprefix")
+    .expect("write partial request");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  assert_eq!(
+    "HTTP/1.1 413 Payload Too Large\r\nContent-Length: 8\r\nConnection: close\r\n\r\nrejected",
+    response
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn server_bind_falls_back_to_later_candidate_when_first_addr_is_occupied() {
   let (_occupied_listener, occupied_addr) = reserve_local_addr();
   let (available_listener, available_addr) = reserve_local_addr();

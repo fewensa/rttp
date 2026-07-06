@@ -6,17 +6,46 @@ use std::collections::HashMap;
 #[cfg(feature = "async")]
 use futures::executor::block_on;
 #[cfg(feature = "async")]
-use futures::io::AllowStdIo;
+use futures::io::{AllowStdIo, Cursor as AsyncCursor};
 #[cfg(feature = "async")]
 use rttp_client::types::Proxy;
 #[cfg(feature = "async")]
 use rttp_client::{async_streaming_response_after_header, Config, HttpClient};
 #[cfg(feature = "async")]
-use std::io::Cursor;
+use std::io::{Cursor, Read, Write};
+#[cfg(feature = "async")]
+use std::net::TcpListener;
+#[cfg(feature = "async")]
+use std::thread;
 
 #[cfg(feature = "async")]
 fn client() -> HttpClient {
   HttpClient::new()
+}
+
+#[cfg(feature = "async")]
+fn spawn_async_chunked_upload_capture_server() -> (std::net::SocketAddr, thread::JoinHandle<Vec<u8>>)
+{
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind async upload capture server");
+  let addr = listener.local_addr().expect("async upload capture addr");
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept async upload");
+    let mut request = Vec::new();
+    let mut byte = [0u8; 1];
+    while !request.ends_with(b"\r\n\r\n") {
+      stream.read_exact(&mut byte).expect("read request head");
+      request.push(byte[0]);
+    }
+    while !request.ends_with(b"\r\n0\r\n\r\n") {
+      stream.read_exact(&mut byte).expect("read chunked body");
+      request.push(byte[0]);
+    }
+    stream
+      .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\nuploaded")
+      .expect("write response");
+    request
+  });
+  (addr, handle)
 }
 
 #[test]
@@ -61,6 +90,30 @@ fn test_async_chunked() {
       response.trailer("x-signature").map(|h| h.value().as_str())
     );
   });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_streaming_chunked_upload_writes_incremental_framing() {
+  let (addr, handle) = spawn_async_chunked_upload_capture_server();
+  block_on(async {
+    let payload = vec![b'a'; 96 * 1024];
+    let response = client()
+      .post()
+      .url(format!("http://{}/upload", addr))
+      .rasync_streaming_chunked(AsyncCursor::new(payload))
+      .await
+      .expect("async stream chunked upload");
+
+    assert_eq!("uploaded", response.body().string().unwrap());
+  });
+
+  let request = handle.join().expect("upload server thread");
+  let request = String::from_utf8(request).expect("request utf8");
+  assert!(request.starts_with("POST /upload HTTP/1.1\r\n"));
+  assert!(request.contains("\r\nTransfer-Encoding: chunked\r\n"));
+  assert!(!request.contains("\r\nContent-Length:"));
+  assert!(request.ends_with("\r\n0\r\n\r\n"));
 }
 
 #[test]
