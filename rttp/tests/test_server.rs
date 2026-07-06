@@ -1586,6 +1586,59 @@ fn server_returns_bad_request_for_invalid_chunk_terminator() {
 }
 
 #[test]
+fn server_closes_keep_alive_after_malformed_chunked_request() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request.target().to_string())
+          .expect("send parsed target");
+        HttpResponse::ok(format!("served {}", request.target()))
+      })
+      .expect("serve one request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .set_read_timeout(Some(Duration::from_millis(250)))
+    .expect("set read timeout");
+  stream
+    .write_all(
+      concat!(
+        "POST /broken HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Connection: keep-alive\r\n",
+        "Transfer-Encoding: chunked\r\n",
+        "\r\n",
+        "5\r\nhello",
+        "XX",
+        "GET /leaked HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Connection: keep-alive\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write malformed pipelined request");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  handle.join().expect("server thread");
+  assert!(rx.try_recv().is_err());
+  assert_eq!(
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
+}
+
+#[test]
 fn server_returns_bad_request_for_unsupported_transfer_encoding() {
   let (response, handler_called) =
     send_raw_request(b"POST /upload HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: gzip, chunked\r\n\r\n0\r\n\r\n");

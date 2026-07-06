@@ -1703,6 +1703,90 @@ hello\r\n\
   }
 
   #[test]
+  fn read_next_from_rejects_invalid_chunk_size_characters() {
+    let raw = concat!(
+      "POST /chunked HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "\r\n",
+      "5G\r\nhello\r\n",
+      "0\r\n",
+      "\r\n"
+    );
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+
+    let error = Request::read_next_from(&mut reader).expect_err("invalid chunk size should fail");
+
+    assert_eq!(io::ErrorKind::InvalidData, error.kind());
+    assert_eq!("invalid chunk size", error.to_string());
+  }
+
+  #[test]
+  fn read_next_from_rejects_oversized_chunk_size_line() {
+    let chunk_size = "1".repeat(MAX_REQUEST_BODY_BYTES);
+    let raw = format!(
+      concat!(
+        "POST /chunked HTTP/1.1\r\n",
+        "Host: example.test\r\n",
+        "Transfer-Encoding: chunked\r\n",
+        "\r\n",
+        "{}\r\n",
+        "x\r\n",
+        "0\r\n",
+        "\r\n"
+      ),
+      chunk_size
+    );
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+
+    let error =
+      Request::read_next_from(&mut reader).expect_err("oversized chunk size line should fail");
+
+    assert_eq!(io::ErrorKind::InvalidData, error.kind());
+    assert_eq!("request body is too large", error.to_string());
+  }
+
+  #[test]
+  fn read_next_from_rejects_missing_crlf_after_chunk_data() {
+    let raw = concat!(
+      "POST /chunked HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "\r\n",
+      "5\r\nhello",
+      "0\r\n",
+      "\r\n"
+    );
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+
+    let error =
+      Request::read_next_from(&mut reader).expect_err("missing chunk data terminator should fail");
+
+    assert_eq!(io::ErrorKind::InvalidData, error.kind());
+    assert_eq!("invalid chunk terminator", error.to_string());
+  }
+
+  #[test]
+  fn read_next_from_rejects_malformed_trailer_termination() {
+    let raw = concat!(
+      "POST /chunked HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "\r\n",
+      "5\r\nhello\r\n",
+      "0\r\n",
+      "X-Trace: abc\r\n"
+    );
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+
+    let error =
+      Request::read_next_from(&mut reader).expect_err("missing trailer terminator should fail");
+
+    assert_eq!(io::ErrorKind::UnexpectedEof, error.kind());
+    assert_eq!("incomplete chunked request body", error.to_string());
+  }
+
+  #[test]
   fn connection_close_request_marks_keep_alive_loop_terminal() {
     let raw = concat!(
       "POST /final HTTP/1.1\r\n",
