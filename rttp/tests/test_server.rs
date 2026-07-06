@@ -1589,16 +1589,17 @@ fn server_returns_bad_request_for_invalid_chunk_terminator() {
 fn server_closes_keep_alive_after_malformed_chunked_request() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
-  let (tx, rx) = mpsc::channel();
+  let (handler_tx, handler_rx) = mpsc::channel();
+  let (done_tx, done_rx) = mpsc::channel();
 
   let handle = thread::spawn(move || {
-    server
-      .accept_one(|request| {
-        tx.send(request.target().to_string())
-          .expect("send parsed target");
-        HttpResponse::ok(format!("served {}", request.target()))
-      })
-      .expect("serve one request");
+    let result = server.serve_requests(2, |request| {
+      handler_tx
+        .send(request.target().to_string())
+        .expect("send parsed target");
+      HttpResponse::ok(format!("served {}", request.target()))
+    });
+    done_tx.send(result).expect("send server result");
   });
 
   let mut stream = TcpStream::connect(addr).expect("connect server");
@@ -1630,12 +1631,23 @@ fn server_closes_keep_alive_after_malformed_chunked_request() {
   let mut response = String::new();
   stream.read_to_string(&mut response).expect("read response");
 
-  handle.join().expect("server thread");
-  assert!(rx.try_recv().is_err());
+  assert!(handler_rx.try_recv().is_err());
   assert_eq!(
     "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
     response
   );
+
+  let second_stream = TcpStream::connect(addr).expect("connect second client");
+  second_stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown second write");
+
+  let result = done_rx
+    .recv_timeout(Duration::from_millis(250))
+    .expect("serve_requests returned after second connection");
+  assert!(result.is_ok(), "serve_requests failed: {result:?}");
+
+  handle.join().expect("server thread");
 }
 
 #[test]
