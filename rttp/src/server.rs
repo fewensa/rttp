@@ -638,6 +638,7 @@ impl HttpResponse {
     let value = value.as_ref();
     assert_valid_header_component(name);
     assert_valid_header_component(value);
+    assert_allowed_trailer_name(name);
     self.trailers.push(HttpHeader::new(name, value));
     self
   }
@@ -1354,6 +1355,20 @@ fn assert_valid_header_component(component: &str) {
     !component.contains('\r') && !component.contains('\n'),
     "response headers must not contain CR or LF"
   );
+}
+
+fn assert_allowed_trailer_name(name: &str) {
+  assert!(
+    !is_forbidden_trailer_name(name),
+    "response trailers must not contain framing or routing fields"
+  );
+}
+
+fn is_forbidden_trailer_name(name: &str) -> bool {
+  matches!(
+    name.to_ascii_lowercase().as_str(),
+    "connection" | "content-length" | "host" | "te" | "trailer" | "transfer-encoding" | "upgrade"
+  )
 }
 
 fn response_status_allows_body(status_code: u16) -> bool {

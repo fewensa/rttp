@@ -319,6 +319,25 @@ fn rejects_response_trailers_with_crlf() {
 }
 
 #[test]
+fn rejects_forbidden_response_trailer_names() {
+  for name in [
+    "Content-Length",
+    "transfer-encoding",
+    "Host",
+    "Connection",
+    "TE",
+    "Trailer",
+    "Upgrade",
+  ] {
+    let result = std::panic::catch_unwind(|| {
+      let _response = HttpResponse::new(200, "OK").trailer(name, "unsafe");
+    });
+
+    assert!(result.is_err(), "{name} trailer should be rejected");
+  }
+}
+
+#[test]
 fn serializes_empty_http_response_without_content_length_for_204() {
   let response = HttpResponse::new(204, "No Content");
 
