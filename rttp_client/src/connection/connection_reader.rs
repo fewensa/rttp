@@ -9,7 +9,7 @@ use crate::types::{Header, RoUrl};
 
 const HEADER_END: &[u8] = b"\r\n\r\n";
 const CRLF: &[u8] = b"\r\n";
-const MAX_CHUNKED_RESPONSE_LINE_BYTES: usize = 8 * 1024;
+pub(crate) const MAX_CHUNKED_RESPONSE_LINE_BYTES: usize = 8 * 1024;
 
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum ResponseBodyKind {
