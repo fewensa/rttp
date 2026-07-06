@@ -3,6 +3,12 @@ use std::fmt;
 use crate::types::{FormData, Header, Para, Proxy, RoUrl, ToRoUrl};
 use crate::{error, Config};
 
+pub(crate) fn is_sensitive_redirect_header(name: &str) -> bool {
+  name.eq_ignore_ascii_case("authorization")
+    || name.eq_ignore_ascii_case("cookie")
+    || name.eq_ignore_ascii_case("proxy-authorization")
+}
+
 #[derive(Clone, Debug)]
 pub struct Request {
   closed: bool,
@@ -207,6 +213,12 @@ impl Request {
       });
     }
     self
+  }
+
+  pub(crate) fn remove_sensitive_redirect_headers(&mut self) {
+    self
+      .headers
+      .retain(|header| !is_sensitive_redirect_header(header.name()));
   }
 }
 

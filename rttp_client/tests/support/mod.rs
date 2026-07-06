@@ -299,6 +299,72 @@ pub fn spawn_cross_authority_redirect_host_echo_server() -> (SocketAddr, SocketA
   (origin_addr, target_addr, handle)
 }
 
+pub fn spawn_cross_authority_redirect_header_echo_server(
+) -> (SocketAddr, SocketAddr, JoinHandle<()>) {
+  let (origin_listener, origin_addr) = bind_local_http_listener("cross authority redirect origin");
+  let (target_listener, target_addr) = bind_local_http_listener("cross authority redirect target");
+
+  let handle = thread::spawn(move || {
+    if let Ok((mut stream, _)) = origin_listener.accept() {
+      let _ = read_http_request(&mut stream);
+      let response = format!(
+        "HTTP/1.1 302 Found\r\nLocation: http://{}/final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        target_addr
+      );
+      let _ = stream.write_all(response.as_bytes());
+    }
+
+    if let Ok((mut stream, _)) = target_listener.accept() {
+      let request = read_http_request(&mut stream);
+      let body = echoed_redirect_headers(&request);
+      let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+      );
+      let _ = stream.write_all(response.as_bytes());
+    }
+  });
+
+  (origin_addr, target_addr, handle)
+}
+
+pub fn spawn_same_authority_redirect_header_echo_server() -> (SocketAddr, JoinHandle<()>) {
+  let (listener, addr) = bind_local_http_listener("same authority redirect");
+
+  let handle = thread::spawn(move || {
+    if let Ok((mut stream, _)) = listener.accept() {
+      let _ = read_http_request(&mut stream);
+      let response =
+        "HTTP/1.1 302 Found\r\nLocation: /final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+      let _ = stream.write_all(response.as_bytes());
+    }
+
+    if let Ok((mut stream, _)) = listener.accept() {
+      let request = read_http_request(&mut stream);
+      let body = echoed_redirect_headers(&request);
+      let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+      );
+      let _ = stream.write_all(response.as_bytes());
+    }
+  });
+
+  (addr, handle)
+}
+
+fn echoed_redirect_headers(request: &[u8]) -> String {
+  format!(
+    "authorization={}\ncookie={}\nproxy-authorization={}\nx-trace={}",
+    header_value(request, "Authorization").unwrap_or_default(),
+    header_value(request, "Cookie").unwrap_or_default(),
+    header_value(request, "Proxy-Authorization").unwrap_or_default(),
+    header_value(request, "X-Trace").unwrap_or_default()
+  )
+}
+
 pub fn spawn_keep_alive_server() -> (SocketAddr, JoinHandle<()>) {
   let (listener, addr) = bind_local_http_listener("keep-alive server");
   let handle = thread::spawn(move || {

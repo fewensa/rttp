@@ -51,6 +51,9 @@ impl<'a> BlockConnection<'a> {
       let redirect_url = self.conn.redirect_url(&url, location)?;
       let mut request = self.conn.request().origin().clone();
       request.redirect_status_set(response.code());
+      if !self.conn.is_same_origin_redirect(&url, location)? {
+        request.remove_sensitive_redirect_headers();
+      }
       return HttpClient::with_request(request)
         .url(redirect_url)
         .count(count + 1)

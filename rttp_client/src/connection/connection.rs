@@ -244,6 +244,13 @@ impl<'a> Connection<'a> {
       .map_err(|_| error::bad_url(url.clone(), "Bad redirect location"))
   }
 
+  pub fn is_same_origin_redirect(&self, url: &Url, redirect_url: &str) -> error::Result<bool> {
+    let redirect = url
+      .join(redirect_url)
+      .map_err(|_| error::bad_url(url.clone(), "Bad redirect location"))?;
+    Ok(is_same_origin(url, &redirect))
+  }
+
   pub fn expect_no_response_body(&self) -> bool {
     self.request.origin().method().eq_ignore_ascii_case("head")
   }
@@ -253,6 +260,12 @@ fn absolute_url(url: &Url) -> String {
   let mut absolute = url.clone();
   absolute.set_fragment(None);
   absolute.to_string()
+}
+
+fn is_same_origin(left: &Url, right: &Url) -> bool {
+  left.scheme() == right.scheme()
+    && left.host_str() == right.host_str()
+    && left.port_or_known_default() == right.port_or_known_default()
 }
 
 fn proxy_authorization_value(proxy: &Proxy) -> Option<String> {

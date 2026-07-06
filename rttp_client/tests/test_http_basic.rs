@@ -586,6 +586,49 @@ fn test_auto_redirect_resolves_query_only_location() {
 }
 
 #[test]
+fn test_auto_redirect_strips_sensitive_headers_for_cross_authority_location() {
+  let (origin_addr, _target_addr, _handle) =
+    support::spawn_cross_authority_redirect_header_echo_server();
+  let response = client()
+    .config(Config::builder().auto_redirect(true))
+    .get()
+    .url(format!("http://{}/redirect", origin_addr))
+    .header(("Authorization", "Bearer secret"))
+    .header(("Cookie", "session=secret"))
+    .header(("Proxy-Authorization", "Basic proxy-secret"))
+    .header(("X-Trace", "trace-123"))
+    .emit();
+
+  assert!(response.is_ok());
+  let response = response.unwrap();
+  assert_eq!(
+    "authorization=\ncookie=\nproxy-authorization=\nx-trace=trace-123",
+    response.body().string().unwrap()
+  );
+}
+
+#[test]
+fn test_auto_redirect_preserves_sensitive_headers_for_same_authority_location() {
+  let (addr, _handle) = support::spawn_same_authority_redirect_header_echo_server();
+  let response = client()
+    .config(Config::builder().auto_redirect(true))
+    .get()
+    .url(format!("http://{}/redirect", addr))
+    .header(("Authorization", "Bearer secret"))
+    .header(("Cookie", "session=secret"))
+    .header(("Proxy-Authorization", "Basic proxy-secret"))
+    .header(("X-Trace", "trace-123"))
+    .emit();
+
+  assert!(response.is_ok());
+  let response = response.unwrap();
+  assert_eq!(
+    "authorization=Bearer secret\ncookie=session=secret\nproxy-authorization=Basic proxy-secret\nx-trace=trace-123",
+    response.body().string().unwrap()
+  );
+}
+
+#[test]
 fn test_http_proxy_uses_absolute_form_for_http_requests() {
   let (addr, _handle) = support::spawn_http_proxy_server();
   let response = client()
