@@ -3,7 +3,9 @@ use std::io::Write;
 use socks::{Socks4Stream, Socks5Stream};
 use url::Url;
 
-use crate::connection::connection::{Connection, ExpectContinueResult, StreamingRequestBody};
+use crate::connection::connection::{
+  Connection, ExpectContinueResult, HandoffConnection, HandoffKind, StreamingRequestBody,
+};
 use crate::connection::connection_reader::ResponseParts;
 use crate::error;
 use crate::request::RawRequest;
@@ -82,6 +84,30 @@ impl<'a> BlockConnection<'a> {
       Response::with_trailers(self.conn.rourl().clone(), parts.binary, parts.trailers)?;
     self.conn.closed_set(true);
     Ok(response)
+  }
+
+  pub fn call_connect_handoff(mut self) -> error::Result<HandoffConnection> {
+    if self.conn.proxy().is_some() {
+      return Err(error::builder_with_message(
+        "CONNECT socket handoff does not support proxies",
+      ));
+    }
+    let url = self.conn.url().map_err(error::builder)?;
+    let handoff = self.conn.block_send_handoff(&url, HandoffKind::Connect)?;
+    self.conn.closed_set(true);
+    Ok(handoff)
+  }
+
+  pub fn call_upgrade_handoff(mut self) -> error::Result<HandoffConnection> {
+    if self.conn.proxy().is_some() {
+      return Err(error::builder_with_message(
+        "Upgrade socket handoff does not support proxies",
+      ));
+    }
+    let url = self.conn.url().map_err(error::builder)?;
+    let handoff = self.conn.block_send_handoff(&url, HandoffKind::Upgrade)?;
+    self.conn.closed_set(true);
+    Ok(handoff)
   }
 }
 
