@@ -66,3 +66,4 @@ tls-rustls  = ["rustls", "webpki-roots", "futures-rustls"]
 [dev-dependencies]
 rcgen = "0.11"
 rttp = { path = "../rttp" }
+rttp_http11_test_fixtures = { path = "../rttp_http11_test_fixtures" }
