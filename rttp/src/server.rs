@@ -1131,12 +1131,7 @@ where
 
     let copied = {
       let mut chunk_reader = reader.take(chunk_size as u64);
-      io::copy(&mut chunk_reader, &mut body).map_err(|_| {
-        io::Error::new(
-          io::ErrorKind::UnexpectedEof,
-          "incomplete chunked request body",
-        )
-      })?
+      io::copy(&mut chunk_reader, &mut body)?
     };
 
     if copied != chunk_size as u64 {
@@ -1206,11 +1201,15 @@ where
 {
   add_request_body_bytes(body_bytes_read, 2)?;
   let mut suffix = [0u8; 2];
-  reader.read_exact(&mut suffix).map_err(|_| {
-    io::Error::new(
-      io::ErrorKind::UnexpectedEof,
-      "incomplete chunked request body",
-    )
+  reader.read_exact(&mut suffix).map_err(|err| {
+    if err.kind() == io::ErrorKind::UnexpectedEof {
+      io::Error::new(
+        io::ErrorKind::UnexpectedEof,
+        "incomplete chunked request body",
+      )
+    } else {
+      err
+    }
   })?;
   if suffix == *b"\r\n" {
     Ok(())
