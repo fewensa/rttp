@@ -319,8 +319,68 @@ fn parse_trailer_line(line: &[u8]) -> error::Result<Header> {
   let (name, value) = line
     .split_once(':')
     .ok_or_else(|| error::bad_response("Invalid trailer header"))?;
+  validate_response_trailer_header(name, value)?;
 
   Ok(Header::new(name, value))
+}
+
+pub(crate) fn validate_response_trailer_header(name: &str, value: &str) -> error::Result<()> {
+  if !is_http_token(name) || !value.bytes().all(is_header_value_byte) {
+    return Err(error::bad_response("Invalid trailer header"));
+  }
+  if is_forbidden_response_trailer_name(name) {
+    return Err(error::bad_response("Forbidden trailer header"));
+  }
+  Ok(())
+}
+
+fn is_forbidden_response_trailer_name(name: &str) -> bool {
+  matches!(
+    name.trim().to_ascii_lowercase().as_str(),
+    "authorization"
+      | "connection"
+      | "content-length"
+      | "cookie"
+      | "host"
+      | "proxy-authenticate"
+      | "proxy-authorization"
+      | "www-authenticate"
+      | "set-cookie"
+      | "te"
+      | "trailer"
+      | "transfer-encoding"
+      | "upgrade"
+  )
+}
+
+fn is_http_token(value: &str) -> bool {
+  !value.is_empty() && value.bytes().all(is_http_token_byte)
+}
+
+fn is_http_token_byte(byte: u8) -> bool {
+  byte.is_ascii_alphanumeric()
+    || matches!(
+      byte,
+      b'!'
+        | b'#'
+        | b'$'
+        | b'%'
+        | b'&'
+        | b'\''
+        | b'*'
+        | b'+'
+        | b'-'
+        | b'.'
+        | b'^'
+        | b'_'
+        | b'`'
+        | b'|'
+        | b'~'
+    )
+}
+
+fn is_header_value_byte(byte: u8) -> bool {
+  byte == b'\t' || byte == b' ' || (0x21..=0x7e).contains(&byte) || byte >= 0x80
 }
 
 #[cfg(test)]
@@ -376,6 +436,74 @@ mod tests {
     assert_eq!(
       Some("abc"),
       response.trailer_value("x-trace").map(String::as_str)
+    );
+  }
+
+  #[test]
+  fn test_forbidden_chunked_response_trailer_is_rejected() {
+    for name in [
+      "Transfer-Encoding",
+      "Content-Length",
+      "Host",
+      "Authorization",
+      "Proxy-Authorization",
+      "WWW-Authenticate",
+      "Proxy-Authenticate",
+      "Cookie",
+      "Connection",
+      "TE",
+      "Trailer",
+      "Set-Cookie",
+      "Upgrade",
+    ] {
+      let raw = format!(
+        "HTTP/1.1 200 OK\r\n\
+         Transfer-Encoding: chunked\r\n\
+         \r\n\
+         2\r\n\
+         OK\r\n\
+         0\r\n\
+         {name}: unsafe\r\n\
+         \r\n"
+      );
+      let url = url::Url::parse("http://localhost").unwrap();
+      let mut cursor = Cursor::new(raw.as_bytes());
+      let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+
+      let error = reader
+        .response()
+        .expect_err("forbidden response trailer should be rejected");
+
+      assert!(
+        error.to_string().contains("Forbidden trailer header"),
+        "unexpected error for {name}: {error}"
+      );
+    }
+  }
+
+  #[test]
+  fn test_malformed_chunked_response_trailer_is_rejected() {
+    let raw = concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "\r\n",
+      "2\r\n",
+      "OK\r\n",
+      "0\r\n",
+      "Bad Name: unsafe\r\n",
+      "\r\n"
+    );
+    let url = url::Url::parse("http://localhost").unwrap();
+    let mut cursor = Cursor::new(raw.as_bytes());
+    let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+
+    let error = reader
+      .response()
+      .expect_err("malformed response trailer should be rejected");
+
+    assert!(
+      error.to_string().contains("Invalid trailer header"),
+      "unexpected error: {error}"
     );
   }
 

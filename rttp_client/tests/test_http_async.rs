@@ -128,6 +128,66 @@ fn test_async_chunked_oversized_trailer_is_rejected() {
 
 #[test]
 #[cfg(feature = "async")]
+fn test_async_forbidden_chunked_response_trailer_is_rejected() {
+  let response = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "2\r\nOK\r\n",
+    "0\r\n",
+    "WWW-Authenticate: unsafe\r\n",
+    "\r\n"
+  );
+  let (addr, _handle) = support::spawn_chunked_response_server(response);
+
+  block_on(async {
+    let error = client()
+      .get()
+      .url(format!("http://{}/chunked", addr))
+      .rasync()
+      .await
+      .expect_err("forbidden chunk trailer should be rejected");
+
+    assert!(
+      error.to_string().contains("Forbidden trailer header"),
+      "unexpected error: {error}"
+    );
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_malformed_chunked_response_trailer_is_rejected() {
+  let response = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "2\r\nOK\r\n",
+    "0\r\n",
+    "Bad Name: unsafe\r\n",
+    "\r\n"
+  );
+  let (addr, _handle) = support::spawn_chunked_response_server(response);
+
+  block_on(async {
+    let error = client()
+      .get()
+      .url(format!("http://{}/chunked", addr))
+      .rasync()
+      .await
+      .expect_err("malformed chunk trailer should be rejected");
+
+    assert!(
+      error.to_string().contains("Invalid trailer header"),
+      "unexpected error: {error}"
+    );
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
 fn test_async_duplicate_set_cookie_headers_are_preserved() {
   let (addr, _handle) = support::spawn_duplicate_set_cookie_server();
   block_on(async {

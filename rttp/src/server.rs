@@ -1408,13 +1408,29 @@ where
   loop {
     let line = read_bounded_crlf_line(reader, body_bytes_read)?;
     if line == b"\r\n" {
-      return parse_header_lines(lines.iter().map(String::as_str));
+      return parse_trailer_lines(lines.iter().map(String::as_str));
     }
     let line = line.strip_suffix(b"\r\n").unwrap_or(&line);
     let line = std::str::from_utf8(line)
       .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "trailer line is not UTF-8"))?;
     lines.push(line.to_string());
   }
+}
+
+fn parse_trailer_lines<'a>(
+  lines: impl Iterator<Item = &'a str>,
+) -> io::Result<Vec<(String, String)>> {
+  let trailers = parse_header_lines(lines)?;
+  if trailers
+    .iter()
+    .any(|(name, _)| is_forbidden_trailer_name(name))
+  {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "forbidden request trailer",
+    ));
+  }
+  Ok(trailers)
 }
 
 fn connection_header_has_token(value: Option<&str>, expected: &str) -> bool {
@@ -1434,6 +1450,10 @@ fn assert_valid_header_component(component: &str) {
 
 fn assert_allowed_trailer_name(name: &str) {
   assert!(
+    is_http_token(name),
+    "response trailers must use valid field names"
+  );
+  assert!(
     !is_forbidden_trailer_name(name),
     "response trailers must not contain framing or routing fields"
   );
@@ -1442,7 +1462,19 @@ fn assert_allowed_trailer_name(name: &str) {
 fn is_forbidden_trailer_name(name: &str) -> bool {
   matches!(
     name.to_ascii_lowercase().as_str(),
-    "connection" | "content-length" | "host" | "te" | "trailer" | "transfer-encoding" | "upgrade"
+    "authorization"
+      | "connection"
+      | "content-length"
+      | "cookie"
+      | "host"
+      | "proxy-authenticate"
+      | "proxy-authorization"
+      | "www-authenticate"
+      | "set-cookie"
+      | "te"
+      | "trailer"
+      | "transfer-encoding"
+      | "upgrade"
   )
 }
 
