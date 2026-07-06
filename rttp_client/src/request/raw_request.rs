@@ -1,5 +1,6 @@
 use crate::error;
 use crate::request::builder::RawBuilder;
+#[cfg(feature = "async")]
 use crate::request::is_sensitive_redirect_header;
 use crate::request::{Request, RequestBody};
 #[cfg(feature = "async")]
