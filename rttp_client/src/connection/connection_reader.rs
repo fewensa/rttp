@@ -282,6 +282,7 @@ where
 }
 
 pub(crate) fn response_headers(header: &[u8]) -> error::Result<Vec<Header>> {
+  validate_response_header_lines(header)?;
   let header = String::from_utf8(header.to_vec()).map_err(error::response)?;
   Ok(
     header
@@ -338,6 +339,8 @@ pub(crate) fn response_body_kind(
   header: &[u8],
   expect_no_body: bool,
 ) -> error::Result<ResponseBodyKind> {
+  validate_response_header_lines(header)?;
+
   if expect_no_body {
     return Ok(ResponseBodyKind::NoBody);
   }
@@ -412,6 +415,23 @@ pub(crate) fn response_body_kind(
   } else {
     Ok(ResponseBodyKind::UntilEof)
   }
+}
+
+fn validate_response_header_lines(header: &[u8]) -> error::Result<()> {
+  let header = match header
+    .windows(HEADER_END.len())
+    .position(|w| w == HEADER_END)
+  {
+    Some(header_end) => &header[..header_end],
+    None => header,
+  };
+  let header = String::from_utf8_lossy(header);
+  for line in header.lines().skip(1).filter(|line| !line.is_empty()) {
+    if !line.contains(':') {
+      return Err(error::bad_response("Invalid response header"));
+    }
+  }
+  Ok(())
 }
 
 fn read_bounded_crlf_line<R>(reader: &mut R, max_len: usize) -> error::Result<Vec<u8>>
@@ -870,6 +890,34 @@ mod tests {
     assert!(
       error.to_string().contains("Invalid trailer header"),
       "unexpected error: {error}"
+    );
+  }
+
+  #[test]
+  fn test_malformed_response_header_without_colon_is_rejected_before_body() {
+    let raw = concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "BrokenHeader\r\n",
+      "Content-Length: 2\r\n",
+      "\r\n",
+      "OK"
+    );
+    let url = url::Url::parse("http://localhost").unwrap();
+    let mut cursor = Cursor::new(raw.as_bytes());
+    let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+
+    let error = reader
+      .response()
+      .expect_err("malformed response header should be rejected");
+
+    assert!(
+      error.to_string().contains("Invalid response header"),
+      "unexpected error: {error}"
+    );
+    assert_eq!(
+      (raw.len() - "OK".len()) as u64,
+      cursor.position(),
+      "malformed response headers must be rejected before body bytes are consumed"
     );
   }
 

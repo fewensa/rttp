@@ -1166,4 +1166,34 @@ mod tests {
       );
     });
   }
+
+  #[test]
+  fn async_streaming_response_rejects_malformed_header_without_colon() {
+    block_on(async {
+      let raw = concat!(
+        "HTTP/1.1 200 OK\r\n",
+        "BrokenHeader\r\n",
+        "Content-Length: 2\r\n",
+        "\r\n",
+        "OK"
+      );
+      let mut cursor = AllowStdIo::new(Cursor::new(raw.as_bytes()));
+      let head = async_read_response_head(&mut cursor).await.unwrap();
+
+      let error = match async_streaming_response_after_header(&mut cursor, false, head).await {
+        Ok(_) => panic!("malformed response header should be rejected"),
+        Err(error) => error,
+      };
+
+      assert!(
+        error.to_string().contains("Invalid response header"),
+        "unexpected error: {error}"
+      );
+      assert_eq!(
+        (raw.len() - "OK".len()) as u64,
+        cursor.get_ref().position(),
+        "malformed response headers must be rejected before body bytes are consumed"
+      );
+    });
+  }
 }
