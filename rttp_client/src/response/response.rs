@@ -106,11 +106,28 @@ impl Response {
     self.header(name).map(|header| header.value())
   }
 
+  pub fn trailers_of_name<S: AsRef<str>>(&self, name: S) -> Vec<&Header> {
+    self
+      .trailers()
+      .iter()
+      .filter(|header| header.name().eq_ignore_ascii_case(name.as_ref()))
+      .collect()
+  }
+
   pub fn trailer<S: AsRef<str>>(&self, name: S) -> Option<&Header> {
     self
       .trailers()
       .iter()
       .find(|header| header.name().eq_ignore_ascii_case(name.as_ref()))
+  }
+
+  pub fn trailer_values<S: AsRef<str>>(&self, name: S) -> Vec<&String> {
+    self
+      .trailers()
+      .iter()
+      .filter(|header| header.name().eq_ignore_ascii_case(name.as_ref()))
+      .map(|header| header.value())
+      .collect()
   }
 
   pub fn trailer_value<S: AsRef<str>>(&self, name: S) -> Option<&String> {
