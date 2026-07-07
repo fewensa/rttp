@@ -235,31 +235,62 @@ fn write_request(
     .unwrap_or(&[]);
   let has_trailers = !request.origin().trailers().is_empty();
   let header_flags = if body.is_empty() && !has_trailers {
-    FLAG_END_STREAM | FLAG_END_HEADERS
+    FLAG_END_STREAM
   } else {
-    FLAG_END_HEADERS
+    0
   };
-  write_frame(
+  write_header_block_frames(
     stream,
-    FRAME_HEADERS,
     header_flags,
     STREAM_ID,
     &header_block,
+    peer_max_frame_size,
   )?;
   if !body.is_empty() {
     write_data_frames(stream, body, peer_max_frame_size, has_trailers)?;
   }
   if has_trailers {
     let trailer_block = encode_request_trailers(request)?;
-    write_frame(
+    write_header_block_frames(
       stream,
-      FRAME_HEADERS,
-      FLAG_END_HEADERS | FLAG_END_STREAM,
+      FLAG_END_STREAM,
       STREAM_ID,
       &trailer_block,
+      peer_max_frame_size,
     )?;
   }
   stream.flush().map_err(error::request)
+}
+
+fn write_header_block_frames(
+  stream: &mut TcpStream,
+  initial_flags: u8,
+  stream_id: u32,
+  header_block: &[u8],
+  peer_max_frame_size: usize,
+) -> error::Result<()> {
+  let mut chunks = header_block.chunks(peer_max_frame_size).peekable();
+  let first_chunk = chunks.next().unwrap_or(&[]);
+  if chunks.peek().is_none() {
+    return write_frame(
+      stream,
+      FRAME_HEADERS,
+      initial_flags | FLAG_END_HEADERS,
+      stream_id,
+      first_chunk,
+    );
+  }
+
+  write_frame(stream, FRAME_HEADERS, initial_flags, stream_id, first_chunk)?;
+  while let Some(chunk) = chunks.next() {
+    let flags = if chunks.peek().is_none() {
+      FLAG_END_HEADERS
+    } else {
+      0
+    };
+    write_frame(stream, FRAME_CONTINUATION, flags, stream_id, chunk)?;
+  }
+  Ok(())
 }
 
 fn write_data_frames(

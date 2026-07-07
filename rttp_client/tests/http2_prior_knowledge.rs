@@ -285,6 +285,60 @@ fn prior_knowledge_post_splits_body_data_frames_at_default_peer_max_frame_size()
 }
 
 #[test]
+fn prior_knowledge_get_splits_large_request_headers_at_peer_max_frame_size() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+  let peer_max_frame_size = 16 * 1024;
+  let large_header_value = "a".repeat(peer_max_frame_size + 512);
+  let expected_header_value = large_header_value.clone();
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_handshake_without_request_with_settings(
+      &mut stream,
+      &settings_payload(SETTING_MAX_FRAME_SIZE, peer_max_frame_size as u32),
+    );
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_STREAM, request_headers.flags);
+    assert_eq!(1, request_headers.stream_id);
+    assert_eq!(peer_max_frame_size, request_headers.payload.len());
+
+    let request_continuation = read_frame(&mut stream);
+    assert_eq!(FRAME_CONTINUATION, request_continuation.frame_type);
+    assert_eq!(FLAG_END_HEADERS, request_continuation.flags);
+    assert_eq!(1, request_continuation.stream_id);
+    assert!(request_continuation.payload.len() <= peer_max_frame_size);
+    assert!(!request_continuation.payload.is_empty());
+
+    let mut header_block = request_headers.payload;
+    header_block.extend_from_slice(&request_continuation.payload);
+    assert!(header_block
+      .windows(b"x-large-header".len())
+      .any(|window| window == b"x-large-header"));
+    assert!(header_block
+      .windows(expected_header_value.len())
+      .any(|window| window == expected_header_value.as_bytes()));
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"split");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/large-headers", addr))
+    .header(("X-Large-Header".to_string(), large_header_value))
+    .emit_http2_prior_knowledge()
+    .expect("h2 GET response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("split", response.body().string().unwrap());
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
 fn prior_knowledge_put_and_patch_send_body_data_frames() {
   for method in ["PUT", "PATCH"] {
     let request_header_block = emit_prior_knowledge_body_request(method);
@@ -1401,6 +1455,13 @@ fn complete_h2_request_handshake(stream: &mut impl ReadWrite) {
 }
 
 fn complete_h2_handshake_without_request(stream: &mut impl ReadWrite) {
+  complete_h2_handshake_without_request_with_settings(stream, &[]);
+}
+
+fn complete_h2_handshake_without_request_with_settings(
+  stream: &mut impl ReadWrite,
+  settings: &[u8],
+) {
   let mut preface = [0; 24];
   stream
     .read_exact(&mut preface)
@@ -1412,7 +1473,7 @@ fn complete_h2_handshake_without_request(stream: &mut impl ReadWrite) {
   assert_eq!(0, client_settings.stream_id);
   assert_eq!(0, client_settings.payload.len());
 
-  write_frame(stream, FRAME_SETTINGS, 0, 0, &[]);
+  write_frame(stream, FRAME_SETTINGS, 0, 0, settings);
 
   let client_settings_ack = read_frame(stream);
   assert_eq!(FRAME_SETTINGS, client_settings_ack.frame_type);
