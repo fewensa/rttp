@@ -738,6 +738,123 @@ fn wrapper_http2_feature_exposes_response_trailers_from_prior_knowledge_server()
 }
 
 #[test]
+fn wrapper_http2_prior_knowledge_large_request_header_reaches_socket2_server() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let large_header_value = "r".repeat(16 * 1024 + 512);
+  let expected_header_value = large_header_value.clone();
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.version().to_string(),
+          request.target().to_string(),
+          request.header("x-large-header").map(str::to_string),
+        ))
+        .expect("send parsed large h2 request header");
+        HttpResponse::ok("large request header")
+      })
+      .expect("serve large h2 request header");
+  });
+
+  let response = rttp::Http::client()
+    .url(format!("http://{}/large-request-header", addr))
+    .header(("X-Large-Header".to_string(), large_header_value))
+    .emit_http2_prior_knowledge()
+    .expect("wrapper h2 response after large request header");
+
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!("large request header", response.body().string().unwrap());
+  assert_eq!(
+    (
+      "HTTP/2".to_string(),
+      "/large-request-header".to_string(),
+      Some(expected_header_value)
+    ),
+    rx.recv().expect("receive parsed large h2 request header")
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn wrapper_http2_prior_knowledge_reads_large_response_header_from_socket2_server() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let large_header_value = "h".repeat(16 * 1024 + 512);
+  let expected_header_value = large_header_value.clone();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(move |_| {
+        HttpResponse::ok("large response header").header("X-Large-Response", large_header_value)
+      })
+      .expect("serve large h2 response header");
+  });
+
+  let response = rttp::Http::client()
+    .url(format!("http://{}/large-response-header", addr))
+    .emit_http2_prior_knowledge()
+    .expect("wrapper h2 response with large response header");
+
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(200, response.code());
+  assert_eq!("large response header", response.body().string().unwrap());
+  assert_eq!(
+    Some(&expected_header_value),
+    response.header_value("X-Large-Response")
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn wrapper_http2_prior_knowledge_reads_large_response_trailer_from_socket2_server() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let large_trailer_value = "t".repeat(16 * 1024 + 512);
+  let expected_trailer_value = large_trailer_value.clone();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(move |_| {
+        HttpResponse::ok("large response trailer")
+          .header("Trailer", "X-Large-Trailer")
+          .trailer("X-Large-Trailer", large_trailer_value)
+      })
+      .expect("serve large h2 response trailer");
+  });
+
+  let response = rttp::Http::client()
+    .url(format!("http://{}/large-response-trailer", addr))
+    .emit_http2_prior_knowledge()
+    .expect("wrapper h2 response with large response trailer");
+
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(200, response.code());
+  assert_eq!("large response trailer", response.body().string().unwrap());
+  assert_eq!(
+    Some(&expected_trailer_value),
+    response.trailer_value("X-Large-Trailer")
+  );
+  assert!(response.header_value("Trailer").is_none());
+  assert!(response.header_value("X-Large-Trailer").is_none());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn wrapper_http2_prior_knowledge_post_body_round_trips_between_client_and_server() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
