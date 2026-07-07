@@ -873,6 +873,30 @@ fn captured_redirected_head(status_code: u16, reason: &'static str) -> CapturedR
 }
 
 #[test]
+fn test_auto_redirect_301_post_becomes_get_without_body_or_body_framing() {
+  let request = captured_redirected_post(301, "Moved Permanently");
+
+  assert_eq!("GET", request.method);
+  assert_eq!("/final?via=redirect", request.target);
+  assert_eq!(b"", request.body.as_slice());
+  assert!(!request.headers.contains_key("content-length"));
+  assert!(!request.headers.contains_key("content-type"));
+  assert!(!request.headers.contains_key("transfer-encoding"));
+}
+
+#[test]
+fn test_auto_redirect_302_post_becomes_get_without_body_or_body_framing() {
+  let request = captured_redirected_post(302, "Found");
+
+  assert_eq!("GET", request.method);
+  assert_eq!("/final?via=redirect", request.target);
+  assert_eq!(b"", request.body.as_slice());
+  assert!(!request.headers.contains_key("content-length"));
+  assert!(!request.headers.contains_key("content-type"));
+  assert!(!request.headers.contains_key("transfer-encoding"));
+}
+
+#[test]
 fn test_auto_redirect_303_post_becomes_get_without_body_or_body_framing() {
   let request = captured_redirected_post(303, "See Other");
 

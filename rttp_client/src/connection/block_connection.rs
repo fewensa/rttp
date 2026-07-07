@@ -37,7 +37,12 @@ impl<'a> BlockConnection<'a> {
         Response::with_trailers(self.conn.rourl().clone(), parts.binary, parts.trailers)?;
       let config = self.conn.config().clone();
 
-      if let Some(location) = response.location() {
+      if response.is_redirect() {
+        let Some(location) = response.location() else {
+          self.conn.closed_set(true);
+          return Ok(response);
+        };
+
         let req_url = url.as_str();
         if req_url == location {
           return Err(error::loop_detected(url));
