@@ -888,6 +888,84 @@ fn configured_write_timeout_preserves_normal_response_behavior() {
 }
 
 #[test]
+fn forced_close_overrides_conflicting_response_connection_keep_alive() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(1, |_request| {
+        HttpResponse::ok("terminal").header("Connection", "keep-alive")
+      })
+      .expect("serve request");
+  });
+
+  let response = send_request(
+    addr,
+    b"GET /terminal HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n",
+  );
+
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\nterminal",
+    response
+  );
+  assert!(!response.contains("\r\nConnection: keep-alive\r\n"));
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn keep_alive_response_connection_header_survives_when_connection_remains_open() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        if request.target() == "/first" {
+          HttpResponse::ok("first").header("Connection", "keep-alive")
+        } else {
+          HttpResponse::ok("second")
+        }
+      })
+      .expect("serve requests");
+  });
+
+  let response = send_request(
+    addr,
+    concat!(
+      "GET /first HTTP/1.1\r\n",
+      "Host: localhost\r\n",
+      "Connection: keep-alive\r\n",
+      "\r\n",
+      "GET /second HTTP/1.1\r\n",
+      "Host: localhost\r\n",
+      "Connection: keep-alive\r\n",
+      "\r\n",
+    )
+    .as_bytes(),
+  );
+
+  assert_eq!(
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Connection: keep-alive\r\n",
+      "Content-Length: 5\r\n",
+      "\r\n",
+      "first",
+      "HTTP/1.1 200 OK\r\n",
+      "Content-Length: 6\r\n",
+      "Connection: close\r\n",
+      "\r\n",
+      "second",
+    ),
+    response
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn server_writes_chunked_response_framing() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
