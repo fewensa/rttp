@@ -94,7 +94,7 @@ fn test_async_chunked() {
 
 #[test]
 #[cfg(feature = "async")]
-fn test_async_chunked_valid_extension_is_ignored() {
+fn test_async_chunked_valid_extension_preserves_trailers_without_leaking_extension() {
   let (addr, _handle) = support::spawn_chunked_response_server(concat!(
     "HTTP/1.1 200 OK\r\n",
     "Transfer-Encoding: chunked\r\n",
@@ -102,6 +102,8 @@ fn test_async_chunked_valid_extension_is_ignored() {
     "\r\n",
     "4;foo=bar\r\nWiki\r\n",
     "0\r\n",
+    "X-Trace: abc\r\n",
+    "X-Signature: signed\r\n",
     "\r\n"
   ));
 
@@ -114,6 +116,17 @@ fn test_async_chunked_valid_extension_is_ignored() {
       .unwrap();
 
     assert_eq!("Wiki", response.body().string().unwrap());
+    assert_eq!(2, response.trailers().len());
+    assert_eq!(
+      Some("abc"),
+      response.trailer("X-TRACE").map(|h| h.value().as_str())
+    );
+    assert_eq!(
+      Some("signed"),
+      response.trailer_value("x-signature").map(String::as_str)
+    );
+    assert!(response.trailer("foo").is_none());
+    assert!(response.trailer_value("foo").is_none());
   });
 }
 
