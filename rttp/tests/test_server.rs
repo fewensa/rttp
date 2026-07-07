@@ -1268,6 +1268,11 @@ fn server_returns_bad_request_for_http_11_request_with_multiple_host_headers_bef
 }
 
 #[test]
+fn server_returns_bad_request_for_http_11_request_with_empty_host_before_handler() {
+  assert_bad_request_without_handler(b"GET / HTTP/1.1\r\nHost: \r\n\r\n");
+}
+
+#[test]
 fn server_accepts_http_10_request_without_host() {
   let (response, handler_called) = send_raw_request(b"GET /legacy HTTP/1.0\r\n\r\n");
 
