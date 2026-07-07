@@ -261,3 +261,65 @@ fn wrapper_http2_prior_knowledge_post_body_round_trips_between_client_and_server
 
   handle.join().expect("server thread");
 }
+
+#[test]
+fn wrapper_http2_prior_knowledge_post_request_trailers_reach_server_only_as_trailers() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+  let request_body = b"body with request trailers".to_vec();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.method().to_string(),
+          request.target().to_string(),
+          request.version().to_string(),
+          request.body().to_vec(),
+          request.header("x-trace").map(str::to_string),
+          request.header("x-upload-status").map(str::to_string),
+          request.trailer("x-trace").map(str::to_string),
+          request.trailer("X-UPLOAD-STATUS").map(str::to_string),
+          request.trailers().to_vec(),
+        ))
+        .expect("send parsed h2 request trailers");
+        HttpResponse::ok("stored request trailers")
+      })
+      .expect("serve h2 request trailer request");
+  });
+
+  let response = rttp::Http::client()
+    .post()
+    .url(format!("http://{}/upload-with-request-trailers", addr))
+    .content_type("application/octet-stream")
+    .binary(request_body.clone())
+    .trailer(("X-Trace", "request-trailer-trace"))
+    .expect("configure x-trace request trailer")
+    .trailer(("X-Upload-Status", "stored"))
+    .expect("configure x-upload-status request trailer")
+    .emit_http2_prior_knowledge()
+    .expect("wrapper h2 request trailer response");
+
+  assert_eq!(
+    (
+      "POST".to_string(),
+      "/upload-with-request-trailers".to_string(),
+      "HTTP/2".to_string(),
+      request_body,
+      None,
+      None,
+      Some("request-trailer-trace".to_string()),
+      Some("stored".to_string()),
+      vec![
+        ("x-trace".to_string(), "request-trailer-trace".to_string()),
+        ("x-upload-status".to_string(), "stored".to_string()),
+      ]
+    ),
+    rx.recv().expect("receive parsed h2 request trailers")
+  );
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!("stored request trailers", response.body().string().unwrap());
+
+  handle.join().expect("server thread");
+}
