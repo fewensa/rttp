@@ -167,6 +167,65 @@ fn prior_knowledge_post_sends_headers_then_body_data_frame() {
 }
 
 #[test]
+fn prior_knowledge_post_sends_request_trailers_after_body_data_frame() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_handshake_without_request(&mut stream);
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_HEADERS, request_headers.flags);
+    assert_eq!(1, request_headers.stream_id);
+
+    let request_body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, request_body.frame_type);
+    assert_eq!(0, request_body.flags);
+    assert_eq!(1, request_body.stream_id);
+    assert_eq!(b"trace body", request_body.payload.as_slice());
+
+    let request_trailers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_trailers.frame_type);
+    assert_eq!(FLAG_END_HEADERS | FLAG_END_STREAM, request_trailers.flags);
+    assert_eq!(1, request_trailers.stream_id);
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"created");
+
+    (request_headers.payload, request_trailers.payload)
+  });
+
+  let response = HttpClient::new()
+    .post()
+    .url(format!("http://{}/submit-with-tail", addr))
+    .trailer(("X-Trace", "abc"))
+    .expect("configure request trailer")
+    .raw("trace body")
+    .emit_http2_prior_knowledge()
+    .expect("h2 POST response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("created", response.body().string().unwrap());
+
+  let (request_header_block, request_trailer_block) = handle.join().expect("h2 peer thread");
+  assert!(request_header_block
+    .windows(b"/submit-with-tail".len())
+    .any(|window| window == b"/submit-with-tail"));
+  assert!(!request_header_block
+    .windows(b"trailer".len())
+    .any(|window| window == b"trailer"));
+  assert!(request_trailer_block
+    .windows(b"x-trace".len())
+    .any(|window| window == b"x-trace"));
+  assert!(request_trailer_block
+    .windows(b"abc".len())
+    .any(|window| window == b"abc"));
+}
+
+#[test]
 fn prior_knowledge_post_splits_body_data_frames_at_default_peer_max_frame_size() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");
