@@ -136,6 +136,38 @@ fn prior_knowledge_decodes_content_length_from_hpack_static_index() {
 }
 
 #[test]
+fn prior_knowledge_get_skips_informational_headers_before_final_response() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    write_frame(
+      &mut stream,
+      FRAME_HEADERS,
+      FLAG_END_HEADERS,
+      1,
+      &[0x08, 3, b'1', b'0', b'3'],
+    );
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"final h2");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/early-hints", addr))
+    .emit_http2_prior_knowledge()
+    .expect("h2 response after informational headers");
+
+  assert_eq!(200, response.code());
+  assert_eq!("final h2", response.body().string().unwrap());
+  assert!(response.trailers().is_empty());
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
 fn prior_knowledge_get_ignores_interleaved_data_for_other_streams() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");

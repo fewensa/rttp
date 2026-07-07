@@ -263,8 +263,7 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
           if header_block_is_trailer {
             append_trailers(&mut trailers, decoded)?;
           } else {
-            status = decoded.status;
-            headers = decoded.headers;
+            apply_response_headers(decoded, &mut status, &mut headers);
           }
           header_block.clear();
           in_header_continuation = false;
@@ -282,8 +281,7 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
           if header_block_is_trailer {
             append_trailers(&mut trailers, decoded)?;
           } else {
-            status = decoded.status;
-            headers = decoded.headers;
+            apply_response_headers(decoded, &mut status, &mut headers);
           }
           header_block.clear();
           in_header_continuation = false;
@@ -321,6 +319,22 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
 
   let status = status.ok_or_else(|| error::bad_response("missing HTTP/2 :status header"))?;
   build_response(url, status, &headers, body, trailers)
+}
+
+fn apply_response_headers(
+  decoded: DecodedHeaders,
+  status: &mut Option<u32>,
+  headers: &mut Vec<(String, String)>,
+) {
+  if decoded.status.is_some_and(is_informational_status) {
+    return;
+  }
+  *status = decoded.status;
+  *headers = decoded.headers;
+}
+
+fn is_informational_status(status: u32) -> bool {
+  (100..200).contains(&status)
 }
 
 fn goaway_last_stream_id(payload: &[u8]) -> error::Result<u32> {
