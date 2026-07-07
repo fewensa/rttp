@@ -20,6 +20,8 @@ const HTTP2_FRAME_CONTINUATION: u8 = 0x9;
 const HTTP2_FLAG_END_STREAM: u8 = 0x1;
 const HTTP2_FLAG_ACK: u8 = 0x1;
 const HTTP2_FLAG_END_HEADERS: u8 = 0x4;
+const HTTP2_FLAG_PADDED: u8 = 0x8;
+const HTTP2_FLAG_PRIORITY: u8 = 0x20;
 const HTTP2_DEFAULT_MAX_FRAME_SIZE: usize = 16 * 1024;
 const HTTP2_SETTINGS_ENABLE_PUSH: u16 = 0x2;
 const HTTP2_SETTINGS_INITIAL_WINDOW_SIZE: u16 = 0x4;
@@ -462,6 +464,8 @@ impl HttpServer {
           ));
         }
         (HTTP2_FRAME_HEADERS, id) if id != 0 => {
+          let header_block_fragment =
+            http2_headers_payload_to_header_block_fragment(&frame.payload, frame.flags)?;
           let request_stream = http2_request_stream(&mut streams, id);
           if request_stream.end_stream {
             return Err(io::Error::new(
@@ -483,7 +487,7 @@ impl HttpServer {
           request_stream.header_block_kind = Some(header_block_kind);
           request_stream
             .header_block
-            .extend_from_slice(&frame.payload);
+            .extend_from_slice(header_block_fragment);
           if frame.flags & HTTP2_FLAG_END_HEADERS == HTTP2_FLAG_END_HEADERS {
             request_stream.finish_header_block()?;
           } else {
@@ -536,15 +540,16 @@ impl HttpServer {
             ));
           }
 
+          let data_payload = http2_data_payload_to_data(&frame.payload, frame.flags)?;
           let new_len = request_stream
             .body
             .len()
-            .checked_add(frame.payload.len())
+            .checked_add(data_payload.len())
             .ok_or_else(|| {
               io::Error::new(io::ErrorKind::InvalidData, "request body is too large")
             })?;
           reject_oversized_request_body(new_len)?;
-          request_stream.body.extend_from_slice(&frame.payload);
+          request_stream.body.extend_from_slice(data_payload);
           if !frame.payload.is_empty() {
             write_http2_window_update(&mut stream, 0, frame.payload.len())?;
             write_http2_window_update(&mut stream, id, frame.payload.len())?;
@@ -728,6 +733,61 @@ fn active_http2_header_continuation_stream(streams: &[Http2RequestStream]) -> Op
     .iter()
     .find(|request_stream| request_stream.in_header_continuation)
     .map(|request_stream| request_stream.stream_id)
+}
+
+fn http2_headers_payload_to_header_block_fragment(payload: &[u8], flags: u8) -> io::Result<&[u8]> {
+  let mut start = 0;
+  let pad_len = if flags & HTTP2_FLAG_PADDED == HTTP2_FLAG_PADDED {
+    let Some((&pad_len, rest)) = payload.split_first() else {
+      return Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        "invalid padded HTTP/2 HEADERS frame",
+      ));
+    };
+    start = payload.len() - rest.len();
+    pad_len as usize
+  } else {
+    0
+  };
+
+  if flags & HTTP2_FLAG_PRIORITY == HTTP2_FLAG_PRIORITY {
+    if payload.len().saturating_sub(start) < 5 {
+      return Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        "invalid priority HTTP/2 HEADERS frame",
+      ));
+    }
+    start += 5;
+  }
+
+  let available = payload.len().saturating_sub(start);
+  if pad_len > available {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "invalid padded HTTP/2 HEADERS frame",
+    ));
+  }
+  Ok(&payload[start..payload.len() - pad_len])
+}
+
+fn http2_data_payload_to_data(payload: &[u8], flags: u8) -> io::Result<&[u8]> {
+  if flags & HTTP2_FLAG_PADDED != HTTP2_FLAG_PADDED {
+    return Ok(payload);
+  }
+  let Some((&pad_len, data_and_padding)) = payload.split_first() else {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "invalid padded HTTP/2 DATA frame",
+    ));
+  };
+  let pad_len = pad_len as usize;
+  if pad_len > data_and_padding.len() {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "invalid padded HTTP/2 DATA frame",
+    ));
+  }
+  Ok(&data_and_padding[..data_and_padding.len() - pad_len])
 }
 
 fn read_http2_frame(stream: &mut TcpStream) -> io::Result<Http2Frame> {
