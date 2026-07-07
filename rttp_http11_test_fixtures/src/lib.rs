@@ -22,6 +22,13 @@ pub mod request {
     pub error: &'static str,
   }
 
+  pub struct TargetFormRequest {
+    pub name: &'static str,
+    pub raw: &'static [u8],
+    pub method: &'static str,
+    pub target: &'static str,
+  }
+
   pub struct ChunkedRequest {
     pub raw: &'static [u8],
     pub method: &'static str,
@@ -66,9 +73,31 @@ pub mod request {
         error: "invalid request target",
       },
       InvalidRequest {
+        name: "non-CONNECT authority-form target",
+        raw: b"GET example.test:443 HTTP/1.1\r\nHost: example.test\r\n\r\n",
+        error: "invalid request target",
+      },
+      InvalidRequest {
         name: "connect authority host mismatch",
         raw: b"CONNECT example.test:443 HTTP/1.1\r\nHost: other.test:443\r\n\r\n",
         error: "invalid Host header",
+      },
+    ]
+  }
+
+  pub fn valid_origin_and_absolute_form_cases() -> &'static [TargetFormRequest] {
+    &[
+      TargetFormRequest {
+        name: "origin-form target",
+        raw: b"GET /matrix/origin?case=shared HTTP/1.1\r\nHost: example.test\r\n\r\n",
+        method: "GET",
+        target: "/matrix/origin?case=shared",
+      },
+      TargetFormRequest {
+        name: "absolute-form target",
+        raw: b"GET http://example.test/matrix/absolute?case=shared HTTP/1.1\r\nHost: proxy.local\r\n\r\n",
+        method: "GET",
+        target: "/matrix/absolute?case=shared",
       },
     ]
   }
@@ -84,6 +113,21 @@ pub mod request {
         name: "transfer encoding with content length",
         raw: b"POST /matrix HTTP/1.1\r\nHost: example.test\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\nhello",
         error: "Transfer-Encoding conflicts with Content-Length",
+      },
+    ]
+  }
+
+  pub fn obsolete_line_folding_cases() -> &'static [InvalidRequest] {
+    &[
+      InvalidRequest {
+        name: "space-prefixed folded request header",
+        raw: b"GET /matrix HTTP/1.1\r\nHost: example.test\r\nX-Test: one\r\n two\r\n\r\n",
+        error: "invalid request header",
+      },
+      InvalidRequest {
+        name: "tab-prefixed folded request header",
+        raw: b"GET /matrix HTTP/1.1\r\nHost: example.test\r\nX-Test: one\r\n\ttwo\r\n\r\n",
+        error: "invalid request header",
       },
     ]
   }

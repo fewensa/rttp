@@ -10,8 +10,8 @@ use std::sync::Arc;
 use url::Url;
 
 use crate::connection::connection_reader::{
-  is_skippable_informational_status, read_response_header, read_response_parts_after_header,
-  response_status_code, ConnectionReader, ResponseParts,
+  is_skippable_informational_status, read_response_head, read_response_header,
+  read_response_parts_after_header, response_status_code, ConnectionReader, ResponseParts,
 };
 use crate::request::{RawRequest, RequestBody};
 use crate::response::Response;
@@ -593,9 +593,26 @@ where
 
     header.push(byte[0]);
     if header.ends_with(b"\r\n\r\n") {
+      let status_code = proxy_connect_response_status_code(&header)?;
+      if is_skippable_informational_status(status_code) {
+        header.clear();
+        continue;
+      }
       return parse_proxy_connect_response(&header);
     }
   }
+}
+
+fn proxy_connect_response_status_code(header: &[u8]) -> error::Result<u16> {
+  let header = String::from_utf8(header.to_vec())
+    .map_err(|_| error::bad_proxy("parse proxy server response error."))?;
+  header
+    .lines()
+    .next()
+    .and_then(|line| line.split_whitespace().nth(1))
+    .ok_or_else(|| error::bad_proxy("Proxy server response error."))?
+    .parse::<u16>()
+    .map_err(|_| error::bad_proxy("parse proxy server response error."))
 }
 
 pub(crate) fn connect_tcp_stream<A>(addr: A, config: &Config) -> error::Result<std::net::TcpStream>
@@ -777,7 +794,7 @@ impl<'a> Connection<'a> {
     let mut stream = self.block_tcp_stream(&addr)?;
     self.block_write_stream(&mut stream)?;
 
-    let header = read_response_header(&mut stream)?;
+    let header = read_response_head(&mut stream)?;
     let status_code = response_status_code(&header)?;
     match kind {
       HandoffKind::Connect if (200..300).contains(&status_code) => {
@@ -1222,6 +1239,22 @@ mod tests {
     let mut reader = Cursor::new(header);
 
     read_proxy_connect_response(&mut reader).unwrap();
+  }
+
+  #[test]
+  fn test_read_proxy_connect_response_skips_interim_headers() {
+    let raw = concat!(
+      "HTTP/1.1 103 Early Hints\r\n",
+      "Link: </proxy.css>; rel=preload\r\n",
+      "\r\n",
+      "HTTP/1.1 200 Connection Established\r\n",
+      "Proxy-Agent: test\r\n",
+      "\r\n"
+    );
+    let mut reader = Cursor::new(raw.as_bytes());
+
+    read_proxy_connect_response(&mut reader).unwrap();
+    assert_eq!(raw.len() as u64, reader.position());
   }
 
   #[test]

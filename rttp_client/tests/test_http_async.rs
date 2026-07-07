@@ -6,7 +6,7 @@ use std::collections::HashMap;
 #[cfg(feature = "async")]
 use futures::executor::block_on;
 #[cfg(feature = "async")]
-use futures::io::{AllowStdIo, Cursor as AsyncCursor};
+use futures::io::{AllowStdIo, AsyncRead, AsyncReadExt, Cursor as AsyncCursor};
 #[cfg(feature = "async")]
 use rttp_client::types::Proxy;
 #[cfg(feature = "async")]
@@ -21,6 +21,20 @@ use std::thread;
 #[cfg(feature = "async")]
 fn client() -> HttpClient {
   HttpClient::new()
+}
+
+#[cfg(feature = "async")]
+async fn async_read_test_response_head<S: AsyncRead + Unpin>(stream: &mut S) -> Vec<u8> {
+  let mut head = Vec::new();
+  let mut byte = [0u8; 1];
+  while !head.ends_with(b"\r\n\r\n") {
+    stream
+      .read_exact(&mut byte)
+      .await
+      .expect("read response head");
+    head.push(byte[0]);
+  }
+  head
 }
 
 #[cfg(feature = "async")]
@@ -48,6 +62,36 @@ fn spawn_async_chunked_upload_capture_server() -> (std::net::SocketAddr, thread:
   (addr, handle)
 }
 
+#[cfg(feature = "async")]
+fn spawn_async_head_metadata_server() -> (std::net::SocketAddr, thread::JoinHandle<Vec<u8>>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind async HEAD metadata server");
+  let addr = listener
+    .local_addr()
+    .expect("async HEAD metadata server addr");
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener
+      .accept()
+      .expect("accept async HEAD metadata request");
+    let request = support::read_http_request(&mut stream);
+    stream
+      .write_all(
+        concat!(
+          "HTTP/1.1 200 OK\r\n",
+          "Content-Length: 7\r\n",
+          "Transfer-Encoding: chunked\r\n",
+          "X-Object-Size: 7\r\n",
+          "Connection: close\r\n",
+          "\r\n",
+          "ignored"
+        )
+        .as_bytes(),
+      )
+      .expect("write async HEAD metadata response");
+    request
+  });
+  (addr, handle)
+}
+
 #[test]
 #[cfg(feature = "async")]
 fn test_async_http() {
@@ -64,6 +108,39 @@ fn test_async_http() {
     assert_eq!("127.0.0.1", response.host());
     println!("{}", response);
   });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_head_response_is_bodyless_and_preserves_headers() {
+  let (addr, handle) = spawn_async_head_metadata_server();
+  block_on(async {
+    let response = client()
+      .head()
+      .url(format!("http://{}/metadata", addr))
+      .rasync()
+      .await
+      .expect("async HEAD metadata response");
+
+    assert_eq!("", response.body().string().unwrap());
+    assert_eq!(
+      Some("7"),
+      response.header_value("Content-Length").map(String::as_str)
+    );
+    assert_eq!(
+      Some("chunked"),
+      response
+        .header_value("Transfer-Encoding")
+        .map(String::as_str)
+    );
+    assert_eq!(
+      Some("7"),
+      response.header_value("X-Object-Size").map(String::as_str)
+    );
+  });
+
+  let request = handle.join().expect("async HEAD metadata server thread");
+  assert!(String::from_utf8_lossy(&request).starts_with("HEAD /metadata HTTP/1.1\r\n"));
 }
 
 #[test]
@@ -89,6 +166,44 @@ fn test_async_chunked() {
       Some("signed"),
       response.trailer("x-signature").map(|h| h.value().as_str())
     );
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_chunked_valid_extension_preserves_trailers_without_leaking_extension() {
+  let (addr, _handle) = support::spawn_chunked_response_server(concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "4;foo=bar\r\nWiki\r\n",
+    "0\r\n",
+    "X-Trace: abc\r\n",
+    "X-Signature: signed\r\n",
+    "\r\n"
+  ));
+
+  block_on(async {
+    let response = client()
+      .get()
+      .url(format!("http://{}/chunked", addr))
+      .rasync()
+      .await
+      .unwrap();
+
+    assert_eq!("Wiki", response.body().string().unwrap());
+    assert_eq!(2, response.trailers().len());
+    assert_eq!(
+      Some("abc"),
+      response.trailer("X-TRACE").map(|h| h.value().as_str())
+    );
+    assert_eq!(
+      Some("signed"),
+      response.trailer_value("x-signature").map(String::as_str)
+    );
+    assert!(response.trailer("foo").is_none());
+    assert!(response.trailer_value("foo").is_none());
   });
 }
 
@@ -132,6 +247,120 @@ fn test_async_streaming_response_constructor_is_exported() {
     response.body_mut().read_to_end(&mut body).await.unwrap();
 
     assert_eq!(b"hello", body.as_slice());
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_204_with_misleading_content_length_keeps_next_response_readable() {
+  block_on(async {
+    let raw = concat!(
+      "HTTP/1.1 204 No Content\r\n",
+      "Content-Length: 7\r\n",
+      "X-Trace: no-content\r\n",
+      "\r\n",
+      "HTTP/1.1 200 OK\r\n",
+      "Content-Length: 4\r\n",
+      "Connection: close\r\n",
+      "\r\n",
+      "next"
+    );
+    let mut stream = AllowStdIo::new(Cursor::new(raw.as_bytes()));
+    let head = async_read_test_response_head(&mut stream).await;
+
+    let mut first = async_streaming_response_after_header(&mut stream, false, head)
+      .await
+      .unwrap();
+    let mut body = Vec::new();
+    first.body_mut().read_to_end(&mut body).await.unwrap();
+
+    assert_eq!(204, first.code().unwrap());
+    assert_eq!(b"", body.as_slice());
+    assert_eq!(
+      Some("7"),
+      first
+        .headers()
+        .unwrap()
+        .iter()
+        .find(|header| header.name().eq_ignore_ascii_case("content-length"))
+        .map(|header| header.value().as_str())
+    );
+    assert_eq!(
+      Some("no-content"),
+      first
+        .headers()
+        .unwrap()
+        .iter()
+        .find(|header| header.name().eq_ignore_ascii_case("x-trace"))
+        .map(|header| header.value().as_str())
+    );
+
+    let head = async_read_test_response_head(&mut stream).await;
+    let mut second = async_streaming_response_after_header(&mut stream, false, head)
+      .await
+      .unwrap();
+    let mut body = Vec::new();
+    second.body_mut().read_to_end(&mut body).await.unwrap();
+
+    assert_eq!(200, second.code().unwrap());
+    assert_eq!(b"next", body.as_slice());
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_304_with_misleading_chunked_framing_keeps_next_response_readable() {
+  block_on(async {
+    let raw = concat!(
+      "HTTP/1.1 304 Not Modified\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "ETag: \"abc\"\r\n",
+      "\r\n",
+      "HTTP/1.1 200 OK\r\n",
+      "Content-Length: 4\r\n",
+      "Connection: close\r\n",
+      "\r\n",
+      "next"
+    );
+    let mut stream = AllowStdIo::new(Cursor::new(raw.as_bytes()));
+    let head = async_read_test_response_head(&mut stream).await;
+
+    let mut first = async_streaming_response_after_header(&mut stream, false, head)
+      .await
+      .unwrap();
+    let mut body = Vec::new();
+    first.body_mut().read_to_end(&mut body).await.unwrap();
+
+    assert_eq!(304, first.code().unwrap());
+    assert_eq!(b"", body.as_slice());
+    assert_eq!(
+      Some("chunked"),
+      first
+        .headers()
+        .unwrap()
+        .iter()
+        .find(|header| header.name().eq_ignore_ascii_case("transfer-encoding"))
+        .map(|header| header.value().as_str())
+    );
+    assert_eq!(
+      Some("\"abc\""),
+      first
+        .headers()
+        .unwrap()
+        .iter()
+        .find(|header| header.name().eq_ignore_ascii_case("etag"))
+        .map(|header| header.value().as_str())
+    );
+
+    let head = async_read_test_response_head(&mut stream).await;
+    let mut second = async_streaming_response_after_header(&mut stream, false, head)
+      .await
+      .unwrap();
+    let mut body = Vec::new();
+    second.body_mut().read_to_end(&mut body).await.unwrap();
+
+    assert_eq!(200, second.code().unwrap());
+    assert_eq!(b"next", body.as_slice());
   });
 }
 
@@ -582,6 +811,33 @@ fn test_async_malformed_chunked_response_trailer_is_rejected() {
 
 #[test]
 #[cfg(feature = "async")]
+fn test_async_malformed_response_header_without_colon_is_rejected() {
+  let response = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "BrokenHeader\r\n",
+    "Content-Length: 2\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "OK"
+  );
+  let (addr, _handle) = support::spawn_chunked_response_server(response);
+  block_on(async {
+    let error = client()
+      .get()
+      .url(format!("http://{}/broken", addr))
+      .rasync()
+      .await
+      .expect_err("malformed response header should be rejected");
+
+    assert!(
+      error.to_string().contains("Invalid response header"),
+      "unexpected error: {error}"
+    );
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
 fn test_async_duplicate_set_cookie_headers_are_preserved() {
   let (addr, _handle) = support::spawn_duplicate_set_cookie_server();
   block_on(async {
@@ -651,6 +907,70 @@ fn test_async_content_length_response_does_not_wait_for_eof() {
 
     let response = response.unwrap();
     assert_eq!("OK", response.body().string().unwrap());
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_redirect_reuses_socket_when_connection_close_is_absent() {
+  let (addr, handle) = support::spawn_redirect_connection_lifecycle_server(false);
+  block_on(async {
+    let response = client()
+      .get()
+      .config(Config::builder().auto_redirect(true))
+      .url(format!("http://{}/start", addr))
+      .rasync()
+      .await
+      .unwrap();
+
+    assert_eq!(200, response.code());
+    assert_eq!("final", response.body().string().unwrap());
+  });
+  assert_eq!(vec![2], handle.join().unwrap());
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_redirect_uses_fresh_socket_after_connection_close() {
+  let (addr, handle) = support::spawn_redirect_connection_lifecycle_server(true);
+  block_on(async {
+    let response = client()
+      .get()
+      .config(Config::builder().auto_redirect(true))
+      .url(format!("http://{}/start", addr))
+      .rasync()
+      .await
+      .unwrap();
+
+    assert_eq!(200, response.code());
+    assert_eq!("final", response.body().string().unwrap());
+  });
+  assert_eq!(vec![1, 1], handle.join().unwrap());
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_keep_alive_content_length_response_leaves_client_reusable() {
+  let (addr, _handle) = support::spawn_keep_alive_server_count(2);
+  block_on(async {
+    let mut client = client();
+
+    let first = client
+      .get()
+      .config(Config::builder().read_timeout(100))
+      .url(format!("http://{}/keep-alive", addr))
+      .rasync()
+      .await
+      .unwrap();
+    assert_eq!("OK", first.body().string().unwrap());
+
+    let second = client
+      .get()
+      .url(format!("http://{}/keep-alive", addr))
+      .rasync()
+      .await
+      .unwrap();
+    assert_eq!("OK", second.body().string().unwrap());
   });
 }
 

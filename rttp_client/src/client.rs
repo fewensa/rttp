@@ -234,11 +234,15 @@ impl HttpClient {
       ));
     }
     self.request.prepare_streaming_fixed_body(content_length);
-    let request = RawRequest::block_new(&mut self.request)?;
-    BlockConnection::new(request).call_streaming_body(StreamingRequestBody::Fixed {
-      reader: &mut reader,
-      content_length,
-    })
+    let result = (|| {
+      let request = RawRequest::block_new(&mut self.request)?;
+      BlockConnection::new(request).call_streaming_body(StreamingRequestBody::Fixed {
+        reader: &mut reader,
+        content_length,
+      })
+    })();
+    self.request.clear_streaming_body_headers();
+    result
   }
 
   pub fn emit_streaming_chunked<R>(&mut self, mut reader: R) -> error::Result<Response>
@@ -254,10 +258,14 @@ impl HttpClient {
       ));
     }
     self.request.prepare_streaming_chunked_body();
-    let request = RawRequest::block_new(&mut self.request)?;
-    BlockConnection::new(request).call_streaming_body(StreamingRequestBody::Chunked {
-      reader: &mut reader,
-    })
+    let result = (|| {
+      let request = RawRequest::block_new(&mut self.request)?;
+      BlockConnection::new(request).call_streaming_body(StreamingRequestBody::Chunked {
+        reader: &mut reader,
+      })
+    })();
+    self.request.clear_streaming_body_headers();
+    result
   }
 
   pub fn connect(&mut self) -> error::Result<HandoffConnection> {
@@ -328,13 +336,18 @@ impl HttpClient {
       ));
     }
     self.request.prepare_streaming_fixed_body(content_length);
-    let request = RawRequest::async_new(&mut self.request).await?;
-    AsyncConnection::new(request)
-      .async_call_streaming_body(AsyncStreamingRequestBody::Fixed {
-        reader: &mut reader,
-        content_length,
-      })
-      .await
+    let result = async {
+      let request = RawRequest::async_new(&mut self.request).await?;
+      AsyncConnection::new(request)
+        .async_call_streaming_body(AsyncStreamingRequestBody::Fixed {
+          reader: &mut reader,
+          content_length,
+        })
+        .await
+    }
+    .await;
+    self.request.clear_streaming_body_headers();
+    result
   }
 
   #[cfg(feature = "async")]
@@ -351,11 +364,16 @@ impl HttpClient {
       ));
     }
     self.request.prepare_streaming_chunked_body();
-    let request = RawRequest::async_new(&mut self.request).await?;
-    AsyncConnection::new(request)
-      .async_call_streaming_body(AsyncStreamingRequestBody::Chunked {
-        reader: &mut reader,
-      })
-      .await
+    let result = async {
+      let request = RawRequest::async_new(&mut self.request).await?;
+      AsyncConnection::new(request)
+        .async_call_streaming_body(AsyncStreamingRequestBody::Chunked {
+          reader: &mut reader,
+        })
+        .await
+    }
+    .await;
+    self.request.clear_streaming_body_headers();
+    result
   }
 }

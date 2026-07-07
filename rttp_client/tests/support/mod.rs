@@ -12,7 +12,8 @@ use socket2::{Domain, Protocol, Socket, Type};
 #[path = "local_http.rs"]
 mod local_http;
 
-use local_http::{bind_local_http_listener, read_http_request, HTTP_OK_RESPONSE};
+pub use local_http::read_http_request;
+use local_http::{bind_local_http_listener, HTTP_OK_RESPONSE};
 
 fn read_exact_bytes<R: Read>(stream: &mut R, len: usize) -> io::Result<Vec<u8>> {
   let mut bytes = vec![0u8; len];
@@ -500,14 +501,74 @@ fn echoed_redirect_request_target_and_headers(request: &[u8]) -> String {
 }
 
 pub fn spawn_keep_alive_server() -> (SocketAddr, JoinHandle<()>) {
+  spawn_keep_alive_server_count(1)
+}
+
+pub fn spawn_keep_alive_server_count(count: usize) -> (SocketAddr, JoinHandle<()>) {
   let (listener, addr) = bind_local_http_listener("keep-alive server");
   let handle = thread::spawn(move || {
-    if let Ok((mut stream, _)) = listener.accept() {
+    for _ in 0..count {
+      let Ok((mut stream, _)) = listener.accept() else {
+        break;
+      };
       let _ = read_http_request(&mut stream);
       let response = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nOK";
       let _ = stream.write_all(response);
-      thread::sleep(Duration::from_millis(300));
+      if count == 1 {
+        thread::sleep(Duration::from_millis(300));
+      }
     }
+  });
+  (addr, handle)
+}
+
+pub fn spawn_redirect_connection_lifecycle_server(
+  first_response_connection_close: bool,
+) -> (SocketAddr, JoinHandle<Vec<usize>>) {
+  let (listener, addr) = bind_local_http_listener("redirect connection lifecycle server");
+  let handle = thread::spawn(move || {
+    let Ok((mut first_stream, _)) = listener.accept() else {
+      return Vec::new();
+    };
+
+    let mut requests_per_connection = vec![1];
+    let _ = read_http_request(&mut first_stream);
+    let connection_header = if first_response_connection_close {
+      "Connection: close\r\n"
+    } else {
+      ""
+    };
+    let redirect = format!(
+      "HTTP/1.1 302 Found\r\nLocation: /final\r\nContent-Length: 0\r\n{}\r\n",
+      connection_header
+    );
+    let _ = first_stream.write_all(redirect.as_bytes());
+
+    if first_response_connection_close {
+      drop(first_stream);
+    } else {
+      first_stream
+        .set_read_timeout(Some(Duration::from_millis(300)))
+        .expect("set redirect lifecycle read timeout");
+      match read_http_request(&mut first_stream) {
+        request if !request.is_empty() => {
+          requests_per_connection[0] += 1;
+          let _ = first_stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nfinal");
+          return requests_per_connection;
+        }
+        _ => {}
+      }
+    }
+
+    let Ok((mut second_stream, _)) = listener.accept() else {
+      return requests_per_connection;
+    };
+    requests_per_connection.push(1);
+    let _ = read_http_request(&mut second_stream);
+    let _ = second_stream
+      .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nfinal");
+    requests_per_connection
   });
   (addr, handle)
 }

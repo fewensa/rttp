@@ -107,6 +107,25 @@ fn test_parse_response_preserves_duplicate_headers_with_case_insensitive_lookup(
 }
 
 #[test]
+fn test_parse_response_rejects_header_without_colon() {
+  let s = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "BrokenHeader\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+
+  let error = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
+    .expect_err("malformed response header should be rejected");
+
+  assert!(
+    error.to_string().contains("Invalid response header"),
+    "unexpected error: {error}"
+  );
+}
+
+#[test]
 fn test_parse_response_1() {
   let s = "HTTP/1.1 200 OK\r\n\
   Access-Control-Allow-Credentials: true\r\n\
