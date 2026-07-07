@@ -1594,9 +1594,15 @@ impl HttpRequest {
         body_bytes.to_vec()
       }
       RequestBodyKind::Chunked => {
-        return Err(HttpParseError::new(
-          "chunked request body requires streaming reader",
-        ));
+        let mut reader = Cursor::new(body_bytes);
+        let chunked =
+          read_chunked_request_body(&mut reader).map_err(HttpParseError::from_io_error)?;
+        if reader.position() as usize != body_bytes.len() {
+          return Err(HttpParseError::new(
+            "request body length does not match Transfer-Encoding",
+          ));
+        }
+        chunked.body
       }
     };
     let headers = head
