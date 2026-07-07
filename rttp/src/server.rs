@@ -470,11 +470,18 @@ impl HttpServer {
               "HTTP/2 HEADERS frame arrived after END_STREAM",
             ));
           }
-          request_stream.header_block_kind = Some(if request_stream.decoded_headers.is_some() {
+          let header_block_kind = if request_stream.decoded_headers.is_some() {
+            if frame.flags & HTTP2_FLAG_END_STREAM != HTTP2_FLAG_END_STREAM {
+              return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "HTTP/2 request trailers must end the stream",
+              ));
+            }
             Http2HeaderBlockKind::RequestTrailers
           } else {
             Http2HeaderBlockKind::RequestHeaders
-          });
+          };
+          request_stream.header_block_kind = Some(header_block_kind);
           request_stream
             .header_block
             .extend_from_slice(&frame.payload);
@@ -874,14 +881,17 @@ fn decode_http2_request_headers(block: &[u8]) -> io::Result<DecodedHttp2RequestH
 
 fn decode_http2_request_trailers(block: &[u8]) -> io::Result<Vec<(String, String)>> {
   let trailers = decode_http2_header_fields(block)?;
-  for (name, _) in &trailers {
+  for (name, value) in &trailers {
     if name.starts_with(':') {
       return Err(io::Error::new(
         io::ErrorKind::InvalidData,
         "HTTP/2 request trailer contained pseudo-header",
       ));
     }
-    if !is_http_token(name) || is_forbidden_trailer_name(name) {
+    if !is_http_token(name)
+      || is_forbidden_trailer_name(name)
+      || !value.bytes().all(is_header_value_byte)
+    {
       return Err(io::Error::new(
         io::ErrorKind::InvalidData,
         "forbidden request trailer",
