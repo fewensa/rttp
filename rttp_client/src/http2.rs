@@ -37,12 +37,7 @@ impl<'a> PriorKnowledgeClient<'a> {
   }
 
   pub fn get(mut self) -> error::Result<Response> {
-    if !self.request.origin().method().eq_ignore_ascii_case("GET") {
-      return Err(error::builder_with_message(
-        "HTTP/2 prior-knowledge client currently supports GET only",
-      ));
-    }
-    if self.request.body().is_some() {
+    if self.request.origin().method().eq_ignore_ascii_case("GET") && self.request.body().is_some() {
       return Err(error::builder_with_message(
         "HTTP/2 prior-knowledge GET cannot send a request body",
       ));
@@ -56,7 +51,7 @@ impl<'a> PriorKnowledgeClient<'a> {
     let mut stream = connect_tcp_stream(addr(&url)?, self.request.origin().config())?;
     write_connection_preface(&mut stream)?;
     read_settings_and_ack(&mut stream)?;
-    write_get_headers(&mut stream, &self.request, &url)?;
+    write_request(&mut stream, &self.request, &url)?;
     let response = read_single_stream_response(&mut stream, self.request.url().clone())?;
     self.request.origin_mut().closed_set(true);
     Ok(response)
@@ -148,25 +143,29 @@ fn read_settings_and_ack(stream: &mut TcpStream) -> error::Result<()> {
   }
 }
 
-fn write_get_headers(
-  stream: &mut TcpStream,
-  request: &RawRequest<'_>,
-  url: &Url,
-) -> error::Result<()> {
+fn write_request(stream: &mut TcpStream, request: &RawRequest<'_>, url: &Url) -> error::Result<()> {
   let header_block = encode_request_headers(request, url)?;
+  let body = request.body().as_ref().map(|body| body.bytes());
   write_frame(
     stream,
     FRAME_HEADERS,
-    FLAG_END_STREAM | FLAG_END_HEADERS,
+    if body.is_some() {
+      FLAG_END_HEADERS
+    } else {
+      FLAG_END_STREAM | FLAG_END_HEADERS
+    },
     STREAM_ID,
     &header_block,
   )?;
+  if let Some(body) = body {
+    write_frame(stream, FRAME_DATA, FLAG_END_STREAM, STREAM_ID, body)?;
+  }
   stream.flush().map_err(error::request)
 }
 
 fn encode_request_headers(request: &RawRequest<'_>, url: &Url) -> error::Result<Vec<u8>> {
   let mut block = Vec::new();
-  block.push(0x82);
+  encode_request_method(&mut block, request.origin().method())?;
   if url.scheme() == "http" {
     block.push(0x86);
   } else {
@@ -186,6 +185,17 @@ fn encode_request_headers(request: &RawRequest<'_>, url: &Url) -> error::Result<
   }
 
   Ok(block)
+}
+
+fn encode_request_method(block: &mut Vec<u8>, method: &str) -> error::Result<()> {
+  if method.eq_ignore_ascii_case("GET") {
+    block.push(0x82);
+  } else if method.eq_ignore_ascii_case("POST") {
+    block.push(0x83);
+  } else {
+    encode_literal_indexed_name_without_indexing(block, 2, method.to_uppercase().as_bytes())?;
+  }
+  Ok(())
 }
 
 fn request_target(url: &Url) -> String {
