@@ -136,6 +136,50 @@ fn prior_knowledge_decodes_content_length_from_hpack_static_index() {
 }
 
 #[test]
+fn prior_knowledge_skips_informational_headers_before_final_response() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    write_frame(
+      &mut stream,
+      FRAME_HEADERS,
+      FLAG_END_HEADERS,
+      1,
+      &h2_literal_new_name(b":status", b"103"),
+    );
+    write_frame(
+      &mut stream,
+      FRAME_HEADERS,
+      FLAG_END_HEADERS,
+      1,
+      &[
+        0x88, 0x0f, 16, 10, b't', b'e', b'x', b't', b'/', b'p', b'l', b'a', b'i', b'n',
+      ],
+    );
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"final body");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/early-hints", addr))
+    .emit_http2_prior_knowledge()
+    .expect("h2 response after informational headers");
+
+  assert_eq!(200, response.code());
+  assert_eq!(
+    Some(&"text/plain".to_string()),
+    response.header_value("content-type")
+  );
+  assert_eq!("final body", response.body().string().unwrap());
+  assert!(response.trailers().is_empty());
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
 fn prior_knowledge_exposes_response_trailers_after_data_without_changing_headers() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");

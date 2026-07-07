@@ -247,6 +247,8 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
   let mut body = Vec::new();
   let mut status = None;
   let mut header_block_kind = None;
+  let mut final_response_started = false;
+  let mut response_body_started = false;
 
   loop {
     let frame = read_frame(stream)?;
@@ -265,20 +267,22 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
         if header_block_kind.is_some() {
           return Err(error::bad_response("incomplete HTTP/2 header block"));
         }
-        let kind = if status.is_some() {
+        let kind = if final_response_started || response_body_started {
           HeaderBlockKind::Trailers
         } else {
           HeaderBlockKind::ResponseHeaders
         };
         header_block.extend_from_slice(&frame.payload);
         if frame.flags & FLAG_END_HEADERS == FLAG_END_HEADERS {
-          apply_header_block(
+          if apply_header_block(
             kind,
             &header_block,
             &mut status,
             &mut headers,
             &mut trailers,
-          )?;
+          )? {
+            final_response_started = true;
+          }
           header_block.clear();
           header_block_kind = None;
         } else {
@@ -292,19 +296,22 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
         header_block.extend_from_slice(&frame.payload);
         if frame.flags & FLAG_END_HEADERS == FLAG_END_HEADERS {
           let kind = header_block_kind.expect("checked header block kind");
-          apply_header_block(
+          if apply_header_block(
             kind,
             &header_block,
             &mut status,
             &mut headers,
             &mut trailers,
-          )?;
+          )? {
+            final_response_started = true;
+          }
           header_block.clear();
           header_block_kind = None;
         }
       }
       (FRAME_DATA, STREAM_ID) => {
         let end_stream = frame.flags & FLAG_END_STREAM == FLAG_END_STREAM;
+        response_body_started = true;
         body.extend_from_slice(&frame.payload);
         if !frame.payload.is_empty() && !end_stream {
           write_window_update_best_effort(stream, STREAM_ID, frame.payload.len())?;
@@ -343,18 +350,26 @@ fn apply_header_block(
   status: &mut Option<u32>,
   headers: &mut Vec<(String, String)>,
   trailers: &mut Vec<Header>,
-) -> error::Result<()> {
+) -> error::Result<bool> {
   match kind {
     HeaderBlockKind::ResponseHeaders => {
       let decoded = decode_header_block(block)?;
+      if decoded.status.is_some_and(is_informational_status) {
+        return Ok(false);
+      }
       *status = decoded.status;
       *headers = decoded.headers;
+      Ok(status.is_some())
     }
     HeaderBlockKind::Trailers => {
       trailers.extend(decode_trailer_block(block)?);
+      Ok(false)
     }
   }
-  Ok(())
+}
+
+fn is_informational_status(status: u32) -> bool {
+  (100..200).contains(&status)
 }
 
 fn goaway_last_stream_id(payload: &[u8]) -> error::Result<u32> {
