@@ -107,7 +107,7 @@ fn complete_h2_server_handshake(stream: &mut TcpStream) {
   write_h2_frame(stream, H2_FRAME_SETTINGS, H2_FLAG_ACK, 0, &[]);
 }
 
-fn send_raw_request(raw: &[u8]) -> (String, bool) {
+fn send_raw_request_capture(raw: &[u8]) -> (String, Option<Request>) {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
   let (tx, rx) = mpsc::channel();
@@ -131,7 +131,13 @@ fn send_raw_request(raw: &[u8]) -> (String, bool) {
   stream.read_to_string(&mut response).expect("read response");
 
   handle.join().expect("server thread");
-  (response, rx.try_recv().is_ok())
+  (response, rx.try_recv().ok())
+}
+
+fn send_raw_request(raw: &[u8]) -> (String, bool) {
+  let (response, request) = send_raw_request_capture(raw);
+
+  (response, request.is_some())
 }
 
 fn assert_bad_request_without_handler(raw: &[u8]) {
@@ -1422,10 +1428,13 @@ fn server_accepts_http_10_request_without_host() {
 
 #[test]
 fn server_accepts_absolute_form_request_target() {
-  let (response, handler_called) =
-    send_raw_request(b"GET http://example.test/path?query=1 HTTP/1.1\r\nHost: localhost\r\n\r\n");
+  let (response, request) = send_raw_request_capture(
+    b"GET http://example.test/path?query=1 HTTP/1.1\r\nHost: localhost\r\n\r\n",
+  );
 
-  assert!(handler_called);
+  let request = request.expect("handler receives absolute-form request");
+  assert_eq!("GET", request.method());
+  assert_eq!("http://example.test/path?query=1", request.target());
   assert_eq!(
     "HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nunexpected",
     response
@@ -1434,10 +1443,12 @@ fn server_accepts_absolute_form_request_target() {
 
 #[test]
 fn server_accepts_options_asterisk_request_target() {
-  let (response, handler_called) =
-    send_raw_request(b"OPTIONS * HTTP/1.1\r\nHost: localhost\r\n\r\n");
+  let (response, request) =
+    send_raw_request_capture(b"OPTIONS * HTTP/1.1\r\nHost: localhost\r\n\r\n");
 
-  assert!(handler_called);
+  let request = request.expect("handler receives OPTIONS asterisk-form request");
+  assert_eq!("OPTIONS", request.method());
+  assert_eq!("*", request.target());
   assert_eq!(
     "HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nunexpected",
     response
@@ -1446,10 +1457,13 @@ fn server_accepts_options_asterisk_request_target() {
 
 #[test]
 fn server_accepts_connect_authority_request_target() {
-  let (response, handler_called) =
-    send_raw_request(b"CONNECT example.test:443 HTTP/1.1\r\nHost: example.test:443\r\n\r\n");
+  let (response, request) = send_raw_request_capture(
+    b"CONNECT example.test:443 HTTP/1.1\r\nHost: example.test:443\r\n\r\n",
+  );
 
-  assert!(handler_called);
+  let request = request.expect("handler receives CONNECT authority-form request");
+  assert_eq!("CONNECT", request.method());
+  assert_eq!("example.test:443", request.target());
   assert_eq!(
     "HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nunexpected",
     response
@@ -1457,10 +1471,14 @@ fn server_accepts_connect_authority_request_target() {
 }
 
 #[test]
+fn server_rejects_get_asterisk_request_target_before_handler() {
+  assert_bad_request_without_handler(b"GET * HTTP/1.1\r\nHost: localhost\r\n\r\n");
+}
+
+#[test]
 fn server_rejects_request_target_forms_for_wrong_methods() {
   for raw in [
-    b"GET * HTTP/1.1\r\nHost: localhost\r\n\r\n".as_slice(),
-    b"GET example.test:443 HTTP/1.1\r\nHost: example.test\r\n\r\n",
+    b"GET example.test:443 HTTP/1.1\r\nHost: example.test\r\n\r\n".as_slice(),
     b"CONNECT /tunnel HTTP/1.1\r\nHost: example.test\r\n\r\n",
   ] {
     assert_bad_request_without_handler(raw);
