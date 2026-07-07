@@ -89,6 +89,85 @@ fn live_socket2_server_accepts_shared_chunk_extensions_and_trailers_fixture() {
 }
 
 #[test]
+fn live_socket2_server_accepts_shared_origin_and_absolute_form_fixtures() {
+  for fixture in fixtures::request::valid_origin_and_absolute_form_cases() {
+    let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+    let addr = server.local_addr().expect("server addr");
+    let (tx, rx) = mpsc::channel();
+
+    let handle = thread::spawn(move || {
+      server
+        .accept_one(|request| {
+          tx.send((request.method().to_string(), request.target().to_string()))
+            .expect("send parsed request");
+          HttpResponse::ok(format!("served {}", request.target()))
+        })
+        .expect("serve one request");
+    });
+
+    let mut stream = TcpStream::connect(addr).expect("connect server");
+    stream.write_all(fixture.raw).expect(fixture.name);
+    stream.shutdown(Shutdown::Write).expect("shutdown write");
+
+    let mut response = String::new();
+    stream.read_to_string(&mut response).expect("read response");
+
+    assert_eq!(
+      (fixture.method.to_string(), fixture.target.to_string()),
+      rx.recv().expect("parsed request"),
+      "{}",
+      fixture.name
+    );
+    assert!(
+      response.starts_with("HTTP/1.1 200 OK"),
+      "{} returned {response:?}",
+      fixture.name
+    );
+
+    handle.join().expect("server thread");
+  }
+}
+
+#[test]
+fn live_socket2_server_rejects_shared_invalid_host_and_target_fixtures_before_handler() {
+  for fixture in fixtures::request::invalid_host_and_target_cases() {
+    let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+    let addr = server.local_addr().expect("server addr");
+    let (tx, rx) = mpsc::channel();
+
+    let handle = thread::spawn(move || {
+      server
+        .accept_one(|request| {
+          tx.send(request.target().to_string())
+            .expect("send unexpected request");
+          HttpResponse::ok("unexpected")
+        })
+        .expect("serve invalid request");
+    });
+
+    let mut stream = TcpStream::connect(addr).expect("connect server");
+    stream.write_all(fixture.raw).expect(fixture.name);
+    stream.shutdown(Shutdown::Write).expect("shutdown write");
+
+    let mut response = String::new();
+    stream.read_to_string(&mut response).expect("read response");
+
+    assert!(
+      rx.try_recv().is_err(),
+      "{} should not dispatch to the handler",
+      fixture.name
+    );
+    assert!(
+      response.starts_with("HTTP/1.1 400 Bad Request"),
+      "{} returned {response:?}",
+      fixture.name
+    );
+
+    handle.join().expect("server thread");
+  }
+}
+
+#[test]
 fn live_socket2_server_preserves_connection_lifetime_boundaries() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
