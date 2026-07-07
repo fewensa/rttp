@@ -10,7 +10,10 @@ use rttp_client::HttpClient;
 const H2_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 const H2_FRAME_DATA: u8 = 0x0;
 const H2_FRAME_HEADERS: u8 = 0x1;
+const H2_FRAME_RST_STREAM: u8 = 0x3;
 const H2_FRAME_SETTINGS: u8 = 0x4;
+const H2_FRAME_GOAWAY: u8 = 0x7;
+const H2_FRAME_WINDOW_UPDATE: u8 = 0x8;
 const H2_FLAG_END_STREAM: u8 = 0x1;
 const H2_FLAG_ACK: u8 = 0x1;
 const H2_FLAG_END_HEADERS: u8 = 0x4;
@@ -57,11 +60,51 @@ fn read_h2_frame(stream: &mut TcpStream) -> H2Frame {
   }
 }
 
+fn read_h2_frame_skipping_window_updates(stream: &mut TcpStream) -> H2Frame {
+  loop {
+    let frame = read_h2_frame(stream);
+    if frame.frame_type != H2_FRAME_WINDOW_UPDATE {
+      return frame;
+    }
+  }
+}
+
 fn h2_literal_indexed_name(name_index: u8, value: &[u8]) -> Vec<u8> {
   assert!(value.len() < 128);
   let mut encoded = vec![name_index, value.len() as u8];
   encoded.extend_from_slice(value);
   encoded
+}
+
+fn h2_get_headers(path: &[u8], authority: &[u8]) -> Vec<u8> {
+  let mut headers = vec![0x82, 0x86];
+  headers.extend(h2_literal_indexed_name(4, path));
+  headers.extend(h2_literal_indexed_name(1, authority));
+  headers
+}
+
+fn h2_post_headers(path: &[u8], authority: &[u8]) -> Vec<u8> {
+  let mut headers = vec![0x83, 0x86];
+  headers.extend(h2_literal_indexed_name(4, path));
+  headers.extend(h2_literal_indexed_name(1, authority));
+  headers
+}
+
+fn complete_h2_server_handshake(stream: &mut TcpStream) {
+  stream.write_all(H2_PREFACE).expect("write h2 preface");
+  write_h2_frame(stream, H2_FRAME_SETTINGS, 0, 0, &[]);
+
+  let settings = read_h2_frame(stream);
+  assert_eq!(H2_FRAME_SETTINGS, settings.frame_type);
+  assert_eq!(0, settings.flags);
+  assert_eq!(0, settings.stream_id);
+
+  let settings_ack = read_h2_frame(stream);
+  assert_eq!(H2_FRAME_SETTINGS, settings_ack.frame_type);
+  assert_eq!(H2_FLAG_ACK, settings_ack.flags);
+  assert_eq!(0, settings_ack.stream_id);
+
+  write_h2_frame(stream, H2_FRAME_SETTINGS, H2_FLAG_ACK, 0, &[]);
 }
 
 fn send_raw_request(raw: &[u8]) -> (String, bool) {
@@ -187,6 +230,60 @@ fn server_accepts_http2_prior_knowledge_get_and_writes_single_stream_response() 
 }
 
 #[test]
+fn serve_requests_accepts_next_connection_after_http2_client_closes_cleanly() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        tx.send(request.target().to_string())
+          .expect("send served target");
+        HttpResponse::ok(format!("response for {}", request.target()))
+      })
+      .expect("serve h2 then h1 requests");
+  });
+
+  {
+    let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+    stream
+      .set_read_timeout(Some(Duration::from_secs(2)))
+      .expect("set h2 read timeout");
+    complete_h2_server_handshake(&mut stream);
+
+    write_h2_frame(
+      &mut stream,
+      H2_FRAME_HEADERS,
+      H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+      1,
+      &h2_get_headers(b"/h2-once", addr.to_string().as_bytes()),
+    );
+
+    let response_headers = read_h2_frame_skipping_window_updates(&mut stream);
+    assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+    assert_eq!(1, response_headers.stream_id);
+
+    let response_body = read_h2_frame_skipping_window_updates(&mut stream);
+    assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+    assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
+    assert_eq!(1, response_body.stream_id);
+    assert_eq!(b"response for /h2-once", response_body.payload.as_slice());
+  }
+
+  let response = send_request(addr, b"GET /after-h2 HTTP/1.1\r\nHost: localhost\r\n\r\n");
+
+  assert_eq!("/h2-once", rx.recv().expect("h2 target"));
+  assert_eq!("/after-h2", rx.recv().expect("h1 target"));
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 22\r\nConnection: close\r\n\r\nresponse for /after-h2",
+    response
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn server_accepts_http2_prior_knowledge_headers_and_data_before_calling_handler() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
@@ -242,16 +339,166 @@ fn server_accepts_http2_prior_knowledge_headers_and_data_before_calling_handler(
     b"body over h2",
   );
 
-  let response_headers = read_h2_frame(&mut stream);
+  let response_headers = read_h2_frame_skipping_window_updates(&mut stream);
   assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
   assert_eq!(H2_FLAG_END_HEADERS, response_headers.flags);
   assert_eq!(1, response_headers.stream_id);
 
-  let response_body = read_h2_frame(&mut stream);
+  let response_body = read_h2_frame_skipping_window_updates(&mut stream);
   assert_eq!(H2_FRAME_DATA, response_body.frame_type);
   assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
   assert_eq!(1, response_body.stream_id);
   assert_eq!(b"stored", response_body.payload.as_slice());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_handles_multiple_interleaved_http2_streams_on_one_connection() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        tx.send(request.target().to_string())
+          .expect("send h2 target");
+        HttpResponse::ok(format!("response for {}", request.target()))
+      })
+      .expect("serve multiplexed h2 requests");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+
+  let first_headers = h2_post_headers(b"/first", addr.to_string().as_bytes());
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &first_headers,
+  );
+
+  let second_headers = h2_get_headers(b"/second", addr.to_string().as_bytes());
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    3,
+    &second_headers,
+  );
+
+  write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 1, b"one ");
+  write_h2_frame(&mut stream, H2_FRAME_DATA, H2_FLAG_END_STREAM, 1, b"body");
+
+  let mut response_streams = Vec::new();
+  let mut response_bodies = Vec::new();
+  while response_bodies.len() < 2 {
+    let frame = read_h2_frame(&mut stream);
+    if frame.frame_type == H2_FRAME_DATA && frame.flags & H2_FLAG_END_STREAM == H2_FLAG_END_STREAM {
+      response_streams.push(frame.stream_id);
+      response_bodies.push(String::from_utf8(frame.payload).expect("h2 body utf8"));
+    }
+  }
+
+  assert_eq!(
+    vec!["/second", "/first"],
+    vec![
+      rx.recv().expect("first h2 target"),
+      rx.recv().expect("second h2 target"),
+    ]
+  );
+  assert!(response_streams.contains(&1));
+  assert!(response_streams.contains(&3));
+  assert!(response_bodies.contains(&"response for /first".to_string()));
+  assert!(response_bodies.contains(&"response for /second".to_string()));
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_ignores_reset_stream_and_serves_surviving_http2_stream() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(1, |request| {
+        tx.send(request.target().to_string())
+          .expect("send h2 target");
+        HttpResponse::ok("survivor")
+      })
+      .expect("serve h2 reset/goaway sequence");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &h2_post_headers(b"/reset-me", addr.to_string().as_bytes()),
+  );
+  write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 1, b"partial");
+  write_h2_frame(&mut stream, H2_FRAME_RST_STREAM, 0, 1, &0u32.to_be_bytes());
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    3,
+    &h2_get_headers(b"/survivor", addr.to_string().as_bytes()),
+  );
+
+  let mut saw_survivor = false;
+  while !saw_survivor {
+    let frame = read_h2_frame(&mut stream);
+    if frame.frame_type == H2_FRAME_DATA && frame.stream_id == 3 {
+      assert_eq!(b"survivor", frame.payload.as_slice());
+      saw_survivor = true;
+    }
+  }
+
+  assert_eq!("/survivor", rx.recv().expect("survivor h2 target"));
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_stops_http2_connection_on_goaway_without_calling_handler() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(1, |_| panic!("GOAWAY must not call handler"))
+      .expect("serve h2 goaway");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_GOAWAY,
+    0,
+    0,
+    &[0, 0, 0, 0, 0, 0, 0, 0],
+  );
 
   handle.join().expect("server thread");
 }

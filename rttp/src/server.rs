@@ -11,11 +11,15 @@ const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 const HTTP2_CLIENT_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 const HTTP2_FRAME_DATA: u8 = 0x0;
 const HTTP2_FRAME_HEADERS: u8 = 0x1;
+const HTTP2_FRAME_RST_STREAM: u8 = 0x3;
 const HTTP2_FRAME_SETTINGS: u8 = 0x4;
+const HTTP2_FRAME_GOAWAY: u8 = 0x7;
+const HTTP2_FRAME_WINDOW_UPDATE: u8 = 0x8;
 const HTTP2_FRAME_CONTINUATION: u8 = 0x9;
 const HTTP2_FLAG_END_STREAM: u8 = 0x1;
 const HTTP2_FLAG_ACK: u8 = 0x1;
 const HTTP2_FLAG_END_HEADERS: u8 = 0x4;
+const HTTP2_DEFAULT_MAX_FRAME_SIZE: usize = 16 * 1024;
 
 pub struct HttpServer {
   listener: TcpListener,
@@ -130,7 +134,7 @@ impl HttpServer {
     let stream = match self.detect_connection_protocol(stream)? {
       AcceptedConnection::Http1(stream) => stream,
       AcceptedConnection::Http2(stream) => {
-        return self.handle_http2_connection(stream, handler).map(|()| 1);
+        return self.handle_http2_connection(stream, request_limit, handler);
       }
     };
     let mut reader = BufReader::new(stream);
@@ -188,9 +192,11 @@ impl HttpServer {
       AcceptedConnection::Http1(stream) => stream,
       AcceptedConnection::Http2(stream) => {
         let mut handler = Some(handler);
-        return self.handle_http2_connection(stream, &mut |request| {
-          handler.take().expect("single h2 request handler")(request)
-        });
+        return self
+          .handle_http2_connection(stream, 1, &mut |request| {
+            handler.take().expect("single h2 request handler")(request)
+          })
+          .map(|_| ());
       }
     };
     let mut reader = BufReader::new(stream);
@@ -319,7 +325,12 @@ impl HttpServer {
     Ok(AcceptedConnection::Http1(Http1Stream::Plain(stream)))
   }
 
-  fn handle_http2_connection<F>(&self, mut stream: TcpStream, handler: &mut F) -> io::Result<()>
+  fn handle_http2_connection<F>(
+    &self,
+    mut stream: TcpStream,
+    request_limit: usize,
+    handler: &mut F,
+  ) -> io::Result<usize>
   where
     F: FnMut(Request) -> HttpResponse,
   {
@@ -351,14 +362,134 @@ impl HttpServer {
     ))?;
     self.normalize_connection_error(stream.flush())?;
 
-    let request = self.normalize_connection_error(read_http2_single_request(&mut stream))?;
-    let request_is_head = request.method() == "HEAD";
-    let response = handler(request);
-    self.normalize_connection_error(write_http2_response(
-      &mut stream,
-      &response,
-      !request_is_head,
-    ))
+    let mut streams = Vec::<Http2RequestStream>::new();
+    let mut served = 0;
+
+    while served < request_limit {
+      let frame = match self.normalize_connection_error(read_http2_frame(&mut stream)) {
+        Ok(frame) => frame,
+        Err(err)
+          if err.kind() == io::ErrorKind::UnexpectedEof && served > 0 && streams.is_empty() =>
+        {
+          break;
+        }
+        Err(err) => return Err(err),
+      };
+      match (frame.frame_type, frame.stream_id) {
+        (HTTP2_FRAME_SETTINGS, 0) => {
+          if frame.flags & HTTP2_FLAG_ACK == HTTP2_FLAG_ACK {
+            if !frame.payload.is_empty() {
+              return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "HTTP/2 SETTINGS ACK frame must not contain payload",
+              ));
+            }
+          } else if frame.payload.len() % 6 == 0 {
+            self.normalize_connection_error(write_http2_frame(
+              &mut stream,
+              HTTP2_FRAME_SETTINGS,
+              HTTP2_FLAG_ACK,
+              0,
+              &[],
+            ))?;
+            self.normalize_connection_error(stream.flush())?;
+          } else {
+            return Err(io::Error::new(
+              io::ErrorKind::InvalidData,
+              "invalid HTTP/2 SETTINGS frame",
+            ));
+          }
+        }
+        (HTTP2_FRAME_HEADERS, id) if id != 0 => {
+          let request_stream = http2_request_stream(&mut streams, id);
+          request_stream
+            .header_block
+            .extend_from_slice(&frame.payload);
+          if frame.flags & HTTP2_FLAG_END_HEADERS == HTTP2_FLAG_END_HEADERS {
+            request_stream.decoded_headers =
+              Some(decode_http2_request_headers(&request_stream.header_block)?);
+            request_stream.header_block.clear();
+            request_stream.in_header_continuation = false;
+          } else {
+            request_stream.in_header_continuation = true;
+          }
+          if frame.flags & HTTP2_FLAG_END_STREAM == HTTP2_FLAG_END_STREAM {
+            request_stream.end_stream = true;
+          }
+        }
+        (HTTP2_FRAME_CONTINUATION, id) if id != 0 => {
+          if let Some(request_stream) = streams
+            .iter_mut()
+            .find(|request_stream| request_stream.stream_id == id)
+          {
+            if request_stream.in_header_continuation {
+              request_stream
+                .header_block
+                .extend_from_slice(&frame.payload);
+              if frame.flags & HTTP2_FLAG_END_HEADERS == HTTP2_FLAG_END_HEADERS {
+                request_stream.decoded_headers =
+                  Some(decode_http2_request_headers(&request_stream.header_block)?);
+                request_stream.header_block.clear();
+                request_stream.in_header_continuation = false;
+              }
+            }
+          }
+        }
+        (HTTP2_FRAME_DATA, id) if id != 0 => {
+          if let Some(request_stream) = streams
+            .iter_mut()
+            .find(|request_stream| request_stream.stream_id == id)
+          {
+            let new_len = request_stream
+              .body
+              .len()
+              .checked_add(frame.payload.len())
+              .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "request body is too large")
+              })?;
+            reject_oversized_request_body(new_len)?;
+            request_stream.body.extend_from_slice(&frame.payload);
+            if !frame.payload.is_empty() {
+              write_http2_window_update(&mut stream, 0, frame.payload.len())?;
+              write_http2_window_update(&mut stream, id, frame.payload.len())?;
+            }
+            if frame.flags & HTTP2_FLAG_END_STREAM == HTTP2_FLAG_END_STREAM {
+              request_stream.end_stream = true;
+            }
+          }
+        }
+        (HTTP2_FRAME_RST_STREAM, id) if id != 0 => {
+          streams.retain(|request_stream| request_stream.stream_id != id);
+        }
+        (HTTP2_FRAME_GOAWAY, 0) => break,
+        (HTTP2_FRAME_WINDOW_UPDATE, _) => {}
+        (_, 0) => {}
+        _ => {}
+      }
+
+      while served < request_limit {
+        let Some(index) = streams
+          .iter()
+          .position(|request_stream| request_stream.is_complete())
+        else {
+          break;
+        };
+        let request_stream = streams.remove(index);
+        let stream_id = request_stream.stream_id;
+        let request = request_stream.into_request()?;
+        let request_is_head = request.method() == "HEAD";
+        let response = handler(request);
+        self.normalize_connection_error(write_http2_response(
+          &mut stream,
+          stream_id,
+          &response,
+          !request_is_head,
+        ))?;
+        served += 1;
+      }
+    }
+
+    Ok(served)
   }
 
   fn normalize_connection_error<T>(&self, result: io::Result<T>) -> io::Result<T> {
@@ -416,6 +547,54 @@ struct Http2Frame {
   payload: Vec<u8>,
 }
 
+struct Http2RequestStream {
+  stream_id: u32,
+  header_block: Vec<u8>,
+  decoded_headers: Option<DecodedHttp2RequestHeaders>,
+  body: Vec<u8>,
+  end_stream: bool,
+  in_header_continuation: bool,
+}
+
+impl Http2RequestStream {
+  fn new(stream_id: u32) -> Self {
+    Self {
+      stream_id,
+      header_block: Vec::new(),
+      decoded_headers: None,
+      body: Vec::new(),
+      end_stream: false,
+      in_header_continuation: false,
+    }
+  }
+
+  fn is_complete(&self) -> bool {
+    self.decoded_headers.is_some() && self.end_stream && !self.in_header_continuation
+  }
+
+  fn into_request(self) -> io::Result<Request> {
+    let decoded_headers = self.decoded_headers.ok_or_else(|| {
+      io::Error::new(io::ErrorKind::InvalidData, "missing HTTP/2 request headers")
+    })?;
+    decoded_headers.into_request(self.body)
+  }
+}
+
+fn http2_request_stream(
+  streams: &mut Vec<Http2RequestStream>,
+  stream_id: u32,
+) -> &mut Http2RequestStream {
+  if let Some(index) = streams
+    .iter()
+    .position(|request_stream| request_stream.stream_id == stream_id)
+  {
+    return &mut streams[index];
+  }
+
+  streams.push(Http2RequestStream::new(stream_id));
+  streams.last_mut().expect("new HTTP/2 request stream")
+}
+
 fn read_http2_frame(stream: &mut TcpStream) -> io::Result<Http2Frame> {
   let mut header = [0; 9];
   stream.read_exact(&mut header)?;
@@ -456,84 +635,30 @@ fn write_http2_frame(
   stream.write_all(payload)
 }
 
-fn read_http2_single_request(stream: &mut TcpStream) -> io::Result<Request> {
-  let mut header_block = Vec::new();
-  let mut body = Vec::new();
-  let mut stream_id = None;
-  let mut end_stream = false;
-  let mut in_header_continuation = false;
-  let mut decoded_headers = None;
-
-  while !end_stream || decoded_headers.is_none() {
-    let frame = read_http2_frame(stream)?;
-    match (frame.frame_type, frame.stream_id) {
-      (HTTP2_FRAME_SETTINGS, 0) => {
-        if frame.flags & HTTP2_FLAG_ACK == HTTP2_FLAG_ACK {
-          if !frame.payload.is_empty() {
-            return Err(io::Error::new(
-              io::ErrorKind::InvalidData,
-              "HTTP/2 SETTINGS ACK frame must not contain payload",
-            ));
-          }
-        } else if frame.payload.len() % 6 == 0 {
-          write_http2_frame(stream, HTTP2_FRAME_SETTINGS, HTTP2_FLAG_ACK, 0, &[])?;
-          stream.flush()?;
-        } else {
-          return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "invalid HTTP/2 SETTINGS frame",
-          ));
-        }
-      }
-      (HTTP2_FRAME_HEADERS, id) if id != 0 && stream_id.is_none_or(|seen| seen == id) => {
-        stream_id = Some(id);
-        header_block.extend_from_slice(&frame.payload);
-        if frame.flags & HTTP2_FLAG_END_HEADERS == HTTP2_FLAG_END_HEADERS {
-          decoded_headers = Some(decode_http2_request_headers(&header_block)?);
-          header_block.clear();
-          in_header_continuation = false;
-        } else {
-          in_header_continuation = true;
-        }
-        if frame.flags & HTTP2_FLAG_END_STREAM == HTTP2_FLAG_END_STREAM {
-          end_stream = true;
-        }
-      }
-      (HTTP2_FRAME_CONTINUATION, id) if stream_id == Some(id) && in_header_continuation => {
-        header_block.extend_from_slice(&frame.payload);
-        if frame.flags & HTTP2_FLAG_END_HEADERS == HTTP2_FLAG_END_HEADERS {
-          decoded_headers = Some(decode_http2_request_headers(&header_block)?);
-          header_block.clear();
-          in_header_continuation = false;
-        }
-      }
-      (HTTP2_FRAME_DATA, id) if stream_id == Some(id) => {
-        let new_len = body
-          .len()
-          .checked_add(frame.payload.len())
-          .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "request body is too large"))?;
-        reject_oversized_request_body(new_len)?;
-        body.extend_from_slice(&frame.payload);
-        if frame.flags & HTTP2_FLAG_END_STREAM == HTTP2_FLAG_END_STREAM {
-          end_stream = true;
-        }
-      }
-      (_, 0) => {}
-      (_, id) if stream_id.is_none_or(|seen| seen == id) => {}
-      _ => {}
-    }
-  }
-
-  if in_header_continuation {
+fn write_http2_window_update(
+  stream: &mut TcpStream,
+  stream_id: u32,
+  increment: usize,
+) -> io::Result<()> {
+  let increment = u32::try_from(increment).map_err(|_| {
+    io::Error::new(
+      io::ErrorKind::InvalidInput,
+      "HTTP/2 window update increment is too large",
+    )
+  })?;
+  if increment == 0 || increment > 0x7fff_ffff {
     return Err(io::Error::new(
-      io::ErrorKind::InvalidData,
-      "incomplete HTTP/2 header block",
+      io::ErrorKind::InvalidInput,
+      "invalid HTTP/2 window update increment",
     ));
   }
-
-  let decoded_headers = decoded_headers
-    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing HTTP/2 request headers"))?;
-  decoded_headers.into_request(body)
+  write_http2_frame(
+    stream,
+    HTTP2_FRAME_WINDOW_UPDATE,
+    0,
+    stream_id,
+    &increment.to_be_bytes(),
+  )
 }
 
 struct DecodedHttp2RequestHeaders {
@@ -686,6 +811,7 @@ fn decode_http2_string(block: &[u8], cursor: &mut usize) -> io::Result<String> {
 
 fn write_http2_response(
   stream: &mut TcpStream,
+  stream_id: u32,
   response: &HttpResponse,
   write_body: bool,
 ) -> io::Result<()> {
@@ -694,7 +820,7 @@ fn write_http2_response(
     stream,
     HTTP2_FRAME_HEADERS,
     HTTP2_FLAG_END_HEADERS,
-    1,
+    stream_id,
     &headers,
   )?;
   let body = if write_body && response.allows_body() {
@@ -702,7 +828,21 @@ fn write_http2_response(
   } else {
     &[]
   };
-  write_http2_frame(stream, HTTP2_FRAME_DATA, HTTP2_FLAG_END_STREAM, 1, body)?;
+  if body.is_empty() {
+    write_http2_frame(
+      stream,
+      HTTP2_FRAME_DATA,
+      HTTP2_FLAG_END_STREAM,
+      stream_id,
+      &[],
+    )?;
+  } else {
+    for (index, chunk) in body.chunks(HTTP2_DEFAULT_MAX_FRAME_SIZE).enumerate() {
+      let end_stream = (index + 1) * HTTP2_DEFAULT_MAX_FRAME_SIZE >= body.len();
+      let flags = if end_stream { HTTP2_FLAG_END_STREAM } else { 0 };
+      write_http2_frame(stream, HTTP2_FRAME_DATA, flags, stream_id, chunk)?;
+    }
+  }
   stream.flush()
 }
 
