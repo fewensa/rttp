@@ -201,6 +201,7 @@ fn prior_knowledge_post_sends_request_trailers_after_body_data_frame() {
   let response = HttpClient::new()
     .post()
     .url(format!("http://{}/submit-with-tail", addr))
+    .header(("Trailer", "X-Trace"))
     .trailer(("X-Trace", "abc"))
     .expect("configure request trailer")
     .raw("trace body")
@@ -214,9 +215,12 @@ fn prior_knowledge_post_sends_request_trailers_after_body_data_frame() {
   assert!(request_header_block
     .windows(b"/submit-with-tail".len())
     .any(|window| window == b"/submit-with-tail"));
-  assert!(!request_header_block
+  assert!(request_header_block
     .windows(b"trailer".len())
     .any(|window| window == b"trailer"));
+  assert!(request_header_block
+    .windows(b"X-Trace".len())
+    .any(|window| window == b"X-Trace"));
   assert!(request_trailer_block
     .windows(b"x-trace".len())
     .any(|window| window == b"x-trace"));

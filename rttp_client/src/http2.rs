@@ -260,7 +260,25 @@ fn encode_request_headers(request: &RawRequest<'_>, url: &Url) -> error::Result<
     encode_literal_new_name_without_indexing(&mut block, name.as_bytes(), value.as_bytes())?;
   }
 
+  if !request.origin().trailers().is_empty() {
+    encode_literal_new_name_without_indexing(
+      &mut block,
+      b"trailer",
+      request_trailer_field_value(request).as_bytes(),
+    )?;
+  }
+
   Ok(block)
+}
+
+fn request_trailer_field_value(request: &RawRequest<'_>) -> String {
+  request
+    .origin()
+    .trailers()
+    .iter()
+    .map(|header| header.name().as_str())
+    .collect::<Vec<_>>()
+    .join(", ")
 }
 
 fn encode_request_trailers(request: &RawRequest<'_>) -> error::Result<Vec<u8>> {
