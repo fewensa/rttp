@@ -35,9 +35,10 @@ default = []
 
 client = ["rttp_client"]
 async = ["client", "rttp_client/async"]
+http2 = ["client", "rttp_client/http2"]
 tls-native = ["client", "rttp_client/tls-native"]
 tls-rustls = ["client", "rttp_client/tls-rustls"]
-all = ["client", "async", "tls-native", "tls-rustls"]
+all = ["client", "async", "http2", "tls-native", "tls-rustls"]
 
 
 #[target.'cfg(feature = "all")'.dependencies]

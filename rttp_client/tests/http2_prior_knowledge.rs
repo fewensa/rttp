@@ -3,7 +3,9 @@
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener};
 use std::thread;
+use std::time::Duration;
 
+use rttp_client::types::Proxy;
 use rttp_client::HttpClient;
 
 const FRAME_DATA: u8 = 0x0;
@@ -98,13 +100,49 @@ fn prior_knowledge_get_sends_h2_handshake_and_reads_single_response_stream() {
 }
 
 #[test]
+fn prior_knowledge_rejects_configured_proxy_before_connecting() {
+  let err = HttpClient::new()
+    .get()
+    .url("http://127.0.0.1:9/proxy")
+    .proxy(Proxy::http("127.0.0.1", 8080))
+    .emit_http2_prior_knowledge()
+    .expect_err("prior knowledge does not support proxies");
+
+  assert!(err.is_builder());
+  assert!(err.to_string().contains("does not support proxies"));
+}
+
+#[test]
+fn prior_knowledge_decodes_content_length_from_hpack_static_index() {
+  let (addr, handle) = spawn_h2_prior_knowledge_peer_with_response(
+    &[0x88, 0x0f, 13, 2, b'1', b'3'],
+    &[b"hello over h2"],
+  );
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/content-length", addr))
+    .emit_http2_prior_knowledge()
+    .expect("h2 response with content-length static index");
+
+  assert_eq!(200, response.code());
+  assert_eq!(
+    Some(&"13".to_string()),
+    response.header_value("content-length")
+  );
+  assert_eq!("hello over h2", response.body().string().unwrap());
+
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
 fn prior_knowledge_get_ignores_interleaved_data_for_other_streams() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");
 
   let handle = thread::spawn(move || {
     let (mut stream, _) = listener.accept().expect("accept h2 client");
-    complete_handshake_and_read_request(&mut stream);
+    complete_h2_request_handshake(&mut stream);
 
     write_frame(
       &mut stream,
@@ -154,6 +192,60 @@ fn prior_knowledge_get_reports_stream_reset_and_goaway() {
 }
 
 #[test]
+fn prior_knowledge_sends_window_updates_for_non_final_data_frames() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    stream
+      .set_read_timeout(Some(Duration::from_secs(2)))
+      .expect("set h2 peer read timeout");
+    complete_h2_request_handshake(&mut stream);
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, 0, 1, b"first chunk");
+
+    let stream_update = read_frame(&mut stream);
+    assert_eq!(FRAME_WINDOW_UPDATE, stream_update.frame_type);
+    assert_eq!(1, stream_update.stream_id);
+    assert_eq!(
+      b"first chunk".len() as u32,
+      window_update_increment(&stream_update)
+    );
+
+    let connection_update = read_frame(&mut stream);
+    assert_eq!(FRAME_WINDOW_UPDATE, connection_update.frame_type);
+    assert_eq!(0, connection_update.stream_id);
+    assert_eq!(
+      b"first chunk".len() as u32,
+      window_update_increment(&connection_update)
+    );
+
+    write_frame(
+      &mut stream,
+      FRAME_DATA,
+      FLAG_END_STREAM,
+      1,
+      b" and final chunk",
+    );
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/window-update", addr))
+    .emit_http2_prior_knowledge()
+    .expect("h2 response requiring window updates");
+
+  assert_eq!(
+    "first chunk and final chunk",
+    response.body().string().unwrap()
+  );
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
 fn prior_knowledge_get_sends_window_updates_while_reading_large_response_body() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");
@@ -161,9 +253,9 @@ fn prior_knowledge_get_sends_window_updates_while_reading_large_response_body() 
   let handle = thread::spawn(move || {
     let (mut stream, _) = listener.accept().expect("accept h2 client");
     stream
-      .set_read_timeout(Some(std::time::Duration::from_secs(2)))
-      .expect("set read timeout");
-    complete_handshake_and_read_request(&mut stream);
+      .set_read_timeout(Some(Duration::from_secs(2)))
+      .expect("set h2 peer read timeout");
+    complete_h2_request_handshake(&mut stream);
 
     write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
     for _ in 0..5 {
@@ -175,11 +267,11 @@ fn prior_knowledge_get_sends_window_updates_while_reading_large_response_body() 
     let mut saw_connection_update = false;
     for _ in 0..8 {
       let frame = read_frame(&mut stream);
-      if frame.frame_type == FRAME_WINDOW_UPDATE && frame.stream_id == 0 {
-        saw_connection_update = true;
-      }
       if frame.frame_type == FRAME_WINDOW_UPDATE && frame.stream_id == 1 {
         saw_stream_update = true;
+      }
+      if frame.frame_type == FRAME_WINDOW_UPDATE && frame.stream_id == 0 {
+        saw_connection_update = true;
       }
       if saw_stream_update && saw_connection_update {
         return;
@@ -196,7 +288,7 @@ fn prior_knowledge_get_sends_window_updates_while_reading_large_response_body() 
 
   assert_eq!(200, response.code());
   assert_eq!(5 * 16 * 1024 + 4, response.body().binary().len());
-  handle.join().expect("window update peer thread");
+  handle.join().expect("h2 peer thread");
 }
 
 struct Frame {
@@ -220,6 +312,78 @@ fn read_frame(stream: &mut impl Read) -> Frame {
   }
 }
 
+fn spawn_h2_prior_knowledge_peer_with_response(
+  header_block: &'static [u8],
+  data_frames: &'static [&'static [u8]],
+) -> (SocketAddr, thread::JoinHandle<()>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(
+      &mut stream,
+      FRAME_HEADERS,
+      FLAG_END_HEADERS,
+      1,
+      header_block,
+    );
+    for (index, data) in data_frames.iter().enumerate() {
+      let flags = if index + 1 == data_frames.len() {
+        FLAG_END_STREAM
+      } else {
+        0
+      };
+      write_frame(&mut stream, FRAME_DATA, flags, 1, data);
+    }
+  });
+
+  (addr, handle)
+}
+
+fn complete_h2_request_handshake(stream: &mut impl ReadWrite) {
+  let mut preface = [0; 24];
+  stream
+    .read_exact(&mut preface)
+    .expect("read client preface");
+  assert_eq!(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", &preface);
+
+  let client_settings = read_frame(stream);
+  assert_eq!(FRAME_SETTINGS, client_settings.frame_type);
+  assert_eq!(0, client_settings.stream_id);
+  assert_eq!(0, client_settings.payload.len());
+
+  write_frame(stream, FRAME_SETTINGS, 0, 0, &[]);
+
+  let client_settings_ack = read_frame(stream);
+  assert_eq!(FRAME_SETTINGS, client_settings_ack.frame_type);
+  assert_eq!(FLAG_ACK, client_settings_ack.flags);
+  assert_eq!(0, client_settings_ack.stream_id);
+  assert_eq!(0, client_settings_ack.payload.len());
+
+  let request_headers = read_frame(stream);
+  assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+  assert_eq!(FLAG_END_STREAM | FLAG_END_HEADERS, request_headers.flags);
+  assert_eq!(1, request_headers.stream_id);
+}
+
+trait ReadWrite: Read + Write {}
+
+impl<T> ReadWrite for T where T: Read + Write {}
+
+fn window_update_increment(frame: &Frame) -> u32 {
+  assert_eq!(4, frame.payload.len());
+  u32::from_be_bytes([
+    frame.payload[0] & 0x7f,
+    frame.payload[1],
+    frame.payload[2],
+    frame.payload[3],
+  ])
+}
+
 fn write_frame(stream: &mut impl Write, frame_type: u8, flags: u8, stream_id: u32, payload: &[u8]) {
   let length = payload.len();
   let mut header = [0; 9];
@@ -234,36 +398,13 @@ fn write_frame(stream: &mut impl Write, frame_type: u8, flags: u8, stream_id: u3
   stream.flush().expect("flush frame");
 }
 
-fn complete_handshake_and_read_request(stream: &mut (impl Read + Write)) {
-  let mut preface = [0; 24];
-  stream
-    .read_exact(&mut preface)
-    .expect("read client preface");
-  assert_eq!(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", &preface);
-
-  let client_settings = read_frame(stream);
-  assert_eq!(FRAME_SETTINGS, client_settings.frame_type);
-  assert_eq!(0, client_settings.stream_id);
-
-  write_frame(stream, FRAME_SETTINGS, 0, 0, &[]);
-
-  let client_settings_ack = read_frame(stream);
-  assert_eq!(FRAME_SETTINGS, client_settings_ack.frame_type);
-  assert_eq!(FLAG_ACK, client_settings_ack.flags);
-
-  let request_headers = read_frame(stream);
-  assert_eq!(FRAME_HEADERS, request_headers.frame_type);
-  assert_eq!(FLAG_END_STREAM | FLAG_END_HEADERS, request_headers.flags);
-  assert_eq!(1, request_headers.stream_id);
-}
-
 fn spawn_control_frame_peer(frame_type: u8) -> (SocketAddr, thread::JoinHandle<()>) {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");
 
   let handle = thread::spawn(move || {
     let (mut stream, _) = listener.accept().expect("accept h2 client");
-    complete_handshake_and_read_request(&mut stream);
+    complete_h2_request_handshake(&mut stream);
     match frame_type {
       FRAME_RST_STREAM => write_frame(&mut stream, FRAME_RST_STREAM, 0, 1, &0u32.to_be_bytes()),
       FRAME_GOAWAY => write_frame(&mut stream, FRAME_GOAWAY, 0, 0, &[0, 0, 0, 1, 0, 0, 0, 0]),

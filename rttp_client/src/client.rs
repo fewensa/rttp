@@ -208,6 +208,11 @@ impl HttpClient {
     if self.request.closed() {
       return Err(error::connection_closed());
     }
+    if self.request.proxy().is_some() {
+      return Err(error::builder_with_message(
+        "HTTP/2 prior-knowledge client does not support proxies",
+      ));
+    }
     let request = RawRequest::block_new(&mut self.request)?;
     crate::http2::PriorKnowledgeClient::new(request).get()
   }

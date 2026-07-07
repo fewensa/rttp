@@ -12,6 +12,7 @@ request APIs and TLS implementations:
 | name | comment |
 |------|---------|
 | async | Async request APIs |
+| http2 | Prior-knowledge h2c GET over direct `socket2` TCP connections |
 | tls-native | HTTPS with `native-tls` |
 | tls-rustls | HTTPS with `rustls` |
 
@@ -25,6 +26,10 @@ are still delegated to the `socks` crate.
 HTTP/1.x chunked responses are decoded by the client, and response trailers are
 available through `Response::trailers`, `Response::trailer`, and
 `Response::trailer_value`.
+With the `http2` feature enabled, `emit_http2_prior_knowledge` sends a minimal
+prior-knowledge h2c GET request over a direct socket2 TCP connection. TLS ALPN,
+proxy tunneling, request bodies, and general HTTP/2 multiplexing are not part of
+that initial client path.
 
 ```rust,no_run
 use rttp_client::HttpClient;
@@ -85,7 +90,10 @@ chunked request bodies, exposes chunked request trailers, applies bounded
 request head/body validation, handles `HEAD` without writing a response body,
 honors `Connection` close/keep-alive semantics across a bounded
 `serve_requests` loop, writes response body framing and response trailers
-consistently, and accepts `Expect: 100-continue`.
+consistently, and accepts `Expect: 100-continue`. On the same socket2 listener,
+the accept path detects the HTTP/2 client preface and dispatches prior-knowledge
+h2c requests to a minimal single-stream handler. TLS ALPN and full HTTP/2
+multiplexing remain outside this server path.
 
 It is not a full RFC-covering web server and still does not implement server
 TLS or async accept loops.
