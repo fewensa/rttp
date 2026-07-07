@@ -104,3 +104,43 @@ fn test_non_chunked_response_exposes_empty_trailers() {
   assert!(response.trailers().is_empty());
   assert!(response.trailer("x-trace").is_none());
 }
+
+#[test]
+fn test_no_body_status_responses_expose_empty_body_with_illegal_framing_bytes() {
+  for raw in [
+    concat!(
+      "HTTP/1.1 204 No Content\r\n",
+      "Content-Length: 7\r\n",
+      "X-Trace: kept\r\n",
+      "\r\n",
+      "ignored"
+    ),
+    concat!(
+      "HTTP/1.1 204 No Content\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "X-Trace: kept\r\n",
+      "\r\n",
+      "7\r\nignored\r\n0\r\n\r\n"
+    ),
+    concat!(
+      "HTTP/1.1 304 Not Modified\r\n",
+      "Content-Length: 7\r\n",
+      "X-Trace: kept\r\n",
+      "\r\n",
+      "ignored"
+    ),
+    concat!(
+      "HTTP/1.1 304 Not Modified\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "X-Trace: kept\r\n",
+      "\r\n",
+      "7\r\nignored\r\n0\r\n\r\n"
+    ),
+  ] {
+    let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+      .expect("no-body status response should parse");
+
+    assert_eq!(Some(&"kept".to_string()), response.header_value("X-Trace"));
+    assert_eq!("", response.body().string().unwrap());
+  }
+}
