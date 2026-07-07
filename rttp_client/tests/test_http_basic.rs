@@ -684,6 +684,27 @@ fn test_content_length_response_does_not_wait_for_eof() {
 }
 
 #[test]
+fn test_keep_alive_content_length_response_leaves_client_reusable() {
+  let (addr, _handle) = support::spawn_keep_alive_server_count(2);
+  let mut client = client();
+
+  let first = client
+    .get()
+    .config(Config::builder().read_timeout(100))
+    .url(format!("http://{}/keep-alive", addr))
+    .emit()
+    .unwrap();
+  assert_eq!("OK", first.body().string().unwrap());
+
+  let second = client
+    .get()
+    .url(format!("http://{}/keep-alive", addr))
+    .emit()
+    .unwrap();
+  assert_eq!("OK", second.body().string().unwrap());
+}
+
+#[test]
 fn test_sync_client_skips_100_continue_before_final_response() {
   let (addr, _handle) = support::spawn_continue_then_ok_server();
   let response = client()
