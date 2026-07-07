@@ -236,7 +236,7 @@ where
   read_response_parts_after_header(reader, expect_no_body, binary)
 }
 
-fn read_response_head<R>(reader: &mut R) -> error::Result<Vec<u8>>
+pub(crate) fn read_response_head<R>(reader: &mut R) -> error::Result<Vec<u8>>
 where
   R: Read + ?Sized,
 {

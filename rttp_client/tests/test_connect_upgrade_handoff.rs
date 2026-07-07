@@ -100,6 +100,50 @@ fn upgrade_returns_socket_after_101_and_does_not_parse_upgraded_bytes() {
 }
 
 #[test]
+fn upgrade_skips_interim_responses_before_101() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind upgrade server");
+  let addr = listener.local_addr().expect("upgrade server addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept upgrade");
+    let request = String::from_utf8(read_request_head(&mut stream)).expect("request utf8");
+    assert!(request.starts_with("GET /chat HTTP/1.1\r\n"));
+    stream
+      .write_all(
+        concat!(
+          "HTTP/1.1 103 Early Hints\r\n",
+          "Link: </style.css>; rel=preload\r\n",
+          "\r\n",
+          "HTTP/1.1 101 Switching Protocols\r\n",
+          "Connection: Upgrade\r\n",
+          "Upgrade: websocket\r\n",
+          "\r\n",
+          "server-bytes"
+        )
+        .as_bytes(),
+      )
+      .expect("write interim and final upgrade responses");
+  });
+
+  let mut upgraded = HttpClient::new()
+    .url(format!("http://{}/chat", addr))
+    .header(("Connection", "Upgrade"))
+    .header(("Upgrade", "websocket"))
+    .upgrade()
+    .expect("upgrade connection");
+
+  assert_eq!(101, upgraded.response().code());
+  let mut server_bytes = [0u8; 12];
+  upgraded
+    .stream_mut()
+    .read_exact(&mut server_bytes)
+    .expect("read upgraded server bytes");
+  assert_eq!(b"server-bytes", &server_bytes);
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn failed_upgrade_reads_http_response_and_closes_socket() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind failed upgrade server");
   let addr = listener.local_addr().expect("failed upgrade server addr");
