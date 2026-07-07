@@ -218,7 +218,7 @@ impl Request {
   pub(crate) fn redirect_rewrites_to_get(&self, status_code: u32) -> bool {
     // Compatibility behavior: like common HTTP clients, 301 and 302
     // rewrite non-HEAD requests to GET. 307 and 308 preserve method/body.
-    matches!(status_code, 301 | 302 | 303) && !self.method.eq_ignore_ascii_case("head")
+    matches!(status_code, 301..=303) && !self.method.eq_ignore_ascii_case("head")
   }
 
   pub(crate) fn remove_sensitive_redirect_headers(&mut self) {
