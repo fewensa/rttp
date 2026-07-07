@@ -329,6 +329,34 @@ pub fn spawn_status_redirect_request_capture_server(
   (addr, handle)
 }
 
+pub fn spawn_same_url_303_redirect_method_echo_server() -> (SocketAddr, JoinHandle<()>) {
+  let (listener, addr) = bind_local_http_listener("same url 303 redirect method echo server");
+  let handle = thread::spawn(move || {
+    if let Ok((mut stream, _)) = listener.accept() {
+      let _ = read_http_request(&mut stream);
+      let response =
+        "HTTP/1.1 303 See Other\r\nLocation: /submit\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+      let _ = stream.write_all(response.as_bytes());
+    }
+
+    if let Ok((mut stream, _)) = listener.accept() {
+      let request = read_http_request(&mut stream);
+      let request_line = String::from_utf8_lossy(&request)
+        .lines()
+        .next()
+        .unwrap_or("")
+        .to_string();
+      let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        request_line.len(),
+        request_line
+      );
+      let _ = stream.write_all(response.as_bytes());
+    }
+  });
+  (addr, handle)
+}
+
 pub fn spawn_cross_authority_redirect_host_echo_server() -> (SocketAddr, SocketAddr, JoinHandle<()>)
 {
   let (origin_listener, origin_addr) = bind_local_http_listener("cross authority redirect origin");

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io::Write;
 
 use socks::{Socks4Stream, Socks5Stream};
@@ -24,8 +25,14 @@ impl<'a> BlockConnection<'a> {
   }
 
   pub fn call(mut self) -> error::Result<Response> {
+    let mut visited_urls = HashSet::new();
+
     loop {
       let url = self.conn.url().map_err(error::builder)?;
+      visited_urls.insert((
+        self.conn.request().origin().method().to_uppercase(),
+        url.clone(),
+      ));
       let proxy = self.conn.proxy().clone();
       let parts = if let Some(proxy) = proxy.as_ref() {
         self.call_with_proxy(&url, proxy)?
@@ -42,11 +49,6 @@ impl<'a> BlockConnection<'a> {
           self.conn.closed_set(true);
           return Ok(response);
         };
-
-        let req_url = url.as_str();
-        if req_url == location {
-          return Err(error::loop_detected(url));
-        }
         if !config.auto_redirect() {
           self.conn.closed_set(true);
           return Ok(response);
@@ -57,11 +59,15 @@ impl<'a> BlockConnection<'a> {
         }
 
         let redirect_url = self.conn.resolve_redirect_url(&url, location)?;
-        if url == redirect_url.url {
-          return Err(error::loop_detected(url));
-        }
         let strip_sensitive_headers = !self.conn.is_same_origin_url(&url, &redirect_url.url);
         self.conn.request_mut().redirect_status_set(response.code());
+        let next_visit = (
+          self.conn.request().origin().method().to_uppercase(),
+          redirect_url.url.clone(),
+        );
+        if visited_urls.contains(&next_visit) {
+          return Err(error::loop_detected(url));
+        }
         self.conn.request_mut().redirect_url_set(
           redirect_url.url.to_string(),
           strip_sensitive_headers,
