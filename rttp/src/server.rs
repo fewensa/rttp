@@ -1246,6 +1246,18 @@ impl Request {
   where
     S: Read + Write,
   {
+    Self::read_next_head_and_body_kind_from_with_continue(reader)?
+      .map_or(Ok(None), |(head, kind)| {
+        Ok(Some((Self::from_head_and_body(head, Vec::new()), kind)))
+      })
+  }
+
+  fn read_next_head_and_body_kind_from_with_continue<S>(
+    reader: &mut BufReader<S>,
+  ) -> io::Result<Option<(RequestHead, RequestBodyKind)>>
+  where
+    S: Read + Write,
+  {
     let mut raw = Vec::new();
 
     loop {
@@ -1279,10 +1291,7 @@ impl Request {
           if request_needs_continue(&head.headers, body_kind)? {
             write_continue_response(reader.get_mut())?;
           }
-          return Ok(Some((
-            Self::from_head_and_body(head, Vec::new()),
-            body_kind,
-          )));
+          return Ok(Some((head, body_kind)));
         }
         None => {
           let take = available.len();
