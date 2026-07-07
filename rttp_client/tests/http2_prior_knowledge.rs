@@ -493,6 +493,65 @@ fn prior_knowledge_rejects_interrupted_continuation_sequence() {
 }
 
 #[test]
+fn prior_knowledge_rejects_continuation_on_wrong_stream_during_header_block() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    write_frame(&mut stream, FRAME_HEADERS, 0, 1, &[0x88]);
+    write_frame(
+      &mut stream,
+      FRAME_CONTINUATION,
+      FLAG_END_HEADERS,
+      3,
+      &[
+        0x0f, 16, 10, b't', b'e', b'x', b't', b'/', b'p', b'l', b'a', b'i', b'n',
+      ],
+    );
+  });
+
+  let error = HttpClient::new()
+    .get()
+    .url(format!("http://{}/wrong-stream-continuation", addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("wrong-stream CONTINUATION sequence should be rejected");
+
+  assert!(
+    error.to_string().contains("expected HTTP/2 CONTINUATION"),
+    "unexpected error: {error}"
+  );
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
+fn prior_knowledge_rejects_eof_before_end_headers() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    write_frame(&mut stream, FRAME_HEADERS, 0, 1, &[0x88]);
+  });
+
+  let error = HttpClient::new()
+    .get()
+    .url(format!("http://{}/eof-before-end-headers", addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("EOF before END_HEADERS should be rejected");
+
+  assert!(
+    error.to_string().contains("incomplete HTTP/2 header block"),
+    "unexpected error: {error}"
+  );
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
 fn prior_knowledge_rejects_response_trailer_pseudo_headers() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");
