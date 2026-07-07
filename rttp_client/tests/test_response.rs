@@ -35,6 +35,78 @@ fn test_parse_response() {
 }
 
 #[test]
+fn test_parse_response_preserves_duplicate_headers_with_case_insensitive_lookup() {
+  let s = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Set-Cookie: session=abc; Path=/; HttpOnly\r\n",
+    "cache-control: no-cache\r\n",
+    "SET-COOKIE: theme=dark; Path=/; SameSite=Lax\r\n",
+    "Cache-Control: max-age=60\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
+    .expect("parse raw duplicate header response");
+
+  let header_lines = response
+    .headers()
+    .iter()
+    .map(|header| (header.name().as_str(), header.value().as_str()))
+    .collect::<Vec<_>>();
+  assert_eq!(
+    vec![
+      ("Set-Cookie", "session=abc; Path=/; HttpOnly"),
+      ("cache-control", "no-cache"),
+      ("SET-COOKIE", "theme=dark; Path=/; SameSite=Lax"),
+      ("Cache-Control", "max-age=60"),
+      ("Content-Length", "2")
+    ],
+    header_lines
+  );
+
+  assert_eq!(
+    vec![
+      "session=abc; Path=/; HttpOnly",
+      "theme=dark; Path=/; SameSite=Lax"
+    ],
+    response
+      .headers_of_name("set-cookie")
+      .iter()
+      .map(|header| header.value().as_str())
+      .collect::<Vec<_>>()
+  );
+  assert_eq!(
+    vec!["no-cache", "max-age=60"],
+    response
+      .headers_of_name("CACHE-CONTROL")
+      .iter()
+      .map(|header| header.value().as_str())
+      .collect::<Vec<_>>()
+  );
+  assert_eq!(
+    vec![
+      &"session=abc; Path=/; HttpOnly".to_string(),
+      &"theme=dark; Path=/; SameSite=Lax".to_string()
+    ],
+    response.header_values("SET-cookie")
+  );
+  assert_eq!(2, response.cookies().len());
+  assert_eq!(
+    Some("abc"),
+    response
+      .cookie("session")
+      .map(|cookie| cookie.value().as_str())
+  );
+  assert_eq!(
+    Some("dark"),
+    response
+      .cookie("theme")
+      .map(|cookie| cookie.value().as_str())
+  );
+}
+
+#[test]
 fn test_parse_response_1() {
   let s = "HTTP/1.1 200 OK\r\n\
   Access-Control-Allow-Credentials: true\r\n\
