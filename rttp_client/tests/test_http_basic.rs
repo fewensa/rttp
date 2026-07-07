@@ -745,6 +745,30 @@ fn test_forbidden_chunked_response_trailer_is_rejected() {
 }
 
 #[test]
+fn test_malformed_response_header_without_colon_is_rejected() {
+  let response = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "BrokenHeader\r\n",
+    "Content-Length: 2\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "OK"
+  );
+  let (addr, _handle) = support::spawn_chunked_response_server(response);
+
+  let error = client()
+    .get()
+    .url(format!("http://{}/broken", addr))
+    .emit()
+    .expect_err("malformed response header should be rejected");
+
+  assert!(
+    error.to_string().contains("Invalid response header"),
+    "unexpected error: {error}"
+  );
+}
+
+#[test]
 fn test_duplicate_set_cookie_headers_are_preserved() {
   let (addr, _handle) = support::spawn_duplicate_set_cookie_server();
   let response = client()
