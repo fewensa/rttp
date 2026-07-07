@@ -1246,6 +1246,18 @@ impl Request {
   where
     S: Read + Write,
   {
+    Self::read_next_head_and_body_kind_from_with_continue(reader)?
+      .map_or(Ok(None), |(head, kind)| {
+        Ok(Some((Self::from_head_and_body(head, Vec::new()), kind)))
+      })
+  }
+
+  fn read_next_head_and_body_kind_from_with_continue<S>(
+    reader: &mut BufReader<S>,
+  ) -> io::Result<Option<(RequestHead, RequestBodyKind)>>
+  where
+    S: Read + Write,
+  {
     let mut raw = Vec::new();
 
     loop {
@@ -1279,10 +1291,7 @@ impl Request {
           if request_needs_continue(&head.headers, body_kind)? {
             write_continue_response(reader.get_mut())?;
           }
-          return Ok(Some((
-            Self::from_head_and_body(head, Vec::new()),
-            body_kind,
-          )));
+          return Ok(Some((head, body_kind)));
         }
         None => {
           let take = available.len();
@@ -1787,12 +1796,7 @@ impl HttpResponse {
 
     let connection_header_index = self.connection_header_index();
     for (index, header) in self.headers.iter().enumerate() {
-      if !header.name.eq_ignore_ascii_case("Content-Length")
-        && (self.allows_body() || !header.name.eq_ignore_ascii_case("Transfer-Encoding"))
-        && (!header.name.eq_ignore_ascii_case("Connection")
-          || (default_connection != DefaultConnectionHeader::ForceClose
-            && Some(index) == connection_header_index))
-      {
+      if self.should_write_head_header(header, index, connection_header_index, default_connection) {
         write!(writer, "{}: {}\r\n", header.name, header.value)?;
       }
     }
@@ -1868,6 +1872,27 @@ impl HttpResponse {
           .split(',')
           .any(|token| token.trim().eq_ignore_ascii_case("chunked"))
     })
+  }
+
+  fn should_write_head_header(
+    &self,
+    header: &HttpHeader,
+    index: usize,
+    connection_header_index: Option<usize>,
+    default_connection: DefaultConnectionHeader,
+  ) -> bool {
+    if header.name.eq_ignore_ascii_case("Content-Length") {
+      return false;
+    }
+    if !self.allows_body() && header.name.eq_ignore_ascii_case("Transfer-Encoding") {
+      return false;
+    }
+    if !header.name.eq_ignore_ascii_case("Connection") {
+      return true;
+    }
+
+    default_connection != DefaultConnectionHeader::ForceClose
+      && Some(index) == connection_header_index
   }
 
   fn connection_header_index(&self) -> Option<usize> {
@@ -2187,6 +2212,13 @@ fn is_valid_port(port: &str) -> bool {
 fn parse_header_lines<'a>(
   lines: impl Iterator<Item = &'a str>,
 ) -> io::Result<Vec<(String, String)>> {
+  parse_header_lines_with_error(lines, "invalid request header")
+}
+
+fn parse_header_lines_with_error<'a>(
+  lines: impl Iterator<Item = &'a str>,
+  invalid_line_error: &'static str,
+) -> io::Result<Vec<(String, String)>> {
   let mut headers = Vec::new();
 
   for line in lines {
@@ -2196,16 +2228,16 @@ fn parse_header_lines<'a>(
     if line.starts_with(' ') || line.starts_with('\t') {
       return Err(io::Error::new(
         io::ErrorKind::InvalidData,
-        "invalid request header",
+        invalid_line_error,
       ));
     }
     let (name, value) = line
       .split_once(':')
-      .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid request header"))?;
+      .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, invalid_line_error))?;
     if !is_http_token(name) || !value.bytes().all(is_header_value_byte) {
       return Err(io::Error::new(
         io::ErrorKind::InvalidData,
-        "invalid request header",
+        invalid_line_error,
       ));
     }
     headers.push((name.trim().to_string(), value.trim().to_string()));
@@ -2649,7 +2681,7 @@ where
 fn parse_trailer_lines<'a>(
   lines: impl Iterator<Item = &'a str>,
 ) -> io::Result<Vec<(String, String)>> {
-  let trailers = parse_header_lines(lines)?;
+  let trailers = parse_header_lines_with_error(lines, "invalid request trailer")?;
   if trailers
     .iter()
     .any(|(name, _)| is_forbidden_trailer_name(name))
