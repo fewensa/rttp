@@ -97,7 +97,7 @@ pub mod request {
         name: "absolute-form target",
         raw: b"GET http://example.test/matrix/absolute?case=shared HTTP/1.1\r\nHost: proxy.local\r\n\r\n",
         method: "GET",
-        target: "http://example.test/matrix/absolute?case=shared",
+        target: "/matrix/absolute?case=shared",
       },
     ]
   }

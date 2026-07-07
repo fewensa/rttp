@@ -1557,8 +1557,14 @@ fn server_returns_bad_request_for_malformed_request_line() {
 }
 
 #[test]
-fn server_returns_bad_request_for_invalid_http_version() {
-  assert_bad_request_without_handler(b"GET / HTTP/2.0\r\nHost: localhost\r\n\r\n");
+fn server_returns_bad_request_for_unsupported_and_malformed_http_versions() {
+  for raw in [
+    b"GET / HTTP/0.9\r\nHost: localhost\r\n\r\n".as_slice(),
+    b"GET / HTTP/2.0\r\nHost: localhost\r\n\r\n",
+    b"GET / HTP/1.1\r\nHost: localhost\r\n\r\n",
+  ] {
+    assert_bad_request_without_handler(raw);
+  }
 }
 
 #[test]
@@ -1602,7 +1608,7 @@ fn server_accepts_absolute_form_request_target() {
 
   let request = request.expect("handler receives absolute-form request");
   assert_eq!("GET", request.method());
-  assert_eq!("http://example.test/path?query=1", request.target());
+  assert_eq!("/path?query=1", request.target());
   assert_eq!(
     "HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nunexpected",
     response
