@@ -1097,10 +1097,11 @@ fn server_does_not_send_continue_for_expect_with_zero_content_length() {
 }
 
 #[test]
-fn server_returns_bad_request_for_unsupported_expectation_without_calling_handler() {
+fn server_returns_expectation_failed_for_unsupported_expectation_without_calling_handler() {
   let (response, handler_called) = send_raw_request(
     concat!(
       "POST /submit HTTP/1.1\r\n",
+      "Host: localhost\r\n",
       "Expect: magic\r\n",
       "Content-Length: 5\r\n",
       "\r\n",
@@ -1111,7 +1112,7 @@ fn server_returns_bad_request_for_unsupported_expectation_without_calling_handle
 
   assert!(!handler_called);
   assert_eq!(
-    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    "HTTP/1.1 417 Expectation Failed\r\nContent-Length: 18\r\nConnection: close\r\n\r\nExpectation Failed",
     response
   );
 }
@@ -1148,8 +1149,7 @@ fn server_rejects_unsupported_expectation_before_body_is_sent() {
     )
     .expect("write request head");
 
-  let expected =
-    b"HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request";
+  let expected = b"HTTP/1.1 417 Expectation Failed\r\nContent-Length: 18\r\nConnection: close\r\n\r\nExpectation Failed";
   let mut response = vec![0; expected.len()];
   stream
     .read_exact(&mut response)
