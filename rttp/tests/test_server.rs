@@ -1984,6 +1984,66 @@ fn server_preserves_chunked_request_trailers() {
 }
 
 #[test]
+fn server_preserves_chunked_request_trailers_after_chunk_extension() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request).expect("send parsed request");
+        HttpResponse::ok("accepted")
+      })
+      .expect("serve one request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(
+      concat!(
+        "POST /upload HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Transfer-Encoding: chunked\r\n",
+        "\r\n",
+        "4;foo=bar\r\nbody\r\n",
+        "0\r\n",
+        "X-Trace: abc\r\n",
+        "X-Signature: signed\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write request");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  let request: Request = rx.recv().expect("receive parsed request");
+  assert_eq!(b"body", request.body());
+  assert_eq!(None, request.header("foo"));
+  assert_eq!(None, request.trailer("foo"));
+  assert_eq!(Some("abc"), request.trailer("x-trace"));
+  assert_eq!(Some("signed"), request.trailer("X-SIGNATURE"));
+  assert_eq!(
+    &[
+      ("X-Trace".to_string(), "abc".to_string()),
+      ("X-Signature".to_string(), "signed".to_string())
+    ],
+    request.trailers()
+  );
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\naccepted",
+    response
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn server_accepts_quoted_chunk_extensions() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
