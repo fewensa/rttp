@@ -512,6 +512,57 @@ pub fn spawn_keep_alive_server() -> (SocketAddr, JoinHandle<()>) {
   (addr, handle)
 }
 
+pub fn spawn_redirect_connection_lifecycle_server(
+  first_response_connection_close: bool,
+) -> (SocketAddr, JoinHandle<Vec<usize>>) {
+  let (listener, addr) = bind_local_http_listener("redirect connection lifecycle server");
+  let handle = thread::spawn(move || {
+    let Ok((mut first_stream, _)) = listener.accept() else {
+      return Vec::new();
+    };
+
+    let mut requests_per_connection = vec![1];
+    let _ = read_http_request(&mut first_stream);
+    let connection_header = if first_response_connection_close {
+      "Connection: close\r\n"
+    } else {
+      ""
+    };
+    let redirect = format!(
+      "HTTP/1.1 302 Found\r\nLocation: /final\r\nContent-Length: 0\r\n{}\r\n",
+      connection_header
+    );
+    let _ = first_stream.write_all(redirect.as_bytes());
+
+    if first_response_connection_close {
+      drop(first_stream);
+    } else {
+      first_stream
+        .set_read_timeout(Some(Duration::from_millis(300)))
+        .expect("set redirect lifecycle read timeout");
+      match read_http_request(&mut first_stream) {
+        request if !request.is_empty() => {
+          requests_per_connection[0] += 1;
+          let _ = first_stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nfinal");
+          return requests_per_connection;
+        }
+        _ => {}
+      }
+    }
+
+    let Ok((mut second_stream, _)) = listener.accept() else {
+      return requests_per_connection;
+    };
+    requests_per_connection.push(1);
+    let _ = read_http_request(&mut second_stream);
+    let _ = second_stream
+      .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nfinal");
+    requests_per_connection
+  });
+  (addr, handle)
+}
+
 pub fn spawn_eof_delimited_response_server(body: &'static str) -> (SocketAddr, JoinHandle<()>) {
   let (listener, addr) = bind_local_http_listener("eof delimited response server");
   let handle = thread::spawn(move || {

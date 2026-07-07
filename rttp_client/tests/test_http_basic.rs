@@ -650,6 +650,36 @@ fn test_content_length_response_does_not_wait_for_eof() {
 }
 
 #[test]
+fn test_sync_redirect_reuses_socket_when_connection_close_is_absent() {
+  let (addr, handle) = support::spawn_redirect_connection_lifecycle_server(false);
+  let response = client()
+    .get()
+    .config(Config::builder().auto_redirect(true))
+    .url(format!("http://{}/start", addr))
+    .emit()
+    .unwrap();
+
+  assert_eq!(200, response.code());
+  assert_eq!("final", response.body().string().unwrap());
+  assert_eq!(vec![2], handle.join().unwrap());
+}
+
+#[test]
+fn test_sync_redirect_uses_fresh_socket_after_connection_close() {
+  let (addr, handle) = support::spawn_redirect_connection_lifecycle_server(true);
+  let response = client()
+    .get()
+    .config(Config::builder().auto_redirect(true))
+    .url(format!("http://{}/start", addr))
+    .emit()
+    .unwrap();
+
+  assert_eq!(200, response.code());
+  assert_eq!("final", response.body().string().unwrap());
+  assert_eq!(vec![1, 1], handle.join().unwrap());
+}
+
+#[test]
 fn test_sync_client_skips_100_continue_before_final_response() {
   let (addr, _handle) = support::spawn_continue_then_ok_server();
   let response = client()

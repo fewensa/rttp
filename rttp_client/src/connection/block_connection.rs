@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::io::Write;
+use std::net::TcpStream;
 
 use socks::{Socks4Stream, Socks5Stream};
 use url::Url;
@@ -26,6 +27,7 @@ impl<'a> BlockConnection<'a> {
 
   pub fn call(mut self) -> error::Result<Response> {
     let mut visited_urls = HashSet::new();
+    let mut reusable_stream: Option<TcpStream> = None;
 
     loop {
       let url = self.conn.url().map_err(error::builder)?;
@@ -35,8 +37,23 @@ impl<'a> BlockConnection<'a> {
       ));
       let proxy = self.conn.proxy().clone();
       let parts = if let Some(proxy) = proxy.as_ref() {
+        reusable_stream = None;
         self.call_with_proxy(&url, proxy)?
+      } else if url.scheme() == "http" {
+        let mut stream = match reusable_stream.take() {
+          Some(stream) => stream,
+          None => {
+            let addr = self.conn.addr(&url)?;
+            self.conn.block_tcp_stream(&addr)?
+          }
+        };
+        let parts = self.conn.block_send_with_stream_parts(&url, &mut stream)?;
+        if parts.connection_reusable {
+          reusable_stream = Some(stream);
+        }
+        parts
       } else {
+        reusable_stream = None;
         self.conn.block_send_parts(&url)?
       };
 
@@ -60,6 +77,11 @@ impl<'a> BlockConnection<'a> {
 
         let redirect_url = self.conn.resolve_redirect_url(&url, location)?;
         let strip_sensitive_headers = !self.conn.is_same_origin_url(&url, &redirect_url.url);
+        if !self.conn.is_same_origin_url(&url, &redirect_url.url)
+          || redirect_url.url.scheme() != "http"
+        {
+          reusable_stream = None;
+        }
         self.conn.request_mut().redirect_status_set(response.code());
         let next_visit = (
           self.conn.request().origin().method().to_uppercase(),

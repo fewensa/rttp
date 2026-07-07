@@ -22,6 +22,7 @@ pub(crate) enum ResponseBodyKind {
 pub(crate) struct ResponseParts {
   pub(crate) binary: Vec<u8>,
   pub(crate) trailers: Vec<Header>,
+  pub(crate) connection_reusable: bool,
 }
 
 pub struct StreamingResponse<'a, R: Read + ?Sized> {
@@ -258,7 +259,9 @@ where
   R: Read + ?Sized,
 {
   let mut trailers = Vec::new();
-  match response_body_kind(&binary, expect_no_body)? {
+  let body_kind = response_body_kind(&binary, expect_no_body)?;
+  let connection_reusable = response_connection_reusable(&binary, &body_kind);
+  match body_kind {
     ResponseBodyKind::NoBody => {}
     ResponseBodyKind::Chunked => {
       let mut body_reader = ResponseBodyReader::new(reader, ResponseBodyKind::Chunked);
@@ -278,7 +281,29 @@ where
       reader.read_to_end(&mut binary).map_err(error::request)?;
     }
   }
-  Ok(ResponseParts { binary, trailers })
+  Ok(ResponseParts {
+    binary,
+    trailers,
+    connection_reusable,
+  })
+}
+
+pub(crate) fn response_connection_reusable(header: &[u8], body_kind: &ResponseBodyKind) -> bool {
+  !matches!(body_kind, ResponseBodyKind::UntilEof) && !response_header_has_connection_close(header)
+}
+
+pub(crate) fn response_header_has_connection_close(header: &[u8]) -> bool {
+  response_headers(header)
+    .map(|headers| {
+      headers.iter().any(|header| {
+        header.name().eq_ignore_ascii_case("Connection")
+          && header
+            .value()
+            .split(',')
+            .any(|token| token.trim().eq_ignore_ascii_case("close"))
+      })
+    })
+    .unwrap_or(false)
 }
 
 pub(crate) fn response_headers(header: &[u8]) -> error::Result<Vec<Header>> {
