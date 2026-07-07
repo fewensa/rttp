@@ -130,6 +130,34 @@ fn spawn_chunked_streaming_then_capture_server() -> (SocketAddr, thread::JoinHan
   (addr, handle)
 }
 
+fn spawn_chunked_trailer_capture_server() -> (SocketAddr, thread::JoinHandle<Vec<u8>>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind chunked trailer capture server");
+  let addr = listener
+    .local_addr()
+    .expect("chunked trailer capture server addr");
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept chunked trailer request");
+    let mut request = read_request_head(&mut stream);
+    let mut body = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+      stream.read_exact(&mut byte).expect("read chunked body");
+      body.push(byte[0]);
+      let saw_final_chunk =
+        body.starts_with(b"0\r\n") || body.windows(5).any(|window| window == b"\r\n0\r\n");
+      if saw_final_chunk && body.ends_with(b"\r\n\r\n") {
+        break;
+      }
+    }
+    request.extend_from_slice(&body);
+    stream
+      .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK")
+      .expect("write chunked trailer response");
+    request
+  });
+  (addr, handle)
+}
+
 #[test]
 fn get_with_query_parameters_sends_request_target_without_body() {
   let request = capture_request(|base_url| {
@@ -198,6 +226,76 @@ fn streaming_chunked_framing_does_not_leak_into_later_emit() {
   assert!(second.starts_with("GET /second HTTP/1.1\r\n"));
   assert_eq!(None, header_value(&second, "Content-Length"));
   assert_eq!(None, header_value(&second, "Transfer-Encoding"));
+}
+
+#[test]
+fn streaming_chunked_upload_sends_advertised_request_trailers_after_final_chunk() {
+  let (addr, handle) = spawn_chunked_trailer_capture_server();
+
+  client()
+    .post()
+    .url(format!("http://{}/upload", addr))
+    .trailer(("X-Trace", "trace-123"))
+    .expect("request trailer should be accepted")
+    .trailer(("X-Signature", "sha256=abc"))
+    .expect("request trailer should be accepted")
+    .emit_streaming_chunked("hello trailers".as_bytes())
+    .expect("chunked streaming upload should succeed");
+
+  let request = handle.join().expect("chunked trailer capture server");
+  let text = request_text(&request);
+  let body = request_body(&request);
+
+  assert!(text.starts_with("POST /upload HTTP/1.1\r\n"));
+  assert_eq!(Some("chunked"), header_value(&text, "Transfer-Encoding"));
+  assert_eq!(Some("X-Trace, X-Signature"), header_value(&text, "Trailer"));
+  assert_eq!(
+    b"e\r\nhello trailers\r\n0\r\nX-Trace: trace-123\r\nX-Signature: sha256=abc\r\n\r\n",
+    body
+  );
+}
+
+#[test]
+fn streaming_fixed_upload_with_request_trailers_keeps_fixed_length_framing() {
+  let request = capture_request(|base_url| {
+    client()
+      .post()
+      .url(format!("{}/upload", base_url))
+      .trailer(("X-Trace", "trace-123"))
+      .expect("request trailer should be accepted")
+      .emit_streaming_fixed("hello".as_bytes(), 5)
+      .expect("fixed streaming upload should succeed");
+  });
+
+  let text = request_text(&request);
+
+  assert_eq!(Some("5"), header_value(&text, "Content-Length"));
+  assert_eq!(None, header_value(&text, "Transfer-Encoding"));
+  assert_eq!(None, header_value(&text, "Trailer"));
+  assert_eq!(b"hello", request_body(&request));
+}
+
+#[test]
+fn request_trailer_rejects_forbidden_field_names() {
+  for name in [
+    "Host",
+    "Content-Length",
+    "Transfer-Encoding",
+    "Trailer",
+    "Connection",
+    "Upgrade",
+    "Proxy-Authorization",
+    "Proxy-Connection",
+  ] {
+    let error = client()
+      .post()
+      .trailer((name, "blocked"))
+      .expect_err("forbidden request trailer should be rejected");
+    assert!(
+      error.to_string().contains("Forbidden request trailer"),
+      "unexpected error for {name}: {error}"
+    );
+  }
 }
 
 #[test]

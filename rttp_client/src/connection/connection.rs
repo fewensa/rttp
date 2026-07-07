@@ -15,7 +15,7 @@ use crate::connection::connection_reader::{
 };
 use crate::request::{RawRequest, RequestBody};
 use crate::response::Response;
-use crate::types::{Proxy, RoUrl, ToUrl};
+use crate::types::{Header, Proxy, RoUrl, ToUrl};
 use crate::{error, Config};
 
 #[cfg(feature = "tls-rustls")]
@@ -548,6 +548,7 @@ pub(crate) enum StreamingRequestBody<'a> {
   },
   Chunked {
     reader: &'a mut dyn io::Read,
+    trailers: &'a [Header],
   },
 }
 
@@ -718,7 +719,9 @@ impl<'a> Connection<'a> {
         reader,
         content_length,
       } => write_fixed_streaming_body(stream, *reader, *content_length)?,
-      StreamingRequestBody::Chunked { reader } => write_chunked_streaming_body(stream, *reader)?,
+      StreamingRequestBody::Chunked { reader, trailers } => {
+        write_chunked_streaming_body(stream, *reader, trailers)?
+      }
     }
     stream.flush().map_err(error::request)
   }
@@ -1140,7 +1143,11 @@ where
   Ok(())
 }
 
-fn write_chunked_streaming_body<W>(writer: &mut W, reader: &mut dyn io::Read) -> error::Result<()>
+fn write_chunked_streaming_body<W>(
+  writer: &mut W,
+  reader: &mut dyn io::Read,
+  trailers: &[Header],
+) -> error::Result<()>
 where
   W: io::Write,
 {
@@ -1148,13 +1155,24 @@ where
   loop {
     let read = reader.read(&mut buffer).map_err(error::request)?;
     if read == 0 {
-      writer.write_all(b"0\r\n\r\n").map_err(error::request)?;
+      write_chunked_trailers(writer, trailers)?;
       return Ok(());
     }
     write!(writer, "{:x}\r\n", read).map_err(error::request)?;
     writer.write_all(&buffer[..read]).map_err(error::request)?;
     writer.write_all(b"\r\n").map_err(error::request)?;
   }
+}
+
+fn write_chunked_trailers<W>(writer: &mut W, trailers: &[Header]) -> error::Result<()>
+where
+  W: io::Write,
+{
+  writer.write_all(b"0\r\n").map_err(error::request)?;
+  for trailer in trailers {
+    write!(writer, "{}: {}\r\n", trailer.name(), trailer.value()).map_err(error::request)?;
+  }
+  writer.write_all(b"\r\n").map_err(error::request)
 }
 
 #[cfg(test)]
