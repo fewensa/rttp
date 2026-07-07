@@ -227,8 +227,8 @@ impl HttpServer {
     let (stream, _) = self.listener.accept()?;
     self.configure_stream(&stream)?;
     let mut reader = BufReader::new(stream);
-    let (request, body_state) = match self.normalize_connection_error(
-      Request::read_next_streaming_head_from_with_continue(&mut reader).and_then(|request| {
+    let (request, body_kind) = match self.normalize_connection_error(
+      Request::read_next_head_from_with_continue(&mut reader).and_then(|request| {
         request.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))
       }),
     ) {
@@ -239,7 +239,7 @@ impl HttpServer {
       Err(err) => return Err(err),
     };
     let request_is_head = request.method() == "HEAD";
-    let body = RequestBodyReader::new(&mut reader, body_state, self.read_timeout.is_some());
+    let body = RequestBodyReader::new(&mut reader, body_kind, self.read_timeout.is_some());
     let response = handler(request, body);
     self.normalize_connection_error(response.write_to_with_default_connection_and_body(
       reader.get_mut(),
@@ -1252,24 +1252,6 @@ impl Request {
       })
   }
 
-  fn read_next_streaming_head_from_with_continue<S>(
-    reader: &mut BufReader<S>,
-  ) -> io::Result<Option<(Self, RequestBodyState)>>
-  where
-    S: Read + Write,
-  {
-    Self::read_next_head_and_body_kind_from_with_continue(reader)?.map_or(
-      Ok(None),
-      |(head, kind)| {
-        let body_state = RequestBodyState::new(kind, reader)?;
-        Ok(Some((
-          Self::from_head_and_body(head, Vec::new()),
-          body_state,
-        )))
-      },
-    )
-  }
-
   fn read_next_head_and_body_kind_from_with_continue<S>(
     reader: &mut BufReader<S>,
   ) -> io::Result<Option<(RequestHead, RequestBodyKind)>>
@@ -1480,16 +1462,20 @@ pub struct RequestBodyReader<'a, R: BufRead> {
 }
 
 impl<'a, R: BufRead> RequestBodyReader<'a, R> {
-  fn new(reader: &'a mut R, state: RequestBodyState, normalize_timeouts: bool) -> Self {
+  fn new(reader: &'a mut R, kind: RequestBodyKind, normalize_timeouts: bool) -> Self {
+    let remaining = match kind {
+      RequestBodyKind::ContentLength(length) => length,
+      RequestBodyKind::Chunked => 0,
+    };
     Self {
       reader,
-      kind: state.kind,
-      remaining: state.remaining,
-      chunk_remaining: state.chunk_remaining,
-      chunk_needs_crlf: state.chunk_needs_crlf,
-      body_bytes_read: state.body_bytes_read,
-      trailers: state.trailers,
-      eof: state.eof,
+      kind,
+      remaining,
+      chunk_remaining: 0,
+      chunk_needs_crlf: false,
+      body_bytes_read: 0,
+      trailers: Vec::new(),
+      eof: matches!(kind, RequestBodyKind::ContentLength(0)),
       normalize_timeouts,
     }
   }
@@ -2017,64 +2003,6 @@ struct RequestHead {
 enum RequestBodyKind {
   ContentLength(usize),
   Chunked,
-}
-
-struct RequestBodyState {
-  kind: RequestBodyKind,
-  remaining: usize,
-  chunk_remaining: usize,
-  chunk_needs_crlf: bool,
-  body_bytes_read: usize,
-  trailers: Vec<(String, String)>,
-  eof: bool,
-}
-
-impl RequestBodyState {
-  fn new<R>(kind: RequestBodyKind, reader: &mut R) -> io::Result<Self>
-  where
-    R: BufRead,
-  {
-    match kind {
-      RequestBodyKind::ContentLength(length) => Ok(Self {
-        kind,
-        remaining: length,
-        chunk_remaining: 0,
-        chunk_needs_crlf: false,
-        body_bytes_read: 0,
-        trailers: Vec::new(),
-        eof: length == 0,
-      }),
-      RequestBodyKind::Chunked => {
-        let mut body_bytes_read = 0;
-        let line = read_bounded_crlf_line(reader, &mut body_bytes_read)?;
-        let chunk_size = parse_chunk_size(&line)?;
-
-        if chunk_size == 0 {
-          let trailers = read_trailers(reader, &mut body_bytes_read)?;
-          return Ok(Self {
-            kind,
-            remaining: 0,
-            chunk_remaining: 0,
-            chunk_needs_crlf: false,
-            body_bytes_read,
-            trailers,
-            eof: true,
-          });
-        }
-
-        add_request_body_bytes(&mut body_bytes_read, chunk_size)?;
-        Ok(Self {
-          kind,
-          remaining: 0,
-          chunk_remaining: chunk_size,
-          chunk_needs_crlf: false,
-          body_bytes_read,
-          trailers: Vec::new(),
-          eof: false,
-        })
-      }
-    }
-  }
 }
 
 struct ChunkedRequestBody {

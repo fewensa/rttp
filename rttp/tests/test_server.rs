@@ -1,4 +1,4 @@
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::mpsc;
 use std::thread;
@@ -585,7 +585,7 @@ fn streaming_handler_can_reject_before_reading_request_body() {
 }
 
 #[test]
-fn streaming_handler_rejects_malformed_chunk_size_before_handler() {
+fn streaming_handler_can_reject_chunked_request_before_body_arrives() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
   let (tx, rx) = mpsc::channel();
@@ -593,8 +593,51 @@ fn streaming_handler_rejects_malformed_chunk_size_before_handler() {
   let handle = thread::spawn(move || {
     server
       .accept_one_streaming(|_request, _body| {
-        tx.send(()).expect("record handler call");
-        HttpResponse::ok("unexpected")
+        tx.send(()).expect("record chunked handler call");
+        HttpResponse::new(413, "Payload Too Large").body("rejected")
+      })
+      .expect("serve chunked streaming rejection");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(b"POST /reject HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n")
+    .expect("write chunked request head");
+
+  if rx.recv_timeout(Duration::from_secs(2)).is_err() {
+    stream
+      .shutdown(std::net::Shutdown::Write)
+      .expect("shutdown write");
+    handle.join().expect("server thread");
+    panic!("chunked streaming handler was not invoked after headers");
+  }
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  assert_eq!(
+    "HTTP/1.1 413 Payload Too Large\r\nContent-Length: 8\r\nConnection: close\r\n\r\nrejected",
+    response
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn streaming_body_reader_rejects_malformed_chunk_size_on_read() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one_streaming(|_request, mut body| {
+        let mut buffer = [0u8; 16];
+        let error = body
+          .read(&mut buffer)
+          .expect_err("malformed chunk size should fail on read");
+        assert_eq!(ErrorKind::InvalidData, error.kind());
+        assert_eq!("invalid chunk size", error.to_string());
+        HttpResponse::new(400, "Bad Request").body("Bad Request")
       })
       .expect("serve malformed streaming request");
   });
@@ -622,7 +665,6 @@ fn streaming_handler_rejects_malformed_chunk_size_before_handler() {
   let mut response = String::new();
   stream.read_to_string(&mut response).expect("read response");
 
-  assert!(rx.try_recv().is_err());
   assert_eq!(
     "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
     response
