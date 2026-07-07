@@ -555,6 +555,113 @@ fn server_rejects_http2_prior_knowledge_interleaved_frame_before_end_headers() {
 }
 
 #[test]
+fn server_rejects_http2_prior_knowledge_continuation_without_open_header_block() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send(request).expect("send unexpected h2 request");
+      HttpResponse::ok("unexpected")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  complete_h2_server_handshake(&mut stream);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_CONTINUATION,
+    H2_FLAG_END_HEADERS,
+    1,
+    &[0x82],
+  );
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown h2 write");
+
+  let error = handle
+    .join()
+    .expect("server thread")
+    .expect_err("orphan CONTINUATION should reject request");
+  assert_eq!(ErrorKind::InvalidData, error.kind());
+  assert!(rx.try_recv().is_err());
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_continuation_on_wrong_stream() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send(request).expect("send unexpected h2 request");
+      HttpResponse::ok("unexpected")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  complete_h2_server_handshake(&mut stream);
+  write_h2_frame(&mut stream, H2_FRAME_HEADERS, 0, 1, &[0x83, 0x86]);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_CONTINUATION,
+    H2_FLAG_END_HEADERS,
+    3,
+    &h2_get_headers(b"/wrong-continuation", addr.to_string().as_bytes()),
+  );
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown h2 write");
+
+  let error = handle
+    .join()
+    .expect("server thread")
+    .expect_err("wrong-stream CONTINUATION should reject request");
+  assert_eq!(ErrorKind::InvalidData, error.kind());
+  assert!(rx.try_recv().is_err());
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_eof_before_end_headers() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send(request).expect("send unexpected h2 request");
+      HttpResponse::ok("unexpected")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  complete_h2_server_handshake(&mut stream);
+  write_h2_frame(&mut stream, H2_FRAME_HEADERS, 0, 1, &[0x83, 0x86]);
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown h2 write");
+
+  let error = handle
+    .join()
+    .expect("server thread")
+    .expect_err("EOF before END_HEADERS should reject request");
+  assert_eq!(ErrorKind::InvalidData, error.kind());
+  assert!(
+    error.to_string().contains("incomplete HTTP/2 header block"),
+    "unexpected error: {error}"
+  );
+  assert!(rx.try_recv().is_err());
+}
+
+#[test]
 fn server_rejects_http2_prior_knowledge_data_before_headers_without_handler() {
   let server = rttp::Http::server("127.0.0.1:0")
     .expect("bind server")

@@ -389,6 +389,15 @@ impl HttpServer {
       let frame = match self.normalize_connection_error(read_http2_frame(&mut stream)) {
         Ok(frame) => frame,
         Err(err)
+          if err.kind() == io::ErrorKind::UnexpectedEof
+            && active_http2_header_continuation_stream(&streams).is_some() =>
+        {
+          return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "incomplete HTTP/2 header block",
+          ));
+        }
+        Err(err)
           if err.kind() == io::ErrorKind::UnexpectedEof && served > 0 && streams.is_empty() =>
         {
           break;

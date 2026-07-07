@@ -331,7 +331,13 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
   let mut pending_window_update = 0usize;
 
   loop {
-    let frame = read_frame(stream)?;
+    let frame = match read_frame(stream) {
+      Ok(frame) => frame,
+      Err(err) if pending_header_block.is_some() && is_unexpected_eof(&err) => {
+        return Err(error::bad_response("incomplete HTTP/2 header block"));
+      }
+      Err(err) => return Err(err),
+    };
     if pending_header_block.is_some()
       && (frame.frame_type != FRAME_CONTINUATION || frame.stream_id != STREAM_ID)
     {
@@ -441,6 +447,12 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
 
   let status = status.ok_or_else(|| error::bad_response("missing HTTP/2 :status header"))?;
   build_response(url, status, &headers, body, trailers)
+}
+
+fn is_unexpected_eof(err: &error::Error) -> bool {
+  std::error::Error::source(err)
+    .and_then(|source| source.downcast_ref::<io::Error>())
+    .is_some_and(|source| source.kind() == io::ErrorKind::UnexpectedEof)
 }
 
 fn apply_header_block(
