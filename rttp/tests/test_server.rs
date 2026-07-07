@@ -1653,6 +1653,20 @@ fn server_returns_bad_request_for_malformed_content_length() {
 }
 
 #[test]
+fn server_returns_bad_request_for_signed_content_length() {
+  assert_bad_request_without_handler(
+    concat!(
+      "POST /upload HTTP/1.1\r\n",
+      "Host: localhost\r\n",
+      "Content-Length: +5\r\n",
+      "\r\n",
+      "hello"
+    )
+    .as_bytes(),
+  );
+}
+
+#[test]
 fn server_accepts_small_chunked_request_body() {
   let (response, handler_called) = send_raw_request(
     concat!(

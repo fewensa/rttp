@@ -2294,8 +2294,14 @@ fn optional_header_content_length(headers: &[(String, String)]) -> io::Result<Op
     .filter(|(name, _)| name.eq_ignore_ascii_case("Content-Length"))
   {
     for token in value.split(',') {
+      let token = token.trim();
+      if token.is_empty() || !token.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(io::Error::new(
+          io::ErrorKind::InvalidData,
+          "invalid Content-Length header",
+        ));
+      }
       let parsed = token
-        .trim()
         .parse::<usize>()
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid Content-Length header"))?;
       if length
