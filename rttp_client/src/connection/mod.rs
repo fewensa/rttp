@@ -7,6 +7,7 @@ pub use self::async_connection::*;
 pub use self::block_connection::*;
 pub use self::connection::HandoffConnection;
 pub(crate) use self::connection::StreamingRequestBody;
+#[cfg(any(feature = "async", feature = "http2"))]
 pub(crate) use self::connection_reader::validate_response_trailer_header;
 pub use self::connection_reader::{ConnectionReader, ResponseBodyReader, StreamingResponse};
 
