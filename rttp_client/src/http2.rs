@@ -190,7 +190,8 @@ fn write_request(
     .as_ref()
     .map(|body| body.bytes())
     .unwrap_or(&[]);
-  let header_flags = if body.is_empty() {
+  let has_trailers = !request.origin().trailers().is_empty();
+  let header_flags = if body.is_empty() && !has_trailers {
     FLAG_END_STREAM | FLAG_END_HEADERS
   } else {
     FLAG_END_HEADERS
@@ -203,7 +204,17 @@ fn write_request(
     &header_block,
   )?;
   if !body.is_empty() {
-    write_data_frames(stream, body, peer_max_frame_size)?;
+    write_data_frames(stream, body, peer_max_frame_size, has_trailers)?;
+  }
+  if has_trailers {
+    let trailer_block = encode_request_trailers(request)?;
+    write_frame(
+      stream,
+      FRAME_HEADERS,
+      FLAG_END_HEADERS | FLAG_END_STREAM,
+      STREAM_ID,
+      &trailer_block,
+    )?;
   }
   stream.flush().map_err(error::request)
 }
@@ -212,12 +223,13 @@ fn write_data_frames(
   stream: &mut TcpStream,
   body: &[u8],
   peer_max_frame_size: usize,
+  has_trailers: bool,
 ) -> error::Result<()> {
   for (index, chunk) in body.chunks(peer_max_frame_size).enumerate() {
     let sent = index
       .checked_mul(peer_max_frame_size)
       .ok_or_else(|| error::request(io::Error::other("HTTP/2 request body is too large")))?;
-    let flags = if sent + chunk.len() == body.len() {
+    let flags = if sent + chunk.len() == body.len() && !has_trailers {
       FLAG_END_STREAM
     } else {
       0
@@ -248,6 +260,36 @@ fn encode_request_headers(request: &RawRequest<'_>, url: &Url) -> error::Result<
     encode_literal_new_name_without_indexing(&mut block, name.as_bytes(), value.as_bytes())?;
   }
 
+  if !request.origin().trailers().is_empty() {
+    encode_literal_new_name_without_indexing(
+      &mut block,
+      b"trailer",
+      request_trailer_field_value(request).as_bytes(),
+    )?;
+  }
+
+  Ok(block)
+}
+
+fn request_trailer_field_value(request: &RawRequest<'_>) -> String {
+  request
+    .origin()
+    .trailers()
+    .iter()
+    .map(|header| header.name().as_str())
+    .collect::<Vec<_>>()
+    .join(", ")
+}
+
+fn encode_request_trailers(request: &RawRequest<'_>) -> error::Result<Vec<u8>> {
+  let mut block = Vec::new();
+  for header in request.origin().trailers() {
+    encode_literal_new_name_without_indexing(
+      &mut block,
+      header.name().to_ascii_lowercase().as_bytes(),
+      header.value().as_bytes(),
+    )?;
+  }
   Ok(block)
 }
 
@@ -301,6 +343,7 @@ fn regular_headers(header: &str) -> Vec<(String, String)> {
           | "keep-alive"
           | "proxy-connection"
           | "te"
+          | "trailer"
           | "transfer-encoding"
           | "upgrade"
       )
