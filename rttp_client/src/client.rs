@@ -203,6 +203,15 @@ impl HttpClient {
     BlockConnection::new(request).call()
   }
 
+  #[cfg(feature = "http2")]
+  pub fn emit_http2_prior_knowledge(&mut self) -> error::Result<Response> {
+    if self.request.closed() {
+      return Err(error::connection_closed());
+    }
+    let request = RawRequest::block_new(&mut self.request)?;
+    crate::http2::PriorKnowledgeClient::new(request).get()
+  }
+
   pub fn emit_streaming_fixed<R>(
     &mut self,
     mut reader: R,

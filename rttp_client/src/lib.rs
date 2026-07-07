@@ -59,6 +59,8 @@ pub use self::connection::{ConnectionReader, ResponseBodyReader, StreamingRespon
 mod client;
 mod config;
 mod connection;
+#[cfg(feature = "http2")]
+pub mod http2;
 mod request;
 
 pub mod error;
