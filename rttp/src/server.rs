@@ -1796,12 +1796,7 @@ impl HttpResponse {
 
     let connection_header_index = self.connection_header_index();
     for (index, header) in self.headers.iter().enumerate() {
-      if !header.name.eq_ignore_ascii_case("Content-Length")
-        && (self.allows_body() || !header.name.eq_ignore_ascii_case("Transfer-Encoding"))
-        && (!header.name.eq_ignore_ascii_case("Connection")
-          || (default_connection != DefaultConnectionHeader::ForceClose
-            && Some(index) == connection_header_index))
-      {
+      if self.should_write_head_header(header, index, connection_header_index, default_connection) {
         write!(writer, "{}: {}\r\n", header.name, header.value)?;
       }
     }
@@ -1877,6 +1872,27 @@ impl HttpResponse {
           .split(',')
           .any(|token| token.trim().eq_ignore_ascii_case("chunked"))
     })
+  }
+
+  fn should_write_head_header(
+    &self,
+    header: &HttpHeader,
+    index: usize,
+    connection_header_index: Option<usize>,
+    default_connection: DefaultConnectionHeader,
+  ) -> bool {
+    if header.name.eq_ignore_ascii_case("Content-Length") {
+      return false;
+    }
+    if !self.allows_body() && header.name.eq_ignore_ascii_case("Transfer-Encoding") {
+      return false;
+    }
+    if !header.name.eq_ignore_ascii_case("Connection") {
+      return true;
+    }
+
+    default_connection != DefaultConnectionHeader::ForceClose
+      && Some(index) == connection_header_index
   }
 
   fn connection_header_index(&self) -> Option<usize> {
