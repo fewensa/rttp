@@ -48,6 +48,36 @@ fn spawn_async_chunked_upload_capture_server() -> (std::net::SocketAddr, thread:
   (addr, handle)
 }
 
+#[cfg(feature = "async")]
+fn spawn_async_head_metadata_server() -> (std::net::SocketAddr, thread::JoinHandle<Vec<u8>>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind async HEAD metadata server");
+  let addr = listener
+    .local_addr()
+    .expect("async HEAD metadata server addr");
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener
+      .accept()
+      .expect("accept async HEAD metadata request");
+    let request = support::read_http_request(&mut stream);
+    stream
+      .write_all(
+        concat!(
+          "HTTP/1.1 200 OK\r\n",
+          "Content-Length: 7\r\n",
+          "Transfer-Encoding: chunked\r\n",
+          "X-Object-Size: 7\r\n",
+          "Connection: close\r\n",
+          "\r\n",
+          "ignored"
+        )
+        .as_bytes(),
+      )
+      .expect("write async HEAD metadata response");
+    request
+  });
+  (addr, handle)
+}
+
 #[test]
 #[cfg(feature = "async")]
 fn test_async_http() {
@@ -64,6 +94,39 @@ fn test_async_http() {
     assert_eq!("127.0.0.1", response.host());
     println!("{}", response);
   });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_head_response_is_bodyless_and_preserves_headers() {
+  let (addr, handle) = spawn_async_head_metadata_server();
+  block_on(async {
+    let response = client()
+      .head()
+      .url(format!("http://{}/metadata", addr))
+      .rasync()
+      .await
+      .expect("async HEAD metadata response");
+
+    assert_eq!("", response.body().string().unwrap());
+    assert_eq!(
+      Some("7"),
+      response.header_value("Content-Length").map(String::as_str)
+    );
+    assert_eq!(
+      Some("chunked"),
+      response
+        .header_value("Transfer-Encoding")
+        .map(String::as_str)
+    );
+    assert_eq!(
+      Some("7"),
+      response.header_value("X-Object-Size").map(String::as_str)
+    );
+  });
+
+  let request = handle.join().expect("async HEAD metadata server thread");
+  assert!(String::from_utf8_lossy(&request).starts_with("HEAD /metadata HTTP/1.1\r\n"));
 }
 
 #[test]
