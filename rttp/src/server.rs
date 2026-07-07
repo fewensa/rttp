@@ -745,7 +745,7 @@ fn read_http2_frame(stream: &mut TcpStream) -> io::Result<Http2Frame> {
 }
 
 fn validate_http2_settings_payload(payload: &[u8]) -> io::Result<()> {
-  if payload.len() % 6 != 0 {
+  if !payload.len().is_multiple_of(6) {
     return Err(invalid_http2_settings_error());
   }
 
