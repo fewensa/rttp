@@ -2497,6 +2497,42 @@ fn server_returns_bad_request_for_forbidden_chunked_request_trailer() {
 }
 
 #[test]
+fn server_returns_bad_request_for_payload_processing_chunked_request_trailer() {
+  assert_bad_request_without_handler(
+    concat!(
+      "POST /upload HTTP/1.1\r\n",
+      "Host: localhost\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "\r\n",
+      "2\r\n",
+      "OK\r\n",
+      "0\r\n",
+      "Content-Type: text/plain\r\n",
+      "\r\n"
+    )
+    .as_bytes(),
+  );
+}
+
+#[test]
+fn server_returns_bad_request_for_pseudo_header_chunked_request_trailer() {
+  assert_bad_request_without_handler(
+    concat!(
+      "POST /upload HTTP/1.1\r\n",
+      "Host: localhost\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "\r\n",
+      "2\r\n",
+      "OK\r\n",
+      "0\r\n",
+      ":method: POST\r\n",
+      "\r\n"
+    )
+    .as_bytes(),
+  );
+}
+
+#[test]
 fn server_exposes_empty_trailers_for_chunked_request_without_trailers() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");

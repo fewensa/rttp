@@ -2861,7 +2861,10 @@ fn is_forbidden_trailer_name(name: &str) -> bool {
     name.to_ascii_lowercase().as_str(),
     "authorization"
       | "connection"
+      | "content-encoding"
       | "content-length"
+      | "content-range"
+      | "content-type"
       | "cookie"
       | "host"
       | "proxy-authenticate"
