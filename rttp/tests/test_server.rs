@@ -157,6 +157,52 @@ fn assert_invalid_h2_headers_without_handler(header_block: &[u8]) {
   assert!(rx.try_recv().is_err());
 }
 
+fn assert_invalid_h2_request_trailers_without_handler(trailer_block: &[u8]) {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send(request).expect("send unexpected h2 request");
+      HttpResponse::ok("unexpected")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &h2_post_headers(b"/invalid-trailers", addr.to_string().as_bytes()),
+  );
+  write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 1, b"body");
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    trailer_block,
+  );
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown h2 write");
+
+  let error = handle
+    .join()
+    .expect("server thread")
+    .expect_err("invalid h2 trailers should reject request");
+  assert_eq!(ErrorKind::InvalidData, error.kind());
+  assert!(rx.try_recv().is_err());
+}
+
 fn assert_invalid_h2_frame_without_handler(
   frame_type: u8,
   flags: u8,
@@ -484,6 +530,215 @@ fn server_accepts_http2_prior_knowledge_headers_and_data_before_calling_handler(
   assert_eq!(b"stored", response_body.payload.as_slice());
 
   handle.join().expect("server thread");
+}
+
+#[test]
+fn server_decodes_http2_prior_knowledge_request_trailers_after_data() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.body().to_vec(),
+          request.header("x-trace").map(str::to_string),
+          request.trailer("x-trace").map(str::to_string),
+          request.trailer("X-UPLOAD-STATUS").map(str::to_string),
+          request.trailers().to_vec(),
+        ))
+        .expect("send parsed h2 trailer request");
+        HttpResponse::ok("stored")
+      })
+      .expect("serve one h2 trailer request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &h2_post_headers(b"/upload-with-trailers", addr.to_string().as_bytes()),
+  );
+  write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 1, b"body before trailers");
+
+  let mut trailers = h2_literal_new_name(b"x-trace", b"from-trailer");
+  trailers.extend(h2_literal_new_name(b"x-upload-status", b"stored"));
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &trailers,
+  );
+
+  let response_headers = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(H2_FLAG_END_HEADERS, response_headers.flags);
+  assert_eq!(1, response_headers.stream_id);
+
+  let response_body = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
+  assert_eq!(1, response_body.stream_id);
+  assert_eq!(b"stored", response_body.payload.as_slice());
+
+  assert_eq!(
+    (
+      b"body before trailers".to_vec(),
+      None,
+      Some("from-trailer".to_string()),
+      Some("stored".to_string()),
+      vec![
+        ("x-trace".to_string(), "from-trailer".to_string()),
+        ("x-upload-status".to_string(), "stored".to_string()),
+      ]
+    ),
+    rx.recv().expect("receive parsed h2 trailer request")
+  );
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_decodes_http2_prior_knowledge_request_trailers_with_continuation() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request.trailers().to_vec())
+          .expect("send parsed h2 continuation trailers");
+        HttpResponse::ok("stored")
+      })
+      .expect("serve one h2 continuation trailer request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &h2_post_headers(
+      b"/upload-with-continued-trailers",
+      addr.to_string().as_bytes(),
+    ),
+  );
+  write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 1, b"body");
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_STREAM,
+    1,
+    &h2_literal_new_name(b"x-first", b"one"),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_CONTINUATION,
+    H2_FLAG_END_HEADERS,
+    1,
+    &h2_literal_new_name(b"x-second", b"two"),
+  );
+
+  let response_headers = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(1, response_headers.stream_id);
+
+  let response_body = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
+  assert_eq!(b"stored", response_body.payload.as_slice());
+
+  assert_eq!(
+    vec![
+      ("x-first".to_string(), "one".to_string()),
+      ("x-second".to_string(), "two".to_string()),
+    ],
+    rx.recv().expect("receive parsed h2 continuation trailers")
+  );
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_request_trailer_pseudo_header() {
+  assert_invalid_h2_request_trailers_without_handler(&h2_literal_indexed_name(2, b"GET"));
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_forbidden_request_trailer_name() {
+  assert_invalid_h2_request_trailers_without_handler(&h2_literal_new_name(b"content-length", b"4"));
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_request_trailers_without_end_stream() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send(request).expect("send unexpected h2 request");
+      HttpResponse::ok("unexpected")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &h2_post_headers(b"/non-terminal-trailers", addr.to_string().as_bytes()),
+  );
+  write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 1, b"body");
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &h2_literal_new_name(b"x-trace", b"not-terminal"),
+  );
+  write_h2_frame(&mut stream, H2_FRAME_DATA, H2_FLAG_END_STREAM, 1, b"after");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown h2 write");
+
+  let error = handle
+    .join()
+    .expect("server thread")
+    .expect_err("non-terminal h2 trailers should reject request");
+  assert_eq!(ErrorKind::InvalidData, error.kind());
+  assert!(rx.try_recv().is_err());
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_request_trailer_value_control_bytes() {
+  assert_invalid_h2_request_trailers_without_handler(&h2_literal_new_name(
+    b"x-trace",
+    b"safe\r\nx-evil: true",
+  ));
 }
 
 #[test]
