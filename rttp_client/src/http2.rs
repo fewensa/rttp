@@ -15,6 +15,7 @@ const CLIENT_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 const FRAME_DATA: u8 = 0x0;
 const FRAME_HEADERS: u8 = 0x1;
 const FRAME_SETTINGS: u8 = 0x4;
+const FRAME_WINDOW_UPDATE: u8 = 0x8;
 const FRAME_CONTINUATION: u8 = 0x9;
 
 const FLAG_END_STREAM: u8 = 0x1;
@@ -279,6 +280,8 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
         body.extend_from_slice(&frame.payload);
         if frame.flags & FLAG_END_STREAM == FLAG_END_STREAM {
           break;
+        } else if !frame.payload.is_empty() {
+          write_window_updates(stream, STREAM_ID, frame.payload.len())?;
         }
       }
       (_, STREAM_ID) => {}
@@ -358,6 +361,23 @@ fn write_frame(
   header[5..9].copy_from_slice(&(stream_id & 0x7fff_ffff).to_be_bytes());
   stream.write_all(&header).map_err(error::request)?;
   stream.write_all(payload).map_err(error::request)
+}
+
+fn write_window_updates(
+  stream: &mut TcpStream,
+  stream_id: u32,
+  consumed: usize,
+) -> error::Result<()> {
+  if consumed > 0x7fff_ffff {
+    return Err(error::response(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "HTTP/2 DATA frame exceeds WINDOW_UPDATE increment range",
+    )));
+  }
+  let payload = (consumed as u32).to_be_bytes();
+  write_frame(stream, FRAME_WINDOW_UPDATE, 0, stream_id, &payload)?;
+  write_frame(stream, FRAME_WINDOW_UPDATE, 0, 0, &payload)?;
+  stream.flush().map_err(error::request)
 }
 
 fn encode_literal_indexed_name_without_indexing(
@@ -551,9 +571,47 @@ fn static_header(index: usize) -> error::Result<(&'static str, &'static str)> {
     18 => Ok(("accept-ranges", "")),
     19 => Ok(("accept", "")),
     20 => Ok(("access-control-allow-origin", "")),
+    21 => Ok(("age", "")),
+    22 => Ok(("allow", "")),
+    23 => Ok(("authorization", "")),
+    24 => Ok(("cache-control", "")),
+    25 => Ok(("content-disposition", "")),
+    26 => Ok(("content-encoding", "")),
+    27 => Ok(("content-language", "")),
+    28 => Ok(("content-length", "")),
+    29 => Ok(("content-location", "")),
+    30 => Ok(("content-range", "")),
     31 => Ok(("content-type", "")),
+    32 => Ok(("cookie", "")),
     33 => Ok(("date", "")),
+    34 => Ok(("etag", "")),
+    35 => Ok(("expect", "")),
+    36 => Ok(("expires", "")),
+    37 => Ok(("from", "")),
+    38 => Ok(("host", "")),
+    39 => Ok(("if-match", "")),
+    40 => Ok(("if-modified-since", "")),
+    41 => Ok(("if-none-match", "")),
+    42 => Ok(("if-range", "")),
+    43 => Ok(("if-unmodified-since", "")),
+    44 => Ok(("last-modified", "")),
+    45 => Ok(("link", "")),
+    46 => Ok(("location", "")),
+    47 => Ok(("max-forwards", "")),
+    48 => Ok(("proxy-authenticate", "")),
+    49 => Ok(("proxy-authorization", "")),
+    50 => Ok(("range", "")),
+    51 => Ok(("referer", "")),
+    52 => Ok(("refresh", "")),
+    53 => Ok(("retry-after", "")),
     54 => Ok(("server", "")),
+    55 => Ok(("set-cookie", "")),
+    56 => Ok(("strict-transport-security", "")),
+    57 => Ok(("transfer-encoding", "")),
+    58 => Ok(("user-agent", "")),
+    59 => Ok(("vary", "")),
+    60 => Ok(("via", "")),
+    61 => Ok(("www-authenticate", "")),
     _ => Err(error::bad_response("unsupported HPACK static table index")),
   }
 }
