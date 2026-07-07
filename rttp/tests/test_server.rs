@@ -1246,8 +1246,14 @@ fn server_returns_bad_request_for_malformed_request_line() {
 }
 
 #[test]
-fn server_returns_bad_request_for_invalid_http_version() {
-  assert_bad_request_without_handler(b"GET / HTTP/2.0\r\nHost: localhost\r\n\r\n");
+fn server_returns_bad_request_for_unsupported_and_malformed_http_versions() {
+  for raw in [
+    b"GET / HTTP/0.9\r\nHost: localhost\r\n\r\n".as_slice(),
+    b"GET / HTTP/2.0\r\nHost: localhost\r\n\r\n",
+    b"GET / HTP/1.1\r\nHost: localhost\r\n\r\n",
+  ] {
+    assert_bad_request_without_handler(raw);
+  }
 }
 
 #[test]

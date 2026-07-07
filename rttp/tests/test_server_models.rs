@@ -118,7 +118,6 @@ fn rejects_request_body_longer_than_content_length() {
 fn rejects_malformed_request_line_and_request_metadata() {
   for raw in [
     b"GET  HTTP/1.1\r\nHost: example.test\r\n\r\n".as_slice(),
-    b"GET / HTTP/2.0\r\nHost: example.test\r\n\r\n",
     b"GE(T / HTTP/1.1\r\nHost: example.test\r\n\r\n",
     b"GET /bad path HTTP/1.1\r\nHost: example.test\r\n\r\n",
     b"GET http://:80/path HTTP/1.1\r\nHost: example.test\r\n\r\n",
@@ -127,6 +126,19 @@ fn rejects_malformed_request_line_and_request_metadata() {
     b"CONNECT example.test:port HTTP/1.1\r\nHost: example.test\r\n\r\n",
   ] {
     let _error = HttpRequest::parse(raw).expect_err("request should be rejected");
+  }
+}
+
+#[test]
+fn rejects_unsupported_and_malformed_http_version_tokens() {
+  for raw in [
+    b"GET / HTTP/0.9\r\nHost: example.test\r\n\r\n".as_slice(),
+    b"GET / HTTP/2.0\r\nHost: example.test\r\n\r\n",
+    b"GET / HTP/1.1\r\nHost: example.test\r\n\r\n",
+  ] {
+    let error = HttpRequest::parse(raw).expect_err("request should be rejected");
+
+    assert_eq!("invalid request version", error.to_string());
   }
 }
 
