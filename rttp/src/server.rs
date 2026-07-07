@@ -2,6 +2,7 @@ use std::error::Error;
 use std::fmt;
 use std::io::{self, BufRead, BufReader, Cursor, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use socket2::{Domain, Protocol, Socket, Type};
@@ -1109,16 +1110,22 @@ fn decode_http2_string(block: &[u8], cursor: &mut usize) -> io::Result<String> {
 }
 
 fn decode_http2_huffman_string(encoded: &[u8]) -> io::Result<Vec<u8>> {
+  let table = http2_huffman_decode_table();
   let mut decoded = Vec::with_capacity(encoded.len());
   let mut code = 0u32;
   let mut code_len = 0u8;
+  let mut node = 0usize;
 
   for byte in encoded {
     for bit_index in (0..8).rev() {
-      code = (code << 1) | (((byte >> bit_index) & 1) as u32);
+      let bit = ((byte >> bit_index) & 1) as usize;
+      code = (code << 1) | (bit as u32);
       code_len += 1;
+      node = table
+        .next_node(node, bit)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid HPACK Huffman code"))?;
 
-      if let Some(symbol) = http2_huffman_symbol(code, code_len) {
+      if let Some(symbol) = table.symbol(node) {
         if symbol == HTTP2_HUFFMAN_EOS {
           return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -1128,6 +1135,7 @@ fn decode_http2_huffman_string(encoded: &[u8]) -> io::Result<Vec<u8>> {
         decoded.push(symbol as u8);
         code = 0;
         code_len = 0;
+        node = 0;
       } else if code_len > HTTP2_HUFFMAN_EOS_BITS {
         return Err(io::Error::new(
           io::ErrorKind::InvalidData,
@@ -1151,11 +1159,68 @@ fn decode_http2_huffman_string(encoded: &[u8]) -> io::Result<Vec<u8>> {
   Ok(decoded)
 }
 
-fn http2_huffman_symbol(code: u32, code_len: u8) -> Option<u16> {
-  HTTP2_HUFFMAN_CODES
-    .iter()
-    .position(|&(bits, table_code)| bits == code_len && table_code == code)
-    .map(|index| index as u16)
+fn http2_huffman_decode_table() -> &'static Http2HuffmanDecodeTable {
+  static TABLE: OnceLock<Http2HuffmanDecodeTable> = OnceLock::new();
+  TABLE.get_or_init(Http2HuffmanDecodeTable::from_codes)
+}
+
+struct Http2HuffmanDecodeTable {
+  nodes: Vec<Http2HuffmanNode>,
+}
+
+impl Http2HuffmanDecodeTable {
+  fn from_codes() -> Self {
+    let mut table = Self {
+      nodes: vec![Http2HuffmanNode::default()],
+    };
+
+    for (symbol, &(code_len, code)) in HTTP2_HUFFMAN_CODES.iter().enumerate() {
+      table.insert(code, code_len, symbol as u16);
+    }
+
+    table
+  }
+
+  fn insert(&mut self, code: u32, code_len: u8, symbol: u16) {
+    let mut node = 0usize;
+    for bit_index in (0..code_len).rev() {
+      let bit = ((code >> bit_index) & 1) as usize;
+      node = match self.nodes[node].children[bit] {
+        Some(child) => child,
+        None => {
+          let child = self.nodes.len();
+          self.nodes.push(Http2HuffmanNode::default());
+          self.nodes[node].children[bit] = Some(child);
+          child
+        }
+      };
+    }
+    assert!(self.nodes[node].symbol.replace(symbol).is_none());
+  }
+
+  #[cfg(test)]
+  fn decode_symbol(&self, code: u32, code_len: u8) -> Option<u16> {
+    let mut node = 0usize;
+    for bit_index in (0..code_len).rev() {
+      let bit = ((code >> bit_index) & 1) as usize;
+      node = self.next_node(node, bit)?;
+    }
+    self.symbol(node)
+  }
+
+  fn next_node(&self, node: usize, bit: usize) -> Option<usize> {
+    self.nodes[node].children[bit]
+  }
+
+  fn symbol(&self, node: usize) -> Option<u16> {
+    self.nodes[node].symbol
+  }
+}
+
+#[derive(Default)]
+struct Http2HuffmanNode {
+  children: [Option<usize>; 2],
+  symbol: Option<u16>,
 }
 
 const HTTP2_HUFFMAN_EOS: u16 = 256;
@@ -3498,6 +3563,20 @@ impl Error for UnsupportedExpectation {}
 mod tests {
   use super::*;
   use std::io::{BufRead, BufReader, Cursor};
+
+  #[test]
+  fn http2_huffman_decode_table_resolves_symbols_without_linear_scan() {
+    let table = http2_huffman_decode_table();
+
+    assert_eq!(Some(b'0' as u16), table.decode_symbol(0x00, 5));
+    assert_eq!(Some(b'.' as u16), table.decode_symbol(0x17, 6));
+    assert_eq!(Some(b'/' as u16), table.decode_symbol(0x18, 6));
+    assert_eq!(
+      Some(HTTP2_HUFFMAN_EOS),
+      table.decode_symbol(0x3fff_ffff, 30)
+    );
+    assert_eq!(None, table.decode_symbol(0x00, 1));
+  }
 
   #[test]
   fn read_next_from_consumes_one_fully_framed_request_at_a_time() {
