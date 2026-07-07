@@ -25,6 +25,9 @@ const FLAG_ACK: u8 = 0x1;
 const FLAG_END_HEADERS: u8 = 0x4;
 
 const STREAM_ID: u32 = 1;
+const SETTING_MAX_FRAME_SIZE: u16 = 0x5;
+const DEFAULT_MAX_FRAME_SIZE: usize = 16 * 1024;
+const MAX_FRAME_SIZE_LIMIT: usize = 16_777_215;
 const WINDOW_UPDATE_THRESHOLD: usize = 32 * 1024;
 
 pub struct PriorKnowledgeClient<'a> {
@@ -56,8 +59,8 @@ impl<'a> PriorKnowledgeClient<'a> {
 
     let mut stream = connect_tcp_stream(addr(&url)?, self.request.origin().config())?;
     write_connection_preface(&mut stream)?;
-    read_settings_and_ack(&mut stream)?;
-    write_request(&mut stream, &self.request, &url)?;
+    let peer_max_frame_size = read_settings_and_ack(&mut stream)?;
+    write_request(&mut stream, &self.request, &url, peer_max_frame_size)?;
     let response = read_single_stream_response(&mut stream, self.request.url().clone())?;
     self.request.origin_mut().closed_set(true);
     Ok(response)
@@ -131,7 +134,7 @@ fn write_connection_preface(stream: &mut TcpStream) -> error::Result<()> {
   stream.flush().map_err(error::request)
 }
 
-fn read_settings_and_ack(stream: &mut TcpStream) -> error::Result<()> {
+fn read_settings_and_ack(stream: &mut TcpStream) -> error::Result<usize> {
   loop {
     let frame = read_frame(stream)?;
     if frame.frame_type != FRAME_SETTINGS {
@@ -150,13 +153,36 @@ fn read_settings_and_ack(stream: &mut TcpStream) -> error::Result<()> {
     if frame.stream_id != 0 || frame.payload.len() % 6 != 0 {
       return Err(error::bad_response("invalid HTTP/2 SETTINGS frame"));
     }
+    let peer_max_frame_size = peer_max_frame_size(&frame.payload)?;
     write_frame(stream, FRAME_SETTINGS, FLAG_ACK, 0, &[])?;
     stream.flush().map_err(error::request)?;
-    return Ok(());
+    return Ok(peer_max_frame_size);
   }
 }
 
-fn write_request(stream: &mut TcpStream, request: &RawRequest<'_>, url: &Url) -> error::Result<()> {
+fn peer_max_frame_size(payload: &[u8]) -> error::Result<usize> {
+  let mut max_frame_size = DEFAULT_MAX_FRAME_SIZE;
+  for setting in payload.chunks_exact(6) {
+    let identifier = u16::from_be_bytes([setting[0], setting[1]]);
+    let value = u32::from_be_bytes([setting[2], setting[3], setting[4], setting[5]]) as usize;
+    if identifier == SETTING_MAX_FRAME_SIZE {
+      if !(DEFAULT_MAX_FRAME_SIZE..=MAX_FRAME_SIZE_LIMIT).contains(&value) {
+        return Err(error::bad_response(
+          "invalid HTTP/2 SETTINGS_MAX_FRAME_SIZE value",
+        ));
+      }
+      max_frame_size = value;
+    }
+  }
+  Ok(max_frame_size)
+}
+
+fn write_request(
+  stream: &mut TcpStream,
+  request: &RawRequest<'_>,
+  url: &Url,
+  peer_max_frame_size: usize,
+) -> error::Result<()> {
   let header_block = encode_request_headers(request, url)?;
   let body = request
     .body()
@@ -176,9 +202,28 @@ fn write_request(stream: &mut TcpStream, request: &RawRequest<'_>, url: &Url) ->
     &header_block,
   )?;
   if !body.is_empty() {
-    write_frame(stream, FRAME_DATA, FLAG_END_STREAM, STREAM_ID, body)?;
+    write_data_frames(stream, body, peer_max_frame_size)?;
   }
   stream.flush().map_err(error::request)
+}
+
+fn write_data_frames(
+  stream: &mut TcpStream,
+  body: &[u8],
+  peer_max_frame_size: usize,
+) -> error::Result<()> {
+  for (index, chunk) in body.chunks(peer_max_frame_size).enumerate() {
+    let sent = index
+      .checked_mul(peer_max_frame_size)
+      .ok_or_else(|| error::request(io::Error::other("HTTP/2 request body is too large")))?;
+    let flags = if sent + chunk.len() == body.len() {
+      FLAG_END_STREAM
+    } else {
+      0
+    };
+    write_frame(stream, FRAME_DATA, flags, STREAM_ID, chunk)?;
+  }
+  Ok(())
 }
 
 fn encode_request_headers(request: &RawRequest<'_>, url: &Url) -> error::Result<Vec<u8>> {
@@ -474,7 +519,7 @@ fn write_frame_io(
   stream_id: u32,
   payload: &[u8],
 ) -> io::Result<()> {
-  if payload.len() > 16_777_215 {
+  if payload.len() > MAX_FRAME_SIZE_LIMIT {
     return Err(io::Error::new(
       io::ErrorKind::InvalidInput,
       "HTTP/2 frame payload is too large",

@@ -165,6 +165,55 @@ fn prior_knowledge_post_sends_headers_then_body_data_frame() {
 }
 
 #[test]
+fn prior_knowledge_post_splits_body_data_frames_at_default_peer_max_frame_size() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+  let body = "x".repeat(16 * 1024 + 7);
+  let expected_body = body.clone();
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_handshake_without_request(&mut stream);
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_HEADERS, request_headers.flags);
+    assert_eq!(1, request_headers.stream_id);
+
+    let first_body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, first_body.frame_type);
+    assert_eq!(0, first_body.flags);
+    assert_eq!(1, first_body.stream_id);
+    assert_eq!(16 * 1024, first_body.payload.len());
+
+    let second_body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, second_body.frame_type);
+    assert_eq!(FLAG_END_STREAM, second_body.flags);
+    assert_eq!(1, second_body.stream_id);
+    assert_eq!(7, second_body.payload.len());
+
+    let mut full_body = first_body.payload;
+    full_body.extend_from_slice(&second_body.payload);
+    assert_eq!(expected_body.as_bytes(), full_body.as_slice());
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"created");
+  });
+
+  let response = HttpClient::new()
+    .post()
+    .url(format!("http://{}/upload", addr))
+    .raw(&body)
+    .emit_http2_prior_knowledge()
+    .expect("h2 POST response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("created", response.body().string().unwrap());
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
 fn prior_knowledge_put_and_patch_send_body_data_frames() {
   for method in ["PUT", "PATCH"] {
     let request_header_block = emit_prior_knowledge_body_request(method);
