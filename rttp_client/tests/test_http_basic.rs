@@ -401,6 +401,32 @@ fn test_chunked_malformed_extension_is_rejected() {
 }
 
 #[test]
+fn test_chunked_malformed_size_is_rejected_as_response_error() {
+  let (addr, _handle) = support::spawn_chunked_response_server(concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "z\r\n",
+    "OK\r\n",
+    "0\r\n",
+    "\r\n"
+  ));
+
+  let error = client()
+    .get()
+    .url(format!("http://{}/chunked", addr))
+    .emit()
+    .expect_err("malformed chunk size should be rejected");
+
+  assert!(
+    error.to_string().starts_with("error receive response")
+      && error.to_string().contains("Invalid chunk size"),
+    "unexpected error: {error}"
+  );
+}
+
+#[test]
 fn test_chunked_missing_crlf_after_chunk_data_is_rejected() {
   let (addr, _handle) = support::spawn_chunked_response_server(concat!(
     "HTTP/1.1 200 OK\r\n",
@@ -420,6 +446,54 @@ fn test_chunked_missing_crlf_after_chunk_data_is_rejected() {
 
   assert!(
     error.to_string().contains("Invalid chunk terminator"),
+    "unexpected error: {error}"
+  );
+}
+
+#[test]
+fn test_chunked_missing_final_zero_chunk_is_rejected_as_response_error() {
+  let (addr, _handle) = support::spawn_chunked_response_server(concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "2\r\nOK\r\n"
+  ));
+
+  let error = client()
+    .get()
+    .url(format!("http://{}/chunked", addr))
+    .emit()
+    .expect_err("missing final zero chunk should be rejected");
+
+  assert!(
+    error.to_string().starts_with("error receive response")
+      && error.to_string().contains("Unexpected end of chunked body"),
+    "unexpected error: {error}"
+  );
+}
+
+#[test]
+fn test_chunked_truncated_trailer_block_is_rejected_as_response_error() {
+  let (addr, _handle) = support::spawn_chunked_response_server(concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "2\r\nOK\r\n",
+    "0\r\n",
+    "X-Trace: abc"
+  ));
+
+  let error = client()
+    .get()
+    .url(format!("http://{}/chunked", addr))
+    .emit()
+    .expect_err("truncated chunk trailer block should be rejected");
+
+  assert!(
+    error.to_string().starts_with("error receive response")
+      && error.to_string().contains("Unexpected end of chunked body"),
     "unexpected error: {error}"
   );
 }
