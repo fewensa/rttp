@@ -1683,9 +1683,43 @@ fn encode_http2_literal_new_name_without_indexing(
 }
 
 fn encode_http2_string(block: &mut Vec<u8>, value: &[u8]) -> io::Result<()> {
+  let huffman = encode_http2_huffman_string(value);
+  if huffman.len() < value.len() {
+    encode_http2_integer(block, huffman.len(), 7, 0x80)?;
+    block.extend_from_slice(&huffman);
+    return Ok(());
+  }
+
   encode_http2_integer(block, value.len(), 7, 0)?;
   block.extend_from_slice(value);
   Ok(())
+}
+
+fn encode_http2_huffman_string(value: &[u8]) -> Vec<u8> {
+  let mut encoded = Vec::new();
+  let mut bits = 0u64;
+  let mut bit_len = 0u8;
+
+  for byte in value {
+    let (code_len, code) = HTTP2_HUFFMAN_CODES[*byte as usize];
+    bits = (bits << code_len) | u64::from(code);
+    bit_len += code_len;
+
+    while bit_len >= 8 {
+      let shift = bit_len - 8;
+      encoded.push((bits >> shift) as u8);
+      bit_len -= 8;
+      bits &= (1u64 << shift) - 1;
+    }
+  }
+
+  if bit_len > 0 {
+    let padding = 8 - bit_len;
+    bits = (bits << padding) | ((1u64 << padding) - 1);
+    encoded.push(bits as u8);
+  }
+
+  encoded
 }
 
 fn encode_http2_integer(

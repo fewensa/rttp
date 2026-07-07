@@ -127,6 +127,94 @@ fn h2_get_headers_with_huffman_path(encoded_path: &[u8]) -> Vec<u8> {
   headers
 }
 
+#[derive(Debug)]
+struct CapturedHpackLiteral {
+  name: Option<String>,
+  name_huffman: bool,
+  value: Option<String>,
+  value_huffman: bool,
+}
+
+fn decode_captured_hpack_integer(block: &[u8], cursor: &mut usize, prefix_bits: u8) -> usize {
+  assert!(*cursor < block.len(), "truncated HPACK integer");
+  let max_prefix = (1usize << prefix_bits) - 1;
+  let mut value = (block[*cursor] as usize) & max_prefix;
+  *cursor += 1;
+  if value < max_prefix {
+    return value;
+  }
+
+  let mut shift = 0;
+  loop {
+    assert!(*cursor < block.len(), "truncated HPACK integer");
+    let byte = block[*cursor];
+    *cursor += 1;
+    value += ((byte & 0x7f) as usize) << shift;
+    if byte & 0x80 == 0 {
+      return value;
+    }
+    shift += 7;
+  }
+}
+
+fn decode_captured_hpack_string(block: &[u8], cursor: &mut usize) -> (Option<String>, bool) {
+  assert!(*cursor < block.len(), "truncated HPACK string");
+  let huffman = block[*cursor] & 0x80 == 0x80;
+  let len = decode_captured_hpack_integer(block, cursor, 7);
+  let end = *cursor + len;
+  assert!(end <= block.len(), "truncated HPACK string");
+  let value = if huffman {
+    None
+  } else {
+    Some(String::from_utf8(block[*cursor..end].to_vec()).expect("raw HPACK string is UTF-8"))
+  };
+  *cursor = end;
+  (value, huffman)
+}
+
+fn captured_hpack_literals(block: &[u8]) -> Vec<CapturedHpackLiteral> {
+  let mut literals = Vec::new();
+  let mut cursor = 0;
+  while cursor < block.len() {
+    let byte = block[cursor];
+    if byte & 0x80 == 0x80 {
+      decode_captured_hpack_integer(block, &mut cursor, 7);
+      continue;
+    }
+
+    let prefix_bits = match byte {
+      b if b & 0x40 == 0x40 => 6,
+      b if b & 0xf0 == 0x00 => 4,
+      b if b & 0xf0 == 0x10 => 4,
+      _ => panic!("unsupported HPACK field representation: {byte:#x}"),
+    };
+    let name_index = decode_captured_hpack_integer(block, &mut cursor, prefix_bits);
+    let (name, name_huffman) = if name_index == 0 {
+      decode_captured_hpack_string(block, &mut cursor)
+    } else {
+      (None, false)
+    };
+    let (value, value_huffman) = decode_captured_hpack_string(block, &mut cursor);
+    literals.push(CapturedHpackLiteral {
+      name,
+      name_huffman,
+      value,
+      value_huffman,
+    });
+  }
+  literals
+}
+
+fn captured_hpack_literal<'a>(
+  literals: &'a [CapturedHpackLiteral],
+  name: &str,
+) -> &'a CapturedHpackLiteral {
+  literals
+    .iter()
+    .find(|literal| literal.name.as_deref() == Some(name))
+    .unwrap_or_else(|| panic!("missing HPACK literal {name}"))
+}
+
 const H2_HUFFMAN_PATH: &[u8] = &[0x62, 0x7b, 0x65, 0x96, 0x91, 0xd4, 0xb5, 0x63, 0x4c, 0xff];
 const H2_HUFFMAN_LOCALHOST: &[u8] = &[0xa0, 0xe4, 0x1d, 0x13, 0x9d, 0x09];
 const H2_HUFFMAN_X_HUFFMAN: &[u8] = &[0xf2, 0xb4, 0xf6, 0xcb, 0x2d, 0x23, 0xab];
@@ -526,9 +614,88 @@ fn server_accepts_http2_prior_knowledge_get_and_writes_single_stream_response() 
 }
 
 #[test]
+fn server_huffman_encodes_http2_response_header_and_trailer_literals_only_when_smaller() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        HttpResponse::ok("hpack body")
+          .header("X", "aaaaaaaaaaaaaaaa")
+          .header("Y", "x")
+          .header("Trailer", "X")
+          .trailer("X", "aaaaaaaaaaaaaaaa")
+          .trailer("Y", "x")
+      })
+      .expect("serve huffman h2 response");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_headers(b"/huffman-response", addr.to_string().as_bytes()),
+  );
+
+  let response_headers = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(H2_FLAG_END_HEADERS, response_headers.flags);
+  assert_eq!(1, response_headers.stream_id);
+  assert_eq!(
+    0x88, response_headers.payload[0],
+    "status must stay static-indexed"
+  );
+
+  let header_literals = captured_hpack_literals(&response_headers.payload);
+  let compressed_header = captured_hpack_literal(&header_literals, "x");
+  assert!(!compressed_header.name_huffman);
+  assert!(compressed_header.value_huffman);
+  assert_eq!(None, compressed_header.value);
+  let raw_header = captured_hpack_literal(&header_literals, "y");
+  assert!(!raw_header.name_huffman);
+  assert!(!raw_header.value_huffman);
+  assert_eq!(Some("x"), raw_header.value.as_deref());
+
+  let response_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(0, response_body.flags);
+  assert_eq!(b"hpack body", response_body.payload.as_slice());
+
+  let response_trailers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_trailers.frame_type);
+  assert_eq!(
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    response_trailers.flags
+  );
+  assert_eq!(1, response_trailers.stream_id);
+
+  let trailer_literals = captured_hpack_literals(&response_trailers.payload);
+  let compressed_trailer = captured_hpack_literal(&trailer_literals, "x");
+  assert!(!compressed_trailer.name_huffman);
+  assert!(compressed_trailer.value_huffman);
+  assert_eq!(None, compressed_trailer.value);
+  let raw_trailer = captured_hpack_literal(&trailer_literals, "y");
+  assert!(!raw_trailer.name_huffman);
+  assert!(!raw_trailer.value_huffman);
+  assert_eq!(Some("x"), raw_trailer.value.as_deref());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn server_splits_large_http2_response_headers_to_peer_max_frame_size() {
   let max_frame_size = 16_384usize;
-  let large_header_value = "a".repeat(max_frame_size + 1024);
+  let large_header_value = "a".repeat(max_frame_size * 2);
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
 
@@ -568,7 +735,7 @@ fn server_splits_large_http2_response_headers_to_peer_max_frame_size() {
 #[test]
 fn server_splits_large_http2_response_trailers_to_peer_max_frame_size() {
   let max_frame_size = 16_384usize;
-  let large_trailer_value = "t".repeat(max_frame_size + 1024);
+  let large_trailer_value = "t".repeat(max_frame_size * 2);
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
 
