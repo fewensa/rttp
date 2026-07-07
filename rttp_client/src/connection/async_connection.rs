@@ -396,7 +396,8 @@ impl<'a> AsyncConnection<'a> {
         content_length,
       } => async_write_fixed_streaming_body(stream, *reader, *content_length).await?,
       AsyncStreamingRequestBody::Chunked { reader } => {
-        async_write_chunked_streaming_body(stream, *reader).await?
+        async_write_chunked_streaming_body(stream, *reader, self.conn.request().origin().trailers())
+          .await?
       }
     }
     stream.flush().await.map_err(error::request)
@@ -1008,6 +1009,7 @@ where
 async fn async_write_chunked_streaming_body<S>(
   writer: &mut S,
   reader: &mut (dyn AsyncRead + Unpin),
+  trailers: &[Header],
 ) -> error::Result<()>
 where
   S: AsyncWrite + Unpin,
@@ -1016,10 +1018,21 @@ where
   loop {
     let read = reader.read(&mut buffer).await.map_err(error::request)?;
     if read == 0 {
-      writer
-        .write_all(b"0\r\n\r\n")
-        .await
-        .map_err(error::request)?;
+      writer.write_all(b"0\r\n").await.map_err(error::request)?;
+      for trailer in trailers {
+        writer
+          .write_all(
+            format!(
+              "{}: {}\r\n",
+              trailer.name(),
+              trailer.value().replace("\r\n", "")
+            )
+            .as_bytes(),
+          )
+          .await
+          .map_err(error::request)?;
+      }
+      writer.write_all(CRLF).await.map_err(error::request)?;
       return Ok(());
     }
     writer

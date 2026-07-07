@@ -150,6 +150,21 @@ impl HttpClient {
     self
   }
 
+  /// Add request trailer field for chunked streaming request bodies.
+  pub fn trailer<N: AsRef<str>, V: AsRef<str>>(&mut self, name: N, value: V) -> &mut Self {
+    let trailers = self.request.trailers_mut();
+    let trailer = Header::new(name, value);
+    if let Some(existing) = trailers
+      .iter_mut()
+      .find(|item| item.name().eq_ignore_ascii_case(trailer.name()))
+    {
+      existing.replace(trailer);
+    } else {
+      trailers.push(trailer);
+    }
+    self
+  }
+
   /// Add request cookie
   pub fn cookie<S: AsRef<str>>(&mut self, cookie: S) -> &mut Self {
     self.header(("Cookie", cookie.as_ref()))
