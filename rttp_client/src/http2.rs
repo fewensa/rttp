@@ -24,6 +24,8 @@ const FRAME_CONTINUATION: u8 = 0x9;
 const FLAG_END_STREAM: u8 = 0x1;
 const FLAG_ACK: u8 = 0x1;
 const FLAG_END_HEADERS: u8 = 0x4;
+const FLAG_PADDED: u8 = 0x8;
+const FLAG_PRIORITY: u8 = 0x20;
 
 const STREAM_ID: u32 = 1;
 const SETTING_ENABLE_PUSH: u16 = 0x2;
@@ -445,7 +447,7 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
           HeaderBlockKind::ResponseHeaders
         };
         let end_stream = frame.flags & FLAG_END_STREAM == FLAG_END_STREAM;
-        header_block.extend_from_slice(&frame.payload);
+        header_block.extend_from_slice(header_block_fragment(&frame)?);
         if frame.flags & FLAG_END_HEADERS == FLAG_END_HEADERS {
           if apply_header_block(
             kind,
@@ -489,8 +491,9 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
       }
       (FRAME_DATA, STREAM_ID) => {
         let end_stream = frame.flags & FLAG_END_STREAM == FLAG_END_STREAM;
+        let data = data_payload(&frame)?;
         response_body_started = true;
-        body.extend_from_slice(&frame.payload);
+        body.extend_from_slice(data);
         pending_window_update = pending_window_update
           .checked_add(frame.payload.len())
           .ok_or_else(|| error::bad_response("HTTP/2 response body is too large"))?;
@@ -541,6 +544,50 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
 
   let status = status.ok_or_else(|| error::bad_response("missing HTTP/2 :status header"))?;
   build_response(url, status, &headers, body, trailers)
+}
+
+fn data_payload(frame: &Frame) -> error::Result<&[u8]> {
+  if frame.flags & FLAG_PADDED == 0 {
+    return Ok(&frame.payload);
+  }
+  let (&pad_length, payload) = frame
+    .payload
+    .split_first()
+    .ok_or_else(|| error::bad_response("invalid HTTP/2 DATA padding"))?;
+  strip_padding(payload, pad_length as usize, "DATA")
+}
+
+fn header_block_fragment(frame: &Frame) -> error::Result<&[u8]> {
+  let mut payload = frame.payload.as_slice();
+  let pad_length = if frame.flags & FLAG_PADDED == FLAG_PADDED {
+    let (&pad_length, rest) = payload
+      .split_first()
+      .ok_or_else(|| error::bad_response("invalid HTTP/2 HEADERS padding"))?;
+    payload = rest;
+    pad_length as usize
+  } else {
+    0
+  };
+
+  if frame.flags & FLAG_PRIORITY == FLAG_PRIORITY {
+    payload = payload
+      .get(5..)
+      .ok_or_else(|| error::bad_response("invalid HTTP/2 HEADERS priority"))?;
+  }
+
+  strip_padding(payload, pad_length, "HEADERS")
+}
+
+fn strip_padding<'a>(
+  payload: &'a [u8],
+  pad_length: usize,
+  frame_name: &str,
+) -> error::Result<&'a [u8]> {
+  let data_length = payload
+    .len()
+    .checked_sub(pad_length)
+    .ok_or_else(|| error::bad_response(format!("invalid HTTP/2 {} padding length", frame_name)))?;
+  Ok(&payload[..data_length])
 }
 
 fn is_unexpected_eof(err: &error::Error) -> bool {

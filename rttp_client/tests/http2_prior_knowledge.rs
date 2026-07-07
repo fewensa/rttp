@@ -19,7 +19,9 @@ const FRAME_CONTINUATION: u8 = 0x9;
 
 const FLAG_END_STREAM: u8 = 0x1;
 const FLAG_END_HEADERS: u8 = 0x4;
+const FLAG_PADDED: u8 = 0x8;
 const FLAG_ACK: u8 = 0x1;
+const FLAG_PRIORITY: u8 = 0x20;
 
 const SETTING_ENABLE_PUSH: u16 = 0x2;
 const SETTING_INITIAL_WINDOW_SIZE: u16 = 0x4;
@@ -528,6 +530,179 @@ fn prior_knowledge_exposes_response_trailers_after_data_without_changing_headers
   );
   assert!(response.header("x-trace").is_none());
   handle.join().expect("h2 peer thread");
+}
+
+#[test]
+fn prior_knowledge_decodes_padded_response_headers() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    let mut payload = vec![3, 0x88];
+    payload.extend_from_slice(&h2_literal_new_name(b"x-padded", b"headers"));
+    payload.extend_from_slice(&[0, 0, 0]);
+
+    write_frame(
+      &mut stream,
+      FRAME_HEADERS,
+      FLAG_PADDED | FLAG_END_HEADERS,
+      1,
+      &payload,
+    );
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"ok");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/padded-headers", addr))
+    .emit_http2_prior_knowledge()
+    .expect("h2 response with padded headers");
+
+  assert_eq!(200, response.code());
+  assert_eq!(
+    Some(&"headers".to_string()),
+    response.header_value("X-Padded")
+  );
+  assert_eq!("ok", response.body().string().unwrap());
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
+fn prior_knowledge_decodes_padded_data_without_appending_padding() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(
+      &mut stream,
+      FRAME_DATA,
+      FLAG_PADDED | FLAG_END_STREAM,
+      1,
+      &[4, b'b', b'o', b'd', b'y', 0, 0, 0, 0],
+    );
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/padded-data", addr))
+    .emit_http2_prior_knowledge()
+    .expect("h2 response with padded data");
+
+  assert_eq!(200, response.code());
+  assert_eq!("body", response.body().string().unwrap());
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
+fn prior_knowledge_decodes_padded_response_trailers() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    let mut trailer_payload = vec![2];
+    trailer_payload.extend_from_slice(&h2_literal_new_name(b"x-trace", b"padded"));
+    trailer_payload.extend_from_slice(&[0, 0]);
+
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, 0, 1, b"trailer body");
+    write_frame(
+      &mut stream,
+      FRAME_HEADERS,
+      FLAG_PADDED | FLAG_END_HEADERS | FLAG_END_STREAM,
+      1,
+      &trailer_payload,
+    );
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/padded-trailers", addr))
+    .emit_http2_prior_knowledge()
+    .expect("h2 response with padded trailers");
+
+  assert_eq!(200, response.code());
+  assert_eq!("trailer body", response.body().string().unwrap());
+  assert_eq!(
+    Some(&"padded".to_string()),
+    response.trailer_value("X-Trace")
+  );
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
+fn prior_knowledge_ignores_response_headers_priority_metadata() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    let mut payload = vec![0, 0, 0, 0, 16, 0x88];
+    payload.extend_from_slice(&h2_literal_new_name(b"x-priority", b"ignored"));
+
+    write_frame(
+      &mut stream,
+      FRAME_HEADERS,
+      FLAG_PRIORITY | FLAG_END_HEADERS,
+      1,
+      &payload,
+    );
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"priority");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/priority-headers", addr))
+    .emit_http2_prior_knowledge()
+    .expect("h2 response with priority headers");
+
+  assert_eq!(200, response.code());
+  assert_eq!(
+    Some(&"ignored".to_string()),
+    response.header_value("X-Priority")
+  );
+  assert_eq!("priority", response.body().string().unwrap());
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
+fn prior_knowledge_rejects_malformed_padding_lengths() {
+  let (data_addr, data_handle) = spawn_malformed_padding_peer(FRAME_DATA);
+  let data_error = HttpClient::new()
+    .get()
+    .url(format!("http://{}/bad-data-padding", data_addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("DATA padding longer than payload must fail");
+  assert!(
+    data_error.to_string().contains("padding"),
+    "unexpected error: {data_error}"
+  );
+  data_handle.join().expect("bad data padding peer thread");
+
+  let (headers_addr, headers_handle) = spawn_malformed_padding_peer(FRAME_HEADERS);
+  let headers_error = HttpClient::new()
+    .get()
+    .url(format!("http://{}/bad-headers-padding", headers_addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("HEADERS padding longer than payload must fail");
+  assert!(
+    headers_error.to_string().contains("padding"),
+    "unexpected error: {headers_error}"
+  );
+  headers_handle
+    .join()
+    .expect("bad headers padding peer thread");
 }
 
 #[test]
@@ -1365,6 +1540,39 @@ fn spawn_ping_peer(
     let (mut stream, _) = listener.accept().expect("accept h2 client");
     complete_h2_request_handshake(&mut stream);
     write_frame(&mut stream, FRAME_PING, flags, stream_id, payload);
+  });
+
+  (addr, handle)
+}
+
+fn spawn_malformed_padding_peer(frame_type: u8) -> (SocketAddr, thread::JoinHandle<()>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    match frame_type {
+      FRAME_DATA => {
+        write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+        write_frame(
+          &mut stream,
+          FRAME_DATA,
+          FLAG_PADDED | FLAG_END_STREAM,
+          1,
+          &[2, b'x'],
+        );
+      }
+      FRAME_HEADERS => write_frame(
+        &mut stream,
+        FRAME_HEADERS,
+        FLAG_PADDED | FLAG_END_HEADERS,
+        1,
+        &[2, 0x88],
+      ),
+      _ => unreachable!("unexpected frame type"),
+    }
   });
 
   (addr, handle)
