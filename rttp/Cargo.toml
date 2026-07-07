@@ -27,6 +27,7 @@ async-std = { version = "1" }
 rcgen = "0.11"
 rustls = "0.23"
 rttp_http11_test_fixtures = { path = "../rttp_http11_test_fixtures" }
+rttp_client = { path = "../rttp_client", features = ["http2"] }
 
 
 [features]
