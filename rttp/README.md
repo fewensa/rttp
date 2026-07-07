@@ -52,16 +52,20 @@ bodies, preserves chunked request trailers on `Request`, bounds request
 head/body parsing, handles `HEAD` without writing a response body, honors
 `Connection` close/keep-alive semantics across a bounded `serve_requests` loop,
 writes response body framing and response trailers consistently, and accepts
-`Expect: 100-continue`.
+`Expect: 100-continue`. On the same socket2 listener, the accept path detects
+the HTTP/2 client preface and dispatches prior-knowledge h2c requests to a
+minimal single-stream handler.
 
 The server is intentionally not a full RFC-covering web server and still does
-not implement server TLS or async accept loops.
+not implement server TLS, TLS ALPN, full HTTP/2 multiplexing, or async accept
+loops.
 
 ## Client feature
 
 Enable the `client` feature to access `rttp::Http::client`, or enable `async`,
-`tls-native`, `tls-rustls`, or `all` for the corresponding `rttp_client`
-capabilities.
+`http2`, `tls-native`, `tls-rustls`, or `all` for the corresponding
+`rttp_client` capabilities. The `http2` feature exposes the minimal
+prior-knowledge h2c GET client path; TLS ALPN remains a later integration point.
 
 Direct TCP client connections use `socket2`. SOCKS proxy handshakes remain
 delegated to the `socks` crate.
