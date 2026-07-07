@@ -28,8 +28,10 @@ through `Response::trailers`, `Response::trailer`, and
 `Response::trailer_value` for both blocking and async request APIs.
 With the `http2` feature enabled, `emit_http2_prior_knowledge` sends a minimal
 prior-knowledge h2c request over a direct socket2 TCP connection. Non-empty
-buffered request bodies are sent as DATA frames. TLS ALPN, proxy tunneling, and
-general HTTP/2 multiplexing are not part of that client path.
+buffered request bodies are sent as DATA frames, and incoming padded HEADERS,
+DATA, and trailer frames are decoded without exposing padding bytes. TLS ALPN,
+proxy tunneling, proxy h2, general HTTP/2 multiplexing, priority scheduling,
+and HPACK dynamic tables are not part of that client path.
 
 ## Examples
 
