@@ -22,6 +22,7 @@ pub(crate) enum ResponseBodyKind {
 pub(crate) struct ResponseParts {
   pub(crate) binary: Vec<u8>,
   pub(crate) trailers: Vec<Header>,
+  pub(crate) connection_reusable: bool,
   pub(crate) close_connection: bool,
 }
 
@@ -260,7 +261,9 @@ where
 {
   let close_connection = response_connection_should_close(&binary)?;
   let mut trailers = Vec::new();
-  match response_body_kind(&binary, expect_no_body)? {
+  let body_kind = response_body_kind(&binary, expect_no_body)?;
+  let connection_reusable = response_connection_reusable(&binary, &body_kind)?;
+  match body_kind {
     ResponseBodyKind::NoBody => {}
     ResponseBodyKind::Chunked => {
       let mut body_reader = ResponseBodyReader::new(reader, ResponseBodyKind::Chunked);
@@ -283,8 +286,16 @@ where
   Ok(ResponseParts {
     binary,
     trailers,
+    connection_reusable,
     close_connection,
   })
+}
+
+pub(crate) fn response_connection_reusable(
+  header: &[u8],
+  body_kind: &ResponseBodyKind,
+) -> error::Result<bool> {
+  Ok(!matches!(body_kind, ResponseBodyKind::UntilEof) && !response_connection_should_close(header)?)
 }
 
 pub(crate) fn response_headers(header: &[u8]) -> error::Result<Vec<Header>> {

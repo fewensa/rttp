@@ -14,9 +14,10 @@ use crate::connection::connection::{
   ExpectContinueResult,
 };
 use crate::connection::connection_reader::{
-  is_skippable_informational_status, response_body_kind, response_connection_should_close,
-  response_headers, response_status_code, validate_response_trailer_header, ResponseBodyKind,
-  ResponseParts, MAX_CHUNKED_RESPONSE_LINE_BYTES,
+  is_skippable_informational_status, response_body_kind, response_connection_reusable,
+  response_connection_should_close, response_headers, response_status_code,
+  validate_response_trailer_header, ResponseBodyKind, ResponseParts,
+  MAX_CHUNKED_RESPONSE_LINE_BYTES,
 };
 use crate::error;
 use crate::request::RawRequest;
@@ -63,11 +64,13 @@ impl<'a, S: AsyncRead + Unpin + ?Sized> AsyncStreamingResponse<'a, S> {
 
   async fn read_to_parts(mut self) -> error::Result<ResponseParts> {
     let close_connection = response_connection_should_close(&self.head)?;
+    let connection_reusable = response_connection_reusable(&self.head, &self.body.kind)?;
     let mut binary = self.head;
     self.body.read_to_end(&mut binary).await?;
     Ok(ResponseParts {
       binary,
       trailers: self.body.trailers().clone(),
+      connection_reusable,
       close_connection,
     })
   }
@@ -218,6 +221,7 @@ impl<'a> AsyncConnection<'a> {
 
   pub async fn async_call(mut self) -> error::Result<Response> {
     let mut visited_urls = HashSet::new();
+    let mut reusable_stream: Option<AllowStdIo<TcpStream>> = None;
 
     loop {
       let url = self.conn.url().map_err(error::builder)?;
@@ -227,8 +231,23 @@ impl<'a> AsyncConnection<'a> {
       ));
       let proxy = self.conn.proxy().clone();
       let parts = if let Some(proxy) = proxy.as_ref() {
+        reusable_stream = None;
         self.call_with_proxy(&url, proxy).await?
+      } else if url.scheme() == "http" {
+        let mut stream = match reusable_stream.take() {
+          Some(stream) => stream,
+          None => {
+            let addr = self.conn.addr(&url)?;
+            AllowStdIo::new(self.async_tcp_stream(&addr).await?)
+          }
+        };
+        let parts = self.async_send_http_parts(&url, &mut stream).await?;
+        if parts.connection_reusable {
+          reusable_stream = Some(stream);
+        }
+        parts
       } else {
+        reusable_stream = None;
         self.async_send_parts(&url).await?
       };
 
@@ -250,6 +269,11 @@ impl<'a> AsyncConnection<'a> {
 
           let redirect_url = self.conn.resolve_redirect_url(&url, location)?;
           let strip_sensitive_headers = !self.conn.is_same_origin_url(&url, &redirect_url.url);
+          if !self.conn.is_same_origin_url(&url, &redirect_url.url)
+            || redirect_url.url.scheme() != "http"
+          {
+            reusable_stream = None;
+          }
           self.conn.request_mut().redirect_status_set(response.code());
           let next_visit = (
             self.conn.request().origin().method().to_uppercase(),
