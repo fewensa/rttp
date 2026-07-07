@@ -674,6 +674,59 @@ fn streaming_body_reader_rejects_malformed_chunk_size_on_read() {
 }
 
 #[test]
+fn streaming_body_reader_rejects_malformed_chunked_trailer_before_exposing_trailers() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one_streaming(|_request, mut body| {
+        let mut buffer = Vec::new();
+        let error = body
+          .read_to_end(&mut buffer)
+          .expect_err("malformed chunk trailer should fail on read");
+        assert_eq!(ErrorKind::InvalidData, error.kind());
+        assert_eq!("invalid request trailer", error.to_string());
+        assert!(body.trailers().is_empty());
+        assert_eq!(b"hello", buffer.as_slice());
+        HttpResponse::new(400, "Bad Request").body("Bad Request")
+      })
+      .expect("serve malformed streaming request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(
+      concat!(
+        "POST /upload HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Transfer-Encoding: chunked\r\n",
+        "\r\n",
+        "5\r\n",
+        "hello\r\n",
+        "0\r\n",
+        "X-Trace abc\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write malformed chunked request");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  assert_eq!(
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn server_bind_falls_back_to_later_candidate_when_first_addr_is_occupied() {
   let (_occupied_listener, occupied_addr) = reserve_local_addr();
   let (available_listener, available_addr) = reserve_local_addr();

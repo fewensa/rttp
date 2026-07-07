@@ -2196,6 +2196,13 @@ fn is_valid_port(port: &str) -> bool {
 fn parse_header_lines<'a>(
   lines: impl Iterator<Item = &'a str>,
 ) -> io::Result<Vec<(String, String)>> {
+  parse_header_lines_with_error(lines, "invalid request header")
+}
+
+fn parse_header_lines_with_error<'a>(
+  lines: impl Iterator<Item = &'a str>,
+  invalid_line_error: &'static str,
+) -> io::Result<Vec<(String, String)>> {
   let mut headers = Vec::new();
 
   for line in lines {
@@ -2205,16 +2212,16 @@ fn parse_header_lines<'a>(
     if line.starts_with(' ') || line.starts_with('\t') {
       return Err(io::Error::new(
         io::ErrorKind::InvalidData,
-        "invalid request header",
+        invalid_line_error,
       ));
     }
     let (name, value) = line
       .split_once(':')
-      .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid request header"))?;
+      .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, invalid_line_error))?;
     if !is_http_token(name) || !value.bytes().all(is_header_value_byte) {
       return Err(io::Error::new(
         io::ErrorKind::InvalidData,
-        "invalid request header",
+        invalid_line_error,
       ));
     }
     headers.push((name.trim().to_string(), value.trim().to_string()));
@@ -2658,7 +2665,7 @@ where
 fn parse_trailer_lines<'a>(
   lines: impl Iterator<Item = &'a str>,
 ) -> io::Result<Vec<(String, String)>> {
-  let trailers = parse_header_lines(lines)?;
+  let trailers = parse_header_lines_with_error(lines, "invalid request trailer")?;
   if trailers
     .iter()
     .any(|(name, _)| is_forbidden_trailer_name(name))
