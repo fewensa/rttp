@@ -367,6 +367,8 @@ impl HttpServer {
       return Err(invalid_http2_settings_error());
     }
     validate_http2_settings_payload(&frame.payload)?;
+    let mut peer_max_frame_size =
+      http2_settings_max_frame_size(&frame.payload).unwrap_or(HTTP2_DEFAULT_MAX_FRAME_SIZE);
 
     self.normalize_connection_error(write_http2_frame(
       &mut stream,
@@ -426,6 +428,9 @@ impl HttpServer {
             }
           } else {
             validate_http2_settings_payload(&frame.payload)?;
+            if let Some(max_frame_size) = http2_settings_max_frame_size(&frame.payload) {
+              peer_max_frame_size = max_frame_size;
+            }
             self.normalize_connection_error(write_http2_frame(
               &mut stream,
               HTTP2_FRAME_SETTINGS,
@@ -587,6 +592,7 @@ impl HttpServer {
           stream_id,
           &response,
           !request_is_head,
+          peer_max_frame_size,
         ))?;
         served += 1;
       }
@@ -825,6 +831,20 @@ fn validate_http2_settings_payload(payload: &[u8]) -> io::Result<()> {
   }
 
   Ok(())
+}
+
+fn http2_settings_max_frame_size(payload: &[u8]) -> Option<usize> {
+  payload
+    .chunks_exact(6)
+    .fold(None, |max_frame_size, setting| {
+      let id = u16::from_be_bytes([setting[0], setting[1]]);
+      let value = u32::from_be_bytes([setting[2], setting[3], setting[4], setting[5]]);
+      if id == HTTP2_SETTINGS_MAX_FRAME_SIZE {
+        Some(value as usize)
+      } else {
+        max_frame_size
+      }
+    })
 }
 
 fn invalid_http2_settings_error() -> io::Error {
@@ -1094,16 +1114,11 @@ fn write_http2_response(
   stream_id: u32,
   response: &HttpResponse,
   write_body: bool,
+  max_frame_size: usize,
 ) -> io::Result<()> {
   let headers = encode_http2_response_headers(response)?;
   let write_trailers = write_body && response.allows_body() && !response.trailers().is_empty();
-  write_http2_frame(
-    stream,
-    HTTP2_FRAME_HEADERS,
-    HTTP2_FLAG_END_HEADERS,
-    stream_id,
-    &headers,
-  )?;
+  write_http2_header_block(stream, stream_id, 0, &headers, max_frame_size)?;
   let body = if write_body && response.allows_body() {
     response.body.as_slice()
   } else {
@@ -1117,8 +1132,8 @@ fn write_http2_response(
     };
     write_http2_frame(stream, HTTP2_FRAME_DATA, flags, stream_id, &[])?;
   } else {
-    for (index, chunk) in body.chunks(HTTP2_DEFAULT_MAX_FRAME_SIZE).enumerate() {
-      let final_data = (index + 1) * HTTP2_DEFAULT_MAX_FRAME_SIZE >= body.len();
+    for (index, chunk) in body.chunks(max_frame_size).enumerate() {
+      let final_data = (index + 1) * max_frame_size >= body.len();
       let flags = if final_data && !write_trailers {
         HTTP2_FLAG_END_STREAM
       } else {
@@ -1129,15 +1144,54 @@ fn write_http2_response(
   }
   if write_trailers {
     let trailers = encode_http2_response_trailers(response)?;
-    write_http2_frame(
+    write_http2_header_block(
       stream,
-      HTTP2_FRAME_HEADERS,
-      HTTP2_FLAG_END_HEADERS | HTTP2_FLAG_END_STREAM,
       stream_id,
+      HTTP2_FLAG_END_STREAM,
       &trailers,
+      max_frame_size,
     )?;
   }
   stream.flush()
+}
+
+fn write_http2_header_block(
+  stream: &mut TcpStream,
+  stream_id: u32,
+  first_frame_flags: u8,
+  block: &[u8],
+  max_frame_size: usize,
+) -> io::Result<()> {
+  if block.len() <= max_frame_size {
+    return write_http2_frame(
+      stream,
+      HTTP2_FRAME_HEADERS,
+      first_frame_flags | HTTP2_FLAG_END_HEADERS,
+      stream_id,
+      block,
+    );
+  }
+
+  let mut chunks = block.chunks(max_frame_size);
+  let first = chunks.next().unwrap_or(&[]);
+  write_http2_frame(
+    stream,
+    HTTP2_FRAME_HEADERS,
+    first_frame_flags,
+    stream_id,
+    first,
+  )?;
+
+  while let Some(chunk) = chunks.next() {
+    let flags = if chunks.len() == 0 {
+      HTTP2_FLAG_END_HEADERS
+    } else {
+      0
+    };
+    write_http2_frame(stream, HTTP2_FRAME_CONTINUATION, flags, stream_id, chunk)?;
+  }
+
+  Ok(())
 }
 
 fn encode_http2_response_headers(response: &HttpResponse) -> io::Result<Vec<u8>> {

@@ -19,6 +19,7 @@ const H2_FRAME_CONTINUATION: u8 = 0x9;
 const H2_FLAG_END_STREAM: u8 = 0x1;
 const H2_FLAG_ACK: u8 = 0x1;
 const H2_FLAG_END_HEADERS: u8 = 0x4;
+const H2_SETTINGS_MAX_FRAME_SIZE: u16 = 0x5;
 
 struct H2Frame {
   frame_type: u8,
@@ -102,9 +103,20 @@ fn h2_post_headers(path: &[u8], authority: &[u8]) -> Vec<u8> {
   headers
 }
 
+fn h2_setting(id: u16, value: u32) -> [u8; 6] {
+  let mut setting = [0; 6];
+  setting[..2].copy_from_slice(&id.to_be_bytes());
+  setting[2..].copy_from_slice(&value.to_be_bytes());
+  setting
+}
+
 fn complete_h2_server_handshake(stream: &mut TcpStream) {
+  complete_h2_server_handshake_with_settings(stream, &[]);
+}
+
+fn complete_h2_server_handshake_with_settings(stream: &mut TcpStream, payload: &[u8]) {
   stream.write_all(H2_PREFACE).expect("write h2 preface");
-  write_h2_frame(stream, H2_FRAME_SETTINGS, 0, 0, &[]);
+  write_h2_frame(stream, H2_FRAME_SETTINGS, 0, 0, payload);
 
   let settings = read_h2_frame(stream);
   assert_eq!(H2_FRAME_SETTINGS, settings.frame_type);
@@ -117,6 +129,40 @@ fn complete_h2_server_handshake(stream: &mut TcpStream) {
   assert_eq!(0, settings_ack.stream_id);
 
   write_h2_frame(stream, H2_FRAME_SETTINGS, H2_FLAG_ACK, 0, &[]);
+}
+
+fn assert_h2_header_block_split(
+  stream: &mut TcpStream,
+  max_frame_size: usize,
+  first_flags: u8,
+  final_flags: u8,
+) {
+  let first = read_h2_frame(stream);
+  assert_eq!(H2_FRAME_HEADERS, first.frame_type);
+  assert_eq!(first_flags, first.flags);
+  assert_eq!(1, first.stream_id);
+  assert!(first.payload.len() <= max_frame_size);
+  assert!(
+    first.flags & H2_FLAG_END_HEADERS == 0,
+    "first HEADERS frame must not end an oversized header block"
+  );
+
+  let mut continuation_count = 0;
+  loop {
+    let frame = read_h2_frame(stream);
+    assert_eq!(H2_FRAME_CONTINUATION, frame.frame_type);
+    assert_eq!(1, frame.stream_id);
+    assert!(frame.payload.len() <= max_frame_size);
+    continuation_count += 1;
+
+    if frame.flags & H2_FLAG_END_HEADERS == H2_FLAG_END_HEADERS {
+      assert_eq!(final_flags, frame.flags);
+      break;
+    }
+
+    assert_eq!(0, frame.flags);
+  }
+  assert!(continuation_count > 0);
 }
 
 fn assert_invalid_h2_headers_without_handler(header_block: &[u8]) {
@@ -438,6 +484,102 @@ fn server_accepts_http2_prior_knowledge_get_and_writes_single_stream_response() 
       .map(|value| value.as_str())
   );
   assert_eq!("hello over h2", response.body().string().unwrap());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_splits_large_http2_response_headers_to_peer_max_frame_size() {
+  let max_frame_size = 16_384usize;
+  let large_header_value = "a".repeat(max_frame_size + 1024);
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(move |_| HttpResponse::ok("split headers").header("X-Large", large_header_value))
+      .expect("serve split h2 headers");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake_with_settings(
+    &mut stream,
+    &h2_setting(H2_SETTINGS_MAX_FRAME_SIZE, max_frame_size as u32),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_headers(b"/large-response-headers", addr.to_string().as_bytes()),
+  );
+
+  assert_h2_header_block_split(&mut stream, max_frame_size, 0, H2_FLAG_END_HEADERS);
+  let response_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
+  assert_eq!(1, response_body.stream_id);
+  assert!(response_body.payload.len() <= max_frame_size);
+  assert_eq!(b"split headers", response_body.payload.as_slice());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_splits_large_http2_response_trailers_to_peer_max_frame_size() {
+  let max_frame_size = 16_384usize;
+  let large_trailer_value = "t".repeat(max_frame_size + 1024);
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(move |_| {
+        HttpResponse::ok("split trailers")
+          .header("Trailer", "X-Large-Trailer")
+          .trailer("X-Large-Trailer", large_trailer_value)
+      })
+      .expect("serve split h2 trailers");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake_with_settings(
+    &mut stream,
+    &h2_setting(H2_SETTINGS_MAX_FRAME_SIZE, max_frame_size as u32),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_headers(b"/large-response-trailers", addr.to_string().as_bytes()),
+  );
+
+  let response_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(H2_FLAG_END_HEADERS, response_headers.flags);
+  assert_eq!(1, response_headers.stream_id);
+  assert!(response_headers.payload.len() <= max_frame_size);
+
+  let response_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(0, response_body.flags);
+  assert_eq!(1, response_body.stream_id);
+  assert!(response_body.payload.len() <= max_frame_size);
+  assert_eq!(b"split trailers", response_body.payload.as_slice());
+
+  assert_h2_header_block_split(
+    &mut stream,
+    max_frame_size,
+    H2_FLAG_END_STREAM,
+    H2_FLAG_END_HEADERS,
+  );
 
   handle.join().expect("server thread");
 }
