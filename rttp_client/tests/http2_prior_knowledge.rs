@@ -14,6 +14,7 @@ const FRAME_RST_STREAM: u8 = 0x3;
 const FRAME_SETTINGS: u8 = 0x4;
 const FRAME_GOAWAY: u8 = 0x7;
 const FRAME_WINDOW_UPDATE: u8 = 0x8;
+const FRAME_CONTINUATION: u8 = 0x9;
 
 const FLAG_END_STREAM: u8 = 0x1;
 const FLAG_END_HEADERS: u8 = 0x4;
@@ -353,6 +354,141 @@ fn prior_knowledge_exposes_response_trailers_after_data_without_changing_headers
     response.trailer_value("X-Trace")
   );
   assert!(response.header("x-trace").is_none());
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
+fn prior_knowledge_decodes_response_headers_split_across_continuation_frames() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    write_frame(&mut stream, FRAME_HEADERS, 0, 1, &[0x88]);
+    write_frame(
+      &mut stream,
+      FRAME_CONTINUATION,
+      FLAG_END_HEADERS,
+      1,
+      &h2_literal_new_name(b"x-split", b"headers"),
+    );
+    write_frame(
+      &mut stream,
+      FRAME_DATA,
+      FLAG_END_STREAM,
+      1,
+      b"split header body",
+    );
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/split-headers", addr))
+    .emit_http2_prior_knowledge()
+    .expect("h2 response with continued headers");
+
+  assert_eq!(200, response.code());
+  assert_eq!(
+    Some(&"headers".to_string()),
+    response.header_value("X-Split")
+  );
+  assert_eq!("split header body", response.body().string().unwrap());
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
+fn prior_knowledge_decodes_response_trailers_split_across_continuation_frames() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, 0, 1, b"split trailer body");
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_STREAM, 1, &[]);
+    write_frame(
+      &mut stream,
+      FRAME_CONTINUATION,
+      FLAG_END_HEADERS,
+      1,
+      &h2_literal_new_name(b"x-trace", b"continued"),
+    );
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/split-trailers", addr))
+    .emit_http2_prior_knowledge()
+    .expect("h2 response with continued trailers");
+
+  assert_eq!(200, response.code());
+  assert_eq!("split trailer body", response.body().string().unwrap());
+  assert_eq!(
+    Some(&"continued".to_string()),
+    response.trailer_value("X-Trace")
+  );
+  assert!(response.header("x-trace").is_none());
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
+fn prior_knowledge_rejects_continuation_without_pending_header_block() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    write_frame(
+      &mut stream,
+      FRAME_CONTINUATION,
+      FLAG_END_HEADERS,
+      1,
+      &[0x88],
+    );
+  });
+
+  let error = HttpClient::new()
+    .get()
+    .url(format!("http://{}/orphan-continuation", addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("orphan CONTINUATION frame should be rejected");
+
+  assert!(
+    error.to_string().contains("unexpected HTTP/2 CONTINUATION"),
+    "unexpected error: {error}"
+  );
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
+fn prior_knowledge_rejects_interrupted_continuation_sequence() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    write_frame(&mut stream, FRAME_HEADERS, 0, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, 0, 1, b"not allowed here");
+  });
+
+  let error = HttpClient::new()
+    .get()
+    .url(format!("http://{}/interrupted-continuation", addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("interrupted CONTINUATION sequence should be rejected");
+
+  assert!(
+    error.to_string().contains("expected HTTP/2 CONTINUATION"),
+    "unexpected error: {error}"
+  );
   handle.join().expect("h2 peer thread");
 }
 
