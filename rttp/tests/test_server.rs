@@ -14,6 +14,7 @@ const H2_FRAME_RST_STREAM: u8 = 0x3;
 const H2_FRAME_SETTINGS: u8 = 0x4;
 const H2_FRAME_GOAWAY: u8 = 0x7;
 const H2_FRAME_WINDOW_UPDATE: u8 = 0x8;
+const H2_FRAME_CONTINUATION: u8 = 0x9;
 const H2_FLAG_END_STREAM: u8 = 0x1;
 const H2_FLAG_ACK: u8 = 0x1;
 const H2_FLAG_END_HEADERS: u8 = 0x4;
@@ -445,6 +446,112 @@ fn server_accepts_http2_prior_knowledge_headers_and_data_before_calling_handler(
   assert_eq!(b"stored", response_body.payload.as_slice());
 
   handle.join().expect("server thread");
+}
+
+#[test]
+fn server_accepts_http2_prior_knowledge_continuation_headers_before_data() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.method().to_string(),
+          request.target().to_string(),
+          request.version().to_string(),
+          request.header("x-split").map(str::to_string),
+          request.body().to_vec(),
+        ))
+        .expect("send parsed h2 continuation request");
+        HttpResponse::new(201, "Created").body("stored")
+      })
+      .expect("serve one h2 continuation request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  complete_h2_server_handshake(&mut stream);
+
+  let first_headers = vec![0x83, 0x86];
+  let mut continued_headers = h2_literal_indexed_name(4, b"/continued-upload");
+  continued_headers.extend(h2_literal_indexed_name(1, addr.to_string().as_bytes()));
+  continued_headers.extend(h2_literal_new_name(b"x-split", b"continued"));
+  write_h2_frame(&mut stream, H2_FRAME_HEADERS, 0, 1, &first_headers);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_CONTINUATION,
+    H2_FLAG_END_HEADERS,
+    1,
+    &continued_headers,
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_DATA,
+    H2_FLAG_END_STREAM,
+    1,
+    b"body after continuation",
+  );
+
+  let response_headers = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(H2_FLAG_END_HEADERS, response_headers.flags);
+  assert_eq!(1, response_headers.stream_id);
+
+  let response_body = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
+  assert_eq!(1, response_body.stream_id);
+  assert_eq!(b"stored", response_body.payload.as_slice());
+
+  assert_eq!(
+    (
+      "POST".to_string(),
+      "/continued-upload".to_string(),
+      "HTTP/2".to_string(),
+      Some("continued".to_string()),
+      b"body after continuation".to_vec()
+    ),
+    rx.recv().expect("receive parsed h2 continuation request")
+  );
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_interleaved_frame_before_end_headers() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send(request).expect("send unexpected h2 request");
+      HttpResponse::ok("unexpected")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  complete_h2_server_handshake(&mut stream);
+  write_h2_frame(&mut stream, H2_FRAME_HEADERS, 0, 1, &[0x83, 0x86]);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    3,
+    &h2_get_headers(b"/interleaved", addr.to_string().as_bytes()),
+  );
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown h2 write");
+
+  let error = handle
+    .join()
+    .expect("server thread")
+    .expect_err("interleaved h2 frame should reject request");
+  assert_eq!(ErrorKind::InvalidData, error.kind());
+  assert!(rx.try_recv().is_err());
 }
 
 #[test]

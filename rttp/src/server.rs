@@ -395,6 +395,14 @@ impl HttpServer {
         }
         Err(err) => return Err(err),
       };
+      if let Some(stream_id) = active_http2_header_continuation_stream(&streams) {
+        if frame.frame_type != HTTP2_FRAME_CONTINUATION || frame.stream_id != stream_id {
+          return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "HTTP/2 frame interleaved before END_HEADERS",
+          ));
+        }
+      }
       match (frame.frame_type, frame.stream_id) {
         (HTTP2_FRAME_SETTINGS, 0) => {
           if frame.flags & HTTP2_FLAG_ACK == HTTP2_FLAG_ACK {
@@ -438,21 +446,29 @@ impl HttpServer {
           }
         }
         (HTTP2_FRAME_CONTINUATION, id) if id != 0 => {
-          if let Some(request_stream) = streams
+          let Some(request_stream) = streams
             .iter_mut()
             .find(|request_stream| request_stream.stream_id == id)
-          {
-            if request_stream.in_header_continuation {
-              request_stream
-                .header_block
-                .extend_from_slice(&frame.payload);
-              if frame.flags & HTTP2_FLAG_END_HEADERS == HTTP2_FLAG_END_HEADERS {
-                request_stream.decoded_headers =
-                  Some(decode_http2_request_headers(&request_stream.header_block)?);
-                request_stream.header_block.clear();
-                request_stream.in_header_continuation = false;
-              }
-            }
+          else {
+            return Err(io::Error::new(
+              io::ErrorKind::InvalidData,
+              "HTTP/2 CONTINUATION frame arrived without request headers",
+            ));
+          };
+          if !request_stream.in_header_continuation {
+            return Err(io::Error::new(
+              io::ErrorKind::InvalidData,
+              "HTTP/2 CONTINUATION frame arrived without request headers",
+            ));
+          }
+          request_stream
+            .header_block
+            .extend_from_slice(&frame.payload);
+          if frame.flags & HTTP2_FLAG_END_HEADERS == HTTP2_FLAG_END_HEADERS {
+            request_stream.decoded_headers =
+              Some(decode_http2_request_headers(&request_stream.header_block)?);
+            request_stream.header_block.clear();
+            request_stream.in_header_continuation = false;
           }
         }
         (HTTP2_FRAME_DATA, id) if id != 0 => {
@@ -630,6 +646,13 @@ fn http2_request_stream(
 
   streams.push(Http2RequestStream::new(stream_id));
   streams.last_mut().expect("new HTTP/2 request stream")
+}
+
+fn active_http2_header_continuation_stream(streams: &[Http2RequestStream]) -> Option<u32> {
+  streams
+    .iter()
+    .find(|request_stream| request_stream.in_header_continuation)
+    .map(|request_stream| request_stream.stream_id)
 }
 
 fn read_http2_frame(stream: &mut TcpStream) -> io::Result<Http2Frame> {
