@@ -26,9 +26,12 @@ const FLAG_ACK: u8 = 0x1;
 const FLAG_END_HEADERS: u8 = 0x4;
 
 const STREAM_ID: u32 = 1;
+const SETTING_ENABLE_PUSH: u16 = 0x2;
+const SETTING_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const SETTING_MAX_FRAME_SIZE: u16 = 0x5;
 const DEFAULT_MAX_FRAME_SIZE: usize = 16 * 1024;
 const MAX_FRAME_SIZE_LIMIT: usize = 16_777_215;
+const MAX_INITIAL_WINDOW_SIZE: u32 = 2_147_483_647;
 const WINDOW_UPDATE_THRESHOLD: usize = 32 * 1024;
 
 pub struct PriorKnowledgeClient<'a> {
@@ -151,31 +154,69 @@ fn read_settings_and_ack(stream: &mut TcpStream) -> error::Result<usize> {
         "HTTP/2 SETTINGS ACK frame must not contain payload",
       ));
     }
-    if frame.stream_id != 0 || frame.payload.len() % 6 != 0 {
+    if frame.stream_id != 0 {
       return Err(error::bad_response("invalid HTTP/2 SETTINGS frame"));
     }
-    let peer_max_frame_size = peer_max_frame_size(&frame.payload)?;
+    let peer_max_frame_size = validate_settings_payload(&frame.payload)?;
     write_frame(stream, FRAME_SETTINGS, FLAG_ACK, 0, &[])?;
     stream.flush().map_err(error::request)?;
     return Ok(peer_max_frame_size);
   }
 }
 
-fn peer_max_frame_size(payload: &[u8]) -> error::Result<usize> {
+fn validate_settings_payload(payload: &[u8]) -> error::Result<usize> {
+  if payload.len() % 6 != 0 {
+    return Err(error::bad_response("invalid HTTP/2 SETTINGS frame"));
+  }
+
   let mut max_frame_size = DEFAULT_MAX_FRAME_SIZE;
   for setting in payload.chunks_exact(6) {
     let identifier = u16::from_be_bytes([setting[0], setting[1]]);
-    let value = u32::from_be_bytes([setting[2], setting[3], setting[4], setting[5]]) as usize;
-    if identifier == SETTING_MAX_FRAME_SIZE {
-      if !(DEFAULT_MAX_FRAME_SIZE..=MAX_FRAME_SIZE_LIMIT).contains(&value) {
-        return Err(error::bad_response(
-          "invalid HTTP/2 SETTINGS_MAX_FRAME_SIZE value",
-        ));
+    let value = u32::from_be_bytes([setting[2], setting[3], setting[4], setting[5]]);
+    match identifier {
+      SETTING_ENABLE_PUSH => {
+        if value > 1 {
+          return Err(error::bad_response(
+            "invalid HTTP/2 SETTINGS_ENABLE_PUSH value",
+          ));
+        }
       }
-      max_frame_size = value;
+      SETTING_INITIAL_WINDOW_SIZE => {
+        if value > MAX_INITIAL_WINDOW_SIZE {
+          return Err(error::bad_response(
+            "invalid HTTP/2 SETTINGS_INITIAL_WINDOW_SIZE value",
+          ));
+        }
+      }
+      SETTING_MAX_FRAME_SIZE => {
+        let value = value as usize;
+        if !(DEFAULT_MAX_FRAME_SIZE..=MAX_FRAME_SIZE_LIMIT).contains(&value) {
+          return Err(error::bad_response(
+            "invalid HTTP/2 SETTINGS_MAX_FRAME_SIZE value",
+          ));
+        }
+        max_frame_size = value;
+      }
+      _ => {}
     }
   }
   Ok(max_frame_size)
+}
+
+fn validate_settings_frame(frame: &Frame) -> error::Result<()> {
+  if frame.stream_id != 0 {
+    return Err(error::bad_response("invalid HTTP/2 SETTINGS frame"));
+  }
+  if frame.flags & FLAG_ACK == FLAG_ACK {
+    if frame.payload.is_empty() {
+      return Ok(());
+    }
+    return Err(error::bad_response(
+      "HTTP/2 SETTINGS ACK frame must not contain payload",
+    ));
+  }
+  validate_settings_payload(&frame.payload)?;
+  Ok(())
 }
 
 fn write_request(
@@ -390,14 +431,11 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
       ));
     }
     match (frame.frame_type, frame.stream_id) {
-      (FRAME_SETTINGS, 0) => {
+      (FRAME_SETTINGS, _) => {
+        validate_settings_frame(&frame)?;
         if frame.flags & FLAG_ACK == 0 {
           write_frame(stream, FRAME_SETTINGS, FLAG_ACK, 0, &[])?;
           stream.flush().map_err(error::request)?;
-        } else if !frame.payload.is_empty() {
-          return Err(error::bad_response(
-            "HTTP/2 SETTINGS ACK frame must not contain payload",
-          ));
         }
       }
       (FRAME_HEADERS, STREAM_ID) => {
