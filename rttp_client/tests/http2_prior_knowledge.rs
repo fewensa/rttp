@@ -136,6 +136,85 @@ fn prior_knowledge_decodes_content_length_from_hpack_static_index() {
 }
 
 #[test]
+fn prior_knowledge_exposes_response_trailers_after_data_without_changing_headers() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    write_frame(
+      &mut stream,
+      FRAME_HEADERS,
+      FLAG_END_HEADERS,
+      1,
+      &[
+        0x88, 0x0f, 16, 10, b't', b'e', b'x', b't', b'/', b'p', b'l', b'a', b'i', b'n',
+      ],
+    );
+    write_frame(&mut stream, FRAME_DATA, 0, 1, b"hello");
+    write_frame(
+      &mut stream,
+      FRAME_HEADERS,
+      FLAG_END_STREAM | FLAG_END_HEADERS,
+      1,
+      &h2_literal_new_name(b"x-trace", b"abc123"),
+    );
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/trailers", addr))
+    .emit_http2_prior_knowledge()
+    .expect("h2 response with trailers");
+
+  assert_eq!(200, response.code());
+  assert_eq!(
+    Some(&"text/plain".to_string()),
+    response.header_value("content-type")
+  );
+  assert_eq!("hello", response.body().string().unwrap());
+  assert_eq!(1, response.trailers().len());
+  assert_eq!(
+    Some(&"abc123".to_string()),
+    response.trailer_value("X-Trace")
+  );
+  assert!(response.header("x-trace").is_none());
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
+fn prior_knowledge_rejects_response_trailer_pseudo_headers() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, 0, 1, b"hello");
+    write_frame(
+      &mut stream,
+      FRAME_HEADERS,
+      FLAG_END_STREAM | FLAG_END_HEADERS,
+      1,
+      &[0x88],
+    );
+  });
+
+  let error = HttpClient::new()
+    .get()
+    .url(format!("http://{}/bad-trailers", addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("trailer pseudo-header should be rejected");
+
+  assert!(error.to_string().contains("Invalid trailer header"));
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
 fn prior_knowledge_get_ignores_interleaved_data_for_other_streams() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");
@@ -407,6 +486,23 @@ fn window_update_increment(frame: &Frame) -> u32 {
     frame.payload[2],
     frame.payload[3],
   ])
+}
+
+fn h2_literal_new_name(name: &[u8], value: &[u8]) -> Vec<u8> {
+  let mut block = Vec::new();
+  block.push(0);
+  h2_string(&mut block, name);
+  h2_string(&mut block, value);
+  block
+}
+
+fn h2_string(block: &mut Vec<u8>, value: &[u8]) {
+  assert!(
+    value.len() < 128,
+    "test HPACK helper only encodes short strings"
+  );
+  block.push(value.len() as u8);
+  block.extend_from_slice(value);
 }
 
 fn write_frame(stream: &mut impl Write, frame_type: u8, flags: u8, stream_id: u32, payload: &[u8]) {
