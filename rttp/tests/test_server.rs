@@ -1289,6 +1289,99 @@ fn server_writes_chunked_response_trailers_on_live_connection() {
 }
 
 #[test]
+fn rttp_client_streaming_chunked_request_trailers_round_trip_over_socket2_server() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.body().to_vec(),
+          request.trailer("x-trace").map(str::to_string),
+          request.trailer("X-UPLOAD-CHECKSUM").map(str::to_string),
+        ))
+        .expect("send parsed request");
+
+        HttpResponse::ok("stored by socket2")
+          .header("Transfer-Encoding", "chunked")
+          .header("Trailer", "X-Response-Trace, X-Response-Status")
+          .trailer("X-Response-Trace", "response-trace-7")
+          .trailer("X-Response-Status", "ok")
+      })
+      .expect("serve one request");
+  });
+
+  let response = HttpClient::new()
+    .post()
+    .url(format!("http://{}/upload", addr))
+    .header(("Trailer", "X-Trace, X-Upload-Checksum"))
+    .trailer("X-Trace: request-trace-42")
+    .expect("request trace trailer should be accepted")
+    .trailer("X-Upload-Checksum: sha256:abc123")
+    .expect("request checksum trailer should be accepted")
+    .emit_streaming_chunked("hello ".as_bytes().chain("trailers".as_bytes()))
+    .expect("chunked trailer upload");
+
+  let (body, trace, checksum) = rx.recv().expect("parsed request");
+  assert_eq!(b"hello trailers", body.as_slice());
+  assert_eq!(Some("request-trace-42".to_string()), trace);
+  assert_eq!(Some("sha256:abc123".to_string()), checksum);
+
+  assert_eq!("stored by socket2", response.body().string().unwrap());
+  assert_eq!(2, response.trailers().len());
+  assert_eq!(
+    Some(&"response-trace-7".to_string()),
+    response.trailer_value("x-response-trace")
+  );
+  assert_eq!(
+    Some(&"ok".to_string()),
+    response.trailer_value("X-RESPONSE-STATUS")
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn rttp_client_streaming_chunked_post_without_trailers_stays_optional() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((request.body().to_vec(), request.trailers().to_vec()))
+          .expect("send parsed request");
+
+        HttpResponse::ok("stored without trailers")
+          .header("Transfer-Encoding", "chunked")
+          .trailer("X-Response-Mode", "optional")
+      })
+      .expect("serve one request");
+  });
+
+  let response = HttpClient::new()
+    .post()
+    .url(format!("http://{}/upload", addr))
+    .emit_streaming_chunked("plain chunked body".as_bytes())
+    .expect("chunked upload without trailers");
+
+  let (body, trailers) = rx.recv().expect("parsed request");
+  assert_eq!(b"plain chunked body", body.as_slice());
+  assert!(trailers.is_empty());
+
+  assert_eq!("stored without trailers", response.body().string().unwrap());
+  assert_eq!(
+    Some(&"optional".to_string()),
+    response.trailer_value("x-response-mode")
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn server_request_body_stops_at_declared_content_length() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
