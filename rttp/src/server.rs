@@ -699,11 +699,10 @@ impl DecodedHttp2RequestHeaders {
     let _scheme = self
       .scheme
       .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing HTTP/2 :scheme"))?;
-    let authority = self
-      .authority
-      .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing HTTP/2 :authority"))?;
     let mut headers = self.headers;
-    headers.push(("host".to_string(), authority));
+    if let Some(authority) = self.authority {
+      headers.push(("host".to_string(), authority));
+    }
 
     Ok(Request {
       method,

@@ -457,11 +457,52 @@ fn server_rejects_http2_prior_knowledge_request_missing_scheme() {
 }
 
 #[test]
-fn server_rejects_http2_prior_knowledge_request_missing_authority() {
-  let mut headers = vec![0x82, 0x86];
-  headers.extend(h2_literal_indexed_name(4, b"/missing-authority"));
+fn server_accepts_http2_prior_knowledge_options_asterisk_without_authority() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
 
-  assert_invalid_h2_headers_without_handler(&headers);
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.method().to_string(),
+          request.target().to_string(),
+          request.header("host").map(str::to_string),
+        ))
+        .expect("send h2 options request");
+        HttpResponse::ok("options")
+      })
+      .expect("serve h2 options request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  complete_h2_server_handshake(&mut stream);
+  let mut headers = h2_literal_indexed_name(2, b"OPTIONS");
+  headers.push(0x86);
+  headers.extend(h2_literal_indexed_name(4, b"*"));
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &headers,
+  );
+
+  let response_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(H2_FLAG_END_HEADERS, response_headers.flags);
+  assert_eq!(1, response_headers.stream_id);
+
+  let response_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
+  assert_eq!(1, response_body.stream_id);
+  assert_eq!(b"options", response_body.payload.as_slice());
+
+  let request = rx.recv().expect("receive h2 options request");
+  assert_eq!(("OPTIONS".to_string(), "*".to_string(), None), request);
+  handle.join().expect("server thread");
 }
 
 #[test]
