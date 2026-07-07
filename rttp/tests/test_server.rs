@@ -659,6 +659,7 @@ fn server_ignores_reset_stream_and_serves_surviving_http2_stream() {
   );
   write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 1, b"partial");
   write_h2_frame(&mut stream, H2_FRAME_RST_STREAM, 0, 1, &0u32.to_be_bytes());
+  write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 1, b"after-reset");
 
   write_h2_frame(
     &mut stream,

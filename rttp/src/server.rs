@@ -382,6 +382,7 @@ impl HttpServer {
     self.normalize_connection_error(stream.flush())?;
 
     let mut streams = Vec::<Http2RequestStream>::new();
+    let mut reset_streams = Vec::<u32>::new();
     let mut served = 0;
 
     while served < request_limit {
@@ -455,15 +456,18 @@ impl HttpServer {
           }
         }
         (HTTP2_FRAME_DATA, id) if id != 0 => {
-          let request_stream = streams
+          let Some(request_stream) = streams
             .iter_mut()
             .find(|request_stream| request_stream.stream_id == id)
-            .ok_or_else(|| {
-              io::Error::new(
-                io::ErrorKind::InvalidData,
-                "HTTP/2 DATA frame arrived before request headers",
-              )
-            })?;
+          else {
+            if reset_streams.contains(&id) {
+              continue;
+            }
+            return Err(io::Error::new(
+              io::ErrorKind::InvalidData,
+              "HTTP/2 DATA frame arrived before request headers",
+            ));
+          };
           if request_stream.decoded_headers.is_none() || request_stream.in_header_continuation {
             return Err(io::Error::new(
               io::ErrorKind::InvalidData,
@@ -490,6 +494,9 @@ impl HttpServer {
         }
         (HTTP2_FRAME_RST_STREAM, id) if id != 0 => {
           streams.retain(|request_stream| request_stream.stream_id != id);
+          if !reset_streams.contains(&id) {
+            reset_streams.push(id);
+          }
         }
         (HTTP2_FRAME_GOAWAY, 0) => break,
         (HTTP2_FRAME_WINDOW_UPDATE, _) => {}
