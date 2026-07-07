@@ -16,6 +16,7 @@ const FRAME_DATA: u8 = 0x0;
 const FRAME_HEADERS: u8 = 0x1;
 const FRAME_RST_STREAM: u8 = 0x3;
 const FRAME_SETTINGS: u8 = 0x4;
+const FRAME_PING: u8 = 0x6;
 const FRAME_GOAWAY: u8 = 0x7;
 const FRAME_WINDOW_UPDATE: u8 = 0x8;
 const FRAME_CONTINUATION: u8 = 0x9;
@@ -424,6 +425,18 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
       }
       (FRAME_RST_STREAM, STREAM_ID) => {
         return Err(error::bad_response("HTTP/2 stream received RST_STREAM"));
+      }
+      (FRAME_PING, 0) => {
+        if frame.payload.len() != 8 {
+          return Err(error::bad_response("invalid HTTP/2 PING frame"));
+        }
+        if frame.flags & FLAG_ACK == 0 {
+          write_frame(stream, FRAME_PING, FLAG_ACK, 0, &frame.payload)?;
+          stream.flush().map_err(error::request)?;
+        }
+      }
+      (FRAME_PING, _) => {
+        return Err(error::bad_response("invalid HTTP/2 PING frame"));
       }
       (FRAME_GOAWAY, 0) => {
         if goaway_last_stream_id(&frame.payload)? < STREAM_ID {
