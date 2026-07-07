@@ -1340,6 +1340,103 @@ fn prior_knowledge_get_defers_small_window_updates_until_more_credit_is_needed()
   handle.join().expect("h2 peer thread");
 }
 
+#[test]
+fn prior_knowledge_decodes_hpack_huffman_response_headers_and_trailers() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    let mut headers = vec![0x88];
+    headers.extend_from_slice(&h2_literal_huffman_new_name(
+      &[0xf2, 0xb4, 0xf6, 0xcb, 0x2f],
+      &[0x3f, 0x55, 0xa7, 0xb6, 0x59, 0x7f],
+    ));
+    let trailers = h2_literal_huffman_new_name(
+      &[0xf2, 0xb2, 0x46, 0x6a, 0x3f],
+      &[0x4d, 0x83, 0x35, 0x0b, 0x4f, 0x6c, 0xb2, 0xff],
+    );
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &headers);
+    write_frame(&mut stream, FRAME_DATA, 0, 1, b"huffman body");
+    write_frame(
+      &mut stream,
+      FRAME_HEADERS,
+      FLAG_END_HEADERS | FLAG_END_STREAM,
+      1,
+      &trailers,
+    );
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/huffman", addr))
+    .emit_http2_prior_knowledge()
+    .expect("huffman h2 response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("huffman body", response.body().string().unwrap());
+  assert_eq!(
+    Some(&"ok-huff".to_string()),
+    response.header_value("x-huff")
+  );
+  assert_eq!(
+    Some(&"trail-huff".to_string()),
+    response.trailer_value("x-tail")
+  );
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
+fn prior_knowledge_rejects_malformed_hpack_huffman_strings() {
+  let cases: &[(&str, &[u8], &str)] = &[
+    (
+      "eos-data",
+      &[0x88, 0, 0x84, 0xff, 0xff, 0xff, 0xff, 1, b'x'],
+      "HPACK Huffman EOS symbol used as data",
+    ),
+    (
+      "invalid-padding",
+      &[0x88, 0, 0x81, 0x00, 1, b'x'],
+      "invalid HPACK Huffman padding",
+    ),
+    (
+      "truncated-code",
+      &[0x88, 0, 0x81, 0xfe, 1, b'x'],
+      "truncated HPACK Huffman code",
+    ),
+    (
+      "overlong-padding",
+      &[0x88, 0, 0x81, 0xff, 1, b'x'],
+      "overlong HPACK Huffman padding",
+    ),
+    (
+      "invalid-utf8",
+      &[0x88, 0, 0x84, 0xff, 0xff, 0xfb, 0xbf, 1, b'x'],
+      "invalid utf-8 sequence",
+    ),
+  ];
+
+  for (path, header_block, expected) in cases {
+    let (addr, handle) = spawn_h2_prior_knowledge_peer_with_response(header_block, &[b""]);
+
+    let error = HttpClient::new()
+      .get()
+      .url(format!("http://{}/{}", addr, path))
+      .emit_http2_prior_knowledge()
+      .expect_err("malformed Huffman string should be rejected");
+
+    assert!(
+      error.to_string().contains(expected),
+      "expected {expected:?}, got {error}"
+    );
+    handle.join().expect("h2 peer thread");
+  }
+}
+
 struct Frame {
   frame_type: u8,
   flags: u8,
@@ -1549,12 +1646,29 @@ fn h2_literal_new_name(name: &[u8], value: &[u8]) -> Vec<u8> {
   block
 }
 
+fn h2_literal_huffman_new_name(name: &[u8], value: &[u8]) -> Vec<u8> {
+  let mut block = Vec::new();
+  block.push(0);
+  h2_huffman_string(&mut block, name);
+  h2_huffman_string(&mut block, value);
+  block
+}
+
 fn h2_string(block: &mut Vec<u8>, value: &[u8]) {
   assert!(
     value.len() < 128,
     "test HPACK helper only encodes short strings"
   );
   block.push(value.len() as u8);
+  block.extend_from_slice(value);
+}
+
+fn h2_huffman_string(block: &mut Vec<u8>, value: &[u8]) {
+  assert!(
+    value.len() < 128,
+    "test HPACK helper only encodes short strings"
+  );
+  block.push(0x80 | value.len() as u8);
   block.extend_from_slice(value);
 }
 
