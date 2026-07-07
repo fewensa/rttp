@@ -743,6 +743,21 @@ async fn captured_async_redirected_post(status_code: u16, reason: &'static str) 
 }
 
 #[cfg(feature = "async")]
+async fn captured_async_redirected_put(status_code: u16, reason: &'static str) -> CapturedRequest {
+  let (addr, handle) = support::spawn_status_redirect_request_capture_server(status_code, reason);
+  let response = client()
+    .config(Config::builder().auto_redirect(true))
+    .put()
+    .url(format!("http://{}/redirect", addr))
+    .raw("redirect-body")
+    .rasync()
+    .await;
+
+  assert!(response.is_ok());
+  captured_request(handle.join().expect("redirect capture thread"))
+}
+
+#[cfg(feature = "async")]
 async fn captured_async_redirected_head(status_code: u16, reason: &'static str) -> CapturedRequest {
   let (addr, handle) = support::spawn_status_redirect_request_capture_server(status_code, reason);
   let response = client()
@@ -754,6 +769,76 @@ async fn captured_async_redirected_head(status_code: u16, reason: &'static str) 
 
   assert!(response.is_ok());
   captured_request(handle.join().expect("redirect capture thread"))
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_auto_redirect_301_post_becomes_get_without_body_or_body_framing() {
+  block_on(async {
+    let request = captured_async_redirected_post(301, "Moved Permanently").await;
+
+    assert_eq!("GET", request.method);
+    assert_eq!("/final?via=redirect", request.target);
+    assert_eq!(b"", request.body.as_slice());
+    assert!(!request.headers.contains_key("content-length"));
+    assert!(!request.headers.contains_key("content-type"));
+    assert!(!request.headers.contains_key("transfer-encoding"));
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_auto_redirect_302_post_becomes_get_without_body_or_body_framing() {
+  block_on(async {
+    let request = captured_async_redirected_post(302, "Found").await;
+
+    assert_eq!("GET", request.method);
+    assert_eq!("/final?via=redirect", request.target);
+    assert_eq!(b"", request.body.as_slice());
+    assert!(!request.headers.contains_key("content-length"));
+    assert!(!request.headers.contains_key("content-type"));
+    assert!(!request.headers.contains_key("transfer-encoding"));
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_auto_redirect_301_put_preserves_method_body_and_body_framing() {
+  block_on(async {
+    let request = captured_async_redirected_put(301, "Moved Permanently").await;
+
+    assert_eq!("PUT", request.method);
+    assert_eq!("/final?via=redirect", request.target);
+    assert_eq!(b"redirect-body", request.body.as_slice());
+    assert_eq!(
+      Some("13"),
+      request.headers.get("content-length").map(String::as_str)
+    );
+    assert_eq!(
+      Some("text/plain"),
+      request.headers.get("content-type").map(String::as_str)
+    );
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_auto_redirect_302_put_preserves_method_body_and_body_framing() {
+  block_on(async {
+    let request = captured_async_redirected_put(302, "Found").await;
+
+    assert_eq!("PUT", request.method);
+    assert_eq!("/final?via=redirect", request.target);
+    assert_eq!(b"redirect-body", request.body.as_slice());
+    assert_eq!(
+      Some("13"),
+      request.headers.get("content-length").map(String::as_str)
+    );
+    assert_eq!(
+      Some("text/plain"),
+      request.headers.get("content-type").map(String::as_str)
+    );
+  });
 }
 
 #[test]

@@ -200,7 +200,7 @@ impl Request {
   }
 
   pub(crate) fn redirect_status_set(&mut self, status_code: u32) -> &mut Self {
-    if status_code == 303 && !self.method.eq_ignore_ascii_case("head") {
+    if self.redirect_rewrites_to_get(status_code) {
       self.method_set("GET");
       self.paras.clear();
       self.formdatas.clear();
@@ -213,6 +213,16 @@ impl Request {
       });
     }
     self
+  }
+
+  pub(crate) fn redirect_rewrites_to_get(&self, status_code: u32) -> bool {
+    // Compatibility behavior: 301/302 rewrite POST requests to GET; 303
+    // rewrites any non-HEAD request. 307 and 308 preserve method/body.
+    match status_code {
+      301 | 302 => self.method.eq_ignore_ascii_case("post"),
+      303 => !self.method.eq_ignore_ascii_case("head"),
+      _ => false,
+    }
   }
 
   pub(crate) fn remove_sensitive_redirect_headers(&mut self) {
