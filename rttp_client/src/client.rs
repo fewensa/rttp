@@ -150,19 +150,24 @@ impl HttpClient {
     self
   }
 
-  /// Add request trailer field for chunked streaming request bodies.
-  pub fn trailer<N: AsRef<str>, V: AsRef<str>>(&mut self, name: N, value: V) -> &mut Self {
-    let trailers = self.request.trailers_mut();
-    let trailer = Header::new(name, value);
-    if let Some(existing) = trailers
-      .iter_mut()
-      .find(|item| item.name().eq_ignore_ascii_case(trailer.name()))
-    {
-      existing.replace(trailer);
-    } else {
-      trailers.push(trailer);
+  /// Add a request trailer field for chunked streaming uploads.
+  pub fn trailer<P: IntoHeader>(&mut self, trailer: P) -> error::Result<&mut Self> {
+    let trailers = trailer.into_headers();
+    for h in &trailers {
+      validate_request_trailer_header(h.name(), h.value())?;
     }
-    self
+    for h in trailers {
+      let trailers = self.request.trailers_mut();
+      if let Some(existing) = trailers
+        .iter_mut()
+        .find(|d| d.name().eq_ignore_ascii_case(h.name()))
+      {
+        existing.replace(h);
+      } else {
+        trailers.push(h);
+      }
+    }
+    Ok(self)
   }
 
   /// Add request cookie
@@ -273,13 +278,15 @@ impl HttpClient {
       ));
     }
     self.request.prepare_streaming_chunked_body();
+    let trailers = self.request.trailers().clone();
     let result = (|| {
       let request = RawRequest::block_new(&mut self.request)?;
       BlockConnection::new(request).call_streaming_body(StreamingRequestBody::Chunked {
         reader: &mut reader,
+        trailers: &trailers,
       })
     })();
-    self.request.clear_streaming_body_headers();
+    self.request.clear_streaming_chunked_body_headers();
     result
   }
 
@@ -379,16 +386,78 @@ impl HttpClient {
       ));
     }
     self.request.prepare_streaming_chunked_body();
+    let trailers = self.request.trailers().clone();
     let result = async {
       let request = RawRequest::async_new(&mut self.request).await?;
       AsyncConnection::new(request)
         .async_call_streaming_body(AsyncStreamingRequestBody::Chunked {
           reader: &mut reader,
+          trailers: &trailers,
         })
         .await
     }
     .await;
-    self.request.clear_streaming_body_headers();
+    self.request.clear_streaming_chunked_body_headers();
     result
   }
+}
+
+fn validate_request_trailer_header(name: &str, value: &str) -> error::Result<()> {
+  if !is_http_token(name) || !value.bytes().all(is_header_value_byte) {
+    return Err(error::builder_with_message(
+      "Invalid request trailer header",
+    ));
+  }
+  if is_forbidden_request_trailer_name(name) {
+    return Err(error::builder_with_message(
+      "Forbidden request trailer header",
+    ));
+  }
+  Ok(())
+}
+
+fn is_forbidden_request_trailer_name(name: &str) -> bool {
+  matches!(
+    name.trim().to_ascii_lowercase().as_str(),
+    "connection"
+      | "content-length"
+      | "host"
+      | "proxy-authenticate"
+      | "proxy-authorization"
+      | "proxy-connection"
+      | "te"
+      | "trailer"
+      | "transfer-encoding"
+      | "upgrade"
+  )
+}
+
+fn is_http_token(value: &str) -> bool {
+  !value.is_empty() && value.bytes().all(is_http_token_byte)
+}
+
+fn is_http_token_byte(byte: u8) -> bool {
+  byte.is_ascii_alphanumeric()
+    || matches!(
+      byte,
+      b'!'
+        | b'#'
+        | b'$'
+        | b'%'
+        | b'&'
+        | b'\''
+        | b'*'
+        | b'+'
+        | b'-'
+        | b'.'
+        | b'^'
+        | b'_'
+        | b'`'
+        | b'|'
+        | b'~'
+    )
+}
+
+fn is_header_value_byte(byte: u8) -> bool {
+  byte == b'\t' || byte == b' ' || (0x21..=0x7e).contains(&byte) || byte >= 0x80
 }

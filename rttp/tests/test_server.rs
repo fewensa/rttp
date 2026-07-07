@@ -1317,8 +1317,10 @@ fn rttp_client_streaming_chunked_request_trailers_round_trip_over_socket2_server
     .post()
     .url(format!("http://{}/upload", addr))
     .header(("Trailer", "X-Trace, X-Upload-Checksum"))
-    .trailer("X-Trace", "request-trace-42")
-    .trailer("X-Upload-Checksum", "sha256:abc123")
+    .trailer("X-Trace: request-trace-42")
+    .expect("request trace trailer should be accepted")
+    .trailer("X-Upload-Checksum: sha256:abc123")
+    .expect("request checksum trailer should be accepted")
     .emit_streaming_chunked("hello ".as_bytes().chain("trailers".as_bytes()))
     .expect("chunked trailer upload");
 
@@ -2581,6 +2583,42 @@ fn server_returns_bad_request_for_forbidden_chunked_request_trailer() {
       "OK\r\n",
       "0\r\n",
       "Content-Length: 2\r\n",
+      "\r\n"
+    )
+    .as_bytes(),
+  );
+}
+
+#[test]
+fn server_returns_bad_request_for_payload_processing_chunked_request_trailer() {
+  assert_bad_request_without_handler(
+    concat!(
+      "POST /upload HTTP/1.1\r\n",
+      "Host: localhost\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "\r\n",
+      "2\r\n",
+      "OK\r\n",
+      "0\r\n",
+      "Content-Type: text/plain\r\n",
+      "\r\n"
+    )
+    .as_bytes(),
+  );
+}
+
+#[test]
+fn server_returns_bad_request_for_pseudo_header_chunked_request_trailer() {
+  assert_bad_request_without_handler(
+    concat!(
+      "POST /upload HTTP/1.1\r\n",
+      "Host: localhost\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "\r\n",
+      "2\r\n",
+      "OK\r\n",
+      "0\r\n",
+      ":method: POST\r\n",
       "\r\n"
     )
     .as_bytes(),

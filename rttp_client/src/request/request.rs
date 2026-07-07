@@ -258,13 +258,24 @@ impl Request {
   }
 
   pub(crate) fn prepare_streaming_chunked_body(&mut self) {
+    let has_trailers = !self.trailers.is_empty();
     self.headers.retain(|header| {
       !header.name().eq_ignore_ascii_case("content-length")
         && !header.name().eq_ignore_ascii_case("transfer-encoding")
+        && (!has_trailers || !header.name().eq_ignore_ascii_case("trailer"))
     });
     self
       .headers
       .push(Header::new("Transfer-Encoding", "chunked"));
+    if has_trailers {
+      let names = self
+        .trailers
+        .iter()
+        .map(|header| header.name().as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+      self.headers.push(Header::new("Trailer", names));
+    }
   }
 
   pub(crate) fn clear_streaming_body_headers(&mut self) {
@@ -272,6 +283,15 @@ impl Request {
       !header.name().eq_ignore_ascii_case("content-length")
         && !header.name().eq_ignore_ascii_case("transfer-encoding")
     });
+  }
+
+  pub(crate) fn clear_streaming_chunked_body_headers(&mut self) {
+    self.clear_streaming_body_headers();
+    if !self.trailers.is_empty() {
+      self
+        .headers
+        .retain(|header| !header.name().eq_ignore_ascii_case("trailer"));
+    }
   }
 }
 
