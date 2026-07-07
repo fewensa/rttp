@@ -382,6 +382,7 @@ impl HttpServer {
     self.normalize_connection_error(stream.flush())?;
 
     let mut streams = Vec::<Http2RequestStream>::new();
+    let mut reset_streams = Vec::<u32>::new();
     let mut served = 0;
 
     while served < request_limit {
@@ -455,30 +456,47 @@ impl HttpServer {
           }
         }
         (HTTP2_FRAME_DATA, id) if id != 0 => {
-          if let Some(request_stream) = streams
+          let Some(request_stream) = streams
             .iter_mut()
             .find(|request_stream| request_stream.stream_id == id)
-          {
-            let new_len = request_stream
-              .body
-              .len()
-              .checked_add(frame.payload.len())
-              .ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidData, "request body is too large")
-              })?;
-            reject_oversized_request_body(new_len)?;
-            request_stream.body.extend_from_slice(&frame.payload);
-            if !frame.payload.is_empty() {
-              write_http2_window_update(&mut stream, 0, frame.payload.len())?;
-              write_http2_window_update(&mut stream, id, frame.payload.len())?;
+          else {
+            if reset_streams.contains(&id) {
+              continue;
             }
-            if frame.flags & HTTP2_FLAG_END_STREAM == HTTP2_FLAG_END_STREAM {
-              request_stream.end_stream = true;
-            }
+            return Err(io::Error::new(
+              io::ErrorKind::InvalidData,
+              "HTTP/2 DATA frame arrived before request headers",
+            ));
+          };
+          if request_stream.decoded_headers.is_none() || request_stream.in_header_continuation {
+            return Err(io::Error::new(
+              io::ErrorKind::InvalidData,
+              "HTTP/2 DATA frame arrived before request headers",
+            ));
+          }
+
+          let new_len = request_stream
+            .body
+            .len()
+            .checked_add(frame.payload.len())
+            .ok_or_else(|| {
+              io::Error::new(io::ErrorKind::InvalidData, "request body is too large")
+            })?;
+          reject_oversized_request_body(new_len)?;
+          request_stream.body.extend_from_slice(&frame.payload);
+          if !frame.payload.is_empty() {
+            write_http2_window_update(&mut stream, 0, frame.payload.len())?;
+            write_http2_window_update(&mut stream, id, frame.payload.len())?;
+          }
+          if frame.flags & HTTP2_FLAG_END_STREAM == HTTP2_FLAG_END_STREAM {
+            request_stream.end_stream = true;
           }
         }
         (HTTP2_FRAME_RST_STREAM, id) if id != 0 => {
           streams.retain(|request_stream| request_stream.stream_id != id);
+          if !reset_streams.contains(&id) {
+            reset_streams.push(id);
+          }
         }
         (HTTP2_FRAME_GOAWAY, 0) => break,
         (HTTP2_FRAME_WINDOW_UPDATE, _) => {}

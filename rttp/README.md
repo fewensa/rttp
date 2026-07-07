@@ -65,7 +65,7 @@ loops.
 Enable the `client` feature to access `rttp::Http::client`, or enable `async`,
 `http2`, `tls-native`, `tls-rustls`, or `all` for the corresponding
 `rttp_client` capabilities. The `http2` feature exposes the minimal
-prior-knowledge h2c GET client path; TLS ALPN remains a later integration point.
+prior-knowledge h2c client path; TLS ALPN remains a later integration point.
 
 Direct TCP client connections use `socket2`. SOCKS proxy handshakes remain
 delegated to the `socks` crate.

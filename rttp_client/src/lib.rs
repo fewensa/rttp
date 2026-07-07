@@ -4,7 +4,7 @@
 //! | name | comment |
 //! |------|---------|
 //! | async | Async request APIs |
-//! | http2 | Prior-knowledge h2c GET over direct `socket2` TCP connections |
+//! | http2 | Prior-knowledge h2c over direct `socket2` TCP connections |
 //! | tls-native | HTTPS with `native-tls` |
 //! | tls-rustls | HTTPS with `rustls` |
 //!
