@@ -141,17 +141,24 @@ impl HttpServer {
     let mut served = 0;
 
     while served < request_limit {
-      let request =
-        match self.normalize_connection_error(Request::read_next_from_with_continue(&mut reader)) {
-          Ok(Some(request)) => request,
-          Ok(None) => break,
-          Err(err) if is_bad_request_error(&err) => {
-            self.normalize_connection_error(bad_request_response().write_to(reader.get_mut()))?;
-            served += 1;
-            break;
-          }
-          Err(err) => return Err(err),
-        };
+      let request = match self
+        .normalize_connection_error(Request::read_next_from_with_continue(&mut reader))
+      {
+        Ok(Some(request)) => request,
+        Ok(None) => break,
+        Err(err) if is_expectation_failed_error(&err) => {
+          self
+            .normalize_connection_error(expectation_failed_response().write_to(reader.get_mut()))?;
+          served += 1;
+          break;
+        }
+        Err(err) if is_bad_request_error(&err) => {
+          self.normalize_connection_error(bad_request_response().write_to(reader.get_mut()))?;
+          served += 1;
+          break;
+        }
+        Err(err) => return Err(err),
+      };
       let request_closes_connection = request.closes_connection();
       let request_uses_http10_defaults = request.version() == "HTTP/1.0";
       let request_is_head = request.method() == "HEAD";
@@ -206,6 +213,10 @@ impl HttpServer {
       }),
     ) {
       Ok(request) => request,
+      Err(err) if is_expectation_failed_error(&err) => {
+        return self
+          .normalize_connection_error(expectation_failed_response().write_to(reader.get_mut()));
+      }
       Err(err) if is_bad_request_error(&err) => {
         return self.normalize_connection_error(bad_request_response().write_to(reader.get_mut()));
       }
@@ -233,6 +244,10 @@ impl HttpServer {
       }),
     ) {
       Ok(request) => request,
+      Err(err) if is_expectation_failed_error(&err) => {
+        return self
+          .normalize_connection_error(expectation_failed_response().write_to(reader.get_mut()));
+      }
       Err(err) if is_bad_request_error(&err) => {
         return self.normalize_connection_error(bad_request_response().write_to(reader.get_mut()));
       }
@@ -263,6 +278,10 @@ impl HttpServer {
       }),
     ) {
       Ok(request) => request,
+      Err(err) if is_expectation_failed_error(&err) => {
+        return self
+          .normalize_connection_error(expectation_failed_response().write_to(reader.get_mut()));
+      }
       Err(err) if is_bad_request_error(&err) => {
         return self.normalize_connection_error(bad_request_response().write_to(reader.get_mut()));
       }
@@ -1246,6 +1265,18 @@ impl Request {
   where
     S: Read + Write,
   {
+    Self::read_next_head_and_body_kind_from_with_continue(reader)?
+      .map_or(Ok(None), |(head, kind)| {
+        Ok(Some((Self::from_head_and_body(head, Vec::new()), kind)))
+      })
+  }
+
+  fn read_next_head_and_body_kind_from_with_continue<S>(
+    reader: &mut BufReader<S>,
+  ) -> io::Result<Option<(RequestHead, RequestBodyKind)>>
+  where
+    S: Read + Write,
+  {
     let mut raw = Vec::new();
 
     loop {
@@ -1279,10 +1310,7 @@ impl Request {
           if request_needs_continue(&head.headers, body_kind)? {
             write_continue_response(reader.get_mut())?;
           }
-          return Ok(Some((
-            Self::from_head_and_body(head, Vec::new()),
-            body_kind,
-          )));
+          return Ok(Some((head, body_kind)));
         }
         None => {
           let take = available.len();
@@ -1787,12 +1815,7 @@ impl HttpResponse {
 
     let connection_header_index = self.connection_header_index();
     for (index, header) in self.headers.iter().enumerate() {
-      if !header.name.eq_ignore_ascii_case("Content-Length")
-        && (self.allows_body() || !header.name.eq_ignore_ascii_case("Transfer-Encoding"))
-        && (!header.name.eq_ignore_ascii_case("Connection")
-          || (default_connection != DefaultConnectionHeader::ForceClose
-            && Some(index) == connection_header_index))
-      {
+      if self.should_write_head_header(header, index, connection_header_index, default_connection) {
         write!(writer, "{}: {}\r\n", header.name, header.value)?;
       }
     }
@@ -1868,6 +1891,27 @@ impl HttpResponse {
           .split(',')
           .any(|token| token.trim().eq_ignore_ascii_case("chunked"))
     })
+  }
+
+  fn should_write_head_header(
+    &self,
+    header: &HttpHeader,
+    index: usize,
+    connection_header_index: Option<usize>,
+    default_connection: DefaultConnectionHeader,
+  ) -> bool {
+    if header.name.eq_ignore_ascii_case("Content-Length") {
+      return false;
+    }
+    if !self.allows_body() && header.name.eq_ignore_ascii_case("Transfer-Encoding") {
+      return false;
+    }
+    if !header.name.eq_ignore_ascii_case("Connection") {
+      return true;
+    }
+
+    default_connection != DefaultConnectionHeader::ForceClose
+      && Some(index) == connection_header_index
   }
 
   fn connection_header_index(&self) -> Option<usize> {
@@ -2029,10 +2073,11 @@ fn parse_request_head(raw: &[u8]) -> io::Result<RequestHead> {
 
   let headers = parse_header_lines(lines)?;
   validate_host_header(version, target, &headers)?;
+  let target = normalize_request_target(target);
 
   Ok(RequestHead {
     method: method.to_string(),
-    target: target.to_string(),
+    target,
     version: version.to_string(),
     headers,
   })
@@ -2116,6 +2161,26 @@ fn is_absolute_form_target(target: &str) -> bool {
   is_valid_host_authority(&rest[..authority_end], false)
 }
 
+fn normalize_request_target(target: &str) -> String {
+  if request_target_form(target) != Some(RequestTargetForm::Absolute) {
+    return target.to_string();
+  }
+
+  let (_, rest) = target
+    .split_once("://")
+    .expect("absolute-form target must include a scheme separator");
+  let path_start = rest.find(['/', '?']).unwrap_or(rest.len());
+  let origin = &rest[path_start..];
+
+  if origin.is_empty() {
+    "/".to_string()
+  } else if origin.starts_with('?') {
+    format!("/{origin}")
+  } else {
+    origin.to_string()
+  }
+}
+
 fn is_uri_scheme(scheme: &str) -> bool {
   let mut bytes = scheme.bytes();
   let Some(first) = bytes.next() else {
@@ -2187,6 +2252,13 @@ fn is_valid_port(port: &str) -> bool {
 fn parse_header_lines<'a>(
   lines: impl Iterator<Item = &'a str>,
 ) -> io::Result<Vec<(String, String)>> {
+  parse_header_lines_with_error(lines, "invalid request header")
+}
+
+fn parse_header_lines_with_error<'a>(
+  lines: impl Iterator<Item = &'a str>,
+  invalid_line_error: &'static str,
+) -> io::Result<Vec<(String, String)>> {
   let mut headers = Vec::new();
 
   for line in lines {
@@ -2196,16 +2268,16 @@ fn parse_header_lines<'a>(
     if line.starts_with(' ') || line.starts_with('\t') {
       return Err(io::Error::new(
         io::ErrorKind::InvalidData,
-        "invalid request header",
+        invalid_line_error,
       ));
     }
     let (name, value) = line
       .split_once(':')
-      .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid request header"))?;
+      .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, invalid_line_error))?;
     if !is_http_token(name) || !value.bytes().all(is_header_value_byte) {
       return Err(io::Error::new(
         io::ErrorKind::InvalidData,
-        "invalid request header",
+        invalid_line_error,
       ));
     }
     headers.push((name.trim().to_string(), value.trim().to_string()));
@@ -2379,7 +2451,7 @@ fn request_needs_continue(
     if !value.eq_ignore_ascii_case("100-continue") {
       return Err(io::Error::new(
         io::ErrorKind::InvalidData,
-        "unsupported Expect header",
+        UnsupportedExpectation,
       ));
     }
   }
@@ -2649,7 +2721,7 @@ where
 fn parse_trailer_lines<'a>(
   lines: impl Iterator<Item = &'a str>,
 ) -> io::Result<Vec<(String, String)>> {
-  let trailers = parse_header_lines(lines)?;
+  let trailers = parse_header_lines_with_error(lines, "invalid request trailer")?;
   if trailers
     .iter()
     .any(|(name, _)| is_forbidden_trailer_name(name))
@@ -2718,9 +2790,30 @@ fn is_bad_request_error(err: &io::Error) -> bool {
   )
 }
 
+fn is_expectation_failed_error(err: &io::Error) -> bool {
+  err
+    .get_ref()
+    .is_some_and(|source| source.is::<UnsupportedExpectation>())
+}
+
 fn bad_request_response() -> HttpResponse {
   HttpResponse::new(400, "Bad Request").body("Bad Request")
 }
+
+fn expectation_failed_response() -> HttpResponse {
+  HttpResponse::new(417, "Expectation Failed").body("Expectation Failed")
+}
+
+#[derive(Debug)]
+struct UnsupportedExpectation;
+
+impl fmt::Display for UnsupportedExpectation {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.write_str("unsupported Expect header")
+  }
+}
+
+impl Error for UnsupportedExpectation {}
 
 #[cfg(test)]
 mod tests {
@@ -2757,6 +2850,46 @@ mod tests {
     assert_eq!("/second", second.target());
     assert_eq!(b"world", second.body());
     assert!(reader.fill_buf().expect("remaining bytes").is_empty());
+  }
+
+  #[test]
+  fn read_next_from_rejects_conflicting_duplicate_content_length() {
+    let raw = concat!(
+      "POST /upload HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Content-Length: 5\r\n",
+      "Content-Length: 6\r\n",
+      "\r\n",
+      "hello!"
+    );
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+
+    let error =
+      Request::read_next_from(&mut reader).expect_err("conflicting Content-Length should fail");
+
+    assert_eq!(io::ErrorKind::InvalidData, error.kind());
+    assert_eq!("conflicting Content-Length headers", error.to_string());
+  }
+
+  #[test]
+  fn read_next_from_accepts_duplicate_matching_content_length() {
+    let raw = concat!(
+      "POST /upload HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Content-Length: 5\r\n",
+      "Content-Length: 5\r\n",
+      "\r\n",
+      "hello"
+    );
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+
+    let request = Request::read_next_from(&mut reader)
+      .expect("matching duplicate Content-Length should parse")
+      .expect("request should be present");
+
+    assert_eq!("POST", request.method());
+    assert_eq!("/upload", request.target());
+    assert_eq!(b"hello", request.body());
   }
 
   #[test]

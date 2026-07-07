@@ -25,6 +25,22 @@ fn parses_http_request_target_headers_and_body() {
 }
 
 #[test]
+fn parses_absolute_form_request_target_as_origin_path_and_query() {
+  let raw = concat!(
+    "GET http://example.com/a/b?x=1 HTTP/1.1\r\n",
+    "Host: proxy.local\r\n",
+    "\r\n"
+  );
+
+  let request = HttpRequest::parse(raw.as_bytes()).expect("request should parse");
+
+  assert_eq!("GET", request.method());
+  assert_eq!("/a/b", request.path());
+  assert_eq!(Some("x=1"), request.query());
+  assert_eq!(Some("proxy.local"), request.header("host"));
+}
+
+#[test]
 fn parses_body_only_when_content_length_matches() {
   let raw = concat!(
     "POST /submit HTTP/1.1\r\n",
@@ -140,6 +156,16 @@ fn rejects_unsupported_and_malformed_http_version_tokens() {
 
     assert_eq!("invalid request version", error.to_string());
   }
+}
+
+#[test]
+fn rejects_malformed_absolute_form_request_target() {
+  let error = HttpRequest::parse(
+    b"GET http://example.test:port/a/b?x=1 HTTP/1.1\r\nHost: proxy.local\r\n\r\n",
+  )
+  .expect_err("request should be rejected");
+
+  assert_eq!("invalid request target", error.to_string());
 }
 
 #[test]

@@ -2,7 +2,11 @@ mod support;
 
 #[cfg(feature = "async")]
 use futures::executor::block_on;
+use rttp_client::types::Proxy;
 use rttp_client::HttpClient;
+use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::thread;
 use std::time::Duration;
 
 fn client() -> HttpClient {
@@ -19,6 +23,12 @@ fn capture_optional_request(request: impl FnOnce(String)) -> Vec<u8> {
   let (addr, handle) = support::capture_optional_raw_http_request(Duration::from_millis(250));
   request(format!("http://{}", addr));
   handle.join().expect("optional raw request capture server")
+}
+
+fn capture_proxy_request(request: impl FnOnce(Proxy)) -> Vec<u8> {
+  let (addr, handle) = support::capture_raw_http_request();
+  request(Proxy::http("127.0.0.1", u32::from(addr.port())));
+  handle.join().expect("raw proxy request capture server")
 }
 
 fn request_text(request: &[u8]) -> String {
@@ -45,6 +55,81 @@ fn request_body(request: &[u8]) -> &[u8] {
   &request[body_start..]
 }
 
+fn read_request_head(stream: &mut TcpStream) -> Vec<u8> {
+  let mut request = Vec::new();
+  let mut byte = [0u8; 1];
+  while !request.ends_with(b"\r\n\r\n") {
+    stream.read_exact(&mut byte).expect("read request head");
+    request.push(byte[0]);
+  }
+  request
+}
+
+fn content_length(request: &[u8]) -> usize {
+  request
+    .split(|byte| *byte == b'\n')
+    .find_map(|line| {
+      let line = String::from_utf8_lossy(line);
+      let (name, value) = line.split_once(':')?;
+      if name.eq_ignore_ascii_case("Content-Length") {
+        Some(value.trim().parse().expect("valid content length"))
+      } else {
+        None
+      }
+    })
+    .unwrap_or(0)
+}
+
+fn spawn_streaming_then_capture_server() -> (SocketAddr, thread::JoinHandle<Vec<u8>>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind streaming reuse server");
+  let addr = listener.local_addr().expect("streaming reuse server addr");
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept streaming request");
+    let first_head = read_request_head(&mut stream);
+    let mut body = vec![0u8; content_length(&first_head)];
+    stream.read_exact(&mut body).expect("read streaming body");
+    stream
+      .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: keep-alive\r\n\r\nuploaded")
+      .expect("write streaming response");
+
+    let (mut stream, _) = listener.accept().expect("accept follow-up request");
+    let second_head = read_request_head(&mut stream);
+    stream
+      .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nsecond")
+      .expect("write follow-up response");
+    second_head
+  });
+  (addr, handle)
+}
+
+fn spawn_chunked_streaming_then_capture_server() -> (SocketAddr, thread::JoinHandle<Vec<u8>>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind chunked streaming reuse server");
+  let addr = listener
+    .local_addr()
+    .expect("chunked streaming reuse server addr");
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept chunked streaming request");
+    let _first_head = read_request_head(&mut stream);
+    let mut body = Vec::new();
+    let mut byte = [0u8; 1];
+    while !body.ends_with(b"\r\n0\r\n\r\n") {
+      stream.read_exact(&mut byte).expect("read chunked body");
+      body.push(byte[0]);
+    }
+    stream
+      .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: keep-alive\r\n\r\nuploaded")
+      .expect("write chunked streaming response");
+
+    let (mut stream, _) = listener.accept().expect("accept follow-up request");
+    let second_head = read_request_head(&mut stream);
+    stream
+      .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nsecond")
+      .expect("write follow-up response");
+    second_head
+  });
+  (addr, handle)
+}
+
 #[test]
 fn get_with_query_parameters_sends_request_target_without_body() {
   let request = capture_request(|base_url| {
@@ -63,6 +148,89 @@ fn get_with_query_parameters_sends_request_target_without_body() {
   assert_eq!(None, header_value(&text, "Content-Type"));
   assert_eq!(None, header_value(&text, "Content-Length"));
   assert_eq!(b"", request_body(&request));
+}
+
+#[test]
+fn streaming_fixed_framing_does_not_leak_into_later_emit() {
+  let (addr, handle) = spawn_streaming_then_capture_server();
+  let mut client = client();
+
+  client
+    .post()
+    .url(format!("http://{}/upload", addr))
+    .emit_streaming_fixed("hello".as_bytes(), 5)
+    .expect("streaming upload should succeed");
+
+  client
+    .get()
+    .url(format!("http://{}/second", addr))
+    .emit()
+    .expect("follow-up request should succeed");
+
+  let second = handle.join().expect("streaming reuse server");
+  let second = request_text(&second);
+
+  assert!(second.starts_with("GET /second HTTP/1.1\r\n"));
+  assert_eq!(None, header_value(&second, "Content-Length"));
+  assert_eq!(None, header_value(&second, "Transfer-Encoding"));
+}
+
+#[test]
+fn streaming_chunked_framing_does_not_leak_into_later_emit() {
+  let (addr, handle) = spawn_chunked_streaming_then_capture_server();
+  let mut client = client();
+
+  client
+    .post()
+    .url(format!("http://{}/upload", addr))
+    .emit_streaming_chunked("hello".as_bytes())
+    .expect("chunked streaming upload should succeed");
+
+  client
+    .get()
+    .url(format!("http://{}/second", addr))
+    .emit()
+    .expect("follow-up request should succeed");
+
+  let second = handle.join().expect("chunked streaming reuse server");
+  let second = request_text(&second);
+
+  assert!(second.starts_with("GET /second HTTP/1.1\r\n"));
+  assert_eq!(None, header_value(&second, "Content-Length"));
+  assert_eq!(None, header_value(&second, "Transfer-Encoding"));
+}
+
+#[test]
+fn http_proxy_request_sends_absolute_form_request_target() {
+  let request = capture_proxy_request(|proxy| {
+    client()
+      .get()
+      .url("http://example.test/path?x=1")
+      .proxy(proxy)
+      .emit()
+      .expect("request should succeed");
+  });
+
+  let text = request_text(&request);
+  let request_line = text.lines().next().expect("request line");
+
+  assert_eq!("GET http://example.test/path?x=1 HTTP/1.1", request_line);
+}
+
+#[test]
+fn direct_http_request_sends_origin_form_request_target() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/path?x=1", base_url))
+      .emit()
+      .expect("request should succeed");
+  });
+
+  let text = request_text(&request);
+  let request_line = text.lines().next().expect("request line");
+
+  assert_eq!("GET /path?x=1 HTTP/1.1", request_line);
 }
 
 #[test]

@@ -14,7 +14,8 @@ use crate::connection::connection::{
   ExpectContinueResult,
 };
 use crate::connection::connection_reader::{
-  is_skippable_informational_status, response_body_kind, response_headers, response_status_code,
+  is_skippable_informational_status, response_body_kind, response_connection_reusable,
+  response_connection_should_close, response_headers, response_status_code,
   validate_response_trailer_header, ResponseBodyKind, ResponseParts,
   MAX_CHUNKED_RESPONSE_LINE_BYTES,
 };
@@ -62,11 +63,15 @@ impl<'a, S: AsyncRead + Unpin + ?Sized> AsyncStreamingResponse<'a, S> {
   }
 
   async fn read_to_parts(mut self) -> error::Result<ResponseParts> {
+    let close_connection = response_connection_should_close(&self.head)?;
+    let connection_reusable = response_connection_reusable(&self.head, &self.body.kind)?;
     let mut binary = self.head;
     self.body.read_to_end(&mut binary).await?;
     Ok(ResponseParts {
       binary,
       trailers: self.body.trailers().clone(),
+      connection_reusable,
+      close_connection,
     })
   }
 }
@@ -216,6 +221,7 @@ impl<'a> AsyncConnection<'a> {
 
   pub async fn async_call(mut self) -> error::Result<Response> {
     let mut visited_urls = HashSet::new();
+    let mut reusable_stream: Option<AllowStdIo<TcpStream>> = None;
 
     loop {
       let url = self.conn.url().map_err(error::builder)?;
@@ -225,18 +231,34 @@ impl<'a> AsyncConnection<'a> {
       ));
       let proxy = self.conn.proxy().clone();
       let parts = if let Some(proxy) = proxy.as_ref() {
+        reusable_stream = None;
         self.call_with_proxy(&url, proxy).await?
+      } else if url.scheme() == "http" {
+        let mut stream = match reusable_stream.take() {
+          Some(stream) => stream,
+          None => {
+            let addr = self.conn.addr(&url)?;
+            AllowStdIo::new(self.async_tcp_stream(&addr).await?)
+          }
+        };
+        let parts = self.async_send_http_parts(&url, &mut stream).await?;
+        if parts.connection_reusable {
+          reusable_stream = Some(stream);
+        }
+        parts
       } else {
+        reusable_stream = None;
         self.async_send_parts(&url).await?
       };
 
+      let close_connection = parts.close_connection;
       let response =
         Response::with_trailers(self.conn.rourl().clone(), parts.binary, parts.trailers)?;
       let config = self.conn.config().clone();
 
       if response.is_redirect() {
         let Some(location) = response.location() else {
-          self.conn.closed_set(true);
+          self.conn.closed_set(close_connection);
           return Ok(response);
         };
         if config.auto_redirect() {
@@ -247,6 +269,11 @@ impl<'a> AsyncConnection<'a> {
 
           let redirect_url = self.conn.resolve_redirect_url(&url, location)?;
           let strip_sensitive_headers = !self.conn.is_same_origin_url(&url, &redirect_url.url);
+          if !self.conn.is_same_origin_url(&url, &redirect_url.url)
+            || redirect_url.url.scheme() != "http"
+          {
+            reusable_stream = None;
+          }
           self.conn.request_mut().redirect_status_set(response.code());
           let next_visit = (
             self.conn.request().origin().method().to_uppercase(),
@@ -265,7 +292,7 @@ impl<'a> AsyncConnection<'a> {
         }
       }
 
-      self.conn.closed_set(true);
+      self.conn.closed_set(close_connection);
       return Ok(response);
     }
   }
@@ -282,9 +309,10 @@ impl<'a> AsyncConnection<'a> {
 
     let url = self.conn.url().map_err(error::builder)?;
     let parts = self.async_send_streaming_parts(&url, body).await?;
+    let close_connection = parts.close_connection;
     let response =
       Response::with_trailers(self.conn.rourl().clone(), parts.binary, parts.trailers)?;
-    self.conn.closed_set(true);
+    self.conn.closed_set(close_connection);
     Ok(response)
   }
 }
@@ -1163,6 +1191,36 @@ mod tests {
       assert_eq!(
         Some("abc"),
         response.trailer_value("x-trace").map(String::as_str)
+      );
+    });
+  }
+
+  #[test]
+  fn async_streaming_response_rejects_malformed_header_without_colon() {
+    block_on(async {
+      let raw = concat!(
+        "HTTP/1.1 200 OK\r\n",
+        "BrokenHeader\r\n",
+        "Content-Length: 2\r\n",
+        "\r\n",
+        "OK"
+      );
+      let mut cursor = AllowStdIo::new(Cursor::new(raw.as_bytes()));
+      let head = async_read_response_head(&mut cursor).await.unwrap();
+
+      let error = match async_streaming_response_after_header(&mut cursor, false, head).await {
+        Ok(_) => panic!("malformed response header should be rejected"),
+        Err(error) => error,
+      };
+
+      assert!(
+        error.to_string().contains("Invalid response header"),
+        "unexpected error: {error}"
+      );
+      assert_eq!(
+        (raw.len() - "OK".len()) as u64,
+        cursor.get_ref().position(),
+        "malformed response headers must be rejected before body bytes are consumed"
       );
     });
   }

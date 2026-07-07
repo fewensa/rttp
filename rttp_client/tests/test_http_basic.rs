@@ -6,6 +6,7 @@ use std::net::TcpListener;
 use std::thread;
 
 use rttp_client::types::{Auth, Para, Proxy, RoUrl};
+use rttp_client::ConnectionReader;
 use rttp_client::{Config, HttpClient};
 
 fn client() -> HttpClient {
@@ -59,6 +60,31 @@ fn spawn_fixed_upload_capture_server() -> (std::net::SocketAddr, thread::JoinHan
   (addr, handle)
 }
 
+fn spawn_head_metadata_server() -> (std::net::SocketAddr, thread::JoinHandle<Vec<u8>>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind HEAD metadata server");
+  let addr = listener.local_addr().expect("HEAD metadata server addr");
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept HEAD metadata request");
+    let request = support::read_http_request(&mut stream);
+    stream
+      .write_all(
+        concat!(
+          "HTTP/1.1 200 OK\r\n",
+          "Content-Length: 7\r\n",
+          "Transfer-Encoding: chunked\r\n",
+          "X-Object-Size: 7\r\n",
+          "Connection: close\r\n",
+          "\r\n",
+          "ignored"
+        )
+        .as_bytes(),
+      )
+      .expect("write HEAD metadata response");
+    request
+  });
+  (addr, handle)
+}
+
 struct FailingReader {
   sent: bool,
 }
@@ -85,6 +111,35 @@ fn test_http() {
   let response = response.unwrap();
   assert_eq!("127.0.0.1", response.host());
   println!("{}", response);
+}
+
+#[test]
+fn test_head_response_is_bodyless_and_preserves_headers() {
+  let (addr, handle) = spawn_head_metadata_server();
+  let response = client()
+    .head()
+    .url(format!("http://{}/metadata", addr))
+    .emit()
+    .expect("HEAD metadata response");
+
+  assert_eq!("", response.body().string().unwrap());
+  assert_eq!(
+    Some("7"),
+    response.header_value("Content-Length").map(String::as_str)
+  );
+  assert_eq!(
+    Some("chunked"),
+    response
+      .header_value("Transfer-Encoding")
+      .map(String::as_str)
+  );
+  assert_eq!(
+    Some("7"),
+    response.header_value("X-Object-Size").map(String::as_str)
+  );
+
+  let request = handle.join().expect("HEAD metadata server thread");
+  assert!(String::from_utf8_lossy(&request).starts_with("HEAD /metadata HTTP/1.1\r\n"));
 }
 
 #[test]
@@ -210,6 +265,40 @@ fn test_chunked() {
 }
 
 #[test]
+fn test_chunked_valid_extension_preserves_trailers_without_leaking_extension() {
+  let (addr, _handle) = support::spawn_chunked_response_server(concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "4;foo=bar\r\nWiki\r\n",
+    "0\r\n",
+    "X-Trace: abc\r\n",
+    "X-Signature: signed\r\n",
+    "\r\n"
+  ));
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/chunked", addr))
+    .emit()
+    .unwrap();
+
+  assert_eq!("Wiki", response.body().string().unwrap());
+  assert_eq!(2, response.trailers().len());
+  assert_eq!(
+    Some("abc"),
+    response.trailer("x-trace").map(|h| h.value().as_str())
+  );
+  assert_eq!(
+    Some("signed"),
+    response.trailer_value("X-SIGNATURE").map(String::as_str)
+  );
+  assert!(response.trailer("foo").is_none());
+  assert!(response.trailer_value("foo").is_none());
+}
+
+#[test]
 fn test_socket2_server_chunked_trailers_are_exposed_case_insensitively() {
   let (addr, _handle) = support::spawn_socket2_chunked_trailer_server();
   let response = client()
@@ -251,6 +340,78 @@ fn test_chunked_without_trailers_exposes_empty_trailers() {
   assert_eq!("OK", response.body().string().unwrap());
   assert!(response.trailers().is_empty());
   assert!(response.trailer("x-trace").is_none());
+}
+
+#[test]
+fn test_204_with_misleading_content_length_keeps_next_response_readable() {
+  let raw = concat!(
+    "HTTP/1.1 204 No Content\r\n",
+    "Content-Length: 7\r\n",
+    "X-Trace: no-content\r\n",
+    "\r\n",
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Length: 4\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "next"
+  );
+  let url = url::Url::parse("http://localhost").unwrap();
+  let mut cursor = Cursor::new(raw.as_bytes());
+  let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+
+  let first = reader.response().unwrap();
+
+  assert_eq!(204, first.code());
+  assert_eq!("", first.body().string().unwrap());
+  assert_eq!(
+    Some("7"),
+    first.header_value("Content-Length").map(String::as_str)
+  );
+  assert_eq!(
+    Some("no-content"),
+    first.header_value("X-Trace").map(String::as_str)
+  );
+
+  let second = reader.response().unwrap();
+
+  assert_eq!(200, second.code());
+  assert_eq!("next", second.body().string().unwrap());
+}
+
+#[test]
+fn test_304_with_misleading_chunked_framing_keeps_next_response_readable() {
+  let raw = concat!(
+    "HTTP/1.1 304 Not Modified\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "ETag: \"abc\"\r\n",
+    "\r\n",
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Length: 4\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "next"
+  );
+  let url = url::Url::parse("http://localhost").unwrap();
+  let mut cursor = Cursor::new(raw.as_bytes());
+  let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+
+  let first = reader.response().unwrap();
+
+  assert_eq!(304, first.code());
+  assert_eq!("", first.body().string().unwrap());
+  assert_eq!(
+    Some("chunked"),
+    first.header_value("Transfer-Encoding").map(String::as_str)
+  );
+  assert_eq!(
+    Some("\"abc\""),
+    first.header_value("ETag").map(String::as_str)
+  );
+
+  let second = reader.response().unwrap();
+
+  assert_eq!(200, second.code());
+  assert_eq!("next", second.body().string().unwrap());
 }
 
 #[test]
@@ -584,6 +745,30 @@ fn test_forbidden_chunked_response_trailer_is_rejected() {
 }
 
 #[test]
+fn test_malformed_response_header_without_colon_is_rejected() {
+  let response = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "BrokenHeader\r\n",
+    "Content-Length: 2\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "OK"
+  );
+  let (addr, _handle) = support::spawn_chunked_response_server(response);
+
+  let error = client()
+    .get()
+    .url(format!("http://{}/broken", addr))
+    .emit()
+    .expect_err("malformed response header should be rejected");
+
+  assert!(
+    error.to_string().contains("Invalid response header"),
+    "unexpected error: {error}"
+  );
+}
+
+#[test]
 fn test_duplicate_set_cookie_headers_are_preserved() {
   let (addr, _handle) = support::spawn_duplicate_set_cookie_server();
   let response = client()
@@ -647,6 +832,57 @@ fn test_content_length_response_does_not_wait_for_eof() {
 
   let response = response.unwrap();
   assert_eq!("OK", response.body().string().unwrap());
+}
+
+#[test]
+fn test_sync_redirect_reuses_socket_when_connection_close_is_absent() {
+  let (addr, handle) = support::spawn_redirect_connection_lifecycle_server(false);
+  let response = client()
+    .get()
+    .config(Config::builder().auto_redirect(true))
+    .url(format!("http://{}/start", addr))
+    .emit()
+    .unwrap();
+
+  assert_eq!(200, response.code());
+  assert_eq!("final", response.body().string().unwrap());
+  assert_eq!(vec![2], handle.join().unwrap());
+}
+
+#[test]
+fn test_sync_redirect_uses_fresh_socket_after_connection_close() {
+  let (addr, handle) = support::spawn_redirect_connection_lifecycle_server(true);
+  let response = client()
+    .get()
+    .config(Config::builder().auto_redirect(true))
+    .url(format!("http://{}/start", addr))
+    .emit()
+    .unwrap();
+
+  assert_eq!(200, response.code());
+  assert_eq!("final", response.body().string().unwrap());
+  assert_eq!(vec![1, 1], handle.join().unwrap());
+}
+
+#[test]
+fn test_keep_alive_content_length_response_leaves_client_reusable() {
+  let (addr, _handle) = support::spawn_keep_alive_server_count(2);
+  let mut client = client();
+
+  let first = client
+    .get()
+    .config(Config::builder().read_timeout(100))
+    .url(format!("http://{}/keep-alive", addr))
+    .emit()
+    .unwrap();
+  assert_eq!("OK", first.body().string().unwrap());
+
+  let second = client
+    .get()
+    .url(format!("http://{}/keep-alive", addr))
+    .emit()
+    .unwrap();
+  assert_eq!("OK", second.body().string().unwrap());
 }
 
 #[test]

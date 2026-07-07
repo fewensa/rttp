@@ -22,6 +22,8 @@ pub(crate) enum ResponseBodyKind {
 pub(crate) struct ResponseParts {
   pub(crate) binary: Vec<u8>,
   pub(crate) trailers: Vec<Header>,
+  pub(crate) connection_reusable: bool,
+  pub(crate) close_connection: bool,
 }
 
 pub struct StreamingResponse<'a, R: Read + ?Sized> {
@@ -235,7 +237,7 @@ where
   read_response_parts_after_header(reader, expect_no_body, binary)
 }
 
-fn read_response_head<R>(reader: &mut R) -> error::Result<Vec<u8>>
+pub(crate) fn read_response_head<R>(reader: &mut R) -> error::Result<Vec<u8>>
 where
   R: Read + ?Sized,
 {
@@ -257,8 +259,11 @@ pub(crate) fn read_response_parts_after_header<R>(
 where
   R: Read + ?Sized,
 {
+  let close_connection = response_connection_should_close(&binary)?;
   let mut trailers = Vec::new();
-  match response_body_kind(&binary, expect_no_body)? {
+  let body_kind = response_body_kind(&binary, expect_no_body)?;
+  let connection_reusable = response_connection_reusable(&binary, &body_kind)?;
+  match body_kind {
     ResponseBodyKind::NoBody => {}
     ResponseBodyKind::Chunked => {
       let mut body_reader = ResponseBodyReader::new(reader, ResponseBodyKind::Chunked);
@@ -278,10 +283,23 @@ where
       reader.read_to_end(&mut binary).map_err(error::request)?;
     }
   }
-  Ok(ResponseParts { binary, trailers })
+  Ok(ResponseParts {
+    binary,
+    trailers,
+    connection_reusable,
+    close_connection,
+  })
+}
+
+pub(crate) fn response_connection_reusable(
+  header: &[u8],
+  body_kind: &ResponseBodyKind,
+) -> error::Result<bool> {
+  Ok(!matches!(body_kind, ResponseBodyKind::UntilEof) && !response_connection_should_close(header)?)
 }
 
 pub(crate) fn response_headers(header: &[u8]) -> error::Result<Vec<Header>> {
+  validate_response_header_lines(header)?;
   let header = String::from_utf8(header.to_vec()).map_err(error::response)?;
   Ok(
     header
@@ -291,6 +309,36 @@ pub(crate) fn response_headers(header: &[u8]) -> error::Result<Vec<Header>> {
       .flat_map(|line| line.into_headers())
       .collect(),
   )
+}
+
+pub(crate) fn response_connection_should_close(header: &[u8]) -> error::Result<bool> {
+  let header = String::from_utf8(header.to_vec()).map_err(error::response)?;
+  let version = header
+    .lines()
+    .next()
+    .and_then(|line| line.split_whitespace().next())
+    .unwrap_or_default();
+  let mut has_keep_alive = false;
+
+  for line in header.lines().skip(1) {
+    let Some((name, value)) = line.split_once(':') else {
+      continue;
+    };
+    if !name.eq_ignore_ascii_case("Connection") {
+      continue;
+    }
+
+    for token in value.split(',').map(str::trim) {
+      if token.eq_ignore_ascii_case("close") {
+        return Ok(true);
+      }
+      if token.eq_ignore_ascii_case("keep-alive") {
+        has_keep_alive = true;
+      }
+    }
+  }
+
+  Ok(version.eq_ignore_ascii_case("HTTP/1.0") && !has_keep_alive)
 }
 
 pub(crate) fn read_response_header<R>(reader: &mut R) -> error::Result<Vec<u8>>
@@ -338,6 +386,8 @@ pub(crate) fn response_body_kind(
   header: &[u8],
   expect_no_body: bool,
 ) -> error::Result<ResponseBodyKind> {
+  validate_response_header_lines(header)?;
+
   if expect_no_body {
     return Ok(ResponseBodyKind::NoBody);
   }
@@ -412,6 +462,23 @@ pub(crate) fn response_body_kind(
   } else {
     Ok(ResponseBodyKind::UntilEof)
   }
+}
+
+fn validate_response_header_lines(header: &[u8]) -> error::Result<()> {
+  let header = match header
+    .windows(HEADER_END.len())
+    .position(|w| w == HEADER_END)
+  {
+    Some(header_end) => &header[..header_end],
+    None => header,
+  };
+  let header = String::from_utf8_lossy(header);
+  for line in header.lines().skip(1).filter(|line| !line.is_empty()) {
+    if !line.contains(':') {
+      return Err(error::bad_response("Invalid response header"));
+    }
+  }
+  Ok(())
 }
 
 fn read_bounded_crlf_line<R>(reader: &mut R, max_len: usize) -> error::Result<Vec<u8>>
@@ -870,6 +937,34 @@ mod tests {
     assert!(
       error.to_string().contains("Invalid trailer header"),
       "unexpected error: {error}"
+    );
+  }
+
+  #[test]
+  fn test_malformed_response_header_without_colon_is_rejected_before_body() {
+    let raw = concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "BrokenHeader\r\n",
+      "Content-Length: 2\r\n",
+      "\r\n",
+      "OK"
+    );
+    let url = url::Url::parse("http://localhost").unwrap();
+    let mut cursor = Cursor::new(raw.as_bytes());
+    let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+
+    let error = reader
+      .response()
+      .expect_err("malformed response header should be rejected");
+
+    assert!(
+      error.to_string().contains("Invalid response header"),
+      "unexpected error: {error}"
+    );
+    assert_eq!(
+      (raw.len() - "OK".len()) as u64,
+      cursor.position(),
+      "malformed response headers must be rejected before body bytes are consumed"
     );
   }
 

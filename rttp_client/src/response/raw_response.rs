@@ -210,6 +210,17 @@ impl Parser {
       .code(status_code)
       .reason(reason);
 
+    for header_line in parts
+      .iter()
+      .skip(1)
+      .map(|part| part.trim_end_matches('\r'))
+      .filter(|part| !part.is_empty())
+    {
+      if !header_line.contains(':') {
+        return Err(error::bad_response("Invalid response header"));
+      }
+    }
+
     let headers = parts
       .iter()
       .enumerate()
