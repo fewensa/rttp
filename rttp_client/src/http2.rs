@@ -313,19 +313,32 @@ enum HeaderBlockKind {
   Trailers,
 }
 
+#[derive(Clone, Copy)]
+struct PendingHeaderBlock {
+  kind: HeaderBlockKind,
+  end_stream: bool,
+}
+
 fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Result<Response> {
   let mut header_block = Vec::new();
   let mut headers = Vec::new();
   let mut trailers = Vec::new();
   let mut body = Vec::new();
   let mut status = None;
-  let mut header_block_kind = None;
+  let mut pending_header_block = None;
   let mut final_response_started = false;
   let mut response_body_started = false;
   let mut pending_window_update = 0usize;
 
   loop {
     let frame = read_frame(stream)?;
+    if pending_header_block.is_some()
+      && (frame.frame_type != FRAME_CONTINUATION || frame.stream_id != STREAM_ID)
+    {
+      return Err(error::bad_response(
+        "expected HTTP/2 CONTINUATION frame for incomplete header block",
+      ));
+    }
     match (frame.frame_type, frame.stream_id) {
       (FRAME_SETTINGS, 0) => {
         if frame.flags & FLAG_ACK == 0 {
@@ -338,14 +351,12 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
         }
       }
       (FRAME_HEADERS, STREAM_ID) => {
-        if header_block_kind.is_some() {
-          return Err(error::bad_response("incomplete HTTP/2 header block"));
-        }
         let kind = if final_response_started || response_body_started {
           HeaderBlockKind::Trailers
         } else {
           HeaderBlockKind::ResponseHeaders
         };
+        let end_stream = frame.flags & FLAG_END_STREAM == FLAG_END_STREAM;
         header_block.extend_from_slice(&frame.payload);
         if frame.flags & FLAG_END_HEADERS == FLAG_END_HEADERS {
           if apply_header_block(
@@ -358,20 +369,22 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
             final_response_started = true;
           }
           header_block.clear();
-          header_block_kind = None;
+          pending_header_block = None;
         } else {
-          header_block_kind = Some(kind);
+          pending_header_block = Some(PendingHeaderBlock { kind, end_stream });
         }
-        if frame.flags & FLAG_END_STREAM == FLAG_END_STREAM {
+        if frame.flags & FLAG_END_HEADERS == FLAG_END_HEADERS && end_stream {
           break;
         }
       }
-      (FRAME_CONTINUATION, STREAM_ID) if header_block_kind.is_some() => {
+      (FRAME_CONTINUATION, STREAM_ID) => {
+        let pending = pending_header_block.ok_or_else(|| {
+          error::bad_response("unexpected HTTP/2 CONTINUATION frame without header block")
+        })?;
         header_block.extend_from_slice(&frame.payload);
         if frame.flags & FLAG_END_HEADERS == FLAG_END_HEADERS {
-          let kind = header_block_kind.expect("checked header block kind");
           if apply_header_block(
-            kind,
+            pending.kind,
             &header_block,
             &mut status,
             &mut headers,
@@ -380,7 +393,10 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
             final_response_started = true;
           }
           header_block.clear();
-          header_block_kind = None;
+          pending_header_block = None;
+          if pending.end_stream {
+            break;
+          }
         }
       }
       (FRAME_DATA, STREAM_ID) => {
@@ -409,12 +425,17 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
         }
       }
       (_, STREAM_ID) => {}
+      (FRAME_CONTINUATION, _) => {
+        return Err(error::bad_response(
+          "unexpected HTTP/2 CONTINUATION frame without header block",
+        ));
+      }
       (_, 0) => {}
       _ => {}
     }
   }
 
-  if header_block_kind.is_some() {
+  if pending_header_block.is_some() {
     return Err(error::bad_response("incomplete HTTP/2 header block"));
   }
 
