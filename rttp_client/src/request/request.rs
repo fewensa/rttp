@@ -20,6 +20,7 @@ pub struct Request {
   paras: Vec<Para>,
   formdatas: Vec<FormData>,
   headers: Vec<Header>,
+  trailers: Vec<Header>,
   traditional: bool,
   encode: bool,
   raw: Option<String>,
@@ -40,6 +41,7 @@ impl Request {
       paras: vec![],
       formdatas: vec![],
       headers: vec![],
+      trailers: vec![],
       traditional: true,
       encode: true,
       raw: None,
@@ -74,6 +76,9 @@ impl Request {
   }
   pub fn headers(&self) -> &Vec<Header> {
     &self.headers
+  }
+  pub fn trailers(&self) -> &Vec<Header> {
+    &self.trailers
   }
   pub fn traditional(&self) -> bool {
     self.traditional
@@ -117,6 +122,9 @@ impl Request {
   }
   pub(crate) fn headers_mut(&mut self) -> &mut Vec<Header> {
     &mut self.headers
+  }
+  pub(crate) fn trailers_mut(&mut self) -> &mut Vec<Header> {
+    &mut self.trailers
   }
   pub(crate) fn traditional_mut(&mut self) -> &mut bool {
     &mut self.traditional
@@ -168,6 +176,10 @@ impl Request {
   }
   pub(crate) fn headers_set(&mut self, headers: Vec<Header>) -> &mut Self {
     self.headers = headers;
+    self
+  }
+  pub(crate) fn trailers_set(&mut self, trailers: Vec<Header>) -> &mut Self {
+    self.trailers = trailers;
     self
   }
   pub(crate) fn traditional_set(&mut self, traditional: bool) -> &mut Self {
@@ -246,13 +258,24 @@ impl Request {
   }
 
   pub(crate) fn prepare_streaming_chunked_body(&mut self) {
+    let has_trailers = !self.trailers.is_empty();
     self.headers.retain(|header| {
       !header.name().eq_ignore_ascii_case("content-length")
         && !header.name().eq_ignore_ascii_case("transfer-encoding")
+        && (!has_trailers || !header.name().eq_ignore_ascii_case("trailer"))
     });
     self
       .headers
       .push(Header::new("Transfer-Encoding", "chunked"));
+    if has_trailers {
+      let names = self
+        .trailers
+        .iter()
+        .map(|header| header.name().as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+      self.headers.push(Header::new("Trailer", names));
+    }
   }
 
   pub(crate) fn clear_streaming_body_headers(&mut self) {
@@ -260,6 +283,15 @@ impl Request {
       !header.name().eq_ignore_ascii_case("content-length")
         && !header.name().eq_ignore_ascii_case("transfer-encoding")
     });
+  }
+
+  pub(crate) fn clear_streaming_chunked_body_headers(&mut self) {
+    self.clear_streaming_body_headers();
+    if !self.trailers.is_empty() {
+      self
+        .headers
+        .retain(|header| !header.name().eq_ignore_ascii_case("trailer"));
+    }
   }
 }
 
