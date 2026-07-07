@@ -94,6 +94,31 @@ fn test_async_chunked() {
 
 #[test]
 #[cfg(feature = "async")]
+fn test_async_chunked_valid_extension_is_ignored() {
+  let (addr, _handle) = support::spawn_chunked_response_server(concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "4;foo=bar\r\nWiki\r\n",
+    "0\r\n",
+    "\r\n"
+  ));
+
+  block_on(async {
+    let response = client()
+      .get()
+      .url(format!("http://{}/chunked", addr))
+      .rasync()
+      .await
+      .unwrap();
+
+    assert_eq!("Wiki", response.body().string().unwrap());
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
 fn test_async_streaming_chunked_upload_writes_incremental_framing() {
   let (addr, handle) = spawn_async_chunked_upload_capture_server();
   block_on(async {
