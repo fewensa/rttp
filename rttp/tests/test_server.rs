@@ -76,6 +76,16 @@ fn h2_literal_indexed_name(name_index: u8, value: &[u8]) -> Vec<u8> {
   encoded
 }
 
+fn h2_literal_new_name(name: &[u8], value: &[u8]) -> Vec<u8> {
+  assert!(name.len() < 128);
+  assert!(value.len() < 128);
+  let mut encoded = vec![0, name.len() as u8];
+  encoded.extend_from_slice(name);
+  encoded.push(value.len() as u8);
+  encoded.extend_from_slice(value);
+  encoded
+}
+
 fn h2_get_headers(path: &[u8], authority: &[u8]) -> Vec<u8> {
   let mut headers = vec![0x82, 0x86];
   headers.extend(h2_literal_indexed_name(4, path));
@@ -105,6 +115,44 @@ fn complete_h2_server_handshake(stream: &mut TcpStream) {
   assert_eq!(0, settings_ack.stream_id);
 
   write_h2_frame(stream, H2_FRAME_SETTINGS, H2_FLAG_ACK, 0, &[]);
+}
+
+fn assert_invalid_h2_headers_without_handler(header_block: &[u8]) {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send(request).expect("send unexpected h2 request");
+      HttpResponse::ok("unexpected")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    header_block,
+  );
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown h2 write");
+
+  let error = handle
+    .join()
+    .expect("server thread")
+    .expect_err("invalid h2 headers should reject request");
+  assert_eq!(ErrorKind::InvalidData, error.kind());
+  assert!(rx.try_recv().is_err());
 }
 
 fn send_raw_request_capture(raw: &[u8]) -> (String, Option<Request>) {
@@ -397,6 +445,42 @@ fn server_accepts_http2_prior_knowledge_headers_and_data_before_calling_handler(
   assert_eq!(b"stored", response_body.payload.as_slice());
 
   handle.join().expect("server thread");
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_request_missing_scheme() {
+  let mut headers = vec![0x82];
+  headers.extend(h2_literal_indexed_name(4, b"/missing-scheme"));
+  headers.extend(h2_literal_indexed_name(1, b"localhost"));
+
+  assert_invalid_h2_headers_without_handler(&headers);
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_request_missing_authority() {
+  let mut headers = vec![0x82, 0x86];
+  headers.extend(h2_literal_indexed_name(4, b"/missing-authority"));
+
+  assert_invalid_h2_headers_without_handler(&headers);
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_request_duplicate_pseudo_header() {
+  let mut headers = vec![0x82, 0x82, 0x86];
+  headers.extend(h2_literal_indexed_name(4, b"/duplicate-method"));
+  headers.extend(h2_literal_indexed_name(1, b"localhost"));
+
+  assert_invalid_h2_headers_without_handler(&headers);
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_pseudo_header_after_regular_header() {
+  let mut headers = vec![0x82, 0x86];
+  headers.extend(h2_literal_new_name(b"x-before-pseudo", b"present"));
+  headers.extend(h2_literal_indexed_name(4, b"/late-path"));
+  headers.extend(h2_literal_indexed_name(1, b"localhost"));
+
+  assert_invalid_h2_headers_without_handler(&headers);
 }
 
 #[test]

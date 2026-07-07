@@ -683,6 +683,7 @@ fn write_http2_window_update(
 struct DecodedHttp2RequestHeaders {
   method: Option<String>,
   target: Option<String>,
+  scheme: Option<String>,
   authority: Option<String>,
   headers: Vec<(String, String)>,
 }
@@ -695,10 +696,14 @@ impl DecodedHttp2RequestHeaders {
     let target = self
       .target
       .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing HTTP/2 :path"))?;
+    let _scheme = self
+      .scheme
+      .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing HTTP/2 :scheme"))?;
+    let authority = self
+      .authority
+      .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing HTTP/2 :authority"))?;
     let mut headers = self.headers;
-    if let Some(authority) = self.authority {
-      headers.push(("host".to_string(), authority));
-    }
+    headers.push(("host".to_string(), authority));
 
     Ok(Request {
       method,
@@ -716,9 +721,12 @@ fn decode_http2_request_headers(block: &[u8]) -> io::Result<DecodedHttp2RequestH
   let mut decoded = DecodedHttp2RequestHeaders {
     method: None,
     target: None,
+    scheme: None,
     authority: None,
     headers: Vec::new(),
   };
+  let mut regular_header_seen = false;
+  let mut pseudo_headers = Vec::<String>::new();
 
   while cursor < block.len() {
     let byte = block[cursor];
@@ -737,9 +745,31 @@ fn decode_http2_request_headers(block: &[u8]) -> io::Result<DecodedHttp2RequestH
       decode_http2_literal(block, &mut cursor, 4)?
     };
 
+    if name.starts_with(':') {
+      if regular_header_seen {
+        return Err(io::Error::new(
+          io::ErrorKind::InvalidData,
+          "HTTP/2 pseudo-header appeared after a regular header",
+        ));
+      }
+      if pseudo_headers
+        .iter()
+        .any(|pseudo_header| pseudo_header == &name)
+      {
+        return Err(io::Error::new(
+          io::ErrorKind::InvalidData,
+          "duplicate HTTP/2 pseudo-header",
+        ));
+      }
+      pseudo_headers.push(name.clone());
+    } else {
+      regular_header_seen = true;
+    }
+
     match name.as_str() {
       ":method" => decoded.method = Some(value),
       ":path" => decoded.target = Some(value),
+      ":scheme" => decoded.scheme = Some(value),
       ":authority" => decoded.authority = Some(value),
       name if name.starts_with(':') => {}
       "connection" | "keep-alive" | "proxy-connection" | "transfer-encoding" | "upgrade" => {}
