@@ -264,7 +264,7 @@ where
       let mut body_reader = ResponseBodyReader::new(reader, ResponseBodyKind::Chunked);
       body_reader
         .read_to_end(&mut binary)
-        .map_err(error::request)?;
+        .map_err(response_body_read_error)?;
       trailers = body_reader.trailers().clone();
     }
     ResponseBodyKind::ContentLength(content_length) => {
@@ -272,7 +272,7 @@ where
         ResponseBodyReader::new(reader, ResponseBodyKind::ContentLength(content_length));
       body_reader
         .read_to_end(&mut binary)
-        .map_err(error::request)?;
+        .map_err(response_body_read_error)?;
     }
     ResponseBodyKind::UntilEof => {
       reader.read_to_end(&mut binary).map_err(error::request)?;
@@ -608,8 +608,19 @@ fn to_io_error(err: error::Error) -> io::Error {
     .map(|source| source.kind())
   {
     io::Error::new(kind, err)
+  } else if let Some(source) = std::error::Error::source(&err) {
+    io::Error::new(io::ErrorKind::InvalidData, source.to_string())
   } else {
     io::Error::new(io::ErrorKind::InvalidData, err)
+  }
+}
+
+fn response_body_read_error(err: io::Error) -> error::Error {
+  match err.kind() {
+    io::ErrorKind::InvalidData | io::ErrorKind::UnexpectedEof => {
+      error::bad_response(err.to_string())
+    }
+    _ => error::request(err),
   }
 }
 
