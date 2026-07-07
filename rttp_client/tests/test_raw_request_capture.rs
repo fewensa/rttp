@@ -2,6 +2,7 @@ mod support;
 
 #[cfg(feature = "async")]
 use futures::executor::block_on;
+use rttp_client::types::Proxy;
 use rttp_client::HttpClient;
 use std::time::Duration;
 
@@ -19,6 +20,12 @@ fn capture_optional_request(request: impl FnOnce(String)) -> Vec<u8> {
   let (addr, handle) = support::capture_optional_raw_http_request(Duration::from_millis(250));
   request(format!("http://{}", addr));
   handle.join().expect("optional raw request capture server")
+}
+
+fn capture_proxy_request(request: impl FnOnce(Proxy)) -> Vec<u8> {
+  let (addr, handle) = support::capture_raw_http_request();
+  request(Proxy::http("127.0.0.1", u32::from(addr.port())));
+  handle.join().expect("raw proxy request capture server")
 }
 
 fn request_text(request: &[u8]) -> String {
@@ -63,6 +70,39 @@ fn get_with_query_parameters_sends_request_target_without_body() {
   assert_eq!(None, header_value(&text, "Content-Type"));
   assert_eq!(None, header_value(&text, "Content-Length"));
   assert_eq!(b"", request_body(&request));
+}
+
+#[test]
+fn http_proxy_request_sends_absolute_form_request_target() {
+  let request = capture_proxy_request(|proxy| {
+    client()
+      .get()
+      .url("http://example.test/path?x=1")
+      .proxy(proxy)
+      .emit()
+      .expect("request should succeed");
+  });
+
+  let text = request_text(&request);
+  let request_line = text.lines().next().expect("request line");
+
+  assert_eq!("GET http://example.test/path?x=1 HTTP/1.1", request_line);
+}
+
+#[test]
+fn direct_http_request_sends_origin_form_request_target() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/path?x=1", base_url))
+      .emit()
+      .expect("request should succeed");
+  });
+
+  let text = request_text(&request);
+  let request_line = text.lines().next().expect("request line");
+
+  assert_eq!("GET /path?x=1 HTTP/1.1", request_line);
 }
 
 #[test]
