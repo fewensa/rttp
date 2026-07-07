@@ -22,6 +22,7 @@ pub(crate) enum ResponseBodyKind {
 pub(crate) struct ResponseParts {
   pub(crate) binary: Vec<u8>,
   pub(crate) trailers: Vec<Header>,
+  pub(crate) close_connection: bool,
 }
 
 pub struct StreamingResponse<'a, R: Read + ?Sized> {
@@ -257,6 +258,7 @@ pub(crate) fn read_response_parts_after_header<R>(
 where
   R: Read + ?Sized,
 {
+  let close_connection = response_connection_should_close(&binary)?;
   let mut trailers = Vec::new();
   match response_body_kind(&binary, expect_no_body)? {
     ResponseBodyKind::NoBody => {}
@@ -278,7 +280,11 @@ where
       reader.read_to_end(&mut binary).map_err(error::request)?;
     }
   }
-  Ok(ResponseParts { binary, trailers })
+  Ok(ResponseParts {
+    binary,
+    trailers,
+    close_connection,
+  })
 }
 
 pub(crate) fn response_headers(header: &[u8]) -> error::Result<Vec<Header>> {
@@ -291,6 +297,36 @@ pub(crate) fn response_headers(header: &[u8]) -> error::Result<Vec<Header>> {
       .flat_map(|line| line.into_headers())
       .collect(),
   )
+}
+
+pub(crate) fn response_connection_should_close(header: &[u8]) -> error::Result<bool> {
+  let header = String::from_utf8(header.to_vec()).map_err(error::response)?;
+  let version = header
+    .lines()
+    .next()
+    .and_then(|line| line.split_whitespace().next())
+    .unwrap_or_default();
+  let mut has_keep_alive = false;
+
+  for line in header.lines().skip(1) {
+    let Some((name, value)) = line.split_once(':') else {
+      continue;
+    };
+    if !name.eq_ignore_ascii_case("Connection") {
+      continue;
+    }
+
+    for token in value.split(',').map(str::trim) {
+      if token.eq_ignore_ascii_case("close") {
+        return Ok(true);
+      }
+      if token.eq_ignore_ascii_case("keep-alive") {
+        has_keep_alive = true;
+      }
+    }
+  }
+
+  Ok(version.eq_ignore_ascii_case("HTTP/1.0") && !has_keep_alive)
 }
 
 pub(crate) fn read_response_header<R>(reader: &mut R) -> error::Result<Vec<u8>>
