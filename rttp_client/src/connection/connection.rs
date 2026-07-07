@@ -283,6 +283,7 @@ impl<'a> Connection<'a> {
     let mut redirect = url
       .join(location)
       .map_err(|_| error::bad_url(url.clone(), "Bad redirect location"))?;
+    strip_userinfo_for_cross_origin_redirect(url, &mut redirect);
     let (path, query) = raw_redirect_path_and_query(url, self.request.request_target(), location)
       .unwrap_or_else(|| {
         (
@@ -446,6 +447,15 @@ fn is_same_origin(left: &Url, right: &Url) -> bool {
   left.scheme() == right.scheme()
     && left.host_str() == right.host_str()
     && left.port_or_known_default() == right.port_or_known_default()
+}
+
+fn strip_userinfo_for_cross_origin_redirect(base: &Url, redirect: &mut Url) {
+  if is_same_origin(base, redirect) {
+    return;
+  }
+
+  let _ = redirect.set_username("");
+  let _ = redirect.set_password(None);
 }
 
 fn proxy_authorization_value(proxy: &Proxy) -> Option<String> {
@@ -1139,10 +1149,11 @@ mod tests {
   use crate::request::RequestBody;
   use crate::types::Proxy;
   use crate::Config;
+  use url::Url;
 
   use super::{
     connect_tcp_stream, parse_proxy_connect_response, proxy_authorization_value,
-    read_proxy_connect_response, write_http_request,
+    read_proxy_connect_response, strip_userinfo_for_cross_origin_redirect, write_http_request,
   };
 
   struct PartialWriter {
@@ -1211,6 +1222,28 @@ mod tests {
     let mut reader = Cursor::new(header);
 
     read_proxy_connect_response(&mut reader).unwrap();
+  }
+
+  #[test]
+  fn test_strip_userinfo_for_cross_origin_redirect_removes_redirect_credentials() {
+    let base = Url::parse("http://user:secret@example.test/start").unwrap();
+    let mut cross_origin = Url::parse("http://next:secret@other.test/final").unwrap();
+
+    strip_userinfo_for_cross_origin_redirect(&base, &mut cross_origin);
+
+    assert_eq!("", cross_origin.username());
+    assert_eq!(None, cross_origin.password());
+  }
+
+  #[test]
+  fn test_strip_userinfo_for_cross_origin_redirect_preserves_same_origin_credentials() {
+    let base = Url::parse("http://user:secret@example.test/start").unwrap();
+    let mut same_origin = Url::parse("http://next:secret@example.test/final").unwrap();
+
+    strip_userinfo_for_cross_origin_redirect(&base, &mut same_origin);
+
+    assert_eq!("next", same_origin.username());
+    assert_eq!(Some("secret"), same_origin.password());
   }
 
   #[test]

@@ -417,6 +417,36 @@ pub fn spawn_cross_authority_redirect_header_echo_server(
   (origin_addr, target_addr, handle)
 }
 
+pub fn spawn_cross_authority_redirect_userinfo_echo_server(
+) -> (SocketAddr, SocketAddr, JoinHandle<()>) {
+  let (origin_listener, origin_addr) = bind_local_http_listener("cross authority redirect origin");
+  let (target_listener, target_addr) = bind_local_http_listener("cross authority redirect target");
+
+  let handle = thread::spawn(move || {
+    if let Ok((mut stream, _)) = origin_listener.accept() {
+      let _ = read_http_request(&mut stream);
+      let response = format!(
+        "HTTP/1.1 302 Found\r\nLocation: http://user:secret@{}/final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        target_addr
+      );
+      let _ = stream.write_all(response.as_bytes());
+    }
+
+    if let Ok((mut stream, _)) = target_listener.accept() {
+      let request = read_http_request(&mut stream);
+      let body = echoed_redirect_request_target_and_headers(&request);
+      let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+      );
+      let _ = stream.write_all(response.as_bytes());
+    }
+  });
+
+  (origin_addr, target_addr, handle)
+}
+
 pub fn spawn_same_authority_redirect_header_echo_server() -> (SocketAddr, JoinHandle<()>) {
   let (listener, addr) = bind_local_http_listener("same authority redirect");
 
@@ -450,6 +480,20 @@ fn echoed_redirect_headers(request: &[u8]) -> String {
     header_value(request, "Cookie").unwrap_or_default(),
     header_value(request, "Proxy-Authorization").unwrap_or_default(),
     header_value(request, "X-Trace").unwrap_or_default()
+  )
+}
+
+fn echoed_redirect_request_target_and_headers(request: &[u8]) -> String {
+  let request_text = String::from_utf8_lossy(request);
+  let request_target = request_text
+    .lines()
+    .next()
+    .and_then(|line| line.split_whitespace().nth(1))
+    .unwrap_or_default();
+  format!(
+    "request-target={}\n{}",
+    request_target,
+    echoed_redirect_headers(request)
   )
 }
 

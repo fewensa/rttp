@@ -57,8 +57,9 @@ impl<'a> RawRequest<'a> {
   }
 
   pub(crate) fn redirect_status_set(&mut self, status_code: u32) {
+    let rewrite_to_get = self.origin.redirect_rewrites_to_get(status_code);
     self.origin.redirect_status_set(status_code);
-    if status_code == 303 && !self.origin.method().eq_ignore_ascii_case("head") {
+    if rewrite_to_get {
       self.body = None;
       self.header = Self::redirect_body_headers_remove(&self.header);
     }

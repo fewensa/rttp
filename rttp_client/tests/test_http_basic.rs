@@ -882,6 +882,19 @@ fn captured_redirected_post(status_code: u16, reason: &'static str) -> CapturedR
   captured_request(handle.join().expect("redirect capture thread"))
 }
 
+fn captured_redirected_put(status_code: u16, reason: &'static str) -> CapturedRequest {
+  let (addr, handle) = support::spawn_status_redirect_request_capture_server(status_code, reason);
+  let response = client()
+    .config(Config::builder().auto_redirect(true))
+    .put()
+    .url(format!("http://{}/redirect", addr))
+    .raw("redirect-body")
+    .emit();
+
+  assert!(response.is_ok());
+  captured_request(handle.join().expect("redirect capture thread"))
+}
+
 fn captured_redirected_head(status_code: u16, reason: &'static str) -> CapturedRequest {
   let (addr, handle) = support::spawn_status_redirect_request_capture_server(status_code, reason);
   let response = client()
@@ -892,6 +905,64 @@ fn captured_redirected_head(status_code: u16, reason: &'static str) -> CapturedR
 
   assert!(response.is_ok());
   captured_request(handle.join().expect("redirect capture thread"))
+}
+
+#[test]
+fn test_auto_redirect_301_post_becomes_get_without_body_or_body_framing() {
+  let request = captured_redirected_post(301, "Moved Permanently");
+
+  assert_eq!("GET", request.method);
+  assert_eq!("/final?via=redirect", request.target);
+  assert_eq!(b"", request.body.as_slice());
+  assert!(!request.headers.contains_key("content-length"));
+  assert!(!request.headers.contains_key("content-type"));
+  assert!(!request.headers.contains_key("transfer-encoding"));
+}
+
+#[test]
+fn test_auto_redirect_302_post_becomes_get_without_body_or_body_framing() {
+  let request = captured_redirected_post(302, "Found");
+
+  assert_eq!("GET", request.method);
+  assert_eq!("/final?via=redirect", request.target);
+  assert_eq!(b"", request.body.as_slice());
+  assert!(!request.headers.contains_key("content-length"));
+  assert!(!request.headers.contains_key("content-type"));
+  assert!(!request.headers.contains_key("transfer-encoding"));
+}
+
+#[test]
+fn test_auto_redirect_301_put_preserves_method_body_and_body_framing() {
+  let request = captured_redirected_put(301, "Moved Permanently");
+
+  assert_eq!("PUT", request.method);
+  assert_eq!("/final?via=redirect", request.target);
+  assert_eq!(b"redirect-body", request.body.as_slice());
+  assert_eq!(
+    Some("13"),
+    request.headers.get("content-length").map(String::as_str)
+  );
+  assert_eq!(
+    Some("text/plain"),
+    request.headers.get("content-type").map(String::as_str)
+  );
+}
+
+#[test]
+fn test_auto_redirect_302_put_preserves_method_body_and_body_framing() {
+  let request = captured_redirected_put(302, "Found");
+
+  assert_eq!("PUT", request.method);
+  assert_eq!("/final?via=redirect", request.target);
+  assert_eq!(b"redirect-body", request.body.as_slice());
+  assert_eq!(
+    Some("13"),
+    request.headers.get("content-length").map(String::as_str)
+  );
+  assert_eq!(
+    Some("text/plain"),
+    request.headers.get("content-type").map(String::as_str)
+  );
 }
 
 #[test]
@@ -970,12 +1041,17 @@ fn test_auto_redirect_resolves_absolute_location() {
 
 #[test]
 fn test_auto_redirect_resolves_absolute_path_location() {
-  assert_redirect_resolves_to_target(|_| "/final?x=1".to_string(), "/final?x=1");
+  assert_redirect_resolves_to_target(|_| "/absolute-path".to_string(), "/absolute-path");
 }
 
 #[test]
-fn test_auto_redirect_resolves_relative_path_location() {
-  assert_redirect_resolves_to_target(|_| "../final".to_string(), "/final");
+fn test_auto_redirect_resolves_relative_child_location() {
+  assert_redirect_resolves_to_target(|_| "relative-child".to_string(), "/redirect/relative-child");
+}
+
+#[test]
+fn test_auto_redirect_resolves_parent_relative_location() {
+  assert_redirect_resolves_to_target(|_| "../sibling".to_string(), "/sibling");
 }
 
 #[test]
@@ -990,7 +1066,23 @@ fn test_auto_redirect_preserves_trailing_slash_for_parent_dot_segment_location()
 
 #[test]
 fn test_auto_redirect_resolves_query_only_location() {
-  assert_redirect_resolves_to_target(|_| "?page=2".to_string(), "/redirect/from?page=2");
+  assert_redirect_resolves_to_target(|_| "?query-only".to_string(), "/redirect/from?query-only");
+}
+
+#[test]
+fn test_auto_redirect_resolves_location_with_fragment_without_sending_fragment() {
+  assert_redirect_resolves_to_target(
+    |_| "fragment-child#section".to_string(),
+    "/redirect/fragment-child",
+  );
+}
+
+#[test]
+fn test_auto_redirect_resolves_absolute_location_with_fragment_without_sending_fragment() {
+  assert_redirect_resolves_to_target(
+    |addr| format!("http://{}/absolute-fragment#section", addr),
+    "/absolute-fragment",
+  );
 }
 
 #[test]
@@ -1197,6 +1289,28 @@ fn test_auto_redirect_strips_sensitive_headers_for_cross_authority_location() {
   let response = response.unwrap();
   assert_eq!(
     "authorization=\ncookie=\nproxy-authorization=\nx-trace=trace-123",
+    response.body().string().unwrap()
+  );
+}
+
+#[test]
+fn test_auto_redirect_strips_sensitive_headers_and_userinfo_for_cross_authority_location() {
+  let (origin_addr, _target_addr, _handle) =
+    support::spawn_cross_authority_redirect_userinfo_echo_server();
+  let response = client()
+    .config(Config::builder().auto_redirect(true))
+    .get()
+    .url(format!("http://{}/redirect", origin_addr))
+    .header(("Authorization", "Bearer secret"))
+    .header(("Cookie", "session=secret"))
+    .header(("Proxy-Authorization", "Basic proxy-secret"))
+    .header(("X-Trace", "trace-123"))
+    .emit();
+
+  assert!(response.is_ok());
+  let response = response.unwrap();
+  assert_eq!(
+    "request-target=/final\nauthorization=\ncookie=\nproxy-authorization=\nx-trace=trace-123",
     response.body().string().unwrap()
   );
 }
