@@ -239,6 +239,62 @@ fn test_socket2_server_chunked_trailers_are_exposed_case_insensitively() {
 }
 
 #[test]
+fn test_chunked_duplicate_trailers_are_exposed_in_wire_order() {
+  let (addr, _handle) = support::spawn_chunked_response_server(concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "7;foo=bar\r\nchunked\r\n",
+    "6\r\n body!\r\n",
+    "0\r\n",
+    "X-Trace: first\r\n",
+    "x-trace: second\r\n",
+    "X-Signature: signed\r\n",
+    "\r\n"
+  ));
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/chunked", addr))
+    .emit()
+    .unwrap();
+
+  assert_eq!("chunked body!", response.body().string().unwrap());
+  assert_eq!(3, response.trailers().len());
+  assert_eq!("X-Trace", response.trailers()[0].name());
+  assert_eq!("first", response.trailers()[0].value());
+  assert_eq!("x-trace", response.trailers()[1].name());
+  assert_eq!("second", response.trailers()[1].value());
+  assert_eq!("X-Signature", response.trailers()[2].name());
+  assert_eq!("signed", response.trailers()[2].value());
+  assert_eq!(
+    Some("first"),
+    response.trailer("x-trace").map(|h| h.value().as_str())
+  );
+  assert_eq!(
+    Some("first"),
+    response.trailer_value("X-TRACE").map(String::as_str)
+  );
+  assert_eq!(
+    vec!["first", "second"],
+    response
+      .trailers_of_name("X-TRACE")
+      .iter()
+      .map(|header| header.value().as_str())
+      .collect::<Vec<_>>()
+  );
+  assert_eq!(
+    vec!["first", "second"],
+    response
+      .trailer_values("x-trace")
+      .iter()
+      .map(|value| value.as_str())
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
 fn test_chunked_without_trailers_exposes_empty_trailers() {
   let (addr, _handle) = support::spawn_chunked_server_without_trailers();
   let response = client()

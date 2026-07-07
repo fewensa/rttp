@@ -170,6 +170,66 @@ fn test_async_socket2_server_chunked_trailers_match_sync_accessors() {
 
 #[test]
 #[cfg(feature = "async")]
+fn test_async_chunked_duplicate_trailers_are_exposed_in_wire_order() {
+  let (addr, _handle) = support::spawn_chunked_response_server(concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "7;foo=bar\r\nchunked\r\n",
+    "6\r\n body!\r\n",
+    "0\r\n",
+    "X-Trace: first\r\n",
+    "x-trace: second\r\n",
+    "X-Signature: signed\r\n",
+    "\r\n"
+  ));
+
+  block_on(async {
+    let response = client()
+      .get()
+      .url(format!("http://{}/chunked", addr))
+      .rasync()
+      .await
+      .unwrap();
+
+    assert_eq!("chunked body!", response.body().string().unwrap());
+    assert_eq!(3, response.trailers().len());
+    assert_eq!("X-Trace", response.trailers()[0].name());
+    assert_eq!("first", response.trailers()[0].value());
+    assert_eq!("x-trace", response.trailers()[1].name());
+    assert_eq!("second", response.trailers()[1].value());
+    assert_eq!("X-Signature", response.trailers()[2].name());
+    assert_eq!("signed", response.trailers()[2].value());
+    assert_eq!(
+      Some("first"),
+      response.trailer("X-TRACE").map(|h| h.value().as_str())
+    );
+    assert_eq!(
+      Some("first"),
+      response.trailer_value("x-trace").map(String::as_str)
+    );
+    assert_eq!(
+      vec!["first", "second"],
+      response
+        .trailers_of_name("x-trace")
+        .iter()
+        .map(|header| header.value().as_str())
+        .collect::<Vec<_>>()
+    );
+    assert_eq!(
+      vec!["first", "second"],
+      response
+        .trailer_values("X-TRACE")
+        .iter()
+        .map(|value| value.as_str())
+        .collect::<Vec<_>>()
+    );
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
 fn test_async_chunked_quoted_extensions_are_accepted() {
   let (addr, _handle) = support::spawn_chunked_response_server(concat!(
     "HTTP/1.1 200 OK\r\n",
