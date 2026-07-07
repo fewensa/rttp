@@ -234,14 +234,21 @@ fn regular_headers(header: &str) -> Vec<(String, String)> {
     .collect()
 }
 
+#[derive(Clone, Copy)]
+enum HeaderBlockKind {
+  ResponseHeaders,
+  Trailers,
+}
+
 fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Result<Response> {
   let mut header_block = Vec::new();
   let mut headers = Vec::new();
   let mut trailers = Vec::new();
   let mut body = Vec::new();
   let mut status = None;
-  let mut in_header_continuation = false;
-  let mut header_block_is_trailer = false;
+  let mut header_block_kind = None;
+  let mut final_response_started = false;
+  let mut response_body_started = false;
   let mut pending_window_update = 0usize;
 
   loop {
@@ -258,39 +265,54 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
         }
       }
       (FRAME_HEADERS, STREAM_ID) => {
-        header_block_is_trailer = status.is_some();
+        if header_block_kind.is_some() {
+          return Err(error::bad_response("incomplete HTTP/2 header block"));
+        }
+        let kind = if final_response_started || response_body_started {
+          HeaderBlockKind::Trailers
+        } else {
+          HeaderBlockKind::ResponseHeaders
+        };
         header_block.extend_from_slice(&frame.payload);
         if frame.flags & FLAG_END_HEADERS == FLAG_END_HEADERS {
-          let decoded = decode_header_block(&header_block)?;
-          if header_block_is_trailer {
-            append_trailers(&mut trailers, decoded)?;
-          } else {
-            apply_response_headers(decoded, &mut status, &mut headers);
+          if apply_header_block(
+            kind,
+            &header_block,
+            &mut status,
+            &mut headers,
+            &mut trailers,
+          )? {
+            final_response_started = true;
           }
           header_block.clear();
-          in_header_continuation = false;
+          header_block_kind = None;
         } else {
-          in_header_continuation = true;
+          header_block_kind = Some(kind);
         }
         if frame.flags & FLAG_END_STREAM == FLAG_END_STREAM {
           break;
         }
       }
-      (FRAME_CONTINUATION, STREAM_ID) if in_header_continuation => {
+      (FRAME_CONTINUATION, STREAM_ID) if header_block_kind.is_some() => {
         header_block.extend_from_slice(&frame.payload);
         if frame.flags & FLAG_END_HEADERS == FLAG_END_HEADERS {
-          let decoded = decode_header_block(&header_block)?;
-          if header_block_is_trailer {
-            append_trailers(&mut trailers, decoded)?;
-          } else {
-            apply_response_headers(decoded, &mut status, &mut headers);
+          let kind = header_block_kind.expect("checked header block kind");
+          if apply_header_block(
+            kind,
+            &header_block,
+            &mut status,
+            &mut headers,
+            &mut trailers,
+          )? {
+            final_response_started = true;
           }
           header_block.clear();
-          in_header_continuation = false;
+          header_block_kind = None;
         }
       }
       (FRAME_DATA, STREAM_ID) => {
         let end_stream = frame.flags & FLAG_END_STREAM == FLAG_END_STREAM;
+        response_body_started = true;
         body.extend_from_slice(&frame.payload);
         pending_window_update = pending_window_update
           .checked_add(frame.payload.len())
@@ -319,7 +341,7 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
     }
   }
 
-  if in_header_continuation {
+  if header_block_kind.is_some() {
     return Err(error::bad_response("incomplete HTTP/2 header block"));
   }
 
@@ -327,16 +349,28 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
   build_response(url, status, &headers, body, trailers)
 }
 
-fn apply_response_headers(
-  decoded: DecodedHeaders,
+fn apply_header_block(
+  kind: HeaderBlockKind,
+  block: &[u8],
   status: &mut Option<u32>,
   headers: &mut Vec<(String, String)>,
-) {
-  if decoded.status.is_some_and(is_informational_status) {
-    return;
+  trailers: &mut Vec<Header>,
+) -> error::Result<bool> {
+  match kind {
+    HeaderBlockKind::ResponseHeaders => {
+      let decoded = decode_header_block(block)?;
+      if decoded.status.is_some_and(is_informational_status) {
+        return Ok(false);
+      }
+      *status = decoded.status;
+      *headers = decoded.headers;
+      Ok(status.is_some())
+    }
+    HeaderBlockKind::Trailers => {
+      trailers.extend(decode_trailer_block(block)?);
+      Ok(false)
+    }
   }
-  *status = decoded.status;
-  *headers = decoded.headers;
 }
 
 fn is_informational_status(status: u32) -> bool {
@@ -372,17 +406,6 @@ fn build_response(
   binary.extend_from_slice(b"\r\n");
   binary.extend_from_slice(&body);
   Response::with_trailers(url, binary, trailers)
-}
-
-fn append_trailers(trailers: &mut Vec<Header>, decoded: DecodedHeaders) -> error::Result<()> {
-  if decoded.status.is_some() {
-    return Err(error::bad_response("invalid HTTP/2 trailer pseudo-header"));
-  }
-  for (name, value) in decoded.headers {
-    validate_response_trailer_header(&name, &value)?;
-    trailers.push(Header::new(name, value));
-  }
-  Ok(())
 }
 
 struct Frame {
@@ -554,16 +577,42 @@ struct DecodedHeaders {
 }
 
 fn decode_header_block(block: &[u8]) -> error::Result<DecodedHeaders> {
-  let mut cursor = 0;
+  let entries = decode_header_entries(block)?;
   let mut status = None;
   let mut headers = Vec::new();
+
+  for (name, value) in entries {
+    push_decoded_header(&name, &value, &mut status, &mut headers)?;
+  }
+
+  Ok(DecodedHeaders { status, headers })
+}
+
+fn decode_trailer_block(block: &[u8]) -> error::Result<Vec<Header>> {
+  let entries = decode_header_entries(block)?;
+  let mut trailers = Vec::new();
+
+  for (name, value) in entries {
+    if name.starts_with(':') {
+      return Err(error::bad_response("Invalid trailer header"));
+    }
+    validate_response_trailer_header(&name, &value)?;
+    trailers.push(Header::new(name, value));
+  }
+
+  Ok(trailers)
+}
+
+fn decode_header_entries(block: &[u8]) -> error::Result<Vec<(String, String)>> {
+  let mut cursor = 0;
+  let mut entries = Vec::new();
 
   while cursor < block.len() {
     let byte = block[cursor];
     if byte & 0x80 == 0x80 {
       let index = decode_integer(block, &mut cursor, 7)?;
       let (name, value) = static_header(index)?;
-      push_decoded_header(name, value, &mut status, &mut headers)?;
+      entries.push((name.to_string(), value.to_string()));
       continue;
     }
 
@@ -576,10 +625,10 @@ fn decode_header_block(block: &[u8]) -> error::Result<DecodedHeaders> {
     } else {
       decode_literal(block, &mut cursor, 4)?
     };
-    push_decoded_header(&name, &value, &mut status, &mut headers)?;
+    entries.push((name, value));
   }
 
-  Ok(DecodedHeaders { status, headers })
+  Ok(entries)
 }
 
 fn decode_literal(
