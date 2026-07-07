@@ -1,7 +1,7 @@
 #![cfg(feature = "http2")]
 
-use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener};
+use std::io::{self, Read, Write};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
@@ -15,6 +15,10 @@ const H2_FRAME_PING: u8 = 0x6;
 const H2_FLAG_END_STREAM: u8 = 0x1;
 const H2_FLAG_ACK: u8 = 0x1;
 const H2_FLAG_END_HEADERS: u8 = 0x4;
+const H2_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+const H2_SETTINGS_ENABLE_PUSH: u16 = 0x2;
+const H2_SETTINGS_INITIAL_WINDOW_SIZE: u16 = 0x4;
+const H2_SETTINGS_MAX_FRAME_SIZE: u16 = 0x5;
 
 struct H2Frame {
   frame_type: u8,
@@ -42,6 +46,25 @@ fn write_h2_frame(
   stream.write_all(payload).expect("write h2 frame payload");
 }
 
+fn try_write_h2_frame(
+  stream: &mut impl Write,
+  frame_type: u8,
+  flags: u8,
+  stream_id: u32,
+  payload: &[u8],
+) -> io::Result<()> {
+  let length = payload.len();
+  let mut header = [0; 9];
+  header[0] = ((length >> 16) & 0xff) as u8;
+  header[1] = ((length >> 8) & 0xff) as u8;
+  header[2] = (length & 0xff) as u8;
+  header[3] = frame_type;
+  header[4] = flags;
+  header[5..9].copy_from_slice(&(stream_id & 0x7fff_ffff).to_be_bytes());
+  stream.write_all(&header)?;
+  stream.write_all(payload)
+}
+
 fn read_h2_frame(stream: &mut impl Read) -> H2Frame {
   let mut header = [0; 9];
   stream.read_exact(&mut header).expect("read h2 frame head");
@@ -56,6 +79,123 @@ fn read_h2_frame(stream: &mut impl Read) -> H2Frame {
     stream_id: u32::from_be_bytes([header[5] & 0x7f, header[6], header[7], header[8]]),
     payload,
   }
+}
+
+fn try_read_h2_frame(stream: &mut impl Read) -> io::Result<H2Frame> {
+  let mut header = [0; 9];
+  stream.read_exact(&mut header)?;
+  let length = ((header[0] as usize) << 16) | ((header[1] as usize) << 8) | header[2] as usize;
+  let mut payload = vec![0; length];
+  stream.read_exact(&mut payload)?;
+  Ok(H2Frame {
+    frame_type: header[3],
+    flags: header[4],
+    stream_id: u32::from_be_bytes([header[5] & 0x7f, header[6], header[7], header[8]]),
+    payload,
+  })
+}
+
+fn h2_setting(id: u16, value: u32) -> [u8; 6] {
+  let mut setting = [0; 6];
+  setting[..2].copy_from_slice(&id.to_be_bytes());
+  setting[2..].copy_from_slice(&value.to_be_bytes());
+  setting
+}
+
+fn h2_literal_indexed_name(name_index: u8, value: &[u8]) -> Vec<u8> {
+  assert!(value.len() < 128);
+  let mut encoded = vec![name_index, value.len() as u8];
+  encoded.extend_from_slice(value);
+  encoded
+}
+
+fn h2_get_headers(path: &[u8], authority: &[u8]) -> Vec<u8> {
+  let mut headers = vec![0x82, 0x86];
+  headers.extend(h2_literal_indexed_name(4, path));
+  headers.extend(h2_literal_indexed_name(1, authority));
+  headers
+}
+
+fn write_h2_get_request(stream: &mut TcpStream, authority: &[u8]) -> io::Result<()> {
+  try_write_h2_frame(
+    stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_headers(b"/settings", authority),
+  )
+}
+
+fn complete_h2_server_handshake_with_settings(stream: &mut TcpStream, payload: &[u8]) {
+  stream.write_all(H2_PREFACE).expect("write h2 preface");
+  write_h2_frame(stream, H2_FRAME_SETTINGS, 0, 0, payload);
+
+  let settings = read_h2_frame(stream);
+  assert_eq!(H2_FRAME_SETTINGS, settings.frame_type);
+  assert_eq!(0, settings.flags);
+  assert_eq!(0, settings.stream_id);
+
+  let settings_ack = read_h2_frame(stream);
+  assert_eq!(H2_FRAME_SETTINGS, settings_ack.frame_type);
+  assert_eq!(H2_FLAG_ACK, settings_ack.flags);
+  assert_eq!(0, settings_ack.stream_id);
+
+  write_h2_frame(stream, H2_FRAME_SETTINGS, H2_FLAG_ACK, 0, &[]);
+}
+
+fn assert_malformed_settings_rejected_before_handler(
+  initial_payload: &[u8],
+  initial_flags: u8,
+  subsequent_settings: Option<(u8, &[u8])>,
+) {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|_| {
+      tx.send(()).expect("send unexpected handler call");
+      HttpResponse::ok("unexpected")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_millis(200)))
+    .expect("set client read timeout");
+  stream
+    .set_write_timeout(Some(Duration::from_secs(2)))
+    .expect("set client write timeout");
+  stream.write_all(H2_PREFACE).expect("write h2 preface");
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_SETTINGS,
+    initial_flags,
+    0,
+    initial_payload,
+  );
+
+  if let Some((flags, payload)) = subsequent_settings {
+    let _ = read_h2_frame(&mut stream);
+    let _ = read_h2_frame(&mut stream);
+    let _ = try_write_h2_frame(&mut stream, H2_FRAME_SETTINGS, flags, 0, payload);
+  } else {
+    let _ = try_read_h2_frame(&mut stream);
+    let _ = try_read_h2_frame(&mut stream);
+  }
+
+  let _ = write_h2_get_request(&mut stream, addr.to_string().as_bytes());
+  drop(stream);
+
+  let result = handle.join().expect("server thread");
+  assert!(
+    result.is_err(),
+    "malformed SETTINGS should reject connection"
+  );
+  assert!(rx.try_recv().is_err(), "handler must not be called");
 }
 
 fn spawn_h2_peer_sending_ping_before_response() -> (SocketAddr, thread::JoinHandle<()>) {
@@ -120,6 +260,96 @@ fn spawn_h2_peer_sending_ping_before_response() -> (SocketAddr, thread::JoinHand
   });
 
   (addr, handle)
+}
+
+#[test]
+fn prior_knowledge_server_acknowledges_valid_settings_payload_and_serves_request() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        assert_eq!("HTTP/2", request.version());
+        assert_eq!("/settings", request.target());
+        HttpResponse::ok("settings accepted")
+      })
+      .expect("serve h2 request")
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set client read timeout");
+  let mut payload = Vec::new();
+  payload.extend_from_slice(&h2_setting(H2_SETTINGS_ENABLE_PUSH, 0));
+  payload.extend_from_slice(&h2_setting(H2_SETTINGS_MAX_FRAME_SIZE, 16_384));
+  payload.extend_from_slice(&h2_setting(0xffff, 99));
+  complete_h2_server_handshake_with_settings(&mut stream, &payload);
+  write_h2_get_request(&mut stream, addr.to_string().as_bytes()).expect("write h2 request");
+
+  let response_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(1, response_headers.stream_id);
+  let response_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
+  assert_eq!(b"settings accepted", response_body.payload.as_slice());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn prior_knowledge_server_rejects_initial_settings_payload_with_invalid_length() {
+  assert_malformed_settings_rejected_before_handler(&[0, 1, 0], 0, None);
+}
+
+#[test]
+fn prior_knowledge_server_rejects_initial_settings_with_invalid_max_frame_size() {
+  assert_malformed_settings_rejected_before_handler(
+    &h2_setting(H2_SETTINGS_MAX_FRAME_SIZE, 16_383),
+    0,
+    None,
+  );
+}
+
+#[test]
+fn prior_knowledge_server_rejects_initial_settings_with_invalid_enable_push() {
+  assert_malformed_settings_rejected_before_handler(
+    &h2_setting(H2_SETTINGS_ENABLE_PUSH, 2),
+    0,
+    None,
+  );
+}
+
+#[test]
+fn prior_knowledge_server_rejects_initial_settings_with_invalid_initial_window_size() {
+  assert_malformed_settings_rejected_before_handler(
+    &h2_setting(H2_SETTINGS_INITIAL_WINDOW_SIZE, 2_147_483_648),
+    0,
+    None,
+  );
+}
+
+#[test]
+fn prior_knowledge_server_rejects_settings_ack_with_payload() {
+  assert_malformed_settings_rejected_before_handler(
+    &[],
+    0,
+    Some((H2_FLAG_ACK, &h2_setting(0xffff, 1))),
+  );
+}
+
+#[test]
+fn prior_knowledge_server_rejects_invalid_subsequent_settings_before_request() {
+  assert_malformed_settings_rejected_before_handler(
+    &[],
+    0,
+    Some((0, &h2_setting(H2_SETTINGS_ENABLE_PUSH, 2))),
+  );
 }
 
 #[test]
