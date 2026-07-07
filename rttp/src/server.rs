@@ -2073,10 +2073,11 @@ fn parse_request_head(raw: &[u8]) -> io::Result<RequestHead> {
 
   let headers = parse_header_lines(lines)?;
   validate_host_header(version, target, &headers)?;
+  let target = normalize_request_target(target);
 
   Ok(RequestHead {
     method: method.to_string(),
-    target: target.to_string(),
+    target,
     version: version.to_string(),
     headers,
   })
@@ -2158,6 +2159,26 @@ fn is_absolute_form_target(target: &str) -> bool {
 
   let authority_end = rest.find(['/', '?']).unwrap_or(rest.len());
   is_valid_host_authority(&rest[..authority_end], false)
+}
+
+fn normalize_request_target(target: &str) -> String {
+  if request_target_form(target) != Some(RequestTargetForm::Absolute) {
+    return target.to_string();
+  }
+
+  let (_, rest) = target
+    .split_once("://")
+    .expect("absolute-form target must include a scheme separator");
+  let path_start = rest.find(['/', '?']).unwrap_or(rest.len());
+  let origin = &rest[path_start..];
+
+  if origin.is_empty() {
+    "/".to_string()
+  } else if origin.starts_with('?') {
+    format!("/{origin}")
+  } else {
+    origin.to_string()
+  }
 }
 
 fn is_uri_scheme(scheme: &str) -> bool {
