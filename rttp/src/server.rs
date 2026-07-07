@@ -2760,6 +2760,46 @@ mod tests {
   }
 
   #[test]
+  fn read_next_from_rejects_conflicting_duplicate_content_length() {
+    let raw = concat!(
+      "POST /upload HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Content-Length: 5\r\n",
+      "Content-Length: 6\r\n",
+      "\r\n",
+      "hello!"
+    );
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+
+    let error =
+      Request::read_next_from(&mut reader).expect_err("conflicting Content-Length should fail");
+
+    assert_eq!(io::ErrorKind::InvalidData, error.kind());
+    assert_eq!("conflicting Content-Length headers", error.to_string());
+  }
+
+  #[test]
+  fn read_next_from_accepts_duplicate_matching_content_length() {
+    let raw = concat!(
+      "POST /upload HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Content-Length: 5\r\n",
+      "Content-Length: 5\r\n",
+      "\r\n",
+      "hello"
+    );
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+
+    let request = Request::read_next_from(&mut reader)
+      .expect("matching duplicate Content-Length should parse")
+      .expect("request should be present");
+
+    assert_eq!("POST", request.method());
+    assert_eq!("/upload", request.target());
+    assert_eq!(b"hello", request.body());
+  }
+
+  #[test]
   fn read_next_from_consumes_one_chunked_request_at_a_time() {
     let raw = concat!(
       "POST /first HTTP/1.1\r\n",
