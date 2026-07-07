@@ -12,9 +12,12 @@ const H2_FRAME_DATA: u8 = 0x0;
 const H2_FRAME_HEADERS: u8 = 0x1;
 const H2_FRAME_SETTINGS: u8 = 0x4;
 const H2_FRAME_PING: u8 = 0x6;
+const H2_FRAME_WINDOW_UPDATE: u8 = 0x8;
 const H2_FLAG_END_STREAM: u8 = 0x1;
 const H2_FLAG_ACK: u8 = 0x1;
 const H2_FLAG_END_HEADERS: u8 = 0x4;
+const H2_FLAG_PADDED: u8 = 0x8;
+const H2_FLAG_PRIORITY: u8 = 0x20;
 const H2_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 const H2_SETTINGS_ENABLE_PUSH: u16 = 0x2;
 const H2_SETTINGS_INITIAL_WINDOW_SIZE: u16 = 0x4;
@@ -109,8 +112,25 @@ fn h2_literal_indexed_name(name_index: u8, value: &[u8]) -> Vec<u8> {
   encoded
 }
 
+fn h2_literal_new_name(name: &[u8], value: &[u8]) -> Vec<u8> {
+  assert!(name.len() < 128);
+  assert!(value.len() < 128);
+  let mut encoded = vec![0, name.len() as u8];
+  encoded.extend_from_slice(name);
+  encoded.push(value.len() as u8);
+  encoded.extend_from_slice(value);
+  encoded
+}
+
 fn h2_get_headers(path: &[u8], authority: &[u8]) -> Vec<u8> {
   let mut headers = vec![0x82, 0x86];
+  headers.extend(h2_literal_indexed_name(4, path));
+  headers.extend(h2_literal_indexed_name(1, authority));
+  headers
+}
+
+fn h2_post_headers(path: &[u8], authority: &[u8]) -> Vec<u8> {
+  let mut headers = vec![0x83, 0x86];
   headers.extend(h2_literal_indexed_name(4, path));
   headers.extend(h2_literal_indexed_name(1, authority));
   headers
@@ -681,4 +701,310 @@ fn wrapper_http2_prior_knowledge_post_request_trailers_reach_server_only_as_trai
   assert_eq!("stored request trailers", response.body().string().unwrap());
 
   handle.join().expect("server thread");
+}
+
+#[test]
+fn http2_feature_socket2_padded_request_headers_reach_server_without_padding() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.method().to_string(),
+          request.target().to_string(),
+          request.version().to_string(),
+        ))
+        .expect("send parsed padded h2 request headers");
+        HttpResponse::ok("padded headers")
+      })
+      .expect("serve padded h2 request headers");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+
+  let headers = h2_get_headers(b"/padded-headers", addr.to_string().as_bytes());
+  let mut payload = Vec::new();
+  payload.push(3);
+  payload.extend_from_slice(&headers);
+  payload.extend_from_slice(&[0, 0, 0]);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_PADDED | H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &payload,
+  );
+
+  let response_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  let response_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+
+  assert_eq!(
+    (
+      "GET".to_string(),
+      "/padded-headers".to_string(),
+      "HTTP/2".to_string()
+    ),
+    rx.recv().expect("receive parsed padded h2 request headers")
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn http2_feature_socket2_padded_request_data_reaches_server_without_padding() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request.body().to_vec())
+          .expect("send parsed padded h2 request data");
+        HttpResponse::ok("padded data")
+      })
+      .expect("serve padded h2 request data");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+
+  let headers = h2_post_headers(b"/padded-data", addr.to_string().as_bytes());
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &headers,
+  );
+
+  let mut data = Vec::new();
+  data.push(2);
+  data.extend_from_slice(b"body without padding");
+  data.extend_from_slice(&[0, 0]);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_DATA,
+    H2_FLAG_PADDED | H2_FLAG_END_STREAM,
+    1,
+    &data,
+  );
+
+  let window_update = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_WINDOW_UPDATE, window_update.frame_type);
+  let stream_window_update = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_WINDOW_UPDATE, stream_window_update.frame_type);
+  let response_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  let response_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+
+  assert_eq!(
+    b"body without padding".to_vec(),
+    rx.recv().expect("receive parsed padded h2 request data")
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn http2_feature_socket2_padded_request_trailers_reach_server_without_padding() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.body().to_vec(),
+          request.trailer("x-trace").map(str::to_string),
+          request.trailers().to_vec(),
+        ))
+        .expect("send parsed padded h2 request trailers");
+        HttpResponse::ok("padded trailers")
+      })
+      .expect("serve padded h2 request trailers");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+
+  let headers = h2_post_headers(b"/padded-trailers", addr.to_string().as_bytes());
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &headers,
+  );
+  write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 1, b"trailer body");
+
+  let trailers = h2_literal_new_name(b"x-trace", b"padded-trailer");
+  let mut trailer_payload = Vec::new();
+  trailer_payload.push(4);
+  trailer_payload.extend_from_slice(&trailers);
+  trailer_payload.extend_from_slice(&[0, 0, 0, 0]);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_PADDED | H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &trailer_payload,
+  );
+
+  let window_update = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_WINDOW_UPDATE, window_update.frame_type);
+  let stream_window_update = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_WINDOW_UPDATE, stream_window_update.frame_type);
+  let response_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  let response_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+
+  assert_eq!(
+    (
+      b"trailer body".to_vec(),
+      Some("padded-trailer".to_string()),
+      vec![("x-trace".to_string(), "padded-trailer".to_string())]
+    ),
+    rx.recv()
+      .expect("receive parsed padded h2 request trailers")
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn http2_feature_socket2_request_headers_with_priority_reach_server_without_priority_metadata() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request.target().to_string())
+          .expect("send parsed priority h2 request headers");
+        HttpResponse::ok("priority headers")
+      })
+      .expect("serve priority h2 request headers");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+
+  let mut payload = vec![0, 0, 0, 0, 16];
+  payload.extend_from_slice(&h2_get_headers(
+    b"/priority-headers",
+    addr.to_string().as_bytes(),
+  ));
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_PRIORITY | H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &payload,
+  );
+
+  let response_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  let response_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+
+  assert_eq!(
+    "/priority-headers",
+    rx.recv()
+      .expect("receive parsed priority h2 request headers")
+  );
+
+  handle.join().expect("server thread");
+}
+
+fn assert_malformed_h2_request_rejected_before_handler(
+  write_request: impl FnOnce(&mut TcpStream, SocketAddr),
+) {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|_| {
+      tx.send(()).expect("send unexpected handler call");
+      HttpResponse::ok("unexpected")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_millis(200)))
+    .expect("set client read timeout");
+  stream
+    .set_write_timeout(Some(Duration::from_secs(2)))
+    .expect("set client write timeout");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+
+  write_request(&mut stream, addr);
+  drop(stream);
+
+  let result = handle.join().expect("server thread");
+  assert!(
+    result.is_err(),
+    "malformed request should reject connection"
+  );
+  assert!(rx.try_recv().is_err(), "handler must not be called");
+}
+
+#[test]
+fn http2_feature_socket2_rejects_malformed_padded_headers_before_handler() {
+  assert_malformed_h2_request_rejected_before_handler(|stream, addr| {
+    let headers = h2_get_headers(b"/bad-padded-headers", addr.to_string().as_bytes());
+    let mut payload = Vec::new();
+    payload.push(10);
+    payload.extend_from_slice(&headers);
+    write_h2_frame(
+      stream,
+      H2_FRAME_HEADERS,
+      H2_FLAG_PADDED | H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+      1,
+      &payload,
+    );
+  });
+}
+
+#[test]
+fn http2_feature_socket2_rejects_short_priority_headers_before_handler() {
+  assert_malformed_h2_request_rejected_before_handler(|stream, _| {
+    write_h2_frame(
+      stream,
+      H2_FRAME_HEADERS,
+      H2_FLAG_PRIORITY | H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+      1,
+      &[0, 0, 0, 0],
+    );
+  });
+}
+
+#[test]
+fn http2_feature_socket2_rejects_malformed_padded_data_before_handler() {
+  assert_malformed_h2_request_rejected_before_handler(|stream, addr| {
+    let headers = h2_post_headers(b"/bad-padded-data", addr.to_string().as_bytes());
+    write_h2_frame(stream, H2_FRAME_HEADERS, H2_FLAG_END_HEADERS, 1, &headers);
+    write_h2_frame(
+      stream,
+      H2_FRAME_DATA,
+      H2_FLAG_PADDED | H2_FLAG_END_STREAM,
+      1,
+      &[10, b'x'],
+    );
+  });
 }
