@@ -203,6 +203,40 @@ fn assert_invalid_h2_request_trailers_without_handler(trailer_block: &[u8]) {
   assert!(rx.try_recv().is_err());
 }
 
+fn assert_invalid_h2_request_trailer_sequence_without_handler(
+  write_sequence: impl FnOnce(&mut TcpStream, SocketAddr),
+) {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send(request).expect("send unexpected h2 request");
+      HttpResponse::ok("unexpected")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+  write_sequence(&mut stream, addr);
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown h2 write");
+
+  let error = handle
+    .join()
+    .expect("server thread")
+    .expect_err("invalid h2 trailer sequence should reject request");
+  assert_eq!(ErrorKind::InvalidData, error.kind());
+  assert!(rx.try_recv().is_err());
+}
+
 fn assert_invalid_h2_frame_without_handler(
   frame_type: u8,
   flags: u8,
@@ -681,7 +715,17 @@ fn server_rejects_http2_prior_knowledge_request_trailer_pseudo_header() {
 
 #[test]
 fn server_rejects_http2_prior_knowledge_forbidden_request_trailer_name() {
-  assert_invalid_h2_request_trailers_without_handler(&h2_literal_new_name(b"content-length", b"4"));
+  for name in [
+    b"content-length".as_slice(),
+    b"transfer-encoding",
+    b"connection",
+    b"host",
+    b"te",
+    b"trailer",
+    b"upgrade",
+  ] {
+    assert_invalid_h2_request_trailers_without_handler(&h2_literal_new_name(name, b"blocked"));
+  }
 }
 
 #[test]
@@ -739,6 +783,77 @@ fn server_rejects_http2_prior_knowledge_request_trailer_value_control_bytes() {
     b"x-trace",
     b"safe\r\nx-evil: true",
   ));
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_interleaved_frame_during_request_trailers() {
+  assert_invalid_h2_request_trailer_sequence_without_handler(|stream, addr| {
+    write_h2_frame(
+      stream,
+      H2_FRAME_HEADERS,
+      H2_FLAG_END_HEADERS,
+      1,
+      &h2_post_headers(b"/interleaved-trailers", addr.to_string().as_bytes()),
+    );
+    write_h2_frame(stream, H2_FRAME_DATA, 0, 1, b"body");
+    write_h2_frame(
+      stream,
+      H2_FRAME_HEADERS,
+      H2_FLAG_END_STREAM,
+      1,
+      &h2_literal_new_name(b"x-trace", b"partial"),
+    );
+    write_h2_frame(stream, H2_FRAME_DATA, H2_FLAG_END_STREAM, 1, b"interleaved");
+  });
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_request_trailer_continuation_on_wrong_stream() {
+  assert_invalid_h2_request_trailer_sequence_without_handler(|stream, addr| {
+    write_h2_frame(
+      stream,
+      H2_FRAME_HEADERS,
+      H2_FLAG_END_HEADERS,
+      1,
+      &h2_post_headers(b"/wrong-stream-trailers", addr.to_string().as_bytes()),
+    );
+    write_h2_frame(stream, H2_FRAME_DATA, 0, 1, b"body");
+    write_h2_frame(
+      stream,
+      H2_FRAME_HEADERS,
+      H2_FLAG_END_STREAM,
+      1,
+      &h2_literal_new_name(b"x-trace", b"partial"),
+    );
+    write_h2_frame(
+      stream,
+      H2_FRAME_CONTINUATION,
+      H2_FLAG_END_HEADERS,
+      3,
+      &h2_literal_new_name(b"x-second", b"wrong-stream"),
+    );
+  });
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_eof_during_request_trailers() {
+  assert_invalid_h2_request_trailer_sequence_without_handler(|stream, addr| {
+    write_h2_frame(
+      stream,
+      H2_FRAME_HEADERS,
+      H2_FLAG_END_HEADERS,
+      1,
+      &h2_post_headers(b"/eof-during-trailers", addr.to_string().as_bytes()),
+    );
+    write_h2_frame(stream, H2_FRAME_DATA, 0, 1, b"body");
+    write_h2_frame(
+      stream,
+      H2_FRAME_HEADERS,
+      H2_FLAG_END_STREAM,
+      1,
+      &h2_literal_new_name(b"x-trace", b"partial"),
+    );
+  });
 }
 
 #[test]
