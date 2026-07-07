@@ -933,12 +933,17 @@ fn test_auto_redirect_resolves_absolute_location() {
 
 #[test]
 fn test_auto_redirect_resolves_absolute_path_location() {
-  assert_redirect_resolves_to_target(|_| "/final?x=1".to_string(), "/final?x=1");
+  assert_redirect_resolves_to_target(|_| "/absolute-path".to_string(), "/absolute-path");
 }
 
 #[test]
-fn test_auto_redirect_resolves_relative_path_location() {
-  assert_redirect_resolves_to_target(|_| "../final".to_string(), "/final");
+fn test_auto_redirect_resolves_relative_child_location() {
+  assert_redirect_resolves_to_target(|_| "relative-child".to_string(), "/redirect/relative-child");
+}
+
+#[test]
+fn test_auto_redirect_resolves_parent_relative_location() {
+  assert_redirect_resolves_to_target(|_| "../sibling".to_string(), "/sibling");
 }
 
 #[test]
@@ -953,7 +958,23 @@ fn test_auto_redirect_preserves_trailing_slash_for_parent_dot_segment_location()
 
 #[test]
 fn test_auto_redirect_resolves_query_only_location() {
-  assert_redirect_resolves_to_target(|_| "?page=2".to_string(), "/redirect/from?page=2");
+  assert_redirect_resolves_to_target(|_| "?query-only".to_string(), "/redirect/from?query-only");
+}
+
+#[test]
+fn test_auto_redirect_resolves_location_with_fragment_without_sending_fragment() {
+  assert_redirect_resolves_to_target(
+    |_| "fragment-child#section".to_string(),
+    "/redirect/fragment-child",
+  );
+}
+
+#[test]
+fn test_auto_redirect_resolves_absolute_location_with_fragment_without_sending_fragment() {
+  assert_redirect_resolves_to_target(
+    |addr| format!("http://{}/absolute-fragment#section", addr),
+    "/absolute-fragment",
+  );
 }
 
 #[test]
