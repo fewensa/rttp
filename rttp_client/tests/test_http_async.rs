@@ -514,6 +514,34 @@ fn test_async_non_chunked_transfer_coding_before_chunked_is_rejected() {
 
 #[test]
 #[cfg(feature = "async")]
+fn test_async_transfer_encoding_without_final_chunked_is_rejected() {
+  let (addr, _handle) = support::spawn_chunked_response_server(concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Transfer-Encoding: gzip\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "unframed"
+  ));
+
+  block_on(async {
+    let error = client()
+      .get()
+      .url(format!("http://{}/gzip", addr))
+      .rasync()
+      .await
+      .expect_err("unsupported transfer coding should be rejected");
+
+    assert!(
+      error
+        .to_string()
+        .contains("Unsupported Transfer-Encoding response body"),
+      "unexpected error: {error}"
+    );
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
 fn test_async_chunked_malformed_extension_is_rejected() {
   let (addr, _handle) = support::spawn_chunked_response_server(concat!(
     "HTTP/1.1 200 OK\r\n",
