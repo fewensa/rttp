@@ -247,6 +247,89 @@ fn live_socket2_server_preserves_connection_lifetime_boundaries() {
 }
 
 #[test]
+fn live_socket2_server_stops_pipelined_connection_after_request_close() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        tx.send(request.target().to_string())
+          .expect("send parsed request");
+        HttpResponse::ok(format!("served {}", request.target()))
+      })
+      .expect("serve requests");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(
+      concat!(
+        "GET /matrix/close-first HTTP/1.1\r\n",
+        "Host: example.test\r\n",
+        "Connection: close\r\n",
+        "Content-Length: 0\r\n",
+        "\r\n",
+        "GET /matrix/ignored HTTP/1.1\r\n",
+        "Host: example.test\r\n",
+        "Content-Length: 0\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write pipelined close request");
+  stream.shutdown(Shutdown::Write).expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  let (first_response, remaining) = parse_content_length_response(&response);
+  assert!(first_response.head.starts_with("HTTP/1.1 200 OK"));
+  assert_eq!(
+    Some("close"),
+    header_value(first_response.head, "Connection")
+  );
+  assert_eq!("served /matrix/close-first", first_response.body);
+  assert_eq!("", remaining);
+  assert_eq!("/matrix/close-first", rx.recv().expect("first request"));
+  assert!(rx.recv_timeout(Duration::from_millis(100)).is_err());
+
+  let mut next_stream = TcpStream::connect(addr).expect("connect next request");
+  next_stream
+    .write_all(
+      concat!(
+        "GET /matrix/next-connection HTTP/1.1\r\n",
+        "Host: example.test\r\n",
+        "Content-Length: 0\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write next request");
+  next_stream
+    .shutdown(Shutdown::Write)
+    .expect("shutdown next write");
+
+  let mut next_response = String::new();
+  next_stream
+    .read_to_string(&mut next_response)
+    .expect("read next response");
+
+  let (next_response, next_remaining) = parse_content_length_response(&next_response);
+  assert!(next_response.head.starts_with("HTTP/1.1 200 OK"));
+  assert_eq!("served /matrix/next-connection", next_response.body);
+  assert_eq!("", next_remaining);
+  assert_eq!(
+    "/matrix/next-connection",
+    rx.recv().expect("next connection request")
+  );
+  assert!(rx.try_recv().is_err());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn live_socket2_server_closes_http10_without_keep_alive_before_next_request() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
