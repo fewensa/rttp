@@ -7,7 +7,7 @@ use url::Url;
 
 use crate::request::RawRequest;
 use crate::response::Response;
-use crate::types::{RoUrl, ToUrl};
+use crate::types::{Header, RoUrl, ToUrl};
 use crate::{error, Config};
 
 const CLIENT_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
@@ -25,6 +25,7 @@ const FLAG_ACK: u8 = 0x1;
 const FLAG_END_HEADERS: u8 = 0x4;
 
 const STREAM_ID: u32 = 1;
+const WINDOW_UPDATE_THRESHOLD: usize = 32 * 1024;
 
 pub struct PriorKnowledgeClient<'a> {
   request: RawRequest<'a>,
@@ -236,9 +237,12 @@ fn regular_headers(header: &str) -> Vec<(String, String)> {
 fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Result<Response> {
   let mut header_block = Vec::new();
   let mut headers = Vec::new();
+  let mut trailers = Vec::new();
   let mut body = Vec::new();
   let mut status = None;
   let mut in_header_continuation = false;
+  let mut header_block_is_trailer = false;
+  let mut pending_window_update = 0usize;
 
   loop {
     let frame = read_frame(stream)?;
@@ -254,11 +258,15 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
         }
       }
       (FRAME_HEADERS, STREAM_ID) => {
+        header_block_is_trailer = status.is_some();
         header_block.extend_from_slice(&frame.payload);
         if frame.flags & FLAG_END_HEADERS == FLAG_END_HEADERS {
           let decoded = decode_header_block(&header_block)?;
-          status = decoded.status;
-          headers = decoded.headers;
+          if header_block_is_trailer {
+            append_trailers(&mut trailers, decoded)?;
+          } else {
+            apply_response_headers(decoded, &mut status, &mut headers);
+          }
           header_block.clear();
           in_header_continuation = false;
         } else {
@@ -272,8 +280,11 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
         header_block.extend_from_slice(&frame.payload);
         if frame.flags & FLAG_END_HEADERS == FLAG_END_HEADERS {
           let decoded = decode_header_block(&header_block)?;
-          status = decoded.status;
-          headers = decoded.headers;
+          if header_block_is_trailer {
+            append_trailers(&mut trailers, decoded)?;
+          } else {
+            apply_response_headers(decoded, &mut status, &mut headers);
+          }
           header_block.clear();
           in_header_continuation = false;
         }
@@ -281,10 +292,14 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
       (FRAME_DATA, STREAM_ID) => {
         let end_stream = frame.flags & FLAG_END_STREAM == FLAG_END_STREAM;
         body.extend_from_slice(&frame.payload);
-        if !frame.payload.is_empty() && !end_stream {
-          write_window_update_best_effort(stream, STREAM_ID, frame.payload.len())?;
-          write_window_update_best_effort(stream, 0, frame.payload.len())?;
+        pending_window_update = pending_window_update
+          .checked_add(frame.payload.len())
+          .ok_or_else(|| error::bad_response("HTTP/2 response body is too large"))?;
+        if !end_stream && pending_window_update >= WINDOW_UPDATE_THRESHOLD {
+          write_window_update_best_effort(stream, STREAM_ID, pending_window_update)?;
+          write_window_update_best_effort(stream, 0, pending_window_update)?;
           flush_best_effort(stream)?;
+          pending_window_update = 0;
         }
         if end_stream {
           break;
@@ -309,7 +324,23 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
   }
 
   let status = status.ok_or_else(|| error::bad_response("missing HTTP/2 :status header"))?;
-  build_response(url, status, &headers, body)
+  build_response(url, status, &headers, body, trailers)
+}
+
+fn apply_response_headers(
+  decoded: DecodedHeaders,
+  status: &mut Option<u32>,
+  headers: &mut Vec<(String, String)>,
+) {
+  if decoded.status.is_some_and(is_informational_status) {
+    return;
+  }
+  *status = decoded.status;
+  *headers = decoded.headers;
+}
+
+fn is_informational_status(status: u32) -> bool {
+  (100..200).contains(&status)
 }
 
 fn goaway_last_stream_id(payload: &[u8]) -> error::Result<u32> {
@@ -329,6 +360,7 @@ fn build_response(
   status: u32,
   headers: &[(String, String)],
   body: Vec<u8>,
+  trailers: Vec<Header>,
 ) -> error::Result<Response> {
   let mut binary = format!("HTTP/2 {}\r\n", status).into_bytes();
   for (name, value) in headers {
@@ -339,7 +371,18 @@ fn build_response(
   }
   binary.extend_from_slice(b"\r\n");
   binary.extend_from_slice(&body);
-  Response::new(url, binary)
+  Response::with_trailers(url, binary, trailers)
+}
+
+fn append_trailers(trailers: &mut Vec<Header>, decoded: DecodedHeaders) -> error::Result<()> {
+  if decoded.status.is_some() {
+    return Err(error::bad_response("invalid HTTP/2 trailer pseudo-header"));
+  }
+  for (name, value) in decoded.headers {
+    validate_response_trailer_header(&name, &value)?;
+    trailers.push(Header::new(name, value));
+  }
+  Ok(())
 }
 
 struct Frame {
@@ -619,6 +662,39 @@ fn push_decoded_header(
     headers.push((name.to_string(), value.to_string()));
   }
   Ok(())
+}
+
+fn validate_response_trailer_header(name: &str, value: &str) -> error::Result<()> {
+  if name.is_empty()
+    || name.contains(|ch: char| ch.is_ascii_control() || ch == ':' || ch == ' ')
+    || value.contains('\r')
+    || value.contains('\n')
+  {
+    return Err(error::bad_response("Invalid trailer header"));
+  }
+  if is_forbidden_response_trailer_name(name) {
+    return Err(error::bad_response("Forbidden trailer header"));
+  }
+  Ok(())
+}
+
+fn is_forbidden_response_trailer_name(name: &str) -> bool {
+  matches!(
+    name.to_ascii_lowercase().as_str(),
+    "authorization"
+      | "connection"
+      | "content-length"
+      | "cookie"
+      | "host"
+      | "proxy-authenticate"
+      | "proxy-authorization"
+      | "www-authenticate"
+      | "set-cookie"
+      | "te"
+      | "trailer"
+      | "transfer-encoding"
+      | "upgrade"
+  )
 }
 
 fn static_header(index: usize) -> error::Result<(&'static str, &'static str)> {
