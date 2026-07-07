@@ -14,7 +14,10 @@ const CLIENT_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
 const FRAME_DATA: u8 = 0x0;
 const FRAME_HEADERS: u8 = 0x1;
+const FRAME_RST_STREAM: u8 = 0x3;
 const FRAME_SETTINGS: u8 = 0x4;
+const FRAME_GOAWAY: u8 = 0x7;
+const FRAME_WINDOW_UPDATE: u8 = 0x8;
 const FRAME_CONTINUATION: u8 = 0x9;
 
 const FLAG_END_STREAM: u8 = 0x1;
@@ -276,10 +279,22 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
         }
       }
       (FRAME_DATA, STREAM_ID) => {
+        let end_stream = frame.flags & FLAG_END_STREAM == FLAG_END_STREAM;
         body.extend_from_slice(&frame.payload);
-        if frame.flags & FLAG_END_STREAM == FLAG_END_STREAM {
+        if !frame.payload.is_empty() && !end_stream {
+          write_window_update_best_effort(stream, 0, frame.payload.len())?;
+          write_window_update_best_effort(stream, STREAM_ID, frame.payload.len())?;
+          flush_best_effort(stream)?;
+        }
+        if end_stream {
           break;
         }
+      }
+      (FRAME_RST_STREAM, STREAM_ID) => {
+        return Err(error::bad_response("HTTP/2 stream received RST_STREAM"));
+      }
+      (FRAME_GOAWAY, 0) => {
+        return Err(error::bad_response("HTTP/2 connection received GOAWAY"));
       }
       (_, STREAM_ID) => {}
       (_, 0) => {}
@@ -341,11 +356,21 @@ fn write_frame(
   stream_id: u32,
   payload: &[u8],
 ) -> error::Result<()> {
+  write_frame_io(stream, frame_type, flags, stream_id, payload).map_err(error::request)
+}
+
+fn write_frame_io(
+  stream: &mut TcpStream,
+  frame_type: u8,
+  flags: u8,
+  stream_id: u32,
+  payload: &[u8],
+) -> io::Result<()> {
   if payload.len() > 16_777_215 {
-    return Err(error::request(io::Error::new(
+    return Err(io::Error::new(
       io::ErrorKind::InvalidInput,
       "HTTP/2 frame payload is too large",
-    )));
+    ));
   }
 
   let length = payload.len();
@@ -356,8 +381,61 @@ fn write_frame(
   header[3] = frame_type;
   header[4] = flags;
   header[5..9].copy_from_slice(&(stream_id & 0x7fff_ffff).to_be_bytes());
-  stream.write_all(&header).map_err(error::request)?;
-  stream.write_all(payload).map_err(error::request)
+  stream.write_all(&header)?;
+  stream.write_all(payload)
+}
+
+fn write_window_update_best_effort(
+  stream: &mut TcpStream,
+  stream_id: u32,
+  increment: usize,
+) -> error::Result<()> {
+  match write_window_update_io(stream, stream_id, increment) {
+    Ok(()) => Ok(()),
+    Err(err) if is_connection_closed(&err) => Ok(()),
+    Err(err) => Err(error::request(err)),
+  }
+}
+
+fn write_window_update_io(
+  stream: &mut TcpStream,
+  stream_id: u32,
+  increment: usize,
+) -> io::Result<()> {
+  let increment = u32::try_from(increment).map_err(|_| {
+    io::Error::new(
+      io::ErrorKind::InvalidInput,
+      "HTTP/2 window update increment is too large",
+    )
+  })?;
+  if increment == 0 || increment > 0x7fff_ffff {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidInput,
+      "invalid HTTP/2 window update increment",
+    ));
+  }
+  write_frame_io(
+    stream,
+    FRAME_WINDOW_UPDATE,
+    0,
+    stream_id,
+    &increment.to_be_bytes(),
+  )
+}
+
+fn flush_best_effort(stream: &mut TcpStream) -> error::Result<()> {
+  match stream.flush() {
+    Ok(()) => Ok(()),
+    Err(err) if is_connection_closed(&err) => Ok(()),
+    Err(err) => Err(error::request(err)),
+  }
+}
+
+fn is_connection_closed(err: &io::Error) -> bool {
+  matches!(
+    err.kind(),
+    io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset | io::ErrorKind::NotConnected
+  )
 }
 
 fn encode_literal_indexed_name_without_indexing(

@@ -8,7 +8,10 @@ use rttp_client::HttpClient;
 
 const FRAME_DATA: u8 = 0x0;
 const FRAME_HEADERS: u8 = 0x1;
+const FRAME_RST_STREAM: u8 = 0x3;
 const FRAME_SETTINGS: u8 = 0x4;
+const FRAME_GOAWAY: u8 = 0x7;
+const FRAME_WINDOW_UPDATE: u8 = 0x8;
 
 const FLAG_END_STREAM: u8 = 0x1;
 const FLAG_END_HEADERS: u8 = 0x4;
@@ -94,6 +97,108 @@ fn prior_knowledge_get_sends_h2_handshake_and_reads_single_response_stream() {
     .any(|window| window == b"/hello?via=h2"));
 }
 
+#[test]
+fn prior_knowledge_get_ignores_interleaved_data_for_other_streams() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_handshake_and_read_request(&mut stream);
+
+    write_frame(
+      &mut stream,
+      FRAME_HEADERS,
+      FLAG_END_HEADERS,
+      1,
+      &[
+        0x88, 0x0f, 16, 10, b't', b'e', b'x', b't', b'/', b'p', b'l', b'a', b'i', b'n',
+      ],
+    );
+    write_frame(&mut stream, FRAME_DATA, 0, 1, b"hel");
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 3, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 3, b"ignored");
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"lo");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/interleaved", addr))
+    .emit_http2_prior_knowledge()
+    .expect("interleaved h2 response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("hello", response.body().string().unwrap());
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
+fn prior_knowledge_get_reports_stream_reset_and_goaway() {
+  let (reset_addr, reset_handle) = spawn_control_frame_peer(FRAME_RST_STREAM);
+  let reset_error = HttpClient::new()
+    .get()
+    .url(format!("http://{}/reset", reset_addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("reset stream must fail the response");
+  assert!(reset_error.to_string().contains("RST_STREAM"));
+  reset_handle.join().expect("reset peer thread");
+
+  let (goaway_addr, goaway_handle) = spawn_control_frame_peer(FRAME_GOAWAY);
+  let goaway_error = HttpClient::new()
+    .get()
+    .url(format!("http://{}/goaway", goaway_addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("goaway must fail the response");
+  assert!(goaway_error.to_string().contains("GOAWAY"));
+  goaway_handle.join().expect("goaway peer thread");
+}
+
+#[test]
+fn prior_knowledge_get_sends_window_updates_while_reading_large_response_body() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    stream
+      .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+      .expect("set read timeout");
+    complete_handshake_and_read_request(&mut stream);
+
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    for _ in 0..5 {
+      write_frame(&mut stream, FRAME_DATA, 0, 1, &vec![b'x'; 16 * 1024]);
+    }
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"done");
+
+    let mut saw_stream_update = false;
+    let mut saw_connection_update = false;
+    for _ in 0..8 {
+      let frame = read_frame(&mut stream);
+      if frame.frame_type == FRAME_WINDOW_UPDATE && frame.stream_id == 0 {
+        saw_connection_update = true;
+      }
+      if frame.frame_type == FRAME_WINDOW_UPDATE && frame.stream_id == 1 {
+        saw_stream_update = true;
+      }
+      if saw_stream_update && saw_connection_update {
+        return;
+      }
+    }
+    panic!("client did not send stream and connection WINDOW_UPDATE frames");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/large", addr))
+    .emit_http2_prior_knowledge()
+    .expect("large h2 response");
+
+  assert_eq!(200, response.code());
+  assert_eq!(5 * 16 * 1024 + 4, response.body().binary().len());
+  handle.join().expect("window update peer thread");
+}
+
 struct Frame {
   frame_type: u8,
   flags: u8,
@@ -127,4 +232,44 @@ fn write_frame(stream: &mut impl Write, frame_type: u8, flags: u8, stream_id: u3
   stream.write_all(&header).expect("write frame header");
   stream.write_all(payload).expect("write frame payload");
   stream.flush().expect("flush frame");
+}
+
+fn complete_handshake_and_read_request(stream: &mut (impl Read + Write)) {
+  let mut preface = [0; 24];
+  stream
+    .read_exact(&mut preface)
+    .expect("read client preface");
+  assert_eq!(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", &preface);
+
+  let client_settings = read_frame(stream);
+  assert_eq!(FRAME_SETTINGS, client_settings.frame_type);
+  assert_eq!(0, client_settings.stream_id);
+
+  write_frame(stream, FRAME_SETTINGS, 0, 0, &[]);
+
+  let client_settings_ack = read_frame(stream);
+  assert_eq!(FRAME_SETTINGS, client_settings_ack.frame_type);
+  assert_eq!(FLAG_ACK, client_settings_ack.flags);
+
+  let request_headers = read_frame(stream);
+  assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+  assert_eq!(FLAG_END_STREAM | FLAG_END_HEADERS, request_headers.flags);
+  assert_eq!(1, request_headers.stream_id);
+}
+
+fn spawn_control_frame_peer(frame_type: u8) -> (SocketAddr, thread::JoinHandle<()>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_handshake_and_read_request(&mut stream);
+    match frame_type {
+      FRAME_RST_STREAM => write_frame(&mut stream, FRAME_RST_STREAM, 0, 1, &0u32.to_be_bytes()),
+      FRAME_GOAWAY => write_frame(&mut stream, FRAME_GOAWAY, 0, 0, &[0, 0, 0, 1, 0, 0, 0, 0]),
+      _ => unreachable!("unexpected control frame"),
+    }
+  });
+
+  (addr, handle)
 }
