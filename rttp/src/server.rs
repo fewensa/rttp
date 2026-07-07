@@ -13,6 +13,7 @@ const HTTP2_FRAME_DATA: u8 = 0x0;
 const HTTP2_FRAME_HEADERS: u8 = 0x1;
 const HTTP2_FRAME_RST_STREAM: u8 = 0x3;
 const HTTP2_FRAME_SETTINGS: u8 = 0x4;
+const HTTP2_FRAME_PING: u8 = 0x6;
 const HTTP2_FRAME_GOAWAY: u8 = 0x7;
 const HTTP2_FRAME_WINDOW_UPDATE: u8 = 0x8;
 const HTTP2_FRAME_CONTINUATION: u8 = 0x9;
@@ -436,6 +437,30 @@ impl HttpServer {
               "invalid HTTP/2 SETTINGS frame",
             ));
           }
+        }
+        (HTTP2_FRAME_PING, 0) => {
+          if frame.payload.len() != 8 {
+            return Err(io::Error::new(
+              io::ErrorKind::InvalidData,
+              "invalid HTTP/2 PING frame",
+            ));
+          }
+          if frame.flags & HTTP2_FLAG_ACK != HTTP2_FLAG_ACK {
+            self.normalize_connection_error(write_http2_frame(
+              &mut stream,
+              HTTP2_FRAME_PING,
+              HTTP2_FLAG_ACK,
+              0,
+              &frame.payload,
+            ))?;
+            self.normalize_connection_error(stream.flush())?;
+          }
+        }
+        (HTTP2_FRAME_PING, _) => {
+          return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid HTTP/2 PING frame",
+          ));
         }
         (HTTP2_FRAME_HEADERS, id) if id != 0 => {
           let request_stream = http2_request_stream(&mut streams, id);

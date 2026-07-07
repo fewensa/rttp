@@ -12,6 +12,7 @@ const H2_FRAME_DATA: u8 = 0x0;
 const H2_FRAME_HEADERS: u8 = 0x1;
 const H2_FRAME_RST_STREAM: u8 = 0x3;
 const H2_FRAME_SETTINGS: u8 = 0x4;
+const H2_FRAME_PING: u8 = 0x6;
 const H2_FRAME_GOAWAY: u8 = 0x7;
 const H2_FRAME_WINDOW_UPDATE: u8 = 0x8;
 const H2_FRAME_CONTINUATION: u8 = 0x9;
@@ -152,6 +153,43 @@ fn assert_invalid_h2_headers_without_handler(header_block: &[u8]) {
     .join()
     .expect("server thread")
     .expect_err("invalid h2 headers should reject request");
+  assert_eq!(ErrorKind::InvalidData, error.kind());
+  assert!(rx.try_recv().is_err());
+}
+
+fn assert_invalid_h2_frame_without_handler(
+  frame_type: u8,
+  flags: u8,
+  stream_id: u32,
+  payload: &[u8],
+) {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send(request).expect("send unexpected h2 request");
+      HttpResponse::ok("unexpected")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+  write_h2_frame(&mut stream, frame_type, flags, stream_id, payload);
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown h2 write");
+
+  let error = handle
+    .join()
+    .expect("server thread")
+    .expect_err("invalid h2 frame should reject connection");
   assert_eq!(ErrorKind::InvalidData, error.kind());
   assert!(rx.try_recv().is_err());
 }
@@ -446,6 +484,81 @@ fn server_accepts_http2_prior_knowledge_headers_and_data_before_calling_handler(
   assert_eq!(b"stored", response_body.payload.as_slice());
 
   handle.join().expect("server thread");
+}
+
+#[test]
+fn server_acknowledges_http2_prior_knowledge_ping_around_request_frames() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request.target().to_string())
+          .expect("send h2 target");
+        HttpResponse::ok("pong path")
+      })
+      .expect("serve h2 ping request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+
+  write_h2_frame(&mut stream, H2_FRAME_PING, 0, 0, b"12345678");
+  let ping_ack = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_PING, ping_ack.frame_type);
+  assert_eq!(H2_FLAG_ACK, ping_ack.flags);
+  assert_eq!(0, ping_ack.stream_id);
+  assert_eq!(b"12345678", ping_ack.payload.as_slice());
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &h2_post_headers(b"/ping-before-response", addr.to_string().as_bytes()),
+  );
+  write_h2_frame(&mut stream, H2_FRAME_PING, H2_FLAG_ACK, 0, b"ignored!");
+  write_h2_frame(&mut stream, H2_FRAME_PING, 0, 0, b"abcdefgh");
+
+  let second_ping_ack = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_PING, second_ping_ack.frame_type);
+  assert_eq!(H2_FLAG_ACK, second_ping_ack.flags);
+  assert_eq!(0, second_ping_ack.stream_id);
+  assert_eq!(b"abcdefgh", second_ping_ack.payload.as_slice());
+
+  write_h2_frame(&mut stream, H2_FRAME_DATA, H2_FLAG_END_STREAM, 1, b"");
+
+  let response_headers = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(1, response_headers.stream_id);
+
+  let response_body = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
+  assert_eq!(1, response_body.stream_id);
+  assert_eq!(b"pong path", response_body.payload.as_slice());
+
+  assert_eq!(
+    "/ping-before-response",
+    rx.recv().expect("receive h2 target")
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_ping_with_non_zero_stream_id() {
+  assert_invalid_h2_frame_without_handler(H2_FRAME_PING, 0, 1, b"12345678");
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_ping_with_invalid_payload_length() {
+  assert_invalid_h2_frame_without_handler(H2_FRAME_PING, 0, 0, b"too short");
 }
 
 #[test]
