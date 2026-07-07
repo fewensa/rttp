@@ -25,6 +25,7 @@ const FLAG_ACK: u8 = 0x1;
 const FLAG_END_HEADERS: u8 = 0x4;
 
 const STREAM_ID: u32 = 1;
+const WINDOW_UPDATE_THRESHOLD: usize = 32 * 1024;
 
 pub struct PriorKnowledgeClient<'a> {
   request: RawRequest<'a>,
@@ -241,6 +242,7 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
   let mut status = None;
   let mut in_header_continuation = false;
   let mut header_block_is_trailer = false;
+  let mut pending_window_update = 0usize;
 
   loop {
     let frame = read_frame(stream)?;
@@ -290,10 +292,14 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
       (FRAME_DATA, STREAM_ID) => {
         let end_stream = frame.flags & FLAG_END_STREAM == FLAG_END_STREAM;
         body.extend_from_slice(&frame.payload);
-        if !frame.payload.is_empty() && !end_stream {
-          write_window_update_best_effort(stream, STREAM_ID, frame.payload.len())?;
-          write_window_update_best_effort(stream, 0, frame.payload.len())?;
+        pending_window_update = pending_window_update
+          .checked_add(frame.payload.len())
+          .ok_or_else(|| error::bad_response("HTTP/2 response body is too large"))?;
+        if !end_stream && pending_window_update >= WINDOW_UPDATE_THRESHOLD {
+          write_window_update_best_effort(stream, STREAM_ID, pending_window_update)?;
+          write_window_update_best_effort(stream, 0, pending_window_update)?;
           flush_best_effort(stream)?;
+          pending_window_update = 0;
         }
         if end_stream {
           break;

@@ -1,6 +1,6 @@
 #![cfg(feature = "http2")]
 
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener};
 use std::thread;
 use std::time::Duration;
@@ -262,21 +262,19 @@ fn prior_knowledge_sends_window_updates_for_non_final_data_frames() {
 
     write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
     write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
-    write_frame(&mut stream, FRAME_DATA, 0, 1, b"first chunk");
+    let chunk = vec![b'x'; 32 * 1024];
+    write_frame(&mut stream, FRAME_DATA, 0, 1, &chunk);
 
     let stream_update = read_frame(&mut stream);
     assert_eq!(FRAME_WINDOW_UPDATE, stream_update.frame_type);
     assert_eq!(1, stream_update.stream_id);
-    assert_eq!(
-      b"first chunk".len() as u32,
-      window_update_increment(&stream_update)
-    );
+    assert_eq!(chunk.len() as u32, window_update_increment(&stream_update));
 
     let connection_update = read_frame(&mut stream);
     assert_eq!(FRAME_WINDOW_UPDATE, connection_update.frame_type);
     assert_eq!(0, connection_update.stream_id);
     assert_eq!(
-      b"first chunk".len() as u32,
+      chunk.len() as u32,
       window_update_increment(&connection_update)
     );
 
@@ -296,8 +294,8 @@ fn prior_knowledge_sends_window_updates_for_non_final_data_frames() {
     .expect("h2 response requiring window updates");
 
   assert_eq!(
-    "first chunk and final chunk",
-    response.body().string().unwrap()
+    32 * 1024 + b" and final chunk".len(),
+    response.body().binary().len()
   );
   handle.join().expect("h2 peer thread");
 }
@@ -382,6 +380,52 @@ fn prior_knowledge_get_decodes_terminal_trailer_headers() {
   handle.join().expect("h2 peer thread");
 }
 
+#[test]
+fn prior_knowledge_get_defers_small_window_updates_until_more_credit_is_needed() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    stream
+      .set_read_timeout(Some(Duration::from_millis(200)))
+      .expect("set h2 peer read timeout");
+    complete_h2_request_handshake(&mut stream);
+
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, 0, 1, b"small trailer body");
+    write_frame(
+      &mut stream,
+      FRAME_HEADERS,
+      FLAG_END_HEADERS | FLAG_END_STREAM,
+      1,
+      &[
+        0, 7, b'x', b'-', b't', b'r', b'a', b'c', b'e', 3, b'a', b'b', b'c',
+      ],
+    );
+
+    match try_read_frame(&mut stream) {
+      Ok(Some(frame)) => panic!(
+        "unexpected client frame after small trailer response: type={}, stream_id={}",
+        frame.frame_type, frame.stream_id
+      ),
+      Ok(None) => {}
+      Err(err) => panic!("unexpected frame read error: {err}"),
+    }
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/small-trailers", addr))
+    .emit_http2_prior_knowledge()
+    .expect("h2 response with small trailer body");
+
+  assert_eq!(200, response.code());
+  assert_eq!("small trailer body", response.body().string().unwrap());
+  assert_eq!(Some(&"abc".to_string()), response.trailer_value("X-Trace"));
+  handle.join().expect("h2 peer thread");
+}
+
 struct Frame {
   frame_type: u8,
   flags: u8,
@@ -401,6 +445,30 @@ fn read_frame(stream: &mut impl Read) -> Frame {
     stream_id: u32::from_be_bytes([header[5] & 0x7f, header[6], header[7], header[8]]),
     payload,
   }
+}
+
+fn try_read_frame(stream: &mut impl Read) -> io::Result<Option<Frame>> {
+  let mut header = [0; 9];
+  match stream.read_exact(&mut header) {
+    Ok(()) => {}
+    Err(err)
+      if err.kind() == io::ErrorKind::WouldBlock
+        || err.kind() == io::ErrorKind::TimedOut
+        || err.kind() == io::ErrorKind::UnexpectedEof =>
+    {
+      return Ok(None);
+    }
+    Err(err) => return Err(err),
+  }
+  let length = ((header[0] as usize) << 16) | ((header[1] as usize) << 8) | header[2] as usize;
+  let mut payload = vec![0; length];
+  stream.read_exact(&mut payload)?;
+  Ok(Some(Frame {
+    frame_type: header[3],
+    flags: header[4],
+    stream_id: u32::from_be_bytes([header[5] & 0x7f, header[6], header[7], header[8]]),
+    payload,
+  }))
 }
 
 fn spawn_h2_prior_knowledge_peer_with_response(
