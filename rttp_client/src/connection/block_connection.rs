@@ -57,17 +57,18 @@ impl<'a> BlockConnection<'a> {
         self.conn.block_send_parts(&url)?
       };
 
+      let close_connection = parts.close_connection;
       let response =
         Response::with_trailers(self.conn.rourl().clone(), parts.binary, parts.trailers)?;
       let config = self.conn.config().clone();
 
       if response.is_redirect() {
         let Some(location) = response.location() else {
-          self.conn.closed_set(true);
+          self.conn.closed_set(close_connection);
           return Ok(response);
         };
         if !config.auto_redirect() {
-          self.conn.closed_set(true);
+          self.conn.closed_set(close_connection);
           return Ok(response);
         }
         let count = self.conn.count();
@@ -99,7 +100,7 @@ impl<'a> BlockConnection<'a> {
         continue;
       }
 
-      self.conn.closed_set(true);
+      self.conn.closed_set(close_connection);
       return Ok(response);
     }
   }
@@ -113,9 +114,10 @@ impl<'a> BlockConnection<'a> {
 
     let url = self.conn.url().map_err(error::builder)?;
     let parts = self.conn.block_send_streaming_parts(&url, body)?;
+    let close_connection = parts.close_connection;
     let response =
       Response::with_trailers(self.conn.rourl().clone(), parts.binary, parts.trailers)?;
-    self.conn.closed_set(true);
+    self.conn.closed_set(close_connection);
     Ok(response)
   }
 

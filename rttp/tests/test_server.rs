@@ -1,4 +1,4 @@
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::mpsc;
 use std::thread;
@@ -107,7 +107,7 @@ fn complete_h2_server_handshake(stream: &mut TcpStream) {
   write_h2_frame(stream, H2_FRAME_SETTINGS, H2_FLAG_ACK, 0, &[]);
 }
 
-fn send_raw_request(raw: &[u8]) -> (String, bool) {
+fn send_raw_request_capture(raw: &[u8]) -> (String, Option<Request>) {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
   let (tx, rx) = mpsc::channel();
@@ -131,7 +131,13 @@ fn send_raw_request(raw: &[u8]) -> (String, bool) {
   stream.read_to_string(&mut response).expect("read response");
 
   handle.join().expect("server thread");
-  (response, rx.try_recv().is_ok())
+  (response, rx.try_recv().ok())
+}
+
+fn send_raw_request(raw: &[u8]) -> (String, bool) {
+  let (response, request) = send_raw_request_capture(raw);
+
+  (response, request.is_some())
 }
 
 fn assert_bad_request_without_handler(raw: &[u8]) {
@@ -585,6 +591,148 @@ fn streaming_handler_can_reject_before_reading_request_body() {
 }
 
 #[test]
+fn streaming_handler_can_reject_chunked_request_before_body_arrives() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one_streaming(|_request, _body| {
+        tx.send(()).expect("record chunked handler call");
+        HttpResponse::new(413, "Payload Too Large").body("rejected")
+      })
+      .expect("serve chunked streaming rejection");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(b"POST /reject HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n")
+    .expect("write chunked request head");
+
+  if rx.recv_timeout(Duration::from_secs(2)).is_err() {
+    stream
+      .shutdown(std::net::Shutdown::Write)
+      .expect("shutdown write");
+    handle.join().expect("server thread");
+    panic!("chunked streaming handler was not invoked after headers");
+  }
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  assert_eq!(
+    "HTTP/1.1 413 Payload Too Large\r\nContent-Length: 8\r\nConnection: close\r\n\r\nrejected",
+    response
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn streaming_body_reader_rejects_malformed_chunk_size_on_read() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one_streaming(|_request, mut body| {
+        let mut buffer = [0u8; 16];
+        let error = body
+          .read(&mut buffer)
+          .expect_err("malformed chunk size should fail on read");
+        assert_eq!(ErrorKind::InvalidData, error.kind());
+        assert_eq!("invalid chunk size", error.to_string());
+        HttpResponse::new(400, "Bad Request").body("Bad Request")
+      })
+      .expect("serve malformed streaming request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(
+      concat!(
+        "POST /upload HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Transfer-Encoding: chunked\r\n",
+        "\r\n",
+        "not-hex\r\n",
+        "hello\r\n",
+        "0\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write malformed chunked request");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  assert_eq!(
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn streaming_body_reader_rejects_malformed_chunked_trailer_before_exposing_trailers() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one_streaming(|_request, mut body| {
+        let mut buffer = Vec::new();
+        let error = body
+          .read_to_end(&mut buffer)
+          .expect_err("malformed chunk trailer should fail on read");
+        assert_eq!(ErrorKind::InvalidData, error.kind());
+        assert_eq!("invalid request trailer", error.to_string());
+        assert!(body.trailers().is_empty());
+        assert_eq!(b"hello", buffer.as_slice());
+        HttpResponse::new(400, "Bad Request").body("Bad Request")
+      })
+      .expect("serve malformed streaming request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(
+      concat!(
+        "POST /upload HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Transfer-Encoding: chunked\r\n",
+        "\r\n",
+        "5\r\n",
+        "hello\r\n",
+        "0\r\n",
+        "X-Trace abc\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write malformed chunked request");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  assert_eq!(
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn server_bind_falls_back_to_later_candidate_when_first_addr_is_occupied() {
   let (_occupied_listener, occupied_addr) = reserve_local_addr();
   let (available_listener, available_addr) = reserve_local_addr();
@@ -733,6 +881,84 @@ fn configured_write_timeout_preserves_normal_response_behavior() {
 
   assert_eq!(
     "HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: close\r\n\r\nwrite bounded",
+    response
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn forced_close_overrides_conflicting_response_connection_keep_alive() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(1, |_request| {
+        HttpResponse::ok("terminal").header("Connection", "keep-alive")
+      })
+      .expect("serve request");
+  });
+
+  let response = send_request(
+    addr,
+    b"GET /terminal HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n",
+  );
+
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\nterminal",
+    response
+  );
+  assert!(!response.contains("\r\nConnection: keep-alive\r\n"));
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn keep_alive_response_connection_header_survives_when_connection_remains_open() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        if request.target() == "/first" {
+          HttpResponse::ok("first").header("Connection", "keep-alive")
+        } else {
+          HttpResponse::ok("second")
+        }
+      })
+      .expect("serve requests");
+  });
+
+  let response = send_request(
+    addr,
+    concat!(
+      "GET /first HTTP/1.1\r\n",
+      "Host: localhost\r\n",
+      "Connection: keep-alive\r\n",
+      "\r\n",
+      "GET /second HTTP/1.1\r\n",
+      "Host: localhost\r\n",
+      "Connection: keep-alive\r\n",
+      "\r\n",
+    )
+    .as_bytes(),
+  );
+
+  assert_eq!(
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Connection: keep-alive\r\n",
+      "Content-Length: 5\r\n",
+      "\r\n",
+      "first",
+      "HTTP/1.1 200 OK\r\n",
+      "Content-Length: 6\r\n",
+      "Connection: close\r\n",
+      "\r\n",
+      "second",
+    ),
     response
   );
 
@@ -1280,10 +1506,13 @@ fn server_accepts_http_10_request_without_host() {
 
 #[test]
 fn server_accepts_absolute_form_request_target() {
-  let (response, handler_called) =
-    send_raw_request(b"GET http://example.test/path?query=1 HTTP/1.1\r\nHost: localhost\r\n\r\n");
+  let (response, request) = send_raw_request_capture(
+    b"GET http://example.test/path?query=1 HTTP/1.1\r\nHost: localhost\r\n\r\n",
+  );
 
-  assert!(handler_called);
+  let request = request.expect("handler receives absolute-form request");
+  assert_eq!("GET", request.method());
+  assert_eq!("http://example.test/path?query=1", request.target());
   assert_eq!(
     "HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nunexpected",
     response
@@ -1292,10 +1521,12 @@ fn server_accepts_absolute_form_request_target() {
 
 #[test]
 fn server_accepts_options_asterisk_request_target() {
-  let (response, handler_called) =
-    send_raw_request(b"OPTIONS * HTTP/1.1\r\nHost: localhost\r\n\r\n");
+  let (response, request) =
+    send_raw_request_capture(b"OPTIONS * HTTP/1.1\r\nHost: localhost\r\n\r\n");
 
-  assert!(handler_called);
+  let request = request.expect("handler receives OPTIONS asterisk-form request");
+  assert_eq!("OPTIONS", request.method());
+  assert_eq!("*", request.target());
   assert_eq!(
     "HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nunexpected",
     response
@@ -1304,21 +1535,52 @@ fn server_accepts_options_asterisk_request_target() {
 
 #[test]
 fn server_accepts_connect_authority_request_target() {
-  let (response, handler_called) =
-    send_raw_request(b"CONNECT example.test:443 HTTP/1.1\r\nHost: example.test:443\r\n\r\n");
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
 
-  assert!(handler_called);
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = format!("{} {}", request.method(), request.target());
+        tx.send(observed.clone()).expect("send observed request");
+        HttpResponse::ok(observed)
+      })
+      .expect("serve one request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(b"CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n")
+    .expect("write request");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
   assert_eq!(
-    "HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nunexpected",
+    "CONNECT example.com:443",
+    rx.recv().expect("observed request")
+  );
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 23\r\nConnection: close\r\n\r\nCONNECT example.com:443",
     response
   );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_rejects_get_asterisk_request_target_before_handler() {
+  assert_bad_request_without_handler(b"GET * HTTP/1.1\r\nHost: localhost\r\n\r\n");
 }
 
 #[test]
 fn server_rejects_request_target_forms_for_wrong_methods() {
   for raw in [
-    b"GET * HTTP/1.1\r\nHost: localhost\r\n\r\n".as_slice(),
-    b"GET example.test:443 HTTP/1.1\r\nHost: example.test\r\n\r\n",
+    b"GET example.test:443 HTTP/1.1\r\nHost: example.test\r\n\r\n".as_slice(),
     b"CONNECT /tunnel HTTP/1.1\r\nHost: example.test\r\n\r\n",
   ] {
     assert_bad_request_without_handler(raw);
@@ -1688,6 +1950,58 @@ fn server_accepts_small_chunked_request_body() {
 }
 
 #[test]
+fn server_accepts_chunk_extension_without_exposing_extension_metadata() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request).expect("send parsed request");
+        HttpResponse::ok("accepted")
+      })
+      .expect("serve one request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(
+      concat!(
+        "POST /upload HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Transfer-Encoding: chunked\r\n",
+        "\r\n",
+        "4;foo=bar\r\n",
+        "body\r\n",
+        "0\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write request");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  let request: Request = rx.recv().expect("receive parsed request");
+  assert_eq!("POST", request.method());
+  assert_eq!("/upload", request.target());
+  assert_eq!(b"body", request.body());
+  assert_eq!(None, request.header("foo"));
+  assert_eq!(None, request.trailer("foo"));
+  assert!(request.trailers().is_empty());
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\naccepted",
+    response
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn server_returns_bad_request_for_oversized_chunked_request_body() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
@@ -1772,6 +2086,66 @@ fn server_preserves_chunked_request_trailers() {
 
   let request: Request = rx.recv().expect("receive parsed request");
   assert_eq!(b"chunked body!", request.body());
+  assert_eq!(Some("abc"), request.trailer("x-trace"));
+  assert_eq!(Some("signed"), request.trailer("X-SIGNATURE"));
+  assert_eq!(
+    &[
+      ("X-Trace".to_string(), "abc".to_string()),
+      ("X-Signature".to_string(), "signed".to_string())
+    ],
+    request.trailers()
+  );
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\naccepted",
+    response
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_preserves_chunked_request_trailers_after_chunk_extension() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request).expect("send parsed request");
+        HttpResponse::ok("accepted")
+      })
+      .expect("serve one request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(
+      concat!(
+        "POST /upload HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Transfer-Encoding: chunked\r\n",
+        "\r\n",
+        "4;foo=bar\r\nbody\r\n",
+        "0\r\n",
+        "X-Trace: abc\r\n",
+        "X-Signature: signed\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write request");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  let request: Request = rx.recv().expect("receive parsed request");
+  assert_eq!(b"body", request.body());
+  assert_eq!(None, request.header("foo"));
+  assert_eq!(None, request.trailer("foo"));
   assert_eq!(Some("abc"), request.trailer("x-trace"));
   assert_eq!(Some("signed"), request.trailer("X-SIGNATURE"));
   assert_eq!(

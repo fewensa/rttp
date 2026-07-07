@@ -254,6 +254,13 @@ impl Request {
       .headers
       .push(Header::new("Transfer-Encoding", "chunked"));
   }
+
+  pub(crate) fn clear_streaming_body_headers(&mut self) {
+    self.headers.retain(|header| {
+      !header.name().eq_ignore_ascii_case("content-length")
+        && !header.name().eq_ignore_ascii_case("transfer-encoding")
+    });
+  }
 }
 
 #[derive(Clone)]

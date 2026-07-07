@@ -15,8 +15,9 @@ use crate::connection::connection::{
 };
 use crate::connection::connection_reader::{
   is_skippable_informational_status, response_body_kind, response_connection_reusable,
-  response_headers, response_status_code, validate_response_trailer_header, ResponseBodyKind,
-  ResponseParts, MAX_CHUNKED_RESPONSE_LINE_BYTES,
+  response_connection_should_close, response_headers, response_status_code,
+  validate_response_trailer_header, ResponseBodyKind, ResponseParts,
+  MAX_CHUNKED_RESPONSE_LINE_BYTES,
 };
 use crate::error;
 use crate::request::RawRequest;
@@ -62,13 +63,15 @@ impl<'a, S: AsyncRead + Unpin + ?Sized> AsyncStreamingResponse<'a, S> {
   }
 
   async fn read_to_parts(mut self) -> error::Result<ResponseParts> {
-    let connection_reusable = response_connection_reusable(&self.head, &self.body.kind);
+    let close_connection = response_connection_should_close(&self.head)?;
+    let connection_reusable = response_connection_reusable(&self.head, &self.body.kind)?;
     let mut binary = self.head;
     self.body.read_to_end(&mut binary).await?;
     Ok(ResponseParts {
       binary,
       trailers: self.body.trailers().clone(),
       connection_reusable,
+      close_connection,
     })
   }
 }
@@ -248,13 +251,14 @@ impl<'a> AsyncConnection<'a> {
         self.async_send_parts(&url).await?
       };
 
+      let close_connection = parts.close_connection;
       let response =
         Response::with_trailers(self.conn.rourl().clone(), parts.binary, parts.trailers)?;
       let config = self.conn.config().clone();
 
       if response.is_redirect() {
         let Some(location) = response.location() else {
-          self.conn.closed_set(true);
+          self.conn.closed_set(close_connection);
           return Ok(response);
         };
         if config.auto_redirect() {
@@ -288,7 +292,7 @@ impl<'a> AsyncConnection<'a> {
         }
       }
 
-      self.conn.closed_set(true);
+      self.conn.closed_set(close_connection);
       return Ok(response);
     }
   }
@@ -305,9 +309,10 @@ impl<'a> AsyncConnection<'a> {
 
     let url = self.conn.url().map_err(error::builder)?;
     let parts = self.async_send_streaming_parts(&url, body).await?;
+    let close_connection = parts.close_connection;
     let response =
       Response::with_trailers(self.conn.rourl().clone(), parts.binary, parts.trailers)?;
-    self.conn.closed_set(true);
+    self.conn.closed_set(close_connection);
     Ok(response)
   }
 }

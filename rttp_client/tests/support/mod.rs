@@ -500,13 +500,22 @@ fn echoed_redirect_request_target_and_headers(request: &[u8]) -> String {
 }
 
 pub fn spawn_keep_alive_server() -> (SocketAddr, JoinHandle<()>) {
+  spawn_keep_alive_server_count(1)
+}
+
+pub fn spawn_keep_alive_server_count(count: usize) -> (SocketAddr, JoinHandle<()>) {
   let (listener, addr) = bind_local_http_listener("keep-alive server");
   let handle = thread::spawn(move || {
-    if let Ok((mut stream, _)) = listener.accept() {
+    for _ in 0..count {
+      let Ok((mut stream, _)) = listener.accept() else {
+        break;
+      };
       let _ = read_http_request(&mut stream);
       let response = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nOK";
       let _ = stream.write_all(response);
-      thread::sleep(Duration::from_millis(300));
+      if count == 1 {
+        thread::sleep(Duration::from_millis(300));
+      }
     }
   });
   (addr, handle)

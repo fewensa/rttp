@@ -210,6 +210,40 @@ fn test_chunked() {
 }
 
 #[test]
+fn test_chunked_valid_extension_preserves_trailers_without_leaking_extension() {
+  let (addr, _handle) = support::spawn_chunked_response_server(concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "4;foo=bar\r\nWiki\r\n",
+    "0\r\n",
+    "X-Trace: abc\r\n",
+    "X-Signature: signed\r\n",
+    "\r\n"
+  ));
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/chunked", addr))
+    .emit()
+    .unwrap();
+
+  assert_eq!("Wiki", response.body().string().unwrap());
+  assert_eq!(2, response.trailers().len());
+  assert_eq!(
+    Some("abc"),
+    response.trailer("x-trace").map(|h| h.value().as_str())
+  );
+  assert_eq!(
+    Some("signed"),
+    response.trailer_value("X-SIGNATURE").map(String::as_str)
+  );
+  assert!(response.trailer("foo").is_none());
+  assert!(response.trailer_value("foo").is_none());
+}
+
+#[test]
 fn test_socket2_server_chunked_trailers_are_exposed_case_insensitively() {
   let (addr, _handle) = support::spawn_socket2_chunked_trailer_server();
   let response = client()
@@ -677,6 +711,27 @@ fn test_sync_redirect_uses_fresh_socket_after_connection_close() {
   assert_eq!(200, response.code());
   assert_eq!("final", response.body().string().unwrap());
   assert_eq!(vec![1, 1], handle.join().unwrap());
+}
+
+#[test]
+fn test_keep_alive_content_length_response_leaves_client_reusable() {
+  let (addr, _handle) = support::spawn_keep_alive_server_count(2);
+  let mut client = client();
+
+  let first = client
+    .get()
+    .config(Config::builder().read_timeout(100))
+    .url(format!("http://{}/keep-alive", addr))
+    .emit()
+    .unwrap();
+  assert_eq!("OK", first.body().string().unwrap());
+
+  let second = client
+    .get()
+    .url(format!("http://{}/keep-alive", addr))
+    .emit()
+    .unwrap();
+  assert_eq!("OK", second.body().string().unwrap());
 }
 
 #[test]
