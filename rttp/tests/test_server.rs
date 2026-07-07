@@ -562,6 +562,11 @@ fn server_rejects_http2_prior_knowledge_ping_with_invalid_payload_length() {
 }
 
 #[test]
+fn server_rejects_http2_prior_knowledge_ping_ack_with_invalid_payload_length() {
+  assert_invalid_h2_frame_without_handler(H2_FRAME_PING, H2_FLAG_ACK, 0, b"short");
+}
+
+#[test]
 fn server_accepts_http2_prior_knowledge_continuation_headers_before_data() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
