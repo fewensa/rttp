@@ -8,6 +8,14 @@ use socket2::{Domain, Protocol, Socket, Type};
 
 const MAX_REQUEST_HEAD_BYTES: usize = 64 * 1024;
 const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
+const HTTP2_CLIENT_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+const HTTP2_FRAME_DATA: u8 = 0x0;
+const HTTP2_FRAME_HEADERS: u8 = 0x1;
+const HTTP2_FRAME_SETTINGS: u8 = 0x4;
+const HTTP2_FRAME_CONTINUATION: u8 = 0x9;
+const HTTP2_FLAG_END_STREAM: u8 = 0x1;
+const HTTP2_FLAG_ACK: u8 = 0x1;
+const HTTP2_FLAG_END_HEADERS: u8 = 0x4;
 
 pub struct HttpServer {
   listener: TcpListener,
@@ -119,6 +127,12 @@ impl HttpServer {
   where
     F: FnMut(Request) -> HttpResponse,
   {
+    let stream = match self.detect_connection_protocol(stream)? {
+      AcceptedConnection::Http1(stream) => stream,
+      AcceptedConnection::Http2(stream) => {
+        return self.handle_http2_connection(stream, handler).map(|()| 1);
+      }
+    };
     let mut reader = BufReader::new(stream);
     let mut served = 0;
 
@@ -170,6 +184,15 @@ impl HttpServer {
   {
     let (stream, _) = self.listener.accept()?;
     self.configure_stream(&stream)?;
+    let stream = match self.detect_connection_protocol(stream)? {
+      AcceptedConnection::Http1(stream) => stream,
+      AcceptedConnection::Http2(stream) => {
+        let mut handler = Some(handler);
+        return self.handle_http2_connection(stream, &mut |request| {
+          handler.take().expect("single h2 request handler")(request)
+        });
+      }
+    };
     let mut reader = BufReader::new(stream);
     let request = match self.normalize_connection_error(
       Request::read_next_from_with_continue(&mut reader).and_then(|request| {
@@ -263,6 +286,81 @@ impl HttpServer {
     stream.set_write_timeout(self.write_timeout)
   }
 
+  fn detect_connection_protocol(&self, mut stream: TcpStream) -> io::Result<AcceptedConnection> {
+    let mut peeked = [0; 24];
+
+    loop {
+      match self.normalize_connection_error(stream.peek(&mut peeked)) {
+        Ok(0) => break,
+        Ok(read) => {
+          if read == HTTP2_CLIENT_PREFACE.len() && peeked[..read] == HTTP2_CLIENT_PREFACE[..] {
+            let mut preface = [0; 24];
+            stream.read_exact(&mut preface)?;
+            return Ok(AcceptedConnection::Http2(stream));
+          }
+          if HTTP2_CLIENT_PREFACE.starts_with(&peeked[..read]) {
+            let mut preface = [0; 24];
+            stream.read_exact(&mut preface)?;
+            if preface == *HTTP2_CLIENT_PREFACE {
+              return Ok(AcceptedConnection::Http2(stream));
+            }
+            return Ok(AcceptedConnection::Http1(Http1Stream::Prefixed(
+              HandoffStream::new(preface.to_vec(), stream),
+            )));
+          }
+          if !HTTP2_CLIENT_PREFACE.starts_with(&peeked[..read]) {
+            return Ok(AcceptedConnection::Http1(Http1Stream::Plain(stream)));
+          }
+        }
+        Err(err) => return Err(err),
+      }
+    }
+
+    Ok(AcceptedConnection::Http1(Http1Stream::Plain(stream)))
+  }
+
+  fn handle_http2_connection<F>(&self, mut stream: TcpStream, handler: &mut F) -> io::Result<()>
+  where
+    F: FnMut(Request) -> HttpResponse,
+  {
+    let frame = self.normalize_connection_error(read_http2_frame(&mut stream))?;
+    if frame.frame_type != HTTP2_FRAME_SETTINGS
+      || frame.flags & HTTP2_FLAG_ACK == HTTP2_FLAG_ACK
+      || frame.stream_id != 0
+      || frame.payload.len() % 6 != 0
+    {
+      return Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        "invalid HTTP/2 SETTINGS frame",
+      ));
+    }
+
+    self.normalize_connection_error(write_http2_frame(
+      &mut stream,
+      HTTP2_FRAME_SETTINGS,
+      0,
+      0,
+      &[],
+    ))?;
+    self.normalize_connection_error(write_http2_frame(
+      &mut stream,
+      HTTP2_FRAME_SETTINGS,
+      HTTP2_FLAG_ACK,
+      0,
+      &[],
+    ))?;
+    self.normalize_connection_error(stream.flush())?;
+
+    let request = self.normalize_connection_error(read_http2_single_request(&mut stream))?;
+    let request_is_head = request.method() == "HEAD";
+    let response = handler(request);
+    self.normalize_connection_error(write_http2_response(
+      &mut stream,
+      &response,
+      !request_is_head,
+    ))
+  }
+
   fn normalize_connection_error<T>(&self, result: io::Result<T>) -> io::Result<T> {
     result.map_err(|err| {
       if err.kind() == io::ErrorKind::WouldBlock
@@ -273,6 +371,468 @@ impl HttpServer {
         err
       }
     })
+  }
+}
+
+enum AcceptedConnection {
+  Http1(Http1Stream),
+  Http2(TcpStream),
+}
+
+enum Http1Stream {
+  Plain(TcpStream),
+  Prefixed(HandoffStream),
+}
+
+impl Read for Http1Stream {
+  fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    match self {
+      Self::Plain(stream) => stream.read(buf),
+      Self::Prefixed(stream) => stream.read(buf),
+    }
+  }
+}
+
+impl Write for Http1Stream {
+  fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+    match self {
+      Self::Plain(stream) => stream.write(buf),
+      Self::Prefixed(stream) => stream.write(buf),
+    }
+  }
+
+  fn flush(&mut self) -> io::Result<()> {
+    match self {
+      Self::Plain(stream) => stream.flush(),
+      Self::Prefixed(stream) => stream.flush(),
+    }
+  }
+}
+
+struct Http2Frame {
+  frame_type: u8,
+  flags: u8,
+  stream_id: u32,
+  payload: Vec<u8>,
+}
+
+fn read_http2_frame(stream: &mut TcpStream) -> io::Result<Http2Frame> {
+  let mut header = [0; 9];
+  stream.read_exact(&mut header)?;
+  let length = ((header[0] as usize) << 16) | ((header[1] as usize) << 8) | header[2] as usize;
+  let mut payload = vec![0; length];
+  stream.read_exact(&mut payload)?;
+  Ok(Http2Frame {
+    frame_type: header[3],
+    flags: header[4],
+    stream_id: u32::from_be_bytes([header[5] & 0x7f, header[6], header[7], header[8]]),
+    payload,
+  })
+}
+
+fn write_http2_frame(
+  stream: &mut TcpStream,
+  frame_type: u8,
+  flags: u8,
+  stream_id: u32,
+  payload: &[u8],
+) -> io::Result<()> {
+  if payload.len() > 16_777_215 {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidInput,
+      "HTTP/2 frame payload is too large",
+    ));
+  }
+
+  let length = payload.len();
+  let mut header = [0; 9];
+  header[0] = ((length >> 16) & 0xff) as u8;
+  header[1] = ((length >> 8) & 0xff) as u8;
+  header[2] = (length & 0xff) as u8;
+  header[3] = frame_type;
+  header[4] = flags;
+  header[5..9].copy_from_slice(&(stream_id & 0x7fff_ffff).to_be_bytes());
+  stream.write_all(&header)?;
+  stream.write_all(payload)
+}
+
+fn read_http2_single_request(stream: &mut TcpStream) -> io::Result<Request> {
+  let mut header_block = Vec::new();
+  let mut body = Vec::new();
+  let mut stream_id = None;
+  let mut end_stream = false;
+  let mut in_header_continuation = false;
+  let mut decoded_headers = None;
+
+  while !end_stream || decoded_headers.is_none() {
+    let frame = read_http2_frame(stream)?;
+    match (frame.frame_type, frame.stream_id) {
+      (HTTP2_FRAME_SETTINGS, 0) => {
+        if frame.flags & HTTP2_FLAG_ACK == HTTP2_FLAG_ACK {
+          if !frame.payload.is_empty() {
+            return Err(io::Error::new(
+              io::ErrorKind::InvalidData,
+              "HTTP/2 SETTINGS ACK frame must not contain payload",
+            ));
+          }
+        } else if frame.payload.len() % 6 == 0 {
+          write_http2_frame(stream, HTTP2_FRAME_SETTINGS, HTTP2_FLAG_ACK, 0, &[])?;
+          stream.flush()?;
+        } else {
+          return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid HTTP/2 SETTINGS frame",
+          ));
+        }
+      }
+      (HTTP2_FRAME_HEADERS, id) if id != 0 && stream_id.is_none_or(|seen| seen == id) => {
+        stream_id = Some(id);
+        header_block.extend_from_slice(&frame.payload);
+        if frame.flags & HTTP2_FLAG_END_HEADERS == HTTP2_FLAG_END_HEADERS {
+          decoded_headers = Some(decode_http2_request_headers(&header_block)?);
+          header_block.clear();
+          in_header_continuation = false;
+        } else {
+          in_header_continuation = true;
+        }
+        if frame.flags & HTTP2_FLAG_END_STREAM == HTTP2_FLAG_END_STREAM {
+          end_stream = true;
+        }
+      }
+      (HTTP2_FRAME_CONTINUATION, id) if stream_id == Some(id) && in_header_continuation => {
+        header_block.extend_from_slice(&frame.payload);
+        if frame.flags & HTTP2_FLAG_END_HEADERS == HTTP2_FLAG_END_HEADERS {
+          decoded_headers = Some(decode_http2_request_headers(&header_block)?);
+          header_block.clear();
+          in_header_continuation = false;
+        }
+      }
+      (HTTP2_FRAME_DATA, id) if stream_id == Some(id) => {
+        let new_len = body
+          .len()
+          .checked_add(frame.payload.len())
+          .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "request body is too large"))?;
+        reject_oversized_request_body(new_len)?;
+        body.extend_from_slice(&frame.payload);
+        if frame.flags & HTTP2_FLAG_END_STREAM == HTTP2_FLAG_END_STREAM {
+          end_stream = true;
+        }
+      }
+      (_, 0) => {}
+      (_, id) if stream_id.is_none_or(|seen| seen == id) => {}
+      _ => {}
+    }
+  }
+
+  if in_header_continuation {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "incomplete HTTP/2 header block",
+    ));
+  }
+
+  let decoded_headers = decoded_headers
+    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing HTTP/2 request headers"))?;
+  decoded_headers.into_request(body)
+}
+
+struct DecodedHttp2RequestHeaders {
+  method: Option<String>,
+  target: Option<String>,
+  authority: Option<String>,
+  headers: Vec<(String, String)>,
+}
+
+impl DecodedHttp2RequestHeaders {
+  fn into_request(self, body: Vec<u8>) -> io::Result<Request> {
+    let method = self
+      .method
+      .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing HTTP/2 :method"))?;
+    let target = self
+      .target
+      .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing HTTP/2 :path"))?;
+    let mut headers = self.headers;
+    if let Some(authority) = self.authority {
+      headers.push(("host".to_string(), authority));
+    }
+
+    Ok(Request {
+      method,
+      target,
+      version: "HTTP/2".to_string(),
+      headers,
+      trailers: Vec::new(),
+      body,
+    })
+  }
+}
+
+fn decode_http2_request_headers(block: &[u8]) -> io::Result<DecodedHttp2RequestHeaders> {
+  let mut cursor = 0;
+  let mut decoded = DecodedHttp2RequestHeaders {
+    method: None,
+    target: None,
+    authority: None,
+    headers: Vec::new(),
+  };
+
+  while cursor < block.len() {
+    let byte = block[cursor];
+    let (name, value) = if byte & 0x80 == 0x80 {
+      let index = decode_http2_integer(block, &mut cursor, 7)?;
+      let (name, value) = http2_static_header(index)?;
+      (name.to_string(), value.to_string())
+    } else if byte & 0x40 == 0x40 {
+      decode_http2_literal(block, &mut cursor, 6)?
+    } else if byte & 0x20 == 0x20 {
+      return Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        "HTTP/2 dynamic table size updates are not supported",
+      ));
+    } else {
+      decode_http2_literal(block, &mut cursor, 4)?
+    };
+
+    match name.as_str() {
+      ":method" => decoded.method = Some(value),
+      ":path" => decoded.target = Some(value),
+      ":authority" => decoded.authority = Some(value),
+      name if name.starts_with(':') => {}
+      "connection" | "keep-alive" | "proxy-connection" | "transfer-encoding" | "upgrade" => {}
+      _ => decoded.headers.push((name, value)),
+    }
+  }
+
+  Ok(decoded)
+}
+
+fn decode_http2_literal(
+  block: &[u8],
+  cursor: &mut usize,
+  prefix_bits: u8,
+) -> io::Result<(String, String)> {
+  let name_index = decode_http2_integer(block, cursor, prefix_bits)?;
+  let name = if name_index == 0 {
+    decode_http2_string(block, cursor)?
+  } else {
+    http2_static_header(name_index)?.0.to_string()
+  };
+  let value = decode_http2_string(block, cursor)?;
+  Ok((name, value))
+}
+
+fn decode_http2_integer(block: &[u8], cursor: &mut usize, prefix_bits: u8) -> io::Result<usize> {
+  if *cursor >= block.len() {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "truncated HPACK integer",
+    ));
+  }
+
+  let max_prefix = (1usize << prefix_bits) - 1;
+  let mut value = (block[*cursor] as usize) & max_prefix;
+  *cursor += 1;
+  if value < max_prefix {
+    return Ok(value);
+  }
+
+  let mut shift = 0;
+  loop {
+    if *cursor >= block.len() {
+      return Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        "truncated HPACK integer",
+      ));
+    }
+    let byte = block[*cursor];
+    *cursor += 1;
+    value += ((byte & 0x7f) as usize) << shift;
+    if byte & 0x80 == 0 {
+      return Ok(value);
+    }
+    shift += 7;
+  }
+}
+
+fn decode_http2_string(block: &[u8], cursor: &mut usize) -> io::Result<String> {
+  if *cursor >= block.len() {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "truncated HPACK string",
+    ));
+  }
+  let huffman = block[*cursor] & 0x80 == 0x80;
+  let len = decode_http2_integer(block, cursor, 7)?;
+  if huffman {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "HPACK Huffman strings are not supported by the minimal decoder",
+    ));
+  }
+  let end = cursor
+    .checked_add(len)
+    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "HPACK string length overflow"))?;
+  if end > block.len() {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "truncated HPACK string",
+    ));
+  }
+  let value = String::from_utf8(block[*cursor..end].to_vec())
+    .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+  *cursor = end;
+  Ok(value)
+}
+
+fn write_http2_response(
+  stream: &mut TcpStream,
+  response: &HttpResponse,
+  write_body: bool,
+) -> io::Result<()> {
+  let headers = encode_http2_response_headers(response)?;
+  write_http2_frame(
+    stream,
+    HTTP2_FRAME_HEADERS,
+    HTTP2_FLAG_END_HEADERS,
+    1,
+    &headers,
+  )?;
+  let body = if write_body && response.allows_body() {
+    response.body.as_slice()
+  } else {
+    &[]
+  };
+  write_http2_frame(stream, HTTP2_FRAME_DATA, HTTP2_FLAG_END_STREAM, 1, body)?;
+  stream.flush()
+}
+
+fn encode_http2_response_headers(response: &HttpResponse) -> io::Result<Vec<u8>> {
+  let mut block = Vec::new();
+  match response.status_code {
+    200 => block.push(0x88),
+    204 => block.push(0x89),
+    206 => block.push(0x8a),
+    304 => block.push(0x8b),
+    400 => block.push(0x8c),
+    404 => block.push(0x8d),
+    500 => block.push(0x8e),
+    status => encode_http2_literal_indexed_name_without_indexing(
+      &mut block,
+      8,
+      status.to_string().as_bytes(),
+    )?,
+  }
+
+  let content_length = if response.allows_body() {
+    response.body.len()
+  } else {
+    0
+  };
+  encode_http2_literal_new_name_without_indexing(
+    &mut block,
+    b"content-length",
+    content_length.to_string().as_bytes(),
+  )?;
+
+  for header in &response.headers {
+    let name = header.name.to_ascii_lowercase();
+    if matches!(
+      name.as_str(),
+      "connection"
+        | "keep-alive"
+        | "proxy-connection"
+        | "transfer-encoding"
+        | "upgrade"
+        | "content-length"
+    ) {
+      continue;
+    }
+    encode_http2_literal_new_name_without_indexing(
+      &mut block,
+      name.as_bytes(),
+      header.value.as_bytes(),
+    )?;
+  }
+
+  Ok(block)
+}
+
+fn encode_http2_literal_indexed_name_without_indexing(
+  block: &mut Vec<u8>,
+  name_index: u8,
+  value: &[u8],
+) -> io::Result<()> {
+  if name_index > 15 {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidInput,
+      "HPACK literal indexed name is too large for the minimal encoder",
+    ));
+  }
+  block.push(name_index);
+  encode_http2_string(block, value)
+}
+
+fn encode_http2_literal_new_name_without_indexing(
+  block: &mut Vec<u8>,
+  name: &[u8],
+  value: &[u8],
+) -> io::Result<()> {
+  block.push(0);
+  encode_http2_string(block, name)?;
+  encode_http2_string(block, value)
+}
+
+fn encode_http2_string(block: &mut Vec<u8>, value: &[u8]) -> io::Result<()> {
+  encode_http2_integer(block, value.len(), 7, 0)?;
+  block.extend_from_slice(value);
+  Ok(())
+}
+
+fn encode_http2_integer(
+  block: &mut Vec<u8>,
+  mut value: usize,
+  prefix_bits: u8,
+  first_byte_prefix: u8,
+) -> io::Result<()> {
+  let max_prefix = (1usize << prefix_bits) - 1;
+  if value < max_prefix {
+    block.push(first_byte_prefix | value as u8);
+    return Ok(());
+  }
+
+  block.push(first_byte_prefix | max_prefix as u8);
+  value -= max_prefix;
+  while value >= 128 {
+    block.push((value % 128) as u8 + 128);
+    value /= 128;
+  }
+  block.push(value as u8);
+  Ok(())
+}
+
+fn http2_static_header(index: usize) -> io::Result<(&'static str, &'static str)> {
+  match index {
+    1 => Ok((":authority", "")),
+    2 => Ok((":method", "GET")),
+    3 => Ok((":method", "POST")),
+    4 => Ok((":path", "/")),
+    5 => Ok((":path", "/index.html")),
+    6 => Ok((":scheme", "http")),
+    7 => Ok((":scheme", "https")),
+    8 => Ok((":status", "200")),
+    9 => Ok((":status", "204")),
+    10 => Ok((":status", "206")),
+    11 => Ok((":status", "304")),
+    12 => Ok((":status", "400")),
+    13 => Ok((":status", "404")),
+    14 => Ok((":status", "500")),
+    31 => Ok(("content-type", "")),
+    33 => Ok(("date", "")),
+    54 => Ok(("server", "")),
+    _ => Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "unsupported HPACK static table index",
+    )),
   }
 }
 

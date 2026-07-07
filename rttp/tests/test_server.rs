@@ -5,6 +5,64 @@ use std::thread;
 use std::time::Duration;
 
 use rttp::server::{HttpResponse, Request};
+use rttp_client::HttpClient;
+
+const H2_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+const H2_FRAME_DATA: u8 = 0x0;
+const H2_FRAME_HEADERS: u8 = 0x1;
+const H2_FRAME_SETTINGS: u8 = 0x4;
+const H2_FLAG_END_STREAM: u8 = 0x1;
+const H2_FLAG_ACK: u8 = 0x1;
+const H2_FLAG_END_HEADERS: u8 = 0x4;
+
+struct H2Frame {
+  frame_type: u8,
+  flags: u8,
+  stream_id: u32,
+  payload: Vec<u8>,
+}
+
+fn write_h2_frame(
+  stream: &mut TcpStream,
+  frame_type: u8,
+  flags: u8,
+  stream_id: u32,
+  payload: &[u8],
+) {
+  let length = payload.len();
+  let mut header = [0; 9];
+  header[0] = ((length >> 16) & 0xff) as u8;
+  header[1] = ((length >> 8) & 0xff) as u8;
+  header[2] = (length & 0xff) as u8;
+  header[3] = frame_type;
+  header[4] = flags;
+  header[5..9].copy_from_slice(&(stream_id & 0x7fff_ffff).to_be_bytes());
+  stream.write_all(&header).expect("write h2 frame head");
+  stream.write_all(payload).expect("write h2 frame payload");
+}
+
+fn read_h2_frame(stream: &mut TcpStream) -> H2Frame {
+  let mut header = [0; 9];
+  stream.read_exact(&mut header).expect("read h2 frame head");
+  let length = ((header[0] as usize) << 16) | ((header[1] as usize) << 8) | header[2] as usize;
+  let mut payload = vec![0; length];
+  stream
+    .read_exact(&mut payload)
+    .expect("read h2 frame payload");
+  H2Frame {
+    frame_type: header[3],
+    flags: header[4],
+    stream_id: u32::from_be_bytes([header[5] & 0x7f, header[6], header[7], header[8]]),
+    payload,
+  }
+}
+
+fn h2_literal_indexed_name(name_index: u8, value: &[u8]) -> Vec<u8> {
+  assert!(value.len() < 128);
+  let mut encoded = vec![name_index, value.len() as u8];
+  encoded.extend_from_slice(value);
+  encoded
+}
 
 fn send_raw_request(raw: &[u8]) -> (String, bool) {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
@@ -85,6 +143,115 @@ fn server_accepts_get_request_and_writes_response() {
     "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello",
     response
   );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_accepts_http2_prior_knowledge_get_and_writes_single_stream_response() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request).expect("send parsed h2 request");
+        HttpResponse::ok("hello over h2").header("X-Server-Mode", "prior-knowledge")
+      })
+      .expect("serve one h2 request");
+  });
+
+  let response = HttpClient::new()
+    .url(format!("http://{}/h2?prior=true", addr))
+    .emit_http2_prior_knowledge()
+    .expect("single h2 response");
+
+  let request = rx.recv().expect("receive parsed h2 request");
+  assert_eq!("GET", request.method());
+  assert_eq!("/h2?prior=true", request.target());
+  assert_eq!("HTTP/2", request.version());
+  assert_eq!(Some(addr.to_string().as_str()), request.header("host"));
+
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(200, response.code());
+  assert_eq!(
+    Some("prior-knowledge"),
+    response
+      .header_value("x-server-mode")
+      .map(|value| value.as_str())
+  );
+  assert_eq!("hello over h2", response.body().string().unwrap());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_accepts_http2_prior_knowledge_headers_and_data_before_calling_handler() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        assert_eq!("POST", request.method());
+        assert_eq!("/upload", request.target());
+        assert_eq!("HTTP/2", request.version());
+        assert_eq!(Some("text/plain"), request.header("content-type"));
+        assert_eq!(b"body over h2", request.body());
+        HttpResponse::new(201, "Created").body("stored")
+      })
+      .expect("serve one h2 data request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream.write_all(H2_PREFACE).expect("write h2 preface");
+  write_h2_frame(&mut stream, H2_FRAME_SETTINGS, 0, 0, &[]);
+
+  let settings = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_SETTINGS, settings.frame_type);
+  assert_eq!(0, settings.flags);
+  assert_eq!(0, settings.stream_id);
+
+  let settings_ack = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_SETTINGS, settings_ack.frame_type);
+  assert_eq!(H2_FLAG_ACK, settings_ack.flags);
+  assert_eq!(0, settings_ack.stream_id);
+
+  write_h2_frame(&mut stream, H2_FRAME_SETTINGS, H2_FLAG_ACK, 0, &[]);
+
+  let mut headers = vec![0x83, 0x86];
+  headers.extend(h2_literal_indexed_name(4, b"/upload"));
+  headers.extend(h2_literal_indexed_name(1, addr.to_string().as_bytes()));
+  headers.extend([0, b"content-type".len() as u8]);
+  headers.extend(b"content-type");
+  headers.extend([b"text/plain".len() as u8]);
+  headers.extend(b"text/plain");
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &headers,
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_DATA,
+    H2_FLAG_END_STREAM,
+    1,
+    b"body over h2",
+  );
+
+  let response_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(H2_FLAG_END_HEADERS, response_headers.flags);
+  assert_eq!(1, response_headers.stream_id);
+
+  let response_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
+  assert_eq!(1, response_body.stream_id);
+  assert_eq!(b"stored", response_body.payload.as_slice());
 
   handle.join().expect("server thread");
 }
