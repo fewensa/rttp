@@ -835,15 +835,28 @@ fn test_async_auto_redirect_resolves_absolute_location() {
 #[cfg(feature = "async")]
 fn test_async_auto_redirect_resolves_absolute_path_location() {
   block_on(async {
-    assert_async_redirect_resolves_to_target(|_| "/final?x=1".to_string(), "/final?x=1").await;
+    assert_async_redirect_resolves_to_target(|_| "/absolute-path".to_string(), "/absolute-path")
+      .await;
   });
 }
 
 #[test]
 #[cfg(feature = "async")]
-fn test_async_auto_redirect_resolves_relative_path_location() {
+fn test_async_auto_redirect_resolves_relative_child_location() {
   block_on(async {
-    assert_async_redirect_resolves_to_target(|_| "../final".to_string(), "/final").await;
+    assert_async_redirect_resolves_to_target(
+      |_| "relative-child".to_string(),
+      "/redirect/relative-child",
+    )
+    .await;
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_auto_redirect_resolves_parent_relative_location() {
+  block_on(async {
+    assert_async_redirect_resolves_to_target(|_| "../sibling".to_string(), "/sibling").await;
   });
 }
 
@@ -851,8 +864,35 @@ fn test_async_auto_redirect_resolves_relative_path_location() {
 #[cfg(feature = "async")]
 fn test_async_auto_redirect_resolves_query_only_location() {
   block_on(async {
-    assert_async_redirect_resolves_to_target(|_| "?page=2".to_string(), "/redirect/from?page=2")
-      .await;
+    assert_async_redirect_resolves_to_target(
+      |_| "?query-only".to_string(),
+      "/redirect/from?query-only",
+    )
+    .await;
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_auto_redirect_resolves_location_with_fragment_without_sending_fragment() {
+  block_on(async {
+    assert_async_redirect_resolves_to_target(
+      |_| "fragment-child#section".to_string(),
+      "/redirect/fragment-child",
+    )
+    .await;
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_auto_redirect_resolves_absolute_location_with_fragment_without_sending_fragment() {
+  block_on(async {
+    assert_async_redirect_resolves_to_target(
+      |addr| format!("http://{}/absolute-fragment#section", addr),
+      "/absolute-fragment",
+    )
+    .await;
   });
 }
 
