@@ -860,6 +860,66 @@ fn wrapper_http2_prior_knowledge_post_request_trailers_reach_server_only_as_trai
 }
 
 #[test]
+fn http2_feature_socket2_applies_later_max_frame_size_settings_to_response_frames() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| HttpResponse::ok("x".repeat(20_000)))
+      .expect("serve h2 response after updated settings");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  complete_h2_server_handshake_with_settings(
+    &mut stream,
+    &h2_setting(H2_SETTINGS_MAX_FRAME_SIZE, 65_535),
+  );
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_SETTINGS,
+    0,
+    0,
+    &h2_setting(H2_SETTINGS_MAX_FRAME_SIZE, 16_384),
+  );
+  let settings_ack = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_SETTINGS, settings_ack.frame_type);
+  assert_eq!(H2_FLAG_ACK, settings_ack.flags);
+  assert_eq!(0, settings_ack.stream_id);
+  assert!(settings_ack.payload.is_empty());
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_headers(b"/updated-max-frame-size", addr.to_string().as_bytes()),
+  );
+
+  let response_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(1, response_headers.stream_id);
+
+  let first_data = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, first_data.frame_type);
+  assert_eq!(1, first_data.stream_id);
+  assert_eq!(16_384, first_data.payload.len());
+  assert_eq!(0, first_data.flags & H2_FLAG_END_STREAM);
+
+  let second_data = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, second_data.frame_type);
+  assert_eq!(1, second_data.stream_id);
+  assert_eq!(3_616, second_data.payload.len());
+  assert_eq!(H2_FLAG_END_STREAM, second_data.flags & H2_FLAG_END_STREAM);
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn http2_feature_socket2_padded_request_headers_reach_server_without_padding() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");

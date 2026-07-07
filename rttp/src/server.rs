@@ -367,7 +367,7 @@ impl HttpServer {
       return Err(invalid_http2_settings_error());
     }
     validate_http2_settings_payload(&frame.payload)?;
-    let peer_max_frame_size =
+    let mut peer_max_frame_size =
       http2_settings_max_frame_size(&frame.payload).unwrap_or(HTTP2_DEFAULT_MAX_FRAME_SIZE);
 
     self.normalize_connection_error(write_http2_frame(
@@ -428,6 +428,9 @@ impl HttpServer {
             }
           } else {
             validate_http2_settings_payload(&frame.payload)?;
+            if let Some(max_frame_size) = http2_settings_max_frame_size(&frame.payload) {
+              peer_max_frame_size = max_frame_size;
+            }
             self.normalize_connection_error(write_http2_frame(
               &mut stream,
               HTTP2_FRAME_SETTINGS,
