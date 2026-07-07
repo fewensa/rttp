@@ -79,6 +79,13 @@ fn h2_literal_indexed_name(name_index: u8, value: &[u8]) -> Vec<u8> {
   encoded
 }
 
+fn h2_literal_indexed_name_huffman(name_index: u8, encoded_value: &[u8]) -> Vec<u8> {
+  assert!(encoded_value.len() < 128);
+  let mut encoded = vec![name_index, 0x80 | encoded_value.len() as u8];
+  encoded.extend_from_slice(encoded_value);
+  encoded
+}
+
 fn h2_literal_new_name(name: &[u8], value: &[u8]) -> Vec<u8> {
   assert!(name.len() < 128);
   assert!(value.len() < 128);
@@ -86,6 +93,16 @@ fn h2_literal_new_name(name: &[u8], value: &[u8]) -> Vec<u8> {
   encoded.extend_from_slice(name);
   encoded.push(value.len() as u8);
   encoded.extend_from_slice(value);
+  encoded
+}
+
+fn h2_literal_new_name_huffman(encoded_name: &[u8], encoded_value: &[u8]) -> Vec<u8> {
+  assert!(encoded_name.len() < 128);
+  assert!(encoded_value.len() < 128);
+  let mut encoded = vec![0, 0x80 | encoded_name.len() as u8];
+  encoded.extend_from_slice(encoded_name);
+  encoded.push(0x80 | encoded_value.len() as u8);
+  encoded.extend_from_slice(encoded_value);
   encoded
 }
 
@@ -102,6 +119,26 @@ fn h2_post_headers(path: &[u8], authority: &[u8]) -> Vec<u8> {
   headers.extend(h2_literal_indexed_name(1, authority));
   headers
 }
+
+fn h2_get_headers_with_huffman_path(encoded_path: &[u8]) -> Vec<u8> {
+  let mut headers = vec![0x82, 0x86];
+  headers.extend(h2_literal_indexed_name_huffman(4, encoded_path));
+  headers.extend(h2_literal_indexed_name(1, b"localhost"));
+  headers
+}
+
+const H2_HUFFMAN_PATH: &[u8] = &[0x62, 0x7b, 0x65, 0x96, 0x91, 0xd4, 0xb5, 0x63, 0x4c, 0xff];
+const H2_HUFFMAN_LOCALHOST: &[u8] = &[0xa0, 0xe4, 0x1d, 0x13, 0x9d, 0x09];
+const H2_HUFFMAN_X_HUFFMAN: &[u8] = &[0xf2, 0xb4, 0xf6, 0xcb, 0x2d, 0x23, 0xab];
+const H2_HUFFMAN_DECODED_HEADER: &[u8] =
+  &[0x90, 0xa4, 0x3c, 0x85, 0x91, 0x69, 0xca, 0x39, 0x0b, 0x67];
+const H2_HUFFMAN_X_HUFF_TRAILER: &[u8] = &[
+  0xf2, 0xb4, 0xf6, 0xcb, 0x2a, 0xc9, 0xb0, 0x66, 0xa0, 0xb6, 0x7f,
+];
+const H2_HUFFMAN_DECODED_TRAILER: &[u8] = &[
+  0x90, 0xa4, 0x3c, 0x85, 0x91, 0x64, 0xd8, 0x33, 0x50, 0x5b, 0x3f,
+];
+const H2_HUFFMAN_NON_UTF8: &[u8] = &[0xff, 0xff, 0xfb, 0xbf];
 
 fn h2_setting(id: u16, value: u32) -> [u8; 6] {
   let mut setting = [0; 6];
@@ -709,6 +746,85 @@ fn server_accepts_http2_prior_knowledge_headers_and_data_before_calling_handler(
 }
 
 #[test]
+fn server_decodes_http2_prior_knowledge_hpack_huffman_request_headers_and_trailers() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.method().to_string(),
+          request.target().to_string(),
+          request.header("host").map(str::to_string),
+          request.header("x-huffman").map(str::to_string),
+          request.trailer("x-huff-trailer").map(str::to_string),
+          request.trailers().to_vec(),
+        ))
+        .expect("send parsed huffman h2 request");
+        HttpResponse::ok("decoded")
+      })
+      .expect("serve huffman h2 request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+
+  let mut headers = vec![0x83, 0x86];
+  headers.extend(h2_literal_indexed_name_huffman(4, H2_HUFFMAN_PATH));
+  headers.extend(h2_literal_indexed_name_huffman(1, H2_HUFFMAN_LOCALHOST));
+  headers.extend(h2_literal_new_name_huffman(
+    H2_HUFFMAN_X_HUFFMAN,
+    H2_HUFFMAN_DECODED_HEADER,
+  ));
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &headers,
+  );
+  write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 1, b"huffman body");
+
+  let trailers = h2_literal_new_name_huffman(H2_HUFFMAN_X_HUFF_TRAILER, H2_HUFFMAN_DECODED_TRAILER);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &trailers,
+  );
+
+  let response_headers = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(H2_FLAG_END_HEADERS, response_headers.flags);
+  assert_eq!(1, response_headers.stream_id);
+
+  let response_body = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
+  assert_eq!(1, response_body.stream_id);
+  assert_eq!(b"decoded", response_body.payload.as_slice());
+
+  assert_eq!(
+    (
+      "POST".to_string(),
+      "/huffman-path".to_string(),
+      Some("localhost".to_string()),
+      Some("decoded-header".to_string()),
+      Some("decoded-trailer".to_string()),
+      vec![("x-huff-trailer".to_string(), "decoded-trailer".to_string())]
+    ),
+    rx.recv().expect("receive parsed huffman h2 request")
+  );
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn server_decodes_http2_prior_knowledge_request_trailers_after_data() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
@@ -853,6 +969,14 @@ fn server_decodes_http2_prior_knowledge_request_trailers_with_continuation() {
 #[test]
 fn server_rejects_http2_prior_knowledge_request_trailer_pseudo_header() {
   assert_invalid_h2_request_trailers_without_handler(&h2_literal_indexed_name(2, b"GET"));
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_hpack_huffman_request_trailer_before_handler() {
+  assert_invalid_h2_request_trailers_without_handler(&h2_literal_new_name_huffman(
+    H2_HUFFMAN_X_HUFF_TRAILER,
+    &[0xff],
+  ));
 }
 
 #[test]
@@ -1334,6 +1458,33 @@ fn server_rejects_http2_prior_knowledge_request_missing_scheme() {
   headers.extend(h2_literal_indexed_name(1, b"localhost"));
 
   assert_invalid_h2_headers_without_handler(&headers);
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_hpack_huffman_eos_symbol_before_handler() {
+  assert_invalid_h2_headers_without_handler(&h2_get_headers_with_huffman_path(&[
+    0xff, 0xff, 0xff, 0xff,
+  ]));
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_hpack_huffman_invalid_padding_before_handler() {
+  assert_invalid_h2_headers_without_handler(&h2_get_headers_with_huffman_path(&[0x00]));
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_hpack_huffman_truncated_code_before_handler() {
+  assert_invalid_h2_headers_without_handler(&h2_get_headers_with_huffman_path(&[0xfe]));
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_hpack_huffman_overlong_padding_before_handler() {
+  assert_invalid_h2_headers_without_handler(&h2_get_headers_with_huffman_path(&[0xff]));
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_hpack_huffman_non_utf8_before_handler() {
+  assert_invalid_h2_headers_without_handler(&h2_get_headers_with_huffman_path(H2_HUFFMAN_NON_UTF8));
 }
 
 #[test]
