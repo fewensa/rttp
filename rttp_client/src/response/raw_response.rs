@@ -215,9 +215,7 @@ impl Parser {
       .enumerate()
       .filter(|(ix, _)| *ix > 0)
       .filter(|(_, v)| !v.is_empty())
-      .map(|(_, v)| v.into_headers())
-      .filter(|hs| !hs.is_empty())
-      .filter_map(|hs| hs.first().cloned())
+      .flat_map(|(_, v)| v.into_headers())
       .collect::<Vec<Header>>();
 
     let cookies: Vec<Cookie> = headers

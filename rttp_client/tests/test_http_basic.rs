@@ -519,12 +519,34 @@ fn test_duplicate_set_cookie_headers_are_preserved() {
   assert!(response.is_ok());
 
   let response = response.unwrap();
+  let duplicate_headers = response
+    .headers()
+    .iter()
+    .filter(|header| {
+      header.name().eq_ignore_ascii_case("set-cookie")
+        || header.name().eq_ignore_ascii_case("cache-control")
+    })
+    .map(|header| (header.name().as_str(), header.value().as_str()))
+    .collect::<Vec<_>>();
+  assert_eq!(
+    vec![
+      ("Set-Cookie", "session=abc; Path=/; HttpOnly"),
+      ("cache-control", "no-cache"),
+      ("SET-COOKIE", "theme=dark; Path=/; SameSite=Lax"),
+      ("Cache-Control", "max-age=60")
+    ],
+    duplicate_headers
+  );
   assert_eq!(
     vec![
       &"session=abc; Path=/; HttpOnly".to_string(),
       &"theme=dark; Path=/; SameSite=Lax".to_string()
     ],
     response.header_values("set-cookie")
+  );
+  assert_eq!(
+    vec![&"no-cache".to_string(), &"max-age=60".to_string()],
+    response.header_values("CACHE-CONTROL")
   );
   assert_eq!(
     Some(&"session=abc; Path=/; HttpOnly".to_string()),
