@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::net::TcpStream;
 
 use futures::io::{AllowStdIo, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -214,8 +215,11 @@ impl<'a> AsyncConnection<'a> {
   }
 
   pub async fn async_call(mut self) -> error::Result<Response> {
+    let mut visited_urls = HashSet::new();
+
     loop {
       let url = self.conn.url().map_err(error::builder)?;
+      visited_urls.insert(url.clone());
       let proxy = self.conn.proxy().clone();
       let parts = if let Some(proxy) = proxy.as_ref() {
         self.call_with_proxy(&url, proxy).await?
@@ -239,7 +243,7 @@ impl<'a> AsyncConnection<'a> {
           }
 
           let redirect_url = self.conn.resolve_redirect_url(&url, location)?;
-          if url == redirect_url.url {
+          if visited_urls.contains(&redirect_url.url) {
             return Err(error::loop_detected(url));
           }
           let strip_sensitive_headers = !self.conn.is_same_origin_url(&url, &redirect_url.url);

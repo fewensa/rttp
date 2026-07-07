@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io::Write;
 
 use socks::{Socks4Stream, Socks5Stream};
@@ -24,8 +25,11 @@ impl<'a> BlockConnection<'a> {
   }
 
   pub fn call(mut self) -> error::Result<Response> {
+    let mut visited_urls = HashSet::new();
+
     loop {
       let url = self.conn.url().map_err(error::builder)?;
+      visited_urls.insert(url.clone());
       let proxy = self.conn.proxy().clone();
       let parts = if let Some(proxy) = proxy.as_ref() {
         self.call_with_proxy(&url, proxy)?
@@ -52,7 +56,7 @@ impl<'a> BlockConnection<'a> {
         }
 
         let redirect_url = self.conn.resolve_redirect_url(&url, location)?;
-        if url == redirect_url.url {
+        if visited_urls.contains(&redirect_url.url) {
           return Err(error::loop_detected(url));
         }
         let strip_sensitive_headers = !self.conn.is_same_origin_url(&url, &redirect_url.url);

@@ -807,6 +807,28 @@ where
   assert_eq!(expected_target, response.body().string().unwrap());
 }
 
+fn assert_redirect_error_has_url_context(
+  error: &rttp_client::error::Error,
+  message: &str,
+  expected_path: &str,
+) {
+  assert!(error.is_redirect());
+  let error_message = error.to_string();
+  assert!(error_message.contains(message));
+  assert!(error_message.contains(" for url (http://"));
+  assert!(error_message.contains(expected_path));
+  assert!(!error_message.contains("Authorization"));
+  assert!(!error_message.contains("Bearer secret"));
+  assert!(!error_message.contains("Cookie"));
+  assert!(!error_message.contains("session=secret"));
+  assert!(!error_message.contains("Proxy-Authorization"));
+  assert!(!error_message.contains("proxy-secret"));
+  assert_eq!(
+    expected_path,
+    error.url().expect("redirect error url").path()
+  );
+}
+
 struct CapturedRequest {
   method: String,
   target: String,
@@ -1021,8 +1043,91 @@ fn test_auto_redirect_enforces_max_redirect_bound() {
     .emit()
     .expect_err("redirect chain should exceed max_redirect");
 
-  assert!(error.is_redirect());
-  assert!(error.to_string().contains("too many redirects"));
+  assert_redirect_error_has_url_context(&error, "too many redirects", "/hop-two");
+}
+
+#[test]
+fn test_auto_redirect_with_zero_max_redirect_fails_before_first_hop() {
+  let (addr, _handle) = support::spawn_redirect_chain_server(vec![("/start", "/final?done=1")], 1);
+  let error = client()
+    .config(Config::builder().auto_redirect(true).max_redirect(0))
+    .get()
+    .url(format!("http://{}/start", addr))
+    .header(("Authorization", "Bearer secret"))
+    .header(("Cookie", "session=secret"))
+    .header(("Proxy-Authorization", "Basic proxy-secret"))
+    .emit()
+    .expect_err("max_redirect=0 should reject the first redirect");
+
+  assert_redirect_error_has_url_context(&error, "too many redirects", "/start");
+}
+
+#[test]
+fn test_auto_redirect_with_one_max_redirect_fails_on_second_hop() {
+  let (addr, _handle) = support::spawn_redirect_chain_server(
+    vec![("/start", "/hop-one"), ("/hop-one", "/final?done=1")],
+    2,
+  );
+  let error = client()
+    .config(Config::builder().auto_redirect(true).max_redirect(1))
+    .get()
+    .url(format!("http://{}/start", addr))
+    .emit()
+    .expect_err("max_redirect=1 should allow one redirect and reject the second");
+
+  assert_redirect_error_has_url_context(&error, "too many redirects", "/hop-one");
+}
+
+#[test]
+fn test_auto_redirect_uses_default_max_redirect_when_enabled() {
+  let (addr, _handle) = support::spawn_redirect_chain_server(
+    vec![
+      ("/start", "/hop-one"),
+      ("/hop-one", "/hop-two"),
+      ("/hop-two", "/hop-three"),
+      ("/hop-three", "/hop-four"),
+      ("/hop-four", "/hop-five"),
+      ("/hop-five", "/final"),
+    ],
+    6,
+  );
+  let error = client()
+    .config(Config::builder().auto_redirect(true))
+    .get()
+    .url(format!("http://{}/start", addr))
+    .emit()
+    .expect_err("auto_redirect default max should reject the sixth redirect");
+
+  assert_redirect_error_has_url_context(&error, "too many redirects", "/hop-five");
+}
+
+#[test]
+fn test_auto_redirect_detects_a_b_a_loop() {
+  let (addr, _handle) = support::spawn_redirect_chain_server(vec![("/a", "/b"), ("/b", "/a")], 3);
+  let error = client()
+    .config(Config::builder().auto_redirect(true).max_redirect(10))
+    .get()
+    .url(format!("http://{}/a", addr))
+    .header(("Authorization", "Bearer secret"))
+    .header(("Cookie", "session=secret"))
+    .header(("Proxy-Authorization", "Basic proxy-secret"))
+    .emit()
+    .expect_err("A -> B -> A should be detected as a loop");
+
+  assert_redirect_error_has_url_context(&error, "infinite redirect loop detected", "/b");
+}
+
+#[test]
+fn test_auto_redirect_detects_self_redirect() {
+  let (addr, _handle) = support::spawn_redirect_chain_server(vec![("/self", "/self")], 1);
+  let error = client()
+    .config(Config::builder().auto_redirect(true))
+    .get()
+    .url(format!("http://{}/self", addr))
+    .emit()
+    .expect_err("self redirect should be detected as a loop");
+
+  assert_redirect_error_has_url_context(&error, "infinite redirect loop detected", "/self");
 }
 
 #[test]
