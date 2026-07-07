@@ -12,7 +12,8 @@ use socket2::{Domain, Protocol, Socket, Type};
 #[path = "local_http.rs"]
 mod local_http;
 
-use local_http::{bind_local_http_listener, read_http_request, HTTP_OK_RESPONSE};
+pub use local_http::read_http_request;
+use local_http::{bind_local_http_listener, HTTP_OK_RESPONSE};
 
 fn read_exact_bytes<R: Read>(stream: &mut R, len: usize) -> io::Result<Vec<u8>> {
   let mut bytes = vec![0u8; len];
