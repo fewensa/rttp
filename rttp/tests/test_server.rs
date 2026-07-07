@@ -631,6 +631,51 @@ fn streaming_handler_can_reject_before_reading_request_body() {
 }
 
 #[test]
+fn streaming_handler_is_not_invoked_for_transfer_encoding_with_content_length() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one_streaming(|_request, _body| {
+        tx.send(()).expect("send unexpected handler invocation");
+        HttpResponse::ok("unexpected")
+      })
+      .expect("serve streaming request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(
+      concat!(
+        "POST /upload HTTP/1.1\r\n",
+        "Host: localhost\r\n",
+        "Transfer-Encoding: chunked\r\n",
+        "Content-Length: 0\r\n",
+        "\r\n",
+        "0\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write request");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  assert!(rx.try_recv().is_err());
+  assert_eq!(
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn streaming_handler_can_reject_chunked_request_before_body_arrives() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
