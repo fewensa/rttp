@@ -88,6 +88,21 @@ pub mod request {
     ]
   }
 
+  pub fn obsolete_line_folding_cases() -> &'static [InvalidRequest] {
+    &[
+      InvalidRequest {
+        name: "space-prefixed folded request header",
+        raw: b"GET /matrix HTTP/1.1\r\nHost: example.test\r\nX-Test: one\r\n two\r\n\r\n",
+        error: "invalid request header",
+      },
+      InvalidRequest {
+        name: "tab-prefixed folded request header",
+        raw: b"GET /matrix HTTP/1.1\r\nHost: example.test\r\nX-Test: one\r\n\ttwo\r\n\r\n",
+        error: "invalid request header",
+      },
+    ]
+  }
+
   pub fn chunked_with_extensions_and_trailers() -> ChunkedRequest {
     ChunkedRequest {
       raw: concat!(

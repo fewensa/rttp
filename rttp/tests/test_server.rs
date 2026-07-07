@@ -1345,7 +1345,7 @@ fn server_returns_bad_request_for_header_name_with_whitespace() {
 #[test]
 fn server_returns_bad_request_for_obsolete_folded_header() {
   assert_bad_request_without_handler(
-    b"GET / HTTP/1.1\r\nHost: localhost\r\n folded: value\r\n\r\n",
+    b"GET / HTTP/1.1\r\nHost: localhost\r\nX-Test: one\r\n two\r\n\r\n",
   );
 }
 

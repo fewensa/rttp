@@ -40,6 +40,15 @@ fn model_parser_rejects_shared_framing_ambiguity_fixtures() {
 }
 
 #[test]
+fn model_parser_rejects_shared_obsolete_line_folding_fixtures() {
+  for fixture in fixtures::request::obsolete_line_folding_cases() {
+    let error = HttpRequest::parse(fixture.raw).expect_err(fixture.name);
+
+    assert_eq!(fixture.error, error.to_string(), "{}", fixture.name);
+  }
+}
+
+#[test]
 fn live_socket2_server_accepts_shared_chunk_extensions_and_trailers_fixture() {
   let fixture = fixtures::request::chunked_with_extensions_and_trailers();
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
