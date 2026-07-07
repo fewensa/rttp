@@ -395,7 +395,7 @@ pub(crate) fn response_body_kind(
         "Transfer-Encoding conflicts with Content-Length",
       ));
     }
-    if transfer_codings.len() == 1 && transfer_codings[0].eq_ignore_ascii_case("chunked") {
+    if is_supported_chunked_transfer_coding_path(&transfer_codings) {
       return Ok(ResponseBodyKind::Chunked);
     }
     return Err(error::bad_response(
@@ -412,6 +412,10 @@ pub(crate) fn response_body_kind(
   } else {
     Ok(ResponseBodyKind::UntilEof)
   }
+}
+
+fn is_supported_chunked_transfer_coding_path(transfer_codings: &[&str]) -> bool {
+  transfer_codings.len() == 1 && transfer_codings[0].eq_ignore_ascii_case("chunked")
 }
 
 fn read_bounded_crlf_line<R>(reader: &mut R, max_len: usize) -> error::Result<Vec<u8>>
@@ -803,6 +807,28 @@ mod tests {
         .contains("Unsupported Transfer-Encoding response body"),
       "unexpected error: {error}"
     );
+  }
+
+  #[test]
+  fn test_transfer_encoding_without_final_chunked_is_rejected() {
+    for transfer_encoding in ["gzip", "chunked, gzip"] {
+      let raw = format!(
+        "HTTP/1.1 200 OK\r\n\
+         Transfer-Encoding: {transfer_encoding}\r\n\
+         \r\n\
+         unframed"
+      );
+
+      let error = super::response_body_kind(raw.as_bytes(), false)
+        .expect_err("unsupported transfer coding should be rejected");
+
+      assert!(
+        error
+          .to_string()
+          .contains("Unsupported Transfer-Encoding response body"),
+        "unexpected error for {transfer_encoding}: {error}"
+      );
+    }
   }
 
   #[test]
