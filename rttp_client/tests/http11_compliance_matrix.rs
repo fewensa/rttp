@@ -7,6 +7,98 @@ fn client() -> HttpClient {
   HttpClient::new()
 }
 
+const NO_BODY_STATUS_WITH_FRAMING_CASES: &[(&str, &[u8], u32, &str, &str)] = &[
+  (
+    "204 content-length",
+    concat!(
+      "HTTP/1.1 204 No Content\r\n",
+      "Content-Length: 7\r\n",
+      "X-Trace: kept\r\n",
+      "\r\n",
+      "ignored"
+    )
+    .as_bytes(),
+    204,
+    "Content-Length",
+    "7",
+  ),
+  (
+    "204 chunked",
+    concat!(
+      "HTTP/1.1 204 No Content\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "X-Trace: kept\r\n",
+      "\r\n",
+      "7\r\nignored\r\n0\r\n\r\n"
+    )
+    .as_bytes(),
+    204,
+    "Transfer-Encoding",
+    "chunked",
+  ),
+  (
+    "304 content-length",
+    concat!(
+      "HTTP/1.1 304 Not Modified\r\n",
+      "Content-Length: 7\r\n",
+      "X-Trace: kept\r\n",
+      "\r\n",
+      "ignored"
+    )
+    .as_bytes(),
+    304,
+    "Content-Length",
+    "7",
+  ),
+  (
+    "304 chunked",
+    concat!(
+      "HTTP/1.1 304 Not Modified\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "X-Trace: kept\r\n",
+      "\r\n",
+      "7\r\nignored\r\n0\r\n\r\n"
+    )
+    .as_bytes(),
+    304,
+    "Transfer-Encoding",
+    "chunked",
+  ),
+];
+
+const ORDINARY_200_FRAMING_CASES: &[(&str, &[u8], &str, &str, &str)] = &[
+  (
+    "200 content-length",
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Content-Length: 2\r\n",
+      "X-Trace: kept\r\n",
+      "\r\n",
+      "OK"
+    )
+    .as_bytes(),
+    "Content-Length",
+    "2",
+    "OK",
+  ),
+  (
+    "200 chunked",
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "X-Trace: kept\r\n",
+      "\r\n",
+      "7\r\nchunked\r\n",
+      "6\r\n body!\r\n",
+      "0\r\n\r\n"
+    )
+    .as_bytes(),
+    "Transfer-Encoding",
+    "chunked",
+    "chunked body!",
+  ),
+];
+
 #[test]
 fn sync_client_decodes_shared_chunk_extensions_and_trailers_fixture() {
   let (addr, handle) = fixtures::spawn_socket2_raw_response_server(
@@ -29,6 +121,56 @@ fn sync_client_decodes_shared_chunk_extensions_and_trailers_fixture() {
 
   let request = handle.join().expect("raw response server thread");
   assert!(String::from_utf8_lossy(&request).starts_with("GET /matrix/chunked HTTP/1.1"));
+}
+
+#[test]
+fn sync_client_treats_204_and_304_as_bodyless_despite_framing_headers() {
+  for (name, raw_response, status, framing_header, framing_value) in
+    NO_BODY_STATUS_WITH_FRAMING_CASES
+  {
+    let (addr, handle) = fixtures::spawn_socket2_raw_response_server(raw_response);
+
+    let response = client()
+      .get()
+      .url(format!("http://{}/matrix/no-body", addr))
+      .emit()
+      .unwrap_or_else(|err| panic!("{name} should parse: {err}"));
+
+    assert_eq!(*status, response.code(), "{name}");
+    assert_eq!(
+      Some(&framing_value.to_string()),
+      response.header_value(framing_header),
+      "{name}"
+    );
+    assert_eq!(Some(&"kept".to_string()), response.header_value("X-Trace"));
+    assert_eq!("", response.body().string().unwrap(), "{name}");
+
+    handle.join().expect("raw response server thread");
+  }
+}
+
+#[test]
+fn sync_client_preserves_ordinary_200_framed_bodies() {
+  for (name, raw_response, framing_header, framing_value, body) in ORDINARY_200_FRAMING_CASES {
+    let (addr, handle) = fixtures::spawn_socket2_raw_response_server(raw_response);
+
+    let response = client()
+      .get()
+      .url(format!("http://{}/matrix/ordinary-body", addr))
+      .emit()
+      .unwrap_or_else(|err| panic!("{name} should parse: {err}"));
+
+    assert_eq!(200, response.code(), "{name}");
+    assert_eq!(
+      Some(&framing_value.to_string()),
+      response.header_value(framing_header),
+      "{name}"
+    );
+    assert_eq!(Some(&"kept".to_string()), response.header_value("X-Trace"));
+    assert_eq!(*body, response.body().string().unwrap(), "{name}");
+
+    handle.join().expect("raw response server thread");
+  }
 }
 
 #[test]
@@ -106,6 +248,64 @@ fn async_client_decodes_shared_chunk_extensions_and_trailers_fixture() {
 
   let request = handle.join().expect("raw response server thread");
   assert!(String::from_utf8_lossy(&request).starts_with("GET /matrix/chunked HTTP/1.1"));
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn async_client_treats_204_and_304_as_bodyless_despite_framing_headers() {
+  for (name, raw_response, status, framing_header, framing_value) in
+    NO_BODY_STATUS_WITH_FRAMING_CASES
+  {
+    let (addr, handle) = fixtures::spawn_socket2_raw_response_server(raw_response);
+
+    block_on(async {
+      let response = client()
+        .get()
+        .url(format!("http://{}/matrix/no-body", addr))
+        .rasync()
+        .await
+        .unwrap_or_else(|err| panic!("{name} should parse: {err}"));
+
+      assert_eq!(*status, response.code(), "{name}");
+      assert_eq!(
+        Some(&framing_value.to_string()),
+        response.header_value(framing_header),
+        "{name}"
+      );
+      assert_eq!(Some(&"kept".to_string()), response.header_value("X-Trace"));
+      assert_eq!("", response.body().string().unwrap(), "{name}");
+    });
+
+    handle.join().expect("raw response server thread");
+  }
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn async_client_preserves_ordinary_200_framed_bodies() {
+  for (name, raw_response, framing_header, framing_value, body) in ORDINARY_200_FRAMING_CASES {
+    let (addr, handle) = fixtures::spawn_socket2_raw_response_server(raw_response);
+
+    block_on(async {
+      let response = client()
+        .get()
+        .url(format!("http://{}/matrix/ordinary-body", addr))
+        .rasync()
+        .await
+        .unwrap_or_else(|err| panic!("{name} should parse: {err}"));
+
+      assert_eq!(200, response.code(), "{name}");
+      assert_eq!(
+        Some(&framing_value.to_string()),
+        response.header_value(framing_header),
+        "{name}"
+      );
+      assert_eq!(Some(&"kept".to_string()), response.header_value("X-Trace"));
+      assert_eq!(*body, response.body().string().unwrap(), "{name}");
+    });
+
+    handle.join().expect("raw response server thread");
+  }
 }
 
 #[test]

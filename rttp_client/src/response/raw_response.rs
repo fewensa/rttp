@@ -232,6 +232,10 @@ impl Parser {
   }
 
   fn parse_body(&self, response: &mut RawResponse, binary: Vec<u8>) -> error::Result<()> {
+    if response_status_has_no_body(response.code_get()) {
+      return Ok(());
+    }
+
     if binary.is_empty() {
       return Ok(());
     }
@@ -260,4 +264,8 @@ impl Parser {
     response.body(body);
     Ok(())
   }
+}
+
+fn response_status_has_no_body(status_code: u32) -> bool {
+  (100..200).contains(&status_code) || status_code == 204 || status_code == 304
 }
