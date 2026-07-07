@@ -12,7 +12,7 @@ request APIs and TLS implementations:
 | name | comment |
 |------|---------|
 | async | Async request APIs |
-| http2 | Prior-knowledge h2c GET over direct `socket2` TCP connections |
+| http2 | Minimal prior-knowledge h2c over direct `socket2` TCP connections |
 | tls-native | HTTPS with `native-tls` |
 | tls-rustls | HTTPS with `rustls` |
 
@@ -27,9 +27,10 @@ HTTP/1.x chunked responses are decoded by the client, and response trailers are
 available through `Response::trailers`, `Response::trailer`, and
 `Response::trailer_value`.
 With the `http2` feature enabled, `emit_http2_prior_knowledge` sends a minimal
-prior-knowledge h2c GET request over a direct socket2 TCP connection. TLS ALPN,
-proxy tunneling, request bodies, and general HTTP/2 multiplexing are not part of
-that initial client path.
+prior-knowledge h2c request over a direct socket2 TCP connection. It supports
+GET and buffered POST, PUT, or PATCH requests, including non-empty buffered
+request bodies as DATA frames. TLS ALPN, proxy tunneling, and general HTTP/2
+multiplexing are not part of that client path.
 
 ```rust,no_run
 use rttp_client::HttpClient;
