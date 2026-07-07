@@ -141,17 +141,24 @@ impl HttpServer {
     let mut served = 0;
 
     while served < request_limit {
-      let request =
-        match self.normalize_connection_error(Request::read_next_from_with_continue(&mut reader)) {
-          Ok(Some(request)) => request,
-          Ok(None) => break,
-          Err(err) if is_bad_request_error(&err) => {
-            self.normalize_connection_error(bad_request_response().write_to(reader.get_mut()))?;
-            served += 1;
-            break;
-          }
-          Err(err) => return Err(err),
-        };
+      let request = match self
+        .normalize_connection_error(Request::read_next_from_with_continue(&mut reader))
+      {
+        Ok(Some(request)) => request,
+        Ok(None) => break,
+        Err(err) if is_expectation_failed_error(&err) => {
+          self
+            .normalize_connection_error(expectation_failed_response().write_to(reader.get_mut()))?;
+          served += 1;
+          break;
+        }
+        Err(err) if is_bad_request_error(&err) => {
+          self.normalize_connection_error(bad_request_response().write_to(reader.get_mut()))?;
+          served += 1;
+          break;
+        }
+        Err(err) => return Err(err),
+      };
       let request_closes_connection = request.closes_connection();
       let request_uses_http10_defaults = request.version() == "HTTP/1.0";
       let request_is_head = request.method() == "HEAD";
@@ -206,6 +213,10 @@ impl HttpServer {
       }),
     ) {
       Ok(request) => request,
+      Err(err) if is_expectation_failed_error(&err) => {
+        return self
+          .normalize_connection_error(expectation_failed_response().write_to(reader.get_mut()));
+      }
       Err(err) if is_bad_request_error(&err) => {
         return self.normalize_connection_error(bad_request_response().write_to(reader.get_mut()));
       }
@@ -233,6 +244,10 @@ impl HttpServer {
       }),
     ) {
       Ok(request) => request,
+      Err(err) if is_expectation_failed_error(&err) => {
+        return self
+          .normalize_connection_error(expectation_failed_response().write_to(reader.get_mut()));
+      }
       Err(err) if is_bad_request_error(&err) => {
         return self.normalize_connection_error(bad_request_response().write_to(reader.get_mut()));
       }
@@ -263,6 +278,10 @@ impl HttpServer {
       }),
     ) {
       Ok(request) => request,
+      Err(err) if is_expectation_failed_error(&err) => {
+        return self
+          .normalize_connection_error(expectation_failed_response().write_to(reader.get_mut()));
+      }
       Err(err) if is_bad_request_error(&err) => {
         return self.normalize_connection_error(bad_request_response().write_to(reader.get_mut()));
       }
@@ -2411,7 +2430,7 @@ fn request_needs_continue(
     if !value.eq_ignore_ascii_case("100-continue") {
       return Err(io::Error::new(
         io::ErrorKind::InvalidData,
-        "unsupported Expect header",
+        UnsupportedExpectation,
       ));
     }
   }
@@ -2750,9 +2769,30 @@ fn is_bad_request_error(err: &io::Error) -> bool {
   )
 }
 
+fn is_expectation_failed_error(err: &io::Error) -> bool {
+  err
+    .get_ref()
+    .is_some_and(|source| source.is::<UnsupportedExpectation>())
+}
+
 fn bad_request_response() -> HttpResponse {
   HttpResponse::new(400, "Bad Request").body("Bad Request")
 }
+
+fn expectation_failed_response() -> HttpResponse {
+  HttpResponse::new(417, "Expectation Failed").body("Expectation Failed")
+}
+
+#[derive(Debug)]
+struct UnsupportedExpectation;
+
+impl fmt::Display for UnsupportedExpectation {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.write_str("unsupported Expect header")
+  }
+}
+
+impl Error for UnsupportedExpectation {}
 
 #[cfg(test)]
 mod tests {
