@@ -294,7 +294,9 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
         return Err(error::bad_response("HTTP/2 stream received RST_STREAM"));
       }
       (FRAME_GOAWAY, 0) => {
-        return Err(error::bad_response("HTTP/2 connection received GOAWAY"));
+        if goaway_last_stream_id(&frame.payload)? < STREAM_ID {
+          return Err(error::bad_response("HTTP/2 connection received GOAWAY"));
+        }
       }
       (_, STREAM_ID) => {}
       (_, 0) => {}
@@ -308,6 +310,18 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
 
   let status = status.ok_or_else(|| error::bad_response("missing HTTP/2 :status header"))?;
   build_response(url, status, &headers, body)
+}
+
+fn goaway_last_stream_id(payload: &[u8]) -> error::Result<u32> {
+  if payload.len() < 8 {
+    return Err(error::bad_response("invalid HTTP/2 GOAWAY frame"));
+  }
+  Ok(u32::from_be_bytes([
+    payload[0] & 0x7f,
+    payload[1],
+    payload[2],
+    payload[3],
+  ]))
 }
 
 fn build_response(

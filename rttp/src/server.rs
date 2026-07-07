@@ -366,7 +366,15 @@ impl HttpServer {
     let mut served = 0;
 
     while served < request_limit {
-      let frame = self.normalize_connection_error(read_http2_frame(&mut stream))?;
+      let frame = match self.normalize_connection_error(read_http2_frame(&mut stream)) {
+        Ok(frame) => frame,
+        Err(err)
+          if err.kind() == io::ErrorKind::UnexpectedEof && served > 0 && streams.is_empty() =>
+        {
+          break;
+        }
+        Err(err) => return Err(err),
+      };
       match (frame.frame_type, frame.stream_id) {
         (HTTP2_FRAME_SETTINGS, 0) => {
           if frame.flags & HTTP2_FLAG_ACK == HTTP2_FLAG_ACK {

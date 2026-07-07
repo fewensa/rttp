@@ -230,6 +230,60 @@ fn server_accepts_http2_prior_knowledge_get_and_writes_single_stream_response() 
 }
 
 #[test]
+fn serve_requests_accepts_next_connection_after_http2_client_closes_cleanly() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        tx.send(request.target().to_string())
+          .expect("send served target");
+        HttpResponse::ok(format!("response for {}", request.target()))
+      })
+      .expect("serve h2 then h1 requests");
+  });
+
+  {
+    let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+    stream
+      .set_read_timeout(Some(Duration::from_secs(2)))
+      .expect("set h2 read timeout");
+    complete_h2_server_handshake(&mut stream);
+
+    write_h2_frame(
+      &mut stream,
+      H2_FRAME_HEADERS,
+      H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+      1,
+      &h2_get_headers(b"/h2-once", addr.to_string().as_bytes()),
+    );
+
+    let response_headers = read_h2_frame_skipping_window_updates(&mut stream);
+    assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+    assert_eq!(1, response_headers.stream_id);
+
+    let response_body = read_h2_frame_skipping_window_updates(&mut stream);
+    assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+    assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
+    assert_eq!(1, response_body.stream_id);
+    assert_eq!(b"response for /h2-once", response_body.payload.as_slice());
+  }
+
+  let response = send_request(addr, b"GET /after-h2 HTTP/1.1\r\nHost: localhost\r\n\r\n");
+
+  assert_eq!("/h2-once", rx.recv().expect("h2 target"));
+  assert_eq!("/after-h2", rx.recv().expect("h1 target"));
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 22\r\nConnection: close\r\n\r\nresponse for /after-h2",
+    response
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn server_accepts_http2_prior_knowledge_headers_and_data_before_calling_handler() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");

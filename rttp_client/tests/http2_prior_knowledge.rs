@@ -192,6 +192,31 @@ fn prior_knowledge_get_reports_stream_reset_and_goaway() {
 }
 
 #[test]
+fn prior_knowledge_get_continues_after_graceful_goaway_for_active_stream() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    write_frame(&mut stream, FRAME_GOAWAY, 0, 0, &[0, 0, 0, 1, 0, 0, 0, 0]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"still served");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/graceful-goaway", addr))
+    .emit_http2_prior_knowledge()
+    .expect("graceful GOAWAY permits active stream response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("still served", response.body().string().unwrap());
+  handle.join().expect("goaway peer thread");
+}
+
+#[test]
 fn prior_knowledge_sends_window_updates_for_non_final_data_frames() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");
@@ -407,7 +432,7 @@ fn spawn_control_frame_peer(frame_type: u8) -> (SocketAddr, thread::JoinHandle<(
     complete_h2_request_handshake(&mut stream);
     match frame_type {
       FRAME_RST_STREAM => write_frame(&mut stream, FRAME_RST_STREAM, 0, 1, &0u32.to_be_bytes()),
-      FRAME_GOAWAY => write_frame(&mut stream, FRAME_GOAWAY, 0, 0, &[0, 0, 0, 1, 0, 0, 0, 0]),
+      FRAME_GOAWAY => write_frame(&mut stream, FRAME_GOAWAY, 0, 0, &[0, 0, 0, 0, 0, 0, 0, 0]),
       _ => unreachable!("unexpected control frame"),
     }
   });
