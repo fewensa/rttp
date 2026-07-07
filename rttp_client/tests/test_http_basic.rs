@@ -6,6 +6,7 @@ use std::net::TcpListener;
 use std::thread;
 
 use rttp_client::types::{Auth, Para, Proxy, RoUrl};
+use rttp_client::ConnectionReader;
 use rttp_client::{Config, HttpClient};
 
 fn client() -> HttpClient {
@@ -339,6 +340,78 @@ fn test_chunked_without_trailers_exposes_empty_trailers() {
   assert_eq!("OK", response.body().string().unwrap());
   assert!(response.trailers().is_empty());
   assert!(response.trailer("x-trace").is_none());
+}
+
+#[test]
+fn test_204_with_misleading_content_length_keeps_next_response_readable() {
+  let raw = concat!(
+    "HTTP/1.1 204 No Content\r\n",
+    "Content-Length: 7\r\n",
+    "X-Trace: no-content\r\n",
+    "\r\n",
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Length: 4\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "next"
+  );
+  let url = url::Url::parse("http://localhost").unwrap();
+  let mut cursor = Cursor::new(raw.as_bytes());
+  let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+
+  let first = reader.response().unwrap();
+
+  assert_eq!(204, first.code());
+  assert_eq!("", first.body().string().unwrap());
+  assert_eq!(
+    Some("7"),
+    first.header_value("Content-Length").map(String::as_str)
+  );
+  assert_eq!(
+    Some("no-content"),
+    first.header_value("X-Trace").map(String::as_str)
+  );
+
+  let second = reader.response().unwrap();
+
+  assert_eq!(200, second.code());
+  assert_eq!("next", second.body().string().unwrap());
+}
+
+#[test]
+fn test_304_with_misleading_chunked_framing_keeps_next_response_readable() {
+  let raw = concat!(
+    "HTTP/1.1 304 Not Modified\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "ETag: \"abc\"\r\n",
+    "\r\n",
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Length: 4\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "next"
+  );
+  let url = url::Url::parse("http://localhost").unwrap();
+  let mut cursor = Cursor::new(raw.as_bytes());
+  let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+
+  let first = reader.response().unwrap();
+
+  assert_eq!(304, first.code());
+  assert_eq!("", first.body().string().unwrap());
+  assert_eq!(
+    Some("chunked"),
+    first.header_value("Transfer-Encoding").map(String::as_str)
+  );
+  assert_eq!(
+    Some("\"abc\""),
+    first.header_value("ETag").map(String::as_str)
+  );
+
+  let second = reader.response().unwrap();
+
+  assert_eq!(200, second.code());
+  assert_eq!("next", second.body().string().unwrap());
 }
 
 #[test]

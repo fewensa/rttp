@@ -6,7 +6,7 @@ use std::collections::HashMap;
 #[cfg(feature = "async")]
 use futures::executor::block_on;
 #[cfg(feature = "async")]
-use futures::io::{AllowStdIo, Cursor as AsyncCursor};
+use futures::io::{AllowStdIo, AsyncRead, AsyncReadExt, Cursor as AsyncCursor};
 #[cfg(feature = "async")]
 use rttp_client::types::Proxy;
 #[cfg(feature = "async")]
@@ -21,6 +21,20 @@ use std::thread;
 #[cfg(feature = "async")]
 fn client() -> HttpClient {
   HttpClient::new()
+}
+
+#[cfg(feature = "async")]
+async fn async_read_test_response_head<S: AsyncRead + Unpin>(stream: &mut S) -> Vec<u8> {
+  let mut head = Vec::new();
+  let mut byte = [0u8; 1];
+  while !head.ends_with(b"\r\n\r\n") {
+    stream
+      .read_exact(&mut byte)
+      .await
+      .expect("read response head");
+    head.push(byte[0]);
+  }
+  head
 }
 
 #[cfg(feature = "async")]
@@ -233,6 +247,120 @@ fn test_async_streaming_response_constructor_is_exported() {
     response.body_mut().read_to_end(&mut body).await.unwrap();
 
     assert_eq!(b"hello", body.as_slice());
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_204_with_misleading_content_length_keeps_next_response_readable() {
+  block_on(async {
+    let raw = concat!(
+      "HTTP/1.1 204 No Content\r\n",
+      "Content-Length: 7\r\n",
+      "X-Trace: no-content\r\n",
+      "\r\n",
+      "HTTP/1.1 200 OK\r\n",
+      "Content-Length: 4\r\n",
+      "Connection: close\r\n",
+      "\r\n",
+      "next"
+    );
+    let mut stream = AllowStdIo::new(Cursor::new(raw.as_bytes()));
+    let head = async_read_test_response_head(&mut stream).await;
+
+    let mut first = async_streaming_response_after_header(&mut stream, false, head)
+      .await
+      .unwrap();
+    let mut body = Vec::new();
+    first.body_mut().read_to_end(&mut body).await.unwrap();
+
+    assert_eq!(204, first.code().unwrap());
+    assert_eq!(b"", body.as_slice());
+    assert_eq!(
+      Some("7"),
+      first
+        .headers()
+        .unwrap()
+        .iter()
+        .find(|header| header.name().eq_ignore_ascii_case("content-length"))
+        .map(|header| header.value().as_str())
+    );
+    assert_eq!(
+      Some("no-content"),
+      first
+        .headers()
+        .unwrap()
+        .iter()
+        .find(|header| header.name().eq_ignore_ascii_case("x-trace"))
+        .map(|header| header.value().as_str())
+    );
+
+    let head = async_read_test_response_head(&mut stream).await;
+    let mut second = async_streaming_response_after_header(&mut stream, false, head)
+      .await
+      .unwrap();
+    let mut body = Vec::new();
+    second.body_mut().read_to_end(&mut body).await.unwrap();
+
+    assert_eq!(200, second.code().unwrap());
+    assert_eq!(b"next", body.as_slice());
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_304_with_misleading_chunked_framing_keeps_next_response_readable() {
+  block_on(async {
+    let raw = concat!(
+      "HTTP/1.1 304 Not Modified\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "ETag: \"abc\"\r\n",
+      "\r\n",
+      "HTTP/1.1 200 OK\r\n",
+      "Content-Length: 4\r\n",
+      "Connection: close\r\n",
+      "\r\n",
+      "next"
+    );
+    let mut stream = AllowStdIo::new(Cursor::new(raw.as_bytes()));
+    let head = async_read_test_response_head(&mut stream).await;
+
+    let mut first = async_streaming_response_after_header(&mut stream, false, head)
+      .await
+      .unwrap();
+    let mut body = Vec::new();
+    first.body_mut().read_to_end(&mut body).await.unwrap();
+
+    assert_eq!(304, first.code().unwrap());
+    assert_eq!(b"", body.as_slice());
+    assert_eq!(
+      Some("chunked"),
+      first
+        .headers()
+        .unwrap()
+        .iter()
+        .find(|header| header.name().eq_ignore_ascii_case("transfer-encoding"))
+        .map(|header| header.value().as_str())
+    );
+    assert_eq!(
+      Some("\"abc\""),
+      first
+        .headers()
+        .unwrap()
+        .iter()
+        .find(|header| header.name().eq_ignore_ascii_case("etag"))
+        .map(|header| header.value().as_str())
+    );
+
+    let head = async_read_test_response_head(&mut stream).await;
+    let mut second = async_streaming_response_after_header(&mut stream, false, head)
+      .await
+      .unwrap();
+    let mut body = Vec::new();
+    second.body_mut().read_to_end(&mut body).await.unwrap();
+
+    assert_eq!(200, second.code().unwrap());
+    assert_eq!(b"next", body.as_slice());
   });
 }
 
