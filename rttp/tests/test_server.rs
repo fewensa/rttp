@@ -2071,6 +2071,8 @@ fn server_preserves_chunked_request_trailers() {
         "6\r\n body!\r\n",
         "0\r\n",
         "X-Trace: abc\r\n",
+        "x-trace: duplicate\r\n",
+        "MiXeD-Trailer: Case Preserved\r\n",
         "X-Signature: signed\r\n",
         "\r\n"
       )
@@ -2086,11 +2088,16 @@ fn server_preserves_chunked_request_trailers() {
 
   let request: Request = rx.recv().expect("receive parsed request");
   assert_eq!(b"chunked body!", request.body());
+  assert_eq!(Some("chunked"), request.header("Transfer-Encoding"));
+  assert_eq!(None, request.header("X-Trace"));
   assert_eq!(Some("abc"), request.trailer("x-trace"));
+  assert_eq!(Some("Case Preserved"), request.trailer("mixed-trailer"));
   assert_eq!(Some("signed"), request.trailer("X-SIGNATURE"));
   assert_eq!(
     &[
       ("X-Trace".to_string(), "abc".to_string()),
+      ("x-trace".to_string(), "duplicate".to_string()),
+      ("MiXeD-Trailer".to_string(), "Case Preserved".to_string()),
       ("X-Signature".to_string(), "signed".to_string())
     ],
     request.trailers()
