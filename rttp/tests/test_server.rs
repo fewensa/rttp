@@ -448,6 +448,42 @@ fn server_accepts_http2_prior_knowledge_headers_and_data_before_calling_handler(
 }
 
 #[test]
+fn server_rejects_http2_prior_knowledge_data_before_headers_without_handler() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send(request).expect("send unexpected h2 request");
+      HttpResponse::ok("unexpected")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  complete_h2_server_handshake(&mut stream);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_DATA,
+    H2_FLAG_END_STREAM,
+    1,
+    b"body before headers",
+  );
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown h2 write");
+
+  let error = handle
+    .join()
+    .expect("server thread")
+    .expect_err("DATA before HEADERS should reject request");
+  assert_eq!(ErrorKind::InvalidData, error.kind());
+  assert!(rx.try_recv().is_err());
+}
+
+#[test]
 fn server_rejects_http2_prior_knowledge_request_missing_scheme() {
   let mut headers = vec![0x82];
   headers.extend(h2_literal_indexed_name(4, b"/missing-scheme"));
@@ -623,6 +659,7 @@ fn server_ignores_reset_stream_and_serves_surviving_http2_stream() {
   );
   write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 1, b"partial");
   write_h2_frame(&mut stream, H2_FRAME_RST_STREAM, 0, 1, &0u32.to_be_bytes());
+  write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 1, b"after-reset");
 
   write_h2_frame(
     &mut stream,
