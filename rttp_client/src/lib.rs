@@ -12,8 +12,10 @@
 //! to the `socks` crate.
 //! With the `http2` feature enabled, `emit_http2_prior_knowledge` sends a
 //! minimal prior-knowledge h2c request over a direct socket2 TCP connection.
-//! TLS ALPN and full HTTP/2 multiplexing are not part of that single-stream
-//! path.
+//! It decodes incoming padded HEADERS, DATA, and trailer frames without
+//! exposing padding bytes. TLS ALPN, proxy h2, full HTTP/2 multiplexing,
+//! priority scheduling, and HPACK dynamic tables are not part of that
+//! single-stream path.
 //!
 //! ```rust,no_run
 //! use rttp_client::HttpClient;
