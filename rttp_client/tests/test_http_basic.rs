@@ -907,6 +907,21 @@ fn test_auto_redirect_303_post_becomes_get_without_body_or_body_framing() {
 }
 
 #[test]
+fn test_auto_redirect_303_post_allows_same_url_after_method_changes() {
+  let (addr, _handle) = support::spawn_same_url_303_redirect_method_echo_server();
+  let response = client()
+    .config(Config::builder().auto_redirect(true).max_redirect(1))
+    .post()
+    .url(format!("http://{}/submit", addr))
+    .raw("redirect-body")
+    .emit();
+
+  assert!(response.is_ok());
+  let response = response.unwrap();
+  assert_eq!("GET /submit HTTP/1.1", response.body().string().unwrap());
+}
+
+#[test]
 fn test_auto_redirect_303_head_preserves_method() {
   let request = captured_redirected_head(303, "See Other");
 

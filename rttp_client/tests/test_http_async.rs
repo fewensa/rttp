@@ -796,6 +796,25 @@ fn test_async_auto_redirect_303_post_becomes_get_without_body_or_body_framing() 
 
 #[test]
 #[cfg(feature = "async")]
+fn test_async_auto_redirect_303_post_allows_same_url_after_method_changes() {
+  let (addr, _handle) = support::spawn_same_url_303_redirect_method_echo_server();
+  block_on(async {
+    let response = client()
+      .config(Config::builder().auto_redirect(true).max_redirect(1))
+      .post()
+      .url(format!("http://{}/submit", addr))
+      .raw("redirect-body")
+      .rasync()
+      .await;
+
+    assert!(response.is_ok());
+    let response = response.unwrap();
+    assert_eq!("GET /submit HTTP/1.1", response.body().string().unwrap());
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
 fn test_async_auto_redirect_303_head_preserves_method() {
   block_on(async {
     let request = captured_async_redirected_head(303, "See Other").await;
