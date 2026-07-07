@@ -4,15 +4,15 @@
 //! | name | comment |
 //! |------|---------|
 //! | async | Async request APIs |
-//! | http2 | Prior-knowledge h2c GET over direct `socket2` TCP connections |
+//! | http2 | Prior-knowledge h2c over direct `socket2` TCP connections |
 //! | tls-native | HTTPS with `native-tls` |
 //! | tls-rustls | HTTPS with `rustls` |
 //!
 //! Direct TCP connections use `socket2`. SOCKS proxy handshakes remain delegated
 //! to the `socks` crate.
 //! With the `http2` feature enabled, `emit_http2_prior_knowledge` sends a
-//! minimal prior-knowledge h2c GET request over a direct socket2 TCP connection.
-//! TLS ALPN and full HTTP/2 multiplexing are not part of that initial path.
+//! minimal prior-knowledge h2c request over a direct socket2 TCP connection.
+//! TLS ALPN and full HTTP/2 multiplexing are not part of that path.
 //!
 //! ```rust,no_run
 //! use rttp_client::HttpClient;

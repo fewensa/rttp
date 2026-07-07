@@ -100,6 +100,85 @@ fn prior_knowledge_get_sends_h2_handshake_and_reads_single_response_stream() {
 }
 
 #[test]
+fn prior_knowledge_post_sends_headers_then_body_data_frame() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_handshake_without_request(&mut stream);
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_HEADERS, request_headers.flags);
+    assert_eq!(1, request_headers.stream_id);
+
+    let request_body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, request_body.frame_type);
+    assert_eq!(FLAG_END_STREAM, request_body.flags);
+    assert_eq!(1, request_body.stream_id);
+    assert_eq!(b"{\"ok\":true}", request_body.payload.as_slice());
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"created");
+
+    request_headers.payload
+  });
+
+  let response = HttpClient::new()
+    .post()
+    .url(format!("http://{}/submit", addr))
+    .content_type("application/json")
+    .header(("X-Trace", "abc123"))
+    .raw("{\"ok\":true}")
+    .emit_http2_prior_knowledge()
+    .expect("h2 POST response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!("created", response.body().string().unwrap());
+
+  let request_header_block = handle.join().expect("h2 peer thread");
+  assert!(request_header_block.contains(&0x83));
+  assert!(request_header_block
+    .windows(b"/submit".len())
+    .any(|window| window == b"/submit"));
+  assert!(request_header_block
+    .windows(b"content-type".len())
+    .any(|window| window == b"content-type"));
+  assert!(request_header_block
+    .windows(b"application/json".len())
+    .any(|window| window == b"application/json"));
+  assert!(request_header_block
+    .windows(b"content-length".len())
+    .any(|window| window == b"content-length"));
+  assert!(request_header_block
+    .windows(b"11".len())
+    .any(|window| window == b"11"));
+  assert!(request_header_block
+    .windows(b"x-trace".len())
+    .any(|window| window == b"x-trace"));
+  assert!(request_header_block
+    .windows(b"abc123".len())
+    .any(|window| window == b"abc123"));
+}
+
+#[test]
+fn prior_knowledge_put_and_patch_send_body_data_frames() {
+  for method in ["PUT", "PATCH"] {
+    let request_header_block = emit_prior_knowledge_body_request(method);
+
+    assert!(request_header_block
+      .windows(method.len())
+      .any(|window| window == method.as_bytes()));
+    assert!(request_header_block
+      .windows(b"/resource".len())
+      .any(|window| window == b"/resource"));
+  }
+}
+
+#[test]
 fn prior_knowledge_rejects_configured_proxy_before_connecting() {
   let err = HttpClient::new()
     .get()
@@ -595,6 +674,15 @@ fn spawn_h2_prior_knowledge_peer_with_response(
 }
 
 fn complete_h2_request_handshake(stream: &mut impl ReadWrite) {
+  complete_h2_handshake_without_request(stream);
+
+  let request_headers = read_frame(stream);
+  assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+  assert_eq!(FLAG_END_STREAM | FLAG_END_HEADERS, request_headers.flags);
+  assert_eq!(1, request_headers.stream_id);
+}
+
+fn complete_h2_handshake_without_request(stream: &mut impl ReadWrite) {
   let mut preface = [0; 24];
   stream
     .read_exact(&mut preface)
@@ -613,11 +701,44 @@ fn complete_h2_request_handshake(stream: &mut impl ReadWrite) {
   assert_eq!(FLAG_ACK, client_settings_ack.flags);
   assert_eq!(0, client_settings_ack.stream_id);
   assert_eq!(0, client_settings_ack.payload.len());
+}
 
-  let request_headers = read_frame(stream);
-  assert_eq!(FRAME_HEADERS, request_headers.frame_type);
-  assert_eq!(FLAG_END_STREAM | FLAG_END_HEADERS, request_headers.flags);
-  assert_eq!(1, request_headers.stream_id);
+fn emit_prior_knowledge_body_request(method: &str) -> Vec<u8> {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_handshake_without_request(&mut stream);
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_HEADERS, request_headers.flags);
+    assert_eq!(1, request_headers.stream_id);
+
+    let request_body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, request_body.frame_type);
+    assert_eq!(FLAG_END_STREAM, request_body.flags);
+    assert_eq!(1, request_body.stream_id);
+    assert_eq!(b"update-body", request_body.payload.as_slice());
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"updated");
+
+    request_headers.payload
+  });
+
+  let response = HttpClient::new()
+    .method(method)
+    .url(format!("http://{}/resource", addr))
+    .raw("update-body")
+    .emit_http2_prior_knowledge()
+    .expect("h2 request body response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("updated", response.body().string().unwrap());
+  handle.join().expect("h2 peer thread")
 }
 
 trait ReadWrite: Read + Write {}
