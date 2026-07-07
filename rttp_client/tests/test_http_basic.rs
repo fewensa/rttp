@@ -210,6 +210,27 @@ fn test_chunked() {
 }
 
 #[test]
+fn test_chunked_valid_extension_is_ignored() {
+  let (addr, _handle) = support::spawn_chunked_response_server(concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "4;foo=bar\r\nWiki\r\n",
+    "0\r\n",
+    "\r\n"
+  ));
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/chunked", addr))
+    .emit()
+    .unwrap();
+
+  assert_eq!("Wiki", response.body().string().unwrap());
+}
+
+#[test]
 fn test_socket2_server_chunked_trailers_are_exposed_case_insensitively() {
   let (addr, _handle) = support::spawn_socket2_chunked_trailer_server();
   let response = client()
