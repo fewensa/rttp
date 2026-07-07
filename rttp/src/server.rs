@@ -21,6 +21,9 @@ const HTTP2_FLAG_END_STREAM: u8 = 0x1;
 const HTTP2_FLAG_ACK: u8 = 0x1;
 const HTTP2_FLAG_END_HEADERS: u8 = 0x4;
 const HTTP2_DEFAULT_MAX_FRAME_SIZE: usize = 16 * 1024;
+const HTTP2_SETTINGS_ENABLE_PUSH: u16 = 0x2;
+const HTTP2_SETTINGS_INITIAL_WINDOW_SIZE: u16 = 0x4;
+const HTTP2_SETTINGS_MAX_FRAME_SIZE: u16 = 0x5;
 
 pub struct HttpServer {
   listener: TcpListener,
@@ -358,13 +361,10 @@ impl HttpServer {
     if frame.frame_type != HTTP2_FRAME_SETTINGS
       || frame.flags & HTTP2_FLAG_ACK == HTTP2_FLAG_ACK
       || frame.stream_id != 0
-      || frame.payload.len() % 6 != 0
     {
-      return Err(io::Error::new(
-        io::ErrorKind::InvalidData,
-        "invalid HTTP/2 SETTINGS frame",
-      ));
+      return Err(invalid_http2_settings_error());
     }
+    validate_http2_settings_payload(&frame.payload)?;
 
     self.normalize_connection_error(write_http2_frame(
       &mut stream,
@@ -422,7 +422,8 @@ impl HttpServer {
                 "HTTP/2 SETTINGS ACK frame must not contain payload",
               ));
             }
-          } else if frame.payload.len() % 6 == 0 {
+          } else {
+            validate_http2_settings_payload(&frame.payload)?;
             self.normalize_connection_error(write_http2_frame(
               &mut stream,
               HTTP2_FRAME_SETTINGS,
@@ -431,12 +432,10 @@ impl HttpServer {
               &[],
             ))?;
             self.normalize_connection_error(stream.flush())?;
-          } else {
-            return Err(io::Error::new(
-              io::ErrorKind::InvalidData,
-              "invalid HTTP/2 SETTINGS frame",
-            ));
           }
+        }
+        (HTTP2_FRAME_SETTINGS, _) => {
+          return Err(invalid_http2_settings_error());
         }
         (HTTP2_FRAME_PING, 0) => {
           if frame.payload.len() != 8 {
@@ -743,6 +742,33 @@ fn read_http2_frame(stream: &mut TcpStream) -> io::Result<Http2Frame> {
     stream_id: u32::from_be_bytes([header[5] & 0x7f, header[6], header[7], header[8]]),
     payload,
   })
+}
+
+fn validate_http2_settings_payload(payload: &[u8]) -> io::Result<()> {
+  if !payload.len().is_multiple_of(6) {
+    return Err(invalid_http2_settings_error());
+  }
+
+  for setting in payload.chunks_exact(6) {
+    let id = u16::from_be_bytes([setting[0], setting[1]]);
+    let value = u32::from_be_bytes([setting[2], setting[3], setting[4], setting[5]]);
+    match id {
+      HTTP2_SETTINGS_ENABLE_PUSH if value > 1 => return Err(invalid_http2_settings_error()),
+      HTTP2_SETTINGS_INITIAL_WINDOW_SIZE if value > 0x7fff_ffff => {
+        return Err(invalid_http2_settings_error());
+      }
+      HTTP2_SETTINGS_MAX_FRAME_SIZE if !(16_384..=16_777_215).contains(&value) => {
+        return Err(invalid_http2_settings_error());
+      }
+      _ => {}
+    }
+  }
+
+  Ok(())
+}
+
+fn invalid_http2_settings_error() -> io::Error {
+  io::Error::new(io::ErrorKind::InvalidData, "invalid HTTP/2 SETTINGS frame")
 }
 
 fn write_http2_frame(
