@@ -726,7 +726,7 @@ fn prior_knowledge_ignores_ping_ack_and_consumes_final_response() {
 
 #[test]
 fn prior_knowledge_rejects_malformed_ping_frames() {
-  let (stream_addr, stream_handle) = spawn_ping_peer(1, b"rttp-png");
+  let (stream_addr, stream_handle) = spawn_ping_peer(0, 1, b"rttp-png");
   let stream_error = HttpClient::new()
     .get()
     .url(format!("http://{}/bad-ping-stream", stream_addr))
@@ -735,7 +735,7 @@ fn prior_knowledge_rejects_malformed_ping_frames() {
   assert!(stream_error.to_string().contains("PING"));
   stream_handle.join().expect("bad ping stream peer thread");
 
-  let (length_addr, length_handle) = spawn_ping_peer(0, b"short");
+  let (length_addr, length_handle) = spawn_ping_peer(0, 0, b"short");
   let length_error = HttpClient::new()
     .get()
     .url(format!("http://{}/bad-ping-length", length_addr))
@@ -743,6 +743,22 @@ fn prior_knowledge_rejects_malformed_ping_frames() {
     .expect_err("ping with invalid payload length must fail");
   assert!(length_error.to_string().contains("PING"));
   length_handle.join().expect("bad ping length peer thread");
+
+  let (ack_length_addr, ack_length_handle) = spawn_ping_peer(FLAG_ACK, 0, b"short");
+  let ack_length_error = HttpClient::new()
+    .get()
+    .url(format!("http://{}/bad-ping-ack-length", ack_length_addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("ping ack with invalid payload length must fail");
+  assert!(
+    ack_length_error
+      .to_string()
+      .contains("invalid HTTP/2 PING frame"),
+    "unexpected error: {ack_length_error}"
+  );
+  ack_length_handle
+    .join()
+    .expect("bad ping ack length peer thread");
 }
 
 #[test]
@@ -1130,14 +1146,18 @@ fn spawn_control_frame_peer(frame_type: u8) -> (SocketAddr, thread::JoinHandle<(
   (addr, handle)
 }
 
-fn spawn_ping_peer(stream_id: u32, payload: &'static [u8]) -> (SocketAddr, thread::JoinHandle<()>) {
+fn spawn_ping_peer(
+  flags: u8,
+  stream_id: u32,
+  payload: &'static [u8],
+) -> (SocketAddr, thread::JoinHandle<()>) {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");
 
   let handle = thread::spawn(move || {
     let (mut stream, _) = listener.accept().expect("accept h2 client");
     complete_h2_request_handshake(&mut stream);
-    write_frame(&mut stream, FRAME_PING, 0, stream_id, payload);
+    write_frame(&mut stream, FRAME_PING, flags, stream_id, payload);
   });
 
   (addr, handle)
