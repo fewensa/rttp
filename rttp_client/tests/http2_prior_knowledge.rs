@@ -316,6 +316,40 @@ fn prior_knowledge_get_sends_window_updates_while_reading_large_response_body() 
   handle.join().expect("h2 peer thread");
 }
 
+#[test]
+fn prior_knowledge_get_decodes_terminal_trailer_headers() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, 0, 1, b"hello trailers");
+    write_frame(
+      &mut stream,
+      FRAME_HEADERS,
+      FLAG_END_HEADERS | FLAG_END_STREAM,
+      1,
+      &[
+        0, 7, b'x', b'-', b't', b'r', b'a', b'c', b'e', 3, b'a', b'b', b'c',
+      ],
+    );
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/trailers", addr))
+    .emit_http2_prior_knowledge()
+    .expect("h2 response with trailer headers");
+
+  assert_eq!(200, response.code());
+  assert_eq!("hello trailers", response.body().string().unwrap());
+  assert_eq!(Some(&"abc".to_string()), response.trailer_value("X-Trace"));
+  handle.join().expect("h2 peer thread");
+}
+
 struct Frame {
   frame_type: u8,
   flags: u8,

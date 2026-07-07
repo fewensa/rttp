@@ -835,6 +835,7 @@ fn write_http2_response(
   write_body: bool,
 ) -> io::Result<()> {
   let headers = encode_http2_response_headers(response)?;
+  let write_trailers = write_body && response.allows_body() && !response.trailers().is_empty();
   write_http2_frame(
     stream,
     HTTP2_FRAME_HEADERS,
@@ -848,19 +849,32 @@ fn write_http2_response(
     &[]
   };
   if body.is_empty() {
-    write_http2_frame(
-      stream,
-      HTTP2_FRAME_DATA,
-      HTTP2_FLAG_END_STREAM,
-      stream_id,
-      &[],
-    )?;
+    let flags = if write_trailers {
+      0
+    } else {
+      HTTP2_FLAG_END_STREAM
+    };
+    write_http2_frame(stream, HTTP2_FRAME_DATA, flags, stream_id, &[])?;
   } else {
     for (index, chunk) in body.chunks(HTTP2_DEFAULT_MAX_FRAME_SIZE).enumerate() {
-      let end_stream = (index + 1) * HTTP2_DEFAULT_MAX_FRAME_SIZE >= body.len();
-      let flags = if end_stream { HTTP2_FLAG_END_STREAM } else { 0 };
+      let final_data = (index + 1) * HTTP2_DEFAULT_MAX_FRAME_SIZE >= body.len();
+      let flags = if final_data && !write_trailers {
+        HTTP2_FLAG_END_STREAM
+      } else {
+        0
+      };
       write_http2_frame(stream, HTTP2_FRAME_DATA, flags, stream_id, chunk)?;
     }
+  }
+  if write_trailers {
+    let trailers = encode_http2_response_trailers(response)?;
+    write_http2_frame(
+      stream,
+      HTTP2_FRAME_HEADERS,
+      HTTP2_FLAG_END_HEADERS | HTTP2_FLAG_END_STREAM,
+      stream_id,
+      &trailers,
+    )?;
   }
   stream.flush()
 }
@@ -900,6 +914,8 @@ fn encode_http2_response_headers(response: &HttpResponse) -> io::Result<Vec<u8>>
       "connection"
         | "keep-alive"
         | "proxy-connection"
+        | "te"
+        | "trailer"
         | "transfer-encoding"
         | "upgrade"
         | "content-length"
@@ -913,6 +929,39 @@ fn encode_http2_response_headers(response: &HttpResponse) -> io::Result<Vec<u8>>
     )?;
   }
 
+  Ok(block)
+}
+
+fn encode_http2_response_trailers(response: &HttpResponse) -> io::Result<Vec<u8>> {
+  let mut block = Vec::new();
+  for trailer in response.trailers() {
+    let name = trailer.name.to_ascii_lowercase();
+    if matches!(
+      name.as_str(),
+      "authorization"
+        | "connection"
+        | "content-length"
+        | "cookie"
+        | "host"
+        | "keep-alive"
+        | "proxy-authenticate"
+        | "proxy-authorization"
+        | "proxy-connection"
+        | "set-cookie"
+        | "te"
+        | "trailer"
+        | "transfer-encoding"
+        | "upgrade"
+        | "www-authenticate"
+    ) {
+      continue;
+    }
+    encode_http2_literal_new_name_without_indexing(
+      &mut block,
+      name.as_bytes(),
+      trailer.value.as_bytes(),
+    )?;
+  }
   Ok(block)
 }
 
