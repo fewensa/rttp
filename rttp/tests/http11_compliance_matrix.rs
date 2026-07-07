@@ -7,6 +7,33 @@ use std::time::Duration;
 use rttp::server::{HttpRequest, HttpResponse};
 use rttp_http11_test_fixtures as fixtures;
 
+#[derive(Debug)]
+struct ParsedResponse<'a> {
+  head: &'a str,
+  body: &'a str,
+}
+
+fn parse_content_length_response(input: &str) -> (ParsedResponse<'_>, &str) {
+  let (head, after_head) = input.split_once("\r\n\r\n").expect("response head");
+  let content_length = head
+    .lines()
+    .find_map(|line| line.strip_prefix("Content-Length: "))
+    .expect("content length")
+    .parse::<usize>()
+    .expect("content length value");
+  let (body, remaining) = after_head.split_at(content_length);
+
+  (ParsedResponse { head, body }, remaining)
+}
+
+fn header_value<'a>(head: &'a str, name: &str) -> Option<&'a str> {
+  head
+    .lines()
+    .filter_map(|line| line.split_once(':'))
+    .find(|(observed_name, _)| observed_name.eq_ignore_ascii_case(name))
+    .map(|(_, value)| value.trim())
+}
+
 #[test]
 fn model_parser_accepts_shared_fixed_length_request_fixture() {
   let fixture = fixtures::request::fixed_length_post();
@@ -194,8 +221,19 @@ fn live_socket2_server_preserves_connection_lifetime_boundaries() {
     .read_to_string(&mut response)
     .expect("read responses");
 
-  assert!(response.contains("served /matrix/first"));
-  assert!(response.contains("served /matrix/second"));
+  let (first_response, remaining) = parse_content_length_response(&response);
+  let (second_response, remaining) = parse_content_length_response(remaining);
+
+  assert!(first_response.head.starts_with("HTTP/1.1 200 OK"));
+  assert_eq!(None, header_value(first_response.head, "Connection"));
+  assert_eq!("served /matrix/first", first_response.body);
+  assert!(second_response.head.starts_with("HTTP/1.1 200 OK"));
+  assert_eq!(
+    Some("close"),
+    header_value(second_response.head, "Connection")
+  );
+  assert_eq!("served /matrix/second", second_response.body);
+  assert_eq!("", remaining);
   assert_eq!(
     ("/matrix/first".to_string(), b"alpha".to_vec()),
     rx.recv().expect("first request")
@@ -204,6 +242,144 @@ fn live_socket2_server_preserves_connection_lifetime_boundaries() {
     ("/matrix/second".to_string(), b"bravo!".to_vec()),
     rx.recv().expect("second request")
   );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn live_socket2_server_closes_http10_without_keep_alive_before_next_request() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        tx.send(request.target().to_string())
+          .expect("send parsed request");
+        HttpResponse::ok(format!("served {}", request.target()))
+      })
+      .expect("serve requests");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(
+      concat!(
+        "GET /matrix/http10-terminal HTTP/1.0\r\n",
+        "Content-Length: 0\r\n",
+        "\r\n",
+        "GET /matrix/ignored HTTP/1.0\r\n",
+        "Connection: keep-alive\r\n",
+        "Content-Length: 0\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write pipelined HTTP/1.0 requests");
+  stream.shutdown(Shutdown::Write).expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  let mut next_stream = TcpStream::connect(addr).expect("connect next request");
+  next_stream
+    .write_all(
+      concat!(
+        "GET /matrix/http10-next-connection HTTP/1.0\r\n",
+        "Content-Length: 0\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write next HTTP/1.0 request");
+  next_stream
+    .shutdown(Shutdown::Write)
+    .expect("shutdown next write");
+
+  let mut next_response = String::new();
+  next_stream
+    .read_to_string(&mut next_response)
+    .expect("read next response");
+
+  let (first_response, remaining) = parse_content_length_response(&response);
+  let (next_response, next_remaining) = parse_content_length_response(&next_response);
+  assert!(first_response.head.starts_with("HTTP/1.1 200 OK"));
+  assert_eq!(
+    Some("close"),
+    header_value(first_response.head, "Connection")
+  );
+  assert_eq!("served /matrix/http10-terminal", first_response.body);
+  assert_eq!("", remaining);
+  assert!(next_response.head.starts_with("HTTP/1.1 200 OK"));
+  assert_eq!("served /matrix/http10-next-connection", next_response.body);
+  assert_eq!("", next_remaining);
+  assert_eq!("/matrix/http10-terminal", rx.recv().expect("first request"));
+  assert_eq!(
+    "/matrix/http10-next-connection",
+    rx.recv().expect("next connection request")
+  );
+  assert!(rx.try_recv().is_err());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn live_socket2_server_keeps_http10_alive_when_explicitly_requested() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        tx.send(request.target().to_string())
+          .expect("send parsed request");
+        HttpResponse::ok(format!("served {}", request.target()))
+      })
+      .expect("serve requests");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(
+      concat!(
+        "GET /matrix/http10-first HTTP/1.0\r\n",
+        "Connection: keep-alive\r\n",
+        "Content-Length: 0\r\n",
+        "\r\n",
+        "GET /matrix/http10-final HTTP/1.0\r\n",
+        "Content-Length: 0\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("write pipelined HTTP/1.0 requests");
+  stream.shutdown(Shutdown::Write).expect("shutdown write");
+
+  let mut response = String::new();
+  stream
+    .read_to_string(&mut response)
+    .expect("read responses");
+
+  let (first_response, remaining) = parse_content_length_response(&response);
+  let (second_response, remaining) = parse_content_length_response(remaining);
+
+  assert!(first_response.head.starts_with("HTTP/1.1 200 OK"));
+  assert_eq!(
+    Some("keep-alive"),
+    header_value(first_response.head, "Connection")
+  );
+  assert_eq!("served /matrix/http10-first", first_response.body);
+  assert!(second_response.head.starts_with("HTTP/1.1 200 OK"));
+  assert_eq!(
+    Some("close"),
+    header_value(second_response.head, "Connection")
+  );
+  assert_eq!("served /matrix/http10-final", second_response.body);
+  assert_eq!("", remaining);
+  assert_eq!("/matrix/http10-first", rx.recv().expect("first request"));
+  assert_eq!("/matrix/http10-final", rx.recv().expect("second request"));
 
   handle.join().expect("server thread");
 }
