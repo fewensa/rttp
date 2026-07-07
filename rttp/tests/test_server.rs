@@ -1446,14 +1446,41 @@ fn server_accepts_options_asterisk_request_target() {
 
 #[test]
 fn server_accepts_connect_authority_request_target() {
-  let (response, handler_called) =
-    send_raw_request(b"CONNECT example.test:443 HTTP/1.1\r\nHost: example.test:443\r\n\r\n");
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
 
-  assert!(handler_called);
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = format!("{} {}", request.method(), request.target());
+        tx.send(observed.clone()).expect("send observed request");
+        HttpResponse::ok(observed)
+      })
+      .expect("serve one request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(b"CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n")
+    .expect("write request");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
   assert_eq!(
-    "HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nunexpected",
+    "CONNECT example.com:443",
+    rx.recv().expect("observed request")
+  );
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 23\r\nConnection: close\r\n\r\nCONNECT example.com:443",
     response
   );
+
+  handle.join().expect("server thread");
 }
 
 #[test]
