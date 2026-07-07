@@ -464,14 +464,22 @@ impl HttpServer {
         }
         (HTTP2_FRAME_HEADERS, id) if id != 0 => {
           let request_stream = http2_request_stream(&mut streams, id);
+          if request_stream.end_stream {
+            return Err(io::Error::new(
+              io::ErrorKind::InvalidData,
+              "HTTP/2 HEADERS frame arrived after END_STREAM",
+            ));
+          }
+          request_stream.header_block_kind = Some(if request_stream.decoded_headers.is_some() {
+            Http2HeaderBlockKind::RequestTrailers
+          } else {
+            Http2HeaderBlockKind::RequestHeaders
+          });
           request_stream
             .header_block
             .extend_from_slice(&frame.payload);
           if frame.flags & HTTP2_FLAG_END_HEADERS == HTTP2_FLAG_END_HEADERS {
-            request_stream.decoded_headers =
-              Some(decode_http2_request_headers(&request_stream.header_block)?);
-            request_stream.header_block.clear();
-            request_stream.in_header_continuation = false;
+            request_stream.finish_header_block()?;
           } else {
             request_stream.in_header_continuation = true;
           }
@@ -499,10 +507,7 @@ impl HttpServer {
             .header_block
             .extend_from_slice(&frame.payload);
           if frame.flags & HTTP2_FLAG_END_HEADERS == HTTP2_FLAG_END_HEADERS {
-            request_stream.decoded_headers =
-              Some(decode_http2_request_headers(&request_stream.header_block)?);
-            request_stream.header_block.clear();
-            request_stream.in_header_continuation = false;
+            request_stream.finish_header_block()?;
           }
         }
         (HTTP2_FRAME_DATA, id) if id != 0 => {
@@ -637,10 +642,18 @@ struct Http2Frame {
 struct Http2RequestStream {
   stream_id: u32,
   header_block: Vec<u8>,
+  header_block_kind: Option<Http2HeaderBlockKind>,
   decoded_headers: Option<DecodedHttp2RequestHeaders>,
+  decoded_trailers: Vec<(String, String)>,
   body: Vec<u8>,
   end_stream: bool,
   in_header_continuation: bool,
+}
+
+#[derive(Clone, Copy)]
+enum Http2HeaderBlockKind {
+  RequestHeaders,
+  RequestTrailers,
 }
 
 impl Http2RequestStream {
@@ -648,7 +661,9 @@ impl Http2RequestStream {
     Self {
       stream_id,
       header_block: Vec::new(),
+      header_block_kind: None,
       decoded_headers: None,
+      decoded_trailers: Vec::new(),
       body: Vec::new(),
       end_stream: false,
       in_header_continuation: false,
@@ -659,11 +674,31 @@ impl Http2RequestStream {
     self.decoded_headers.is_some() && self.end_stream && !self.in_header_continuation
   }
 
+  fn finish_header_block(&mut self) -> io::Result<()> {
+    match self.header_block_kind.take() {
+      Some(Http2HeaderBlockKind::RequestHeaders) => {
+        self.decoded_headers = Some(decode_http2_request_headers(&self.header_block)?);
+      }
+      Some(Http2HeaderBlockKind::RequestTrailers) => {
+        self.decoded_trailers = decode_http2_request_trailers(&self.header_block)?;
+      }
+      None => {
+        return Err(io::Error::new(
+          io::ErrorKind::InvalidData,
+          "HTTP/2 header block completed without HEADERS frame",
+        ));
+      }
+    }
+    self.header_block.clear();
+    self.in_header_continuation = false;
+    Ok(())
+  }
+
   fn into_request(self) -> io::Result<Request> {
     let decoded_headers = self.decoded_headers.ok_or_else(|| {
       io::Error::new(io::ErrorKind::InvalidData, "missing HTTP/2 request headers")
     })?;
-    decoded_headers.into_request(self.body)
+    decoded_headers.into_request(self.body, self.decoded_trailers)
   }
 }
 
@@ -764,7 +799,7 @@ struct DecodedHttp2RequestHeaders {
 }
 
 impl DecodedHttp2RequestHeaders {
-  fn into_request(self, body: Vec<u8>) -> io::Result<Request> {
+  fn into_request(self, body: Vec<u8>, trailers: Vec<(String, String)>) -> io::Result<Request> {
     let method = self
       .method
       .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing HTTP/2 :method"))?;
@@ -784,14 +819,13 @@ impl DecodedHttp2RequestHeaders {
       target,
       version: "HTTP/2".to_string(),
       headers,
-      trailers: Vec::new(),
+      trailers,
       body,
     })
   }
 }
 
 fn decode_http2_request_headers(block: &[u8]) -> io::Result<DecodedHttp2RequestHeaders> {
-  let mut cursor = 0;
   let mut decoded = DecodedHttp2RequestHeaders {
     method: None,
     target: None,
@@ -802,23 +836,7 @@ fn decode_http2_request_headers(block: &[u8]) -> io::Result<DecodedHttp2RequestH
   let mut regular_header_seen = false;
   let mut pseudo_headers = Vec::<String>::new();
 
-  while cursor < block.len() {
-    let byte = block[cursor];
-    let (name, value) = if byte & 0x80 == 0x80 {
-      let index = decode_http2_integer(block, &mut cursor, 7)?;
-      let (name, value) = http2_static_header(index)?;
-      (name.to_string(), value.to_string())
-    } else if byte & 0x40 == 0x40 {
-      decode_http2_literal(block, &mut cursor, 6)?
-    } else if byte & 0x20 == 0x20 {
-      return Err(io::Error::new(
-        io::ErrorKind::InvalidData,
-        "HTTP/2 dynamic table size updates are not supported",
-      ));
-    } else {
-      decode_http2_literal(block, &mut cursor, 4)?
-    };
-
+  for (name, value) in decode_http2_header_fields(block)? {
     if name.starts_with(':') {
       if regular_header_seen {
         return Err(io::Error::new(
@@ -852,6 +870,49 @@ fn decode_http2_request_headers(block: &[u8]) -> io::Result<DecodedHttp2RequestH
   }
 
   Ok(decoded)
+}
+
+fn decode_http2_request_trailers(block: &[u8]) -> io::Result<Vec<(String, String)>> {
+  let trailers = decode_http2_header_fields(block)?;
+  for (name, _) in &trailers {
+    if name.starts_with(':') {
+      return Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        "HTTP/2 request trailer contained pseudo-header",
+      ));
+    }
+    if !is_http_token(name) || is_forbidden_trailer_name(name) {
+      return Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        "forbidden request trailer",
+      ));
+    }
+  }
+  Ok(trailers)
+}
+
+fn decode_http2_header_fields(block: &[u8]) -> io::Result<Vec<(String, String)>> {
+  let mut cursor = 0;
+  let mut fields = Vec::new();
+  while cursor < block.len() {
+    let byte = block[cursor];
+    let field = if byte & 0x80 == 0x80 {
+      let index = decode_http2_integer(block, &mut cursor, 7)?;
+      let (name, value) = http2_static_header(index)?;
+      (name.to_string(), value.to_string())
+    } else if byte & 0x40 == 0x40 {
+      decode_http2_literal(block, &mut cursor, 6)?
+    } else if byte & 0x20 == 0x20 {
+      return Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        "HTTP/2 dynamic table size updates are not supported",
+      ));
+    } else {
+      decode_http2_literal(block, &mut cursor, 4)?
+    };
+    fields.push(field);
+  }
+  Ok(fields)
 }
 
 fn decode_http2_literal(
