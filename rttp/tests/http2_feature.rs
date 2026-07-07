@@ -262,6 +262,99 @@ fn spawn_h2_peer_sending_ping_before_response() -> (SocketAddr, thread::JoinHand
   (addr, handle)
 }
 
+fn spawn_h2_peer_with_valid_settings_payload() -> (SocketAddr, thread::JoinHandle<Vec<u8>>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    stream
+      .set_read_timeout(Some(Duration::from_secs(2)))
+      .expect("set h2 peer read timeout");
+
+    let mut preface = [0; 24];
+    stream
+      .read_exact(&mut preface)
+      .expect("read client preface");
+    assert_eq!(H2_PREFACE.as_slice(), &preface);
+
+    let client_settings = read_h2_frame(&mut stream);
+    assert_eq!(H2_FRAME_SETTINGS, client_settings.frame_type);
+    assert_eq!(0, client_settings.flags);
+    assert_eq!(0, client_settings.stream_id);
+
+    let mut settings = Vec::new();
+    settings.extend_from_slice(&h2_setting(H2_SETTINGS_ENABLE_PUSH, 0));
+    settings.extend_from_slice(&h2_setting(H2_SETTINGS_INITIAL_WINDOW_SIZE, 65_535));
+    settings.extend_from_slice(&h2_setting(H2_SETTINGS_MAX_FRAME_SIZE, 32_768));
+    write_h2_frame(&mut stream, H2_FRAME_SETTINGS, 0, 0, &settings);
+
+    let client_settings_ack = read_h2_frame(&mut stream);
+    assert_eq!(H2_FRAME_SETTINGS, client_settings_ack.frame_type);
+    assert_eq!(H2_FLAG_ACK, client_settings_ack.flags);
+    assert_eq!(0, client_settings_ack.stream_id);
+    assert!(client_settings_ack.payload.is_empty());
+
+    let request_headers = read_h2_frame(&mut stream);
+    assert_eq!(H2_FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(
+      H2_FLAG_END_STREAM | H2_FLAG_END_HEADERS,
+      request_headers.flags
+    );
+    assert_eq!(1, request_headers.stream_id);
+
+    write_h2_frame(&mut stream, H2_FRAME_SETTINGS, H2_FLAG_ACK, 0, &[]);
+    write_h2_frame(
+      &mut stream,
+      H2_FRAME_HEADERS,
+      H2_FLAG_END_HEADERS,
+      1,
+      &[0x88],
+    );
+    write_h2_frame(
+      &mut stream,
+      H2_FRAME_DATA,
+      H2_FLAG_END_STREAM,
+      1,
+      b"valid settings round trip",
+    );
+
+    request_headers.payload
+  });
+
+  (addr, handle)
+}
+
+fn spawn_h2_peer_with_malformed_initial_settings() -> (SocketAddr, thread::JoinHandle<()>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    stream
+      .set_read_timeout(Some(Duration::from_secs(2)))
+      .expect("set h2 peer read timeout");
+
+    let mut preface = [0; 24];
+    stream
+      .read_exact(&mut preface)
+      .expect("read client preface");
+    assert_eq!(H2_PREFACE.as_slice(), &preface);
+
+    let client_settings = read_h2_frame(&mut stream);
+    assert_eq!(H2_FRAME_SETTINGS, client_settings.frame_type);
+    write_h2_frame(
+      &mut stream,
+      H2_FRAME_SETTINGS,
+      0,
+      0,
+      &h2_setting(H2_SETTINGS_ENABLE_PUSH, 2),
+    );
+  });
+
+  (addr, handle)
+}
+
 #[test]
 fn prior_knowledge_server_acknowledges_valid_settings_payload_and_serves_request() {
   let server = rttp::Http::server("127.0.0.1:0")
@@ -286,6 +379,7 @@ fn prior_knowledge_server_acknowledges_valid_settings_payload_and_serves_request
     .expect("set client read timeout");
   let mut payload = Vec::new();
   payload.extend_from_slice(&h2_setting(H2_SETTINGS_ENABLE_PUSH, 0));
+  payload.extend_from_slice(&h2_setting(H2_SETTINGS_INITIAL_WINDOW_SIZE, 65_535));
   payload.extend_from_slice(&h2_setting(H2_SETTINGS_MAX_FRAME_SIZE, 16_384));
   payload.extend_from_slice(&h2_setting(0xffff, 99));
   complete_h2_server_handshake_with_settings(&mut stream, &payload);
@@ -350,6 +444,41 @@ fn prior_knowledge_server_rejects_invalid_subsequent_settings_before_request() {
     0,
     Some((0, &h2_setting(H2_SETTINGS_ENABLE_PUSH, 2))),
   );
+}
+
+#[test]
+fn wrapper_http2_prior_knowledge_accepts_valid_peer_settings_payload() {
+  let (addr, handle) = spawn_h2_peer_with_valid_settings_payload();
+
+  let response = rttp::Http::client()
+    .url(format!("http://{}/valid-settings", addr))
+    .emit_http2_prior_knowledge()
+    .expect("wrapper h2 response with valid peer SETTINGS");
+
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(200, response.code());
+  assert_eq!(
+    "valid settings round trip",
+    response.body().string().unwrap()
+  );
+
+  let request_header_block = handle.join().expect("valid settings peer thread");
+  assert!(request_header_block
+    .windows(b"/valid-settings".len())
+    .any(|window| window == b"/valid-settings"));
+}
+
+#[test]
+fn wrapper_http2_prior_knowledge_rejects_malformed_peer_settings() {
+  let (addr, handle) = spawn_h2_peer_with_malformed_initial_settings();
+
+  let err = rttp::Http::client()
+    .url(format!("http://{}/invalid-settings", addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("wrapper client must reject malformed peer SETTINGS");
+
+  assert!(err.to_string().contains("SETTINGS_ENABLE_PUSH"));
+  handle.join().expect("malformed settings peer thread");
 }
 
 #[test]
