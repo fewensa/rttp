@@ -191,6 +191,46 @@ fn server_accepts_get_request_and_writes_response() {
 }
 
 #[test]
+fn server_accepts_absolute_form_get_request_as_origin_target() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request).expect("send parsed request");
+        HttpResponse::ok("hello")
+      })
+      .expect("serve one request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(b"GET http://example.com/a/b?x=1 HTTP/1.1\r\nHost: localhost\r\n\r\n")
+    .expect("write request");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  let request: Request = rx.recv().expect("receive parsed request");
+  assert_eq!("GET", request.method());
+  assert_eq!("/a/b?x=1", request.target());
+  assert_eq!("HTTP/1.1", request.version());
+  assert_eq!(Some("localhost"), request.header("host"));
+
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello",
+    response
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn server_accepts_http2_prior_knowledge_get_and_writes_single_stream_response() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
@@ -2380,7 +2420,7 @@ fn server_rejects_invalid_second_request_target_on_kept_alive_connection() {
         "Connection: keep-alive\r\n",
         "\r\n"
       ),
-      "http://example.test/first",
+      "/first",
     ),
   ] {
     let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
