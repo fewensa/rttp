@@ -455,26 +455,37 @@ impl HttpServer {
           }
         }
         (HTTP2_FRAME_DATA, id) if id != 0 => {
-          if let Some(request_stream) = streams
+          let request_stream = streams
             .iter_mut()
             .find(|request_stream| request_stream.stream_id == id)
-          {
-            let new_len = request_stream
-              .body
-              .len()
-              .checked_add(frame.payload.len())
-              .ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidData, "request body is too large")
-              })?;
-            reject_oversized_request_body(new_len)?;
-            request_stream.body.extend_from_slice(&frame.payload);
-            if !frame.payload.is_empty() {
-              write_http2_window_update(&mut stream, 0, frame.payload.len())?;
-              write_http2_window_update(&mut stream, id, frame.payload.len())?;
-            }
-            if frame.flags & HTTP2_FLAG_END_STREAM == HTTP2_FLAG_END_STREAM {
-              request_stream.end_stream = true;
-            }
+            .ok_or_else(|| {
+              io::Error::new(
+                io::ErrorKind::InvalidData,
+                "HTTP/2 DATA frame arrived before request headers",
+              )
+            })?;
+          if request_stream.decoded_headers.is_none() || request_stream.in_header_continuation {
+            return Err(io::Error::new(
+              io::ErrorKind::InvalidData,
+              "HTTP/2 DATA frame arrived before request headers",
+            ));
+          }
+
+          let new_len = request_stream
+            .body
+            .len()
+            .checked_add(frame.payload.len())
+            .ok_or_else(|| {
+              io::Error::new(io::ErrorKind::InvalidData, "request body is too large")
+            })?;
+          reject_oversized_request_body(new_len)?;
+          request_stream.body.extend_from_slice(&frame.payload);
+          if !frame.payload.is_empty() {
+            write_http2_window_update(&mut stream, 0, frame.payload.len())?;
+            write_http2_window_update(&mut stream, id, frame.payload.len())?;
+          }
+          if frame.flags & HTTP2_FLAG_END_STREAM == HTTP2_FLAG_END_STREAM {
+            request_stream.end_stream = true;
           }
         }
         (HTTP2_FRAME_RST_STREAM, id) if id != 0 => {
