@@ -21,6 +21,10 @@ const FLAG_END_STREAM: u8 = 0x1;
 const FLAG_END_HEADERS: u8 = 0x4;
 const FLAG_ACK: u8 = 0x1;
 
+const SETTING_ENABLE_PUSH: u16 = 0x2;
+const SETTING_INITIAL_WINDOW_SIZE: u16 = 0x4;
+const SETTING_MAX_FRAME_SIZE: u16 = 0x5;
+
 fn spawn_h2_prior_knowledge_peer() -> (SocketAddr, thread::JoinHandle<Vec<u8>>) {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");
@@ -303,6 +307,111 @@ fn prior_knowledge_rejects_configured_proxy_before_connecting() {
 
   assert!(err.is_builder());
   assert!(err.to_string().contains("does not support proxies"));
+}
+
+#[test]
+fn prior_knowledge_rejects_initial_settings_with_invalid_payload_length() {
+  let (addr, handle) = spawn_initial_settings_peer(0, 0, &[0, 1, 2, 3, 4]);
+
+  let err = HttpClient::new()
+    .get()
+    .url(format!("http://{}/invalid-settings-length", addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("invalid SETTINGS payload length must fail");
+
+  assert!(err.to_string().contains("invalid HTTP/2 SETTINGS frame"));
+  handle.join().expect("invalid settings length peer thread");
+}
+
+#[test]
+fn prior_knowledge_rejects_initial_settings_with_invalid_max_frame_size() {
+  let payload = settings_payload(SETTING_MAX_FRAME_SIZE, 16_777_216);
+  let (addr, handle) = spawn_initial_settings_peer(0, 0, &payload);
+
+  let err = HttpClient::new()
+    .get()
+    .url(format!("http://{}/invalid-max-frame-size", addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("invalid SETTINGS_MAX_FRAME_SIZE must fail");
+
+  assert!(err.to_string().contains("SETTINGS_MAX_FRAME_SIZE"));
+  handle.join().expect("invalid max frame size peer thread");
+}
+
+#[test]
+fn prior_knowledge_rejects_initial_settings_with_invalid_enable_push() {
+  let payload = settings_payload(SETTING_ENABLE_PUSH, 2);
+  let (addr, handle) = spawn_initial_settings_peer(0, 0, &payload);
+
+  let err = HttpClient::new()
+    .get()
+    .url(format!("http://{}/invalid-enable-push", addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("invalid SETTINGS_ENABLE_PUSH must fail");
+
+  assert!(err.to_string().contains("SETTINGS_ENABLE_PUSH"));
+  handle.join().expect("invalid enable push peer thread");
+}
+
+#[test]
+fn prior_knowledge_rejects_initial_settings_with_invalid_initial_window_size() {
+  let payload = settings_payload(SETTING_INITIAL_WINDOW_SIZE, 2_147_483_648);
+  let (addr, handle) = spawn_initial_settings_peer(0, 0, &payload);
+
+  let err = HttpClient::new()
+    .get()
+    .url(format!("http://{}/invalid-initial-window-size", addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("invalid SETTINGS_INITIAL_WINDOW_SIZE must fail");
+
+  assert!(err.to_string().contains("SETTINGS_INITIAL_WINDOW_SIZE"));
+  handle
+    .join()
+    .expect("invalid initial window size peer thread");
+}
+
+#[test]
+fn prior_knowledge_rejects_initial_settings_ack_with_payload() {
+  let payload = settings_payload(SETTING_MAX_FRAME_SIZE, 16 * 1024);
+  let (addr, handle) = spawn_initial_settings_peer(FLAG_ACK, 0, &payload);
+
+  let err = HttpClient::new()
+    .get()
+    .url(format!("http://{}/settings-ack-payload", addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("SETTINGS ACK with payload must fail");
+
+  assert!(err.to_string().contains("SETTINGS ACK"));
+  handle.join().expect("settings ack payload peer thread");
+}
+
+#[test]
+fn prior_knowledge_rejects_subsequent_settings_with_invalid_payload() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+    write_frame(
+      &mut stream,
+      FRAME_SETTINGS,
+      0,
+      0,
+      &settings_payload(SETTING_ENABLE_PUSH, 2),
+    );
+  });
+
+  let err = HttpClient::new()
+    .get()
+    .url(format!("http://{}/invalid-subsequent-settings", addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("invalid subsequent SETTINGS must fail");
+
+  assert!(err.to_string().contains("SETTINGS_ENABLE_PUSH"));
+  handle
+    .join()
+    .expect("invalid subsequent settings peer thread");
 }
 
 #[test]
@@ -1079,6 +1188,34 @@ fn spawn_h2_prior_knowledge_peer_with_response(
   (addr, handle)
 }
 
+fn spawn_initial_settings_peer(
+  flags: u8,
+  stream_id: u32,
+  payload: &[u8],
+) -> (SocketAddr, thread::JoinHandle<()>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+  let payload = payload.to_vec();
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    let mut preface = [0; 24];
+    stream
+      .read_exact(&mut preface)
+      .expect("read client preface");
+    assert_eq!(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", &preface);
+
+    let client_settings = read_frame(&mut stream);
+    assert_eq!(FRAME_SETTINGS, client_settings.frame_type);
+    assert_eq!(0, client_settings.stream_id);
+    assert_eq!(0, client_settings.payload.len());
+
+    write_frame(&mut stream, FRAME_SETTINGS, flags, stream_id, &payload);
+  });
+
+  (addr, handle)
+}
+
 fn complete_h2_request_handshake(stream: &mut impl ReadWrite) {
   complete_h2_handshake_without_request(stream);
 
@@ -1159,6 +1296,13 @@ fn window_update_increment(frame: &Frame) -> u32 {
     frame.payload[2],
     frame.payload[3],
   ])
+}
+
+fn settings_payload(identifier: u16, value: u32) -> Vec<u8> {
+  let mut payload = Vec::with_capacity(6);
+  payload.extend_from_slice(&identifier.to_be_bytes());
+  payload.extend_from_slice(&value.to_be_bytes());
+  payload
 }
 
 fn h2_literal_new_name(name: &[u8], value: &[u8]) -> Vec<u8> {
