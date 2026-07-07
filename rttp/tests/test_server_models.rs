@@ -40,6 +40,29 @@ fn parses_body_only_when_content_length_matches() {
 }
 
 #[test]
+fn parses_chunked_transfer_coded_request_body() {
+  let raw = concat!(
+    "POST /submit HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "\r\n",
+    "5;foo=bar\r\n",
+    "hello\r\n",
+    "6\r\n",
+    " world\r\n",
+    "0\r\n",
+    "X-Trace: abc\r\n",
+    "\r\n"
+  );
+
+  let request = HttpRequest::parse(raw.as_bytes()).expect("request should parse");
+
+  assert_eq!("POST", request.method());
+  assert_eq!("/submit", request.path());
+  assert_eq!(b"hello world", request.body());
+}
+
+#[test]
 fn parses_fixed_length_request_with_duplicate_matching_content_length() {
   let raw = concat!(
     "POST /submit HTTP/1.1\r\n",
