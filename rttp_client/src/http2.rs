@@ -14,6 +14,7 @@ const CLIENT_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
 const FRAME_DATA: u8 = 0x0;
 const FRAME_HEADERS: u8 = 0x1;
+const FRAME_PRIORITY: u8 = 0x2;
 const FRAME_RST_STREAM: u8 = 0x3;
 const FRAME_SETTINGS: u8 = 0x4;
 const FRAME_PING: u8 = 0x6;
@@ -509,6 +510,9 @@ fn read_until_send_window_available(
           current_max_frame_size,
         )?;
       }
+      (FRAME_PRIORITY, _) => {
+        validate_priority_frame(&frame)?;
+      }
       (FRAME_RST_STREAM, STREAM_ID) => {
         return Err(error::bad_response("HTTP/2 stream received RST_STREAM"));
       }
@@ -872,6 +876,9 @@ fn read_single_stream_response_with_first_frame(
       (FRAME_WINDOW_UPDATE, _) => {
         window_update_increment(&frame)?;
       }
+      (FRAME_PRIORITY, _) => {
+        validate_priority_frame(&frame)?;
+      }
       (FRAME_RST_STREAM, STREAM_ID) => {
         return Err(error::bad_response("HTTP/2 stream received RST_STREAM"));
       }
@@ -1029,6 +1036,13 @@ fn window_update_increment(frame: &Frame) -> error::Result<u32> {
     ));
   }
   Ok(increment)
+}
+
+fn validate_priority_frame(frame: &Frame) -> error::Result<()> {
+  if frame.stream_id == 0 || frame.payload.len() != 5 {
+    return Err(error::bad_response("invalid HTTP/2 PRIORITY frame"));
+  }
+  Ok(())
 }
 
 fn data_payload(frame: &Frame) -> error::Result<&[u8]> {

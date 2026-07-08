@@ -10,6 +10,7 @@ use rttp_client::HttpClient;
 
 const FRAME_DATA: u8 = 0x0;
 const FRAME_HEADERS: u8 = 0x1;
+const FRAME_PRIORITY: u8 = 0x2;
 const FRAME_RST_STREAM: u8 = 0x3;
 const FRAME_SETTINGS: u8 = 0x4;
 const FRAME_PING: u8 = 0x6;
@@ -1636,6 +1637,67 @@ fn prior_knowledge_ignores_response_headers_priority_metadata() {
   );
   assert_eq!("priority", response.body().string().unwrap());
   handle.join().expect("h2 peer thread");
+}
+
+#[test]
+fn prior_knowledge_ignores_standalone_priority_before_response_headers() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    write_frame(&mut stream, FRAME_PRIORITY, 0, 1, &[0, 0, 0, 0, 16]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"priority");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/standalone-priority", addr))
+    .emit_http2_prior_knowledge()
+    .expect("h2 response with ignored standalone priority");
+
+  assert_eq!(200, response.code());
+  assert_eq!("priority", response.body().string().unwrap());
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
+fn prior_knowledge_rejects_malformed_standalone_priority_frames() {
+  let cases: &[(&str, u32, &[u8])] = &[
+    ("stream-zero", 0, &[0, 0, 0, 0, 16]),
+    ("short-payload", 1, &[0, 0, 0, 0]),
+    ("long-payload", 1, &[0, 0, 0, 0, 16, 0]),
+  ];
+
+  for (path, stream_id, payload) in cases {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+    let addr = listener.local_addr().expect("h2 peer addr");
+    let payload = payload.to_vec();
+
+    let handle = thread::spawn(move || {
+      let (mut stream, _) = listener.accept().expect("accept h2 client");
+      complete_h2_request_handshake(&mut stream);
+
+      write_frame(&mut stream, FRAME_PRIORITY, 0, *stream_id, &payload);
+      write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+      write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"unexpected");
+    });
+
+    let error = HttpClient::new()
+      .get()
+      .url(format!("http://{}/bad-priority-{}", addr, path))
+      .emit_http2_prior_knowledge()
+      .expect_err("malformed PRIORITY frame should be rejected");
+
+    assert!(
+      error.to_string().contains("invalid HTTP/2 PRIORITY frame"),
+      "unexpected error: {error}"
+    );
+    handle.join().expect("h2 peer thread");
+  }
 }
 
 #[test]
