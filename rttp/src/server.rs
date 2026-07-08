@@ -410,8 +410,11 @@ impl HttpServer {
     let mut accepted_stream_count = 0;
     let mut last_accepted_stream_id = 0;
     let mut graceful_goaway_sent = false;
+    let mut peer_goaway_received = false;
 
-    while served < request_limit && (!graceful_goaway_sent || !streams.is_empty()) {
+    while served < request_limit
+      && ((!graceful_goaway_sent && !peer_goaway_received) || !streams.is_empty())
+    {
       let frame = match self.normalize_connection_error(read_http2_frame(&mut stream)) {
         Ok(frame) => frame,
         Err(err)
@@ -511,7 +514,9 @@ impl HttpServer {
           if streams
             .iter()
             .all(|request_stream| request_stream.stream_id != id)
-            && (graceful_goaway_sent || served.saturating_add(streams.len()) >= request_limit)
+            && (graceful_goaway_sent
+              || peer_goaway_received
+              || served.saturating_add(streams.len()) >= request_limit)
           {
             self.normalize_connection_error(write_http2_frame(
               &mut stream,
@@ -653,7 +658,10 @@ impl HttpServer {
         (HTTP2_FRAME_RST_STREAM, id) => {
           validate_http2_rst_stream_frame(id, &frame.payload)?;
         }
-        (HTTP2_FRAME_GOAWAY, 0) => break,
+        (HTTP2_FRAME_GOAWAY, id) => {
+          validate_http2_goaway_frame(id, &frame.payload)?;
+          peer_goaway_received = true;
+        }
         (HTTP2_FRAME_WINDOW_UPDATE, _) => {
           let increment = http2_window_update_increment(&frame.payload)?;
           if frame.stream_id == 0 {
@@ -1124,6 +1132,16 @@ fn validate_http2_rst_stream_frame(stream_id: u32, payload: &[u8]) -> io::Result
     return Err(io::Error::new(
       io::ErrorKind::InvalidData,
       "invalid HTTP/2 RST_STREAM frame",
+    ));
+  }
+  Ok(())
+}
+
+fn validate_http2_goaway_frame(stream_id: u32, payload: &[u8]) -> io::Result<()> {
+  if stream_id != 0 || payload.len() < 8 {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "invalid HTTP/2 GOAWAY frame",
     ));
   }
   Ok(())
