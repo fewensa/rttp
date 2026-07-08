@@ -417,13 +417,21 @@ struct PeerSettings {
 
 #[derive(Clone, Copy)]
 struct LocalSettings {
+  header_table_size: usize,
+  header_table_size_configured: bool,
   max_frame_size: usize,
   max_frame_size_configured: bool,
 }
 
 impl LocalSettings {
   fn from_config(config: &Config) -> error::Result<Self> {
+    let configured_header_table_size = config.http2_header_table_size();
     let configured_max_frame_size = config.http2_max_frame_size();
+    if configured_header_table_size.is_some_and(|size| size > u32::MAX as usize) {
+      return Err(error::builder_with_message(
+        "invalid HTTP/2 SETTINGS_HEADER_TABLE_SIZE value",
+      ));
+    }
     let max_frame_size = configured_max_frame_size.unwrap_or(DEFAULT_MAX_FRAME_SIZE);
     if !(DEFAULT_MAX_FRAME_SIZE..=MAX_FRAME_SIZE_LIMIT).contains(&max_frame_size) {
       return Err(error::builder_with_message(
@@ -431,16 +439,28 @@ impl LocalSettings {
       ));
     }
     Ok(Self {
+      header_table_size: configured_header_table_size.unwrap_or(DEFAULT_HPACK_DYNAMIC_TABLE_SIZE),
+      header_table_size_configured: configured_header_table_size.is_some(),
       max_frame_size,
       max_frame_size_configured: configured_max_frame_size.is_some(),
     })
   }
 
   fn settings_payload(self) -> Vec<u8> {
-    if !self.max_frame_size_configured {
-      return Vec::new();
+    let mut payload = Vec::new();
+    if self.header_table_size_configured {
+      payload.extend_from_slice(&h2_setting(
+        SETTING_HEADER_TABLE_SIZE,
+        self.header_table_size as u32,
+      ));
     }
-    h2_setting(SETTING_MAX_FRAME_SIZE, self.max_frame_size as u32).to_vec()
+    if self.max_frame_size_configured {
+      payload.extend_from_slice(&h2_setting(
+        SETTING_MAX_FRAME_SIZE,
+        self.max_frame_size as u32,
+      ));
+    }
+    payload
   }
 }
 
@@ -1135,7 +1155,7 @@ fn read_single_stream_response_with_first_frame(
   let mut pending_header_block = None;
   let mut final_response_started = false;
   let mut response_body_started = false;
-  let mut hpack = HpackDecoder::new(DEFAULT_HPACK_DYNAMIC_TABLE_SIZE);
+  let mut hpack = HpackDecoder::new(local_settings.header_table_size);
   let mut connection_receive_window = ReceiveWindow::new();
   let mut stream_receive_window = ReceiveWindow::new();
   let mut connection_send_window = SendWindow::new();

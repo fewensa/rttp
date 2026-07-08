@@ -1766,6 +1766,93 @@ fn prior_knowledge_advertises_configured_legal_max_frame_size_boundaries() {
 }
 
 #[test]
+fn prior_knowledge_advertises_configured_header_table_size_boundaries() {
+  for header_table_size in [0, u32::MAX] {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+    let addr = listener.local_addr().expect("h2 peer addr");
+
+    let handle = thread::spawn(move || {
+      let (mut stream, _) = listener.accept().expect("accept h2 client");
+      let mut preface = [0; 24];
+      stream
+        .read_exact(&mut preface)
+        .expect("read client preface");
+      assert_eq!(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", &preface);
+
+      let client_settings = read_frame(&mut stream);
+      assert_eq!(FRAME_SETTINGS, client_settings.frame_type);
+      assert_eq!(0, client_settings.flags);
+      assert_eq!(0, client_settings.stream_id);
+      assert_eq!(
+        Some(header_table_size),
+        h2_setting_value(&client_settings.payload, SETTING_HEADER_TABLE_SIZE)
+      );
+
+      write_frame(&mut stream, FRAME_SETTINGS, 0, 0, &[]);
+      let client_settings_ack = read_frame(&mut stream);
+      assert_eq!(FRAME_SETTINGS, client_settings_ack.frame_type);
+      assert_eq!(FLAG_ACK, client_settings_ack.flags);
+      assert_eq!(0, client_settings_ack.stream_id);
+      assert!(client_settings_ack.payload.is_empty());
+
+      let request_headers = read_frame(&mut stream);
+      assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+      assert_eq!(FLAG_END_STREAM | FLAG_END_HEADERS, request_headers.flags);
+      assert_eq!(1, request_headers.stream_id);
+
+      write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+      write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+      write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"ok");
+    });
+
+    let config = Config::builder()
+      .http2_header_table_size(header_table_size as usize)
+      .build();
+    let response = HttpClient::new()
+      .get()
+      .url(format!("http://{}/configured-header-table-size", addr))
+      .config(config)
+      .emit_http2_prior_knowledge()
+      .expect("configured legal header table size should work");
+
+    assert_eq!(200, response.code());
+    assert_eq!("ok", response.body().string().unwrap());
+    handle
+      .join()
+      .expect("configured header table size peer thread");
+  }
+}
+
+#[test]
+fn prior_knowledge_rejects_configured_header_table_size_above_wire_limit_before_connecting() {
+  let Some(header_table_size) = (u32::MAX as usize).checked_add(1) else {
+    return;
+  };
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  listener
+    .set_nonblocking(true)
+    .expect("set h2 listener nonblocking");
+  let addr = listener.local_addr().expect("h2 peer addr");
+  let config = Config::builder()
+    .http2_header_table_size(header_table_size)
+    .build();
+
+  let err = HttpClient::new()
+    .get()
+    .url(format!("http://{}/illegal-header-table-size", addr))
+    .config(config)
+    .emit_http2_prior_knowledge()
+    .expect_err("illegal local SETTINGS_HEADER_TABLE_SIZE must fail");
+
+  assert!(err.is_builder());
+  assert!(err.to_string().contains("SETTINGS_HEADER_TABLE_SIZE"));
+  assert!(
+    listener.accept().is_err(),
+    "client must reject illegal local SETTINGS_HEADER_TABLE_SIZE before connecting"
+  );
+}
+
+#[test]
 fn prior_knowledge_rejects_configured_illegal_max_frame_size_boundaries_before_connecting() {
   for max_frame_size in [DEFAULT_MAX_FRAME_SIZE - 1, MAX_FRAME_SIZE_LIMIT + 1] {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");

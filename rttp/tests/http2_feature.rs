@@ -7,7 +7,7 @@ use std::thread;
 use std::time::Duration;
 
 use rttp::server::HttpResponse;
-use rttp_client::HttpClient;
+use rttp_client::{Config, HttpClient};
 
 const H2_FRAME_DATA: u8 = 0x0;
 const H2_FRAME_HEADERS: u8 = 0x1;
@@ -4046,6 +4046,139 @@ fn rttp_client_http2_prior_knowledge_decodes_rttp_server_dynamic_response_evicti
   assert!(response.header_value("X-Evict-Trailer").is_none());
 
   handle.join().expect("server thread");
+}
+
+#[test]
+fn rttp_client_http2_prior_knowledge_settings_header_table_size_matrix_with_rttp_server() {
+  struct MatrixCase {
+    name: &'static str,
+    local_header_table_size: usize,
+    response_headers: Vec<(&'static str, &'static str)>,
+    response_trailers: Vec<(&'static str, &'static str)>,
+  }
+
+  let cases = [
+    MatrixCase {
+      name: "zero",
+      local_header_table_size: 0,
+      response_headers: vec![
+        ("X-Matrix-Zero", "repeatable-response-value"),
+        ("X-Matrix-Zero", "repeatable-response-value"),
+      ],
+      response_trailers: vec![
+        ("X-Matrix-Zero-Trailer", "repeatable-trailer-value"),
+        ("X-Matrix-Zero-Trailer", "repeatable-trailer-value"),
+      ],
+    },
+    MatrixCase {
+      name: "small-eviction",
+      local_header_table_size: 64,
+      response_headers: vec![
+        ("X-Matrix-One", "a"),
+        ("X-Matrix-Two", "b"),
+        ("X-Matrix-One", "a"),
+        ("X-Matrix-Two", "b"),
+      ],
+      response_trailers: vec![("X-Matrix-Trailer-One", "a"), ("X-Matrix-Trailer-Two", "b")],
+    },
+  ];
+
+  for case in cases {
+    let case_name = case.name;
+    let server = rttp::Http::server("127.0.0.1:0")
+      .expect("bind server")
+      .with_read_timeout(Some(Duration::from_secs(2)))
+      .with_write_timeout(Some(Duration::from_secs(2)));
+    let addr = server.local_addr().expect("server addr");
+    let request_field_name = format!("X-Matrix-Request-{}", case.name);
+    let request_trailer_name = request_field_name.clone();
+    let handler_request_field_name = request_field_name.clone();
+    let handler_request_trailer_name = request_trailer_name.clone();
+    let response_headers = case.response_headers.clone();
+    let response_trailers = case.response_trailers.clone();
+    let response_body = format!("matrix {}", case_name);
+    let expected_response_body = response_body.clone();
+
+    let handle = thread::spawn(move || {
+      server
+        .accept_one(move |request| {
+          assert_eq!("HTTP/2", request.version());
+          assert_eq!("POST", request.method());
+          assert_eq!(
+            format!("/settings-header-table-size/{}", case_name),
+            request.target()
+          );
+          assert_eq!(
+            Some("repeatable-request-value"),
+            request.header(&handler_request_field_name)
+          );
+          assert_eq!(b"matrix request body", request.body());
+          assert_eq!(
+            Some("repeatable-request-value"),
+            request.trailer(&handler_request_trailer_name)
+          );
+
+          let mut response = HttpResponse::ok(&response_body);
+          for (name, value) in &response_headers {
+            response = response.header(*name, *value);
+          }
+          for (name, _) in &response_trailers {
+            response = response.header("Trailer", *name);
+          }
+          for (name, value) in &response_trailers {
+            response = response.trailer(*name, *value);
+          }
+          response
+        })
+        .expect("serve header table size matrix request");
+    });
+
+    let config = Config::builder()
+      .http2_header_table_size(case.local_header_table_size)
+      .build();
+    let response = rttp_client::HttpClient::new()
+      .post()
+      .url(format!(
+        "http://{}/settings-header-table-size/{}",
+        addr, case_name
+      ))
+      .config(config)
+      .header((
+        request_field_name.clone(),
+        "repeatable-request-value".to_string(),
+      ))
+      .trailer((request_trailer_name, "repeatable-request-value".to_string()))
+      .expect("configure matrix request trailer")
+      .raw("matrix request body")
+      .emit_http2_prior_knowledge()
+      .expect("matrix h2 response");
+
+    assert_eq!("HTTP/2", response.version());
+    assert_eq!(200, response.code());
+    assert_eq!(expected_response_body, response.body().string().unwrap());
+    for (name, value) in case.response_headers {
+      assert!(
+        response
+          .header_values(name)
+          .iter()
+          .any(|actual| *actual == value),
+        "{name} response header value {value:?} missing for {} table",
+        case_name
+      );
+    }
+    for (name, value) in case.response_trailers {
+      assert!(
+        response
+          .trailer_values(name)
+          .iter()
+          .any(|actual| *actual == value),
+        "{name} response trailer value {value:?} missing for {} table",
+        case_name
+      );
+    }
+    assert!(response.header_value("Trailer").is_none());
+    handle.join().expect("server thread");
+  }
 }
 
 #[test]
