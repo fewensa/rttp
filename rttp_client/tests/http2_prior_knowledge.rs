@@ -5,6 +5,7 @@ use std::net::{SocketAddr, TcpListener};
 use std::thread;
 use std::time::Duration;
 
+use rttp_client::types::Header;
 use rttp_client::types::Proxy;
 use rttp_client::HttpClient;
 
@@ -266,12 +267,69 @@ fn prior_knowledge_connect_is_rejected_before_connecting() {
   assert!(
     err
       .to_string()
-      .contains("HTTP/2 prior-knowledge CONNECT/proxy tunneling is unsupported"),
+      .contains("HTTP/2 prior-knowledge CONNECT or extended CONNECT is unsupported"),
     "unexpected error: {err}"
   );
   assert!(
     matches!(listener.accept(), Err(ref err) if err.kind() == io::ErrorKind::WouldBlock),
     "prior-knowledge CONNECT must not open a server connection"
+  );
+}
+
+#[test]
+fn prior_knowledge_extended_connect_protocol_is_rejected_before_connecting() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  listener
+    .set_nonblocking(true)
+    .expect("set listener nonblocking");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let err = HttpClient::new()
+    .get()
+    .url(format!("http://{}/extended-connect", addr))
+    .header(Header::new(":protocol", "websocket"))
+    .emit_http2_prior_knowledge()
+    .expect_err("extended CONNECT protocol metadata must be rejected");
+
+  assert!(err.is_builder());
+  assert!(
+    err
+      .to_string()
+      .contains("HTTP/2 prior-knowledge CONNECT or extended CONNECT is unsupported"),
+    "unexpected error: {err}"
+  );
+  assert!(
+    matches!(listener.accept(), Err(ref err) if err.kind() == io::ErrorKind::WouldBlock),
+    "prior-knowledge extended CONNECT must not open a server connection"
+  );
+}
+
+#[test]
+fn prior_knowledge_upgrade_handoff_is_rejected_before_connecting() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  listener
+    .set_nonblocking(true)
+    .expect("set listener nonblocking");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let err = HttpClient::new()
+    .get()
+    .url(format!("http://{}/chat", addr))
+    .header(("Connection", "Upgrade"))
+    .header(("Upgrade", "websocket"))
+    .emit_http2_prior_knowledge()
+    .expect_err("upgrade handoff must be rejected");
+
+  assert!(err.is_builder());
+  assert!(
+    err
+      .to_string()
+      .contains("HTTP/2 prior-knowledge CONNECT or extended CONNECT is unsupported"),
+    "unexpected error: {err}"
+  );
+  assert!(
+    matches!(listener.accept(), Err(ref err) if err.kind() == io::ErrorKind::WouldBlock),
+    "prior-knowledge upgrade handoff must not open a server connection"
   );
 }
 
@@ -778,7 +836,6 @@ fn prior_knowledge_request_omits_connection_specific_headers_and_connection_toke
     .header(("Keep-Alive", "timeout=5"))
     .header(("Proxy-Connection", "keep-alive"))
     .header(("Transfer-Encoding", "chunked"))
-    .header(("Upgrade", "websocket"))
     .header(("Trailer", "X-Trailer"))
     .header(("Host".to_string(), addr.to_string()))
     .header(("X-Hop", "remove-me"))
