@@ -739,7 +739,7 @@ impl Http2ClientStreamIds {
   }
 
   fn open(&mut self, stream_id: u32) -> io::Result<()> {
-    if stream_id % 2 == 0 {
+    if stream_id.is_multiple_of(2) {
       return Err(invalid_http2_client_stream_id_error());
     }
     if self.is_closed(stream_id) {
