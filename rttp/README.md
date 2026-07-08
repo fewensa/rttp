@@ -55,22 +55,23 @@ writes response body framing and response trailers consistently, and accepts
 `Expect: 100-continue`. On the same socket2 listener, the accept path detects
 the HTTP/2 client preface and dispatches prior-knowledge h2c requests to a
 minimal single-stream handler. Incoming padded HEADERS, DATA, and trailer
-frames are accepted without exposing padding bytes to handlers, and large
-header blocks are carried with CONTINUATION frames.
+frames are accepted without exposing padding bytes to handlers, and HPACK
+static Huffman strings and large header blocks are carried with CONTINUATION
+frames.
 
 The server is intentionally not a full RFC-covering web server and still does
-not implement server TLS, TLS ALPN, proxy h2, full HTTP/2 multiplexing,
-priority scheduling, HPACK dynamic tables, or async accept loops.
+not implement server TLS, TLS ALPN, proxy h2, HPACK dynamic tables, full HTTP/2
+features such as multiplexing and priority scheduling, or async accept loops.
 
 ## Client feature
 
 Enable the `client` feature to access `rttp::Http::client`, or enable `async`,
 `http2`, `tls-native`, `tls-rustls`, or `all` for the corresponding
 `rttp_client` capabilities. The `http2` feature exposes the minimal
-prior-knowledge h2c client path, including large header blocks via
-CONTINUATION frames and padded incoming response frames; TLS ALPN, proxy h2,
-full HTTP/2 multiplexing, priority scheduling, and HPACK dynamic tables remain
-outside that path.
+prior-knowledge h2c client path, including HPACK static Huffman strings, large
+header blocks via CONTINUATION frames, and padded incoming response frames; TLS
+ALPN, proxy h2, HPACK dynamic tables, and full HTTP/2 features such as
+multiplexing and priority scheduling remain outside that path.
 
 Direct TCP client connections use `socket2`. SOCKS proxy handshakes remain
 delegated to the `socks` crate.

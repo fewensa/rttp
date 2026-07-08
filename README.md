@@ -29,11 +29,11 @@ available through `Response::trailers`, `Response::trailer`, and
 With the `http2` feature enabled, `emit_http2_prior_knowledge` sends a minimal
 prior-knowledge h2c request over a direct socket2 TCP connection. It supports
 GET and buffered POST, PUT, or PATCH requests, including non-empty buffered
-request bodies as DATA frames and large header blocks via CONTINUATION frames,
-and it decodes incoming padded HEADERS, DATA, and trailer frames without
-exposing padding bytes. TLS ALPN, proxy tunneling, proxy h2, general HTTP/2
-multiplexing, priority scheduling, and HPACK dynamic tables are not part of
-that client path.
+request bodies as DATA frames, HPACK static Huffman strings, and large header
+blocks via CONTINUATION frames, and it decodes incoming padded HEADERS, DATA,
+and trailer frames without exposing padding bytes. TLS ALPN, proxy tunneling,
+proxy h2, HPACK dynamic tables, and full HTTP/2 features such as general
+multiplexing and priority scheduling are not part of that client path.
 
 ```rust,no_run
 use rttp_client::HttpClient;
@@ -98,9 +98,10 @@ consistently, and accepts `Expect: 100-continue`. On the same socket2 listener,
 the accept path detects the HTTP/2 client preface and dispatches prior-knowledge
 h2c requests to a minimal single-stream handler. Incoming padded HEADERS, DATA,
 and trailer frames are accepted without exposing padding bytes to handlers, and
-large header blocks are carried with CONTINUATION frames. TLS ALPN, proxy h2,
-full HTTP/2 multiplexing, priority scheduling, and HPACK dynamic tables remain
-outside this server path.
+HPACK static Huffman strings and large header blocks are carried with
+CONTINUATION frames. TLS ALPN, proxy h2, HPACK dynamic tables, and full HTTP/2
+features such as multiplexing and priority scheduling remain outside this
+server path.
 
 It is not a full RFC-covering web server and still does not implement server
 TLS or async accept loops.
