@@ -623,10 +623,12 @@ impl HttpServer {
           stream_id,
           &response,
           !request_is_head,
-          &mut peer_max_frame_size,
-          &mut peer_initial_stream_send_window,
-          &mut connection_send_window,
-          &mut stream_send_window,
+          &mut Http2ResponseFlowControl {
+            max_frame_size: &mut peer_max_frame_size,
+            peer_initial_stream_send_window: &mut peer_initial_stream_send_window,
+            connection_send_window: &mut connection_send_window,
+            stream_send_window: &mut stream_send_window,
+          },
         ))?;
         served += 1;
       }
@@ -1641,19 +1643,23 @@ const HTTP2_HUFFMAN_CODES: [(u8, u32); 257] = [
   (30, 0x3fffffff),
 ];
 
+struct Http2ResponseFlowControl<'a> {
+  max_frame_size: &'a mut usize,
+  peer_initial_stream_send_window: &'a mut i32,
+  connection_send_window: &'a mut Http2SendWindow,
+  stream_send_window: &'a mut Http2SendWindow,
+}
+
 fn write_http2_response(
   stream: &mut TcpStream,
   stream_id: u32,
   response: &HttpResponse,
   write_body: bool,
-  max_frame_size: &mut usize,
-  peer_initial_stream_send_window: &mut i32,
-  connection_send_window: &mut Http2SendWindow,
-  stream_send_window: &mut Http2SendWindow,
+  flow_control: &mut Http2ResponseFlowControl<'_>,
 ) -> io::Result<()> {
   let headers = encode_http2_response_headers(response)?;
   let write_trailers = write_body && response.allows_body() && !response.trailers().is_empty();
-  write_http2_header_block(stream, stream_id, 0, &headers, *max_frame_size)?;
+  write_http2_header_block(stream, stream_id, 0, &headers, *flow_control.max_frame_size)?;
   let body = if write_body && response.allows_body() {
     response.body.as_slice()
   } else {
@@ -1669,21 +1675,23 @@ fn write_http2_response(
   } else {
     let mut offset = 0;
     while offset < body.len() {
-      while connection_send_window.available() == 0 || stream_send_window.available() == 0 {
+      while flow_control.connection_send_window.available() == 0
+        || flow_control.stream_send_window.available() == 0
+      {
         read_http2_response_flow_control_frame(
           stream,
           stream_id,
-          max_frame_size,
-          peer_initial_stream_send_window,
-          connection_send_window,
-          stream_send_window,
+          flow_control.max_frame_size,
+          flow_control.peer_initial_stream_send_window,
+          flow_control.connection_send_window,
+          flow_control.stream_send_window,
         )?;
       }
 
       let chunk_len = (body.len() - offset)
-        .min(*max_frame_size)
-        .min(connection_send_window.available())
-        .min(stream_send_window.available());
+        .min(*flow_control.max_frame_size)
+        .min(flow_control.connection_send_window.available())
+        .min(flow_control.stream_send_window.available());
       let final_data = offset + chunk_len == body.len();
       let flags = if final_data && !write_trailers {
         HTTP2_FLAG_END_STREAM
@@ -1691,8 +1699,8 @@ fn write_http2_response(
         0
       };
       let chunk = &body[offset..offset + chunk_len];
-      connection_send_window.consume(chunk_len)?;
-      stream_send_window.consume(chunk_len)?;
+      flow_control.connection_send_window.consume(chunk_len)?;
+      flow_control.stream_send_window.consume(chunk_len)?;
       write_http2_frame(stream, HTTP2_FRAME_DATA, flags, stream_id, chunk)?;
       stream.flush()?;
       offset += chunk_len;
@@ -1705,7 +1713,7 @@ fn write_http2_response(
       stream_id,
       HTTP2_FLAG_END_STREAM,
       &trailers,
-      *max_frame_size,
+      *flow_control.max_frame_size,
     )?;
   }
   stream.flush()
