@@ -1343,6 +1343,84 @@ fn prior_knowledge_post_uses_later_max_frame_size_for_request_trailers() {
 }
 
 #[test]
+fn prior_knowledge_post_applies_later_zero_header_table_size_before_trailers() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_handshake_without_request_with_settings(
+      &mut stream,
+      &settings_payload(SETTING_INITIAL_WINDOW_SIZE, 5),
+    );
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_HEADERS, request_headers.flags);
+    assert_eq!(1, request_headers.stream_id);
+
+    let first_body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, first_body.frame_type);
+    assert_eq!(0, first_body.flags);
+    assert_eq!(1, first_body.stream_id);
+    assert_eq!(b"abcde", first_body.payload.as_slice());
+
+    write_frame(
+      &mut stream,
+      FRAME_SETTINGS,
+      0,
+      0,
+      &settings_payload(SETTING_HEADER_TABLE_SIZE, 0),
+    );
+    let settings_ack = read_frame(&mut stream);
+    assert_eq!(FRAME_SETTINGS, settings_ack.frame_type);
+    assert_eq!(FLAG_ACK, settings_ack.flags);
+    assert_eq!(0, settings_ack.stream_id);
+    assert!(settings_ack.payload.is_empty());
+
+    write_frame(&mut stream, FRAME_WINDOW_UPDATE, 0, 1, &1_u32.to_be_bytes());
+
+    let final_body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, final_body.frame_type);
+    assert_eq!(0, final_body.flags);
+    assert_eq!(1, final_body.stream_id);
+    assert_eq!(b"f", final_body.payload.as_slice());
+
+    let request_trailers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_trailers.frame_type);
+    assert_eq!(FLAG_END_HEADERS | FLAG_END_STREAM, request_trailers.flags);
+    assert_eq!(1, request_trailers.stream_id);
+
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"ok");
+
+    (request_headers.payload, request_trailers.payload)
+  });
+
+  let response = HttpClient::new()
+    .post()
+    .url(format!("http://{}/later-zero-table-size", addr))
+    .header(("X-Repeat", "same-value"))
+    .trailer(("X-Repeat", "same-value"))
+    .expect("configure repeated request trailer")
+    .raw("abcdef")
+    .emit_http2_prior_knowledge()
+    .expect("h2 POST response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("ok", response.body().string().unwrap());
+
+  let (request_header_block, request_trailer_block) = handle.join().expect("h2 peer thread");
+  assert_eq!(1, literal_with_indexing_fields(&request_header_block));
+  assert_eq!(0, dynamic_indexed_fields(&request_trailer_block));
+  assert_eq!(0, literal_with_indexing_fields(&request_trailer_block));
+  assert!(
+    find_literal_new_name_value(&request_trailer_block, b"x-repeat").is_some(),
+    "later zero-sized peer table should make repeated trailer fall back to a literal"
+  );
+}
+
+#[test]
 fn prior_knowledge_get_splits_large_request_headers_at_peer_max_frame_size() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");
