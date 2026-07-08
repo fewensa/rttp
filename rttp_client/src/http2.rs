@@ -35,6 +35,7 @@ const SETTING_ENABLE_PUSH: u16 = 0x2;
 const SETTING_MAX_CONCURRENT_STREAMS: u16 = 0x3;
 const SETTING_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const SETTING_MAX_FRAME_SIZE: u16 = 0x5;
+const SETTING_MAX_HEADER_LIST_SIZE: u16 = 0x6;
 const DEFAULT_INITIAL_WINDOW_SIZE: i64 = 65_535;
 const DEFAULT_MAX_FRAME_SIZE: usize = 16 * 1024;
 const MAX_FRAME_SIZE_LIMIT: usize = 16_777_215;
@@ -260,6 +261,7 @@ struct PeerSettings {
   initial_window_size_changed: bool,
   max_frame_size: usize,
   max_frame_size_changed: bool,
+  max_header_list_size: Option<usize>,
 }
 
 fn validate_settings_payload(payload: &[u8]) -> error::Result<PeerSettings> {
@@ -274,6 +276,7 @@ fn validate_settings_payload(payload: &[u8]) -> error::Result<PeerSettings> {
     initial_window_size_changed: false,
     max_frame_size: DEFAULT_MAX_FRAME_SIZE,
     max_frame_size_changed: false,
+    max_header_list_size: None,
   };
   for setting in payload.chunks_exact(6) {
     let identifier = u16::from_be_bytes([setting[0], setting[1]]);
@@ -307,6 +310,7 @@ fn validate_settings_payload(payload: &[u8]) -> error::Result<PeerSettings> {
         settings.max_frame_size = value;
         settings.max_frame_size_changed = true;
       }
+      SETTING_MAX_HEADER_LIST_SIZE => settings.max_header_list_size = Some(value as usize),
       _ => {}
     }
   }
@@ -349,6 +353,13 @@ fn write_request(
   );
   let regular_header_fields = regular_headers(request.header());
   let trailer_fields = request_trailer_fields(request);
+  enforce_peer_header_list_size(
+    request,
+    url,
+    &regular_header_fields,
+    &trailer_fields,
+    peer_settings,
+  )?;
   let mut dynamic_field_plan = Vec::new();
   dynamic_field_plan.extend(regular_header_fields.iter().cloned());
   dynamic_field_plan.extend(trailer_fields.iter().cloned());
@@ -403,6 +414,46 @@ fn write_request(
     )?;
   }
   stream.flush().map_err(error::request).map(|()| None)
+}
+
+fn enforce_peer_header_list_size(
+  request: &RawRequest<'_>,
+  url: &Url,
+  regular_header_fields: &[(String, String)],
+  trailer_fields: &[(String, String)],
+  peer_settings: PeerSettings,
+) -> error::Result<()> {
+  let Some(max_header_list_size) = peer_settings.max_header_list_size else {
+    return Ok(());
+  };
+
+  let mut size = 0usize;
+  size = add_header_list_field_size(size, ":method", request.origin().method())?;
+  size = add_header_list_field_size(size, ":scheme", url.scheme())?;
+  size = add_header_list_field_size(size, ":path", &request_target(url))?;
+  size = add_header_list_field_size(size, ":authority", &authority(url)?)?;
+  for (name, value) in regular_header_fields {
+    size = add_header_list_field_size(size, name, value)?;
+  }
+  for (name, value) in trailer_fields {
+    validate_request_trailer_field(name, value)?;
+    size = add_header_list_field_size(size, name, value)?;
+  }
+
+  if size > max_header_list_size {
+    return Err(error::builder_with_message(
+      "HTTP/2 peer SETTINGS_MAX_HEADER_LIST_SIZE exceeded by request metadata",
+    ));
+  }
+  Ok(())
+}
+
+fn add_header_list_field_size(size: usize, name: &str, value: &str) -> error::Result<usize> {
+  size
+    .checked_add(name.len())
+    .and_then(|size| size.checked_add(value.len()))
+    .and_then(|size| size.checked_add(32))
+    .ok_or_else(|| error::builder_with_message("HTTP/2 request header list size overflow"))
 }
 
 fn write_header_block_frames(
