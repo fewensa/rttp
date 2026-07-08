@@ -54,15 +54,17 @@ head/body parsing, handles `HEAD` without writing a response body, honors
 writes response body framing and response trailers consistently, and accepts
 `Expect: 100-continue`. On the same socket2 listener, the accept path detects
 the HTTP/2 client preface and dispatches prior-knowledge h2c requests to a
-minimal single-stream handler. Incoming padded HEADERS, DATA, and trailer
-frames are accepted without exposing padding bytes to handlers, and HPACK
-static Huffman strings, request dynamic table entries, and large header blocks
-are carried with CONTINUATION frames. The minimal h2c path supports
-conservative DATA flow-control for single-stream prior-knowledge use.
+minimal bounded handler. Incoming padded HEADERS, DATA, and trailer frames are
+accepted without exposing padding bytes to handlers, HPACK static Huffman
+strings, request dynamic table entries, and large header blocks are carried
+with CONTINUATION frames, and multiple prior-knowledge h2c request streams may
+be open on one connection up to the caller's bounded `serve_requests` loop.
+Responses are still written synchronously as requests complete. The minimal
+h2c path supports conservative DATA flow-control for prior-knowledge use.
 
 The server is intentionally not a full RFC-covering web server and still does
 not implement server TLS, TLS ALPN, proxy h2, full HTTP/2 features such as
-multiplexing and priority scheduling, or async accept loops.
+unbounded multiplexing and priority scheduling, or async accept loops.
 
 ## Client feature
 

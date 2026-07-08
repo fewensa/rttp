@@ -2296,6 +2296,61 @@ fn http2_feature_socket2_interleaved_request_data_and_trailers_stay_per_stream()
 }
 
 #[test]
+fn http2_feature_socket2_bounded_h2c_multiplexing_stops_at_request_limit() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(1, |request| {
+        tx.send(request.target().to_string())
+          .expect("send parsed bounded h2 request");
+        HttpResponse::ok(format!("served {}", request.target()))
+      })
+      .expect("serve bounded h2 request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set client read timeout");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &h2_post_headers(b"/pending", addr.to_string().as_bytes()),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    3,
+    &h2_get_headers(b"/ready", addr.to_string().as_bytes()),
+  );
+  stream.flush().expect("flush bounded h2 requests");
+
+  assert_eq!(vec![3], read_h2_end_stream_data_streams(&mut stream, 1, 8));
+  assert_eq!(
+    "/ready",
+    rx.recv().expect("receive bounded h2 request target")
+  );
+
+  drop(stream);
+  handle.join().expect("server thread");
+  assert!(
+    rx.try_recv().is_err(),
+    "pending stream must not be dispatched after request limit"
+  );
+}
+
+#[test]
 fn http2_feature_socket2_request_headers_with_priority_reach_server_without_priority_metadata() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
