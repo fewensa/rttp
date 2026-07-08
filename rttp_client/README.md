@@ -98,13 +98,15 @@ response cancellation, while malformed reset frames are rejected
 deterministically. RTTP does not expose a public cancellation callback API or
 retry the request automatically. `CONNECT`, RFC 8441 `:protocol` extended
 CONNECT metadata, HTTP/1.1 `Upgrade` handoff requests, and proxy tunneling are
-rejected before a client socket is opened. TLS ALPN, extension callback APIs,
-full extension negotiation, external h2 integration, proxy h2, tunnel handoff,
-connection pooling, persistent HTTP/2 session management, automatic retry,
-server push, full stream state machines, and full HTTP/2 features such as
-unbounded multiplex scheduling, general multiplexing, and priority scheduling
-are not part of that bounded prior-knowledge client path. RTTP does not expose
-a dynamic policy API for changing h2c metadata limits at runtime.
+rejected before a client socket is opened. HTTP/1.1 `CONNECT` tunnel handoff
+and `Upgrade` remain separate client handoff paths; this h2c path does not
+provide WebSocket over h2, proxy h2, tunnel handoff, persistent HTTP/2
+sessions, or full RFC 8441 support. TLS ALPN, extension callback APIs, full
+extension negotiation, external h2 integration, connection pooling, automatic
+retry, server push, full stream state machines, and full HTTP/2 features such
+as unbounded multiplex scheduling, general multiplexing, and priority
+scheduling are not part of that bounded prior-knowledge client path. RTTP does
+not expose a dynamic policy API for changing h2c metadata limits at runtime.
 
 ## Examples
 
