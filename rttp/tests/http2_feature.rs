@@ -942,6 +942,110 @@ fn cross_crate_h2c_server_graceful_shutdown_reports_last_completed_stream() {
 }
 
 #[test]
+fn cross_crate_h2c_server_goaway_rejects_new_streams_and_drains_accepted_streams() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        tx.send(request.target().to_string())
+          .expect("send graceful h2 request target");
+        HttpResponse::ok(format!("served {}", request.target()))
+      })
+      .expect("serve graceful h2 requests");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &h2_post_headers(b"/accepted-inflight", addr.to_string().as_bytes()),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    3,
+    &h2_get_headers(b"/accepted-ready", addr.to_string().as_bytes()),
+  );
+  stream.flush().expect("flush accepted h2 streams");
+
+  let mut completed_streams = Vec::new();
+  let shutdown = loop {
+    let frame = read_h2_frame(&mut stream);
+    if frame.frame_type == H2_FRAME_DATA && frame.flags & H2_FLAG_END_STREAM == H2_FLAG_END_STREAM {
+      completed_streams.push(frame.stream_id);
+    }
+    if frame.frame_type == H2_FRAME_GOAWAY {
+      break frame;
+    }
+  };
+  assert_eq!(0, shutdown.flags);
+  assert_eq!(0, shutdown.stream_id);
+  assert_eq!(8, shutdown.payload.len());
+  assert_eq!(
+    3,
+    u32::from_be_bytes(shutdown.payload[0..4].try_into().unwrap())
+  );
+  assert_eq!(
+    0,
+    u32::from_be_bytes(shutdown.payload[4..8].try_into().unwrap())
+  );
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    5,
+    &h2_get_headers(b"/rejected-after-goaway", addr.to_string().as_bytes()),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_DATA,
+    H2_FLAG_END_STREAM,
+    1,
+    b"accepted body",
+  );
+  stream
+    .flush()
+    .expect("flush rejected and in-flight h2 streams");
+
+  while !(completed_streams.contains(&1) && completed_streams.contains(&3)) {
+    let frame = read_h2_frame(&mut stream);
+    if frame.frame_type == H2_FRAME_DATA && frame.flags & H2_FLAG_END_STREAM == H2_FLAG_END_STREAM {
+      completed_streams.push(frame.stream_id);
+    }
+  }
+
+  assert!(completed_streams.contains(&1));
+  assert!(completed_streams.contains(&3));
+  handle.join().expect("server thread");
+  assert_eq!(
+    "/accepted-ready",
+    rx.recv().expect("receive ready h2 request target")
+  );
+  assert_eq!(
+    "/accepted-inflight",
+    rx.recv().expect("receive in-flight h2 request target")
+  );
+  assert!(
+    rx.try_recv().is_err(),
+    "new streams after GOAWAY must not be dispatched"
+  );
+}
+
+#[test]
 fn cross_crate_h2c_prior_knowledge_client_remains_single_use_after_shutdown() {
   let (addr, handle) = spawn_goaway_matrix_peer([0, 0, 0, 1, 0, 0, 0, 0], true);
   let mut client = rttp::Http::client();

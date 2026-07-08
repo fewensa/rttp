@@ -1289,6 +1289,9 @@ fn server_preserves_http2_request_frames_received_while_response_is_flow_control
   assert_eq!(b"fghij", second_data.payload.as_slice());
   assert_eq!(H2_FLAG_END_STREAM, second_data.flags & H2_FLAG_END_STREAM);
 
+  let goaway = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(3, h2_goaway_last_stream_id(&goaway));
+
   let queued_response_headers = read_h2_frame_skipping_window_updates(&mut stream);
   assert_eq!(H2_FRAME_HEADERS, queued_response_headers.frame_type);
   assert_eq!(3, queued_response_headers.stream_id);
@@ -1457,6 +1460,9 @@ fn server_applies_http2_window_update_to_other_stream_while_response_is_blocked(
   assert_eq!(1, blocked_body.stream_id);
   assert_eq!(b"aa", blocked_body.payload.as_slice());
 
+  let goaway = read_h2_frame(&mut stream);
+  assert_eq!(3, h2_goaway_last_stream_id(&goaway));
+
   let other_headers = read_h2_frame(&mut stream);
   assert_eq!(H2_FRAME_HEADERS, other_headers.frame_type);
   assert_eq!(3, other_headers.stream_id);
@@ -1536,6 +1542,9 @@ fn server_applies_http2_initial_window_settings_to_all_streams_while_response_is
   assert_eq!(H2_FRAME_DATA, blocked_body.frame_type);
   assert_eq!(1, blocked_body.stream_id);
   assert_eq!(b"aa", blocked_body.payload.as_slice());
+
+  let goaway = read_h2_frame(&mut stream);
+  assert_eq!(3, h2_goaway_last_stream_id(&goaway));
 
   let other_headers = read_h2_frame(&mut stream);
   assert_eq!(H2_FRAME_HEADERS, other_headers.frame_type);
