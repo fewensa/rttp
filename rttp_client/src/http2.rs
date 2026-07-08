@@ -140,7 +140,8 @@ impl<'a> PriorKnowledgeClient<'a> {
 
     let mut stream = connect_tcp_stream(addr(&url)?, self.request.origin().config())?;
     write_connection_preface(&mut stream)?;
-    let peer_settings = read_settings_and_ack(&mut stream)?;
+    let mut peer_settings = read_settings_and_ack(&mut stream)?;
+    reject_goaway_before_opening_request_stream(&mut stream, &mut peer_settings)?;
     let response = match write_request(
       &mut stream,
       &self.request,
@@ -224,6 +225,114 @@ where
   })))
 }
 
+fn reject_goaway_before_opening_request_stream(
+  stream: &mut TcpStream,
+  peer_settings: &mut PeerSettings,
+) -> error::Result<()> {
+  while pending_frame_available(stream)? {
+    let frame = read_frame(stream)?;
+    match (frame.frame_type, frame.stream_id) {
+      (FRAME_GOAWAY, _) => {
+        if goaway_last_stream_id(&frame)? < STREAM_ID {
+          return Err(error::request(io::Error::new(
+            io::ErrorKind::ConnectionAborted,
+            "HTTP/2 connection received GOAWAY before opening request stream; no new streams may be created on this connection",
+          )));
+        }
+      }
+      (FRAME_SETTINGS, _) => {
+        validate_settings_frame(&frame)?;
+        if frame.flags & FLAG_ACK == 0 {
+          apply_settings_before_opening_request(peer_settings, &frame.payload)?;
+          write_frame(stream, FRAME_SETTINGS, FLAG_ACK, 0, &[])?;
+          stream.flush().map_err(error::request)?;
+        }
+      }
+      (FRAME_PING, 0) => {
+        if frame.payload.len() != 8 {
+          return Err(error::bad_response("invalid HTTP/2 PING frame"));
+        }
+        if frame.flags & FLAG_ACK == 0 {
+          write_frame(stream, FRAME_PING, FLAG_ACK, 0, &frame.payload)?;
+          stream.flush().map_err(error::request)?;
+        }
+      }
+      (FRAME_PING, _) => {
+        return Err(error::bad_response("invalid HTTP/2 PING frame"));
+      }
+      (FRAME_WINDOW_UPDATE, _) => {
+        window_update_increment(&frame)?;
+      }
+      (FRAME_PRIORITY, _) => {
+        validate_priority_frame(&frame)?;
+      }
+      (FRAME_PUSH_PROMISE, _) => {
+        reject_push_promise_frame(&frame)?;
+      }
+      (FRAME_RST_STREAM, _) => {
+        rst_stream_error_code(&frame)?;
+      }
+      (FRAME_CONTINUATION, _) => {
+        return Err(error::bad_response(
+          "unexpected HTTP/2 CONTINUATION frame without header block",
+        ));
+      }
+      (_, 0) => {}
+      _ => {
+        return Err(error::bad_response(
+          "HTTP/2 peer sent stream frame before request stream was opened",
+        ));
+      }
+    }
+  }
+  Ok(())
+}
+
+fn apply_settings_before_opening_request(
+  peer_settings: &mut PeerSettings,
+  payload: &[u8],
+) -> error::Result<()> {
+  let settings = validate_settings_payload(payload)?;
+  if settings.header_table_size_changed {
+    peer_settings.header_table_size = settings.header_table_size;
+  }
+  if settings.max_concurrent_streams_changed {
+    peer_settings.max_concurrent_streams = settings.max_concurrent_streams;
+  }
+  if settings.initial_window_size_changed {
+    peer_settings.initial_window_size = settings.initial_window_size;
+    peer_settings.initial_window_size_changed = true;
+  }
+  if settings.max_frame_size_changed {
+    peer_settings.max_frame_size = settings.max_frame_size;
+    peer_settings.max_frame_size_changed = true;
+  }
+  if settings.max_header_list_size.is_some() {
+    peer_settings.max_header_list_size = settings.max_header_list_size;
+  }
+  Ok(())
+}
+
+fn pending_frame_available(stream: &mut TcpStream) -> error::Result<bool> {
+  stream.set_nonblocking(true).map_err(error::request)?;
+  let mut byte = [0];
+  let peeked = loop {
+    match stream.peek(&mut byte) {
+      Ok(0) => break Ok(false),
+      Ok(_) => break Ok(true),
+      Err(err) if err.kind() == io::ErrorKind::WouldBlock => break Ok(false),
+      Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+      Err(err) => break Err(error::response(err)),
+    }
+  };
+  let restore_result = stream.set_nonblocking(false).map_err(error::request);
+  match (peeked, restore_result) {
+    (Ok(available), Ok(())) => Ok(available),
+    (Err(err), Ok(())) => Err(err),
+    (_, Err(err)) => Err(err),
+  }
+}
+
 fn timeout_duration(name: &'static str, millis: u64) -> error::Result<Duration> {
   if millis == 0 {
     return Err(error::request(io::Error::new(
@@ -269,7 +378,9 @@ fn read_settings_and_ack(stream: &mut TcpStream) -> error::Result<PeerSettings> 
 #[derive(Clone, Copy)]
 struct PeerSettings {
   header_table_size: usize,
+  header_table_size_changed: bool,
   max_concurrent_streams: Option<u32>,
+  max_concurrent_streams_changed: bool,
   initial_window_size: u32,
   initial_window_size_changed: bool,
   max_frame_size: usize,
@@ -284,7 +395,9 @@ fn validate_settings_payload(payload: &[u8]) -> error::Result<PeerSettings> {
 
   let mut settings = PeerSettings {
     header_table_size: DEFAULT_HPACK_DYNAMIC_TABLE_SIZE,
+    header_table_size_changed: false,
     max_concurrent_streams: None,
+    max_concurrent_streams_changed: false,
     initial_window_size: DEFAULT_INITIAL_WINDOW_SIZE as u32,
     initial_window_size_changed: false,
     max_frame_size: DEFAULT_MAX_FRAME_SIZE,
@@ -295,7 +408,10 @@ fn validate_settings_payload(payload: &[u8]) -> error::Result<PeerSettings> {
     let identifier = u16::from_be_bytes([setting[0], setting[1]]);
     let value = u32::from_be_bytes([setting[2], setting[3], setting[4], setting[5]]);
     match identifier {
-      SETTING_HEADER_TABLE_SIZE => settings.header_table_size = value as usize,
+      SETTING_HEADER_TABLE_SIZE => {
+        settings.header_table_size = value as usize;
+        settings.header_table_size_changed = true;
+      }
       SETTING_ENABLE_PUSH => {
         if value > 1 {
           return Err(error::bad_response(
@@ -303,7 +419,10 @@ fn validate_settings_payload(payload: &[u8]) -> error::Result<PeerSettings> {
           ));
         }
       }
-      SETTING_MAX_CONCURRENT_STREAMS => settings.max_concurrent_streams = Some(value),
+      SETTING_MAX_CONCURRENT_STREAMS => {
+        settings.max_concurrent_streams = Some(value);
+        settings.max_concurrent_streams_changed = true;
+      }
       SETTING_INITIAL_WINDOW_SIZE => {
         if value > MAX_INITIAL_WINDOW_SIZE {
           return Err(error::bad_response(
