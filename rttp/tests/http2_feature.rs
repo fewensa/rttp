@@ -1134,6 +1134,54 @@ fn rttp_client_delete_prior_knowledge_interoperates_with_socket2_server() {
 }
 
 #[test]
+fn rttp_client_trace_prior_knowledge_interoperates_with_socket2_server() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.version().to_string(),
+          request.method().to_string(),
+          request.target().to_string(),
+          request.body().to_vec(),
+        ))
+        .expect("send captured TRACE request");
+        HttpResponse::ok("traced by rttp server").header("X-Trace-Handled", "socket2-h2c")
+      })
+      .expect("serve rttp_client h2 TRACE request");
+  });
+
+  let response = HttpClient::new()
+    .trace()
+    .url(format!("http://{}/matrix/trace?loopback=true", addr))
+    .emit_http2_prior_knowledge()
+    .expect("rttp_client TRACE h2 response");
+
+  let (request_version, request_method, request_target, request_body) = rx
+    .recv_timeout(Duration::from_secs(2))
+    .expect("receive captured TRACE request");
+  assert_eq!("HTTP/2", request_version);
+  assert_eq!("TRACE", request_method);
+  assert_eq!("/matrix/trace?loopback=true", request_target);
+  assert!(request_body.is_empty());
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(200, response.code());
+  assert_eq!(
+    Some(&"socket2-h2c".to_string()),
+    response.header_value("x-trace-handled")
+  );
+  assert_eq!("traced by rttp server", response.body().string().unwrap());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn wrapper_http2_prior_knowledge_client_acks_peer_ping_before_response() {
   let (addr, handle) = spawn_h2_peer_sending_ping_before_response();
 
