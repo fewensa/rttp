@@ -36,7 +36,7 @@ available through `Response::trailers`, `Response::trailer`, and
 | Upgrade and tunnel handoff | `CONNECT` returns the tunnel socket after a successful `200`; `upgrade()` returns the socket after `101 Switching Protocols` and skips interim `1xx` responses | Upgraded protocols are handed to the caller and are not parsed by `rttp_client` |
 | Redirects | Auto-redirect covers 301, 302, 303, 307, and 308 method/body behavior, relative and absolute `Location` resolution, same- and cross-authority header handling, loop detection, and redirect bounds | Redirects are HTTP client behavior, not a browser policy implementation |
 | Trailers | Chunked response trailers are exposed for blocking and async APIs; streaming chunked uploads can send declared request trailers | Forbidden framing/routing trailer fields are rejected |
-| Prior-knowledge h2c | With `http2`, direct `socket2` h2c sends GET, HEAD, bodyless DELETE, OPTIONS, or TRACE, and buffered POST, PUT, or PATCH requests, suppresses HEAD response bodies, acknowledges valid PING frames with matching opaque data, DATA bodies, trailers, HPACK static Huffman strings, dynamic entries within peer settings, large header blocks, padded incoming frames, `GOAWAY` shutdown boundaries, PRIORITY metadata validation without scheduling, and conservative DATA flow control | `CONNECT` is rejected deterministically before opening a client socket, and `PUSH_PROMISE`/server push is rejected instead of managed; bounded prior-knowledge h2c only, with no TLS ALPN, external h2 integration, proxy tunneling to h2, proxy h2, tunnel handoff, connection pooling, persistent HTTP/2 session management, automatic retry, server push, unbounded multiplex scheduling, general multiplexing, priority scheduling, or request bodies for GET, HEAD, DELETE, OPTIONS, or TRACE |
+| Prior-knowledge h2c | With `http2`, direct `socket2` h2c sends GET, HEAD, bodyless DELETE, OPTIONS, or TRACE, and buffered POST, PUT, or PATCH requests, suppresses HEAD response bodies, acknowledges valid PING frames with matching opaque data, DATA bodies, trailers, HPACK static Huffman strings, dynamic entries within peer settings, large header blocks, padded incoming frames, `GOAWAY` shutdown boundaries, PRIORITY metadata validation without scheduling, HTTP/2-allowed unknown/extension frame ignoring inside this bounded path, reserved stream-id high-bit normalization, and conservative DATA flow control | `CONNECT` is rejected deterministically before opening a client socket, and `PUSH_PROMISE`/server push is rejected instead of managed; bounded prior-knowledge h2c only, with no extension callback API, full extension negotiation, TLS ALPN, external h2 integration, proxy tunneling to h2, proxy h2, tunnel handoff, connection pooling, persistent HTTP/2 session management, automatic retry, server push, unbounded multiplex scheduling, general multiplexing, priority scheduling, or request bodies for GET, HEAD, DELETE, OPTIONS, or TRACE |
 
 With the `http2` feature enabled, `emit_http2_prior_knowledge` sends a bounded
 prior-knowledge h2c request over a direct socket2 TCP connection. It supports
@@ -55,7 +55,13 @@ without exposing padding bytes. Valid response PRIORITY frames and HEADERS
 priority fields are validated and ignored as metadata; malformed priority
 metadata is rejected, and no priority scheduling is performed. Valid PING
 frames are acknowledged with PING ACK frames that carry the same opaque 8-byte
-data. Server push is outside this bounded client path: incoming
+data. Unknown frame types, including extension frames, are ignored only after
+the prior-knowledge h2c handshake in this bounded direct-client path where
+HTTP/2 permits that behavior; RTTP does not expose extension callbacks or
+perform full extension negotiation. Reserved stream identifier high bits are
+masked when frames are parsed or written, which normalizes wire framing but
+does not add broader multiplex scheduling or persistent session management.
+Server push is outside this bounded client path: incoming
 `PUSH_PROMISE` frames are rejected deterministically instead of creating or
 tracking push state. HTTP/1.1 `CONNECT` tunnel handoff remains a separate
 client path;
@@ -63,11 +69,12 @@ prior-knowledge h2c `GOAWAY` is treated as a bounded shutdown signal: a
 response already completed before `GOAWAY` remains usable, an active stream
 continues only when the peer's `last-stream-id` includes it, and a lower
 boundary rejects the response deterministically. `CONNECT` and proxy tunneling
-are rejected before a client socket is opened. TLS ALPN, external h2
-integration, proxy h2, tunnel handoff, connection pooling, persistent HTTP/2
-session management, automatic retry, server push, and full HTTP/2 features
-such as unbounded multiplex scheduling, general multiplexing, and priority
-scheduling are not part of that bounded prior-knowledge client path.
+are rejected before a client socket is opened. TLS ALPN, extension callback
+APIs, full extension negotiation, external h2 integration, proxy h2, tunnel
+handoff, connection pooling, persistent HTTP/2 session management, automatic
+retry, server push, and full HTTP/2 features such as unbounded multiplex
+scheduling, general multiplexing, and priority scheduling are not part of that
+bounded prior-knowledge client path.
 
 ```rust,no_run
 use rttp_client::HttpClient;
@@ -141,6 +148,13 @@ ignored as metadata; malformed priority metadata is rejected, and request or
 response ordering does not use priority scheduling. Valid PING frames on
 stream 0 are acknowledged with PING ACK frames that carry the same opaque
 8-byte data.
+Unknown frame types, including extension frames, are ignored only after the
+HTTP/2 preface is accepted in this bounded prior-knowledge h2c server path
+where HTTP/2 permits that behavior; RTTP does not expose an extension callback
+API or negotiate extensions. Reserved stream identifier high bits are masked
+when frames are parsed or written, which normalizes frame identifiers without
+adding unbounded multiplexing, session management, or external h2-stack
+support.
 Server push is outside this bounded server path: inbound `PUSH_PROMISE` frames
 are rejected deterministically before handler dispatch instead of attempting
 push state management.
@@ -148,11 +162,12 @@ When the bounded prior-knowledge h2c server loop finishes, it sends `GOAWAY`
 with the last completed stream id so clients have a deterministic shutdown
 boundary for already processed streams.
 The prior-knowledge h2c path does not share the HTTP/1.1 `CONNECT` handoff
-path: h2c `CONNECT` is rejected before handler dispatch. TLS ALPN, external h2
-integration, proxy h2, tunnel handoff, connection pooling, persistent HTTP/2
-session management, and full HTTP/2 features such as unbounded multiplexing,
-unbounded multiplex scheduling, server push, and priority scheduling remain
-outside this bounded prior-knowledge server path.
+path: h2c `CONNECT` is rejected before handler dispatch. TLS ALPN, extension
+callback APIs, full extension negotiation, external h2 integration, proxy h2,
+tunnel handoff, connection pooling, persistent HTTP/2 session management, and
+full HTTP/2 features such as unbounded multiplexing, unbounded multiplex
+scheduling, server push, and priority scheduling remain outside this bounded
+prior-knowledge server path.
 
 It is not a full RFC-covering web server and still does not implement server
 TLS or async accept loops.
@@ -166,4 +181,4 @@ TLS or async accept loops.
 | HTTP/1.1 response framing | Automatic `Content-Length`, explicit chunked responses, bodyless `HEAD`, `101`, `204`, and `304`, response trailers after the terminating chunk | No server TLS |
 | Upgrade and tunnel targets | `CONNECT` authority-form requests are accepted as HTTP requests; `HttpResponse::upgrade` can hand an upgraded socket to caller code after a matching request | The server does not implement the upgraded protocol after handoff |
 | Trailers | Chunked request trailers are preserved on `Request`; malformed, oversized, forbidden, and pseudo-header trailers are rejected; response trailers can be serialized for chunked responses | Trailer names that affect framing or routing are rejected |
-| Prior-knowledge h2c | The same `socket2` listener detects the HTTP/2 preface, validates SETTINGS, serves bounded prior-knowledge streams including bodyless DELETE, OPTIONS, and TRACE, handles HEAD without response DATA, acknowledges valid PING frames with matching opaque data, accepts padded HEADERS/DATA/trailers without exposing padding, handles HPACK Huffman/dynamic fields and CONTINUATION blocks, emits `GOAWAY` with the last completed stream id at bounded shutdown, validates and ignores valid PRIORITY metadata, and applies conservative DATA flow control | `CONNECT` and `PUSH_PROMISE` are rejected deterministically before handler dispatch; bounded prior-knowledge h2c only, with no TLS ALPN, external h2 integration, proxy h2, tunnel handoff, connection pooling, persistent HTTP/2 session management, server push, unbounded multiplexing, unbounded multiplex scheduling, priority scheduling, or full HTTP/2 server feature set |
+| Prior-knowledge h2c | The same `socket2` listener detects the HTTP/2 preface, validates SETTINGS, serves bounded prior-knowledge streams including bodyless DELETE, OPTIONS, and TRACE, handles HEAD without response DATA, acknowledges valid PING frames with matching opaque data, accepts padded HEADERS/DATA/trailers without exposing padding, handles HPACK Huffman/dynamic fields and CONTINUATION blocks, emits `GOAWAY` with the last completed stream id at bounded shutdown, validates and ignores valid PRIORITY metadata, ignores HTTP/2-allowed unknown/extension frames inside this bounded path, normalizes reserved stream-id high bits, and applies conservative DATA flow control | `CONNECT` and `PUSH_PROMISE` are rejected deterministically before handler dispatch; bounded prior-knowledge h2c only, with no extension callback API, full extension negotiation, TLS ALPN, external h2 integration, proxy h2, tunnel handoff, connection pooling, persistent HTTP/2 session management, server push, unbounded multiplexing, unbounded multiplex scheduling, priority scheduling, or full HTTP/2 server feature set |
