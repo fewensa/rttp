@@ -796,6 +796,7 @@ fn handle_settings_while_sending(
     }
   }
   if settings.max_frame_size_changed {
+    peer_settings.max_frame_size = settings.max_frame_size;
     *current_max_frame_size = settings.max_frame_size;
   }
   if settings.max_header_list_size.is_some() {
