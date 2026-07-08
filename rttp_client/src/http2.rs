@@ -32,6 +32,7 @@ const FLAG_PRIORITY: u8 = 0x20;
 const STREAM_ID: u32 = 1;
 const SETTING_HEADER_TABLE_SIZE: u16 = 0x1;
 const SETTING_ENABLE_PUSH: u16 = 0x2;
+const SETTING_MAX_CONCURRENT_STREAMS: u16 = 0x3;
 const SETTING_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const SETTING_MAX_FRAME_SIZE: u16 = 0x5;
 const DEFAULT_INITIAL_WINDOW_SIZE: i64 = 65_535;
@@ -254,6 +255,7 @@ fn read_settings_and_ack(stream: &mut TcpStream) -> error::Result<PeerSettings> 
 #[derive(Clone, Copy)]
 struct PeerSettings {
   header_table_size: usize,
+  max_concurrent_streams: Option<u32>,
   initial_window_size: u32,
   initial_window_size_changed: bool,
   max_frame_size: usize,
@@ -267,6 +269,7 @@ fn validate_settings_payload(payload: &[u8]) -> error::Result<PeerSettings> {
 
   let mut settings = PeerSettings {
     header_table_size: DEFAULT_HPACK_DYNAMIC_TABLE_SIZE,
+    max_concurrent_streams: None,
     initial_window_size: DEFAULT_INITIAL_WINDOW_SIZE as u32,
     initial_window_size_changed: false,
     max_frame_size: DEFAULT_MAX_FRAME_SIZE,
@@ -284,6 +287,7 @@ fn validate_settings_payload(payload: &[u8]) -> error::Result<PeerSettings> {
           ));
         }
       }
+      SETTING_MAX_CONCURRENT_STREAMS => settings.max_concurrent_streams = Some(value),
       SETTING_INITIAL_WINDOW_SIZE => {
         if value > MAX_INITIAL_WINDOW_SIZE {
           return Err(error::bad_response(
@@ -332,6 +336,12 @@ fn write_request(
   response_url: RoUrl,
   peer_settings: PeerSettings,
 ) -> error::Result<Option<Response>> {
+  if peer_settings.max_concurrent_streams == Some(0) {
+    return Err(error::bad_response(
+      "HTTP/2 peer SETTINGS_MAX_CONCURRENT_STREAMS forbids opening a request stream",
+    ));
+  }
+
   let mut hpack = RequestHpackEncoder::new(
     peer_settings
       .header_table_size
