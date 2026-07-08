@@ -865,9 +865,58 @@ fn encode_literal_new_name_without_indexing(
 }
 
 fn encode_string(block: &mut Vec<u8>, value: &[u8]) -> error::Result<()> {
+  if let Some(encoded) = encode_huffman_string_if_smaller(value)? {
+    encode_integer(block, encoded.len(), 7, 0x80)?;
+    block.extend_from_slice(&encoded);
+    return Ok(());
+  }
+
   encode_integer(block, value.len(), 7, 0)?;
   block.extend_from_slice(value);
   Ok(())
+}
+
+fn encode_huffman_string_if_smaller(value: &[u8]) -> error::Result<Option<Vec<u8>>> {
+  let mut bit_len = 0usize;
+  for byte in value {
+    bit_len = bit_len
+      .checked_add(HPACK_HUFFMAN_CODE_LENGTHS[*byte as usize] as usize)
+      .ok_or_else(|| error::request(io::Error::other("HPACK Huffman string is too large")))?;
+  }
+
+  let encoded_len = bit_len
+    .checked_add(7)
+    .ok_or_else(|| error::request(io::Error::other("HPACK Huffman string is too large")))?
+    / 8;
+  if encoded_len >= value.len() {
+    return Ok(None);
+  }
+
+  let mut encoded = Vec::with_capacity(encoded_len);
+  let mut current = 0u8;
+  let mut current_len = 0u8;
+
+  for byte in value {
+    let code = HPACK_HUFFMAN_CODES[*byte as usize];
+    let code_len = HPACK_HUFFMAN_CODE_LENGTHS[*byte as usize];
+    for bit_offset in (0..code_len).rev() {
+      current = (current << 1) | (((code >> bit_offset) & 1) as u8);
+      current_len += 1;
+      if current_len == 8 {
+        encoded.push(current);
+        current = 0;
+        current_len = 0;
+      }
+    }
+  }
+
+  if current_len > 0 {
+    let padding_len = 8 - current_len;
+    current = (current << padding_len) | ((1u8 << padding_len) - 1);
+    encoded.push(current);
+  }
+
+  Ok(Some(encoded))
 }
 
 fn encode_integer(

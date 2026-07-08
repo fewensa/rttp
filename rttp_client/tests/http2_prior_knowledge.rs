@@ -102,9 +102,79 @@ fn prior_knowledge_get_sends_h2_handshake_and_reads_single_response_stream() {
   let request_header_block = handle.join().expect("h2 peer thread");
   assert!(request_header_block.contains(&0x82));
   assert!(request_header_block.contains(&0x86));
-  assert!(request_header_block
-    .windows(b"/hello?via=h2".len())
-    .any(|window| window == b"/hello?via=h2"));
+  assert_eq!(
+    b"/hello?via=h2",
+    find_header_value(&request_header_block, b":path")
+      .expect("request path")
+      .value
+      .as_slice()
+  );
+}
+
+#[test]
+fn prior_knowledge_request_literals_use_huffman_only_when_smaller() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+  let compressible_value = "a".repeat(24);
+  let expected_header_value = compressible_value.clone();
+  let expected_trailer_value = compressible_value.clone();
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_handshake_without_request(&mut stream);
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_HEADERS, request_headers.flags);
+    assert_eq!(1, request_headers.stream_id);
+
+    let request_body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, request_body.frame_type);
+    assert_eq!(0, request_body.flags);
+    assert_eq!(1, request_body.stream_id);
+    assert_eq!(b"huffman body", request_body.payload.as_slice());
+
+    let request_trailers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_trailers.frame_type);
+    assert_eq!(FLAG_END_HEADERS | FLAG_END_STREAM, request_trailers.flags);
+    assert_eq!(1, request_trailers.stream_id);
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"ok");
+
+    (request_headers.payload, request_trailers.payload)
+  });
+
+  let response = HttpClient::new()
+    .post()
+    .url(format!("http://{}/huffman-literals", addr))
+    .header(("X-H".to_string(), compressible_value))
+    .header(("X-R", "0"))
+    .trailer(("X-T".to_string(), expected_trailer_value.clone()))
+    .expect("configure request trailer")
+    .raw("huffman body")
+    .emit_http2_prior_knowledge()
+    .expect("h2 POST response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("ok", response.body().string().unwrap());
+
+  let (request_header_block, request_trailer_block) = handle.join().expect("h2 peer thread");
+  let encoded_header =
+    find_literal_new_name_value(&request_header_block, b"x-h").expect("huffman request header");
+  assert!(encoded_header.huffman);
+  assert_eq!(expected_header_value.as_bytes(), encoded_header.value);
+
+  let raw_header =
+    find_literal_new_name_value(&request_header_block, b"x-r").expect("raw request header");
+  assert!(!raw_header.huffman);
+  assert_eq!(b"0", raw_header.value.as_slice());
+
+  let encoded_trailer =
+    find_literal_new_name_value(&request_trailer_block, b"x-t").expect("huffman request trailer");
+  assert!(encoded_trailer.huffman);
+  assert_eq!(expected_trailer_value.as_bytes(), encoded_trailer.value);
 }
 
 #[test]
@@ -149,27 +219,34 @@ fn prior_knowledge_post_sends_headers_then_body_data_frame() {
 
   let request_header_block = handle.join().expect("h2 peer thread");
   assert!(request_header_block.contains(&0x83));
-  assert!(request_header_block
-    .windows(b"/submit".len())
-    .any(|window| window == b"/submit"));
-  assert!(request_header_block
-    .windows(b"content-type".len())
-    .any(|window| window == b"content-type"));
-  assert!(request_header_block
-    .windows(b"application/json".len())
-    .any(|window| window == b"application/json"));
-  assert!(request_header_block
-    .windows(b"content-length".len())
-    .any(|window| window == b"content-length"));
-  assert!(request_header_block
-    .windows(b"11".len())
-    .any(|window| window == b"11"));
-  assert!(request_header_block
-    .windows(b"x-trace".len())
-    .any(|window| window == b"x-trace"));
-  assert!(request_header_block
-    .windows(b"abc123".len())
-    .any(|window| window == b"abc123"));
+  assert_eq!(
+    b"/submit",
+    find_header_value(&request_header_block, b":path")
+      .expect("request path")
+      .value
+      .as_slice()
+  );
+  assert_eq!(
+    b"application/json",
+    find_header_value(&request_header_block, b"content-type")
+      .expect("content-type request header")
+      .value
+      .as_slice()
+  );
+  assert_eq!(
+    b"11",
+    find_header_value(&request_header_block, b"content-length")
+      .expect("content-length request header")
+      .value
+      .as_slice()
+  );
+  assert_eq!(
+    b"abc123",
+    find_header_value(&request_header_block, b"x-trace")
+      .expect("x-trace request header")
+      .value
+      .as_slice()
+  );
 }
 
 #[test]
@@ -218,21 +295,27 @@ fn prior_knowledge_post_sends_request_trailers_after_body_data_frame() {
   assert_eq!("created", response.body().string().unwrap());
 
   let (request_header_block, request_trailer_block) = handle.join().expect("h2 peer thread");
-  assert!(request_header_block
-    .windows(b"/submit-with-tail".len())
-    .any(|window| window == b"/submit-with-tail"));
-  assert!(request_header_block
-    .windows(b"trailer".len())
-    .any(|window| window == b"trailer"));
-  assert!(request_header_block
-    .windows(b"X-Trace".len())
-    .any(|window| window == b"X-Trace"));
-  assert!(request_trailer_block
-    .windows(b"x-trace".len())
-    .any(|window| window == b"x-trace"));
-  assert!(request_trailer_block
-    .windows(b"abc".len())
-    .any(|window| window == b"abc"));
+  assert_eq!(
+    b"/submit-with-tail",
+    find_header_value(&request_header_block, b":path")
+      .expect("request path")
+      .value
+      .as_slice()
+  );
+  assert_eq!(
+    b"X-Trace",
+    find_header_value(&request_header_block, b"trailer")
+      .expect("trailer request header")
+      .value
+      .as_slice()
+  );
+  assert_eq!(
+    b"abc",
+    find_header_value(&request_trailer_block, b"x-trace")
+      .expect("request trailer")
+      .value
+      .as_slice()
+  );
 }
 
 #[test]
@@ -289,7 +372,7 @@ fn prior_knowledge_get_splits_large_request_headers_at_peer_max_frame_size() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");
   let peer_max_frame_size = 16 * 1024;
-  let large_header_value = "a".repeat(peer_max_frame_size + 512);
+  let large_header_value = "{".repeat(peer_max_frame_size + 512);
   let expected_header_value = large_header_value.clone();
 
   let handle = thread::spawn(move || {
@@ -314,12 +397,10 @@ fn prior_knowledge_get_splits_large_request_headers_at_peer_max_frame_size() {
 
     let mut header_block = request_headers.payload;
     header_block.extend_from_slice(&request_continuation.payload);
-    assert!(header_block
-      .windows(b"x-large-header".len())
-      .any(|window| window == b"x-large-header"));
-    assert!(header_block
-      .windows(expected_header_value.len())
-      .any(|window| window == expected_header_value.as_bytes()));
+    let large_header =
+      find_header_value(&header_block, b"x-large-header").expect("large request header");
+    assert!(!large_header.huffman);
+    assert_eq!(expected_header_value.as_bytes(), large_header.value);
 
     write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
     write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
@@ -339,6 +420,58 @@ fn prior_knowledge_get_splits_large_request_headers_at_peer_max_frame_size() {
 }
 
 #[test]
+fn prior_knowledge_get_splits_large_huffman_request_headers_at_peer_max_frame_size() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+  let peer_max_frame_size = 16 * 1024;
+  let large_header_value = "a".repeat(peer_max_frame_size * 3);
+  let expected_header_value = large_header_value.clone();
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_handshake_without_request_with_settings(
+      &mut stream,
+      &settings_payload(SETTING_MAX_FRAME_SIZE, peer_max_frame_size as u32),
+    );
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_STREAM, request_headers.flags);
+    assert_eq!(1, request_headers.stream_id);
+    assert_eq!(peer_max_frame_size, request_headers.payload.len());
+
+    let request_continuation = read_frame(&mut stream);
+    assert_eq!(FRAME_CONTINUATION, request_continuation.frame_type);
+    assert_eq!(FLAG_END_HEADERS, request_continuation.flags);
+    assert_eq!(1, request_continuation.stream_id);
+    assert!(request_continuation.payload.len() <= peer_max_frame_size);
+    assert!(!request_continuation.payload.is_empty());
+
+    let mut header_block = request_headers.payload;
+    header_block.extend_from_slice(&request_continuation.payload);
+    let encoded_header =
+      find_literal_new_name_value(&header_block, b"x-h").expect("large huffman request header");
+    assert!(encoded_header.huffman);
+    assert_eq!(expected_header_value.as_bytes(), encoded_header.value);
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"split");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/large-huffman-headers", addr))
+    .header(("X-H".to_string(), large_header_value))
+    .emit_http2_prior_knowledge()
+    .expect("h2 GET response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("split", response.body().string().unwrap());
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
 fn prior_knowledge_put_and_patch_send_body_data_frames() {
   for method in ["PUT", "PATCH"] {
     let request_header_block = emit_prior_knowledge_body_request(method);
@@ -346,9 +479,13 @@ fn prior_knowledge_put_and_patch_send_body_data_frames() {
     assert!(request_header_block
       .windows(method.len())
       .any(|window| window == method.as_bytes()));
-    assert!(request_header_block
-      .windows(b"/resource".len())
-      .any(|window| window == b"/resource"));
+    assert_eq!(
+      b"/resource",
+      find_header_value(&request_header_block, b":path")
+        .expect("request path")
+        .value
+        .as_slice()
+    );
   }
 }
 
@@ -1653,6 +1790,232 @@ fn h2_literal_huffman_new_name(name: &[u8], value: &[u8]) -> Vec<u8> {
   h2_huffman_string(&mut block, value);
   block
 }
+
+struct TestHpackString {
+  huffman: bool,
+  value: Vec<u8>,
+}
+
+fn find_literal_new_name_value(block: &[u8], expected_name: &[u8]) -> Option<TestHpackString> {
+  find_test_header_value(block, expected_name, true)
+}
+
+fn find_header_value(block: &[u8], expected_name: &[u8]) -> Option<TestHpackString> {
+  find_test_header_value(block, expected_name, false)
+}
+
+fn find_test_header_value(
+  block: &[u8],
+  expected_name: &[u8],
+  new_name_only: bool,
+) -> Option<TestHpackString> {
+  let mut cursor = 0;
+  while cursor < block.len() {
+    let byte = block[cursor];
+    if byte & 0x80 == 0x80 {
+      decode_test_integer(block, &mut cursor, 7);
+      continue;
+    }
+    assert_eq!(0, byte & 0x20, "dynamic table update in request block");
+
+    let name_index = decode_test_integer(block, &mut cursor, 4);
+    let name = if name_index == 0 {
+      Some(decode_test_string(block, &mut cursor))
+    } else {
+      test_static_name(name_index).map(|name| TestHpackString {
+        huffman: false,
+        value: name.to_vec(),
+      })
+    };
+    let value = decode_test_string(block, &mut cursor);
+    if (!new_name_only || name_index == 0)
+      && name
+        .as_ref()
+        .is_some_and(|name| name.value.as_slice() == expected_name)
+    {
+      return Some(value);
+    }
+  }
+  None
+}
+
+fn test_static_name(index: usize) -> Option<&'static [u8]> {
+  match index {
+    1 => Some(b":authority"),
+    2 => Some(b":method"),
+    4 => Some(b":path"),
+    _ => None,
+  }
+}
+
+fn decode_test_integer(block: &[u8], cursor: &mut usize, prefix_bits: u8) -> usize {
+  let max_prefix = (1usize << prefix_bits) - 1;
+  let mut value = (block[*cursor] as usize) & max_prefix;
+  *cursor += 1;
+  if value < max_prefix {
+    return value;
+  }
+
+  let mut shift = 0;
+  loop {
+    let byte = block[*cursor];
+    *cursor += 1;
+    value += ((byte & 0x7f) as usize) << shift;
+    if byte & 0x80 == 0 {
+      return value;
+    }
+    shift += 7;
+  }
+}
+
+fn decode_test_string(block: &[u8], cursor: &mut usize) -> TestHpackString {
+  let huffman = block[*cursor] & 0x80 == 0x80;
+  let len = decode_test_integer(block, cursor, 7);
+  let end = *cursor + len;
+  let encoded = &block[*cursor..end];
+  *cursor = end;
+  let value = if huffman {
+    decode_test_huffman_ascii_string(encoded)
+  } else {
+    encoded.to_vec()
+  };
+  TestHpackString { huffman, value }
+}
+
+fn decode_test_huffman_ascii_string(encoded: &[u8]) -> Vec<u8> {
+  let mut value = Vec::new();
+  let mut code = 0u32;
+  let mut code_len = 0u8;
+
+  for byte in encoded {
+    for bit_offset in (0..8).rev() {
+      code = (code << 1) | (((byte >> bit_offset) & 1) as u32);
+      code_len += 1;
+
+      if let Some(symbol) = test_huffman_ascii_symbol(code, code_len) {
+        value.push(symbol);
+        code = 0;
+        code_len = 0;
+      }
+    }
+  }
+
+  if code_len > 0 {
+    assert_eq!(
+      (1u32 << code_len) - 1,
+      code,
+      "invalid test HPACK Huffman padding"
+    );
+    assert!(code_len <= 7, "overlong test HPACK Huffman padding");
+  }
+
+  value
+}
+
+fn test_huffman_ascii_symbol(code: u32, code_len: u8) -> Option<u8> {
+  TEST_HPACK_HUFFMAN_ASCII
+    .iter()
+    .find_map(|&(candidate, candidate_len, symbol)| {
+      (candidate == code && candidate_len == code_len).then_some(symbol)
+    })
+}
+
+const TEST_HPACK_HUFFMAN_ASCII: &[(u32, u8, u8)] = &[
+  (0x14, 6, b' '),
+  (0x3f8, 10, b'!'),
+  (0x3f9, 10, b'"'),
+  (0xffa, 12, b'#'),
+  (0x1ff9, 13, b'$'),
+  (0x15, 6, b'%'),
+  (0xf8, 8, b'&'),
+  (0x7fa, 11, b'\''),
+  (0x3fa, 10, b'('),
+  (0x3fb, 10, b')'),
+  (0xf9, 8, b'*'),
+  (0x7fb, 11, b'+'),
+  (0xfa, 8, b','),
+  (0x16, 6, b'-'),
+  (0x17, 6, b'.'),
+  (0x18, 6, b'/'),
+  (0x0, 5, b'0'),
+  (0x1, 5, b'1'),
+  (0x2, 5, b'2'),
+  (0x19, 6, b'3'),
+  (0x1a, 6, b'4'),
+  (0x1b, 6, b'5'),
+  (0x1c, 6, b'6'),
+  (0x1d, 6, b'7'),
+  (0x1e, 6, b'8'),
+  (0x1f, 6, b'9'),
+  (0x5c, 7, b':'),
+  (0xfb, 8, b';'),
+  (0x7ffc, 15, b'<'),
+  (0x20, 6, b'='),
+  (0xffb, 12, b'>'),
+  (0x3fc, 10, b'?'),
+  (0x1ffa, 13, b'@'),
+  (0x21, 6, b'A'),
+  (0x5d, 7, b'B'),
+  (0x5e, 7, b'C'),
+  (0x5f, 7, b'D'),
+  (0x60, 7, b'E'),
+  (0x61, 7, b'F'),
+  (0x62, 7, b'G'),
+  (0x63, 7, b'H'),
+  (0x64, 7, b'I'),
+  (0x65, 7, b'J'),
+  (0x66, 7, b'K'),
+  (0x67, 7, b'L'),
+  (0x68, 7, b'M'),
+  (0x69, 7, b'N'),
+  (0x6a, 7, b'O'),
+  (0x6b, 7, b'P'),
+  (0x6c, 7, b'Q'),
+  (0x6d, 7, b'R'),
+  (0x6e, 7, b'S'),
+  (0x6f, 7, b'T'),
+  (0x70, 7, b'U'),
+  (0x71, 7, b'V'),
+  (0x72, 7, b'W'),
+  (0xfc, 8, b'X'),
+  (0x73, 7, b'Y'),
+  (0xfd, 8, b'Z'),
+  (0x1ffb, 13, b'['),
+  (0x1ffc, 13, b']'),
+  (0x3ffc, 14, b'^'),
+  (0x22, 6, b'_'),
+  (0x7ffd, 15, b'`'),
+  (0x3, 5, b'a'),
+  (0x23, 6, b'b'),
+  (0x4, 5, b'c'),
+  (0x24, 6, b'd'),
+  (0x5, 5, b'e'),
+  (0x25, 6, b'f'),
+  (0x26, 6, b'g'),
+  (0x27, 6, b'h'),
+  (0x6, 5, b'i'),
+  (0x74, 7, b'j'),
+  (0x75, 7, b'k'),
+  (0x28, 6, b'l'),
+  (0x29, 6, b'm'),
+  (0x2a, 6, b'n'),
+  (0x7, 5, b'o'),
+  (0x2b, 6, b'p'),
+  (0x76, 7, b'q'),
+  (0x2c, 6, b'r'),
+  (0x8, 5, b's'),
+  (0x9, 5, b't'),
+  (0x2d, 6, b'u'),
+  (0x77, 7, b'v'),
+  (0x78, 7, b'w'),
+  (0x79, 7, b'x'),
+  (0x7a, 7, b'y'),
+  (0x7b, 7, b'z'),
+  (0x7ffe, 15, b'{'),
+  (0x7fc, 11, b'|'),
+  (0x3ffd, 14, b'}'),
+  (0x1ffd, 13, b'~'),
+];
 
 fn h2_string(block: &mut Vec<u8>, value: &[u8]) {
   assert!(
