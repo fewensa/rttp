@@ -2049,6 +2049,8 @@ fn server_rejects_http2_prior_knowledge_connection_specific_request_headers_with
     (b"proxy-connection".as_slice(), b"keep-alive".as_slice()),
     (b"transfer-encoding".as_slice(), b"chunked".as_slice()),
     (b"upgrade".as_slice(), b"h2c".as_slice()),
+    (b"Connection".as_slice(), b"close".as_slice()),
+    (b"TE".as_slice(), b"gzip".as_slice()),
   ] {
     let mut headers = h2_get_headers(b"/forbidden-headers", b"localhost");
     headers.extend(h2_literal_new_name(name, value));
