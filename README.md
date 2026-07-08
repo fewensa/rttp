@@ -98,10 +98,10 @@ consistently, and accepts `Expect: 100-continue`. On the same socket2 listener,
 the accept path detects the HTTP/2 client preface and dispatches prior-knowledge
 h2c requests to a minimal single-stream handler. Incoming padded HEADERS, DATA,
 and trailer frames are accepted without exposing padding bytes to handlers, and
-HPACK static Huffman strings and large header blocks are carried with
-CONTINUATION frames. TLS ALPN, proxy h2, HPACK dynamic tables, and full HTTP/2
-features such as multiplexing and priority scheduling remain outside this
-server path.
+HPACK static Huffman strings, request dynamic table entries, and large header
+blocks are carried with CONTINUATION frames. TLS ALPN, proxy h2, and full
+HTTP/2 features such as multiplexing and priority scheduling remain outside
+this server path.
 
 It is not a full RFC-covering web server and still does not implement server
 TLS or async accept loops.
