@@ -1258,6 +1258,89 @@ fn prior_knowledge_post_uses_later_max_frame_size_after_send_window_resumes() {
 }
 
 #[test]
+fn prior_knowledge_post_uses_later_max_frame_size_for_request_trailers() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+  let large_trailer_value = "{".repeat(16 * 1024 + 512);
+  let expected_trailer_value = large_trailer_value.clone();
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    let mut initial_settings = settings_payload(SETTING_INITIAL_WINDOW_SIZE, 5);
+    initial_settings.extend_from_slice(&settings_payload(SETTING_MAX_FRAME_SIZE, 32_768));
+    complete_h2_handshake_without_request_with_settings(&mut stream, &initial_settings);
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_HEADERS, request_headers.flags);
+    assert_eq!(1, request_headers.stream_id);
+
+    let first_body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, first_body.frame_type);
+    assert_eq!(0, first_body.flags);
+    assert_eq!(1, first_body.stream_id);
+    assert_eq!(b"abcde", first_body.payload.as_slice());
+
+    write_frame(
+      &mut stream,
+      FRAME_SETTINGS,
+      0,
+      0,
+      &settings_payload(SETTING_MAX_FRAME_SIZE, 16_384),
+    );
+    let settings_ack = read_frame(&mut stream);
+    assert_eq!(FRAME_SETTINGS, settings_ack.frame_type);
+    assert_eq!(FLAG_ACK, settings_ack.flags);
+    assert_eq!(0, settings_ack.stream_id);
+    assert!(settings_ack.payload.is_empty());
+
+    write_frame(&mut stream, FRAME_WINDOW_UPDATE, 0, 1, &1_u32.to_be_bytes());
+
+    let final_body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, final_body.frame_type);
+    assert_eq!(0, final_body.flags);
+    assert_eq!(1, final_body.stream_id);
+    assert_eq!(b"f", final_body.payload.as_slice());
+
+    let request_trailers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_trailers.frame_type);
+    assert_eq!(FLAG_END_STREAM, request_trailers.flags);
+    assert_eq!(1, request_trailers.stream_id);
+    assert_eq!(16 * 1024, request_trailers.payload.len());
+
+    let request_trailer_continuation = read_frame(&mut stream);
+    assert_eq!(FRAME_CONTINUATION, request_trailer_continuation.frame_type);
+    assert_eq!(FLAG_END_HEADERS, request_trailer_continuation.flags);
+    assert_eq!(1, request_trailer_continuation.stream_id);
+    assert!(request_trailer_continuation.payload.len() <= 16 * 1024);
+    assert!(!request_trailer_continuation.payload.is_empty());
+
+    let mut trailer_block = request_trailers.payload;
+    trailer_block.extend_from_slice(&request_trailer_continuation.payload);
+    let large_trailer =
+      find_header_value(&trailer_block, b"x-large-trailer").expect("large request trailer");
+    assert!(!large_trailer.huffman);
+    assert_eq!(expected_trailer_value.as_bytes(), large_trailer.value);
+
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"ok");
+  });
+
+  let response = HttpClient::new()
+    .post()
+    .url(format!("http://{}/later-trailer-max-frame-size", addr))
+    .trailer(("X-Large-Trailer".to_string(), large_trailer_value))
+    .expect("configure request trailer")
+    .raw("abcdef")
+    .emit_http2_prior_knowledge()
+    .expect("h2 POST response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("ok", response.body().string().unwrap());
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
 fn prior_knowledge_get_splits_large_request_headers_at_peer_max_frame_size() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");
