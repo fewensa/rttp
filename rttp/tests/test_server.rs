@@ -39,6 +39,16 @@ fn write_h2_frame(
   stream_id: u32,
   payload: &[u8],
 ) {
+  write_raw_h2_frame(stream, frame_type, flags, stream_id & 0x7fff_ffff, payload);
+}
+
+fn write_raw_h2_frame(
+  stream: &mut TcpStream,
+  frame_type: u8,
+  flags: u8,
+  stream_id: u32,
+  payload: &[u8],
+) {
   let length = payload.len();
   let mut header = [0; 9];
   header[0] = ((length >> 16) & 0xff) as u8;
@@ -46,7 +56,7 @@ fn write_h2_frame(
   header[2] = (length & 0xff) as u8;
   header[3] = frame_type;
   header[4] = flags;
-  header[5..9].copy_from_slice(&(stream_id & 0x7fff_ffff).to_be_bytes());
+  header[5..9].copy_from_slice(&stream_id.to_be_bytes());
   stream.write_all(&header).expect("write h2 frame head");
   stream.write_all(payload).expect("write h2 frame payload");
 }
@@ -1692,6 +1702,189 @@ fn server_sends_http2_window_updates_while_consuming_large_request_body() {
 #[test]
 fn server_rejects_http2_prior_knowledge_zero_window_update_increment() {
   assert_invalid_h2_frame_without_handler(H2_FRAME_WINDOW_UPDATE, 0, 0, &0u32.to_be_bytes());
+}
+
+#[test]
+fn server_ignores_http2_prior_knowledge_unknown_connection_frames_around_bounded_streams() {
+  const H2_FRAME_UNKNOWN_EXTENSION: u8 = 0xb;
+
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        tx.send(request.target().to_string())
+          .expect("send h2 target");
+        HttpResponse::ok(format!("served {}", request.target()))
+      })
+      .expect("serve bounded h2 requests around unknown frames");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_UNKNOWN_EXTENSION,
+    0,
+    0,
+    b"connection metadata",
+  );
+  assert!(
+    rx.try_recv().is_err(),
+    "connection-level extension frame must not dispatch a request"
+  );
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_headers(b"/first-after-extension", addr.to_string().as_bytes()),
+  );
+
+  let first_headers = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, first_headers.frame_type);
+  assert_eq!(1, first_headers.stream_id);
+  let first_body = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_DATA, first_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, first_body.flags);
+  assert_eq!(1, first_body.stream_id);
+  assert_eq!(
+    b"served /first-after-extension",
+    first_body.payload.as_slice()
+  );
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_UNKNOWN_EXTENSION,
+    0,
+    0,
+    b"between streams",
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    3,
+    &h2_get_headers(b"/second-after-extension", addr.to_string().as_bytes()),
+  );
+
+  let second_headers = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, second_headers.frame_type);
+  assert_eq!(3, second_headers.stream_id);
+  let second_body = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_DATA, second_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, second_body.flags);
+  assert_eq!(3, second_body.stream_id);
+  assert_eq!(
+    b"served /second-after-extension",
+    second_body.payload.as_slice()
+  );
+
+  assert_eq!(
+    "/first-after-extension",
+    rx.recv().expect("receive first h2 target")
+  );
+  assert_eq!(
+    "/second-after-extension",
+    rx.recv().expect("receive second h2 target")
+  );
+
+  let goaway = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(3, h2_goaway_last_stream_id(&goaway));
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_ignores_http2_prior_knowledge_unknown_stream_frames_without_exposing_payload() {
+  const H2_FRAME_UNKNOWN_EXTENSION: u8 = 0xb;
+
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.body().to_vec(),
+          request.trailers().to_vec(),
+          request.trailer("x-upload-status").map(str::to_string),
+        ))
+        .expect("send parsed h2 request");
+        HttpResponse::ok("clean response")
+      })
+      .expect("serve h2 request with unknown stream frames");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &h2_post_headers(b"/upload-with-extension", addr.to_string().as_bytes()),
+  );
+  write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 1, b"visible ");
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_UNKNOWN_EXTENSION,
+    0,
+    1,
+    b"not request body",
+  );
+  write_raw_h2_frame(&mut stream, H2_FRAME_DATA, 0, 0x8000_0001, b"body");
+  write_raw_h2_frame(
+    &mut stream,
+    H2_FRAME_UNKNOWN_EXTENSION,
+    0,
+    0x8000_0001,
+    &h2_literal_new_name(b"x-hidden", b"not-a-trailer"),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_literal_new_name(b"x-upload-status", b"stored"),
+  );
+
+  let response_headers = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(H2_FLAG_END_HEADERS, response_headers.flags);
+  assert_eq!(1, response_headers.stream_id);
+
+  let response_body = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
+  assert_eq!(1, response_body.stream_id);
+  assert_eq!(b"clean response", response_body.payload.as_slice());
+
+  assert_eq!(
+    (
+      b"visible body".to_vec(),
+      vec![("x-upload-status".to_string(), "stored".to_string())],
+      Some("stored".to_string()),
+    ),
+    rx.recv().expect("receive parsed h2 request")
+  );
+
+  handle.join().expect("server thread");
 }
 
 #[test]
