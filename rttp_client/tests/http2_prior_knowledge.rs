@@ -2035,6 +2035,82 @@ fn prior_knowledge_get_continues_after_graceful_goaway_for_active_stream() {
 }
 
 #[test]
+fn prior_knowledge_get_rejects_goaway_before_response_when_active_stream_excluded() {
+  let (addr, handle) = spawn_goaway_peer(0, &[0, 0, 0, 0, 0, 0, 0, 0], Some(b"late"));
+
+  let error = HttpClient::new()
+    .get()
+    .url(format!("http://{}/goaway-before-response", addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("GOAWAY that excludes active stream must fail before response");
+
+  assert!(
+    error
+      .to_string()
+      .contains("HTTP/2 connection received GOAWAY"),
+    "unexpected error: {error}"
+  );
+  handle.join().expect("goaway peer thread");
+}
+
+#[test]
+fn prior_knowledge_get_ignores_goaway_after_complete_response() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"complete");
+    write_frame(&mut stream, FRAME_GOAWAY, 0, 0, &[0, 0, 0, 0, 0, 0, 0, 0]);
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/goaway-after-response", addr))
+    .emit_http2_prior_knowledge()
+    .expect("GOAWAY after final response data must not fail completed response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("complete", response.body().string().unwrap());
+  handle.join().expect("goaway peer thread");
+}
+
+#[test]
+fn prior_knowledge_get_rejects_malformed_goaway_frames() {
+  let (short_addr, short_handle) = spawn_goaway_peer(0, &[0, 0, 0, 0], Some(b"ignored"));
+  let short_error = HttpClient::new()
+    .get()
+    .url(format!("http://{}/short-goaway", short_addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("short GOAWAY payload must fail the response");
+  assert!(
+    short_error
+      .to_string()
+      .contains("invalid HTTP/2 GOAWAY frame"),
+    "unexpected error: {short_error}"
+  );
+  short_handle.join().expect("short goaway peer thread");
+
+  let (stream_addr, stream_handle) =
+    spawn_goaway_peer(1, &[0, 0, 0, 1, 0, 0, 0, 0], Some(b"ignored"));
+  let stream_error = HttpClient::new()
+    .get()
+    .url(format!("http://{}/stream-goaway", stream_addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("GOAWAY on a non-connection stream must fail the response");
+  assert!(
+    stream_error
+      .to_string()
+      .contains("invalid HTTP/2 GOAWAY frame"),
+    "unexpected error: {stream_error}"
+  );
+  stream_handle.join().expect("stream goaway peer thread");
+}
+
+#[test]
 fn prior_knowledge_rejects_invalid_window_update_frames() {
   let (zero_addr, zero_handle) = spawn_window_update_peer(1, &[0]);
   let zero_error = HttpClient::new()
@@ -3204,6 +3280,27 @@ fn spawn_control_frame_peer(frame_type: u8) -> (SocketAddr, thread::JoinHandle<(
       FRAME_RST_STREAM => write_frame(&mut stream, FRAME_RST_STREAM, 0, 1, &0u32.to_be_bytes()),
       FRAME_GOAWAY => write_frame(&mut stream, FRAME_GOAWAY, 0, 0, &[0, 0, 0, 0, 0, 0, 0, 0]),
       _ => unreachable!("unexpected control frame"),
+    }
+  });
+
+  (addr, handle)
+}
+
+fn spawn_goaway_peer(
+  stream_id: u32,
+  payload: &'static [u8],
+  response_body: Option<&'static [u8]>,
+) -> (SocketAddr, thread::JoinHandle<()>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+    write_frame(&mut stream, FRAME_GOAWAY, 0, stream_id, payload);
+    if let Some(body) = response_body {
+      write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+      write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, body);
     }
   });
 
