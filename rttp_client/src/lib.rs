@@ -21,6 +21,16 @@
 //! request HEADERS, DATA, and trailing HEADERS.
 //! It decodes incoming padded HEADERS, DATA, and trailer frames without
 //! exposing padding bytes, including response HPACK dynamic table entries.
+//! Peer `SETTINGS_HEADER_TABLE_SIZE` bounds outbound request dynamic indexing;
+//! a peer value of zero disables request dynamic indexing for HEADERS and
+//! trailers. Response decoding uses the locally advertised HPACK dynamic table
+//! limit, defaulting to 4,096 bytes unless
+//! `ConfigBuilder::http2_header_table_size` configures another `u32`-sized
+//! value. Incoming dynamic table size updates may shrink that decoder table,
+//! including to zero, but updates above the local advertised limit are
+//! rejected. These boundaries affect HPACK compression state only and do not
+//! change trailer validation, body framing, DATA flow control, or the
+//! single-stream h2c policy.
 //! `GOAWAY` is treated as a protocol shutdown boundary: completed responses
 //! remain usable, an active stream may finish only when the peer's
 //! `last-stream-id` includes stream 1, and pre-stream `GOAWAY` refuses the

@@ -8,19 +8,30 @@
 //! `SETTINGS_MAX_FRAME_SIZE` values from 16,384 through 16,777,215 bytes,
 //! rejects inbound frame payloads above the active local limit, and splits
 //! outbound response HEADERS, DATA, and trailing HEADERS to the active peer
-//! frame-size limit. It remains a bounded prior-knowledge server path: it can
-//! accept multiple open streams only up to the advertised active-stream
-//! allowance, uses synchronous response writes, and does not provide full
-//! multiplex scheduling, persistent HTTP/2 session management, dynamic policy
-//! APIs, extension callbacks, TLS ALPN, server push, proxy h2, tunnel handoff,
-//! or a full HTTP/2 server feature set.
+//! frame-size limit. Peer `SETTINGS_HEADER_TABLE_SIZE` values bound response
+//! dynamic indexing, and a peer value of zero keeps response HEADERS and
+//! trailers literal encoded. Request and request-trailer HPACK decoding stays
+//! bounded to the server's fixed 4,096-byte dynamic table limit; incoming
+//! dynamic table size updates may shrink that table, including to zero, but
+//! updates above 4,096 bytes are rejected. Those table-size boundaries affect
+//! HPACK compression state only, not trailer validation or request dispatch.
+//! It remains a bounded prior-knowledge server path: it can accept multiple
+//! open streams only up to the advertised active-stream allowance, uses
+//! synchronous response writes, and does not provide full multiplex scheduling,
+//! persistent HTTP/2 session management, dynamic policy APIs, extension
+//! callbacks, TLS ALPN, server push, proxy h2, tunnel handoff, or a full
+//! HTTP/2 server feature set.
 //!
 //! With the `client` or `http2` feature enabled, the wrapper exposes the
 //! `rttp_client` bounded prior-knowledge h2c client behavior. The client opens
 //! at most one stream, validates the same legal `SETTINGS_MAX_FRAME_SIZE`
 //! range, splits outbound request HEADERS, DATA, and trailing HEADERS to the
 //! peer frame-size limit, and rejects inbound oversized frames when a local
-//! `http2_max_frame_size` is configured.
+//! `http2_max_frame_size` is configured. The peer's
+//! `SETTINGS_HEADER_TABLE_SIZE` bounds request dynamic indexing, including
+//! disabling request dynamic indexing at zero. Response decoding uses the
+//! locally advertised HPACK dynamic table limit, defaulting to 4,096 bytes
+//! unless client configuration advertises another `u32`-sized value.
 
 pub struct Http {}
 

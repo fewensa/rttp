@@ -78,8 +78,17 @@ including `Connection`, `Keep-Alive`, `Proxy-Connection`, `TE`, `Trailer`,
 `Content-Encoding`, `Content-Range`, `Content-Type`, `Max-Forwards`,
 `Authorization`, `Proxy-Authenticate`, `Proxy-Authorization`, `Cookie`,
 `Set-Cookie`, and `WWW-Authenticate`. HPACK static Huffman strings, request
-dynamic table entries, and bounded large header blocks are carried with CONTINUATION
-frames. Valid
+dynamic table entries, and bounded large header blocks are carried with
+CONTINUATION frames. Peer `SETTINGS_HEADER_TABLE_SIZE` values bound response
+dynamic indexing: the server uses the peer's latest advertised table size when
+encoding response HEADERS and applies later updates before response trailers.
+A peer value of zero evicts response dynamic entries and keeps response HEADERS
+and trailers literal encoded. Inbound request and request-trailer decoding is
+bounded to the server's fixed 4,096-byte HPACK dynamic table limit; incoming
+dynamic table size updates may shrink that table, including to zero, but
+updates above 4,096 bytes are rejected. These HPACK limits affect compression
+state only and do not change `SETTINGS_MAX_HEADER_LIST_SIZE`, trailer
+validation, DATA flow control, handler dispatch, or multiplex scheduling. Valid
 prior-knowledge h2c request headers reject HTTP/1.x connection-specific fields
 before handler dispatch: `Connection`, `Keep-Alive`, `Proxy-Connection`,
 `Transfer-Encoding`, and `Upgrade`; `TE` is accepted only as `te: trailers`
@@ -150,7 +159,7 @@ push, and priority scheduling, or async accept loops.
 | HTTP/1.1 response framing | Automatic `Content-Length`, explicit chunked responses, bodyless `HEAD`, `101`, `204`, and `304`, response trailers after the terminating chunk | No server TLS |
 | Upgrade and tunnel targets | `CONNECT` authority-form requests are accepted as HTTP requests; `HttpResponse::upgrade` can hand an upgraded socket to caller code after a matching request | The server does not implement the upgraded protocol after handoff |
 | Trailers | Chunked request trailers are preserved on `Request`; malformed, oversized, forbidden, and pseudo-header trailers are rejected; response trailers can be serialized for chunked responses | Application metadata trailers are allowed; trailer names that affect connection state, routing, authentication/cookies, framing, or payload processing are rejected |
-| Prior-knowledge h2c | The same `socket2` listener detects the HTTP/2 preface, validates SETTINGS including legal `SETTINGS_MAX_FRAME_SIZE` values from 16,384 through 16,777,215 bytes, advertises the default 16,384-byte `SETTINGS_MAX_FRAME_SIZE`, rejects inbound frames above the active local limit, splits outbound HEADERS, DATA, and trailers to the active peer frame-size limit, advertises `SETTINGS_MAX_CONCURRENT_STREAMS` from the bounded active stream allowance, enforces that allowance before dispatching new streams, advertises and enforces a conservative `SETTINGS_MAX_HEADER_LIST_SIZE` for inbound request metadata, serves bounded prior-knowledge streams including bodyless DELETE, OPTIONS, and TRACE, handles HEAD without response DATA, rejects connection-specific request fields before handler dispatch, strips connection-specific response fields during h2c serialization, treats `RST_STREAM` as a bounded reset/cancellation signal for the affected stream, acknowledges valid PING frames with matching opaque data, accepts padded HEADERS/DATA/trailers without exposing padding, handles HPACK Huffman/dynamic fields and bounded CONTINUATION header blocks, emits `GOAWAY` with the last completed stream id at bounded shutdown, validates and ignores valid PRIORITY metadata, ignores HTTP/2-allowed unknown/extension frames inside this bounded path, normalizes reserved stream-id high bits, and applies conservative DATA flow control | Ordinary `CONNECT`, RFC 8441 extended `CONNECT`/`:protocol`, and `PUSH_PROMISE` are rejected deterministically before handler dispatch; HTTP/1.1 `CONNECT` and `Upgrade` remain separate handoff paths; bounded prior-knowledge h2c only, with no public cancellation callback API, no dynamic policy API, no extension callback API, full extension negotiation, TLS ALPN, external h2 integration, WebSocket over h2, proxy h2, tunnel handoff, connection pooling, persistent HTTP/2 session management, automatic retry, server push, full RFC 8441 support, full stream state machine, unbounded multiplexing, unbounded multiplex scheduling, general multiplexing, priority scheduling, or full HTTP/2 server feature set |
+| Prior-knowledge h2c | The same `socket2` listener detects the HTTP/2 preface, validates SETTINGS including legal `SETTINGS_MAX_FRAME_SIZE` values from 16,384 through 16,777,215 bytes, advertises the default 16,384-byte `SETTINGS_MAX_FRAME_SIZE`, rejects inbound frames above the active local limit, splits outbound HEADERS, DATA, and trailers to the active peer frame-size limit, advertises `SETTINGS_MAX_CONCURRENT_STREAMS` from the bounded active stream allowance, enforces that allowance before dispatching new streams, advertises and enforces a conservative `SETTINGS_MAX_HEADER_LIST_SIZE` for inbound request metadata, bounds HPACK dynamic table use with `SETTINGS_HEADER_TABLE_SIZE`, serves bounded prior-knowledge streams including bodyless DELETE, OPTIONS, and TRACE, handles HEAD without response DATA, rejects connection-specific request fields before handler dispatch, strips connection-specific response fields during h2c serialization, treats `RST_STREAM` as a bounded reset/cancellation signal for the affected stream, acknowledges valid PING frames with matching opaque data, accepts padded HEADERS/DATA/trailers without exposing padding, handles HPACK Huffman fields and bounded CONTINUATION header blocks, emits `GOAWAY` with the last completed stream id at bounded shutdown, validates and ignores valid PRIORITY metadata, ignores HTTP/2-allowed unknown/extension frames inside this bounded path, normalizes reserved stream-id high bits, and applies conservative DATA flow control | Ordinary `CONNECT`, RFC 8441 extended `CONNECT`/`:protocol`, and `PUSH_PROMISE` are rejected deterministically before handler dispatch; HTTP/1.1 `CONNECT` and `Upgrade` remain separate handoff paths; bounded prior-knowledge h2c only, with no public cancellation callback API, no dynamic policy API, no extension callback API, full extension negotiation, TLS ALPN, external h2 integration, WebSocket over h2, proxy h2, tunnel handoff, connection pooling, persistent HTTP/2 session management, automatic retry, server push, full RFC 8441 support, full stream state machine, unbounded multiplexing, unbounded multiplex scheduling, general multiplexing, priority scheduling, or full HTTP/2 server feature set |
 
 ## Client feature
 
@@ -173,14 +182,22 @@ includes rejection of request bodies for GET, HEAD, DELETE,
 OPTIONS, and TRACE, HEAD response body suppression, stripping of HTTP/1.x
 connection-specific request fields before h2c emission, rejection of
 connection-specific peer response fields, HPACK static Huffman strings, request
-dynamic entries within the peer's advertised table size, response dynamic table
-decoding, bounded large header blocks via CONTINUATION frames, padded incoming response
-frames, and conservative DATA flow-control for single-stream prior-knowledge
-use. Valid response PRIORITY
+dynamic entries within the peer's advertised `SETTINGS_HEADER_TABLE_SIZE`,
+bounded local response dynamic table decoding, bounded large header blocks via
+CONTINUATION frames, padded incoming response frames, and conservative DATA
+flow-control for single-stream prior-knowledge use. Valid response PRIORITY
 frames and HEADERS priority fields are validated and ignored as metadata;
 malformed priority metadata is rejected, and no priority scheduling is
 performed. Valid PING frames are acknowledged with PING ACK frames that carry
 the same opaque 8-byte data. Server push is outside this bounded client path.
+For client HPACK, the peer's `SETTINGS_HEADER_TABLE_SIZE` bounds outbound
+request dynamic indexing for request HEADERS and trailers, and a peer value of
+zero disables that request dynamic table. The local response decoder uses the
+default 4,096-byte table unless `ConfigBuilder::http2_header_table_size`
+configures and advertises another `u32`-sized limit; incoming response
+table-size updates may shrink the decoder table, including to zero, but
+updates above the advertised local limit are rejected. The wrapper does not add
+a public dynamic policy API for changing those limits after the h2c handshake.
 Unknown frame types, including extension frames, are ignored only after the
 prior-knowledge h2c handshake in this bounded direct-client path where HTTP/2
 permits that behavior; RTTP does not expose extension callbacks or perform
