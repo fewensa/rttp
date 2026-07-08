@@ -24,6 +24,8 @@ const H2_FLAG_END_HEADERS: u8 = 0x4;
 const H2_SETTINGS_MAX_CONCURRENT_STREAMS: u16 = 0x3;
 const H2_SETTINGS_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const H2_SETTINGS_MAX_FRAME_SIZE: u16 = 0x5;
+const H2_SETTINGS_MAX_HEADER_LIST_SIZE: u16 = 0x6;
+const H2_SERVER_MAX_HEADER_LIST_SIZE: u32 = 64 * 1024;
 const H2_ERROR_REFUSED_STREAM: u32 = 0x7;
 
 #[derive(Debug)]
@@ -145,6 +147,13 @@ fn h2_setting_value(frame: &H2Frame, setting_id: u16) -> Option<u32> {
 fn h2_literal_indexed_name(name_index: u8, value: &[u8]) -> Vec<u8> {
   assert!(value.len() < 128);
   let mut encoded = vec![name_index, value.len() as u8];
+  encoded.extend_from_slice(value);
+  encoded
+}
+
+fn h2_literal_indexed_name_sized(name_index: u8, value: &[u8]) -> Vec<u8> {
+  let mut encoded = h2_encode_integer(name_index as usize, 4, 0);
+  encoded.extend(h2_encode_integer(value.len(), 7, 0));
   encoded.extend_from_slice(value);
   encoded
 }
@@ -3458,6 +3467,142 @@ fn server_advertises_bounded_http2_prior_knowledge_concurrent_stream_limit() {
     ErrorKind::UnexpectedEof,
     handle.join().expect("server thread").kind()
   );
+}
+
+#[test]
+fn server_advertises_bounded_http2_prior_knowledge_header_list_size() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| HttpResponse::ok("unused"))
+      .expect_err("client closes before any h2 request")
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  let settings = read_h2_server_settings_during_handshake(&mut stream, &[]);
+  assert_eq!(
+    Some(H2_SERVER_MAX_HEADER_LIST_SIZE),
+    h2_setting_value(&settings, H2_SETTINGS_MAX_HEADER_LIST_SIZE)
+  );
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown h2 write");
+
+  assert_eq!(
+    ErrorKind::UnexpectedEof,
+    handle.join().expect("server thread").kind()
+  );
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_oversized_request_headers_before_handler() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send(request).expect("send unexpected h2 request");
+      HttpResponse::ok("unexpected")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+
+  let mut headers = h2_post_headers(b"/oversized-headers", addr.to_string().as_bytes());
+  headers.extend(h2_literal_indexed_name_sized(
+    2,
+    &vec![b'a'; H2_SERVER_MAX_HEADER_LIST_SIZE as usize],
+  ));
+  let split = headers.len() / 2;
+  write_h2_frame(&mut stream, H2_FRAME_HEADERS, 0, 1, &headers[..split]);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_CONTINUATION,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &headers[split..],
+  );
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown h2 write");
+
+  let error = handle
+    .join()
+    .expect("server thread")
+    .expect_err("oversized h2 request headers should reject request");
+  assert_eq!(ErrorKind::InvalidData, error.kind());
+  assert!(rx.try_recv().is_err());
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_oversized_request_trailers_before_handler() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send(request).expect("send unexpected h2 request");
+      HttpResponse::ok("unexpected")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &h2_post_headers(b"/oversized-trailers", addr.to_string().as_bytes()),
+  );
+  write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 1, b"body");
+
+  let trailers =
+    h2_literal_indexed_name_sized(2, &vec![b'a'; H2_SERVER_MAX_HEADER_LIST_SIZE as usize]);
+  let split = trailers.len() / 2;
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_STREAM,
+    1,
+    &trailers[..split],
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_CONTINUATION,
+    H2_FLAG_END_HEADERS,
+    1,
+    &trailers[split..],
+  );
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown h2 write");
+
+  let error = handle
+    .join()
+    .expect("server thread")
+    .expect_err("oversized h2 request trailers should reject request");
+  assert_eq!(ErrorKind::InvalidData, error.kind());
+  assert!(rx.try_recv().is_err());
 }
 
 #[test]
