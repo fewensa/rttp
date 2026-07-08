@@ -110,6 +110,40 @@ fn h2_literal_indexed_name(name_index: u8, value: &[u8]) -> Vec<u8> {
   encoded
 }
 
+fn h2_encode_integer(value: usize, prefix_bits: u8, first_byte_prefix: u8) -> Vec<u8> {
+  let max_prefix = (1usize << prefix_bits) - 1;
+  if value < max_prefix {
+    return vec![first_byte_prefix | value as u8];
+  }
+
+  let mut encoded = vec![first_byte_prefix | max_prefix as u8];
+  let mut remaining = value - max_prefix;
+  while remaining >= 128 {
+    encoded.push((remaining % 128) as u8 + 128);
+    remaining /= 128;
+  }
+  encoded.push(remaining as u8);
+  encoded
+}
+
+fn h2_indexed_header(index: usize) -> Vec<u8> {
+  h2_encode_integer(index, 7, 0x80)
+}
+
+fn h2_table_size_update(size: usize) -> Vec<u8> {
+  h2_encode_integer(size, 5, 0x20)
+}
+
+fn h2_literal_new_name_incremental(name: &[u8], value: &[u8]) -> Vec<u8> {
+  assert!(name.len() < 128);
+  assert!(value.len() < 128);
+  let mut encoded = vec![0x40, name.len() as u8];
+  encoded.extend_from_slice(name);
+  encoded.push(value.len() as u8);
+  encoded.extend_from_slice(value);
+  encoded
+}
+
 fn h2_literal_indexed_name_huffman(name_index: u8, encoded_value: &[u8]) -> Vec<u8> {
   assert!(encoded_value.len() < 128);
   let mut encoded = vec![name_index, 0x80 | encoded_value.len() as u8];
@@ -1606,6 +1640,161 @@ fn server_decodes_http2_prior_knowledge_hpack_huffman_request_headers_and_traile
     rx.recv().expect("receive parsed huffman h2 request")
   );
   handle.join().expect("server thread");
+}
+
+#[test]
+fn server_decodes_http2_prior_knowledge_hpack_dynamic_headers_and_trailers() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.target().to_string(),
+          request.header("x-dynamic").map(str::to_string),
+          request.trailer("x-dynamic").map(str::to_string),
+          request.trailers().to_vec(),
+        ))
+        .expect("send parsed h2 dynamic request");
+        HttpResponse::ok("decoded")
+      })
+      .expect("serve h2 dynamic request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+
+  let mut headers = vec![0x83, 0x86];
+  headers.extend(h2_literal_indexed_name(4, b"/dynamic"));
+  headers.extend(h2_literal_indexed_name(1, addr.to_string().as_bytes()));
+  headers.extend(h2_literal_new_name_incremental(b"x-dynamic", b"from-table"));
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &headers,
+  );
+  write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 1, b"body");
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_indexed_header(62),
+  );
+
+  let response_headers = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(H2_FLAG_END_HEADERS, response_headers.flags);
+  assert_eq!(1, response_headers.stream_id);
+
+  let response_body = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
+  assert_eq!(b"decoded", response_body.payload.as_slice());
+
+  assert_eq!(
+    (
+      "/dynamic".to_string(),
+      Some("from-table".to_string()),
+      Some("from-table".to_string()),
+      vec![("x-dynamic".to_string(), "from-table".to_string())]
+    ),
+    rx.recv().expect("receive parsed h2 dynamic request")
+  );
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_evicts_http2_prior_knowledge_hpack_dynamic_entries() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request.header("x-second").map(str::to_string))
+          .expect("send parsed h2 eviction request");
+        HttpResponse::ok("evicted")
+      })
+      .expect("serve h2 eviction request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+
+  let mut headers = h2_table_size_update(64);
+  headers.extend([0x82, 0x86]);
+  headers.extend(h2_literal_indexed_name(4, b"/evict"));
+  headers.extend(h2_literal_indexed_name(1, addr.to_string().as_bytes()));
+  headers.extend(h2_literal_new_name_incremental(b"x-first", b"one"));
+  headers.extend(h2_literal_new_name_incremental(
+    b"x-second",
+    b"abcdefghijklmnopqrstu",
+  ));
+  headers.extend(h2_indexed_header(62));
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &headers,
+  );
+
+  let response_headers = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(1, response_headers.stream_id);
+
+  let response_body = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
+  assert_eq!(b"evicted", response_body.payload.as_slice());
+
+  assert_eq!(
+    Some("abcdefghijklmnopqrstu".to_string()),
+    rx.recv().expect("receive parsed h2 eviction request")
+  );
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_invalid_hpack_dynamic_index_before_handler() {
+  let mut headers = vec![0x82, 0x86];
+  headers.extend(h2_literal_indexed_name(4, b"/bad-dynamic-index"));
+  headers.extend(h2_literal_indexed_name(1, b"localhost"));
+  headers.extend(h2_indexed_header(62));
+
+  assert_invalid_h2_headers_without_handler(&headers);
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_invalid_hpack_dynamic_size_update_before_handler() {
+  let mut headers = h2_table_size_update(4097);
+  headers.extend([0x82, 0x86]);
+  headers.extend(h2_literal_indexed_name(4, b"/bad-dynamic-size"));
+  headers.extend(h2_literal_indexed_name(1, b"localhost"));
+
+  assert_invalid_h2_headers_without_handler(&headers);
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_truncated_hpack_dynamic_index_before_handler() {
+  let mut headers = vec![0x82, 0x86];
+  headers.extend(h2_literal_indexed_name(4, b"/truncated-dynamic-index"));
+  headers.extend(h2_literal_indexed_name(1, b"localhost"));
+  headers.push(0xff);
+
+  assert_invalid_h2_headers_without_handler(&headers);
 }
 
 #[test]

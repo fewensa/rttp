@@ -25,6 +25,8 @@ const HTTP2_FLAG_PADDED: u8 = 0x8;
 const HTTP2_FLAG_PRIORITY: u8 = 0x20;
 const HTTP2_DEFAULT_MAX_FRAME_SIZE: usize = 16 * 1024;
 const HTTP2_DEFAULT_INITIAL_WINDOW_SIZE: i32 = 65_535;
+const HTTP2_DEFAULT_HEADER_TABLE_SIZE: usize = 4096;
+const HTTP2_STATIC_TABLE_LEN: usize = 61;
 const HTTP2_SETTINGS_ENABLE_PUSH: u16 = 0x2;
 const HTTP2_SETTINGS_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const HTTP2_SETTINGS_MAX_FRAME_SIZE: u16 = 0x5;
@@ -394,6 +396,7 @@ impl HttpServer {
     let mut reset_streams = Vec::<u32>::new();
     let mut connection_receive_window = HTTP2_DEFAULT_INITIAL_WINDOW_SIZE;
     let mut connection_send_window = Http2SendWindow::new(HTTP2_DEFAULT_INITIAL_WINDOW_SIZE);
+    let mut request_header_decoder = Http2HeaderDecoder::new(HTTP2_DEFAULT_HEADER_TABLE_SIZE);
     let mut served = 0;
 
     while served < request_limit {
@@ -508,7 +511,7 @@ impl HttpServer {
             .header_block
             .extend_from_slice(header_block_fragment);
           if frame.flags & HTTP2_FLAG_END_HEADERS == HTTP2_FLAG_END_HEADERS {
-            request_stream.finish_header_block()?;
+            request_stream.finish_header_block(&mut request_header_decoder)?;
           } else {
             request_stream.in_header_continuation = true;
           }
@@ -536,7 +539,7 @@ impl HttpServer {
             .header_block
             .extend_from_slice(&frame.payload);
           if frame.flags & HTTP2_FLAG_END_HEADERS == HTTP2_FLAG_END_HEADERS {
-            request_stream.finish_header_block()?;
+            request_stream.finish_header_block(&mut request_header_decoder)?;
           }
         }
         (HTTP2_FRAME_DATA, id) if id != 0 => {
@@ -631,6 +634,7 @@ impl HttpServer {
             stream_send_window: &mut stream_send_window,
             streams: &mut streams,
             reset_streams: &mut reset_streams,
+            request_header_decoder: &mut request_header_decoder,
           },
         ))?;
         served += 1;
@@ -734,13 +738,13 @@ impl Http2RequestStream {
     self.decoded_headers.is_some() && self.end_stream && !self.in_header_continuation
   }
 
-  fn finish_header_block(&mut self) -> io::Result<()> {
+  fn finish_header_block(&mut self, decoder: &mut Http2HeaderDecoder) -> io::Result<()> {
     match self.header_block_kind.take() {
       Some(Http2HeaderBlockKind::RequestHeaders) => {
-        self.decoded_headers = Some(decode_http2_request_headers(&self.header_block)?);
+        self.decoded_headers = Some(decode_http2_request_headers(&self.header_block, decoder)?);
       }
       Some(Http2HeaderBlockKind::RequestTrailers) => {
-        self.decoded_trailers = decode_http2_request_trailers(&self.header_block)?;
+        self.decoded_trailers = decode_http2_request_trailers(&self.header_block, decoder)?;
       }
       None => {
         return Err(io::Error::new(
@@ -1099,7 +1103,100 @@ impl DecodedHttp2RequestHeaders {
   }
 }
 
-fn decode_http2_request_headers(block: &[u8]) -> io::Result<DecodedHttp2RequestHeaders> {
+struct Http2HeaderDecoder {
+  dynamic_entries: Vec<(String, String)>,
+  max_size: usize,
+  current_size: usize,
+}
+
+impl Http2HeaderDecoder {
+  fn new(max_size: usize) -> Self {
+    Self {
+      dynamic_entries: Vec::new(),
+      max_size,
+      current_size: 0,
+    }
+  }
+
+  fn header(&self, index: usize) -> io::Result<(String, String)> {
+    if index == 0 {
+      return Err(invalid_hpack_index_error());
+    }
+    if index <= HTTP2_STATIC_TABLE_LEN {
+      let (name, value) = http2_static_header(index)?;
+      return Ok((name.to_string(), value.to_string()));
+    }
+    self
+      .dynamic_header(index)
+      .cloned()
+      .ok_or_else(invalid_hpack_index_error)
+  }
+
+  fn header_name(&self, index: usize) -> io::Result<String> {
+    if index == 0 {
+      return Err(invalid_hpack_index_error());
+    }
+    if index <= HTTP2_STATIC_TABLE_LEN {
+      return Ok(http2_static_header(index)?.0.to_string());
+    }
+    self
+      .dynamic_header(index)
+      .map(|(name, _)| name.clone())
+      .ok_or_else(invalid_hpack_index_error)
+  }
+
+  fn update_max_size(&mut self, size: usize) -> io::Result<()> {
+    if size > HTTP2_DEFAULT_HEADER_TABLE_SIZE {
+      return Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        "HPACK dynamic table size update exceeds configured size",
+      ));
+    }
+    self.max_size = size;
+    self.evict_to_max_size();
+    Ok(())
+  }
+
+  fn insert(&mut self, name: String, value: String) {
+    let entry_size = hpack_dynamic_entry_size(&name, &value);
+    if entry_size > self.max_size {
+      self.dynamic_entries.clear();
+      self.current_size = 0;
+      return;
+    }
+    self.dynamic_entries.insert(0, (name, value));
+    self.current_size += entry_size;
+    self.evict_to_max_size();
+  }
+
+  fn dynamic_header(&self, index: usize) -> Option<&(String, String)> {
+    let dynamic_index = index.checked_sub(HTTP2_STATIC_TABLE_LEN + 1)?;
+    self.dynamic_entries.get(dynamic_index)
+  }
+
+  fn evict_to_max_size(&mut self) {
+    while self.current_size > self.max_size {
+      let Some((name, value)) = self.dynamic_entries.pop() else {
+        self.current_size = 0;
+        return;
+      };
+      self.current_size -= hpack_dynamic_entry_size(&name, &value);
+    }
+  }
+}
+
+fn hpack_dynamic_entry_size(name: &str, value: &str) -> usize {
+  name.len() + value.len() + 32
+}
+
+fn invalid_hpack_index_error() -> io::Error {
+  io::Error::new(io::ErrorKind::InvalidData, "invalid HPACK table index")
+}
+
+fn decode_http2_request_headers(
+  block: &[u8],
+  decoder: &mut Http2HeaderDecoder,
+) -> io::Result<DecodedHttp2RequestHeaders> {
   let mut decoded = DecodedHttp2RequestHeaders {
     method: None,
     target: None,
@@ -1110,7 +1207,7 @@ fn decode_http2_request_headers(block: &[u8]) -> io::Result<DecodedHttp2RequestH
   let mut regular_header_seen = false;
   let mut pseudo_headers = Vec::<String>::new();
 
-  for (name, value) in decode_http2_header_fields(block)? {
+  for (name, value) in decode_http2_header_fields(block, decoder)? {
     if name.starts_with(':') {
       if regular_header_seen {
         return Err(io::Error::new(
@@ -1146,8 +1243,11 @@ fn decode_http2_request_headers(block: &[u8]) -> io::Result<DecodedHttp2RequestH
   Ok(decoded)
 }
 
-fn decode_http2_request_trailers(block: &[u8]) -> io::Result<Vec<(String, String)>> {
-  let trailers = decode_http2_header_fields(block)?;
+fn decode_http2_request_trailers(
+  block: &[u8],
+  decoder: &mut Http2HeaderDecoder,
+) -> io::Result<Vec<(String, String)>> {
+  let trailers = decode_http2_header_fields(block, decoder)?;
   for (name, value) in &trailers {
     if name.starts_with(':') {
       return Err(io::Error::new(
@@ -1168,24 +1268,37 @@ fn decode_http2_request_trailers(block: &[u8]) -> io::Result<Vec<(String, String
   Ok(trailers)
 }
 
-fn decode_http2_header_fields(block: &[u8]) -> io::Result<Vec<(String, String)>> {
+fn decode_http2_header_fields(
+  block: &[u8],
+  decoder: &mut Http2HeaderDecoder,
+) -> io::Result<Vec<(String, String)>> {
   let mut cursor = 0;
   let mut fields = Vec::new();
+  let mut field_seen = false;
   while cursor < block.len() {
     let byte = block[cursor];
     let field = if byte & 0x80 == 0x80 {
       let index = decode_http2_integer(block, &mut cursor, 7)?;
-      let (name, value) = http2_static_header(index)?;
-      (name.to_string(), value.to_string())
+      field_seen = true;
+      decoder.header(index)?
     } else if byte & 0x40 == 0x40 {
-      decode_http2_literal(block, &mut cursor, 6)?
+      field_seen = true;
+      let field = decode_http2_literal(block, &mut cursor, 6, decoder)?;
+      decoder.insert(field.0.clone(), field.1.clone());
+      field
     } else if byte & 0x20 == 0x20 {
-      return Err(io::Error::new(
-        io::ErrorKind::InvalidData,
-        "HTTP/2 dynamic table size updates are not supported",
-      ));
+      if field_seen {
+        return Err(io::Error::new(
+          io::ErrorKind::InvalidData,
+          "HPACK dynamic table size update after header field",
+        ));
+      }
+      let size = decode_http2_integer(block, &mut cursor, 5)?;
+      decoder.update_max_size(size)?;
+      continue;
     } else {
-      decode_http2_literal(block, &mut cursor, 4)?
+      field_seen = true;
+      decode_http2_literal(block, &mut cursor, 4, decoder)?
     };
     fields.push(field);
   }
@@ -1196,12 +1309,13 @@ fn decode_http2_literal(
   block: &[u8],
   cursor: &mut usize,
   prefix_bits: u8,
+  decoder: &Http2HeaderDecoder,
 ) -> io::Result<(String, String)> {
   let name_index = decode_http2_integer(block, cursor, prefix_bits)?;
   let name = if name_index == 0 {
     decode_http2_string(block, cursor)?
   } else {
-    http2_static_header(name_index)?.0.to_string()
+    decoder.header_name(name_index)?
   };
   let value = decode_http2_string(block, cursor)?;
   Ok((name, value))
@@ -1222,7 +1336,7 @@ fn decode_http2_integer(block: &[u8], cursor: &mut usize, prefix_bits: u8) -> io
     return Ok(value);
   }
 
-  let mut shift = 0;
+  let mut shift = 0u32;
   loop {
     if *cursor >= block.len() {
       return Err(io::Error::new(
@@ -1232,7 +1346,12 @@ fn decode_http2_integer(block: &[u8], cursor: &mut usize, prefix_bits: u8) -> io
     }
     let byte = block[*cursor];
     *cursor += 1;
-    value += ((byte & 0x7f) as usize) << shift;
+    let addition = ((byte & 0x7f) as usize)
+      .checked_shl(shift)
+      .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "HPACK integer overflow"))?;
+    value = value
+      .checked_add(addition)
+      .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "HPACK integer overflow"))?;
     if byte & 0x80 == 0 {
       return Ok(value);
     }
@@ -1654,6 +1773,7 @@ struct Http2ResponseFlowControl<'a> {
   stream_send_window: &'a mut Http2SendWindow,
   streams: &'a mut Vec<Http2RequestStream>,
   reset_streams: &'a mut Vec<u32>,
+  request_header_decoder: &'a mut Http2HeaderDecoder,
 }
 
 fn write_http2_response(
@@ -1836,7 +1956,7 @@ fn read_http2_response_flow_control_frame(
           .header_block
           .extend_from_slice(header_block_fragment);
         if frame.flags & HTTP2_FLAG_END_HEADERS == HTTP2_FLAG_END_HEADERS {
-          request_stream.finish_header_block()?;
+          request_stream.finish_header_block(flow_control.request_header_decoder)?;
         } else {
           request_stream.in_header_continuation = true;
         }
@@ -1865,7 +1985,7 @@ fn read_http2_response_flow_control_frame(
           .header_block
           .extend_from_slice(&frame.payload);
         if frame.flags & HTTP2_FLAG_END_HEADERS == HTTP2_FLAG_END_HEADERS {
-          request_stream.finish_header_block()?;
+          request_stream.finish_header_block(flow_control.request_header_decoder)?;
         }
       }
       (HTTP2_FRAME_DATA, id) if id != 0 => {
