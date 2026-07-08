@@ -25,10 +25,12 @@ const H2_FLAG_PADDED: u8 = 0x8;
 const H2_FLAG_PRIORITY: u8 = 0x20;
 const H2_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 const H2_SETTINGS_ENABLE_PUSH: u16 = 0x2;
+const H2_SETTINGS_MAX_CONCURRENT_STREAMS: u16 = 0x3;
 const H2_SETTINGS_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const H2_SETTINGS_MAX_FRAME_SIZE: u16 = 0x5;
 const H2_DEFAULT_INITIAL_WINDOW_SIZE: usize = 65_535;
 const H2_ERROR_CANCEL: u32 = 0x8;
+const H2_ERROR_REFUSED_STREAM: u32 = 0x7;
 const H2_UNKNOWN_EXTENSION_FRAME: u8 = 0xf1;
 
 struct H2Frame {
@@ -732,6 +734,53 @@ fn spawn_rst_stream_matrix_peer(
   (addr, handle)
 }
 
+fn spawn_h2_peer_advertising_max_concurrent_streams_zero() -> (SocketAddr, thread::JoinHandle<()>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 settings peer");
+  let addr = listener.local_addr().expect("h2 settings peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    stream
+      .set_read_timeout(Some(Duration::from_secs(2)))
+      .expect("set h2 peer read timeout");
+
+    let mut preface = [0; 24];
+    stream
+      .read_exact(&mut preface)
+      .expect("read client preface");
+    assert_eq!(H2_PREFACE.as_slice(), &preface);
+
+    let client_settings = read_h2_frame(&mut stream);
+    assert_eq!(H2_FRAME_SETTINGS, client_settings.frame_type);
+    assert_eq!(0, client_settings.flags);
+    assert_eq!(0, client_settings.stream_id);
+
+    write_h2_frame(
+      &mut stream,
+      H2_FRAME_SETTINGS,
+      0,
+      0,
+      &h2_setting(H2_SETTINGS_MAX_CONCURRENT_STREAMS, 0),
+    );
+
+    let client_settings_ack = read_h2_frame(&mut stream);
+    assert_eq!(H2_FRAME_SETTINGS, client_settings_ack.frame_type);
+    assert_eq!(H2_FLAG_ACK, client_settings_ack.flags);
+    assert_eq!(0, client_settings_ack.stream_id);
+    assert!(client_settings_ack.payload.is_empty());
+
+    stream
+      .set_read_timeout(Some(Duration::from_millis(200)))
+      .expect("set short h2 peer read timeout");
+    assert!(
+      try_read_h2_frame(&mut stream).is_err(),
+      "client must not open a request stream after peer advertises zero concurrency"
+    );
+  });
+
+  (addr, handle)
+}
+
 #[test]
 fn cross_crate_h2c_goaway_after_completed_stream_keeps_wrapper_response_complete() {
   let (addr, handle) = spawn_goaway_matrix_peer([0, 0, 0, 0, 0, 0, 0, 0], true);
@@ -898,6 +947,162 @@ fn cross_crate_h2c_rst_stream_malformed_boundaries_reject_wrapper_response() {
     );
     handle.join().expect("malformed RST_STREAM peer thread");
   }
+}
+
+#[test]
+fn cross_crate_h2c_max_concurrent_streams_matrix_wrapper_allows_one_active_stream() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind h2 max concurrent server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2 max concurrent addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.version().to_string(),
+          request.method().to_string(),
+          request.target().to_string(),
+        ))
+        .expect("send single active h2 request");
+        HttpResponse::ok("single stream accepted")
+      })
+      .expect("serve single bounded h2 request")
+  });
+
+  let response = rttp::Http::client()
+    .get()
+    .url(format!("http://{}/max-concurrent/one", addr))
+    .emit_http2_prior_knowledge()
+    .expect("wrapper client may open one stream when peer permits one");
+
+  assert_eq!(200, response.code());
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(
+    "single stream accepted",
+    response.body().string().expect("response body")
+  );
+  assert_eq!(
+    (
+      "HTTP/2".to_string(),
+      "GET".to_string(),
+      "/max-concurrent/one".to_string(),
+    ),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("receive single active request")
+  );
+  handle.join().expect("single stream h2 server thread");
+}
+
+#[test]
+fn cross_crate_h2c_max_concurrent_streams_matrix_wrapper_rejects_zero_peer_bound() {
+  let (addr, handle) = spawn_h2_peer_advertising_max_concurrent_streams_zero();
+
+  let err = rttp::Http::client()
+    .get()
+    .url(format!("http://{}/max-concurrent/zero", addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("wrapper client must reject zero peer concurrency");
+  assert!(
+    err
+      .to_string()
+      .contains("SETTINGS_MAX_CONCURRENT_STREAMS forbids opening a request stream"),
+    "unexpected zero-concurrency error: {err}"
+  );
+
+  handle.join().expect("zero max concurrent peer thread");
+}
+
+#[test]
+fn cross_crate_h2c_max_concurrent_streams_matrix_server_rejects_over_limit_interleaved_stream() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind h2 max concurrent server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2 max concurrent addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        tx.send(request.target().to_string())
+          .expect("send allowed h2 request");
+        HttpResponse::ok(format!("served {}", request.target()))
+      })
+      .expect("serve allowed bounded h2 requests")
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 max concurrent server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 max concurrent read timeout");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &h2_post_headers(b"/max-concurrent/allowed-one", addr.to_string().as_bytes()),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    3,
+    &h2_post_headers(b"/max-concurrent/allowed-two", addr.to_string().as_bytes()),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    5,
+    &h2_get_headers(b"/max-concurrent/rejected", addr.to_string().as_bytes()),
+  );
+  stream.flush().expect("flush over-limit h2 headers");
+
+  let reset = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_RST_STREAM, reset.frame_type);
+  assert_eq!(0, reset.flags);
+  assert_eq!(5, reset.stream_id);
+  assert_eq!(
+    H2_ERROR_REFUSED_STREAM.to_be_bytes(),
+    reset.payload.as_slice()
+  );
+  assert!(
+    rx.try_recv().is_err(),
+    "over-limit stream must be rejected before dispatching allowed incomplete streams"
+  );
+
+  write_h2_frame(&mut stream, H2_FRAME_DATA, H2_FLAG_END_STREAM, 1, b"");
+  write_h2_frame(&mut stream, H2_FRAME_DATA, H2_FLAG_END_STREAM, 3, b"");
+  stream.flush().expect("flush allowed h2 completions");
+
+  let mut completed_response_streams = read_h2_end_stream_data_streams(&mut stream, 2, 12);
+  completed_response_streams.sort_unstable();
+  assert_eq!(vec![1, 3], completed_response_streams);
+
+  let mut received = vec![
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("receive first allowed request"),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("receive second allowed request"),
+  ];
+  received.sort();
+  assert_eq!(
+    vec![
+      "/max-concurrent/allowed-one".to_string(),
+      "/max-concurrent/allowed-two".to_string(),
+    ],
+    received
+  );
+  assert!(
+    rx.try_recv().is_err(),
+    "over-limit stream must not reach the handler"
+  );
+
+  handle.join().expect("max concurrent h2 server thread");
 }
 
 #[test]

@@ -34,7 +34,7 @@ const HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS: u16 = 0x3;
 const HTTP2_SETTINGS_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const HTTP2_SETTINGS_MAX_FRAME_SIZE: u16 = 0x5;
 const HTTP2_ERROR_NO_ERROR: u32 = 0x0;
-const HTTP2_ERROR_PROTOCOL_ERROR: u32 = 0x1;
+const HTTP2_ERROR_REFUSED_STREAM: u32 = 0x7;
 
 pub struct HttpServer {
   listener: TcpListener,
@@ -508,13 +508,18 @@ impl HttpServer {
             .all(|request_stream| request_stream.stream_id != id)
             && served.saturating_add(streams.len()) >= request_limit
           {
-            self.normalize_connection_error(write_http2_goaway(
+            self.normalize_connection_error(write_http2_frame(
               &mut stream,
-              last_processed_stream_id,
-              HTTP2_ERROR_PROTOCOL_ERROR,
+              HTTP2_FRAME_RST_STREAM,
+              0,
+              id,
+              &HTTP2_ERROR_REFUSED_STREAM.to_be_bytes(),
             ))?;
             self.normalize_connection_error(stream.flush())?;
-            return Err(http2_max_concurrent_streams_error());
+            if !reset_streams.contains(&id) {
+              reset_streams.push(id);
+            }
+            continue;
           }
           let request_stream = http2_request_stream(
             &mut streams,
@@ -1169,13 +1174,6 @@ fn http2_closed_stream_error() -> io::Error {
   io::Error::new(
     io::ErrorKind::InvalidData,
     "HTTP/2 frame arrived after stream close",
-  )
-}
-
-fn http2_max_concurrent_streams_error() -> io::Error {
-  io::Error::new(
-    io::ErrorKind::InvalidData,
-    "HTTP/2 max concurrent streams exceeded",
   )
 }
 
