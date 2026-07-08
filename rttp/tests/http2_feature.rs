@@ -3820,30 +3820,35 @@ fn http2_feature_socket2_bounded_h2c_multiplexing_stops_at_request_limit() {
   write_h2_frame(
     &mut stream,
     H2_FRAME_HEADERS,
-    H2_FLAG_END_HEADERS,
-    1,
-    &h2_post_headers(b"/pending", addr.to_string().as_bytes()),
-  );
-  write_h2_frame(
-    &mut stream,
-    H2_FRAME_HEADERS,
     H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
-    3,
+    1,
     &h2_get_headers(b"/ready", addr.to_string().as_bytes()),
   );
   stream.flush().expect("flush bounded h2 requests");
 
-  assert_eq!(vec![3], read_h2_end_stream_data_streams(&mut stream, 1, 8));
+  assert_eq!(vec![1], read_h2_end_stream_data_streams(&mut stream, 1, 8));
+  let shutdown = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_GOAWAY, shutdown.frame_type);
+  assert_eq!(0, shutdown.flags);
+  assert_eq!(0, shutdown.stream_id);
+  assert_eq!(8, shutdown.payload.len());
+  assert_eq!(
+    1,
+    u32::from_be_bytes(shutdown.payload[0..4].try_into().unwrap())
+  );
+  assert_eq!(
+    0,
+    u32::from_be_bytes(shutdown.payload[4..8].try_into().unwrap())
+  );
   assert_eq!(
     "/ready",
     rx.recv().expect("receive bounded h2 request target")
   );
 
-  drop(stream);
   handle.join().expect("server thread");
   assert!(
     rx.try_recv().is_err(),
-    "pending stream must not be dispatched after request limit"
+    "no additional stream must be dispatched after request limit"
   );
 }
 

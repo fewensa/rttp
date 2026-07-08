@@ -30,9 +30,11 @@ const HTTP2_DEFAULT_INITIAL_WINDOW_SIZE: i32 = 65_535;
 const HTTP2_DEFAULT_HEADER_TABLE_SIZE: usize = 4096;
 const HTTP2_STATIC_TABLE_LEN: usize = 61;
 const HTTP2_SETTINGS_ENABLE_PUSH: u16 = 0x2;
+const HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS: u16 = 0x3;
 const HTTP2_SETTINGS_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const HTTP2_SETTINGS_MAX_FRAME_SIZE: u16 = 0x5;
 const HTTP2_ERROR_NO_ERROR: u32 = 0x0;
+const HTTP2_ERROR_PROTOCOL_ERROR: u32 = 0x1;
 
 pub struct HttpServer {
   listener: TcpListener,
@@ -384,7 +386,10 @@ impl HttpServer {
       HTTP2_FRAME_SETTINGS,
       0,
       0,
-      &[],
+      &http2_setting(
+        HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS,
+        bounded_http2_max_concurrent_streams(request_limit),
+      ),
     ))?;
     self.normalize_connection_error(write_http2_frame(
       &mut stream,
@@ -498,6 +503,19 @@ impl HttpServer {
         (HTTP2_FRAME_HEADERS, id) if id != 0 => {
           let header_block_fragment =
             http2_headers_payload_to_header_block_fragment(&frame.payload, frame.flags)?;
+          if streams
+            .iter()
+            .all(|request_stream| request_stream.stream_id != id)
+            && served.saturating_add(streams.len()) >= request_limit
+          {
+            self.normalize_connection_error(write_http2_goaway(
+              &mut stream,
+              last_processed_stream_id,
+              HTTP2_ERROR_PROTOCOL_ERROR,
+            ))?;
+            self.normalize_connection_error(stream.flush())?;
+            return Err(http2_max_concurrent_streams_error());
+          }
           let request_stream = http2_request_stream(
             &mut streams,
             &mut stream_ids,
@@ -1125,6 +1143,17 @@ fn http2_settings_initial_window_size(payload: &[u8]) -> Option<i32> {
     })
 }
 
+fn bounded_http2_max_concurrent_streams(request_limit: usize) -> u32 {
+  u32::try_from(request_limit).unwrap_or(u32::MAX)
+}
+
+fn http2_setting(id: u16, value: u32) -> [u8; 6] {
+  let mut setting = [0; 6];
+  setting[..2].copy_from_slice(&id.to_be_bytes());
+  setting[2..].copy_from_slice(&value.to_be_bytes());
+  setting
+}
+
 fn invalid_http2_settings_error() -> io::Error {
   io::Error::new(io::ErrorKind::InvalidData, "invalid HTTP/2 SETTINGS frame")
 }
@@ -1140,6 +1169,13 @@ fn http2_closed_stream_error() -> io::Error {
   io::Error::new(
     io::ErrorKind::InvalidData,
     "HTTP/2 frame arrived after stream close",
+  )
+}
+
+fn http2_max_concurrent_streams_error() -> io::Error {
+  io::Error::new(
+    io::ErrorKind::InvalidData,
+    "HTTP/2 max concurrent streams exceeded",
   )
 }
 
