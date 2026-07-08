@@ -42,7 +42,7 @@ With the `http2` feature enabled, `emit_http2_prior_knowledge` sends a minimal
 prior-knowledge h2c request over a direct socket2 TCP connection. It supports
 GET, HEAD, bodyless DELETE, OPTIONS, or TRACE, and buffered POST, PUT, or PATCH requests,
 including non-empty buffered request bodies as DATA frames for the write
-methods. GET, HEAD, DELETE, and OPTIONS requests with bodies are rejected; HEAD,
+methods. GET, HEAD, DELETE, OPTIONS, and TRACE requests with bodies are rejected; HEAD,
 bodyless DELETE, OPTIONS, and TRACE requests do not send request DATA frames,
 and any HEAD response DATA frames are consumed without being exposed as a
 response body. The client
@@ -116,8 +116,9 @@ honors `Connection` close/keep-alive semantics across a bounded
 `serve_requests` loop, writes response body framing and response trailers
 consistently, and accepts `Expect: 100-continue`. On the same socket2 listener,
 the accept path detects the HTTP/2 client preface and dispatches prior-knowledge
-h2c requests to a minimal bounded handler, including bodyless DELETE and OPTIONS
-requests. It preserves the same HEAD body suppression for prior-knowledge h2c responses.
+h2c requests to a minimal bounded handler, including bodyless DELETE, OPTIONS,
+and TRACE requests. It preserves the same HEAD body suppression for
+prior-knowledge h2c responses.
 Incoming padded HEADERS, DATA, and trailer frames are accepted without exposing
 padding bytes to handlers, and HPACK static Huffman strings, request dynamic
 table entries, and large header blocks are carried with CONTINUATION frames.
@@ -136,4 +137,4 @@ TLS or async accept loops.
 | HTTP/1.1 response framing | Automatic `Content-Length`, explicit chunked responses, bodyless `HEAD`, `101`, `204`, and `304`, response trailers after the terminating chunk | No server TLS |
 | Upgrade and tunnel targets | `CONNECT` authority-form requests are accepted as HTTP requests; `HttpResponse::upgrade` can hand an upgraded socket to caller code after a matching request | The server does not implement the upgraded protocol after handoff |
 | Trailers | Chunked request trailers are preserved on `Request`; malformed, oversized, forbidden, and pseudo-header trailers are rejected; response trailers can be serialized for chunked responses | Trailer names that affect framing or routing are rejected |
-| Prior-knowledge h2c | The same `socket2` listener detects the HTTP/2 preface, validates SETTINGS, serves bounded prior-knowledge streams including bodyless DELETE and OPTIONS, handles HEAD without response DATA, accepts padded HEADERS/DATA/trailers without exposing padding, handles HPACK Huffman/dynamic fields and CONTINUATION blocks, and applies conservative DATA flow control | No TLS ALPN, proxy h2, unbounded multiplexing, priority scheduling, or full HTTP/2 server feature set |
+| Prior-knowledge h2c | The same `socket2` listener detects the HTTP/2 preface, validates SETTINGS, serves bounded prior-knowledge streams including bodyless DELETE, OPTIONS, and TRACE, handles HEAD without response DATA, accepts padded HEADERS/DATA/trailers without exposing padding, handles HPACK Huffman/dynamic fields and CONTINUATION blocks, and applies conservative DATA flow control | No TLS ALPN, proxy h2, unbounded multiplexing, priority scheduling, or full HTTP/2 server feature set |
