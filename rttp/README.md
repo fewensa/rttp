@@ -62,11 +62,14 @@ header blocks are carried with CONTINUATION frames, and multiple prior-knowledge
 h2c request streams may be open on one connection up to the caller's bounded
 `serve_requests` loop.
 Responses are still written synchronously as requests complete. The minimal
-h2c path supports conservative DATA flow-control for prior-knowledge use.
+h2c path supports conservative DATA flow-control for prior-knowledge use. It
+does not share the HTTP/1.1 `CONNECT` handoff path: prior-knowledge h2c
+`CONNECT` is rejected before handler dispatch.
 
 The server is intentionally not a full RFC-covering web server and still does
-not implement server TLS, TLS ALPN, proxy h2, full HTTP/2 features such as
-unbounded multiplexing and priority scheduling, or async accept loops.
+not implement server TLS, TLS ALPN, proxy h2, h2c tunnel handoff, full HTTP/2
+features such as unbounded multiplexing and priority scheduling, or async
+accept loops.
 
 ## Tested server protocol coverage
 
@@ -77,7 +80,7 @@ unbounded multiplexing and priority scheduling, or async accept loops.
 | HTTP/1.1 response framing | Automatic `Content-Length`, explicit chunked responses, bodyless `HEAD`, `101`, `204`, and `304`, response trailers after the terminating chunk | No server TLS |
 | Upgrade and tunnel targets | `CONNECT` authority-form requests are accepted as HTTP requests; `HttpResponse::upgrade` can hand an upgraded socket to caller code after a matching request | The server does not implement the upgraded protocol after handoff |
 | Trailers | Chunked request trailers are preserved on `Request`; malformed, oversized, forbidden, and pseudo-header trailers are rejected; response trailers can be serialized for chunked responses | Trailer names that affect framing or routing are rejected |
-| Prior-knowledge h2c | The same `socket2` listener detects the HTTP/2 preface, validates SETTINGS, serves bounded prior-knowledge streams including bodyless DELETE, OPTIONS, and TRACE, handles HEAD without response DATA, accepts padded HEADERS/DATA/trailers without exposing padding, handles HPACK Huffman/dynamic fields and CONTINUATION blocks, and applies conservative DATA flow control | No TLS ALPN, proxy h2, unbounded multiplexing, priority scheduling, or full HTTP/2 server feature set |
+| Prior-knowledge h2c | The same `socket2` listener detects the HTTP/2 preface, validates SETTINGS, serves bounded prior-knowledge streams including bodyless DELETE, OPTIONS, and TRACE, handles HEAD without response DATA, accepts padded HEADERS/DATA/trailers without exposing padding, handles HPACK Huffman/dynamic fields and CONTINUATION blocks, and applies conservative DATA flow control | `CONNECT` is rejected deterministically before handler dispatch; no TLS ALPN, proxy h2, tunnel handoff, unbounded multiplexing, priority scheduling, or full HTTP/2 server feature set |
 
 ## Client feature
 
@@ -90,8 +93,11 @@ GET, HEAD, DELETE, OPTIONS, and TRACE, HEAD response body suppression, HPACK sta
 strings, request dynamic entries within the peer's advertised table size,
 response dynamic table decoding, large header blocks via CONTINUATION frames,
 padded incoming response frames, and conservative DATA flow-control for
-single-stream prior-knowledge use; TLS ALPN, proxy h2, and full HTTP/2 features
-such as multiplexing and priority scheduling remain outside that path.
+single-stream prior-knowledge use. HTTP/1.1 `CONNECT` tunnel handoff remains a
+separate path; prior-knowledge h2c `CONNECT` and proxy tunneling are rejected
+before a client socket is opened. TLS ALPN, proxy h2, tunnel handoff, and full
+HTTP/2 features such as multiplexing and priority scheduling remain outside
+that path.
 
 Direct TCP client connections use `socket2`. SOCKS proxy handshakes remain
 delegated to the `socks` crate.
