@@ -370,7 +370,8 @@ impl HttpServer {
   where
     F: FnMut(Request) -> HttpResponse,
   {
-    let frame = self.normalize_connection_error(read_http2_frame(&mut stream))?;
+    let frame = self
+      .normalize_connection_error(read_http2_frame(&mut stream, HTTP2_DEFAULT_MAX_FRAME_SIZE))?;
     if frame.frame_type != HTTP2_FRAME_SETTINGS
       || frame.flags & HTTP2_FLAG_ACK == HTTP2_FLAG_ACK
       || frame.stream_id != 0
@@ -415,7 +416,9 @@ impl HttpServer {
     while served < request_limit
       && ((!graceful_goaway_sent && !peer_goaway_received) || !streams.is_empty())
     {
-      let frame = match self.normalize_connection_error(read_http2_frame(&mut stream)) {
+      let frame = match self
+        .normalize_connection_error(read_http2_frame(&mut stream, HTTP2_DEFAULT_MAX_FRAME_SIZE))
+      {
         Ok(frame) => frame,
         Err(err)
           if err.kind() == io::ErrorKind::UnexpectedEof
@@ -1060,10 +1063,16 @@ fn http2_data_payload_to_data(payload: &[u8], flags: u8) -> io::Result<&[u8]> {
   Ok(&data_and_padding[..data_and_padding.len() - pad_len])
 }
 
-fn read_http2_frame(stream: &mut TcpStream) -> io::Result<Http2Frame> {
+fn read_http2_frame(stream: &mut TcpStream, max_frame_size: usize) -> io::Result<Http2Frame> {
   let mut header = [0; 9];
   stream.read_exact(&mut header)?;
   let length = ((header[0] as usize) << 16) | ((header[1] as usize) << 8) | header[2] as usize;
+  if length > max_frame_size {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "HTTP/2 frame payload exceeds active max frame size",
+    ));
+  }
   let mut payload = vec![0; length];
   stream.read_exact(&mut payload).map_err(|err| {
     if err.kind() == io::ErrorKind::UnexpectedEof {
@@ -1285,7 +1294,11 @@ fn write_http2_window_update(
 }
 
 fn server_http2_settings_payload(request_limit: usize) -> Vec<u8> {
-  let mut payload = Vec::with_capacity(12);
+  let mut payload = Vec::with_capacity(18);
+  payload.extend_from_slice(&http2_setting(
+    HTTP2_SETTINGS_MAX_FRAME_SIZE,
+    HTTP2_DEFAULT_MAX_FRAME_SIZE as u32,
+  ));
   payload.extend_from_slice(&http2_setting(
     HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS,
     bounded_http2_max_concurrent_streams(request_limit),
@@ -2176,7 +2189,7 @@ fn read_http2_response_flow_control_frame(
   flow_control: &mut Http2ResponseFlowControl<'_>,
 ) -> io::Result<Http2ResponseFlowControlRead> {
   loop {
-    let frame = read_http2_frame(stream)?;
+    let frame = read_http2_frame(stream, HTTP2_DEFAULT_MAX_FRAME_SIZE)?;
     if let Some(stream_id) = active_http2_header_continuation_stream(flow_control.streams) {
       if frame.frame_type != HTTP2_FRAME_CONTINUATION || frame.stream_id != stream_id {
         return Err(io::Error::new(

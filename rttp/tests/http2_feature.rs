@@ -18,6 +18,7 @@ const H2_FRAME_PUSH_PROMISE: u8 = 0x5;
 const H2_FRAME_PING: u8 = 0x6;
 const H2_FRAME_GOAWAY: u8 = 0x7;
 const H2_FRAME_WINDOW_UPDATE: u8 = 0x8;
+const H2_FRAME_CONTINUATION: u8 = 0x9;
 const H2_FLAG_END_STREAM: u8 = 0x1;
 const H2_FLAG_ACK: u8 = 0x1;
 const H2_FLAG_END_HEADERS: u8 = 0x4;
@@ -29,6 +30,7 @@ const H2_SETTINGS_MAX_CONCURRENT_STREAMS: u16 = 0x3;
 const H2_SETTINGS_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const H2_SETTINGS_MAX_FRAME_SIZE: u16 = 0x5;
 const H2_SETTINGS_ENABLE_CONNECT_PROTOCOL: u16 = 0x8;
+const H2_DEFAULT_MAX_FRAME_SIZE: usize = 16 * 1024;
 const H2_DEFAULT_INITIAL_WINDOW_SIZE: usize = 65_535;
 const H2_ERROR_CANCEL: u32 = 0x8;
 const H2_ERROR_REFUSED_STREAM: u32 = 0x7;
@@ -156,6 +158,18 @@ fn h2_setting(id: u16, value: u32) -> [u8; 6] {
   setting[..2].copy_from_slice(&id.to_be_bytes());
   setting[2..].copy_from_slice(&value.to_be_bytes());
   setting
+}
+
+fn h2_setting_value(payload: &[u8], id: u16) -> Option<u32> {
+  payload.chunks_exact(6).find_map(|setting| {
+    if u16::from_be_bytes([setting[0], setting[1]]) == id {
+      Some(u32::from_be_bytes([
+        setting[2], setting[3], setting[4], setting[5],
+      ]))
+    } else {
+      None
+    }
+  })
 }
 
 fn h2_literal_indexed_name(name_index: u8, value: &[u8]) -> Vec<u8> {
@@ -1479,6 +1493,251 @@ fn prior_knowledge_server_acknowledges_valid_settings_payload_and_serves_request
   assert_eq!(H2_FRAME_DATA, response_body.frame_type);
   assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
   assert_eq!(b"settings accepted", response_body.payload.as_slice());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn prior_knowledge_server_advertises_conservative_max_frame_size() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        assert_eq!("HTTP/2", request.version());
+        HttpResponse::ok("advertised max frame size")
+      })
+      .expect("serve h2 request")
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set client read timeout");
+  stream.write_all(H2_PREFACE).expect("write h2 preface");
+  write_h2_frame(&mut stream, H2_FRAME_SETTINGS, 0, 0, &[]);
+
+  let settings = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_SETTINGS, settings.frame_type);
+  assert_eq!(0, settings.flags);
+  assert_eq!(0, settings.stream_id);
+  assert_eq!(
+    Some(H2_DEFAULT_MAX_FRAME_SIZE as u32),
+    h2_setting_value(&settings.payload, H2_SETTINGS_MAX_FRAME_SIZE)
+  );
+
+  let settings_ack = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_SETTINGS, settings_ack.frame_type);
+  assert_eq!(H2_FLAG_ACK, settings_ack.flags);
+  assert_eq!(0, settings_ack.stream_id);
+
+  write_h2_frame(&mut stream, H2_FRAME_SETTINGS, H2_FLAG_ACK, 0, &[]);
+  write_h2_get_request(&mut stream, addr.to_string().as_bytes()).expect("write h2 request");
+  let response_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  let response_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(
+    b"advertised max frame size",
+    response_body.payload.as_slice()
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn prior_knowledge_server_rejects_inbound_frame_exceeding_active_max_before_handler() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send(request.target().to_string())
+        .expect("send unexpected oversized h2 request");
+      HttpResponse::ok("unexpected oversized frame")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_millis(200)))
+    .expect("set client read timeout");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &vec![0x82; H2_DEFAULT_MAX_FRAME_SIZE + 1],
+  );
+  stream.flush().expect("flush oversized h2 frame");
+  let _ = try_read_h2_frame(&mut stream);
+  drop(stream);
+
+  let err = handle
+    .join()
+    .expect("server thread")
+    .expect_err("oversized inbound frame must reject the connection");
+  assert_eq!(io::ErrorKind::InvalidData, err.kind());
+  assert!(
+    err
+      .to_string()
+      .contains("HTTP/2 frame payload exceeds active max frame size"),
+    "unexpected oversized frame error: {err}"
+  );
+  assert!(
+    rx.try_recv().is_err(),
+    "oversized frame must not reach the handler"
+  );
+}
+
+#[test]
+fn prior_knowledge_server_uses_legal_peer_max_frame_size_update_for_response_data() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        assert_eq!("/updated-response-frame-size", request.target());
+        HttpResponse::ok(vec![b'x'; 40_000])
+      })
+      .expect("serve h2 response using updated frame size")
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set client read timeout");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_SETTINGS,
+    0,
+    0,
+    &h2_setting(H2_SETTINGS_MAX_FRAME_SIZE, 32_768),
+  );
+  let settings_ack = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_SETTINGS, settings_ack.frame_type);
+  assert_eq!(H2_FLAG_ACK, settings_ack.flags);
+  assert_eq!(0, settings_ack.stream_id);
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_headers(b"/updated-response-frame-size", addr.to_string().as_bytes()),
+  );
+  stream.flush().expect("flush h2 request");
+
+  let response_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  let mut data_lengths = Vec::new();
+  loop {
+    let frame = read_h2_frame(&mut stream);
+    if frame.frame_type != H2_FRAME_DATA {
+      continue;
+    }
+    assert!(frame.payload.len() <= 32_768);
+    data_lengths.push(frame.payload.len());
+    if frame.flags & H2_FLAG_END_STREAM == H2_FLAG_END_STREAM {
+      break;
+    }
+  }
+  assert!(
+    data_lengths
+      .iter()
+      .any(|len| *len > H2_DEFAULT_MAX_FRAME_SIZE),
+    "legal SETTINGS_MAX_FRAME_SIZE update should allow larger response DATA frames"
+  );
+  assert_eq!(40_000, data_lengths.iter().sum::<usize>());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn prior_knowledge_server_splits_response_trailing_headers_to_peer_max_frame_size() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        assert_eq!("/large-trailers", request.target());
+        let mut response = HttpResponse::ok("body");
+        for index in 0..420 {
+          response = response.trailer(
+            format!("X-Trailer-{index}"),
+            format!("value-{index}-{}", "t".repeat(120)),
+          );
+        }
+        response
+      })
+      .expect("serve h2 response with large trailers")
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set client read timeout");
+  complete_h2_server_handshake_with_settings(
+    &mut stream,
+    &h2_setting(H2_SETTINGS_MAX_FRAME_SIZE, H2_DEFAULT_MAX_FRAME_SIZE as u32),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_headers(b"/large-trailers", addr.to_string().as_bytes()),
+  );
+  stream.flush().expect("flush h2 request");
+
+  let response_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  let response_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(b"body", response_body.payload.as_slice());
+  assert_eq!(0, response_body.flags & H2_FLAG_END_STREAM);
+
+  let first_trailer = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, first_trailer.frame_type);
+  assert_eq!(1, first_trailer.stream_id);
+  assert!(first_trailer.payload.len() <= H2_DEFAULT_MAX_FRAME_SIZE);
+  assert_eq!(H2_FLAG_END_STREAM, first_trailer.flags & H2_FLAG_END_STREAM);
+  assert_eq!(0, first_trailer.flags & H2_FLAG_END_HEADERS);
+
+  let mut saw_final_continuation = false;
+  for _ in 0..8 {
+    let frame = read_h2_frame(&mut stream);
+    assert_eq!(1, frame.stream_id);
+    assert!(frame.payload.len() <= H2_DEFAULT_MAX_FRAME_SIZE);
+    if frame.frame_type == H2_FRAME_CONTINUATION
+      && frame.flags & H2_FLAG_END_HEADERS == H2_FLAG_END_HEADERS
+    {
+      saw_final_continuation = true;
+      break;
+    }
+  }
+  assert!(
+    saw_final_continuation,
+    "large response trailers should be split with CONTINUATION frames"
+  );
 
   handle.join().expect("server thread");
 }

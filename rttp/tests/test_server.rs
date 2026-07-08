@@ -25,6 +25,7 @@ const H2_SETTINGS_MAX_CONCURRENT_STREAMS: u16 = 0x3;
 const H2_SETTINGS_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const H2_SETTINGS_MAX_FRAME_SIZE: u16 = 0x5;
 const H2_SETTINGS_MAX_HEADER_LIST_SIZE: u16 = 0x6;
+const H2_DEFAULT_MAX_FRAME_SIZE: usize = 16 * 1024;
 const H2_SERVER_MAX_HEADER_LIST_SIZE: u32 = 64 * 1024;
 const H2_ERROR_REFUSED_STREAM: u32 = 0x7;
 
@@ -44,6 +45,32 @@ fn write_h2_frame(
   payload: &[u8],
 ) {
   write_raw_h2_frame(stream, frame_type, flags, stream_id & 0x7fff_ffff, payload);
+}
+
+fn write_h2_header_block(stream: &mut TcpStream, stream_id: u32, end_stream: bool, block: &[u8]) {
+  if block.len() <= H2_DEFAULT_MAX_FRAME_SIZE {
+    let flags = H2_FLAG_END_HEADERS | if end_stream { H2_FLAG_END_STREAM } else { 0 };
+    write_h2_frame(stream, H2_FRAME_HEADERS, flags, stream_id, block);
+    return;
+  }
+
+  let mut chunks = block.chunks(H2_DEFAULT_MAX_FRAME_SIZE);
+  write_h2_frame(
+    stream,
+    H2_FRAME_HEADERS,
+    if end_stream { H2_FLAG_END_STREAM } else { 0 },
+    stream_id,
+    chunks.next().expect("first h2 header chunk"),
+  );
+
+  while let Some(chunk) = chunks.next() {
+    let flags = if chunks.len() == 0 {
+      H2_FLAG_END_HEADERS
+    } else {
+      0
+    };
+    write_h2_frame(stream, H2_FRAME_CONTINUATION, flags, stream_id, chunk);
+  }
 }
 
 fn write_raw_h2_frame(
@@ -117,6 +144,33 @@ fn h2_window_update_increment(frame: &H2Frame) -> u32 {
 
 fn h2_window_update(increment: u32) -> [u8; 4] {
   increment.to_be_bytes()
+}
+
+fn read_h2_window_updates_until(
+  stream: &mut TcpStream,
+  expected_connection_increment: u32,
+  expected_stream_increment: u32,
+  stream_id: u32,
+) {
+  let mut connection_increment = 0;
+  let mut stream_increment = 0;
+  for _ in 0..16 {
+    let update = read_h2_frame(stream);
+    assert_eq!(H2_FRAME_WINDOW_UPDATE, update.frame_type);
+    match update.stream_id {
+      0 => connection_increment += h2_window_update_increment(&update),
+      id if id == stream_id => stream_increment += h2_window_update_increment(&update),
+      id => panic!("unexpected WINDOW_UPDATE stream id {id}"),
+    }
+    if connection_increment == expected_connection_increment
+      && stream_increment == expected_stream_increment
+    {
+      return;
+    }
+  }
+  panic!(
+    "missing WINDOW_UPDATE totals: connection={connection_increment}, stream={stream_increment}"
+  );
 }
 
 fn h2_goaway_last_stream_id(frame: &H2Frame) -> u32 {
@@ -1760,23 +1814,11 @@ fn server_sends_http2_window_updates_while_consuming_large_request_body() {
   );
 
   let first_chunk = vec![b'a'; 65_535];
-  write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 1, &first_chunk);
+  for chunk in first_chunk.chunks(H2_DEFAULT_MAX_FRAME_SIZE) {
+    write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 1, chunk);
+  }
 
-  let first_update = read_h2_frame(&mut stream);
-  let second_update = read_h2_frame(&mut stream);
-  assert_eq!(
-    vec![(0, 65_535), (1, 65_535)],
-    vec![
-      (
-        first_update.stream_id,
-        h2_window_update_increment(&first_update)
-      ),
-      (
-        second_update.stream_id,
-        h2_window_update_increment(&second_update)
-      ),
-    ]
-  );
+  read_h2_window_updates_until(&mut stream, 65_535, 65_535, 1);
 
   write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 1, b"tail");
   let trailers = h2_literal_new_name(b"x-large-body", b"complete");
@@ -1788,21 +1830,7 @@ fn server_sends_http2_window_updates_while_consuming_large_request_body() {
     &trailers,
   );
 
-  let tail_connection_update = read_h2_frame(&mut stream);
-  let tail_stream_update = read_h2_frame(&mut stream);
-  assert_eq!(
-    vec![(0, 4), (1, 4)],
-    vec![
-      (
-        tail_connection_update.stream_id,
-        h2_window_update_increment(&tail_connection_update)
-      ),
-      (
-        tail_stream_update.stream_id,
-        h2_window_update_increment(&tail_stream_update)
-      ),
-    ]
-  );
+  read_h2_window_updates_until(&mut stream, 4, 4, 1);
 
   let response_headers = read_h2_frame(&mut stream);
   assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
@@ -3534,18 +3562,8 @@ fn server_rejects_http2_prior_knowledge_oversized_request_headers_before_handler
     2,
     &vec![b'a'; H2_SERVER_MAX_HEADER_LIST_SIZE as usize],
   ));
-  let split = headers.len() / 2;
-  write_h2_frame(&mut stream, H2_FRAME_HEADERS, 0, 1, &headers[..split]);
-  write_h2_frame(
-    &mut stream,
-    H2_FRAME_CONTINUATION,
-    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
-    1,
-    &headers[split..],
-  );
-  stream
-    .shutdown(std::net::Shutdown::Write)
-    .expect("shutdown h2 write");
+  write_h2_header_block(&mut stream, 1, true, &headers);
+  let _ = stream.shutdown(std::net::Shutdown::Write);
 
   let error = handle
     .join()
