@@ -338,7 +338,7 @@ fn write_request(
   request: &RawRequest<'_>,
   url: &Url,
   response_url: RoUrl,
-  peer_settings: PeerSettings,
+  mut peer_settings: PeerSettings,
 ) -> error::Result<Option<Response>> {
   if peer_settings.max_concurrent_streams == Some(0) {
     return Err(error::bad_response(
@@ -353,13 +353,7 @@ fn write_request(
   );
   let regular_header_fields = regular_headers(request.header());
   let trailer_fields = request_trailer_fields(request);
-  enforce_peer_header_list_size(
-    request,
-    url,
-    &regular_header_fields,
-    &trailer_fields,
-    peer_settings,
-  )?;
+  enforce_peer_request_header_list_size(request, url, &regular_header_fields, peer_settings)?;
   let mut dynamic_field_plan = Vec::new();
   dynamic_field_plan.extend(regular_header_fields.iter().cloned());
   dynamic_field_plan.extend(trailer_fields.iter().cloned());
@@ -393,12 +387,13 @@ fn write_request(
   )?;
   if !body.is_empty() {
     if let Some(response) =
-      write_data_frames(stream, body, peer_settings, has_trailers, response_url)?
+      write_data_frames(stream, body, &mut peer_settings, has_trailers, response_url)?
     {
       return Ok(Some(response));
     }
   }
   if has_trailers {
+    enforce_peer_trailer_header_list_size(&trailer_fields, peer_settings)?;
     let trailer_block = encode_request_trailers(
       &trailer_fields,
       &dynamic_field_plan,
@@ -416,11 +411,10 @@ fn write_request(
   stream.flush().map_err(error::request).map(|()| None)
 }
 
-fn enforce_peer_header_list_size(
+fn enforce_peer_request_header_list_size(
   request: &RawRequest<'_>,
   url: &Url,
   regular_header_fields: &[(String, String)],
-  trailer_fields: &[(String, String)],
   peer_settings: PeerSettings,
 ) -> error::Result<()> {
   let Some(max_header_list_size) = peer_settings.max_header_list_size else {
@@ -435,11 +429,29 @@ fn enforce_peer_header_list_size(
   for (name, value) in regular_header_fields {
     size = add_header_list_field_size(size, name, value)?;
   }
+  fail_if_header_list_size_exceeds_peer_bound(size, max_header_list_size)
+}
+
+fn enforce_peer_trailer_header_list_size(
+  trailer_fields: &[(String, String)],
+  peer_settings: PeerSettings,
+) -> error::Result<()> {
+  let Some(max_header_list_size) = peer_settings.max_header_list_size else {
+    return Ok(());
+  };
+
+  let mut size = 0usize;
   for (name, value) in trailer_fields {
     validate_request_trailer_field(name, value)?;
     size = add_header_list_field_size(size, name, value)?;
   }
+  fail_if_header_list_size_exceeds_peer_bound(size, max_header_list_size)
+}
 
+fn fail_if_header_list_size_exceeds_peer_bound(
+  size: usize,
+  max_header_list_size: usize,
+) -> error::Result<()> {
   if size > max_header_list_size {
     return Err(error::builder_with_message(
       "HTTP/2 peer SETTINGS_MAX_HEADER_LIST_SIZE exceeded by request metadata",
@@ -490,7 +502,7 @@ fn write_header_block_frames(
 fn write_data_frames(
   stream: &mut TcpStream,
   body: &[u8],
-  peer_settings: PeerSettings,
+  peer_settings: &mut PeerSettings,
   has_trailers: bool,
   url: RoUrl,
 ) -> error::Result<Option<Response>> {
@@ -510,6 +522,7 @@ fn write_data_frames(
         stream,
         &mut connection_send_window,
         &mut stream_send_window,
+        peer_settings,
         &mut current_initial_window_size,
         &mut current_max_frame_size,
         url.clone(),
@@ -543,6 +556,7 @@ fn read_until_send_window_available(
   stream: &mut TcpStream,
   connection_send_window: &mut SendWindow,
   stream_send_window: &mut SendWindow,
+  peer_settings: &mut PeerSettings,
   current_initial_window_size: &mut u32,
   current_max_frame_size: &mut usize,
   url: RoUrl,
@@ -564,6 +578,7 @@ fn read_until_send_window_available(
           stream,
           &frame,
           stream_send_window,
+          peer_settings,
           current_initial_window_size,
           current_max_frame_size,
         )?;
@@ -620,6 +635,7 @@ fn handle_settings_while_sending(
   stream: &mut TcpStream,
   frame: &Frame,
   stream_send_window: &mut SendWindow,
+  peer_settings: &mut PeerSettings,
   current_initial_window_size: &mut u32,
   current_max_frame_size: &mut usize,
 ) -> error::Result<()> {
@@ -637,6 +653,9 @@ fn handle_settings_while_sending(
   }
   if settings.max_frame_size_changed {
     *current_max_frame_size = settings.max_frame_size;
+  }
+  if settings.max_header_list_size.is_some() {
+    peer_settings.max_header_list_size = settings.max_header_list_size;
   }
   write_frame(stream, FRAME_SETTINGS, FLAG_ACK, 0, &[])?;
   stream.flush().map_err(error::request)
