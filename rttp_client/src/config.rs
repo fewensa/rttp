@@ -6,6 +6,7 @@ pub struct Config {
   max_redirect: u32,
   verify_ssl_hostname: bool,
   verify_ssl_cert: bool,
+  http2_max_frame_size: Option<usize>,
 }
 
 impl Default for Config {
@@ -44,6 +45,9 @@ impl Config {
   pub fn verify_ssl_hostname(&self) -> bool {
     self.verify_ssl_hostname
   }
+  pub fn http2_max_frame_size(&self) -> Option<usize> {
+    self.http2_max_frame_size
+  }
 }
 
 #[derive(Clone, Debug)]
@@ -67,6 +71,7 @@ impl ConfigBuilder {
         max_redirect: 0,
         verify_ssl_hostname: true,
         verify_ssl_cert: true,
+        http2_max_frame_size: None,
       },
     }
   }
@@ -102,6 +107,10 @@ impl ConfigBuilder {
     self.config.verify_ssl_cert = verify_ssl_cert;
     self
   }
+  pub fn http2_max_frame_size(&mut self, max_frame_size: usize) -> &mut Self {
+    self.config.http2_max_frame_size = Some(max_frame_size);
+    self
+  }
 }
 
 impl AsRef<Config> for Config {
@@ -129,6 +138,7 @@ mod tests {
       .max_redirect(5)
       .verify_ssl_hostname(false)
       .verify_ssl_cert(false)
+      .http2_max_frame_size(16_384)
       .build();
 
     assert_eq!(config.read_timeout(), 1234);
@@ -137,6 +147,7 @@ mod tests {
     assert_eq!(config.max_redirect(), 5);
     assert!(!config.verify_ssl_hostname());
     assert!(!config.verify_ssl_cert());
+    assert_eq!(Some(16_384), config.http2_max_frame_size());
   }
 
   #[test]
@@ -161,6 +172,10 @@ mod tests {
     assert_eq!(
       default_config.verify_ssl_cert(),
       builder_config.verify_ssl_cert()
+    );
+    assert_eq!(
+      default_config.http2_max_frame_size(),
+      builder_config.http2_max_frame_size()
     );
   }
 
