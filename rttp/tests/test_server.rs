@@ -10,6 +10,7 @@ use rttp_client::HttpClient;
 const H2_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 const H2_FRAME_DATA: u8 = 0x0;
 const H2_FRAME_HEADERS: u8 = 0x1;
+const H2_FRAME_PRIORITY: u8 = 0x2;
 const H2_FRAME_RST_STREAM: u8 = 0x3;
 const H2_FRAME_SETTINGS: u8 = 0x4;
 const H2_FRAME_PING: u8 = 0x6;
@@ -1574,6 +1575,65 @@ fn server_sends_http2_window_updates_while_consuming_large_request_body() {
 #[test]
 fn server_rejects_http2_prior_knowledge_zero_window_update_increment() {
   assert_invalid_h2_frame_without_handler(H2_FRAME_WINDOW_UPDATE, 0, 0, &0u32.to_be_bytes());
+}
+
+#[test]
+fn server_ignores_http2_prior_knowledge_priority_before_request_headers() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request.target().to_string())
+          .expect("send h2 target");
+        HttpResponse::ok("priority ignored")
+      })
+      .expect("serve h2 request after priority frame");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+
+  write_h2_frame(&mut stream, H2_FRAME_PRIORITY, 0, 1, &[0, 0, 0, 0, 16]);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_headers(b"/priority-before-headers", addr.to_string().as_bytes()),
+  );
+
+  let response_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(1, response_headers.stream_id);
+
+  let response_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
+  assert_eq!(1, response_body.stream_id);
+  assert_eq!(b"priority ignored", response_body.payload.as_slice());
+
+  assert_eq!(
+    "/priority-before-headers",
+    rx.recv().expect("receive h2 target")
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_priority_with_zero_stream_id() {
+  assert_invalid_h2_frame_without_handler(H2_FRAME_PRIORITY, 0, 0, &[0, 0, 0, 0, 16]);
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_priority_with_invalid_payload_length() {
+  assert_invalid_h2_frame_without_handler(H2_FRAME_PRIORITY, 0, 1, &[0, 0, 0, 0]);
 }
 
 #[test]

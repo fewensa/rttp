@@ -12,6 +12,7 @@ const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 const HTTP2_CLIENT_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 const HTTP2_FRAME_DATA: u8 = 0x0;
 const HTTP2_FRAME_HEADERS: u8 = 0x1;
+const HTTP2_FRAME_PRIORITY: u8 = 0x2;
 const HTTP2_FRAME_RST_STREAM: u8 = 0x3;
 const HTTP2_FRAME_SETTINGS: u8 = 0x4;
 const HTTP2_FRAME_PING: u8 = 0x6;
@@ -484,6 +485,9 @@ impl HttpServer {
             io::ErrorKind::InvalidData,
             "invalid HTTP/2 PING frame",
           ));
+        }
+        (HTTP2_FRAME_PRIORITY, id) => {
+          validate_http2_priority_frame(id, &frame.payload)?;
         }
         (HTTP2_FRAME_HEADERS, id) if id != 0 => {
           let header_block_fragment =
@@ -1014,6 +1018,16 @@ fn http2_window_update_increment(payload: &[u8]) -> io::Result<u32> {
     return Err(invalid_http2_window_update_error());
   }
   Ok(increment)
+}
+
+fn validate_http2_priority_frame(stream_id: u32, payload: &[u8]) -> io::Result<()> {
+  if stream_id == 0 || stream_id.is_multiple_of(2) || payload.len() != 5 {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "invalid HTTP/2 PRIORITY frame",
+    ));
+  }
+  Ok(())
 }
 
 fn invalid_http2_window_update_error() -> io::Error {
