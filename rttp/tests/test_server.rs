@@ -104,6 +104,18 @@ fn h2_window_update(increment: u32) -> [u8; 4] {
   increment.to_be_bytes()
 }
 
+fn h2_goaway_last_stream_id(frame: &H2Frame) -> u32 {
+  assert_eq!(H2_FRAME_GOAWAY, frame.frame_type);
+  assert_eq!(0, frame.flags);
+  assert_eq!(0, frame.stream_id);
+  assert_eq!(8, frame.payload.len());
+  assert_eq!(
+    0,
+    u32::from_be_bytes(frame.payload[4..8].try_into().unwrap())
+  );
+  u32::from_be_bytes(frame.payload[0..4].try_into().unwrap()) & 0x7fff_ffff
+}
+
 fn h2_literal_indexed_name(name_index: u8, value: &[u8]) -> Vec<u8> {
   assert!(value.len() < 128);
   let mut encoded = vec![name_index, value.len() as u8];
@@ -734,6 +746,110 @@ fn server_accepts_http2_prior_knowledge_delete_with_end_stream_once() {
   let request = rx.recv().expect("receive parsed h2 DELETE request");
   assert_eq!(("DELETE".to_string(), "/resource".to_string()), request);
   assert!(rx.try_recv().is_err(), "handler must run exactly once");
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_sends_http2_prior_knowledge_goaway_after_bounded_request_limit() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(1, |request| {
+        HttpResponse::ok(format!("served {}", request.target()))
+      })
+      .expect("serve bounded h2 request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_headers(b"/bounded", addr.to_string().as_bytes()),
+  );
+
+  let response_headers = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(1, response_headers.stream_id);
+  let response_body = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
+  assert_eq!(1, response_body.stream_id);
+  assert_eq!(b"served /bounded", response_body.payload.as_slice());
+
+  let goaway = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(1, h2_goaway_last_stream_id(&goaway));
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_sends_http2_prior_knowledge_goaway_with_last_processed_stream_id() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        HttpResponse::ok(format!("served {}", request.target()))
+      })
+      .expect("serve bounded h2 requests");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_headers(b"/first", addr.to_string().as_bytes()),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    3,
+    &h2_get_headers(b"/second", addr.to_string().as_bytes()),
+  );
+
+  let first_headers = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, first_headers.frame_type);
+  assert_eq!(1, first_headers.stream_id);
+  let first_body = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_DATA, first_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, first_body.flags);
+  assert_eq!(1, first_body.stream_id);
+  assert_eq!(b"served /first", first_body.payload.as_slice());
+
+  let second_headers = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, second_headers.frame_type);
+  assert_eq!(3, second_headers.stream_id);
+  let second_body = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_DATA, second_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, second_body.flags);
+  assert_eq!(3, second_body.stream_id);
+  assert_eq!(b"served /second", second_body.payload.as_slice());
+
+  let goaway = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(3, h2_goaway_last_stream_id(&goaway));
 
   handle.join().expect("server thread");
 }
