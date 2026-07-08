@@ -960,6 +960,264 @@ fn server_pauses_http2_response_data_until_connection_window_update() {
 }
 
 #[test]
+fn server_preserves_http2_request_frames_received_while_response_is_flow_control_blocked() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        if request.target() == "/queued" {
+          tx.send((
+            request.body().to_vec(),
+            request.trailer("x-queued").map(str::to_string),
+          ))
+          .expect("send queued h2 request details");
+          HttpResponse::ok("ok")
+        } else {
+          HttpResponse::ok("abcdefghij")
+        }
+      })
+      .expect("serve multiplexed flow-controlled h2 responses");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_millis(200)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake_with_settings(
+    &mut stream,
+    &h2_setting(H2_SETTINGS_INITIAL_WINDOW_SIZE, 5),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_headers(b"/blocked", addr.to_string().as_bytes()),
+  );
+
+  let response_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(1, response_headers.stream_id);
+  let first_data = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, first_data.frame_type);
+  assert_eq!(1, first_data.stream_id);
+  assert_eq!(b"abcde", first_data.payload.as_slice());
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    3,
+    &h2_post_headers(b"/queued", addr.to_string().as_bytes()),
+  );
+  write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 3, b"saved");
+  let trailers = h2_literal_new_name(b"x-queued", b"trailer");
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    3,
+    &trailers,
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_WINDOW_UPDATE,
+    0,
+    1,
+    &h2_window_update(5),
+  );
+
+  let second_data = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_DATA, second_data.frame_type);
+  assert_eq!(1, second_data.stream_id);
+  assert_eq!(b"fghij", second_data.payload.as_slice());
+  assert_eq!(H2_FLAG_END_STREAM, second_data.flags & H2_FLAG_END_STREAM);
+
+  let queued_response_headers = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, queued_response_headers.frame_type);
+  assert_eq!(3, queued_response_headers.stream_id);
+  let queued_response_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, queued_response_body.frame_type);
+  assert_eq!(3, queued_response_body.stream_id);
+  assert_eq!(b"ok", queued_response_body.payload.as_slice());
+
+  assert_eq!(
+    (b"saved".to_vec(), Some("trailer".to_string())),
+    rx.recv().expect("receive queued h2 request details")
+  );
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_applies_http2_window_update_to_other_stream_while_response_is_blocked() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        if request.target() == "/blocked" {
+          HttpResponse::ok("aa")
+        } else {
+          HttpResponse::ok("ok")
+        }
+      })
+      .expect("serve window-updated h2 responses");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_millis(200)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake_with_settings(
+    &mut stream,
+    &h2_setting(H2_SETTINGS_INITIAL_WINDOW_SIZE, 0),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_headers(b"/blocked", addr.to_string().as_bytes()),
+  );
+
+  let blocked_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, blocked_headers.frame_type);
+  assert_eq!(1, blocked_headers.stream_id);
+  let blocked = try_read_h2_frame(&mut stream).expect_err("server must wait for stream credit");
+  assert!(
+    matches!(blocked.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut),
+    "unexpected read error: {blocked}"
+  );
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    3,
+    &h2_get_headers(b"/other", addr.to_string().as_bytes()),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_WINDOW_UPDATE,
+    0,
+    3,
+    &h2_window_update(2),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_WINDOW_UPDATE,
+    0,
+    1,
+    &h2_window_update(2),
+  );
+
+  let blocked_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, blocked_body.frame_type);
+  assert_eq!(1, blocked_body.stream_id);
+  assert_eq!(b"aa", blocked_body.payload.as_slice());
+
+  let other_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, other_headers.frame_type);
+  assert_eq!(3, other_headers.stream_id);
+  let other_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, other_body.frame_type);
+  assert_eq!(3, other_body.stream_id);
+  assert_eq!(b"ok", other_body.payload.as_slice());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_applies_http2_initial_window_settings_to_all_streams_while_response_is_blocked() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        if request.target() == "/blocked" {
+          HttpResponse::ok("aa")
+        } else {
+          HttpResponse::ok("ok")
+        }
+      })
+      .expect("serve settings-adjusted h2 responses");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_millis(200)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake_with_settings(
+    &mut stream,
+    &h2_setting(H2_SETTINGS_INITIAL_WINDOW_SIZE, 0),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_headers(b"/blocked", addr.to_string().as_bytes()),
+  );
+
+  let blocked_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, blocked_headers.frame_type);
+  assert_eq!(1, blocked_headers.stream_id);
+  let blocked = try_read_h2_frame(&mut stream).expect_err("server must wait for stream credit");
+  assert!(
+    matches!(blocked.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut),
+    "unexpected read error: {blocked}"
+  );
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    3,
+    &h2_get_headers(b"/other", addr.to_string().as_bytes()),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_SETTINGS,
+    0,
+    0,
+    &h2_setting(H2_SETTINGS_INITIAL_WINDOW_SIZE, 2),
+  );
+
+  let settings_ack = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_SETTINGS, settings_ack.frame_type);
+  assert_eq!(H2_FLAG_ACK, settings_ack.flags);
+
+  let blocked_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, blocked_body.frame_type);
+  assert_eq!(1, blocked_body.stream_id);
+  assert_eq!(b"aa", blocked_body.payload.as_slice());
+
+  let other_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, other_headers.frame_type);
+  assert_eq!(3, other_headers.stream_id);
+  let other_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, other_body.frame_type);
+  assert_eq!(3, other_body.stream_id);
+  assert_eq!(b"ok", other_body.payload.as_slice());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn server_rejects_http2_response_window_update_overflow() {
   let server = rttp::Http::server("127.0.0.1:0")
     .expect("bind server")

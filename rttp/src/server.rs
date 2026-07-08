@@ -627,7 +627,10 @@ impl HttpServer {
             max_frame_size: &mut peer_max_frame_size,
             peer_initial_stream_send_window: &mut peer_initial_stream_send_window,
             connection_send_window: &mut connection_send_window,
+            connection_receive_window: &mut connection_receive_window,
             stream_send_window: &mut stream_send_window,
+            streams: &mut streams,
+            reset_streams: &mut reset_streams,
           },
         ))?;
         served += 1;
@@ -1647,7 +1650,10 @@ struct Http2ResponseFlowControl<'a> {
   max_frame_size: &'a mut usize,
   peer_initial_stream_send_window: &'a mut i32,
   connection_send_window: &'a mut Http2SendWindow,
+  connection_receive_window: &'a mut i32,
   stream_send_window: &'a mut Http2SendWindow,
+  streams: &'a mut Vec<Http2RequestStream>,
+  reset_streams: &'a mut Vec<u32>,
 }
 
 fn write_http2_response(
@@ -1678,14 +1684,7 @@ fn write_http2_response(
       while flow_control.connection_send_window.available() == 0
         || flow_control.stream_send_window.available() == 0
       {
-        read_http2_response_flow_control_frame(
-          stream,
-          stream_id,
-          flow_control.max_frame_size,
-          flow_control.peer_initial_stream_send_window,
-          flow_control.connection_send_window,
-          flow_control.stream_send_window,
-        )?;
+        read_http2_response_flow_control_frame(stream, stream_id, flow_control)?;
       }
 
       let chunk_len = (body.len() - offset)
@@ -1722,24 +1721,40 @@ fn write_http2_response(
 fn read_http2_response_flow_control_frame(
   stream: &mut TcpStream,
   response_stream_id: u32,
-  max_frame_size: &mut usize,
-  peer_initial_stream_send_window: &mut i32,
-  connection_send_window: &mut Http2SendWindow,
-  stream_send_window: &mut Http2SendWindow,
+  flow_control: &mut Http2ResponseFlowControl<'_>,
 ) -> io::Result<()> {
   loop {
     let frame = read_http2_frame(stream)?;
+    if let Some(stream_id) = active_http2_header_continuation_stream(flow_control.streams) {
+      if frame.frame_type != HTTP2_FRAME_CONTINUATION || frame.stream_id != stream_id {
+        return Err(io::Error::new(
+          io::ErrorKind::InvalidData,
+          "HTTP/2 frame interleaved before END_HEADERS",
+        ));
+      }
+    }
     match (frame.frame_type, frame.stream_id) {
       (HTTP2_FRAME_WINDOW_UPDATE, 0) => {
-        connection_send_window.increase(http2_window_update_increment(&frame.payload)?)?;
+        flow_control
+          .connection_send_window
+          .increase(http2_window_update_increment(&frame.payload)?)?;
         return Ok(());
       }
       (HTTP2_FRAME_WINDOW_UPDATE, id) if id == response_stream_id => {
-        stream_send_window.increase(http2_window_update_increment(&frame.payload)?)?;
+        flow_control
+          .stream_send_window
+          .increase(http2_window_update_increment(&frame.payload)?)?;
         return Ok(());
       }
-      (HTTP2_FRAME_WINDOW_UPDATE, _) => {
-        http2_window_update_increment(&frame.payload)?;
+      (HTTP2_FRAME_WINDOW_UPDATE, id) => {
+        let increment = http2_window_update_increment(&frame.payload)?;
+        if let Some(request_stream) = flow_control
+          .streams
+          .iter_mut()
+          .find(|request_stream| request_stream.stream_id == id)
+        {
+          request_stream.send_window.increase(increment)?;
+        }
       }
       (HTTP2_FRAME_SETTINGS, 0) => {
         if frame.flags & HTTP2_FLAG_ACK == HTTP2_FLAG_ACK {
@@ -1752,12 +1767,15 @@ fn read_http2_response_flow_control_frame(
         } else {
           validate_http2_settings_payload(&frame.payload)?;
           if let Some(updated_max_frame_size) = http2_settings_max_frame_size(&frame.payload) {
-            *max_frame_size = updated_max_frame_size;
+            *flow_control.max_frame_size = updated_max_frame_size;
           }
           if let Some(initial_window_size) = http2_settings_initial_window_size(&frame.payload) {
-            let delta = initial_window_size - *peer_initial_stream_send_window;
-            stream_send_window.adjust(delta)?;
-            *peer_initial_stream_send_window = initial_window_size;
+            let delta = initial_window_size - *flow_control.peer_initial_stream_send_window;
+            flow_control.stream_send_window.adjust(delta)?;
+            for request_stream in &mut *flow_control.streams {
+              request_stream.send_window.adjust(delta)?;
+            }
+            *flow_control.peer_initial_stream_send_window = initial_window_size;
           }
           write_http2_frame(stream, HTTP2_FRAME_SETTINGS, HTTP2_FLAG_ACK, 0, &[])?;
           stream.flush()?;
@@ -1788,7 +1806,130 @@ fn read_http2_response_flow_control_frame(
           "HTTP/2 connection received GOAWAY",
         ));
       }
+      (HTTP2_FRAME_HEADERS, id) if id != 0 => {
+        let header_block_fragment =
+          http2_headers_payload_to_header_block_fragment(&frame.payload, frame.flags)?;
+        let request_stream = http2_request_stream(
+          flow_control.streams,
+          id,
+          *flow_control.peer_initial_stream_send_window,
+        );
+        if request_stream.end_stream {
+          return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "HTTP/2 HEADERS frame arrived after END_STREAM",
+          ));
+        }
+        let header_block_kind = if request_stream.decoded_headers.is_some() {
+          if frame.flags & HTTP2_FLAG_END_STREAM != HTTP2_FLAG_END_STREAM {
+            return Err(io::Error::new(
+              io::ErrorKind::InvalidData,
+              "HTTP/2 request trailers must end the stream",
+            ));
+          }
+          Http2HeaderBlockKind::RequestTrailers
+        } else {
+          Http2HeaderBlockKind::RequestHeaders
+        };
+        request_stream.header_block_kind = Some(header_block_kind);
+        request_stream
+          .header_block
+          .extend_from_slice(header_block_fragment);
+        if frame.flags & HTTP2_FLAG_END_HEADERS == HTTP2_FLAG_END_HEADERS {
+          request_stream.finish_header_block()?;
+        } else {
+          request_stream.in_header_continuation = true;
+        }
+        if frame.flags & HTTP2_FLAG_END_STREAM == HTTP2_FLAG_END_STREAM {
+          request_stream.end_stream = true;
+        }
+      }
+      (HTTP2_FRAME_CONTINUATION, id) if id != 0 => {
+        let Some(request_stream) = flow_control
+          .streams
+          .iter_mut()
+          .find(|request_stream| request_stream.stream_id == id)
+        else {
+          return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "HTTP/2 CONTINUATION frame arrived without request headers",
+          ));
+        };
+        if !request_stream.in_header_continuation {
+          return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "HTTP/2 CONTINUATION frame arrived without request headers",
+          ));
+        }
+        request_stream
+          .header_block
+          .extend_from_slice(&frame.payload);
+        if frame.flags & HTTP2_FLAG_END_HEADERS == HTTP2_FLAG_END_HEADERS {
+          request_stream.finish_header_block()?;
+        }
+      }
+      (HTTP2_FRAME_DATA, id) if id != 0 => {
+        let Some(request_stream) = flow_control
+          .streams
+          .iter_mut()
+          .find(|request_stream| request_stream.stream_id == id)
+        else {
+          if flow_control.reset_streams.contains(&id) {
+            continue;
+          }
+          return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "HTTP/2 DATA frame arrived before request headers",
+          ));
+        };
+        if request_stream.decoded_headers.is_none() || request_stream.in_header_continuation {
+          return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "HTTP/2 DATA frame arrived before request headers",
+          ));
+        }
+
+        let data_payload = http2_data_payload_to_data(&frame.payload, frame.flags)?;
+        let flow_controlled_len =
+          i32::try_from(frame.payload.len()).map_err(|_| http2_flow_control_error())?;
+        request_stream.receive_flow_controlled_data(
+          flow_control.connection_receive_window,
+          flow_controlled_len,
+        )?;
+        let new_len = request_stream
+          .body
+          .len()
+          .checked_add(data_payload.len())
+          .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "request body is too large"))?;
+        reject_oversized_request_body(new_len)?;
+        request_stream.body.extend_from_slice(data_payload);
+        if !frame.payload.is_empty() {
+          write_http2_window_update(stream, 0, frame.payload.len())?;
+          write_http2_window_update(stream, id, frame.payload.len())?;
+          request_stream.release_flow_controlled_data(
+            flow_control.connection_receive_window,
+            flow_controlled_len,
+          )?;
+        }
+        if frame.flags & HTTP2_FLAG_END_STREAM == HTTP2_FLAG_END_STREAM {
+          request_stream.end_stream = true;
+        }
+      }
+      (HTTP2_FRAME_RST_STREAM, id) if id != 0 => {
+        flow_control
+          .streams
+          .retain(|request_stream| request_stream.stream_id != id);
+        if !flow_control.reset_streams.contains(&id) {
+          flow_control.reset_streams.push(id);
+        }
+      }
+      (_, 0) => {}
       _ => {}
+    }
+    if flow_control.connection_send_window.available() > 0
+      && flow_control.stream_send_window.available() > 0
+    {
+      return Ok(());
     }
   }
 }
