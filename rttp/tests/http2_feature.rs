@@ -14,6 +14,7 @@ const H2_FRAME_HEADERS: u8 = 0x1;
 const H2_FRAME_PRIORITY: u8 = 0x2;
 const H2_FRAME_RST_STREAM: u8 = 0x3;
 const H2_FRAME_SETTINGS: u8 = 0x4;
+const H2_FRAME_PUSH_PROMISE: u8 = 0x5;
 const H2_FRAME_PING: u8 = 0x6;
 const H2_FRAME_GOAWAY: u8 = 0x7;
 const H2_FRAME_WINDOW_UPDATE: u8 = 0x8;
@@ -1189,6 +1190,103 @@ fn h2c_priority_unsupported_scheduling_matrix_server_rejects_malformed_priority_
       write_h2_frame(stream, H2_FRAME_PRIORITY, 0, stream_id, &payload);
     });
   }
+}
+
+#[test]
+fn h2c_push_promise_unsupported_matrix_rejects_wrapper_peer_push_before_final_response() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 push peer");
+  let addr = listener.local_addr().expect("h2 push peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_peer_request_handshake(&mut stream);
+
+    write_h2_frame(
+      &mut stream,
+      H2_FRAME_PUSH_PROMISE,
+      H2_FLAG_END_HEADERS,
+      1,
+      &[0, 0, 0, 2, 0x82],
+    );
+    write_h2_frame(
+      &mut stream,
+      H2_FRAME_HEADERS,
+      H2_FLAG_END_HEADERS,
+      1,
+      &[0x88],
+    );
+    write_h2_frame(
+      &mut stream,
+      H2_FRAME_DATA,
+      H2_FLAG_END_STREAM,
+      1,
+      b"unexpected pushed response",
+    );
+  });
+
+  let err = rttp::Http::client()
+    .get()
+    .url(format!("http://{}/push-promise/client-boundary", addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("wrapper client must reject PUSH_PROMISE before final response");
+  assert!(
+    err
+      .to_string()
+      .contains("unsupported HTTP/2 PUSH_PROMISE server push"),
+    "unexpected wrapper client PUSH_PROMISE error: {err}"
+  );
+
+  handle.join().expect("h2 push peer thread");
+}
+
+#[test]
+fn h2c_push_promise_unsupported_matrix_server_rejects_client_push_before_handler() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind h2 push server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2 push server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send(request.target().to_string())
+        .expect("send unexpected PUSH_PROMISE handler call");
+      HttpResponse::ok("unexpected h2 PUSH_PROMISE handler")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 push server");
+  stream
+    .set_read_timeout(Some(Duration::from_millis(200)))
+    .expect("set h2 push client read timeout");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_PUSH_PROMISE,
+    H2_FLAG_END_HEADERS,
+    1,
+    &[0, 0, 0, 2, 0x82],
+  );
+  stream.flush().expect("flush h2 PUSH_PROMISE");
+  let _ = try_read_h2_frame(&mut stream);
+  drop(stream);
+
+  let err = handle
+    .join()
+    .expect("h2 push server thread")
+    .expect_err("client-sent PUSH_PROMISE must reject before handler");
+  assert_eq!(io::ErrorKind::InvalidData, err.kind());
+  assert!(
+    err
+      .to_string()
+      .contains("HTTP/2 PUSH_PROMISE frame is unsupported"),
+    "unexpected h2c server PUSH_PROMISE rejection error: {err}"
+  );
+  assert!(
+    rx.try_recv().is_err(),
+    "client-sent PUSH_PROMISE must not be dispatched as a normal request"
+  );
 }
 
 #[test]
