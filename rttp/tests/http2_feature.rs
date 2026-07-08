@@ -705,6 +705,33 @@ fn spawn_goaway_matrix_peer(
   (addr, handle)
 }
 
+fn spawn_rst_stream_matrix_peer(
+  stream_id: u32,
+  payload: &'static [u8],
+  response_body: Option<&'static [u8]>,
+) -> (SocketAddr, thread::JoinHandle<()>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_peer_request_handshake(&mut stream);
+    write_h2_frame(&mut stream, H2_FRAME_RST_STREAM, 0, stream_id, payload);
+    if let Some(body) = response_body {
+      write_h2_frame(
+        &mut stream,
+        H2_FRAME_HEADERS,
+        H2_FLAG_END_HEADERS,
+        1,
+        &[0x88],
+      );
+      write_h2_frame(&mut stream, H2_FRAME_DATA, H2_FLAG_END_STREAM, 1, body);
+    }
+  });
+
+  (addr, handle)
+}
+
 #[test]
 fn cross_crate_h2c_goaway_after_completed_stream_keeps_wrapper_response_complete() {
   let (addr, handle) = spawn_goaway_matrix_peer([0, 0, 0, 0, 0, 0, 0, 0], true);
@@ -827,6 +854,151 @@ fn cross_crate_h2c_prior_knowledge_client_remains_single_use_after_shutdown() {
     "unexpected error: {error}"
   );
   handle.join().expect("single-use GOAWAY peer thread");
+}
+
+#[test]
+fn cross_crate_h2c_rst_stream_on_active_stream_rejects_wrapper_response() {
+  let (addr, handle) = spawn_rst_stream_matrix_peer(1, &[0, 0, 0, 8], None);
+
+  let error = rttp::Http::client()
+    .get()
+    .url(format!("http://{}/reset-active", addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("active stream reset must fail the wrapper response");
+
+  assert!(
+    error.to_string().contains("RST_STREAM error code 8"),
+    "unexpected error: {error}"
+  );
+  handle.join().expect("active RST_STREAM peer thread");
+}
+
+#[test]
+fn cross_crate_h2c_rst_stream_malformed_boundaries_reject_wrapper_response() {
+  let cases: &[(&str, u32, &[u8])] = &[
+    ("stream-zero", 0, &[0, 0, 0, 0]),
+    ("short-payload", 1, &[0, 0, 0]),
+    ("long-payload", 1, &[0, 0, 0, 8, 0]),
+  ];
+
+  for (name, stream_id, payload) in cases {
+    let (addr, handle) = spawn_rst_stream_matrix_peer(*stream_id, payload, Some(b"ignored"));
+
+    let error = rttp::Http::client()
+      .get()
+      .url(format!("http://{}/bad-rst-{}", addr, name))
+      .emit_http2_prior_knowledge()
+      .expect_err("malformed RST_STREAM must fail the wrapper response");
+
+    assert!(
+      error
+        .to_string()
+        .contains("invalid HTTP/2 RST_STREAM frame"),
+      "unexpected error for {name}: {error}"
+    );
+    handle.join().expect("malformed RST_STREAM peer thread");
+  }
+}
+
+#[test]
+fn cross_crate_h2c_server_drops_inbound_reset_stream_and_serves_next_wrapper_request() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(1, |request| {
+        tx.send((
+          request.version().to_string(),
+          request.target().to_string(),
+          request.body().to_vec(),
+        ))
+        .expect("send parsed h2 request");
+        HttpResponse::ok("survived reset")
+      })
+      .expect("serve h2 stream after reset")
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set client read timeout");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &h2_post_headers(b"/reset-inbound", addr.to_string().as_bytes()),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_DATA,
+    0,
+    1,
+    b"body the wrapper must drop",
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_RST_STREAM,
+    0,
+    1,
+    &H2_ERROR_CANCEL.to_be_bytes(),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_DATA,
+    H2_FLAG_END_STREAM,
+    1,
+    b"late reset data",
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    3,
+    &h2_get_headers(b"/after-reset", addr.to_string().as_bytes()),
+  );
+  stream.flush().expect("flush h2 reset matrix");
+
+  let response_headers = (0..8)
+    .map(|_| read_h2_frame(&mut stream))
+    .find(|frame| frame.frame_type == H2_FRAME_HEADERS && frame.stream_id == 3)
+    .expect("surviving stream response headers");
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(3, response_headers.stream_id);
+  let response_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
+  assert_eq!(3, response_body.stream_id);
+  assert_eq!(b"survived reset", response_body.payload.as_slice());
+
+  assert_eq!(
+    ("HTTP/2".to_string(), "/after-reset".to_string(), Vec::new(),),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("receive surviving request")
+  );
+  assert!(
+    rx.try_recv().is_err(),
+    "reset stream must not reach handler"
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn cross_crate_h2c_server_rejects_malformed_rst_stream_boundaries_before_handler() {
+  let cases: &[(u32, &[u8])] = &[(0, &[0, 0, 0, 0]), (1, &[0, 0, 0]), (1, &[0, 0, 0, 8, 0])];
+
+  for (stream_id, payload) in cases {
+    assert_malformed_h2_request_rejected_before_handler(|stream, _| {
+      write_h2_frame(stream, H2_FRAME_RST_STREAM, 0, *stream_id, payload);
+    });
+  }
 }
 
 #[test]
