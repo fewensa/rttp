@@ -1859,6 +1859,16 @@ fn write_http2_response(
   let mut header_encoder = Http2HeaderEncoder::new(HTTP2_DEFAULT_HEADER_TABLE_SIZE);
   let dynamic_candidates = repeated_http2_response_fields(response);
   let headers = encode_http2_response_headers(response, &mut header_encoder, &dynamic_candidates)?;
+  if !write_body {
+    write_http2_header_block(
+      stream,
+      stream_id,
+      HTTP2_FLAG_END_STREAM,
+      &headers,
+      *flow_control.max_frame_size,
+    )?;
+    return stream.flush();
+  }
   let write_trailers = write_body && response.allows_body() && !response.trailers().is_empty();
   write_http2_header_block(stream, stream_id, 0, &headers, *flow_control.max_frame_size)?;
   let body = if write_body && response.allows_body() {
