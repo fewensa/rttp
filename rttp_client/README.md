@@ -42,7 +42,7 @@ With the `http2` feature enabled, `emit_http2_prior_knowledge` sends a minimal
 prior-knowledge h2c request over a direct socket2 TCP connection. It supports
 GET, HEAD, bodyless DELETE, OPTIONS, or TRACE, and buffered POST, PUT, or PATCH requests.
 Non-empty buffered request bodies are sent as DATA frames for the write methods;
-GET, HEAD, DELETE, and OPTIONS requests with bodies are rejected. HEAD,
+GET, HEAD, DELETE, OPTIONS, and TRACE requests with bodies are rejected. HEAD,
 bodyless DELETE, OPTIONS, and TRACE requests do not send request DATA frames,
 and any HEAD response DATA frames are consumed without being exposed as a
 response body.
