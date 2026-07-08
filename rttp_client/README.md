@@ -29,10 +29,12 @@ through `Response::trailers`, `Response::trailer`, and
 With the `http2` feature enabled, `emit_http2_prior_knowledge` sends a minimal
 prior-knowledge h2c request over a direct socket2 TCP connection. Non-empty
 buffered request bodies are sent as DATA frames, HPACK static Huffman strings
-and large header blocks are supported, and incoming padded HEADERS, DATA, and
-trailer frames are decoded without exposing padding bytes. TLS ALPN, proxy
-tunneling, proxy h2, HPACK dynamic tables, and full HTTP/2 features such as
-general multiplexing and priority scheduling are not part of that client path.
+and large header blocks are supported, repeated request header and trailer
+fields can use HPACK dynamic entries within the peer's advertised table size,
+and incoming dynamic table entries, table-size updates, padded HEADERS, DATA,
+and trailer frames are decoded without exposing padding bytes. TLS ALPN, proxy
+tunneling, proxy h2, and full HTTP/2 features such as general multiplexing and
+priority scheduling are not part of that client path.
 
 ## Examples
 
