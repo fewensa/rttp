@@ -23,6 +23,7 @@ const FLAG_PADDED: u8 = 0x8;
 const FLAG_ACK: u8 = 0x1;
 const FLAG_PRIORITY: u8 = 0x20;
 
+const SETTING_HEADER_TABLE_SIZE: u16 = 0x1;
 const SETTING_ENABLE_PUSH: u16 = 0x2;
 const SETTING_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const SETTING_MAX_FRAME_SIZE: u16 = 0x5;
@@ -175,6 +176,175 @@ fn prior_knowledge_request_literals_use_huffman_only_when_smaller() {
     find_literal_new_name_value(&request_trailer_block, b"x-t").expect("huffman request trailer");
   assert!(encoded_trailer.huffman);
   assert_eq!(expected_trailer_value.as_bytes(), encoded_trailer.value);
+}
+
+#[test]
+fn prior_knowledge_request_uses_dynamic_table_for_repeated_fields_when_smaller() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_handshake_without_request(&mut stream);
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_HEADERS, request_headers.flags);
+    assert_eq!(1, request_headers.stream_id);
+
+    let request_body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, request_body.frame_type);
+    assert_eq!(0, request_body.flags);
+    assert_eq!(1, request_body.stream_id);
+    assert_eq!(b"dynamic body", request_body.payload.as_slice());
+
+    let request_trailers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_trailers.frame_type);
+    assert_eq!(FLAG_END_HEADERS | FLAG_END_STREAM, request_trailers.flags);
+    assert_eq!(1, request_trailers.stream_id);
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"ok");
+
+    (request_headers.payload, request_trailers.payload)
+  });
+
+  let response = HttpClient::new()
+    .post()
+    .url(format!("http://{}/dynamic-request-fields", addr))
+    .header(("X-Repeat", "same-value"))
+    .trailer(("X-Repeat", "same-value"))
+    .expect("configure repeated trailer")
+    .raw("dynamic body")
+    .emit_http2_prior_knowledge()
+    .expect("h2 POST response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("ok", response.body().string().unwrap());
+
+  let (request_header_block, request_trailer_block) = handle.join().expect("h2 peer thread");
+  let indexed_header =
+    find_literal_with_indexing_new_name_value(&request_header_block, b"x-repeat")
+      .expect("first repeated request header is indexed");
+  assert_eq!(b"same-value", indexed_header.value.as_slice());
+  assert!(
+    dynamic_indexed_fields(&request_trailer_block) >= 1,
+    "repeated request trailer should use the dynamic indexed request header field"
+  );
+}
+
+#[test]
+fn prior_knowledge_request_respects_disabled_peer_dynamic_table() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+  let settings = settings_payload(SETTING_HEADER_TABLE_SIZE, 0);
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_handshake_without_request_with_settings(&mut stream, &settings);
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_HEADERS, request_headers.flags);
+    assert_eq!(1, request_headers.stream_id);
+
+    let request_body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, request_body.frame_type);
+    assert_eq!(0, request_body.flags);
+    assert_eq!(1, request_body.stream_id);
+
+    let request_trailers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_trailers.frame_type);
+    assert_eq!(FLAG_END_HEADERS | FLAG_END_STREAM, request_trailers.flags);
+    assert_eq!(1, request_trailers.stream_id);
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"ok");
+
+    (request_headers.payload, request_trailers.payload)
+  });
+
+  let response = HttpClient::new()
+    .post()
+    .url(format!("http://{}/no-dynamic-request-fields", addr))
+    .header(("X-Repeat", "same-value"))
+    .trailer(("X-Repeat", "same-value"))
+    .expect("configure repeated trailer")
+    .raw("dynamic body")
+    .emit_http2_prior_knowledge()
+    .expect("h2 POST response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("ok", response.body().string().unwrap());
+
+  let (request_header_block, request_trailer_block) = handle.join().expect("h2 peer thread");
+  assert_eq!(0, literal_with_indexing_fields(&request_header_block));
+  assert_eq!(0, dynamic_indexed_fields(&request_header_block));
+  assert_eq!(0, literal_with_indexing_fields(&request_trailer_block));
+  assert_eq!(0, dynamic_indexed_fields(&request_trailer_block));
+}
+
+#[test]
+fn prior_knowledge_request_evicts_dynamic_entries_to_peer_table_size() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+  let settings = settings_payload(SETTING_HEADER_TABLE_SIZE, 64);
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_handshake_without_request_with_settings(&mut stream, &settings);
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_HEADERS, request_headers.flags);
+    assert_eq!(1, request_headers.stream_id);
+
+    let request_body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, request_body.frame_type);
+    assert_eq!(0, request_body.flags);
+    assert_eq!(1, request_body.stream_id);
+
+    let request_trailers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_trailers.frame_type);
+    assert_eq!(FLAG_END_HEADERS | FLAG_END_STREAM, request_trailers.flags);
+    assert_eq!(1, request_trailers.stream_id);
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"ok");
+
+    (request_headers.payload, request_trailers.payload)
+  });
+
+  let response = HttpClient::new()
+    .post()
+    .url(format!("http://{}/dynamic-request-eviction", addr))
+    .header(("X-One", "a"))
+    .header(("X-Two", "b"))
+    .trailer(("X-One", "a"))
+    .expect("configure first repeated trailer")
+    .trailer(("X-Two", "b"))
+    .expect("configure second repeated trailer")
+    .raw("dynamic body")
+    .emit_http2_prior_knowledge()
+    .expect("h2 POST response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("ok", response.body().string().unwrap());
+
+  let (request_header_block, request_trailer_block) = handle.join().expect("h2 peer thread");
+  assert_eq!(2, literal_with_indexing_fields(&request_header_block));
+  assert_eq!(
+    1,
+    dynamic_indexed_fields(&request_trailer_block),
+    "only the newest repeated field should survive the peer-bounded dynamic table"
+  );
+  assert!(
+    find_literal_new_name_value(&request_trailer_block, b"x-one").is_some(),
+    "evicted repeated field should fall back to literal encoding"
+  );
 }
 
 #[test]
@@ -2285,6 +2455,104 @@ struct TestHpackString {
 
 fn find_literal_new_name_value(block: &[u8], expected_name: &[u8]) -> Option<TestHpackString> {
   find_test_header_value(block, expected_name, true)
+}
+
+fn find_literal_with_indexing_new_name_value(
+  block: &[u8],
+  expected_name: &[u8],
+) -> Option<TestHpackString> {
+  let mut cursor = 0;
+  while cursor < block.len() {
+    let byte = block[cursor];
+    if byte & 0x80 == 0x80 {
+      decode_test_integer(block, &mut cursor, 7);
+      continue;
+    }
+    if byte & 0x40 == 0x40 {
+      let name_index = decode_test_integer(block, &mut cursor, 6);
+      let name = if name_index == 0 {
+        Some(decode_test_string(block, &mut cursor))
+      } else {
+        None
+      };
+      let value = decode_test_string(block, &mut cursor);
+      if name
+        .as_ref()
+        .is_some_and(|name| name.value.as_slice() == expected_name)
+      {
+        return Some(value);
+      }
+      continue;
+    }
+
+    assert_eq!(0, byte & 0x20, "dynamic table update in request block");
+    let name_index = decode_test_integer(block, &mut cursor, 4);
+    if name_index == 0 {
+      decode_test_string(block, &mut cursor);
+    }
+    decode_test_string(block, &mut cursor);
+  }
+  None
+}
+
+fn dynamic_indexed_fields(block: &[u8]) -> usize {
+  let mut cursor = 0;
+  let mut count = 0;
+  while cursor < block.len() {
+    let byte = block[cursor];
+    if byte & 0x80 == 0x80 {
+      let index = decode_test_integer(block, &mut cursor, 7);
+      if index > 61 {
+        count += 1;
+      }
+      continue;
+    }
+    if byte & 0x40 == 0x40 {
+      let name_index = decode_test_integer(block, &mut cursor, 6);
+      if name_index == 0 {
+        decode_test_string(block, &mut cursor);
+      }
+      decode_test_string(block, &mut cursor);
+      continue;
+    }
+
+    assert_eq!(0, byte & 0x20, "dynamic table update in request block");
+    let name_index = decode_test_integer(block, &mut cursor, 4);
+    if name_index == 0 {
+      decode_test_string(block, &mut cursor);
+    }
+    decode_test_string(block, &mut cursor);
+  }
+  count
+}
+
+fn literal_with_indexing_fields(block: &[u8]) -> usize {
+  let mut cursor = 0;
+  let mut count = 0;
+  while cursor < block.len() {
+    let byte = block[cursor];
+    if byte & 0x80 == 0x80 {
+      decode_test_integer(block, &mut cursor, 7);
+      continue;
+    }
+    if byte & 0x40 == 0x40 {
+      count += 1;
+      let name_index = decode_test_integer(block, &mut cursor, 6);
+      if name_index == 0 {
+        decode_test_string(block, &mut cursor);
+      }
+      decode_test_string(block, &mut cursor);
+      continue;
+    }
+
+    assert_eq!(0, byte & 0x20, "dynamic table update in request block");
+    let name_index = decode_test_integer(block, &mut cursor, 4);
+    if name_index == 0 {
+      decode_test_string(block, &mut cursor);
+    }
+    decode_test_string(block, &mut cursor);
+  }
+  count
 }
 
 fn find_header_value(block: &[u8], expected_name: &[u8]) -> Option<TestHpackString> {

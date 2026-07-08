@@ -28,6 +28,7 @@ const FLAG_PADDED: u8 = 0x8;
 const FLAG_PRIORITY: u8 = 0x20;
 
 const STREAM_ID: u32 = 1;
+const SETTING_HEADER_TABLE_SIZE: u16 = 0x1;
 const SETTING_ENABLE_PUSH: u16 = 0x2;
 const SETTING_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const SETTING_MAX_FRAME_SIZE: u16 = 0x5;
@@ -222,6 +223,7 @@ fn read_settings_and_ack(stream: &mut TcpStream) -> error::Result<PeerSettings> 
 
 #[derive(Clone, Copy)]
 struct PeerSettings {
+  header_table_size: usize,
   initial_window_size: u32,
   initial_window_size_changed: bool,
   max_frame_size: usize,
@@ -234,6 +236,7 @@ fn validate_settings_payload(payload: &[u8]) -> error::Result<PeerSettings> {
   }
 
   let mut settings = PeerSettings {
+    header_table_size: DEFAULT_HPACK_DYNAMIC_TABLE_SIZE,
     initial_window_size: DEFAULT_INITIAL_WINDOW_SIZE as u32,
     initial_window_size_changed: false,
     max_frame_size: DEFAULT_MAX_FRAME_SIZE,
@@ -243,6 +246,7 @@ fn validate_settings_payload(payload: &[u8]) -> error::Result<PeerSettings> {
     let identifier = u16::from_be_bytes([setting[0], setting[1]]);
     let value = u32::from_be_bytes([setting[2], setting[3], setting[4], setting[5]]);
     match identifier {
+      SETTING_HEADER_TABLE_SIZE => settings.header_table_size = value as usize,
       SETTING_ENABLE_PUSH => {
         if value > 1 {
           return Err(error::bad_response(
@@ -298,7 +302,30 @@ fn write_request(
   response_url: RoUrl,
   peer_settings: PeerSettings,
 ) -> error::Result<Option<Response>> {
-  let header_block = encode_request_headers(request, url)?;
+  let mut hpack = RequestHpackEncoder::new(
+    peer_settings
+      .header_table_size
+      .min(DEFAULT_HPACK_DYNAMIC_TABLE_SIZE),
+  );
+  let regular_header_fields = regular_headers(request.header());
+  let trailer_announcement = (!request.origin().trailers().is_empty())
+    .then(|| ("trailer".to_string(), request_trailer_field_value(request)));
+  let trailer_fields = request_trailer_fields(request);
+  let mut dynamic_field_plan = Vec::new();
+  dynamic_field_plan.extend(regular_header_fields.iter().cloned());
+  dynamic_field_plan.extend(trailer_announcement.iter().cloned());
+  dynamic_field_plan.extend(trailer_fields.iter().cloned());
+  let mut dynamic_field_position = 0;
+
+  let header_block = encode_request_headers(
+    request,
+    url,
+    &regular_header_fields,
+    trailer_announcement.as_ref(),
+    &dynamic_field_plan,
+    &mut dynamic_field_position,
+    &mut hpack,
+  )?;
   let body = request
     .body()
     .as_ref()
@@ -325,7 +352,12 @@ fn write_request(
     }
   }
   if has_trailers {
-    let trailer_block = encode_request_trailers(request)?;
+    let trailer_block = encode_request_trailers(
+      &trailer_fields,
+      &dynamic_field_plan,
+      &mut dynamic_field_position,
+      &mut hpack,
+    )?;
     write_header_block_frames(
       stream,
       FLAG_END_STREAM,
@@ -511,7 +543,15 @@ fn handle_settings_while_sending(
   stream.flush().map_err(error::request)
 }
 
-fn encode_request_headers(request: &RawRequest<'_>, url: &Url) -> error::Result<Vec<u8>> {
+fn encode_request_headers(
+  request: &RawRequest<'_>,
+  url: &Url,
+  regular_header_fields: &[(String, String)],
+  trailer_announcement: Option<&(String, String)>,
+  dynamic_field_plan: &[(String, String)],
+  dynamic_field_position: &mut usize,
+  hpack: &mut RequestHpackEncoder,
+) -> error::Result<Vec<u8>> {
   let mut block = Vec::new();
   encode_method(&mut block, request.origin().method())?;
   if url.scheme() == "http" {
@@ -528,16 +568,20 @@ fn encode_request_headers(request: &RawRequest<'_>, url: &Url) -> error::Result<
   }
   encode_literal_indexed_name_without_indexing(&mut block, 1, authority(url)?.as_bytes())?;
 
-  for (name, value) in regular_headers(request.header()) {
-    encode_literal_new_name_without_indexing(&mut block, name.as_bytes(), value.as_bytes())?;
+  for (name, value) in regular_header_fields {
+    let remaining = dynamic_field_plan
+      .get(*dynamic_field_position + 1..)
+      .unwrap_or(&[]);
+    hpack.encode_field(&mut block, name, value, remaining)?;
+    *dynamic_field_position += 1;
   }
 
-  if !request.origin().trailers().is_empty() {
-    encode_literal_new_name_without_indexing(
-      &mut block,
-      b"trailer",
-      request_trailer_field_value(request).as_bytes(),
-    )?;
+  if let Some((name, value)) = trailer_announcement {
+    let remaining = dynamic_field_plan
+      .get(*dynamic_field_position + 1..)
+      .unwrap_or(&[]);
+    hpack.encode_field(&mut block, name, value, remaining)?;
+    *dynamic_field_position += 1;
   }
 
   Ok(block)
@@ -553,14 +597,33 @@ fn request_trailer_field_value(request: &RawRequest<'_>) -> String {
     .join(", ")
 }
 
-fn encode_request_trailers(request: &RawRequest<'_>) -> error::Result<Vec<u8>> {
+fn request_trailer_fields(request: &RawRequest<'_>) -> Vec<(String, String)> {
+  request
+    .origin()
+    .trailers()
+    .iter()
+    .map(|header| {
+      (
+        header.name().to_ascii_lowercase(),
+        header.value().to_string(),
+      )
+    })
+    .collect()
+}
+
+fn encode_request_trailers(
+  trailer_fields: &[(String, String)],
+  dynamic_field_plan: &[(String, String)],
+  dynamic_field_position: &mut usize,
+  hpack: &mut RequestHpackEncoder,
+) -> error::Result<Vec<u8>> {
   let mut block = Vec::new();
-  for header in request.origin().trailers() {
-    encode_literal_new_name_without_indexing(
-      &mut block,
-      header.name().to_ascii_lowercase().as_bytes(),
-      header.value().as_bytes(),
-    )?;
+  for (name, value) in trailer_fields {
+    let remaining = dynamic_field_plan
+      .get(*dynamic_field_position + 1..)
+      .unwrap_or(&[]);
+    hpack.encode_field(&mut block, name, value, remaining)?;
+    *dynamic_field_position += 1;
   }
   Ok(block)
 }
@@ -1176,6 +1239,122 @@ fn encode_literal_new_name_without_indexing(
   block.push(0);
   encode_string(block, name)?;
   encode_string(block, value)
+}
+
+fn encode_literal_new_name_with_indexing(
+  block: &mut Vec<u8>,
+  name: &[u8],
+  value: &[u8],
+) -> error::Result<()> {
+  block.push(0x40);
+  encode_string(block, name)?;
+  encode_string(block, value)
+}
+
+struct RequestHpackEncoder {
+  dynamic_entries: Vec<(String, String)>,
+  max_size: usize,
+  current_size: usize,
+}
+
+impl RequestHpackEncoder {
+  fn new(max_size: usize) -> Self {
+    Self {
+      dynamic_entries: Vec::new(),
+      max_size,
+      current_size: 0,
+    }
+  }
+
+  fn encode_field(
+    &mut self,
+    block: &mut Vec<u8>,
+    name: &str,
+    value: &str,
+    remaining_fields: &[(String, String)],
+  ) -> error::Result<()> {
+    let literal_len = literal_new_name_without_indexing_len(name.as_bytes(), value.as_bytes())?;
+    if let Some(index) = self.index(name, value) {
+      if hpack_integer_len(index, 7) < literal_len {
+        return encode_integer(block, index, 7, 0x80);
+      }
+    }
+
+    if self.should_index(name, value, literal_len, remaining_fields) {
+      encode_literal_new_name_with_indexing(block, name.as_bytes(), value.as_bytes())?;
+      self.insert(name.to_string(), value.to_string());
+      return Ok(());
+    }
+
+    encode_literal_new_name_without_indexing(block, name.as_bytes(), value.as_bytes())
+  }
+
+  fn should_index(
+    &self,
+    name: &str,
+    value: &str,
+    literal_len: usize,
+    remaining_fields: &[(String, String)],
+  ) -> bool {
+    self.max_size > 0
+      && dynamic_entry_size(name, value) <= self.max_size
+      && hpack_integer_len(HPACK_STATIC_TABLE_LENGTH + 1, 7) < literal_len
+      && remaining_fields
+        .iter()
+        .any(|(remaining_name, remaining_value)| remaining_name == name && remaining_value == value)
+  }
+
+  fn index(&self, name: &str, value: &str) -> Option<usize> {
+    self
+      .dynamic_entries
+      .iter()
+      .position(|(entry_name, entry_value)| entry_name == name && entry_value == value)
+      .map(|position| HPACK_STATIC_TABLE_LENGTH + 1 + position)
+  }
+
+  fn insert(&mut self, name: String, value: String) {
+    let entry_size = dynamic_entry_size(&name, &value);
+    if entry_size > self.max_size {
+      self.dynamic_entries.clear();
+      self.current_size = 0;
+      return;
+    }
+
+    self.dynamic_entries.insert(0, (name, value));
+    self.current_size += entry_size;
+    self.evict_to_capacity();
+  }
+
+  fn evict_to_capacity(&mut self) {
+    while self.current_size > self.max_size {
+      let Some((name, value)) = self.dynamic_entries.pop() else {
+        self.current_size = 0;
+        return;
+      };
+      self.current_size -= dynamic_entry_size(&name, &value);
+    }
+  }
+}
+
+fn literal_new_name_without_indexing_len(name: &[u8], value: &[u8]) -> error::Result<usize> {
+  let mut block = Vec::new();
+  encode_literal_new_name_without_indexing(&mut block, name, value)?;
+  Ok(block.len())
+}
+
+fn hpack_integer_len(mut value: usize, prefix_bits: u8) -> usize {
+  let max_prefix = (1usize << prefix_bits) - 1;
+  if value < max_prefix {
+    return 1;
+  }
+
+  let mut len = 1;
+  value -= max_prefix;
+  while value >= 128 {
+    len += 1;
+    value /= 128;
+  }
+  len + 1
 }
 
 fn encode_string(block: &mut Vec<u8>, value: &[u8]) -> error::Result<()> {
