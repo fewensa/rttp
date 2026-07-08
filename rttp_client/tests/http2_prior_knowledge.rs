@@ -518,6 +518,130 @@ fn prior_knowledge_post_requires_connection_and_stream_window_updates_to_resume_
 }
 
 #[test]
+fn prior_knowledge_post_returns_early_response_while_blocked_on_send_window() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_handshake_without_request_with_settings(
+      &mut stream,
+      &settings_payload(SETTING_INITIAL_WINDOW_SIZE, 5),
+    );
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_HEADERS, request_headers.flags);
+    assert_eq!(1, request_headers.stream_id);
+
+    let first_body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, first_body.frame_type);
+    assert_eq!(0, first_body.flags);
+    assert_eq!(1, first_body.stream_id);
+    assert_eq!(b"abcde", first_body.payload.as_slice());
+
+    write_frame(
+      &mut stream,
+      FRAME_HEADERS,
+      FLAG_END_HEADERS,
+      1,
+      &h2_literal_new_name(b":status", b"413"),
+    );
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"rejected");
+  });
+
+  let response = HttpClient::new()
+    .post()
+    .url(format!("http://{}/early-reject", addr))
+    .raw("abcdefghijkl")
+    .emit_http2_prior_knowledge()
+    .expect("early final response while request body is blocked");
+
+  assert_eq!(413, response.code());
+  assert_eq!("rejected", response.body().string().unwrap());
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
+fn prior_knowledge_post_uses_later_max_frame_size_after_send_window_resumes() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+  let body = "x".repeat(20_005);
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    let mut initial_settings = settings_payload(SETTING_INITIAL_WINDOW_SIZE, 5);
+    initial_settings.extend_from_slice(&settings_payload(SETTING_MAX_FRAME_SIZE, 32_768));
+    complete_h2_handshake_without_request_with_settings(&mut stream, &initial_settings);
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_HEADERS, request_headers.flags);
+    assert_eq!(1, request_headers.stream_id);
+
+    let first_body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, first_body.frame_type);
+    assert_eq!(0, first_body.flags);
+    assert_eq!(1, first_body.stream_id);
+    assert_eq!(5, first_body.payload.len());
+
+    write_frame(
+      &mut stream,
+      FRAME_SETTINGS,
+      0,
+      0,
+      &settings_payload(SETTING_MAX_FRAME_SIZE, 16_384),
+    );
+    let settings_ack = read_frame(&mut stream);
+    assert_eq!(FRAME_SETTINGS, settings_ack.frame_type);
+    assert_eq!(FLAG_ACK, settings_ack.flags);
+    assert_eq!(0, settings_ack.stream_id);
+    assert!(settings_ack.payload.is_empty());
+
+    write_frame(
+      &mut stream,
+      FRAME_WINDOW_UPDATE,
+      0,
+      1,
+      &20_000_u32.to_be_bytes(),
+    );
+
+    let resumed_body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, resumed_body.frame_type);
+    assert_eq!(0, resumed_body.flags);
+    assert_eq!(1, resumed_body.stream_id);
+    assert_eq!(16_384, resumed_body.payload.len());
+
+    write_frame(
+      &mut stream,
+      FRAME_WINDOW_UPDATE,
+      0,
+      1,
+      &3_616_u32.to_be_bytes(),
+    );
+    let final_body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, final_body.frame_type);
+    assert_eq!(FLAG_END_STREAM, final_body.flags);
+    assert_eq!(1, final_body.stream_id);
+    assert_eq!(3_616, final_body.payload.len());
+
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"ok");
+  });
+
+  let response = HttpClient::new()
+    .post()
+    .url(format!("http://{}/later-max-frame-size", addr))
+    .raw(&body)
+    .emit_http2_prior_knowledge()
+    .expect("h2 POST response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("ok", response.body().string().unwrap());
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
 fn prior_knowledge_get_splits_large_request_headers_at_peer_max_frame_size() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");
