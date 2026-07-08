@@ -7,6 +7,7 @@ use std::thread;
 use std::time::Duration;
 
 use rttp::server::HttpResponse;
+use rttp_client::HttpClient;
 
 const H2_FRAME_DATA: u8 = 0x0;
 const H2_FRAME_HEADERS: u8 = 0x1;
@@ -701,6 +702,59 @@ fn prior_knowledge_server_ends_head_response_on_headers_without_data_frame() {
   assert!(
     try_read_h2_frame(&mut stream).is_err(),
     "HEAD responses must end on HEADERS without a DATA frame"
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn rttp_client_options_prior_knowledge_round_trips_against_socket2_server() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.method().to_string(),
+          request.target().to_string(),
+          request.version().to_string(),
+        ))
+        .expect("send parsed h2 request");
+
+        HttpResponse::ok("options accepted over h2")
+          .header("Content-Type", "text/plain")
+          .header("X-RTTP-H2C", "socket2")
+      })
+      .expect("serve h2 OPTIONS request")
+  });
+
+  let response = HttpClient::new()
+    .options()
+    .url(format!("http://{}/matrix/options?via=h2c", addr))
+    .emit_http2_prior_knowledge()
+    .expect("h2 OPTIONS response");
+
+  let (method, target, version) = rx
+    .recv_timeout(Duration::from_secs(2))
+    .expect("receive parsed h2 request");
+  assert_eq!("OPTIONS", method);
+  assert_eq!("/matrix/options?via=h2c", target);
+  assert_eq!("HTTP/2", version);
+
+  assert_eq!(200, response.code());
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(
+    Some(&"socket2".to_string()),
+    response.header_value("x-rttp-h2c")
+  );
+  assert_eq!(
+    "options accepted over h2",
+    response.body().string().expect("response body")
   );
 
   handle.join().expect("server thread");
