@@ -448,6 +448,7 @@ impl LocalSettings {
 
   fn settings_payload(self) -> Vec<u8> {
     let mut payload = Vec::new();
+    payload.extend_from_slice(&h2_setting(SETTING_ENABLE_PUSH, 0));
     if self.header_table_size_configured {
       payload.extend_from_slice(&h2_setting(
         SETTING_HEADER_TABLE_SIZE,

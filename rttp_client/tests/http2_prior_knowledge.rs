@@ -50,7 +50,7 @@ fn spawn_h2_prior_knowledge_peer() -> (SocketAddr, thread::JoinHandle<Vec<u8>>) 
     let client_settings = read_frame(&mut stream);
     assert_eq!(FRAME_SETTINGS, client_settings.frame_type);
     assert_eq!(0, client_settings.stream_id);
-    assert_eq!(0, client_settings.payload.len());
+    assert_client_advertises_enable_push_disabled(&client_settings);
 
     write_frame(&mut stream, FRAME_SETTINGS, 0, 0, &[]);
 
@@ -1607,7 +1607,7 @@ fn prior_knowledge_get_rejects_goaway_before_opening_request_stream() {
     let client_settings = read_frame(&mut stream);
     assert_eq!(FRAME_SETTINGS, client_settings.frame_type);
     assert_eq!(0, client_settings.stream_id);
-    assert_eq!(0, client_settings.payload.len());
+    assert_client_advertises_enable_push_disabled(&client_settings);
 
     write_frame(&mut stream, FRAME_SETTINGS, 0, 0, &[]);
     write_frame(&mut stream, FRAME_GOAWAY, 0, 0, &[0, 0, 0, 0, 0, 0, 0, 0]);
@@ -1705,6 +1705,69 @@ fn prior_knowledge_rejects_initial_settings_with_invalid_max_frame_size() {
 
   assert!(err.to_string().contains("SETTINGS_MAX_FRAME_SIZE"));
   handle.join().expect("invalid max frame size peer thread");
+}
+
+#[test]
+fn prior_knowledge_advertises_disabled_enable_push_with_configured_settings() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    let mut preface = [0; 24];
+    stream
+      .read_exact(&mut preface)
+      .expect("read client preface");
+    assert_eq!(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", &preface);
+
+    let client_settings = read_frame(&mut stream);
+    assert_eq!(FRAME_SETTINGS, client_settings.frame_type);
+    assert_eq!(0, client_settings.flags);
+    assert_eq!(0, client_settings.stream_id);
+    assert_eq!(
+      Some(0),
+      h2_setting_value(&client_settings.payload, SETTING_ENABLE_PUSH)
+    );
+    assert_eq!(
+      Some(0),
+      h2_setting_value(&client_settings.payload, SETTING_HEADER_TABLE_SIZE)
+    );
+    assert_eq!(
+      Some(32_768),
+      h2_setting_value(&client_settings.payload, SETTING_MAX_FRAME_SIZE)
+    );
+
+    write_frame(&mut stream, FRAME_SETTINGS, 0, 0, &[]);
+    let client_settings_ack = read_frame(&mut stream);
+    assert_eq!(FRAME_SETTINGS, client_settings_ack.frame_type);
+    assert_eq!(FLAG_ACK, client_settings_ack.flags);
+    assert_eq!(0, client_settings_ack.stream_id);
+    assert!(client_settings_ack.payload.is_empty());
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_STREAM | FLAG_END_HEADERS, request_headers.flags);
+    assert_eq!(1, request_headers.stream_id);
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"ok");
+  });
+
+  let config = Config::builder()
+    .http2_header_table_size(0)
+    .http2_max_frame_size(32_768)
+    .build();
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/settings-enable-push", addr))
+    .config(config)
+    .emit_http2_prior_knowledge()
+    .expect("configured client settings should work");
+
+  assert_eq!(200, response.code());
+  assert_eq!("ok", response.body().string().unwrap());
+  handle.join().expect("enable push settings peer thread");
 }
 
 #[test]
@@ -3887,7 +3950,7 @@ fn spawn_initial_settings_peer(
     let client_settings = read_frame(&mut stream);
     assert_eq!(FRAME_SETTINGS, client_settings.frame_type);
     assert_eq!(0, client_settings.stream_id);
-    assert_eq!(0, client_settings.payload.len());
+    assert_client_advertises_enable_push_disabled(&client_settings);
 
     write_frame(&mut stream, FRAME_SETTINGS, flags, stream_id, &payload);
   });
@@ -3948,7 +4011,7 @@ fn complete_h2_handshake_without_request_with_settings(
   let client_settings = read_frame(stream);
   assert_eq!(FRAME_SETTINGS, client_settings.frame_type);
   assert_eq!(0, client_settings.stream_id);
-  assert_eq!(0, client_settings.payload.len());
+  assert_client_advertises_enable_push_disabled(&client_settings);
 
   write_frame(stream, FRAME_SETTINGS, 0, 0, settings);
 
@@ -4024,6 +4087,13 @@ fn h2_setting_value(payload: &[u8], identifier: u16) -> Option<u32> {
     let value = u32::from_be_bytes([setting[2], setting[3], setting[4], setting[5]]);
     (id == identifier).then_some(value)
   })
+}
+
+fn assert_client_advertises_enable_push_disabled(frame: &Frame) {
+  assert_eq!(
+    Some(0),
+    h2_setting_value(&frame.payload, SETTING_ENABLE_PUSH)
+  );
 }
 
 fn h2_literal_new_name(name: &[u8], value: &[u8]) -> Vec<u8> {
