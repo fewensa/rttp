@@ -109,9 +109,17 @@ impl<'a> PriorKnowledgeClient<'a> {
 
     let mut stream = connect_tcp_stream(addr(&url)?, self.request.origin().config())?;
     write_connection_preface(&mut stream)?;
-    let peer_max_frame_size = read_settings_and_ack(&mut stream)?;
-    write_request(&mut stream, &self.request, &url, peer_max_frame_size)?;
-    let response = read_single_stream_response(&mut stream, self.request.url().clone())?;
+    let peer_settings = read_settings_and_ack(&mut stream)?;
+    let response = match write_request(
+      &mut stream,
+      &self.request,
+      &url,
+      self.request.url().clone(),
+      peer_settings,
+    )? {
+      Some(response) => response,
+      None => read_single_stream_response(&mut stream, self.request.url().clone())?,
+    };
     self.request.origin_mut().closed_set(true);
     Ok(response)
   }
@@ -184,7 +192,7 @@ fn write_connection_preface(stream: &mut TcpStream) -> error::Result<()> {
   stream.flush().map_err(error::request)
 }
 
-fn read_settings_and_ack(stream: &mut TcpStream) -> error::Result<usize> {
+fn read_settings_and_ack(stream: &mut TcpStream) -> error::Result<PeerSettings> {
   loop {
     let frame = read_frame(stream)?;
     if frame.frame_type != FRAME_SETTINGS {
@@ -203,19 +211,32 @@ fn read_settings_and_ack(stream: &mut TcpStream) -> error::Result<usize> {
     if frame.stream_id != 0 {
       return Err(error::bad_response("invalid HTTP/2 SETTINGS frame"));
     }
-    let peer_max_frame_size = validate_settings_payload(&frame.payload)?;
+    let peer_settings = validate_settings_payload(&frame.payload)?;
     write_frame(stream, FRAME_SETTINGS, FLAG_ACK, 0, &[])?;
     stream.flush().map_err(error::request)?;
-    return Ok(peer_max_frame_size);
+    return Ok(peer_settings);
   }
 }
 
-fn validate_settings_payload(payload: &[u8]) -> error::Result<usize> {
+#[derive(Clone, Copy)]
+struct PeerSettings {
+  initial_window_size: u32,
+  initial_window_size_changed: bool,
+  max_frame_size: usize,
+  max_frame_size_changed: bool,
+}
+
+fn validate_settings_payload(payload: &[u8]) -> error::Result<PeerSettings> {
   if payload.len() % 6 != 0 {
     return Err(error::bad_response("invalid HTTP/2 SETTINGS frame"));
   }
 
-  let mut max_frame_size = DEFAULT_MAX_FRAME_SIZE;
+  let mut settings = PeerSettings {
+    initial_window_size: DEFAULT_INITIAL_WINDOW_SIZE as u32,
+    initial_window_size_changed: false,
+    max_frame_size: DEFAULT_MAX_FRAME_SIZE,
+    max_frame_size_changed: false,
+  };
   for setting in payload.chunks_exact(6) {
     let identifier = u16::from_be_bytes([setting[0], setting[1]]);
     let value = u32::from_be_bytes([setting[2], setting[3], setting[4], setting[5]]);
@@ -233,6 +254,8 @@ fn validate_settings_payload(payload: &[u8]) -> error::Result<usize> {
             "invalid HTTP/2 SETTINGS_INITIAL_WINDOW_SIZE value",
           ));
         }
+        settings.initial_window_size = value;
+        settings.initial_window_size_changed = true;
       }
       SETTING_MAX_FRAME_SIZE => {
         let value = value as usize;
@@ -241,12 +264,13 @@ fn validate_settings_payload(payload: &[u8]) -> error::Result<usize> {
             "invalid HTTP/2 SETTINGS_MAX_FRAME_SIZE value",
           ));
         }
-        max_frame_size = value;
+        settings.max_frame_size = value;
+        settings.max_frame_size_changed = true;
       }
       _ => {}
     }
   }
-  Ok(max_frame_size)
+  Ok(settings)
 }
 
 fn validate_settings_frame(frame: &Frame) -> error::Result<()> {
@@ -269,8 +293,9 @@ fn write_request(
   stream: &mut TcpStream,
   request: &RawRequest<'_>,
   url: &Url,
-  peer_max_frame_size: usize,
-) -> error::Result<()> {
+  response_url: RoUrl,
+  peer_settings: PeerSettings,
+) -> error::Result<Option<Response>> {
   let header_block = encode_request_headers(request, url)?;
   let body = request
     .body()
@@ -288,10 +313,14 @@ fn write_request(
     header_flags,
     STREAM_ID,
     &header_block,
-    peer_max_frame_size,
+    peer_settings.max_frame_size,
   )?;
   if !body.is_empty() {
-    write_data_frames(stream, body, peer_max_frame_size, has_trailers)?;
+    if let Some(response) =
+      write_data_frames(stream, body, peer_settings, has_trailers, response_url)?
+    {
+      return Ok(Some(response));
+    }
   }
   if has_trailers {
     let trailer_block = encode_request_trailers(request)?;
@@ -300,10 +329,10 @@ fn write_request(
       FLAG_END_STREAM,
       STREAM_ID,
       &trailer_block,
-      peer_max_frame_size,
+      peer_settings.max_frame_size,
     )?;
   }
-  stream.flush().map_err(error::request)
+  stream.flush().map_err(error::request).map(|()| None)
 }
 
 fn write_header_block_frames(
@@ -340,21 +369,144 @@ fn write_header_block_frames(
 fn write_data_frames(
   stream: &mut TcpStream,
   body: &[u8],
-  peer_max_frame_size: usize,
+  peer_settings: PeerSettings,
   has_trailers: bool,
-) -> error::Result<()> {
-  for (index, chunk) in body.chunks(peer_max_frame_size).enumerate() {
-    let sent = index
-      .checked_mul(peer_max_frame_size)
-      .ok_or_else(|| error::request(io::Error::other("HTTP/2 request body is too large")))?;
-    let flags = if sent + chunk.len() == body.len() && !has_trailers {
+  url: RoUrl,
+) -> error::Result<Option<Response>> {
+  let mut connection_send_window = SendWindow::new();
+  let mut stream_send_window =
+    SendWindow::with_available(i64::from(peer_settings.initial_window_size));
+  let mut current_initial_window_size = peer_settings.initial_window_size;
+  let mut current_max_frame_size = peer_settings.max_frame_size;
+  let mut sent = 0;
+
+  while sent < body.len() {
+    let available = connection_send_window
+      .available()
+      .min(stream_send_window.available());
+    if available <= 0 {
+      if let Some(response) = read_until_send_window_available(
+        stream,
+        &mut connection_send_window,
+        &mut stream_send_window,
+        &mut current_initial_window_size,
+        &mut current_max_frame_size,
+        url.clone(),
+      )? {
+        return Ok(Some(response));
+      }
+      continue;
+    }
+
+    let window_chunk_size = usize::try_from(available)
+      .map_err(|_| error::request(io::Error::other("HTTP/2 send window is too large")))?;
+    let chunk_size = current_max_frame_size
+      .min(window_chunk_size)
+      .min(body.len() - sent);
+    let chunk = &body[sent..sent + chunk_size];
+    sent += chunk_size;
+    connection_send_window.consume(chunk_size)?;
+    stream_send_window.consume(chunk_size)?;
+
+    let flags = if sent == body.len() && !has_trailers {
       FLAG_END_STREAM
     } else {
       0
     };
     write_frame(stream, FRAME_DATA, flags, STREAM_ID, chunk)?;
   }
-  Ok(())
+  Ok(None)
+}
+
+fn read_until_send_window_available(
+  stream: &mut TcpStream,
+  connection_send_window: &mut SendWindow,
+  stream_send_window: &mut SendWindow,
+  current_initial_window_size: &mut u32,
+  current_max_frame_size: &mut usize,
+  url: RoUrl,
+) -> error::Result<Option<Response>> {
+  loop {
+    let frame = read_frame(stream)?;
+    match (frame.frame_type, frame.stream_id) {
+      (FRAME_WINDOW_UPDATE, 0) => {
+        connection_send_window.increase(window_update_increment(&frame)?)?;
+      }
+      (FRAME_WINDOW_UPDATE, STREAM_ID) => {
+        stream_send_window.increase(window_update_increment(&frame)?)?;
+      }
+      (FRAME_WINDOW_UPDATE, _) => {
+        window_update_increment(&frame)?;
+      }
+      (FRAME_SETTINGS, _) => {
+        handle_settings_while_sending(
+          stream,
+          &frame,
+          stream_send_window,
+          current_initial_window_size,
+          current_max_frame_size,
+        )?;
+      }
+      (FRAME_RST_STREAM, STREAM_ID) => {
+        return Err(error::bad_response("HTTP/2 stream received RST_STREAM"));
+      }
+      (FRAME_PING, 0) => {
+        if frame.payload.len() != 8 {
+          return Err(error::bad_response("invalid HTTP/2 PING frame"));
+        }
+        if frame.flags & FLAG_ACK == 0 {
+          write_frame(stream, FRAME_PING, FLAG_ACK, 0, &frame.payload)?;
+          stream.flush().map_err(error::request)?;
+        }
+      }
+      (FRAME_PING, _) => {
+        return Err(error::bad_response("invalid HTTP/2 PING frame"));
+      }
+      (FRAME_GOAWAY, 0) => {
+        if goaway_last_stream_id(&frame.payload)? < STREAM_ID {
+          return Err(error::bad_response("HTTP/2 connection received GOAWAY"));
+        }
+      }
+      (FRAME_HEADERS, STREAM_ID) | (FRAME_DATA, STREAM_ID) | (FRAME_CONTINUATION, STREAM_ID) => {
+        return read_single_stream_response_from_frame(stream, url, frame).map(Some);
+      }
+      _ => {}
+    }
+
+    if connection_send_window
+      .available()
+      .min(stream_send_window.available())
+      > 0
+    {
+      return Ok(None);
+    }
+  }
+}
+
+fn handle_settings_while_sending(
+  stream: &mut TcpStream,
+  frame: &Frame,
+  stream_send_window: &mut SendWindow,
+  current_initial_window_size: &mut u32,
+  current_max_frame_size: &mut usize,
+) -> error::Result<()> {
+  validate_settings_frame(frame)?;
+  if frame.flags & FLAG_ACK == FLAG_ACK {
+    return Ok(());
+  }
+  let settings = validate_settings_payload(&frame.payload)?;
+  if settings.initial_window_size_changed {
+    let delta = i64::from(settings.initial_window_size) - i64::from(*current_initial_window_size);
+    if delta != 0 {
+      stream_send_window.adjust(delta)?;
+      *current_initial_window_size = settings.initial_window_size;
+    }
+  }
+  if settings.max_frame_size_changed {
+    *current_max_frame_size = settings.max_frame_size;
+  }
+  write_frame(stream, FRAME_SETTINGS, FLAG_ACK, 0, &[])?;
+  stream.flush().map_err(error::request)
 }
 
 fn encode_request_headers(request: &RawRequest<'_>, url: &Url) -> error::Result<Vec<u8>> {
@@ -482,6 +634,22 @@ struct PendingHeaderBlock {
 }
 
 fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Result<Response> {
+  read_single_stream_response_with_first_frame(stream, url, None)
+}
+
+fn read_single_stream_response_from_frame(
+  stream: &mut TcpStream,
+  url: RoUrl,
+  first_frame: Frame,
+) -> error::Result<Response> {
+  read_single_stream_response_with_first_frame(stream, url, Some(first_frame))
+}
+
+fn read_single_stream_response_with_first_frame(
+  stream: &mut TcpStream,
+  url: RoUrl,
+  mut first_frame: Option<Frame>,
+) -> error::Result<Response> {
   let mut header_block = Vec::new();
   let mut headers = Vec::new();
   let mut trailers = Vec::new();
@@ -496,12 +664,15 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
   let mut stream_send_window = SendWindow::new();
 
   loop {
-    let frame = match read_frame(stream) {
-      Ok(frame) => frame,
-      Err(err) if pending_header_block.is_some() && is_unexpected_eof(&err) => {
-        return Err(error::bad_response("incomplete HTTP/2 header block"));
-      }
-      Err(err) => return Err(err),
+    let frame = match first_frame.take() {
+      Some(frame) => frame,
+      None => match read_frame(stream) {
+        Ok(frame) => frame,
+        Err(err) if pending_header_block.is_some() && is_unexpected_eof(&err) => {
+          return Err(error::bad_response("incomplete HTTP/2 header block"));
+        }
+        Err(err) => return Err(err),
+      },
     };
     if pending_header_block.is_some()
       && (frame.frame_type != FRAME_CONTINUATION || frame.stream_id != STREAM_ID)
@@ -698,6 +869,24 @@ impl SendWindow {
     }
   }
 
+  fn with_available(available: i64) -> Self {
+    Self { available }
+  }
+
+  fn available(&self) -> i64 {
+    self.available
+  }
+
+  fn consume(&mut self, amount: usize) -> error::Result<()> {
+    let amount = i64::try_from(amount)
+      .map_err(|_| error::request(io::Error::other("HTTP/2 DATA frame is too large")))?;
+    self.available = self
+      .available
+      .checked_sub(amount)
+      .ok_or_else(|| error::request(io::Error::other("HTTP/2 send window underflow")))?;
+    Ok(())
+  }
+
   fn increase(&mut self, amount: u32) -> error::Result<()> {
     self.available = self
       .available
@@ -705,6 +894,17 @@ impl SendWindow {
       .ok_or_else(|| error::bad_response("HTTP/2 WINDOW_UPDATE overflow"))?;
     if self.available > MAX_INITIAL_WINDOW_SIZE as i64 {
       return Err(error::bad_response("HTTP/2 WINDOW_UPDATE overflow"));
+    }
+    Ok(())
+  }
+
+  fn adjust(&mut self, delta: i64) -> error::Result<()> {
+    self.available = self
+      .available
+      .checked_add(delta)
+      .ok_or_else(|| error::bad_response("HTTP/2 flow-control window overflow"))?;
+    if self.available > MAX_INITIAL_WINDOW_SIZE as i64 {
+      return Err(error::bad_response("HTTP/2 flow-control window overflow"));
     }
     Ok(())
   }
