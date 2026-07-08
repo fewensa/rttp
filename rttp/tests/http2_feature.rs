@@ -1003,6 +1003,58 @@ fn wrapper_http2_prior_knowledge_huffman_request_headers_reach_socket2_server_de
 }
 
 #[test]
+fn wrapper_http2_prior_knowledge_dynamic_request_fields_reach_socket2_server_decoded() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.version().to_string(),
+          request.target().to_string(),
+          request.header("x-repeat").map(str::to_string),
+          request.trailer("x-repeat").map(str::to_string),
+        ))
+        .expect("send parsed dynamic h2 request fields");
+        HttpResponse::ok("decoded dynamic request fields")
+      })
+      .expect("serve dynamic h2 request fields");
+  });
+
+  let response = rttp::Http::client()
+    .post()
+    .url(format!("http://{}/dynamic-request-fields", addr))
+    .header(("X-Repeat", "same-value"))
+    .trailer(("X-Repeat", "same-value"))
+    .expect("configure repeated trailer")
+    .raw("dynamic request body")
+    .emit_http2_prior_knowledge()
+    .expect("wrapper h2 response after dynamic request fields");
+
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(
+    "decoded dynamic request fields",
+    response.body().string().unwrap()
+  );
+  assert_eq!(
+    (
+      "HTTP/2".to_string(),
+      "/dynamic-request-fields".to_string(),
+      Some("same-value".to_string()),
+      Some("same-value".to_string())
+    ),
+    rx.recv().expect("receive parsed dynamic h2 request fields")
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn wrapper_http2_prior_knowledge_large_huffman_request_header_reaches_socket2_server_decoded() {
   let server = rttp::Http::server("127.0.0.1:0")
     .expect("bind server")
