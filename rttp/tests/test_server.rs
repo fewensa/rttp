@@ -692,9 +692,9 @@ fn server_huffman_encodes_http2_response_header_and_trailer_literals_only_when_s
         HttpResponse::ok("hpack body")
           .header("X", "aaaaaaaaaaaaaaaa")
           .header("Y", "x")
-          .header("Trailer", "X")
-          .trailer("X", "aaaaaaaaaaaaaaaa")
-          .trailer("Y", "x")
+          .header("Trailer", "Z, W")
+          .trailer("Z", "aaaaaaaaaaaaaaaa")
+          .trailer("W", "x")
       })
       .expect("serve huffman h2 response");
   });
@@ -745,11 +745,11 @@ fn server_huffman_encodes_http2_response_header_and_trailer_literals_only_when_s
   assert_eq!(1, response_trailers.stream_id);
 
   let trailer_literals = captured_hpack_literals(&response_trailers.payload);
-  let compressed_trailer = captured_hpack_literal(&trailer_literals, "x");
+  let compressed_trailer = captured_hpack_literal(&trailer_literals, "z");
   assert!(!compressed_trailer.name_huffman);
   assert!(compressed_trailer.value_huffman);
   assert_eq!(None, compressed_trailer.value);
-  let raw_trailer = captured_hpack_literal(&trailer_literals, "y");
+  let raw_trailer = captured_hpack_literal(&trailer_literals, "w");
   assert!(!raw_trailer.name_huffman);
   assert!(!raw_trailer.value_huffman);
   assert_eq!(Some("x"), raw_trailer.value.as_deref());

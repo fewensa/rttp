@@ -1783,7 +1783,9 @@ fn write_http2_response(
   write_body: bool,
   flow_control: &mut Http2ResponseFlowControl<'_>,
 ) -> io::Result<()> {
-  let headers = encode_http2_response_headers(response)?;
+  let mut header_encoder = Http2HeaderEncoder::new(HTTP2_DEFAULT_HEADER_TABLE_SIZE);
+  let dynamic_candidates = repeated_http2_response_fields(response);
+  let headers = encode_http2_response_headers(response, &mut header_encoder, &dynamic_candidates)?;
   let write_trailers = write_body && response.allows_body() && !response.trailers().is_empty();
   write_http2_header_block(stream, stream_id, 0, &headers, *flow_control.max_frame_size)?;
   let body = if write_body && response.allows_body() {
@@ -1826,7 +1828,8 @@ fn write_http2_response(
     }
   }
   if write_trailers {
-    let trailers = encode_http2_response_trailers(response)?;
+    let trailers =
+      encode_http2_response_trailers(response, &mut header_encoder, &dynamic_candidates)?;
     write_http2_header_block(
       stream,
       stream_id,
@@ -2093,7 +2096,104 @@ fn write_http2_header_block(
   Ok(())
 }
 
-fn encode_http2_response_headers(response: &HttpResponse) -> io::Result<Vec<u8>> {
+struct Http2HeaderEncoder {
+  dynamic_entries: Vec<(String, String)>,
+  max_size: usize,
+  current_size: usize,
+}
+
+impl Http2HeaderEncoder {
+  fn new(max_size: usize) -> Self {
+    Self {
+      dynamic_entries: Vec::new(),
+      max_size,
+      current_size: 0,
+    }
+  }
+
+  fn dynamic_header_index(&self, name: &str, value: &str) -> Option<usize> {
+    self
+      .dynamic_entries
+      .iter()
+      .position(|(entry_name, entry_value)| entry_name == name && entry_value == value)
+      .map(|position| HTTP2_STATIC_TABLE_LEN + position + 1)
+  }
+
+  fn can_insert(&self, name: &str, value: &str) -> bool {
+    hpack_dynamic_entry_size(name, value) <= self.max_size
+  }
+
+  fn insert(&mut self, name: String, value: String) {
+    let entry_size = hpack_dynamic_entry_size(&name, &value);
+    if entry_size > self.max_size {
+      self.dynamic_entries.clear();
+      self.current_size = 0;
+      return;
+    }
+    self.dynamic_entries.insert(0, (name, value));
+    self.current_size += entry_size;
+    self.evict_to_max_size();
+  }
+
+  fn evict_to_max_size(&mut self) {
+    while self.current_size > self.max_size {
+      let Some((name, value)) = self.dynamic_entries.pop() else {
+        self.current_size = 0;
+        return;
+      };
+      self.current_size -= hpack_dynamic_entry_size(&name, &value);
+    }
+  }
+}
+
+fn repeated_http2_response_fields(response: &HttpResponse) -> Vec<(String, String)> {
+  let mut fields = Vec::<(String, String)>::new();
+  for header in &response.headers {
+    let name = header.name.to_ascii_lowercase();
+    if !is_http2_skipped_response_header_name(&name) {
+      fields.push((name, header.value.clone()));
+    }
+  }
+  for trailer in response.trailers() {
+    let name = trailer.name.to_ascii_lowercase();
+    if !is_http2_skipped_response_trailer_name(&name) {
+      fields.push((name, trailer.value.clone()));
+    }
+  }
+
+  let mut repeated = Vec::<(String, String)>::new();
+  for (index, (name, value)) in fields.iter().enumerate() {
+    if repeated
+      .iter()
+      .any(|(repeated_name, repeated_value)| repeated_name == name && repeated_value == value)
+    {
+      continue;
+    }
+    if fields[index + 1..]
+      .iter()
+      .any(|(other_name, other_value)| other_name == name && other_value == value)
+    {
+      repeated.push((name.clone(), value.clone()));
+    }
+  }
+  repeated
+}
+
+fn is_repeated_http2_response_field(
+  dynamic_candidates: &[(String, String)],
+  name: &str,
+  value: &str,
+) -> bool {
+  dynamic_candidates
+    .iter()
+    .any(|(candidate_name, candidate_value)| candidate_name == name && candidate_value == value)
+}
+
+fn encode_http2_response_headers(
+  response: &HttpResponse,
+  encoder: &mut Http2HeaderEncoder,
+  dynamic_candidates: &[(String, String)],
+) -> io::Result<Vec<u8>> {
   let mut block = Vec::new();
   match response.status_code {
     200 => block.push(0x88),
@@ -2123,60 +2223,139 @@ fn encode_http2_response_headers(response: &HttpResponse) -> io::Result<Vec<u8>>
 
   for header in &response.headers {
     let name = header.name.to_ascii_lowercase();
-    if matches!(
-      name.as_str(),
-      "connection"
-        | "keep-alive"
-        | "proxy-connection"
-        | "te"
-        | "trailer"
-        | "transfer-encoding"
-        | "upgrade"
-        | "content-length"
-    ) {
+    if is_http2_skipped_response_header_name(&name) {
       continue;
     }
-    encode_http2_literal_new_name_without_indexing(
+    encode_http2_response_field(
       &mut block,
-      name.as_bytes(),
-      header.value.as_bytes(),
+      encoder,
+      dynamic_candidates,
+      &name,
+      &header.value,
     )?;
   }
 
   Ok(block)
 }
 
-fn encode_http2_response_trailers(response: &HttpResponse) -> io::Result<Vec<u8>> {
+fn encode_http2_response_trailers(
+  response: &HttpResponse,
+  encoder: &mut Http2HeaderEncoder,
+  dynamic_candidates: &[(String, String)],
+) -> io::Result<Vec<u8>> {
   let mut block = Vec::new();
   for trailer in response.trailers() {
     let name = trailer.name.to_ascii_lowercase();
-    if matches!(
-      name.as_str(),
-      "authorization"
-        | "connection"
-        | "content-length"
-        | "cookie"
-        | "host"
-        | "keep-alive"
-        | "proxy-authenticate"
-        | "proxy-authorization"
-        | "proxy-connection"
-        | "set-cookie"
-        | "te"
-        | "trailer"
-        | "transfer-encoding"
-        | "upgrade"
-        | "www-authenticate"
-    ) {
+    if is_http2_skipped_response_trailer_name(&name) {
       continue;
     }
-    encode_http2_literal_new_name_without_indexing(
+    encode_http2_response_field(
       &mut block,
-      name.as_bytes(),
-      trailer.value.as_bytes(),
+      encoder,
+      dynamic_candidates,
+      &name,
+      &trailer.value,
     )?;
   }
   Ok(block)
+}
+
+fn encode_http2_response_field(
+  block: &mut Vec<u8>,
+  encoder: &mut Http2HeaderEncoder,
+  dynamic_candidates: &[(String, String)],
+  name: &str,
+  value: &str,
+) -> io::Result<()> {
+  let literal_without_indexing_len =
+    encoded_http2_literal_new_name_without_indexing_len(name.as_bytes(), value.as_bytes())?;
+  if let Some(index) = encoder.dynamic_header_index(name, value) {
+    let indexed_len = encoded_http2_indexed_len(index)?;
+    if indexed_len < literal_without_indexing_len {
+      return encode_http2_indexed(block, index);
+    }
+  }
+
+  if is_repeated_http2_response_field(dynamic_candidates, name, value)
+    && encoder.can_insert(name, value)
+  {
+    let indexed_len = encoded_http2_indexed_len(HTTP2_STATIC_TABLE_LEN + 1)?;
+    if indexed_len < literal_without_indexing_len {
+      encode_http2_literal_new_name_with_incremental_indexing(
+        block,
+        name.as_bytes(),
+        value.as_bytes(),
+      )?;
+      encoder.insert(name.to_string(), value.to_string());
+      return Ok(());
+    }
+  }
+
+  encode_http2_literal_new_name_without_indexing(block, name.as_bytes(), value.as_bytes())
+}
+
+fn is_http2_skipped_response_header_name(name: &str) -> bool {
+  matches!(
+    name,
+    "connection"
+      | "keep-alive"
+      | "proxy-connection"
+      | "te"
+      | "trailer"
+      | "transfer-encoding"
+      | "upgrade"
+      | "content-length"
+  )
+}
+
+fn is_http2_skipped_response_trailer_name(name: &str) -> bool {
+  matches!(
+    name,
+    "authorization"
+      | "connection"
+      | "content-length"
+      | "cookie"
+      | "host"
+      | "keep-alive"
+      | "proxy-authenticate"
+      | "proxy-authorization"
+      | "proxy-connection"
+      | "set-cookie"
+      | "te"
+      | "trailer"
+      | "transfer-encoding"
+      | "upgrade"
+      | "www-authenticate"
+  )
+}
+
+fn encode_http2_indexed(block: &mut Vec<u8>, index: usize) -> io::Result<()> {
+  encode_http2_integer(block, index, 7, 0x80)
+}
+
+fn encode_http2_literal_new_name_with_incremental_indexing(
+  block: &mut Vec<u8>,
+  name: &[u8],
+  value: &[u8],
+) -> io::Result<()> {
+  block.push(0x40);
+  encode_http2_string(block, name)?;
+  encode_http2_string(block, value)
+}
+
+fn encoded_http2_indexed_len(index: usize) -> io::Result<usize> {
+  let mut encoded = Vec::new();
+  encode_http2_indexed(&mut encoded, index)?;
+  Ok(encoded.len())
+}
+
+fn encoded_http2_literal_new_name_without_indexing_len(
+  name: &[u8],
+  value: &[u8],
+) -> io::Result<usize> {
+  let mut encoded = Vec::new();
+  encode_http2_literal_new_name_without_indexing(&mut encoded, name, value)?;
+  Ok(encoded.len())
 }
 
 fn encode_http2_literal_indexed_name_without_indexing(
