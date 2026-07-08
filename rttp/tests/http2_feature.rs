@@ -888,6 +888,100 @@ fn wrapper_http2_prior_knowledge_large_request_header_reaches_socket2_server() {
 }
 
 #[test]
+fn wrapper_http2_prior_knowledge_huffman_request_headers_reach_socket2_server_decoded() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let huffman_header_value = "a".repeat(64);
+  let expected_header_value = huffman_header_value.clone();
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.version().to_string(),
+          request.target().to_string(),
+          request.header("x-hpack-huffman").map(str::to_string),
+        ))
+        .expect("send parsed Huffman h2 request header");
+        HttpResponse::ok("decoded request huffman")
+      })
+      .expect("serve Huffman h2 request header");
+  });
+
+  let response = rttp::Http::client()
+    .url(format!("http://{}/huffman-request-header", addr))
+    .header(("X-HPACK-Huffman".to_string(), huffman_header_value))
+    .emit_http2_prior_knowledge()
+    .expect("wrapper h2 response after Huffman request header");
+
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!("decoded request huffman", response.body().string().unwrap());
+  assert_eq!(
+    (
+      "HTTP/2".to_string(),
+      "/huffman-request-header".to_string(),
+      Some(expected_header_value)
+    ),
+    rx.recv().expect("receive parsed Huffman h2 request header")
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn wrapper_http2_prior_knowledge_large_huffman_request_header_reaches_socket2_server_decoded() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let large_huffman_value = "a".repeat(28 * 1024);
+  let expected_header_value = large_huffman_value.clone();
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.version().to_string(),
+          request.target().to_string(),
+          request.header("x-large-hpack-huffman").map(str::to_string),
+        ))
+        .expect("send parsed large Huffman h2 request header");
+        HttpResponse::ok("decoded large request huffman")
+      })
+      .expect("serve large Huffman h2 request header");
+  });
+
+  let response = rttp::Http::client()
+    .url(format!("http://{}/large-huffman-request-header", addr))
+    .header(("X-Large-HPACK-Huffman".to_string(), large_huffman_value))
+    .emit_http2_prior_knowledge()
+    .expect("wrapper h2 response after large Huffman request header");
+
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(
+    "decoded large request huffman",
+    response.body().string().unwrap()
+  );
+  assert_eq!(
+    (
+      "HTTP/2".to_string(),
+      "/large-huffman-request-header".to_string(),
+      Some(expected_header_value)
+    ),
+    rx.recv()
+      .expect("receive parsed large Huffman h2 request header")
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn wrapper_http2_prior_knowledge_reads_large_response_header_from_socket2_server() {
   let server = rttp::Http::server("127.0.0.1:0")
     .expect("bind server")
@@ -916,6 +1010,93 @@ fn wrapper_http2_prior_knowledge_reads_large_response_header_from_socket2_server
   assert_eq!(
     Some(&expected_header_value),
     response.header_value("X-Large-Response")
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn wrapper_http2_prior_knowledge_decodes_huffman_response_headers_and_trailers_from_socket2_server()
+{
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let header_value = "a".repeat(64);
+  let trailer_value = "e".repeat(64);
+  let expected_header_value = header_value.clone();
+  let expected_trailer_value = trailer_value.clone();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(move |_| {
+        HttpResponse::ok("decoded response huffman")
+          .header("X-HPACK-Huffman", header_value)
+          .header("Trailer", "X-HPACK-Trailer")
+          .trailer("X-HPACK-Trailer", trailer_value)
+      })
+      .expect("serve Huffman h2 response headers and trailers");
+  });
+
+  let response = rttp::Http::client()
+    .url(format!("http://{}/huffman-response-fields", addr))
+    .emit_http2_prior_knowledge()
+    .expect("wrapper h2 response with Huffman response fields");
+
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(200, response.code());
+  assert_eq!(
+    "decoded response huffman",
+    response.body().string().unwrap()
+  );
+  assert_eq!(
+    Some(&expected_header_value),
+    response.header_value("X-HPACK-Huffman")
+  );
+  assert_eq!(
+    Some(&expected_trailer_value),
+    response.trailer_value("X-HPACK-Trailer")
+  );
+  assert!(response.header_value("Trailer").is_none());
+  assert!(response.header_value("X-HPACK-Trailer").is_none());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn wrapper_http2_prior_knowledge_decodes_large_huffman_response_header_split_by_continuation() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let large_header_value = "a".repeat(28 * 1024);
+  let expected_header_value = large_header_value.clone();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(move |_| {
+        HttpResponse::ok("decoded large response huffman")
+          .header("X-Large-HPACK-Huffman", large_header_value)
+      })
+      .expect("serve large Huffman h2 response header");
+  });
+
+  let response = rttp::Http::client()
+    .url(format!("http://{}/large-huffman-response-header", addr))
+    .emit_http2_prior_knowledge()
+    .expect("wrapper h2 response with large Huffman response header");
+
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(200, response.code());
+  assert_eq!(
+    "decoded large response huffman",
+    response.body().string().unwrap()
+  );
+  assert_eq!(
+    Some(&expected_header_value),
+    response.header_value("X-Large-HPACK-Huffman")
   );
 
   handle.join().expect("server thread");
