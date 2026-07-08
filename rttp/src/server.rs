@@ -1776,6 +1776,11 @@ struct Http2ResponseFlowControl<'a> {
   request_header_decoder: &'a mut Http2HeaderDecoder,
 }
 
+enum Http2ResponseFlowControlRead {
+  WindowAvailable,
+  ResponseReset,
+}
+
 fn write_http2_response(
   stream: &mut TcpStream,
   stream_id: u32,
@@ -1806,7 +1811,10 @@ fn write_http2_response(
       while flow_control.connection_send_window.available() == 0
         || flow_control.stream_send_window.available() == 0
       {
-        read_http2_response_flow_control_frame(stream, stream_id, flow_control)?;
+        match read_http2_response_flow_control_frame(stream, stream_id, flow_control)? {
+          Http2ResponseFlowControlRead::WindowAvailable => {}
+          Http2ResponseFlowControlRead::ResponseReset => return Ok(()),
+        }
       }
 
       let chunk_len = (body.len() - offset)
@@ -1845,7 +1853,7 @@ fn read_http2_response_flow_control_frame(
   stream: &mut TcpStream,
   response_stream_id: u32,
   flow_control: &mut Http2ResponseFlowControl<'_>,
-) -> io::Result<()> {
+) -> io::Result<Http2ResponseFlowControlRead> {
   loop {
     let frame = read_http2_frame(stream)?;
     if let Some(stream_id) = active_http2_header_continuation_stream(flow_control.streams) {
@@ -1861,13 +1869,13 @@ fn read_http2_response_flow_control_frame(
         flow_control
           .connection_send_window
           .increase(http2_window_update_increment(&frame.payload)?)?;
-        return Ok(());
+        return Ok(Http2ResponseFlowControlRead::WindowAvailable);
       }
       (HTTP2_FRAME_WINDOW_UPDATE, id) if id == response_stream_id => {
         flow_control
           .stream_send_window
           .increase(http2_window_update_increment(&frame.payload)?)?;
-        return Ok(());
+        return Ok(Http2ResponseFlowControlRead::WindowAvailable);
       }
       (HTTP2_FRAME_WINDOW_UPDATE, id) => {
         let increment = http2_window_update_increment(&frame.payload)?;
@@ -2045,6 +2053,9 @@ fn read_http2_response_flow_control_frame(
         if !flow_control.reset_streams.contains(&id) {
           flow_control.reset_streams.push(id);
         }
+        if id == response_stream_id {
+          return Ok(Http2ResponseFlowControlRead::ResponseReset);
+        }
       }
       (_, 0) => {}
       _ => {}
@@ -2052,7 +2063,7 @@ fn read_http2_response_flow_control_frame(
     if flow_control.connection_send_window.available() > 0
       && flow_control.stream_send_window.available() > 0
     {
-      return Ok(());
+      return Ok(Http2ResponseFlowControlRead::WindowAvailable);
     }
   }
 }
