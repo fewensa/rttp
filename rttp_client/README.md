@@ -36,14 +36,15 @@ through `Response::trailers`, `Response::trailer`, and
 | Upgrade and tunnel handoff | `CONNECT` returns the tunnel socket after a successful `200`; `upgrade()` returns the socket after `101 Switching Protocols` and skips interim `1xx` responses | Upgraded protocols are handed to the caller and are not parsed by `rttp_client` |
 | Redirects | Auto-redirect covers 301, 302, 303, 307, and 308 method/body behavior, relative and absolute `Location` resolution, same- and cross-authority header handling, loop detection, and redirect bounds | Redirects are HTTP client behavior, not a browser policy implementation |
 | Trailers | Chunked response trailers are exposed for blocking and async APIs; streaming chunked uploads can send declared request trailers | Forbidden framing/routing trailer fields are rejected |
-| Prior-knowledge h2c | With `http2`, direct `socket2` h2c sends GET, HEAD, and buffered POST, PUT, or PATCH requests, suppresses HEAD response bodies, DATA bodies, trailers, HPACK static Huffman strings, dynamic entries within peer settings, large header blocks, padded incoming frames, and conservative DATA flow control | No TLS ALPN, proxy tunneling to h2, proxy h2, general multiplexing, or priority scheduling |
+| Prior-knowledge h2c | With `http2`, direct `socket2` h2c sends GET, HEAD, bodyless DELETE, and buffered POST, PUT, or PATCH requests, suppresses HEAD response bodies, DATA bodies, trailers, HPACK static Huffman strings, dynamic entries within peer settings, large header blocks, padded incoming frames, and conservative DATA flow control | No TLS ALPN, proxy tunneling to h2, proxy h2, general multiplexing, or priority scheduling |
 
 With the `http2` feature enabled, `emit_http2_prior_knowledge` sends a minimal
 prior-knowledge h2c request over a direct socket2 TCP connection. It supports
-GET, HEAD, and buffered POST, PUT, or PATCH requests. Non-empty buffered
-request bodies are sent as DATA frames for the write methods; HEAD requests do
-not send request DATA frames, and any response DATA frames are consumed without
-being exposed as a response body. HPACK static Huffman strings and large header
+GET, HEAD, bodyless DELETE, and buffered POST, PUT, or PATCH requests.
+Non-empty buffered request bodies are sent as DATA frames for the write methods;
+HEAD and bodyless DELETE requests do not send request DATA frames, and any HEAD
+response DATA frames are consumed without being exposed as a response body.
+HPACK static Huffman strings and large header
 blocks are supported, repeated request header and trailer fields can use HPACK
 dynamic entries within the peer's advertised table size, and incoming dynamic
 table entries, table-size updates, padded HEADERS, DATA, and trailer frames are

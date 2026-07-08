@@ -95,14 +95,20 @@ impl<'a> PriorKnowledgeClient<'a> {
   pub fn get(mut self) -> error::Result<Response> {
     let method = self.request.origin().method();
     let is_head = method.eq_ignore_ascii_case("HEAD");
+    let is_delete = method.eq_ignore_ascii_case("DELETE");
     if (method.eq_ignore_ascii_case("GET") || is_head) && self.request.body().is_some() {
       return Err(error::builder_with_message(
         "HTTP/2 prior-knowledge GET or HEAD cannot send a request body",
       ));
     }
+    if is_delete && self.request.body().is_some() {
+      return Err(error::builder_with_message(
+        "HTTP/2 prior-knowledge DELETE cannot send a request body",
+      ));
+    }
     if !is_supported_request_method(method) {
       return Err(error::builder_with_message(
-        "HTTP/2 prior-knowledge client supports GET, HEAD, and buffered POST, PUT, or PATCH",
+        "HTTP/2 prior-knowledge client supports GET, HEAD, bodyless DELETE, and buffered POST, PUT, or PATCH",
       ));
     }
 
@@ -132,6 +138,7 @@ impl<'a> PriorKnowledgeClient<'a> {
 fn is_supported_request_method(method: &str) -> bool {
   method.eq_ignore_ascii_case("GET")
     || method.eq_ignore_ascii_case("HEAD")
+    || method.eq_ignore_ascii_case("DELETE")
     || method.eq_ignore_ascii_case("POST")
     || method.eq_ignore_ascii_case("PUT")
     || method.eq_ignore_ascii_case("PATCH")
