@@ -15,6 +15,7 @@ const HTTP2_FRAME_HEADERS: u8 = 0x1;
 const HTTP2_FRAME_PRIORITY: u8 = 0x2;
 const HTTP2_FRAME_RST_STREAM: u8 = 0x3;
 const HTTP2_FRAME_SETTINGS: u8 = 0x4;
+const HTTP2_FRAME_PUSH_PROMISE: u8 = 0x5;
 const HTTP2_FRAME_PING: u8 = 0x6;
 const HTTP2_FRAME_GOAWAY: u8 = 0x7;
 const HTTP2_FRAME_WINDOW_UPDATE: u8 = 0x8;
@@ -490,6 +491,9 @@ impl HttpServer {
         }
         (HTTP2_FRAME_PRIORITY, id) => {
           validate_http2_priority_frame(id, &frame.payload)?;
+        }
+        (HTTP2_FRAME_PUSH_PROMISE, _) => {
+          return Err(invalid_http2_push_promise_error());
         }
         (HTTP2_FRAME_HEADERS, id) if id != 0 => {
           let header_block_fragment =
@@ -989,7 +993,16 @@ fn read_http2_frame(stream: &mut TcpStream) -> io::Result<Http2Frame> {
   stream.read_exact(&mut header)?;
   let length = ((header[0] as usize) << 16) | ((header[1] as usize) << 8) | header[2] as usize;
   let mut payload = vec![0; length];
-  stream.read_exact(&mut payload)?;
+  stream.read_exact(&mut payload).map_err(|err| {
+    if err.kind() == io::ErrorKind::UnexpectedEof {
+      io::Error::new(
+        io::ErrorKind::InvalidData,
+        "incomplete HTTP/2 frame payload",
+      )
+    } else {
+      err
+    }
+  })?;
   Ok(Http2Frame {
     frame_type: header[3],
     flags: header[4],
@@ -1040,6 +1053,13 @@ fn validate_http2_priority_frame(stream_id: u32, payload: &[u8]) -> io::Result<(
     ));
   }
   Ok(())
+}
+
+fn invalid_http2_push_promise_error() -> io::Error {
+  io::Error::new(
+    io::ErrorKind::InvalidData,
+    "HTTP/2 PUSH_PROMISE frame is unsupported",
+  )
 }
 
 fn invalid_http2_window_update_error() -> io::Error {
