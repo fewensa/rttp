@@ -2042,6 +2042,74 @@ fn server_rejects_http2_prior_knowledge_connection_push_promise_without_handler(
 }
 
 #[test]
+fn server_rejects_http2_prior_knowledge_connection_specific_request_headers_without_handler() {
+  for (name, value) in [
+    (b"connection".as_slice(), b"close".as_slice()),
+    (b"keep-alive".as_slice(), b"timeout=5".as_slice()),
+    (b"proxy-connection".as_slice(), b"keep-alive".as_slice()),
+    (b"transfer-encoding".as_slice(), b"chunked".as_slice()),
+    (b"upgrade".as_slice(), b"h2c".as_slice()),
+  ] {
+    let mut headers = h2_get_headers(b"/forbidden-headers", b"localhost");
+    headers.extend(h2_literal_new_name(name, value));
+
+    assert_invalid_h2_headers_without_handler(&headers);
+  }
+}
+
+#[test]
+fn server_accepts_http2_prior_knowledge_te_trailers_request_header() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request.header("te").map(str::to_string))
+          .expect("send h2 TE header");
+        HttpResponse::ok("accepted")
+      })
+      .expect("serve h2 TE trailers request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+
+  let mut headers = h2_get_headers(b"/te-trailers", addr.to_string().as_bytes());
+  headers.extend(h2_literal_new_name(b"te", b"trailers"));
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &headers,
+  );
+
+  let response_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(1, response_headers.stream_id);
+  let response_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
+  assert_eq!(b"accepted", response_body.payload.as_slice());
+
+  assert_eq!(Some("trailers".to_string()), rx.recv().expect("TE header"));
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_invalid_te_request_header_without_handler() {
+  let mut headers = h2_get_headers(b"/invalid-te", b"localhost");
+  headers.extend(h2_literal_new_name(b"te", b"gzip"));
+
+  assert_invalid_h2_headers_without_handler(&headers);
+}
+
+#[test]
 fn server_rejects_http2_prior_knowledge_truncated_push_promise_without_handler() {
   let server = rttp::Http::server("127.0.0.1:0")
     .expect("bind server")
