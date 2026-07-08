@@ -11,6 +11,7 @@ use rttp_client::HttpClient;
 
 const H2_FRAME_DATA: u8 = 0x0;
 const H2_FRAME_HEADERS: u8 = 0x1;
+const H2_FRAME_PRIORITY: u8 = 0x2;
 const H2_FRAME_RST_STREAM: u8 = 0x3;
 const H2_FRAME_SETTINGS: u8 = 0x4;
 const H2_FRAME_PING: u8 = 0x6;
@@ -835,6 +836,173 @@ fn rttp_client_options_prior_knowledge_round_trips_against_socket2_server() {
   );
 
   handle.join().expect("server thread");
+}
+
+#[test]
+fn h2c_priority_unsupported_scheduling_matrix_preserves_wrapper_response_behavior() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 priority peer");
+  let addr = listener.local_addr().expect("h2 priority peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_peer_request_handshake(&mut stream);
+
+    write_h2_frame(&mut stream, H2_FRAME_PRIORITY, 0, 1, &[0, 0, 0, 0, 16]);
+    let mut headers = vec![0, 0, 0, 0, 32, 0x88];
+    headers.extend_from_slice(&h2_literal_new_name(b"x-priority", b"metadata-only"));
+    write_h2_frame(
+      &mut stream,
+      H2_FRAME_HEADERS,
+      H2_FLAG_PRIORITY | H2_FLAG_END_HEADERS,
+      1,
+      &headers,
+    );
+    write_h2_frame(
+      &mut stream,
+      H2_FRAME_DATA,
+      H2_FLAG_END_STREAM,
+      1,
+      b"priority metadata ignored",
+    );
+  });
+
+  let response = rttp::Http::client()
+    .url(format!("http://{}/priority/client-boundary", addr))
+    .emit_http2_prior_knowledge()
+    .expect("wrapper client ignores valid priority metadata");
+
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(200, response.code());
+  assert_eq!(
+    Some(&"metadata-only".to_string()),
+    response.header_value("X-Priority")
+  );
+  assert_eq!(
+    "priority metadata ignored",
+    response.body().string().expect("response body")
+  );
+
+  handle.join().expect("h2 priority peer thread");
+}
+
+#[test]
+fn h2c_priority_unsupported_scheduling_matrix_rejects_malformed_wrapper_peer_priority() {
+  for (path, stream_id, payload) in [
+    ("zero-stream", 0, vec![0, 0, 0, 0, 16]),
+    ("short-payload", 1, vec![0, 0, 0, 0]),
+    ("long-payload", 1, vec![0, 0, 0, 0, 16, 0]),
+  ] {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 priority peer");
+    let addr = listener.local_addr().expect("h2 priority peer addr");
+
+    let handle = thread::spawn(move || {
+      let (mut stream, _) = listener.accept().expect("accept h2 client");
+      complete_h2_peer_request_handshake(&mut stream);
+      write_h2_frame(&mut stream, H2_FRAME_PRIORITY, 0, stream_id, &payload);
+      write_h2_frame(
+        &mut stream,
+        H2_FRAME_HEADERS,
+        H2_FLAG_END_HEADERS,
+        1,
+        &[0x88],
+      );
+      write_h2_frame(
+        &mut stream,
+        H2_FRAME_DATA,
+        H2_FLAG_END_STREAM,
+        1,
+        b"unexpected",
+      );
+    });
+
+    let err = rttp::Http::client()
+      .url(format!("http://{}/priority/bad-{}", addr, path))
+      .emit_http2_prior_knowledge()
+      .expect_err("wrapper client must reject malformed PRIORITY frames");
+    assert!(
+      err.to_string().contains("invalid HTTP/2 PRIORITY frame"),
+      "unexpected wrapper client priority error: {err}"
+    );
+
+    handle.join().expect("bad h2 priority peer thread");
+  }
+}
+
+#[test]
+fn h2c_priority_unsupported_scheduling_matrix_server_ignores_valid_priority_metadata() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind h2 priority server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2 priority server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        tx.send(request.target().to_string())
+          .expect("send parsed priority h2 request");
+        HttpResponse::ok(format!("served {}", request.target()))
+      })
+      .expect("serve priority h2 requests")
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 priority server");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+
+  write_h2_frame(&mut stream, H2_FRAME_PRIORITY, 0, 3, &[0, 0, 0, 0, 1]);
+  let mut first_headers = vec![0, 0, 0, 0, 255];
+  first_headers.extend_from_slice(&h2_get_headers(
+    b"/priority/server-first",
+    addr.to_string().as_bytes(),
+  ));
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_PRIORITY | H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &first_headers,
+  );
+  write_h2_frame(&mut stream, H2_FRAME_PRIORITY, 0, 1, &[0, 0, 0, 0, 255]);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    3,
+    &h2_get_headers(b"/priority/server-second", addr.to_string().as_bytes()),
+  );
+  stream.flush().expect("flush h2 priority requests");
+
+  assert_eq!(
+    vec![1, 3],
+    read_h2_end_stream_data_streams(&mut stream, 2, 8),
+    "valid priority metadata must not reorder completed server responses"
+  );
+  assert_eq!(
+    "/priority/server-first",
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("receive first priority request")
+  );
+  assert_eq!(
+    "/priority/server-second",
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("receive second priority request")
+  );
+
+  handle.join().expect("h2 priority server thread");
+}
+
+#[test]
+fn h2c_priority_unsupported_scheduling_matrix_server_rejects_malformed_priority_frames() {
+  for (stream_id, payload) in [
+    (0, vec![0, 0, 0, 0, 16]),
+    (1, vec![0, 0, 0, 0]),
+    (2, vec![0, 0, 0, 0, 16]),
+  ] {
+    assert_malformed_h2_request_rejected_before_handler(|stream, _| {
+      write_h2_frame(stream, H2_FRAME_PRIORITY, 0, stream_id, &payload);
+    });
+  }
 }
 
 #[test]
