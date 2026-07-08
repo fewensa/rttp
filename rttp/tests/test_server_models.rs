@@ -400,6 +400,7 @@ fn serializes_chunked_response_trailers() {
     concat!(
       "HTTP/1.1 200 OK\r\n",
       "Transfer-Encoding: chunked\r\n",
+      "Trailer: X-Trace, X-Signature\r\n",
       "\r\n",
       "5\r\n",
       "hello\r\n",
@@ -470,6 +471,18 @@ fn rejects_forbidden_response_trailer_names() {
 #[test]
 fn serializes_empty_http_response_without_content_length_for_204() {
   let response = HttpResponse::new(204, "No Content");
+
+  let serialized = response.to_bytes();
+
+  assert_eq!(b"HTTP/1.1 204 No Content\r\n\r\n", serialized.as_slice());
+}
+
+#[test]
+fn omits_chunked_trailer_declaration_for_bodyless_response() {
+  let response = HttpResponse::new(204, "No Content")
+    .header("Transfer-Encoding", "chunked")
+    .trailer("X-Trace", "abc")
+    .body("ignored");
 
   let serialized = response.to_bytes();
 
