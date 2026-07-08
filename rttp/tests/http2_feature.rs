@@ -99,6 +99,27 @@ fn try_read_h2_frame(stream: &mut impl Read) -> io::Result<H2Frame> {
   })
 }
 
+fn read_h2_end_stream_data_streams(
+  stream: &mut impl Read,
+  expected_count: usize,
+  max_frames: usize,
+) -> Vec<u32> {
+  let mut completed_streams = Vec::new();
+  for _ in 0..max_frames {
+    let frame = read_h2_frame(stream);
+    if frame.frame_type == H2_FRAME_DATA && frame.flags & H2_FLAG_END_STREAM == H2_FLAG_END_STREAM {
+      completed_streams.push(frame.stream_id);
+      if completed_streams.len() == expected_count {
+        return completed_streams;
+      }
+    }
+  }
+  panic!(
+    "expected {} end-stream DATA frames within {} HTTP/2 frames, got {:?}",
+    expected_count, max_frames, completed_streams
+  );
+}
+
 fn h2_setting(id: u16, value: u32) -> [u8; 6] {
   let mut setting = [0; 6];
   setting[..2].copy_from_slice(&id.to_be_bytes());
@@ -2030,6 +2051,101 @@ fn http2_feature_socket2_padded_request_trailers_reach_server_without_padding() 
     ),
     rx.recv()
       .expect("receive parsed padded h2 request trailers")
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn http2_feature_socket2_interleaved_request_data_and_trailers_stay_per_stream() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        tx.send((
+          request.target().to_string(),
+          request.body().to_vec(),
+          request.trailers().to_vec(),
+        ))
+        .expect("send parsed interleaved h2 request");
+        HttpResponse::ok(format!("accepted {}", request.target()))
+      })
+      .expect("serve interleaved h2 requests");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set client read timeout");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+
+  let first_headers = h2_post_headers(b"/upload-one", addr.to_string().as_bytes());
+  let second_headers = h2_post_headers(b"/upload-two", addr.to_string().as_bytes());
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &first_headers,
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    3,
+    &second_headers,
+  );
+  write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 1, b"one-");
+  write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 3, b"two-");
+  write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 1, b"body");
+  write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 3, b"body");
+
+  let first_trailers = h2_literal_new_name(b"x-stream-check", b"first");
+  let second_trailers = h2_literal_new_name(b"x-stream-check", b"second");
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &first_trailers,
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    3,
+    &second_trailers,
+  );
+
+  let mut completed_response_streams = read_h2_end_stream_data_streams(&mut stream, 2, 16);
+  completed_response_streams.sort_unstable();
+  assert_eq!(vec![1, 3], completed_response_streams);
+
+  let mut received = vec![
+    rx.recv().expect("receive first interleaved h2 request"),
+    rx.recv().expect("receive second interleaved h2 request"),
+  ];
+  received.sort_by(|left, right| left.0.cmp(&right.0));
+  assert_eq!(
+    vec![
+      (
+        "/upload-one".to_string(),
+        b"one-body".to_vec(),
+        vec![("x-stream-check".to_string(), "first".to_string())],
+      ),
+      (
+        "/upload-two".to_string(),
+        b"two-body".to_vec(),
+        vec![("x-stream-check".to_string(), "second".to_string())],
+      ),
+    ],
+    received
   );
 
   handle.join().expect("server thread");
