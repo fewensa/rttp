@@ -24,6 +24,7 @@ const HTTP2_FLAG_END_HEADERS: u8 = 0x4;
 const HTTP2_FLAG_PADDED: u8 = 0x8;
 const HTTP2_FLAG_PRIORITY: u8 = 0x20;
 const HTTP2_DEFAULT_MAX_FRAME_SIZE: usize = 16 * 1024;
+const HTTP2_DEFAULT_INITIAL_WINDOW_SIZE: i32 = 65_535;
 const HTTP2_SETTINGS_ENABLE_PUSH: u16 = 0x2;
 const HTTP2_SETTINGS_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const HTTP2_SETTINGS_MAX_FRAME_SIZE: u16 = 0x5;
@@ -389,6 +390,7 @@ impl HttpServer {
 
     let mut streams = Vec::<Http2RequestStream>::new();
     let mut reset_streams = Vec::<u32>::new();
+    let mut connection_receive_window = HTTP2_DEFAULT_INITIAL_WINDOW_SIZE;
     let mut served = 0;
 
     while served < request_limit {
@@ -547,6 +549,10 @@ impl HttpServer {
           }
 
           let data_payload = http2_data_payload_to_data(&frame.payload, frame.flags)?;
+          let flow_controlled_len =
+            i32::try_from(frame.payload.len()).map_err(|_| http2_flow_control_error())?;
+          request_stream
+            .receive_flow_controlled_data(&mut connection_receive_window, flow_controlled_len)?;
           let new_len = request_stream
             .body
             .len()
@@ -559,6 +565,8 @@ impl HttpServer {
           if !frame.payload.is_empty() {
             write_http2_window_update(&mut stream, 0, frame.payload.len())?;
             write_http2_window_update(&mut stream, id, frame.payload.len())?;
+            request_stream
+              .release_flow_controlled_data(&mut connection_receive_window, flow_controlled_len)?;
           }
           if frame.flags & HTTP2_FLAG_END_STREAM == HTTP2_FLAG_END_STREAM {
             request_stream.end_stream = true;
@@ -571,7 +579,9 @@ impl HttpServer {
           }
         }
         (HTTP2_FRAME_GOAWAY, 0) => break,
-        (HTTP2_FRAME_WINDOW_UPDATE, _) => {}
+        (HTTP2_FRAME_WINDOW_UPDATE, _) => {
+          validate_http2_window_update_payload(&frame.payload)?;
+        }
         (_, 0) => {}
         _ => {}
       }
@@ -666,6 +676,7 @@ struct Http2RequestStream {
   body: Vec<u8>,
   end_stream: bool,
   in_header_continuation: bool,
+  receive_window: i32,
 }
 
 #[derive(Clone, Copy)]
@@ -685,6 +696,7 @@ impl Http2RequestStream {
       body: Vec::new(),
       end_stream: false,
       in_header_continuation: false,
+      receive_window: HTTP2_DEFAULT_INITIAL_WINDOW_SIZE,
     }
   }
 
@@ -717,6 +729,36 @@ impl Http2RequestStream {
       io::Error::new(io::ErrorKind::InvalidData, "missing HTTP/2 request headers")
     })?;
     decoded_headers.into_request(self.body, self.decoded_trailers)
+  }
+
+  fn receive_flow_controlled_data(
+    &mut self,
+    connection_receive_window: &mut i32,
+    len: i32,
+  ) -> io::Result<()> {
+    if len > *connection_receive_window || len > self.receive_window {
+      return Err(http2_flow_control_error());
+    }
+    *connection_receive_window -= len;
+    self.receive_window -= len;
+    Ok(())
+  }
+
+  fn release_flow_controlled_data(
+    &mut self,
+    connection_receive_window: &mut i32,
+    len: i32,
+  ) -> io::Result<()> {
+    *connection_receive_window = connection_receive_window
+      .checked_add(len)
+      .filter(|window| *window <= HTTP2_DEFAULT_INITIAL_WINDOW_SIZE)
+      .ok_or_else(http2_flow_control_error)?;
+    self.receive_window = self
+      .receive_window
+      .checked_add(len)
+      .filter(|window| *window <= HTTP2_DEFAULT_INITIAL_WINDOW_SIZE)
+      .ok_or_else(http2_flow_control_error)?;
+    Ok(())
   }
 }
 
@@ -832,6 +874,31 @@ fn validate_http2_settings_payload(payload: &[u8]) -> io::Result<()> {
   }
 
   Ok(())
+}
+
+fn validate_http2_window_update_payload(payload: &[u8]) -> io::Result<()> {
+  if payload.len() != 4 {
+    return Err(invalid_http2_window_update_error());
+  }
+  let increment = u32::from_be_bytes([payload[0] & 0x7f, payload[1], payload[2], payload[3]]);
+  if increment == 0 {
+    return Err(invalid_http2_window_update_error());
+  }
+  Ok(())
+}
+
+fn invalid_http2_window_update_error() -> io::Error {
+  io::Error::new(
+    io::ErrorKind::InvalidData,
+    "invalid HTTP/2 WINDOW_UPDATE frame",
+  )
+}
+
+fn http2_flow_control_error() -> io::Error {
+  io::Error::new(
+    io::ErrorKind::InvalidData,
+    "HTTP/2 flow-control window exceeded",
+  )
 }
 
 fn http2_settings_max_frame_size(payload: &[u8]) -> Option<usize> {
