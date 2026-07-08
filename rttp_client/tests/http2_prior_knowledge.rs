@@ -368,6 +368,156 @@ fn prior_knowledge_post_splits_body_data_frames_at_default_peer_max_frame_size()
 }
 
 #[test]
+fn prior_knowledge_post_pauses_request_body_at_peer_initial_stream_window() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    stream
+      .set_read_timeout(Some(Duration::from_millis(200)))
+      .expect("set h2 peer read timeout");
+    complete_h2_handshake_without_request_with_settings(
+      &mut stream,
+      &settings_payload(SETTING_INITIAL_WINDOW_SIZE, 5),
+    );
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_HEADERS, request_headers.flags);
+    assert_eq!(1, request_headers.stream_id);
+
+    let first_body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, first_body.frame_type);
+    assert_eq!(0, first_body.flags);
+    assert_eq!(1, first_body.stream_id);
+    assert_eq!(b"abcde", first_body.payload.as_slice());
+
+    match try_read_frame(&mut stream) {
+      Ok(None) => {}
+      Ok(Some(frame)) => panic!(
+        "client sent request frame without stream credit: type={}, stream_id={}, len={}",
+        frame.frame_type,
+        frame.stream_id,
+        frame.payload.len()
+      ),
+      Err(err) => panic!("unexpected frame read error: {err}"),
+    }
+
+    write_frame(&mut stream, FRAME_WINDOW_UPDATE, 0, 1, &7_u32.to_be_bytes());
+
+    let second_body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, second_body.frame_type);
+    assert_eq!(0, second_body.flags);
+    assert_eq!(1, second_body.stream_id);
+    assert_eq!(b"fghijkl", second_body.payload.as_slice());
+
+    let request_trailers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_trailers.frame_type);
+    assert_eq!(FLAG_END_HEADERS | FLAG_END_STREAM, request_trailers.flags);
+    assert_eq!(1, request_trailers.stream_id);
+    assert_eq!(
+      b"flowed",
+      find_header_value(&request_trailers.payload, b"x-flow")
+        .expect("request trailer")
+        .value
+        .as_slice()
+    );
+
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"ok");
+  });
+
+  let response = HttpClient::new()
+    .post()
+    .url(format!("http://{}/flow-controlled-trailers", addr))
+    .trailer(("X-Flow", "flowed"))
+    .expect("configure request trailer")
+    .raw("abcdefghijkl")
+    .emit_http2_prior_knowledge()
+    .expect("h2 POST response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("ok", response.body().string().unwrap());
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
+fn prior_knowledge_post_requires_connection_and_stream_window_updates_to_resume_body() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+  let body = "x".repeat(65_536);
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    stream
+      .set_read_timeout(Some(Duration::from_millis(200)))
+      .expect("set h2 peer read timeout");
+    complete_h2_handshake_without_request(&mut stream);
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_HEADERS, request_headers.flags);
+    assert_eq!(1, request_headers.stream_id);
+
+    let mut received = 0;
+    while received < 65_535 {
+      let data = read_frame(&mut stream);
+      assert_eq!(FRAME_DATA, data.frame_type);
+      assert_eq!(0, data.flags);
+      assert_eq!(1, data.stream_id);
+      assert!(data.payload.len() <= 65_535 - received);
+      received += data.payload.len();
+    }
+
+    match try_read_frame(&mut stream) {
+      Ok(None) => {}
+      Ok(Some(frame)) => panic!(
+        "client sent request frame without connection and stream credit: type={}, stream_id={}, len={}",
+        frame.frame_type,
+        frame.stream_id,
+        frame.payload.len()
+      ),
+      Err(err) => panic!("unexpected frame read error: {err}"),
+    }
+
+    write_frame(&mut stream, FRAME_WINDOW_UPDATE, 0, 0, &1_u32.to_be_bytes());
+    match try_read_frame(&mut stream) {
+      Ok(None) => {}
+      Ok(Some(frame)) => panic!(
+        "client resumed without stream credit: type={}, stream_id={}, len={}",
+        frame.frame_type,
+        frame.stream_id,
+        frame.payload.len()
+      ),
+      Err(err) => panic!("unexpected frame read error: {err}"),
+    }
+
+    write_frame(&mut stream, FRAME_WINDOW_UPDATE, 0, 1, &1_u32.to_be_bytes());
+
+    let final_body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, final_body.frame_type);
+    assert_eq!(FLAG_END_STREAM, final_body.flags);
+    assert_eq!(1, final_body.stream_id);
+    assert_eq!(1, final_body.payload.len());
+
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"ok");
+  });
+
+  let response = HttpClient::new()
+    .post()
+    .url(format!("http://{}/connection-window", addr))
+    .raw(&body)
+    .emit_http2_prior_knowledge()
+    .expect("h2 POST response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("ok", response.body().string().unwrap());
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
 fn prior_knowledge_get_splits_large_request_headers_at_peer_max_frame_size() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");
