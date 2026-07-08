@@ -1706,6 +1706,28 @@ fn test_auto_redirect_strips_sensitive_headers_for_cross_authority_location() {
 }
 
 #[test]
+fn test_auto_redirect_strips_mixed_case_sensitive_headers_for_cross_authority_location() {
+  let (origin_addr, _target_addr, _handle) =
+    support::spawn_cross_authority_redirect_header_echo_server();
+  let response = client()
+    .config(Config::builder().auto_redirect(true))
+    .get()
+    .url(format!("http://{}/redirect", origin_addr))
+    .header(("aUtHoRiZaTiOn", "Bearer secret"))
+    .header(("cOoKiE", "session=secret"))
+    .header(("pRoXy-AuThOrIzAtIoN", "Basic proxy-secret"))
+    .header(("X-Trace", "trace-123"))
+    .emit();
+
+  assert!(response.is_ok());
+  let response = response.unwrap();
+  assert_eq!(
+    "authorization=\ncookie=\nproxy-authorization=\nx-trace=trace-123",
+    response.body().string().unwrap()
+  );
+}
+
+#[test]
 fn test_auto_redirect_strips_sensitive_headers_and_userinfo_for_cross_authority_location() {
   let (origin_addr, _target_addr, _handle) =
     support::spawn_cross_authority_redirect_userinfo_echo_server();
@@ -1723,6 +1745,27 @@ fn test_auto_redirect_strips_sensitive_headers_and_userinfo_for_cross_authority_
   let response = response.unwrap();
   assert_eq!(
     "request-target=/final\nauthorization=\ncookie=\nproxy-authorization=\nx-trace=trace-123",
+    response.body().string().unwrap()
+  );
+}
+
+#[test]
+fn test_auto_redirect_preserves_mixed_case_sensitive_headers_for_same_authority_location() {
+  let (addr, _handle) = support::spawn_same_authority_redirect_header_echo_server();
+  let response = client()
+    .config(Config::builder().auto_redirect(true))
+    .get()
+    .url(format!("http://{}/redirect", addr))
+    .header(("aUtHoRiZaTiOn", "Bearer secret"))
+    .header(("cOoKiE", "session=secret"))
+    .header(("pRoXy-AuThOrIzAtIoN", "Basic proxy-secret"))
+    .header(("X-Trace", "trace-123"))
+    .emit();
+
+  assert!(response.is_ok());
+  let response = response.unwrap();
+  assert_eq!(
+    "authorization=Bearer secret\ncookie=session=secret\nproxy-authorization=Basic proxy-secret\nx-trace=trace-123",
     response.body().string().unwrap()
   );
 }
