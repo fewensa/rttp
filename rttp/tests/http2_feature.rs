@@ -177,6 +177,14 @@ fn h2_trace_headers(path: &[u8], authority: &[u8]) -> Vec<u8> {
   headers
 }
 
+fn h2_connect_headers(path: &[u8], authority: &[u8]) -> Vec<u8> {
+  let mut headers = h2_literal_indexed_name(2, b"CONNECT");
+  headers.push(0x86);
+  headers.extend(h2_literal_indexed_name(4, path));
+  headers.extend(h2_literal_indexed_name(1, authority));
+  headers
+}
+
 fn find_request_path(block: &[u8]) -> Option<Vec<u8>> {
   let mut cursor = 0;
   while cursor < block.len() {
@@ -827,6 +835,118 @@ fn rttp_client_options_prior_knowledge_round_trips_against_socket2_server() {
   );
 
   handle.join().expect("server thread");
+}
+
+#[test]
+fn h2c_connect_unsupported_matrix_preserves_http11_handoff_boundary() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 client preflight peer");
+  listener
+    .set_nonblocking(true)
+    .expect("set h2 client preflight peer nonblocking");
+  let addr = listener.local_addr().expect("h2 client preflight addr");
+
+  let err = HttpClient::new()
+    .method("CONNECT")
+    .url(format!("http://{}/client-preflight", addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("h2c CONNECT must be rejected before opening a socket");
+  assert!(err.is_builder());
+  assert!(
+    err
+      .to_string()
+      .contains("HTTP/2 prior-knowledge CONNECT/proxy tunneling is unsupported"),
+    "unexpected h2c client preflight error: {err}"
+  );
+  assert!(
+    matches!(listener.accept(), Err(ref err) if err.kind() == io::ErrorKind::WouldBlock),
+    "h2c CONNECT preflight must not open a server connection"
+  );
+
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind h2 server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2 server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send((request.method().to_string(), request.target().to_string()))
+        .expect("send unexpected h2 CONNECT handler call");
+      HttpResponse::ok("unexpected h2 CONNECT handler")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_millis(200)))
+    .expect("set h2 client read timeout");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_connect_headers(b"/h2c-tunnel", addr.to_string().as_bytes()),
+  );
+  stream.flush().expect("flush h2 CONNECT request");
+  let _ = try_read_h2_frame(&mut stream);
+  drop(stream);
+
+  let err = handle
+    .join()
+    .expect("h2 server thread")
+    .expect_err("h2c CONNECT must reject before handler");
+  assert_eq!(io::ErrorKind::InvalidData, err.kind());
+  assert!(
+    err
+      .to_string()
+      .contains("HTTP/2 prior-knowledge CONNECT/proxy tunneling is unsupported"),
+    "unexpected h2c server rejection error: {err}"
+  );
+  assert!(
+    rx.try_recv().is_err(),
+    "h2c CONNECT must not be dispatched as a normal request"
+  );
+
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind HTTP/1.1 CONNECT server");
+  let addr = server.local_addr().expect("HTTP/1.1 CONNECT server addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one_handoff(|request| {
+        assert_eq!("CONNECT", request.method());
+        assert_eq!(addr.to_string(), request.target());
+        rttp::server::HttpHandoff::connect(
+          HttpResponse::new(200, "Connection Established"),
+          |mut stream| {
+            let mut ping = [0u8; 4];
+            stream.read_exact(&mut ping)?;
+            assert_eq!(b"ping", &ping);
+            stream.write_all(b"pong")?;
+            Ok(())
+          },
+        )
+      })
+      .expect("serve HTTP/1.1 CONNECT handoff");
+  });
+
+  let mut tunnel = HttpClient::new()
+    .url(format!("http://{}", addr))
+    .connect()
+    .expect("HTTP/1.1 CONNECT handoff remains supported");
+  assert_eq!(200, tunnel.response().code());
+  tunnel
+    .stream_mut()
+    .write_all(b"ping")
+    .expect("write HTTP/1.1 tunnel bytes");
+  let mut pong = [0u8; 4];
+  tunnel
+    .stream_mut()
+    .read_exact(&mut pong)
+    .expect("read HTTP/1.1 tunnel bytes");
+  assert_eq!(b"pong", &pong);
+
+  handle.join().expect("HTTP/1.1 CONNECT server thread");
 }
 
 #[test]
