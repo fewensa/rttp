@@ -92,7 +92,14 @@ HTTP/1.1 `CONNECT` tunnel handoff remains a separate client path;
 prior-knowledge h2c `GOAWAY` is treated as a bounded shutdown signal:
 completed responses remain usable, active responses continue only when the
 peer's `last-stream-id` includes the stream, and lower boundaries reject the
-response deterministically. `RST_STREAM` is likewise bounded to this
+response deterministically. A `GOAWAY` received before stream 1 is opened is
+treated as request refusal and no request HEADERS are sent. RTTP returns that
+refusal to the caller instead of retrying on a new connection; callers that
+know a request is safe or idempotent must choose any retry policy themselves.
+This protocol shutdown boundary is distinct from a transport-level
+disconnect, read timeout, write timeout, or TCP reset, which is reported
+through the normal socket/error path without an HTTP/2 `last-stream-id`
+boundary. `RST_STREAM` is likewise bounded to this
 prior-knowledge h2c client path: a reset for the active stream is reported as
 response cancellation, while malformed reset frames are rejected
 deterministically. RTTP does not expose a public cancellation callback API or

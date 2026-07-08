@@ -94,9 +94,16 @@ client path;
 prior-knowledge h2c `GOAWAY` is treated as a bounded shutdown signal: a
 response already completed before `GOAWAY` remains usable, an active stream
 continues only when the peer's `last-stream-id` includes it, and a lower
-boundary rejects the response deterministically. `RST_STREAM` is likewise
-bounded to this prior-knowledge h2c client path: a reset for the active stream
-is reported as response cancellation, while malformed reset frames are rejected
+boundary rejects the response deterministically. A `GOAWAY` received before
+stream 1 is opened is treated as request refusal and no request HEADERS are
+sent. RTTP returns that refusal to the caller instead of retrying on a new
+connection; callers that know a request is safe or idempotent must choose any
+retry policy themselves. This protocol shutdown boundary is distinct from a
+transport-level disconnect, read timeout, write timeout, or TCP reset, which
+is reported through the normal socket/error path without an HTTP/2
+`last-stream-id` boundary. `RST_STREAM` is likewise bounded to this
+prior-knowledge h2c client path: a reset for the active stream is reported as
+response cancellation, while malformed reset frames are rejected
 deterministically. RTTP does not expose a public cancellation callback API or
 retry the request automatically. `CONNECT`, RFC 8441 `:protocol` extended
 CONNECT metadata, HTTP/1.1 `Upgrade` handoff requests, and proxy tunneling are
@@ -222,7 +229,14 @@ are rejected deterministically before handler dispatch instead of attempting
 push state management.
 When the bounded prior-knowledge h2c server loop finishes, it sends `GOAWAY`
 with the last completed stream id so clients have a deterministic shutdown
-boundary for already processed streams.
+boundary for already processed streams. If the bounded request allowance is
+exhausted while additional streams are already open, the server first sends a
+graceful `GOAWAY` boundary and lets streams within that boundary finish; new
+streams outside the boundary are refused with `REFUSED_STREAM` and are not
+dispatched to the handler. If the peer closes the TCP connection, a read/write
+timeout fires, or the socket is reset before `GOAWAY` can be written, that is
+transport termination rather than an HTTP/2 graceful shutdown signal and no
+additional stream boundary is implied.
 Within that same prior-knowledge h2c server path, inbound `RST_STREAM` is a
 bounded reset/cancellation signal for the affected stream: reset request
 streams are not dispatched to handlers, and reset response streams stop within

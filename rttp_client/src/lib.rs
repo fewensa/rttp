@@ -13,9 +13,15 @@
 //! With the `http2` feature enabled, `emit_http2_prior_knowledge` sends a
 //! minimal prior-knowledge h2c request over a direct socket2 TCP connection.
 //! It decodes incoming padded HEADERS, DATA, and trailer frames without
-//! exposing padding bytes, including response HPACK dynamic table entries. TLS
-//! ALPN, proxy h2, full HTTP/2 multiplexing, and priority scheduling are not
-//! part of that single-stream path.
+//! exposing padding bytes, including response HPACK dynamic table entries.
+//! `GOAWAY` is treated as a protocol shutdown boundary: completed responses
+//! remain usable, an active stream may finish only when the peer's
+//! `last-stream-id` includes stream 1, and pre-stream `GOAWAY` refuses the
+//! request before request HEADERS are sent. RTTP reports those conditions to
+//! the caller and does not retry automatically; transport disconnects remain
+//! ordinary socket errors without an HTTP/2 stream boundary. TLS ALPN, proxy
+//! h2, full HTTP/2 multiplexing, and priority scheduling are not part of that
+//! single-stream path.
 //!
 //! ```rust,no_run
 //! use rttp_client::HttpClient;
