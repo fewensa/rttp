@@ -36,13 +36,17 @@ available through `Response::trailers`, `Response::trailer`, and
 | Upgrade and tunnel handoff | `CONNECT` returns the tunnel socket after a successful `200`; `upgrade()` returns the socket after `101 Switching Protocols` and skips interim `1xx` responses | Upgraded protocols are handed to the caller and are not parsed by `rttp_client` |
 | Redirects | Auto-redirect covers 301, 302, 303, 307, and 308 method/body behavior, relative and absolute `Location` resolution, same- and cross-authority header handling, loop detection, and redirect bounds | Redirects are HTTP client behavior, not a browser policy implementation |
 | Trailers | Chunked response trailers are exposed for blocking and async APIs; streaming chunked uploads can send declared request trailers | Application metadata trailers such as `X-Trace` are allowed; pseudo-header, connection-specific, routing, authentication/cookie, and framing trailer fields are rejected |
-| Prior-knowledge h2c | With `http2`, direct `socket2` h2c sends GET, HEAD, bodyless DELETE, OPTIONS, or TRACE, and buffered POST, PUT, or PATCH requests, opens at most one request stream, honors initial peer `SETTINGS_MAX_CONCURRENT_STREAMS` by failing before request HEADERS when the peer allows zero streams, strips HTTP/1.x connection-specific request fields before emission, rejects connection-specific peer response fields, suppresses HEAD response bodies, treats `RST_STREAM` on the active stream as a bounded reset/cancellation signal, acknowledges valid PING frames with matching opaque data, DATA bodies, trailers, HPACK static Huffman strings, dynamic entries within peer settings, large header blocks, padded incoming frames, `GOAWAY` shutdown boundaries, PRIORITY metadata validation without scheduling, HTTP/2-allowed unknown/extension frame ignoring inside this bounded path, reserved stream-id high-bit normalization, and conservative DATA flow control | `CONNECT` is rejected deterministically before opening a client socket, and `PUSH_PROMISE`/server push is rejected instead of managed; bounded prior-knowledge h2c only, with no public cancellation callback API, no extension callback API, full extension negotiation, TLS ALPN, external h2 integration, proxy tunneling to h2, proxy h2, tunnel handoff, connection pooling, persistent HTTP/2 session management, automatic retry, server push, full stream state machine, unbounded multiplex scheduling, general multiplexing, priority scheduling, or request bodies for GET, HEAD, DELETE, OPTIONS, or TRACE |
+| Prior-knowledge h2c | With `http2`, direct `socket2` h2c sends GET, HEAD, bodyless DELETE, OPTIONS, or TRACE, and buffered POST, PUT, or PATCH requests, opens at most one request stream, honors initial peer `SETTINGS_MAX_CONCURRENT_STREAMS` by failing before request HEADERS when the peer allows zero streams, honors peer-advertised `SETTINGS_MAX_HEADER_LIST_SIZE` request metadata limits, strips HTTP/1.x connection-specific request fields before emission, rejects connection-specific peer response fields, suppresses HEAD response bodies, treats `RST_STREAM` on the active stream as a bounded reset/cancellation signal, acknowledges valid PING frames with matching opaque data, DATA bodies, trailers, HPACK static Huffman strings, dynamic entries within peer settings, bounded large header blocks, padded incoming frames, `GOAWAY` shutdown boundaries, PRIORITY metadata validation without scheduling, HTTP/2-allowed unknown/extension frame ignoring inside this bounded path, reserved stream-id high-bit normalization, and conservative DATA flow control | `CONNECT` is rejected deterministically before opening a client socket, and `PUSH_PROMISE`/server push is rejected instead of managed; bounded prior-knowledge h2c only, with no public cancellation callback API, no dynamic policy API, no extension callback API, full extension negotiation, TLS ALPN, external h2 integration, proxy tunneling to h2, proxy h2, tunnel handoff, connection pooling, persistent HTTP/2 session management, automatic retry, server push, full stream state machine, unbounded multiplex scheduling, general multiplexing, priority scheduling, or request bodies for GET, HEAD, DELETE, OPTIONS, or TRACE |
 
 With the `http2` feature enabled, `emit_http2_prior_knowledge` sends a bounded
 prior-knowledge h2c request over a direct socket2 TCP connection. It opens at
 most one request stream and honors the peer's initial
 `SETTINGS_MAX_CONCURRENT_STREAMS`: a value of zero rejects the request before
-HEADERS are sent. It supports GET, HEAD, bodyless DELETE, OPTIONS, or TRACE,
+HEADERS are sent. It also honors the peer's advertised
+`SETTINGS_MAX_HEADER_LIST_SIZE` for request metadata: encoded request HEADERS
+and trailing HEADERS must stay within that peer boundary before emission, while
+peers that do not advertise the setting keep the bounded direct-client default.
+It supports GET, HEAD, bodyless DELETE, OPTIONS, or TRACE,
 and buffered POST, PUT, or PATCH requests, including non-empty buffered request
 bodies as DATA frames for the write methods. GET, HEAD, DELETE, OPTIONS, and
 TRACE requests with bodies are rejected; HEAD, bodyless DELETE, OPTIONS, and
@@ -68,7 +72,8 @@ as `Authorization`, `Connection`, `Content-Length`, `Cookie`, `Host`,
 `Proxy-Connection`, `Set-Cookie`, `TE`, `Trailer`, `Transfer-Encoding`,
 `Upgrade`, and `WWW-Authenticate`. The client
 supports HPACK static Huffman
-strings and large header blocks via CONTINUATION frames. It uses HPACK dynamic
+strings and bounded large header blocks via CONTINUATION frames. It uses HPACK
+dynamic
 entries for repeated request header and trailer fields within the peer's
 advertised table size, and it decodes response dynamic table entries and
 table-size updates from incoming padded HEADERS, DATA, and trailer frames
@@ -99,7 +104,8 @@ extension negotiation, external h2 integration, proxy h2, tunnel handoff,
 connection pooling, persistent HTTP/2 session management, automatic retry,
 server push, full stream state machines, and full HTTP/2 features such as
 unbounded multiplex scheduling, general multiplexing, and priority scheduling
-are not part of that bounded prior-knowledge client path.
+are not part of that bounded prior-knowledge client path; RTTP also does not
+provide a dynamic policy API for changing those h2c metadata limits at runtime.
 
 ```rust,no_run
 use rttp_client::HttpClient;
@@ -166,7 +172,11 @@ h2c requests to a minimal bounded handler, including bodyless DELETE, OPTIONS,
 and TRACE requests. The server advertises `SETTINGS_MAX_CONCURRENT_STREAMS`
 from the active request allowance for that bounded accept path and rejects new
 h2c streams once the open-stream count plus completed requests reaches that
-allowance. It preserves the same HEAD body suppression for prior-knowledge h2c
+allowance. It also advertises and enforces a conservative
+`SETTINGS_MAX_HEADER_LIST_SIZE` for inbound request metadata; request HEADERS
+and trailing HEADERS can span CONTINUATION frames, but the decoded metadata
+remains bounded before handler dispatch. It preserves the same HEAD body
+suppression for prior-knowledge h2c
 responses.
 Incoming padded HEADERS, DATA, and trailer frames are accepted without exposing
 padding bytes to handlers, and application trailers such as `X-Trace`,
@@ -179,7 +189,7 @@ including `Connection`, `Keep-Alive`, `Proxy-Connection`, `TE`, `Trailer`,
 `Content-Encoding`, `Content-Range`, `Content-Type`, `Max-Forwards`,
 `Authorization`, `Proxy-Authenticate`, `Proxy-Authorization`, `Cookie`,
 `Set-Cookie`, and `WWW-Authenticate`. HPACK static Huffman strings, request
-dynamic table entries, and large header blocks are carried with CONTINUATION
+dynamic table entries, and bounded large header blocks are carried with CONTINUATION
 frames.
 Prior-knowledge h2c request headers reject HTTP/1.x connection-specific fields
 before handler dispatch: `Connection`, `Keep-Alive`, `Proxy-Connection`,
@@ -221,7 +231,8 @@ callback APIs, full extension negotiation, external h2 integration, proxy h2,
 tunnel handoff, connection pooling, persistent HTTP/2 session management, and
 full HTTP/2 features such as unbounded multiplexing, unbounded multiplex
 scheduling, general multiplexing, server push, and priority scheduling remain
-outside this bounded prior-knowledge server path.
+outside this bounded prior-knowledge server path. RTTP does not expose a
+dynamic policy API for changing the h2c metadata limit at runtime.
 
 It is not a full RFC-covering web server and still does not implement server
 TLS or async accept loops.
@@ -235,4 +246,4 @@ TLS or async accept loops.
 | HTTP/1.1 response framing | Automatic `Content-Length`, explicit chunked responses, bodyless `HEAD`, `101`, `204`, and `304`, response trailers after the terminating chunk | No server TLS |
 | Upgrade and tunnel targets | `CONNECT` authority-form requests are accepted as HTTP requests; `HttpResponse::upgrade` can hand an upgraded socket to caller code after a matching request | The server does not implement the upgraded protocol after handoff |
 | Trailers | Chunked request trailers are preserved on `Request`; malformed, oversized, forbidden, and pseudo-header trailers are rejected; response trailers can be serialized for chunked responses | Application metadata trailers are allowed; trailer names that affect connection state, routing, authentication/cookies, framing, or payload processing are rejected |
-| Prior-knowledge h2c | The same `socket2` listener detects the HTTP/2 preface, validates SETTINGS, advertises `SETTINGS_MAX_CONCURRENT_STREAMS` from the bounded active stream allowance, enforces that allowance before dispatching new streams, serves bounded prior-knowledge streams including bodyless DELETE, OPTIONS, and TRACE, handles HEAD without response DATA, rejects connection-specific request fields before handler dispatch, strips connection-specific response fields during h2c serialization, treats `RST_STREAM` as a bounded reset/cancellation signal for the affected stream, acknowledges valid PING frames with matching opaque data, accepts padded HEADERS/DATA/trailers without exposing padding, handles HPACK Huffman/dynamic fields and CONTINUATION blocks, emits `GOAWAY` with the last completed stream id at bounded shutdown, validates and ignores valid PRIORITY metadata, ignores HTTP/2-allowed unknown/extension frames inside this bounded path, normalizes reserved stream-id high bits, and applies conservative DATA flow control | `CONNECT` and `PUSH_PROMISE` are rejected deterministically before handler dispatch; bounded prior-knowledge h2c only, with no public cancellation callback API, no extension callback API, full extension negotiation, TLS ALPN, external h2 integration, proxy h2, tunnel handoff, connection pooling, persistent HTTP/2 session management, automatic retry, server push, full stream state machine, unbounded multiplexing, unbounded multiplex scheduling, general multiplexing, priority scheduling, or full HTTP/2 server feature set |
+| Prior-knowledge h2c | The same `socket2` listener detects the HTTP/2 preface, validates SETTINGS, advertises `SETTINGS_MAX_CONCURRENT_STREAMS` from the bounded active stream allowance, enforces that allowance before dispatching new streams, advertises and enforces a conservative `SETTINGS_MAX_HEADER_LIST_SIZE` for inbound request metadata, serves bounded prior-knowledge streams including bodyless DELETE, OPTIONS, and TRACE, handles HEAD without response DATA, rejects connection-specific request fields before handler dispatch, strips connection-specific response fields during h2c serialization, treats `RST_STREAM` as a bounded reset/cancellation signal for the affected stream, acknowledges valid PING frames with matching opaque data, accepts padded HEADERS/DATA/trailers without exposing padding, handles HPACK Huffman/dynamic fields and bounded CONTINUATION header blocks, emits `GOAWAY` with the last completed stream id at bounded shutdown, validates and ignores valid PRIORITY metadata, ignores HTTP/2-allowed unknown/extension frames inside this bounded path, normalizes reserved stream-id high bits, and applies conservative DATA flow control | `CONNECT` and `PUSH_PROMISE` are rejected deterministically before handler dispatch; bounded prior-knowledge h2c only, with no public cancellation callback API, no dynamic policy API, no extension callback API, full extension negotiation, TLS ALPN, external h2 integration, proxy h2, tunnel handoff, connection pooling, persistent HTTP/2 session management, automatic retry, server push, full stream state machine, unbounded multiplexing, unbounded multiplex scheduling, general multiplexing, priority scheduling, or full HTTP/2 server feature set |
