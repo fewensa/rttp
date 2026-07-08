@@ -314,18 +314,30 @@ fn apply_settings_before_opening_request(
 }
 
 fn pending_frame_available(stream: &mut TcpStream) -> error::Result<bool> {
-  stream.set_nonblocking(true).map_err(error::request)?;
+  let previous_timeout = stream.read_timeout().map_err(error::request)?;
+  stream
+    .set_read_timeout(Some(Duration::from_millis(10)))
+    .map_err(error::request)?;
   let mut byte = [0];
   let peeked = loop {
     match stream.peek(&mut byte) {
       Ok(0) => break Ok(false),
       Ok(_) => break Ok(true),
-      Err(err) if err.kind() == io::ErrorKind::WouldBlock => break Ok(false),
+      Err(err)
+        if matches!(
+          err.kind(),
+          io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+        ) =>
+      {
+        break Ok(false);
+      }
       Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
       Err(err) => break Err(error::response(err)),
     }
   };
-  let restore_result = stream.set_nonblocking(false).map_err(error::request);
+  let restore_result = stream
+    .set_read_timeout(previous_timeout)
+    .map_err(error::request);
   match (peeked, restore_result) {
     (Ok(available), Ok(())) => Ok(available),
     (Err(err), Ok(())) => Err(err),

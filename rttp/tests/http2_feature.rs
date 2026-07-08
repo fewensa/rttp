@@ -1012,6 +1012,20 @@ fn cross_crate_h2c_server_goaway_rejects_new_streams_and_drains_accepted_streams
   );
   write_h2_frame(
     &mut stream,
+    H2_FRAME_GOAWAY,
+    0,
+    0,
+    &[0, 0, 0, 3, 0, 0, 0, 0],
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_GOAWAY,
+    0,
+    0,
+    &[0, 0, 0, 3, 0, 0, 0, 0],
+  );
+  write_h2_frame(
+    &mut stream,
     H2_FRAME_DATA,
     H2_FLAG_END_STREAM,
     1,
@@ -1043,6 +1057,60 @@ fn cross_crate_h2c_server_goaway_rejects_new_streams_and_drains_accepted_streams
     rx.try_recv().is_err(),
     "new streams after GOAWAY must not be dispatched"
   );
+}
+
+#[test]
+fn cross_crate_h2c_prior_knowledge_client_server_goaway_shutdown_matrix() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(1, |request| {
+        tx.send(request.target().to_string())
+          .expect("send h2c shutdown matrix target");
+        HttpResponse::ok(format!("served {}", request.target()))
+      })
+      .expect("serve h2c shutdown matrix request");
+  });
+
+  let mut client = rttp::Http::client();
+  let response = client
+    .get()
+    .url(format!("http://{}/before-goaway", addr))
+    .emit_http2_prior_knowledge()
+    .expect("request accepted before server GOAWAY");
+
+  assert_eq!(200, response.code());
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!("served /before-goaway", response.body().string().unwrap());
+  assert_eq!(
+    "/before-goaway",
+    rx.recv().expect("receive h2c shutdown matrix target")
+  );
+
+  let error = client
+    .get()
+    .url(format!("http://{}/after-goaway", addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("closed h2c prior-knowledge client must refuse a replacement request");
+  assert!(
+    error
+      .to_string()
+      .to_ascii_lowercase()
+      .contains("connection is closed"),
+    "unexpected closed-client error: {error}"
+  );
+  assert!(
+    rx.try_recv().is_err(),
+    "closed client must not dispatch a replacement request after GOAWAY"
+  );
+
+  handle.join().expect("server thread");
 }
 
 #[test]
