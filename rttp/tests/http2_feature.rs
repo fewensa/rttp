@@ -136,6 +136,108 @@ fn h2_post_headers(path: &[u8], authority: &[u8]) -> Vec<u8> {
   headers
 }
 
+fn find_request_path(block: &[u8]) -> Option<Vec<u8>> {
+  let mut cursor = 0;
+  while cursor < block.len() {
+    let byte = block[cursor];
+    if byte & 0x80 == 0x80 {
+      decode_hpack_integer(block, &mut cursor, 7);
+      continue;
+    }
+
+    let name_index = decode_hpack_integer(block, &mut cursor, 4);
+    if name_index == 0 {
+      let _ = decode_hpack_string(block, &mut cursor);
+    }
+    let value = decode_hpack_string(block, &mut cursor);
+    if name_index == 4 {
+      return Some(value);
+    }
+  }
+  None
+}
+
+fn decode_hpack_integer(block: &[u8], cursor: &mut usize, prefix_bits: u8) -> usize {
+  let max_prefix = (1usize << prefix_bits) - 1;
+  let mut value = (block[*cursor] as usize) & max_prefix;
+  *cursor += 1;
+  if value < max_prefix {
+    return value;
+  }
+
+  let mut shift = 0;
+  loop {
+    let byte = block[*cursor];
+    *cursor += 1;
+    value += ((byte & 0x7f) as usize) << shift;
+    if byte & 0x80 == 0 {
+      return value;
+    }
+    shift += 7;
+  }
+}
+
+fn decode_hpack_string(block: &[u8], cursor: &mut usize) -> Vec<u8> {
+  let huffman = block[*cursor] & 0x80 == 0x80;
+  let len = decode_hpack_integer(block, cursor, 7);
+  let end = *cursor + len;
+  let encoded = &block[*cursor..end];
+  *cursor = end;
+  if huffman {
+    decode_path_huffman_string(encoded)
+  } else {
+    encoded.to_vec()
+  }
+}
+
+fn decode_path_huffman_string(encoded: &[u8]) -> Vec<u8> {
+  let mut value = Vec::new();
+  let mut code = 0u32;
+  let mut code_len = 0u8;
+
+  for byte in encoded {
+    for bit_offset in (0..8).rev() {
+      code = (code << 1) | (((byte >> bit_offset) & 1) as u32);
+      code_len += 1;
+
+      if let Some(symbol) = path_huffman_symbol(code, code_len) {
+        value.push(symbol);
+        code = 0;
+        code_len = 0;
+      }
+    }
+  }
+
+  if code_len > 0 {
+    assert_eq!(
+      (1u32 << code_len) - 1,
+      code,
+      "invalid HPACK Huffman padding in request path"
+    );
+    assert!(code_len <= 7, "overlong HPACK Huffman padding");
+  }
+
+  value
+}
+
+fn path_huffman_symbol(code: u32, code_len: u8) -> Option<u8> {
+  match (code, code_len) {
+    (0x18, 6) => Some(b'/'),
+    (0x16, 6) => Some(b'-'),
+    (0x3, 5) => Some(b'a'),
+    (0x24, 6) => Some(b'd'),
+    (0x5, 5) => Some(b'e'),
+    (0x26, 6) => Some(b'g'),
+    (0x6, 5) => Some(b'i'),
+    (0x28, 6) => Some(b'l'),
+    (0x2a, 6) => Some(b'n'),
+    (0x8, 5) => Some(b's'),
+    (0x9, 5) => Some(b't'),
+    (0x77, 7) => Some(b'v'),
+    _ => None,
+  }
+}
+
 fn write_h2_get_request(stream: &mut TcpStream, authority: &[u8]) -> io::Result<()> {
   try_write_h2_frame(
     stream,
@@ -519,9 +621,12 @@ fn wrapper_http2_prior_knowledge_accepts_valid_peer_settings_payload() {
   );
 
   let request_header_block = handle.join().expect("valid settings peer thread");
-  assert!(request_header_block
-    .windows(b"/valid-settings".len())
-    .any(|window| window == b"/valid-settings"));
+  assert_eq!(
+    b"/valid-settings",
+    find_request_path(&request_header_block)
+      .expect("request path")
+      .as_slice()
+  );
 }
 
 #[test]
