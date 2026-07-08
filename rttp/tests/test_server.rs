@@ -13,6 +13,7 @@ const H2_FRAME_HEADERS: u8 = 0x1;
 const H2_FRAME_PRIORITY: u8 = 0x2;
 const H2_FRAME_RST_STREAM: u8 = 0x3;
 const H2_FRAME_SETTINGS: u8 = 0x4;
+const H2_FRAME_PUSH_PROMISE: u8 = 0x5;
 const H2_FRAME_PING: u8 = 0x6;
 const H2_FRAME_GOAWAY: u8 = 0x7;
 const H2_FRAME_WINDOW_UPDATE: u8 = 0x8;
@@ -1750,6 +1751,65 @@ fn server_rejects_http2_prior_knowledge_priority_with_zero_stream_id() {
 #[test]
 fn server_rejects_http2_prior_knowledge_priority_with_invalid_payload_length() {
   assert_invalid_h2_frame_without_handler(H2_FRAME_PRIORITY, 0, 1, &[0, 0, 0, 0]);
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_push_promise_without_handler() {
+  let mut payload = 2u32.to_be_bytes().to_vec();
+  payload.extend(h2_get_headers(b"/promised", b"localhost"));
+  assert_invalid_h2_frame_without_handler(H2_FRAME_PUSH_PROMISE, H2_FLAG_END_HEADERS, 1, &payload);
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_connection_push_promise_without_handler() {
+  let mut payload = 2u32.to_be_bytes().to_vec();
+  payload.extend(h2_get_headers(b"/promised", b"localhost"));
+  assert_invalid_h2_frame_without_handler(H2_FRAME_PUSH_PROMISE, H2_FLAG_END_HEADERS, 0, &payload);
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_truncated_push_promise_without_handler() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send(request).expect("send unexpected h2 request");
+      HttpResponse::ok("unexpected")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+
+  let declared_length = 4usize;
+  let mut header = [0; 9];
+  header[0] = ((declared_length >> 16) & 0xff) as u8;
+  header[1] = ((declared_length >> 8) & 0xff) as u8;
+  header[2] = (declared_length & 0xff) as u8;
+  header[3] = H2_FRAME_PUSH_PROMISE;
+  header[4] = H2_FLAG_END_HEADERS;
+  header[5..9].copy_from_slice(&1u32.to_be_bytes());
+  stream.write_all(&header).expect("write h2 frame head");
+  stream
+    .write_all(&[0, 0])
+    .expect("write truncated h2 frame payload");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown h2 write");
+
+  let error = handle
+    .join()
+    .expect("server thread")
+    .expect_err("truncated PUSH_PROMISE should reject connection");
+  assert_eq!(ErrorKind::InvalidData, error.kind());
+  assert!(rx.try_recv().is_err());
 }
 
 #[test]
