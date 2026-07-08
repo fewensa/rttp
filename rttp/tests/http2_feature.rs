@@ -967,6 +967,50 @@ fn wrapper_http2_feature_exposes_prior_knowledge_client_path() {
 }
 
 #[test]
+fn rttp_client_delete_prior_knowledge_interoperates_with_socket2_server() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.version().to_string(),
+          request.method().to_string(),
+          request.target().to_string(),
+          request.body().to_vec(),
+        ))
+        .expect("send captured DELETE request");
+        HttpResponse::ok("deleted by rttp server")
+      })
+      .expect("serve rttp_client h2 DELETE request");
+  });
+
+  let response = rttp_client::HttpClient::new()
+    .delete()
+    .url(format!("http://{}/matrix/delete?hard=true", addr))
+    .emit_http2_prior_knowledge()
+    .expect("rttp_client DELETE h2 response");
+
+  let (request_version, request_method, request_target, request_body) = rx
+    .recv_timeout(Duration::from_secs(2))
+    .expect("receive captured DELETE request");
+  assert_eq!("HTTP/2", request_version);
+  assert_eq!("DELETE", request_method);
+  assert_eq!("/matrix/delete?hard=true", request_target);
+  assert!(request_body.is_empty());
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(200, response.code());
+  assert_eq!("deleted by rttp server", response.body().string().unwrap());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn wrapper_http2_prior_knowledge_client_acks_peer_ping_before_response() {
   let (addr, handle) = spawn_h2_peer_sending_ping_before_response();
 
