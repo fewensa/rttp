@@ -21,6 +21,7 @@ const H2_FRAME_CONTINUATION: u8 = 0x9;
 const H2_FLAG_END_STREAM: u8 = 0x1;
 const H2_FLAG_ACK: u8 = 0x1;
 const H2_FLAG_END_HEADERS: u8 = 0x4;
+const H2_SETTINGS_ENABLE_PUSH: u16 = 0x2;
 const H2_SETTINGS_MAX_CONCURRENT_STREAMS: u16 = 0x3;
 const H2_SETTINGS_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const H2_SETTINGS_MAX_FRAME_SIZE: u16 = 0x5;
@@ -3603,6 +3604,101 @@ fn server_advertises_bounded_http2_prior_knowledge_header_list_size() {
     ErrorKind::UnexpectedEof,
     handle.join().expect("server thread").kind()
   );
+}
+
+#[test]
+fn server_accepts_http2_prior_knowledge_enable_push_zero_and_advertises_existing_settings() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request.target().to_string())
+          .expect("send h2 target");
+        HttpResponse::ok("push disabled")
+      })
+      .expect("serve h2 request with enable-push zero")
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  let settings =
+    read_h2_server_settings_during_handshake(&mut stream, &h2_setting(H2_SETTINGS_ENABLE_PUSH, 0));
+  assert_eq!(
+    Some(1),
+    h2_setting_value(&settings, H2_SETTINGS_MAX_CONCURRENT_STREAMS)
+  );
+  assert_eq!(
+    Some(H2_DEFAULT_MAX_FRAME_SIZE as u32),
+    h2_setting_value(&settings, H2_SETTINGS_MAX_FRAME_SIZE)
+  );
+  assert_eq!(
+    Some(H2_SERVER_MAX_HEADER_LIST_SIZE),
+    h2_setting_value(&settings, H2_SETTINGS_MAX_HEADER_LIST_SIZE)
+  );
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_headers(b"/enable-push-zero", addr.to_string().as_bytes()),
+  );
+
+  let response_headers = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(1, response_headers.stream_id);
+  let response_body = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
+  assert_eq!(b"push disabled", response_body.payload.as_slice());
+
+  assert_eq!("/enable-push-zero", rx.recv().expect("h2 target"));
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_enable_push_two_before_handler() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send(request).expect("send unexpected h2 request");
+      HttpResponse::ok("unexpected")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  stream.write_all(H2_PREFACE).expect("write h2 preface");
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_SETTINGS,
+    0,
+    0,
+    &h2_setting(H2_SETTINGS_ENABLE_PUSH, 2),
+  );
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown h2 write");
+
+  let error = handle
+    .join()
+    .expect("server thread")
+    .expect_err("invalid h2 enable-push setting should reject connection");
+  assert_eq!(ErrorKind::InvalidData, error.kind());
+  assert!(error.to_string().contains("SETTINGS_ENABLE_PUSH"));
+  assert!(rx.try_recv().is_err());
 }
 
 #[test]

@@ -1108,7 +1108,9 @@ fn validate_http2_settings_payload(payload: &[u8]) -> io::Result<()> {
     let id = u16::from_be_bytes([setting[0], setting[1]]);
     let value = u32::from_be_bytes([setting[2], setting[3], setting[4], setting[5]]);
     match id {
-      HTTP2_SETTINGS_ENABLE_PUSH if value > 1 => return Err(invalid_http2_settings_error()),
+      HTTP2_SETTINGS_ENABLE_PUSH if value > 1 => {
+        return Err(invalid_http2_enable_push_settings_error());
+      }
       HTTP2_SETTINGS_INITIAL_WINDOW_SIZE if value > 0x7fff_ffff => {
         return Err(invalid_http2_settings_error());
       }
@@ -1246,6 +1248,13 @@ fn http2_setting(id: u16, value: u32) -> [u8; 6] {
 
 fn invalid_http2_settings_error() -> io::Error {
   io::Error::new(io::ErrorKind::InvalidData, "invalid HTTP/2 SETTINGS frame")
+}
+
+fn invalid_http2_enable_push_settings_error() -> io::Error {
+  io::Error::new(
+    io::ErrorKind::InvalidData,
+    "invalid HTTP/2 SETTINGS_ENABLE_PUSH value",
+  )
 }
 
 fn invalid_http2_client_stream_id_error() -> io::Error {
