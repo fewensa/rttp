@@ -7,6 +7,7 @@ pub struct Config {
   verify_ssl_hostname: bool,
   verify_ssl_cert: bool,
   http2_max_frame_size: Option<usize>,
+  http2_header_table_size: Option<usize>,
 }
 
 impl Default for Config {
@@ -48,6 +49,9 @@ impl Config {
   pub fn http2_max_frame_size(&self) -> Option<usize> {
     self.http2_max_frame_size
   }
+  pub fn http2_header_table_size(&self) -> Option<usize> {
+    self.http2_header_table_size
+  }
 }
 
 #[derive(Clone, Debug)]
@@ -72,6 +76,7 @@ impl ConfigBuilder {
         verify_ssl_hostname: true,
         verify_ssl_cert: true,
         http2_max_frame_size: None,
+        http2_header_table_size: None,
       },
     }
   }
@@ -120,6 +125,15 @@ impl ConfigBuilder {
     self.config.http2_max_frame_size = Some(max_frame_size);
     self
   }
+  /// Configure the local h2c `SETTINGS_HEADER_TABLE_SIZE` value.
+  ///
+  /// This applies only to the bounded prior-knowledge h2c client path. The
+  /// value is advertised to the peer and bounds the HPACK dynamic table used
+  /// while decoding inbound response HEADERS and trailing HEADERS.
+  pub fn http2_header_table_size(&mut self, header_table_size: usize) -> &mut Self {
+    self.config.http2_header_table_size = Some(header_table_size);
+    self
+  }
 }
 
 impl AsRef<Config> for Config {
@@ -148,6 +162,7 @@ mod tests {
       .verify_ssl_hostname(false)
       .verify_ssl_cert(false)
       .http2_max_frame_size(16_384)
+      .http2_header_table_size(64)
       .build();
 
     assert_eq!(config.read_timeout(), 1234);
@@ -157,6 +172,7 @@ mod tests {
     assert!(!config.verify_ssl_hostname());
     assert!(!config.verify_ssl_cert());
     assert_eq!(Some(16_384), config.http2_max_frame_size());
+    assert_eq!(Some(64), config.http2_header_table_size());
   }
 
   #[test]
@@ -185,6 +201,10 @@ mod tests {
     assert_eq!(
       default_config.http2_max_frame_size(),
       builder_config.http2_max_frame_size()
+    );
+    assert_eq!(
+      default_config.http2_header_table_size(),
+      builder_config.http2_header_table_size()
     );
   }
 
