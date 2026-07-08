@@ -1697,6 +1697,53 @@ fn prior_knowledge_decodes_padded_response_headers() {
 }
 
 #[test]
+fn prior_knowledge_rejects_connection_specific_response_headers() {
+  for (name, value) in [
+    (b"connection".as_slice(), b"close".as_slice()),
+    (b"keep-alive".as_slice(), b"timeout=5".as_slice()),
+    (b"proxy-connection".as_slice(), b"keep-alive".as_slice()),
+    (b"te".as_slice(), b"trailers".as_slice()),
+    (b"transfer-encoding".as_slice(), b"chunked".as_slice()),
+    (b"upgrade".as_slice(), b"websocket".as_slice()),
+  ] {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+    let addr = listener.local_addr().expect("h2 peer addr");
+    let header_block = {
+      let mut block = vec![0x88];
+      block.extend(h2_literal_new_name(name, value));
+      block
+    };
+
+    let handle = thread::spawn(move || {
+      let (mut stream, _) = listener.accept().expect("accept h2 client");
+      complete_h2_request_handshake(&mut stream);
+      write_frame(
+        &mut stream,
+        FRAME_HEADERS,
+        FLAG_END_HEADERS | FLAG_END_STREAM,
+        1,
+        &header_block,
+      );
+    });
+
+    let error = HttpClient::new()
+      .get()
+      .url(format!("http://{}/bad-connection-header", addr))
+      .emit_http2_prior_knowledge()
+      .expect_err("connection-specific response header must be rejected");
+
+    assert!(
+      error
+        .to_string()
+        .contains("forbidden HTTP/2 response header"),
+      "unexpected error for {}: {error}",
+      String::from_utf8_lossy(name)
+    );
+    handle.join().expect("h2 forbidden response peer thread");
+  }
+}
+
+#[test]
 fn prior_knowledge_decodes_padded_data_without_appending_padding() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");

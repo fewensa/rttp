@@ -2986,6 +2986,67 @@ fn wrapper_http2_prior_knowledge_post_body_round_trips_between_client_and_server
 }
 
 #[test]
+fn wrapper_http2_prior_knowledge_strips_connection_specific_headers_across_crates() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.header("connection").map(str::to_string),
+          request.header("keep-alive").map(str::to_string),
+          request.header("te").map(str::to_string),
+          request.header("upgrade").map(str::to_string),
+          request.header("x-boundary").map(str::to_string),
+        ))
+        .expect("send h2 connection header boundary observation");
+        HttpResponse::ok("clean h2c response")
+          .header("Connection", "close")
+          .header("Keep-Alive", "timeout=5")
+          .header("TE", "trailers")
+          .header("Trailer", "X-Forbidden-Trailer")
+          .header("Transfer-Encoding", "chunked")
+          .header("Upgrade", "websocket")
+          .header("X-Boundary-Response", "present")
+      })
+      .expect("serve h2 connection header boundary request");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/connection-boundary", addr))
+    .header(("Connection", "keep-alive"))
+    .header(("Keep-Alive", "timeout=5"))
+    .header(("TE", "trailers"))
+    .header(("Upgrade", "websocket"))
+    .header(("X-Boundary", "present"))
+    .emit_http2_prior_knowledge()
+    .expect("h2 connection header boundary response");
+
+  assert_eq!("clean h2c response", response.body().string().unwrap());
+  assert_eq!(
+    (None, None, None, None, Some("present".to_string())),
+    rx.recv()
+      .expect("receive h2 connection header boundary observation")
+  );
+  assert!(response.header_value("connection").is_none());
+  assert!(response.header_value("keep-alive").is_none());
+  assert!(response.header_value("te").is_none());
+  assert!(response.header_value("trailer").is_none());
+  assert!(response.header_value("transfer-encoding").is_none());
+  assert!(response.header_value("upgrade").is_none());
+  assert_eq!(
+    Some(&"present".to_string()),
+    response.header_value("x-boundary-response")
+  );
+  assert!(response.trailers().is_empty());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn wrapper_http2_prior_knowledge_post_request_trailers_reach_server_only_as_trailers() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
@@ -3786,6 +3847,25 @@ fn http2_feature_socket2_rejects_malformed_padded_headers_before_handler() {
       H2_FLAG_PADDED | H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
       1,
       &payload,
+    );
+  });
+}
+
+#[test]
+fn http2_feature_socket2_rejects_connection_specific_request_headers_before_handler() {
+  assert_malformed_h2_request_rejected_before_handler(|stream, addr| {
+    let mut headers = h2_get_headers(b"/bad-connection-header", addr.to_string().as_bytes());
+    headers.extend(h2_literal_new_name(b"connection", b"keep-alive"));
+    headers.extend(h2_literal_new_name(b"keep-alive", b"timeout=5"));
+    headers.extend(h2_literal_new_name(b"te", b"gzip"));
+    headers.extend(h2_literal_new_name(b"transfer-encoding", b"chunked"));
+    headers.extend(h2_literal_new_name(b"upgrade", b"websocket"));
+    write_h2_frame(
+      stream,
+      H2_FRAME_HEADERS,
+      H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+      1,
+      &headers,
     );
   });
 }
