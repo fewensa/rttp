@@ -36,7 +36,7 @@ available through `Response::trailers`, `Response::trailer`, and
 | Upgrade and tunnel handoff | `CONNECT` returns the tunnel socket after a successful `200`; `upgrade()` returns the socket after `101 Switching Protocols` and skips interim `1xx` responses | Upgraded protocols are handed to the caller and are not parsed by `rttp_client` |
 | Redirects | Auto-redirect covers 301, 302, 303, 307, and 308 method/body behavior, relative and absolute `Location` resolution, same- and cross-authority header handling, loop detection, and redirect bounds | Redirects are HTTP client behavior, not a browser policy implementation |
 | Trailers | Chunked response trailers are exposed for blocking and async APIs; streaming chunked uploads can send declared request trailers | Forbidden framing/routing trailer fields are rejected |
-| Prior-knowledge h2c | With `http2`, direct `socket2` h2c sends GET, HEAD, bodyless DELETE, OPTIONS, or TRACE, and buffered POST, PUT, or PATCH requests, suppresses HEAD response bodies, DATA bodies, trailers, HPACK static Huffman strings, dynamic entries within peer settings, large header blocks, padded incoming frames, PRIORITY metadata validation without scheduling, and conservative DATA flow control | `CONNECT` is rejected deterministically before opening a client socket; no TLS ALPN, proxy tunneling to h2, proxy h2, tunnel handoff, general multiplexing, priority scheduling, or request bodies for GET, HEAD, DELETE, OPTIONS, or TRACE |
+| Prior-knowledge h2c | With `http2`, direct `socket2` h2c sends GET, HEAD, bodyless DELETE, OPTIONS, or TRACE, and buffered POST, PUT, or PATCH requests, suppresses HEAD response bodies, DATA bodies, trailers, HPACK static Huffman strings, dynamic entries within peer settings, large header blocks, padded incoming frames, `GOAWAY` shutdown boundaries, PRIORITY metadata validation without scheduling, and conservative DATA flow control | `CONNECT` is rejected deterministically before opening a client socket; no TLS ALPN, proxy tunneling to h2, proxy h2, tunnel handoff, persistent HTTP/2 session pooling, automatic retry, general multiplexing, priority scheduling, or request bodies for GET, HEAD, DELETE, OPTIONS, or TRACE |
 
 With the `http2` feature enabled, `emit_http2_prior_knowledge` sends a minimal
 prior-knowledge h2c request over a direct socket2 TCP connection. It supports
@@ -55,9 +55,13 @@ without exposing padding bytes. Valid response PRIORITY frames and HEADERS
 priority fields are validated and ignored as metadata; malformed priority
 metadata is rejected, and no priority scheduling is performed. HTTP/1.1
 `CONNECT` tunnel handoff remains a separate client path; prior-knowledge h2c
-`CONNECT` and proxy tunneling are rejected before a client socket is opened.
-TLS ALPN, proxy h2, tunnel handoff, and full HTTP/2 features such as general
-multiplexing and priority scheduling are not part of that client path.
+`GOAWAY` is treated as a bounded shutdown signal: a response already completed
+before `GOAWAY` remains usable, an active stream continues only when the peer's
+`last-stream-id` includes it, and a lower boundary rejects the response
+deterministically. `CONNECT` and proxy tunneling are rejected before a client
+socket is opened. TLS ALPN, proxy h2, tunnel handoff, persistent HTTP/2 session
+pooling, automatic retry, and full HTTP/2 features such as general multiplexing
+and priority scheduling are not part of that client path.
 
 ```rust,no_run
 use rttp_client::HttpClient;
@@ -129,10 +133,14 @@ table entries, and large header blocks are carried with CONTINUATION frames.
 Valid standalone PRIORITY frames and HEADERS priority fields are validated and
 ignored as metadata; malformed priority metadata is rejected, and request or
 response ordering does not use priority scheduling.
+When the bounded prior-knowledge h2c server loop finishes, it sends `GOAWAY`
+with the last completed stream id so clients have a deterministic shutdown
+boundary for already processed streams.
 The prior-knowledge h2c path does not share the HTTP/1.1 `CONNECT` handoff
 path: h2c `CONNECT` is rejected before handler dispatch. TLS ALPN, proxy h2,
-tunnel handoff, and full HTTP/2 features such as multiplexing and priority
-scheduling remain outside this server path.
+tunnel handoff, persistent HTTP/2 session pooling, and full HTTP/2 features
+such as unbounded multiplexing and priority scheduling remain outside this
+server path.
 
 It is not a full RFC-covering web server and still does not implement server
 TLS or async accept loops.
@@ -146,4 +154,4 @@ TLS or async accept loops.
 | HTTP/1.1 response framing | Automatic `Content-Length`, explicit chunked responses, bodyless `HEAD`, `101`, `204`, and `304`, response trailers after the terminating chunk | No server TLS |
 | Upgrade and tunnel targets | `CONNECT` authority-form requests are accepted as HTTP requests; `HttpResponse::upgrade` can hand an upgraded socket to caller code after a matching request | The server does not implement the upgraded protocol after handoff |
 | Trailers | Chunked request trailers are preserved on `Request`; malformed, oversized, forbidden, and pseudo-header trailers are rejected; response trailers can be serialized for chunked responses | Trailer names that affect framing or routing are rejected |
-| Prior-knowledge h2c | The same `socket2` listener detects the HTTP/2 preface, validates SETTINGS, serves bounded prior-knowledge streams including bodyless DELETE, OPTIONS, and TRACE, handles HEAD without response DATA, accepts padded HEADERS/DATA/trailers without exposing padding, handles HPACK Huffman/dynamic fields and CONTINUATION blocks, validates and ignores valid PRIORITY metadata, and applies conservative DATA flow control | `CONNECT` is rejected deterministically before handler dispatch; no TLS ALPN, proxy h2, tunnel handoff, unbounded multiplexing, priority scheduling, or full HTTP/2 server feature set |
+| Prior-knowledge h2c | The same `socket2` listener detects the HTTP/2 preface, validates SETTINGS, serves bounded prior-knowledge streams including bodyless DELETE, OPTIONS, and TRACE, handles HEAD without response DATA, accepts padded HEADERS/DATA/trailers without exposing padding, handles HPACK Huffman/dynamic fields and CONTINUATION blocks, emits `GOAWAY` with the last completed stream id at bounded shutdown, validates and ignores valid PRIORITY metadata, and applies conservative DATA flow control | `CONNECT` is rejected deterministically before handler dispatch; no TLS ALPN, proxy h2, tunnel handoff, persistent HTTP/2 session pooling, unbounded multiplexing, priority scheduling, or full HTTP/2 server feature set |
