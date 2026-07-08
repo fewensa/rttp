@@ -1429,6 +1429,62 @@ fn prior_knowledge_get_rejects_zero_peer_max_concurrent_streams_before_headers()
 }
 
 #[test]
+fn prior_knowledge_get_rejects_goaway_before_opening_request_stream() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    let mut preface = [0; 24];
+    stream
+      .read_exact(&mut preface)
+      .expect("read client preface");
+    assert_eq!(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", &preface);
+
+    let client_settings = read_frame(&mut stream);
+    assert_eq!(FRAME_SETTINGS, client_settings.frame_type);
+    assert_eq!(0, client_settings.stream_id);
+    assert_eq!(0, client_settings.payload.len());
+
+    write_frame(&mut stream, FRAME_SETTINGS, 0, 0, &[]);
+    write_frame(&mut stream, FRAME_GOAWAY, 0, 0, &[0, 0, 0, 0, 0, 0, 0, 0]);
+
+    let client_settings_ack = read_frame(&mut stream);
+    assert_eq!(FRAME_SETTINGS, client_settings_ack.frame_type);
+    assert_eq!(FLAG_ACK, client_settings_ack.flags);
+    assert_eq!(0, client_settings_ack.stream_id);
+    assert_eq!(0, client_settings_ack.payload.len());
+
+    stream
+      .set_read_timeout(Some(Duration::from_millis(200)))
+      .expect("set read timeout");
+    let next_frame = try_read_frame(&mut stream).expect("check for refused request HEADERS");
+    assert!(
+      next_frame.is_none(),
+      "client must not open a request stream after GOAWAY last_stream_id=0"
+    );
+  });
+
+  let err = HttpClient::new()
+    .get()
+    .url(format!("http://{}/goaway-before-request", addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("GOAWAY before request assignment must refuse the request");
+
+  assert!(
+    err
+      .to_string()
+      .contains("HTTP/2 connection received GOAWAY before opening request stream"),
+    "unexpected error: {err}"
+  );
+  assert!(
+    err.to_string().contains("no new streams"),
+    "unexpected error: {err}"
+  );
+  handle.join().expect("pre-request goaway peer thread");
+}
+
+#[test]
 fn prior_knowledge_put_and_patch_send_body_data_frames() {
   for method in ["PUT", "PATCH"] {
     let request_header_block = emit_prior_knowledge_body_request(method);
