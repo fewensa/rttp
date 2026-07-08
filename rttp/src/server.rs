@@ -1438,6 +1438,12 @@ fn decode_http2_request_headers(
       ":path" => decoded.target = Some(value),
       ":scheme" => decoded.scheme = Some(value),
       ":authority" => decoded.authority = Some(value),
+      ":protocol" => {
+        return Err(io::Error::new(
+          io::ErrorKind::InvalidData,
+          "HTTP/2 extended CONNECT :protocol is unsupported",
+        ));
+      }
       name if name.starts_with(':') => {}
       name if is_forbidden_http2_request_header_name(name) => {
         return Err(io::Error::new(

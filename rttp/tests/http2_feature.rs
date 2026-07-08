@@ -212,6 +212,12 @@ fn h2_connect_headers(path: &[u8], authority: &[u8]) -> Vec<u8> {
   headers
 }
 
+fn h2_get_extended_connect_protocol_headers(path: &[u8], authority: &[u8]) -> Vec<u8> {
+  let mut headers = h2_get_headers(path, authority);
+  headers.extend(h2_literal_new_name(b":protocol", b"websocket"));
+  headers
+}
+
 fn find_request_path(block: &[u8]) -> Option<Vec<u8>> {
   let mut cursor = 0;
   while cursor < block.len() {
@@ -1798,6 +1804,61 @@ fn h2c_connect_unsupported_matrix_preserves_http11_handoff_boundary() {
   assert_eq!(b"pong", &pong);
 
   handle.join().expect("HTTP/1.1 CONNECT server thread");
+}
+
+#[test]
+fn h2c_extended_connect_protocol_pseudo_header_rejects_before_handler() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind h2 extended connect boundary server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server
+    .local_addr()
+    .expect("h2 extended connect boundary addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send((request.method().to_string(), request.target().to_string()))
+        .expect("send unexpected h2 :protocol handler call");
+      HttpResponse::ok("unexpected h2 :protocol handler")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 extended connect boundary server");
+  stream
+    .set_read_timeout(Some(Duration::from_millis(200)))
+    .expect("set h2 extended connect boundary client read timeout");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_extended_connect_protocol_headers(
+      b"/extended-connect-boundary",
+      addr.to_string().as_bytes(),
+    ),
+  );
+  stream.flush().expect("flush h2 :protocol request");
+  let _ = try_read_h2_frame(&mut stream);
+  drop(stream);
+
+  let err = handle
+    .join()
+    .expect("h2 extended connect boundary server thread")
+    .expect_err("h2c :protocol must reject before handler");
+  assert_eq!(io::ErrorKind::InvalidData, err.kind());
+  assert!(
+    err
+      .to_string()
+      .contains("HTTP/2 extended CONNECT :protocol is unsupported"),
+    "unexpected h2c :protocol rejection error: {err}"
+  );
+  assert!(
+    rx.try_recv().is_err(),
+    "h2c :protocol must not be dispatched as a normal request"
+  );
 }
 
 #[test]
