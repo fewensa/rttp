@@ -3871,6 +3871,76 @@ fn http2_feature_socket2_rejects_connection_specific_request_headers_before_hand
 }
 
 #[test]
+fn http2_feature_socket2_accepts_te_trailers_request_header() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send(request.header("te").map(str::to_string))
+        .expect("send observed te header");
+      HttpResponse::ok("accepted te trailers")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set client read timeout");
+  stream
+    .set_write_timeout(Some(Duration::from_secs(2)))
+    .expect("set client write timeout");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+
+  let mut headers = h2_get_headers(b"/te-trailers", addr.to_string().as_bytes());
+  headers.extend(h2_literal_new_name(b"te", b"trailers"));
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &headers,
+  );
+
+  let response_body = (0..8)
+    .map(|_| read_h2_frame(&mut stream))
+    .find(|frame| {
+      frame.frame_type == H2_FRAME_DATA
+        && frame.stream_id == 1
+        && frame.flags & H2_FLAG_END_STREAM == H2_FLAG_END_STREAM
+    })
+    .expect("h2 response body");
+  assert_eq!(b"accepted te trailers", response_body.payload.as_slice());
+  assert_eq!(
+    Some("trailers".to_string()),
+    rx.recv().expect("receive observed te header")
+  );
+  handle
+    .join()
+    .expect("server thread")
+    .expect("serve h2 request");
+}
+
+#[test]
+fn http2_feature_socket2_rejects_non_trailers_te_request_header_before_handler() {
+  assert_malformed_h2_request_rejected_before_handler(|stream, addr| {
+    let mut headers = h2_get_headers(b"/bad-te-header", addr.to_string().as_bytes());
+    headers.extend(h2_literal_new_name(b"te", b"gzip"));
+    write_h2_frame(
+      stream,
+      H2_FRAME_HEADERS,
+      H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+      1,
+      &headers,
+    );
+  });
+}
+
+#[test]
 fn http2_feature_socket2_rejects_short_priority_headers_before_handler() {
   assert_malformed_h2_request_rejected_before_handler(|stream, _| {
     write_h2_frame(

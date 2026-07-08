@@ -1379,7 +1379,7 @@ fn decode_http2_request_headers(
       ":scheme" => decoded.scheme = Some(value),
       ":authority" => decoded.authority = Some(value),
       name if name.starts_with(':') => {}
-      name if is_forbidden_http2_request_header_name(name) => {
+      name if is_forbidden_http2_request_header(name, &value) => {
         return Err(io::Error::new(
           io::ErrorKind::InvalidData,
           "forbidden HTTP/2 request header",
@@ -1392,11 +1392,12 @@ fn decode_http2_request_headers(
   Ok(decoded)
 }
 
-fn is_forbidden_http2_request_header_name(name: &str) -> bool {
-  matches!(
-    name,
-    "connection" | "keep-alive" | "proxy-connection" | "te" | "transfer-encoding" | "upgrade"
-  )
+fn is_forbidden_http2_request_header(name: &str, value: &str) -> bool {
+  match name {
+    "te" => !value.eq_ignore_ascii_case("trailers"),
+    "connection" | "keep-alive" | "proxy-connection" | "transfer-encoding" | "upgrade" => true,
+    _ => false,
+  }
 }
 
 fn decode_http2_request_trailers(
