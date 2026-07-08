@@ -24,7 +24,7 @@ const H2_FLAG_END_HEADERS: u8 = 0x4;
 const H2_SETTINGS_MAX_CONCURRENT_STREAMS: u16 = 0x3;
 const H2_SETTINGS_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const H2_SETTINGS_MAX_FRAME_SIZE: u16 = 0x5;
-const H2_ERROR_PROTOCOL_ERROR: u32 = 0x1;
+const H2_ERROR_REFUSED_STREAM: u32 = 0x7;
 
 #[derive(Debug)]
 struct H2Frame {
@@ -127,14 +127,6 @@ fn h2_goaway_last_stream_id(frame: &H2Frame) -> u32 {
     u32::from_be_bytes(frame.payload[4..8].try_into().unwrap())
   );
   u32::from_be_bytes(frame.payload[0..4].try_into().unwrap()) & 0x7fff_ffff
-}
-
-fn h2_goaway_error_code(frame: &H2Frame) -> u32 {
-  assert_eq!(H2_FRAME_GOAWAY, frame.frame_type);
-  assert_eq!(0, frame.flags);
-  assert_eq!(0, frame.stream_id);
-  assert_eq!(8, frame.payload.len());
-  u32::from_be_bytes(frame.payload[4..8].try_into().unwrap())
 }
 
 fn h2_setting_value(frame: &H2Frame, setting_id: u16) -> Option<u32> {
@@ -3609,11 +3601,13 @@ fn server_rejects_http2_prior_knowledge_streams_above_active_limit_before_handle
   let (tx, rx) = mpsc::channel();
 
   let handle = thread::spawn(move || {
-    server.serve_requests(2, |request| {
-      tx.send(request.target().to_string())
-        .expect("send unexpected h2 target");
-      HttpResponse::ok("unexpected")
-    })
+    server
+      .serve_requests(2, |request| {
+        tx.send(request.target().to_string())
+          .expect("send allowed h2 target");
+        HttpResponse::ok(format!("served {}", request.target()))
+      })
+      .expect("serve allowed h2 streams")
   });
 
   let mut stream = TcpStream::connect(addr).expect("connect h2 server");
@@ -3644,15 +3638,38 @@ fn server_rejects_http2_prior_knowledge_streams_above_active_limit_before_handle
     &h2_get_headers(b"/over-limit", addr.to_string().as_bytes()),
   );
 
-  let goaway = read_h2_frame(&mut stream);
-  assert_eq!(H2_ERROR_PROTOCOL_ERROR, h2_goaway_error_code(&goaway));
-
-  let error = handle
-    .join()
-    .expect("server thread")
-    .expect_err("over-limit h2 stream should reject connection");
-  assert_eq!(ErrorKind::InvalidData, error.kind());
+  let reset = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_RST_STREAM, reset.frame_type);
+  assert_eq!(0, reset.flags);
+  assert_eq!(5, reset.stream_id);
+  assert_eq!(
+    H2_ERROR_REFUSED_STREAM.to_be_bytes(),
+    reset.payload.as_slice()
+  );
   assert!(rx.try_recv().is_err());
+
+  write_h2_frame(&mut stream, H2_FRAME_DATA, H2_FLAG_END_STREAM, 1, b"");
+  write_h2_frame(&mut stream, H2_FRAME_DATA, H2_FLAG_END_STREAM, 3, b"");
+
+  let mut response_streams = Vec::new();
+  while response_streams.len() < 2 {
+    let frame = read_h2_frame(&mut stream);
+    if frame.frame_type == H2_FRAME_DATA && frame.flags & H2_FLAG_END_STREAM == H2_FLAG_END_STREAM {
+      response_streams.push(frame.stream_id);
+    }
+  }
+  response_streams.sort_unstable();
+  assert_eq!(vec![1, 3], response_streams);
+
+  let mut targets = vec![
+    rx.recv().expect("first allowed h2 target"),
+    rx.recv().expect("second allowed h2 target"),
+  ];
+  targets.sort();
+  assert_eq!(vec!["/first".to_string(), "/second".to_string()], targets);
+  assert!(rx.try_recv().is_err());
+
+  handle.join().expect("server thread");
 }
 
 #[test]
