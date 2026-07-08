@@ -2425,6 +2425,165 @@ fn server_rejects_http2_prior_knowledge_data_before_headers_without_handler() {
 }
 
 #[test]
+fn server_rejects_http2_prior_knowledge_even_client_stream_id() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send(request).expect("send unexpected h2 request");
+      HttpResponse::ok("unexpected")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    2,
+    &h2_get_headers(b"/even-stream", addr.to_string().as_bytes()),
+  );
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown h2 write");
+
+  let error = handle
+    .join()
+    .expect("server thread")
+    .expect_err("even h2 stream id should reject request");
+  assert_eq!(ErrorKind::InvalidData, error.kind());
+  assert!(
+    error
+      .to_string()
+      .contains("invalid HTTP/2 client stream id"),
+    "unexpected error: {error}"
+  );
+  assert!(rx.try_recv().is_err());
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_lower_client_stream_id_after_higher_stream() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.serve_requests(2, |request| {
+      tx.send(request).expect("send unexpected h2 request");
+      HttpResponse::ok("unexpected")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    3,
+    &h2_get_headers(b"/higher", addr.to_string().as_bytes()),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_headers(b"/lower", addr.to_string().as_bytes()),
+  );
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown h2 write");
+
+  let error = handle
+    .join()
+    .expect("server thread")
+    .expect_err("lower h2 stream id should reject connection");
+  assert_eq!(ErrorKind::InvalidData, error.kind());
+  assert!(
+    error
+      .to_string()
+      .contains("invalid HTTP/2 client stream id"),
+    "unexpected error: {error}"
+  );
+  assert_eq!(
+    "/higher",
+    rx.recv()
+      .expect("higher h2 stream can be served before lower stream violation")
+      .target()
+  );
+  assert!(rx.try_recv().is_err());
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_reused_closed_client_stream_id() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.serve_requests(2, |request| {
+      tx.send(request.target().to_string())
+        .expect("send h2 target");
+      HttpResponse::ok("unexpected")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_headers(b"/first", addr.to_string().as_bytes()),
+  );
+  let _ = read_h2_frame_skipping_window_updates(&mut stream);
+  let _ = read_h2_frame_skipping_window_updates(&mut stream);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_headers(b"/reused", addr.to_string().as_bytes()),
+  );
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown h2 write");
+
+  let error = handle
+    .join()
+    .expect("server thread")
+    .expect_err("reused closed h2 stream id should reject connection");
+  assert_eq!(ErrorKind::InvalidData, error.kind());
+  assert!(
+    error
+      .to_string()
+      .contains("HTTP/2 frame arrived after stream close"),
+    "unexpected error: {error}"
+  );
+  assert_eq!("/first", rx.recv().expect("first h2 request"));
+  assert!(rx.try_recv().is_err());
+}
+
+#[test]
 fn server_rejects_http2_prior_knowledge_request_missing_scheme() {
   let mut headers = vec![0x82];
   headers.extend(h2_literal_indexed_name(4, b"/missing-scheme"));

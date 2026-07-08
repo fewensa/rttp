@@ -394,6 +394,7 @@ impl HttpServer {
 
     let mut streams = Vec::<Http2RequestStream>::new();
     let mut reset_streams = Vec::<u32>::new();
+    let mut stream_ids = Http2ClientStreamIds::new();
     let mut connection_receive_window = HTTP2_DEFAULT_INITIAL_WINDOW_SIZE;
     let mut connection_send_window = Http2SendWindow::new(HTTP2_DEFAULT_INITIAL_WINDOW_SIZE);
     let mut request_header_decoder = Http2HeaderDecoder::new(HTTP2_DEFAULT_HEADER_TABLE_SIZE);
@@ -487,8 +488,12 @@ impl HttpServer {
         (HTTP2_FRAME_HEADERS, id) if id != 0 => {
           let header_block_fragment =
             http2_headers_payload_to_header_block_fragment(&frame.payload, frame.flags)?;
-          let request_stream =
-            http2_request_stream(&mut streams, id, peer_initial_stream_send_window);
+          let request_stream = http2_request_stream(
+            &mut streams,
+            &mut stream_ids,
+            id,
+            peer_initial_stream_send_window,
+          )?;
           if request_stream.end_stream {
             return Err(io::Error::new(
               io::ErrorKind::InvalidData,
@@ -524,6 +529,9 @@ impl HttpServer {
             .iter_mut()
             .find(|request_stream| request_stream.stream_id == id)
           else {
+            if stream_ids.is_closed(id) {
+              return Err(http2_closed_stream_error());
+            }
             return Err(io::Error::new(
               io::ErrorKind::InvalidData,
               "HTTP/2 CONTINUATION frame arrived without request headers",
@@ -549,6 +557,9 @@ impl HttpServer {
           else {
             if reset_streams.contains(&id) {
               continue;
+            }
+            if stream_ids.is_closed(id) {
+              return Err(http2_closed_stream_error());
             }
             return Err(io::Error::new(
               io::ErrorKind::InvalidData,
@@ -617,6 +628,7 @@ impl HttpServer {
         };
         let request_stream = streams.remove(index);
         let stream_id = request_stream.stream_id;
+        stream_ids.close(stream_id);
         let mut stream_send_window = request_stream.send_window;
         let request = request_stream.into_request()?;
         let request_is_head = request.method() == "HEAD";
@@ -634,6 +646,7 @@ impl HttpServer {
             stream_send_window: &mut stream_send_window,
             streams: &mut streams,
             reset_streams: &mut reset_streams,
+            stream_ids: &mut stream_ids,
             request_header_decoder: &mut request_header_decoder,
           },
         ))?;
@@ -710,6 +723,44 @@ struct Http2RequestStream {
   in_header_continuation: bool,
   receive_window: i32,
   send_window: Http2SendWindow,
+}
+
+struct Http2ClientStreamIds {
+  max_opened: u32,
+  closed: Vec<u32>,
+}
+
+impl Http2ClientStreamIds {
+  fn new() -> Self {
+    Self {
+      max_opened: 0,
+      closed: Vec::new(),
+    }
+  }
+
+  fn open(&mut self, stream_id: u32) -> io::Result<()> {
+    if stream_id % 2 == 0 {
+      return Err(invalid_http2_client_stream_id_error());
+    }
+    if self.is_closed(stream_id) {
+      return Err(http2_closed_stream_error());
+    }
+    if stream_id <= self.max_opened {
+      return Err(invalid_http2_client_stream_id_error());
+    }
+    self.max_opened = stream_id;
+    Ok(())
+  }
+
+  fn close(&mut self, stream_id: u32) {
+    if !self.closed.contains(&stream_id) {
+      self.closed.push(stream_id);
+    }
+  }
+
+  fn is_closed(&self, stream_id: u32) -> bool {
+    self.closed.contains(&stream_id)
+  }
 }
 
 #[derive(Clone, Copy)]
@@ -837,20 +888,22 @@ impl Http2SendWindow {
   }
 }
 
-fn http2_request_stream(
-  streams: &mut Vec<Http2RequestStream>,
+fn http2_request_stream<'a>(
+  streams: &'a mut Vec<Http2RequestStream>,
+  stream_ids: &mut Http2ClientStreamIds,
   stream_id: u32,
   send_window: i32,
-) -> &mut Http2RequestStream {
+) -> io::Result<&'a mut Http2RequestStream> {
   if let Some(index) = streams
     .iter()
     .position(|request_stream| request_stream.stream_id == stream_id)
   {
-    return &mut streams[index];
+    return Ok(&mut streams[index]);
   }
 
+  stream_ids.open(stream_id)?;
   streams.push(Http2RequestStream::new(stream_id, send_window));
-  streams.last_mut().expect("new HTTP/2 request stream")
+  Ok(streams.last_mut().expect("new HTTP/2 request stream"))
 }
 
 fn active_http2_header_continuation_stream(streams: &[Http2RequestStream]) -> Option<u32> {
@@ -1014,6 +1067,20 @@ fn http2_settings_initial_window_size(payload: &[u8]) -> Option<i32> {
 
 fn invalid_http2_settings_error() -> io::Error {
   io::Error::new(io::ErrorKind::InvalidData, "invalid HTTP/2 SETTINGS frame")
+}
+
+fn invalid_http2_client_stream_id_error() -> io::Error {
+  io::Error::new(
+    io::ErrorKind::InvalidData,
+    "invalid HTTP/2 client stream id",
+  )
+}
+
+fn http2_closed_stream_error() -> io::Error {
+  io::Error::new(
+    io::ErrorKind::InvalidData,
+    "HTTP/2 frame arrived after stream close",
+  )
 }
 
 fn write_http2_frame(
@@ -1773,6 +1840,7 @@ struct Http2ResponseFlowControl<'a> {
   stream_send_window: &'a mut Http2SendWindow,
   streams: &'a mut Vec<Http2RequestStream>,
   reset_streams: &'a mut Vec<u32>,
+  stream_ids: &'a mut Http2ClientStreamIds,
   request_header_decoder: &'a mut Http2HeaderDecoder,
 }
 
@@ -1934,9 +2002,10 @@ fn read_http2_response_flow_control_frame(
           http2_headers_payload_to_header_block_fragment(&frame.payload, frame.flags)?;
         let request_stream = http2_request_stream(
           flow_control.streams,
+          flow_control.stream_ids,
           id,
           *flow_control.peer_initial_stream_send_window,
-        );
+        )?;
         if request_stream.end_stream {
           return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -1973,6 +2042,9 @@ fn read_http2_response_flow_control_frame(
           .iter_mut()
           .find(|request_stream| request_stream.stream_id == id)
         else {
+          if flow_control.stream_ids.is_closed(id) {
+            return Err(http2_closed_stream_error());
+          }
           return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "HTTP/2 CONTINUATION frame arrived without request headers",
@@ -1999,6 +2071,9 @@ fn read_http2_response_flow_control_frame(
         else {
           if flow_control.reset_streams.contains(&id) {
             continue;
+          }
+          if flow_control.stream_ids.is_closed(id) {
+            return Err(http2_closed_stream_error());
           }
           return Err(io::Error::new(
             io::ErrorKind::InvalidData,
