@@ -4472,6 +4472,7 @@ fn is_forbidden_trailer_name(name: &str) -> bool {
   matches!(
     name.to_ascii_lowercase().as_str(),
     "authorization"
+      | "cache-control"
       | "connection"
       | "content-encoding"
       | "content-length"
@@ -4479,8 +4480,11 @@ fn is_forbidden_trailer_name(name: &str) -> bool {
       | "content-type"
       | "cookie"
       | "host"
+      | "keep-alive"
+      | "max-forwards"
       | "proxy-authenticate"
       | "proxy-authorization"
+      | "proxy-connection"
       | "www-authenticate"
       | "set-cookie"
       | "te"
