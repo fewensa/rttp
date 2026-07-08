@@ -427,6 +427,7 @@ fn is_forbidden_request_trailer_name(name: &str) -> bool {
     "connection"
       | "content-length"
       | "host"
+      | "keep-alive"
       | "proxy-authenticate"
       | "proxy-authorization"
       | "proxy-connection"
