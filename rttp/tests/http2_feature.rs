@@ -633,6 +633,179 @@ fn complete_h2_peer_request_handshake(stream: &mut TcpStream) -> H2Frame {
   request_headers
 }
 
+fn spawn_goaway_matrix_peer(
+  goaway_payload: [u8; 8],
+  response_before_goaway: bool,
+) -> (SocketAddr, thread::JoinHandle<()>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_peer_request_handshake(&mut stream);
+
+    if response_before_goaway {
+      write_h2_frame(
+        &mut stream,
+        H2_FRAME_HEADERS,
+        H2_FLAG_END_HEADERS,
+        1,
+        &[0x88],
+      );
+      write_h2_frame(
+        &mut stream,
+        H2_FRAME_DATA,
+        H2_FLAG_END_STREAM,
+        1,
+        b"completed before shutdown",
+      );
+    }
+    write_h2_frame(&mut stream, H2_FRAME_GOAWAY, 0, 0, &goaway_payload);
+    if !response_before_goaway {
+      write_h2_frame(
+        &mut stream,
+        H2_FRAME_HEADERS,
+        H2_FLAG_END_HEADERS,
+        1,
+        &[0x88],
+      );
+      write_h2_frame(
+        &mut stream,
+        H2_FRAME_DATA,
+        H2_FLAG_END_STREAM,
+        1,
+        b"must not be accepted",
+      );
+    }
+  });
+
+  (addr, handle)
+}
+
+#[test]
+fn cross_crate_h2c_goaway_after_completed_stream_keeps_wrapper_response_complete() {
+  let (addr, handle) = spawn_goaway_matrix_peer([0, 0, 0, 0, 0, 0, 0, 0], true);
+
+  let response = rttp::Http::client()
+    .get()
+    .url(format!("http://{}/completed-before-goaway", addr))
+    .emit_http2_prior_knowledge()
+    .expect("completed stream must survive later GOAWAY");
+
+  assert_eq!(200, response.code());
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(
+    "completed before shutdown",
+    response.body().string().unwrap()
+  );
+  handle.join().expect("completed GOAWAY peer thread");
+}
+
+#[test]
+fn cross_crate_h2c_goaway_lower_last_stream_id_rejects_wrapper_response() {
+  let (addr, handle) = spawn_goaway_matrix_peer([0, 0, 0, 0, 0, 0, 0, 0], false);
+
+  let error = rttp::Http::client()
+    .get()
+    .url(format!("http://{}/excluded-by-goaway", addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("GOAWAY excluding active stream must fail");
+
+  assert!(
+    error
+      .to_string()
+      .contains("HTTP/2 connection received GOAWAY"),
+    "unexpected error: {error}"
+  );
+  handle.join().expect("lower GOAWAY peer thread");
+}
+
+#[test]
+fn cross_crate_h2c_server_graceful_shutdown_reports_last_completed_stream() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        HttpResponse::ok(format!("served {}", request.target()))
+      })
+      .expect("serve bounded h2 requests");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_headers(b"/matrix-one", addr.to_string().as_bytes()),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    3,
+    &h2_get_headers(b"/matrix-two", addr.to_string().as_bytes()),
+  );
+  stream.flush().expect("flush h2 matrix requests");
+
+  assert_eq!(
+    vec![1, 3],
+    read_h2_end_stream_data_streams(&mut stream, 2, 8)
+  );
+  let shutdown = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_GOAWAY, shutdown.frame_type);
+  assert_eq!(0, shutdown.flags);
+  assert_eq!(0, shutdown.stream_id);
+  assert_eq!(8, shutdown.payload.len());
+  assert_eq!(
+    3,
+    u32::from_be_bytes(shutdown.payload[0..4].try_into().unwrap())
+  );
+  assert_eq!(
+    0,
+    u32::from_be_bytes(shutdown.payload[4..8].try_into().unwrap())
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn cross_crate_h2c_prior_knowledge_client_remains_single_use_after_shutdown() {
+  let (addr, handle) = spawn_goaway_matrix_peer([0, 0, 0, 1, 0, 0, 0, 0], true);
+  let mut client = rttp::Http::client();
+
+  let response = client
+    .get()
+    .url(format!("http://{}/single-use", addr))
+    .emit_http2_prior_knowledge()
+    .expect("initial h2c request");
+  assert_eq!(
+    "completed before shutdown",
+    response.body().string().unwrap()
+  );
+
+  let error = client
+    .emit_http2_prior_knowledge()
+    .expect_err("h2c prior-knowledge calls do not keep a reusable session");
+  let error_message = error.to_string();
+  assert!(
+    error_message
+      .to_ascii_lowercase()
+      .contains("connection is closed"),
+    "unexpected error: {error}"
+  );
+  handle.join().expect("single-use GOAWAY peer thread");
+}
+
 #[test]
 fn prior_knowledge_server_acknowledges_valid_settings_payload_and_serves_request() {
   let server = rttp::Http::server("127.0.0.1:0")
