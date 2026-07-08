@@ -2594,9 +2594,13 @@ fn server_rejects_http2_prior_knowledge_hpack_huffman_request_trailer_before_han
 #[test]
 fn server_rejects_http2_prior_knowledge_forbidden_request_trailer_name() {
   for name in [
+    b"cache-control".as_slice(),
+    b"max-forwards",
     b"content-length".as_slice(),
     b"transfer-encoding",
     b"connection",
+    b"keep-alive",
+    b"proxy-connection",
     b"host",
     b"te",
     b"trailer",
