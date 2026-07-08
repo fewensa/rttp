@@ -36,6 +36,8 @@ const DEFAULT_MAX_FRAME_SIZE: usize = 16 * 1024;
 const MAX_FRAME_SIZE_LIMIT: usize = 16_777_215;
 const MAX_INITIAL_WINDOW_SIZE: u32 = 2_147_483_647;
 const WINDOW_UPDATE_THRESHOLD: usize = 32 * 1024;
+const DEFAULT_HPACK_DYNAMIC_TABLE_SIZE: usize = 4096;
+const HPACK_STATIC_TABLE_LENGTH: usize = 61;
 const HPACK_HUFFMAN_EOS_SYMBOL: usize = 256;
 const HPACK_HUFFMAN_EOS_BITS: u8 = 30;
 
@@ -658,6 +660,7 @@ fn read_single_stream_response_with_first_frame(
   let mut pending_header_block = None;
   let mut final_response_started = false;
   let mut response_body_started = false;
+  let mut hpack = HpackDecoder::new(DEFAULT_HPACK_DYNAMIC_TABLE_SIZE);
   let mut connection_receive_window = ReceiveWindow::new();
   let mut stream_receive_window = ReceiveWindow::new();
   let mut connection_send_window = SendWindow::new();
@@ -704,6 +707,7 @@ fn read_single_stream_response_with_first_frame(
             &mut status,
             &mut headers,
             &mut trailers,
+            &mut hpack,
           )? {
             final_response_started = true;
           }
@@ -728,6 +732,7 @@ fn read_single_stream_response_with_first_frame(
             &mut status,
             &mut headers,
             &mut trailers,
+            &mut hpack,
           )? {
             final_response_started = true;
           }
@@ -984,10 +989,11 @@ fn apply_header_block(
   status: &mut Option<u32>,
   headers: &mut Vec<(String, String)>,
   trailers: &mut Vec<Header>,
+  hpack: &mut HpackDecoder,
 ) -> error::Result<bool> {
   match kind {
     HeaderBlockKind::ResponseHeaders => {
-      let decoded = decode_header_block(block)?;
+      let decoded = decode_header_block(block, hpack)?;
       if decoded.status.is_some_and(is_informational_status) {
         return Ok(false);
       }
@@ -996,7 +1002,7 @@ fn apply_header_block(
       Ok(status.is_some())
     }
     HeaderBlockKind::Trailers => {
-      trailers.extend(decode_trailer_block(block)?);
+      trailers.extend(decode_trailer_block(block, hpack)?);
       Ok(false)
     }
   }
@@ -1254,8 +1260,136 @@ struct DecodedHeaders {
   headers: Vec<(String, String)>,
 }
 
-fn decode_header_block(block: &[u8]) -> error::Result<DecodedHeaders> {
-  let entries = decode_header_entries(block)?;
+struct HpackDecoder {
+  dynamic_entries: Vec<(String, String)>,
+  dynamic_size: usize,
+  max_dynamic_size: usize,
+  peer_max_dynamic_size: usize,
+}
+
+impl HpackDecoder {
+  fn new(peer_max_dynamic_size: usize) -> Self {
+    Self {
+      dynamic_entries: Vec::new(),
+      dynamic_size: 0,
+      max_dynamic_size: peer_max_dynamic_size,
+      peer_max_dynamic_size,
+    }
+  }
+
+  fn decode_entries(&mut self, block: &[u8]) -> error::Result<Vec<(String, String)>> {
+    let mut cursor = 0;
+    let mut entries = Vec::new();
+
+    while cursor < block.len() {
+      let byte = block[cursor];
+      if byte & 0x80 == 0x80 {
+        let (name, value) = self.decode_indexed(block, &mut cursor)?;
+        entries.push((name, value));
+        continue;
+      }
+
+      if byte & 0x40 == 0x40 {
+        let (name, value) = self.decode_literal(block, &mut cursor, 6)?;
+        self.insert(name.clone(), value.clone())?;
+        entries.push((name, value));
+      } else if byte & 0x20 == 0x20 {
+        self.update_dynamic_size(decode_integer(block, &mut cursor, 5)?)?;
+      } else {
+        entries.push(self.decode_literal(block, &mut cursor, 4)?);
+      }
+    }
+
+    Ok(entries)
+  }
+
+  fn decode_indexed(&self, block: &[u8], cursor: &mut usize) -> error::Result<(String, String)> {
+    self.header(decode_integer(block, cursor, 7)?)
+  }
+
+  fn decode_literal(
+    &self,
+    block: &[u8],
+    cursor: &mut usize,
+    prefix_bits: u8,
+  ) -> error::Result<(String, String)> {
+    let name_index = decode_integer(block, cursor, prefix_bits)?;
+    let name = if name_index == 0 {
+      decode_string(block, cursor)?
+    } else {
+      self.header(name_index)?.0
+    };
+    let value = decode_string(block, cursor)?;
+    Ok((name, value))
+  }
+
+  fn header(&self, index: usize) -> error::Result<(String, String)> {
+    if index == 0 {
+      return Err(error::bad_response("invalid HPACK header index"));
+    }
+    if index <= HPACK_STATIC_TABLE_LENGTH {
+      let (name, value) = static_header(index)?;
+      return Ok((name.to_string(), value.to_string()));
+    }
+
+    let dynamic_index = index - HPACK_STATIC_TABLE_LENGTH - 1;
+    self
+      .dynamic_entries
+      .get(dynamic_index)
+      .cloned()
+      .ok_or_else(|| error::bad_response("invalid HPACK dynamic table index"))
+  }
+
+  fn update_dynamic_size(&mut self, size: usize) -> error::Result<()> {
+    if size > self.peer_max_dynamic_size {
+      return Err(error::bad_response(
+        "HPACK dynamic table size update exceeds limit",
+      ));
+    }
+    self.max_dynamic_size = size;
+    self.evict_to_capacity();
+    Ok(())
+  }
+
+  fn insert(&mut self, name: String, value: String) -> error::Result<()> {
+    let entry_size = name
+      .len()
+      .checked_add(value.len())
+      .and_then(|size| size.checked_add(32))
+      .ok_or_else(|| error::bad_response("HPACK dynamic table entry is too large"))?;
+
+    if entry_size > self.max_dynamic_size {
+      self.dynamic_entries.clear();
+      self.dynamic_size = 0;
+      return Ok(());
+    }
+
+    self.dynamic_entries.insert(0, (name, value));
+    self.dynamic_size = self
+      .dynamic_size
+      .checked_add(entry_size)
+      .ok_or_else(|| error::bad_response("HPACK dynamic table size overflow"))?;
+    self.evict_to_capacity();
+    Ok(())
+  }
+
+  fn evict_to_capacity(&mut self) {
+    while self.dynamic_size > self.max_dynamic_size {
+      if let Some((name, value)) = self.dynamic_entries.pop() {
+        self.dynamic_size -= dynamic_entry_size(&name, &value);
+      } else {
+        self.dynamic_size = 0;
+      }
+    }
+  }
+}
+
+fn dynamic_entry_size(name: &str, value: &str) -> usize {
+  32 + name.len() + value.len()
+}
+
+fn decode_header_block(block: &[u8], hpack: &mut HpackDecoder) -> error::Result<DecodedHeaders> {
+  let entries = hpack.decode_entries(block)?;
   let mut status = None;
   let mut headers = Vec::new();
 
@@ -1266,8 +1400,8 @@ fn decode_header_block(block: &[u8]) -> error::Result<DecodedHeaders> {
   Ok(DecodedHeaders { status, headers })
 }
 
-fn decode_trailer_block(block: &[u8]) -> error::Result<Vec<Header>> {
-  let entries = decode_header_entries(block)?;
+fn decode_trailer_block(block: &[u8], hpack: &mut HpackDecoder) -> error::Result<Vec<Header>> {
+  let entries = hpack.decode_entries(block)?;
   let mut trailers = Vec::new();
 
   for (name, value) in entries {
@@ -1279,49 +1413,6 @@ fn decode_trailer_block(block: &[u8]) -> error::Result<Vec<Header>> {
   }
 
   Ok(trailers)
-}
-
-fn decode_header_entries(block: &[u8]) -> error::Result<Vec<(String, String)>> {
-  let mut cursor = 0;
-  let mut entries = Vec::new();
-
-  while cursor < block.len() {
-    let byte = block[cursor];
-    if byte & 0x80 == 0x80 {
-      let index = decode_integer(block, &mut cursor, 7)?;
-      let (name, value) = static_header(index)?;
-      entries.push((name.to_string(), value.to_string()));
-      continue;
-    }
-
-    let (name, value) = if byte & 0x40 == 0x40 {
-      decode_literal(block, &mut cursor, 6)?
-    } else if byte & 0x20 == 0x20 {
-      return Err(error::bad_response(
-        "HTTP/2 dynamic table size updates are not supported",
-      ));
-    } else {
-      decode_literal(block, &mut cursor, 4)?
-    };
-    entries.push((name, value));
-  }
-
-  Ok(entries)
-}
-
-fn decode_literal(
-  block: &[u8],
-  cursor: &mut usize,
-  prefix_bits: u8,
-) -> error::Result<(String, String)> {
-  let name_index = decode_integer(block, cursor, prefix_bits)?;
-  let name = if name_index == 0 {
-    decode_string(block, cursor)?
-  } else {
-    static_header(name_index)?.0.to_string()
-  };
-  let value = decode_string(block, cursor)?;
-  Ok((name, value))
 }
 
 fn decode_integer(block: &[u8], cursor: &mut usize, prefix_bits: u8) -> error::Result<usize> {
