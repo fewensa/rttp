@@ -1711,7 +1711,7 @@ fn h2c_connect_unsupported_matrix_preserves_http11_handoff_boundary() {
   assert!(
     err
       .to_string()
-      .contains("HTTP/2 prior-knowledge CONNECT/proxy tunneling is unsupported"),
+      .contains("HTTP/2 prior-knowledge CONNECT or extended CONNECT is unsupported"),
     "unexpected h2c client preflight error: {err}"
   );
   assert!(
@@ -3496,7 +3496,6 @@ fn wrapper_http2_prior_knowledge_strips_connection_specific_headers_across_crate
     .header(("Connection", "keep-alive"))
     .header(("Keep-Alive", "timeout=5"))
     .header(("TE", "trailers"))
-    .header(("Upgrade", "websocket"))
     .header(("X-Boundary", "present"))
     .emit_http2_prior_knowledge()
     .expect("h2 connection header boundary response");

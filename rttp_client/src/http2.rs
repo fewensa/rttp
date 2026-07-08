@@ -102,9 +102,9 @@ impl<'a> PriorKnowledgeClient<'a> {
     let is_delete = method.eq_ignore_ascii_case("DELETE");
     let is_options = method.eq_ignore_ascii_case("OPTIONS");
     let is_trace = method.eq_ignore_ascii_case("TRACE");
-    if method.eq_ignore_ascii_case("CONNECT") {
+    if requires_http2_connect_semantics(&self.request) {
       return Err(error::builder_with_message(
-        "HTTP/2 prior-knowledge CONNECT/proxy tunneling is unsupported",
+        "HTTP/2 prior-knowledge CONNECT or extended CONNECT is unsupported",
       ));
     }
     if (method.eq_ignore_ascii_case("GET") || is_head) && self.request.body().is_some() {
@@ -154,6 +154,19 @@ impl<'a> PriorKnowledgeClient<'a> {
     self.request.origin_mut().closed_set(true);
     Ok(response)
   }
+}
+
+fn requires_http2_connect_semantics(request: &RawRequest<'_>) -> bool {
+  request.origin().method().eq_ignore_ascii_case("CONNECT")
+    || request.origin().headers().iter().any(|header| {
+      header.name().eq_ignore_ascii_case(":protocol")
+        || header.name().eq_ignore_ascii_case("upgrade")
+    })
+    || request
+      .header()
+      .lines()
+      .skip(1)
+      .any(|line| line.trim_start().starts_with(":protocol:"))
 }
 
 fn is_supported_request_method(method: &str) -> bool {
