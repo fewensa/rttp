@@ -59,6 +59,8 @@ requests. The h2c path handles `HEAD` without writing response DATA frames.
 Incoming padded HEADERS, DATA, and trailer frames are accepted without exposing
 padding bytes to handlers, HPACK static Huffman strings, request dynamic table
 entries, and large header blocks are carried with CONTINUATION frames. Valid
+prior-knowledge h2c request headers reject HTTP/1.x connection-specific fields
+before handler dispatch; `TE` is accepted only as `te: trailers`. Valid
 standalone PRIORITY frames and HEADERS priority fields are validated and ignored
 as metadata; malformed priority metadata is rejected, and request or response
 ordering does not use priority scheduling. Multiple prior-knowledge h2c request
