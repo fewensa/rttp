@@ -3,6 +3,7 @@ use std::net::TcpStream;
 use std::thread;
 
 use rttp::server::{HttpHandoff, HttpResponse};
+use rttp_client::HttpClient;
 
 #[test]
 fn connect_authority_form_hands_off_socket_after_response_boundary() {
@@ -109,6 +110,83 @@ fn upgrade_request_hands_off_socket_and_preserves_buffered_bytes() {
   );
 
   handle.join().expect("server thread");
+}
+
+#[test]
+fn rttp_client_upgrade_interoperates_with_socket2_handoff_matrix() {
+  for (path, protocol, server_bytes, client_bytes) in [
+    (
+      "/chat",
+      "websocket",
+      b"server-websocket".as_slice(),
+      b"client-websocket".as_slice(),
+    ),
+    (
+      "/events",
+      "event-stream",
+      b"server-events".as_slice(),
+      b"client-events".as_slice(),
+    ),
+  ] {
+    let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+    let addr = server.local_addr().expect("server addr");
+
+    let handle = thread::spawn(move || {
+      server
+        .accept_one_handoff(|request| {
+          assert_eq!("GET", request.method());
+          assert_eq!(path, request.target());
+          assert_eq!(Some(protocol), request.header("Upgrade"));
+          assert!(request
+            .header("Connection")
+            .expect("Connection header")
+            .eq_ignore_ascii_case("Upgrade"));
+
+          HttpHandoff::upgrade(
+            HttpResponse::new(101, "Switching Protocols")
+              .header("Connection", "Upgrade")
+              .header("Upgrade", protocol),
+            move |mut stream| {
+              stream.write_all(server_bytes)?;
+
+              let mut received = vec![0; client_bytes.len()];
+              stream.read_exact(&mut received)?;
+              assert_eq!(client_bytes, received.as_slice());
+
+              Ok(())
+            },
+          )
+        })
+        .expect("serve upgrade handoff");
+    });
+
+    let mut upgraded = HttpClient::new()
+      .url(format!("http://{}{}", addr, path))
+      .header(("Connection", "Upgrade"))
+      .header(("Upgrade", protocol))
+      .upgrade()
+      .expect("upgrade connection");
+
+    assert_eq!(101, upgraded.response().code());
+    assert_eq!(
+      Some(&protocol.to_string()),
+      upgraded.response().header_value("Upgrade")
+    );
+
+    let mut received = vec![0; server_bytes.len()];
+    upgraded
+      .stream_mut()
+      .read_exact(&mut received)
+      .expect("read upgraded server bytes");
+    assert_eq!(server_bytes, received.as_slice());
+
+    upgraded
+      .stream_mut()
+      .write_all(client_bytes)
+      .expect("write upgraded client bytes");
+
+    handle.join().expect("server thread");
+  }
 }
 
 #[test]
