@@ -35,6 +35,7 @@ const HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS: u16 = 0x3;
 const HTTP2_SETTINGS_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const HTTP2_SETTINGS_MAX_FRAME_SIZE: u16 = 0x5;
 const HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE: u16 = 0x6;
+const HTTP2_SETTINGS_ENABLE_CONNECT_PROTOCOL: u16 = 0x8;
 const HTTP2_ERROR_NO_ERROR: u32 = 0x0;
 const HTTP2_ERROR_REFUSED_STREAM: u32 = 0x7;
 
@@ -1063,6 +1064,12 @@ fn validate_http2_settings_payload(payload: &[u8]) -> io::Result<()> {
       }
       HTTP2_SETTINGS_MAX_FRAME_SIZE if !(16_384..=16_777_215).contains(&value) => {
         return Err(invalid_http2_settings_error());
+      }
+      HTTP2_SETTINGS_ENABLE_CONNECT_PROTOCOL if value != 0 => {
+        return Err(io::Error::new(
+          io::ErrorKind::InvalidData,
+          "HTTP/2 extended CONNECT SETTINGS_ENABLE_CONNECT_PROTOCOL is unsupported",
+        ));
       }
       _ => {}
     }

@@ -28,6 +28,7 @@ const H2_SETTINGS_ENABLE_PUSH: u16 = 0x2;
 const H2_SETTINGS_MAX_CONCURRENT_STREAMS: u16 = 0x3;
 const H2_SETTINGS_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const H2_SETTINGS_MAX_FRAME_SIZE: u16 = 0x5;
+const H2_SETTINGS_ENABLE_CONNECT_PROTOCOL: u16 = 0x8;
 const H2_DEFAULT_INITIAL_WINDOW_SIZE: usize = 65_535;
 const H2_ERROR_CANCEL: u32 = 0x8;
 const H2_ERROR_REFUSED_STREAM: u32 = 0x7;
@@ -2030,6 +2031,15 @@ fn prior_knowledge_server_rejects_initial_settings_with_invalid_enable_push() {
 fn prior_knowledge_server_rejects_initial_settings_with_invalid_initial_window_size() {
   assert_malformed_settings_rejected_before_handler(
     &h2_setting(H2_SETTINGS_INITIAL_WINDOW_SIZE, 2_147_483_648),
+    0,
+    None,
+  );
+}
+
+#[test]
+fn h2c_extended_connect_settings_metadata_rejects_before_handler() {
+  assert_malformed_settings_rejected_before_handler(
+    &h2_setting(H2_SETTINGS_ENABLE_CONNECT_PROTOCOL, 1),
     0,
     None,
   );
