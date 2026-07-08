@@ -1202,6 +1202,35 @@ fn prior_knowledge_get_continues_after_graceful_goaway_for_active_stream() {
 }
 
 #[test]
+fn prior_knowledge_rejects_invalid_window_update_frames() {
+  let (zero_addr, zero_handle) = spawn_window_update_peer(1, &[0]);
+  let zero_error = HttpClient::new()
+    .get()
+    .url(format!("http://{}/zero-window-update", zero_addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("zero WINDOW_UPDATE increment must fail");
+  assert!(
+    zero_error.to_string().contains("WINDOW_UPDATE"),
+    "unexpected error: {zero_error}"
+  );
+  zero_handle.join().expect("zero window update peer thread");
+
+  let (overflow_addr, overflow_handle) = spawn_window_update_peer(0, &[0x7fff_ffff]);
+  let overflow_error = HttpClient::new()
+    .get()
+    .url(format!("http://{}/overflow-window-update", overflow_addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("overflowing WINDOW_UPDATE increment must fail");
+  assert!(
+    overflow_error.to_string().contains("overflow"),
+    "unexpected error: {overflow_error}"
+  );
+  overflow_handle
+    .join()
+    .expect("overflow window update peer thread");
+}
+
+#[test]
 fn prior_knowledge_acks_ping_before_consuming_final_response() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");
@@ -1674,6 +1703,33 @@ fn spawn_initial_settings_peer(
     assert_eq!(0, client_settings.payload.len());
 
     write_frame(&mut stream, FRAME_SETTINGS, flags, stream_id, &payload);
+  });
+
+  (addr, handle)
+}
+
+fn spawn_window_update_peer(
+  stream_id: u32,
+  increments: &'static [u32],
+) -> (SocketAddr, thread::JoinHandle<()>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    for increment in increments {
+      write_frame(
+        &mut stream,
+        FRAME_WINDOW_UPDATE,
+        0,
+        stream_id,
+        &increment.to_be_bytes(),
+      );
+    }
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"ignored");
   });
 
   (addr, handle)

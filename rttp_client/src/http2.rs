@@ -31,6 +31,7 @@ const STREAM_ID: u32 = 1;
 const SETTING_ENABLE_PUSH: u16 = 0x2;
 const SETTING_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const SETTING_MAX_FRAME_SIZE: u16 = 0x5;
+const DEFAULT_INITIAL_WINDOW_SIZE: i64 = 65_535;
 const DEFAULT_MAX_FRAME_SIZE: usize = 16 * 1024;
 const MAX_FRAME_SIZE_LIMIT: usize = 16_777_215;
 const MAX_INITIAL_WINDOW_SIZE: u32 = 2_147_483_647;
@@ -489,7 +490,10 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
   let mut pending_header_block = None;
   let mut final_response_started = false;
   let mut response_body_started = false;
-  let mut pending_window_update = 0usize;
+  let mut connection_receive_window = ReceiveWindow::new();
+  let mut stream_receive_window = ReceiveWindow::new();
+  let mut connection_send_window = SendWindow::new();
+  let mut stream_send_window = SendWindow::new();
 
   loop {
     let frame = match read_frame(stream) {
@@ -568,18 +572,31 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
         let data = data_payload(&frame)?;
         response_body_started = true;
         body.extend_from_slice(data);
-        pending_window_update = pending_window_update
-          .checked_add(frame.payload.len())
-          .ok_or_else(|| error::bad_response("HTTP/2 response body is too large"))?;
-        if !end_stream && pending_window_update >= WINDOW_UPDATE_THRESHOLD {
-          write_window_update_best_effort(stream, STREAM_ID, pending_window_update)?;
-          write_window_update_best_effort(stream, 0, pending_window_update)?;
+        let stream_update = stream_receive_window.consume(frame.payload.len())?;
+        let connection_update = connection_receive_window.consume(frame.payload.len())?;
+        if !end_stream && (stream_update > 0 || connection_update > 0) {
+          if stream_update > 0 {
+            write_window_update_best_effort(stream, STREAM_ID, stream_update)?;
+            stream_receive_window.release(stream_update)?;
+          }
+          if connection_update > 0 {
+            write_window_update_best_effort(stream, 0, connection_update)?;
+            connection_receive_window.release(connection_update)?;
+          }
           flush_best_effort(stream)?;
-          pending_window_update = 0;
         }
         if end_stream {
           break;
         }
+      }
+      (FRAME_WINDOW_UPDATE, 0) => {
+        connection_send_window.increase(window_update_increment(&frame)?)?;
+      }
+      (FRAME_WINDOW_UPDATE, STREAM_ID) => {
+        stream_send_window.increase(window_update_increment(&frame)?)?;
+      }
+      (FRAME_WINDOW_UPDATE, _) => {
+        window_update_increment(&frame)?;
       }
       (FRAME_RST_STREAM, STREAM_ID) => {
         return Err(error::bad_response("HTTP/2 stream received RST_STREAM"));
@@ -618,6 +635,97 @@ fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Res
 
   let status = status.ok_or_else(|| error::bad_response("missing HTTP/2 :status header"))?;
   build_response(url, status, &headers, body, trailers)
+}
+
+struct ReceiveWindow {
+  available: i64,
+  pending_update: usize,
+}
+
+impl ReceiveWindow {
+  fn new() -> Self {
+    Self {
+      available: DEFAULT_INITIAL_WINDOW_SIZE,
+      pending_update: 0,
+    }
+  }
+
+  fn consume(&mut self, amount: usize) -> error::Result<usize> {
+    let amount = i64::try_from(amount)
+      .map_err(|_| error::bad_response("HTTP/2 DATA frame exceeds flow-control window"))?;
+    self.available = self
+      .available
+      .checked_sub(amount)
+      .ok_or_else(|| error::bad_response("HTTP/2 DATA frame exceeds flow-control window"))?;
+    if self.available < 0 {
+      return Err(error::bad_response(
+        "HTTP/2 DATA frame exceeds flow-control window",
+      ));
+    }
+    self.pending_update = self
+      .pending_update
+      .checked_add(amount as usize)
+      .ok_or_else(|| error::bad_response("HTTP/2 response body is too large"))?;
+    if self.pending_update >= WINDOW_UPDATE_THRESHOLD {
+      Ok(std::mem::take(&mut self.pending_update))
+    } else {
+      Ok(0)
+    }
+  }
+
+  fn release(&mut self, amount: usize) -> error::Result<()> {
+    let amount = i64::try_from(amount)
+      .map_err(|_| error::bad_response("HTTP/2 window update increment is too large"))?;
+    self.available = self
+      .available
+      .checked_add(amount)
+      .ok_or_else(|| error::bad_response("HTTP/2 flow-control window overflow"))?;
+    if self.available > MAX_INITIAL_WINDOW_SIZE as i64 {
+      return Err(error::bad_response("HTTP/2 flow-control window overflow"));
+    }
+    Ok(())
+  }
+}
+
+struct SendWindow {
+  available: i64,
+}
+
+impl SendWindow {
+  fn new() -> Self {
+    Self {
+      available: DEFAULT_INITIAL_WINDOW_SIZE,
+    }
+  }
+
+  fn increase(&mut self, amount: u32) -> error::Result<()> {
+    self.available = self
+      .available
+      .checked_add(i64::from(amount))
+      .ok_or_else(|| error::bad_response("HTTP/2 WINDOW_UPDATE overflow"))?;
+    if self.available > MAX_INITIAL_WINDOW_SIZE as i64 {
+      return Err(error::bad_response("HTTP/2 WINDOW_UPDATE overflow"));
+    }
+    Ok(())
+  }
+}
+
+fn window_update_increment(frame: &Frame) -> error::Result<u32> {
+  if frame.payload.len() != 4 {
+    return Err(error::bad_response("invalid HTTP/2 WINDOW_UPDATE frame"));
+  }
+  let increment = u32::from_be_bytes([
+    frame.payload[0] & 0x7f,
+    frame.payload[1],
+    frame.payload[2],
+    frame.payload[3],
+  ]);
+  if increment == 0 {
+    return Err(error::bad_response(
+      "invalid HTTP/2 WINDOW_UPDATE increment",
+    ));
+  }
+  Ok(increment)
 }
 
 fn data_payload(frame: &Frame) -> error::Result<&[u8]> {
