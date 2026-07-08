@@ -22,6 +22,7 @@ const H2_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 const H2_SETTINGS_ENABLE_PUSH: u16 = 0x2;
 const H2_SETTINGS_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const H2_SETTINGS_MAX_FRAME_SIZE: u16 = 0x5;
+const H2_DEFAULT_INITIAL_WINDOW_SIZE: usize = 65_535;
 
 struct H2Frame {
   frame_type: u8,
@@ -1258,6 +1259,134 @@ fn wrapper_http2_prior_knowledge_post_request_trailers_reach_server_only_as_trai
   );
   assert_eq!("HTTP/2", response.version());
   assert_eq!("stored request trailers", response.body().string().unwrap());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn wrapper_http2_prior_knowledge_uploads_flow_controlled_body_with_trailers_to_socket2_server() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+  let request_body = (0..H2_DEFAULT_INITIAL_WINDOW_SIZE + 32 * 1024)
+    .map(|idx| b'a' + (idx % 26) as u8)
+    .collect::<Vec<_>>();
+  let expected_body = request_body.clone();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.method().to_string(),
+          request.target().to_string(),
+          request.version().to_string(),
+          request.body().to_vec(),
+          request.header("x-flow-control").map(str::to_string),
+          request.trailer("x-flow-control").map(str::to_string),
+          request.trailer("x-upload-checksum").map(str::to_string),
+          request.trailers().to_vec(),
+        ))
+        .expect("send parsed flow-controlled h2 request");
+        HttpResponse::ok("flow-controlled upload accepted")
+      })
+      .expect("serve flow-controlled h2 upload");
+  });
+
+  let response = rttp::Http::client()
+    .post()
+    .url(format!("http://{}/flow-controlled-upload", addr))
+    .header(("X-Flow-Control", "body-over-default-window"))
+    .binary(request_body)
+    .trailer(("X-Flow-Control", "request-trailer"))
+    .expect("configure request flow-control trailer")
+    .trailer(("X-Upload-Checksum", "window-updated"))
+    .expect("configure request checksum trailer")
+    .emit_http2_prior_knowledge()
+    .expect("wrapper h2 flow-controlled upload response");
+
+  assert_eq!(
+    (
+      "POST".to_string(),
+      "/flow-controlled-upload".to_string(),
+      "HTTP/2".to_string(),
+      expected_body,
+      Some("body-over-default-window".to_string()),
+      Some("request-trailer".to_string()),
+      Some("window-updated".to_string()),
+      vec![
+        ("x-flow-control".to_string(), "request-trailer".to_string()),
+        (
+          "x-upload-checksum".to_string(),
+          "window-updated".to_string()
+        ),
+      ],
+    ),
+    rx.recv()
+      .expect("receive parsed flow-controlled h2 request")
+  );
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(200, response.code());
+  assert_eq!(b"flow-controlled upload accepted", response.body().binary());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn wrapper_http2_prior_knowledge_receives_flow_controlled_response_body_with_trailers_from_socket2_server(
+) {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let response_body = (0..H2_DEFAULT_INITIAL_WINDOW_SIZE + 40 * 1024)
+    .map(|idx| b'0' + (idx % 10) as u8)
+    .collect::<Vec<_>>();
+  let expected_body = response_body.clone();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(move |request| {
+        assert_eq!("HTTP/2", request.version());
+        assert_eq!("/flow-controlled-download", request.target());
+        HttpResponse::ok(response_body)
+          .header("Trailer", "X-Flow-Control, X-Response-Checksum")
+          .trailer("X-Flow-Control", "response-trailer")
+          .trailer("X-Response-Checksum", "window-updated")
+      })
+      .expect("serve flow-controlled h2 download");
+  });
+
+  let response = rttp::Http::client()
+    .url(format!("http://{}/flow-controlled-download", addr))
+    .emit_http2_prior_knowledge()
+    .expect("wrapper h2 flow-controlled download response");
+
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(200, response.code());
+  assert_eq!(expected_body.len(), response.body().binary().len());
+  assert_eq!(&expected_body[..64], &response.body().binary()[..64]);
+  assert_eq!(
+    &expected_body[expected_body.len() - 64..],
+    &response.body().binary()[response.body().binary().len() - 64..]
+  );
+  assert!(
+    expected_body.as_slice() == response.body().binary(),
+    "flow-controlled response body bytes differ"
+  );
+  assert_eq!(
+    Some(&"response-trailer".to_string()),
+    response.trailer_value("x-flow-control")
+  );
+  assert_eq!(
+    Some(&"window-updated".to_string()),
+    response.trailer_value("X-RESPONSE-CHECKSUM")
+  );
+  assert!(response.header_value("Trailer").is_none());
+  assert!(response.header_value("X-Flow-Control").is_none());
 
   handle.join().expect("server thread");
 }
