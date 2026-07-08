@@ -138,19 +138,26 @@ impl<'a> PriorKnowledgeClient<'a> {
       return Err(error::url_bad_scheme(url));
     }
 
+    let local_settings = LocalSettings::from_config(self.request.origin().config())?;
     let mut stream = connect_tcp_stream(addr(&url)?, self.request.origin().config())?;
-    write_connection_preface(&mut stream)?;
-    let mut peer_settings = read_settings_and_ack(&mut stream)?;
-    reject_goaway_before_opening_request_stream(&mut stream, &mut peer_settings)?;
+    write_connection_preface(&mut stream, local_settings)?;
+    let mut peer_settings = read_settings_and_ack(&mut stream, local_settings)?;
+    reject_goaway_before_opening_request_stream(&mut stream, &mut peer_settings, local_settings)?;
     let response = match write_request(
       &mut stream,
       &self.request,
       &url,
       self.request.url().clone(),
       peer_settings,
+      local_settings,
     )? {
       Some(response) => response,
-      None => read_single_stream_response(&mut stream, self.request.url().clone(), !is_head)?,
+      None => read_single_stream_response(
+        &mut stream,
+        self.request.url().clone(),
+        !is_head,
+        local_settings,
+      )?,
     };
     self.request.origin_mut().closed_set(true);
     Ok(response)
@@ -228,9 +235,10 @@ where
 fn reject_goaway_before_opening_request_stream(
   stream: &mut TcpStream,
   peer_settings: &mut PeerSettings,
+  local_settings: LocalSettings,
 ) -> error::Result<()> {
   while pending_frame_available(stream)? {
-    let frame = read_frame(stream)?;
+    let frame = read_frame(stream, local_settings)?;
     match (frame.frame_type, frame.stream_id) {
       (FRAME_GOAWAY, _) => {
         if goaway_last_stream_id(&frame)? < STREAM_ID {
@@ -355,15 +363,22 @@ fn timeout_duration(name: &'static str, millis: u64) -> error::Result<Duration> 
   Ok(Duration::from_millis(millis))
 }
 
-fn write_connection_preface(stream: &mut TcpStream) -> error::Result<()> {
+fn write_connection_preface(
+  stream: &mut TcpStream,
+  local_settings: LocalSettings,
+) -> error::Result<()> {
   stream.write_all(CLIENT_PREFACE).map_err(error::request)?;
-  write_frame(stream, FRAME_SETTINGS, 0, 0, &[])?;
+  let payload = local_settings.settings_payload();
+  write_frame(stream, FRAME_SETTINGS, 0, 0, &payload)?;
   stream.flush().map_err(error::request)
 }
 
-fn read_settings_and_ack(stream: &mut TcpStream) -> error::Result<PeerSettings> {
+fn read_settings_and_ack(
+  stream: &mut TcpStream,
+  local_settings: LocalSettings,
+) -> error::Result<PeerSettings> {
   loop {
-    let frame = read_frame(stream)?;
+    let frame = read_frame(stream, local_settings)?;
     if frame.frame_type != FRAME_SETTINGS {
       return Err(error::bad_response(
         "HTTP/2 peer did not start with a SETTINGS frame",
@@ -398,6 +413,42 @@ struct PeerSettings {
   max_frame_size: usize,
   max_frame_size_changed: bool,
   max_header_list_size: Option<usize>,
+}
+
+#[derive(Clone, Copy)]
+struct LocalSettings {
+  max_frame_size: usize,
+  max_frame_size_configured: bool,
+}
+
+impl LocalSettings {
+  fn from_config(config: &Config) -> error::Result<Self> {
+    let configured_max_frame_size = config.http2_max_frame_size();
+    let max_frame_size = configured_max_frame_size.unwrap_or(DEFAULT_MAX_FRAME_SIZE);
+    if !(DEFAULT_MAX_FRAME_SIZE..=MAX_FRAME_SIZE_LIMIT).contains(&max_frame_size) {
+      return Err(error::builder_with_message(
+        "invalid HTTP/2 SETTINGS_MAX_FRAME_SIZE value",
+      ));
+    }
+    Ok(Self {
+      max_frame_size,
+      max_frame_size_configured: configured_max_frame_size.is_some(),
+    })
+  }
+
+  fn settings_payload(self) -> Vec<u8> {
+    if !self.max_frame_size_configured {
+      return Vec::new();
+    }
+    h2_setting(SETTING_MAX_FRAME_SIZE, self.max_frame_size as u32).to_vec()
+  }
+}
+
+fn h2_setting(id: u16, value: u32) -> [u8; 6] {
+  let mut setting = [0; 6];
+  setting[..2].copy_from_slice(&id.to_be_bytes());
+  setting[2..].copy_from_slice(&value.to_be_bytes());
+  setting
 }
 
 fn validate_settings_payload(payload: &[u8]) -> error::Result<PeerSettings> {
@@ -483,6 +534,7 @@ fn write_request(
   url: &Url,
   response_url: RoUrl,
   mut peer_settings: PeerSettings,
+  local_settings: LocalSettings,
 ) -> error::Result<Option<Response>> {
   if peer_settings.max_concurrent_streams == Some(0) {
     return Err(error::bad_response(
@@ -530,9 +582,14 @@ fn write_request(
     peer_settings.max_frame_size,
   )?;
   if !body.is_empty() {
-    if let Some(response) =
-      write_data_frames(stream, body, &mut peer_settings, has_trailers, response_url)?
-    {
+    if let Some(response) = write_data_frames(
+      stream,
+      body,
+      &mut peer_settings,
+      has_trailers,
+      response_url,
+      local_settings,
+    )? {
       return Ok(Some(response));
     }
   }
@@ -649,6 +706,7 @@ fn write_data_frames(
   peer_settings: &mut PeerSettings,
   has_trailers: bool,
   url: RoUrl,
+  local_settings: LocalSettings,
 ) -> error::Result<Option<Response>> {
   let mut connection_send_window = SendWindow::new();
   let mut stream_send_window =
@@ -670,6 +728,7 @@ fn write_data_frames(
         &mut current_initial_window_size,
         &mut current_max_frame_size,
         url.clone(),
+        local_settings,
       )? {
         return Ok(Some(response));
       }
@@ -704,9 +763,10 @@ fn read_until_send_window_available(
   current_initial_window_size: &mut u32,
   current_max_frame_size: &mut usize,
   url: RoUrl,
+  local_settings: LocalSettings,
 ) -> error::Result<Option<Response>> {
   loop {
-    let frame = read_frame(stream)?;
+    let frame = read_frame(stream, local_settings)?;
     match (frame.frame_type, frame.stream_id) {
       (FRAME_WINDOW_UPDATE, 0) => {
         connection_send_window.increase(window_update_increment(&frame)?)?;
@@ -760,7 +820,8 @@ fn read_until_send_window_available(
         }
       }
       (FRAME_HEADERS, STREAM_ID) | (FRAME_DATA, STREAM_ID) | (FRAME_CONTINUATION, STREAM_ID) => {
-        return read_single_stream_response_from_frame(stream, url, frame).map(Some);
+        return read_single_stream_response_from_frame(stream, url, frame, local_settings)
+          .map(Some);
       }
       _ => {}
     }
@@ -1025,16 +1086,24 @@ fn read_single_stream_response(
   stream: &mut TcpStream,
   url: RoUrl,
   include_data_payload: bool,
+  local_settings: LocalSettings,
 ) -> error::Result<Response> {
-  read_single_stream_response_with_first_frame(stream, url, None, include_data_payload)
+  read_single_stream_response_with_first_frame(
+    stream,
+    url,
+    None,
+    include_data_payload,
+    local_settings,
+  )
 }
 
 fn read_single_stream_response_from_frame(
   stream: &mut TcpStream,
   url: RoUrl,
   first_frame: Frame,
+  local_settings: LocalSettings,
 ) -> error::Result<Response> {
-  read_single_stream_response_with_first_frame(stream, url, Some(first_frame), true)
+  read_single_stream_response_with_first_frame(stream, url, Some(first_frame), true, local_settings)
 }
 
 fn read_single_stream_response_with_first_frame(
@@ -1042,6 +1111,7 @@ fn read_single_stream_response_with_first_frame(
   url: RoUrl,
   mut first_frame: Option<Frame>,
   include_data_payload: bool,
+  local_settings: LocalSettings,
 ) -> error::Result<Response> {
   let mut header_block = Vec::new();
   let mut headers = Vec::new();
@@ -1060,7 +1130,7 @@ fn read_single_stream_response_with_first_frame(
   loop {
     let frame = match first_frame.take() {
       Some(frame) => frame,
-      None => match read_frame(stream) {
+      None => match read_frame(stream, local_settings) {
         Ok(frame) => frame,
         Err(err) if pending_header_block.is_some() && is_unexpected_eof(&err) => {
           return Err(error::bad_response("incomplete HTTP/2 header block"));
@@ -1483,10 +1553,15 @@ struct Frame {
   payload: Vec<u8>,
 }
 
-fn read_frame(stream: &mut TcpStream) -> error::Result<Frame> {
+fn read_frame(stream: &mut TcpStream, local_settings: LocalSettings) -> error::Result<Frame> {
   let mut header = [0; 9];
   stream.read_exact(&mut header).map_err(error::response)?;
   let length = ((header[0] as usize) << 16) | ((header[1] as usize) << 8) | header[2] as usize;
+  if local_settings.max_frame_size_configured && length > local_settings.max_frame_size {
+    return Err(error::bad_response(
+      "HTTP/2 frame payload exceeds active max frame size",
+    ));
+  }
   let mut payload = vec![0; length];
   stream.read_exact(&mut payload).map_err(error::response)?;
   Ok(Frame {

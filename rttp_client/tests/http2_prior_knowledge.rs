@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use rttp_client::types::Header;
 use rttp_client::types::Proxy;
-use rttp_client::HttpClient;
+use rttp_client::{Config, HttpClient};
 
 const FRAME_DATA: u8 = 0x0;
 const FRAME_HEADERS: u8 = 0x1;
@@ -32,6 +32,8 @@ const SETTING_MAX_CONCURRENT_STREAMS: u16 = 0x3;
 const SETTING_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const SETTING_MAX_FRAME_SIZE: u16 = 0x5;
 const SETTING_MAX_HEADER_LIST_SIZE: u16 = 0x6;
+const DEFAULT_MAX_FRAME_SIZE: usize = 16 * 1024;
+const MAX_FRAME_SIZE_LIMIT: usize = 16_777_215;
 
 fn spawn_h2_prior_knowledge_peer() -> (SocketAddr, thread::JoinHandle<Vec<u8>>) {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
@@ -1625,6 +1627,150 @@ fn prior_knowledge_rejects_initial_settings_with_invalid_max_frame_size() {
 
   assert!(err.to_string().contains("SETTINGS_MAX_FRAME_SIZE"));
   handle.join().expect("invalid max frame size peer thread");
+}
+
+#[test]
+fn prior_knowledge_advertises_configured_legal_max_frame_size_boundaries() {
+  for max_frame_size in [DEFAULT_MAX_FRAME_SIZE, MAX_FRAME_SIZE_LIMIT] {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+    let addr = listener.local_addr().expect("h2 peer addr");
+
+    let handle = thread::spawn(move || {
+      let (mut stream, _) = listener.accept().expect("accept h2 client");
+      let mut preface = [0; 24];
+      stream
+        .read_exact(&mut preface)
+        .expect("read client preface");
+      assert_eq!(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", &preface);
+
+      let client_settings = read_frame(&mut stream);
+      assert_eq!(FRAME_SETTINGS, client_settings.frame_type);
+      assert_eq!(0, client_settings.flags);
+      assert_eq!(0, client_settings.stream_id);
+      assert_eq!(
+        Some(max_frame_size as u32),
+        h2_setting_value(&client_settings.payload, SETTING_MAX_FRAME_SIZE)
+      );
+
+      write_frame(&mut stream, FRAME_SETTINGS, 0, 0, &[]);
+      let client_settings_ack = read_frame(&mut stream);
+      assert_eq!(FRAME_SETTINGS, client_settings_ack.frame_type);
+      assert_eq!(FLAG_ACK, client_settings_ack.flags);
+      assert_eq!(0, client_settings_ack.stream_id);
+      assert!(client_settings_ack.payload.is_empty());
+
+      let request_headers = read_frame(&mut stream);
+      assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+      assert_eq!(FLAG_END_STREAM | FLAG_END_HEADERS, request_headers.flags);
+      assert_eq!(1, request_headers.stream_id);
+
+      write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+      write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+      write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"ok");
+    });
+
+    let config = Config::builder()
+      .http2_max_frame_size(max_frame_size)
+      .build();
+    let response = HttpClient::new()
+      .get()
+      .url(format!("http://{}/configured-max-frame-size", addr))
+      .config(config)
+      .emit_http2_prior_knowledge()
+      .expect("configured legal max frame size should work");
+
+    assert_eq!(200, response.code());
+    assert_eq!("ok", response.body().string().unwrap());
+    handle
+      .join()
+      .expect("configured max frame size peer thread");
+  }
+}
+
+#[test]
+fn prior_knowledge_rejects_configured_illegal_max_frame_size_boundaries_before_connecting() {
+  for max_frame_size in [DEFAULT_MAX_FRAME_SIZE - 1, MAX_FRAME_SIZE_LIMIT + 1] {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+    listener
+      .set_nonblocking(true)
+      .expect("set h2 listener nonblocking");
+    let addr = listener.local_addr().expect("h2 peer addr");
+    let config = Config::builder()
+      .http2_max_frame_size(max_frame_size)
+      .build();
+
+    let err = HttpClient::new()
+      .get()
+      .url(format!("http://{}/illegal-max-frame-size", addr))
+      .config(config)
+      .emit_http2_prior_knowledge()
+      .expect_err("illegal local SETTINGS_MAX_FRAME_SIZE must fail");
+
+    assert!(err.is_builder());
+    assert!(err.to_string().contains("SETTINGS_MAX_FRAME_SIZE"));
+    assert!(
+      listener.accept().is_err(),
+      "client must reject illegal local SETTINGS_MAX_FRAME_SIZE before connecting"
+    );
+  }
+}
+
+#[test]
+fn prior_knowledge_rejects_oversized_inbound_frame_above_configured_max_frame_size() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    let mut preface = [0; 24];
+    stream
+      .read_exact(&mut preface)
+      .expect("read client preface");
+    assert_eq!(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", &preface);
+
+    let client_settings = read_frame(&mut stream);
+    assert_eq!(
+      Some(DEFAULT_MAX_FRAME_SIZE as u32),
+      h2_setting_value(&client_settings.payload, SETTING_MAX_FRAME_SIZE)
+    );
+
+    write_frame(&mut stream, FRAME_SETTINGS, 0, 0, &[]);
+    let client_settings_ack = read_frame(&mut stream);
+    assert_eq!(FRAME_SETTINGS, client_settings_ack.frame_type);
+    assert_eq!(FLAG_ACK, client_settings_ack.flags);
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(1, request_headers.stream_id);
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(
+      &mut stream,
+      FRAME_DATA,
+      FLAG_END_STREAM,
+      1,
+      &vec![b'x'; DEFAULT_MAX_FRAME_SIZE + 1],
+    );
+  });
+
+  let config = Config::builder()
+    .http2_max_frame_size(DEFAULT_MAX_FRAME_SIZE)
+    .build();
+  let err = HttpClient::new()
+    .get()
+    .url(format!("http://{}/oversized-inbound-frame", addr))
+    .config(config)
+    .emit_http2_prior_knowledge()
+    .expect_err("oversized inbound HTTP/2 frame must fail");
+
+  assert!(
+    err
+      .to_string()
+      .contains("frame payload exceeds active max frame size"),
+    "unexpected error: {err}"
+  );
+  handle.join().expect("oversized inbound peer thread");
 }
 
 #[test]
@@ -3705,6 +3851,14 @@ fn settings_payload(identifier: u16, value: u32) -> Vec<u8> {
   payload.extend_from_slice(&identifier.to_be_bytes());
   payload.extend_from_slice(&value.to_be_bytes());
   payload
+}
+
+fn h2_setting_value(payload: &[u8], identifier: u16) -> Option<u32> {
+  payload.chunks_exact(6).find_map(|setting| {
+    let id = u16::from_be_bytes([setting[0], setting[1]]);
+    let value = u32::from_be_bytes([setting[2], setting[3], setting[4], setting[5]]);
+    (id == identifier).then_some(value)
+  })
 }
 
 fn h2_literal_new_name(name: &[u8], value: &[u8]) -> Vec<u8> {

@@ -5,7 +5,7 @@ use std::thread;
 use std::time::Duration;
 
 use rttp::server::{HttpResponse, Request};
-use rttp_client::HttpClient;
+use rttp_client::{Config, HttpClient};
 
 const H2_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 const H2_FRAME_DATA: u8 = 0x0;
@@ -26,6 +26,7 @@ const H2_SETTINGS_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const H2_SETTINGS_MAX_FRAME_SIZE: u16 = 0x5;
 const H2_SETTINGS_MAX_HEADER_LIST_SIZE: u16 = 0x6;
 const H2_DEFAULT_MAX_FRAME_SIZE: usize = 16 * 1024;
+const H2_MAX_FRAME_SIZE_LIMIT: usize = 16_777_215;
 const H2_SERVER_MAX_HEADER_LIST_SIZE: u32 = 64 * 1024;
 const H2_ERROR_REFUSED_STREAM: u32 = 0x7;
 
@@ -789,6 +790,74 @@ fn server_accepts_http2_prior_knowledge_get_and_writes_single_stream_response() 
       .map(|value| value.as_str())
   );
   assert_eq!("hello over h2", response.body().string().unwrap());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn rttp_client_h2c_max_frame_size_interoperates_with_socket2_server_matrix() {
+  let min_response_body = vec![b's'; H2_DEFAULT_MAX_FRAME_SIZE * 2 + 7];
+  let min_request_body = vec![b'c'; H2_DEFAULT_MAX_FRAME_SIZE * 2 + 11];
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+  let min_response_body_for_server = min_response_body.clone();
+  let min_request_body_for_client = min_request_body.clone();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, move |request| match request.target() {
+        "/min-split" => {
+          tx.send((
+            request.target().to_string(),
+            request.body().len(),
+            request.body().first().copied(),
+            request.body().last().copied(),
+          ))
+          .expect("send min split request details");
+          HttpResponse::ok(min_response_body_for_server.clone())
+        }
+        "/max-single" => HttpResponse::ok(vec![b'm'; H2_DEFAULT_MAX_FRAME_SIZE + 19]),
+        target => panic!("unexpected h2c target {target}"),
+      })
+      .expect("serve h2c max-frame-size matrix");
+  });
+
+  let min_response = HttpClient::new()
+    .post()
+    .url(format!("http://{}/min-split", addr))
+    .binary(min_request_body_for_client)
+    .emit_http2_prior_knowledge()
+    .expect("min legal max-frame-size h2c response");
+  assert_eq!("HTTP/2", min_response.version());
+  assert_eq!(min_response_body, min_response.body().binary());
+  assert_eq!(
+    (
+      "/min-split".to_string(),
+      min_request_body.len(),
+      Some(b'c'),
+      Some(b'c')
+    ),
+    rx.recv().expect("receive min split request")
+  );
+
+  let max_frame_config = Config::builder()
+    .http2_max_frame_size(H2_MAX_FRAME_SIZE_LIMIT)
+    .build();
+  let max_response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/max-single", addr))
+    .config(max_frame_config)
+    .emit_http2_prior_knowledge()
+    .expect("max legal max-frame-size h2c response");
+  assert_eq!("HTTP/2", max_response.version());
+  assert_eq!(
+    vec![b'm'; H2_DEFAULT_MAX_FRAME_SIZE + 19],
+    max_response.body().binary()
+  );
 
   handle.join().expect("server thread");
 }
