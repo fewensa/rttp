@@ -638,6 +638,7 @@ fn encode_request_trailers(
 ) -> error::Result<Vec<u8>> {
   let mut block = Vec::new();
   for (name, value) in trailer_fields {
+    validate_request_trailer_field(name, value)?;
     let remaining = dynamic_field_plan
       .get(*dynamic_field_position + 1..)
       .unwrap_or(&[]);
@@ -645,6 +646,67 @@ fn encode_request_trailers(
     *dynamic_field_position += 1;
   }
   Ok(block)
+}
+
+fn validate_request_trailer_field(name: &str, value: &str) -> error::Result<()> {
+  if !is_http_token(name) || !value.bytes().all(is_header_value_byte) {
+    return Err(error::builder_with_message(
+      "Invalid request trailer header",
+    ));
+  }
+  if is_forbidden_request_trailer_name(name) {
+    return Err(error::builder_with_message(
+      "Forbidden request trailer header",
+    ));
+  }
+  Ok(())
+}
+
+fn is_forbidden_request_trailer_name(name: &str) -> bool {
+  matches!(
+    name.to_ascii_lowercase().as_str(),
+    "connection"
+      | "content-length"
+      | "host"
+      | "keep-alive"
+      | "proxy-authenticate"
+      | "proxy-authorization"
+      | "proxy-connection"
+      | "te"
+      | "trailer"
+      | "transfer-encoding"
+      | "upgrade"
+  )
+}
+
+fn is_http_token(value: &str) -> bool {
+  !value.is_empty() && value.bytes().all(is_http_token_byte)
+}
+
+fn is_http_token_byte(byte: u8) -> bool {
+  byte.is_ascii_alphanumeric()
+    || matches!(
+      byte,
+      b'!'
+        | b'#'
+        | b'$'
+        | b'%'
+        | b'&'
+        | b'\''
+        | b'*'
+        | b'+'
+        | b'-'
+        | b'.'
+        | b'^'
+        | b'_'
+        | b'`'
+        | b'|'
+        | b'~'
+    )
+}
+
+fn is_header_value_byte(byte: u8) -> bool {
+  byte == b'\t' || byte == b' ' || (0x21..=0x7e).contains(&byte) || byte >= 0x80
 }
 
 fn encode_method(block: &mut Vec<u8>, method: &str) -> error::Result<()> {
@@ -1843,6 +1905,81 @@ fn is_forbidden_response_trailer_name(name: &str) -> bool {
       | "transfer-encoding"
       | "upgrade"
   )
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn encode_request_trailers_rejects_pseudo_headers() {
+    let mut hpack = RequestHpackEncoder::new(DEFAULT_HPACK_DYNAMIC_TABLE_SIZE);
+    let mut dynamic_field_position = 0;
+    let trailer_fields = vec![(":path".to_string(), "/hidden".to_string())];
+
+    let err = encode_request_trailers(
+      &trailer_fields,
+      &trailer_fields,
+      &mut dynamic_field_position,
+      &mut hpack,
+    )
+    .expect_err("request trailer pseudo-header must be rejected");
+
+    assert!(err.to_string().contains("Invalid request trailer header"));
+  }
+
+  #[test]
+  fn encode_request_trailers_rejects_http1_routing_and_framing_fields() {
+    for name in [
+      "connection",
+      "content-length",
+      "host",
+      "keep-alive",
+      "proxy-connection",
+      "te",
+      "trailer",
+      "transfer-encoding",
+      "upgrade",
+    ] {
+      let mut hpack = RequestHpackEncoder::new(DEFAULT_HPACK_DYNAMIC_TABLE_SIZE);
+      let mut dynamic_field_position = 0;
+      let trailer_fields = vec![(name.to_string(), "forbidden".to_string())];
+
+      let err = encode_request_trailers(
+        &trailer_fields,
+        &trailer_fields,
+        &mut dynamic_field_position,
+        &mut hpack,
+      )
+      .expect_err("forbidden request trailer must be rejected");
+
+      assert!(
+        err.to_string().contains("Forbidden request trailer header"),
+        "unexpected error for {name}: {err}"
+      );
+    }
+  }
+
+  #[test]
+  fn encode_request_trailers_preserves_repeated_application_fields() {
+    let mut hpack = RequestHpackEncoder::new(DEFAULT_HPACK_DYNAMIC_TABLE_SIZE);
+    let mut dynamic_field_position = 0;
+    let trailer_fields = vec![
+      ("x-repeat".to_string(), "one".to_string()),
+      ("x-repeat".to_string(), "two".to_string()),
+    ];
+
+    let block = encode_request_trailers(
+      &trailer_fields,
+      &trailer_fields,
+      &mut dynamic_field_position,
+      &mut hpack,
+    )
+    .expect("repeated application request trailers must be encoded");
+
+    assert!(!block.is_empty());
+    assert_eq!(2, dynamic_field_position);
+  }
 }
 
 fn static_header(index: usize) -> error::Result<(&'static str, &'static str)> {
