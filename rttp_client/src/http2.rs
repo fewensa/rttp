@@ -94,14 +94,15 @@ impl<'a> PriorKnowledgeClient<'a> {
 
   pub fn get(mut self) -> error::Result<Response> {
     let method = self.request.origin().method();
-    if method.eq_ignore_ascii_case("GET") && self.request.body().is_some() {
+    let is_head = method.eq_ignore_ascii_case("HEAD");
+    if (method.eq_ignore_ascii_case("GET") || is_head) && self.request.body().is_some() {
       return Err(error::builder_with_message(
-        "HTTP/2 prior-knowledge GET cannot send a request body",
+        "HTTP/2 prior-knowledge GET or HEAD cannot send a request body",
       ));
     }
     if !is_supported_request_method(method) {
       return Err(error::builder_with_message(
-        "HTTP/2 prior-knowledge client supports GET and buffered POST, PUT, or PATCH",
+        "HTTP/2 prior-knowledge client supports GET, HEAD, and buffered POST, PUT, or PATCH",
       ));
     }
 
@@ -121,7 +122,7 @@ impl<'a> PriorKnowledgeClient<'a> {
       peer_settings,
     )? {
       Some(response) => response,
-      None => read_single_stream_response(&mut stream, self.request.url().clone())?,
+      None => read_single_stream_response(&mut stream, self.request.url().clone(), !is_head)?,
     };
     self.request.origin_mut().closed_set(true);
     Ok(response)
@@ -130,6 +131,7 @@ impl<'a> PriorKnowledgeClient<'a> {
 
 fn is_supported_request_method(method: &str) -> bool {
   method.eq_ignore_ascii_case("GET")
+    || method.eq_ignore_ascii_case("HEAD")
     || method.eq_ignore_ascii_case("POST")
     || method.eq_ignore_ascii_case("PUT")
     || method.eq_ignore_ascii_case("PATCH")
@@ -698,8 +700,12 @@ struct PendingHeaderBlock {
   end_stream: bool,
 }
 
-fn read_single_stream_response(stream: &mut TcpStream, url: RoUrl) -> error::Result<Response> {
-  read_single_stream_response_with_first_frame(stream, url, None)
+fn read_single_stream_response(
+  stream: &mut TcpStream,
+  url: RoUrl,
+  include_data_payload: bool,
+) -> error::Result<Response> {
+  read_single_stream_response_with_first_frame(stream, url, None, include_data_payload)
 }
 
 fn read_single_stream_response_from_frame(
@@ -707,13 +713,14 @@ fn read_single_stream_response_from_frame(
   url: RoUrl,
   first_frame: Frame,
 ) -> error::Result<Response> {
-  read_single_stream_response_with_first_frame(stream, url, Some(first_frame))
+  read_single_stream_response_with_first_frame(stream, url, Some(first_frame), true)
 }
 
 fn read_single_stream_response_with_first_frame(
   stream: &mut TcpStream,
   url: RoUrl,
   mut first_frame: Option<Frame>,
+  include_data_payload: bool,
 ) -> error::Result<Response> {
   let mut header_block = Vec::new();
   let mut headers = Vec::new();
@@ -810,7 +817,9 @@ fn read_single_stream_response_with_first_frame(
         let end_stream = frame.flags & FLAG_END_STREAM == FLAG_END_STREAM;
         let data = data_payload(&frame)?;
         response_body_started = true;
-        body.extend_from_slice(data);
+        if include_data_payload {
+          body.extend_from_slice(data);
+        }
         let stream_update = stream_receive_window.consume(frame.payload.len())?;
         let connection_update = connection_receive_window.consume(frame.payload.len())?;
         if !end_stream && (stream_update > 0 || connection_update > 0) {

@@ -113,6 +113,54 @@ fn prior_knowledge_get_sends_h2_handshake_and_reads_single_response_stream() {
 }
 
 #[test]
+fn prior_knowledge_head_sends_no_request_body_and_ignores_response_data_payload() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    stream
+      .set_read_timeout(Some(Duration::from_millis(200)))
+      .expect("set h2 peer read timeout");
+    complete_h2_handshake_without_request(&mut stream);
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_STREAM | FLAG_END_HEADERS, request_headers.flags);
+    assert_eq!(1, request_headers.stream_id);
+    assert_eq!(
+      b"HEAD",
+      find_header_value(&request_headers.payload, b":method")
+        .expect("request method")
+        .value
+        .as_slice()
+    );
+    assert!(
+      try_read_frame(&mut stream)
+        .expect("check for unexpected request body")
+        .is_none(),
+      "HEAD request must not send DATA frames"
+    );
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"not payload");
+  });
+
+  let response = HttpClient::new()
+    .head()
+    .url(format!("http://{}/metadata", addr))
+    .emit_http2_prior_knowledge()
+    .expect("h2 HEAD response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(b"", response.body().binary());
+
+  handle.join().expect("h2 HEAD peer thread");
+}
+
+#[test]
 fn prior_knowledge_request_literals_use_huffman_only_when_smaller() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");
