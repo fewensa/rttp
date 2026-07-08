@@ -608,10 +608,14 @@ impl HttpServer {
           }
         }
         (HTTP2_FRAME_RST_STREAM, id) if id != 0 => {
+          validate_http2_rst_stream_frame(id, &frame.payload)?;
           streams.retain(|request_stream| request_stream.stream_id != id);
           if !reset_streams.contains(&id) {
             reset_streams.push(id);
           }
+        }
+        (HTTP2_FRAME_RST_STREAM, id) => {
+          validate_http2_rst_stream_frame(id, &frame.payload)?;
         }
         (HTTP2_FRAME_GOAWAY, 0) => break,
         (HTTP2_FRAME_WINDOW_UPDATE, _) => {
@@ -1050,6 +1054,16 @@ fn validate_http2_priority_frame(stream_id: u32, payload: &[u8]) -> io::Result<(
     return Err(io::Error::new(
       io::ErrorKind::InvalidData,
       "invalid HTTP/2 PRIORITY frame",
+    ));
+  }
+  Ok(())
+}
+
+fn validate_http2_rst_stream_frame(stream_id: u32, payload: &[u8]) -> io::Result<()> {
+  if stream_id == 0 || payload.len() != 4 {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "invalid HTTP/2 RST_STREAM frame",
     ));
   }
   Ok(())
@@ -2195,6 +2209,7 @@ fn read_http2_response_flow_control_frame(
         }
       }
       (HTTP2_FRAME_RST_STREAM, id) if id != 0 => {
+        validate_http2_rst_stream_frame(id, &frame.payload)?;
         flow_control
           .streams
           .retain(|request_stream| request_stream.stream_id != id);
@@ -2204,6 +2219,9 @@ fn read_http2_response_flow_control_frame(
         if id == response_stream_id {
           return Ok(Http2ResponseFlowControlRead::ResponseReset);
         }
+      }
+      (HTTP2_FRAME_RST_STREAM, id) => {
+        validate_http2_rst_stream_frame(id, &frame.payload)?;
       }
       (_, 0) => {}
       _ => {}
