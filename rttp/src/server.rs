@@ -407,8 +407,11 @@ impl HttpServer {
     let mut request_header_decoder = Http2HeaderDecoder::new(HTTP2_DEFAULT_HEADER_TABLE_SIZE);
     let mut served = 0;
     let mut last_processed_stream_id = 0;
+    let mut accepted_stream_count = 0;
+    let mut last_accepted_stream_id = 0;
+    let mut graceful_goaway_sent = false;
 
-    while served < request_limit {
+    while served < request_limit && (!graceful_goaway_sent || !streams.is_empty()) {
       let frame = match self.normalize_connection_error(read_http2_frame(&mut stream)) {
         Ok(frame) => frame,
         Err(err)
@@ -502,10 +505,13 @@ impl HttpServer {
         (HTTP2_FRAME_HEADERS, id) if id != 0 => {
           let header_block_fragment =
             http2_headers_payload_to_header_block_fragment(&frame.payload, frame.flags)?;
+          let is_new_stream = streams
+            .iter()
+            .all(|request_stream| request_stream.stream_id != id);
           if streams
             .iter()
             .all(|request_stream| request_stream.stream_id != id)
-            && served.saturating_add(streams.len()) >= request_limit
+            && (graceful_goaway_sent || served.saturating_add(streams.len()) >= request_limit)
           {
             self.normalize_connection_error(write_http2_frame(
               &mut stream,
@@ -520,41 +526,47 @@ impl HttpServer {
             }
             continue;
           }
-          let request_stream = http2_request_stream(
-            &mut streams,
-            &mut stream_ids,
-            id,
-            peer_initial_stream_send_window,
-          )?;
-          if request_stream.end_stream {
-            return Err(io::Error::new(
-              io::ErrorKind::InvalidData,
-              "HTTP/2 HEADERS frame arrived after END_STREAM",
-            ));
-          }
-          let header_block_kind = if request_stream.decoded_headers.is_some() {
-            if frame.flags & HTTP2_FLAG_END_STREAM != HTTP2_FLAG_END_STREAM {
+          {
+            let request_stream = http2_request_stream(
+              &mut streams,
+              &mut stream_ids,
+              id,
+              peer_initial_stream_send_window,
+            )?;
+            if request_stream.end_stream {
               return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "HTTP/2 request trailers must end the stream",
+                "HTTP/2 HEADERS frame arrived after END_STREAM",
               ));
             }
-            Http2HeaderBlockKind::RequestTrailers
-          } else {
-            Http2HeaderBlockKind::RequestHeaders
-          };
-          request_stream.header_block_kind = Some(header_block_kind);
-          request_stream
-            .header_block
-            .extend_from_slice(header_block_fragment);
-          if frame.flags & HTTP2_FLAG_END_HEADERS == HTTP2_FLAG_END_HEADERS {
+            let header_block_kind = if request_stream.decoded_headers.is_some() {
+              if frame.flags & HTTP2_FLAG_END_STREAM != HTTP2_FLAG_END_STREAM {
+                return Err(io::Error::new(
+                  io::ErrorKind::InvalidData,
+                  "HTTP/2 request trailers must end the stream",
+                ));
+              }
+              Http2HeaderBlockKind::RequestTrailers
+            } else {
+              Http2HeaderBlockKind::RequestHeaders
+            };
+            request_stream.header_block_kind = Some(header_block_kind);
             request_stream
-              .finish_header_block(&mut request_header_decoder, HTTP2_MAX_HEADER_LIST_SIZE)?;
-          } else {
-            request_stream.in_header_continuation = true;
+              .header_block
+              .extend_from_slice(header_block_fragment);
+            if frame.flags & HTTP2_FLAG_END_HEADERS == HTTP2_FLAG_END_HEADERS {
+              request_stream
+                .finish_header_block(&mut request_header_decoder, HTTP2_MAX_HEADER_LIST_SIZE)?;
+            } else {
+              request_stream.in_header_continuation = true;
+            }
+            if frame.flags & HTTP2_FLAG_END_STREAM == HTTP2_FLAG_END_STREAM {
+              request_stream.end_stream = true;
+            }
           }
-          if frame.flags & HTTP2_FLAG_END_STREAM == HTTP2_FLAG_END_STREAM {
-            request_stream.end_stream = true;
+          if is_new_stream {
+            accepted_stream_count += 1;
+            last_accepted_stream_id = id;
           }
         }
         (HTTP2_FRAME_CONTINUATION, id) if id != 0 => {
@@ -690,10 +702,23 @@ impl HttpServer {
         ))?;
         last_processed_stream_id = stream_id;
         served += 1;
+        if !graceful_goaway_sent
+          && accepted_stream_count >= request_limit
+          && !streams.is_empty()
+          && last_accepted_stream_id != 0
+        {
+          self.normalize_connection_error(write_http2_goaway(
+            &mut stream,
+            last_accepted_stream_id,
+            HTTP2_ERROR_NO_ERROR,
+          ))?;
+          self.normalize_connection_error(stream.flush())?;
+          graceful_goaway_sent = true;
+        }
       }
     }
 
-    if served == request_limit && last_processed_stream_id != 0 {
+    if served == request_limit && last_processed_stream_id != 0 && !graceful_goaway_sent {
       self.normalize_connection_error(write_http2_goaway(
         &mut stream,
         last_processed_stream_id,
