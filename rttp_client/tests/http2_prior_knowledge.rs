@@ -245,6 +245,33 @@ fn prior_knowledge_delete_with_body_is_rejected_before_connecting() {
 }
 
 #[test]
+fn prior_knowledge_connect_is_rejected_before_connecting() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  listener
+    .set_nonblocking(true)
+    .expect("set listener nonblocking");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let err = HttpClient::new()
+    .method("CONNECT")
+    .url(format!("http://{}/tunnel", addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("CONNECT must be rejected");
+
+  assert!(err.is_builder());
+  assert!(
+    err
+      .to_string()
+      .contains("HTTP/2 prior-knowledge CONNECT/proxy tunneling is unsupported"),
+    "unexpected error: {err}"
+  );
+  assert!(
+    matches!(listener.accept(), Err(ref err) if err.kind() == io::ErrorKind::WouldBlock),
+    "prior-knowledge CONNECT must not open a server connection"
+  );
+}
+
+#[test]
 fn prior_knowledge_options_without_body_sends_headers_end_stream() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");

@@ -98,6 +98,11 @@ impl<'a> PriorKnowledgeClient<'a> {
     let is_delete = method.eq_ignore_ascii_case("DELETE");
     let is_options = method.eq_ignore_ascii_case("OPTIONS");
     let is_trace = method.eq_ignore_ascii_case("TRACE");
+    if method.eq_ignore_ascii_case("CONNECT") {
+      return Err(error::builder_with_message(
+        "HTTP/2 prior-knowledge CONNECT/proxy tunneling is unsupported",
+      ));
+    }
     if (method.eq_ignore_ascii_case("GET") || is_head) && self.request.body().is_some() {
       return Err(error::builder_with_message(
         "HTTP/2 prior-knowledge GET or HEAD cannot send a request body",
