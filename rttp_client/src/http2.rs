@@ -518,7 +518,13 @@ fn read_until_send_window_available(
         reject_push_promise_frame(&frame)?;
       }
       (FRAME_RST_STREAM, STREAM_ID) => {
-        return Err(error::bad_response("HTTP/2 stream received RST_STREAM"));
+        return Err(error::bad_response(format!(
+          "HTTP/2 stream received RST_STREAM error code {}",
+          rst_stream_error_code(&frame)?
+        )));
+      }
+      (FRAME_RST_STREAM, _) => {
+        rst_stream_error_code(&frame)?;
       }
       (FRAME_PING, 0) => {
         if frame.payload.len() != 8 {
@@ -887,7 +893,13 @@ fn read_single_stream_response_with_first_frame(
         reject_push_promise_frame(&frame)?;
       }
       (FRAME_RST_STREAM, STREAM_ID) => {
-        return Err(error::bad_response("HTTP/2 stream received RST_STREAM"));
+        return Err(error::bad_response(format!(
+          "HTTP/2 stream received RST_STREAM error code {}",
+          rst_stream_error_code(&frame)?
+        )));
+      }
+      (FRAME_RST_STREAM, _) => {
+        rst_stream_error_code(&frame)?;
       }
       (FRAME_PING, 0) => {
         if frame.payload.len() != 8 {
@@ -1059,6 +1071,18 @@ fn reject_push_promise_frame(frame: &Frame) -> error::Result<()> {
   Err(error::bad_response(
     "unsupported HTTP/2 PUSH_PROMISE server push",
   ))
+}
+
+fn rst_stream_error_code(frame: &Frame) -> error::Result<u32> {
+  if frame.stream_id == 0 || frame.payload.len() != 4 {
+    return Err(error::bad_response("invalid HTTP/2 RST_STREAM frame"));
+  }
+  Ok(u32::from_be_bytes([
+    frame.payload[0],
+    frame.payload[1],
+    frame.payload[2],
+    frame.payload[3],
+  ]))
 }
 
 fn data_payload(frame: &Frame) -> error::Result<&[u8]> {
