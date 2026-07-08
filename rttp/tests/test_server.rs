@@ -21,8 +21,10 @@ const H2_FRAME_CONTINUATION: u8 = 0x9;
 const H2_FLAG_END_STREAM: u8 = 0x1;
 const H2_FLAG_ACK: u8 = 0x1;
 const H2_FLAG_END_HEADERS: u8 = 0x4;
+const H2_SETTINGS_MAX_CONCURRENT_STREAMS: u16 = 0x3;
 const H2_SETTINGS_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const H2_SETTINGS_MAX_FRAME_SIZE: u16 = 0x5;
+const H2_ERROR_PROTOCOL_ERROR: u32 = 0x1;
 
 #[derive(Debug)]
 struct H2Frame {
@@ -125,6 +127,27 @@ fn h2_goaway_last_stream_id(frame: &H2Frame) -> u32 {
     u32::from_be_bytes(frame.payload[4..8].try_into().unwrap())
   );
   u32::from_be_bytes(frame.payload[0..4].try_into().unwrap()) & 0x7fff_ffff
+}
+
+fn h2_goaway_error_code(frame: &H2Frame) -> u32 {
+  assert_eq!(H2_FRAME_GOAWAY, frame.frame_type);
+  assert_eq!(0, frame.flags);
+  assert_eq!(0, frame.stream_id);
+  assert_eq!(8, frame.payload.len());
+  u32::from_be_bytes(frame.payload[4..8].try_into().unwrap())
+}
+
+fn h2_setting_value(frame: &H2Frame, setting_id: u16) -> Option<u32> {
+  assert_eq!(H2_FRAME_SETTINGS, frame.frame_type);
+  assert_eq!(0, frame.flags);
+  assert_eq!(0, frame.stream_id);
+  assert_eq!(0, frame.payload.len() % 6);
+
+  frame.payload.chunks_exact(6).find_map(|setting| {
+    let id = u16::from_be_bytes(setting[..2].try_into().unwrap());
+    let value = u32::from_be_bytes(setting[2..].try_into().unwrap());
+    (id == setting_id).then_some(value)
+  })
 }
 
 fn h2_literal_indexed_name(name_index: u8, value: &[u8]) -> Vec<u8> {
@@ -337,6 +360,10 @@ fn complete_h2_server_handshake(stream: &mut TcpStream) {
 }
 
 fn complete_h2_server_handshake_with_settings(stream: &mut TcpStream, payload: &[u8]) {
+  let _ = read_h2_server_settings_during_handshake(stream, payload);
+}
+
+fn read_h2_server_settings_during_handshake(stream: &mut TcpStream, payload: &[u8]) -> H2Frame {
   stream.write_all(H2_PREFACE).expect("write h2 preface");
   write_h2_frame(stream, H2_FRAME_SETTINGS, 0, 0, payload);
 
@@ -351,6 +378,7 @@ fn complete_h2_server_handshake_with_settings(stream: &mut TcpStream, payload: &
   assert_eq!(0, settings_ack.stream_id);
 
   write_h2_frame(stream, H2_FRAME_SETTINGS, H2_FLAG_ACK, 0, &[]);
+  settings
 }
 
 fn assert_h2_header_block_split(
@@ -3411,6 +3439,36 @@ fn server_rejects_http2_prior_knowledge_pseudo_header_after_regular_header() {
 }
 
 #[test]
+fn server_advertises_bounded_http2_prior_knowledge_concurrent_stream_limit() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |_| HttpResponse::ok("unused"))
+      .expect_err("client closes before any h2 request")
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  let settings = read_h2_server_settings_during_handshake(&mut stream, &[]);
+  assert_eq!(
+    Some(2),
+    h2_setting_value(&settings, H2_SETTINGS_MAX_CONCURRENT_STREAMS)
+  );
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown h2 write");
+
+  assert_eq!(
+    ErrorKind::UnexpectedEof,
+    handle.join().expect("server thread").kind()
+  );
+}
+
+#[test]
 fn server_handles_multiple_interleaved_http2_streams_on_one_connection() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
@@ -3476,6 +3534,125 @@ fn server_handles_multiple_interleaved_http2_streams_on_one_connection() {
   assert!(response_bodies.contains(&"response for /second".to_string()));
 
   handle.join().expect("server thread");
+}
+
+#[test]
+fn server_allows_http2_prior_knowledge_interleaving_up_to_advertised_stream_limit() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        tx.send(request.target().to_string())
+          .expect("send h2 target");
+        HttpResponse::ok(format!("response for {}", request.target()))
+      })
+      .expect("serve bounded h2 requests");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  let settings = read_h2_server_settings_during_handshake(&mut stream, &[]);
+  assert_eq!(
+    Some(2),
+    h2_setting_value(&settings, H2_SETTINGS_MAX_CONCURRENT_STREAMS)
+  );
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &h2_post_headers(b"/first", addr.to_string().as_bytes()),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    3,
+    &h2_post_headers(b"/second", addr.to_string().as_bytes()),
+  );
+  write_h2_frame(&mut stream, H2_FRAME_DATA, H2_FLAG_END_STREAM, 3, b"two");
+  write_h2_frame(&mut stream, H2_FRAME_DATA, H2_FLAG_END_STREAM, 1, b"one");
+
+  let mut response_streams = Vec::new();
+  while response_streams.len() < 2 {
+    let frame = read_h2_frame(&mut stream);
+    if frame.frame_type == H2_FRAME_DATA && frame.flags & H2_FLAG_END_STREAM == H2_FLAG_END_STREAM {
+      response_streams.push(frame.stream_id);
+    }
+  }
+
+  assert_eq!(
+    vec!["/second", "/first"],
+    vec![
+      rx.recv().expect("first h2 target"),
+      rx.recv().expect("second h2 target"),
+    ]
+  );
+  assert!(response_streams.contains(&1));
+  assert!(response_streams.contains(&3));
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_streams_above_active_limit_before_handler() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.serve_requests(2, |request| {
+      tx.send(request.target().to_string())
+        .expect("send unexpected h2 target");
+      HttpResponse::ok("unexpected")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &h2_post_headers(b"/first", addr.to_string().as_bytes()),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    3,
+    &h2_post_headers(b"/second", addr.to_string().as_bytes()),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    5,
+    &h2_get_headers(b"/over-limit", addr.to_string().as_bytes()),
+  );
+
+  let goaway = read_h2_frame(&mut stream);
+  assert_eq!(H2_ERROR_PROTOCOL_ERROR, h2_goaway_error_code(&goaway));
+
+  let error = handle
+    .join()
+    .expect("server thread")
+    .expect_err("over-limit h2 stream should reject connection");
+  assert_eq!(ErrorKind::InvalidData, error.kind());
+  assert!(rx.try_recv().is_err());
 }
 
 #[test]
