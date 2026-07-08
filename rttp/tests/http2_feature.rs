@@ -1055,6 +1055,73 @@ fn wrapper_http2_prior_knowledge_dynamic_request_fields_reach_socket2_server_dec
 }
 
 #[test]
+fn rttp_client_http2_prior_knowledge_dynamic_request_fields_reach_rttp_server_decoded() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.method().to_string(),
+          request.version().to_string(),
+          request.target().to_string(),
+          request.header("x-repeat").map(str::to_string),
+          request.header("x-client-only").map(str::to_string),
+          request.trailer("x-repeat").map(str::to_string),
+          request.trailer("x-client-only").map(str::to_string),
+          request.trailers().to_vec(),
+        ))
+        .expect("send direct client dynamic h2 request fields");
+        HttpResponse::ok("decoded direct client dynamic request fields")
+      })
+      .expect("serve direct client dynamic h2 request fields");
+  });
+
+  let response = rttp_client::HttpClient::new()
+    .post()
+    .url(format!("http://{}/direct-dynamic-request-fields", addr))
+    .header(("X-Repeat", "same-value"))
+    .header(("X-Client-Only", "header-value"))
+    .trailer(("X-Repeat", "same-value"))
+    .expect("configure repeated direct client trailer")
+    .trailer(("X-Client-Only", "trailer-value"))
+    .expect("configure direct client-only trailer")
+    .raw("direct dynamic request body")
+    .emit_http2_prior_knowledge()
+    .expect("direct client h2 response after dynamic request fields");
+
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(
+    "decoded direct client dynamic request fields",
+    response.body().string().unwrap()
+  );
+  assert_eq!(
+    (
+      "POST".to_string(),
+      "HTTP/2".to_string(),
+      "/direct-dynamic-request-fields".to_string(),
+      Some("same-value".to_string()),
+      Some("header-value".to_string()),
+      Some("same-value".to_string()),
+      Some("trailer-value".to_string()),
+      vec![
+        ("x-repeat".to_string(), "same-value".to_string()),
+        ("x-client-only".to_string(), "trailer-value".to_string()),
+      ],
+    ),
+    rx.recv()
+      .expect("receive direct client dynamic h2 request fields")
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn wrapper_http2_prior_knowledge_large_huffman_request_header_reaches_socket2_server_decoded() {
   let server = rttp::Http::server("127.0.0.1:0")
     .expect("bind server")
@@ -1345,6 +1412,61 @@ fn wrapper_http2_prior_knowledge_decodes_dynamic_response_fields_from_socket2_se
   );
   assert!(response.header_value("Trailer").is_none());
   assert!(response.header_value("X-Dynamic-Trailer").is_none());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn rttp_client_http2_prior_knowledge_decodes_rttp_server_dynamic_response_eviction() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let large_value = "v".repeat(4020);
+  let expected_large_value = large_value.clone();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(move |_| {
+        HttpResponse::ok("decoded direct client dynamic response eviction")
+          .header("X-Evict-Small", "small")
+          .header("X-Evict-Large", &large_value)
+          .header("X-Evict-Large", &large_value)
+          .header("X-Evict-Small", "small")
+          .header("Trailer", "X-Evict-Trailer")
+          .trailer("X-Evict-Trailer", "trailer-repeat")
+          .trailer("X-Evict-Trailer", "trailer-repeat")
+      })
+      .expect("serve direct client dynamic h2 response eviction");
+  });
+
+  let response = rttp_client::HttpClient::new()
+    .get()
+    .url(format!("http://{}/direct-dynamic-response-eviction", addr))
+    .emit_http2_prior_knowledge()
+    .expect("direct client h2 response with dynamic response eviction");
+
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(200, response.code());
+  assert_eq!(
+    "decoded direct client dynamic response eviction",
+    response.body().string().unwrap()
+  );
+  assert_eq!(
+    vec![&"small".to_string(), &"small".to_string()],
+    response.header_values("X-Evict-Small")
+  );
+  assert_eq!(
+    vec![&expected_large_value, &expected_large_value],
+    response.header_values("X-Evict-Large")
+  );
+  assert_eq!(
+    vec![&"trailer-repeat".to_string(), &"trailer-repeat".to_string()],
+    response.trailer_values("X-Evict-Trailer")
+  );
+  assert!(response.header_value("Trailer").is_none());
+  assert!(response.header_value("X-Evict-Trailer").is_none());
 
   handle.join().expect("server thread");
 }

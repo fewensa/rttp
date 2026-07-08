@@ -30,9 +30,11 @@ With the `http2` feature enabled, `emit_http2_prior_knowledge` sends a minimal
 prior-knowledge h2c request over a direct socket2 TCP connection. It supports
 GET and buffered POST, PUT, or PATCH requests, including non-empty buffered
 request bodies as DATA frames, HPACK static Huffman strings, and large header
-blocks via CONTINUATION frames, and it decodes incoming padded HEADERS, DATA,
-and trailer frames without exposing padding bytes. TLS ALPN, proxy tunneling,
-proxy h2, HPACK dynamic tables, and full HTTP/2 features such as general
+blocks via CONTINUATION frames. It uses HPACK dynamic entries for repeated
+request header and trailer fields within the peer's advertised table size, and
+it decodes response dynamic table entries and table-size updates from incoming
+padded HEADERS, DATA, and trailer frames without exposing padding bytes. TLS
+ALPN, proxy tunneling, proxy h2, and full HTTP/2 features such as general
 multiplexing and priority scheduling are not part of that client path.
 
 ```rust,no_run
