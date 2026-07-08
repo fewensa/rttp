@@ -107,6 +107,15 @@ impl ConfigBuilder {
     self.config.verify_ssl_cert = verify_ssl_cert;
     self
   }
+  /// Configure the local h2c `SETTINGS_MAX_FRAME_SIZE` value.
+  ///
+  /// This applies only to the bounded prior-knowledge h2c client path. Values
+  /// must be in the legal HTTP/2 range of 16,384 through 16,777,215 bytes; an
+  /// out-of-range value is rejected before a socket is opened. When set, the
+  /// value is advertised to the peer and inbound frame payloads above that
+  /// active local limit are rejected. Outbound request HEADERS, DATA, and
+  /// trailing HEADERS are still split to the peer's active
+  /// `SETTINGS_MAX_FRAME_SIZE`.
   pub fn http2_max_frame_size(&mut self, max_frame_size: usize) -> &mut Self {
     self.config.http2_max_frame_size = Some(max_frame_size);
     self
