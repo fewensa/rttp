@@ -472,6 +472,63 @@ fn assert_malformed_settings_rejected_before_handler(
   assert!(rx.try_recv().is_err(), "handler must not be called");
 }
 
+fn assert_connect_protocol_settings_accepted(subsequent: bool) {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        assert_eq!("HTTP/2", request.version());
+        assert_eq!("GET", request.method());
+        assert_eq!("/settings", request.target());
+        HttpResponse::ok("connect settings ignored")
+      })
+      .expect("serve h2 request after connect settings")
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set client read timeout");
+  if subsequent {
+    complete_h2_server_handshake_with_settings(&mut stream, &[]);
+    write_h2_frame(
+      &mut stream,
+      H2_FRAME_SETTINGS,
+      0,
+      0,
+      &h2_setting(H2_SETTINGS_ENABLE_CONNECT_PROTOCOL, 1),
+    );
+    let settings_ack = read_h2_frame(&mut stream);
+    assert_eq!(H2_FRAME_SETTINGS, settings_ack.frame_type);
+    assert_eq!(H2_FLAG_ACK, settings_ack.flags);
+    assert_eq!(0, settings_ack.stream_id);
+  } else {
+    complete_h2_server_handshake_with_settings(
+      &mut stream,
+      &h2_setting(H2_SETTINGS_ENABLE_CONNECT_PROTOCOL, 1),
+    );
+  }
+  write_h2_get_request(&mut stream, addr.to_string().as_bytes()).expect("write h2 request");
+
+  let response_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(1, response_headers.stream_id);
+  let response_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
+  assert_eq!(
+    b"connect settings ignored",
+    response_body.payload.as_slice()
+  );
+
+  handle.join().expect("server thread");
+}
+
 fn spawn_h2_peer_sending_ping_before_response() -> (SocketAddr, thread::JoinHandle<()>) {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");
@@ -2037,12 +2094,9 @@ fn prior_knowledge_server_rejects_initial_settings_with_invalid_initial_window_s
 }
 
 #[test]
-fn h2c_extended_connect_settings_metadata_rejects_before_handler() {
-  assert_malformed_settings_rejected_before_handler(
-    &h2_setting(H2_SETTINGS_ENABLE_CONNECT_PROTOCOL, 1),
-    0,
-    None,
-  );
+fn h2c_connect_protocol_settings_metadata_is_ignored_for_ordinary_requests() {
+  assert_connect_protocol_settings_accepted(false);
+  assert_connect_protocol_settings_accepted(true);
 }
 
 #[test]
