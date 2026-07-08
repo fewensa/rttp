@@ -13,6 +13,7 @@ const FRAME_HEADERS: u8 = 0x1;
 const FRAME_PRIORITY: u8 = 0x2;
 const FRAME_RST_STREAM: u8 = 0x3;
 const FRAME_SETTINGS: u8 = 0x4;
+const FRAME_PUSH_PROMISE: u8 = 0x5;
 const FRAME_PING: u8 = 0x6;
 const FRAME_GOAWAY: u8 = 0x7;
 const FRAME_WINDOW_UPDATE: u8 = 0x8;
@@ -2010,6 +2011,57 @@ fn prior_knowledge_get_reports_stream_reset_and_goaway() {
 }
 
 #[test]
+fn prior_knowledge_get_rejects_push_promise_on_active_stream() {
+  let (addr, handle) = spawn_push_promise_peer(1, &[0, 0, 0, 2, 0x82]);
+
+  let error = HttpClient::new()
+    .get()
+    .url(format!("http://{}/push-promise", addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("PUSH_PROMISE must fail the response");
+
+  assert!(
+    error.to_string().contains("PUSH_PROMISE"),
+    "unexpected error: {error}"
+  );
+  handle.join().expect("push promise peer thread");
+}
+
+#[test]
+fn prior_knowledge_get_rejects_malformed_push_promise_frames() {
+  let (connection_addr, connection_handle) = spawn_push_promise_peer(0, &[0, 0, 0, 2, 0x82]);
+  let connection_error = HttpClient::new()
+    .get()
+    .url(format!(
+      "http://{}/connection-push-promise",
+      connection_addr
+    ))
+    .emit_http2_prior_knowledge()
+    .expect_err("PUSH_PROMISE on stream 0 must fail the response");
+  assert!(
+    connection_error.to_string().contains("PUSH_PROMISE"),
+    "unexpected error: {connection_error}"
+  );
+  connection_handle
+    .join()
+    .expect("connection push promise peer thread");
+
+  let (truncated_addr, truncated_handle) = spawn_push_promise_peer(1, &[0, 0, 0]);
+  let truncated_error = HttpClient::new()
+    .get()
+    .url(format!("http://{}/truncated-push-promise", truncated_addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("truncated PUSH_PROMISE promised stream id must fail the response");
+  assert!(
+    truncated_error.to_string().contains("PUSH_PROMISE"),
+    "unexpected error: {truncated_error}"
+  );
+  truncated_handle
+    .join()
+    .expect("truncated push promise peer thread");
+}
+
+#[test]
 fn prior_knowledge_get_continues_after_graceful_goaway_for_active_stream() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");
@@ -3319,6 +3371,30 @@ fn spawn_ping_peer(
     let (mut stream, _) = listener.accept().expect("accept h2 client");
     complete_h2_request_handshake(&mut stream);
     write_frame(&mut stream, FRAME_PING, flags, stream_id, payload);
+  });
+
+  (addr, handle)
+}
+
+fn spawn_push_promise_peer(
+  stream_id: u32,
+  payload: &'static [u8],
+) -> (SocketAddr, thread::JoinHandle<()>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+    write_frame(
+      &mut stream,
+      FRAME_PUSH_PROMISE,
+      FLAG_END_HEADERS,
+      stream_id,
+      payload,
+    );
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"ignored");
   });
 
   (addr, handle)
