@@ -625,6 +625,65 @@ fn prior_knowledge_server_acknowledges_valid_settings_payload_and_serves_request
 }
 
 #[test]
+fn prior_knowledge_server_serves_two_complete_streams_on_one_socket2_connection() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        assert_eq!("HTTP/2", request.version());
+        HttpResponse::ok(format!("served {}", request.target()))
+      })
+      .expect("serve two h2 streams")
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set client read timeout");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_headers(b"/first", addr.to_string().as_bytes()),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    3,
+    &h2_get_headers(b"/second", addr.to_string().as_bytes()),
+  );
+  stream.flush().expect("flush h2 requests");
+
+  let first_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, first_headers.frame_type);
+  assert_eq!(1, first_headers.stream_id);
+  let first_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, first_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, first_body.flags);
+  assert_eq!(1, first_body.stream_id);
+  assert_eq!(b"served /first", first_body.payload.as_slice());
+
+  let second_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, second_headers.frame_type);
+  assert_eq!(3, second_headers.stream_id);
+  let second_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, second_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, second_body.flags);
+  assert_eq!(3, second_body.stream_id);
+  assert_eq!(b"served /second", second_body.payload.as_slice());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn prior_knowledge_server_rejects_initial_settings_payload_with_invalid_length() {
   assert_malformed_settings_rejected_before_handler(&[0, 1, 0], 0, None);
 }
