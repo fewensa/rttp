@@ -2705,6 +2705,120 @@ fn rttp_client_http2_prior_knowledge_request_trailer_boundary_matrix_round_trips
 }
 
 #[test]
+fn rttp_client_http2_prior_knowledge_header_list_size_matrix_respects_socket2_server_bound() {
+  struct HeaderListCase {
+    name: &'static str,
+    path: &'static str,
+    header_value_len: usize,
+    trailer_value_len: usize,
+    expect_success: bool,
+  }
+
+  for case in [
+    HeaderListCase {
+      name: "under-advertised-bound",
+      path: "/bounded-header-list/under",
+      header_value_len: 1024,
+      trailer_value_len: 1024,
+      expect_success: true,
+    },
+    HeaderListCase {
+      name: "over-advertised-bound",
+      path: "/bounded-header-list/over",
+      header_value_len: 64 * 1024,
+      trailer_value_len: 1024,
+      expect_success: false,
+    },
+  ] {
+    let server = rttp::Http::server("127.0.0.1:0")
+      .expect("bind server")
+      .with_read_timeout(Some(Duration::from_secs(2)))
+      .with_write_timeout(Some(Duration::from_secs(2)));
+    let addr = server.local_addr().expect("server addr");
+    let (tx, rx) = mpsc::channel();
+
+    let handle = thread::spawn(move || {
+      let result = server.accept_one(|request| {
+        tx.send((
+          request.method().to_string(),
+          request.version().to_string(),
+          request.target().to_string(),
+          request.header("x-boundary-header").map(str::to_string),
+          request.trailer("x-boundary-trailer").map(str::to_string),
+        ))
+        .expect("send parsed bounded h2 request metadata");
+        HttpResponse::ok(format!("accepted {}", case.name))
+      });
+
+      if case.expect_success {
+        result.expect("serve bounded h2 request metadata");
+      } else {
+        let error = result.expect_err("oversized h2 metadata should close before dispatch");
+        assert!(
+          matches!(
+            error.kind(),
+            io::ErrorKind::UnexpectedEof | io::ErrorKind::TimedOut | io::ErrorKind::ConnectionReset
+          ),
+          "unexpected server error for {}: {error}",
+          case.name
+        );
+      }
+    });
+
+    let header_value = "h".repeat(case.header_value_len);
+    let expected_header_value = header_value.clone();
+    let trailer_value = "t".repeat(case.trailer_value_len);
+    let expected_trailer_value = trailer_value.clone();
+    let response = rttp_client::HttpClient::new()
+      .post()
+      .url(format!("http://{}{}", addr, case.path))
+      .header(("X-Boundary-Header".to_string(), header_value))
+      .trailer(("X-Boundary-Trailer".to_string(), trailer_value))
+      .expect("configure bounded request trailer")
+      .raw("bounded metadata body")
+      .emit_http2_prior_knowledge();
+
+    if case.expect_success {
+      let response = response.expect("bounded h2 metadata response");
+      assert_eq!("HTTP/2", response.version(), "{}", case.name);
+      assert_eq!(
+        format!("accepted {}", case.name),
+        response.body().string().unwrap(),
+        "{}",
+        case.name
+      );
+      assert_eq!(
+        (
+          "POST".to_string(),
+          "HTTP/2".to_string(),
+          case.path.to_string(),
+          Some(expected_header_value),
+          Some(expected_trailer_value),
+        ),
+        rx.recv().expect("receive parsed bounded h2 metadata"),
+        "{}",
+        case.name
+      );
+    } else {
+      let error = response.expect_err("oversized h2 metadata should be rejected");
+      assert!(
+        error
+          .to_string()
+          .contains("HTTP/2 peer SETTINGS_MAX_HEADER_LIST_SIZE"),
+        "unexpected client error for {}: {error}",
+        case.name
+      );
+      assert!(
+        rx.recv_timeout(Duration::from_millis(200)).is_err(),
+        "oversized h2 metadata must not dispatch to the socket2 server handler"
+      );
+    }
+
+    handle.join().expect("server thread");
+  }
+}
+
+#[test]
 fn rttp_client_http2_prior_knowledge_head_interoperates_with_socket2_h2c_server_matrix() {
   struct HeadCase {
     name: &'static str,
