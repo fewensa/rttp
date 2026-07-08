@@ -160,6 +160,14 @@ fn h2_post_headers(path: &[u8], authority: &[u8]) -> Vec<u8> {
   headers
 }
 
+fn h2_head_headers(path: &[u8], authority: &[u8]) -> Vec<u8> {
+  let mut headers = vec![0x86];
+  headers.extend(h2_literal_indexed_name(2, b"HEAD"));
+  headers.extend(h2_literal_indexed_name(4, path));
+  headers.extend(h2_literal_indexed_name(1, authority));
+  headers
+}
+
 fn find_request_path(block: &[u8]) -> Option<Vec<u8>> {
   let mut cursor = 0;
   while cursor < block.len() {
@@ -643,6 +651,57 @@ fn prior_knowledge_server_acknowledges_valid_settings_payload_and_serves_request
   assert_eq!(H2_FRAME_DATA, response_body.frame_type);
   assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
   assert_eq!(b"settings accepted", response_body.payload.as_slice());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn prior_knowledge_server_ends_head_response_on_headers_without_data_frame() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        assert_eq!("HTTP/2", request.version());
+        assert_eq!("HEAD", request.method());
+        assert_eq!("/metadata", request.target());
+        HttpResponse::ok("metadata body")
+      })
+      .expect("serve h2 HEAD request")
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set client read timeout");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_head_headers(b"/metadata", addr.to_string().as_bytes()),
+  );
+  stream.flush().expect("flush h2 HEAD request");
+
+  let response_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    response_headers.flags
+  );
+  assert_eq!(1, response_headers.stream_id);
+  stream
+    .set_read_timeout(Some(Duration::from_millis(200)))
+    .expect("set short client read timeout");
+  assert!(
+    try_read_h2_frame(&mut stream).is_err(),
+    "HEAD responses must end on HEADERS without a DATA frame"
+  );
 
   handle.join().expect("server thread");
 }
