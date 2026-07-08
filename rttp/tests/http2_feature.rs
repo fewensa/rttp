@@ -2404,6 +2404,102 @@ fn rttp_client_http2_prior_knowledge_dynamic_request_fields_reach_rttp_server_de
 }
 
 #[test]
+fn rttp_client_http2_prior_knowledge_request_trailer_boundary_matrix_round_trips_application_trailers(
+) {
+  struct TrailerCase {
+    name: &'static str,
+    path: &'static str,
+    trailers: &'static [(&'static str, &'static str)],
+  }
+
+  for case in [
+    TrailerCase {
+      name: "metadata",
+      path: "/direct-request-trailers/metadata",
+      trailers: &[
+        ("X-Trace", "request-trailer-trace"),
+        ("X-Upload-Status", "stored"),
+      ],
+    },
+    TrailerCase {
+      name: "integrity",
+      path: "/direct-request-trailers/integrity",
+      trailers: &[
+        ("X-Upload-Checksum", "sha256-boundary"),
+        ("X-Client-Metric", "42"),
+      ],
+    },
+  ] {
+    let server = rttp::Http::server("127.0.0.1:0")
+      .expect("bind server")
+      .with_read_timeout(Some(Duration::from_secs(2)))
+      .with_write_timeout(Some(Duration::from_secs(2)));
+    let addr = server.local_addr().expect("server addr");
+    let (tx, rx) = mpsc::channel();
+
+    let handle = thread::spawn(move || {
+      server
+        .accept_one(|request| {
+          tx.send((
+            request.method().to_string(),
+            request.version().to_string(),
+            request.target().to_string(),
+            request.body().to_vec(),
+            request.trailers().to_vec(),
+          ))
+          .expect("send parsed direct h2 request trailer matrix");
+          HttpResponse::ok(format!("accepted {}", case.name))
+        })
+        .expect("serve direct h2 request trailer matrix");
+    });
+
+    let mut client = rttp_client::HttpClient::new();
+    client
+      .post()
+      .url(format!("http://{}{}", addr, case.path))
+      .raw(format!("request body for {}", case.name));
+    for trailer in case.trailers {
+      client
+        .trailer(*trailer)
+        .expect("configure application request trailer");
+    }
+    let response = client
+      .emit_http2_prior_knowledge()
+      .expect("direct client h2 request trailer matrix response");
+
+    assert_eq!("HTTP/2", response.version(), "{}", case.name);
+    assert_eq!(200, response.code(), "{}", case.name);
+    assert_eq!(
+      format!("accepted {}", case.name),
+      response.body().string().unwrap(),
+      "{}",
+      case.name
+    );
+
+    let expected_trailers = case
+      .trailers
+      .iter()
+      .map(|(name, value)| (name.to_ascii_lowercase(), (*value).to_string()))
+      .collect::<Vec<_>>();
+    assert_eq!(
+      (
+        "POST".to_string(),
+        "HTTP/2".to_string(),
+        case.path.to_string(),
+        format!("request body for {}", case.name).into_bytes(),
+        expected_trailers,
+      ),
+      rx.recv()
+        .expect("receive parsed direct h2 request trailer matrix"),
+      "{}",
+      case.name
+    );
+
+    handle.join().expect("server thread");
+  }
+}
+
+#[test]
 fn rttp_client_http2_prior_knowledge_head_interoperates_with_socket2_h2c_server_matrix() {
   struct HeadCase {
     name: &'static str,
@@ -3966,4 +4062,57 @@ fn http2_feature_socket2_rejects_malformed_padded_data_before_handler() {
       &[10, b'x'],
     );
   });
+}
+
+#[test]
+fn http2_feature_socket2_rejects_hostile_request_trailer_boundary_matrix_before_handler() {
+  struct HostileTrailerCase {
+    name: &'static str,
+    trailer_block: Vec<u8>,
+  }
+
+  for case in [
+    HostileTrailerCase {
+      name: "pseudo-path",
+      trailer_block: h2_literal_indexed_name(4, b"/not-a-trailer"),
+    },
+    HostileTrailerCase {
+      name: "routing-host",
+      trailer_block: h2_literal_new_name(b"host", b"example.invalid"),
+    },
+    HostileTrailerCase {
+      name: "routing-authorization",
+      trailer_block: h2_literal_new_name(b"authorization", b"Bearer secret"),
+    },
+    HostileTrailerCase {
+      name: "framing-content-length",
+      trailer_block: h2_literal_new_name(b"content-length", b"4"),
+    },
+    HostileTrailerCase {
+      name: "framing-transfer-encoding",
+      trailer_block: h2_literal_new_name(b"transfer-encoding", b"chunked"),
+    },
+    HostileTrailerCase {
+      name: "framing-te",
+      trailer_block: h2_literal_new_name(b"te", b"trailers"),
+    },
+    HostileTrailerCase {
+      name: "framing-trailer",
+      trailer_block: h2_literal_new_name(b"trailer", b"x-late"),
+    },
+  ] {
+    assert_malformed_h2_request_rejected_before_handler(|stream, addr| {
+      let path = format!("/bad-request-trailer-{}", case.name);
+      let headers = h2_post_headers(path.as_bytes(), addr.to_string().as_bytes());
+      write_h2_frame(stream, H2_FRAME_HEADERS, H2_FLAG_END_HEADERS, 1, &headers);
+      write_h2_frame(stream, H2_FRAME_DATA, 0, 1, b"body");
+      write_h2_frame(
+        stream,
+        H2_FRAME_HEADERS,
+        H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+        1,
+        &case.trailer_block,
+      );
+    });
+  }
 }
