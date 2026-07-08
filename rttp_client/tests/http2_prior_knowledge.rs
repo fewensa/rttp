@@ -1555,15 +1555,10 @@ fn prior_knowledge_exposes_response_trailers_after_data_without_changing_headers
 }
 
 #[test]
-fn prior_knowledge_preserves_peer_response_connection_specific_headers() {
+fn prior_knowledge_preserves_peer_response_non_connection_specific_headers() {
   let mut header_block = vec![0x88];
   for (name, value) in [
-    (b"connection".as_slice(), b"close".as_slice()),
-    (b"keep-alive", b"timeout=5"),
-    (b"proxy-connection", b"keep-alive"),
-    (b"transfer-encoding", b"chunked"),
-    (b"upgrade", b"websocket"),
-    (b"trailer", b"x-trace"),
+    (b"trailer".as_slice(), b"x-trace".as_slice()),
     (b"host", b"example.invalid"),
   ] {
     header_block.extend_from_slice(&h2_literal_new_name(name, value));
@@ -1573,32 +1568,12 @@ fn prior_knowledge_preserves_peer_response_connection_specific_headers() {
 
   let response = HttpClient::new()
     .get()
-    .url(format!("http://{}/response-connection-specific", addr))
+    .url(format!("http://{}/response-non-connection-specific", addr))
     .emit_http2_prior_knowledge()
-    .expect("h2 response with peer connection-specific headers");
+    .expect("h2 response with peer non-connection-specific headers");
 
   assert_eq!(200, response.code());
   assert_eq!("headers", response.body().string().unwrap());
-  assert_eq!(
-    Some(&"close".to_string()),
-    response.header_value("connection")
-  );
-  assert_eq!(
-    Some(&"timeout=5".to_string()),
-    response.header_value("keep-alive")
-  );
-  assert_eq!(
-    Some(&"keep-alive".to_string()),
-    response.header_value("proxy-connection")
-  );
-  assert_eq!(
-    Some(&"chunked".to_string()),
-    response.header_value("transfer-encoding")
-  );
-  assert_eq!(
-    Some(&"websocket".to_string()),
-    response.header_value("upgrade")
-  );
   assert_eq!(
     Some(&"x-trace".to_string()),
     response.header_value("trailer")
@@ -1694,6 +1669,53 @@ fn prior_knowledge_decodes_padded_response_headers() {
   );
   assert_eq!("ok", response.body().string().unwrap());
   handle.join().expect("h2 peer thread");
+}
+
+#[test]
+fn prior_knowledge_rejects_connection_specific_response_headers() {
+  for (name, value) in [
+    (b"connection".as_slice(), b"close".as_slice()),
+    (b"keep-alive".as_slice(), b"timeout=5".as_slice()),
+    (b"proxy-connection".as_slice(), b"keep-alive".as_slice()),
+    (b"te".as_slice(), b"trailers".as_slice()),
+    (b"transfer-encoding".as_slice(), b"chunked".as_slice()),
+    (b"upgrade".as_slice(), b"websocket".as_slice()),
+  ] {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+    let addr = listener.local_addr().expect("h2 peer addr");
+    let header_block = {
+      let mut block = vec![0x88];
+      block.extend(h2_literal_new_name(name, value));
+      block
+    };
+
+    let handle = thread::spawn(move || {
+      let (mut stream, _) = listener.accept().expect("accept h2 client");
+      complete_h2_request_handshake(&mut stream);
+      write_frame(
+        &mut stream,
+        FRAME_HEADERS,
+        FLAG_END_HEADERS | FLAG_END_STREAM,
+        1,
+        &header_block,
+      );
+    });
+
+    let error = HttpClient::new()
+      .get()
+      .url(format!("http://{}/bad-connection-header", addr))
+      .emit_http2_prior_knowledge()
+      .expect_err("connection-specific response header must be rejected");
+
+    assert!(
+      error
+        .to_string()
+        .contains("forbidden HTTP/2 response header"),
+      "unexpected error for {}: {error}",
+      String::from_utf8_lossy(name)
+    );
+    handle.join().expect("h2 forbidden response peer thread");
+  }
 }
 
 #[test]

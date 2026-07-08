@@ -1795,9 +1795,19 @@ fn push_decoded_header(
         .map_err(|_| error::bad_response("invalid HTTP/2 :status header"))?,
     );
   } else if !name.starts_with(':') {
+    if is_forbidden_response_header_name(name) {
+      return Err(error::bad_response("forbidden HTTP/2 response header"));
+    }
     headers.push((name.to_string(), value.to_string()));
   }
   Ok(())
+}
+
+fn is_forbidden_response_header_name(name: &str) -> bool {
+  matches!(
+    name.to_ascii_lowercase().as_str(),
+    "connection" | "keep-alive" | "proxy-connection" | "te" | "transfer-encoding" | "upgrade"
+  )
 }
 
 fn validate_response_trailer_header(name: &str, value: &str) -> error::Result<()> {
