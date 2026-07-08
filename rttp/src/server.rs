@@ -3382,8 +3382,12 @@ impl HttpResponse {
       }
     }
 
-    if self.allows_body() && !self.uses_chunked_transfer_encoding() {
-      write!(writer, "Content-Length: {}\r\n", self.body.len())?;
+    if self.allows_body() {
+      if self.uses_chunked_transfer_encoding() {
+        self.write_http11_trailer_declaration(writer)?;
+      } else {
+        write!(writer, "Content-Length: {}\r\n", self.body.len())?;
+      }
     }
     if default_connection == DefaultConnectionHeader::ForceClose
       || connection_header_index.is_none()
@@ -3397,6 +3401,24 @@ impl HttpResponse {
       }
     }
 
+    writer.write_all(b"\r\n")
+  }
+
+  fn write_http11_trailer_declaration<W>(&self, writer: &mut W) -> io::Result<()>
+  where
+    W: Write,
+  {
+    if self.trailers.is_empty() {
+      return Ok(());
+    }
+
+    writer.write_all(b"Trailer: ")?;
+    for (index, trailer) in self.trailers.iter().enumerate() {
+      if index > 0 {
+        writer.write_all(b", ")?;
+      }
+      writer.write_all(trailer.name.as_bytes())?;
+    }
     writer.write_all(b"\r\n")
   }
 
@@ -3466,6 +3488,13 @@ impl HttpResponse {
       return false;
     }
     if !self.allows_body() && header.name.eq_ignore_ascii_case("Transfer-Encoding") {
+      return false;
+    }
+    if self.allows_body()
+      && self.uses_chunked_transfer_encoding()
+      && !self.trailers.is_empty()
+      && header.name.eq_ignore_ascii_case("Trailer")
+    {
       return false;
     }
     if !header.name.eq_ignore_ascii_case("Connection") {

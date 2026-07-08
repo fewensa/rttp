@@ -3400,6 +3400,7 @@ fn server_writes_chunked_response_trailers_on_live_connection() {
     concat!(
       "HTTP/1.1 200 OK\r\n",
       "Transfer-Encoding: chunked\r\n",
+      "Trailer: X-Trace, X-Signature\r\n",
       "Connection: close\r\n",
       "\r\n",
       "5\r\n",
