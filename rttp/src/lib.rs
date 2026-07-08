@@ -1,3 +1,27 @@
+//! `rttp` wraps `rttp_client` behind optional client features and provides a
+//! small blocking HTTP server for local tests and simple embedded use.
+//!
+//! The server accepts HTTP/1.x on a `socket2` listener and also detects the
+//! HTTP/2 client preface for a bounded prior-knowledge h2c path. That h2c
+//! server path advertises the default 16,384-byte
+//! `SETTINGS_MAX_FRAME_SIZE`, accepts only legal peer
+//! `SETTINGS_MAX_FRAME_SIZE` values from 16,384 through 16,777,215 bytes,
+//! rejects inbound frame payloads above the active local limit, and splits
+//! outbound response HEADERS, DATA, and trailing HEADERS to the active peer
+//! frame-size limit. It remains a bounded prior-knowledge server path: it can
+//! accept multiple open streams only up to the advertised active-stream
+//! allowance, uses synchronous response writes, and does not provide full
+//! multiplex scheduling, persistent HTTP/2 session management, dynamic policy
+//! APIs, extension callbacks, TLS ALPN, server push, proxy h2, tunnel handoff,
+//! or a full HTTP/2 server feature set.
+//!
+//! With the `client` or `http2` feature enabled, the wrapper exposes the
+//! `rttp_client` bounded prior-knowledge h2c client behavior. The client opens
+//! at most one stream, validates the same legal `SETTINGS_MAX_FRAME_SIZE`
+//! range, splits outbound request HEADERS, DATA, and trailing HEADERS to the
+//! peer frame-size limit, and rejects inbound oversized frames when a local
+//! `http2_max_frame_size` is configured.
+
 pub struct Http {}
 
 pub mod server;

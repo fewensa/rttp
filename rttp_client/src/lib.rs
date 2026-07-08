@@ -4,14 +4,21 @@
 //! | name | comment |
 //! |------|---------|
 //! | async | Async request APIs |
-//! | http2 | Prior-knowledge h2c over direct `socket2` TCP connections |
+//! | http2 | Bounded prior-knowledge h2c over direct `socket2` TCP connections |
 //! | tls-native | HTTPS with `native-tls` |
 //! | tls-rustls | HTTPS with `rustls` |
 //!
 //! Direct TCP connections use `socket2`. SOCKS proxy handshakes remain delegated
 //! to the `socks` crate.
 //! With the `http2` feature enabled, `emit_http2_prior_knowledge` sends a
-//! minimal prior-knowledge h2c request over a direct socket2 TCP connection.
+//! bounded prior-knowledge h2c request over a direct socket2 TCP connection.
+//! It opens at most one stream and validates `SETTINGS_MAX_FRAME_SIZE` on both
+//! sides of the handshake. A configured local `http2_max_frame_size` is
+//! advertised only when set, must be in the legal HTTP/2 range of 16,384
+//! through 16,777,215 bytes, and rejects inbound frame payloads larger than
+//! that active local limit. Peer-advertised values outside the same range
+//! reject the handshake, while legal peer values are used to split outbound
+//! request HEADERS, DATA, and trailing HEADERS.
 //! It decodes incoming padded HEADERS, DATA, and trailer frames without
 //! exposing padding bytes, including response HPACK dynamic table entries.
 //! `GOAWAY` is treated as a protocol shutdown boundary: completed responses
@@ -20,8 +27,8 @@
 //! request before request HEADERS are sent. RTTP reports those conditions to
 //! the caller and does not retry automatically; transport disconnects remain
 //! ordinary socket errors without an HTTP/2 stream boundary. TLS ALPN, proxy
-//! h2, full HTTP/2 multiplexing, and priority scheduling are not part of that
-//! single-stream path.
+//! h2, full HTTP/2 multiplexing, dynamic policy APIs, and priority scheduling
+//! are not part of that single-stream path.
 //!
 //! ```rust,no_run
 //! use rttp_client::HttpClient;
