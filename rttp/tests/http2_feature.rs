@@ -191,6 +191,75 @@ fn decode_hpack_string(block: &[u8], cursor: &mut usize) -> Vec<u8> {
   }
 }
 
+fn skip_hpack_string(block: &[u8], cursor: &mut usize) {
+  let len = decode_hpack_integer(block, cursor, 7);
+  *cursor += len;
+}
+
+fn count_hpack_dynamic_indexed_fields(block: &[u8]) -> usize {
+  let mut cursor = 0;
+  let mut indexed = 0;
+  while cursor < block.len() {
+    let byte = block[cursor];
+    if byte & 0x80 == 0x80 {
+      let index = decode_hpack_integer(block, &mut cursor, 7);
+      if index > 61 {
+        indexed += 1;
+      }
+      continue;
+    }
+    if byte & 0x40 == 0x40 {
+      let name_index = decode_hpack_integer(block, &mut cursor, 6);
+      if name_index == 0 {
+        skip_hpack_string(block, &mut cursor);
+      }
+      skip_hpack_string(block, &mut cursor);
+      continue;
+    }
+    if byte & 0x20 == 0x20 {
+      let _ = decode_hpack_integer(block, &mut cursor, 5);
+      continue;
+    }
+    let name_index = decode_hpack_integer(block, &mut cursor, 4);
+    if name_index == 0 {
+      skip_hpack_string(block, &mut cursor);
+    }
+    skip_hpack_string(block, &mut cursor);
+  }
+  indexed
+}
+
+fn count_hpack_incrementally_indexed_fields(block: &[u8]) -> usize {
+  let mut cursor = 0;
+  let mut indexed = 0;
+  while cursor < block.len() {
+    let byte = block[cursor];
+    if byte & 0x80 == 0x80 {
+      let _ = decode_hpack_integer(block, &mut cursor, 7);
+      continue;
+    }
+    if byte & 0x40 == 0x40 {
+      indexed += 1;
+      let name_index = decode_hpack_integer(block, &mut cursor, 6);
+      if name_index == 0 {
+        skip_hpack_string(block, &mut cursor);
+      }
+      skip_hpack_string(block, &mut cursor);
+      continue;
+    }
+    if byte & 0x20 == 0x20 {
+      let _ = decode_hpack_integer(block, &mut cursor, 5);
+      continue;
+    }
+    let name_index = decode_hpack_integer(block, &mut cursor, 4);
+    if name_index == 0 {
+      skip_hpack_string(block, &mut cursor);
+    }
+    skip_hpack_string(block, &mut cursor);
+  }
+  indexed
+}
+
 fn decode_path_huffman_string(encoded: &[u8]) -> Vec<u8> {
   let mut value = Vec::new();
   let mut code = 0u32;
@@ -1061,6 +1130,169 @@ fn wrapper_http2_prior_knowledge_decodes_huffman_response_headers_and_trailers_f
   );
   assert!(response.header_value("Trailer").is_none());
   assert!(response.header_value("X-HPACK-Trailer").is_none());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn socket2_h2_response_uses_dynamic_entries_for_repeated_smaller_fields() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(move |_| {
+        HttpResponse::ok("dynamic fields")
+          .header("X-Dynamic-Response", "repeatable-response-value")
+          .header("X-Dynamic-Response", "repeatable-response-value")
+          .header("Trailer", "X-Dynamic-Trailer")
+          .trailer("X-Dynamic-Trailer", "repeatable-trailer-value")
+          .trailer("X-Dynamic-Trailer", "repeatable-trailer-value")
+      })
+      .expect("serve dynamic h2 response fields");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_headers(b"/dynamic-response-fields", addr.to_string().as_bytes()),
+  );
+
+  let response_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(1, response_headers.stream_id);
+  assert_eq!(
+    1,
+    count_hpack_dynamic_indexed_fields(&response_headers.payload)
+  );
+  assert_eq!(
+    1,
+    count_hpack_incrementally_indexed_fields(&response_headers.payload)
+  );
+
+  let response_data = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_data.frame_type);
+  assert_eq!(0, response_data.flags & H2_FLAG_END_STREAM);
+
+  let response_trailers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_trailers.frame_type);
+  assert_eq!(
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    response_trailers.flags
+  );
+  assert_eq!(
+    1,
+    count_hpack_dynamic_indexed_fields(&response_trailers.payload)
+  );
+  assert_eq!(
+    1,
+    count_hpack_incrementally_indexed_fields(&response_trailers.payload)
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn socket2_h2_response_dynamic_table_evicts_entries_at_default_size() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let large_value = "v".repeat(4020);
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(move |_| {
+        HttpResponse::ok("evicted dynamic fields")
+          .header("X-Evict-Small", "small")
+          .header("X-Evict-Large", &large_value)
+          .header("X-Evict-Large", &large_value)
+          .header("X-Evict-Small", "small")
+      })
+      .expect("serve h2 response with dynamic table eviction");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_headers(b"/dynamic-eviction", addr.to_string().as_bytes()),
+  );
+
+  let response_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(1, response_headers.stream_id);
+  assert_eq!(
+    1,
+    count_hpack_dynamic_indexed_fields(&response_headers.payload)
+  );
+  assert_eq!(
+    3,
+    count_hpack_incrementally_indexed_fields(&response_headers.payload)
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn wrapper_http2_prior_knowledge_decodes_dynamic_response_fields_from_socket2_server() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(move |_| {
+        HttpResponse::ok("decoded dynamic response fields")
+          .header("X-Dynamic-Response", "repeatable-response-value")
+          .header("X-Dynamic-Response", "repeatable-response-value")
+          .header("Trailer", "X-Dynamic-Trailer")
+          .trailer("X-Dynamic-Trailer", "repeatable-trailer-value")
+          .trailer("X-Dynamic-Trailer", "repeatable-trailer-value")
+      })
+      .expect("serve dynamic h2 response fields");
+  });
+
+  let response = rttp::Http::client()
+    .url(format!("http://{}/dynamic-response-fields", addr))
+    .emit_http2_prior_knowledge()
+    .expect("wrapper h2 response with dynamic response fields");
+
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(200, response.code());
+  assert_eq!(
+    "decoded dynamic response fields",
+    response.body().string().unwrap()
+  );
+  assert_eq!(
+    vec![
+      &"repeatable-response-value".to_string(),
+      &"repeatable-response-value".to_string()
+    ],
+    response.header_values("X-Dynamic-Response")
+  );
+  assert_eq!(
+    vec![
+      &"repeatable-trailer-value".to_string(),
+      &"repeatable-trailer-value".to_string()
+    ],
+    response.trailer_values("X-Dynamic-Trailer")
+  );
+  assert!(response.header_value("Trailer").is_none());
+  assert!(response.header_value("X-Dynamic-Trailer").is_none());
 
   handle.join().expect("server thread");
 }
