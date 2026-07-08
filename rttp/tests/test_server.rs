@@ -72,6 +72,17 @@ fn read_h2_frame_skipping_window_updates(stream: &mut TcpStream) -> H2Frame {
   }
 }
 
+fn h2_window_update_increment(frame: &H2Frame) -> u32 {
+  assert_eq!(H2_FRAME_WINDOW_UPDATE, frame.frame_type);
+  assert_eq!(4, frame.payload.len());
+  u32::from_be_bytes([
+    frame.payload[0] & 0x7f,
+    frame.payload[1],
+    frame.payload[2],
+    frame.payload[3],
+  ])
+}
+
 fn h2_literal_indexed_name(name_index: u8, value: &[u8]) -> Vec<u8> {
   assert!(value.len() < 128);
   let mut encoded = vec![name_index, value.len() as u8];
@@ -910,6 +921,149 @@ fn server_accepts_http2_prior_knowledge_headers_and_data_before_calling_handler(
   assert_eq!(b"stored", response_body.payload.as_slice());
 
   handle.join().expect("server thread");
+}
+
+#[test]
+fn server_sends_http2_window_updates_while_consuming_large_request_body() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.body().len(),
+          request.trailer("x-large-body").map(str::to_string),
+        ))
+        .expect("send large h2 request details");
+        HttpResponse::ok("large body")
+      })
+      .expect("serve large h2 request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &h2_post_headers(b"/large-body", addr.to_string().as_bytes()),
+  );
+
+  let first_chunk = vec![b'a'; 65_535];
+  write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 1, &first_chunk);
+
+  let first_update = read_h2_frame(&mut stream);
+  let second_update = read_h2_frame(&mut stream);
+  assert_eq!(
+    vec![(0, 65_535), (1, 65_535)],
+    vec![
+      (
+        first_update.stream_id,
+        h2_window_update_increment(&first_update)
+      ),
+      (
+        second_update.stream_id,
+        h2_window_update_increment(&second_update)
+      ),
+    ]
+  );
+
+  write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 1, b"tail");
+  let trailers = h2_literal_new_name(b"x-large-body", b"complete");
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &trailers,
+  );
+
+  let tail_connection_update = read_h2_frame(&mut stream);
+  let tail_stream_update = read_h2_frame(&mut stream);
+  assert_eq!(
+    vec![(0, 4), (1, 4)],
+    vec![
+      (
+        tail_connection_update.stream_id,
+        h2_window_update_increment(&tail_connection_update)
+      ),
+      (
+        tail_stream_update.stream_id,
+        h2_window_update_increment(&tail_stream_update)
+      ),
+    ]
+  );
+
+  let response_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  let response_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(b"large body", response_body.payload.as_slice());
+
+  assert_eq!(
+    (65_539, Some("complete".to_string())),
+    rx.recv().expect("receive large h2 body details")
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_zero_window_update_increment() {
+  assert_invalid_h2_frame_without_handler(H2_FRAME_WINDOW_UPDATE, 0, 0, &0u32.to_be_bytes());
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_data_beyond_receive_window() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send(request).expect("send unexpected h2 request");
+      HttpResponse::ok("unexpected")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &h2_post_headers(b"/window-exhaustion", addr.to_string().as_bytes()),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_DATA,
+    H2_FLAG_END_STREAM,
+    1,
+    &vec![b'x'; 65_536],
+  );
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown h2 write");
+
+  let error = handle
+    .join()
+    .expect("server thread")
+    .expect_err("DATA beyond receive window should reject request");
+  assert_eq!(ErrorKind::InvalidData, error.kind());
+  assert!(rx.try_recv().is_err());
 }
 
 #[test]
