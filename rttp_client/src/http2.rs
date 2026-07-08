@@ -586,6 +586,7 @@ fn write_request(
       stream,
       body,
       &mut peer_settings,
+      &mut hpack,
       has_trailers,
       response_url,
       local_settings,
@@ -704,6 +705,7 @@ fn write_data_frames(
   stream: &mut TcpStream,
   body: &[u8],
   peer_settings: &mut PeerSettings,
+  hpack: &mut RequestHpackEncoder,
   has_trailers: bool,
   url: RoUrl,
   local_settings: LocalSettings,
@@ -725,6 +727,7 @@ fn write_data_frames(
         &mut connection_send_window,
         &mut stream_send_window,
         peer_settings,
+        hpack,
         &mut current_initial_window_size,
         &mut current_max_frame_size,
         url.clone(),
@@ -760,6 +763,7 @@ fn read_until_send_window_available(
   connection_send_window: &mut SendWindow,
   stream_send_window: &mut SendWindow,
   peer_settings: &mut PeerSettings,
+  hpack: &mut RequestHpackEncoder,
   current_initial_window_size: &mut u32,
   current_max_frame_size: &mut usize,
   url: RoUrl,
@@ -783,6 +787,7 @@ fn read_until_send_window_available(
           &frame,
           stream_send_window,
           peer_settings,
+          hpack,
           current_initial_window_size,
           current_max_frame_size,
         )?;
@@ -841,6 +846,7 @@ fn handle_settings_while_sending(
   frame: &Frame,
   stream_send_window: &mut SendWindow,
   peer_settings: &mut PeerSettings,
+  hpack: &mut RequestHpackEncoder,
   current_initial_window_size: &mut u32,
   current_max_frame_size: &mut usize,
 ) -> error::Result<()> {
@@ -859,6 +865,14 @@ fn handle_settings_while_sending(
   if settings.max_frame_size_changed {
     peer_settings.max_frame_size = settings.max_frame_size;
     *current_max_frame_size = settings.max_frame_size;
+  }
+  if settings.header_table_size_changed {
+    peer_settings.header_table_size = settings.header_table_size;
+    hpack.set_max_size(
+      settings
+        .header_table_size
+        .min(DEFAULT_HPACK_DYNAMIC_TABLE_SIZE),
+    );
   }
   if settings.max_header_list_size.is_some() {
     peer_settings.max_header_list_size = settings.max_header_list_size;
@@ -1767,6 +1781,11 @@ impl RequestHpackEncoder {
 
     self.dynamic_entries.insert(0, (name, value));
     self.current_size += entry_size;
+    self.evict_to_capacity();
+  }
+
+  fn set_max_size(&mut self, max_size: usize) {
+    self.max_size = max_size;
     self.evict_to_capacity();
   }
 
