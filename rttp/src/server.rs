@@ -1148,6 +1148,12 @@ impl DecodedHttp2RequestHeaders {
     let method = self
       .method
       .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing HTTP/2 :method"))?;
+    if method.eq_ignore_ascii_case("CONNECT") {
+      return Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        "HTTP/2 prior-knowledge CONNECT/proxy tunneling is unsupported",
+      ));
+    }
     let target = self
       .target
       .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing HTTP/2 :path"))?;
