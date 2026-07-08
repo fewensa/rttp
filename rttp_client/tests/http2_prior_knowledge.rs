@@ -2132,13 +2132,16 @@ fn prior_knowledge_get_ignores_interleaved_data_for_other_streams() {
 
 #[test]
 fn prior_knowledge_get_reports_stream_reset_and_goaway() {
-  let (reset_addr, reset_handle) = spawn_control_frame_peer(FRAME_RST_STREAM);
+  let (reset_addr, reset_handle) = spawn_rst_stream_peer(1, &[0, 0, 0, 8], None);
   let reset_error = HttpClient::new()
     .get()
     .url(format!("http://{}/reset", reset_addr))
     .emit_http2_prior_knowledge()
     .expect_err("reset stream must fail the response");
-  assert!(reset_error.to_string().contains("RST_STREAM"));
+  assert!(
+    reset_error.to_string().contains("RST_STREAM error code 8"),
+    "unexpected error: {reset_error}"
+  );
   reset_handle.join().expect("reset peer thread");
 
   let (goaway_addr, goaway_handle) = spawn_control_frame_peer(FRAME_GOAWAY);
@@ -2149,6 +2152,33 @@ fn prior_knowledge_get_reports_stream_reset_and_goaway() {
     .expect_err("goaway must fail the response");
   assert!(goaway_error.to_string().contains("GOAWAY"));
   goaway_handle.join().expect("goaway peer thread");
+}
+
+#[test]
+fn prior_knowledge_get_rejects_malformed_rst_stream_frames() {
+  let cases: &[(&str, u32, &[u8])] = &[
+    ("stream-zero", 0, &[0, 0, 0, 0]),
+    ("short-payload", 1, &[0, 0, 0]),
+    ("long-payload", 1, &[0, 0, 0, 8, 0]),
+  ];
+
+  for (path, stream_id, payload) in cases {
+    let (addr, handle) = spawn_rst_stream_peer(*stream_id, payload, Some(b"unexpected"));
+
+    let error = HttpClient::new()
+      .get()
+      .url(format!("http://{}/bad-rst-{}", addr, path))
+      .emit_http2_prior_knowledge()
+      .expect_err("malformed RST_STREAM frame should be rejected");
+
+    assert!(
+      error
+        .to_string()
+        .contains("invalid HTTP/2 RST_STREAM frame"),
+      "unexpected error: {error}"
+    );
+    handle.join().expect("rst stream peer thread");
+  }
 }
 
 #[test]
@@ -3483,6 +3513,27 @@ fn spawn_control_frame_peer(frame_type: u8) -> (SocketAddr, thread::JoinHandle<(
       FRAME_RST_STREAM => write_frame(&mut stream, FRAME_RST_STREAM, 0, 1, &0u32.to_be_bytes()),
       FRAME_GOAWAY => write_frame(&mut stream, FRAME_GOAWAY, 0, 0, &[0, 0, 0, 0, 0, 0, 0, 0]),
       _ => unreachable!("unexpected control frame"),
+    }
+  });
+
+  (addr, handle)
+}
+
+fn spawn_rst_stream_peer(
+  stream_id: u32,
+  payload: &'static [u8],
+  response_body: Option<&'static [u8]>,
+) -> (SocketAddr, thread::JoinHandle<()>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+    write_frame(&mut stream, FRAME_RST_STREAM, 0, stream_id, payload);
+    if let Some(body) = response_body {
+      write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+      write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, body);
     }
   });
 
