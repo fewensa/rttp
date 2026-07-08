@@ -169,6 +169,14 @@ fn h2_head_headers(path: &[u8], authority: &[u8]) -> Vec<u8> {
   headers
 }
 
+fn h2_trace_headers(path: &[u8], authority: &[u8]) -> Vec<u8> {
+  let mut headers = vec![0x86];
+  headers.extend(h2_literal_indexed_name(2, b"TRACE"));
+  headers.extend(h2_literal_indexed_name(4, path));
+  headers.extend(h2_literal_indexed_name(1, authority));
+  headers
+}
+
 fn find_request_path(block: &[u8]) -> Option<Vec<u8>> {
   let mut cursor = 0;
   while cursor < block.len() {
@@ -703,6 +711,67 @@ fn prior_knowledge_server_ends_head_response_on_headers_without_data_frame() {
     try_read_h2_frame(&mut stream).is_err(),
     "HEAD responses must end on HEADERS without a DATA frame"
   );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn prior_knowledge_server_delivers_bodyless_trace_once_with_origin_form_target() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.version().to_string(),
+          request.method().to_string(),
+          request.target().to_string(),
+          request.body().to_vec(),
+        ))
+        .expect("send parsed h2 TRACE request");
+        HttpResponse::ok("trace accepted over h2")
+      })
+      .expect("serve h2 TRACE request")
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set client read timeout");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_trace_headers(b"/trace/socket2?via=h2c", addr.to_string().as_bytes()),
+  );
+  stream.flush().expect("flush h2 TRACE request");
+
+  let response_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(1, response_headers.stream_id);
+  let response_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
+  assert_eq!(b"trace accepted over h2", response_body.payload.as_slice());
+
+  assert_eq!(
+    (
+      "HTTP/2".to_string(),
+      "TRACE".to_string(),
+      "/trace/socket2?via=h2c".to_string(),
+      Vec::new(),
+    ),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("receive parsed h2 TRACE request")
+  );
+  assert!(rx.try_recv().is_err(), "handler must be called once");
 
   handle.join().expect("server thread");
 }
