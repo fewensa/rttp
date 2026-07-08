@@ -35,7 +35,7 @@ through `Response::trailers`, `Response::trailer`, and
 | HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and `Expect: 100-continue` | SOCKS handshakes are delegated to the `socks` crate |
 | Upgrade and tunnel handoff | `CONNECT` returns the tunnel socket after a successful `200`; `upgrade()` returns the socket after `101 Switching Protocols` and skips interim `1xx` responses | Upgraded protocols are handed to the caller and are not parsed by `rttp_client` |
 | Redirects | Auto-redirect covers 301, 302, 303, 307, and 308 method/body behavior, relative and absolute `Location` resolution, same- and cross-authority header handling, loop detection, and redirect bounds | Redirects are HTTP client behavior, not a browser policy implementation |
-| Trailers | Chunked response trailers are exposed for blocking and async APIs; streaming chunked uploads can send declared request trailers | Forbidden framing/routing trailer fields are rejected |
+| Trailers | Chunked response trailers are exposed for blocking and async APIs; streaming chunked uploads can send declared request trailers | Application metadata trailers such as `X-Trace` are allowed; pseudo-header, connection-specific, routing, authentication/cookie, and framing trailer fields are rejected |
 | Prior-knowledge h2c | With `http2`, direct `socket2` h2c sends GET, HEAD, bodyless DELETE, OPTIONS, or TRACE, and buffered POST, PUT, or PATCH requests, strips HTTP/1.x connection-specific request fields before emission, rejects connection-specific peer response fields, suppresses HEAD response bodies, treats `RST_STREAM` on the active stream as a bounded reset/cancellation signal, acknowledges valid PING frames with matching opaque data, DATA bodies, trailers, HPACK static Huffman strings, dynamic entries within peer settings, large header blocks, padded incoming frames, `GOAWAY` shutdown boundaries, PRIORITY metadata validation without scheduling, HTTP/2-allowed unknown/extension frame ignoring inside this bounded path, reserved stream-id high-bit normalization, and conservative DATA flow control | `CONNECT` is rejected deterministically before opening a client socket, and `PUSH_PROMISE`/server push is rejected instead of managed; bounded prior-knowledge h2c only, with no public cancellation callback API, no extension callback API, full extension negotiation, TLS ALPN, external h2 integration, proxy tunneling to h2, proxy h2, tunnel handoff, connection pooling, persistent HTTP/2 session management, automatic retry, server push, full stream state machine, unbounded multiplex scheduling, general multiplexing, priority scheduling, or request bodies for GET, HEAD, DELETE, OPTIONS, or TRACE |
 
 With the `http2` feature enabled, `emit_http2_prior_knowledge` sends a bounded
@@ -50,9 +50,20 @@ HTTP/1.x connection-specific fields: `Connection`, `Keep-Alive`,
 `Proxy-Connection`, `Transfer-Encoding`, `Upgrade`, `TE`, `Trailer`, `Host`,
 and any field named by a `Connection` token. Peer response HEADERS are rejected
 when they contain `Connection`, `Keep-Alive`, `Proxy-Connection`, `TE`,
-`Transfer-Encoding`, or `Upgrade`; peer response trailers use the existing
-forbidden-trailer validation for framing, routing, authentication, and cookie
-fields.
+`Transfer-Encoding`, or `Upgrade`. Application request trailers such as
+`X-Trace`, `X-Upload-Status`, or `X-Upload-Checksum` are valid in this bounded
+h2c path and are encoded as trailing HEADERS after request DATA. Configured
+request trailers are rejected before emission when their field name is invalid
+or reserved for connection/framing/routing behavior: `Connection`,
+`Keep-Alive`, `Proxy-Connection`, `TE`, `Trailer`, `Transfer-Encoding`,
+`Upgrade`, `Content-Length`, `Host`, `Proxy-Authenticate`, or
+`Proxy-Authorization`. Peer response trailers use the existing
+forbidden-trailer validation for invalid pseudo-header-like names,
+connection-specific, routing, authentication/cookie, and framing fields such
+as `Authorization`, `Connection`, `Content-Length`, `Cookie`, `Host`,
+`Keep-Alive`, `Proxy-Authenticate`, `Proxy-Authorization`,
+`Proxy-Connection`, `Set-Cookie`, `TE`, `Trailer`, `Transfer-Encoding`,
+`Upgrade`, and `WWW-Authenticate`.
 HPACK static Huffman strings and large header
 blocks are supported, repeated request header and trailer fields can use HPACK
 dynamic entries within the peer's advertised table size, and incoming dynamic

@@ -57,8 +57,18 @@ the HTTP/2 client preface and dispatches prior-knowledge h2c requests to a
 minimal bounded handler, including bodyless DELETE, OPTIONS, and TRACE
 requests. The h2c path handles `HEAD` without writing response DATA frames.
 Incoming padded HEADERS, DATA, and trailer frames are accepted without exposing
-padding bytes to handlers, HPACK static Huffman strings, request dynamic table
-entries, and large header blocks are carried with CONTINUATION frames. Valid
+padding bytes to handlers, and application trailers such as `X-Trace`,
+`X-Upload-Status`, and `X-Upload-Checksum` are preserved on `Request`.
+Trailing HEADERS that contain HTTP/2 pseudo-headers are rejected before handler
+dispatch. Trailer field names that affect connection state, routing,
+authentication/cookies, framing, or payload processing are also rejected,
+including `Connection`, `Keep-Alive`, `Proxy-Connection`, `TE`, `Trailer`,
+`Transfer-Encoding`, `Upgrade`, `Host`, `Content-Length`, `Cache-Control`,
+`Content-Encoding`, `Content-Range`, `Content-Type`, `Max-Forwards`,
+`Authorization`, `Proxy-Authenticate`, `Proxy-Authorization`, `Cookie`,
+`Set-Cookie`, and `WWW-Authenticate`. HPACK static Huffman strings, request
+dynamic table entries, and large header blocks are carried with CONTINUATION
+frames. Valid
 prior-knowledge h2c request headers reject HTTP/1.x connection-specific fields
 before handler dispatch: `Connection`, `Keep-Alive`, `Proxy-Connection`,
 `Transfer-Encoding`, and `Upgrade`; `TE` is accepted only as `te: trailers`
@@ -66,8 +76,9 @@ and other `TE` values are rejected. When serializing h2c responses, the server
 strips HTTP/1.x connection-specific response fields and generated HTTP/2
 framing fields from HEADERS: `Connection`, `Keep-Alive`, `Proxy-Connection`,
 `TE`, `Trailer`, `Transfer-Encoding`, `Upgrade`, and `Content-Length`. H2c
-response trailers skip the existing forbidden trailer set, including
-connection, transfer, routing, authentication, and cookie fields. Valid
+response trailers skip the existing forbidden trailer set, including invalid
+pseudo-header-like names, connection-specific, transfer/framing, routing,
+authentication, and cookie fields. Valid
 standalone PRIORITY frames and HEADERS priority fields are validated and ignored
 as metadata; malformed priority metadata is rejected, and request or response
 ordering does not use priority scheduling. Multiple prior-knowledge h2c request
@@ -114,7 +125,7 @@ multiplexing, server push, and priority scheduling, or async accept loops.
 | HTTP/1.1 connection handling | Bounded sequential `serve_requests`, keep-alive and close behavior for HTTP/1.1 and HTTP/1.0, pipelined request boundaries, malformed request rejection before handler dispatch | Blocking listener only; no async accept loop |
 | HTTP/1.1 response framing | Automatic `Content-Length`, explicit chunked responses, bodyless `HEAD`, `101`, `204`, and `304`, response trailers after the terminating chunk | No server TLS |
 | Upgrade and tunnel targets | `CONNECT` authority-form requests are accepted as HTTP requests; `HttpResponse::upgrade` can hand an upgraded socket to caller code after a matching request | The server does not implement the upgraded protocol after handoff |
-| Trailers | Chunked request trailers are preserved on `Request`; malformed, oversized, forbidden, and pseudo-header trailers are rejected; response trailers can be serialized for chunked responses | Trailer names that affect framing or routing are rejected |
+| Trailers | Chunked request trailers are preserved on `Request`; malformed, oversized, forbidden, and pseudo-header trailers are rejected; response trailers can be serialized for chunked responses | Application metadata trailers are allowed; trailer names that affect connection state, routing, authentication/cookies, framing, or payload processing are rejected |
 | Prior-knowledge h2c | The same `socket2` listener detects the HTTP/2 preface, validates SETTINGS, serves bounded prior-knowledge streams including bodyless DELETE, OPTIONS, and TRACE, handles HEAD without response DATA, rejects connection-specific request fields before handler dispatch, strips connection-specific response fields during h2c serialization, treats `RST_STREAM` as a bounded reset/cancellation signal for the affected stream, acknowledges valid PING frames with matching opaque data, accepts padded HEADERS/DATA/trailers without exposing padding, handles HPACK Huffman/dynamic fields and CONTINUATION blocks, emits `GOAWAY` with the last completed stream id at bounded shutdown, validates and ignores valid PRIORITY metadata, ignores HTTP/2-allowed unknown/extension frames inside this bounded path, normalizes reserved stream-id high bits, and applies conservative DATA flow control | `CONNECT` and `PUSH_PROMISE` are rejected deterministically before handler dispatch; bounded prior-knowledge h2c only, with no public cancellation callback API, no extension callback API, full extension negotiation, TLS ALPN, external h2 integration, proxy h2, tunnel handoff, connection pooling, persistent HTTP/2 session management, automatic retry, server push, full stream state machine, unbounded multiplexing, unbounded multiplex scheduling, general multiplexing, priority scheduling, or full HTTP/2 server feature set |
 
 ## Client feature
@@ -155,9 +166,20 @@ client strips `Connection`, `Keep-Alive`, `Proxy-Connection`,
 `Transfer-Encoding`, `Upgrade`, `TE`, `Trailer`, `Host`, and any field named
 by a `Connection` token from emitted request HEADERS. Peer response HEADERS
 containing `Connection`, `Keep-Alive`, `Proxy-Connection`, `TE`,
-`Transfer-Encoding`, or `Upgrade` are rejected, and peer response trailers use
-the existing forbidden-trailer validation for framing, routing,
-authentication, and cookie fields. `CONNECT`
+`Transfer-Encoding`, or `Upgrade` are rejected. Application request trailers
+such as `X-Trace`, `X-Upload-Status`, or `X-Upload-Checksum` are valid in this
+bounded h2c path and are encoded as trailing HEADERS after request DATA.
+Configured request trailers are rejected before emission when their field name
+is invalid or reserved for connection/framing/routing behavior: `Connection`,
+`Keep-Alive`, `Proxy-Connection`, `TE`, `Trailer`, `Transfer-Encoding`,
+`Upgrade`, `Content-Length`, `Host`, `Proxy-Authenticate`, or
+`Proxy-Authorization`. Peer response trailers use the existing
+forbidden-trailer validation for invalid pseudo-header-like names,
+connection-specific, routing, authentication/cookie, and framing fields such
+as `Authorization`, `Connection`, `Content-Length`, `Cookie`, `Host`,
+`Keep-Alive`, `Proxy-Authenticate`, `Proxy-Authorization`,
+`Proxy-Connection`, `Set-Cookie`, `TE`, `Trailer`, `Transfer-Encoding`,
+`Upgrade`, and `WWW-Authenticate`. `CONNECT`
 and proxy tunneling are rejected before a client socket is opened. TLS ALPN,
 extension callback APIs, full extension negotiation, external h2 integration,
 proxy h2, tunnel handoff, connection pooling, persistent HTTP/2 session
