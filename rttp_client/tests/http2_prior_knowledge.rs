@@ -27,6 +27,7 @@ const FLAG_PRIORITY: u8 = 0x20;
 
 const SETTING_HEADER_TABLE_SIZE: u16 = 0x1;
 const SETTING_ENABLE_PUSH: u16 = 0x2;
+const SETTING_MAX_CONCURRENT_STREAMS: u16 = 0x3;
 const SETTING_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const SETTING_MAX_FRAME_SIZE: u16 = 0x5;
 
@@ -1303,6 +1304,73 @@ fn prior_knowledge_get_splits_large_huffman_request_headers_at_peer_max_frame_si
 }
 
 #[test]
+fn prior_knowledge_get_sends_request_when_peer_max_concurrent_streams_allows_one() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_handshake_without_request_with_settings(
+      &mut stream,
+      &settings_payload(SETTING_MAX_CONCURRENT_STREAMS, 1),
+    );
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_STREAM | FLAG_END_HEADERS, request_headers.flags);
+    assert_eq!(1, request_headers.stream_id);
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"allowed");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/max-concurrent-one", addr))
+    .emit_http2_prior_knowledge()
+    .expect("h2 GET response with one allowed peer stream");
+
+  assert_eq!(200, response.code());
+  assert_eq!("allowed", response.body().string().unwrap());
+  handle.join().expect("max concurrent streams peer thread");
+}
+
+#[test]
+fn prior_knowledge_get_rejects_zero_peer_max_concurrent_streams_before_headers() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_handshake_without_request_with_settings(
+      &mut stream,
+      &settings_payload(SETTING_MAX_CONCURRENT_STREAMS, 0),
+    );
+
+    stream
+      .set_read_timeout(Some(Duration::from_millis(200)))
+      .expect("set read timeout");
+    let next_frame = try_read_frame(&mut stream).expect("check for extra client frame");
+    assert!(
+      next_frame.is_none(),
+      "client must not send request HEADERS when peer permits zero concurrent streams"
+    );
+  });
+
+  let err = HttpClient::new()
+    .get()
+    .url(format!("http://{}/max-concurrent-zero", addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("zero peer max concurrent streams must fail before request headers");
+
+  assert!(err.to_string().contains("SETTINGS_MAX_CONCURRENT_STREAMS"));
+  handle
+    .join()
+    .expect("zero max concurrent streams peer thread");
+}
+
+#[test]
 fn prior_knowledge_put_and_patch_send_body_data_frames() {
   for method in ["PUT", "PATCH"] {
     let request_header_block = emit_prior_knowledge_body_request(method);
@@ -1436,6 +1504,45 @@ fn prior_knowledge_rejects_subsequent_settings_with_invalid_payload() {
   handle
     .join()
     .expect("invalid subsequent settings peer thread");
+}
+
+#[test]
+fn prior_knowledge_accepts_subsequent_settings_with_max_concurrent_streams() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+    write_frame(
+      &mut stream,
+      FRAME_SETTINGS,
+      0,
+      0,
+      &settings_payload(SETTING_MAX_CONCURRENT_STREAMS, 0),
+    );
+
+    let settings_ack = read_frame(&mut stream);
+    assert_eq!(FRAME_SETTINGS, settings_ack.frame_type);
+    assert_eq!(FLAG_ACK, settings_ack.flags);
+    assert_eq!(0, settings_ack.stream_id);
+    assert!(settings_ack.payload.is_empty());
+
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"accepted");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/subsequent-max-concurrent", addr))
+    .emit_http2_prior_knowledge()
+    .expect("subsequent SETTINGS_MAX_CONCURRENT_STREAMS should be accepted");
+
+  assert_eq!(200, response.code());
+  assert_eq!("accepted", response.body().string().unwrap());
+  handle
+    .join()
+    .expect("subsequent max concurrent streams peer thread");
 }
 
 #[test]
