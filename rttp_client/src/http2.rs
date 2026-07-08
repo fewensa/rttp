@@ -528,8 +528,8 @@ fn read_until_send_window_available(
       (FRAME_PING, _) => {
         return Err(error::bad_response("invalid HTTP/2 PING frame"));
       }
-      (FRAME_GOAWAY, 0) => {
-        if goaway_last_stream_id(&frame.payload)? < STREAM_ID {
+      (FRAME_GOAWAY, _) => {
+        if goaway_last_stream_id(&frame)? < STREAM_ID {
           return Err(error::bad_response("HTTP/2 connection received GOAWAY"));
         }
       }
@@ -894,8 +894,8 @@ fn read_single_stream_response_with_first_frame(
       (FRAME_PING, _) => {
         return Err(error::bad_response("invalid HTTP/2 PING frame"));
       }
-      (FRAME_GOAWAY, 0) => {
-        if goaway_last_stream_id(&frame.payload)? < STREAM_ID {
+      (FRAME_GOAWAY, _) => {
+        if goaway_last_stream_id(&frame)? < STREAM_ID {
           return Err(error::bad_response("HTTP/2 connection received GOAWAY"));
         }
       }
@@ -1124,15 +1124,15 @@ fn is_informational_status(status: u32) -> bool {
   (100..200).contains(&status)
 }
 
-fn goaway_last_stream_id(payload: &[u8]) -> error::Result<u32> {
-  if payload.len() < 8 {
+fn goaway_last_stream_id(frame: &Frame) -> error::Result<u32> {
+  if frame.stream_id != 0 || frame.payload.len() < 8 {
     return Err(error::bad_response("invalid HTTP/2 GOAWAY frame"));
   }
   Ok(u32::from_be_bytes([
-    payload[0] & 0x7f,
-    payload[1],
-    payload[2],
-    payload[3],
+    frame.payload[0] & 0x7f,
+    frame.payload[1],
+    frame.payload[2],
+    frame.payload[3],
   ]))
 }
 
