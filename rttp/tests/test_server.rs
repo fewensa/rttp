@@ -185,6 +185,14 @@ fn h2_post_headers(path: &[u8], authority: &[u8]) -> Vec<u8> {
   headers
 }
 
+fn h2_delete_headers(path: &[u8], authority: &[u8]) -> Vec<u8> {
+  let mut headers = vec![0x86];
+  headers.extend(h2_literal_indexed_name(2, b"DELETE"));
+  headers.extend(h2_literal_indexed_name(4, path));
+  headers.extend(h2_literal_indexed_name(1, authority));
+  headers
+}
+
 fn h2_get_headers_with_huffman_path(encoded_path: &[u8]) -> Vec<u8> {
   let mut headers = vec![0x82, 0x86];
   headers.extend(h2_literal_indexed_name_huffman(4, encoded_path));
@@ -674,6 +682,57 @@ fn server_accepts_http2_prior_knowledge_get_and_writes_single_stream_response() 
       .map(|value| value.as_str())
   );
   assert_eq!("hello over h2", response.body().string().unwrap());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_accepts_http2_prior_knowledge_delete_with_end_stream_once() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((request.method().to_string(), request.target().to_string()))
+          .expect("send parsed h2 DELETE request");
+        HttpResponse::ok("deleted").header("X-Delete-Handled", "once")
+      })
+      .expect("serve one h2 DELETE request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_delete_headers(b"/resource", addr.to_string().as_bytes()),
+  );
+
+  let response_headers = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(H2_FLAG_END_HEADERS, response_headers.flags);
+  assert_eq!(1, response_headers.stream_id);
+  assert_eq!(
+    0x88, response_headers.payload[0],
+    "200 response must use the HTTP/2 static status entry"
+  );
+
+  let response_body = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
+  assert_eq!(1, response_body.stream_id);
+  assert_eq!(b"deleted", response_body.payload.as_slice());
+
+  let request = rx.recv().expect("receive parsed h2 DELETE request");
+  assert_eq!(("DELETE".to_string(), "/resource".to_string()), request);
+  assert!(rx.try_recv().is_err(), "handler must run exactly once");
 
   handle.join().expect("server thread");
 }
