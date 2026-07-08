@@ -2652,6 +2652,24 @@ fn server_rejects_http2_prior_knowledge_request_missing_scheme() {
 }
 
 #[test]
+fn server_rejects_http2_prior_knowledge_connect_without_path_or_scheme_before_handler() {
+  let mut headers = h2_literal_indexed_name(2, b"CONNECT");
+  headers.extend(h2_literal_indexed_name(1, b"example.test:443"));
+
+  assert_invalid_h2_headers_without_handler(&headers);
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_connect_authority_form_before_handler() {
+  let mut headers = h2_literal_indexed_name(2, b"CONNECT");
+  headers.push(0x86);
+  headers.extend(h2_literal_indexed_name(4, b"example.test:443"));
+  headers.extend(h2_literal_indexed_name(1, b"example.test:443"));
+
+  assert_invalid_h2_headers_without_handler(&headers);
+}
+
+#[test]
 fn server_rejects_http2_prior_knowledge_hpack_huffman_eos_symbol_before_handler() {
   assert_invalid_h2_headers_without_handler(&h2_get_headers_with_huffman_path(&[
     0xff, 0xff, 0xff, 0xff,
