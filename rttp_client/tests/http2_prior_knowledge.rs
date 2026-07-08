@@ -1955,6 +1955,147 @@ fn prior_knowledge_rejects_response_trailer_pseudo_headers() {
 }
 
 #[test]
+fn prior_knowledge_get_ignores_unknown_connection_frame_before_response_headers() {
+  const FRAME_UNKNOWN_EXTENSION: u8 = 0xf0;
+
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    write_frame(
+      &mut stream,
+      FRAME_UNKNOWN_EXTENSION,
+      0x7f,
+      0,
+      b"connection metadata",
+    );
+    write_frame(
+      &mut stream,
+      FRAME_HEADERS,
+      FLAG_END_HEADERS,
+      1,
+      &[0x88, 0x0f, 16, 4, b't', b'e', b'x', b't'],
+    );
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"body");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/unknown-connection-frame", addr))
+    .emit_http2_prior_knowledge()
+    .expect("unknown connection frame must not fail response");
+
+  assert_eq!(200, response.code());
+  assert_eq!(
+    Some(&"text".to_string()),
+    response.header_value("content-type")
+  );
+  assert_eq!("body", response.body().string().unwrap());
+  assert!(response.trailers().is_empty());
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
+fn prior_knowledge_get_ignores_unknown_stream_frames_around_body_and_trailers() {
+  const FRAME_UNKNOWN_EXTENSION: u8 = 0xf1;
+
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    write_frame(
+      &mut stream,
+      FRAME_HEADERS,
+      FLAG_END_HEADERS,
+      1,
+      &[
+        0x88, 0x0f, 16, 10, b't', b'e', b'x', b't', b'/', b'p', b'l', b'a', b'i', b'n',
+      ],
+    );
+    write_frame(&mut stream, FRAME_UNKNOWN_EXTENSION, 0, 1, b"not body");
+    write_frame(&mut stream, FRAME_DATA, 0, 1, b"hello");
+    write_raw_frame(
+      &mut stream,
+      FRAME_UNKNOWN_EXTENSION,
+      0,
+      0x8000_0001,
+      b"reserved-bit active stream extension",
+    );
+    write_frame(&mut stream, FRAME_DATA, 0, 1, b" world");
+    write_frame(
+      &mut stream,
+      FRAME_UNKNOWN_EXTENSION,
+      FLAG_END_STREAM,
+      1,
+      b"not final",
+    );
+    write_frame(
+      &mut stream,
+      FRAME_HEADERS,
+      FLAG_END_STREAM | FLAG_END_HEADERS,
+      1,
+      &h2_literal_new_name(b"x-trace", b"kept"),
+    );
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/unknown-stream-frames", addr))
+    .emit_http2_prior_knowledge()
+    .expect("unknown stream frames must not fail response");
+
+  assert_eq!(200, response.code());
+  assert_eq!(
+    Some(&"text/plain".to_string()),
+    response.header_value("content-type")
+  );
+  assert_eq!("hello world", response.body().string().unwrap());
+  assert_eq!(1, response.trailers().len());
+  assert_eq!(Some(&"kept".to_string()), response.trailer_value("x-trace"));
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
+fn prior_knowledge_get_ignores_unknown_stream_frame_after_final_data() {
+  const FRAME_UNKNOWN_EXTENSION: u8 = 0xf2;
+
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"complete");
+    write_frame(
+      &mut stream,
+      FRAME_UNKNOWN_EXTENSION,
+      0,
+      1,
+      b"late extension",
+    );
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/unknown-after-final-data", addr))
+    .emit_http2_prior_knowledge()
+    .expect("unknown stream frame after final data must not affect response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("complete", response.body().string().unwrap());
+  assert!(response.trailers().is_empty());
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
 fn prior_knowledge_get_ignores_interleaved_data_for_other_streams() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");
@@ -3308,6 +3449,16 @@ fn h2_huffman_string(block: &mut Vec<u8>, value: &[u8]) {
 }
 
 fn write_frame(stream: &mut impl Write, frame_type: u8, flags: u8, stream_id: u32, payload: &[u8]) {
+  write_raw_frame(stream, frame_type, flags, stream_id & 0x7fff_ffff, payload);
+}
+
+fn write_raw_frame(
+  stream: &mut impl Write,
+  frame_type: u8,
+  flags: u8,
+  stream_id: u32,
+  payload: &[u8],
+) {
   let length = payload.len();
   let mut header = [0; 9];
   header[0] = ((length >> 16) & 0xff) as u8;
@@ -3315,7 +3466,7 @@ fn write_frame(stream: &mut impl Write, frame_type: u8, flags: u8, stream_id: u3
   header[2] = (length & 0xff) as u8;
   header[3] = frame_type;
   header[4] = flags;
-  header[5..9].copy_from_slice(&(stream_id & 0x7fff_ffff).to_be_bytes());
+  header[5..9].copy_from_slice(&stream_id.to_be_bytes());
   stream.write_all(&header).expect("write frame header");
   stream.write_all(payload).expect("write frame payload");
   stream.flush().expect("flush frame");
