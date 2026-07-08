@@ -29,6 +29,7 @@ const H2_SETTINGS_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const H2_SETTINGS_MAX_FRAME_SIZE: u16 = 0x5;
 const H2_DEFAULT_INITIAL_WINDOW_SIZE: usize = 65_535;
 const H2_ERROR_CANCEL: u32 = 0x8;
+const H2_UNKNOWN_EXTENSION_FRAME: u8 = 0xf1;
 
 struct H2Frame {
   frame_type: u8,
@@ -54,6 +55,27 @@ fn write_h2_frame(
   header[5..9].copy_from_slice(&(stream_id & 0x7fff_ffff).to_be_bytes());
   stream.write_all(&header).expect("write h2 frame head");
   stream.write_all(payload).expect("write h2 frame payload");
+}
+
+fn write_raw_h2_frame(
+  stream: &mut impl Write,
+  frame_type: u8,
+  flags: u8,
+  stream_id: u32,
+  payload: &[u8],
+) {
+  let length = payload.len();
+  let mut header = [0; 9];
+  header[0] = ((length >> 16) & 0xff) as u8;
+  header[1] = ((length >> 8) & 0xff) as u8;
+  header[2] = (length & 0xff) as u8;
+  header[3] = frame_type;
+  header[4] = flags;
+  header[5..9].copy_from_slice(&stream_id.to_be_bytes());
+  stream.write_all(&header).expect("write raw h2 frame head");
+  stream
+    .write_all(payload)
+    .expect("write raw h2 frame payload");
 }
 
 fn try_write_h2_frame(
@@ -1830,6 +1852,83 @@ fn wrapper_http2_prior_knowledge_accepts_padded_peer_response_frames_without_pad
 }
 
 #[test]
+fn wrapper_http2_prior_knowledge_ignores_unknown_extension_frames_around_successful_response() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_peer_request_handshake(&mut stream);
+
+    write_h2_frame(
+      &mut stream,
+      H2_UNKNOWN_EXTENSION_FRAME,
+      0,
+      0,
+      b"connection extension ignored",
+    );
+    write_h2_frame(
+      &mut stream,
+      H2_FRAME_HEADERS,
+      H2_FLAG_END_HEADERS,
+      1,
+      &[
+        0x88, 0x0f, 16, 10, b't', b'e', b'x', b't', b'/', b'p', b'l', b'a', b'i', b'n',
+      ],
+    );
+    write_h2_frame(
+      &mut stream,
+      H2_UNKNOWN_EXTENSION_FRAME,
+      0,
+      1,
+      b"stream extension ignored before data",
+    );
+    write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 1, b"matrix");
+    write_raw_h2_frame(
+      &mut stream,
+      H2_UNKNOWN_EXTENSION_FRAME,
+      0,
+      0x8000_0001,
+      b"reserved stream-id high bit ignored",
+    );
+    write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 1, b" body");
+    write_h2_frame(
+      &mut stream,
+      H2_UNKNOWN_EXTENSION_FRAME,
+      H2_FLAG_END_STREAM,
+      1,
+      b"extension end stream ignored",
+    );
+    write_h2_frame(
+      &mut stream,
+      H2_FRAME_HEADERS,
+      H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+      1,
+      &h2_literal_new_name(b"x-matrix-trailer", b"kept"),
+    );
+  });
+
+  let response = rttp::Http::client()
+    .url(format!("http://{}/extension-response-matrix", addr))
+    .emit_http2_prior_knowledge()
+    .expect("wrapper h2 response with ignored extension frames");
+
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(200, response.code());
+  assert_eq!(
+    Some(&"text/plain".to_string()),
+    response.header_value("content-type")
+  );
+  assert_eq!("matrix body", response.body().string().unwrap());
+  assert_eq!(
+    Some(&"kept".to_string()),
+    response.trailer_value("x-matrix-trailer")
+  );
+
+  handle.join().expect("extension response peer thread");
+}
+
+#[test]
 fn wrapper_http2_prior_knowledge_rejects_malformed_padded_peer_response_frames() {
   let data_listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let data_addr = data_listener.local_addr().expect("h2 peer addr");
@@ -3137,6 +3236,133 @@ fn http2_feature_socket2_padded_request_trailers_reach_server_without_padding() 
     ),
     rx.recv()
       .expect("receive parsed padded h2 request trailers")
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn http2_feature_socket2_ignores_unknown_extension_frames_around_successful_request_response() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.method().to_string(),
+          request.target().to_string(),
+          request.version().to_string(),
+          request.header("x-matrix").map(str::to_string),
+          request.body().to_vec(),
+          request.trailer("x-matrix-trailer").map(str::to_string),
+          request.trailers().to_vec(),
+        ))
+        .expect("send parsed extension-frame matrix request");
+
+        HttpResponse::ok("extension matrix response")
+          .header("X-Matrix-Response", "kept")
+          .header("Trailer", "X-Matrix-Response-Trailer")
+          .trailer("X-Matrix-Response-Trailer", "kept")
+      })
+      .expect("serve extension-frame matrix h2 request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set client read timeout");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+
+  write_h2_frame(
+    &mut stream,
+    H2_UNKNOWN_EXTENSION_FRAME,
+    0,
+    0,
+    b"ignored before request",
+  );
+
+  let mut headers = h2_post_headers(b"/extension-request-matrix", addr.to_string().as_bytes());
+  headers.extend_from_slice(&h2_literal_new_name(b"x-matrix", b"kept"));
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &headers,
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_UNKNOWN_EXTENSION_FRAME,
+    0,
+    1,
+    b"ignored after headers",
+  );
+  write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 1, b"matrix ");
+  write_raw_h2_frame(
+    &mut stream,
+    H2_UNKNOWN_EXTENSION_FRAME,
+    0,
+    0x8000_0001,
+    b"reserved-bit extension ignored",
+  );
+  write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 1, b"upload");
+  write_h2_frame(
+    &mut stream,
+    H2_UNKNOWN_EXTENSION_FRAME,
+    H2_FLAG_END_STREAM,
+    1,
+    b"extension end stream ignored",
+  );
+
+  let trailers = h2_literal_new_name(b"x-matrix-trailer", b"kept");
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &trailers,
+  );
+
+  let response_headers = loop {
+    let frame = read_h2_frame(&mut stream);
+    if frame.frame_type != H2_FRAME_WINDOW_UPDATE {
+      break frame;
+    }
+  };
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(1, response_headers.stream_id);
+  let response_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(1, response_body.stream_id);
+  assert_eq!(
+    b"extension matrix response",
+    response_body.payload.as_slice()
+  );
+  let response_trailers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_trailers.frame_type);
+  assert_eq!(
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    response_trailers.flags
+  );
+  assert_eq!(1, response_trailers.stream_id);
+
+  assert_eq!(
+    (
+      "POST".to_string(),
+      "/extension-request-matrix".to_string(),
+      "HTTP/2".to_string(),
+      Some("kept".to_string()),
+      b"matrix upload".to_vec(),
+      Some("kept".to_string()),
+      vec![("x-matrix-trailer".to_string(), "kept".to_string())],
+    ),
+    rx.recv()
+      .expect("receive parsed extension-frame matrix request")
   );
 
   handle.join().expect("server thread");
