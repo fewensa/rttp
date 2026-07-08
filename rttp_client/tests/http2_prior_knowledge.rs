@@ -749,6 +749,71 @@ fn prior_knowledge_post_sends_headers_then_body_data_frame() {
 }
 
 #[test]
+fn prior_knowledge_request_omits_connection_specific_headers_and_connection_tokens() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_handshake_without_request(&mut stream);
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_STREAM | FLAG_END_HEADERS, request_headers.flags);
+    assert_eq!(1, request_headers.stream_id);
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"filtered");
+
+    request_headers.payload
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/connection-specific", addr))
+    .header(("Connection", "Keep-Alive, X-Hop, upgrade"))
+    .header(("Keep-Alive", "timeout=5"))
+    .header(("Proxy-Connection", "keep-alive"))
+    .header(("Transfer-Encoding", "chunked"))
+    .header(("Upgrade", "websocket"))
+    .header(("Trailer", "X-Trailer"))
+    .header(("Host".to_string(), addr.to_string()))
+    .header(("X-Hop", "remove-me"))
+    .header(("X-End-To-End", "keep-me"))
+    .emit_http2_prior_knowledge()
+    .expect("h2 GET response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("filtered", response.body().string().unwrap());
+
+  let request_header_block = handle.join().expect("h2 peer thread");
+  for forbidden in [
+    b"connection".as_slice(),
+    b"keep-alive",
+    b"proxy-connection",
+    b"transfer-encoding",
+    b"upgrade",
+    b"trailer",
+    b"host",
+    b"x-hop",
+  ] {
+    assert!(
+      find_header_value(&request_header_block, forbidden).is_none(),
+      "request must not encode {} as an HTTP/2 header",
+      String::from_utf8_lossy(forbidden)
+    );
+  }
+  assert_eq!(
+    b"keep-me",
+    find_header_value(&request_header_block, b"x-end-to-end")
+      .expect("end-to-end request header")
+      .value
+      .as_slice()
+  );
+}
+
+#[test]
 fn prior_knowledge_post_sends_request_trailers_after_body_data_frame() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");
@@ -783,7 +848,6 @@ fn prior_knowledge_post_sends_request_trailers_after_body_data_frame() {
   let response = HttpClient::new()
     .post()
     .url(format!("http://{}/submit-with-tail", addr))
-    .header(("Trailer", "X-Trace"))
     .trailer(("X-Trace", "abc"))
     .expect("configure request trailer")
     .raw("trace body")
@@ -801,13 +865,7 @@ fn prior_knowledge_post_sends_request_trailers_after_body_data_frame() {
       .value
       .as_slice()
   );
-  assert_eq!(
-    b"X-Trace",
-    find_header_value(&request_header_block, b"trailer")
-      .expect("trailer request header")
-      .value
-      .as_slice()
-  );
+  assert!(find_header_value(&request_header_block, b"trailer").is_none());
   assert_eq!(
     b"abc",
     find_header_value(&request_trailer_block, b"x-trace")
@@ -1494,6 +1552,110 @@ fn prior_knowledge_exposes_response_trailers_after_data_without_changing_headers
   );
   assert!(response.header("x-trace").is_none());
   handle.join().expect("h2 peer thread");
+}
+
+#[test]
+fn prior_knowledge_preserves_peer_response_connection_specific_headers() {
+  let mut header_block = vec![0x88];
+  for (name, value) in [
+    (b"connection".as_slice(), b"close".as_slice()),
+    (b"keep-alive", b"timeout=5"),
+    (b"proxy-connection", b"keep-alive"),
+    (b"transfer-encoding", b"chunked"),
+    (b"upgrade", b"websocket"),
+    (b"trailer", b"x-trace"),
+    (b"host", b"example.invalid"),
+  ] {
+    header_block.extend_from_slice(&h2_literal_new_name(name, value));
+  }
+  let header_block = Box::leak(header_block.into_boxed_slice());
+  let (addr, handle) = spawn_h2_prior_knowledge_peer_with_response(header_block, &[b"headers"]);
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/response-connection-specific", addr))
+    .emit_http2_prior_knowledge()
+    .expect("h2 response with peer connection-specific headers");
+
+  assert_eq!(200, response.code());
+  assert_eq!("headers", response.body().string().unwrap());
+  assert_eq!(
+    Some(&"close".to_string()),
+    response.header_value("connection")
+  );
+  assert_eq!(
+    Some(&"timeout=5".to_string()),
+    response.header_value("keep-alive")
+  );
+  assert_eq!(
+    Some(&"keep-alive".to_string()),
+    response.header_value("proxy-connection")
+  );
+  assert_eq!(
+    Some(&"chunked".to_string()),
+    response.header_value("transfer-encoding")
+  );
+  assert_eq!(
+    Some(&"websocket".to_string()),
+    response.header_value("upgrade")
+  );
+  assert_eq!(
+    Some(&"x-trace".to_string()),
+    response.header_value("trailer")
+  );
+  assert_eq!(
+    Some(&"example.invalid".to_string()),
+    response.header_value("host")
+  );
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
+fn prior_knowledge_rejects_peer_response_connection_specific_trailers() {
+  for (name, path) in [
+    (b"connection".as_slice(), "connection"),
+    (b"keep-alive", "keep-alive"),
+    (b"proxy-connection", "proxy-connection"),
+    (b"transfer-encoding", "transfer-encoding"),
+    (b"upgrade", "upgrade"),
+    (b"trailer", "trailer"),
+    (b"host", "host"),
+  ] {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+    let addr = listener.local_addr().expect("h2 peer addr");
+    let trailer_block = h2_literal_new_name(name, b"forbidden");
+
+    let handle = thread::spawn(move || {
+      let (mut stream, _) = listener.accept().expect("accept h2 client");
+      complete_h2_request_handshake(&mut stream);
+
+      write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+      write_frame(&mut stream, FRAME_DATA, 0, 1, b"body");
+      write_frame(
+        &mut stream,
+        FRAME_HEADERS,
+        FLAG_END_HEADERS | FLAG_END_STREAM,
+        1,
+        &trailer_block,
+      );
+    });
+
+    let result = HttpClient::new()
+      .get()
+      .url(format!("http://{}/forbidden-trailer-{}", addr, path))
+      .emit_http2_prior_knowledge();
+
+    let error = match result {
+      Ok(response) => panic!("{path} response trailer must be rejected, got response: {response}"),
+      Err(error) => error,
+    };
+
+    assert!(
+      error.to_string().contains("Forbidden trailer header"),
+      "unexpected error for {path}: {error}"
+    );
+    handle.join().expect("h2 peer thread");
+  }
 }
 
 #[test]

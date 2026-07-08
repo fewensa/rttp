@@ -338,12 +338,9 @@ fn write_request(
       .min(DEFAULT_HPACK_DYNAMIC_TABLE_SIZE),
   );
   let regular_header_fields = regular_headers(request.header());
-  let trailer_announcement = (!request.origin().trailers().is_empty())
-    .then(|| ("trailer".to_string(), request_trailer_field_value(request)));
   let trailer_fields = request_trailer_fields(request);
   let mut dynamic_field_plan = Vec::new();
   dynamic_field_plan.extend(regular_header_fields.iter().cloned());
-  dynamic_field_plan.extend(trailer_announcement.iter().cloned());
   dynamic_field_plan.extend(trailer_fields.iter().cloned());
   let mut dynamic_field_position = 0;
 
@@ -351,7 +348,6 @@ fn write_request(
     request,
     url,
     &regular_header_fields,
-    trailer_announcement.as_ref(),
     &dynamic_field_plan,
     &mut dynamic_field_position,
     &mut hpack,
@@ -589,7 +585,6 @@ fn encode_request_headers(
   request: &RawRequest<'_>,
   url: &Url,
   regular_header_fields: &[(String, String)],
-  trailer_announcement: Option<&(String, String)>,
   dynamic_field_plan: &[(String, String)],
   dynamic_field_position: &mut usize,
   hpack: &mut RequestHpackEncoder,
@@ -618,25 +613,7 @@ fn encode_request_headers(
     *dynamic_field_position += 1;
   }
 
-  if let Some((name, value)) = trailer_announcement {
-    let remaining = dynamic_field_plan
-      .get(*dynamic_field_position + 1..)
-      .unwrap_or(&[]);
-    hpack.encode_field(&mut block, name, value, remaining)?;
-    *dynamic_field_position += 1;
-  }
-
   Ok(block)
-}
-
-fn request_trailer_field_value(request: &RawRequest<'_>) -> String {
-  request
-    .origin()
-    .trailers()
-    .iter()
-    .map(|header| header.name().as_str())
-    .collect::<Vec<_>>()
-    .join(", ")
 }
 
 fn request_trailer_fields(request: &RawRequest<'_>) -> Vec<(String, String)> {
@@ -707,25 +684,42 @@ fn authority(url: &Url) -> error::Result<String> {
 }
 
 fn regular_headers(header: &str) -> Vec<(String, String)> {
+  let connection_tokens = header
+    .lines()
+    .skip(1)
+    .filter_map(|line| line.split_once(':'))
+    .filter(|(name, _)| name.trim().eq_ignore_ascii_case("connection"))
+    .flat_map(|(_, value)| value.split(','))
+    .map(|token| token.trim().to_ascii_lowercase())
+    .filter(|token| !token.is_empty())
+    .collect::<Vec<_>>();
+
   header
     .lines()
     .skip(1)
     .filter_map(|line| line.split_once(':'))
     .map(|(name, value)| (name.trim().to_ascii_lowercase(), value.trim().to_string()))
-    .filter(|(name, _)| {
-      !matches!(
-        name.as_str(),
-        "connection"
-          | "host"
-          | "keep-alive"
-          | "proxy-connection"
-          | "te"
-          | "trailer"
-          | "transfer-encoding"
-          | "upgrade"
-      )
-    })
+    .filter(|(name, _)| !is_forbidden_request_header_name(name, &connection_tokens))
     .collect()
+}
+
+fn is_forbidden_request_header_name(name: &str, connection_tokens: &[String]) -> bool {
+  is_connection_specific_header_name(name)
+    || name == "te"
+    || connection_tokens.iter().any(|token| token == name)
+}
+
+fn is_connection_specific_header_name(name: &str) -> bool {
+  matches!(
+    name,
+    "connection"
+      | "host"
+      | "keep-alive"
+      | "proxy-connection"
+      | "trailer"
+      | "transfer-encoding"
+      | "upgrade"
+  )
 }
 
 #[derive(Clone, Copy)]
@@ -1828,8 +1822,10 @@ fn is_forbidden_response_trailer_name(name: &str) -> bool {
       | "content-length"
       | "cookie"
       | "host"
+      | "keep-alive"
       | "proxy-authenticate"
       | "proxy-authorization"
+      | "proxy-connection"
       | "www-authenticate"
       | "set-cookie"
       | "te"
