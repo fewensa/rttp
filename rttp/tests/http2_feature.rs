@@ -1346,6 +1346,102 @@ fn rttp_client_http2_prior_knowledge_dynamic_request_fields_reach_rttp_server_de
 }
 
 #[test]
+fn rttp_client_http2_prior_knowledge_head_interoperates_with_socket2_h2c_server_matrix() {
+  struct HeadCase {
+    name: &'static str,
+    path: &'static str,
+    status_code: u16,
+    expected_code: u32,
+    reason: &'static str,
+    response_body: &'static str,
+  }
+
+  for case in [
+    HeadCase {
+      name: "ok-with-suppressed-body",
+      path: "/direct-head-ok",
+      status_code: 200,
+      expected_code: 200,
+      reason: "OK",
+      response_body: "metadata body suppressed for HEAD",
+    },
+    HeadCase {
+      name: "no-content",
+      path: "/direct-head-no-content",
+      status_code: 204,
+      expected_code: 204,
+      reason: "No Content",
+      response_body: "ignored no-content body",
+    },
+    HeadCase {
+      name: "not-modified",
+      path: "/direct-head-not-modified",
+      status_code: 304,
+      expected_code: 304,
+      reason: "Not Modified",
+      response_body: "ignored not-modified body",
+    },
+  ] {
+    let server = rttp::Http::server("127.0.0.1:0")
+      .expect("bind server")
+      .with_read_timeout(Some(Duration::from_secs(2)))
+      .with_write_timeout(Some(Duration::from_secs(2)));
+    let addr = server.local_addr().expect("server addr");
+    let (tx, rx) = mpsc::channel();
+
+    let handle = thread::spawn(move || {
+      server
+        .accept_one(|request| {
+          tx.send((
+            request.method().to_string(),
+            request.version().to_string(),
+            request.target().to_string(),
+            request.header("x-head-matrix").map(str::to_string),
+            request.body().to_vec(),
+          ))
+          .expect("send parsed direct h2 HEAD request");
+
+          HttpResponse::new(case.status_code, case.reason)
+            .header("X-Head-Matrix", case.name)
+            .body(case.response_body)
+        })
+        .expect("serve direct h2 HEAD request");
+    });
+
+    let response = rttp_client::HttpClient::new()
+      .head()
+      .url(format!("http://{}{}", addr, case.path))
+      .header(("X-Head-Matrix", case.name))
+      .emit_http2_prior_knowledge()
+      .expect("direct client h2 HEAD response from socket2 server");
+
+    assert_eq!("HTTP/2", response.version(), "{}", case.name);
+    assert_eq!(case.expected_code, response.code(), "{}", case.name);
+    assert_eq!(
+      Some(&case.name.to_string()),
+      response.header_value("X-Head-Matrix"),
+      "{}",
+      case.name
+    );
+    assert_eq!(b"", response.body().binary(), "{}", case.name);
+    assert_eq!(
+      (
+        "HEAD".to_string(),
+        "HTTP/2".to_string(),
+        case.path.to_string(),
+        Some(case.name.to_string()),
+        Vec::new(),
+      ),
+      rx.recv().expect("receive parsed direct h2 HEAD request"),
+      "{}",
+      case.name
+    );
+
+    handle.join().expect("server thread");
+  }
+}
+
+#[test]
 fn wrapper_http2_prior_knowledge_large_huffman_request_header_reaches_socket2_server_decoded() {
   let server = rttp::Http::server("127.0.0.1:0")
     .expect("bind server")
