@@ -28,11 +28,13 @@ const HTTP2_FLAG_PRIORITY: u8 = 0x20;
 const HTTP2_DEFAULT_MAX_FRAME_SIZE: usize = 16 * 1024;
 const HTTP2_DEFAULT_INITIAL_WINDOW_SIZE: i32 = 65_535;
 const HTTP2_DEFAULT_HEADER_TABLE_SIZE: usize = 4096;
+const HTTP2_MAX_HEADER_LIST_SIZE: usize = MAX_REQUEST_HEAD_BYTES;
 const HTTP2_STATIC_TABLE_LEN: usize = 61;
 const HTTP2_SETTINGS_ENABLE_PUSH: u16 = 0x2;
 const HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS: u16 = 0x3;
 const HTTP2_SETTINGS_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const HTTP2_SETTINGS_MAX_FRAME_SIZE: u16 = 0x5;
+const HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE: u16 = 0x6;
 const HTTP2_ERROR_NO_ERROR: u32 = 0x0;
 const HTTP2_ERROR_REFUSED_STREAM: u32 = 0x7;
 
@@ -386,10 +388,7 @@ impl HttpServer {
       HTTP2_FRAME_SETTINGS,
       0,
       0,
-      &http2_setting(
-        HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS,
-        bounded_http2_max_concurrent_streams(request_limit),
-      ),
+      &server_http2_settings_payload(request_limit),
     ))?;
     self.normalize_connection_error(write_http2_frame(
       &mut stream,
@@ -549,7 +548,8 @@ impl HttpServer {
             .header_block
             .extend_from_slice(header_block_fragment);
           if frame.flags & HTTP2_FLAG_END_HEADERS == HTTP2_FLAG_END_HEADERS {
-            request_stream.finish_header_block(&mut request_header_decoder)?;
+            request_stream
+              .finish_header_block(&mut request_header_decoder, HTTP2_MAX_HEADER_LIST_SIZE)?;
           } else {
             request_stream.in_header_continuation = true;
           }
@@ -580,7 +580,8 @@ impl HttpServer {
             .header_block
             .extend_from_slice(&frame.payload);
           if frame.flags & HTTP2_FLAG_END_HEADERS == HTTP2_FLAG_END_HEADERS {
-            request_stream.finish_header_block(&mut request_header_decoder)?;
+            request_stream
+              .finish_header_block(&mut request_header_decoder, HTTP2_MAX_HEADER_LIST_SIZE)?;
           }
         }
         (HTTP2_FRAME_DATA, id) if id != 0 => {
@@ -836,13 +837,22 @@ impl Http2RequestStream {
     self.decoded_headers.is_some() && self.end_stream && !self.in_header_continuation
   }
 
-  fn finish_header_block(&mut self, decoder: &mut Http2HeaderDecoder) -> io::Result<()> {
+  fn finish_header_block(
+    &mut self,
+    decoder: &mut Http2HeaderDecoder,
+    max_header_list_size: usize,
+  ) -> io::Result<()> {
     match self.header_block_kind.take() {
       Some(Http2HeaderBlockKind::RequestHeaders) => {
-        self.decoded_headers = Some(decode_http2_request_headers(&self.header_block, decoder)?);
+        self.decoded_headers = Some(decode_http2_request_headers(
+          &self.header_block,
+          decoder,
+          max_header_list_size,
+        )?);
       }
       Some(Http2HeaderBlockKind::RequestTrailers) => {
-        self.decoded_trailers = decode_http2_request_trailers(&self.header_block, decoder)?;
+        self.decoded_trailers =
+          decode_http2_request_trailers(&self.header_block, decoder, max_header_list_size)?;
       }
       None => {
         return Err(io::Error::new(
@@ -1229,6 +1239,19 @@ fn write_http2_window_update(
   )
 }
 
+fn server_http2_settings_payload(request_limit: usize) -> Vec<u8> {
+  let mut payload = Vec::with_capacity(12);
+  payload.extend_from_slice(&http2_setting(
+    HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS,
+    bounded_http2_max_concurrent_streams(request_limit),
+  ));
+  payload.extend_from_slice(&http2_setting(
+    HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE,
+    HTTP2_MAX_HEADER_LIST_SIZE as u32,
+  ));
+  payload
+}
+
 fn write_http2_goaway(
   stream: &mut TcpStream,
   last_stream_id: u32,
@@ -1374,6 +1397,7 @@ fn invalid_hpack_index_error() -> io::Error {
 fn decode_http2_request_headers(
   block: &[u8],
   decoder: &mut Http2HeaderDecoder,
+  max_header_list_size: usize,
 ) -> io::Result<DecodedHttp2RequestHeaders> {
   let mut decoded = DecodedHttp2RequestHeaders {
     method: None,
@@ -1385,7 +1409,9 @@ fn decode_http2_request_headers(
   let mut regular_header_seen = false;
   let mut pseudo_headers = Vec::<String>::new();
 
-  for (name, value) in decode_http2_header_fields(block, decoder)? {
+  let fields = decode_http2_header_fields(block, decoder)?;
+  reject_oversized_http2_header_list(&fields, max_header_list_size)?;
+  for (name, value) in fields {
     if name.starts_with(':') {
       if regular_header_seen {
         return Err(io::Error::new(
@@ -1450,8 +1476,10 @@ fn is_forbidden_http2_request_header_name(name: &str) -> bool {
 fn decode_http2_request_trailers(
   block: &[u8],
   decoder: &mut Http2HeaderDecoder,
+  max_header_list_size: usize,
 ) -> io::Result<Vec<(String, String)>> {
   let trailers = decode_http2_header_fields(block, decoder)?;
+  reject_oversized_http2_header_list(&trailers, max_header_list_size)?;
   for (name, value) in &trailers {
     if name.starts_with(':') {
       return Err(io::Error::new(
@@ -1470,6 +1498,31 @@ fn decode_http2_request_trailers(
     }
   }
   Ok(trailers)
+}
+
+fn reject_oversized_http2_header_list(
+  fields: &[(String, String)],
+  max_header_list_size: usize,
+) -> io::Result<()> {
+  let mut size = 0usize;
+  for (name, value) in fields {
+    size = size
+      .checked_add(name.len())
+      .and_then(|size| size.checked_add(value.len()))
+      .and_then(|size| size.checked_add(32))
+      .ok_or_else(http2_header_list_size_error)?;
+    if size > max_header_list_size {
+      return Err(http2_header_list_size_error());
+    }
+  }
+  Ok(())
+}
+
+fn http2_header_list_size_error() -> io::Error {
+  io::Error::new(
+    io::ErrorKind::InvalidData,
+    "HTTP/2 header list size exceeded",
+  )
 }
 
 fn decode_http2_header_fields(
@@ -2183,7 +2236,10 @@ fn read_http2_response_flow_control_frame(
           .header_block
           .extend_from_slice(header_block_fragment);
         if frame.flags & HTTP2_FLAG_END_HEADERS == HTTP2_FLAG_END_HEADERS {
-          request_stream.finish_header_block(flow_control.request_header_decoder)?;
+          request_stream.finish_header_block(
+            flow_control.request_header_decoder,
+            HTTP2_MAX_HEADER_LIST_SIZE,
+          )?;
         } else {
           request_stream.in_header_continuation = true;
         }
@@ -2215,7 +2271,10 @@ fn read_http2_response_flow_control_frame(
           .header_block
           .extend_from_slice(&frame.payload);
         if frame.flags & HTTP2_FLAG_END_HEADERS == HTTP2_FLAG_END_HEADERS {
-          request_stream.finish_header_block(flow_control.request_header_decoder)?;
+          request_stream.finish_header_block(
+            flow_control.request_header_decoder,
+            HTTP2_MAX_HEADER_LIST_SIZE,
+          )?;
         }
       }
       (HTTP2_FRAME_DATA, id) if id != 0 => {
