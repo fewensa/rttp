@@ -15,6 +15,7 @@ const H2_FRAME_PRIORITY: u8 = 0x2;
 const H2_FRAME_RST_STREAM: u8 = 0x3;
 const H2_FRAME_SETTINGS: u8 = 0x4;
 const H2_FRAME_PING: u8 = 0x6;
+const H2_FRAME_GOAWAY: u8 = 0x7;
 const H2_FRAME_WINDOW_UPDATE: u8 = 0x8;
 const H2_FLAG_END_STREAM: u8 = 0x1;
 const H2_FLAG_ACK: u8 = 0x1;
@@ -716,9 +717,21 @@ fn prior_knowledge_server_ends_head_response_on_headers_without_data_frame() {
   stream
     .set_read_timeout(Some(Duration::from_millis(200)))
     .expect("set short client read timeout");
-  assert!(
-    try_read_h2_frame(&mut stream).is_err(),
-    "HEAD responses must end on HEADERS without a DATA frame"
+  let shutdown = read_h2_frame(&mut stream);
+  assert_eq!(
+    H2_FRAME_GOAWAY, shutdown.frame_type,
+    "HEAD responses must end on HEADERS before graceful shutdown"
+  );
+  assert_eq!(0, shutdown.flags);
+  assert_eq!(0, shutdown.stream_id);
+  assert_eq!(8, shutdown.payload.len());
+  assert_eq!(
+    1,
+    u32::from_be_bytes(shutdown.payload[0..4].try_into().unwrap())
+  );
+  assert_eq!(
+    0,
+    u32::from_be_bytes(shutdown.payload[4..8].try_into().unwrap())
   );
 
   handle.join().expect("server thread");

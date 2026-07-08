@@ -31,6 +31,7 @@ const HTTP2_STATIC_TABLE_LEN: usize = 61;
 const HTTP2_SETTINGS_ENABLE_PUSH: u16 = 0x2;
 const HTTP2_SETTINGS_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const HTTP2_SETTINGS_MAX_FRAME_SIZE: u16 = 0x5;
+const HTTP2_ERROR_NO_ERROR: u32 = 0x0;
 
 pub struct HttpServer {
   listener: TcpListener,
@@ -400,6 +401,7 @@ impl HttpServer {
     let mut connection_send_window = Http2SendWindow::new(HTTP2_DEFAULT_INITIAL_WINDOW_SIZE);
     let mut request_header_decoder = Http2HeaderDecoder::new(HTTP2_DEFAULT_HEADER_TABLE_SIZE);
     let mut served = 0;
+    let mut last_processed_stream_id = 0;
 
     while served < request_limit {
       let frame = match self.normalize_connection_error(read_http2_frame(&mut stream)) {
@@ -654,8 +656,18 @@ impl HttpServer {
             request_header_decoder: &mut request_header_decoder,
           },
         ))?;
+        last_processed_stream_id = stream_id;
         served += 1;
       }
+    }
+
+    if served == request_limit && last_processed_stream_id != 0 {
+      self.normalize_connection_error(write_http2_goaway(
+        &mut stream,
+        last_processed_stream_id,
+        HTTP2_ERROR_NO_ERROR,
+      ))?;
+      self.normalize_connection_error(stream.flush())?;
     }
 
     Ok(served)
@@ -1147,6 +1159,17 @@ fn write_http2_window_update(
     stream_id,
     &increment.to_be_bytes(),
   )
+}
+
+fn write_http2_goaway(
+  stream: &mut TcpStream,
+  last_stream_id: u32,
+  error_code: u32,
+) -> io::Result<()> {
+  let mut payload = [0; 8];
+  payload[..4].copy_from_slice(&(last_stream_id & 0x7fff_ffff).to_be_bytes());
+  payload[4..].copy_from_slice(&error_code.to_be_bytes());
+  write_http2_frame(stream, HTTP2_FRAME_GOAWAY, 0, 0, &payload)
 }
 
 struct DecodedHttp2RequestHeaders {
