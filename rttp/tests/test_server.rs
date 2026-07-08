@@ -1276,6 +1276,87 @@ fn server_preserves_http2_request_frames_received_while_response_is_flow_control
 }
 
 #[test]
+fn server_cancels_blocked_http2_response_after_reset_and_serves_next_stream() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .serve_requests(2, |request| {
+        tx.send(request.target().to_string())
+          .expect("send h2 target");
+        if request.target() == "/reset-response" {
+          HttpResponse::ok("abcdefghij")
+        } else {
+          HttpResponse::ok("after")
+        }
+      })
+      .expect("serve reset h2 response sequence");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_millis(200)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake_with_settings(
+    &mut stream,
+    &h2_setting(H2_SETTINGS_INITIAL_WINDOW_SIZE, 5),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_headers(b"/reset-response", addr.to_string().as_bytes()),
+  );
+
+  let response_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(1, response_headers.stream_id);
+  let first_data = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, first_data.frame_type);
+  assert_eq!(1, first_data.stream_id);
+  assert_eq!(b"abcde", first_data.payload.as_slice());
+
+  let blocked = try_read_h2_frame(&mut stream).expect_err("server must wait for stream credit");
+  assert!(
+    matches!(blocked.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut),
+    "unexpected read error: {blocked}"
+  );
+
+  write_h2_frame(&mut stream, H2_FRAME_RST_STREAM, 0, 1, &0u32.to_be_bytes());
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    3,
+    &h2_get_headers(b"/after-reset", addr.to_string().as_bytes()),
+  );
+
+  let next_headers = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, next_headers.frame_type);
+  assert_eq!(3, next_headers.stream_id);
+  let next_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, next_body.frame_type);
+  assert_eq!(3, next_body.stream_id);
+  assert_eq!(b"after", next_body.payload.as_slice());
+
+  assert_eq!(
+    vec!["/reset-response".to_string(), "/after-reset".to_string()],
+    vec![
+      rx.recv().expect("reset h2 target"),
+      rx.recv().expect("next h2 target"),
+    ]
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn server_applies_http2_window_update_to_other_stream_while_response_is_blocked() {
   let server = rttp::Http::server("127.0.0.1:0")
     .expect("bind server")
@@ -3376,6 +3457,16 @@ fn server_ignores_reset_stream_and_serves_surviving_http2_stream() {
   assert_eq!("/survivor", rx.recv().expect("survivor h2 target"));
 
   handle.join().expect("server thread");
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_reset_stream_with_zero_stream_id() {
+  assert_invalid_h2_frame_without_handler(H2_FRAME_RST_STREAM, 0, 0, &0u32.to_be_bytes());
+}
+
+#[test]
+fn server_rejects_http2_prior_knowledge_reset_stream_with_invalid_payload_length() {
+  assert_invalid_h2_frame_without_handler(H2_FRAME_RST_STREAM, 0, 1, &[0, 0, 0]);
 }
 
 #[test]
