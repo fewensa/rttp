@@ -36,15 +36,16 @@ available through `Response::trailers`, `Response::trailer`, and
 | Upgrade and tunnel handoff | `CONNECT` returns the tunnel socket after a successful `200`; `upgrade()` returns the socket after `101 Switching Protocols` and skips interim `1xx` responses | Upgraded protocols are handed to the caller and are not parsed by `rttp_client` |
 | Redirects | Auto-redirect covers 301, 302, 303, 307, and 308 method/body behavior, relative and absolute `Location` resolution, same- and cross-authority header handling, loop detection, and redirect bounds | Redirects are HTTP client behavior, not a browser policy implementation |
 | Trailers | Chunked response trailers are exposed for blocking and async APIs; streaming chunked uploads can send declared request trailers | Forbidden framing/routing trailer fields are rejected |
-| Prior-knowledge h2c | With `http2`, direct `socket2` h2c sends GET, HEAD, bodyless DELETE, and buffered POST, PUT, or PATCH requests, suppresses HEAD response bodies, DATA bodies, trailers, HPACK static Huffman strings, dynamic entries within peer settings, large header blocks, padded incoming frames, and conservative DATA flow control | No TLS ALPN, proxy tunneling to h2, proxy h2, general multiplexing, priority scheduling, or request bodies for GET, HEAD, or DELETE |
+| Prior-knowledge h2c | With `http2`, direct `socket2` h2c sends GET, HEAD, bodyless DELETE or OPTIONS, and buffered POST, PUT, or PATCH requests, suppresses HEAD response bodies, DATA bodies, trailers, HPACK static Huffman strings, dynamic entries within peer settings, large header blocks, padded incoming frames, and conservative DATA flow control | No TLS ALPN, proxy tunneling to h2, proxy h2, general multiplexing, priority scheduling, or request bodies for GET, HEAD, DELETE, or OPTIONS |
 
 With the `http2` feature enabled, `emit_http2_prior_knowledge` sends a minimal
 prior-knowledge h2c request over a direct socket2 TCP connection. It supports
-GET, HEAD, bodyless DELETE, and buffered POST, PUT, or PATCH requests,
+GET, HEAD, bodyless DELETE or OPTIONS, and buffered POST, PUT, or PATCH requests,
 including non-empty buffered request bodies as DATA frames for the write
-methods. GET, HEAD, and DELETE requests with bodies are rejected; HEAD and
-bodyless DELETE requests do not send request DATA frames, and any HEAD response
-DATA frames are consumed without being exposed as a response body. The client
+methods. GET, HEAD, DELETE, and OPTIONS requests with bodies are rejected; HEAD,
+bodyless DELETE, and bodyless OPTIONS requests do not send request DATA frames,
+and any HEAD response DATA frames are consumed without being exposed as a
+response body. The client
 supports HPACK static Huffman
 strings and large header blocks via CONTINUATION frames. It uses HPACK dynamic
 entries for repeated request header and trailer fields within the peer's

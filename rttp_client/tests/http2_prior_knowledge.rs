@@ -245,6 +245,90 @@ fn prior_knowledge_delete_with_body_is_rejected_before_connecting() {
 }
 
 #[test]
+fn prior_knowledge_options_without_body_sends_headers_end_stream() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    stream
+      .set_read_timeout(Some(Duration::from_millis(200)))
+      .expect("set h2 peer read timeout");
+    complete_h2_handshake_without_request(&mut stream);
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_STREAM | FLAG_END_HEADERS, request_headers.flags);
+    assert_eq!(1, request_headers.stream_id);
+    assert_eq!(
+      b"OPTIONS",
+      find_header_value(&request_headers.payload, b":method")
+        .expect("request method")
+        .value
+        .as_slice()
+    );
+    assert!(
+      request_headers.payload.contains(&0x86),
+      "OPTIONS request must send :scheme http"
+    );
+    assert_eq!(
+      addr.to_string().as_bytes(),
+      find_header_value(&request_headers.payload, b":authority")
+        .expect("request authority")
+        .value
+        .as_slice()
+    );
+    assert_eq!(
+      b"/resource",
+      find_header_value(&request_headers.payload, b":path")
+        .expect("request path")
+        .value
+        .as_slice()
+    );
+    assert!(
+      try_read_frame(&mut stream)
+        .expect("check for unexpected OPTIONS body")
+        .is_none(),
+      "bodyless OPTIONS request must not send DATA frames"
+    );
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"options");
+  });
+
+  let response = HttpClient::new()
+    .options()
+    .url(format!("http://{}/resource", addr))
+    .emit_http2_prior_knowledge()
+    .expect("h2 OPTIONS response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!("options", response.body().string().unwrap());
+
+  handle.join().expect("h2 OPTIONS peer thread");
+}
+
+#[test]
+fn prior_knowledge_options_with_body_is_rejected_before_connecting() {
+  let err = HttpClient::new()
+    .options()
+    .url("http://127.0.0.1:9/options-body")
+    .raw("unsupported body")
+    .emit_http2_prior_knowledge()
+    .expect_err("OPTIONS with a body must be rejected");
+
+  assert!(err.is_builder());
+  assert!(
+    err
+      .to_string()
+      .contains("HTTP/2 prior-knowledge OPTIONS cannot send a request body"),
+    "unexpected error: {err}"
+  );
+}
+
+#[test]
 fn prior_knowledge_request_literals_use_huffman_only_when_smaller() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");
