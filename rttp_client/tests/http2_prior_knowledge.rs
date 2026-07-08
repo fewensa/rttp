@@ -1831,6 +1831,129 @@ fn prior_knowledge_decodes_hpack_huffman_response_headers_and_trailers() {
 }
 
 #[test]
+fn prior_knowledge_decodes_hpack_dynamic_indexed_response_headers() {
+  let mut header_block = vec![0x88];
+  header_block.extend_from_slice(&h2_literal_new_name_with_indexing(b"x-dyn", b"alpha"));
+  header_block.extend_from_slice(&h2_indexed(62));
+  let header_block = Box::leak(header_block.into_boxed_slice());
+  let (addr, handle) = spawn_h2_prior_knowledge_peer_with_response(header_block, &[b"dynamic"]);
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/dynamic-index", addr))
+    .emit_http2_prior_knowledge()
+    .expect("h2 response with dynamic indexed header");
+
+  assert_eq!(200, response.code());
+  assert_eq!("dynamic", response.body().string().unwrap());
+  assert_eq!(
+    vec![&"alpha".to_string(), &"alpha".to_string()],
+    response.header_values("x-dyn")
+  );
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
+fn prior_knowledge_applies_hpack_dynamic_table_size_update_and_eviction() {
+  let mut header_block = vec![0x88];
+  header_block.extend_from_slice(&h2_dynamic_table_size_update(64));
+  header_block.extend_from_slice(&h2_literal_new_name_with_indexing(b"x-one", b"a"));
+  header_block.extend_from_slice(&h2_literal_new_name_with_indexing(b"x-two", b"b"));
+  header_block.extend_from_slice(&h2_indexed(62));
+  let header_block = Box::leak(header_block.into_boxed_slice());
+  let (addr, handle) = spawn_h2_prior_knowledge_peer_with_response(header_block, &[b"evict"]);
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/dynamic-eviction", addr))
+    .emit_http2_prior_knowledge()
+    .expect("h2 response with evicted dynamic table entries");
+
+  assert_eq!(200, response.code());
+  assert_eq!("evict", response.body().string().unwrap());
+  assert_eq!(vec![&"a".to_string()], response.header_values("x-one"));
+  assert_eq!(
+    vec![&"b".to_string(), &"b".to_string()],
+    response.header_values("x-two")
+  );
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
+fn prior_knowledge_decodes_response_trailers_from_hpack_dynamic_entries() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    let mut headers = vec![0x88];
+    headers.extend_from_slice(&h2_literal_new_name_with_indexing(
+      b"x-tail",
+      b"dyn-trailer",
+    ));
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &headers);
+    write_frame(&mut stream, FRAME_DATA, 0, 1, b"dynamic trailers");
+    write_frame(
+      &mut stream,
+      FRAME_HEADERS,
+      FLAG_END_HEADERS | FLAG_END_STREAM,
+      1,
+      &h2_indexed(62),
+    );
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/dynamic-trailers", addr))
+    .emit_http2_prior_knowledge()
+    .expect("h2 response with dynamic indexed trailer");
+
+  assert_eq!(200, response.code());
+  assert_eq!("dynamic trailers", response.body().string().unwrap());
+  assert_eq!(
+    Some(&"dyn-trailer".to_string()),
+    response.trailer_value("x-tail")
+  );
+  handle.join().expect("h2 peer thread");
+}
+
+#[test]
+fn prior_knowledge_rejects_malformed_hpack_dynamic_references() {
+  let cases: &[(&str, &[u8], &str)] = &[
+    (
+      "missing-dynamic-entry",
+      &[0x88, 0xbe],
+      "invalid HPACK dynamic table index",
+    ),
+    (
+      "truncated-dynamic-index",
+      &[0x88, 0xff],
+      "truncated HPACK integer",
+    ),
+  ];
+
+  for (path, header_block, expected) in cases {
+    let (addr, handle) = spawn_h2_prior_knowledge_peer_with_response(header_block, &[b""]);
+
+    let error = HttpClient::new()
+      .get()
+      .url(format!("http://{}/{}", addr, path))
+      .emit_http2_prior_knowledge()
+      .expect_err("malformed dynamic HPACK reference should be rejected");
+
+    assert!(
+      error.to_string().contains(expected),
+      "expected {expected:?}, got {error}"
+    );
+    handle.join().expect("h2 peer thread");
+  }
+}
+
+#[test]
 fn prior_knowledge_rejects_malformed_hpack_huffman_strings() {
   let cases: &[(&str, &[u8], &str)] = &[
     (
@@ -2113,11 +2236,45 @@ fn h2_literal_new_name(name: &[u8], value: &[u8]) -> Vec<u8> {
   block
 }
 
+fn h2_literal_new_name_with_indexing(name: &[u8], value: &[u8]) -> Vec<u8> {
+  let mut block = Vec::new();
+  block.push(0x40);
+  h2_string(&mut block, name);
+  h2_string(&mut block, value);
+  block
+}
+
 fn h2_literal_huffman_new_name(name: &[u8], value: &[u8]) -> Vec<u8> {
   let mut block = Vec::new();
   block.push(0);
   h2_huffman_string(&mut block, name);
   h2_huffman_string(&mut block, value);
+  block
+}
+
+fn h2_indexed(index: usize) -> Vec<u8> {
+  h2_integer(index, 7, 0x80)
+}
+
+fn h2_dynamic_table_size_update(size: usize) -> Vec<u8> {
+  h2_integer(size, 5, 0x20)
+}
+
+fn h2_integer(mut value: usize, prefix_bits: u8, first_byte_prefix: u8) -> Vec<u8> {
+  let max_prefix = (1usize << prefix_bits) - 1;
+  let mut block = Vec::new();
+  if value < max_prefix {
+    block.push(first_byte_prefix | value as u8);
+    return block;
+  }
+
+  block.push(first_byte_prefix | max_prefix as u8);
+  value -= max_prefix;
+  while value >= 128 {
+    block.push((value % 128) as u8 + 128);
+    value /= 128;
+  }
+  block.push(value as u8);
   block
 }
 

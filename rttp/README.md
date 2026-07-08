@@ -69,11 +69,11 @@ features such as multiplexing and priority scheduling, or async accept loops.
 Enable the `client` feature to access `rttp::Http::client`, or enable `async`,
 `http2`, `tls-native`, `tls-rustls`, or `all` for the corresponding
 `rttp_client` capabilities. The `http2` feature exposes the minimal
-prior-knowledge h2c client path, including HPACK static Huffman strings, large
-header blocks via CONTINUATION frames, padded incoming response frames, and
-conservative DATA flow-control for single-stream prior-knowledge use; TLS ALPN,
-proxy h2, HPACK dynamic tables, and full HTTP/2 features such as multiplexing
-and priority scheduling remain outside that path.
+prior-knowledge h2c client path, including HPACK static Huffman strings,
+response dynamic table decoding, large header blocks via CONTINUATION frames,
+padded incoming response frames, and conservative DATA flow-control for
+single-stream prior-knowledge use; TLS ALPN, proxy h2, and full HTTP/2 features
+such as multiplexing and priority scheduling remain outside that path.
 
 Direct TCP client connections use `socket2`. SOCKS proxy handshakes remain
 delegated to the `socks` crate.
