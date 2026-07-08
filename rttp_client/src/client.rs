@@ -69,6 +69,11 @@ impl HttpClient {
     self.method("HEAD")
   }
 
+  /// Set trace request
+  pub fn trace(&mut self) -> &mut Self {
+    self.method("TRACE")
+  }
+
   /// Set request by method
   pub fn method<S: AsRef<str>>(&mut self, method: S) -> &mut Self {
     self.request.method_set(method);

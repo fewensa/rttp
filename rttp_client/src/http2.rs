@@ -97,6 +97,7 @@ impl<'a> PriorKnowledgeClient<'a> {
     let is_head = method.eq_ignore_ascii_case("HEAD");
     let is_delete = method.eq_ignore_ascii_case("DELETE");
     let is_options = method.eq_ignore_ascii_case("OPTIONS");
+    let is_trace = method.eq_ignore_ascii_case("TRACE");
     if (method.eq_ignore_ascii_case("GET") || is_head) && self.request.body().is_some() {
       return Err(error::builder_with_message(
         "HTTP/2 prior-knowledge GET or HEAD cannot send a request body",
@@ -112,9 +113,14 @@ impl<'a> PriorKnowledgeClient<'a> {
         "HTTP/2 prior-knowledge OPTIONS cannot send a request body",
       ));
     }
+    if is_trace && self.request.body().is_some() {
+      return Err(error::builder_with_message(
+        "HTTP/2 prior-knowledge TRACE cannot send a request body",
+      ));
+    }
     if !is_supported_request_method(method) {
       return Err(error::builder_with_message(
-        "HTTP/2 prior-knowledge client supports GET, HEAD, bodyless DELETE or OPTIONS, and buffered POST, PUT, or PATCH",
+        "HTTP/2 prior-knowledge client supports GET, HEAD, bodyless DELETE, OPTIONS, or TRACE, and buffered POST, PUT, or PATCH",
       ));
     }
 
@@ -146,6 +152,7 @@ fn is_supported_request_method(method: &str) -> bool {
     || method.eq_ignore_ascii_case("HEAD")
     || method.eq_ignore_ascii_case("DELETE")
     || method.eq_ignore_ascii_case("OPTIONS")
+    || method.eq_ignore_ascii_case("TRACE")
     || method.eq_ignore_ascii_case("POST")
     || method.eq_ignore_ascii_case("PUT")
     || method.eq_ignore_ascii_case("PATCH")

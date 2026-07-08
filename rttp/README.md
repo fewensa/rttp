@@ -84,7 +84,7 @@ unbounded multiplexing and priority scheduling, or async accept loops.
 Enable the `client` feature to access `rttp::Http::client`, or enable `async`,
 `http2`, `tls-native`, `tls-rustls`, or `all` for the corresponding
 `rttp_client` capabilities. The `http2` feature exposes the minimal
-prior-knowledge h2c client path for GET, HEAD, bodyless DELETE or OPTIONS, and
+prior-knowledge h2c client path for GET, HEAD, bodyless DELETE, OPTIONS, or TRACE, and
 buffered POST, PUT, or PATCH requests, including rejection of request bodies for
 GET, HEAD, DELETE, and OPTIONS, HEAD response body suppression, HPACK static Huffman
 strings, request dynamic entries within the peer's advertised table size,
