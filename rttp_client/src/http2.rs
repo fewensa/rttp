@@ -17,6 +17,7 @@ const FRAME_HEADERS: u8 = 0x1;
 const FRAME_PRIORITY: u8 = 0x2;
 const FRAME_RST_STREAM: u8 = 0x3;
 const FRAME_SETTINGS: u8 = 0x4;
+const FRAME_PUSH_PROMISE: u8 = 0x5;
 const FRAME_PING: u8 = 0x6;
 const FRAME_GOAWAY: u8 = 0x7;
 const FRAME_WINDOW_UPDATE: u8 = 0x8;
@@ -513,6 +514,9 @@ fn read_until_send_window_available(
       (FRAME_PRIORITY, _) => {
         validate_priority_frame(&frame)?;
       }
+      (FRAME_PUSH_PROMISE, _) => {
+        reject_push_promise_frame(&frame)?;
+      }
       (FRAME_RST_STREAM, STREAM_ID) => {
         return Err(error::bad_response("HTTP/2 stream received RST_STREAM"));
       }
@@ -879,6 +883,9 @@ fn read_single_stream_response_with_first_frame(
       (FRAME_PRIORITY, _) => {
         validate_priority_frame(&frame)?;
       }
+      (FRAME_PUSH_PROMISE, _) => {
+        reject_push_promise_frame(&frame)?;
+      }
       (FRAME_RST_STREAM, STREAM_ID) => {
         return Err(error::bad_response("HTTP/2 stream received RST_STREAM"));
       }
@@ -1043,6 +1050,15 @@ fn validate_priority_frame(frame: &Frame) -> error::Result<()> {
     return Err(error::bad_response("invalid HTTP/2 PRIORITY frame"));
   }
   Ok(())
+}
+
+fn reject_push_promise_frame(frame: &Frame) -> error::Result<()> {
+  if frame.stream_id == 0 || frame.payload.len() < 4 {
+    return Err(error::bad_response("invalid HTTP/2 PUSH_PROMISE frame"));
+  }
+  Err(error::bad_response(
+    "unsupported HTTP/2 PUSH_PROMISE server push",
+  ))
 }
 
 fn data_payload(frame: &Frame) -> error::Result<&[u8]> {
