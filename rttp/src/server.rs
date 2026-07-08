@@ -31,6 +31,7 @@ const HTTP2_DEFAULT_HEADER_TABLE_SIZE: usize = 4096;
 const HTTP2_MAX_HEADER_LIST_SIZE: usize = MAX_REQUEST_HEAD_BYTES;
 const HTTP2_STATIC_TABLE_LEN: usize = 61;
 const HTTP2_SETTINGS_ENABLE_PUSH: u16 = 0x2;
+const HTTP2_SETTINGS_HEADER_TABLE_SIZE: u16 = 0x1;
 const HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS: u16 = 0x3;
 const HTTP2_SETTINGS_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const HTTP2_SETTINGS_MAX_FRAME_SIZE: u16 = 0x5;
@@ -383,6 +384,8 @@ impl HttpServer {
       http2_settings_max_frame_size(&frame.payload).unwrap_or(HTTP2_DEFAULT_MAX_FRAME_SIZE);
     let mut peer_initial_stream_send_window = http2_settings_initial_window_size(&frame.payload)
       .unwrap_or(HTTP2_DEFAULT_INITIAL_WINDOW_SIZE);
+    let mut peer_header_table_size =
+      http2_settings_header_table_size(&frame.payload).unwrap_or(HTTP2_DEFAULT_HEADER_TABLE_SIZE);
 
     self.normalize_connection_error(write_http2_frame(
       &mut stream,
@@ -457,6 +460,9 @@ impl HttpServer {
             validate_http2_settings_payload(&frame.payload)?;
             if let Some(max_frame_size) = http2_settings_max_frame_size(&frame.payload) {
               peer_max_frame_size = max_frame_size;
+            }
+            if let Some(header_table_size) = http2_settings_header_table_size(&frame.payload) {
+              peer_header_table_size = header_table_size;
             }
             if let Some(initial_window_size) = http2_settings_initial_window_size(&frame.payload) {
               let delta = initial_window_size - peer_initial_stream_send_window;
@@ -701,6 +707,7 @@ impl HttpServer {
           !request_is_head,
           &mut Http2ResponseFlowControl {
             max_frame_size: &mut peer_max_frame_size,
+            peer_header_table_size: &mut peer_header_table_size,
             peer_initial_stream_send_window: &mut peer_initial_stream_send_window,
             connection_send_window: &mut connection_send_window,
             connection_receive_window: &mut connection_receive_window,
@@ -1194,6 +1201,20 @@ fn http2_settings_max_frame_size(payload: &[u8]) -> Option<usize> {
         Some(value as usize)
       } else {
         max_frame_size
+      }
+    })
+}
+
+fn http2_settings_header_table_size(payload: &[u8]) -> Option<usize> {
+  payload
+    .chunks_exact(6)
+    .fold(None, |header_table_size, setting| {
+      let id = u16::from_be_bytes([setting[0], setting[1]]);
+      let value = u32::from_be_bytes([setting[2], setting[3], setting[4], setting[5]]);
+      if id == HTTP2_SETTINGS_HEADER_TABLE_SIZE {
+        Some(value as usize)
+      } else {
+        header_table_size
       }
     })
 }
@@ -2088,6 +2109,7 @@ const HTTP2_HUFFMAN_CODES: [(u8, u32); 257] = [
 
 struct Http2ResponseFlowControl<'a> {
   max_frame_size: &'a mut usize,
+  peer_header_table_size: &'a mut usize,
   peer_initial_stream_send_window: &'a mut i32,
   connection_send_window: &'a mut Http2SendWindow,
   connection_receive_window: &'a mut i32,
@@ -2112,7 +2134,7 @@ fn write_http2_response(
   write_body: bool,
   flow_control: &mut Http2ResponseFlowControl<'_>,
 ) -> io::Result<()> {
-  let mut header_encoder = Http2HeaderEncoder::new(HTTP2_DEFAULT_HEADER_TABLE_SIZE);
+  let mut header_encoder = Http2HeaderEncoder::new(*flow_control.peer_header_table_size);
   let dynamic_candidates = repeated_http2_response_fields(response);
   let headers = encode_http2_response_headers(response, &mut header_encoder, &dynamic_candidates)?;
   if !write_body {
@@ -2170,6 +2192,7 @@ fn write_http2_response(
     }
   }
   if write_trailers {
+    header_encoder.set_max_size(*flow_control.peer_header_table_size);
     let trailers =
       encode_http2_response_trailers(response, &mut header_encoder, &dynamic_candidates)?;
     write_http2_header_block(
@@ -2233,6 +2256,9 @@ fn read_http2_response_flow_control_frame(
           validate_http2_settings_payload(&frame.payload)?;
           if let Some(updated_max_frame_size) = http2_settings_max_frame_size(&frame.payload) {
             *flow_control.max_frame_size = updated_max_frame_size;
+          }
+          if let Some(header_table_size) = http2_settings_header_table_size(&frame.payload) {
+            *flow_control.peer_header_table_size = header_table_size;
           }
           if let Some(initial_window_size) = http2_settings_initial_window_size(&frame.payload) {
             let delta = initial_window_size - *flow_control.peer_initial_stream_send_window;
@@ -2470,6 +2496,7 @@ struct Http2HeaderEncoder {
   dynamic_entries: Vec<(String, String)>,
   max_size: usize,
   current_size: usize,
+  pending_max_size_update: Option<usize>,
 }
 
 impl Http2HeaderEncoder {
@@ -2478,6 +2505,7 @@ impl Http2HeaderEncoder {
       dynamic_entries: Vec::new(),
       max_size,
       current_size: 0,
+      pending_max_size_update: None,
     }
   }
 
@@ -2491,6 +2519,22 @@ impl Http2HeaderEncoder {
 
   fn can_insert(&self, name: &str, value: &str) -> bool {
     hpack_dynamic_entry_size(name, value) <= self.max_size
+  }
+
+  fn set_max_size(&mut self, max_size: usize) {
+    if self.max_size == max_size {
+      return;
+    }
+    self.max_size = max_size;
+    self.pending_max_size_update = Some(max_size);
+    self.evict_to_max_size();
+  }
+
+  fn encode_pending_max_size_update(&mut self, block: &mut Vec<u8>) -> io::Result<()> {
+    if let Some(max_size) = self.pending_max_size_update.take() {
+      encode_http2_dynamic_table_size_update(block, max_size)?;
+    }
+    Ok(())
   }
 
   fn insert(&mut self, name: String, value: String) {
@@ -2565,6 +2609,7 @@ fn encode_http2_response_headers(
   dynamic_candidates: &[(String, String)],
 ) -> io::Result<Vec<u8>> {
   let mut block = Vec::new();
+  encoder.encode_pending_max_size_update(&mut block)?;
   match response.status_code {
     200 => block.push(0x88),
     204 => block.push(0x89),
@@ -2614,6 +2659,7 @@ fn encode_http2_response_trailers(
   dynamic_candidates: &[(String, String)],
 ) -> io::Result<Vec<u8>> {
   let mut block = Vec::new();
+  encoder.encode_pending_max_size_update(&mut block)?;
   for trailer in response.trailers() {
     let name = trailer.name.to_ascii_lowercase();
     if is_http2_skipped_response_trailer_name(&name) {
@@ -2662,6 +2708,10 @@ fn encode_http2_response_field(
   }
 
   encode_http2_literal_new_name_without_indexing(block, name.as_bytes(), value.as_bytes())
+}
+
+fn encode_http2_dynamic_table_size_update(block: &mut Vec<u8>, size: usize) -> io::Result<()> {
+  encode_http2_integer(block, size, 5, 0x20)
 }
 
 fn is_http2_skipped_response_header_name(name: &str) -> bool {
@@ -4737,6 +4787,7 @@ mod tests {
     client.flush().expect("client frames should flush");
 
     let mut max_frame_size = HTTP2_DEFAULT_MAX_FRAME_SIZE;
+    let mut peer_header_table_size = HTTP2_DEFAULT_HEADER_TABLE_SIZE;
     let mut peer_initial_stream_send_window = HTTP2_DEFAULT_INITIAL_WINDOW_SIZE;
     let mut connection_send_window = Http2SendWindow::new(0);
     let mut connection_receive_window = HTTP2_DEFAULT_INITIAL_WINDOW_SIZE;
@@ -4751,6 +4802,7 @@ mod tests {
     let read = {
       let mut flow_control = Http2ResponseFlowControl {
         max_frame_size: &mut max_frame_size,
+        peer_header_table_size: &mut peer_header_table_size,
         peer_initial_stream_send_window: &mut peer_initial_stream_send_window,
         connection_send_window: &mut connection_send_window,
         connection_receive_window: &mut connection_receive_window,

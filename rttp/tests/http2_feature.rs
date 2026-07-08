@@ -26,6 +26,7 @@ const H2_FLAG_PADDED: u8 = 0x8;
 const H2_FLAG_PRIORITY: u8 = 0x20;
 const H2_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 const H2_SETTINGS_ENABLE_PUSH: u16 = 0x2;
+const H2_SETTINGS_HEADER_TABLE_SIZE: u16 = 0x1;
 const H2_SETTINGS_MAX_CONCURRENT_STREAMS: u16 = 0x3;
 const H2_SETTINGS_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const H2_SETTINGS_MAX_FRAME_SIZE: u16 = 0x5;
@@ -3708,6 +3709,233 @@ fn socket2_h2_response_dynamic_table_evicts_entries_at_default_size() {
   assert_eq!(
     3,
     count_hpack_incrementally_indexed_fields(&response_headers.payload)
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn socket2_h2_response_honors_zero_peer_header_table_size() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(move |_| {
+        HttpResponse::ok("zero dynamic table")
+          .header("X-Zero-Dynamic", "repeatable-response-value")
+          .header("X-Zero-Dynamic", "repeatable-response-value")
+          .header("Trailer", "X-Zero-Dynamic-Trailer")
+          .trailer("X-Zero-Dynamic-Trailer", "repeatable-trailer-value")
+          .trailer("X-Zero-Dynamic-Trailer", "repeatable-trailer-value")
+      })
+      .expect("serve h2 response with zero peer table size");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  complete_h2_server_handshake_with_settings(
+    &mut stream,
+    &h2_setting(H2_SETTINGS_HEADER_TABLE_SIZE, 0),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_headers(b"/zero-response-table", addr.to_string().as_bytes()),
+  );
+
+  let response_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(
+    0,
+    count_hpack_dynamic_indexed_fields(&response_headers.payload)
+  );
+  assert_eq!(
+    0,
+    count_hpack_incrementally_indexed_fields(&response_headers.payload)
+  );
+
+  let response_data = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_data.frame_type);
+  assert_eq!(0, response_data.flags & H2_FLAG_END_STREAM);
+
+  let response_trailers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_trailers.frame_type);
+  assert_eq!(
+    0,
+    count_hpack_dynamic_indexed_fields(&response_trailers.payload)
+  );
+  assert_eq!(
+    0,
+    count_hpack_incrementally_indexed_fields(&response_trailers.payload)
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn socket2_h2_response_honors_small_peer_header_table_size_for_headers_and_trailers() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(move |_| {
+        HttpResponse::ok("small dynamic table")
+          .header("X-Small-Dynamic-Header", "repeatable-response-value")
+          .header("X-Small-Dynamic-Header", "repeatable-response-value")
+          .header("Trailer", "X-Small-Dynamic-Trailer")
+          .trailer("X-Small-Dynamic-Trailer", "repeatable-trailer-value")
+          .trailer("X-Small-Dynamic-Trailer", "repeatable-trailer-value")
+      })
+      .expect("serve h2 response with small peer table size");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  complete_h2_server_handshake_with_settings(
+    &mut stream,
+    &h2_setting(H2_SETTINGS_HEADER_TABLE_SIZE, 48),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_headers(b"/small-response-table", addr.to_string().as_bytes()),
+  );
+
+  let response_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(
+    0,
+    count_hpack_dynamic_indexed_fields(&response_headers.payload)
+  );
+  assert_eq!(
+    0,
+    count_hpack_incrementally_indexed_fields(&response_headers.payload)
+  );
+
+  let response_data = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_data.frame_type);
+  assert_eq!(0, response_data.flags & H2_FLAG_END_STREAM);
+
+  let response_trailers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_trailers.frame_type);
+  assert_eq!(
+    0,
+    count_hpack_dynamic_indexed_fields(&response_trailers.payload)
+  );
+  assert_eq!(
+    0,
+    count_hpack_incrementally_indexed_fields(&response_trailers.payload)
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn socket2_h2_response_applies_later_header_table_size_before_blocked_trailers() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(move |_| {
+        HttpResponse::ok("x".repeat(H2_DEFAULT_INITIAL_WINDOW_SIZE + 1))
+          .header("X-Blocked-Dynamic", "repeatable-response-value")
+          .header("X-Blocked-Dynamic", "repeatable-response-value")
+          .header("Trailer", "X-Blocked-Dynamic-Trailer")
+          .trailer("X-Blocked-Dynamic-Trailer", "repeatable-trailer-value")
+          .trailer("X-Blocked-Dynamic-Trailer", "repeatable-trailer-value")
+      })
+      .expect("serve h2 response with later peer table size");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_headers(b"/blocked-response-table", addr.to_string().as_bytes()),
+  );
+
+  let response_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(
+    1,
+    count_hpack_dynamic_indexed_fields(&response_headers.payload)
+  );
+  assert_eq!(
+    1,
+    count_hpack_incrementally_indexed_fields(&response_headers.payload)
+  );
+
+  let mut response_body_len = 0;
+  while response_body_len < H2_DEFAULT_INITIAL_WINDOW_SIZE {
+    let response_body = read_h2_frame(&mut stream);
+    assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+    assert_eq!(1, response_body.stream_id);
+    response_body_len += response_body.payload.len();
+  }
+  assert_eq!(H2_DEFAULT_INITIAL_WINDOW_SIZE, response_body_len);
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_SETTINGS,
+    0,
+    0,
+    &h2_setting(H2_SETTINGS_HEADER_TABLE_SIZE, 0),
+  );
+  let settings_ack = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_SETTINGS, settings_ack.frame_type);
+  assert_eq!(H2_FLAG_ACK, settings_ack.flags);
+  assert!(settings_ack.payload.is_empty());
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_WINDOW_UPDATE,
+    0,
+    0,
+    &1u32.to_be_bytes(),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_WINDOW_UPDATE,
+    0,
+    1,
+    &1u32.to_be_bytes(),
+  );
+
+  let final_data = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, final_data.frame_type);
+  assert_eq!(1, final_data.payload.len());
+  assert_eq!(0, final_data.flags & H2_FLAG_END_STREAM);
+
+  let response_trailers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_trailers.frame_type);
+  assert_eq!(
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    response_trailers.flags
+  );
+  assert_eq!(
+    0,
+    count_hpack_dynamic_indexed_fields(&response_trailers.payload)
+  );
+  assert_eq!(
+    0,
+    count_hpack_incrementally_indexed_fields(&response_trailers.payload)
   );
 
   handle.join().expect("server thread");
