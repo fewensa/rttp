@@ -119,6 +119,48 @@ implement a full cache-control engine. Invalid conditional headers that cannot
 be parsed as the bounded helper syntax are ignored by the evaluation helper
 rather than rejected before handler code.
 
+## Bounded HTTP/1.1 Cache-Control behavior
+
+Server `Cache-Control` helpers parse directive metadata for application policy;
+they do not enforce cache behavior. `Request::cache_control()` and
+`HttpRequest::cache_control()` parse request directives into
+`HttpRequestCacheControl`, including `no-cache`, `no-store`, `max-age`,
+`max-stale` with or without a value, `min-fresh`, `no-transform`,
+`only-if-cached`, and extension directives. `HttpResponse::cache_control()`
+parses response headers already attached to an `HttpResponse` into
+`HttpResponseCacheControl`, including `no-cache`, `no-store`, `max-age`,
+`s-maxage`, `private`, `public`, `must-revalidate`, `proxy-revalidate`,
+`immutable`, `stale-while-revalidate`, `stale-if-error`, quoted field-name
+lists, and extension directives.
+
+Unknown extension directives are preserved rather than discarded. Each
+`HttpCacheControlExtension` exposes the directive token name and optional
+parsed value, with quoted-string escaping removed when a quoted value is used.
+The helpers do not interpret extension semantics or negotiate extension
+behavior.
+
+Parsing is bounded and validation-oriented. Each `Cache-Control` field value is
+limited to 64 KiB, the parsed set is limited to 256 directives across all
+values passed to the helper, directive names and unquoted values must be valid
+HTTP tokens, quoted strings must be well formed, and delta-seconds values must
+be unquoted non-negative decimal integers that fit in `u64`. Invalid
+`Cache-Control` syntax returns `HttpCacheControlParseError` from the helper;
+it does not by itself reject the request before handler code or remove the
+original header from the response model.
+
+These helpers are separate from conditional validator evaluation.
+`Request::evaluate_conditional()` and `Request::evaluate_if_range()` use only
+caller-supplied `HttpConditionalMetadata` and the conditional request headers.
+They do not consult `Cache-Control` directives to decide whether a response is
+fresh, whether it must be revalidated, or whether validators should be emitted
+on a later request.
+
+RTTP does not provide cache storage, automatic revalidation, freshness
+calculation against wall-clock time, `Vary` matching, shared-cache policy
+enforcement, or automatic conditional requests. Directives such as `max-age`,
+`s-maxage`, `no-cache`, `only-if-cached`, `must-revalidate`, and extension
+directives are exposed as parsed metadata for application-owned policy.
+
 ## Bounded trailer behavior
 
 HTTP/1.1 server trailer support remains chunked-scope only. Chunked request
@@ -313,6 +355,7 @@ scheduling, or async accept loops.
 | HTTP/1.1 response framing | Automatic `Content-Length`, explicit chunked responses, bodyless `HEAD`, `101`, `204`, and `304`, response trailers after the terminating chunk | No server TLS |
 | Byte ranges | `HttpByteRange` parses one `bytes` range, `Request::evaluate_if_range` and `HttpRequest::evaluate_if_range` gate it with caller-provided strong ETag or exact HTTP-date metadata, and `HttpResponse::partial_content`/`range_not_satisfiable` serialize `206`/`416` with `Content-Range` | No multipart range serialization, automatic retry, cache storage, filesystem serving, automatic cache validation, or static-file policy |
 | Conditional requests | `Request::evaluate_conditional`, `evaluate_conditional_request`, `HttpConditionalMetadata`, and `HttpEntityTag` evaluate bounded HTTP/1.1 validators; `HttpResponse::not_modified` and `precondition_failed` serialize `304` and `412` outcomes | No cache storage, static-file serving policy, automatic revalidation, or cache-control engine |
+| Cache-Control | `Request::cache_control`, `HttpRequest::cache_control`, and `HttpResponse::cache_control` parse bounded request/response directives, numeric freshness fields, quoted field-name lists, and extension directives | No cache storage, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, automatic conditional requests, or directive-based validator evaluation |
 | Upgrade and tunnel targets | `CONNECT` authority-form requests are accepted as HTTP requests; `HttpResponse::upgrade` can hand an upgraded socket to caller code after a matching request | The server does not implement the upgraded protocol after handoff |
 | Trailers | Chunked request trailers are preserved on `Request`; malformed, oversized, forbidden, and pseudo-header trailers are rejected; response trailers can be serialized for chunked responses | Application metadata trailers are allowed; trailer names that affect connection state, routing, authentication/cookies, framing, or payload processing are rejected |
 | Bounded h2c server | The same `socket2` listener detects the HTTP/2 prior-knowledge preface or a valid HTTP/1.1 `Upgrade: h2c` request with `HTTP2-Settings`, validates SETTINGS including legal `SETTINGS_ENABLE_PUSH` and `SETTINGS_ENABLE_CONNECT_PROTOCOL` values of only `0` or `1` and legal `SETTINGS_MAX_FRAME_SIZE` values from 16,384 through 16,777,215 bytes, dispatches RFC 8441 extended CONNECT only after `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1` has been negotiated, exposes negotiated extended CONNECT as a normal `Request` with method `CONNECT`, version `HTTP/2`, target from `:path`, `host` from `:authority`, and `Request::extended_connect_protocol()` from `:protocol`, advertises the default 16,384-byte `SETTINGS_MAX_FRAME_SIZE`, rejects inbound frames above the active local limit, splits outbound HEADERS, DATA, and trailers to the active peer frame-size limit, advertises `SETTINGS_MAX_CONCURRENT_STREAMS` from the bounded active stream allowance, enforces that allowance before dispatching new streams, advertises and enforces a conservative `SETTINGS_MAX_HEADER_LIST_SIZE` for inbound request metadata, bounds HPACK dynamic table use with `SETTINGS_HEADER_TABLE_SIZE`, serves bounded streams including bodyless DELETE, OPTIONS, TRACE, and negotiated extended CONNECT, handles HEAD without response DATA, rejects connection-specific request fields before handler dispatch, strips connection-specific response fields during h2c serialization, treats `RST_STREAM` as a bounded reset/cancellation signal for the affected stream, acknowledges valid PING frames with matching opaque data, accepts padded HEADERS/DATA/trailers without exposing padding, handles HPACK Huffman fields and bounded CONTINUATION header blocks, emits `GOAWAY` with the last completed stream id at bounded shutdown, validates and ignores valid PRIORITY metadata, ignores HTTP/2-allowed unknown/extension frames inside this bounded path, normalizes reserved stream-id high bits, and applies conservative DATA flow control | Ordinary `CONNECT`, missing-negotiation `:protocol`, non-CONNECT `:protocol`, malformed h2c Upgrade, request bodies on h2c Upgrade, and `PUSH_PROMISE` are rejected deterministically before handler dispatch; HTTP/1.1 `CONNECT` and non-h2c `Upgrade` remain separate handoff paths; bounded h2c only, with no public cancellation callback API, no dynamic policy API, no extension callback API, no full extension negotiation, TLS ALPN, external h2 integration, full WebSocket-over-h2, proxy h2, tunnel handoff, connection pooling, persistent multiplex sessions, persistent HTTP/2 session management, automatic retry, server push, full RFC 8441 support, full stream state machine, unbounded multiplexing, unbounded multiplex scheduling, general multiplexing, general tunnel scheduling, priority scheduling, or full HTTP/2 server feature set |
@@ -331,6 +374,11 @@ exposes `is_partial_content()`, `is_range_not_satisfiable()`, and
 `If-Range` headers remain available through the generic header API. These
 client helpers do not evaluate `If-Range`, retry requests, store cache entries,
 generate multipart range requests, or apply automatic cache validation. The
+client response API also includes `Response::cache_control()` from
+`rttp_client`, which parses bounded response `Cache-Control` directives and
+extensions as metadata only; the wrapper does not add cache storage,
+automatic revalidation, wall-clock freshness calculation, `Vary` matching,
+shared-cache policy enforcement, or automatic conditional requests. The
 `http2` feature exposes the bounded
 prior-knowledge h2c client path for GET, HEAD, bodyless DELETE, OPTIONS, or
 TRACE, and buffered POST, PUT, or PATCH requests. It opens at most one request
