@@ -21,6 +21,7 @@ const MAX_CONTENT_LOCATION_VALUE_BYTES: usize = 64 * 1024;
 const MAX_ACCEPT_RANGES_VALUE_BYTES: usize = 64 * 1024;
 const MAX_ACCEPT_RANGES_UNITS: usize = 32;
 const MAX_RETRY_AFTER_VALUE_BYTES: usize = 64 * 1024;
+const MAX_EARLY_HINTS_VALUE_BYTES: usize = 64 * 1024;
 const HTTP2_CLIENT_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 const HTTP2_FRAME_DATA: u8 = 0x0;
 const HTTP2_FRAME_HEADERS: u8 = 0x1;
@@ -4444,6 +4445,27 @@ impl fmt::Display for HttpByteRangeError {
 
 impl Error for HttpByteRangeError {}
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpEarlyHintsError {
+  message: String,
+}
+
+impl HttpEarlyHintsError {
+  fn new<S: AsRef<str>>(message: S) -> Self {
+    Self {
+      message: message.as_ref().to_string(),
+    }
+  }
+}
+
+impl fmt::Display for HttpEarlyHintsError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpEarlyHintsError {}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DefaultConnectionHeader {
   Close,
@@ -4500,6 +4522,47 @@ impl HttpResponse {
 
   pub fn precondition_failed() -> Self {
     Self::new(412, "Precondition Failed")
+  }
+
+  pub fn early_hints<I, L>(links: I) -> Result<Self, HttpEarlyHintsError>
+  where
+    I: IntoIterator<Item = L>,
+    L: AsRef<str>,
+  {
+    Self::early_hints_with_headers(links, std::iter::empty::<(&str, &str)>())
+  }
+
+  pub fn early_hints_with_headers<I, L, H, N, V>(
+    links: I,
+    metadata: H,
+  ) -> Result<Self, HttpEarlyHintsError>
+  where
+    I: IntoIterator<Item = L>,
+    L: AsRef<str>,
+    H: IntoIterator<Item = (N, V)>,
+    N: AsRef<str>,
+    V: AsRef<str>,
+  {
+    let mut response = Self::new(103, "Early Hints");
+    let mut link_count = 0usize;
+    for link in links {
+      let link = validate_early_hints_link_value(link.as_ref())?;
+      response.headers.push(HttpHeader::new("Link", link));
+      link_count += 1;
+    }
+    if link_count == 0 {
+      return Err(HttpEarlyHintsError::new(
+        "Early Hints requires at least one Link header",
+      ));
+    }
+
+    for (name, value) in metadata {
+      let name = validate_early_hints_metadata_name(name.as_ref())?;
+      let value = validate_early_hints_header_value(value.as_ref())?;
+      response.headers.push(HttpHeader::new(name, value));
+    }
+
+    Ok(response)
   }
 
   pub fn header<N: AsRef<str>, V: AsRef<str>>(mut self, name: N, value: V) -> Self {
@@ -7003,6 +7066,63 @@ fn assert_valid_header_component(component: &str) {
     !component.contains('\r') && !component.contains('\n'),
     "response headers must not contain CR or LF"
   );
+}
+
+fn validate_early_hints_link_value(value: &str) -> Result<&str, HttpEarlyHintsError> {
+  let value = validate_early_hints_header_value(value)?;
+  if value.trim().is_empty() {
+    return Err(HttpEarlyHintsError::new(
+      "Early Hints Link header must not be empty",
+    ));
+  }
+  Ok(value)
+}
+
+fn validate_early_hints_metadata_name(name: &str) -> Result<&str, HttpEarlyHintsError> {
+  if !is_http_token(name) {
+    return Err(HttpEarlyHintsError::new(
+      "Early Hints metadata header name is invalid",
+    ));
+  }
+  if name.eq_ignore_ascii_case("Link") {
+    return Err(HttpEarlyHintsError::new(
+      "Early Hints Link headers must be provided through the links argument",
+    ));
+  }
+  if is_forbidden_early_hints_metadata_name(name) {
+    return Err(HttpEarlyHintsError::new(
+      "Early Hints metadata must not contain framing or connection fields",
+    ));
+  }
+  Ok(name)
+}
+
+fn validate_early_hints_header_value(value: &str) -> Result<&str, HttpEarlyHintsError> {
+  if value.len() > MAX_EARLY_HINTS_VALUE_BYTES {
+    return Err(HttpEarlyHintsError::new(
+      "Early Hints header value is too large",
+    ));
+  }
+  if !value.bytes().all(is_header_value_byte) {
+    return Err(HttpEarlyHintsError::new(
+      "Early Hints header value contains invalid bytes",
+    ));
+  }
+  Ok(value)
+}
+
+fn is_forbidden_early_hints_metadata_name(name: &str) -> bool {
+  matches!(
+    name.to_ascii_lowercase().as_str(),
+    "connection"
+      | "content-length"
+      | "keep-alive"
+      | "proxy-connection"
+      | "te"
+      | "trailer"
+      | "transfer-encoding"
+      | "upgrade"
+  )
 }
 
 fn assert_allowed_trailer_name(name: &str) {
