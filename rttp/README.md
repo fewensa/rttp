@@ -82,9 +82,9 @@ precision.
 Multipart byte ranges are intentionally not serialized: RTTP does not generate
 `multipart/byteranges` responses or choose a response for multiple requested
 ranges. There is no built-in filesystem serving, path normalization, MIME
-selection, ETag or Last-Modified generation, cache, authorization,
-directory-index, or dotfile policy. Those remain application decisions before
-choosing `200`, `206`, or `416`.
+selection, ETag or Last-Modified generation, cache storage, automatic cache
+validation, automatic retry, authorization, directory-index, or dotfile policy.
+Those remain application decisions before choosing `200`, `206`, or `416`.
 
 ## Bounded HTTP/1.1 conditional requests
 
@@ -311,7 +311,7 @@ scheduling, or async accept loops.
 | HTTP/1.1 request parsing | Required `Host` validation, origin-form, absolute-form, asterisk-form `OPTIONS`, authority-form `CONNECT`, fixed and chunked bodies, chunk extensions, `Expect: 100-continue`, and obsolete line folding rejection | Intended for local tests and simple embedded use, not full RFC coverage |
 | HTTP/1.1 connection handling | Bounded sequential `serve_requests`, keep-alive and close behavior for HTTP/1.1 and HTTP/1.0, pipelined request boundaries, malformed request rejection before handler dispatch | Blocking listener only; no async accept loop |
 | HTTP/1.1 response framing | Automatic `Content-Length`, explicit chunked responses, bodyless `HEAD`, `101`, `204`, and `304`, response trailers after the terminating chunk | No server TLS |
-| Byte ranges | `HttpByteRange` parses one `bytes` range and `HttpResponse::partial_content`/`range_not_satisfiable` serialize `206`/`416` with `Content-Range` | No multipart range serialization, `If-Range` evaluation, filesystem serving, or static-file policy |
+| Byte ranges | `HttpByteRange` parses one `bytes` range, `Request::evaluate_if_range` and `HttpRequest::evaluate_if_range` gate it with caller-provided strong ETag or exact HTTP-date metadata, and `HttpResponse::partial_content`/`range_not_satisfiable` serialize `206`/`416` with `Content-Range` | No multipart range serialization, automatic retry, cache storage, filesystem serving, automatic cache validation, or static-file policy |
 | Conditional requests | `Request::evaluate_conditional`, `evaluate_conditional_request`, `HttpConditionalMetadata`, and `HttpEntityTag` evaluate bounded HTTP/1.1 validators; `HttpResponse::not_modified` and `precondition_failed` serialize `304` and `412` outcomes | No cache storage, static-file serving policy, automatic revalidation, or cache-control engine |
 | Upgrade and tunnel targets | `CONNECT` authority-form requests are accepted as HTTP requests; `HttpResponse::upgrade` can hand an upgraded socket to caller code after a matching request | The server does not implement the upgraded protocol after handoff |
 | Trailers | Chunked request trailers are preserved on `Request`; malformed, oversized, forbidden, and pseudo-header trailers are rejected; response trailers can be serialized for chunked responses | Application metadata trailers are allowed; trailer names that affect connection state, routing, authentication/cookies, framing, or payload processing are rejected |
@@ -322,11 +322,16 @@ scheduling, or async accept loops.
 Enable the `client` feature to access `rttp::Http::client`, or enable `async`,
 `http2`, `tls-native`, `tls-rustls`, or `all` for the corresponding
 `rttp_client` capabilities. The client feature includes the bounded HTTP/1.1
-Range helpers from `rttp_client`: `range(start, end)`, `range_from(start)`, and
-`range_suffix(length)` set single `bytes` ranges, while `Response` exposes
-`is_partial_content()`, `is_range_not_satisfiable()`, and `content_range()` for
-`206` and `416` responses. Manual `Range` headers remain available through the
-generic header API. The `http2` feature exposes the bounded
+Range helpers from `rttp_client`: `range(start, end)`, `range_from(start)`,
+and `range_suffix(length)` set single `bytes` ranges; `if_range_etag(etag)`
+sets a single strong entity-tag `If-Range` validator; and
+`if_range_date(http_date)` sets an HTTP-date `If-Range` validator. `Response`
+exposes `is_partial_content()`, `is_range_not_satisfiable()`, and
+`content_range()` for `206` and `416` responses. Manual `Range` and
+`If-Range` headers remain available through the generic header API. These
+client helpers do not evaluate `If-Range`, retry requests, store cache entries,
+generate multipart range requests, or apply automatic cache validation. The
+`http2` feature exposes the bounded
 prior-knowledge h2c client path for GET, HEAD, bodyless DELETE, OPTIONS, or
 TRACE, and buffered POST, PUT, or PATCH requests. It opens at most one request
 stream, advertises `SETTINGS_ENABLE_PUSH = 0` so peers see server push
