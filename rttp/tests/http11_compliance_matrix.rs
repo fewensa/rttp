@@ -4,7 +4,9 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use rttp::server::{HttpRequest, HttpRequestCacheControl, HttpResponse, HttpResponseCacheControl};
+use rttp::server::{
+  HttpRequest, HttpRequestCacheControl, HttpResponse, HttpResponseCacheControl, HttpVary,
+};
 use rttp_http11_test_fixtures as fixtures;
 
 #[derive(Debug)]
@@ -50,6 +52,14 @@ fn cache_control_response(values: &[&str]) -> HttpResponse {
     .iter()
     .fold(HttpResponse::new(200, "OK"), |response, value| {
       response.header("Cache-Control", value)
+    })
+}
+
+fn vary_response(values: &[&str]) -> HttpResponse {
+  values
+    .iter()
+    .fold(HttpResponse::new(200, "OK"), |response, value| {
+      response.header("Vary", value)
     })
 }
 
@@ -141,6 +151,15 @@ fn assert_response_cache_control(
   }
 }
 
+fn assert_response_vary(name: &str, vary: &HttpVary, expected: &fixtures::vary::ResponseCase) {
+  assert_eq!(expected.wildcard, vary.is_wildcard(), "{name}");
+  assert_eq!(
+    expected.field_names,
+    vary.field_names().as_slice(),
+    "{name}"
+  );
+}
+
 #[test]
 fn model_parser_accepts_shared_fixed_length_request_fixture() {
   let fixture = fixtures::request::fixed_length_post();
@@ -209,6 +228,100 @@ fn model_parser_cache_control_helper_enforces_shared_bounds() {
   assert!(
     HttpRequestCacheControl::parse(&oversized_value).is_err(),
     "oversized request Cache-Control value helper should reject invalid Cache-Control"
+  );
+}
+
+#[test]
+fn server_response_helper_accepts_shared_vary_response_matrix() {
+  for case in fixtures::vary::response_cases() {
+    let response = vary_response(case.values);
+    let vary = response
+      .vary()
+      .unwrap_or_else(|err| panic!("{} Vary should parse: {err}", case.name))
+      .unwrap_or_else(|| panic!("{} should include Vary", case.name));
+
+    assert_response_vary(case.name, &vary, case);
+  }
+}
+
+#[test]
+fn server_response_with_vary_declares_normalized_shared_vary_matrix() {
+  for case in fixtures::vary::response_cases() {
+    let Some(value) = case.values.first() else {
+      continue;
+    };
+    let response = HttpResponse::ok("accepted")
+      .with_vary(value)
+      .unwrap_or_else(|err| panic!("{} Vary declaration should parse: {err}", case.name));
+    let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+    let expected = HttpVary::parse(value)
+      .expect("already parsed by with_vary")
+      .header_value();
+
+    assert_eq!(
+      Some(expected.as_str()),
+      header_value(&serialized, "Vary"),
+      "{}",
+      case.name
+    );
+  }
+}
+
+#[test]
+fn server_request_selection_accepts_shared_vary_matrix() {
+  for case in fixtures::vary::selection_cases() {
+    let request = HttpRequest::parse(case.request).expect("request should parse");
+    let vary = HttpVary::parse(case.value)
+      .unwrap_or_else(|err| panic!("{} Vary should parse: {err}", case.name));
+
+    let selection = request.vary_selection(&vary);
+
+    assert_eq!(case.wildcard, selection.is_wildcard(), "{}", case.name);
+    assert_eq!(
+      case.field_names,
+      selection.field_names().as_slice(),
+      "{}",
+      case.name
+    );
+    for (field_name, expected_values) in case.selected_values {
+      assert_eq!(
+        *expected_values,
+        selection.values(field_name).as_slice(),
+        "{} {field_name}",
+        case.name
+      );
+    }
+  }
+}
+
+#[test]
+fn server_vary_helpers_reject_shared_invalid_matrix() {
+  for case in fixtures::vary::invalid_cases() {
+    assert!(
+      HttpVary::parse(case.value).is_err(),
+      "{} Vary helper should reject invalid value",
+      case.name
+    );
+    assert!(
+      HttpResponse::ok("body").with_vary(case.value).is_err(),
+      "{} response helper should reject invalid Vary value",
+      case.name
+    );
+  }
+}
+
+#[test]
+fn server_vary_helper_enforces_shared_bounds() {
+  let too_many_fields = fixtures::vary::too_many_field_names_value();
+  assert!(
+    HttpVary::parse(&too_many_fields).is_err(),
+    "too many Vary field names should be rejected"
+  );
+
+  let oversized_value = fixtures::vary::oversized_value();
+  assert!(
+    HttpVary::parse(&oversized_value).is_err(),
+    "oversized Vary value should be rejected"
   );
 }
 

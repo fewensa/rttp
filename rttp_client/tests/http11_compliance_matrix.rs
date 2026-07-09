@@ -28,6 +28,17 @@ fn cache_control_response(values: &[&str]) -> Vec<u8> {
   response.into_bytes()
 }
 
+fn vary_response(values: &[&str]) -> Vec<u8> {
+  let mut response = String::from("HTTP/1.1 200 OK\r\n");
+  for value in values {
+    response.push_str("Vary: ");
+    response.push_str(value);
+    response.push_str("\r\n");
+  }
+  response.push_str("Content-Length: 2\r\n\r\nOK");
+  response.into_bytes()
+}
+
 const RANGE_BODY: &[u8] = b"0123456789abcdef";
 const CONDITIONAL_LAST_MODIFIED: &str = "Sun, 06 Nov 1994 08:49:37 GMT";
 const CONDITIONAL_STALE_DATE: &str = "Sun, 06 Nov 1994 08:49:36 GMT";
@@ -317,6 +328,38 @@ fn assert_response_cache_control(
   }
 }
 
+fn assert_response_vary(
+  name: &str,
+  response: rttp_client::response::Response,
+  expected: &fixtures::vary::ResponseCase,
+) {
+  let raw_values: Vec<&str> = response
+    .header_values("vary")
+    .into_iter()
+    .map(String::as_str)
+    .collect();
+  assert_eq!(expected.values, raw_values.as_slice(), "{name}");
+
+  let vary = response
+    .vary()
+    .unwrap_or_else(|err| panic!("{name} Vary should parse: {err}"))
+    .unwrap_or_else(|| panic!("{name} should include Vary"));
+
+  assert_eq!(expected.wildcard, vary.is_any(), "{name}");
+  assert_eq!(
+    expected.field_names,
+    vary.field_names().as_slice(),
+    "{name}"
+  );
+  for field_name in expected.field_names {
+    assert!(vary.contains_field_name(field_name), "{name} {field_name}");
+    assert!(
+      vary.contains_field_name(field_name.to_ascii_uppercase()),
+      "{name} uppercase {field_name}"
+    );
+  }
+}
+
 fn assert_cache_control_helper_rejects_but_preserves_response(name: &str, raw_response: Vec<u8>) {
   let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
 
@@ -329,6 +372,24 @@ fn assert_cache_control_helper_rejects_but_preserves_response(name: &str, raw_re
   assert!(
     response.cache_control().is_err(),
     "{name} helper should reject invalid Cache-Control"
+  );
+  assert_eq!("OK", response.body().string().unwrap(), "{name}");
+
+  handle.join().expect("raw response server thread");
+}
+
+fn assert_vary_helper_rejects_but_preserves_response(name: &str, raw_response: Vec<u8>) {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/vary-invalid", addr))
+    .emit()
+    .unwrap_or_else(|err| panic!("{name} response should remain parseable: {err}"));
+
+  assert!(
+    response.vary().is_err(),
+    "{name} helper should reject invalid Vary"
   );
   assert_eq!("OK", response.body().string().unwrap(), "{name}");
 
@@ -361,12 +422,36 @@ fn sync_client_parses_shared_cache_control_response_matrix() {
 }
 
 #[test]
+fn sync_client_parses_shared_vary_response_matrix() {
+  for case in fixtures::vary::response_cases() {
+    let raw_response = vary_response(case.values);
+    let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+    let response = client()
+      .get()
+      .url(format!("http://{}/matrix/vary", addr))
+      .emit()
+      .unwrap_or_else(|err| panic!("{} response should parse: {err}", case.name));
+
+    assert_response_vary(case.name, response, case);
+    handle.join().expect("raw response server thread");
+  }
+}
+
+#[test]
 fn sync_client_cache_control_helper_rejects_shared_invalid_response_matrix() {
   for case in fixtures::cache_control::invalid_response_cases() {
     assert_cache_control_helper_rejects_but_preserves_response(
       case.name,
       cache_control_response(&[case.value]),
     );
+  }
+}
+
+#[test]
+fn sync_client_vary_helper_rejects_shared_invalid_response_matrix() {
+  for case in fixtures::vary::invalid_cases() {
+    assert_vary_helper_rejects_but_preserves_response(case.name, vary_response(&[case.value]));
   }
 }
 
@@ -379,6 +464,18 @@ fn sync_client_cache_control_helper_enforces_shared_bounds() {
   assert_cache_control_helper_rejects_but_preserves_response(
     "oversized response Cache-Control value",
     cache_control_response(&[&fixtures::cache_control::oversized_value()]),
+  );
+}
+
+#[test]
+fn sync_client_vary_helper_enforces_shared_bounds() {
+  assert_vary_helper_rejects_but_preserves_response(
+    "too many Vary field names",
+    vary_response(&[&fixtures::vary::too_many_field_names_value()]),
+  );
+  assert_vary_helper_rejects_but_preserves_response(
+    "oversized Vary value",
+    vary_response(&[&fixtures::vary::oversized_value()]),
   );
 }
 
