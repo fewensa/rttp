@@ -6,7 +6,10 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use rttp::server::{HttpByteRange, HttpByteRangeError, HttpResponse, Request};
+use rttp::server::{
+  HttpByteRange, HttpByteRangeError, HttpConditionalMetadata, HttpConditionalRequestOutcome,
+  HttpEntityTag, HttpResponse, Request,
+};
 use rttp_client::HttpClient;
 use rttp_http11_test_fixtures as fixtures;
 
@@ -15,6 +18,10 @@ fn client() -> HttpClient {
 }
 
 const RANGE_BODY: &[u8] = b"0123456789abcdef";
+const CONDITIONAL_LAST_MODIFIED: &str = "Sun, 06 Nov 1994 08:49:37 GMT";
+const CONDITIONAL_STALE_DATE: &str = "Sun, 06 Nov 1994 08:49:36 GMT";
+const CONDITIONAL_FRESH_DATE: &str = "Sun, 06 Nov 1994 08:49:38 GMT";
+const CONDITIONAL_BODY: &str = "cache representation";
 
 const NO_BODY_STATUS_WITH_FRAMING_CASES: &[(&str, &[u8], u32, &str, &str)] = &[
   (
@@ -107,6 +114,50 @@ fn spawn_range_server() -> (std::net::SocketAddr, thread::JoinHandle<Option<Stri
   (addr, handle)
 }
 
+fn conditional_metadata() -> HttpConditionalMetadata {
+  HttpConditionalMetadata::new()
+    .entity_tag(HttpEntityTag::strong("abc"))
+    .last_modified(httpdate::parse_http_date(CONDITIONAL_LAST_MODIFIED).expect("metadata date"))
+}
+
+fn conditional_response(request: Request) -> HttpResponse {
+  let metadata = conditional_metadata();
+  match request.evaluate_conditional(&metadata) {
+    HttpConditionalRequestOutcome::Proceed => HttpResponse::ok(CONDITIONAL_BODY)
+      .header("ETag", r#""abc""#)
+      .header("Last-Modified", CONDITIONAL_LAST_MODIFIED),
+    HttpConditionalRequestOutcome::NotModified => HttpResponse::not_modified(&metadata),
+    HttpConditionalRequestOutcome::PreconditionFailed => HttpResponse::precondition_failed(),
+  }
+}
+
+fn spawn_conditional_server() -> (std::net::SocketAddr, thread::JoinHandle<Option<String>>) {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind conditional server");
+  let addr = server.local_addr().expect("conditional server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed_validator = [
+          "If-None-Match",
+          "If-Match",
+          "If-Modified-Since",
+          "If-Unmodified-Since",
+        ]
+        .iter()
+        .find_map(|name| request.header(name).map(|value| format!("{name}: {value}")));
+        tx.send(observed_validator)
+          .expect("send observed validator");
+        conditional_response(request)
+      })
+      .expect("serve conditional request");
+    rx.recv().expect("observed validator")
+  });
+
+  (addr, handle)
+}
+
 fn assert_partial_response(
   name: &str,
   response: rttp_client::response::Response,
@@ -133,6 +184,53 @@ fn assert_observed_range(
     handle.join().expect("range server thread"),
     "{name}"
   );
+}
+
+enum ConditionalHeader {
+  IfNoneMatch(&'static str),
+  IfMatch(&'static str),
+  IfModifiedSince(&'static str),
+  IfUnmodifiedSince(&'static str),
+  Manual(&'static str, &'static str),
+}
+
+impl ConditionalHeader {
+  fn apply(&self, client: &mut HttpClient) {
+    match self {
+      Self::IfNoneMatch(value) => {
+        client
+          .if_none_match(value)
+          .expect("If-None-Match helper should accept test validator");
+      }
+      Self::IfMatch(value) => {
+        client
+          .if_match(value)
+          .expect("If-Match helper should accept test validator");
+      }
+      Self::IfModifiedSince(value) => {
+        client
+          .if_modified_since(value)
+          .expect("If-Modified-Since helper should accept test date");
+      }
+      Self::IfUnmodifiedSince(value) => {
+        client
+          .if_unmodified_since(value)
+          .expect("If-Unmodified-Since helper should accept test date");
+      }
+      Self::Manual(name, value) => {
+        client.header((*name, *value));
+      }
+    }
+  }
+}
+
+struct ConditionalCase {
+  name: &'static str,
+  method: &'static str,
+  header: ConditionalHeader,
+  expected_validator: &'static str,
+  expected_code: u32,
+  expected_body: &'static str,
 }
 
 const ORDINARY_200_FRAMING_CASES: &[(&str, &[u8], &str, &str, &str)] = &[
@@ -337,6 +435,167 @@ fn sync_client_range_helpers_interoperate_with_server_partial_content_helper() {
 
     assert_partial_response(name, response, expected_content_range, expected_body);
     assert_observed_range(handle, expected_range, name);
+  }
+}
+
+#[test]
+fn sync_client_conditional_helpers_interoperate_with_server_validator_evaluation() {
+  let cases = [
+    ConditionalCase {
+      name: "GET If-None-Match strong match returns 304",
+      method: "GET",
+      header: ConditionalHeader::IfNoneMatch(r#""abc""#),
+      expected_validator: r#"If-None-Match: "abc""#,
+      expected_code: 304,
+      expected_body: "",
+    },
+    ConditionalCase {
+      name: "GET If-None-Match weak match returns 304",
+      method: "GET",
+      header: ConditionalHeader::IfNoneMatch(r#"W/"abc""#),
+      expected_validator: r#"If-None-Match: W/"abc""#,
+      expected_code: 304,
+      expected_body: "",
+    },
+    ConditionalCase {
+      name: "GET If-None-Match miss proceeds",
+      method: "GET",
+      header: ConditionalHeader::IfNoneMatch(r#""different""#),
+      expected_validator: r#"If-None-Match: "different""#,
+      expected_code: 200,
+      expected_body: CONDITIONAL_BODY,
+    },
+    ConditionalCase {
+      name: "GET If-None-Match wildcard returns 304",
+      method: "GET",
+      header: ConditionalHeader::IfNoneMatch("*"),
+      expected_validator: "If-None-Match: *",
+      expected_code: 304,
+      expected_body: "",
+    },
+    ConditionalCase {
+      name: "PUT If-None-Match wildcard returns 412",
+      method: "PUT",
+      header: ConditionalHeader::IfNoneMatch("*"),
+      expected_validator: "If-None-Match: *",
+      expected_code: 412,
+      expected_body: "",
+    },
+    ConditionalCase {
+      name: "GET If-Match strong match proceeds",
+      method: "GET",
+      header: ConditionalHeader::IfMatch(r#""abc""#),
+      expected_validator: r#"If-Match: "abc""#,
+      expected_code: 200,
+      expected_body: CONDITIONAL_BODY,
+    },
+    ConditionalCase {
+      name: "GET If-Match weak comparison miss returns 412",
+      method: "GET",
+      header: ConditionalHeader::IfMatch(r#"W/"abc""#),
+      expected_validator: r#"If-Match: W/"abc""#,
+      expected_code: 412,
+      expected_body: "",
+    },
+    ConditionalCase {
+      name: "GET If-Match non-match returns 412",
+      method: "GET",
+      header: ConditionalHeader::IfMatch(r#""different""#),
+      expected_validator: r#"If-Match: "different""#,
+      expected_code: 412,
+      expected_body: "",
+    },
+    ConditionalCase {
+      name: "GET If-Match wildcard proceeds",
+      method: "GET",
+      header: ConditionalHeader::IfMatch("*"),
+      expected_validator: "If-Match: *",
+      expected_code: 200,
+      expected_body: CONDITIONAL_BODY,
+    },
+    ConditionalCase {
+      name: "GET If-Modified-Since fresh returns 304",
+      method: "GET",
+      header: ConditionalHeader::IfModifiedSince(CONDITIONAL_FRESH_DATE),
+      expected_validator: "If-Modified-Since: Sun, 06 Nov 1994 08:49:38 GMT",
+      expected_code: 304,
+      expected_body: "",
+    },
+    ConditionalCase {
+      name: "GET If-Modified-Since stale proceeds",
+      method: "GET",
+      header: ConditionalHeader::IfModifiedSince(CONDITIONAL_STALE_DATE),
+      expected_validator: "If-Modified-Since: Sun, 06 Nov 1994 08:49:36 GMT",
+      expected_code: 200,
+      expected_body: CONDITIONAL_BODY,
+    },
+    ConditionalCase {
+      name: "GET If-Unmodified-Since stale returns 412",
+      method: "GET",
+      header: ConditionalHeader::IfUnmodifiedSince(CONDITIONAL_STALE_DATE),
+      expected_validator: "If-Unmodified-Since: Sun, 06 Nov 1994 08:49:36 GMT",
+      expected_code: 412,
+      expected_body: "",
+    },
+    ConditionalCase {
+      name: "GET If-Unmodified-Since fresh proceeds",
+      method: "GET",
+      header: ConditionalHeader::IfUnmodifiedSince(CONDITIONAL_FRESH_DATE),
+      expected_validator: "If-Unmodified-Since: Sun, 06 Nov 1994 08:49:38 GMT",
+      expected_code: 200,
+      expected_body: CONDITIONAL_BODY,
+    },
+    ConditionalCase {
+      name: "HEAD If-None-Match match returns bodyless 304",
+      method: "HEAD",
+      header: ConditionalHeader::IfNoneMatch(r#""abc""#),
+      expected_validator: r#"If-None-Match: "abc""#,
+      expected_code: 304,
+      expected_body: "",
+    },
+    ConditionalCase {
+      name: "HEAD If-Modified-Since fresh returns bodyless 304",
+      method: "HEAD",
+      header: ConditionalHeader::IfModifiedSince(CONDITIONAL_FRESH_DATE),
+      expected_validator: "If-Modified-Since: Sun, 06 Nov 1994 08:49:38 GMT",
+      expected_code: 304,
+      expected_body: "",
+    },
+    ConditionalCase {
+      name: "manual If-None-Match list remains available",
+      method: "GET",
+      header: ConditionalHeader::Manual("If-None-Match", r#""different", "abc""#),
+      expected_validator: r#"If-None-Match: "different", "abc""#,
+      expected_code: 304,
+      expected_body: "",
+    },
+  ];
+
+  for case in cases {
+    let (addr, handle) = spawn_conditional_server();
+    let mut client = client();
+    client
+      .method(case.method)
+      .url(format!("http://{}/matrix/conditional", addr));
+    case.header.apply(&mut client);
+
+    let response = client
+      .emit()
+      .unwrap_or_else(|err| panic!("{} should parse: {err}", case.name));
+
+    assert_eq!(case.expected_code, response.code(), "{}", case.name);
+    assert_eq!(
+      case.expected_body,
+      response.body().string().unwrap(),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      Some(case.expected_validator.to_string()),
+      handle.join().expect("conditional server thread"),
+      "{}",
+      case.name
+    );
   }
 }
 
