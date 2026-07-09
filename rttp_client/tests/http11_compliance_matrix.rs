@@ -1,3 +1,5 @@
+use flate2::write::GzEncoder;
+use flate2::Compression;
 #[cfg(feature = "async")]
 use futures::executor::block_on;
 use std::io::Write;
@@ -8,7 +10,8 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use rttp::server::{
   HttpByteRange, HttpByteRangeError, HttpConditionalMetadata, HttpConditionalRequestOutcome,
-  HttpContentDisposition, HttpEntityTag, HttpIfRangeRequestOutcome, HttpResponse, Request,
+  HttpContentDisposition, HttpContentType, HttpEntityTag, HttpIfRangeRequestOutcome, HttpResponse,
+  Request,
 };
 use rttp_client::HttpClient;
 use rttp_http11_test_fixtures as fixtures;
@@ -119,6 +122,56 @@ fn content_disposition_response(values: &[&str]) -> Vec<u8> {
   }
   response.push_str("Content-Length: 2\r\n\r\nOK");
   response.into_bytes()
+}
+
+fn content_type_response(values: &[&str], include_adjacent_metadata: bool) -> Vec<u8> {
+  let mut response = String::from("HTTP/1.1 200 OK\r\n");
+  for value in values {
+    response.push_str("Content-Type: ");
+    response.push_str(value);
+    response.push_str("\r\n");
+  }
+  if include_adjacent_metadata {
+    response.push_str("Content-Encoding: gzip, br\r\n");
+    response.push_str("Content-Language: fr-CA, es-419\r\n");
+    response.push_str("Content-Location: /representations/current\r\n");
+    response.push_str("Accept-Ranges: bytes, pages\r\n");
+  }
+  response.push_str("Content-Length: 2\r\n\r\nOK");
+  response.into_bytes()
+}
+
+fn content_encoding_response(values: &[&str], include_adjacent_metadata: bool) -> Vec<u8> {
+  let mut response = String::from("HTTP/1.1 200 OK\r\n");
+  for value in values {
+    response.push_str("Content-Encoding: ");
+    response.push_str(value);
+    response.push_str("\r\n");
+  }
+  if include_adjacent_metadata {
+    response.push_str("Content-Type: text/plain; charset=utf-8\r\n");
+    response.push_str("Content-Language: fr-CA, es-419\r\n");
+    response.push_str("Content-Location: /representations/current\r\n");
+    response.push_str("Accept-Ranges: bytes, pages\r\n");
+  }
+  let body = content_encoding_body(values);
+  response.push_str(&format!("Content-Length: {}\r\n\r\n", body.len()));
+  let mut response = response.into_bytes();
+  response.extend_from_slice(&body);
+  response
+}
+
+fn content_encoding_body(values: &[&str]) -> Vec<u8> {
+  if values == ["gzip"] {
+    return gzip_body();
+  }
+  b"OK".to_vec()
+}
+
+fn gzip_body() -> Vec<u8> {
+  let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+  encoder.write_all(b"OK").expect("write gzip fixture body");
+  encoder.finish().expect("finish gzip fixture body")
 }
 
 fn allow_response_with_cache_metadata(values: &[&str]) -> Vec<u8> {
@@ -371,6 +424,46 @@ fn spawn_content_disposition_server(
           .expect("Content-Disposition declaration should parse")
       })
       .expect("serve content-disposition request");
+  });
+
+  (addr, handle)
+}
+
+fn spawn_content_type_server(
+  content_type: HttpContentType,
+) -> (std::net::SocketAddr, thread::JoinHandle<()>) {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind content-type server");
+  let addr = server.local_addr().expect("content-type server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        HttpResponse::ok("OK")
+          .header("Content-Type", "application/octet-stream")
+          .with_content_type(content_type.clone())
+          .expect("Content-Type declaration should parse")
+      })
+      .expect("serve content-type request");
+  });
+
+  (addr, handle)
+}
+
+fn spawn_content_encoding_server(
+  codings: &'static [&'static str],
+) -> (std::net::SocketAddr, thread::JoinHandle<()>) {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind content-encoding server");
+  let addr = server.local_addr().expect("content-encoding server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        HttpResponse::ok(content_encoding_body(codings))
+          .header("Content-Encoding", "identity")
+          .with_content_encoding(codings.iter().copied())
+          .expect("Content-Encoding declaration should parse")
+      })
+      .expect("serve content-encoding request");
   });
 
   (addr, handle)
@@ -658,6 +751,79 @@ fn assert_content_disposition_metadata(
   }
 }
 
+fn assert_response_content_type(
+  name: &str,
+  response: &rttp_client::response::Response,
+  expected: &fixtures::content_type::ResponseCase,
+) {
+  let raw_values: Vec<&str> = response
+    .header_values("content-type")
+    .into_iter()
+    .map(String::as_str)
+    .collect();
+  assert_eq!(expected.values, raw_values.as_slice(), "{name}");
+  assert_content_type_metadata(name, response, expected);
+}
+
+fn assert_content_type_metadata(
+  name: &str,
+  response: &rttp_client::response::Response,
+  expected: &fixtures::content_type::ResponseCase,
+) {
+  let content_type = response
+    .content_type()
+    .unwrap_or_else(|err| panic!("{name} Content-Type should parse: {err}"))
+    .unwrap_or_else(|| panic!("{name} should include Content-Type"));
+
+  assert_eq!(expected.type_name, content_type.type_(), "{name}");
+  assert_eq!(expected.subtype, content_type.subtype(), "{name}");
+  assert_eq!(
+    format!("{}/{}", expected.type_name, expected.subtype),
+    content_type.essence(),
+    "{name}"
+  );
+  assert_eq!(
+    expected.parameters.len(),
+    content_type.parameters().len(),
+    "{name}"
+  );
+  for ((expected_name, expected_value), observed) in
+    expected.parameters.iter().zip(content_type.parameters())
+  {
+    assert_eq!(*expected_name, observed.name(), "{name}");
+    assert_eq!(*expected_value, observed.value(), "{name}");
+    assert_eq!(
+      Some(*expected_value),
+      content_type.parameter(*expected_name),
+      "{name}"
+    );
+  }
+}
+
+fn assert_response_content_encoding(
+  name: &str,
+  response: &rttp_client::response::Response,
+  expected: &fixtures::content_encoding::ResponseCase,
+) {
+  let raw_values: Vec<&str> = response
+    .header_values("content-encoding")
+    .into_iter()
+    .map(String::as_str)
+    .collect();
+  assert_eq!(expected.values, raw_values.as_slice(), "{name}");
+
+  let content_encoding = response
+    .content_encoding()
+    .unwrap_or_else(|err| panic!("{name} Content-Encoding should parse: {err}"))
+    .unwrap_or_else(|| panic!("{name} should include Content-Encoding"));
+
+  assert_eq!(
+    expected.codings,
+    content_encoding.codings().as_slice(),
+    "{name}"
+  );
+}
+
 fn assert_informational_response(
   name: &str,
   observed: &rttp_client::response::InformationalResponse,
@@ -884,6 +1050,62 @@ fn assert_content_disposition_helper_rejects_but_preserves_response(
   handle.join().expect("raw response server thread");
 }
 
+fn assert_content_type_helper_rejects_but_preserves_response(
+  name: &str,
+  raw_response: Vec<u8>,
+  expected_values: &[&str],
+) {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/content-type-invalid", addr))
+    .emit()
+    .unwrap_or_else(|err| panic!("{name} response should remain parseable: {err}"));
+
+  assert!(
+    response.content_type().is_err(),
+    "{name} helper should reject invalid Content-Type"
+  );
+  let raw_values: Vec<&str> = response
+    .header_values("Content-Type")
+    .into_iter()
+    .map(String::as_str)
+    .collect();
+  assert_eq!(expected_values, raw_values.as_slice(), "{name}");
+  assert_eq!("OK", response.body().string().unwrap(), "{name}");
+
+  handle.join().expect("raw response server thread");
+}
+
+fn assert_content_encoding_helper_rejects_but_preserves_response(
+  name: &str,
+  raw_response: Vec<u8>,
+  expected_values: &[&str],
+) {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/content-encoding-invalid", addr))
+    .emit()
+    .unwrap_or_else(|err| panic!("{name} response should remain parseable: {err}"));
+
+  assert!(
+    response.content_encoding().is_err(),
+    "{name} helper should reject invalid Content-Encoding"
+  );
+  let raw_values: Vec<&str> = response
+    .header_values("Content-Encoding")
+    .into_iter()
+    .map(String::as_str)
+    .collect();
+  assert_eq!(expected_values, raw_values.as_slice(), "{name}");
+  assert_eq!("OK", response.body().string().unwrap(), "{name}");
+
+  handle.join().expect("raw response server thread");
+}
+
 enum ConditionalHeader {
   IfNoneMatch(&'static str),
   IfMatch(&'static str),
@@ -1085,6 +1307,42 @@ fn sync_client_parses_shared_content_disposition_response_matrix() {
       .unwrap_or_else(|err| panic!("{} response should parse: {err}", case.name));
 
     assert_response_content_disposition(case.name, &response, case);
+    assert_eq!("OK", response.body().string().unwrap(), "{}", case.name);
+    handle.join().expect("raw response server thread");
+  }
+}
+
+#[test]
+fn sync_client_parses_shared_content_type_response_matrix() {
+  for case in fixtures::content_type::response_cases() {
+    let raw_response = content_type_response(case.values, false);
+    let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+    let response = client()
+      .get()
+      .url(format!("http://{}/matrix/content-type", addr))
+      .emit()
+      .unwrap_or_else(|err| panic!("{} response should parse: {err}", case.name));
+
+    assert_response_content_type(case.name, &response, case);
+    assert_eq!("OK", response.body().string().unwrap(), "{}", case.name);
+    handle.join().expect("raw response server thread");
+  }
+}
+
+#[test]
+fn sync_client_parses_shared_content_encoding_response_matrix() {
+  for case in fixtures::content_encoding::response_cases() {
+    let raw_response = content_encoding_response(case.values, false);
+    let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+    let response = client()
+      .get()
+      .url(format!("http://{}/matrix/content-encoding", addr))
+      .emit()
+      .unwrap_or_else(|err| panic!("{} response should parse: {err}", case.name));
+
+    assert_response_content_encoding(case.name, &response, case);
     assert_eq!("OK", response.body().string().unwrap(), "{}", case.name);
     handle.join().expect("raw response server thread");
   }
@@ -1614,6 +1872,128 @@ fn sync_client_parses_content_location_with_existing_metadata_helpers() {
 }
 
 #[test]
+fn sync_client_parses_content_type_with_existing_metadata_helpers() {
+  for case in fixtures::content_type::response_cases() {
+    let raw_response = content_type_response(case.values, true);
+    let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+    let response = client()
+      .get()
+      .url(format!("http://{}/matrix/content-type-adjacent", addr))
+      .emit()
+      .unwrap_or_else(|err| panic!("{} response should parse: {err}", case.name));
+
+    assert_response_content_type(case.name, &response, case);
+    assert_eq!(
+      &["gzip", "br"],
+      response
+        .content_encoding()
+        .expect("Content-Encoding should parse")
+        .expect("Content-Encoding should be present")
+        .codings()
+        .as_slice(),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      &["fr-CA", "es-419"],
+      response
+        .content_language()
+        .expect("Content-Language should parse")
+        .expect("Content-Language should be present")
+        .tags()
+        .as_slice(),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      Some("/representations/current"),
+      response
+        .content_location()
+        .expect("Content-Location should parse")
+        .as_ref()
+        .map(|location| location.as_str()),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      &["bytes", "pages"],
+      response
+        .accept_ranges()
+        .expect("Accept-Ranges should parse")
+        .expect("Accept-Ranges should be present")
+        .units()
+        .as_slice(),
+      "{}",
+      case.name
+    );
+    assert_eq!("OK", response.body().string().unwrap(), "{}", case.name);
+    handle.join().expect("raw response server thread");
+  }
+}
+
+#[test]
+fn sync_client_parses_content_encoding_with_existing_metadata_helpers() {
+  for case in fixtures::content_encoding::response_cases() {
+    let raw_response = content_encoding_response(case.values, true);
+    let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+    let response = client()
+      .get()
+      .url(format!("http://{}/matrix/content-encoding-adjacent", addr))
+      .emit()
+      .unwrap_or_else(|err| panic!("{} response should parse: {err}", case.name));
+
+    assert_response_content_encoding(case.name, &response, case);
+    let content_type = response
+      .content_type()
+      .expect("Content-Type should parse")
+      .expect("Content-Type should be present");
+    assert!(content_type.is("text", "plain"), "{}", case.name);
+    assert_eq!(
+      Some("utf-8"),
+      content_type.parameter("charset"),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      &["fr-CA", "es-419"],
+      response
+        .content_language()
+        .expect("Content-Language should parse")
+        .expect("Content-Language should be present")
+        .tags()
+        .as_slice(),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      Some("/representations/current"),
+      response
+        .content_location()
+        .expect("Content-Location should parse")
+        .as_ref()
+        .map(|location| location.as_str()),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      &["bytes", "pages"],
+      response
+        .accept_ranges()
+        .expect("Accept-Ranges should parse")
+        .expect("Accept-Ranges should be present")
+        .units()
+        .as_slice(),
+      "{}",
+      case.name
+    );
+    assert_eq!("OK", response.body().string().unwrap(), "{}", case.name);
+    handle.join().expect("raw response server thread");
+  }
+}
+
+#[test]
 fn sync_client_observes_rttp_server_content_disposition_helpers() {
   for case in fixtures::content_disposition::response_cases() {
     let disposition = HttpContentDisposition::new(case.disposition_type)
@@ -1648,6 +2028,82 @@ fn sync_client_observes_rttp_server_content_disposition_helpers() {
     assert_eq!("OK", response.body().string().unwrap(), "{}", case.name);
 
     handle.join().expect("content-disposition server thread");
+  }
+}
+
+#[test]
+fn sync_client_observes_rttp_server_content_type_helpers() {
+  for case in fixtures::content_type::response_cases() {
+    let content_type = HttpContentType::new(case.type_name, case.subtype)
+      .unwrap_or_else(|err| panic!("{} media type should parse: {err}", case.name));
+    let content_type = case
+      .parameters
+      .iter()
+      .fold(content_type, |content_type, (name, value)| {
+        content_type
+          .with_parameter(name, value)
+          .unwrap_or_else(|err| panic!("{} parameter should parse: {err}", case.name))
+      });
+    let (addr, handle) = spawn_content_type_server(content_type);
+
+    let response = client()
+      .get()
+      .url(format!("http://{}/matrix/content-type-server", addr))
+      .emit()
+      .unwrap_or_else(|err| panic!("{} response should parse: {err}", case.name));
+
+    assert_eq!(
+      vec![case.normalized_value],
+      response
+        .header_values("Content-Type")
+        .into_iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>(),
+      "{}",
+      case.name
+    );
+    assert_content_type_metadata(case.name, &response, case);
+    assert_eq!("OK", response.body().string().unwrap(), "{}", case.name);
+
+    handle.join().expect("content-type server thread");
+  }
+}
+
+#[test]
+fn sync_client_observes_rttp_server_content_encoding_helpers() {
+  for case in fixtures::content_encoding::response_cases() {
+    let (addr, handle) = spawn_content_encoding_server(case.codings);
+
+    let response = client()
+      .get()
+      .url(format!("http://{}/matrix/content-encoding-server", addr))
+      .emit()
+      .unwrap_or_else(|err| panic!("{} response should parse: {err}", case.name));
+
+    let expected_header_value = case.codings.join(", ");
+    assert_eq!(
+      vec![expected_header_value.as_str()],
+      response
+        .header_values("Content-Encoding")
+        .into_iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>(),
+      "{}",
+      case.name
+    );
+    let content_encoding = response
+      .content_encoding()
+      .unwrap_or_else(|err| panic!("{} Content-Encoding should parse: {err}", case.name))
+      .unwrap_or_else(|| panic!("{} should include Content-Encoding", case.name));
+    assert_eq!(
+      case.codings,
+      content_encoding.codings().as_slice(),
+      "{}",
+      case.name
+    );
+    assert_eq!("OK", response.body().string().unwrap(), "{}", case.name);
+
+    handle.join().expect("content-encoding server thread");
   }
 }
 
@@ -1740,6 +2196,28 @@ fn sync_client_content_disposition_helper_rejects_shared_invalid_response_matrix
 }
 
 #[test]
+fn sync_client_content_type_helper_rejects_shared_invalid_response_matrix() {
+  for case in fixtures::content_type::invalid_cases() {
+    assert_content_type_helper_rejects_but_preserves_response(
+      case.name,
+      content_type_response(&[case.value], false),
+      &[case.value],
+    );
+  }
+}
+
+#[test]
+fn sync_client_content_encoding_helper_rejects_shared_invalid_response_matrix() {
+  for case in fixtures::content_encoding::invalid_cases() {
+    assert_content_encoding_helper_rejects_but_preserves_response(
+      case.name,
+      content_encoding_response(&[case.value], false),
+      &[case.value.trim()],
+    );
+  }
+}
+
+#[test]
 fn sync_client_retry_after_helper_rejects_shared_invalid_response_matrix() {
   for case in fixtures::retry_after::invalid_cases() {
     assert_retry_after_helper_rejects_but_preserves_response(
@@ -1813,6 +2291,60 @@ fn sync_client_content_disposition_helper_rejects_duplicates_and_enforces_shared
     "too many Content-Disposition parameters",
     content_disposition_response(&[&too_many]),
     &[&too_many],
+  );
+}
+
+#[test]
+fn sync_client_content_type_helper_rejects_duplicates_and_enforces_shared_bounds() {
+  assert_content_type_helper_rejects_but_preserves_response(
+    "duplicate Content-Type header fields",
+    content_type_response(&["text/plain", "application/json"], false),
+    &["text/plain", "application/json"],
+  );
+  assert_content_type_helper_rejects_but_preserves_response(
+    "duplicate Content-Type parameters",
+    content_type_response(
+      &[fixtures::content_type::duplicate_parameter_value()],
+      false,
+    ),
+    &[fixtures::content_type::duplicate_parameter_value()],
+  );
+
+  let oversized = fixtures::content_type::oversized_value();
+  assert_content_type_helper_rejects_but_preserves_response(
+    "oversized Content-Type value",
+    content_type_response(&[&oversized], false),
+    &[&oversized],
+  );
+
+  let too_many = fixtures::content_type::too_many_client_parameters_value();
+  assert_content_type_helper_rejects_but_preserves_response(
+    "too many Content-Type parameters",
+    content_type_response(&[&too_many], false),
+    &[&too_many],
+  );
+}
+
+#[test]
+fn sync_client_content_encoding_helper_rejects_duplicates_and_enforces_shared_bounds() {
+  assert_content_encoding_helper_rejects_but_preserves_response(
+    "duplicate Content-Encoding codings across header fields",
+    content_encoding_response(&["gzip, br", "GZIP"], false),
+    &["gzip, br", "GZIP"],
+  );
+
+  let too_many = fixtures::content_encoding::too_many_client_codings_value();
+  assert_content_encoding_helper_rejects_but_preserves_response(
+    "too many Content-Encoding codings",
+    content_encoding_response(&[&too_many], false),
+    &[&too_many],
+  );
+
+  let oversized = fixtures::content_encoding::oversized_value();
+  assert_content_encoding_helper_rejects_but_preserves_response(
+    "oversized Content-Encoding value",
+    content_encoding_response(&[&oversized], false),
+    &[&oversized],
   );
 }
 
