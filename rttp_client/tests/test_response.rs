@@ -210,6 +210,79 @@ fn test_parse_conditional_response_metadata() {
 }
 
 #[test]
+fn test_parse_cache_control_response_directives() {
+  let s = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Cache-Control: no-cache=\"Set-Cookie, Authorization\", no-store, max-age=60\r\n",
+    "Cache-Control: s-maxage=120, private=\"X-User\", public, must-revalidate\r\n",
+    "Cache-Control: proxy-revalidate, immutable, stale-while-revalidate=30, stale-if-error=90\r\n",
+    "Cache-Control: community=\"u=1, tier=gold\", ext-token\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
+    .expect("parse cache-control response");
+
+  let cache_control = response
+    .cache_control()
+    .expect("valid cache-control should parse")
+    .expect("cache-control header should be present");
+
+  assert!(cache_control.no_cache());
+  assert_eq!(
+    vec!["Set-Cookie", "Authorization"],
+    cache_control.no_cache_fields()
+  );
+  assert!(cache_control.no_store());
+  assert_eq!(Some(60), cache_control.max_age());
+  assert_eq!(Some(120), cache_control.s_maxage());
+  assert!(cache_control.private());
+  assert_eq!(vec!["X-User"], cache_control.private_fields());
+  assert!(cache_control.public());
+  assert!(cache_control.must_revalidate());
+  assert!(cache_control.proxy_revalidate());
+  assert!(cache_control.immutable());
+  assert_eq!(Some(30), cache_control.stale_while_revalidate());
+  assert_eq!(Some(90), cache_control.stale_if_error());
+  assert_eq!(2, cache_control.extensions().len());
+  assert_eq!("community", cache_control.extensions()[0].name());
+  assert_eq!(
+    Some("u=1, tier=gold"),
+    cache_control.extensions()[0].value()
+  );
+  assert_eq!("ext-token", cache_control.extensions()[1].name());
+  assert_eq!(None, cache_control.extensions()[1].value());
+}
+
+#[test]
+fn test_parse_cache_control_rejects_invalid_helper_values_without_rejecting_response() {
+  let invalid_values = [
+    "max-age=-1",
+    "s-maxage=abc",
+    "stale-while-revalidate=1.5",
+    "stale-if-error=\"60\"",
+    "private=\"unterminated",
+    "extension=\"bad\\\"",
+  ];
+
+  for value in invalid_values {
+    let raw = format!("HTTP/1.1 200 OK\r\nCache-Control: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response remains usable");
+
+    assert!(
+      response.cache_control().is_err(),
+      "cache-control helper should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Cache-Control")
+    );
+  }
+}
+
+#[test]
 fn test_parse_response_rejects_header_without_colon() {
   let s = concat!(
     "HTTP/1.1 200 OK\r\n",
