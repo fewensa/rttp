@@ -219,6 +219,235 @@ pub mod response {
   .as_bytes();
 }
 
+pub mod cache_control {
+  pub const MAX_VALUE_BYTES: usize = 64 * 1024;
+  pub const MAX_DIRECTIVES: usize = 256;
+
+  pub struct RequestCase {
+    pub name: &'static str,
+    pub values: &'static [&'static str],
+    pub no_cache: bool,
+    pub no_store: bool,
+    pub max_age: Option<u64>,
+    pub max_stale: Option<Option<u64>>,
+    pub min_fresh: Option<u64>,
+    pub no_transform: bool,
+    pub only_if_cached: bool,
+    pub extensions: &'static [(&'static str, Option<&'static str>)],
+  }
+
+  pub struct ResponseCase {
+    pub name: &'static str,
+    pub values: &'static [&'static str],
+    pub no_cache: bool,
+    pub no_cache_fields: &'static [&'static str],
+    pub no_store: bool,
+    pub max_age: Option<u64>,
+    pub s_maxage: Option<u64>,
+    pub private: bool,
+    pub private_fields: &'static [&'static str],
+    pub public: bool,
+    pub must_revalidate: bool,
+    pub proxy_revalidate: bool,
+    pub immutable: bool,
+    pub stale_while_revalidate: Option<u64>,
+    pub stale_if_error: Option<u64>,
+    pub extensions: &'static [(&'static str, Option<&'static str>)],
+  }
+
+  pub struct InvalidCase {
+    pub name: &'static str,
+    pub value: &'static str,
+  }
+
+  pub fn request_cases() -> &'static [RequestCase] {
+    &[
+      RequestCase {
+        name: "request known directives across header fields",
+        values: &[
+          "no-cache, no-store, max-age=60, max-stale=120",
+          "min-fresh=30, no-transform, only-if-cached",
+        ],
+        no_cache: true,
+        no_store: true,
+        max_age: Some(60),
+        max_stale: Some(Some(120)),
+        min_fresh: Some(30),
+        no_transform: true,
+        only_if_cached: true,
+        extensions: &[],
+      },
+      RequestCase {
+        name: "request extension and quoted-string values",
+        values: &[
+          "ext=\"a,b\", token-ext, escaped=\"quoted\\\\value\"",
+          "obs-ext=\"cache policy\"",
+        ],
+        no_cache: false,
+        no_store: false,
+        max_age: None,
+        max_stale: None,
+        min_fresh: None,
+        no_transform: false,
+        only_if_cached: false,
+        extensions: &[
+          ("ext", Some("a,b")),
+          ("token-ext", None),
+          ("escaped", Some("quoted\\value")),
+          ("obs-ext", Some("cache policy")),
+        ],
+      },
+      RequestCase {
+        name: "request duplicate directives keep helper parity",
+        values: &["max-age=10, max-age=20, no-cache, no-cache"],
+        no_cache: true,
+        no_store: false,
+        max_age: Some(20),
+        max_stale: None,
+        min_fresh: None,
+        no_transform: false,
+        only_if_cached: false,
+        extensions: &[],
+      },
+      RequestCase {
+        name: "request max-stale without value remains a bounded helper",
+        values: &["max-stale"],
+        no_cache: false,
+        no_store: false,
+        max_age: None,
+        max_stale: Some(None),
+        min_fresh: None,
+        no_transform: false,
+        only_if_cached: false,
+        extensions: &[],
+      },
+    ]
+  }
+
+  pub fn response_cases() -> &'static [ResponseCase] {
+    &[
+      ResponseCase {
+        name: "response known directives across header fields",
+        values: &[
+          "no-cache=\"Set-Cookie, Authorization\", no-store, max-age=60",
+          "s-maxage=120, private=\"X-User\", public, must-revalidate",
+          "proxy-revalidate, immutable, stale-while-revalidate=30, stale-if-error=90",
+        ],
+        no_cache: true,
+        no_cache_fields: &["Set-Cookie", "Authorization"],
+        no_store: true,
+        max_age: Some(60),
+        s_maxage: Some(120),
+        private: true,
+        private_fields: &["X-User"],
+        public: true,
+        must_revalidate: true,
+        proxy_revalidate: true,
+        immutable: true,
+        stale_while_revalidate: Some(30),
+        stale_if_error: Some(90),
+        extensions: &[],
+      },
+      ResponseCase {
+        name: "response extension and quoted-string values",
+        values: &[
+          "community=\"u=1, tier=gold\", ext-token",
+          "escaped=\"quoted\\\\value\"",
+        ],
+        no_cache: false,
+        no_cache_fields: &[],
+        no_store: false,
+        max_age: None,
+        s_maxage: None,
+        private: false,
+        private_fields: &[],
+        public: false,
+        must_revalidate: false,
+        proxy_revalidate: false,
+        immutable: false,
+        stale_while_revalidate: None,
+        stale_if_error: None,
+        extensions: &[
+          ("community", Some("u=1, tier=gold")),
+          ("ext-token", None),
+          ("escaped", Some("quoted\\value")),
+        ],
+      },
+      ResponseCase {
+        name: "response duplicate directives keep helper parity",
+        values: &["max-age=10, max-age=20, private=\"A\", private=\"B\""],
+        no_cache: false,
+        no_cache_fields: &[],
+        no_store: false,
+        max_age: Some(20),
+        s_maxage: None,
+        private: true,
+        private_fields: &["B"],
+        public: false,
+        must_revalidate: false,
+        proxy_revalidate: false,
+        immutable: false,
+        stale_while_revalidate: None,
+        stale_if_error: None,
+        extensions: &[],
+      },
+    ]
+  }
+
+  pub fn invalid_request_cases() -> &'static [InvalidCase] {
+    &[
+      InvalidCase {
+        name: "request invalid max-age delta-seconds",
+        value: "max-age=-1",
+      },
+      InvalidCase {
+        name: "request invalid max-stale delta-seconds",
+        value: "max-stale=1.5",
+      },
+      InvalidCase {
+        name: "request quoted min-fresh delta-seconds",
+        value: "min-fresh=\"60\"",
+      },
+      InvalidCase {
+        name: "request malformed quoted-string",
+        value: "extension=\"unterminated",
+      },
+    ]
+  }
+
+  pub fn invalid_response_cases() -> &'static [InvalidCase] {
+    &[
+      InvalidCase {
+        name: "response invalid max-age delta-seconds",
+        value: "max-age=-1",
+      },
+      InvalidCase {
+        name: "response invalid s-maxage delta-seconds",
+        value: "s-maxage=abc",
+      },
+      InvalidCase {
+        name: "response quoted stale-if-error delta-seconds",
+        value: "stale-if-error=\"60\"",
+      },
+      InvalidCase {
+        name: "response malformed quoted-string",
+        value: "private=\"unterminated",
+      },
+    ]
+  }
+
+  pub fn too_many_directives_value() -> String {
+    (0..=MAX_DIRECTIVES)
+      .map(|index| format!("ext{index}"))
+      .collect::<Vec<_>>()
+      .join(", ")
+  }
+
+  pub fn oversized_value() -> String {
+    format!("ext=\"{}\"", "a".repeat(MAX_VALUE_BYTES))
+  }
+}
+
 pub fn bind_socket2_tcp_listener(name: &str) -> (TcpListener, SocketAddr) {
   let addr: SocketAddr = "127.0.0.1:0".parse().expect("parse local addr");
   let socket = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))
@@ -283,6 +512,12 @@ pub fn read_http_request<R: Read>(stream: &mut R) -> Vec<u8> {
 pub fn spawn_socket2_raw_response_server(
   response: &'static [u8],
 ) -> (SocketAddr, JoinHandle<Vec<u8>>) {
+  spawn_socket2_owned_raw_response_server(response.to_vec())
+}
+
+pub fn spawn_socket2_owned_raw_response_server(
+  response: Vec<u8>,
+) -> (SocketAddr, JoinHandle<Vec<u8>>) {
   let (listener, addr) = bind_socket2_tcp_listener("raw response server");
   let handle = thread::spawn(move || {
     let Ok((mut stream, _)) = listener.accept() else {
@@ -292,7 +527,7 @@ pub fn spawn_socket2_raw_response_server(
       .set_read_timeout(Some(Duration::from_secs(2)))
       .expect("set read timeout");
     let request = read_http_request(&mut stream);
-    let _ = stream.write_all(response);
+    let _ = stream.write_all(&response);
     request
   });
   (addr, handle)

@@ -6,6 +6,9 @@ use crate::error;
 use crate::response::raw_response::RawResponse;
 use crate::types::{Cookie, Header, RoUrl};
 
+const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
+const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
+
 #[derive(Clone)]
 pub struct Response {
   raw: RawResponse,
@@ -296,8 +299,13 @@ impl CacheControl {
     I: IntoIterator<Item = &'a str>,
   {
     let mut cache_control = Self::default();
+    let mut directive_count = 0usize;
     for value in values {
       for directive in split_cache_control_directives(value)? {
+        directive_count += 1;
+        if directive_count > MAX_CACHE_CONTROL_DIRECTIVES {
+          return Err(error::bad_response("Too many Cache-Control directives"));
+        }
         cache_control.apply_directive(&directive)?;
       }
     }
@@ -454,6 +462,12 @@ impl CacheControlExtension {
 }
 
 fn split_cache_control_directives(value: &str) -> error::Result<Vec<String>> {
+  if value.len() > MAX_CACHE_CONTROL_VALUE_BYTES {
+    return Err(error::bad_response(
+      "Cache-Control header value is too large",
+    ));
+  }
+
   let mut directives = Vec::new();
   let mut current = String::new();
   let mut in_quote = false;
@@ -494,6 +508,9 @@ fn push_directive(directives: &mut Vec<String>, directive: &str) -> error::Resul
   let directive = directive.trim();
   if directive.is_empty() {
     return Err(error::bad_response("Invalid Cache-Control directive"));
+  }
+  if directives.len() >= MAX_CACHE_CONTROL_DIRECTIVES {
+    return Err(error::bad_response("Too many Cache-Control directives"));
   }
   directives.push(directive.to_string());
   Ok(())
