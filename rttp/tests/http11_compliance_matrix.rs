@@ -2,7 +2,7 @@ use std::io::{Read, Write};
 use std::net::{Shutdown, TcpStream};
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, UNIX_EPOCH};
 
 use rttp::server::{
   HttpRequest, HttpRequestCacheControl, HttpResponse, HttpResponseCacheControl, HttpVary,
@@ -61,6 +61,15 @@ fn vary_response(values: &[&str]) -> HttpResponse {
     .fold(HttpResponse::new(200, "OK"), |response, value| {
       response.header("Vary", value)
     })
+}
+
+fn age_expires_response(age: u64, expires: std::time::SystemTime) -> HttpResponse {
+  HttpResponse::ok("OK")
+    .with_age(age)
+    .with_expires(expires)
+    .header("Cache-Control", "public, max-age=60")
+    .with_vary("Accept-Encoding")
+    .expect("test Vary should parse")
 }
 
 fn assert_request_cache_control(
@@ -241,6 +250,97 @@ fn server_response_helper_accepts_shared_vary_response_matrix() {
       .unwrap_or_else(|| panic!("{} should include Vary", case.name));
 
     assert_response_vary(case.name, &vary, case);
+  }
+}
+
+#[test]
+fn server_response_helper_accepts_shared_age_response_matrix() {
+  for case in fixtures::age_expires::age_cases() {
+    let response = HttpResponse::ok("OK").header("Age", case.value);
+
+    assert_eq!(
+      Some(case.delta_seconds),
+      response
+        .age()
+        .unwrap_or_else(|err| panic!("{} Age should parse: {err}", case.name)),
+      "{}",
+      case.name
+    );
+  }
+}
+
+#[test]
+fn server_response_helper_accepts_shared_expires_response_matrix() {
+  for case in fixtures::age_expires::expires_cases() {
+    let response = HttpResponse::ok("OK").header("Expires", case.value);
+
+    assert_eq!(
+      Some(UNIX_EPOCH + Duration::from_secs(case.unix_seconds)),
+      response
+        .expires()
+        .unwrap_or_else(|err| panic!("{} Expires should parse: {err}", case.name)),
+      "{}",
+      case.name
+    );
+  }
+}
+
+#[test]
+fn server_response_with_age_and_expires_declares_shared_metadata_matrix() {
+  for case in fixtures::age_expires::declaration_cases() {
+    let response = age_expires_response(
+      case.age,
+      UNIX_EPOCH + Duration::from_secs(case.expires_unix_seconds),
+    );
+    let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+    assert_eq!(
+      Some(case.age_value),
+      header_value(&serialized, "Age"),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      Some(case.expires_value),
+      header_value(&serialized, "Expires"),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      Some("public, max-age=60"),
+      header_value(&serialized, "Cache-Control"),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      Some("accept-encoding"),
+      header_value(&serialized, "Vary"),
+      "{}",
+      case.name
+    );
+  }
+}
+
+#[test]
+fn server_response_age_and_expires_helpers_reject_shared_invalid_matrix() {
+  for case in fixtures::age_expires::invalid_age_cases() {
+    let response = HttpResponse::ok("OK").header("Age", case.value);
+
+    assert!(
+      response.age().is_err(),
+      "{} Age helper should reject invalid value",
+      case.name
+    );
+  }
+
+  for case in fixtures::age_expires::invalid_expires_cases() {
+    let response = HttpResponse::ok("OK").header("Expires", case.value);
+
+    assert!(
+      response.expires().is_err(),
+      "{} Expires helper should reject invalid value",
+      case.name
+    );
   }
 }
 
