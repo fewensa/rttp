@@ -121,7 +121,12 @@ impl<'a> PriorKnowledgeClient<'a> {
     let mut stream = connect_tcp_stream(addr(&url)?, self.request.origin().config())?;
     write_connection_preface(&mut stream, local_settings)?;
     let mut peer_settings = read_settings_and_ack(&mut stream, local_settings)?;
-    reject_goaway_before_opening_request_stream(&mut stream, &mut peer_settings, local_settings)?;
+    reject_goaway_before_opening_request_stream(
+      &mut stream,
+      &mut peer_settings,
+      local_settings,
+      STREAM_ID,
+    )?;
     let response = match write_request(
       &mut stream,
       &self.request,
@@ -178,7 +183,12 @@ impl<'a> UpgradeClient<'a> {
     read_h2c_upgrade_response(&mut stream)?;
     write_connection_preface(&mut stream, local_settings)?;
     let mut peer_settings = read_settings_and_ack(&mut stream, local_settings)?;
-    reject_goaway_before_opening_request_stream(&mut stream, &mut peer_settings, local_settings)?;
+    reject_goaway_before_opening_request_stream(
+      &mut stream,
+      &mut peer_settings,
+      local_settings,
+      UPGRADED_STREAM_ID,
+    )?;
     let response = match write_request(
       &mut stream,
       &self.request,
@@ -353,12 +363,13 @@ fn reject_goaway_before_opening_request_stream(
   stream: &mut TcpStream,
   peer_settings: &mut PeerSettings,
   local_settings: LocalSettings,
+  stream_id: u32,
 ) -> error::Result<()> {
   while pending_frame_available(stream)? {
     let frame = read_frame(stream, local_settings)?;
     match (frame.frame_type, frame.stream_id) {
       (FRAME_GOAWAY, _) => {
-        if goaway_last_stream_id(&frame)? < STREAM_ID {
+        if goaway_last_stream_id(&frame)? < stream_id {
           return Err(error::request(io::Error::new(
             io::ErrorKind::ConnectionAborted,
             "HTTP/2 connection received GOAWAY before opening request stream; no new streams may be created on this connection",
