@@ -9,6 +9,8 @@ use socket2::{Domain, Protocol, Socket, Type};
 
 const MAX_REQUEST_HEAD_BYTES: usize = 64 * 1024;
 const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
+const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
+const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
 const HTTP2_CLIENT_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 const HTTP2_FRAME_DATA: u8 = 0x0;
 const HTTP2_FRAME_HEADERS: u8 = 0x1;
@@ -3344,6 +3346,16 @@ impl Request {
     evaluate_if_range_request(self, metadata, entity_length)
   }
 
+  pub fn cache_control(
+    &self,
+  ) -> Result<Option<HttpRequestCacheControl>, HttpCacheControlParseError> {
+    let values: Vec<&str> = self.headers_named("Cache-Control").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpRequestCacheControl::parse_values(values).map(Some)
+  }
+
   fn connection_header_has_token(&self, token: &str) -> bool {
     self
       .headers
@@ -4241,6 +4253,21 @@ impl HttpRequest {
       .map(|header| header.value.as_str())
   }
 
+  pub fn cache_control(
+    &self,
+  ) -> Result<Option<HttpRequestCacheControl>, HttpCacheControlParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Cache-Control"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpRequestCacheControl::parse_values(values).map(Some)
+  }
+
   pub fn body(&self) -> &[u8] {
     &self.body
   }
@@ -4460,6 +4487,21 @@ impl HttpResponse {
       .iter()
       .find(|trailer| trailer.name.eq_ignore_ascii_case(name.as_ref()))
       .map(|trailer| trailer.value.as_str())
+  }
+
+  pub fn cache_control(
+    &self,
+  ) -> Result<Option<HttpResponseCacheControl>, HttpCacheControlParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Cache-Control"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpResponseCacheControl::parse_values(values).map(Some)
   }
 
   pub fn body<B: AsRef<[u8]>>(mut self, body: B) -> Self {
@@ -4697,6 +4739,500 @@ fn parse_byte_range_position(value: &str) -> Result<usize, HttpByteRangeError> {
   value
     .parse::<usize>()
     .map_err(|_| HttpByteRangeError::InvalidRange)
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct HttpRequestCacheControl {
+  no_cache: bool,
+  no_store: bool,
+  max_age: Option<u64>,
+  max_stale: Option<Option<u64>>,
+  min_fresh: Option<u64>,
+  no_transform: bool,
+  only_if_cached: bool,
+  extensions: Vec<HttpCacheControlExtension>,
+}
+
+impl HttpRequestCacheControl {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpCacheControlParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpCacheControlParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut cache_control = Self::default();
+    let mut directive_count = 0usize;
+    for value in values {
+      for directive in split_cache_control_directives(value)? {
+        directive_count += 1;
+        if directive_count > MAX_CACHE_CONTROL_DIRECTIVES {
+          return Err(HttpCacheControlParseError::new(
+            "too many Cache-Control directives",
+          ));
+        }
+        cache_control.apply_directive(&directive)?;
+      }
+    }
+    Ok(cache_control)
+  }
+
+  fn apply_directive(&mut self, directive: &str) -> Result<(), HttpCacheControlParseError> {
+    let parsed = parse_cache_control_directive(directive)?;
+
+    match parsed.name.to_ascii_lowercase().as_str() {
+      "no-cache" => self.no_cache = true,
+      "no-store" => self.no_store = true,
+      "max-age" => {
+        self.max_age = Some(parse_cache_control_delta_seconds(
+          parsed.name,
+          parsed.value.as_deref(),
+          parsed.value_was_quoted,
+        )?)
+      }
+      "max-stale" => {
+        self.max_stale = Some(match parsed.value {
+          Some(value) => Some(parse_cache_control_delta_seconds(
+            parsed.name,
+            Some(&value),
+            parsed.value_was_quoted,
+          )?),
+          None => None,
+        })
+      }
+      "min-fresh" => {
+        self.min_fresh = Some(parse_cache_control_delta_seconds(
+          parsed.name,
+          parsed.value.as_deref(),
+          parsed.value_was_quoted,
+        )?)
+      }
+      "no-transform" => self.no_transform = true,
+      "only-if-cached" => self.only_if_cached = true,
+      _ => self.extensions.push(HttpCacheControlExtension::new(
+        parsed.name,
+        parsed.value.as_deref(),
+      )),
+    }
+
+    Ok(())
+  }
+
+  pub fn no_cache(&self) -> bool {
+    self.no_cache
+  }
+
+  pub fn no_store(&self) -> bool {
+    self.no_store
+  }
+
+  pub fn max_age(&self) -> Option<u64> {
+    self.max_age
+  }
+
+  pub fn max_stale(&self) -> Option<Option<u64>> {
+    self.max_stale
+  }
+
+  pub fn min_fresh(&self) -> Option<u64> {
+    self.min_fresh
+  }
+
+  pub fn no_transform(&self) -> bool {
+    self.no_transform
+  }
+
+  pub fn only_if_cached(&self) -> bool {
+    self.only_if_cached
+  }
+
+  pub fn extensions(&self) -> &[HttpCacheControlExtension] {
+    &self.extensions
+  }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct HttpResponseCacheControl {
+  no_cache: bool,
+  no_cache_fields: Vec<String>,
+  no_store: bool,
+  max_age: Option<u64>,
+  s_maxage: Option<u64>,
+  private: bool,
+  private_fields: Vec<String>,
+  public: bool,
+  must_revalidate: bool,
+  proxy_revalidate: bool,
+  immutable: bool,
+  stale_while_revalidate: Option<u64>,
+  stale_if_error: Option<u64>,
+  extensions: Vec<HttpCacheControlExtension>,
+}
+
+impl HttpResponseCacheControl {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpCacheControlParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpCacheControlParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut cache_control = Self::default();
+    let mut directive_count = 0usize;
+    for value in values {
+      for directive in split_cache_control_directives(value)? {
+        directive_count += 1;
+        if directive_count > MAX_CACHE_CONTROL_DIRECTIVES {
+          return Err(HttpCacheControlParseError::new(
+            "too many Cache-Control directives",
+          ));
+        }
+        cache_control.apply_directive(&directive)?;
+      }
+    }
+    Ok(cache_control)
+  }
+
+  fn apply_directive(&mut self, directive: &str) -> Result<(), HttpCacheControlParseError> {
+    let parsed = parse_cache_control_directive(directive)?;
+
+    match parsed.name.to_ascii_lowercase().as_str() {
+      "no-cache" => {
+        self.no_cache = true;
+        if let Some(value) = parsed.value {
+          self.no_cache_fields = split_cache_control_field_names(&value);
+        }
+      }
+      "no-store" => self.no_store = true,
+      "max-age" => {
+        self.max_age = Some(parse_cache_control_delta_seconds(
+          parsed.name,
+          parsed.value.as_deref(),
+          parsed.value_was_quoted,
+        )?)
+      }
+      "s-maxage" => {
+        self.s_maxage = Some(parse_cache_control_delta_seconds(
+          parsed.name,
+          parsed.value.as_deref(),
+          parsed.value_was_quoted,
+        )?)
+      }
+      "private" => {
+        self.private = true;
+        if let Some(value) = parsed.value {
+          self.private_fields = split_cache_control_field_names(&value);
+        }
+      }
+      "public" => self.public = true,
+      "must-revalidate" => self.must_revalidate = true,
+      "proxy-revalidate" => self.proxy_revalidate = true,
+      "immutable" => self.immutable = true,
+      "stale-while-revalidate" => {
+        self.stale_while_revalidate = Some(parse_cache_control_delta_seconds(
+          parsed.name,
+          parsed.value.as_deref(),
+          parsed.value_was_quoted,
+        )?)
+      }
+      "stale-if-error" => {
+        self.stale_if_error = Some(parse_cache_control_delta_seconds(
+          parsed.name,
+          parsed.value.as_deref(),
+          parsed.value_was_quoted,
+        )?)
+      }
+      _ => self.extensions.push(HttpCacheControlExtension::new(
+        parsed.name,
+        parsed.value.as_deref(),
+      )),
+    }
+
+    Ok(())
+  }
+
+  pub fn no_cache(&self) -> bool {
+    self.no_cache
+  }
+
+  pub fn no_cache_fields(&self) -> Vec<&str> {
+    self.no_cache_fields.iter().map(String::as_str).collect()
+  }
+
+  pub fn no_store(&self) -> bool {
+    self.no_store
+  }
+
+  pub fn max_age(&self) -> Option<u64> {
+    self.max_age
+  }
+
+  pub fn s_maxage(&self) -> Option<u64> {
+    self.s_maxage
+  }
+
+  pub fn private(&self) -> bool {
+    self.private
+  }
+
+  pub fn private_fields(&self) -> Vec<&str> {
+    self.private_fields.iter().map(String::as_str).collect()
+  }
+
+  pub fn public(&self) -> bool {
+    self.public
+  }
+
+  pub fn must_revalidate(&self) -> bool {
+    self.must_revalidate
+  }
+
+  pub fn proxy_revalidate(&self) -> bool {
+    self.proxy_revalidate
+  }
+
+  pub fn immutable(&self) -> bool {
+    self.immutable
+  }
+
+  pub fn stale_while_revalidate(&self) -> Option<u64> {
+    self.stale_while_revalidate
+  }
+
+  pub fn stale_if_error(&self) -> Option<u64> {
+    self.stale_if_error
+  }
+
+  pub fn extensions(&self) -> &[HttpCacheControlExtension] {
+    &self.extensions
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpCacheControlExtension {
+  name: String,
+  value: Option<String>,
+}
+
+impl HttpCacheControlExtension {
+  fn new(name: &str, value: Option<&str>) -> Self {
+    Self {
+      name: name.to_string(),
+      value: value.map(ToString::to_string),
+    }
+  }
+
+  pub fn name(&self) -> &str {
+    &self.name
+  }
+
+  pub fn value(&self) -> Option<&str> {
+    self.value.as_deref()
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpCacheControlParseError {
+  message: String,
+}
+
+impl HttpCacheControlParseError {
+  fn new<S: AsRef<str>>(message: S) -> Self {
+    Self {
+      message: message.as_ref().to_string(),
+    }
+  }
+}
+
+impl fmt::Display for HttpCacheControlParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpCacheControlParseError {}
+
+struct ParsedCacheControlDirective<'a> {
+  name: &'a str,
+  value: Option<String>,
+  value_was_quoted: bool,
+}
+
+fn split_cache_control_directives(value: &str) -> Result<Vec<String>, HttpCacheControlParseError> {
+  if value.len() > MAX_CACHE_CONTROL_VALUE_BYTES {
+    return Err(HttpCacheControlParseError::new(
+      "Cache-Control header value is too large",
+    ));
+  }
+
+  let mut directives = Vec::new();
+  let mut current = String::new();
+  let mut in_quote = false;
+  let mut escaped = false;
+
+  for ch in value.chars() {
+    if escaped {
+      current.push(ch);
+      escaped = false;
+      continue;
+    }
+
+    match ch {
+      '\\' if in_quote => {
+        current.push(ch);
+        escaped = true;
+      }
+      '"' => {
+        current.push(ch);
+        in_quote = !in_quote;
+      }
+      ',' if !in_quote => {
+        push_cache_control_directive(&mut directives, &current)?;
+        current.clear();
+      }
+      _ => current.push(ch),
+    }
+  }
+
+  if in_quote || escaped {
+    return Err(HttpCacheControlParseError::new(
+      "malformed Cache-Control quoted-string",
+    ));
+  }
+  push_cache_control_directive(&mut directives, &current)?;
+  Ok(directives)
+}
+
+fn push_cache_control_directive(
+  directives: &mut Vec<String>,
+  directive: &str,
+) -> Result<(), HttpCacheControlParseError> {
+  let directive = directive.trim();
+  if directive.is_empty() {
+    return Err(HttpCacheControlParseError::new(
+      "invalid Cache-Control directive",
+    ));
+  }
+  if directives.len() >= MAX_CACHE_CONTROL_DIRECTIVES {
+    return Err(HttpCacheControlParseError::new(
+      "too many Cache-Control directives",
+    ));
+  }
+  directives.push(directive.to_string());
+  Ok(())
+}
+
+fn parse_cache_control_directive(
+  directive: &str,
+) -> Result<ParsedCacheControlDirective<'_>, HttpCacheControlParseError> {
+  let (name, value, value_was_quoted) = match directive.split_once('=') {
+    Some((name, value)) => {
+      let value = value.trim();
+      (
+        name.trim(),
+        Some(parse_cache_control_directive_value(value)?),
+        value.starts_with('"'),
+      )
+    }
+    None => (directive.trim(), None, false),
+  };
+  if !is_http_token(name) {
+    return Err(HttpCacheControlParseError::new(
+      "invalid Cache-Control directive",
+    ));
+  }
+
+  Ok(ParsedCacheControlDirective {
+    name,
+    value,
+    value_was_quoted,
+  })
+}
+
+fn parse_cache_control_directive_value(value: &str) -> Result<String, HttpCacheControlParseError> {
+  if let Some(value) = value.strip_prefix('"') {
+    return parse_cache_control_quoted_string(value);
+  }
+  if value.contains('"') || value.is_empty() {
+    return Err(HttpCacheControlParseError::new(
+      "invalid Cache-Control directive value",
+    ));
+  }
+  Ok(value.to_string())
+}
+
+fn parse_cache_control_quoted_string(value: &str) -> Result<String, HttpCacheControlParseError> {
+  let mut chars = value.bytes();
+  let mut parsed = Vec::new();
+  let mut closed = false;
+
+  while let Some(byte) = chars.next() {
+    match byte {
+      b'"' => {
+        closed = true;
+        break;
+      }
+      b'\\' => {
+        let Some(escaped) = chars.next() else {
+          return Err(HttpCacheControlParseError::new(
+            "malformed Cache-Control quoted-string",
+          ));
+        };
+        if !is_quoted_pair_char(escaped) {
+          return Err(HttpCacheControlParseError::new(
+            "malformed Cache-Control quoted-string",
+          ));
+        }
+        parsed.push(escaped);
+      }
+      _ if is_qdtext(byte) => parsed.push(byte),
+      _ => {
+        return Err(HttpCacheControlParseError::new(
+          "malformed Cache-Control quoted-string",
+        ))
+      }
+    }
+  }
+
+  if !closed || chars.any(|byte| !byte.is_ascii_whitespace()) {
+    return Err(HttpCacheControlParseError::new(
+      "malformed Cache-Control quoted-string",
+    ));
+  }
+
+  String::from_utf8(parsed)
+    .map_err(|_| HttpCacheControlParseError::new("malformed Cache-Control quoted-string"))
+}
+
+fn parse_cache_control_delta_seconds(
+  name: &str,
+  value: Option<&str>,
+  value_was_quoted: bool,
+) -> Result<u64, HttpCacheControlParseError> {
+  let Some(value) = value else {
+    return Err(HttpCacheControlParseError::new(format!(
+      "missing Cache-Control {name} delta-seconds"
+    )));
+  };
+  if value_was_quoted || value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+    return Err(HttpCacheControlParseError::new(format!(
+      "invalid Cache-Control {name} delta-seconds"
+    )));
+  }
+  value.parse::<u64>().map_err(|_| {
+    HttpCacheControlParseError::new(format!("invalid Cache-Control {name} delta-seconds"))
+  })
+}
+
+fn split_cache_control_field_names(value: &str) -> Vec<String> {
+  value
+    .split(',')
+    .map(str::trim)
+    .filter(|field| !field.is_empty())
+    .map(ToString::to_string)
+    .collect()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

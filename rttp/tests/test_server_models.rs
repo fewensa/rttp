@@ -1,10 +1,132 @@
 use rttp::server::{
   HttpByteRange, HttpByteRangeError, HttpConditionalMetadata, HttpEntityTag,
-  HttpIfRangeRequestOutcome, HttpRequest, HttpResponse,
+  HttpIfRangeRequestOutcome, HttpRequest, HttpRequestCacheControl, HttpResponse,
+  HttpResponseCacheControl,
 };
 
 fn parse_request(raw: &str) -> HttpRequest {
   HttpRequest::parse(raw.as_bytes()).expect("request should parse")
+}
+
+#[test]
+fn parses_request_cache_control_directives() {
+  let request = parse_request(concat!(
+    "GET /cached HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Cache-Control: no-cache, no-store, max-age=60, max-stale=120\r\n",
+    "Cache-Control: min-fresh=30, no-transform, only-if-cached, ext=\"a,b\"\r\n",
+    "\r\n"
+  ));
+
+  let cache_control = request
+    .cache_control()
+    .expect("valid cache-control should parse")
+    .expect("cache-control header should be present");
+
+  assert!(cache_control.no_cache());
+  assert!(cache_control.no_store());
+  assert_eq!(Some(60), cache_control.max_age());
+  assert_eq!(Some(Some(120)), cache_control.max_stale());
+  assert_eq!(Some(30), cache_control.min_fresh());
+  assert!(cache_control.no_transform());
+  assert!(cache_control.only_if_cached());
+  assert_eq!(1, cache_control.extensions().len());
+  assert_eq!("ext", cache_control.extensions()[0].name());
+  assert_eq!(Some("a,b"), cache_control.extensions()[0].value());
+}
+
+#[test]
+fn parses_request_cache_control_max_stale_without_value() {
+  let cache_control =
+    HttpRequestCacheControl::parse("max-stale").expect("max-stale without delta-seconds is valid");
+
+  assert_eq!(Some(None), cache_control.max_stale());
+}
+
+#[test]
+fn parses_response_cache_control_directives() {
+  let response = HttpResponse::new(200, "OK")
+    .header(
+      "Cache-Control",
+      "no-cache=\"Set-Cookie, Authorization\", no-store, max-age=60",
+    )
+    .header(
+      "Cache-Control",
+      "s-maxage=120, private=\"X-User\", public, must-revalidate",
+    )
+    .header(
+      "Cache-Control",
+      "proxy-revalidate, immutable, stale-while-revalidate=30, stale-if-error=90",
+    )
+    .header("Cache-Control", "community=\"u=1, tier=gold\", ext-token");
+
+  let cache_control = response
+    .cache_control()
+    .expect("valid cache-control should parse")
+    .expect("cache-control header should be present");
+
+  assert!(cache_control.no_cache());
+  assert_eq!(
+    vec!["Set-Cookie", "Authorization"],
+    cache_control.no_cache_fields()
+  );
+  assert!(cache_control.no_store());
+  assert_eq!(Some(60), cache_control.max_age());
+  assert_eq!(Some(120), cache_control.s_maxage());
+  assert!(cache_control.private());
+  assert_eq!(vec!["X-User"], cache_control.private_fields());
+  assert!(cache_control.public());
+  assert!(cache_control.must_revalidate());
+  assert!(cache_control.proxy_revalidate());
+  assert!(cache_control.immutable());
+  assert_eq!(Some(30), cache_control.stale_while_revalidate());
+  assert_eq!(Some(90), cache_control.stale_if_error());
+  assert_eq!(2, cache_control.extensions().len());
+  assert_eq!("community", cache_control.extensions()[0].name());
+  assert_eq!(
+    Some("u=1, tier=gold"),
+    cache_control.extensions()[0].value()
+  );
+  assert_eq!("ext-token", cache_control.extensions()[1].name());
+  assert_eq!(None, cache_control.extensions()[1].value());
+}
+
+#[test]
+fn parses_response_cache_control_from_raw_values() {
+  let cache_control = HttpResponseCacheControl::parse("public, max-age=15")
+    .expect("standalone cache-control value should parse");
+
+  assert!(cache_control.public());
+  assert_eq!(Some(15), cache_control.max_age());
+}
+
+#[test]
+fn cache_control_helpers_reject_invalid_numbers_and_quoted_strings() {
+  for value in [
+    "max-age=-1",
+    "s-maxage=abc",
+    "stale-while-revalidate=1.5",
+    "stale-if-error=\"60\"",
+    "private=\"unterminated",
+    "extension=\"bad\\\"",
+  ] {
+    assert!(
+      HttpResponseCacheControl::parse(value).is_err(),
+      "response helper should reject {value:?}"
+    );
+  }
+
+  for value in [
+    "max-age=abc",
+    "max-stale=-1",
+    "min-fresh=\"60\"",
+    "extension=\"bad\\\"",
+  ] {
+    assert!(
+      HttpRequestCacheControl::parse(value).is_err(),
+      "request helper should reject {value:?}"
+    );
+  }
 }
 
 #[test]
