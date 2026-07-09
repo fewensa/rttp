@@ -17,6 +17,17 @@ fn client() -> HttpClient {
   HttpClient::new()
 }
 
+fn cache_control_response(values: &[&str]) -> Vec<u8> {
+  let mut response = String::from("HTTP/1.1 200 OK\r\n");
+  for value in values {
+    response.push_str("Cache-Control: ");
+    response.push_str(value);
+    response.push_str("\r\n");
+  }
+  response.push_str("Content-Length: 2\r\n\r\nOK");
+  response.into_bytes()
+}
+
 const RANGE_BODY: &[u8] = b"0123456789abcdef";
 const CONDITIONAL_LAST_MODIFIED: &str = "Sun, 06 Nov 1994 08:49:37 GMT";
 const CONDITIONAL_STALE_DATE: &str = "Sun, 06 Nov 1994 08:49:36 GMT";
@@ -246,12 +257,160 @@ fn assert_observed_if_range(
   );
 }
 
+fn assert_response_cache_control(
+  name: &str,
+  response: rttp_client::response::Response,
+  expected: &fixtures::cache_control::ResponseCase,
+) {
+  let cache_control = response
+    .cache_control()
+    .unwrap_or_else(|err| panic!("{name} cache-control should parse: {err}"))
+    .unwrap_or_else(|| panic!("{name} should include Cache-Control"));
+
+  assert_eq!(expected.no_cache, cache_control.no_cache(), "{name}");
+  assert_eq!(
+    expected.no_cache_fields,
+    cache_control.no_cache_fields().as_slice(),
+    "{name}"
+  );
+  assert_eq!(expected.no_store, cache_control.no_store(), "{name}");
+  assert_eq!(expected.max_age, cache_control.max_age(), "{name}");
+  assert_eq!(expected.s_maxage, cache_control.s_maxage(), "{name}");
+  assert_eq!(expected.private, cache_control.private(), "{name}");
+  assert_eq!(
+    expected.private_fields,
+    cache_control.private_fields().as_slice(),
+    "{name}"
+  );
+  assert_eq!(expected.public, cache_control.public(), "{name}");
+  assert_eq!(
+    expected.must_revalidate,
+    cache_control.must_revalidate(),
+    "{name}"
+  );
+  assert_eq!(
+    expected.proxy_revalidate,
+    cache_control.proxy_revalidate(),
+    "{name}"
+  );
+  assert_eq!(expected.immutable, cache_control.immutable(), "{name}");
+  assert_eq!(
+    expected.stale_while_revalidate,
+    cache_control.stale_while_revalidate(),
+    "{name}"
+  );
+  assert_eq!(
+    expected.stale_if_error,
+    cache_control.stale_if_error(),
+    "{name}"
+  );
+  assert_eq!(
+    expected.extensions.len(),
+    cache_control.extensions().len(),
+    "{name}"
+  );
+  for ((expected_name, expected_value), observed) in
+    expected.extensions.iter().zip(cache_control.extensions())
+  {
+    assert_eq!(*expected_name, observed.name(), "{name}");
+    assert_eq!(*expected_value, observed.value(), "{name}");
+  }
+}
+
+fn assert_cache_control_helper_rejects_but_preserves_response(name: &str, raw_response: Vec<u8>) {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/cache-control-invalid", addr))
+    .emit()
+    .unwrap_or_else(|err| panic!("{name} response should remain parseable: {err}"));
+
+  assert!(
+    response.cache_control().is_err(),
+    "{name} helper should reject invalid Cache-Control"
+  );
+  assert_eq!("OK", response.body().string().unwrap(), "{name}");
+
+  handle.join().expect("raw response server thread");
+}
+
 enum ConditionalHeader {
   IfNoneMatch(&'static str),
   IfMatch(&'static str),
   IfModifiedSince(&'static str),
   IfUnmodifiedSince(&'static str),
   Manual(&'static str, &'static str),
+}
+
+#[test]
+fn sync_client_parses_shared_cache_control_response_matrix() {
+  for case in fixtures::cache_control::response_cases() {
+    let raw_response = cache_control_response(case.values);
+    let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+    let response = client()
+      .get()
+      .url(format!("http://{}/matrix/cache-control", addr))
+      .emit()
+      .unwrap_or_else(|err| panic!("{} response should parse: {err}", case.name));
+
+    assert_response_cache_control(case.name, response, case);
+    handle.join().expect("raw response server thread");
+  }
+}
+
+#[test]
+fn sync_client_cache_control_helper_rejects_shared_invalid_response_matrix() {
+  for case in fixtures::cache_control::invalid_response_cases() {
+    assert_cache_control_helper_rejects_but_preserves_response(
+      case.name,
+      cache_control_response(&[case.value]),
+    );
+  }
+}
+
+#[test]
+fn sync_client_cache_control_helper_enforces_shared_bounds() {
+  assert_cache_control_helper_rejects_but_preserves_response(
+    "too many response Cache-Control directives",
+    cache_control_response(&[&fixtures::cache_control::too_many_directives_value()]),
+  );
+  assert_cache_control_helper_rejects_but_preserves_response(
+    "oversized response Cache-Control value",
+    cache_control_response(&[&fixtures::cache_control::oversized_value()]),
+  );
+}
+
+#[test]
+fn sync_client_cache_control_matrix_keeps_cache_engine_non_goals_explicit() {
+  let raw_response = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "ETag: \"representation\"\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  )
+  .as_bytes();
+  let (addr, handle) = fixtures::spawn_socket2_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/cache-control-non-goals", addr))
+    .emit()
+    .expect("response without Cache-Control should parse");
+
+  assert!(response
+    .cache_control()
+    .expect("missing header is valid")
+    .is_none());
+  assert_eq!(
+    Some(&"\"representation\"".to_string()),
+    response.header_value("ETag")
+  );
+  assert_eq!("OK", response.body().string().unwrap());
+
+  handle.join().expect("raw response server thread");
 }
 
 impl ConditionalHeader {
