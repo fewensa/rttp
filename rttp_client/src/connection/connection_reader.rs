@@ -4,12 +4,13 @@ use std::io::Read;
 use url::Url;
 
 use crate::error;
-use crate::response::Response;
+use crate::response::{InformationalResponse, Response};
 use crate::types::{Header, IntoHeader, RoUrl};
 
 const HEADER_END: &[u8] = b"\r\n\r\n";
 const CRLF: &[u8] = b"\r\n";
 pub(crate) const MAX_CHUNKED_RESPONSE_LINE_BYTES: usize = 8 * 1024;
+pub(crate) const MAX_RESPONSE_HEAD_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum ResponseBodyKind {
@@ -22,6 +23,7 @@ pub(crate) enum ResponseBodyKind {
 pub(crate) struct ResponseParts {
   pub(crate) binary: Vec<u8>,
   pub(crate) trailers: Vec<Header>,
+  pub(crate) informational_responses: Vec<InformationalResponse>,
   pub(crate) connection_reusable: bool,
   pub(crate) close_connection: bool,
 }
@@ -220,7 +222,13 @@ impl<'a> ConnectionReader<'a> {
 
   #[allow(dead_code)]
   pub fn response(&mut self) -> error::Result<Response> {
-    self.streaming_response()?.read_to_response()
+    let parts = self.response_parts()?;
+    Response::with_trailers_and_informational(
+      RoUrl::from(self.url.clone()),
+      parts.binary,
+      parts.trailers,
+      parts.informational_responses,
+    )
   }
 
   // todo Connection reader will read more type from io::Reader, like Chunk data, and Stream data.
@@ -233,8 +241,23 @@ pub(crate) fn read_response_parts<R>(
 where
   R: Read + ?Sized,
 {
-  let binary = read_response_head(reader)?;
-  read_response_parts_after_header(reader, expect_no_body, binary)
+  read_response_parts_with_informational(reader, expect_no_body)
+}
+
+pub(crate) fn read_response_parts_with_informational<R>(
+  reader: &mut R,
+  expect_no_body: bool,
+) -> error::Result<ResponseParts>
+where
+  R: Read + ?Sized,
+{
+  let (binary, informational_responses) = read_response_head_with_informational(reader)?;
+  read_response_parts_after_header_with_informational(
+    reader,
+    expect_no_body,
+    binary,
+    informational_responses,
+  )
 }
 
 pub(crate) fn read_response_head<R>(reader: &mut R) -> error::Result<Vec<u8>>
@@ -251,10 +274,40 @@ where
   }
 }
 
+pub(crate) fn read_response_head_with_informational<R>(
+  reader: &mut R,
+) -> error::Result<(Vec<u8>, Vec<InformationalResponse>)>
+where
+  R: Read + ?Sized,
+{
+  let mut informational_responses = Vec::new();
+  loop {
+    let header = read_response_header(reader)?;
+    let status_code = response_status_code(&header)?;
+    if is_skippable_informational_status(status_code) {
+      informational_responses.push(parse_informational_response(&header)?);
+      continue;
+    }
+    return Ok((header, informational_responses));
+  }
+}
+
 pub(crate) fn read_response_parts_after_header<R>(
   reader: &mut R,
   expect_no_body: bool,
+  binary: Vec<u8>,
+) -> error::Result<ResponseParts>
+where
+  R: Read + ?Sized,
+{
+  read_response_parts_after_header_with_informational(reader, expect_no_body, binary, Vec::new())
+}
+
+pub(crate) fn read_response_parts_after_header_with_informational<R>(
+  reader: &mut R,
+  expect_no_body: bool,
   mut binary: Vec<u8>,
+  informational_responses: Vec<InformationalResponse>,
 ) -> error::Result<ResponseParts>
 where
   R: Read + ?Sized,
@@ -286,6 +339,7 @@ where
   Ok(ResponseParts {
     binary,
     trailers,
+    informational_responses,
     connection_reusable,
     close_connection,
   })
@@ -466,6 +520,112 @@ pub(crate) fn response_body_kind(
 
 fn is_supported_chunked_transfer_coding_path(transfer_codings: &[&str]) -> bool {
   transfer_codings.len() == 1 && transfer_codings[0].eq_ignore_ascii_case("chunked")
+}
+
+pub(crate) fn parse_informational_response(header: &[u8]) -> error::Result<InformationalResponse> {
+  if header.len() > MAX_RESPONSE_HEAD_BYTES {
+    return Err(error::bad_response(
+      "HTTP informational response head is too large",
+    ));
+  }
+  let (status_line, header_lines) = split_response_head_lines(header)?;
+  let (version, status_code, reason) = parse_response_status_line(status_line)?;
+  if !version.eq_ignore_ascii_case("HTTP/1.1") || !(100..200).contains(&status_code) {
+    return Err(error::bad_response("Invalid informational response"));
+  }
+
+  let mut headers = Vec::new();
+  for line in header_lines {
+    if line.is_empty() {
+      continue;
+    }
+    let line = std::str::from_utf8(line).map_err(error::response)?;
+    let (name, value) = line
+      .split_once(':')
+      .ok_or_else(|| error::bad_response("Invalid informational response header"))?;
+    if !is_http_token(name) || !value.bytes().all(is_header_value_byte) {
+      return Err(error::bad_response("Invalid informational response header"));
+    }
+    if name.eq_ignore_ascii_case("Content-Length") || name.eq_ignore_ascii_case("Transfer-Encoding")
+    {
+      return Err(error::bad_response(
+        "Informational response must not declare body framing",
+      ));
+    }
+    headers.push(Header::new(name, value));
+  }
+
+  Ok(InformationalResponse::new(
+    status_code,
+    reason.to_string(),
+    headers,
+  ))
+}
+
+fn split_response_head_lines(header: &[u8]) -> error::Result<(&[u8], Vec<&[u8]>)> {
+  let header = header
+    .strip_suffix(HEADER_END)
+    .ok_or_else(|| error::bad_response("Invalid informational response"))?;
+  if header.is_empty() {
+    return Err(error::bad_response("Invalid informational response"));
+  }
+  if !has_only_crlf_line_breaks(header) {
+    return Err(error::bad_response("Invalid informational response"));
+  }
+  let mut lines = header
+    .split(|byte| *byte == b'\n')
+    .map(|line| line.strip_suffix(b"\r").unwrap_or(line));
+  let Some(status_line) = lines.next() else {
+    return Err(error::bad_response("Invalid informational response"));
+  };
+  let mut header_lines = Vec::new();
+  for line in lines {
+    header_lines.push(line);
+  }
+  Ok((status_line, header_lines))
+}
+
+fn has_only_crlf_line_breaks(bytes: &[u8]) -> bool {
+  for (index, byte) in bytes.iter().enumerate() {
+    match *byte {
+      b'\r' => {
+        if bytes.get(index + 1) != Some(&b'\n') {
+          return false;
+        }
+      }
+      b'\n' if index == 0 || bytes.get(index - 1) != Some(&b'\r') => {
+        return false;
+      }
+      b'\n' => {}
+      _ => {}
+    }
+  }
+  true
+}
+
+fn parse_response_status_line(status_line: &[u8]) -> error::Result<(&str, u16, &str)> {
+  if status_line.contains(&b'\r') || status_line.contains(&b'\n') {
+    return Err(error::bad_response("Invalid informational response"));
+  }
+  let status_line = std::str::from_utf8(status_line).map_err(error::response)?;
+  let mut parts = status_line.splitn(3, ' ');
+  let version = parts
+    .next()
+    .ok_or_else(|| error::bad_response("Invalid informational response"))?;
+  let code = parts
+    .next()
+    .ok_or_else(|| error::bad_response("Invalid informational response"))?;
+  if code.len() != 3 || !code.bytes().all(|byte| byte.is_ascii_digit()) {
+    return Err(error::bad_response("Invalid informational response"));
+  }
+  let reason = parts.next().unwrap_or_default();
+  if !reason.bytes().all(is_reason_phrase_byte) {
+    return Err(error::bad_response("Invalid informational response"));
+  }
+  let status_code = code
+    .parse::<u16>()
+    .map_err(|_| error::bad_response("Invalid informational response"))?;
+  Ok((version, status_code, reason))
 }
 
 fn validate_response_header_lines(header: &[u8]) -> error::Result<()> {
@@ -754,12 +914,16 @@ fn is_header_value_byte(byte: u8) -> bool {
   byte == b'\t' || byte == b' ' || (0x21..=0x7e).contains(&byte) || byte >= 0x80
 }
 
+fn is_reason_phrase_byte(byte: u8) -> bool {
+  byte == b'\t' || byte == b' ' || (0x21..=0x7e).contains(&byte) || byte >= 0x80
+}
+
 #[cfg(test)]
 mod tests {
   use std::error::Error as StdError;
   use std::io::{self, Cursor, Read};
 
-  use super::{ConnectionReader, ResponseBodyKind};
+  use super::{ConnectionReader, ResponseBodyKind, MAX_RESPONSE_HEAD_BYTES};
 
   #[test]
   fn test_chunked_binary_is_decoded() {
@@ -991,6 +1155,151 @@ mod tests {
       (raw.len() - "OK".len()) as u64,
       cursor.position(),
       "malformed response headers must be rejected before body bytes are consumed"
+    );
+  }
+
+  #[test]
+  fn response_parts_preserve_skipped_informational_heads() {
+    let raw = concat!(
+      "HTTP/1.1 100 Continue\r\n",
+      "X-Continue: yes\r\n",
+      "\r\n",
+      "HTTP/1.1 103 Early Hints\r\n",
+      "Link: </style.css>; rel=preload\r\n",
+      "X-Trace: hint\r\n",
+      "\r\n",
+      "HTTP/1.1 200 OK\r\n",
+      "Content-Length: 2\r\n",
+      "\r\n",
+      "OK"
+    );
+    let url = url::Url::parse("http://localhost").unwrap();
+    let mut cursor = Cursor::new(raw.as_bytes());
+    let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+
+    let response = reader.response().unwrap();
+    let informational = response.informational_responses();
+
+    assert_eq!(200, response.code());
+    assert_eq!("OK", response.body().string().unwrap());
+    assert_eq!(2, informational.len());
+    assert_eq!(100, informational[0].code());
+    assert_eq!("Continue", informational[0].reason());
+    assert_eq!(
+      Some("yes"),
+      informational[0]
+        .header_value("X-Continue")
+        .map(String::as_str)
+    );
+    assert_eq!(103, informational[1].code());
+    assert_eq!("Early Hints", informational[1].reason());
+    assert_eq!(
+      Some("</style.css>; rel=preload"),
+      informational[1].header_value("Link").map(String::as_str)
+    );
+    assert_eq!(
+      Some("hint"),
+      informational[1].header_value("X-Trace").map(String::as_str)
+    );
+  }
+
+  #[test]
+  fn malformed_informational_response_header_is_rejected() {
+    let raw = concat!(
+      "HTTP/1.1 103 Early Hints\r\n",
+      "BrokenHeader\r\n",
+      "\r\n",
+      "HTTP/1.1 200 OK\r\n",
+      "Content-Length: 2\r\n",
+      "\r\n",
+      "OK"
+    );
+    let url = url::Url::parse("http://localhost").unwrap();
+    let mut cursor = Cursor::new(raw.as_bytes());
+    let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+
+    let error = reader
+      .response()
+      .expect_err("malformed informational header should be rejected");
+
+    assert!(
+      error.to_string().contains("Invalid informational response"),
+      "unexpected error: {error}"
+    );
+    assert_eq!(
+      "HTTP/1.1 103 Early Hints\r\nBrokenHeader\r\n\r\n".len() as u64,
+      cursor.position(),
+      "malformed informational heads are rejected before final response bytes are consumed"
+    );
+  }
+
+  #[test]
+  fn ambiguous_informational_response_framing_is_rejected() {
+    for framing in ["Content-Length: 2", "Transfer-Encoding: chunked"] {
+      let raw = format!(
+        "HTTP/1.1 103 Early Hints\r\n{framing}\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK"
+      );
+      let url = url::Url::parse("http://localhost").unwrap();
+      let mut cursor = Cursor::new(raw.as_bytes());
+      let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+
+      let error = reader
+        .response()
+        .expect_err("informational body framing should be rejected");
+
+      assert!(
+        error
+          .to_string()
+          .contains("Informational response must not declare body framing"),
+        "unexpected error for {framing}: {error}"
+      );
+    }
+  }
+
+  #[test]
+  fn malformed_informational_status_line_is_rejected() {
+    for status_line in [
+      "HTTP/1.1 103 Early\x7fHints",
+      "HTTP/1.0 103 Early Hints",
+      "HTTP/9.9 103 Early Hints",
+    ] {
+      let raw = format!(
+        "{status_line}\r\nX-Interim: ignored\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK"
+      );
+      let url = url::Url::parse("http://localhost").unwrap();
+      let mut cursor = Cursor::new(raw.as_bytes());
+      let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+
+      let error = reader
+        .response()
+        .expect_err("malformed informational status line should be rejected");
+
+      assert!(
+        error.to_string().contains("Invalid informational response"),
+        "unexpected error for {status_line:?}: {error}"
+      );
+    }
+  }
+
+  #[test]
+  fn oversized_informational_response_head_is_rejected() {
+    let oversized = "a".repeat(MAX_RESPONSE_HEAD_BYTES);
+    let raw = format!(
+      "HTTP/1.1 103 Early Hints\r\nX-Large: {oversized}\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK"
+    );
+    let url = url::Url::parse("http://localhost").unwrap();
+    let mut cursor = Cursor::new(raw.as_bytes());
+    let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+
+    let error = reader
+      .response()
+      .expect_err("oversized informational head should be rejected");
+
+    assert!(
+      error
+        .to_string()
+        .contains("HTTP informational response head is too large"),
+      "unexpected error: {error}"
     );
   }
 
