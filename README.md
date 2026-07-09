@@ -61,13 +61,19 @@ SETTINGS frame so peers see server push disabled, and it advertises
 `SETTINGS_ENABLE_PUSH` values as only `0` or `1`; any other value rejects the
 bounded h2c handshake.
 `emit_http2_upgrade` is the explicit HTTP/1.1 h2c Upgrade variant of the same
-bounded single-request client path. It sends an HTTP/1.1 request with
+bounded single-request client path. It is opt-in and separate from
+`emit_http2_prior_knowledge`: the client first sends an HTTP/1.1 request with
 `Connection: Upgrade, HTTP2-Settings`, `Upgrade: h2c`, and the local SETTINGS
 payload in `HTTP2-Settings`, requires a `101 Switching Protocols` response
 that negotiates `h2c`, then sends the HTTP/2 connection preface and uses the
 same bounded single-stream h2c request/response flow on the upgraded socket.
-Invalid h2c upgrade responses fail deterministically. Ordinary `upgrade()`
-continues to return the socket to the caller for WebSocket-style protocols.
+The Upgrade variant supports the same request methods and body limits as the
+prior-knowledge h2c path, rejects proxies before opening a socket, rewrites
+any preconfigured HTTP/1.x upgrade/framing fields into the required h2c
+upgrade fields, and fails deterministically for invalid h2c upgrade responses.
+Ordinary `upgrade()` continues to return the socket to the caller for
+WebSocket-style protocols, and non-h2c HTTP/1.1 Upgrade handoff remains
+outside the bounded h2c client path.
 The client validates `SETTINGS_MAX_FRAME_SIZE` boundaries on both sides of the
 bounded h2c handshake. A configured local
 `http2_max_frame_size` is advertised only when set, must be in the legal
@@ -219,11 +225,20 @@ request head/body validation, handles `HEAD` without writing a response body,
 honors `Connection` close/keep-alive semantics across a bounded
 `serve_requests` loop, writes response body framing and response trailers
 consistently, and accepts `Expect: 100-continue`. On the same socket2 listener,
-the accept path detects the HTTP/2 client preface and dispatches prior-knowledge
-h2c requests to a minimal bounded handler, including bodyless DELETE, OPTIONS,
-and TRACE requests. The server advertises `SETTINGS_MAX_CONCURRENT_STREAMS`
-from the active request allowance for that bounded accept path and rejects new
-h2c streams once the open-stream count plus completed requests reaches that
+the accept path detects either the HTTP/2 client preface or an HTTP/1.1
+`Upgrade: h2c` request and dispatches the resulting h2c connection to the same
+minimal bounded handler, including bodyless DELETE, OPTIONS, and TRACE
+requests. HTTP/1.1 h2c Upgrade is opt-in on both sides: the request must be
+`HTTP/1.1`, include `Connection: Upgrade, HTTP2-Settings`, `Upgrade: h2c`,
+exactly one `HTTP2-Settings` field with a valid unpadded base64url SETTINGS
+payload, and no request body; malformed h2c upgrade attempts receive
+`400 Bad Request` before handler dispatch. When the upgrade is valid, the
+server writes `101 Switching Protocols`, consumes the client's HTTP/2 preface
+on the same socket, applies the advertised SETTINGS as the initial peer
+SETTINGS, and uses the HTTP/2 stream id sequence reserved for an HTTP/1.1
+upgrade. The server advertises `SETTINGS_MAX_CONCURRENT_STREAMS` from the
+active request allowance for that bounded accept path and rejects new h2c
+streams once the open-stream count plus completed requests reaches that
 allowance. It also advertises and enforces a conservative
 `SETTINGS_MAX_HEADER_LIST_SIZE` for inbound request metadata; request HEADERS
 and trailing HEADERS can span CONTINUATION frames, but the decoded metadata
@@ -278,10 +293,10 @@ response ordering does not use priority scheduling. Valid PING frames on
 stream 0 are acknowledged with PING ACK frames that carry the same opaque
 8-byte data.
 Unknown frame types, including extension frames, are ignored only after the
-HTTP/2 preface is accepted in this bounded prior-knowledge h2c server path
-where HTTP/2 permits that behavior; RTTP does not expose an extension callback
-API or negotiate extensions. Reserved stream identifier high bits are masked
-when frames are parsed or written, which normalizes frame identifiers without
+HTTP/2 preface is accepted in this bounded h2c server path where HTTP/2
+permits that behavior; RTTP does not expose an extension callback API or
+negotiate extensions. Reserved stream identifier high bits are masked when
+frames are parsed or written, which normalizes frame identifiers without
 adding unbounded multiplexing, session management, or external h2-stack
 support.
 Server push is outside this bounded server path: inbound `PUSH_PROMISE` frames
@@ -304,16 +319,18 @@ streams are not dispatched to handlers, and reset response streams stop within
 the bounded write path. RTTP does not expose a public cancellation callback API,
 retry work automatically, keep persistent HTTP/2 sessions, or model a full
 HTTP/2 stream state machine around those resets.
-The prior-knowledge h2c path does not share the HTTP/1.1 `CONNECT` or
-`Upgrade` handoff paths. Ordinary h2c `CONNECT` without `:protocol` remains
-unsupported proxy tunneling and is rejected before handler dispatch.
-Negotiated extended CONNECT is exposed to handlers as a normal `Request` with
-method `CONNECT`, version `HTTP/2`, origin-form target from `:path`, `host`
-derived from `:authority`, and `Request::extended_connect_protocol()` returning
-the `:protocol` value. The handler returns a normal `HttpResponse`; RTTP does
-not switch the stream to caller-owned tunnel bytes. HTTP/1.1 `CONNECT`
-authority-form requests and `HttpResponse::upgrade` remain separate handoff
-paths for caller-owned protocols. TLS ALPN, extension callback APIs, full
+The h2c handler does not share the HTTP/1.1 `CONNECT` or non-h2c `Upgrade`
+handoff paths. Ordinary h2c `CONNECT` without `:protocol` remains unsupported
+proxy tunneling and is rejected before handler dispatch. Negotiated extended
+CONNECT is exposed to handlers as a normal `Request` with method `CONNECT`,
+version `HTTP/2`, origin-form target from `:path`, `host` derived from
+`:authority`, and `Request::extended_connect_protocol()` returning the
+`:protocol` value. The handler returns a normal `HttpResponse`; RTTP does not
+switch the stream to caller-owned tunnel bytes. HTTP/1.1 `CONNECT`
+authority-form requests and `HttpResponse::upgrade` for non-h2c protocols
+remain separate handoff paths for caller-owned protocols, and the h2c Upgrade
+detection preserves those existing handoffs when `Upgrade` is not `h2c`. TLS
+ALPN, extension callback APIs, full
 extension negotiation, external h2 integration, full WebSocket-over-h2, proxy
 h2, tunnel handoff, connection pooling, persistent multiplex sessions,
 persistent HTTP/2 session management, full RFC 8441 support, and full HTTP/2
@@ -335,4 +352,4 @@ TLS or async accept loops.
 | HTTP/1.1 response framing | Automatic `Content-Length`, explicit chunked responses, bodyless `HEAD`, `101`, `204`, and `304`, response trailers after the terminating chunk | No server TLS |
 | Upgrade and tunnel targets | `CONNECT` authority-form requests are accepted as HTTP requests; `HttpResponse::upgrade` can hand an upgraded socket to caller code after a matching request | The server does not implement the upgraded protocol after handoff |
 | Trailers | Chunked request trailers are preserved on `Request`; malformed, oversized, forbidden, and pseudo-header trailers are rejected; response trailers can be serialized for chunked responses | Application metadata trailers are allowed; trailer names that affect connection state, routing, authentication/cookies, framing, or payload processing are rejected |
-| Prior-knowledge h2c | The same `socket2` listener detects the HTTP/2 preface, validates SETTINGS including legal `SETTINGS_ENABLE_PUSH` and `SETTINGS_ENABLE_CONNECT_PROTOCOL` values of only `0` or `1` and legal `SETTINGS_MAX_FRAME_SIZE` values from 16,384 through 16,777,215 bytes, dispatches RFC 8441 extended CONNECT only after `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1` has been negotiated, exposes negotiated extended CONNECT as a normal `Request` with method `CONNECT`, version `HTTP/2`, target from `:path`, `host` from `:authority`, and `Request::extended_connect_protocol()` from `:protocol`, advertises the default 16,384-byte `SETTINGS_MAX_FRAME_SIZE`, rejects inbound frames above the active local limit, splits outbound HEADERS, DATA, and trailers to the active peer frame-size limit, advertises `SETTINGS_MAX_CONCURRENT_STREAMS` from the bounded active stream allowance, enforces that allowance before dispatching new streams, advertises and enforces a conservative `SETTINGS_MAX_HEADER_LIST_SIZE` for inbound request metadata, bounds HPACK dynamic table use with `SETTINGS_HEADER_TABLE_SIZE`, serves bounded prior-knowledge streams including bodyless DELETE, OPTIONS, TRACE, and negotiated extended CONNECT, handles HEAD without response DATA, rejects connection-specific request fields before handler dispatch, strips connection-specific response fields during h2c serialization, treats `RST_STREAM` as a bounded reset/cancellation signal for the affected stream, acknowledges valid PING frames with matching opaque data, accepts padded HEADERS/DATA/trailers without exposing padding, handles HPACK Huffman fields and bounded CONTINUATION header blocks, emits `GOAWAY` with the last completed stream id at bounded shutdown, validates and ignores valid PRIORITY metadata, ignores HTTP/2-allowed unknown/extension frames inside this bounded path, normalizes reserved stream-id high bits, and applies conservative DATA flow control | Ordinary `CONNECT`, missing-negotiation `:protocol`, non-CONNECT `:protocol`, and `PUSH_PROMISE` are rejected deterministically before handler dispatch; HTTP/1.1 `CONNECT` and `Upgrade` remain separate handoff paths; bounded prior-knowledge h2c only, with no public cancellation callback API, no dynamic policy API, no extension callback API, no full extension negotiation, TLS ALPN, external h2 integration, full WebSocket-over-h2, proxy h2, tunnel handoff, connection pooling, persistent multiplex sessions, persistent HTTP/2 session management, automatic retry, server push, full RFC 8441 support, full stream state machine, unbounded multiplexing, unbounded multiplex scheduling, general multiplexing, general tunnel scheduling, priority scheduling, or full HTTP/2 server feature set |
+| Bounded h2c server | The same `socket2` listener detects the HTTP/2 prior-knowledge preface or a valid HTTP/1.1 `Upgrade: h2c` request with `HTTP2-Settings`, validates SETTINGS including legal `SETTINGS_ENABLE_PUSH` and `SETTINGS_ENABLE_CONNECT_PROTOCOL` values of only `0` or `1` and legal `SETTINGS_MAX_FRAME_SIZE` values from 16,384 through 16,777,215 bytes, dispatches RFC 8441 extended CONNECT only after `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1` has been negotiated, exposes negotiated extended CONNECT as a normal `Request` with method `CONNECT`, version `HTTP/2`, target from `:path`, `host` from `:authority`, and `Request::extended_connect_protocol()` from `:protocol`, advertises the default 16,384-byte `SETTINGS_MAX_FRAME_SIZE`, rejects inbound frames above the active local limit, splits outbound HEADERS, DATA, and trailers to the active peer frame-size limit, advertises `SETTINGS_MAX_CONCURRENT_STREAMS` from the bounded active stream allowance, enforces that allowance before dispatching new streams, advertises and enforces a conservative `SETTINGS_MAX_HEADER_LIST_SIZE` for inbound request metadata, bounds HPACK dynamic table use with `SETTINGS_HEADER_TABLE_SIZE`, serves bounded streams including bodyless DELETE, OPTIONS, TRACE, and negotiated extended CONNECT, handles HEAD without response DATA, rejects connection-specific request fields before handler dispatch, strips connection-specific response fields during h2c serialization, treats `RST_STREAM` as a bounded reset/cancellation signal for the affected stream, acknowledges valid PING frames with matching opaque data, accepts padded HEADERS/DATA/trailers without exposing padding, handles HPACK Huffman fields and bounded CONTINUATION header blocks, emits `GOAWAY` with the last completed stream id at bounded shutdown, validates and ignores valid PRIORITY metadata, ignores HTTP/2-allowed unknown/extension frames inside this bounded path, normalizes reserved stream-id high bits, and applies conservative DATA flow control | Ordinary `CONNECT`, missing-negotiation `:protocol`, non-CONNECT `:protocol`, malformed h2c Upgrade, request bodies on h2c Upgrade, and `PUSH_PROMISE` are rejected deterministically before handler dispatch; HTTP/1.1 `CONNECT` and non-h2c `Upgrade` remain separate handoff paths; bounded h2c only, with no public cancellation callback API, no dynamic policy API, no extension callback API, no full extension negotiation, TLS ALPN, external h2 integration, full WebSocket-over-h2, proxy h2, tunnel handoff, connection pooling, persistent multiplex sessions, persistent HTTP/2 session management, automatic retry, server push, full RFC 8441 support, full stream state machine, unbounded multiplexing, unbounded multiplex scheduling, general multiplexing, general tunnel scheduling, priority scheduling, or full HTTP/2 server feature set |

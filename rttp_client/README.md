@@ -61,13 +61,19 @@ when `http2_extended_connect` is used. It validates received
 `SETTINGS_ENABLE_PUSH` values as only `0` or `1`; any other value rejects the
 bounded h2c handshake.
 `emit_http2_upgrade` is the explicit HTTP/1.1 h2c Upgrade variant of the same
-bounded single-request client path. It sends an HTTP/1.1 request with
+bounded single-request client path. It is opt-in and separate from
+`emit_http2_prior_knowledge`: the client first sends an HTTP/1.1 request with
 `Connection: Upgrade, HTTP2-Settings`, `Upgrade: h2c`, and the local SETTINGS
 payload in `HTTP2-Settings`, requires a `101 Switching Protocols` response
 that negotiates `h2c`, then sends the HTTP/2 connection preface and uses the
 same bounded single-stream h2c request/response flow on the upgraded socket.
-Invalid h2c upgrade responses fail deterministically. Ordinary `upgrade()`
-continues to return the socket to the caller for WebSocket-style protocols.
+The Upgrade variant supports the same request methods and body limits as the
+prior-knowledge h2c path, rejects proxies before opening a socket, rewrites
+any preconfigured HTTP/1.x upgrade/framing fields into the required h2c
+upgrade fields, and fails deterministically for invalid h2c upgrade responses.
+Ordinary `upgrade()` continues to return the socket to the caller for
+WebSocket-style protocols, and non-h2c HTTP/1.1 Upgrade handoff remains
+outside the bounded h2c client path.
 The client validates `SETTINGS_MAX_FRAME_SIZE` boundaries on both sides of the
 bounded h2c handshake. A configured local `http2_max_frame_size` is advertised
 only when set, must be in the legal HTTP/2 range of 16,384 through 16,777,215
@@ -117,11 +123,11 @@ priority metadata is rejected, and no priority scheduling is performed. Valid
 PING frames are acknowledged with PING ACK frames that carry the same opaque
 8-byte data.
 Unknown frame types, including extension frames, are ignored only after the
-prior-knowledge h2c handshake in this bounded direct-client path where HTTP/2
-permits that behavior; RTTP does not expose extension callbacks or perform
-full extension negotiation. Reserved stream identifier high bits are masked
-when frames are parsed or written, which normalizes wire framing but does not
-add broader multiplex scheduling or persistent session management.
+h2c handshake in this bounded direct-client path where HTTP/2 permits that
+behavior; RTTP does not expose extension callbacks or perform full extension
+negotiation. Reserved stream identifier high bits are masked when frames are
+parsed or written, which normalizes wire framing but does not add broader
+multiplex scheduling or persistent session management.
 Server push is outside this bounded client path even when a peer advertises
 `SETTINGS_ENABLE_PUSH = 1`: incoming `PUSH_PROMISE` frames are rejected
 deterministically instead of creating or tracking push state.
