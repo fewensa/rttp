@@ -459,6 +459,84 @@ fn raw_accept_ranges_headers_are_preserved_without_helper_validation() {
 }
 
 #[test]
+fn response_content_location_helper_declares_single_header_value() {
+  let response = HttpResponse::ok("body")
+    .header("Content-Location", "/old")
+    .with_content_location(" /representations/current ")
+    .expect("valid Content-Location should be accepted");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nContent-Location: /representations/current\r\n"));
+  assert_eq!(1, serialized.matches("\r\nContent-Location: ").count());
+  assert_eq!(
+    Some("/representations/current"),
+    response
+      .content_location()
+      .expect("Content-Location should parse")
+  );
+}
+
+#[test]
+fn response_content_location_helper_parses_attached_singleton_header() {
+  let response = HttpResponse::ok("body").header("Content-Location", "../variant.en");
+
+  assert_eq!(
+    Some("../variant.en"),
+    response
+      .content_location()
+      .expect("Content-Location should parse")
+  );
+}
+
+#[test]
+fn content_location_helper_rejects_empty_control_duplicate_and_oversized_values() {
+  for value in [
+    "",
+    " ",
+    "/safe\u{7f}",
+    "/safe\u{1f}",
+    "/safe\r\nX-Evil: true",
+  ] {
+    assert!(
+      HttpResponse::ok("body")
+        .with_content_location(value)
+        .is_err(),
+      "Content-Location helper should reject {value:?}"
+    );
+  }
+
+  for value in ["", " ", "/safe\u{7f}", "/safe\u{1f}"] {
+    let response = HttpResponse::ok("body").header("Content-Location", value);
+    assert!(
+      response.content_location().is_err(),
+      "Content-Location parser should reject {value:?}"
+    );
+  }
+
+  let response = HttpResponse::ok("body")
+    .header("Content-Location", "/one")
+    .header("Content-Location", "/two");
+  assert!(
+    response.content_location().is_err(),
+    "Content-Location parser should reject duplicate header fields"
+  );
+
+  let oversized = format!("/{}", "a".repeat(64 * 1024 + 1));
+  assert!(
+    HttpResponse::ok("body")
+      .with_content_location(&oversized)
+      .is_err(),
+    "Content-Location helper should reject oversized values"
+  );
+
+  let response = HttpResponse::ok("body").header("Content-Location", oversized);
+  assert!(
+    response.content_location().is_err(),
+    "Content-Location parser should reject oversized raw values"
+  );
+}
+
+#[test]
 fn response_age_and_expires_helpers_declare_metadata_headers() {
   let expires = UNIX_EPOCH + Duration::from_secs(784_111_777);
   let response = HttpResponse::ok("body").with_age(60).with_expires(expires);
