@@ -11,6 +11,8 @@ const MAX_REQUEST_HEAD_BYTES: usize = 64 * 1024;
 const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
+const MAX_VARY_VALUE_BYTES: usize = 64 * 1024;
+const MAX_VARY_FIELDS: usize = 256;
 const HTTP2_CLIENT_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 const HTTP2_FRAME_DATA: u8 = 0x0;
 const HTTP2_FRAME_HEADERS: u8 = 0x1;
@@ -3356,6 +3358,22 @@ impl Request {
     HttpRequestCacheControl::parse_values(values).map(Some)
   }
 
+  pub fn vary_selection(&self, vary: &HttpVary) -> HttpVarySelection {
+    if vary.is_wildcard() {
+      return HttpVarySelection::wildcard();
+    }
+
+    HttpVarySelection::from_fields(vary.fields.iter().map(|field| {
+      HttpVarySelectedField::new(
+        field,
+        self
+          .headers_named(field)
+          .map(ToString::to_string)
+          .collect::<Vec<_>>(),
+      )
+    }))
+  }
+
   fn connection_header_has_token(&self, token: &str) -> bool {
     self
       .headers
@@ -4268,6 +4286,24 @@ impl HttpRequest {
     HttpRequestCacheControl::parse_values(values).map(Some)
   }
 
+  pub fn vary_selection(&self, vary: &HttpVary) -> HttpVarySelection {
+    if vary.is_wildcard() {
+      return HttpVarySelection::wildcard();
+    }
+
+    HttpVarySelection::from_fields(vary.fields.iter().map(|field| {
+      HttpVarySelectedField::new(
+        field,
+        self
+          .headers
+          .iter()
+          .filter(|header| header.name.eq_ignore_ascii_case(field))
+          .map(|header| header.value.clone())
+          .collect::<Vec<_>>(),
+      )
+    }))
+  }
+
   pub fn body(&self) -> &[u8] {
     &self.body
   }
@@ -4477,6 +4513,14 @@ impl HttpResponse {
     self
   }
 
+  pub fn with_vary<V: AsRef<str>>(mut self, value: V) -> Result<Self, HttpVaryParseError> {
+    let vary = HttpVary::parse(value)?;
+    self
+      .headers
+      .push(HttpHeader::new("Vary", vary.header_value()));
+    Ok(self)
+  }
+
   pub fn trailers(&self) -> &[HttpHeader] {
     &self.trailers
   }
@@ -4502,6 +4546,19 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpResponseCacheControl::parse_values(values).map(Some)
+  }
+
+  pub fn vary(&self) -> Result<Option<HttpVary>, HttpVaryParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Vary"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpVary::parse_values(values).map(Some)
   }
 
   pub fn body<B: AsRef<[u8]>>(mut self, body: B) -> Self {
@@ -4740,6 +4797,183 @@ fn parse_byte_range_position(value: &str) -> Result<usize, HttpByteRangeError> {
     .parse::<usize>()
     .map_err(|_| HttpByteRangeError::InvalidRange)
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpVary {
+  wildcard: bool,
+  fields: Vec<String>,
+}
+
+impl HttpVary {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpVaryParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpVaryParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut fields = Vec::new();
+    let mut wildcard = false;
+
+    for value in values {
+      if value.len() > MAX_VARY_VALUE_BYTES {
+        return Err(HttpVaryParseError::new("Vary header value is too large"));
+      }
+
+      for field in value.split(',') {
+        let field = field.trim();
+        if field.is_empty() {
+          return Err(HttpVaryParseError::new("invalid Vary field name"));
+        }
+        if field == "*" {
+          wildcard = true;
+          continue;
+        }
+        if !is_http_token(field) {
+          return Err(HttpVaryParseError::new("invalid Vary field name"));
+        }
+        let normalized = field.to_ascii_lowercase();
+        if !fields.iter().any(|known| known == &normalized) {
+          if fields.len() >= MAX_VARY_FIELDS {
+            return Err(HttpVaryParseError::new("too many Vary field names"));
+          }
+          fields.push(normalized);
+        }
+      }
+    }
+
+    if wildcard && !fields.is_empty() {
+      return Err(HttpVaryParseError::new(
+        "Vary wildcard cannot be combined with field names",
+      ));
+    }
+    if wildcard {
+      return Ok(Self::wildcard());
+    }
+    if fields.is_empty() {
+      return Err(HttpVaryParseError::new("invalid Vary field name"));
+    }
+
+    Ok(Self {
+      wildcard: false,
+      fields,
+    })
+  }
+
+  pub fn wildcard() -> Self {
+    Self {
+      wildcard: true,
+      fields: Vec::new(),
+    }
+  }
+
+  pub fn is_wildcard(&self) -> bool {
+    self.wildcard
+  }
+
+  pub fn field_names(&self) -> Vec<&str> {
+    self.fields.iter().map(String::as_str).collect()
+  }
+
+  pub fn header_value(&self) -> String {
+    if self.wildcard {
+      "*".to_string()
+    } else {
+      self.fields.join(", ")
+    }
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpVarySelection {
+  wildcard: bool,
+  fields: Vec<HttpVarySelectedField>,
+}
+
+impl HttpVarySelection {
+  fn wildcard() -> Self {
+    Self {
+      wildcard: true,
+      fields: Vec::new(),
+    }
+  }
+
+  fn from_fields<I>(fields: I) -> Self
+  where
+    I: IntoIterator<Item = HttpVarySelectedField>,
+  {
+    Self {
+      wildcard: false,
+      fields: fields.into_iter().collect(),
+    }
+  }
+
+  pub fn is_wildcard(&self) -> bool {
+    self.wildcard
+  }
+
+  pub fn fields(&self) -> &[HttpVarySelectedField] {
+    &self.fields
+  }
+
+  pub fn field_names(&self) -> Vec<&str> {
+    self.fields.iter().map(|field| field.name()).collect()
+  }
+
+  pub fn values<S: AsRef<str>>(&self, name: S) -> Vec<&str> {
+    self
+      .fields
+      .iter()
+      .find(|field| field.name.eq_ignore_ascii_case(name.as_ref()))
+      .map(|field| field.values())
+      .unwrap_or_default()
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpVarySelectedField {
+  name: String,
+  values: Vec<String>,
+}
+
+impl HttpVarySelectedField {
+  fn new<S: AsRef<str>>(name: S, values: Vec<String>) -> Self {
+    Self {
+      name: name.as_ref().to_ascii_lowercase(),
+      values,
+    }
+  }
+
+  pub fn name(&self) -> &str {
+    &self.name
+  }
+
+  pub fn values(&self) -> Vec<&str> {
+    self.values.iter().map(String::as_str).collect()
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpVaryParseError {
+  message: String,
+}
+
+impl HttpVaryParseError {
+  fn new<S: AsRef<str>>(message: S) -> Self {
+    Self {
+      message: message.as_ref().to_string(),
+    }
+  }
+}
+
+impl fmt::Display for HttpVaryParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpVaryParseError {}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct HttpRequestCacheControl {
