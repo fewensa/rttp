@@ -1,11 +1,20 @@
 #[cfg(feature = "async")]
 use futures::executor::block_on;
+use std::io::Write;
+use std::net::TcpStream;
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
+
+use rttp::server::{HttpByteRange, HttpByteRangeError, HttpResponse, Request};
 use rttp_client::HttpClient;
 use rttp_http11_test_fixtures as fixtures;
 
 fn client() -> HttpClient {
   HttpClient::new()
 }
+
+const RANGE_BODY: &[u8] = b"0123456789abcdef";
 
 const NO_BODY_STATUS_WITH_FRAMING_CASES: &[(&str, &[u8], u32, &str, &str)] = &[
   (
@@ -65,6 +74,66 @@ const NO_BODY_STATUS_WITH_FRAMING_CASES: &[(&str, &[u8], u32, &str, &str)] = &[
     "chunked",
   ),
 ];
+
+fn range_response(request: Request) -> HttpResponse {
+  match request.header("range") {
+    Some(range_header) => match HttpByteRange::parse(range_header, RANGE_BODY.len()) {
+      Ok(range) => HttpResponse::partial_content(RANGE_BODY, range),
+      Err(HttpByteRangeError::UnsatisfiedRange) => {
+        HttpResponse::range_not_satisfiable(RANGE_BODY.len())
+      }
+      Err(error) => HttpResponse::new(400, "Bad Request").body(error.to_string()),
+    },
+    None => HttpResponse::ok(RANGE_BODY),
+  }
+}
+
+fn spawn_range_server() -> (std::net::SocketAddr, thread::JoinHandle<Option<String>>) {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind range server");
+  let addr = server.local_addr().expect("range server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request.header("range").map(str::to_string))
+          .expect("send observed range");
+        range_response(request)
+      })
+      .expect("serve range request");
+    rx.recv().expect("observed range")
+  });
+
+  (addr, handle)
+}
+
+fn assert_partial_response(
+  name: &str,
+  response: rttp_client::response::Response,
+  expected_content_range: &str,
+  expected_body: &str,
+) {
+  assert_eq!(206, response.code(), "{name}");
+  assert!(response.is_partial_content(), "{name}");
+  assert_eq!(
+    Some(&expected_content_range.to_string()),
+    response.header_value("Content-Range"),
+    "{name}"
+  );
+  assert_eq!(expected_body, response.body().string().unwrap(), "{name}");
+}
+
+fn assert_observed_range(
+  handle: thread::JoinHandle<Option<String>>,
+  expected_range: &str,
+  name: &str,
+) {
+  assert_eq!(
+    Some(expected_range.to_string()),
+    handle.join().expect("range server thread"),
+    "{name}"
+  );
+}
 
 const ORDINARY_200_FRAMING_CASES: &[(&str, &[u8], &str, &str, &str)] = &[
   (
@@ -220,6 +289,139 @@ fn sync_client_waits_for_shared_expect_continue_fixture() {
   let request = handle.join().expect("raw response server thread");
   assert!(String::from_utf8_lossy(&request).contains("Expect: 100-continue"));
   assert!(request.ends_with(fixture.body));
+}
+
+#[test]
+fn sync_client_range_helpers_interoperate_with_server_partial_content_helper() {
+  for (name, expected_range, expected_content_range, expected_body, request) in [
+    (
+      "bounded range",
+      "bytes=3-7",
+      "bytes 3-7/16",
+      "34567",
+      Box::new(|client: &mut HttpClient| {
+        client
+          .range(3, 7)
+          .expect("bounded range should be accepted");
+      }) as Box<dyn Fn(&mut HttpClient)>,
+    ),
+    (
+      "open-ended range",
+      "bytes=12-",
+      "bytes 12-15/16",
+      "cdef",
+      Box::new(|client: &mut HttpClient| {
+        client.range_from(12);
+      }),
+    ),
+    (
+      "suffix range",
+      "bytes=-4",
+      "bytes 12-15/16",
+      "cdef",
+      Box::new(|client: &mut HttpClient| {
+        client
+          .range_suffix(4)
+          .expect("suffix range should be accepted");
+      }),
+    ),
+  ] {
+    let (addr, handle) = spawn_range_server();
+    let mut client = client();
+    client.get().url(format!("http://{}/matrix/range", addr));
+    request(&mut client);
+
+    let response = client
+      .emit()
+      .unwrap_or_else(|err| panic!("{name} should parse: {err}"));
+
+    assert_partial_response(name, response, expected_content_range, expected_body);
+    assert_observed_range(handle, expected_range, name);
+  }
+}
+
+#[test]
+fn sync_client_unsatisfied_range_maps_to_server_416_response() {
+  let (addr, handle) = spawn_range_server();
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/range", addr))
+    .range_from(RANGE_BODY.len() as u64)
+    .emit()
+    .expect("unsatisfied range response should parse");
+
+  assert_eq!(416, response.code());
+  assert!(response.is_range_not_satisfiable());
+  assert_eq!(
+    Some(&format!("bytes */{}", RANGE_BODY.len())),
+    response.header_value("Content-Range")
+  );
+  assert_eq!("", response.body().string().unwrap());
+  assert_observed_range(
+    handle,
+    &format!("bytes={}-", RANGE_BODY.len()),
+    "unsatisfied range",
+  );
+}
+
+#[test]
+fn sync_client_malformed_range_helpers_reject_before_reaching_server() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind range server");
+  let addr = server.local_addr().expect("range server addr");
+  let (tx, rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request.header("range").map(str::to_string))
+          .expect("send unexpected range");
+        HttpResponse::ok("unexpected")
+      })
+      .expect("serve optional range request");
+  });
+
+  let mut range_client = client();
+  let error = range_client
+    .get()
+    .url(format!("http://{}/matrix/range", addr))
+    .range(7, 3)
+    .expect_err("inverted range should be rejected");
+  assert!(error.is_builder());
+
+  let mut range_client = client();
+  let error = range_client
+    .get()
+    .url(format!("http://{}/matrix/range", addr))
+    .range_suffix(0)
+    .expect_err("empty suffix should be rejected");
+  assert!(error.is_builder());
+
+  assert!(
+    rx.recv_timeout(Duration::from_millis(100)).is_err(),
+    "malformed helper input should not reach the range server"
+  );
+
+  let mut stream = TcpStream::connect(addr).expect("release range server");
+  stream
+    .write_all(b"GET /matrix/release HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+    .expect("write release request");
+  assert_eq!(None, rx.recv().expect("release request observed range"));
+  handle.join().expect("range server thread");
+}
+
+#[test]
+fn sync_client_manual_range_header_interoperates_with_server_partial_content_helper() {
+  let (addr, handle) = spawn_range_server();
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/range", addr))
+    .header(("Range", "bytes=5-9"))
+    .emit()
+    .expect("manual range response should parse");
+
+  assert_partial_response("manual range", response, "bytes 5-9/16", "56789");
+  assert_observed_range(handle, "bytes=5-9", "manual range");
 }
 
 #[test]
