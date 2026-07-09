@@ -283,6 +283,94 @@ fn test_parse_cache_control_rejects_invalid_helper_values_without_rejecting_resp
 }
 
 #[test]
+fn test_parse_vary_response_helper_normalizes_and_deduplicates_field_names() {
+  let s = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Vary: Accept-Encoding, User-Agent\r\n",
+    "VARY: accept-encoding, X-Feature\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
+    .expect("parse response with vary headers");
+
+  let vary = response
+    .vary()
+    .expect("valid vary should parse")
+    .expect("vary header should be present");
+
+  assert!(!vary.is_any());
+  assert_eq!(
+    vec!["accept-encoding", "user-agent", "x-feature"],
+    vary.field_names()
+  );
+  assert!(vary.contains_field_name("ACCEPT-ENCODING"));
+  assert!(vary.contains_field_name("user-agent"));
+  assert!(!vary.contains_field_name("authorization"));
+  assert_eq!(
+    vec![
+      &"Accept-Encoding, User-Agent".to_string(),
+      &"accept-encoding, X-Feature".to_string()
+    ],
+    response.header_values("vary")
+  );
+}
+
+#[test]
+fn test_parse_vary_response_helper_supports_wildcard_and_absent_header() {
+  let s = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Vary: *\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
+    .expect("parse response with wildcard vary");
+  let vary = response
+    .vary()
+    .expect("valid wildcard vary should parse")
+    .expect("vary header should be present");
+
+  assert!(vary.is_any());
+  assert!(vary.field_names().is_empty());
+  assert!(!vary.contains_field_name("accept"));
+
+  let s = concat!("HTTP/1.1 200 OK\r\n", "Content-Length: 2\r\n", "\r\n", "OK");
+  let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
+    .expect("parse response without vary");
+  assert_eq!(None, response.vary().expect("absent vary should parse"));
+}
+
+#[test]
+fn test_parse_vary_rejects_invalid_helper_values_without_rejecting_response() {
+  let invalid_values = [
+    "",
+    "Accept,",
+    ",Accept",
+    "Accept,,User-Agent",
+    "Accept, ,User-Agent",
+    "Accept Encoding",
+    "Accept@Encoding",
+    "*, Accept",
+    "Accept, *",
+  ];
+
+  for value in invalid_values {
+    let raw = format!("HTTP/1.1 200 OK\r\nVary: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response remains usable");
+
+    assert!(
+      response.vary().is_err(),
+      "vary helper should reject {value:?}"
+    );
+    assert_eq!(Some(&value.to_string()), response.header_value("Vary"));
+  }
+}
+
+#[test]
 fn test_parse_response_rejects_header_without_colon() {
   let s = concat!(
     "HTTP/1.1 200 OK\r\n",
