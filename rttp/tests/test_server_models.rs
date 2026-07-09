@@ -3,7 +3,7 @@ use std::time::{Duration, UNIX_EPOCH};
 use rttp::server::{
   HttpByteRange, HttpByteRangeError, HttpConditionalMetadata, HttpEntityTag,
   HttpIfRangeRequestOutcome, HttpRequest, HttpRequestCacheControl, HttpResponse,
-  HttpResponseCacheControl, HttpVary,
+  HttpResponseCacheControl, HttpRetryAfter, HttpVary,
 };
 
 fn parse_request(raw: &str) -> HttpRequest {
@@ -192,6 +192,94 @@ fn response_age_and_expires_helpers_parse_raw_metadata_headers() {
 }
 
 #[test]
+fn response_retry_after_helpers_declare_delta_seconds_and_http_date() {
+  let retry_at = UNIX_EPOCH + Duration::from_secs(784_111_777);
+
+  let delta_response = HttpResponse::new(503, "Service Unavailable").with_retry_after_delta(120);
+  let date_response = HttpResponse::new(503, "Service Unavailable").with_retry_after_date(retry_at);
+
+  let delta_serialized = String::from_utf8(delta_response.to_bytes()).expect("response is UTF-8");
+  let date_serialized = String::from_utf8(date_response.to_bytes()).expect("response is UTF-8");
+
+  assert!(delta_serialized.contains("\r\nRetry-After: 120\r\n"));
+  assert!(date_serialized.contains("\r\nRetry-After: Sun, 06 Nov 1994 08:49:37 GMT\r\n"));
+  assert_eq!(
+    Some(HttpRetryAfter::DeltaSeconds(120)),
+    delta_response
+      .retry_after()
+      .expect("Retry-After delta should parse")
+  );
+  assert_eq!(
+    Some(HttpRetryAfter::HttpDate(retry_at)),
+    date_response
+      .retry_after()
+      .expect("Retry-After date should parse")
+  );
+}
+
+#[test]
+fn response_retry_after_helper_parses_raw_delta_seconds_and_http_date() {
+  let delta_response = HttpResponse::ok("body").header("Retry-After", "0");
+  let date_response =
+    HttpResponse::ok("body").header("Retry-After", "Sunday, 06-Nov-94 08:49:37 GMT");
+
+  assert_eq!(
+    Some(HttpRetryAfter::DeltaSeconds(0)),
+    delta_response
+      .retry_after()
+      .expect("Retry-After delta should parse")
+  );
+  assert_eq!(
+    Some(HttpRetryAfter::HttpDate(
+      UNIX_EPOCH + Duration::from_secs(784_111_777)
+    )),
+    date_response
+      .retry_after()
+      .expect("Retry-After date should parse")
+  );
+}
+
+#[test]
+fn response_retry_after_helper_rejects_malformed_overflowing_or_oversized_values() {
+  for value in [
+    "",
+    " ",
+    "-1",
+    "+1",
+    "1.5",
+    "abc",
+    "0, 60",
+    "18446744073709551616",
+    "Sun, 06 Nov 1994 08:49:37 PST",
+  ] {
+    let response = HttpResponse::ok("body").header("Retry-After", value);
+
+    assert!(
+      response.retry_after().is_err(),
+      "Retry-After helper should reject {value:?}"
+    );
+  }
+
+  let response = HttpResponse::ok("body").header("Retry-After", "1".repeat(64 * 1024 + 1));
+  assert!(
+    response.retry_after().is_err(),
+    "Retry-After helper should reject oversized values"
+  );
+}
+
+#[test]
+fn response_retry_after_helper_rejects_duplicate_values() {
+  let response = HttpResponse::ok("body")
+    .header("Retry-After", "60")
+    .header("Retry-After", "120");
+
+  assert!(
+    response.retry_after().is_err(),
+    "Retry-After helper should reject duplicate header fields"
+  );
+}
+
+#[test]
 fn response_age_helper_rejects_malformed_or_overflowing_values() {
   for value in ["", " ", "-1", "+1", "1.5", "abc", "18446744073709551616"] {
     let response = HttpResponse::ok("body").header("Age", value);
@@ -219,12 +307,14 @@ fn response_expires_helper_rejects_malformed_values() {
 fn raw_age_and_expires_headers_are_preserved_without_helper_validation() {
   let response = HttpResponse::ok("body")
     .header("Age", "not-a-delta")
-    .header("Expires", "not-a-date");
+    .header("Expires", "not-a-date")
+    .header("Retry-After", "not-a-delta-or-date");
 
   let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
 
   assert!(serialized.contains("\r\nAge: not-a-delta\r\n"));
   assert!(serialized.contains("\r\nExpires: not-a-date\r\n"));
+  assert!(serialized.contains("\r\nRetry-After: not-a-delta-or-date\r\n"));
 }
 
 #[test]
