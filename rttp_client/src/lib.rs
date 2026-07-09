@@ -30,6 +30,15 @@
 //! disabled, validates received `SETTINGS_ENABLE_PUSH` values as only `0` or
 //! `1`, and rejects any incoming `PUSH_PROMISE` frame instead of creating or
 //! tracking push state.
+//! `HttpClient::http2_extended_connect(protocol)` is the only public RFC 8441
+//! entry point on this bounded path. It is prior-knowledge h2c only over the
+//! direct `socket2` transport boundary: the client advertises
+//! `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1`, emits `:method CONNECT` with
+//! `:protocol`, `:scheme`, `:authority`, and `:path`, and returns the peer's
+//! response through the normal `Response` API. Ordinary `CONNECT`,
+//! header-configured `:protocol` metadata, HTTP/1.1 `Upgrade` handoff requests,
+//! proxies, request bodies, and request trailers are rejected before the h2c
+//! request is sent.
 //! It decodes incoming padded HEADERS, DATA, and trailer frames without
 //! exposing padding bytes, including response HPACK dynamic table entries.
 //! Peer `SETTINGS_HEADER_TABLE_SIZE` bounds outbound request dynamic indexing;
@@ -47,10 +56,12 @@
 //! `last-stream-id` includes stream 1, and pre-stream `GOAWAY` refuses the
 //! request before request HEADERS are sent. RTTP reports those conditions to
 //! the caller and does not retry automatically; transport disconnects remain
-//! ordinary socket errors without an HTTP/2 stream boundary. TLS ALPN, proxy
-//! h2, full extension negotiation, full HTTP/2 multiplexing, dynamic policy
-//! APIs, server push, and priority scheduling are not part of that
-//! single-stream path.
+//! ordinary socket errors without an HTTP/2 stream boundary. This is not a full
+//! WebSocket-over-h2 implementation, arbitrary tunnel scheduler, or general
+//! multiplexing guarantee beyond the bounded single-stream path, and it does
+//! not change HTTP/1.1 `CONNECT` or `Upgrade` semantics. TLS ALPN, proxy h2,
+//! full extension negotiation, full HTTP/2 multiplexing, dynamic policy APIs,
+//! server push, and priority scheduling are not part of that path.
 //!
 //! ```rust,no_run
 //! use rttp_client::HttpClient;
@@ -60,6 +71,20 @@
 //!   .url("http://127.0.0.1:8080/health")
 //!   .emit()?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! ```rust,no_run
+//! # #[cfg(feature = "http2")]
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! use rttp_client::HttpClient;
+//!
+//! let response = HttpClient::new()
+//!   .get()
+//!   .url("http://127.0.0.1:8080/chat")
+//!   .http2_extended_connect("websocket")
+//!   .emit_http2_prior_knowledge()?;
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! ```rust,no_run

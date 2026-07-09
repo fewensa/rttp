@@ -119,8 +119,11 @@ impl HttpClient {
   /// Use RFC 8441 extended CONNECT on the bounded prior-knowledge h2c path.
   ///
   /// This is only honored by `emit_http2_prior_knowledge` with the `http2`
-  /// feature enabled. The request is emitted as `:method CONNECT` and includes
-  /// the configured `:protocol` pseudo-header.
+  /// feature enabled. The client opens a direct `socket2` h2c TCP connection,
+  /// advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1`, emits `:method
+  /// CONNECT`, and includes the configured `:protocol` pseudo-header. It
+  /// returns the peer's HTTP/2 response through the normal `Response` API; it
+  /// does not hand an upgraded socket to the caller.
   #[cfg(feature = "http2")]
   pub fn http2_extended_connect<S: AsRef<str>>(&mut self, protocol: S) -> &mut Self {
     self

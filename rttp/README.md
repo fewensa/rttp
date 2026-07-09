@@ -619,6 +619,25 @@ authority-form requests and `HttpResponse::upgrade` for non-h2c protocols
 remain separate handoff paths for caller-owned protocols, and the h2c Upgrade
 detection preserves those existing handoffs when `Upgrade` is not `h2c`.
 
+```rust,no_run
+use rttp::server::HttpResponse;
+
+fn main() -> std::io::Result<()> {
+  let server = rttp::Http::server("127.0.0.1:8080")?;
+
+  server.accept_one(|request| {
+    if request.method() == "CONNECT"
+      && request.version() == "HTTP/2"
+      && request.extended_connect_protocol() == Some("websocket")
+    {
+      return HttpResponse::ok("accepted extended CONNECT metadata");
+    }
+
+    HttpResponse::new(400, "Bad Request")
+  })
+}
+```
+
 The server is intentionally not a full RFC-covering web server and still does
 not implement server TLS, TLS ALPN, extension callback APIs, full extension
 negotiation, external h2 integration, full WebSocket-over-h2, proxy h2, h2c
@@ -769,6 +788,18 @@ scheduling, general multiplexing, and priority scheduling remain outside that
 bounded prior-knowledge path. RTTP does not expose a dynamic policy API for
 changing h2c frame-size or metadata limits at
 runtime.
+
+```rust,no_run
+# #[cfg(feature = "http2")]
+# fn example() -> Result<(), Box<dyn std::error::Error>> {
+let response = rttp::Http::client()
+  .get()
+  .url("http://127.0.0.1:8080/chat")
+  .http2_extended_connect("websocket")
+  .emit_http2_prior_knowledge()?;
+# Ok(())
+# }
+```
 
 Direct TCP client connections use `socket2`. SOCKS proxy handshakes remain
 delegated to the `socks` crate.
