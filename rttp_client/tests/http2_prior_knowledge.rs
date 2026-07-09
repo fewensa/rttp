@@ -122,6 +122,88 @@ fn prior_knowledge_get_sends_h2_handshake_and_reads_single_response_stream() {
 }
 
 #[test]
+fn prior_knowledge_client_acks_ping_and_ignores_ping_ack_during_response() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_PING, FLAG_ACK, 0, b"ignored!");
+    write_frame(&mut stream, FRAME_PING, 0, 0, b"rttp-png");
+
+    let ping_ack = read_frame(&mut stream);
+    assert_eq!(FRAME_PING, ping_ack.frame_type);
+    assert_eq!(FLAG_ACK, ping_ack.flags);
+    assert_eq!(0, ping_ack.stream_id);
+    assert_eq!(b"rttp-png", ping_ack.payload.as_slice());
+
+    write_frame(
+      &mut stream,
+      FRAME_HEADERS,
+      FLAG_END_HEADERS,
+      1,
+      &[
+        0x88, 0x0f, 16, 10, b't', b'e', b'x', b't', b'/', b'p', b'l', b'a', b'i', b'n',
+      ],
+    );
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"pong body");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/ping", addr))
+    .emit_http2_prior_knowledge()
+    .expect("h2 response after peer PING");
+
+  assert_eq!(200, response.code());
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(
+    Some(&"text/plain".to_string()),
+    response.header_value("content-type")
+  );
+  assert_eq!("pong body", response.body().string().unwrap());
+
+  handle.join().expect("h2 ping peer thread");
+}
+
+#[test]
+fn prior_knowledge_client_rejects_malformed_ping_during_response() {
+  for (path, flags, stream_id, payload) in [
+    ("ping-stream", 0, 1, b"rttp-png".as_slice()),
+    ("ping-short", 0, 0, b"short".as_slice()),
+    ("ping-ack-short", FLAG_ACK, 0, b"short".as_slice()),
+  ] {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+    let addr = listener.local_addr().expect("h2 peer addr");
+    let payload = payload.to_vec();
+
+    let handle = thread::spawn(move || {
+      let (mut stream, _) = listener.accept().expect("accept h2 client");
+      complete_h2_request_handshake(&mut stream);
+
+      write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+      write_frame(&mut stream, FRAME_PING, flags, stream_id, &payload);
+    });
+
+    let error = HttpClient::new()
+      .get()
+      .url(format!("http://{}/{}", addr, path))
+      .emit_http2_prior_knowledge()
+      .expect_err("malformed PING must reject response");
+
+    assert!(
+      error.to_string().contains("invalid HTTP/2 PING frame"),
+      "unexpected error: {error}"
+    );
+
+    handle.join().expect("h2 malformed ping peer thread");
+  }
+}
+
+#[test]
 fn http2_upgrade_sends_http11_upgrade_then_runs_single_h2_stream() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2c upgrade peer");
   let addr = listener.local_addr().expect("h2c upgrade peer addr");
