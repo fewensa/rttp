@@ -560,6 +560,141 @@ fn test_parse_allow_rejects_duplicate_oversized_and_too_many_methods() {
 }
 
 #[test]
+fn test_parse_accept_ranges_response_helper_preserves_order_across_header_fields() {
+  let s = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Accept-Ranges: bytes, pages\r\n",
+    "accept-ranges: records\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
+    .expect("parse response with accept-ranges headers");
+  let accept_ranges = response
+    .accept_ranges()
+    .expect("valid accept-ranges should parse")
+    .expect("accept-ranges header should be present");
+
+  assert!(!accept_ranges.is_none());
+  assert!(accept_ranges.accepts_bytes());
+  assert_eq!(vec!["bytes", "pages", "records"], accept_ranges.units());
+  assert_eq!(
+    vec![&"bytes, pages".to_string(), &"records".to_string()],
+    response.header_values("Accept-Ranges")
+  );
+}
+
+#[test]
+fn test_parse_accept_ranges_response_helper_supports_none_and_absent_header() {
+  let s = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Accept-Ranges: none\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
+    .expect("parse response with none accept-ranges");
+  let accept_ranges = response
+    .accept_ranges()
+    .expect("valid none accept-ranges should parse")
+    .expect("accept-ranges header should be present");
+
+  assert!(accept_ranges.is_none());
+  assert!(!accept_ranges.accepts_bytes());
+  assert_eq!(vec!["none"], accept_ranges.units());
+
+  let s = concat!("HTTP/1.1 200 OK\r\n", "Content-Length: 2\r\n", "\r\n", "OK");
+  let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
+    .expect("parse response without accept-ranges");
+  assert_eq!(
+    None,
+    response
+      .accept_ranges()
+      .expect("absent accept-ranges should parse")
+  );
+}
+
+#[test]
+fn test_parse_accept_ranges_rejects_invalid_helper_values_without_rejecting_response() {
+  let invalid_values = [
+    "",
+    "bytes,",
+    ",bytes",
+    "bytes,,pages",
+    "bytes, ,pages",
+    "byte ranges",
+    "bytes@pages",
+    "bytes, none",
+    "none, bytes",
+  ];
+
+  for value in invalid_values {
+    let raw = format!("HTTP/1.1 200 OK\r\nAccept-Ranges: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response remains usable");
+
+    assert!(
+      response.accept_ranges().is_err(),
+      "accept-ranges helper should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Accept-Ranges")
+    );
+  }
+}
+
+#[test]
+fn test_parse_accept_ranges_rejects_duplicate_oversized_and_too_many_values() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Accept-Ranges: bytes, pages\r\n",
+    "accept-ranges: BYTES\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response with duplicate accept-ranges remains usable");
+
+  assert!(
+    response.accept_ranges().is_err(),
+    "accept-ranges helper should reject normalized duplicate units"
+  );
+  assert_eq!(
+    vec![&"bytes, pages".to_string(), &"BYTES".to_string()],
+    response.header_values("Accept-Ranges")
+  );
+
+  let oversized = "bytes".repeat(16 * 1024);
+  let raw = format!("HTTP/1.1 200 OK\r\nAccept-Ranges: {oversized}\r\nContent-Length: 2\r\n\r\nOK");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response with oversized accept-ranges remains usable");
+
+  assert!(
+    response.accept_ranges().is_err(),
+    "accept-ranges helper should reject oversized values"
+  );
+  assert_eq!(Some(&oversized), response.header_value("Accept-Ranges"));
+
+  let too_many = (0..257)
+    .map(|ix| format!("unit{ix}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let raw = format!("HTTP/1.1 200 OK\r\nAccept-Ranges: {too_many}\r\nContent-Length: 2\r\n\r\nOK");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response with too many accept-ranges values remains usable");
+
+  assert!(
+    response.accept_ranges().is_err(),
+    "accept-ranges helper should reject too many values"
+  );
+  assert_eq!(Some(&too_many), response.header_value("Accept-Ranges"));
+}
+
+#[test]
 fn test_parse_age_rejects_invalid_helper_values_without_rejecting_response() {
   let invalid_values = [
     "",
