@@ -70,6 +70,39 @@ The h2c Upgrade path is only the bounded HTTP/2 path selected by a valid
 non-h2c `HttpResponse::upgrade` handoffs remain separate caller-owned protocol
 paths; they are not trailer-parsed as HTTP/2 streams.
 
+## Bounded HTTP/2 CONTINUATION behavior
+
+The server supports large HTTP/2 header blocks on its bounded h2c paths.
+Inbound request HEADERS and trailing HEADERS may arrive as an initial HEADERS
+frame followed by CONTINUATION frames, and RTTP reassembles the complete HPACK
+block before decoding, header-list-size enforcement, trailer validation, and
+handler dispatch. Outbound response HEADERS and trailing HEADERS are split into
+HEADERS plus CONTINUATION frames when their encoded HPACK block exceeds the
+active peer `SETTINGS_MAX_FRAME_SIZE`.
+
+`SETTINGS_MAX_FRAME_SIZE` controls per-frame payload boundaries, not the total
+decoded metadata allowance. The server advertises the default 16,384-byte
+frame size, accepts only legal peer frame-size settings from 16,384 through
+16,777,215 bytes, rejects inbound frames above the active local limit, and uses
+the active peer limit to fragment response HEADERS, DATA, and trailing HEADERS.
+Decoded request metadata remains bounded by the advertised
+`SETTINGS_MAX_HEADER_LIST_SIZE`; HPACK dynamic table size controls compression
+state only.
+
+CONTINUATION ordering is enforced before application code sees a request. Once
+a request HEADERS frame starts a block without `END_HEADERS`, only
+CONTINUATION frames on that same stream may arrive until `END_HEADERS` closes
+the block. CONTINUATION on stream 0, orphan CONTINUATION frames,
+wrong-stream CONTINUATION frames, interleaved DATA or control frames before
+`END_HEADERS`, and EOF before the block is closed are rejected without handler
+dispatch.
+
+This behavior is shared by HTTP/2 prior-knowledge preface detection and the
+valid `Upgrade: h2c` server path after `101 Switching Protocols`. It does not
+apply to ordinary HTTP/1.1 `CONNECT`, non-h2c `HttpResponse::upgrade`
+handoffs, TLS ALPN, proxy h2, h2c tunnel handoff, server push, extension
+callbacks, persistent sessions, or unbounded multiplexing.
+
 The server currently parses blocking HTTP/1.x requests for local tests and
 simple embedded use. It supports fixed `Content-Length` and chunked request
 bodies, preserves chunked request trailers on `Request`, bounds request

@@ -19,6 +19,13 @@
 //! that active local limit. Peer-advertised values outside the same range
 //! reject the handshake, while legal peer values are used to split outbound
 //! request HEADERS, DATA, and trailing HEADERS.
+//! Large outbound request HEADERS and trailing HEADERS are fragmented as
+//! HEADERS plus CONTINUATION frames when the encoded HPACK block exceeds the
+//! active peer frame-size limit. Inbound response HEADERS and trailing HEADERS
+//! may span CONTINUATION frames, which are reassembled before HPACK decoding
+//! and metadata validation. The client rejects orphan CONTINUATION frames,
+//! wrong-stream fragments, interleaved frames before `END_HEADERS`, and EOF
+//! before a pending header block closes.
 //! The client advertises `SETTINGS_ENABLE_PUSH = 0` so peers see server push
 //! disabled, validates received `SETTINGS_ENABLE_PUSH` values as only `0` or
 //! `1`, and rejects any incoming `PUSH_PROMISE` frame instead of creating or
