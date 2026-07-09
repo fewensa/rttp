@@ -937,6 +937,132 @@ pub mod vary {
   }
 }
 
+pub mod content_language {
+  pub const MAX_VALUE_BYTES: usize = 64 * 1024;
+  pub const SERVER_MAX_LANGUAGES: usize = 32;
+  pub const CLIENT_MAX_LANGUAGES: usize = 256;
+
+  pub struct ResponseCase {
+    pub name: &'static str,
+    pub values: &'static [&'static str],
+    pub languages: &'static [&'static str],
+  }
+
+  pub struct InvalidCase {
+    pub name: &'static str,
+    pub value: &'static str,
+  }
+
+  const RESPONSE_CASES: &[ResponseCase] = &[
+    ResponseCase {
+      name: "single language tag",
+      values: &["en"],
+      languages: &["en"],
+    },
+    ResponseCase {
+      name: "language tags across header fields preserve order",
+      values: &["en-US, fr", "zh-Hant-TW, es-419"],
+      languages: &["en-US", "fr", "zh-Hant-TW", "es-419"],
+    },
+    ResponseCase {
+      name: "optional whitespace around commas",
+      values: &["en-US,\tfr-CA , es-419"],
+      languages: &["en-US", "fr-CA", "es-419"],
+    },
+    ResponseCase {
+      name: "private-use style tag preserves spelling",
+      values: &["x-private, i-klingon"],
+      languages: &["x-private", "i-klingon"],
+    },
+  ];
+
+  const INVALID_CASES: &[InvalidCase] = &[
+    InvalidCase {
+      name: "empty value",
+      value: "",
+    },
+    InvalidCase {
+      name: "blank value",
+      value: " ",
+    },
+    InvalidCase {
+      name: "trailing comma",
+      value: "en,",
+    },
+    InvalidCase {
+      name: "leading comma",
+      value: ", en",
+    },
+    InvalidCase {
+      name: "empty member",
+      value: "en,,fr",
+    },
+    InvalidCase {
+      name: "language with whitespace",
+      value: "en US",
+    },
+    InvalidCase {
+      name: "language with underscore",
+      value: "en_US",
+    },
+    InvalidCase {
+      name: "language with parameter",
+      value: "en; q=1",
+    },
+    InvalidCase {
+      name: "leading hyphen",
+      value: "-en",
+    },
+    InvalidCase {
+      name: "trailing hyphen",
+      value: "en-",
+    },
+    InvalidCase {
+      name: "empty subtag",
+      value: "en--US",
+    },
+    InvalidCase {
+      name: "primary subtag too long",
+      value: "englishlong",
+    },
+    InvalidCase {
+      name: "secondary subtag too long",
+      value: "en-toolongsubtag",
+    },
+    InvalidCase {
+      name: "invalid subtag character",
+      value: "en-@",
+    },
+  ];
+
+  pub fn response_cases() -> &'static [ResponseCase] {
+    RESPONSE_CASES
+  }
+
+  pub fn invalid_cases() -> &'static [InvalidCase] {
+    INVALID_CASES
+  }
+
+  pub fn too_many_server_languages_value() -> String {
+    too_many_languages_value(SERVER_MAX_LANGUAGES)
+  }
+
+  pub fn too_many_client_languages_value() -> String {
+    too_many_languages_value(CLIENT_MAX_LANGUAGES)
+  }
+
+  pub fn oversized_value() -> String {
+    format!("x-{}", "a".repeat(MAX_VALUE_BYTES))
+  }
+
+  fn too_many_languages_value(max_languages: usize) -> String {
+    (0..=max_languages)
+      .map(|index| format!("x-{index}"))
+      .collect::<Vec<_>>()
+      .join(", ")
+  }
+}
+
 pub fn bind_socket2_tcp_listener(name: &str) -> (TcpListener, SocketAddr) {
   let addr: SocketAddr = "127.0.0.1:0".parse().expect("parse local addr");
   let socket = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))
