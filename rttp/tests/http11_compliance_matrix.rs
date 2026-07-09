@@ -73,6 +73,16 @@ fn age_expires_response(age: u64, expires: std::time::SystemTime) -> HttpRespons
     .expect("test Vary should parse")
 }
 
+fn retry_after_response(retry_after: std::time::SystemTime) -> HttpResponse {
+  HttpResponse::new(503, "Service Unavailable")
+    .with_retry_after_date(retry_after)
+    .with_age(5)
+    .with_expires(UNIX_EPOCH + Duration::from_secs(fixtures::age_expires::EXPIRES_UNIX_SECONDS))
+    .header("Cache-Control", "public, max-age=60")
+    .with_vary("Accept-Encoding")
+    .expect("test Vary should parse")
+}
+
 fn expected_retry_after(kind: &fixtures::retry_after::RetryAfterKind) -> HttpRetryAfter {
   match kind {
     fixtures::retry_after::RetryAfterKind::DeltaSeconds(delta_seconds) => {
@@ -398,6 +408,57 @@ fn server_response_with_retry_after_declares_shared_metadata_matrix() {
 }
 
 #[test]
+fn server_response_with_retry_after_coexists_with_cache_metadata_helpers() {
+  let response = retry_after_response(
+    UNIX_EPOCH + Duration::from_secs(fixtures::retry_after::RETRY_AFTER_UNIX_SECONDS),
+  );
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert_eq!(
+    Some(fixtures::retry_after::RETRY_AFTER_IMF_FIXDATE),
+    header_value(&serialized, "Retry-After")
+  );
+  assert_eq!(Some("5"), header_value(&serialized, "Age"));
+  assert_eq!(
+    Some(fixtures::age_expires::EXPIRES_IMF_FIXDATE),
+    header_value(&serialized, "Expires")
+  );
+  assert_eq!(
+    Some("public, max-age=60"),
+    header_value(&serialized, "Cache-Control")
+  );
+  assert_eq!(Some("accept-encoding"), header_value(&serialized, "Vary"));
+  assert_eq!(
+    Some(HttpRetryAfter::HttpDate(
+      UNIX_EPOCH + Duration::from_secs(fixtures::retry_after::RETRY_AFTER_UNIX_SECONDS)
+    )),
+    response
+      .retry_after()
+      .expect("Retry-After should parse with cache metadata")
+  );
+  assert_eq!(Some(5), response.age().expect("Age should parse"));
+  assert_eq!(
+    Some(UNIX_EPOCH + Duration::from_secs(fixtures::age_expires::EXPIRES_UNIX_SECONDS)),
+    response.expires().expect("Expires should parse")
+  );
+  assert_eq!(
+    Some(60),
+    response
+      .cache_control()
+      .expect("Cache-Control should parse")
+      .expect("Cache-Control should be present")
+      .max_age()
+  );
+  assert!(response
+    .vary()
+    .expect("Vary should parse")
+    .expect("Vary should be present")
+    .field_names()
+    .iter()
+    .any(|name| *name == "accept-encoding"));
+}
+
+#[test]
 fn server_response_retry_after_helper_rejects_shared_invalid_matrix() {
   for case in fixtures::retry_after::invalid_cases() {
     let response = HttpResponse::ok("OK").header("Retry-After", case.value);
@@ -408,6 +469,26 @@ fn server_response_retry_after_helper_rejects_shared_invalid_matrix() {
       case.name
     );
   }
+}
+
+#[test]
+fn server_response_retry_after_helper_rejects_duplicate_singleton_and_oversized_values() {
+  let duplicate = HttpResponse::ok("OK")
+    .header("Retry-After", "60")
+    .header("Retry-After", "120");
+  assert!(
+    duplicate.retry_after().is_err(),
+    "duplicate Retry-After header fields should be rejected"
+  );
+
+  let oversized = HttpResponse::ok("OK").header(
+    "Retry-After",
+    fixtures::retry_after::oversized_value().as_str(),
+  );
+  assert!(
+    oversized.retry_after().is_err(),
+    "oversized Retry-After value should be rejected"
+  );
 }
 
 #[test]
