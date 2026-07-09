@@ -717,6 +717,55 @@ fn server_accepts_get_request_and_writes_response() {
 }
 
 #[test]
+fn server_handler_can_parse_request_cache_control_directives() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let cache_control = request
+          .cache_control()
+          .expect("valid cache-control should parse")
+          .expect("cache-control header should be present");
+        tx.send((
+          cache_control.no_cache(),
+          cache_control.max_age(),
+          cache_control.only_if_cached(),
+          cache_control.extensions()[0]
+            .value()
+            .map(ToString::to_string),
+        ))
+        .expect("send cache-control state");
+        HttpResponse::ok("cached")
+      })
+      .expect("serve one request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(
+      b"GET /cached HTTP/1.1\r\nHost: localhost\r\nCache-Control: no-cache, max-age=5, only-if-cached, ext=\"a,b\"\r\n\r\n",
+    )
+    .expect("write request");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  assert_eq!(
+    (true, Some(5), true, Some("a,b".to_string())),
+    rx.recv().expect("receive cache-control state")
+  );
+  assert!(response.starts_with("HTTP/1.1 200 OK"));
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn server_accepts_absolute_form_get_request_as_origin_target() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
