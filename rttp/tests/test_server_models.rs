@@ -1,7 +1,7 @@
 use rttp::server::{
   HttpByteRange, HttpByteRangeError, HttpConditionalMetadata, HttpEntityTag,
   HttpIfRangeRequestOutcome, HttpRequest, HttpRequestCacheControl, HttpResponse,
-  HttpResponseCacheControl,
+  HttpResponseCacheControl, HttpVary,
 };
 
 fn parse_request(raw: &str) -> HttpRequest {
@@ -98,6 +98,107 @@ fn parses_response_cache_control_from_raw_values() {
 
   assert!(cache_control.public());
   assert_eq!(Some(15), cache_control.max_age());
+}
+
+#[test]
+fn parses_vary_field_names_and_normalizes_case() {
+  let vary = HttpVary::parse("Accept-Encoding, accept-language, X-User")
+    .expect("valid Vary field list should parse");
+
+  assert!(!vary.is_wildcard());
+  assert_eq!(
+    vec!["accept-encoding", "accept-language", "x-user"],
+    vary.field_names()
+  );
+  assert_eq!(
+    "accept-encoding, accept-language, x-user",
+    vary.header_value()
+  );
+}
+
+#[test]
+fn parses_vary_wildcard_as_distinct_representation() {
+  let vary = HttpVary::parse("*").expect("wildcard Vary should parse");
+
+  assert!(vary.is_wildcard());
+  assert!(vary.field_names().is_empty());
+  assert_eq!("*", vary.header_value());
+}
+
+#[test]
+fn vary_helpers_reject_malformed_values() {
+  for value in [
+    "",
+    "Accept-Encoding,",
+    ", Accept-Encoding",
+    "Accept Encoding",
+    "Accept-Encoding, *, Accept-Language",
+    "Accept-Encoding, bad:name",
+  ] {
+    assert!(
+      HttpVary::parse(value).is_err(),
+      "Vary helper should reject {value:?}"
+    );
+  }
+
+  assert!(
+    HttpResponse::ok("body")
+      .with_vary("Accept Encoding")
+      .is_err(),
+    "response Vary helper should reject invalid field names"
+  );
+}
+
+#[test]
+fn response_vary_helper_declares_normalized_vary_header() {
+  let response = HttpResponse::ok("body")
+    .with_vary("Accept-Encoding, X-User")
+    .expect("valid Vary should be accepted");
+
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nVary: accept-encoding, x-user\r\n"));
+}
+
+#[test]
+fn selects_request_headers_named_by_vary_case_insensitively() {
+  let request = parse_request(concat!(
+    "GET /cached HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Accept-Encoding: gzip\r\n",
+    "accept-encoding: br\r\n",
+    "X-User: 123\r\n",
+    "\r\n"
+  ));
+  let vary =
+    HttpVary::parse("ACCEPT-ENCODING, x-user, accept-language").expect("Vary should parse");
+
+  let selection = request.vary_selection(&vary);
+
+  assert!(!selection.is_wildcard());
+  assert_eq!(
+    vec!["accept-encoding", "x-user", "accept-language"],
+    selection.field_names()
+  );
+  assert_eq!(vec!["gzip", "br"], selection.values("Accept-Encoding"));
+  assert_eq!(vec!["123"], selection.values("x-user"));
+  assert!(selection.values("accept-language").is_empty());
+}
+
+#[test]
+fn wildcard_vary_selection_does_not_read_specific_request_headers() {
+  let request = parse_request(concat!(
+    "GET /cached HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Accept-Encoding: gzip\r\n",
+    "\r\n"
+  ));
+  let vary = HttpVary::wildcard();
+
+  let selection = request.vary_selection(&vary);
+
+  assert!(selection.is_wildcard());
+  assert!(selection.fields().is_empty());
 }
 
 #[test]
