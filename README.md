@@ -50,10 +50,22 @@ socket is opened; the date helper requires a value that parses as an HTTP-date.
 Manual `If-Range` headers remain available through the generic header API for
 cases outside the helper validation.
 
+`Response::accept_ranges()` parses response `Accept-Ranges` fields into
+`AcceptRanges` metadata. It returns `Ok(None)` when the header is absent;
+present values expose `units()`, `is_none()`, and `accepts_bytes()`. Parsing is
+bounded to 64 KiB per header field and 256 range units, rejects malformed or
+empty values, rejects duplicate units case-insensitively across all parsed
+fields, and treats `none` as an exclusive sentinel. Raw `Accept-Ranges` fields
+remain available through the ordinary response header accessors even when the
+typed parser rejects a malformed value.
+
 On the client side, these APIs only emit request metadata and expose response
-metadata. RTTP does not evaluate `If-Range`, automatically retry a failed or
-full-response range request, store cached responses, synthesize multipart range
-requests, or apply automatic cache validation policy.
+metadata. RTTP does not generate `Range` requests from `Accept-Ranges`,
+evaluate `If-Range`, automatically retry or replay a failed or full-response
+range request, store cached responses, synthesize multipart range requests,
+implement a partial response engine, serve bytes, slice content, resume
+downloads, follow redirects because of range metadata, choose status-policy
+behavior, or apply automatic cache validation policy.
 
 ### Bounded HTTP/1.1 conditional requests
 
@@ -284,7 +296,7 @@ gain additional HTTP/2 header-block handling.
 | HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and `Expect: 100-continue` | SOCKS handshakes are delegated to the `socks` crate |
 | Upgrade and tunnel handoff | `CONNECT` returns the tunnel socket after a successful `200`; `upgrade()` returns the socket after `101 Switching Protocols` and skips interim `1xx` responses | Upgraded protocols are handed to the caller and are not parsed by `rttp_client` |
 | Redirects | Auto-redirect covers 301, 302, 303, 307, and 308 method/body behavior, relative and absolute `Location` resolution, same- and cross-authority header handling, loop detection, and redirect bounds | Redirects are HTTP client behavior, not a browser policy implementation |
-| Byte ranges | `range`, `range_from`, `range_suffix`, `if_range_etag`, and `if_range_date` emit bounded HTTP/1.1 range request metadata; `Response::content_range`, `is_partial_content`, and `is_range_not_satisfiable` expose `206` and `416` metadata | No client-side `If-Range` evaluation, automatic retry, cache storage, multipart range generation, or automatic cache validation policy |
+| Byte ranges | `range`, `range_from`, `range_suffix`, `if_range_etag`, and `if_range_date` emit bounded HTTP/1.1 range request metadata; `Response::content_range`, `accept_ranges`, `is_partial_content`, and `is_range_not_satisfiable` expose `Content-Range`, `Accept-Ranges`, `206`, and `416` metadata while preserving raw headers | No Range request generation from `Accept-Ranges`, client-side `If-Range` evaluation, partial response engine, byte serving, content slicing, download resume, automatic retry/replay, cache storage, redirect handling, status-policy behavior, multipart range generation, or automatic cache validation policy |
 | Conditional requests | `if_none_match`, `if_match`, `if_modified_since`, and `if_unmodified_since` emit bounded HTTP/1.1 validators; `Response::is_not_modified`, `is_precondition_failed`, `etag`, and `last_modified` expose `304`/`412` metadata | One ETag validator per helper call, `If-Range` is range-scoped, no cache storage, no automatic revalidation, and no cache-control engine |
 | Cache-Control, Age, Expires, Retry-After, and Allow | `Response::cache_control` parses bounded response directives, numeric freshness fields, quoted field-name lists, and extension directives; `Response::age` parses bounded delta-seconds; `Response::expires` parses bounded HTTP-date metadata; `Response::retry_after` parses bounded delta-seconds or HTTP-date metadata; `Response::allow` parses bounded ordered method metadata | No cache storage, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, automatic conditional requests, automatic sleep, retry, replay, backoff, scheduler integration, fallback method selection, or status-code policy engine |
 | Content-Language | `Response::content_language` parses bounded response `Content-Language` fields into ordered language metadata while preserving raw headers | No automatic language negotiation, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
@@ -508,6 +520,24 @@ ranges. Filesystem path normalization, MIME detection, ETag or Last-Modified
 generation, authorization, directory indexes, dotfile visibility, cache
 storage, automatic cache validation, and any automatic retry policy remain
 caller-owned policy before choosing `200`, `206`, or `416`.
+
+`HttpResponse::with_accept_ranges(units)` declares supported range units with
+one bounded comma-separated `Accept-Ranges` response header, while
+`HttpResponse::with_accept_ranges_none()` declares the exclusive
+`Accept-Ranges: none` sentinel. `HttpResponse::accept_ranges()` parses attached
+fields into `HttpAcceptRanges`, bounded to 64 KiB per field and 32 range units.
+Malformed or empty values, duplicate units across parsed fields, combining
+`none` with any unit, and passing `none` through the unit declaration helper
+are rejected. Manual raw `Accept-Ranges` headers remain preserved until a
+typed declaration helper replaces them or the typed parser is requested.
+
+The server `Accept-Ranges` helpers are response metadata helpers that compose
+with `HttpResponse::cache_control()`, `HttpResponse::vary()`,
+`HttpResponse::allow()`, `HttpResponse::content_language()`, and the other raw
+header APIs. They do not parse request `Range` fields, generate `Range`
+requests, create a partial response engine, serve bytes, slice content, resume
+downloads, choose redirect or status-policy behavior, implement cache policy,
+retry or replay requests, or automatically select `200`, `206`, or `416`.
 
 ### Bounded HTTP/1.1 conditional requests
 
@@ -824,7 +854,7 @@ TLS or async accept loops.
 | HTTP/1.1 request parsing | Required `Host` validation, origin-form, absolute-form, asterisk-form `OPTIONS`, authority-form `CONNECT`, fixed and chunked bodies, chunk extensions, `Expect: 100-continue`, and obsolete line folding rejection | Intended for local tests and simple embedded use, not full RFC coverage |
 | HTTP/1.1 connection handling | Bounded sequential `serve_requests`, keep-alive and close behavior for HTTP/1.1 and HTTP/1.0, pipelined request boundaries, malformed request rejection before handler dispatch | Blocking listener only; no async accept loop |
 | HTTP/1.1 response framing | Automatic `Content-Length`, explicit chunked responses, bodyless `HEAD`, `101`, `204`, and `304`, response trailers after the terminating chunk | No server TLS |
-| Byte ranges | `HttpByteRange` parses one `bytes` range, `Request::evaluate_if_range` gates it with caller-provided strong ETag or exact HTTP-date metadata, `HttpResponse::partial_content`/`range_not_satisfiable` serialize `206`/`416` with `Content-Range`, and `HttpAcceptRanges` plus `HttpResponse::with_accept_ranges`/`with_accept_ranges_none`/`accept_ranges` declare and parse bounded `Accept-Ranges` metadata | No multipart range serialization, automatic retry, cache storage, filesystem serving, MIME detection, automatic cache validation, automatic static-file policy, automatic byte serving, or content slicing |
+| Byte ranges | `HttpByteRange` parses one `bytes` range, `Request::evaluate_if_range` gates it with caller-provided strong ETag or exact HTTP-date metadata, `HttpResponse::partial_content`/`range_not_satisfiable` serialize `206`/`416` with `Content-Range`, and `HttpAcceptRanges` plus `HttpResponse::with_accept_ranges`/`with_accept_ranges_none`/`accept_ranges` declare and parse bounded `Accept-Ranges` metadata while preserving raw headers | No Range request generation, multipart range serialization, partial response engine, automatic retry/replay, redirect behavior, cache storage or policy, filesystem serving, MIME detection, automatic cache validation, automatic static-file policy, automatic byte serving, content slicing, download resume, or status-policy behavior |
 | Conditional requests | `Request::evaluate_conditional`, `evaluate_conditional_request`, `HttpConditionalMetadata`, and `HttpEntityTag` evaluate bounded HTTP/1.1 validators; `HttpResponse::not_modified` and `precondition_failed` serialize `304` and `412` outcomes | No cache storage, static-file serving policy, automatic revalidation, or cache-control engine |
 | Cache-Control | `Request::cache_control`, `HttpRequest::cache_control`, and `HttpResponse::cache_control` parse bounded request/response directives, numeric freshness fields, quoted field-name lists, and extension directives; `HttpResponse::with_age`/`age`, `with_expires`/`expires`, and `with_retry_after_delta`/`with_retry_after_date`/`retry_after` declare and parse response `Age`, `Expires`, and `Retry-After` metadata | No cache storage, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, automatic conditional requests, directive-based validator evaluation, automatic sleep, retry, replay, backoff, scheduler integration, or status-code policy engine |
 | Vary | `HttpVary`, `HttpResponse::with_vary`, `HttpResponse::vary`, `Request::vary_selection`, and `HttpRequest::vary_selection` parse, declare, and select bounded `Vary` metadata with case-insensitive field-name handling | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
