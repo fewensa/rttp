@@ -1,4 +1,4 @@
-use rttp_client::response::{ContentLocation, Response};
+use rttp_client::response::{ContentDisposition, ContentLocation, Response};
 use rttp_client::types::{Cookie, RoUrl};
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -246,6 +246,176 @@ fn test_parse_content_location_response_helper_accepts_uri_references() {
       response.header_value("Content-Location")
     );
   }
+}
+
+#[test]
+fn test_parse_content_disposition_response_helper_preserves_ordered_parameters() {
+  let s = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Disposition: attachment; filename=\"report \\\"final\\\".txt\"; filename*=UTF-8''report-final.txt; preview=yes\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/download"),
+    s.as_bytes().to_vec(),
+  )
+  .expect("parse response with content-disposition");
+
+  let content_disposition = response
+    .content_disposition()
+    .expect("valid content-disposition should parse")
+    .expect("content-disposition header should be present");
+
+  assert_eq!("attachment", content_disposition.disposition_type());
+  assert_eq!(Some("report \"final\".txt"), content_disposition.filename());
+  assert_eq!(
+    Some("UTF-8''report-final.txt"),
+    content_disposition.filename_ext()
+  );
+  assert_eq!(
+    vec![
+      ("filename", "report \"final\".txt"),
+      ("filename*", "UTF-8''report-final.txt"),
+      ("preview", "yes")
+    ],
+    content_disposition
+      .parameters()
+      .iter()
+      .map(|parameter| (parameter.name(), parameter.value()))
+      .collect::<Vec<_>>()
+  );
+  assert_eq!(
+    Some(
+      &"attachment; filename=\"report \\\"final\\\".txt\"; filename*=UTF-8''report-final.txt; preview=yes"
+        .to_string()
+    ),
+    response.header_value("Content-Disposition")
+  );
+  assert_eq!("OK", response.body().string().unwrap());
+}
+
+#[test]
+fn test_parse_content_disposition_response_helper_returns_none_when_absent() {
+  let s = concat!("HTTP/1.1 200 OK\r\n", "Content-Length: 2\r\n", "\r\n", "OK");
+  let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
+    .expect("parse response without content-disposition");
+
+  assert_eq!(
+    None,
+    response
+      .content_disposition()
+      .expect("absent content-disposition should parse")
+  );
+}
+
+#[test]
+fn test_parse_content_disposition_rejects_invalid_helper_values_without_rejecting_response() {
+  let invalid_values = [
+    "",
+    "attach ment",
+    "attachment;",
+    "attachment; filename",
+    "attachment; file name=report.txt",
+    "attachment; filename=report txt",
+    "attachment; filename=\"unterminated",
+    "attachment; filename=\"bad\\\r\"",
+    "attachment; filename=\"bad\rname\"",
+    "attachment; filename*=UTF-8''bad%ZZname",
+  ];
+
+  for value in invalid_values {
+    let raw =
+      format!("HTTP/1.1 200 OK\r\nContent-Disposition: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response remains usable");
+
+    assert!(
+      response.content_disposition().is_err(),
+      "content-disposition helper should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Content-Disposition")
+    );
+    assert_eq!("OK", response.body().string().unwrap());
+  }
+}
+
+#[test]
+fn test_parse_content_disposition_rejects_duplicate_singleton_duplicate_parameter_and_bounds() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Disposition: attachment; filename=one.txt\r\n",
+    "content-disposition: inline; filename=two.txt\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response with duplicate content-disposition remains usable");
+
+  assert!(
+    response.content_disposition().is_err(),
+    "content-disposition helper should reject duplicate singleton fields"
+  );
+  assert_eq!(
+    vec![
+      &"attachment; filename=one.txt".to_string(),
+      &"inline; filename=two.txt".to_string()
+    ],
+    response.header_values("Content-Disposition")
+  );
+
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Disposition: attachment; filename=one.txt; FILENAME=two.txt\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response with duplicate parameter remains usable");
+  assert!(
+    response.content_disposition().is_err(),
+    "content-disposition helper should reject duplicate parameters"
+  );
+
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let raw =
+    format!("HTTP/1.1 200 OK\r\nContent-Disposition: {oversized}\r\nContent-Length: 2\r\n\r\nOK");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response with oversized content-disposition remains usable");
+  assert!(
+    response.content_disposition().is_err(),
+    "content-disposition helper should reject oversized values"
+  );
+
+  let too_many = (0..257)
+    .map(|ix| format!("p{ix}=v"))
+    .collect::<Vec<_>>()
+    .join("; ");
+  let raw = format!(
+    "HTTP/1.1 200 OK\r\nContent-Disposition: attachment; {too_many}\r\nContent-Length: 2\r\n\r\nOK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response with too many content-disposition parameters remains usable");
+  assert!(
+    response.content_disposition().is_err(),
+    "content-disposition helper should reject too many parameters"
+  );
+}
+
+#[test]
+fn test_content_disposition_parse_rejects_crlf_injection() {
+  let error = ContentDisposition::parse("attachment; filename=\"bad\r\nX-Evil: yes\"")
+    .expect_err("content-disposition helper should reject CR/LF injection");
+
+  assert!(
+    error.to_string().contains("Content-Disposition"),
+    "unexpected error: {error}"
+  );
 }
 
 #[test]
