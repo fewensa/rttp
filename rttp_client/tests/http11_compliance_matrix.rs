@@ -574,6 +574,26 @@ fn assert_response_content_location(
   );
 }
 
+fn assert_informational_response(
+  name: &str,
+  observed: &rttp_client::response::InformationalResponse,
+  expected: &fixtures::response::InformationalExpectation,
+) {
+  assert_eq!(expected.code, observed.code(), "{name}");
+  assert_eq!(expected.reason, observed.reason(), "{name}");
+  assert_eq!(expected.headers.len(), observed.headers().len(), "{name}");
+  for ((header_name, header_value), observed_header) in
+    expected.headers.iter().zip(observed.headers())
+  {
+    assert_eq!(*header_name, observed_header.name(), "{name}");
+    assert_eq!(
+      *header_value,
+      observed_header.value(),
+      "{name} {header_name}"
+    );
+  }
+}
+
 fn assert_cache_control_helper_rejects_but_preserves_response(name: &str, raw_response: Vec<u8>) {
   let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
 
@@ -755,6 +775,115 @@ enum ConditionalHeader {
   IfModifiedSince(&'static str),
   IfUnmodifiedSince(&'static str),
   Manual(&'static str, &'static str),
+}
+
+#[test]
+fn sync_client_preserves_shared_informational_response_matrix() {
+  for case in fixtures::response::informational_response_cases() {
+    let (addr, handle) = fixtures::spawn_socket2_raw_response_server(case.raw);
+
+    let response = client()
+      .get()
+      .url(format!("http://{}/matrix/informational", addr))
+      .emit()
+      .unwrap_or_else(|err| panic!("{} response should parse: {err}", case.name));
+
+    assert_eq!(case.final_status, response.code(), "{}", case.name);
+    assert_eq!(case.final_reason, response.reason(), "{}", case.name);
+    assert_eq!(
+      Some(&case.final_marker.to_string()),
+      response.header_value("X-Final"),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      case.final_body,
+      response.body().string().unwrap(),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      case.informational.len(),
+      response.informational_responses().len(),
+      "{}",
+      case.name
+    );
+    for (observed, expected) in response
+      .informational_responses()
+      .iter()
+      .zip(case.informational)
+    {
+      assert_informational_response(case.name, observed, expected);
+    }
+
+    handle.join().expect("raw response server thread");
+  }
+}
+
+#[test]
+fn sync_client_rejects_shared_malformed_informational_heads() {
+  for case in fixtures::response::malformed_informational_response_cases() {
+    let (addr, handle) = fixtures::spawn_socket2_raw_response_server(case.raw);
+
+    let error = client()
+      .get()
+      .url(format!("http://{}/matrix/informational-invalid", addr))
+      .emit()
+      .expect_err(case.name);
+
+    assert!(
+      error.to_string().contains(case.error_contains),
+      "{} unexpected error: {error}",
+      case.name
+    );
+
+    handle.join().expect("raw response server thread");
+  }
+}
+
+#[test]
+fn sync_client_rejects_shared_oversized_informational_head() {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(
+    fixtures::response::oversized_informational_response(),
+  );
+
+  let error = client()
+    .get()
+    .url(format!("http://{}/matrix/informational-oversized", addr))
+    .emit()
+    .expect_err("oversized informational response should be rejected");
+
+  assert!(
+    error
+      .to_string()
+      .contains("HTTP informational response head is too large"),
+    "unexpected error: {error}"
+  );
+
+  handle.join().expect("raw response server thread");
+}
+
+#[test]
+fn sync_client_keeps_shared_101_handoff_separate_from_informational_history() {
+  let (addr, handle) =
+    fixtures::spawn_socket2_raw_response_server(fixtures::response::SWITCHING_PROTOCOLS_HANDOFF);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/upgrade", addr))
+    .emit()
+    .expect("101 response should parse as the final response");
+
+  assert_eq!(101, response.code());
+  assert_eq!("Switching Protocols", response.reason());
+  assert!(response.informational_responses().is_empty());
+  assert_eq!(
+    Some(&"websocket".to_string()),
+    response.header_value("Upgrade")
+  );
+  assert_eq!("", response.body().string().unwrap());
+
+  handle.join().expect("raw response server thread");
 }
 
 #[test]
@@ -2195,6 +2324,131 @@ fn sync_client_manual_range_header_interoperates_with_server_partial_content_hel
 
   assert_partial_response("manual range", response, "bytes 5-9/16", "56789");
   assert_observed_range(handle, "bytes=5-9", "manual range");
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn async_client_preserves_shared_informational_response_matrix() {
+  for case in fixtures::response::informational_response_cases() {
+    let (addr, handle) = fixtures::spawn_socket2_raw_response_server(case.raw);
+
+    block_on(async {
+      let response = client()
+        .get()
+        .url(format!("http://{}/matrix/informational", addr))
+        .rasync()
+        .await
+        .unwrap_or_else(|err| panic!("{} response should parse: {err}", case.name));
+
+      assert_eq!(case.final_status, response.code(), "{}", case.name);
+      assert_eq!(case.final_reason, response.reason(), "{}", case.name);
+      assert_eq!(
+        Some(&case.final_marker.to_string()),
+        response.header_value("X-Final"),
+        "{}",
+        case.name
+      );
+      assert_eq!(
+        case.final_body,
+        response.body().string().unwrap(),
+        "{}",
+        case.name
+      );
+      assert_eq!(
+        case.informational.len(),
+        response.informational_responses().len(),
+        "{}",
+        case.name
+      );
+      for (observed, expected) in response
+        .informational_responses()
+        .iter()
+        .zip(case.informational)
+      {
+        assert_informational_response(case.name, observed, expected);
+      }
+    });
+
+    handle.join().expect("raw response server thread");
+  }
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn async_client_rejects_shared_malformed_informational_heads() {
+  for case in fixtures::response::malformed_informational_response_cases() {
+    let (addr, handle) = fixtures::spawn_socket2_raw_response_server(case.raw);
+
+    block_on(async {
+      let error = client()
+        .get()
+        .url(format!("http://{}/matrix/informational-invalid", addr))
+        .rasync()
+        .await
+        .expect_err(case.name);
+
+      assert!(
+        error.to_string().contains(case.error_contains),
+        "{} unexpected error: {error}",
+        case.name
+      );
+    });
+
+    handle.join().expect("raw response server thread");
+  }
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn async_client_rejects_shared_oversized_informational_head() {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(
+    fixtures::response::oversized_informational_response(),
+  );
+
+  block_on(async {
+    let error = client()
+      .get()
+      .url(format!("http://{}/matrix/informational-oversized", addr))
+      .rasync()
+      .await
+      .expect_err("oversized informational response should be rejected");
+
+    assert!(
+      error
+        .to_string()
+        .contains("HTTP informational response head is too large"),
+      "unexpected error: {error}"
+    );
+  });
+
+  handle.join().expect("raw response server thread");
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn async_client_keeps_shared_101_handoff_separate_from_informational_history() {
+  let (addr, handle) =
+    fixtures::spawn_socket2_raw_response_server(fixtures::response::SWITCHING_PROTOCOLS_HANDOFF);
+
+  block_on(async {
+    let response = client()
+      .get()
+      .url(format!("http://{}/matrix/upgrade", addr))
+      .rasync()
+      .await
+      .expect("101 response should parse as the final response");
+
+    assert_eq!(101, response.code());
+    assert_eq!("Switching Protocols", response.reason());
+    assert!(response.informational_responses().is_empty());
+    assert_eq!(
+      Some(&"websocket".to_string()),
+      response.header_value("Upgrade")
+    );
+    assert_eq!("", response.body().string().unwrap());
+  });
+
+  handle.join().expect("raw response server thread");
 }
 
 #[test]

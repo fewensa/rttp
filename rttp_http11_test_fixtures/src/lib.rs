@@ -192,6 +192,285 @@ pub mod request {
 
 pub mod response {
   pub const CONTINUE: &[u8] = b"HTTP/1.1 100 Continue\r\n\r\n";
+  pub const MAX_HEAD_BYTES: usize = 64 * 1024;
+
+  pub struct InformationalExpectation {
+    pub code: u16,
+    pub reason: &'static str,
+    pub headers: &'static [(&'static str, &'static str)],
+  }
+
+  pub struct InformationalResponseCase {
+    pub name: &'static str,
+    pub raw: &'static [u8],
+    pub informational: &'static [InformationalExpectation],
+    pub final_status: u32,
+    pub final_reason: &'static str,
+    pub final_marker: &'static str,
+    pub final_body: &'static str,
+  }
+
+  pub struct InvalidInformationalResponseCase {
+    pub name: &'static str,
+    pub raw: &'static [u8],
+    pub error_contains: &'static str,
+  }
+
+  pub struct InvalidEarlyHintsMetadataCase {
+    pub name: &'static str,
+    pub header_name: &'static str,
+    pub value: &'static str,
+    pub error: &'static str,
+  }
+
+  pub const EARLY_HINTS_LINKS: &[&str] = &[
+    "</style.css>; rel=preload; as=style",
+    "</script.js>; rel=preload; as=script",
+  ];
+  pub const EARLY_HINTS_METADATA: &[(&str, &str)] = &[("X-Trace", "early")];
+
+  pub const VALID_EARLY_HINTS_HEAD: &[u8] = concat!(
+    "HTTP/1.1 103 Early Hints\r\n",
+    "Link: </style.css>; rel=preload; as=style\r\n",
+    "Link: </script.js>; rel=preload; as=script\r\n",
+    "X-Trace: early\r\n",
+    "\r\n"
+  )
+  .as_bytes();
+
+  pub const VALID_EARLY_HINTS_WITH_FINAL: &[u8] = concat!(
+    "HTTP/1.1 103 Early Hints\r\n",
+    "Link: </style.css>; rel=preload; as=style\r\n",
+    "Link: </script.js>; rel=preload; as=script\r\n",
+    "X-Trace: early\r\n",
+    "\r\n",
+    "HTTP/1.1 200 OK\r\n",
+    "X-Final: early-hints\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  )
+  .as_bytes();
+
+  pub const MULTIPLE_INFORMATIONAL_WITH_FINAL: &[u8] = concat!(
+    "HTTP/1.1 100 Continue\r\n",
+    "\r\n",
+    "HTTP/1.1 103 Early Hints\r\n",
+    "Link: </style.css>; rel=preload; as=style\r\n",
+    "Link: </script.js>; rel=preload; as=script\r\n",
+    "X-Trace: early\r\n",
+    "\r\n",
+    "HTTP/1.1 102 Processing\r\n",
+    "X-Progress: accepted\r\n",
+    "\r\n",
+    "HTTP/1.1 201 Created\r\n",
+    "X-Final: multiple-informational\r\n",
+    "Content-Length: 7\r\n",
+    "\r\n",
+    "created"
+  )
+  .as_bytes();
+
+  pub const FINAL_RESPONSE_PRESERVATION: &[u8] = concat!(
+    "HTTP/1.1 103 Early Hints\r\n",
+    "Link: </asset.css>; rel=preload; as=style\r\n",
+    "\r\n",
+    "HTTP/1.1 206 Partial Content\r\n",
+    "X-Final: partial-content\r\n",
+    "Content-Range: bytes 1-3/5\r\n",
+    "Content-Length: 3\r\n",
+    "\r\n",
+    "bcd"
+  )
+  .as_bytes();
+
+  pub const SWITCHING_PROTOCOLS_HEAD: &[u8] = concat!(
+    "HTTP/1.1 101 Switching Protocols\r\n",
+    "Connection: Upgrade\r\n",
+    "Upgrade: websocket\r\n",
+    "Sec-WebSocket-Accept: shared-accept\r\n",
+    "\r\n"
+  )
+  .as_bytes();
+
+  pub const SWITCHING_PROTOCOLS_HANDOFF: &[u8] = concat!(
+    "HTTP/1.1 101 Switching Protocols\r\n",
+    "Connection: Upgrade\r\n",
+    "Upgrade: websocket\r\n",
+    "Sec-WebSocket-Accept: shared-accept\r\n",
+    "\r\n",
+    "UPGRADED-BYTES"
+  )
+  .as_bytes();
+
+  const VALID_EARLY_HINTS_EXPECTATIONS: &[InformationalExpectation] = &[InformationalExpectation {
+    code: 103,
+    reason: "Early Hints",
+    headers: &[
+      ("Link", "</style.css>; rel=preload; as=style"),
+      ("Link", "</script.js>; rel=preload; as=script"),
+      ("X-Trace", "early"),
+    ],
+  }];
+
+  const MULTIPLE_INFORMATIONAL_EXPECTATIONS: &[InformationalExpectation] = &[
+    InformationalExpectation {
+      code: 100,
+      reason: "Continue",
+      headers: &[],
+    },
+    InformationalExpectation {
+      code: 103,
+      reason: "Early Hints",
+      headers: &[
+        ("Link", "</style.css>; rel=preload; as=style"),
+        ("Link", "</script.js>; rel=preload; as=script"),
+        ("X-Trace", "early"),
+      ],
+    },
+    InformationalExpectation {
+      code: 102,
+      reason: "Processing",
+      headers: &[("X-Progress", "accepted")],
+    },
+  ];
+
+  const FINAL_RESPONSE_PRESERVATION_EXPECTATIONS: &[InformationalExpectation] =
+    &[InformationalExpectation {
+      code: 103,
+      reason: "Early Hints",
+      headers: &[("Link", "</asset.css>; rel=preload; as=style")],
+    }];
+
+  const INFORMATIONAL_RESPONSE_CASES: &[InformationalResponseCase] = &[
+    InformationalResponseCase {
+      name: "valid 103 Link metadata before final 200",
+      raw: VALID_EARLY_HINTS_WITH_FINAL,
+      informational: VALID_EARLY_HINTS_EXPECTATIONS,
+      final_status: 200,
+      final_reason: "OK",
+      final_marker: "early-hints",
+      final_body: "OK",
+    },
+    InformationalResponseCase {
+      name: "multiple informational responses before final 201",
+      raw: MULTIPLE_INFORMATIONAL_WITH_FINAL,
+      informational: MULTIPLE_INFORMATIONAL_EXPECTATIONS,
+      final_status: 201,
+      final_reason: "Created",
+      final_marker: "multiple-informational",
+      final_body: "created",
+    },
+    InformationalResponseCase {
+      name: "final response status and body preserved after 103",
+      raw: FINAL_RESPONSE_PRESERVATION,
+      informational: FINAL_RESPONSE_PRESERVATION_EXPECTATIONS,
+      final_status: 206,
+      final_reason: "Partial Content",
+      final_marker: "partial-content",
+      final_body: "bcd",
+    },
+  ];
+
+  const MALFORMED_INFORMATIONAL_RESPONSE_CASES: &[InvalidInformationalResponseCase] = &[
+    InvalidInformationalResponseCase {
+      name: "malformed informational header line",
+      raw: concat!(
+        "HTTP/1.1 103 Early Hints\r\n",
+        "BrokenHeader\r\n",
+        "\r\n",
+        "HTTP/1.1 200 OK\r\n",
+        "Content-Length: 2\r\n",
+        "\r\n",
+        "OK"
+      )
+      .as_bytes(),
+      error_contains: "Invalid informational response header",
+    },
+    InvalidInformationalResponseCase {
+      name: "informational Content-Length framing",
+      raw: concat!(
+        "HTTP/1.1 103 Early Hints\r\n",
+        "Content-Length: 2\r\n",
+        "\r\n",
+        "HTTP/1.1 200 OK\r\n",
+        "Content-Length: 2\r\n",
+        "\r\n",
+        "OK"
+      )
+      .as_bytes(),
+      error_contains: "Informational response must not declare body framing",
+    },
+    InvalidInformationalResponseCase {
+      name: "informational Transfer-Encoding framing",
+      raw: concat!(
+        "HTTP/1.1 103 Early Hints\r\n",
+        "Transfer-Encoding: chunked\r\n",
+        "\r\n",
+        "HTTP/1.1 200 OK\r\n",
+        "Content-Length: 2\r\n",
+        "\r\n",
+        "OK"
+      )
+      .as_bytes(),
+      error_contains: "Informational response must not declare body framing",
+    },
+    InvalidInformationalResponseCase {
+      name: "malformed informational status line",
+      raw: concat!(
+        "HTTP/1.0 103 Early Hints\r\n",
+        "X-Trace: early\r\n",
+        "\r\n",
+        "HTTP/1.1 200 OK\r\n",
+        "Content-Length: 2\r\n",
+        "\r\n",
+        "OK"
+      )
+      .as_bytes(),
+      error_contains: "Invalid informational response",
+    },
+  ];
+
+  const INVALID_EARLY_HINTS_METADATA_CASES: &[InvalidEarlyHintsMetadataCase] = &[
+    InvalidEarlyHintsMetadataCase {
+      name: "Link metadata field",
+      header_name: "Link",
+      value: "</other.css>; rel=preload",
+      error: "Early Hints Link headers must be provided through the links argument",
+    },
+    InvalidEarlyHintsMetadataCase {
+      name: "Content-Length metadata field",
+      header_name: "Content-Length",
+      value: "2",
+      error: "Early Hints metadata must not contain framing or connection fields",
+    },
+    InvalidEarlyHintsMetadataCase {
+      name: "Connection metadata field",
+      header_name: "Connection",
+      value: "keep-alive",
+      error: "Early Hints metadata must not contain framing or connection fields",
+    },
+  ];
+
+  pub fn informational_response_cases() -> &'static [InformationalResponseCase] {
+    INFORMATIONAL_RESPONSE_CASES
+  }
+
+  pub fn malformed_informational_response_cases() -> &'static [InvalidInformationalResponseCase] {
+    MALFORMED_INFORMATIONAL_RESPONSE_CASES
+  }
+
+  pub fn invalid_early_hints_metadata_cases() -> &'static [InvalidEarlyHintsMetadataCase] {
+    INVALID_EARLY_HINTS_METADATA_CASES
+  }
+
+  pub fn oversized_informational_response() -> Vec<u8> {
+    let oversized = "a".repeat(MAX_HEAD_BYTES);
+    format!(
+      "HTTP/1.1 103 Early Hints\r\nX-Large: {oversized}\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK"
+    )
+    .into_bytes()
+  }
 
   pub const CHUNKED_WITH_EXTENSIONS_AND_TRAILERS: &[u8] = concat!(
     "HTTP/1.1 200 OK\r\n",
