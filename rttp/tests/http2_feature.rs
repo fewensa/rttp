@@ -2590,6 +2590,236 @@ fn h2c_ordinary_connect_stays_rejected_after_connect_protocol_negotiation() {
 }
 
 #[test]
+fn cross_crate_h2c_extended_connect_matrix_preserves_http11_handoffs() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind cross-crate h2 extended connect server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server
+    .local_addr()
+    .expect("cross-crate h2 extended connect addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        assert_eq!("HTTP/2", request.version());
+        assert_eq!("CONNECT", request.method());
+        assert_eq!("/chat?room=blue", request.target());
+        assert_eq!(Some(addr.to_string().as_str()), request.header("host"));
+        assert_eq!(Some("websocket"), request.extended_connect_protocol());
+        HttpResponse::ok("cross-crate extended connect")
+      })
+      .expect("serve cross-crate h2 extended CONNECT")
+  });
+
+  let response = HttpClient::new()
+    .http2_extended_connect("websocket")
+    .url(format!("http://{}/chat?room=blue", addr))
+    .emit_http2_prior_knowledge()
+    .expect("cross-crate h2 extended CONNECT response");
+  assert_eq!(200, response.code());
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(
+    "cross-crate extended connect",
+    response.body().string().unwrap()
+  );
+  handle
+    .join()
+    .expect("cross-crate h2 extended connect server thread");
+
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind missing-connect-protocol server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("missing setting addr");
+  let (tx, rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send((request.method().to_string(), request.target().to_string()))
+        .expect("send unexpected missing setting handler call");
+      HttpResponse::ok("unexpected missing setting handler")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect missing-connect-protocol server");
+  stream
+    .set_read_timeout(Some(Duration::from_millis(200)))
+    .expect("set missing-connect-protocol read timeout");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_extended_connect_headers(
+      b"/missing-setting",
+      addr.to_string().as_bytes(),
+      b"websocket",
+    ),
+  );
+  stream
+    .flush()
+    .expect("flush missing-connect-protocol request");
+  let _ = try_read_h2_frame(&mut stream);
+  drop(stream);
+
+  let err = handle
+    .join()
+    .expect("missing-connect-protocol server thread")
+    .expect_err("missing SETTINGS_ENABLE_CONNECT_PROTOCOL must reject");
+  assert_eq!(io::ErrorKind::InvalidData, err.kind());
+  assert!(
+    err
+      .to_string()
+      .contains("HTTP/2 extended CONNECT :protocol requires SETTINGS_ENABLE_CONNECT_PROTOCOL"),
+    "unexpected missing-connect-protocol error: {err}"
+  );
+  assert!(
+    rx.try_recv().is_err(),
+    "missing connect protocol setting must not dispatch"
+  );
+
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind unsupported-protocol-metadata server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("unsupported metadata addr");
+  let (tx, rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send((request.method().to_string(), request.target().to_string()))
+        .expect("send unexpected unsupported protocol metadata handler call");
+      HttpResponse::ok("unexpected unsupported protocol metadata handler")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect unsupported-protocol-metadata server");
+  stream
+    .set_read_timeout(Some(Duration::from_millis(200)))
+    .expect("set unsupported-protocol-metadata read timeout");
+  complete_h2_server_handshake_with_settings(
+    &mut stream,
+    &h2_setting(H2_SETTINGS_ENABLE_CONNECT_PROTOCOL, 1),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_extended_connect_protocol_headers(
+      b"/unsupported-protocol-metadata",
+      addr.to_string().as_bytes(),
+    ),
+  );
+  stream
+    .flush()
+    .expect("flush unsupported-protocol-metadata request");
+  let _ = try_read_h2_frame(&mut stream);
+  drop(stream);
+
+  let err = handle
+    .join()
+    .expect("unsupported-protocol-metadata server thread")
+    .expect_err("unsupported :protocol metadata must reject");
+  assert_eq!(io::ErrorKind::InvalidData, err.kind());
+  assert!(
+    err
+      .to_string()
+      .contains("HTTP/2 extended CONNECT :protocol requires CONNECT"),
+    "unexpected unsupported-protocol-metadata error: {err}"
+  );
+  assert!(
+    rx.try_recv().is_err(),
+    "unsupported :protocol metadata must not dispatch"
+  );
+
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind HTTP/1.1 CONNECT handoff server");
+  let addr = server.local_addr().expect("HTTP/1.1 CONNECT handoff addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one_handoff(|request| {
+        assert_eq!("CONNECT", request.method());
+        assert_eq!(addr.to_string(), request.target());
+        rttp::server::HttpHandoff::connect(
+          HttpResponse::new(200, "Connection Established"),
+          |mut stream| {
+            let mut ping = [0u8; 4];
+            stream.read_exact(&mut ping)?;
+            assert_eq!(b"ping", &ping);
+            stream.write_all(b"pong")?;
+            Ok(())
+          },
+        )
+      })
+      .expect("serve HTTP/1.1 CONNECT handoff")
+  });
+
+  let mut tunnel = HttpClient::new()
+    .url(format!("http://{}", addr))
+    .connect()
+    .expect("HTTP/1.1 CONNECT handoff");
+  assert_eq!(200, tunnel.response().code());
+  tunnel
+    .stream_mut()
+    .write_all(b"ping")
+    .expect("write HTTP/1.1 CONNECT tunnel bytes");
+  let mut pong = [0u8; 4];
+  tunnel
+    .stream_mut()
+    .read_exact(&mut pong)
+    .expect("read HTTP/1.1 CONNECT tunnel bytes");
+  assert_eq!(b"pong", &pong);
+  handle.join().expect("HTTP/1.1 CONNECT handoff thread");
+
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind HTTP/1.1 Upgrade handoff server");
+  let addr = server.local_addr().expect("HTTP/1.1 Upgrade handoff addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one_handoff(|request| {
+        assert_eq!("GET", request.method());
+        assert_eq!("/chat", request.target());
+        assert_eq!(Some("websocket"), request.header("Upgrade"));
+        rttp::server::HttpHandoff::upgrade(
+          HttpResponse::new(101, "Switching Protocols")
+            .header("Connection", "Upgrade")
+            .header("Upgrade", "websocket"),
+          |mut stream| {
+            stream.write_all(b"server-bytes")?;
+            let mut client_bytes = [0u8; 12];
+            stream.read_exact(&mut client_bytes)?;
+            assert_eq!(b"client-bytes", &client_bytes);
+            Ok(())
+          },
+        )
+      })
+      .expect("serve HTTP/1.1 Upgrade handoff")
+  });
+
+  let mut upgraded = HttpClient::new()
+    .url(format!("http://{}/chat", addr))
+    .header(("Connection", "Upgrade"))
+    .header(("Upgrade", "websocket"))
+    .upgrade()
+    .expect("HTTP/1.1 Upgrade handoff");
+  assert_eq!(101, upgraded.response().code());
+  assert_eq!(
+    Some(&"websocket".to_string()),
+    upgraded.response().header_value("Upgrade")
+  );
+  let mut server_bytes = [0u8; 12];
+  upgraded
+    .stream_mut()
+    .read_exact(&mut server_bytes)
+    .expect("read HTTP/1.1 Upgrade bytes");
+  assert_eq!(b"server-bytes", &server_bytes);
+  upgraded
+    .stream_mut()
+    .write_all(b"client-bytes")
+    .expect("write HTTP/1.1 Upgrade bytes");
+  handle.join().expect("HTTP/1.1 Upgrade handoff thread");
+}
+
+#[test]
 fn h2c_rejects_invalid_connect_protocol_settings_values_before_handler() {
   assert_malformed_settings_rejected_before_handler(
     &h2_setting(H2_SETTINGS_ENABLE_CONNECT_PROTOCOL, 2),
