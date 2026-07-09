@@ -141,6 +141,37 @@ implement a full cache-control engine. Invalid conditional headers that cannot
 be parsed as the bounded helper syntax are ignored by the evaluation helper
 rather than rejected before handler code.
 
+## Bounded HTTP/1.1 informational responses and Early Hints
+
+`HttpResponse::early_hints(links)` constructs a bodyless `103 Early Hints`
+response with one `Link` header per supplied value.
+`HttpResponse::early_hints_with_headers(links, metadata)` adds validated
+metadata headers alongside those links for applications that want to send
+adjacent response metadata before a final response. Serialize the returned
+model with the same response-writing path used for other `HttpResponse`
+values, then write the final response separately.
+
+The constructors are bounded and validation-oriented. They require at least
+one non-empty `Link` value, bound each Early Hints field value to 64 KiB,
+reject invalid field-value bytes, reject invalid metadata field names, and
+keep `Link` values in the dedicated links argument. Metadata fields that would
+affect connection state or body framing are rejected, including `Connection`,
+`Content-Length`, `Keep-Alive`, `Proxy-Connection`, `TE`, `Trailer`,
+`Transfer-Encoding`, and `Upgrade`. A body assigned to the `103` model is not
+serialized, and `Content-Length` is not generated for it.
+
+`103 Early Hints` is separate from `101 Switching Protocols`. `101` responses
+remain bodyless terminal handoff responses for `HttpResponse::upgrade` and
+other caller-owned protocol transitions; they are not serialized as skipped
+informational metadata. Raw headers attached through ordinary
+`HttpResponse::header` calls remain preserved until a typed helper validates,
+parses, or replaces the relevant field.
+
+Early Hints support is metadata-only. The server does not execute preloads,
+choose cache policy, redirect, retry, replay requests, generate routes, expose
+a streaming early-write API, alter TLS/ALPN behavior, or decide final response
+status from `103` metadata.
+
 ## Bounded HTTP/1.1 Cache-Control behavior
 
 Server `Cache-Control` helpers parse directive metadata for application policy;
@@ -519,6 +550,7 @@ scheduling, or async accept loops.
 | HTTP/1.1 response framing | Automatic `Content-Length`, explicit chunked responses, bodyless `HEAD`, `101`, `204`, and `304`, response trailers after the terminating chunk | No server TLS |
 | Byte ranges | `HttpByteRange` parses one `bytes` range, `Request::evaluate_if_range` and `HttpRequest::evaluate_if_range` gate it with caller-provided strong ETag or exact HTTP-date metadata, `HttpResponse::partial_content`/`range_not_satisfiable` serialize `206`/`416` with `Content-Range`, and `HttpAcceptRanges` plus `HttpResponse::with_accept_ranges`/`with_accept_ranges_none`/`accept_ranges` declare and parse bounded `Accept-Ranges` metadata while preserving raw headers | No Range request generation, multipart range serialization, partial response engine, automatic retry/replay, redirect behavior, cache storage or policy, filesystem serving, automatic cache validation, static-file policy, automatic byte serving, content slicing, download resume, or status-policy behavior |
 | Conditional requests | `Request::evaluate_conditional`, `evaluate_conditional_request`, `HttpConditionalMetadata`, and `HttpEntityTag` evaluate bounded HTTP/1.1 validators; `HttpResponse::not_modified` and `precondition_failed` serialize `304` and `412` outcomes | No cache storage, static-file serving policy, automatic revalidation, or cache-control engine |
+| Informational responses and Early Hints | `HttpResponse::early_hints` and `early_hints_with_headers` construct validated bodyless `103 Early Hints` response metadata with bounded `Link` and safe metadata headers | `101 Switching Protocols` remains a separate terminal handoff response; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
 | Cache-Control | `Request::cache_control`, `HttpRequest::cache_control`, and `HttpResponse::cache_control` parse bounded request/response directives, numeric freshness fields, quoted field-name lists, and extension directives; `HttpResponse::with_age`/`age`, `with_expires`/`expires`, and `with_retry_after_delta`/`with_retry_after_date`/`retry_after` declare and parse response `Age`, `Expires`, and `Retry-After` metadata | No cache storage, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, automatic conditional requests, directive-based validator evaluation, automatic sleep, retry, replay, backoff, scheduler integration, or status-code policy engine |
 | Vary | `HttpVary`, `HttpResponse::with_vary`, `HttpResponse::vary`, `Request::vary_selection`, and `HttpRequest::vary_selection` parse, declare, and select bounded `Vary` metadata with case-insensitive field-name handling | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | Allow | `HttpAllowedMethods`, `HttpResponse::with_allow`, and `HttpResponse::allow` declare and parse bounded `Allow` method-list metadata | No route dispatch, automatic `405` generation, `OPTIONS` policy, fallback method selection, retry/replay, or status-code policy engine |
