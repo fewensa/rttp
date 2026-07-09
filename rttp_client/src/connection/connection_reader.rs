@@ -593,11 +593,10 @@ fn has_only_crlf_line_breaks(bytes: &[u8]) -> bool {
           return false;
         }
       }
-      b'\n' => {
-        if index == 0 || bytes.get(index - 1) != Some(&b'\r') {
-          return false;
-        }
+      b'\n' if index == 0 || bytes.get(index - 1) != Some(&b'\r') => {
+        return false;
       }
+      b'\n' => {}
       _ => {}
     }
   }
