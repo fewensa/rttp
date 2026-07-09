@@ -1727,6 +1727,99 @@ fn h2c_upgrade_server_transitions_to_bounded_http2_loop_on_same_socket() {
 }
 
 #[test]
+fn h2c_upgrade_server_preserves_request_and_response_trailers_after_transition() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.version().to_string(),
+          request.method().to_string(),
+          request.target().to_string(),
+          request.body().to_vec(),
+          request.header("x-trace").map(str::to_string),
+          request.trailer("x-trace").map(str::to_string),
+          request.trailers().to_vec(),
+        ))
+        .expect("send parsed upgraded h2 trailers");
+        HttpResponse::ok("upgraded trailers accepted")
+          .trailer("X-Response-Trace", "upgrade-response-trailer")
+      })
+      .expect("serve upgraded h2 trailer request")
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2c upgrade server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set client read timeout");
+  complete_h2c_upgrade(&mut stream, &addr.to_string(), &[]);
+
+  let mut headers = h2_post_headers(b"/upgrade-trailers", addr.to_string().as_bytes());
+  headers.extend(h2_literal_new_name(b"x-trace", b"initial-header"));
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    3,
+    &headers,
+  );
+  write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 3, b"upgraded body");
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    3,
+    &h2_literal_new_name(b"x-trace", b"request-trailer"),
+  );
+
+  let response_headers = loop {
+    let frame = read_h2_frame(&mut stream);
+    if frame.frame_type != H2_FRAME_WINDOW_UPDATE {
+      break frame;
+    }
+  };
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(3, response_headers.stream_id);
+
+  let response_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(0, response_body.flags & H2_FLAG_END_STREAM);
+  assert_eq!(3, response_body.stream_id);
+  assert_eq!(
+    b"upgraded trailers accepted",
+    response_body.payload.as_slice()
+  );
+
+  let response_trailers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_trailers.frame_type);
+  assert_eq!(
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    response_trailers.flags
+  );
+  assert_eq!(3, response_trailers.stream_id);
+
+  assert_eq!(
+    (
+      "HTTP/2".to_string(),
+      "POST".to_string(),
+      "/upgrade-trailers".to_string(),
+      b"upgraded body".to_vec(),
+      Some("initial-header".to_string()),
+      Some("request-trailer".to_string()),
+      vec![("x-trace".to_string(), "request-trailer".to_string())],
+    ),
+    rx.recv().expect("receive parsed upgraded h2 trailers")
+  );
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn h2c_upgrade_rejects_malformed_http2_settings_before_handler_dispatch() {
   assert_malformed_h2c_upgrade_rejected_before_handler("%%%");
   assert_malformed_h2c_upgrade_rejected_before_handler(&base64url_encode_unpadded(&h2_setting(
