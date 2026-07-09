@@ -218,6 +218,21 @@ impl HttpClient {
     Ok(self.header(("Range", format!("bytes=-{}", suffix).as_str())))
   }
 
+  /// Set an `If-Range` validator with a single strong entity tag.
+  ///
+  /// `If-Range` only permits strong entity-tag validators. Use `header`
+  /// directly for manual values that intentionally bypass this helper.
+  pub fn if_range_etag<S: AsRef<str>>(&mut self, etag: S) -> error::Result<&mut Self> {
+    let etag = validate_single_strong_etag(etag.as_ref())?;
+    Ok(self.header(Header::new("If-Range", etag)))
+  }
+
+  /// Set an `If-Range` validator with an HTTP-date.
+  pub fn if_range_date<S: AsRef<str>>(&mut self, http_date: S) -> error::Result<&mut Self> {
+    let http_date = validate_http_date(http_date.as_ref())?;
+    Ok(self.header(Header::new("If-Range", http_date)))
+  }
+
   /// Set a single entity-tag validator, `If-None-Match: <etag>`.
   ///
   /// Accepts `*`, a strong entity tag such as `"abc"`, or a weak entity tag
@@ -534,6 +549,16 @@ fn validate_single_etag(etag: &str) -> error::Result<&str> {
     ));
   }
 
+  Ok(etag)
+}
+
+fn validate_single_strong_etag(etag: &str) -> error::Result<&str> {
+  let etag = validate_single_etag(etag)?;
+  if etag == "*" || etag.starts_with("W/") {
+    return Err(error::builder_with_message(
+      "If-Range entity-tag helper accepts only a single strong entity tag",
+    ));
+  }
   Ok(etag)
 }
 

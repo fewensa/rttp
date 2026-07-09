@@ -308,6 +308,91 @@ fn conditional_request_helpers_emit_validator_headers() {
 }
 
 #[test]
+fn if_range_helpers_emit_single_validator_headers() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .range(10, 19)
+      .expect("bounded range should be accepted")
+      .if_range_etag(r#""abc123""#)
+      .expect("strong etag should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("bytes=10-19"), header_value(&request, "Range"));
+  assert_eq!(Some(r#""abc123""#), header_value(&request, "If-Range"));
+
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .range_from(20)
+      .if_range_date("Sun, 06 Nov 1994 08:49:37 GMT")
+      .expect("http date should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("bytes=20-"), header_value(&request, "Range"));
+  assert_eq!(
+    Some("Sun, 06 Nov 1994 08:49:37 GMT"),
+    header_value(&request, "If-Range")
+  );
+}
+
+#[test]
+fn if_range_helpers_reject_obvious_malformed_inputs_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .if_range_etag(r#"W/"weak-tag""#)
+      .expect_err("weak etag should be rejected for If-Range");
+
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "malformed If-Range etag helper should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .if_range_etag("*")
+      .expect_err("wildcard etag should be rejected for If-Range");
+
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "malformed If-Range etag helper should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .if_range_date("not a date")
+      .expect_err("invalid http date should be rejected");
+
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "malformed If-Range date helper should not open a socket"
+  );
+}
+
+#[test]
 fn conditional_request_helpers_reject_obvious_malformed_inputs_before_connecting() {
   let request = capture_optional_request(|base_url| {
     let mut client = client();
@@ -370,6 +455,21 @@ fn manual_conditional_headers_remain_available_as_escape_hatch() {
   assert_eq!(
     Some(r#""one", "two""#),
     header_value(&request, "If-None-Match")
+  );
+
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("If-Range", r#"W/"manual-weak""#))
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some(r#"W/"manual-weak""#),
+    header_value(&request, "If-Range")
   );
 }
 
