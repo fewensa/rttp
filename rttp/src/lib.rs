@@ -27,6 +27,13 @@
 //! other value rejects the bounded h2c handshake. `PUSH_PROMISE` frames are
 //! rejected before handler dispatch, and this path does not implement
 //! server-side push state.
+//! Inbound PING without ACK is acknowledged only when it arrives on stream 0
+//! with exactly 8 octets of opaque data; the PING ACK carries that same opaque
+//! data. Inbound PING ACK is ignored for this bounded path. PING with a
+//! non-zero stream id or payload length other than 8 is malformed and
+//! rejected. This acknowledgement path does not add keepalive timers,
+//! automatic client- or server-initiated PING policy, retry/replay, a full
+//! session manager, or a full multiplex scheduler.
 //! Peer `SETTINGS_ENABLE_CONNECT_PROTOCOL` values are validated as only `0` or
 //! `1`. After a peer sends `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1`, the server
 //! accepts RFC 8441 extended CONNECT request HEADERS with method `CONNECT` and
@@ -65,6 +72,11 @@
 //! Incoming `PUSH_PROMISE` frames are rejected instead of creating or tracking
 //! push state, and full extension negotiation remains outside this bounded
 //! client path.
+//! Inbound PING without ACK on stream 0 and exactly 8 octets is acknowledged
+//! with matching opaque data. Inbound PING ACK is ignored, and PING with a
+//! non-zero stream id or payload length other than 8 is rejected. This does not
+//! add keepalive timers, automatic client- or server-initiated PING policy,
+//! retry/replay, a full session manager, or a full multiplex scheduler.
 
 pub struct Http {}
 

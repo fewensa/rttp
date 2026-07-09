@@ -30,6 +30,12 @@
 //! disabled, validates received `SETTINGS_ENABLE_PUSH` values as only `0` or
 //! `1`, and rejects any incoming `PUSH_PROMISE` frame instead of creating or
 //! tracking push state.
+//! Inbound PING without ACK on stream 0 and exactly 8 octets is acknowledged
+//! with matching opaque data. Inbound PING ACK is ignored for this bounded
+//! path. PING with a non-zero stream id or payload length other than 8 is
+//! malformed and rejected. This acknowledgement path does not add keepalive
+//! timers, automatic client- or server-initiated PING policy, retry/replay, a
+//! full session manager, or a full multiplex scheduler.
 //! `HttpClient::http2_extended_connect(protocol)` is the only public RFC 8441
 //! entry point on this bounded path. It is prior-knowledge h2c only over the
 //! direct `socket2` transport boundary: the client advertises
