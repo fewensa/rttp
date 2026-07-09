@@ -5,6 +5,7 @@ use std::net::{SocketAddr, TcpListener};
 use std::thread;
 use std::time::Duration;
 
+use base64::Engine;
 use rttp_client::types::Header;
 use rttp_client::types::Proxy;
 use rttp_client::{Config, HttpClient};
@@ -118,6 +119,103 @@ fn prior_knowledge_get_sends_h2_handshake_and_reads_single_response_stream() {
       .value
       .as_slice()
   );
+}
+
+#[test]
+fn http2_upgrade_sends_http11_upgrade_then_runs_single_h2_stream() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2c upgrade peer");
+  let addr = listener.local_addr().expect("h2c upgrade peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2c upgrade client");
+    let request = String::from_utf8(read_http1_request_head(&mut stream)).expect("request utf8");
+    assert!(request.starts_with("GET /upgrade?via=h2c HTTP/1.1\r\n"));
+    assert!(request.contains("\r\nConnection: Upgrade, HTTP2-Settings\r\n"));
+    assert!(request.contains("\r\nUpgrade: h2c\r\n"));
+    let settings = header_value(&request, "HTTP2-Settings").expect("http2 settings header");
+    assert_eq!(
+      vec![0x00, 0x02, 0x00, 0x00, 0x00, 0x00],
+      base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(settings)
+        .expect("decode http2 settings")
+    );
+
+    stream
+      .write_all(b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: h2c\r\n\r\n")
+      .expect("write upgrade response");
+
+    complete_h2_handshake_without_request(&mut stream);
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_STREAM | FLAG_END_HEADERS, request_headers.flags);
+    assert_eq!(1, request_headers.stream_id);
+    assert_eq!(
+      b"/upgrade?via=h2c",
+      find_header_value(&request_headers.payload, b":path")
+        .expect("request path")
+        .value
+        .as_slice()
+    );
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"h2c upgrade");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/upgrade?via=h2c", addr))
+    .emit_http2_upgrade()
+    .expect("h2c upgrade response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!("h2c upgrade", response.body().string().unwrap());
+
+  handle.join().expect("h2c upgrade peer thread");
+}
+
+#[test]
+fn http2_upgrade_rejects_101_without_h2c_negotiation() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2c upgrade peer");
+  let addr = listener.local_addr().expect("h2c upgrade peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2c upgrade client");
+    let _request = read_http1_request_head(&mut stream);
+    stream
+      .write_all(
+        b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+      )
+      .expect("write invalid upgrade response");
+  });
+
+  let err = HttpClient::new()
+    .get()
+    .url(format!("http://{}/upgrade", addr))
+    .emit_http2_upgrade()
+    .expect_err("invalid h2c upgrade response must fail");
+
+  assert!(err.to_string().contains("h2c upgrade response"));
+
+  handle.join().expect("h2c upgrade peer thread");
+}
+
+#[test]
+fn http2_upgrade_rejects_configured_proxy_before_connecting() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2c upgrade peer");
+  let addr = listener.local_addr().expect("h2c upgrade peer addr");
+  drop(listener);
+
+  let err = HttpClient::new()
+    .get()
+    .url(format!("http://{}/upgrade", addr))
+    .proxy(Proxy::http("127.0.0.1", 9))
+    .emit_http2_upgrade()
+    .expect_err("h2c upgrade does not support proxies");
+
+  assert!(err.to_string().contains("does not support proxies"));
 }
 
 #[test]
@@ -4171,6 +4269,27 @@ fn complete_h2_handshake_without_request_with_settings(
   assert_eq!(FLAG_ACK, client_settings_ack.flags);
   assert_eq!(0, client_settings_ack.stream_id);
   assert_eq!(0, client_settings_ack.payload.len());
+}
+
+fn read_http1_request_head(stream: &mut impl Read) -> Vec<u8> {
+  let mut request = Vec::new();
+  let mut byte = [0u8; 1];
+  while !request.ends_with(b"\r\n\r\n") {
+    stream.read_exact(&mut byte).expect("read request byte");
+    request.push(byte[0]);
+  }
+  request
+}
+
+fn header_value<'a>(headers: &'a str, name: &str) -> Option<&'a str> {
+  headers.lines().find_map(|line| {
+    let (field_name, value) = line.split_once(':')?;
+    if field_name.eq_ignore_ascii_case(name) {
+      Some(value.trim())
+    } else {
+      None
+    }
+  })
 }
 
 fn emit_prior_knowledge_body_request(method: &str) -> Vec<u8> {

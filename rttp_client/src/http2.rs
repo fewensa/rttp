@@ -2,6 +2,7 @@ use std::io::{self, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
+use base64::Engine;
 use socket2::{Domain, Protocol, Socket, Type};
 use url::Url;
 
@@ -98,6 +99,7 @@ impl<'a> PriorKnowledgeClient<'a> {
   }
 
   pub fn get(mut self) -> error::Result<Response> {
+    validate_bounded_h2c_request(&self.request, false)?;
     let method = self.request.origin().method();
     let extended_connect_protocol = self
       .request
@@ -105,55 +107,6 @@ impl<'a> PriorKnowledgeClient<'a> {
       .http2_extended_connect_protocol()
       .as_deref();
     let is_head = method.eq_ignore_ascii_case("HEAD");
-    let is_delete = method.eq_ignore_ascii_case("DELETE");
-    let is_options = method.eq_ignore_ascii_case("OPTIONS");
-    let is_trace = method.eq_ignore_ascii_case("TRACE");
-    if has_http2_upgrade_handoff(&self.request)
-      || has_header_configured_extended_connect_protocol(&self.request)
-      || (extended_connect_protocol.is_none() && method.eq_ignore_ascii_case("CONNECT"))
-    {
-      return Err(error::builder_with_message(
-        "HTTP/2 prior-knowledge CONNECT or extended CONNECT is unsupported",
-      ));
-    }
-    if let Some(protocol) = extended_connect_protocol {
-      validate_extended_connect_protocol(protocol)?;
-      if self.request.body().is_some() {
-        return Err(error::builder_with_message(
-          "HTTP/2 extended CONNECT cannot send a request body",
-        ));
-      }
-      if !self.request.origin().trailers().is_empty() {
-        return Err(error::builder_with_message(
-          "HTTP/2 extended CONNECT cannot send request trailers",
-        ));
-      }
-    }
-    if (method.eq_ignore_ascii_case("GET") || is_head) && self.request.body().is_some() {
-      return Err(error::builder_with_message(
-        "HTTP/2 prior-knowledge GET or HEAD cannot send a request body",
-      ));
-    }
-    if is_delete && self.request.body().is_some() {
-      return Err(error::builder_with_message(
-        "HTTP/2 prior-knowledge DELETE cannot send a request body",
-      ));
-    }
-    if is_options && self.request.body().is_some() {
-      return Err(error::builder_with_message(
-        "HTTP/2 prior-knowledge OPTIONS cannot send a request body",
-      ));
-    }
-    if is_trace && self.request.body().is_some() {
-      return Err(error::builder_with_message(
-        "HTTP/2 prior-knowledge TRACE cannot send a request body",
-      ));
-    }
-    if extended_connect_protocol.is_none() && !is_supported_request_method(method) {
-      return Err(error::builder_with_message(
-        "HTTP/2 prior-knowledge client supports GET, HEAD, bodyless DELETE, OPTIONS, or TRACE, and buffered POST, PUT, or PATCH",
-      ));
-    }
 
     let url = self.request.url().to_url().map_err(error::builder)?;
     if url.scheme() != "http" {
@@ -187,6 +140,123 @@ impl<'a> PriorKnowledgeClient<'a> {
     self.request.origin_mut().closed_set(true);
     Ok(response)
   }
+}
+
+pub struct UpgradeClient<'a> {
+  request: RawRequest<'a>,
+}
+
+impl<'a> UpgradeClient<'a> {
+  pub(crate) fn new(request: RawRequest<'a>) -> Self {
+    Self { request }
+  }
+
+  pub fn get(mut self) -> error::Result<Response> {
+    validate_bounded_h2c_request(&self.request, true)?;
+    let method = self.request.origin().method();
+    let extended_connect_protocol = self
+      .request
+      .origin()
+      .http2_extended_connect_protocol()
+      .as_deref();
+    let is_head = method.eq_ignore_ascii_case("HEAD");
+
+    let url = self.request.url().to_url().map_err(error::builder)?;
+    if url.scheme() != "http" {
+      return Err(error::url_bad_scheme(url));
+    }
+
+    let local_settings = LocalSettings::from_config(
+      self.request.origin().config(),
+      extended_connect_protocol.is_some(),
+    )?;
+    let mut stream = connect_tcp_stream(addr(&url)?, self.request.origin().config())?;
+    write_h2c_upgrade_request(&mut stream, &self.request, local_settings)?;
+    read_h2c_upgrade_response(&mut stream)?;
+    write_connection_preface(&mut stream, local_settings)?;
+    let mut peer_settings = read_settings_and_ack(&mut stream, local_settings)?;
+    reject_goaway_before_opening_request_stream(&mut stream, &mut peer_settings, local_settings)?;
+    let response = match write_request(
+      &mut stream,
+      &self.request,
+      &url,
+      self.request.url().clone(),
+      peer_settings,
+      local_settings,
+    )? {
+      Some(response) => response,
+      None => read_single_stream_response(
+        &mut stream,
+        self.request.url().clone(),
+        !is_head,
+        local_settings,
+      )?,
+    };
+    self.request.origin_mut().closed_set(true);
+    Ok(response)
+  }
+}
+
+fn validate_bounded_h2c_request(
+  request: &RawRequest<'_>,
+  allow_upgrade_header: bool,
+) -> error::Result<()> {
+  let method = request.origin().method();
+  let extended_connect_protocol = request
+    .origin()
+    .http2_extended_connect_protocol()
+    .as_deref();
+  let is_head = method.eq_ignore_ascii_case("HEAD");
+  let is_delete = method.eq_ignore_ascii_case("DELETE");
+  let is_options = method.eq_ignore_ascii_case("OPTIONS");
+  let is_trace = method.eq_ignore_ascii_case("TRACE");
+  if (!allow_upgrade_header && has_http2_upgrade_handoff(request))
+    || has_header_configured_extended_connect_protocol(request)
+    || (extended_connect_protocol.is_none() && method.eq_ignore_ascii_case("CONNECT"))
+  {
+    return Err(error::builder_with_message(
+      "HTTP/2 prior-knowledge CONNECT or extended CONNECT is unsupported",
+    ));
+  }
+  if let Some(protocol) = extended_connect_protocol {
+    validate_extended_connect_protocol(protocol)?;
+    if request.body().is_some() {
+      return Err(error::builder_with_message(
+        "HTTP/2 extended CONNECT cannot send a request body",
+      ));
+    }
+    if !request.origin().trailers().is_empty() {
+      return Err(error::builder_with_message(
+        "HTTP/2 extended CONNECT cannot send request trailers",
+      ));
+    }
+  }
+  if (method.eq_ignore_ascii_case("GET") || is_head) && request.body().is_some() {
+    return Err(error::builder_with_message(
+      "HTTP/2 prior-knowledge GET or HEAD cannot send a request body",
+    ));
+  }
+  if is_delete && request.body().is_some() {
+    return Err(error::builder_with_message(
+      "HTTP/2 prior-knowledge DELETE cannot send a request body",
+    ));
+  }
+  if is_options && request.body().is_some() {
+    return Err(error::builder_with_message(
+      "HTTP/2 prior-knowledge OPTIONS cannot send a request body",
+    ));
+  }
+  if is_trace && request.body().is_some() {
+    return Err(error::builder_with_message(
+      "HTTP/2 prior-knowledge TRACE cannot send a request body",
+    ));
+  }
+  if extended_connect_protocol.is_none() && !is_supported_request_method(method) {
+    return Err(error::builder_with_message(
+      "HTTP/2 prior-knowledge client supports GET, HEAD, bodyless DELETE, OPTIONS, or TRACE, and buffered POST, PUT, or PATCH",
+    ));
+  }
+  Ok(())
 }
 
 fn has_http2_upgrade_handoff(request: &RawRequest<'_>) -> bool {
@@ -517,6 +587,123 @@ fn h2_setting(id: u16, value: u32) -> [u8; 6] {
   setting[..2].copy_from_slice(&id.to_be_bytes());
   setting[2..].copy_from_slice(&value.to_be_bytes());
   setting
+}
+
+fn write_h2c_upgrade_request(
+  stream: &mut TcpStream,
+  request: &RawRequest<'_>,
+  local_settings: LocalSettings,
+) -> error::Result<()> {
+  let settings =
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(local_settings.settings_payload());
+  let header = h2c_upgrade_request_header(request.header(), &settings);
+  stream
+    .write_all(header.as_bytes())
+    .map_err(error::request)?;
+  stream.flush().map_err(error::request)
+}
+
+fn h2c_upgrade_request_header(header: &str, settings: &str) -> String {
+  let mut rewritten = String::new();
+  let mut lines = header.split_inclusive("\r\n");
+  if let Some(request_line) = lines.next() {
+    rewritten.push_str(request_line);
+  }
+
+  for line in lines {
+    let trimmed = line.trim_end_matches("\r\n");
+    if trimmed.is_empty() {
+      break;
+    }
+    let Some((name, _)) = trimmed.split_once(':') else {
+      continue;
+    };
+    if name.eq_ignore_ascii_case("connection")
+      || name.eq_ignore_ascii_case("upgrade")
+      || name.eq_ignore_ascii_case("http2-settings")
+      || name.eq_ignore_ascii_case("content-length")
+      || name.eq_ignore_ascii_case("transfer-encoding")
+    {
+      continue;
+    }
+    rewritten.push_str(line);
+  }
+
+  rewritten.push_str("Connection: Upgrade, HTTP2-Settings\r\n");
+  rewritten.push_str("Upgrade: h2c\r\n");
+  rewritten.push_str("HTTP2-Settings: ");
+  rewritten.push_str(settings);
+  rewritten.push_str("\r\n\r\n");
+  rewritten
+}
+
+fn read_h2c_upgrade_response(stream: &mut TcpStream) -> error::Result<()> {
+  loop {
+    let header = read_http1_response_head(stream)?;
+    let status_code = http1_status_code(&header)?;
+    if (100..200).contains(&status_code) && status_code != 101 {
+      continue;
+    }
+    if status_code == 101 && response_header_has_h2c_upgrade(&header)? {
+      return Ok(());
+    }
+    return Err(error::bad_response(format!(
+      "Invalid h2c upgrade response with HTTP status {}",
+      status_code
+    )));
+  }
+}
+
+fn read_http1_response_head(stream: &mut TcpStream) -> error::Result<Vec<u8>> {
+  let mut header = Vec::new();
+  let mut byte = [0u8; 1];
+  loop {
+    let read = stream.read(&mut byte).map_err(error::response)?;
+    if read == 0 {
+      return Err(error::bad_response("Incomplete h2c upgrade response"));
+    }
+    header.push(byte[0]);
+    if header.ends_with(b"\r\n\r\n") {
+      return Ok(header);
+    }
+  }
+}
+
+fn http1_status_code(header: &[u8]) -> error::Result<u16> {
+  let header = String::from_utf8(header.to_vec())
+    .map_err(|_| error::bad_response("Invalid h2c upgrade response"))?;
+  header
+    .lines()
+    .next()
+    .and_then(|line| line.split_whitespace().nth(1))
+    .ok_or_else(|| error::bad_response("Invalid h2c upgrade response"))?
+    .parse::<u16>()
+    .map_err(|_| error::bad_response("Invalid h2c upgrade response"))
+}
+
+fn response_header_has_h2c_upgrade(header: &[u8]) -> error::Result<bool> {
+  let header = String::from_utf8(header.to_vec())
+    .map_err(|_| error::bad_response("Invalid h2c upgrade response"))?;
+  let mut has_upgrade_h2c = false;
+  let mut connection_has_upgrade = false;
+
+  for line in header.lines().skip(1) {
+    let Some((name, value)) = line.split_once(':') else {
+      continue;
+    };
+    if name.eq_ignore_ascii_case("upgrade") && value.trim().eq_ignore_ascii_case("h2c") {
+      has_upgrade_h2c = true;
+    }
+    if name.eq_ignore_ascii_case("connection")
+      && value
+        .split(',')
+        .any(|token| token.trim().eq_ignore_ascii_case("upgrade"))
+    {
+      connection_has_upgrade = true;
+    }
+  }
+
+  Ok(has_upgrade_h2c && connection_has_upgrade)
 }
 
 fn validate_settings_payload(payload: &[u8]) -> error::Result<PeerSettings> {
