@@ -81,7 +81,7 @@ impl Response {
   pub fn content_range(&self) -> Option<ContentRange> {
     self
       .header_value("content-range")
-      .and_then(|value| ContentRange::parse(value))
+      .and_then(ContentRange::parse)
   }
 
   pub fn headers(&self) -> &Vec<Header> {
