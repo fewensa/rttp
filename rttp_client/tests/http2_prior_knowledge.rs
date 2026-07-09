@@ -149,7 +149,7 @@ fn http2_upgrade_sends_http11_upgrade_then_runs_single_h2_stream() {
     let request_headers = read_frame(&mut stream);
     assert_eq!(FRAME_HEADERS, request_headers.frame_type);
     assert_eq!(FLAG_END_STREAM | FLAG_END_HEADERS, request_headers.flags);
-    assert_eq!(1, request_headers.stream_id);
+    assert_eq!(3, request_headers.stream_id);
     assert_eq!(
       b"/upgrade?via=h2c",
       find_header_value(&request_headers.payload, b":path")
@@ -159,8 +159,8 @@ fn http2_upgrade_sends_http11_upgrade_then_runs_single_h2_stream() {
     );
 
     write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
-    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
-    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"h2c upgrade");
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 3, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 3, b"h2c upgrade");
   });
 
   let response = HttpClient::new()

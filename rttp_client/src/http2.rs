@@ -31,6 +31,7 @@ const FLAG_PADDED: u8 = 0x8;
 const FLAG_PRIORITY: u8 = 0x20;
 
 const STREAM_ID: u32 = 1;
+const UPGRADED_STREAM_ID: u32 = 3;
 const SETTING_HEADER_TABLE_SIZE: u16 = 0x1;
 const SETTING_ENABLE_PUSH: u16 = 0x2;
 const SETTING_MAX_CONCURRENT_STREAMS: u16 = 0x3;
@@ -128,6 +129,7 @@ impl<'a> PriorKnowledgeClient<'a> {
       self.request.url().clone(),
       peer_settings,
       local_settings,
+      STREAM_ID,
     )? {
       Some(response) => response,
       None => read_single_stream_response(
@@ -135,6 +137,7 @@ impl<'a> PriorKnowledgeClient<'a> {
         self.request.url().clone(),
         !is_head,
         local_settings,
+        STREAM_ID,
       )?,
     };
     self.request.origin_mut().closed_set(true);
@@ -183,6 +186,7 @@ impl<'a> UpgradeClient<'a> {
       self.request.url().clone(),
       peer_settings,
       local_settings,
+      UPGRADED_STREAM_ID,
     )? {
       Some(response) => response,
       None => read_single_stream_response(
@@ -190,6 +194,7 @@ impl<'a> UpgradeClient<'a> {
         self.request.url().clone(),
         !is_head,
         local_settings,
+        UPGRADED_STREAM_ID,
       )?,
     };
     self.request.origin_mut().closed_set(true);
@@ -790,6 +795,7 @@ fn write_request(
   response_url: RoUrl,
   mut peer_settings: PeerSettings,
   local_settings: LocalSettings,
+  stream_id: u32,
 ) -> error::Result<Option<Response>> {
   if peer_settings.max_concurrent_streams == Some(0) {
     return Err(error::bad_response(
@@ -836,7 +842,7 @@ fn write_request(
   write_header_block_frames(
     stream,
     header_flags,
-    STREAM_ID,
+    stream_id,
     &header_block,
     peer_settings.max_frame_size,
   )?;
@@ -849,6 +855,7 @@ fn write_request(
       has_trailers,
       response_url,
       local_settings,
+      stream_id,
     )? {
       return Ok(Some(response));
     }
@@ -864,7 +871,7 @@ fn write_request(
     write_header_block_frames(
       stream,
       FLAG_END_STREAM,
-      STREAM_ID,
+      stream_id,
       &trailer_block,
       peer_settings.max_frame_size,
     )?;
@@ -980,6 +987,7 @@ fn write_data_frames(
   has_trailers: bool,
   url: RoUrl,
   local_settings: LocalSettings,
+  stream_id: u32,
 ) -> error::Result<Option<Response>> {
   let mut connection_send_window = SendWindow::new();
   let mut stream_send_window =
@@ -1003,6 +1011,7 @@ fn write_data_frames(
         &mut current_max_frame_size,
         url.clone(),
         local_settings,
+        stream_id,
       )? {
         return Ok(Some(response));
       }
@@ -1024,7 +1033,7 @@ fn write_data_frames(
     } else {
       0
     };
-    write_frame(stream, FRAME_DATA, flags, STREAM_ID, chunk)?;
+    write_frame(stream, FRAME_DATA, flags, stream_id, chunk)?;
   }
   Ok(None)
 }
@@ -1039,6 +1048,7 @@ fn read_until_send_window_available(
   current_max_frame_size: &mut usize,
   url: RoUrl,
   local_settings: LocalSettings,
+  stream_id: u32,
 ) -> error::Result<Option<Response>> {
   loop {
     let frame = read_frame(stream, local_settings)?;
@@ -1046,7 +1056,7 @@ fn read_until_send_window_available(
       (FRAME_WINDOW_UPDATE, 0) => {
         connection_send_window.increase(window_update_increment(&frame)?)?;
       }
-      (FRAME_WINDOW_UPDATE, STREAM_ID) => {
+      (FRAME_WINDOW_UPDATE, id) if id == stream_id => {
         stream_send_window.increase(window_update_increment(&frame)?)?;
       }
       (FRAME_WINDOW_UPDATE, _) => {
@@ -1069,7 +1079,7 @@ fn read_until_send_window_available(
       (FRAME_PUSH_PROMISE, _) => {
         reject_push_promise_frame(&frame)?;
       }
-      (FRAME_RST_STREAM, STREAM_ID) => {
+      (FRAME_RST_STREAM, id) if id == stream_id => {
         return Err(error::bad_response(format!(
           "HTTP/2 stream received RST_STREAM error code {}",
           rst_stream_error_code(&frame)?
@@ -1091,13 +1101,19 @@ fn read_until_send_window_available(
         return Err(error::bad_response("invalid HTTP/2 PING frame"));
       }
       (FRAME_GOAWAY, _) => {
-        if goaway_last_stream_id(&frame)? < STREAM_ID {
+        if goaway_last_stream_id(&frame)? < stream_id {
           return Err(error::bad_response("HTTP/2 connection received GOAWAY"));
         }
       }
-      (FRAME_HEADERS, STREAM_ID) | (FRAME_DATA, STREAM_ID) | (FRAME_CONTINUATION, STREAM_ID) => {
-        return read_single_stream_response_from_frame(stream, url, frame, local_settings)
-          .map(Some);
+      (FRAME_HEADERS, id) | (FRAME_DATA, id) | (FRAME_CONTINUATION, id) if id == stream_id => {
+        return read_single_stream_response_from_frame(
+          stream,
+          url,
+          frame,
+          local_settings,
+          stream_id,
+        )
+        .map(Some);
       }
       _ => {}
     }
@@ -1381,6 +1397,7 @@ fn read_single_stream_response(
   url: RoUrl,
   include_data_payload: bool,
   local_settings: LocalSettings,
+  stream_id: u32,
 ) -> error::Result<Response> {
   read_single_stream_response_with_first_frame(
     stream,
@@ -1388,6 +1405,7 @@ fn read_single_stream_response(
     None,
     include_data_payload,
     local_settings,
+    stream_id,
   )
 }
 
@@ -1396,8 +1414,16 @@ fn read_single_stream_response_from_frame(
   url: RoUrl,
   first_frame: Frame,
   local_settings: LocalSettings,
+  stream_id: u32,
 ) -> error::Result<Response> {
-  read_single_stream_response_with_first_frame(stream, url, Some(first_frame), true, local_settings)
+  read_single_stream_response_with_first_frame(
+    stream,
+    url,
+    Some(first_frame),
+    true,
+    local_settings,
+    stream_id,
+  )
 }
 
 fn read_single_stream_response_with_first_frame(
@@ -1406,6 +1432,7 @@ fn read_single_stream_response_with_first_frame(
   mut first_frame: Option<Frame>,
   include_data_payload: bool,
   local_settings: LocalSettings,
+  stream_id: u32,
 ) -> error::Result<Response> {
   let mut header_block = Vec::new();
   let mut headers = Vec::new();
@@ -1433,7 +1460,7 @@ fn read_single_stream_response_with_first_frame(
       },
     };
     if pending_header_block.is_some()
-      && (frame.frame_type != FRAME_CONTINUATION || frame.stream_id != STREAM_ID)
+      && (frame.frame_type != FRAME_CONTINUATION || frame.stream_id != stream_id)
     {
       return Err(error::bad_response(
         "expected HTTP/2 CONTINUATION frame for incomplete header block",
@@ -1447,7 +1474,7 @@ fn read_single_stream_response_with_first_frame(
           stream.flush().map_err(error::request)?;
         }
       }
-      (FRAME_HEADERS, STREAM_ID) => {
+      (FRAME_HEADERS, id) if id == stream_id => {
         let kind = if final_response_started || response_body_started {
           HeaderBlockKind::Trailers
         } else {
@@ -1475,7 +1502,7 @@ fn read_single_stream_response_with_first_frame(
           break;
         }
       }
-      (FRAME_CONTINUATION, STREAM_ID) => {
+      (FRAME_CONTINUATION, id) if id == stream_id => {
         let pending = pending_header_block.ok_or_else(|| {
           error::bad_response("unexpected HTTP/2 CONTINUATION frame without header block")
         })?;
@@ -1498,7 +1525,7 @@ fn read_single_stream_response_with_first_frame(
           }
         }
       }
-      (FRAME_DATA, STREAM_ID) => {
+      (FRAME_DATA, id) if id == stream_id => {
         let end_stream = frame.flags & FLAG_END_STREAM == FLAG_END_STREAM;
         let data = data_payload(&frame)?;
         response_body_started = true;
@@ -1509,7 +1536,7 @@ fn read_single_stream_response_with_first_frame(
         let connection_update = connection_receive_window.consume(frame.payload.len())?;
         if !end_stream && (stream_update > 0 || connection_update > 0) {
           if stream_update > 0 {
-            write_window_update_best_effort(stream, STREAM_ID, stream_update)?;
+            write_window_update_best_effort(stream, stream_id, stream_update)?;
             stream_receive_window.release(stream_update)?;
           }
           if connection_update > 0 {
@@ -1525,7 +1552,7 @@ fn read_single_stream_response_with_first_frame(
       (FRAME_WINDOW_UPDATE, 0) => {
         connection_send_window.increase(window_update_increment(&frame)?)?;
       }
-      (FRAME_WINDOW_UPDATE, STREAM_ID) => {
+      (FRAME_WINDOW_UPDATE, id) if id == stream_id => {
         stream_send_window.increase(window_update_increment(&frame)?)?;
       }
       (FRAME_WINDOW_UPDATE, _) => {
@@ -1537,7 +1564,7 @@ fn read_single_stream_response_with_first_frame(
       (FRAME_PUSH_PROMISE, _) => {
         reject_push_promise_frame(&frame)?;
       }
-      (FRAME_RST_STREAM, STREAM_ID) => {
+      (FRAME_RST_STREAM, id) if id == stream_id => {
         return Err(error::bad_response(format!(
           "HTTP/2 stream received RST_STREAM error code {}",
           rst_stream_error_code(&frame)?
@@ -1559,11 +1586,11 @@ fn read_single_stream_response_with_first_frame(
         return Err(error::bad_response("invalid HTTP/2 PING frame"));
       }
       (FRAME_GOAWAY, _) => {
-        if goaway_last_stream_id(&frame)? < STREAM_ID {
+        if goaway_last_stream_id(&frame)? < stream_id {
           return Err(error::bad_response("HTTP/2 connection received GOAWAY"));
         }
       }
-      (_, STREAM_ID) => {}
+      (_, id) if id == stream_id => {}
       (FRAME_CONTINUATION, _) => {
         return Err(error::bad_response(
           "unexpected HTTP/2 CONTINUATION frame without header block",
