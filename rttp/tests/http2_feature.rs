@@ -701,6 +701,69 @@ fn spawn_h2_peer_with_malformed_initial_settings() -> (SocketAddr, thread::JoinH
   (addr, handle)
 }
 
+fn spawn_h2c_settings_capture_proxy(
+  server_addr: SocketAddr,
+) -> (SocketAddr, thread::JoinHandle<Option<u32>>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 capture proxy");
+  let proxy_addr = listener.local_addr().expect("h2 capture proxy addr");
+
+  let handle = thread::spawn(move || {
+    let (mut client_stream, _) = listener.accept().expect("accept h2 client through proxy");
+    let mut server_stream = TcpStream::connect(server_addr).expect("connect captured h2 server");
+    client_stream
+      .set_read_timeout(Some(Duration::from_secs(2)))
+      .expect("set proxy client read timeout");
+    server_stream
+      .set_read_timeout(Some(Duration::from_secs(2)))
+      .expect("set proxy server read timeout");
+
+    let mut preface = [0; 24];
+    client_stream
+      .read_exact(&mut preface)
+      .expect("read proxied h2 client preface");
+    assert_eq!(H2_PREFACE.as_slice(), &preface);
+    server_stream
+      .write_all(&preface)
+      .expect("forward proxied h2 client preface");
+
+    let client_settings = read_h2_frame(&mut client_stream);
+    assert_eq!(H2_FRAME_SETTINGS, client_settings.frame_type);
+    assert_eq!(0, client_settings.flags);
+    assert_eq!(0, client_settings.stream_id);
+    let enable_push = h2_setting_value(&client_settings.payload, H2_SETTINGS_ENABLE_PUSH);
+    write_h2_frame(
+      &mut server_stream,
+      client_settings.frame_type,
+      client_settings.flags,
+      client_settings.stream_id,
+      &client_settings.payload,
+    );
+
+    let mut client_reader = client_stream
+      .try_clone()
+      .expect("clone proxied h2 client reader");
+    let mut server_writer = server_stream
+      .try_clone()
+      .expect("clone proxied h2 server writer");
+    let client_to_server = thread::spawn(move || {
+      let _ = io::copy(&mut client_reader, &mut server_writer);
+    });
+    let server_to_client = thread::spawn(move || {
+      let _ = io::copy(&mut server_stream, &mut client_stream);
+    });
+
+    client_to_server
+      .join()
+      .expect("proxied h2 client-to-server relay");
+    server_to_client
+      .join()
+      .expect("proxied h2 server-to-client relay");
+    enable_push
+  });
+
+  (proxy_addr, handle)
+}
+
 fn complete_h2_peer_request_handshake(stream: &mut TcpStream) -> H2Frame {
   stream
     .set_read_timeout(Some(Duration::from_secs(2)))
@@ -2585,6 +2648,78 @@ fn wrapper_http2_prior_knowledge_rejects_malformed_peer_settings() {
 
   assert!(err.to_string().contains("SETTINGS_ENABLE_PUSH"));
   handle.join().expect("malformed settings peer thread");
+}
+
+#[test]
+fn cross_crate_h2c_wrapper_client_advertises_enable_push_zero_to_wrapper_server() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let server_addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let server_handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.version().to_string(),
+          request.method().to_string(),
+          request.target().to_string(),
+        ))
+        .expect("send captured wrapper h2 request");
+        HttpResponse::ok("push disabled through wrappers")
+      })
+      .expect("serve captured wrapper h2 request");
+  });
+  let (proxy_addr, proxy_handle) = spawn_h2c_settings_capture_proxy(server_addr);
+
+  let response = rttp::Http::client()
+    .get()
+    .url(format!("http://{}/push-disabled", proxy_addr))
+    .emit_http2_prior_knowledge()
+    .expect("wrapper h2 response through settings capture proxy");
+
+  assert_eq!(200, response.code());
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(
+    "push disabled through wrappers",
+    response.body().string().unwrap()
+  );
+  assert_eq!(
+    (
+      "HTTP/2".to_string(),
+      "GET".to_string(),
+      "/push-disabled".to_string()
+    ),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("captured wrapper h2 request")
+  );
+  assert_eq!(
+    Some(0),
+    proxy_handle.join().expect("settings capture proxy thread")
+  );
+  server_handle.join().expect("server thread");
+}
+
+#[test]
+fn cross_crate_h2c_enable_push_settings_matrix_rejects_invalid_push_values() {
+  let (addr, handle) = spawn_h2_peer_with_malformed_initial_settings();
+
+  let client_error = rttp::Http::client()
+    .get()
+    .url(format!("http://{}/invalid-peer-push", addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("wrapper client must reject invalid peer SETTINGS_ENABLE_PUSH");
+
+  assert!(client_error.to_string().contains("SETTINGS_ENABLE_PUSH"));
+  handle.join().expect("invalid peer push settings thread");
+
+  assert_malformed_settings_rejected_before_handler(
+    &h2_setting(H2_SETTINGS_ENABLE_PUSH, 2),
+    0,
+    None,
+  );
 }
 
 #[test]
