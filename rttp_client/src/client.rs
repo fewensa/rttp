@@ -330,6 +330,11 @@ impl HttpClient {
     if self.request.closed() {
       return Err(error::connection_closed());
     }
+    if self.request.http2_extended_connect_protocol().is_some() {
+      return Err(error::builder_with_message(
+        "HTTP/2 extended CONNECT is only supported by the prior-knowledge h2c client",
+      ));
+    }
     if self.request.proxy().is_some() {
       return Err(error::builder_with_message(
         "HTTP/2 h2c upgrade client does not support proxies",

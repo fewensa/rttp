@@ -686,6 +686,89 @@ fn extended_connect_rejects_request_body_before_connecting() {
 }
 
 #[test]
+fn extended_connect_rejects_request_trailers_before_connecting() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  listener
+    .set_nonblocking(true)
+    .expect("set listener nonblocking");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let err = HttpClient::new()
+    .http2_extended_connect("websocket")
+    .url(format!("http://{}/chat", addr))
+    .trailer(("X-Trace", "unsupported"))
+    .expect("configure request trailer")
+    .emit_http2_prior_knowledge()
+    .expect_err("extended CONNECT with trailers must be rejected");
+
+  assert!(err.is_builder());
+  assert!(
+    err
+      .to_string()
+      .contains("HTTP/2 extended CONNECT cannot send request trailers"),
+    "unexpected error: {err}"
+  );
+  assert!(
+    matches!(listener.accept(), Err(ref err) if err.kind() == io::ErrorKind::WouldBlock),
+    "extended CONNECT with trailers must not open a server connection"
+  );
+}
+
+#[test]
+fn extended_connect_rejects_empty_protocol_before_connecting() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  listener
+    .set_nonblocking(true)
+    .expect("set listener nonblocking");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let err = HttpClient::new()
+    .http2_extended_connect("")
+    .url(format!("http://{}/chat", addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("extended CONNECT with empty protocol must be rejected");
+
+  assert!(err.is_builder());
+  assert!(
+    err
+      .to_string()
+      .contains("Invalid HTTP/2 extended CONNECT protocol"),
+    "unexpected error: {err}"
+  );
+  assert!(
+    matches!(listener.accept(), Err(ref err) if err.kind() == io::ErrorKind::WouldBlock),
+    "extended CONNECT with empty protocol must not open a server connection"
+  );
+}
+
+#[test]
+fn extended_connect_rejects_h2c_upgrade_path_before_connecting() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  listener
+    .set_nonblocking(true)
+    .expect("set listener nonblocking");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let err = HttpClient::new()
+    .http2_extended_connect("websocket")
+    .url(format!("http://{}/chat", addr))
+    .emit_http2_upgrade()
+    .expect_err("extended CONNECT over h2c upgrade must be rejected");
+
+  assert!(err.is_builder());
+  assert!(
+    err
+      .to_string()
+      .contains("HTTP/2 extended CONNECT is only supported by the prior-knowledge h2c client"),
+    "unexpected error: {err}"
+  );
+  assert!(
+    matches!(listener.accept(), Err(ref err) if err.kind() == io::ErrorKind::WouldBlock),
+    "extended CONNECT over h2c upgrade must not open a server connection"
+  );
+}
+
+#[test]
 fn extended_connect_with_proxy_is_rejected_before_connecting() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   listener
