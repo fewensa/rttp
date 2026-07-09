@@ -1,3 +1,5 @@
+use std::time::{Duration, UNIX_EPOCH};
+
 use rttp::server::{
   HttpByteRange, HttpByteRangeError, HttpConditionalMetadata, HttpEntityTag,
   HttpIfRangeRequestOutcome, HttpRequest, HttpRequestCacheControl, HttpResponse,
@@ -158,6 +160,71 @@ fn response_vary_helper_declares_normalized_vary_header() {
   let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
 
   assert!(serialized.contains("\r\nVary: accept-encoding, x-user\r\n"));
+}
+
+#[test]
+fn response_age_and_expires_helpers_declare_metadata_headers() {
+  let expires = UNIX_EPOCH + Duration::from_secs(784_111_777);
+  let response = HttpResponse::ok("body").with_age(60).with_expires(expires);
+
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nAge: 60\r\n"));
+  assert!(serialized.contains("\r\nExpires: Sun, 06 Nov 1994 08:49:37 GMT\r\n"));
+  assert_eq!(Some(60), response.age().expect("Age should parse"));
+  assert_eq!(
+    Some(expires),
+    response.expires().expect("Expires should parse")
+  );
+}
+
+#[test]
+fn response_age_and_expires_helpers_parse_raw_metadata_headers() {
+  let response = HttpResponse::ok("body")
+    .header("Age", "0")
+    .header("Expires", "Sunday, 06-Nov-94 08:49:37 GMT");
+
+  assert_eq!(Some(0), response.age().expect("Age should parse"));
+  assert_eq!(
+    Some(UNIX_EPOCH + Duration::from_secs(784_111_777)),
+    response.expires().expect("Expires should parse")
+  );
+}
+
+#[test]
+fn response_age_helper_rejects_malformed_or_overflowing_values() {
+  for value in ["", " ", "-1", "+1", "1.5", "abc", "18446744073709551616"] {
+    let response = HttpResponse::ok("body").header("Age", value);
+
+    assert!(
+      response.age().is_err(),
+      "Age helper should reject {value:?}"
+    );
+  }
+}
+
+#[test]
+fn response_expires_helper_rejects_malformed_values() {
+  for value in ["", "not a date", "Sun, 06 Nov 1994 08:49:37 PST"] {
+    let response = HttpResponse::ok("body").header("Expires", value);
+
+    assert!(
+      response.expires().is_err(),
+      "Expires helper should reject {value:?}"
+    );
+  }
+}
+
+#[test]
+fn raw_age_and_expires_headers_are_preserved_without_helper_validation() {
+  let response = HttpResponse::ok("body")
+    .header("Age", "not-a-delta")
+    .header("Expires", "not-a-date");
+
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nAge: not-a-delta\r\n"));
+  assert!(serialized.contains("\r\nExpires: not-a-date\r\n"));
 }
 
 #[test]

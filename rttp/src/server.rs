@@ -4521,6 +4521,21 @@ impl HttpResponse {
     Ok(self)
   }
 
+  pub fn with_age(mut self, delta_seconds: u64) -> Self {
+    self
+      .headers
+      .push(HttpHeader::new("Age", delta_seconds.to_string()));
+    self
+  }
+
+  pub fn with_expires(mut self, http_date: SystemTime) -> Self {
+    self.headers.push(HttpHeader::new(
+      "Expires",
+      httpdate::fmt_http_date(http_date),
+    ));
+    self
+  }
+
   pub fn trailers(&self) -> &[HttpHeader] {
     &self.trailers
   }
@@ -4559,6 +4574,28 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpVary::parse_values(values).map(Some)
+  }
+
+  pub fn age(&self) -> Result<Option<u64>, HttpAgeParseError> {
+    let Some(value) =
+      self.single_header_value("Age", HttpAgeParseError::new("multiple Age headers"))?
+    else {
+      return Ok(None);
+    };
+    parse_http_age(value).map(Some)
+  }
+
+  pub fn expires(&self) -> Result<Option<SystemTime>, HttpExpiresParseError> {
+    let Some(value) = self.single_header_value(
+      "Expires",
+      HttpExpiresParseError::new("multiple Expires headers"),
+    )?
+    else {
+      return Ok(None);
+    };
+    httpdate::parse_http_date(value)
+      .map(Some)
+      .map_err(|_| HttpExpiresParseError::new("invalid Expires HTTP-date"))
   }
 
   pub fn body<B: AsRef<[u8]>>(mut self, body: B) -> Self {
@@ -4764,6 +4801,21 @@ impl HttpResponse {
       .rposition(|header| header.name.eq_ignore_ascii_case("Connection"))
   }
 
+  fn single_header_value<E>(&self, name: &str, multiple_error: E) -> Result<Option<&str>, E> {
+    let mut values = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case(name))
+      .map(|header| header.value.as_str());
+    let Some(value) = values.next() else {
+      return Ok(None);
+    };
+    if values.next().is_some() {
+      return Err(multiple_error);
+    }
+    Ok(Some(value))
+  }
+
   fn closes_connection(&self) -> bool {
     self
       .headers
@@ -4771,6 +4823,58 @@ impl HttpResponse {
       .filter(|header| header.name.eq_ignore_ascii_case("Connection"))
       .any(|header| connection_header_has_token(Some(header.value.as_str()), "close"))
   }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpAgeParseError {
+  message: String,
+}
+
+impl HttpAgeParseError {
+  fn new<S: AsRef<str>>(message: S) -> Self {
+    Self {
+      message: message.as_ref().to_string(),
+    }
+  }
+}
+
+impl fmt::Display for HttpAgeParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpAgeParseError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpExpiresParseError {
+  message: String,
+}
+
+impl HttpExpiresParseError {
+  fn new<S: AsRef<str>>(message: S) -> Self {
+    Self {
+      message: message.as_ref().to_string(),
+    }
+  }
+}
+
+impl fmt::Display for HttpExpiresParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpExpiresParseError {}
+
+fn parse_http_age(value: &str) -> Result<u64, HttpAgeParseError> {
+  let value = value.trim();
+  if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+    return Err(HttpAgeParseError::new("invalid Age delta-seconds"));
+  }
+  value
+    .parse::<u64>()
+    .map_err(|_| HttpAgeParseError::new("invalid Age delta-seconds"))
 }
 
 fn parse_suffix_byte_range(
