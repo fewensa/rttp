@@ -218,6 +218,36 @@ impl HttpClient {
     Ok(self.header(("Range", format!("bytes=-{}", suffix).as_str())))
   }
 
+  /// Set a single entity-tag validator, `If-None-Match: <etag>`.
+  ///
+  /// Accepts `*`, a strong entity tag such as `"abc"`, or a weak entity tag
+  /// such as `W/"abc"`. Use `header` directly for multiple validators.
+  pub fn if_none_match<S: AsRef<str>>(&mut self, etag: S) -> error::Result<&mut Self> {
+    let etag = validate_single_etag(etag.as_ref())?;
+    Ok(self.header(Header::new("If-None-Match", etag)))
+  }
+
+  /// Set a single entity-tag validator, `If-Match: <etag>`.
+  ///
+  /// Accepts `*`, a strong entity tag such as `"abc"`, or a weak entity tag
+  /// such as `W/"abc"`. Use `header` directly for multiple validators.
+  pub fn if_match<S: AsRef<str>>(&mut self, etag: S) -> error::Result<&mut Self> {
+    let etag = validate_single_etag(etag.as_ref())?;
+    Ok(self.header(Header::new("If-Match", etag)))
+  }
+
+  /// Set an HTTP-date modification validator, `If-Modified-Since: <http-date>`.
+  pub fn if_modified_since<S: AsRef<str>>(&mut self, http_date: S) -> error::Result<&mut Self> {
+    let http_date = validate_http_date(http_date.as_ref())?;
+    Ok(self.header(Header::new("If-Modified-Since", http_date)))
+  }
+
+  /// Set an HTTP-date modification validator, `If-Unmodified-Since: <http-date>`.
+  pub fn if_unmodified_since<S: AsRef<str>>(&mut self, http_date: S) -> error::Result<&mut Self> {
+    let http_date = validate_http_date(http_date.as_ref())?;
+    Ok(self.header(Header::new("If-Unmodified-Since", http_date)))
+  }
+
   /// Set request content type
   pub fn content_type<S: AsRef<str>>(&mut self, content_type: S) -> &mut Self {
     self.header(("Content-Type", content_type.as_ref()))
@@ -471,6 +501,48 @@ fn validate_request_trailer_header(name: &str, value: &str) -> error::Result<()>
     ));
   }
   Ok(())
+}
+
+fn validate_single_etag(etag: &str) -> error::Result<&str> {
+  let etag = etag.trim();
+  if etag == "*" {
+    return Ok(etag);
+  }
+  if etag.contains(',') {
+    return Err(error::builder_with_message(
+      "conditional entity-tag helper accepts one validator; use header() for lists",
+    ));
+  }
+
+  let opaque_tag = etag.strip_prefix("W/").unwrap_or(etag);
+  let Some(inner) = opaque_tag
+    .strip_prefix('"')
+    .and_then(|value| value.strip_suffix('"'))
+  else {
+    return Err(error::builder_with_message(
+      "conditional entity-tag must be *, \"tag\", or W/\"tag\"",
+    ));
+  };
+
+  if inner
+    .as_bytes()
+    .iter()
+    .any(|byte| matches!(*byte, b'"' | b'\r' | b'\n') || *byte < 0x21 || *byte == 0x7f)
+  {
+    return Err(error::builder_with_message(
+      "conditional entity-tag contains invalid characters",
+    ));
+  }
+
+  Ok(etag)
+}
+
+fn validate_http_date(http_date: &str) -> error::Result<&str> {
+  let http_date = http_date.trim();
+  httpdate::parse_http_date(http_date).map_err(|_| {
+    error::builder_with_message("conditional modification time must be a valid HTTP-date")
+  })?;
+  Ok(http_date)
 }
 
 fn is_forbidden_request_trailer_name(name: &str) -> bool {

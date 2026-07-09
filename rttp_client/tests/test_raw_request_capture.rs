@@ -267,6 +267,113 @@ fn manual_range_header_remains_available_as_escape_hatch() {
 }
 
 #[test]
+fn conditional_request_helpers_emit_validator_headers() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .if_none_match(r#""abc123""#)
+      .expect("etag should be accepted")
+      .if_modified_since("Sun, 06 Nov 1994 08:49:37 GMT")
+      .expect("http date should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some(r#""abc123""#), header_value(&request, "If-None-Match"));
+  assert_eq!(
+    Some("Sun, 06 Nov 1994 08:49:37 GMT"),
+    header_value(&request, "If-Modified-Since")
+  );
+
+  let request = capture_request(|base_url| {
+    client()
+      .put()
+      .url(format!("{}/asset", base_url))
+      .if_match(r#"W/"weak-tag""#)
+      .expect("weak etag syntax should be accepted")
+      .if_unmodified_since("Sun, 06 Nov 1994 08:49:37 GMT")
+      .expect("http date should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some(r#"W/"weak-tag""#), header_value(&request, "If-Match"));
+  assert_eq!(
+    Some("Sun, 06 Nov 1994 08:49:37 GMT"),
+    header_value(&request, "If-Unmodified-Since")
+  );
+}
+
+#[test]
+fn conditional_request_helpers_reject_obvious_malformed_inputs_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .if_none_match("abc123")
+      .expect_err("unquoted etag should be rejected");
+
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "malformed etag helper should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .if_match(r#""one", "two""#)
+      .expect_err("etag lists should stay on manual header escape hatch");
+
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "malformed etag helper should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .if_modified_since("not a date")
+      .expect_err("invalid http date should be rejected");
+
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "malformed http date helper should not open a socket"
+  );
+}
+
+#[test]
+fn manual_conditional_headers_remain_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("If-None-Match", r#""one", "two""#))
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some(r#""one", "two""#),
+    header_value(&request, "If-None-Match")
+  );
+}
+
+#[test]
 fn streaming_fixed_framing_does_not_leak_into_later_emit() {
   let (addr, handle) = spawn_streaming_then_capture_server();
   let mut client = client();
