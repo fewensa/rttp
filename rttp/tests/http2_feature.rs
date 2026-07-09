@@ -2883,6 +2883,7 @@ fn h2c_extended_connect_dispatches_after_initial_connect_protocol_negotiation() 
     .with_read_timeout(Some(Duration::from_secs(2)))
     .with_write_timeout(Some(Duration::from_secs(2)));
   let addr = server.local_addr().expect("h2 extended connect addr");
+  let (tx, rx) = mpsc::channel();
 
   let handle = thread::spawn(move || {
     server
@@ -2891,7 +2892,10 @@ fn h2c_extended_connect_dispatches_after_initial_connect_protocol_negotiation() 
         assert_eq!("CONNECT", request.method());
         assert_eq!("/ws", request.target());
         assert_eq!(Some(addr.to_string().as_str()), request.header("host"));
+        assert_eq!(Some("trace-1"), request.header("x-trace"));
         assert_eq!(Some("websocket"), request.extended_connect_protocol());
+        assert!(request.body().is_empty());
+        tx.send(()).expect("send extended CONNECT dispatch");
         HttpResponse::ok("extended connect dispatched")
       })
       .expect("serve negotiated h2 extended CONNECT")
@@ -2910,7 +2914,12 @@ fn h2c_extended_connect_dispatches_after_initial_connect_protocol_negotiation() 
     H2_FRAME_HEADERS,
     H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
     1,
-    &h2_extended_connect_headers(b"/ws", addr.to_string().as_bytes(), b"websocket"),
+    &{
+      let mut headers =
+        h2_extended_connect_headers(b"/ws", addr.to_string().as_bytes(), b"websocket");
+      headers.extend(h2_literal_new_name(b"x-trace", b"trace-1"));
+      headers
+    },
   );
   stream
     .flush()
@@ -2928,6 +2937,88 @@ fn h2c_extended_connect_dispatches_after_initial_connect_protocol_negotiation() 
   );
 
   handle.join().expect("h2 extended connect server thread");
+  rx.recv_timeout(Duration::from_secs(2))
+    .expect("receive one extended CONNECT dispatch");
+  assert!(
+    rx.try_recv().is_err(),
+    "extended CONNECT must dispatch exactly once"
+  );
+}
+
+#[test]
+fn h2c_extended_connect_rejects_body_or_trailers_before_handler() {
+  for case in ["data", "trailers"] {
+    let server = rttp::Http::server("127.0.0.1:0")
+      .expect("bind bounded h2 extended connect server")
+      .with_read_timeout(Some(Duration::from_secs(2)))
+      .with_write_timeout(Some(Duration::from_secs(2)));
+    let addr = server
+      .local_addr()
+      .expect("bounded h2 extended connect addr");
+    let (tx, rx) = mpsc::channel();
+
+    let handle = thread::spawn(move || {
+      server.accept_one(|request| {
+        tx.send((request.method().to_string(), request.body().to_vec()))
+          .expect("send unexpected extended CONNECT body dispatch");
+        HttpResponse::ok("unexpected extended CONNECT body dispatch")
+      })
+    });
+
+    let mut stream = TcpStream::connect(addr).expect("connect bounded h2 extended connect server");
+    stream
+      .set_read_timeout(Some(Duration::from_millis(200)))
+      .expect("set bounded h2 extended connect read timeout");
+    complete_h2_server_handshake_with_settings(
+      &mut stream,
+      &h2_setting(H2_SETTINGS_ENABLE_CONNECT_PROTOCOL, 1),
+    );
+    write_h2_frame(
+      &mut stream,
+      H2_FRAME_HEADERS,
+      H2_FLAG_END_HEADERS,
+      1,
+      &h2_extended_connect_headers(b"/bounded-ws", addr.to_string().as_bytes(), b"websocket"),
+    );
+    match case {
+      "data" => write_h2_frame(
+        &mut stream,
+        H2_FRAME_DATA,
+        H2_FLAG_END_STREAM,
+        1,
+        b"outside bounded scope",
+      ),
+      "trailers" => write_h2_frame(
+        &mut stream,
+        H2_FRAME_HEADERS,
+        H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+        1,
+        &h2_literal_new_name(b"x-late", b"outside-bounded-scope"),
+      ),
+      _ => unreachable!(),
+    }
+    stream
+      .flush()
+      .expect("flush bounded h2 extended CONNECT request");
+    let _ = try_read_h2_frame(&mut stream);
+    drop(stream);
+
+    let err = handle
+      .join()
+      .expect("bounded h2 extended connect server thread")
+      .expect_err("extended CONNECT body boundary must reject before handler");
+    assert_eq!(io::ErrorKind::InvalidData, err.kind(), "{case}");
+    assert!(
+      err
+        .to_string()
+        .contains("HTTP/2 extended CONNECT request bodies are unsupported"),
+      "unexpected bounded extended CONNECT rejection for {case}: {err}"
+    );
+    assert!(
+      rx.try_recv().is_err(),
+      "bounded extended CONNECT {case} must not dispatch"
+    );
+  }
 }
 
 #[test]

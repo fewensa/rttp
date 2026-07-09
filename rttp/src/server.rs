@@ -674,6 +674,9 @@ impl HttpServer {
               ));
             }
             let header_block_kind = if request_stream.decoded_headers.is_some() {
+              if request_stream.is_extended_connect() {
+                return Err(unsupported_http2_extended_connect_body_error());
+              }
               if frame.flags & HTTP2_FLAG_END_STREAM != HTTP2_FLAG_END_STREAM {
                 return Err(io::Error::new(
                   io::ErrorKind::InvalidData,
@@ -763,6 +766,9 @@ impl HttpServer {
               io::ErrorKind::InvalidData,
               "HTTP/2 DATA frame arrived before request headers",
             ));
+          }
+          if request_stream.is_extended_connect() {
+            return Err(unsupported_http2_extended_connect_body_error());
           }
 
           let data_payload = http2_data_payload_to_data(&frame.payload, frame.flags)?;
@@ -1040,6 +1046,13 @@ impl Http2RequestStream {
 
   fn is_complete(&self) -> bool {
     self.decoded_headers.is_some() && self.end_stream && !self.in_header_continuation
+  }
+
+  fn is_extended_connect(&self) -> bool {
+    self
+      .decoded_headers
+      .as_ref()
+      .is_some_and(DecodedHttp2RequestHeaders::is_extended_connect)
   }
 
   fn finish_header_block(
@@ -1518,6 +1531,13 @@ fn invalid_http2_enable_connect_protocol_settings_error() -> io::Error {
   )
 }
 
+fn unsupported_http2_extended_connect_body_error() -> io::Error {
+  io::Error::new(
+    io::ErrorKind::InvalidData,
+    "HTTP/2 extended CONNECT request bodies are unsupported",
+  )
+}
+
 fn invalid_http2_client_stream_id_error() -> io::Error {
   io::Error::new(
     io::ErrorKind::InvalidData,
@@ -1622,6 +1642,10 @@ struct DecodedHttp2RequestHeaders {
 }
 
 impl DecodedHttp2RequestHeaders {
+  fn is_extended_connect(&self) -> bool {
+    self.extended_connect_protocol.is_some()
+  }
+
   fn into_request(self, body: Vec<u8>, trailers: Vec<(String, String)>) -> io::Result<Request> {
     let method = self
       .method
@@ -1637,6 +1661,9 @@ impl DecodedHttp2RequestHeaders {
         io::ErrorKind::InvalidData,
         "HTTP/2 extended CONNECT :protocol requires CONNECT",
       ));
+    }
+    if self.extended_connect_protocol.is_some() && (!body.is_empty() || !trailers.is_empty()) {
+      return Err(unsupported_http2_extended_connect_body_error());
     }
     let target = self
       .target
@@ -2604,6 +2631,9 @@ fn read_http2_response_flow_control_frame<S: Read + Write>(
           ));
         }
         let header_block_kind = if request_stream.decoded_headers.is_some() {
+          if request_stream.is_extended_connect() {
+            return Err(unsupported_http2_extended_connect_body_error());
+          }
           if frame.flags & HTTP2_FLAG_END_STREAM != HTTP2_FLAG_END_STREAM {
             return Err(io::Error::new(
               io::ErrorKind::InvalidData,
@@ -2694,6 +2724,9 @@ fn read_http2_response_flow_control_frame<S: Read + Write>(
             io::ErrorKind::InvalidData,
             "HTTP/2 DATA frame arrived before request headers",
           ));
+        }
+        if request_stream.is_extended_connect() {
+          return Err(unsupported_http2_extended_connect_body_error());
         }
 
         let data_payload = http2_data_payload_to_data(&frame.payload, frame.flags)?;
