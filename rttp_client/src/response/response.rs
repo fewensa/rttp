@@ -13,6 +13,8 @@ const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
 const MAX_ALLOW_VALUE_BYTES: usize = 64 * 1024;
 const MAX_ALLOW_METHODS: usize = 256;
+const MAX_ACCEPT_RANGES_VALUE_BYTES: usize = 64 * 1024;
+const MAX_ACCEPT_RANGE_UNITS: usize = 256;
 const MAX_RETRY_AFTER_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_LANGUAGE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_LANGUAGE_TAGS: usize = 256;
@@ -140,6 +142,14 @@ impl Response {
       return Ok(None);
     }
     Allow::parse_values(values.into_iter().map(String::as_str)).map(Some)
+  }
+
+  pub fn accept_ranges(&self) -> error::Result<Option<AcceptRanges>> {
+    let values = self.header_values("accept-ranges");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    AcceptRanges::parse_values(values.into_iter().map(String::as_str)).map(Some)
   }
 
   pub fn content_range(&self) -> Option<ContentRange> {
@@ -318,6 +328,72 @@ impl Allow {
       .methods
       .iter()
       .any(|candidate| candidate == method.as_ref())
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AcceptRanges {
+  units: Vec<String>,
+}
+
+impl AcceptRanges {
+  pub fn parse(value: impl AsRef<str>) -> error::Result<Self> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  fn parse_values<'a, I>(values: I) -> error::Result<Self>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut units = Vec::new();
+    let mut seen = HashSet::new();
+
+    for value in values {
+      if value.len() > MAX_ACCEPT_RANGES_VALUE_BYTES {
+        return Err(error::bad_response(
+          "Accept-Ranges header value is too large",
+        ));
+      }
+
+      for unit in value.split(',') {
+        let unit = unit.trim();
+        if unit.is_empty() || !is_token(unit) {
+          return Err(error::bad_response("Invalid Accept-Ranges range-unit"));
+        }
+        if units.len() >= MAX_ACCEPT_RANGE_UNITS {
+          return Err(error::bad_response("Too many Accept-Ranges range-units"));
+        }
+
+        let normalized = unit.to_ascii_lowercase();
+        if !seen.insert(normalized.clone()) {
+          return Err(error::bad_response("Duplicate Accept-Ranges range-unit"));
+        }
+        units.push(normalized);
+      }
+    }
+
+    if units.is_empty() {
+      return Err(error::bad_response("Invalid Accept-Ranges range-unit"));
+    }
+    if units.iter().any(|unit| unit == "none") && units.len() != 1 {
+      return Err(error::bad_response(
+        "Accept-Ranges none cannot be combined with range-units",
+      ));
+    }
+
+    Ok(Self { units })
+  }
+
+  pub fn units(&self) -> Vec<&str> {
+    self.units.iter().map(String::as_str).collect()
+  }
+
+  pub fn is_none(&self) -> bool {
+    self.units.as_slice() == ["none"]
+  }
+
+  pub fn accepts_bytes(&self) -> bool {
+    self.units.iter().any(|unit| unit == "bytes")
   }
 }
 
