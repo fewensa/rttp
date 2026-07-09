@@ -75,6 +75,39 @@ built-in filesystem serving, path normalization, MIME selection, ETag,
 Last-Modified, cache, authorization, directory-index, or dotfile policy. Those
 remain application decisions before choosing `200`, `206`, or `416`.
 
+## Bounded HTTP/1.1 conditional requests
+
+The server exposes validator evaluation helpers, not a static-file or cache
+policy engine. Build representation metadata with
+`HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("tag"))` or
+`HttpEntityTag::weak("tag")`, optionally add `last_modified(SystemTime)`, and
+evaluate a request with `Request::evaluate_conditional(&metadata)` or
+`evaluate_conditional_request(&request, &metadata)`.
+
+Evaluation returns `HttpConditionalRequestOutcome::Proceed`,
+`NotModified`, or `PreconditionFailed`. `If-Match` uses strong ETag comparison
+and takes precedence over `If-Unmodified-Since`; a failed match returns
+`PreconditionFailed`. `If-None-Match` uses weak ETag comparison and takes
+precedence over `If-Modified-Since`; a match returns `NotModified` for `GET`
+or `HEAD` and `PreconditionFailed` for other methods. `If-Modified-Since` and
+`If-Unmodified-Since` are evaluated only when their HTTP-date values parse
+successfully, and last-modified comparisons are performed at HTTP-date second
+precision.
+
+Use `HttpResponse::not_modified(&metadata)` for `304 Not Modified`; it adds
+available `ETag` and `Last-Modified` validators and serializes without a
+message body. Use `HttpResponse::precondition_failed()` for
+`412 Precondition Failed`; it returns an empty response unless application code
+adds its own headers or body. Applications remain responsible for the normal
+successful `200` response when evaluation returns `Proceed`.
+
+ETag comparison is deliberately scoped to the supplied representation metadata.
+The helpers do not pick entity tags, read files, check authorization, choose a
+static-file policy, store cached responses, perform automatic revalidation, or
+implement a full cache-control engine. Invalid conditional headers that cannot
+be parsed as the bounded helper syntax are ignored by the evaluation helper
+rather than rejected before handler code.
+
 ## Bounded trailer behavior
 
 HTTP/1.1 server trailer support remains chunked-scope only. Chunked request
@@ -268,6 +301,7 @@ scheduling, or async accept loops.
 | HTTP/1.1 connection handling | Bounded sequential `serve_requests`, keep-alive and close behavior for HTTP/1.1 and HTTP/1.0, pipelined request boundaries, malformed request rejection before handler dispatch | Blocking listener only; no async accept loop |
 | HTTP/1.1 response framing | Automatic `Content-Length`, explicit chunked responses, bodyless `HEAD`, `101`, `204`, and `304`, response trailers after the terminating chunk | No server TLS |
 | Byte ranges | `HttpByteRange` parses one `bytes` range and `HttpResponse::partial_content`/`range_not_satisfiable` serialize `206`/`416` with `Content-Range` | No multipart range serialization, `If-Range` evaluation, filesystem serving, or static-file policy |
+| Conditional requests | `Request::evaluate_conditional`, `evaluate_conditional_request`, `HttpConditionalMetadata`, and `HttpEntityTag` evaluate bounded HTTP/1.1 validators; `HttpResponse::not_modified` and `precondition_failed` serialize `304` and `412` outcomes | No cache storage, static-file serving policy, automatic revalidation, or cache-control engine |
 | Upgrade and tunnel targets | `CONNECT` authority-form requests are accepted as HTTP requests; `HttpResponse::upgrade` can hand an upgraded socket to caller code after a matching request | The server does not implement the upgraded protocol after handoff |
 | Trailers | Chunked request trailers are preserved on `Request`; malformed, oversized, forbidden, and pseudo-header trailers are rejected; response trailers can be serialized for chunked responses | Application metadata trailers are allowed; trailer names that affect connection state, routing, authentication/cookies, framing, or payload processing are rejected |
 | Bounded h2c server | The same `socket2` listener detects the HTTP/2 prior-knowledge preface or a valid HTTP/1.1 `Upgrade: h2c` request with `HTTP2-Settings`, validates SETTINGS including legal `SETTINGS_ENABLE_PUSH` and `SETTINGS_ENABLE_CONNECT_PROTOCOL` values of only `0` or `1` and legal `SETTINGS_MAX_FRAME_SIZE` values from 16,384 through 16,777,215 bytes, dispatches RFC 8441 extended CONNECT only after `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1` has been negotiated, exposes negotiated extended CONNECT as a normal `Request` with method `CONNECT`, version `HTTP/2`, target from `:path`, `host` from `:authority`, and `Request::extended_connect_protocol()` from `:protocol`, advertises the default 16,384-byte `SETTINGS_MAX_FRAME_SIZE`, rejects inbound frames above the active local limit, splits outbound HEADERS, DATA, and trailers to the active peer frame-size limit, advertises `SETTINGS_MAX_CONCURRENT_STREAMS` from the bounded active stream allowance, enforces that allowance before dispatching new streams, advertises and enforces a conservative `SETTINGS_MAX_HEADER_LIST_SIZE` for inbound request metadata, bounds HPACK dynamic table use with `SETTINGS_HEADER_TABLE_SIZE`, serves bounded streams including bodyless DELETE, OPTIONS, TRACE, and negotiated extended CONNECT, handles HEAD without response DATA, rejects connection-specific request fields before handler dispatch, strips connection-specific response fields during h2c serialization, treats `RST_STREAM` as a bounded reset/cancellation signal for the affected stream, acknowledges valid PING frames with matching opaque data, accepts padded HEADERS/DATA/trailers without exposing padding, handles HPACK Huffman fields and bounded CONTINUATION header blocks, emits `GOAWAY` with the last completed stream id at bounded shutdown, validates and ignores valid PRIORITY metadata, ignores HTTP/2-allowed unknown/extension frames inside this bounded path, normalizes reserved stream-id high bits, and applies conservative DATA flow control | Ordinary `CONNECT`, missing-negotiation `:protocol`, non-CONNECT `:protocol`, malformed h2c Upgrade, request bodies on h2c Upgrade, and `PUSH_PROMISE` are rejected deterministically before handler dispatch; HTTP/1.1 `CONNECT` and non-h2c `Upgrade` remain separate handoff paths; bounded h2c only, with no public cancellation callback API, no dynamic policy API, no extension callback API, no full extension negotiation, TLS ALPN, external h2 integration, full WebSocket-over-h2, proxy h2, tunnel handoff, connection pooling, persistent multiplex sessions, persistent HTTP/2 session management, automatic retry, server push, full RFC 8441 support, full stream state machine, unbounded multiplexing, unbounded multiplex scheduling, general multiplexing, general tunnel scheduling, priority scheduling, or full HTTP/2 server feature set |
