@@ -1,5 +1,6 @@
 use rttp_client::response::Response;
 use rttp_client::types::{Cookie, RoUrl};
+use std::time::{Duration, UNIX_EPOCH};
 
 #[test]
 fn test_parse_cookie_name_can_match_attribute_name() {
@@ -279,6 +280,89 @@ fn test_parse_cache_control_rejects_invalid_helper_values_without_rejecting_resp
       Some(&value.to_string()),
       response.header_value("Cache-Control")
     );
+  }
+}
+
+#[test]
+fn test_parse_age_and_expires_response_metadata() {
+  let s = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Age: 2147483648\r\n",
+    "Expires: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
+    .expect("parse response with age and expires metadata");
+
+  assert_eq!(
+    Some(2_147_483_648),
+    response.age().expect("valid age should parse")
+  );
+  assert_eq!(
+    Some(UNIX_EPOCH + Duration::from_secs(784111777)),
+    response.expires().expect("valid expires should parse")
+  );
+  assert_eq!(
+    Some(&"2147483648".to_string()),
+    response.header_value("Age")
+  );
+  assert_eq!(
+    Some(&"Sun, 06 Nov 1994 08:49:37 GMT".to_string()),
+    response.header_value("Expires")
+  );
+
+  let s = concat!("HTTP/1.1 200 OK\r\n", "Content-Length: 2\r\n", "\r\n", "OK");
+  let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
+    .expect("parse response without age or expires");
+  assert_eq!(None, response.age().expect("absent age should parse"));
+  assert_eq!(
+    None,
+    response.expires().expect("absent expires should parse")
+  );
+}
+
+#[test]
+fn test_parse_age_rejects_invalid_helper_values_without_rejecting_response() {
+  let invalid_values = [
+    "",
+    "-1",
+    "+1",
+    "1.5",
+    "6 0",
+    "60,61",
+    "abc",
+    "18446744073709551616",
+  ];
+
+  for value in invalid_values {
+    let raw = format!("HTTP/1.1 200 OK\r\nAge: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response remains usable");
+
+    assert!(
+      response.age().is_err(),
+      "age helper should reject {value:?}"
+    );
+    assert_eq!(Some(&value.to_string()), response.header_value("Age"));
+  }
+}
+
+#[test]
+fn test_parse_expires_rejects_invalid_helper_values_without_rejecting_response() {
+  let invalid_values = ["", "not a date", "Sun, 06 Nov 1994 08:49:37 PST"];
+
+  for value in invalid_values {
+    let raw = format!("HTTP/1.1 200 OK\r\nExpires: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response remains usable");
+
+    assert!(
+      response.expires().is_err(),
+      "expires helper should reject {value:?}"
+    );
+    assert_eq!(Some(&value.to_string()), response.header_value("Expires"));
   }
 }
 

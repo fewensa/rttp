@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 use std::fmt;
+use std::time::SystemTime;
 
+use httpdate::parse_http_date;
 use url::Url;
 
 use crate::error;
@@ -98,6 +100,24 @@ impl Response {
 
   pub fn last_modified(&self) -> Option<&String> {
     self.header_value("last-modified")
+  }
+
+  pub fn age(&self) -> error::Result<Option<u64>> {
+    self
+      .header_value("age")
+      .map(|value| parse_age_delta_seconds(value).map(Some))
+      .unwrap_or(Ok(None))
+  }
+
+  pub fn expires(&self) -> error::Result<Option<SystemTime>> {
+    self
+      .header_value("expires")
+      .map(|value| {
+        parse_http_date(value)
+          .map(Some)
+          .map_err(|_| error::bad_response("Invalid Expires HTTP-date"))
+      })
+      .unwrap_or(Ok(None))
   }
 
   pub fn content_range(&self) -> Option<ContentRange> {
@@ -673,6 +693,15 @@ fn parse_delta_seconds(
   value
     .parse::<u64>()
     .map_err(|_| error::bad_response(format!("Invalid Cache-Control {name} delta-seconds")))
+}
+
+fn parse_age_delta_seconds(value: &str) -> error::Result<u64> {
+  if value.is_empty() || !value.chars().all(|ch| ch.is_ascii_digit()) {
+    return Err(error::bad_response("Invalid Age delta-seconds"));
+  }
+  value
+    .parse::<u64>()
+    .map_err(|_| error::bad_response("Invalid Age delta-seconds"))
 }
 
 fn split_field_names(value: &str) -> Vec<String> {
