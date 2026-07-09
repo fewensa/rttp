@@ -1058,6 +1058,78 @@ pub mod vary {
   }
 }
 
+pub mod content_location {
+  pub const MAX_VALUE_BYTES: usize = 64 * 1024;
+
+  pub struct ResponseCase {
+    pub name: &'static str,
+    pub values: &'static [&'static str],
+    pub raw_value: &'static str,
+    pub normalized_value: &'static str,
+    pub declaration_value: &'static str,
+  }
+
+  pub struct InvalidCase {
+    pub name: &'static str,
+    pub value: &'static str,
+  }
+
+  const RESPONSE_CASES: &[ResponseCase] = &[
+    ResponseCase {
+      name: "absolute URI",
+      values: &["https://example.test/representations/current.json"],
+      raw_value: "https://example.test/representations/current.json",
+      normalized_value: "https://example.test/representations/current.json",
+      declaration_value: "https://example.test/representations/current.json",
+    },
+    ResponseCase {
+      name: "absolute path reference with optional whitespace",
+      values: &[" /representations/current.json "],
+      raw_value: "/representations/current.json",
+      normalized_value: "/representations/current.json",
+      declaration_value: " /representations/current.json ",
+    },
+    ResponseCase {
+      name: "relative path reference with query and fragment",
+      values: &["../current?variant=full#metadata"],
+      raw_value: "../current?variant=full#metadata",
+      normalized_value: "../current?variant=full#metadata",
+      declaration_value: "../current?variant=full#metadata",
+    },
+  ];
+
+  const INVALID_CASES: &[InvalidCase] = &[
+    InvalidCase {
+      name: "empty value",
+      value: "",
+    },
+    InvalidCase {
+      name: "blank value",
+      value: " ",
+    },
+    InvalidCase {
+      name: "delete control character",
+      value: "/safe\u{7f}",
+    },
+    InvalidCase {
+      name: "unit separator control character",
+      value: "/safe\u{1f}",
+    },
+  ];
+
+  pub fn response_cases() -> &'static [ResponseCase] {
+    RESPONSE_CASES
+  }
+
+  pub fn invalid_cases() -> &'static [InvalidCase] {
+    INVALID_CASES
+  }
+
+  pub fn oversized_value() -> String {
+    format!("/{}", "a".repeat(MAX_VALUE_BYTES + 1))
+  }
+}
+
 pub mod content_language {
   pub const MAX_VALUE_BYTES: usize = 64 * 1024;
   pub const SERVER_MAX_LANGUAGES: usize = 32;

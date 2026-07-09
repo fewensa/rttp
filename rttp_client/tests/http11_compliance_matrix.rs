@@ -89,6 +89,27 @@ fn content_language_response(values: &[&str], include_adjacent_metadata: bool) -
   response.into_bytes()
 }
 
+fn content_location_response(values: &[&str], include_adjacent_metadata: bool) -> Vec<u8> {
+  let mut response = String::from("HTTP/1.1 200 OK\r\n");
+  for value in values {
+    response.push_str("Content-Location: ");
+    response.push_str(value);
+    response.push_str("\r\n");
+  }
+  if include_adjacent_metadata {
+    response.push_str("Cache-Control: public, max-age=60\r\n");
+    response.push_str("Age: 5\r\n");
+    response.push_str("Expires: Sun, 06 Nov 1994 08:49:37 GMT\r\n");
+    response.push_str("Vary: Accept-Encoding\r\n");
+    response.push_str("Retry-After: 30\r\n");
+    response.push_str("Allow: GET, HEAD\r\n");
+    response.push_str("Content-Language: fr-CA, es-419\r\n");
+    response.push_str("Accept-Ranges: bytes, pages\r\n");
+  }
+  response.push_str("Content-Length: 2\r\n\r\nOK");
+  response.into_bytes()
+}
+
 fn allow_response_with_cache_metadata(values: &[&str]) -> Vec<u8> {
   let mut response = String::from("HTTP/1.1 405 Method Not Allowed\r\n");
   for value in values {
@@ -531,6 +552,28 @@ fn assert_response_content_language(
   );
 }
 
+fn assert_response_content_location(
+  name: &str,
+  response: &rttp_client::response::Response,
+  expected: &fixtures::content_location::ResponseCase,
+) {
+  let content_location = response
+    .content_location()
+    .unwrap_or_else(|err| panic!("{name} Content-Location should parse: {err}"))
+    .unwrap_or_else(|| panic!("{name} should include Content-Location"));
+
+  assert_eq!(
+    expected.normalized_value,
+    content_location.as_str(),
+    "{name}"
+  );
+  assert_eq!(
+    Some(&expected.raw_value.to_string()),
+    response.header_value("Content-Location"),
+    "{name}"
+  );
+}
+
 fn assert_cache_control_helper_rejects_but_preserves_response(name: &str, raw_response: Vec<u8>) {
   let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
 
@@ -679,6 +722,33 @@ fn assert_content_language_helper_rejects_but_preserves_response(
   handle.join().expect("raw response server thread");
 }
 
+fn assert_content_location_helper_rejects_but_preserves_response(
+  name: &str,
+  raw_response: Vec<u8>,
+  expected_value: &str,
+) {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/content-location-invalid", addr))
+    .emit()
+    .unwrap_or_else(|err| panic!("{name} response should remain parseable: {err}"));
+
+  assert!(
+    response.content_location().is_err(),
+    "{name} helper should reject invalid Content-Location"
+  );
+  assert_eq!(
+    Some(&expected_value.to_string()),
+    response.header_value("Content-Location"),
+    "{name}"
+  );
+  assert_eq!("OK", response.body().string().unwrap(), "{name}");
+
+  handle.join().expect("raw response server thread");
+}
+
 enum ConditionalHeader {
   IfNoneMatch(&'static str),
   IfMatch(&'static str),
@@ -735,6 +805,24 @@ fn sync_client_parses_shared_content_language_response_matrix() {
       .unwrap_or_else(|err| panic!("{} response should parse: {err}", case.name));
 
     assert_response_content_language(case.name, &response, case);
+    assert_eq!("OK", response.body().string().unwrap(), "{}", case.name);
+    handle.join().expect("raw response server thread");
+  }
+}
+
+#[test]
+fn sync_client_parses_shared_content_location_response_matrix() {
+  for case in fixtures::content_location::response_cases() {
+    let raw_response = content_location_response(case.values, false);
+    let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+    let response = client()
+      .get()
+      .url(format!("http://{}/matrix/content-location", addr))
+      .emit()
+      .unwrap_or_else(|err| panic!("{} response should parse: {err}", case.name));
+
+    assert_response_content_location(case.name, &response, case);
     assert_eq!("OK", response.body().string().unwrap(), "{}", case.name);
     handle.join().expect("raw response server thread");
   }
@@ -1179,6 +1267,91 @@ fn sync_client_parses_content_language_with_existing_metadata_helpers() {
 }
 
 #[test]
+fn sync_client_parses_content_location_with_existing_metadata_helpers() {
+  for case in fixtures::content_location::response_cases() {
+    let raw_response = content_location_response(case.values, true);
+    let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+    let response = client()
+      .get()
+      .url(format!("http://{}/matrix/content-location-adjacent", addr))
+      .emit()
+      .unwrap_or_else(|err| panic!("{} response should parse: {err}", case.name));
+
+    assert_response_content_location(case.name, &response, case);
+    assert_eq!(
+      Some(60),
+      response
+        .cache_control()
+        .expect("Cache-Control should parse")
+        .expect("Cache-Control should be present")
+        .max_age(),
+      "{}",
+      case.name
+    );
+    assert_eq!(Some(5), response.age().expect("Age should parse"));
+    assert_eq!(
+      Some(UNIX_EPOCH + Duration::from_secs(fixtures::age_expires::EXPIRES_UNIX_SECONDS)),
+      response.expires().expect("Expires should parse"),
+      "{}",
+      case.name
+    );
+    assert!(
+      response
+        .vary()
+        .expect("Vary should parse")
+        .expect("Vary should be present")
+        .contains_field_name("accept-encoding"),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      Some(30),
+      response
+        .retry_after()
+        .expect("Retry-After should parse")
+        .expect("Retry-After should be present")
+        .delta_seconds(),
+      "{}",
+      case.name
+    );
+    assert!(
+      response
+        .allow()
+        .expect("Allow should parse")
+        .expect("Allow should be present")
+        .contains_method("GET"),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      &["fr-CA", "es-419"],
+      response
+        .content_language()
+        .expect("Content-Language should parse")
+        .expect("Content-Language should be present")
+        .tags()
+        .as_slice(),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      &["bytes", "pages"],
+      response
+        .accept_ranges()
+        .expect("Accept-Ranges should parse")
+        .expect("Accept-Ranges should be present")
+        .units()
+        .as_slice(),
+      "{}",
+      case.name
+    );
+    assert_eq!("OK", response.body().string().unwrap(), "{}", case.name);
+    handle.join().expect("raw response server thread");
+  }
+}
+
+#[test]
 fn sync_client_cache_control_helper_rejects_shared_invalid_response_matrix() {
   for case in fixtures::cache_control::invalid_response_cases() {
     assert_cache_control_helper_rejects_but_preserves_response(
@@ -1245,6 +1418,17 @@ fn sync_client_content_language_helper_rejects_shared_invalid_response_matrix() 
 }
 
 #[test]
+fn sync_client_content_location_helper_rejects_shared_invalid_response_matrix() {
+  for case in fixtures::content_location::invalid_cases() {
+    assert_content_location_helper_rejects_but_preserves_response(
+      case.name,
+      content_location_response(&[case.value], false),
+      case.value.trim(),
+    );
+  }
+}
+
+#[test]
 fn sync_client_retry_after_helper_rejects_shared_invalid_response_matrix() {
   for case in fixtures::retry_after::invalid_cases() {
     assert_retry_after_helper_rejects_but_preserves_response(
@@ -1275,6 +1459,21 @@ fn sync_client_retry_after_helper_rejects_duplicate_singleton_and_oversized_valu
   assert_retry_after_helper_rejects_but_preserves_response(
     "oversized Retry-After value",
     retry_after_response(&[&fixtures::retry_after::oversized_value()], false),
+  );
+}
+
+#[test]
+fn sync_client_content_location_helper_rejects_duplicate_singleton_and_oversized_values() {
+  assert_content_location_helper_rejects_but_preserves_response(
+    "duplicate Content-Location header fields",
+    content_location_response(&["/one", "/two"], false),
+    "/one",
+  );
+  let oversized = fixtures::content_location::oversized_value();
+  assert_content_location_helper_rejects_but_preserves_response(
+    "oversized Content-Location value",
+    content_location_response(&[&oversized], false),
+    &oversized,
   );
 }
 
