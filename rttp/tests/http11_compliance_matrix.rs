@@ -87,6 +87,14 @@ fn content_language_response(values: &[&str]) -> HttpResponse {
     })
 }
 
+fn content_location_response(values: &[&str]) -> HttpResponse {
+  values
+    .iter()
+    .fold(HttpResponse::new(200, "OK"), |response, value| {
+      response.header("Content-Location", value)
+    })
+}
+
 fn age_expires_response(age: u64, expires: std::time::SystemTime) -> HttpResponse {
   HttpResponse::ok("OK")
     .with_age(age)
@@ -293,6 +301,20 @@ fn model_parser_accepts_shared_cache_control_request_matrix() {
   }
 }
 
+fn assert_response_content_location(
+  name: &str,
+  response: &HttpResponse,
+  expected: &fixtures::content_location::ResponseCase,
+) {
+  assert_eq!(
+    Some(expected.normalized_value),
+    response
+      .content_location()
+      .unwrap_or_else(|err| panic!("{name} Content-Location should parse: {err}")),
+    "{name}"
+  );
+}
+
 #[test]
 fn model_parser_cache_control_helper_rejects_shared_invalid_request_matrix() {
   for case in fixtures::cache_control::invalid_request_cases() {
@@ -385,6 +407,15 @@ fn server_response_helper_accepts_shared_content_language_response_matrix() {
       .unwrap_or_else(|| panic!("{} should include Content-Language", case.name));
 
     assert_response_content_language(case.name, &content_language, case);
+  }
+}
+
+#[test]
+fn server_response_helper_accepts_shared_content_location_response_matrix() {
+  for case in fixtures::content_location::response_cases() {
+    let response = content_location_response(case.values);
+
+    assert_response_content_location(case.name, &response, case);
   }
 }
 
@@ -1014,47 +1045,41 @@ fn server_content_language_helpers_stay_metadata_only() {
 
 #[test]
 fn server_response_with_content_location_declares_single_bounded_header() {
-  let response = HttpResponse::new(201, "Created")
-    .header("Content-Location", "/old")
-    .with_content_location(" /representations/current ")
-    .expect("Content-Location declaration should parse");
-  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+  for case in fixtures::content_location::response_cases() {
+    let response = HttpResponse::new(201, "Created")
+      .header("Content-Location", "/old")
+      .with_content_location(case.declaration_value)
+      .expect("Content-Location declaration should parse");
+    let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
 
-  assert_eq!(
-    Some("/representations/current"),
-    header_value(&serialized, "Content-Location")
-  );
-  assert_eq!(1, serialized.matches("\r\nContent-Location: ").count());
-  assert_eq!(
-    Some("/representations/current"),
-    response
-      .content_location()
-      .expect("Content-Location should parse")
-  );
+    assert_eq!(
+      Some(case.normalized_value),
+      header_value(&serialized, "Content-Location"),
+      "{}",
+      case.name
+    );
+    assert_eq!(1, serialized.matches("\r\nContent-Location: ").count());
+    assert_response_content_location(case.name, &response, case);
+  }
 }
 
 #[test]
 fn server_content_location_helper_rejects_duplicate_unsafe_and_oversized_values() {
-  for value in [
-    "",
-    " ",
-    "/safe\u{7f}",
-    "/safe\u{1f}",
-    "/safe\r\nInjected: true",
-  ] {
-    assert!(
-      HttpResponse::ok("OK").with_content_location(value).is_err(),
-      "Content-Location declaration should reject {value:?}"
-    );
-  }
-
-  for value in ["", " ", "/safe\u{7f}", "/safe\u{1f}"] {
+  for case in fixtures::content_location::invalid_cases() {
     assert!(
       HttpResponse::ok("OK")
-        .header("Content-Location", value)
+        .with_content_location(case.value)
+        .is_err(),
+      "{} Content-Location declaration should reject invalid value",
+      case.name
+    );
+    assert!(
+      HttpResponse::ok("OK")
+        .header("Content-Location", case.value)
         .content_location()
         .is_err(),
-      "Content-Location parser should reject {value:?}"
+      "{} Content-Location parser should reject invalid value",
+      case.name
     );
   }
 
@@ -1083,6 +1108,26 @@ fn server_content_location_helper_rejects_duplicate_unsafe_and_oversized_values(
 }
 
 #[test]
+fn server_content_location_parser_preserves_invalid_raw_header_values() {
+  for case in fixtures::content_location::invalid_cases() {
+    let response = content_location_response(&[case.value]);
+    let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+    assert!(
+      response.content_location().is_err(),
+      "{} Content-Location parser should reject invalid value",
+      case.name
+    );
+    assert_eq!(
+      Some(case.value.trim()),
+      header_value(&serialized, "Content-Location"),
+      "{}",
+      case.name
+    );
+  }
+}
+
+#[test]
 fn server_content_location_helpers_stay_metadata_only() {
   let response = HttpResponse::new(302, "Found")
     .with_content_location("/representation")
@@ -1100,6 +1145,57 @@ fn server_content_location_helpers_stay_metadata_only() {
   assert!(
     serialized.starts_with("HTTP/1.1 302 Found\r\n"),
     "Content-Location should not alter response status policy"
+  );
+}
+
+#[test]
+fn server_content_location_helpers_coexist_with_adjacent_metadata_helpers() {
+  let response = HttpResponse::new(405, "Method Not Allowed")
+    .with_content_location(" /representations/current ")
+    .expect("Content-Location declaration should parse")
+    .with_allow(["GET", "HEAD"])
+    .expect("Allow declaration should parse")
+    .with_retry_after_delta(30)
+    .with_age(5)
+    .with_expires(UNIX_EPOCH + Duration::from_secs(fixtures::age_expires::EXPIRES_UNIX_SECONDS))
+    .header("Cache-Control", "public, max-age=60")
+    .with_vary("Accept-Encoding")
+    .expect("Vary declaration should parse")
+    .with_content_language(["fr-CA", "es-419"])
+    .expect("Content-Language declaration should parse")
+    .with_accept_ranges(["bytes", "pages"])
+    .expect("Accept-Ranges declaration should parse");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert_eq!(
+    Some("/representations/current"),
+    header_value(&serialized, "Content-Location")
+  );
+  assert_eq!(Some("GET, HEAD"), header_value(&serialized, "Allow"));
+  assert_eq!(
+    Some("public, max-age=60"),
+    header_value(&serialized, "Cache-Control")
+  );
+  assert_eq!(Some("5"), header_value(&serialized, "Age"));
+  assert_eq!(
+    Some(fixtures::age_expires::EXPIRES_IMF_FIXDATE),
+    header_value(&serialized, "Expires")
+  );
+  assert_eq!(Some("accept-encoding"), header_value(&serialized, "Vary"));
+  assert_eq!(Some("30"), header_value(&serialized, "Retry-After"));
+  assert_eq!(
+    Some("fr-CA, es-419"),
+    header_value(&serialized, "Content-Language")
+  );
+  assert_eq!(
+    Some("bytes, pages"),
+    header_value(&serialized, "Accept-Ranges")
+  );
+  assert_eq!(
+    Some("/representations/current"),
+    response
+      .content_location()
+      .expect("Content-Location should parse")
   );
 }
 
