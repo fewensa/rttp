@@ -385,13 +385,7 @@ fn reject_goaway_before_opening_request_stream(
         }
       }
       (FRAME_PING, 0) => {
-        if frame.payload.len() != 8 {
-          return Err(error::bad_response("invalid HTTP/2 PING frame"));
-        }
-        if frame.flags & FLAG_ACK == 0 {
-          write_frame(stream, FRAME_PING, FLAG_ACK, 0, &frame.payload)?;
-          stream.flush().map_err(error::request)?;
-        }
+        handle_ping_frame(stream, &frame)?;
       }
       (FRAME_PING, _) => {
         return Err(error::bad_response("invalid HTTP/2 PING frame"));
@@ -420,6 +414,17 @@ fn reject_goaway_before_opening_request_stream(
         ));
       }
     }
+  }
+  Ok(())
+}
+
+fn handle_ping_frame(stream: &mut TcpStream, frame: &Frame) -> error::Result<()> {
+  if frame.stream_id != 0 || frame.payload.len() != 8 {
+    return Err(error::bad_response("invalid HTTP/2 PING frame"));
+  }
+  if frame.flags & FLAG_ACK == 0 {
+    write_frame(stream, FRAME_PING, FLAG_ACK, 0, &frame.payload)?;
+    stream.flush().map_err(error::request)?;
   }
   Ok(())
 }
@@ -1100,13 +1105,7 @@ fn read_until_send_window_available(
         rst_stream_error_code(&frame)?;
       }
       (FRAME_PING, 0) => {
-        if frame.payload.len() != 8 {
-          return Err(error::bad_response("invalid HTTP/2 PING frame"));
-        }
-        if frame.flags & FLAG_ACK == 0 {
-          write_frame(stream, FRAME_PING, FLAG_ACK, 0, &frame.payload)?;
-          stream.flush().map_err(error::request)?;
-        }
+        handle_ping_frame(stream, &frame)?;
       }
       (FRAME_PING, _) => {
         return Err(error::bad_response("invalid HTTP/2 PING frame"));
@@ -1585,13 +1584,7 @@ fn read_single_stream_response_with_first_frame(
         rst_stream_error_code(&frame)?;
       }
       (FRAME_PING, 0) => {
-        if frame.payload.len() != 8 {
-          return Err(error::bad_response("invalid HTTP/2 PING frame"));
-        }
-        if frame.flags & FLAG_ACK == 0 {
-          write_frame(stream, FRAME_PING, FLAG_ACK, 0, &frame.payload)?;
-          stream.flush().map_err(error::request)?;
-        }
+        handle_ping_frame(stream, &frame)?;
       }
       (FRAME_PING, _) => {
         return Err(error::bad_response("invalid HTTP/2 PING frame"));
