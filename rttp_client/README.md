@@ -47,13 +47,14 @@ HEADERS are sent. It also honors the peer's advertised
 and trailing HEADERS must stay within that peer boundary before emission, while
 peers that do not advertise the setting keep the bounded direct-client default.
 It supports GET, HEAD, bodyless DELETE, OPTIONS, or TRACE,
-buffered POST, PUT, or PATCH requests, and an explicit
-`http2_extended_connect(protocol)` request mode. Non-empty buffered request
-bodies are sent as DATA frames for the write methods; GET, HEAD, DELETE,
-OPTIONS, TRACE, and extended CONNECT requests with bodies are rejected. HEAD,
-bodyless DELETE, OPTIONS, TRACE, and extended CONNECT requests do not send
-request DATA frames, and any HEAD response DATA frames are consumed without
-being exposed as a response body. The client advertises
+buffered POST, PUT, or PATCH requests, and the explicit
+`HttpClient::http2_extended_connect(protocol)` request mode for bounded RFC
+8441 extended CONNECT request HEADERS. Non-empty buffered request bodies are
+sent as DATA frames for the write methods; GET, HEAD, DELETE, OPTIONS, TRACE,
+and extended CONNECT requests with bodies are rejected. HEAD, bodyless DELETE,
+OPTIONS, TRACE, and extended CONNECT requests do not send request DATA frames,
+and any HEAD response DATA frames are consumed without being exposed as a
+response body. The client advertises
 `SETTINGS_ENABLE_PUSH = 0` in its initial SETTINGS frame so peers see server
 push disabled, and it advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1` only
 when `http2_extended_connect` is used. It validates received
@@ -135,17 +136,19 @@ retry the request automatically. Ordinary `CONNECT`, header-configured RFC
 8441 `:protocol` metadata, HTTP/1.1 `Upgrade` handoff requests, and proxy
 tunneling are rejected before a client socket is opened. The explicit
 `http2_extended_connect(protocol)` mode emits `:method CONNECT` with
-`:protocol`, `:scheme`, `:authority`, and `:path`, but remains a bounded
+`:protocol`, `:scheme`, `:authority`, and `:path`, then returns the peer's
+HTTP/2 response through the normal `Response` API. It remains a bounded
 single-stream request/response path without request bodies, request trailers,
 or upgraded socket handoff. HTTP/1.1 `CONNECT` tunnel handoff and `Upgrade`
-remain separate client handoff paths; this h2c path does not provide proxy h2,
-tunnel handoff, persistent HTTP/2 sessions, or full RFC 8441 support. TLS
-ALPN, extension callback APIs, full extension negotiation, external h2
-integration, connection pooling, automatic retry, server push, full stream
-state machines, and full HTTP/2 features such as unbounded multiplex
-scheduling, general multiplexing, and priority scheduling are not part of that
-bounded prior-knowledge client path. RTTP does not expose a dynamic policy API
-for changing h2c frame-size or metadata limits at runtime.
+remain separate client handoff paths; this h2c path does not provide full
+WebSocket-over-h2, proxy h2, TLS ALPN, tunnel handoff, persistent multiplex
+sessions, general tunnel scheduling, or full RFC 8441 support. Extension
+callback APIs, full extension negotiation, external h2 integration, connection
+pooling, automatic retry, server push, full stream state machines, and full
+HTTP/2 features such as unbounded multiplex scheduling, general multiplexing,
+and priority scheduling are not part of that bounded prior-knowledge client
+path. RTTP does not expose a dynamic policy API for changing h2c frame-size or
+metadata limits at runtime.
 
 ## Examples
 
