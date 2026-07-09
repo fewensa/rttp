@@ -16,6 +16,8 @@ const MAX_ALLOW_METHODS: usize = 256;
 const MAX_ACCEPT_RANGES_VALUE_BYTES: usize = 64 * 1024;
 const MAX_ACCEPT_RANGE_UNITS: usize = 256;
 const MAX_RETRY_AFTER_VALUE_BYTES: usize = 64 * 1024;
+const MAX_CONTENT_TYPE_VALUE_BYTES: usize = 64 * 1024;
+const MAX_CONTENT_TYPE_PARAMETERS: usize = 256;
 const MAX_CONTENT_LOCATION_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_DISPOSITION_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_DISPOSITION_PARAMETER_VALUE_BYTES: usize = 64 * 1024;
@@ -229,6 +231,15 @@ impl Response {
     self
       .header_value("content-range")
       .and_then(ContentRange::parse)
+  }
+
+  pub fn content_type(&self) -> error::Result<Option<ContentType>> {
+    let values = self.header_values("content-type");
+    match values.as_slice() {
+      [] => Ok(None),
+      [value] => ContentType::parse(value).map(Some),
+      _ => Err(error::bad_response("Duplicate Content-Type header values")),
+    }
   }
 
   pub fn content_location(&self) -> error::Result<Option<ContentLocation>> {
@@ -605,6 +616,213 @@ fn parse_complete_length(value: &str) -> Option<Option<u64>> {
     return Some(None);
   }
   value.parse::<u64>().ok().map(Some)
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContentType {
+  type_: String,
+  subtype: String,
+  parameters: Vec<ContentTypeParameter>,
+}
+
+impl ContentType {
+  pub fn parse(value: impl AsRef<str>) -> error::Result<Self> {
+    let value = value.as_ref();
+    if value.len() > MAX_CONTENT_TYPE_VALUE_BYTES {
+      return Err(error::bad_response(
+        "Content-Type header value is too large",
+      ));
+    }
+    if value.contains(['\r', '\n']) {
+      return Err(error::bad_response("Invalid Content-Type value"));
+    }
+
+    let members = split_content_type_members(value)?;
+    let Some(media_type) = members.first().map(|member| member.trim()) else {
+      return Err(error::bad_response("Invalid Content-Type media type"));
+    };
+    let (type_, subtype) = media_type
+      .split_once('/')
+      .ok_or_else(|| error::bad_response("Invalid Content-Type media type"))?;
+    let type_ = type_.trim();
+    let subtype = subtype.trim();
+    if !is_token(type_) || !is_token(subtype) {
+      return Err(error::bad_response("Invalid Content-Type media type"));
+    }
+
+    let mut parameters = Vec::new();
+    let mut seen = HashSet::new();
+    for member in members.iter().skip(1) {
+      if parameters.len() >= MAX_CONTENT_TYPE_PARAMETERS {
+        return Err(error::bad_response("Too many Content-Type parameters"));
+      }
+
+      let parameter = ContentTypeParameter::parse(member)?;
+      let normalized = parameter.name.to_ascii_lowercase();
+      if !seen.insert(normalized) {
+        return Err(error::bad_response("Duplicate Content-Type parameter"));
+      }
+      parameters.push(parameter);
+    }
+
+    Ok(Self {
+      type_: type_.to_ascii_lowercase(),
+      subtype: subtype.to_ascii_lowercase(),
+      parameters,
+    })
+  }
+
+  pub fn type_(&self) -> &str {
+    &self.type_
+  }
+
+  pub fn subtype(&self) -> &str {
+    &self.subtype
+  }
+
+  pub fn essence(&self) -> String {
+    format!("{}/{}", self.type_, self.subtype)
+  }
+
+  pub fn is(&self, type_: impl AsRef<str>, subtype: impl AsRef<str>) -> bool {
+    self.type_.eq_ignore_ascii_case(type_.as_ref())
+      && self.subtype.eq_ignore_ascii_case(subtype.as_ref())
+  }
+
+  pub fn parameters(&self) -> &[ContentTypeParameter] {
+    &self.parameters
+  }
+
+  pub fn parameter(&self, name: impl AsRef<str>) -> Option<&str> {
+    self
+      .parameters
+      .iter()
+      .find(|parameter| parameter.name.eq_ignore_ascii_case(name.as_ref()))
+      .map(ContentTypeParameter::value)
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContentTypeParameter {
+  name: String,
+  value: String,
+}
+
+impl ContentTypeParameter {
+  fn parse(value: &str) -> error::Result<Self> {
+    let (name, raw_value) = value
+      .split_once('=')
+      .ok_or_else(|| error::bad_response("Invalid Content-Type parameter"))?;
+    let name = name.trim();
+    let raw_value = raw_value.trim();
+    if !is_token(name) {
+      return Err(error::bad_response("Invalid Content-Type parameter name"));
+    }
+
+    let parsed_value = parse_content_type_parameter_value(raw_value)?;
+    Ok(Self {
+      name: name.to_ascii_lowercase(),
+      value: parsed_value,
+    })
+  }
+
+  pub fn name(&self) -> &str {
+    &self.name
+  }
+
+  pub fn value(&self) -> &str {
+    &self.value
+  }
+}
+
+fn split_content_type_members(value: &str) -> error::Result<Vec<String>> {
+  let mut members = Vec::new();
+  let mut current = String::new();
+  let mut in_quote = false;
+  let mut escaped = false;
+
+  for ch in value.chars() {
+    if escaped {
+      current.push(ch);
+      escaped = false;
+      continue;
+    }
+
+    match ch {
+      '\\' if in_quote => {
+        current.push(ch);
+        escaped = true;
+      }
+      '"' => {
+        current.push(ch);
+        in_quote = !in_quote;
+      }
+      ';' if !in_quote => {
+        push_content_type_member(&mut members, &current)?;
+        current.clear();
+      }
+      _ => current.push(ch),
+    }
+  }
+
+  if in_quote || escaped {
+    return Err(error::bad_response("Malformed Content-Type quoted-string"));
+  }
+  push_content_type_member(&mut members, &current)?;
+  Ok(members)
+}
+
+fn push_content_type_member(members: &mut Vec<String>, member: &str) -> error::Result<()> {
+  let member = member.trim();
+  if member.is_empty() {
+    return Err(error::bad_response("Invalid Content-Type member"));
+  }
+  members.push(member.to_string());
+  Ok(())
+}
+
+fn parse_content_type_parameter_value(value: &str) -> error::Result<String> {
+  if value.is_empty() {
+    return Err(error::bad_response("Invalid Content-Type parameter value"));
+  }
+  if let Some(value) = value.strip_prefix('"') {
+    return parse_content_type_quoted_string(value);
+  }
+  if value.contains('"') || !is_token(value) {
+    return Err(error::bad_response("Invalid Content-Type parameter value"));
+  }
+  Ok(value.to_string())
+}
+
+fn parse_content_type_quoted_string(value: &str) -> error::Result<String> {
+  let mut chars = value.chars();
+  let mut parsed = String::new();
+  let mut closed = false;
+
+  while let Some(ch) = chars.next() {
+    match ch {
+      '"' => {
+        closed = true;
+        break;
+      }
+      '\\' => {
+        let Some(escaped) = chars.next() else {
+          return Err(error::bad_response("Malformed Content-Type quoted-string"));
+        };
+        if !is_quoted_pair_char(escaped) {
+          return Err(error::bad_response("Malformed Content-Type quoted-string"));
+        }
+        parsed.push(escaped);
+      }
+      _ if is_qdtext(ch) => parsed.push(ch),
+      _ => return Err(error::bad_response("Malformed Content-Type quoted-string")),
+    }
+  }
+
+  if !closed || chars.any(|ch| !ch.is_ascii_whitespace()) {
+    return Err(error::bad_response("Malformed Content-Type quoted-string"));
+  }
+  Ok(parsed)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
