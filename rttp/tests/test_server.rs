@@ -2,9 +2,11 @@ use std::io::{self, ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, UNIX_EPOCH};
 
-use rttp::server::{HttpResponse, Request};
+use rttp::server::{
+  HttpConditionalMetadata, HttpConditionalRequestOutcome, HttpEntityTag, HttpResponse, Request,
+};
 use rttp_client::{Config, HttpClient};
 
 const H2_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
@@ -6812,6 +6814,173 @@ fn server_keeps_304_connection_framed_for_following_request() {
 }
 
 #[test]
+fn conditional_request_helpers_evaluate_if_none_match_get_as_not_modified() {
+  let metadata = HttpConditionalMetadata::new()
+    .entity_tag(HttpEntityTag::strong("abc"))
+    .last_modified(UNIX_EPOCH + Duration::from_secs(784_111_777));
+
+  let outcome = conditional_outcome_for(
+    concat!(
+      "GET /cached HTTP/1.1\r\n",
+      "Host: localhost\r\n",
+      "If-None-Match: W/\"different\", \"abc\"\r\n",
+      "\r\n",
+    ),
+    metadata,
+  );
+
+  assert_eq!(HttpConditionalRequestOutcome::NotModified, outcome);
+}
+
+#[test]
+fn conditional_request_helpers_evaluate_if_none_match_unsafe_method_as_precondition_failed() {
+  let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("abc"));
+
+  let outcome = conditional_outcome_for(
+    concat!(
+      "PUT /cached HTTP/1.1\r\n",
+      "Host: localhost\r\n",
+      "If-None-Match: *\r\n",
+      "Content-Length: 0\r\n",
+      "\r\n",
+    ),
+    metadata,
+  );
+
+  assert_eq!(HttpConditionalRequestOutcome::PreconditionFailed, outcome);
+}
+
+#[test]
+fn conditional_request_helpers_evaluate_if_match_with_strong_comparison() {
+  let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("abc"));
+
+  let weak_match = conditional_outcome_for(
+    concat!(
+      "GET /cached HTTP/1.1\r\n",
+      "Host: localhost\r\n",
+      "If-Match: W/\"abc\"\r\n",
+      "\r\n",
+    ),
+    metadata.clone(),
+  );
+  let strong_match = conditional_outcome_for(
+    concat!(
+      "GET /cached HTTP/1.1\r\n",
+      "Host: localhost\r\n",
+      "If-Match: \"abc\"\r\n",
+      "\r\n",
+    ),
+    metadata,
+  );
+
+  assert_eq!(
+    HttpConditionalRequestOutcome::PreconditionFailed,
+    weak_match
+  );
+  assert_eq!(HttpConditionalRequestOutcome::Proceed, strong_match);
+}
+
+#[test]
+fn conditional_request_helpers_evaluate_http_dates_and_precedence() {
+  let metadata = HttpConditionalMetadata::new()
+    .entity_tag(HttpEntityTag::strong("abc"))
+    .last_modified(UNIX_EPOCH + Duration::from_secs(784_111_777));
+
+  let stale_if_unmodified_since = conditional_outcome_for(
+    concat!(
+      "GET /cached HTTP/1.1\r\n",
+      "Host: localhost\r\n",
+      "If-Unmodified-Since: Sun, 06 Nov 1994 08:49:36 GMT\r\n",
+      "\r\n",
+    ),
+    metadata.clone(),
+  );
+  let fresh_if_modified_since = conditional_outcome_for(
+    concat!(
+      "GET /cached HTTP/1.1\r\n",
+      "Host: localhost\r\n",
+      "If-Modified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+      "\r\n",
+    ),
+    metadata.clone(),
+  );
+  let if_none_match_takes_precedence = conditional_outcome_for(
+    concat!(
+      "GET /cached HTTP/1.1\r\n",
+      "Host: localhost\r\n",
+      "If-None-Match: \"different\"\r\n",
+      "If-Modified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+      "\r\n",
+    ),
+    metadata,
+  );
+
+  assert_eq!(
+    HttpConditionalRequestOutcome::PreconditionFailed,
+    stale_if_unmodified_since
+  );
+  assert_eq!(
+    HttpConditionalRequestOutcome::NotModified,
+    fresh_if_modified_since
+  );
+  assert_eq!(
+    HttpConditionalRequestOutcome::Proceed,
+    if_none_match_takes_precedence
+  );
+}
+
+#[test]
+fn conditional_request_helpers_compare_http_dates_at_second_precision() {
+  let metadata = HttpConditionalMetadata::new()
+    .last_modified(UNIX_EPOCH + Duration::from_secs(784_111_777) + Duration::from_millis(500));
+
+  let outcome = conditional_outcome_for(
+    concat!(
+      "GET /cached HTTP/1.1\r\n",
+      "Host: localhost\r\n",
+      "If-Modified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+      "\r\n",
+    ),
+    metadata,
+  );
+
+  assert_eq!(HttpConditionalRequestOutcome::NotModified, outcome);
+}
+
+#[test]
+fn conditional_response_helpers_include_available_validators_and_preserve_304_framing() {
+  let metadata = HttpConditionalMetadata::new()
+    .entity_tag(HttpEntityTag::weak("abc"))
+    .last_modified(UNIX_EPOCH + Duration::from_secs(784_111_777));
+  let mut not_modified = Vec::new();
+  let mut precondition_failed = Vec::new();
+
+  HttpResponse::not_modified(&metadata)
+    .body("ignored")
+    .write_to(&mut not_modified)
+    .expect("serialize 304 response");
+  HttpResponse::precondition_failed()
+    .write_to(&mut precondition_failed)
+    .expect("serialize 412 response");
+
+  assert_eq!(
+    concat!(
+      "HTTP/1.1 304 Not Modified\r\n",
+      "ETag: W/\"abc\"\r\n",
+      "Last-Modified: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+      "Connection: close\r\n",
+      "\r\n",
+    )
+    .as_bytes(),
+    not_modified.as_slice()
+  );
+  assert_eq!(
+    b"HTTP/1.1 412 Precondition Failed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+    precondition_failed.as_slice()
+  );
+}
+
+#[test]
 fn server_keeps_chunked_response_framed_for_following_request() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
@@ -7264,4 +7433,28 @@ fn send_request(addr: std::net::SocketAddr, request: &[u8]) -> String {
   let mut response = String::new();
   stream.read_to_string(&mut response).expect("read response");
   response
+}
+
+fn conditional_outcome_for(
+  request: &str,
+  metadata: HttpConditionalMetadata,
+) -> HttpConditionalRequestOutcome {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let outcome = request.evaluate_conditional(&metadata);
+        tx.send(outcome).expect("send conditional outcome");
+        HttpResponse::ok("")
+      })
+      .expect("serve one request");
+  });
+
+  let _response = send_request(addr, request.as_bytes());
+  let outcome = rx.recv().expect("receive conditional outcome");
+  handle.join().expect("server thread");
+  outcome
 }

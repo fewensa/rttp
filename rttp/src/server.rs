@@ -3,7 +3,7 @@ use std::fmt;
 use std::io::{self, BufRead, BufReader, Cursor, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use socket2::{Domain, Protocol, Socket, Type};
 
@@ -3329,6 +3329,13 @@ impl Request {
     self.version == "HTTP/1.0" && !self.connection_header_has_token("keep-alive")
   }
 
+  pub fn evaluate_conditional(
+    &self,
+    metadata: &HttpConditionalMetadata,
+  ) -> HttpConditionalRequestOutcome {
+    evaluate_conditional_request(self, metadata)
+  }
+
   fn connection_header_has_token(&self, token: &str) -> bool {
     self
       .headers
@@ -3653,6 +3660,298 @@ impl Request {
       extended_connect_protocol: None,
     }
   }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HttpConditionalMetadata {
+  entity_tag: Option<HttpEntityTag>,
+  last_modified: Option<SystemTime>,
+}
+
+impl HttpConditionalMetadata {
+  pub fn new() -> Self {
+    Self::default()
+  }
+
+  pub fn entity_tag(mut self, entity_tag: HttpEntityTag) -> Self {
+    self.entity_tag = Some(entity_tag);
+    self
+  }
+
+  pub fn last_modified(mut self, last_modified: SystemTime) -> Self {
+    self.last_modified = Some(last_modified);
+    self
+  }
+
+  pub fn entity_tag_value(&self) -> Option<&HttpEntityTag> {
+    self.entity_tag.as_ref()
+  }
+
+  pub fn last_modified_value(&self) -> Option<SystemTime> {
+    self.last_modified
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpEntityTag {
+  weak: bool,
+  opaque_tag: String,
+}
+
+impl HttpEntityTag {
+  pub fn strong<S: AsRef<str>>(opaque_tag: S) -> Self {
+    Self::new(false, opaque_tag)
+  }
+
+  pub fn weak<S: AsRef<str>>(opaque_tag: S) -> Self {
+    Self::new(true, opaque_tag)
+  }
+
+  pub fn parse<S: AsRef<str>>(value: S) -> Result<Self, HttpEntityTagParseError> {
+    parse_entity_tag(value.as_ref().trim()).ok_or(HttpEntityTagParseError)
+  }
+
+  pub fn is_weak(&self) -> bool {
+    self.weak
+  }
+
+  pub fn opaque_tag(&self) -> &str {
+    &self.opaque_tag
+  }
+
+  pub fn header_value(&self) -> String {
+    let mut value = String::new();
+    if self.weak {
+      value.push_str("W/");
+    }
+    value.push('"');
+    value.push_str(&self.opaque_tag);
+    value.push('"');
+    value
+  }
+
+  fn new<S: AsRef<str>>(weak: bool, opaque_tag: S) -> Self {
+    let opaque_tag = opaque_tag.as_ref();
+    assert_valid_entity_tag_opaque_tag(opaque_tag);
+    Self {
+      weak,
+      opaque_tag: opaque_tag.to_string(),
+    }
+  }
+
+  fn strong_matches(&self, other: &Self) -> bool {
+    !self.weak && !other.weak && self.opaque_tag == other.opaque_tag
+  }
+
+  fn weak_matches(&self, other: &Self) -> bool {
+    self.opaque_tag == other.opaque_tag
+  }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HttpEntityTagParseError;
+
+impl fmt::Display for HttpEntityTagParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str("invalid entity tag")
+  }
+}
+
+impl Error for HttpEntityTagParseError {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HttpConditionalRequestOutcome {
+  Proceed,
+  NotModified,
+  PreconditionFailed,
+}
+
+pub fn evaluate_conditional_request(
+  request: &Request,
+  metadata: &HttpConditionalMetadata,
+) -> HttpConditionalRequestOutcome {
+  if let Some(matches) = request_if_match_matches(request, metadata) {
+    if !matches {
+      return HttpConditionalRequestOutcome::PreconditionFailed;
+    }
+  } else if let Some(if_unmodified_since) = request_http_date(request, "If-Unmodified-Since") {
+    if metadata
+      .last_modified
+      .is_some_and(|last_modified| http_date_seconds_after(last_modified, if_unmodified_since))
+    {
+      return HttpConditionalRequestOutcome::PreconditionFailed;
+    }
+  }
+
+  if let Some(matches) = request_if_none_match_matches(request, metadata) {
+    if matches {
+      if method_uses_not_modified_for_if_none_match(request.method()) {
+        return HttpConditionalRequestOutcome::NotModified;
+      }
+      return HttpConditionalRequestOutcome::PreconditionFailed;
+    }
+    return HttpConditionalRequestOutcome::Proceed;
+  }
+
+  if method_uses_not_modified_for_if_none_match(request.method()) {
+    if let Some(if_modified_since) = request_http_date(request, "If-Modified-Since") {
+      if metadata
+        .last_modified
+        .is_some_and(|last_modified| !http_date_seconds_after(last_modified, if_modified_since))
+      {
+        return HttpConditionalRequestOutcome::NotModified;
+      }
+    }
+  }
+
+  HttpConditionalRequestOutcome::Proceed
+}
+
+fn request_if_match_matches(request: &Request, metadata: &HttpConditionalMetadata) -> Option<bool> {
+  request_entity_tag_validator_matches(request, "If-Match", metadata, EntityTagComparison::Strong)
+}
+
+fn request_if_none_match_matches(
+  request: &Request,
+  metadata: &HttpConditionalMetadata,
+) -> Option<bool> {
+  request_entity_tag_validator_matches(
+    request,
+    "If-None-Match",
+    metadata,
+    EntityTagComparison::Weak,
+  )
+}
+
+fn request_entity_tag_validator_matches(
+  request: &Request,
+  header_name: &str,
+  metadata: &HttpConditionalMetadata,
+  comparison: EntityTagComparison,
+) -> Option<bool> {
+  let mut saw_header = false;
+  let mut saw_valid_validator = false;
+
+  for value in request.headers_named(header_name) {
+    saw_header = true;
+    for validator in EntityTagValidatorList::parse(value)? {
+      saw_valid_validator = true;
+      match validator {
+        EntityTagValidator::Any => return Some(true),
+        EntityTagValidator::Tag(candidate) => {
+          let Some(current) = metadata.entity_tag.as_ref() else {
+            continue;
+          };
+          let matches = match comparison {
+            EntityTagComparison::Strong => current.strong_matches(&candidate),
+            EntityTagComparison::Weak => current.weak_matches(&candidate),
+          };
+          if matches {
+            return Some(true);
+          }
+        }
+      }
+    }
+  }
+
+  if saw_header && saw_valid_validator {
+    Some(false)
+  } else {
+    None
+  }
+}
+
+fn request_http_date(request: &Request, header_name: &str) -> Option<SystemTime> {
+  httpdate::parse_http_date(request.header(header_name)?).ok()
+}
+
+fn http_date_seconds_after(left: SystemTime, right: SystemTime) -> bool {
+  match (
+    left.duration_since(UNIX_EPOCH),
+    right.duration_since(UNIX_EPOCH),
+  ) {
+    (Ok(left), Ok(right)) => left.as_secs() > right.as_secs(),
+    _ => left > right,
+  }
+}
+
+fn method_uses_not_modified_for_if_none_match(method: &str) -> bool {
+  method.eq_ignore_ascii_case("GET") || method.eq_ignore_ascii_case("HEAD")
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EntityTagComparison {
+  Strong,
+  Weak,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum EntityTagValidator {
+  Any,
+  Tag(HttpEntityTag),
+}
+
+struct EntityTagValidatorList {
+  validators: Vec<EntityTagValidator>,
+}
+
+impl EntityTagValidatorList {
+  fn parse(value: &str) -> Option<Self> {
+    let value = value.trim();
+    if value == "*" {
+      return Some(Self {
+        validators: vec![EntityTagValidator::Any],
+      });
+    }
+
+    let mut validators = Vec::new();
+    for part in value.split(',') {
+      validators.push(EntityTagValidator::Tag(parse_entity_tag(part.trim())?));
+    }
+    if validators.is_empty() {
+      None
+    } else {
+      Some(Self { validators })
+    }
+  }
+}
+
+impl IntoIterator for EntityTagValidatorList {
+  type Item = EntityTagValidator;
+  type IntoIter = std::vec::IntoIter<EntityTagValidator>;
+
+  fn into_iter(self) -> Self::IntoIter {
+    self.validators.into_iter()
+  }
+}
+
+fn parse_entity_tag(value: &str) -> Option<HttpEntityTag> {
+  let (weak, value) = if let Some(rest) = value.strip_prefix("W/") {
+    (true, rest)
+  } else {
+    (false, value)
+  };
+  let opaque_tag = value.strip_prefix('"')?.strip_suffix('"')?;
+  if !is_valid_entity_tag_opaque_tag(opaque_tag) {
+    return None;
+  }
+  Some(HttpEntityTag {
+    weak,
+    opaque_tag: opaque_tag.to_string(),
+  })
+}
+
+fn assert_valid_entity_tag_opaque_tag(opaque_tag: &str) {
+  assert!(
+    is_valid_entity_tag_opaque_tag(opaque_tag),
+    "entity tag opaque value must be valid for an HTTP ETag header"
+  );
+}
+
+fn is_valid_entity_tag_opaque_tag(opaque_tag: &str) -> bool {
+  opaque_tag
+    .bytes()
+    .all(|byte| matches!(byte, b'\x21' | b'\x23'..=b'\x7e' | b'\x80'..=b'\xff'))
 }
 
 pub struct RequestBodyReader<'a, R: BufRead> {
@@ -4024,6 +4323,21 @@ impl HttpResponse {
   pub fn range_not_satisfiable(entity_length: usize) -> Self {
     Self::new(416, "Range Not Satisfiable")
       .header("Content-Range", format!("bytes */{entity_length}"))
+  }
+
+  pub fn not_modified(metadata: &HttpConditionalMetadata) -> Self {
+    let mut response = Self::new(304, "Not Modified");
+    if let Some(entity_tag) = metadata.entity_tag_value() {
+      response = response.header("ETag", entity_tag.header_value());
+    }
+    if let Some(last_modified) = metadata.last_modified_value() {
+      response = response.header("Last-Modified", httpdate::fmt_http_date(last_modified));
+    }
+    response
+  }
+
+  pub fn precondition_failed() -> Self {
+    Self::new(412, "Precondition Failed")
   }
 
   pub fn header<N: AsRef<str>, V: AsRef<str>>(mut self, name: N, value: V) -> Self {
