@@ -27,6 +27,34 @@ HTTP/1.x chunked responses are decoded, and response trailers are exposed
 through `Response::trailers`, `Response::trailer`, and
 `Response::trailer_value` for both blocking and async request APIs.
 
+## Bounded trailer behavior
+
+Trailer support is explicit and bounded by protocol path. Use
+`HttpClient::trailer` to configure request trailer fields. Those fields are
+sent for HTTP/1.1 only by `emit_streaming_chunked`; fixed-length HTTP/1.1
+requests and buffered `emit` requests do not have an HTTP/1.1 trailer section.
+With the `http2` feature enabled, the same configured request trailers are sent
+as HTTP/2 trailing HEADERS by both `emit_http2_prior_knowledge` and the
+explicit `emit_http2_upgrade` h2c path after request DATA for buffered POST,
+PUT, and PATCH requests. The bounded h2c client rejects request trailers for
+`http2_extended_connect`, and the bodyless GET, HEAD, DELETE, OPTIONS, and
+TRACE paths cannot carry request DATA before trailers.
+
+Response trailers are read through the existing `Response` trailer accessors.
+For HTTP/1.1, `rttp_client` exposes only trailers that arrive in a chunked
+response after the terminating zero-size chunk. For bounded h2c, peer response
+trailers arrive as trailing HEADERS on the active stream and are exposed
+through the same accessors. In both request and response directions, trailer
+names must be ordinary field names: HTTP/2 pseudo-headers and fields reserved
+for connection state, routing, authentication/cookies, transfer framing, or
+payload framing are rejected instead of passed to application code.
+
+HTTP/2 trailer support does not make the generic HTTP/1.1 `upgrade()` or
+`connect()` handoff paths parse trailers. The h2c Upgrade client path is opt-in
+through `emit_http2_upgrade` and replaces the initial HTTP/1.1 exchange with
+the bounded HTTP/2 stream model after `101 Switching Protocols`; non-h2c
+Upgrade handoffs remain caller-owned bytes.
+
 ## Tested protocol coverage
 
 | area | tested coverage | limits |

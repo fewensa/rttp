@@ -46,6 +46,30 @@ zero-size chunk, and can be inspected before serialization with
 `HttpResponse::trailers` or `HttpResponse::trailer_value`. Add a `Trailer`
 response header when advertising which trailer fields will follow.
 
+## Bounded trailer behavior
+
+HTTP/1.1 server trailer support remains chunked-scope only. Chunked request
+trailers are preserved on `Request` and can be read with `Request::trailers`
+or `Request::trailer`; fixed-length request bodies do not carry a trailer
+section. HTTP/1.1 response trailers are serialized only for chunked
+`HttpResponse` bodies when the response status permits a body.
+
+On the same listener, prior-knowledge h2c and valid `Upgrade: h2c` requests
+use HTTP/2 trailing HEADERS instead of HTTP/1.1 chunk trailers. Inbound
+application trailers such as `X-Trace`, `X-Upload-Status`, and
+`X-Upload-Checksum` are exposed on `Request` after bounded header-list and
+HPACK decoding. Outbound h2c response trailers come from
+`HttpResponse::trailer` and are emitted as trailing HEADERS after response
+DATA, split to the active peer frame-size limit. HTTP/2 pseudo-headers in
+trailers are rejected before handler dispatch, and trailer names reserved for
+connection state, routing, authentication/cookies, transfer framing, or
+payload processing are rejected.
+
+The h2c Upgrade path is only the bounded HTTP/2 path selected by a valid
+`Upgrade: h2c` request. Ordinary HTTP/1.1 `CONNECT` authority-form requests and
+non-h2c `HttpResponse::upgrade` handoffs remain separate caller-owned protocol
+paths; they are not trailer-parsed as HTTP/2 streams.
+
 The server currently parses blocking HTTP/1.x requests for local tests and
 simple embedded use. It supports fixed `Content-Length` and chunked request
 bodies, preserves chunked request trailers on `Request`, bounds request
