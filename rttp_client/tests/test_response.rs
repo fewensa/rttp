@@ -168,6 +168,48 @@ fn test_parse_range_not_satisfiable_metadata_preserves_body_and_headers() {
 }
 
 #[test]
+fn test_parse_conditional_response_metadata() {
+  let s = concat!(
+    "HTTP/1.1 304 Not Modified\r\n",
+    "ETag: \"abc123\"\r\n",
+    "Last-Modified: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/asset"),
+    s.as_bytes().to_vec(),
+  )
+  .expect("parse not modified response");
+
+  assert!(response.is_not_modified());
+  assert!(!response.is_precondition_failed());
+  assert_eq!(Some(&"\"abc123\"".to_string()), response.etag());
+  assert_eq!(
+    Some(&"Sun, 06 Nov 1994 08:49:37 GMT".to_string()),
+    response.last_modified()
+  );
+
+  let s = concat!(
+    "HTTP/1.1 412 Precondition Failed\r\n",
+    "ETag: W/\"stale\"\r\n",
+    "Content-Length: 5\r\n",
+    "\r\n",
+    "stale"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/asset"),
+    s.as_bytes().to_vec(),
+  )
+  .expect("parse precondition failed response");
+
+  assert!(!response.is_not_modified());
+  assert!(response.is_precondition_failed());
+  assert_eq!(Some(&"W/\"stale\"".to_string()), response.etag());
+  assert_eq!(None, response.last_modified());
+}
+
+#[test]
 fn test_parse_response_rejects_header_without_colon() {
   let s = concat!(
     "HTTP/1.1 200 OK\r\n",

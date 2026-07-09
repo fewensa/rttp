@@ -42,6 +42,14 @@ impl Response {
     self.code() == 416
   }
 
+  pub fn is_not_modified(&self) -> bool {
+    self.code() == 304
+  }
+
+  pub fn is_precondition_failed(&self) -> bool {
+    self.code() == 412
+  }
+
   pub fn is_redirect(&self) -> bool {
     matches!(self.code(), 301 | 302 | 303 | 307 | 308)
   }
@@ -76,6 +84,14 @@ impl Response {
 
   pub fn location(&self) -> Option<&String> {
     self.header_value("location")
+  }
+
+  pub fn etag(&self) -> Option<&String> {
+    self.header_value("etag")
+  }
+
+  pub fn last_modified(&self) -> Option<&String> {
+    self.header_value("last-modified")
   }
 
   pub fn content_range(&self) -> Option<ContentRange> {
