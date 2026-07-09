@@ -951,6 +951,151 @@ fn spawn_h2c_settings_capture_proxy(
   (proxy_addr, handle)
 }
 
+fn spawn_h2c_ping_matrix_proxy(server_addr: SocketAddr) -> (SocketAddr, thread::JoinHandle<()>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 ping matrix proxy");
+  let proxy_addr = listener.local_addr().expect("h2 ping matrix proxy addr");
+
+  let handle = thread::spawn(move || {
+    let (mut client_stream, _) = listener.accept().expect("accept h2 ping matrix client");
+    let mut server_stream = TcpStream::connect(server_addr).expect("connect h2 ping matrix server");
+    client_stream
+      .set_read_timeout(Some(Duration::from_secs(2)))
+      .expect("set ping matrix client read timeout");
+    server_stream
+      .set_read_timeout(Some(Duration::from_secs(2)))
+      .expect("set ping matrix server read timeout");
+
+    let mut preface = [0; 24];
+    client_stream
+      .read_exact(&mut preface)
+      .expect("read ping matrix client preface");
+    assert_eq!(H2_PREFACE.as_slice(), &preface);
+    server_stream
+      .write_all(&preface)
+      .expect("forward ping matrix client preface");
+
+    let client_settings = read_h2_frame(&mut client_stream);
+    assert_eq!(H2_FRAME_SETTINGS, client_settings.frame_type);
+    assert_eq!(0, client_settings.flags);
+    assert_eq!(0, client_settings.stream_id);
+    write_h2_frame(
+      &mut server_stream,
+      client_settings.frame_type,
+      client_settings.flags,
+      client_settings.stream_id,
+      &client_settings.payload,
+    );
+
+    let server_settings = read_h2_frame(&mut server_stream);
+    assert_eq!(H2_FRAME_SETTINGS, server_settings.frame_type);
+    assert_eq!(0, server_settings.flags);
+    assert_eq!(0, server_settings.stream_id);
+    write_h2_frame(
+      &mut client_stream,
+      server_settings.frame_type,
+      server_settings.flags,
+      server_settings.stream_id,
+      &server_settings.payload,
+    );
+
+    write_h2_frame(&mut server_stream, H2_FRAME_PING, 0, 0, b"srv-ping");
+    let mut server_ping_ack_seen = false;
+    for _ in 0..4 {
+      let server_frame = read_h2_frame(&mut server_stream);
+      if server_frame.frame_type == H2_FRAME_PING && server_frame.flags == H2_FLAG_ACK {
+        assert_eq!(0, server_frame.stream_id);
+        assert_eq!(b"srv-ping", server_frame.payload.as_slice());
+        server_ping_ack_seen = true;
+        break;
+      }
+      write_h2_frame(
+        &mut client_stream,
+        server_frame.frame_type,
+        server_frame.flags,
+        server_frame.stream_id,
+        &server_frame.payload,
+      );
+    }
+    assert!(server_ping_ack_seen, "server must echo PING ACK");
+
+    let client_settings_ack = read_h2_frame(&mut client_stream);
+    assert_eq!(H2_FRAME_SETTINGS, client_settings_ack.frame_type);
+    assert_eq!(H2_FLAG_ACK, client_settings_ack.flags);
+    assert_eq!(0, client_settings_ack.stream_id);
+    assert!(client_settings_ack.payload.is_empty());
+    write_h2_frame(
+      &mut server_stream,
+      client_settings_ack.frame_type,
+      client_settings_ack.flags,
+      client_settings_ack.stream_id,
+      &client_settings_ack.payload,
+    );
+
+    let request_headers = read_h2_frame(&mut client_stream);
+    assert_eq!(H2_FRAME_HEADERS, request_headers.frame_type);
+    assert_ne!(0, request_headers.stream_id);
+    let response_stream_id = request_headers.stream_id;
+    let request_ended = request_headers.flags & H2_FLAG_END_STREAM == H2_FLAG_END_STREAM;
+    write_h2_frame(
+      &mut server_stream,
+      request_headers.frame_type,
+      request_headers.flags,
+      request_headers.stream_id,
+      &request_headers.payload,
+    );
+
+    if !request_ended {
+      loop {
+        let request_frame = read_h2_frame(&mut client_stream);
+        let is_terminal = request_frame.stream_id == response_stream_id
+          && request_frame.flags & H2_FLAG_END_STREAM == H2_FLAG_END_STREAM;
+        write_h2_frame(
+          &mut server_stream,
+          request_frame.frame_type,
+          request_frame.flags,
+          request_frame.stream_id,
+          &request_frame.payload,
+        );
+        if is_terminal {
+          break;
+        }
+      }
+    }
+
+    write_h2_frame(
+      &mut client_stream,
+      H2_FRAME_PING,
+      H2_FLAG_ACK,
+      0,
+      b"old-ack!",
+    );
+    write_h2_frame(&mut client_stream, H2_FRAME_PING, 0, 0, b"clt-ping");
+    let client_ping_ack = read_h2_frame(&mut client_stream);
+    assert_eq!(H2_FRAME_PING, client_ping_ack.frame_type);
+    assert_eq!(H2_FLAG_ACK, client_ping_ack.flags);
+    assert_eq!(0, client_ping_ack.stream_id);
+    assert_eq!(b"clt-ping", client_ping_ack.payload.as_slice());
+
+    loop {
+      let response_frame = read_h2_frame(&mut server_stream);
+      let is_terminal = response_frame.stream_id == response_stream_id
+        && response_frame.flags & H2_FLAG_END_STREAM == H2_FLAG_END_STREAM;
+      write_h2_frame(
+        &mut client_stream,
+        response_frame.frame_type,
+        response_frame.flags,
+        response_frame.stream_id,
+        &response_frame.payload,
+      );
+      if is_terminal {
+        break;
+      }
+    }
+  });
+
+  (proxy_addr, handle)
+}
+
 fn complete_h2_peer_request_handshake(stream: &mut TcpStream) -> H2Frame {
   stream
     .set_read_timeout(Some(Duration::from_secs(2)))
@@ -3935,6 +4080,190 @@ fn wrapper_http2_prior_knowledge_client_acks_peer_ping_before_response() {
   assert_eq!("wrapper pong", response.body().string().unwrap());
 
   handle.join().expect("h2 ping peer thread");
+}
+
+#[test]
+fn cross_crate_h2c_ping_matrix_preserves_status_body_trailers_and_settings_bounds() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind h2 ping matrix server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let server_addr = server.local_addr().expect("h2 ping matrix server addr");
+  let (tx, rx) = mpsc::channel();
+  let (proxy_addr, proxy_handle) = spawn_h2c_ping_matrix_proxy(server_addr);
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.version().to_string(),
+          request.method().to_string(),
+          request.target().to_string(),
+          request.body().to_vec(),
+        ))
+        .expect("send h2 ping matrix request");
+        HttpResponse::new(207, "Multi-Status")
+          .body("ping-preserved body")
+          .header("X-Ping-Matrix", "response")
+          .trailer("X-Ping-Trailer", "trailer-ok")
+      })
+      .expect("serve h2 ping matrix request")
+  });
+
+  let config = Config::builder()
+    .http2_header_table_size(0)
+    .http2_max_frame_size(H2_DEFAULT_MAX_FRAME_SIZE)
+    .build();
+  let response = HttpClient::new()
+    .config(config)
+    .get()
+    .url(format!("http://{}/ping-matrix?trailers=true", proxy_addr))
+    .emit_http2_prior_knowledge()
+    .expect("cross-crate h2c PING matrix response");
+
+  assert_eq!(207, response.code());
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(
+    Some(&"response".to_string()),
+    response.header_value("x-ping-matrix")
+  );
+  assert_eq!("ping-preserved body", response.body().string().unwrap());
+  assert_eq!(
+    Some(&"trailer-ok".to_string()),
+    response.trailer_value("x-ping-trailer")
+  );
+  assert_eq!(
+    (
+      "HTTP/2".to_string(),
+      "GET".to_string(),
+      "/ping-matrix?trailers=true".to_string(),
+      Vec::new(),
+    ),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("receive h2 ping matrix request")
+  );
+
+  handle.join().expect("h2 ping matrix server thread");
+  proxy_handle.join().expect("h2 ping matrix proxy thread");
+}
+
+#[test]
+fn cross_crate_h2c_ping_matrix_preserves_extended_connect() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind h2 extended CONNECT ping matrix server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let server_addr = server
+    .local_addr()
+    .expect("h2 extended CONNECT ping matrix server addr");
+  let (tx, rx) = mpsc::channel();
+  let (proxy_addr, proxy_handle) = spawn_h2c_ping_matrix_proxy(server_addr);
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.version().to_string(),
+          request.method().to_string(),
+          request.target().to_string(),
+          request.extended_connect_protocol().map(str::to_string),
+          request.body().to_vec(),
+        ))
+        .expect("send h2 extended CONNECT ping matrix request");
+        HttpResponse::ok("extended connect survived ping")
+      })
+      .expect("serve h2 extended CONNECT ping matrix request")
+  });
+
+  let response = HttpClient::new()
+    .http2_extended_connect("websocket")
+    .url(format!("http://{}/ping-matrix-ws?room=blue", proxy_addr))
+    .emit_http2_prior_knowledge()
+    .expect("cross-crate h2c extended CONNECT PING matrix response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(
+    "extended connect survived ping",
+    response.body().string().unwrap()
+  );
+  assert_eq!(
+    (
+      "HTTP/2".to_string(),
+      "CONNECT".to_string(),
+      "/ping-matrix-ws?room=blue".to_string(),
+      Some("websocket".to_string()),
+      Vec::new(),
+    ),
+    rx.recv_timeout(Duration::from_secs(2))
+      .expect("receive h2 extended CONNECT ping matrix request")
+  );
+
+  handle
+    .join()
+    .expect("h2 extended CONNECT ping matrix server thread");
+  proxy_handle
+    .join()
+    .expect("h2 extended CONNECT ping matrix proxy thread");
+}
+
+#[test]
+fn cross_crate_h2c_ping_matrix_rejects_malformed_ping_before_dispatch() {
+  let cases: &[(u8, u32, &[u8])] = &[
+    (0, 0, b"short"),
+    (0, 1, b"bad-ping"),
+    (H2_FLAG_ACK, 0, b"short"),
+  ];
+
+  for (flags, stream_id, payload) in cases {
+    let server = rttp::Http::server("127.0.0.1:0")
+      .expect("bind malformed h2 ping matrix server")
+      .with_read_timeout(Some(Duration::from_secs(2)))
+      .with_write_timeout(Some(Duration::from_secs(2)));
+    let addr = server
+      .local_addr()
+      .expect("malformed h2 ping matrix server addr");
+    let (tx, rx) = mpsc::channel();
+
+    let handle = thread::spawn(move || {
+      server.accept_one(|request| {
+        tx.send(request.target().to_string())
+          .expect("send unexpected malformed h2 ping dispatch");
+        HttpResponse::ok("unexpected malformed h2 ping dispatch")
+      })
+    });
+
+    let mut stream = TcpStream::connect(addr).expect("connect malformed h2 ping server");
+    stream
+      .set_read_timeout(Some(Duration::from_millis(200)))
+      .expect("set malformed h2 ping read timeout");
+    complete_h2_server_handshake_with_settings(&mut stream, &[]);
+    write_h2_frame(&mut stream, H2_FRAME_PING, *flags, *stream_id, payload);
+    write_h2_frame(
+      &mut stream,
+      H2_FRAME_HEADERS,
+      H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+      1,
+      &h2_get_headers(b"/malformed-ping", addr.to_string().as_bytes()),
+    );
+    stream.flush().expect("flush malformed h2 ping matrix");
+    let _ = try_read_h2_frame(&mut stream);
+    drop(stream);
+
+    let err = handle
+      .join()
+      .expect("malformed h2 ping server thread")
+      .expect_err("malformed h2 ping must reject before handler");
+    assert_eq!(io::ErrorKind::InvalidData, err.kind());
+    assert!(
+      err.to_string().contains("invalid HTTP/2 PING frame"),
+      "unexpected malformed h2 ping rejection: {err}"
+    );
+    assert!(
+      rx.try_recv().is_err(),
+      "malformed PING must not dispatch a request"
+    );
+  }
 }
 
 #[test]
