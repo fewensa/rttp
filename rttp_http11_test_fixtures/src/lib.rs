@@ -1652,6 +1652,231 @@ pub mod content_language {
   }
 }
 
+pub mod content_type {
+  pub const MAX_VALUE_BYTES: usize = 64 * 1024;
+  pub const SERVER_MAX_PARAMETERS: usize = 32;
+  pub const CLIENT_MAX_PARAMETERS: usize = 256;
+
+  pub struct ResponseCase {
+    pub name: &'static str,
+    pub values: &'static [&'static str],
+    pub declaration_value: &'static str,
+    pub normalized_value: &'static str,
+    pub type_name: &'static str,
+    pub subtype: &'static str,
+    pub parameters: &'static [(&'static str, &'static str)],
+  }
+
+  pub struct InvalidCase {
+    pub name: &'static str,
+    pub value: &'static str,
+  }
+
+  const RESPONSE_CASES: &[ResponseCase] = &[
+    ResponseCase {
+      name: "simple media type",
+      values: &["text/plain"],
+      declaration_value: "text/plain",
+      normalized_value: "text/plain",
+      type_name: "text",
+      subtype: "plain",
+      parameters: &[],
+    },
+    ResponseCase {
+      name: "media type and parameters normalize names",
+      values: &["Text/Plain; Charset=UTF-8; format=flowed"],
+      declaration_value: "Text/Plain; Charset=UTF-8; format=flowed",
+      normalized_value: "text/plain; charset=UTF-8; format=flowed",
+      type_name: "text",
+      subtype: "plain",
+      parameters: &[("charset", "UTF-8"), ("format", "flowed")],
+    },
+    ResponseCase {
+      name: "quoted parameter preserves separator",
+      values: &[r#"application/json; profile="https://example.test/a;b""#],
+      declaration_value: r#"application/json; profile="https://example.test/a;b""#,
+      normalized_value: r#"application/json; profile="https://example.test/a;b""#,
+      type_name: "application",
+      subtype: "json",
+      parameters: &[("profile", "https://example.test/a;b")],
+    },
+  ];
+
+  const INVALID_CASES: &[InvalidCase] = &[
+    InvalidCase {
+      name: "empty value",
+      value: "",
+    },
+    InvalidCase {
+      name: "missing slash",
+      value: "text",
+    },
+    InvalidCase {
+      name: "empty subtype",
+      value: "text/",
+    },
+    InvalidCase {
+      name: "media subtype with space",
+      value: "text/pl ain",
+    },
+    InvalidCase {
+      name: "trailing parameter separator",
+      value: "text/plain;",
+    },
+    InvalidCase {
+      name: "missing parameter value",
+      value: "text/plain; charset",
+    },
+    InvalidCase {
+      name: "parameter name with space",
+      value: "text/plain; char set=utf-8",
+    },
+    InvalidCase {
+      name: "unquoted parameter with space",
+      value: "text/plain; charset=utf 8",
+    },
+    InvalidCase {
+      name: "unterminated quoted value",
+      value: "text/plain; charset=\"utf-8",
+    },
+  ];
+
+  pub fn response_cases() -> &'static [ResponseCase] {
+    RESPONSE_CASES
+  }
+
+  pub fn invalid_cases() -> &'static [InvalidCase] {
+    INVALID_CASES
+  }
+
+  pub fn duplicate_parameter_value() -> &'static str {
+    "text/plain; charset=utf-8; CHARSET=iso-8859-1"
+  }
+
+  pub fn oversized_value() -> String {
+    format!("text/plain; p={}", "a".repeat(MAX_VALUE_BYTES))
+  }
+
+  pub fn too_many_server_parameters_value() -> String {
+    too_many_parameters_value(SERVER_MAX_PARAMETERS)
+  }
+
+  pub fn too_many_client_parameters_value() -> String {
+    too_many_parameters_value(CLIENT_MAX_PARAMETERS)
+  }
+
+  fn too_many_parameters_value(max_parameters: usize) -> String {
+    format!(
+      "text/plain{}",
+      (0..=max_parameters)
+        .map(|index| format!("; p{index}=v"))
+        .collect::<String>()
+    )
+  }
+}
+
+pub mod content_encoding {
+  pub const MAX_VALUE_BYTES: usize = 64 * 1024;
+  pub const SERVER_MAX_ENCODINGS: usize = 32;
+  pub const CLIENT_MAX_ENCODINGS: usize = 256;
+
+  pub struct ResponseCase {
+    pub name: &'static str,
+    pub values: &'static [&'static str],
+    pub codings: &'static [&'static str],
+  }
+
+  pub struct InvalidCase {
+    pub name: &'static str,
+    pub value: &'static str,
+  }
+
+  const RESPONSE_CASES: &[ResponseCase] = &[
+    ResponseCase {
+      name: "single coding",
+      values: &["gzip"],
+      codings: &["gzip"],
+    },
+    ResponseCase {
+      name: "codings across header fields preserve order",
+      values: &["gzip, br", "zstd"],
+      codings: &["gzip", "br", "zstd"],
+    },
+    ResponseCase {
+      name: "optional whitespace around commas",
+      values: &["gzip,\tbr , compress"],
+      codings: &["gzip", "br", "compress"],
+    },
+    ResponseCase {
+      name: "extension coding preserves spelling",
+      values: &["x-custom"],
+      codings: &["x-custom"],
+    },
+  ];
+
+  const INVALID_CASES: &[InvalidCase] = &[
+    InvalidCase {
+      name: "empty value",
+      value: "",
+    },
+    InvalidCase {
+      name: "blank value",
+      value: " ",
+    },
+    InvalidCase {
+      name: "leading comma",
+      value: ", gzip",
+    },
+    InvalidCase {
+      name: "trailing comma",
+      value: "gzip,",
+    },
+    InvalidCase {
+      name: "empty member",
+      value: "gzip,,br",
+    },
+    InvalidCase {
+      name: "coding with whitespace",
+      value: "g zip",
+    },
+    InvalidCase {
+      name: "coding with parameter",
+      value: "gzip; q=1",
+    },
+    InvalidCase {
+      name: "coding with invalid separator",
+      value: "gzip/br",
+    },
+  ];
+
+  pub fn response_cases() -> &'static [ResponseCase] {
+    RESPONSE_CASES
+  }
+
+  pub fn invalid_cases() -> &'static [InvalidCase] {
+    INVALID_CASES
+  }
+
+  pub fn too_many_server_codings_value() -> String {
+    too_many_codings_value(SERVER_MAX_ENCODINGS)
+  }
+
+  pub fn too_many_client_codings_value() -> String {
+    too_many_codings_value(CLIENT_MAX_ENCODINGS)
+  }
+
+  fn too_many_codings_value(max_codings: usize) -> String {
+    (0..=max_codings)
+      .map(|index| format!("x-{index}"))
+      .collect::<Vec<_>>()
+      .join(", ")
+  }
+
+  pub fn oversized_value() -> String {
+    format!("x-{}", "a".repeat(MAX_VALUE_BYTES))
+  }
+}
+
 pub fn bind_socket2_tcp_listener(name: &str) -> (TcpListener, SocketAddr) {
   let addr: SocketAddr = "127.0.0.1:0".parse().expect("parse local addr");
   let socket = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))
