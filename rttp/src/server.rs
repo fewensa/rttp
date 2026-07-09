@@ -181,6 +181,30 @@ impl HttpServer {
       let request_closes_connection = request.closes_connection();
       let request_uses_http10_defaults = request.version() == "HTTP/1.0";
       let request_is_head = request.method() == "HEAD";
+      if let Some(settings_payload) = match h2c_upgrade_settings(&request) {
+        Ok(settings_payload) => settings_payload,
+        Err(err) if is_bad_request_error(&err) => {
+          self.normalize_connection_error(bad_request_response().write_to(reader.get_mut()))?;
+          served += 1;
+          break;
+        }
+        Err(err) => return Err(err),
+      } {
+        self.normalize_connection_error(write_h2c_upgrade_response(reader.get_mut()))?;
+        let buffered = reader.buffer().to_vec();
+        let stream = reader.into_inner().into_handoff_stream(buffered)?;
+        let handled = self.handle_http2_connection_with_initial(
+          stream,
+          request_limit - served,
+          handler,
+          Some(Http2InitialSettings {
+            payload: settings_payload,
+            acknowledge: false,
+            upgraded: true,
+          }),
+        )?;
+        return Ok(served + handled);
+      }
       let response = handler(request);
       let response_closes_connection = response.closes_connection();
       served += 1;
@@ -241,6 +265,30 @@ impl HttpServer {
       }
       Err(err) => return Err(err),
     };
+    if let Some(settings_payload) = match h2c_upgrade_settings(&request) {
+      Ok(settings_payload) => settings_payload,
+      Err(err) if is_bad_request_error(&err) => {
+        return self.normalize_connection_error(bad_request_response().write_to(reader.get_mut()));
+      }
+      Err(err) => return Err(err),
+    } {
+      self.normalize_connection_error(write_h2c_upgrade_response(reader.get_mut()))?;
+      let buffered = reader.buffer().to_vec();
+      let stream = reader.into_inner().into_handoff_stream(buffered)?;
+      let mut handler = Some(handler);
+      return self
+        .handle_http2_connection_with_initial(
+          stream,
+          1,
+          &mut |request| handler.take().expect("single h2 request handler")(request),
+          Some(Http2InitialSettings {
+            payload: settings_payload,
+            acknowledge: false,
+            upgraded: true,
+          }),
+        )
+        .map(|_| ());
+    }
     let request_is_head = request.method() == "HEAD";
     let response = handler(request);
     self.normalize_connection_error(response.write_to_with_default_connection_and_body(
@@ -272,6 +320,9 @@ impl HttpServer {
       }
       Err(err) => return Err(err),
     };
+    if h2c_upgrade_settings(&request).is_err() || h2c_upgrade_settings(&request)?.is_some() {
+      return self.normalize_connection_error(bad_request_response().write_to(reader.get_mut()));
+    }
     let request_is_head = request.method() == "HEAD";
     let body = RequestBodyReader::new(&mut reader, body_kind, self.read_timeout.is_some());
     let response = handler(request, body);
@@ -306,6 +357,10 @@ impl HttpServer {
       }
       Err(err) => return Err(err),
     };
+
+    if h2c_upgrade_settings(&request).is_err() || h2c_upgrade_settings(&request)?.is_some() {
+      return self.normalize_connection_error(bad_request_response().write_to(reader.get_mut()));
+    }
 
     let handoff = handler(request.clone());
     if !handoff.valid_for(&request) {
@@ -365,29 +420,54 @@ impl HttpServer {
 
   fn handle_http2_connection<F>(
     &self,
-    mut stream: TcpStream,
+    stream: TcpStream,
     request_limit: usize,
     handler: &mut F,
   ) -> io::Result<usize>
   where
     F: FnMut(Request) -> HttpResponse,
   {
-    let frame = self
-      .normalize_connection_error(read_http2_frame(&mut stream, HTTP2_DEFAULT_MAX_FRAME_SIZE))?;
-    if frame.frame_type != HTTP2_FRAME_SETTINGS
-      || frame.flags & HTTP2_FLAG_ACK == HTTP2_FLAG_ACK
-      || frame.stream_id != 0
+    self.handle_http2_connection_with_initial(stream, request_limit, handler, None)
+  }
+
+  fn handle_http2_connection_with_initial<S, F>(
+    &self,
+    mut stream: S,
+    request_limit: usize,
+    handler: &mut F,
+    initial_settings: Option<Http2InitialSettings>,
+  ) -> io::Result<usize>
+  where
+    S: Read + Write,
+    F: FnMut(Request) -> HttpResponse,
+  {
+    let (initial_payload, acknowledge_initial_settings, upgraded) = if let Some(initial_settings) =
+      initial_settings
     {
-      return Err(invalid_http2_settings_error());
-    }
-    validate_http2_settings_payload(&frame.payload)?;
+      (
+        initial_settings.payload,
+        initial_settings.acknowledge,
+        initial_settings.upgraded,
+      )
+    } else {
+      let frame = self
+        .normalize_connection_error(read_http2_frame(&mut stream, HTTP2_DEFAULT_MAX_FRAME_SIZE))?;
+      if frame.frame_type != HTTP2_FRAME_SETTINGS
+        || frame.flags & HTTP2_FLAG_ACK == HTTP2_FLAG_ACK
+        || frame.stream_id != 0
+      {
+        return Err(invalid_http2_settings_error());
+      }
+      (frame.payload, true, false)
+    };
+    validate_http2_settings_payload(&initial_payload)?;
     let mut peer_max_frame_size =
-      http2_settings_max_frame_size(&frame.payload).unwrap_or(HTTP2_DEFAULT_MAX_FRAME_SIZE);
-    let mut peer_initial_stream_send_window = http2_settings_initial_window_size(&frame.payload)
+      http2_settings_max_frame_size(&initial_payload).unwrap_or(HTTP2_DEFAULT_MAX_FRAME_SIZE);
+    let mut peer_initial_stream_send_window = http2_settings_initial_window_size(&initial_payload)
       .unwrap_or(HTTP2_DEFAULT_INITIAL_WINDOW_SIZE);
     let mut peer_header_table_size =
-      http2_settings_header_table_size(&frame.payload).unwrap_or(HTTP2_DEFAULT_HEADER_TABLE_SIZE);
-    let mut peer_enable_connect_protocol = http2_settings_enable_connect_protocol(&frame.payload);
+      http2_settings_header_table_size(&initial_payload).unwrap_or(HTTP2_DEFAULT_HEADER_TABLE_SIZE);
+    let mut peer_enable_connect_protocol = http2_settings_enable_connect_protocol(&initial_payload);
 
     self.normalize_connection_error(write_http2_frame(
       &mut stream,
@@ -396,18 +476,24 @@ impl HttpServer {
       0,
       &server_http2_settings_payload(request_limit),
     ))?;
-    self.normalize_connection_error(write_http2_frame(
-      &mut stream,
-      HTTP2_FRAME_SETTINGS,
-      HTTP2_FLAG_ACK,
-      0,
-      &[],
-    ))?;
+    if acknowledge_initial_settings {
+      self.normalize_connection_error(write_http2_frame(
+        &mut stream,
+        HTTP2_FRAME_SETTINGS,
+        HTTP2_FLAG_ACK,
+        0,
+        &[],
+      ))?;
+    }
     self.normalize_connection_error(stream.flush())?;
 
     let mut streams = Vec::<Http2RequestStream>::new();
     let mut reset_streams = Vec::<u32>::new();
-    let mut stream_ids = Http2ClientStreamIds::new();
+    let mut stream_ids = if upgraded {
+      Http2ClientStreamIds::after_http1_upgrade()
+    } else {
+      Http2ClientStreamIds::new()
+    };
     let mut connection_receive_window = HTTP2_DEFAULT_INITIAL_WINDOW_SIZE;
     let mut connection_send_window = Http2SendWindow::new(HTTP2_DEFAULT_INITIAL_WINDOW_SIZE);
     let mut request_header_decoder = Http2HeaderDecoder::new(HTTP2_DEFAULT_HEADER_TABLE_SIZE);
@@ -780,9 +866,29 @@ enum AcceptedConnection {
   Http2(TcpStream),
 }
 
+struct Http2InitialSettings {
+  payload: Vec<u8>,
+  acknowledge: bool,
+  upgraded: bool,
+}
+
 enum Http1Stream {
   Plain(TcpStream),
   Prefixed(HandoffStream),
+}
+
+impl Http1Stream {
+  fn into_handoff_stream(self, buffered: Vec<u8>) -> io::Result<HandoffStream> {
+    match self {
+      Self::Plain(stream) => Ok(HandoffStream::new(buffered, stream)),
+      Self::Prefixed(mut stream) => {
+        let mut combined = Vec::new();
+        stream.buffered.read_to_end(&mut combined)?;
+        combined.extend_from_slice(&buffered);
+        Ok(HandoffStream::new(combined, stream.stream))
+      }
+    }
+  }
 }
 
 impl Read for Http1Stream {
@@ -840,6 +946,13 @@ impl Http2ClientStreamIds {
     Self {
       max_opened: 0,
       closed: Vec::new(),
+    }
+  }
+
+  fn after_http1_upgrade() -> Self {
+    Self {
+      max_opened: 1,
+      closed: vec![1],
     }
   }
 
@@ -1084,7 +1197,7 @@ fn http2_data_payload_to_data(payload: &[u8], flags: u8) -> io::Result<&[u8]> {
   Ok(&data_and_padding[..data_and_padding.len() - pad_len])
 }
 
-fn read_http2_frame(stream: &mut TcpStream, max_frame_size: usize) -> io::Result<Http2Frame> {
+fn read_http2_frame<S: Read>(stream: &mut S, max_frame_size: usize) -> io::Result<Http2Frame> {
   let mut header = [0; 9];
   stream.read_exact(&mut header)?;
   let length = ((header[0] as usize) << 16) | ((header[1] as usize) << 8) | header[2] as usize;
@@ -1139,6 +1252,83 @@ fn validate_http2_settings_payload(payload: &[u8]) -> io::Result<()> {
   }
 
   Ok(())
+}
+
+fn h2c_upgrade_settings(request: &Request) -> io::Result<Option<Vec<u8>>> {
+  if !request
+    .header("Upgrade")
+    .is_some_and(|value| connection_header_has_token(Some(value), "h2c"))
+  {
+    return Ok(None);
+  }
+
+  if request.version() != "HTTP/1.1"
+    || request.method().eq_ignore_ascii_case("CONNECT")
+    || !request.connection_header_has_token("upgrade")
+    || !request.connection_header_has_token("http2-settings")
+    || request.headers_named("HTTP2-Settings").count() != 1
+    || !request.body().is_empty()
+  {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "invalid h2c upgrade request",
+    ));
+  }
+
+  let settings = request
+    .header("HTTP2-Settings")
+    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing HTTP2-Settings header"))?;
+  let payload = decode_base64url_unpadded(settings.trim())?;
+  validate_http2_settings_payload(&payload)?;
+  Ok(Some(payload))
+}
+
+fn write_h2c_upgrade_response<S: Write>(stream: &mut S) -> io::Result<()> {
+  HttpResponse::new(101, "Switching Protocols")
+    .header("Connection", "Upgrade")
+    .header("Upgrade", "h2c")
+    .write_handoff_head_to(stream)
+}
+
+fn decode_base64url_unpadded(input: &str) -> io::Result<Vec<u8>> {
+  if input.as_bytes().contains(&b'=') || input.len() % 4 == 1 {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "invalid HTTP2-Settings header",
+    ));
+  }
+
+  let mut output = Vec::with_capacity((input.len() * 3) / 4);
+  for chunk in input.as_bytes().chunks(4) {
+    let mut value = 0u32;
+    for byte in chunk {
+      value = (value << 6) | base64url_value(*byte)? as u32;
+    }
+    let missing = 4 - chunk.len();
+    value <<= 6 * missing;
+    output.push(((value >> 16) & 0xff) as u8);
+    if chunk.len() >= 3 {
+      output.push(((value >> 8) & 0xff) as u8);
+    }
+    if chunk.len() == 4 {
+      output.push((value & 0xff) as u8);
+    }
+  }
+  Ok(output)
+}
+
+fn base64url_value(byte: u8) -> io::Result<u8> {
+  match byte {
+    b'A'..=b'Z' => Ok(byte - b'A'),
+    b'a'..=b'z' => Ok(byte - b'a' + 26),
+    b'0'..=b'9' => Ok(byte - b'0' + 52),
+    b'-' => Ok(62),
+    b'_' => Ok(63),
+    _ => Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "invalid HTTP2-Settings header",
+    )),
+  }
 }
 
 fn http2_window_update_increment(payload: &[u8]) -> io::Result<u32> {
@@ -1307,8 +1497,8 @@ fn http2_closed_stream_error() -> io::Error {
   )
 }
 
-fn write_http2_frame(
-  stream: &mut TcpStream,
+fn write_http2_frame<S: Write>(
+  stream: &mut S,
   frame_type: u8,
   flags: u8,
   stream_id: u32,
@@ -1333,8 +1523,8 @@ fn write_http2_frame(
   stream.write_all(payload)
 }
 
-fn write_http2_window_update(
-  stream: &mut TcpStream,
+fn write_http2_window_update<S: Write>(
+  stream: &mut S,
   stream_id: u32,
   increment: usize,
 ) -> io::Result<()> {
@@ -1376,8 +1566,8 @@ fn server_http2_settings_payload(request_limit: usize) -> Vec<u8> {
   payload
 }
 
-fn write_http2_goaway(
-  stream: &mut TcpStream,
+fn write_http2_goaway<S: Write>(
+  stream: &mut S,
   last_stream_id: u32,
   error_code: u32,
 ) -> io::Result<()> {
@@ -2186,8 +2376,8 @@ enum Http2ResponseFlowControlRead {
   ResponseReset,
 }
 
-fn write_http2_response(
-  stream: &mut TcpStream,
+fn write_http2_response<S: Read + Write>(
+  stream: &mut S,
   stream_id: u32,
   response: &HttpResponse,
   write_body: bool,
@@ -2265,8 +2455,8 @@ fn write_http2_response(
   stream.flush()
 }
 
-fn read_http2_response_flow_control_frame(
-  stream: &mut TcpStream,
+fn read_http2_response_flow_control_frame<S: Read + Write>(
+  stream: &mut S,
   response_stream_id: u32,
   flow_control: &mut Http2ResponseFlowControl<'_>,
 ) -> io::Result<Http2ResponseFlowControlRead> {
@@ -2517,8 +2707,8 @@ fn read_http2_response_flow_control_frame(
   }
 }
 
-fn write_http2_header_block(
-  stream: &mut TcpStream,
+fn write_http2_header_block<S: Write>(
+  stream: &mut S,
   stream_id: u32,
   first_frame_flags: u8,
   block: &[u8],
@@ -3123,6 +3313,14 @@ impl Request {
       .iter()
       .filter(|(name, _)| name.eq_ignore_ascii_case("Connection"))
       .any(|(_, value)| connection_header_has_token(Some(value), token))
+  }
+
+  fn headers_named<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a str> + 'a {
+    self
+      .headers
+      .iter()
+      .filter(move |(key, _)| key.eq_ignore_ascii_case(name))
+      .map(|(_, value)| value.as_str())
   }
 
   #[cfg(test)]

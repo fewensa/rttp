@@ -173,6 +173,26 @@ fn h2_setting_value(payload: &[u8], id: u16) -> Option<u32> {
   })
 }
 
+fn base64url_encode_unpadded(bytes: &[u8]) -> String {
+  const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  let mut encoded = String::new();
+  for chunk in bytes.chunks(3) {
+    let first = chunk[0];
+    let second = *chunk.get(1).unwrap_or(&0);
+    let third = *chunk.get(2).unwrap_or(&0);
+    let value = ((first as u32) << 16) | ((second as u32) << 8) | third as u32;
+    encoded.push(ALPHABET[((value >> 18) & 0x3f) as usize] as char);
+    encoded.push(ALPHABET[((value >> 12) & 0x3f) as usize] as char);
+    if chunk.len() >= 2 {
+      encoded.push(ALPHABET[((value >> 6) & 0x3f) as usize] as char);
+    }
+    if chunk.len() == 3 {
+      encoded.push(ALPHABET[(value & 0x3f) as usize] as char);
+    }
+  }
+  encoded
+}
+
 fn h2_literal_indexed_name(name_index: u8, value: &[u8]) -> Vec<u8> {
   assert!(value.len() < 128);
   let mut encoded = vec![name_index, value.len() as u8];
@@ -441,6 +461,41 @@ fn complete_h2_server_handshake_with_settings(stream: &mut TcpStream, payload: &
   write_h2_frame(stream, H2_FRAME_SETTINGS, H2_FLAG_ACK, 0, &[]);
 }
 
+fn complete_h2c_upgrade(stream: &mut TcpStream, authority: &str, settings_payload: &[u8]) {
+  let settings = base64url_encode_unpadded(settings_payload);
+  let request = format!(
+    "GET /upgrade HTTP/1.1\r\n\
+     Host: {authority}\r\n\
+     Connection: keep-alive, HTTP2-Settings, Upgrade\r\n\
+     Upgrade: h2c\r\n\
+     HTTP2-Settings: {settings}\r\n\
+     \r\n"
+  );
+  stream
+    .write_all(request.as_bytes())
+    .expect("write h2c upgrade request");
+
+  let mut response = Vec::new();
+  let mut byte = [0; 1];
+  while !response.ends_with(b"\r\n\r\n") {
+    stream
+      .read_exact(&mut byte)
+      .expect("read h2c upgrade response");
+    response.push(byte[0]);
+  }
+  let response = String::from_utf8(response).expect("utf8 upgrade response");
+  assert!(response.starts_with("HTTP/1.1 101 Switching Protocols\r\n"));
+  assert!(response.contains("\r\nConnection: Upgrade\r\n"));
+  assert!(response.contains("\r\nUpgrade: h2c\r\n"));
+
+  let settings = read_h2_frame(stream);
+  assert_eq!(H2_FRAME_SETTINGS, settings.frame_type);
+  assert_eq!(0, settings.flags);
+  assert_eq!(0, settings.stream_id);
+
+  write_h2_frame(stream, H2_FRAME_SETTINGS, H2_FLAG_ACK, 0, &[]);
+}
+
 fn assert_malformed_settings_rejected_before_handler(
   initial_payload: &[u8],
   initial_flags: u8,
@@ -492,6 +547,55 @@ fn assert_malformed_settings_rejected_before_handler(
   assert!(
     result.is_err(),
     "malformed SETTINGS should reject connection"
+  );
+  assert!(rx.try_recv().is_err(), "handler must not be called");
+}
+
+fn assert_malformed_h2c_upgrade_rejected_before_handler(http2_settings: &str) {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|_| {
+      tx.send(()).expect("send unexpected handler call");
+      HttpResponse::ok("unexpected")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2c upgrade server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set client read timeout");
+  let request = format!(
+    "GET /upgrade HTTP/1.1\r\n\
+     Host: {addr}\r\n\
+     Connection: Upgrade, HTTP2-Settings\r\n\
+     Upgrade: h2c\r\n\
+     HTTP2-Settings: {http2_settings}\r\n\
+     \r\n"
+  );
+  stream
+    .write_all(request.as_bytes())
+    .expect("write malformed h2c upgrade request");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown client write");
+
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+  assert_eq!(
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
+
+  let result = handle.join().expect("server thread");
+  assert!(
+    result.is_ok(),
+    "malformed h2c upgrade should be handled as 400"
   );
   assert!(rx.try_recv().is_err(), "handler must not be called");
 }
@@ -1568,6 +1672,63 @@ fn prior_knowledge_server_acknowledges_valid_settings_payload_and_serves_request
   assert_eq!(b"settings accepted", response_body.payload.as_slice());
 
   handle.join().expect("server thread");
+}
+
+#[test]
+fn h2c_upgrade_server_transitions_to_bounded_http2_loop_on_same_socket() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        assert_eq!("HTTP/2", request.version());
+        assert_eq!("GET", request.method());
+        assert_eq!("/settings", request.target());
+        HttpResponse::ok("h2c upgrade served")
+      })
+      .expect("serve h2c upgrade request")
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2c upgrade server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set client read timeout");
+  let mut settings_payload = Vec::new();
+  settings_payload.extend_from_slice(&h2_setting(H2_SETTINGS_ENABLE_PUSH, 0));
+  settings_payload.extend_from_slice(&h2_setting(H2_SETTINGS_MAX_FRAME_SIZE, 16_384));
+  complete_h2c_upgrade(&mut stream, &addr.to_string(), &settings_payload);
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    3,
+    &h2_get_headers(b"/settings", addr.to_string().as_bytes()),
+  );
+
+  let response_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(3, response_headers.stream_id);
+  let response_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
+  assert_eq!(3, response_body.stream_id);
+  assert_eq!(b"h2c upgrade served", response_body.payload.as_slice());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn h2c_upgrade_rejects_malformed_http2_settings_before_handler_dispatch() {
+  assert_malformed_h2c_upgrade_rejected_before_handler("%%%");
+  assert_malformed_h2c_upgrade_rejected_before_handler(&base64url_encode_unpadded(&h2_setting(
+    H2_SETTINGS_ENABLE_PUSH,
+    2,
+  )));
 }
 
 #[test]
