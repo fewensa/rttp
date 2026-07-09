@@ -583,6 +583,118 @@ pub mod age_expires {
   }
 }
 
+pub mod retry_after {
+  pub const RETRY_AFTER_UNIX_SECONDS: u64 = 784_111_777;
+  pub const RETRY_AFTER_IMF_FIXDATE: &str = "Sun, 06 Nov 1994 08:49:37 GMT";
+
+  pub struct RetryAfterCase {
+    pub name: &'static str,
+    pub value: &'static str,
+    pub kind: RetryAfterKind,
+  }
+
+  pub enum RetryAfterKind {
+    DeltaSeconds(u64),
+    HttpDate(u64),
+  }
+
+  pub struct DeclarationCase {
+    pub name: &'static str,
+    pub delta_seconds: u64,
+    pub delta_value: &'static str,
+    pub date_unix_seconds: u64,
+    pub date_value: &'static str,
+  }
+
+  pub struct InvalidCase {
+    pub name: &'static str,
+    pub value: &'static str,
+  }
+
+  const RETRY_AFTER_CASES: &[RetryAfterCase] = &[
+    RetryAfterCase {
+      name: "Retry-After zero delta-seconds",
+      value: "0",
+      kind: RetryAfterKind::DeltaSeconds(0),
+    },
+    RetryAfterCase {
+      name: "Retry-After positive delta-seconds",
+      value: "120",
+      kind: RetryAfterKind::DeltaSeconds(120),
+    },
+    RetryAfterCase {
+      name: "Retry-After IMF-fixdate",
+      value: RETRY_AFTER_IMF_FIXDATE,
+      kind: RetryAfterKind::HttpDate(RETRY_AFTER_UNIX_SECONDS),
+    },
+    RetryAfterCase {
+      name: "Retry-After obsolete RFC 850 date",
+      value: "Sunday, 06-Nov-94 08:49:37 GMT",
+      kind: RetryAfterKind::HttpDate(RETRY_AFTER_UNIX_SECONDS),
+    },
+  ];
+
+  const DECLARATION_CASES: &[DeclarationCase] = &[
+    DeclarationCase {
+      name: "declared zero Retry-After delta with HTTP-date",
+      delta_seconds: 0,
+      delta_value: "0",
+      date_unix_seconds: RETRY_AFTER_UNIX_SECONDS,
+      date_value: RETRY_AFTER_IMF_FIXDATE,
+    },
+    DeclarationCase {
+      name: "declared positive Retry-After delta with HTTP-date",
+      delta_seconds: 120,
+      delta_value: "120",
+      date_unix_seconds: RETRY_AFTER_UNIX_SECONDS,
+      date_value: RETRY_AFTER_IMF_FIXDATE,
+    },
+  ];
+
+  const INVALID_CASES: &[InvalidCase] = &[
+    InvalidCase {
+      name: "Retry-After empty value",
+      value: "",
+    },
+    InvalidCase {
+      name: "Retry-After signed delta-seconds",
+      value: "-1",
+    },
+    InvalidCase {
+      name: "Retry-After fractional delta-seconds",
+      value: "1.5",
+    },
+    InvalidCase {
+      name: "Retry-After non-numeric non-date value",
+      value: "abc",
+    },
+    InvalidCase {
+      name: "Retry-After comma-list delta-seconds",
+      value: "0, 60",
+    },
+    InvalidCase {
+      name: "Retry-After overflowing delta-seconds",
+      value: "18446744073709551616",
+    },
+    InvalidCase {
+      name: "Retry-After unsupported timezone",
+      value: "Sun, 06 Nov 1994 08:49:37 PST",
+    },
+  ];
+
+  pub fn retry_after_cases() -> &'static [RetryAfterCase] {
+    RETRY_AFTER_CASES
+  }
+
+  pub fn declaration_cases() -> &'static [DeclarationCase] {
+    DECLARATION_CASES
+  }
+
+  pub fn invalid_cases() -> &'static [InvalidCase] {
+    INVALID_CASES
+  }
+}
+
 pub mod vary {
   pub const MAX_VALUE_BYTES: usize = 64 * 1024;
   pub const MAX_FIELD_NAMES: usize = 256;

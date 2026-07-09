@@ -174,12 +174,23 @@ overflowing values return `HttpAgeParseError`.
 header as an HTTP-date. Valid HTTP-date values parse to `SystemTime`; malformed,
 duplicated, or non-date values return `HttpExpiresParseError`.
 
+`HttpResponse::with_retry_after_delta(delta_seconds)` serializes a
+delta-seconds `Retry-After` header from a non-negative `u64`, while
+`HttpResponse::with_retry_after_date(time)` serializes an HTTP-date
+`Retry-After` header from `SystemTime`. `HttpResponse::retry_after()` parses an
+attached single `Retry-After` header into `HttpRetryAfter::DeltaSeconds` or
+`HttpRetryAfter::HttpDate`. Empty, signed, fractional, non-numeric non-date,
+comma-list, duplicated, overflowing, oversized, or malformed HTTP-date values
+return `HttpRetryAfterParseError`.
+
 Malformed typed helper reads return validation errors, while raw
-`HttpResponse::header("Age", ...)` and `HttpResponse::header("Expires", ...)`
-values remain preserved exactly as response headers. These helpers do not
-calculate freshness, validate cache state against wall-clock time, store
-responses, match stored responses, revalidate responses, enforce shared-cache
-policy, or issue automatic conditional requests.
+`HttpResponse::header("Age", ...)`, `HttpResponse::header("Expires", ...)`,
+and `HttpResponse::header("Retry-After", ...)` values remain preserved exactly
+as response headers. These helpers do not calculate freshness, validate cache
+state against wall-clock time, store responses, match stored responses,
+revalidate responses, enforce shared-cache policy, attach behavior to status
+codes, throttle requests, sleep, schedule work, retry, or issue automatic
+conditional requests.
 
 ## Bounded HTTP/1.1 Vary behavior
 
@@ -405,7 +416,7 @@ scheduling, or async accept loops.
 | HTTP/1.1 response framing | Automatic `Content-Length`, explicit chunked responses, bodyless `HEAD`, `101`, `204`, and `304`, response trailers after the terminating chunk | No server TLS |
 | Byte ranges | `HttpByteRange` parses one `bytes` range, `Request::evaluate_if_range` and `HttpRequest::evaluate_if_range` gate it with caller-provided strong ETag or exact HTTP-date metadata, and `HttpResponse::partial_content`/`range_not_satisfiable` serialize `206`/`416` with `Content-Range` | No multipart range serialization, automatic retry, cache storage, filesystem serving, automatic cache validation, or static-file policy |
 | Conditional requests | `Request::evaluate_conditional`, `evaluate_conditional_request`, `HttpConditionalMetadata`, and `HttpEntityTag` evaluate bounded HTTP/1.1 validators; `HttpResponse::not_modified` and `precondition_failed` serialize `304` and `412` outcomes | No cache storage, static-file serving policy, automatic revalidation, or cache-control engine |
-| Cache-Control | `Request::cache_control`, `HttpRequest::cache_control`, and `HttpResponse::cache_control` parse bounded request/response directives, numeric freshness fields, quoted field-name lists, and extension directives; `HttpResponse::with_age`/`age` and `with_expires`/`expires` declare and parse response `Age` and `Expires` metadata | No cache storage, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, automatic conditional requests, or directive-based validator evaluation |
+| Cache-Control | `Request::cache_control`, `HttpRequest::cache_control`, and `HttpResponse::cache_control` parse bounded request/response directives, numeric freshness fields, quoted field-name lists, and extension directives; `HttpResponse::with_age`/`age`, `with_expires`/`expires`, and `with_retry_after_delta`/`with_retry_after_date`/`retry_after` declare and parse response `Age`, `Expires`, and `Retry-After` metadata | No cache storage, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, automatic conditional requests, directive-based validator evaluation, automatic retry, throttling, sleeping, or scheduling |
 | Vary | `HttpVary`, `HttpResponse::with_vary`, `HttpResponse::vary`, `Request::vary_selection`, and `HttpRequest::vary_selection` parse, declare, and select bounded `Vary` metadata with case-insensitive field-name handling | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | Upgrade and tunnel targets | `CONNECT` authority-form requests are accepted as HTTP requests; `HttpResponse::upgrade` can hand an upgraded socket to caller code after a matching request | The server does not implement the upgraded protocol after handoff |
 | Trailers | Chunked request trailers are preserved on `Request`; malformed, oversized, forbidden, and pseudo-header trailers are rejected; response trailers can be serialized for chunked responses | Application metadata trailers are allowed; trailer names that affect connection state, routing, authentication/cookies, framing, or payload processing are rejected |

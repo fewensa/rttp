@@ -13,6 +13,7 @@ const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
 const MAX_VARY_VALUE_BYTES: usize = 64 * 1024;
 const MAX_VARY_FIELDS: usize = 256;
+const MAX_RETRY_AFTER_VALUE_BYTES: usize = 64 * 1024;
 const HTTP2_CLIENT_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 const HTTP2_FRAME_DATA: u8 = 0x0;
 const HTTP2_FRAME_HEADERS: u8 = 0x1;
@@ -4536,6 +4537,21 @@ impl HttpResponse {
     self
   }
 
+  pub fn with_retry_after_delta(mut self, delta_seconds: u64) -> Self {
+    self
+      .headers
+      .push(HttpHeader::new("Retry-After", delta_seconds.to_string()));
+    self
+  }
+
+  pub fn with_retry_after_date(mut self, http_date: SystemTime) -> Self {
+    self.headers.push(HttpHeader::new(
+      "Retry-After",
+      httpdate::fmt_http_date(http_date),
+    ));
+    self
+  }
+
   pub fn trailers(&self) -> &[HttpHeader] {
     &self.trailers
   }
@@ -4596,6 +4612,17 @@ impl HttpResponse {
     httpdate::parse_http_date(value)
       .map(Some)
       .map_err(|_| HttpExpiresParseError::new("invalid Expires HTTP-date"))
+  }
+
+  pub fn retry_after(&self) -> Result<Option<HttpRetryAfter>, HttpRetryAfterParseError> {
+    let Some(value) = self.single_header_value(
+      "Retry-After",
+      HttpRetryAfterParseError::new("multiple Retry-After headers"),
+    )?
+    else {
+      return Ok(None);
+    };
+    parse_http_retry_after(value).map(Some)
   }
 
   pub fn body<B: AsRef<[u8]>>(mut self, body: B) -> Self {
@@ -4867,6 +4894,33 @@ impl fmt::Display for HttpExpiresParseError {
 
 impl Error for HttpExpiresParseError {}
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HttpRetryAfter {
+  DeltaSeconds(u64),
+  HttpDate(SystemTime),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpRetryAfterParseError {
+  message: String,
+}
+
+impl HttpRetryAfterParseError {
+  fn new<S: AsRef<str>>(message: S) -> Self {
+    Self {
+      message: message.as_ref().to_string(),
+    }
+  }
+}
+
+impl fmt::Display for HttpRetryAfterParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpRetryAfterParseError {}
+
 fn parse_http_age(value: &str) -> Result<u64, HttpAgeParseError> {
   let value = value.trim();
   if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
@@ -4875,6 +4929,30 @@ fn parse_http_age(value: &str) -> Result<u64, HttpAgeParseError> {
   value
     .parse::<u64>()
     .map_err(|_| HttpAgeParseError::new("invalid Age delta-seconds"))
+}
+
+fn parse_http_retry_after(value: &str) -> Result<HttpRetryAfter, HttpRetryAfterParseError> {
+  if value.len() > MAX_RETRY_AFTER_VALUE_BYTES {
+    return Err(HttpRetryAfterParseError::new(
+      "Retry-After value is too large",
+    ));
+  }
+
+  let value = value.trim();
+  if value.is_empty() {
+    return Err(HttpRetryAfterParseError::new("invalid Retry-After value"));
+  }
+
+  if value.bytes().all(|byte| byte.is_ascii_digit()) {
+    return value
+      .parse::<u64>()
+      .map(HttpRetryAfter::DeltaSeconds)
+      .map_err(|_| HttpRetryAfterParseError::new("invalid Retry-After delta-seconds"));
+  }
+
+  httpdate::parse_http_date(value)
+    .map(HttpRetryAfter::HttpDate)
+    .map_err(|_| HttpRetryAfterParseError::new("invalid Retry-After HTTP-date"))
 }
 
 fn parse_suffix_byte_range(

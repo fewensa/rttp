@@ -5,7 +5,8 @@ use std::thread;
 use std::time::{Duration, UNIX_EPOCH};
 
 use rttp::server::{
-  HttpRequest, HttpRequestCacheControl, HttpResponse, HttpResponseCacheControl, HttpVary,
+  HttpRequest, HttpRequestCacheControl, HttpResponse, HttpResponseCacheControl, HttpRetryAfter,
+  HttpVary,
 };
 use rttp_http11_test_fixtures as fixtures;
 
@@ -70,6 +71,17 @@ fn age_expires_response(age: u64, expires: std::time::SystemTime) -> HttpRespons
     .header("Cache-Control", "public, max-age=60")
     .with_vary("Accept-Encoding")
     .expect("test Vary should parse")
+}
+
+fn expected_retry_after(kind: &fixtures::retry_after::RetryAfterKind) -> HttpRetryAfter {
+  match kind {
+    fixtures::retry_after::RetryAfterKind::DeltaSeconds(delta_seconds) => {
+      HttpRetryAfter::DeltaSeconds(*delta_seconds)
+    }
+    fixtures::retry_after::RetryAfterKind::HttpDate(unix_seconds) => {
+      HttpRetryAfter::HttpDate(UNIX_EPOCH + Duration::from_secs(*unix_seconds))
+    }
+  }
 }
 
 fn assert_request_cache_control(
@@ -339,6 +351,60 @@ fn server_response_age_and_expires_helpers_reject_shared_invalid_matrix() {
     assert!(
       response.expires().is_err(),
       "{} Expires helper should reject invalid value",
+      case.name
+    );
+  }
+}
+
+#[test]
+fn server_response_helper_accepts_shared_retry_after_response_matrix() {
+  for case in fixtures::retry_after::retry_after_cases() {
+    let response = HttpResponse::ok("OK").header("Retry-After", case.value);
+
+    assert_eq!(
+      Some(expected_retry_after(&case.kind)),
+      response
+        .retry_after()
+        .unwrap_or_else(|err| panic!("{} Retry-After should parse: {err}", case.name)),
+      "{}",
+      case.name
+    );
+  }
+}
+
+#[test]
+fn server_response_with_retry_after_declares_shared_metadata_matrix() {
+  for case in fixtures::retry_after::declaration_cases() {
+    let delta_response =
+      HttpResponse::new(503, "Service Unavailable").with_retry_after_delta(case.delta_seconds);
+    let date_response = HttpResponse::new(503, "Service Unavailable")
+      .with_retry_after_date(UNIX_EPOCH + Duration::from_secs(case.date_unix_seconds));
+    let delta_serialized = String::from_utf8(delta_response.to_bytes()).expect("response is UTF-8");
+    let date_serialized = String::from_utf8(date_response.to_bytes()).expect("response is UTF-8");
+
+    assert_eq!(
+      Some(case.delta_value),
+      header_value(&delta_serialized, "Retry-After"),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      Some(case.date_value),
+      header_value(&date_serialized, "Retry-After"),
+      "{}",
+      case.name
+    );
+  }
+}
+
+#[test]
+fn server_response_retry_after_helper_rejects_shared_invalid_matrix() {
+  for case in fixtures::retry_after::invalid_cases() {
+    let response = HttpResponse::ok("OK").header("Retry-After", case.value);
+
+    assert!(
+      response.retry_after().is_err(),
+      "{} Retry-After helper should reject invalid value",
       case.name
     );
   }
