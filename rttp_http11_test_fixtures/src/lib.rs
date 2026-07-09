@@ -1409,6 +1409,123 @@ pub mod content_location {
   }
 }
 
+pub mod content_disposition {
+  pub const MAX_VALUE_BYTES: usize = 64 * 1024;
+  pub const SERVER_MAX_PARAMETERS: usize = 32;
+  pub const CLIENT_MAX_PARAMETERS: usize = 256;
+
+  pub struct ResponseCase {
+    pub name: &'static str,
+    pub values: &'static [&'static str],
+    pub disposition_type: &'static str,
+    pub filename: Option<&'static str>,
+    pub filename_ext: Option<&'static str>,
+    pub parameters: &'static [(&'static str, &'static str)],
+    pub normalized_value: &'static str,
+  }
+
+  pub struct InvalidCase {
+    pub name: &'static str,
+    pub value: &'static str,
+  }
+
+  const RESPONSE_CASES: &[ResponseCase] = &[
+    ResponseCase {
+      name: "attachment quoted filename with extension parameter",
+      values: &[
+        "attachment; filename=\"report \\\"final\\\".txt\"; filename*=UTF-8''report-final.txt",
+      ],
+      disposition_type: "attachment",
+      filename: Some("report \"final\".txt"),
+      filename_ext: Some("UTF-8''report-final.txt"),
+      parameters: &[
+        ("filename", "report \"final\".txt"),
+        ("filename*", "UTF-8''report-final.txt"),
+      ],
+      normalized_value:
+        "attachment; filename=\"report \\\"final\\\".txt\"; filename*=UTF-8''report-final.txt",
+    },
+    ResponseCase {
+      name: "inline metadata with quoted filename",
+      values: &["inline; filename=\"read me.txt\"; preview=yes"],
+      disposition_type: "inline",
+      filename: Some("read me.txt"),
+      filename_ext: None,
+      parameters: &[("filename", "read me.txt"), ("preview", "yes")],
+      normalized_value: "inline; filename=\"read me.txt\"; preview=yes",
+    },
+  ];
+
+  const INVALID_CASES: &[InvalidCase] = &[
+    InvalidCase {
+      name: "empty value",
+      value: "",
+    },
+    InvalidCase {
+      name: "disposition type with space",
+      value: "attach ment",
+    },
+    InvalidCase {
+      name: "trailing parameter separator",
+      value: "attachment;",
+    },
+    InvalidCase {
+      name: "missing parameter value",
+      value: "attachment; filename",
+    },
+    InvalidCase {
+      name: "parameter name with space",
+      value: "attachment; file name=report.txt",
+    },
+    InvalidCase {
+      name: "unquoted filename with space",
+      value: "attachment; filename=report txt",
+    },
+    InvalidCase {
+      name: "unterminated quoted value",
+      value: "attachment; filename=\"unterminated",
+    },
+    InvalidCase {
+      name: "control character in quoted value",
+      value: "attachment; filename=\"bad\u{7f}\"",
+    },
+  ];
+
+  pub fn response_cases() -> &'static [ResponseCase] {
+    RESPONSE_CASES
+  }
+
+  pub fn invalid_cases() -> &'static [InvalidCase] {
+    INVALID_CASES
+  }
+
+  pub fn duplicate_parameter_value() -> &'static str {
+    "attachment; filename=one.txt; FILENAME=two.txt"
+  }
+
+  pub fn oversized_value() -> String {
+    format!("attachment; filename=\"{}\"", "a".repeat(MAX_VALUE_BYTES))
+  }
+
+  pub fn too_many_server_parameters_value() -> String {
+    format!(
+      "attachment{}",
+      (0..=SERVER_MAX_PARAMETERS)
+        .map(|index| format!("; p{index}=v"))
+        .collect::<String>()
+    )
+  }
+
+  pub fn too_many_client_parameters_value() -> String {
+    format!(
+      "attachment{}",
+      (0..=CLIENT_MAX_PARAMETERS)
+        .map(|index| format!("; p{index}=v"))
+        .collect::<String>()
+    )
+  }
+}
+
 pub mod content_language {
   pub const MAX_VALUE_BYTES: usize = 64 * 1024;
   pub const SERVER_MAX_LANGUAGES: usize = 32;

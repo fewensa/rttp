@@ -5,8 +5,8 @@ use std::thread;
 use std::time::{Duration, UNIX_EPOCH};
 
 use rttp::server::{
-  HttpAcceptRanges, HttpAllowedMethods, HttpContentLanguages, HttpRequest, HttpRequestCacheControl,
-  HttpResponse, HttpResponseCacheControl, HttpRetryAfter, HttpVary,
+  HttpAcceptRanges, HttpAllowedMethods, HttpContentDisposition, HttpContentLanguages, HttpRequest,
+  HttpRequestCacheControl, HttpResponse, HttpResponseCacheControl, HttpRetryAfter, HttpVary,
 };
 use rttp_http11_test_fixtures as fixtures;
 
@@ -92,6 +92,14 @@ fn content_location_response(values: &[&str]) -> HttpResponse {
     .iter()
     .fold(HttpResponse::new(200, "OK"), |response, value| {
       response.header("Content-Location", value)
+    })
+}
+
+fn content_disposition_response(values: &[&str]) -> HttpResponse {
+  values
+    .iter()
+    .fold(HttpResponse::new(200, "OK"), |response, value| {
+      response.header("Content-Disposition", value)
     })
 }
 
@@ -315,6 +323,33 @@ fn assert_response_content_location(
   );
 }
 
+fn assert_response_content_disposition(
+  name: &str,
+  content_disposition: &HttpContentDisposition,
+  expected: &fixtures::content_disposition::ResponseCase,
+) {
+  assert_eq!(
+    expected.disposition_type,
+    content_disposition.disposition_type(),
+    "{name}"
+  );
+  assert_eq!(
+    expected.filename,
+    content_disposition.parameter("filename"),
+    "{name}"
+  );
+  assert_eq!(
+    expected.filename_ext,
+    content_disposition.parameter("filename*"),
+    "{name}"
+  );
+  assert_eq!(
+    expected.parameters,
+    content_disposition.parameters().as_slice(),
+    "{name}"
+  );
+}
+
 #[test]
 fn model_parser_cache_control_helper_rejects_shared_invalid_request_matrix() {
   for case in fixtures::cache_control::invalid_request_cases() {
@@ -416,6 +451,19 @@ fn server_response_helper_accepts_shared_content_location_response_matrix() {
     let response = content_location_response(case.values);
 
     assert_response_content_location(case.name, &response, case);
+  }
+}
+
+#[test]
+fn server_response_helper_accepts_shared_content_disposition_response_matrix() {
+  for case in fixtures::content_disposition::response_cases() {
+    let response = content_disposition_response(case.values);
+    let content_disposition = response
+      .content_disposition()
+      .unwrap_or_else(|err| panic!("{} Content-Disposition should parse: {err}", case.name))
+      .unwrap_or_else(|| panic!("{} should include Content-Disposition", case.name));
+
+    assert_response_content_disposition(case.name, &content_disposition, case);
   }
 }
 
@@ -632,6 +680,119 @@ fn server_response_retry_after_helper_rejects_duplicate_singleton_and_oversized_
   assert!(
     oversized.retry_after().is_err(),
     "oversized Retry-After value should be rejected"
+  );
+}
+
+#[test]
+fn server_response_with_content_disposition_declares_shared_metadata_matrix() {
+  for case in fixtures::content_disposition::response_cases() {
+    let disposition = HttpContentDisposition::new(case.disposition_type)
+      .unwrap_or_else(|err| panic!("{} disposition type should parse: {err}", case.name));
+    let disposition = case
+      .parameters
+      .iter()
+      .fold(disposition, |disposition, (name, value)| {
+        disposition
+          .with_parameter(name, value)
+          .unwrap_or_else(|err| panic!("{} parameter should parse: {err}", case.name))
+      });
+    let response = HttpResponse::ok("OK")
+      .header("Content-Disposition", "inline")
+      .with_content_disposition(disposition)
+      .unwrap_or_else(|err| panic!("{} declaration should parse: {err}", case.name));
+    let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+    assert_eq!(
+      Some(case.normalized_value),
+      header_value(&serialized, "Content-Disposition"),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      1,
+      serialized.matches("\r\nContent-Disposition: ").count(),
+      "{}",
+      case.name
+    );
+    let content_disposition = response
+      .content_disposition()
+      .expect("Content-Disposition should parse")
+      .expect("Content-Disposition should be present");
+    assert_response_content_disposition(case.name, &content_disposition, case);
+  }
+}
+
+#[test]
+fn server_response_content_disposition_helper_rejects_shared_invalid_matrix() {
+  for case in fixtures::content_disposition::invalid_cases() {
+    assert!(
+      HttpContentDisposition::parse(case.value).is_err(),
+      "{} Content-Disposition helper should reject invalid value",
+      case.name
+    );
+    assert!(
+      content_disposition_response(&[case.value])
+        .content_disposition()
+        .is_err(),
+      "{} response parser should reject invalid Content-Disposition value",
+      case.name
+    );
+  }
+}
+
+#[test]
+fn server_response_content_disposition_helper_rejects_duplicates_and_enforces_shared_bounds() {
+  let duplicate = content_disposition_response(&["attachment; filename=one.txt", "inline"]);
+  assert!(
+    duplicate.content_disposition().is_err(),
+    "duplicate Content-Disposition header fields should be rejected"
+  );
+
+  assert!(
+    content_disposition_response(&[fixtures::content_disposition::duplicate_parameter_value()])
+      .content_disposition()
+      .is_err(),
+    "duplicate Content-Disposition parameters should be rejected"
+  );
+
+  let oversized = fixtures::content_disposition::oversized_value();
+  assert!(
+    HttpContentDisposition::parse(&oversized).is_err(),
+    "oversized Content-Disposition value should be rejected"
+  );
+  assert!(
+    content_disposition_response(&[&oversized])
+      .content_disposition()
+      .is_err(),
+    "oversized response Content-Disposition value should be rejected"
+  );
+
+  let too_many = fixtures::content_disposition::too_many_server_parameters_value();
+  assert!(
+    HttpContentDisposition::parse(&too_many).is_err(),
+    "too many Content-Disposition parameters should be rejected"
+  );
+  assert!(
+    content_disposition_response(&[&too_many])
+      .content_disposition()
+      .is_err(),
+    "too many response Content-Disposition parameters should be rejected"
+  );
+}
+
+#[test]
+fn server_response_raw_content_disposition_remains_inspectable_after_helper_rejection() {
+  let response =
+    content_disposition_response(&[fixtures::content_disposition::duplicate_parameter_value()]);
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(
+    response.content_disposition().is_err(),
+    "typed helper should reject duplicate Content-Disposition parameters"
+  );
+  assert_eq!(
+    Some(fixtures::content_disposition::duplicate_parameter_value()),
+    header_value(&serialized, "Content-Disposition")
   );
 }
 

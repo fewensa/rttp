@@ -8,7 +8,7 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use rttp::server::{
   HttpByteRange, HttpByteRangeError, HttpConditionalMetadata, HttpConditionalRequestOutcome,
-  HttpEntityTag, HttpIfRangeRequestOutcome, HttpResponse, Request,
+  HttpContentDisposition, HttpEntityTag, HttpIfRangeRequestOutcome, HttpResponse, Request,
 };
 use rttp_client::HttpClient;
 use rttp_http11_test_fixtures as fixtures;
@@ -105,6 +105,17 @@ fn content_location_response(values: &[&str], include_adjacent_metadata: bool) -
     response.push_str("Allow: GET, HEAD\r\n");
     response.push_str("Content-Language: fr-CA, es-419\r\n");
     response.push_str("Accept-Ranges: bytes, pages\r\n");
+  }
+  response.push_str("Content-Length: 2\r\n\r\nOK");
+  response.into_bytes()
+}
+
+fn content_disposition_response(values: &[&str]) -> Vec<u8> {
+  let mut response = String::from("HTTP/1.1 200 OK\r\n");
+  for value in values {
+    response.push_str("Content-Disposition: ");
+    response.push_str(value);
+    response.push_str("\r\n");
   }
   response.push_str("Content-Length: 2\r\n\r\nOK");
   response.into_bytes()
@@ -343,6 +354,28 @@ fn spawn_conditional_server() -> (std::net::SocketAddr, thread::JoinHandle<Optio
   (addr, handle)
 }
 
+fn spawn_content_disposition_server(
+  disposition: HttpContentDisposition,
+) -> (std::net::SocketAddr, thread::JoinHandle<()>) {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind content-disposition server");
+  let addr = server
+    .local_addr()
+    .expect("content-disposition server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        HttpResponse::ok("OK")
+          .header("Content-Disposition", "inline")
+          .with_content_disposition(disposition.clone())
+          .expect("Content-Disposition declaration should parse")
+      })
+      .expect("serve content-disposition request");
+  });
+
+  (addr, handle)
+}
+
 fn assert_partial_response(
   name: &str,
   response: rttp_client::response::Response,
@@ -574,6 +607,57 @@ fn assert_response_content_location(
   );
 }
 
+fn assert_response_content_disposition(
+  name: &str,
+  response: &rttp_client::response::Response,
+  expected: &fixtures::content_disposition::ResponseCase,
+) {
+  let raw_values: Vec<&str> = response
+    .header_values("content-disposition")
+    .into_iter()
+    .map(String::as_str)
+    .collect();
+  assert_eq!(expected.values, raw_values.as_slice(), "{name}");
+
+  assert_content_disposition_metadata(name, response, expected);
+}
+
+fn assert_content_disposition_metadata(
+  name: &str,
+  response: &rttp_client::response::Response,
+  expected: &fixtures::content_disposition::ResponseCase,
+) {
+  let content_disposition = response
+    .content_disposition()
+    .unwrap_or_else(|err| panic!("{name} Content-Disposition should parse: {err}"))
+    .unwrap_or_else(|| panic!("{name} should include Content-Disposition"));
+
+  assert_eq!(
+    expected.disposition_type,
+    content_disposition.disposition_type(),
+    "{name}"
+  );
+  assert_eq!(expected.filename, content_disposition.filename(), "{name}");
+  assert_eq!(
+    expected.filename_ext,
+    content_disposition.filename_ext(),
+    "{name}"
+  );
+  assert_eq!(
+    expected.parameters.len(),
+    content_disposition.parameters().len(),
+    "{name}"
+  );
+  for ((expected_name, expected_value), observed) in expected
+    .parameters
+    .iter()
+    .zip(content_disposition.parameters())
+  {
+    assert_eq!(*expected_name, observed.name(), "{name}");
+    assert_eq!(*expected_value, observed.value(), "{name}");
+  }
+}
+
 fn assert_informational_response(
   name: &str,
   observed: &rttp_client::response::InformationalResponse,
@@ -769,6 +853,37 @@ fn assert_content_location_helper_rejects_but_preserves_response(
   handle.join().expect("raw response server thread");
 }
 
+fn assert_content_disposition_helper_rejects_but_preserves_response(
+  name: &str,
+  raw_response: Vec<u8>,
+  expected_values: &[&str],
+) {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!(
+      "http://{}/matrix/content-disposition-invalid",
+      addr
+    ))
+    .emit()
+    .unwrap_or_else(|err| panic!("{name} response should remain parseable: {err}"));
+
+  assert!(
+    response.content_disposition().is_err(),
+    "{name} helper should reject invalid Content-Disposition"
+  );
+  let raw_values: Vec<&str> = response
+    .header_values("Content-Disposition")
+    .into_iter()
+    .map(String::as_str)
+    .collect();
+  assert_eq!(expected_values, raw_values.as_slice(), "{name}");
+  assert_eq!("OK", response.body().string().unwrap(), "{name}");
+
+  handle.join().expect("raw response server thread");
+}
+
 enum ConditionalHeader {
   IfNoneMatch(&'static str),
   IfMatch(&'static str),
@@ -952,6 +1067,24 @@ fn sync_client_parses_shared_content_location_response_matrix() {
       .unwrap_or_else(|err| panic!("{} response should parse: {err}", case.name));
 
     assert_response_content_location(case.name, &response, case);
+    assert_eq!("OK", response.body().string().unwrap(), "{}", case.name);
+    handle.join().expect("raw response server thread");
+  }
+}
+
+#[test]
+fn sync_client_parses_shared_content_disposition_response_matrix() {
+  for case in fixtures::content_disposition::response_cases() {
+    let raw_response = content_disposition_response(case.values);
+    let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+    let response = client()
+      .get()
+      .url(format!("http://{}/matrix/content-disposition", addr))
+      .emit()
+      .unwrap_or_else(|err| panic!("{} response should parse: {err}", case.name));
+
+    assert_response_content_disposition(case.name, &response, case);
     assert_eq!("OK", response.body().string().unwrap(), "{}", case.name);
     handle.join().expect("raw response server thread");
   }
@@ -1481,6 +1614,44 @@ fn sync_client_parses_content_location_with_existing_metadata_helpers() {
 }
 
 #[test]
+fn sync_client_observes_rttp_server_content_disposition_helpers() {
+  for case in fixtures::content_disposition::response_cases() {
+    let disposition = HttpContentDisposition::new(case.disposition_type)
+      .unwrap_or_else(|err| panic!("{} disposition type should parse: {err}", case.name));
+    let disposition = case
+      .parameters
+      .iter()
+      .fold(disposition, |disposition, (name, value)| {
+        disposition
+          .with_parameter(name, value)
+          .unwrap_or_else(|err| panic!("{} parameter should parse: {err}", case.name))
+      });
+    let (addr, handle) = spawn_content_disposition_server(disposition);
+
+    let response = client()
+      .get()
+      .url(format!("http://{}/matrix/content-disposition-server", addr))
+      .emit()
+      .unwrap_or_else(|err| panic!("{} response should parse: {err}", case.name));
+
+    assert_eq!(
+      vec![case.normalized_value],
+      response
+        .header_values("Content-Disposition")
+        .into_iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>(),
+      "{}",
+      case.name
+    );
+    assert_content_disposition_metadata(case.name, &response, case);
+    assert_eq!("OK", response.body().string().unwrap(), "{}", case.name);
+
+    handle.join().expect("content-disposition server thread");
+  }
+}
+
+#[test]
 fn sync_client_cache_control_helper_rejects_shared_invalid_response_matrix() {
   for case in fixtures::cache_control::invalid_response_cases() {
     assert_cache_control_helper_rejects_but_preserves_response(
@@ -1558,6 +1729,17 @@ fn sync_client_content_location_helper_rejects_shared_invalid_response_matrix() 
 }
 
 #[test]
+fn sync_client_content_disposition_helper_rejects_shared_invalid_response_matrix() {
+  for case in fixtures::content_disposition::invalid_cases() {
+    assert_content_disposition_helper_rejects_but_preserves_response(
+      case.name,
+      content_disposition_response(&[case.value]),
+      &[case.value],
+    );
+  }
+}
+
+#[test]
 fn sync_client_retry_after_helper_rejects_shared_invalid_response_matrix() {
   for case in fixtures::retry_after::invalid_cases() {
     assert_retry_after_helper_rejects_but_preserves_response(
@@ -1603,6 +1785,34 @@ fn sync_client_content_location_helper_rejects_duplicate_singleton_and_oversized
     "oversized Content-Location value",
     content_location_response(&[&oversized], false),
     &oversized,
+  );
+}
+
+#[test]
+fn sync_client_content_disposition_helper_rejects_duplicates_and_enforces_shared_bounds() {
+  assert_content_disposition_helper_rejects_but_preserves_response(
+    "duplicate Content-Disposition header fields",
+    content_disposition_response(&["attachment; filename=one.txt", "inline; filename=two.txt"]),
+    &["attachment; filename=one.txt", "inline; filename=two.txt"],
+  );
+  assert_content_disposition_helper_rejects_but_preserves_response(
+    "duplicate Content-Disposition parameters",
+    content_disposition_response(&[fixtures::content_disposition::duplicate_parameter_value()]),
+    &[fixtures::content_disposition::duplicate_parameter_value()],
+  );
+
+  let oversized = fixtures::content_disposition::oversized_value();
+  assert_content_disposition_helper_rejects_but_preserves_response(
+    "oversized Content-Disposition value",
+    content_disposition_response(&[&oversized]),
+    &[&oversized],
+  );
+
+  let too_many = fixtures::content_disposition::too_many_client_parameters_value();
+  assert_content_disposition_helper_rejects_but_preserves_response(
+    "too many Content-Disposition parameters",
+    content_disposition_response(&[&too_many]),
+    &[&too_many],
   );
 }
 
