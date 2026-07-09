@@ -177,6 +177,74 @@ fn http2_upgrade_sends_http11_upgrade_then_runs_single_h2_stream() {
 }
 
 #[test]
+fn http2_upgrade_post_sends_request_trailers_after_h2_data() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2c upgrade peer");
+  let addr = listener.local_addr().expect("h2c upgrade peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2c upgrade client");
+    let request = String::from_utf8(read_http1_request_head(&mut stream)).expect("request utf8");
+    assert!(request.starts_with("POST /upgrade-trailers HTTP/1.1\r\n"));
+    assert!(request.contains("\r\nConnection: Upgrade, HTTP2-Settings\r\n"));
+    assert!(request.contains("\r\nUpgrade: h2c\r\n"));
+
+    stream
+      .write_all(b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: h2c\r\n\r\n")
+      .expect("write upgrade response");
+
+    complete_h2_handshake_without_request(&mut stream);
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_HEADERS, request_headers.flags);
+    assert_eq!(3, request_headers.stream_id);
+    assert_eq!(
+      b"/upgrade-trailers",
+      find_header_value(&request_headers.payload, b":path")
+        .expect("request path")
+        .value
+        .as_slice()
+    );
+
+    let request_body = read_frame(&mut stream);
+    assert_eq!(FRAME_DATA, request_body.frame_type);
+    assert_eq!(0, request_body.flags);
+    assert_eq!(3, request_body.stream_id);
+    assert_eq!(b"upgrade body", request_body.payload.as_slice());
+
+    let request_trailers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_trailers.frame_type);
+    assert_eq!(FLAG_END_HEADERS | FLAG_END_STREAM, request_trailers.flags);
+    assert_eq!(3, request_trailers.stream_id);
+    assert_eq!(
+      b"done",
+      find_header_value(&request_trailers.payload, b"x-upgrade-tail")
+        .expect("request trailer")
+        .value
+        .as_slice()
+    );
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 3, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 3, b"upgraded");
+  });
+
+  let response = HttpClient::new()
+    .post()
+    .url(format!("http://{}/upgrade-trailers", addr))
+    .trailer(("X-Upgrade-Tail", "done"))
+    .expect("configure request trailer")
+    .raw("upgrade body")
+    .emit_http2_upgrade()
+    .expect("h2c upgrade response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("upgraded", response.body().string().unwrap());
+
+  handle.join().expect("h2c upgrade peer thread");
+}
+
+#[test]
 fn http2_upgrade_rejects_101_without_h2c_negotiation() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2c upgrade peer");
   let addr = listener.local_addr().expect("h2c upgrade peer addr");
