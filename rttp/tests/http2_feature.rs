@@ -5441,6 +5441,191 @@ fn wrapper_http2_prior_knowledge_post_request_trailers_reach_server_only_as_trai
   handle.join().expect("server thread");
 }
 
+#[derive(Clone, Copy, Debug)]
+enum CrossCrateTrailerTransport {
+  PriorKnowledge,
+  Upgrade,
+}
+
+impl CrossCrateTrailerTransport {
+  fn name(self) -> &'static str {
+    match self {
+      Self::PriorKnowledge => "prior-knowledge",
+      Self::Upgrade => "h2c-upgrade",
+    }
+  }
+}
+
+#[test]
+fn cross_crate_http2_trailers_matrix_round_trips_after_streaming_data_on_each_h2c_path() {
+  for transport in [
+    CrossCrateTrailerTransport::PriorKnowledge,
+    CrossCrateTrailerTransport::Upgrade,
+  ] {
+    let server = rttp::Http::server("127.0.0.1:0")
+      .expect("bind cross-crate trailer matrix server")
+      .with_read_timeout(Some(Duration::from_secs(2)))
+      .with_write_timeout(Some(Duration::from_secs(2)));
+    let addr = server
+      .local_addr()
+      .expect("cross-crate trailer matrix addr");
+    let (tx, rx) = mpsc::channel();
+    let request_body = format!("streaming DATA before trailers via {}", transport.name());
+    let expected_request_body = request_body.clone().into_bytes();
+    let path = format!("/cross-crate-trailers/{}", transport.name());
+    let expected_path = path.clone();
+
+    let handle = thread::spawn(move || {
+      server
+        .accept_one(|request| {
+          tx.send((
+            request.method().to_string(),
+            request.version().to_string(),
+            request.target().to_string(),
+            request.body().to_vec(),
+            request.header("x-request-trace").map(str::to_string),
+            request.trailer("x-request-trace").map(str::to_string),
+            request.trailer("x-upload-checksum").map(str::to_string),
+            request.trailers().to_vec(),
+          ))
+          .expect("send parsed cross-crate h2 trailer matrix request");
+
+          HttpResponse::ok(format!(
+            "response DATA before trailers via {}",
+            transport.name()
+          ))
+          .header("Trailer", "X-Response-Trace, X-Response-Checksum")
+          .trailer("X-Response-Trace", format!("response-{}", transport.name()))
+          .trailer("X-Response-Checksum", "sha256-response")
+        })
+        .expect("serve cross-crate h2 trailer matrix request");
+    });
+
+    let mut client = rttp_client::HttpClient::new();
+    client
+      .post()
+      .url(format!("http://{}{}", addr, path))
+      .header((
+        "X-Request-Trace".to_string(),
+        format!("header-{}", transport.name()),
+      ))
+      .content_type("application/octet-stream")
+      .raw(request_body);
+    client
+      .trailer((
+        "X-Request-Trace".to_string(),
+        format!("trailer-{}", transport.name()),
+      ))
+      .expect("configure request trace trailer");
+    client
+      .trailer(("X-Upload-Checksum", "sha256-request"))
+      .expect("configure request checksum trailer");
+
+    let response = match transport {
+      CrossCrateTrailerTransport::PriorKnowledge => client
+        .emit_http2_prior_knowledge()
+        .expect("cross-crate prior-knowledge h2 trailer response"),
+      CrossCrateTrailerTransport::Upgrade => client
+        .emit_http2_upgrade()
+        .expect("cross-crate h2c upgrade trailer response"),
+    };
+
+    assert_eq!("HTTP/2", response.version(), "{}", transport.name());
+    assert_eq!(200, response.code(), "{}", transport.name());
+    assert_eq!(
+      format!("response DATA before trailers via {}", transport.name()),
+      response.body().string().unwrap(),
+      "{}",
+      transport.name()
+    );
+    assert!(
+      response.header_value("Trailer").is_none(),
+      "{}",
+      transport.name()
+    );
+    assert_eq!(
+      Some(&format!("response-{}", transport.name())),
+      response.trailer_value("x-response-trace"),
+      "{}",
+      transport.name()
+    );
+    assert_eq!(
+      Some(&"sha256-response".to_string()),
+      response.trailer_value("X-RESPONSE-CHECKSUM"),
+      "{}",
+      transport.name()
+    );
+
+    assert_eq!(
+      (
+        "POST".to_string(),
+        "HTTP/2".to_string(),
+        expected_path,
+        expected_request_body,
+        Some(format!("header-{}", transport.name())),
+        Some(format!("trailer-{}", transport.name())),
+        Some("sha256-request".to_string()),
+        vec![
+          (
+            "x-request-trace".to_string(),
+            format!("trailer-{}", transport.name())
+          ),
+          (
+            "x-upload-checksum".to_string(),
+            "sha256-request".to_string()
+          ),
+        ],
+      ),
+      rx.recv()
+        .expect("receive parsed cross-crate h2 trailer matrix request"),
+      "{}",
+      transport.name()
+    );
+
+    handle
+      .join()
+      .expect("cross-crate h2 trailer matrix server thread");
+  }
+}
+
+#[test]
+fn cross_crate_http2_trailers_matrix_rejects_request_trailer_pseudo_headers_before_h2c_dispatch() {
+  for transport in [
+    CrossCrateTrailerTransport::PriorKnowledge,
+    CrossCrateTrailerTransport::Upgrade,
+  ] {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind pseudo-trailer guard listener");
+    listener
+      .set_nonblocking(true)
+      .expect("set pseudo-trailer guard listener nonblocking");
+    let addr = listener.local_addr().expect("pseudo-trailer guard addr");
+
+    let mut client = rttp_client::HttpClient::new();
+    client
+      .post()
+      .url(format!(
+        "http://{}/cross-crate-trailers/{}/pseudo-header",
+        addr,
+        transport.name()
+      ))
+      .raw("body that must not be dispatched");
+    let error = client
+      .trailer(rttp_client::types::Header::new(":path", "/hidden"))
+      .expect_err("pseudo-header request trailer must be rejected");
+
+    assert!(
+      error.to_string().contains("Invalid request trailer"),
+      "unexpected {} pseudo-header trailer error: {error}",
+      transport.name()
+    );
+    assert!(
+      matches!(listener.accept(), Err(ref err) if err.kind() == io::ErrorKind::WouldBlock),
+      "{} pseudo-header trailer rejection must happen before connecting",
+      transport.name()
+    );
+  }
+}
+
 #[test]
 fn wrapper_http2_prior_knowledge_uploads_flow_controlled_body_with_trailers_to_socket2_server() {
   let server = rttp::Http::server("127.0.0.1:0")
