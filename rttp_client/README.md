@@ -130,15 +130,21 @@ are exposed as parsed metadata only.
 metadata. The helper returns `Ok(None)` when the header is absent, returns the
 non-negative decimal value as `u64` when it is present and valid, and returns an
 error for empty, signed, fractional, non-numeric, comma-list, or overflowing
-values. `Response::expires()` parses the response `Expires` header as an
-HTTP-date using the same HTTP-date parser used by the client date helpers.
+values. The accepted bound is exactly the `u64` delta-seconds range: `0`
+through `u64::MAX`.
+
+`Response::expires()` parses the response `Expires` header as an HTTP-date using
+the same HTTP-date parser used by the client date helpers. It returns
+`Ok(None)` when the header is absent, returns `SystemTime` for valid HTTP-date
+values including the standard IMF-fixdate and obsolete HTTP-date forms accepted
+by the parser, and returns an error for malformed or non-date values.
 
 Malformed helper values do not reject the raw response. The original `Age` and
 `Expires` fields remain available through `header_value`, `header_values`, and
 the other raw header accessors. These helpers expose metadata only;
-`rttp_client` does not calculate freshness against wall-clock time, store cache
-entries, revalidate responses, match stored responses, or issue automatic
-conditional requests.
+`rttp_client` does not calculate freshness, validate cache state against
+wall-clock time, store responses, match stored responses, revalidate responses,
+apply shared-cache policy, or issue automatic conditional requests.
 
 ## Bounded HTTP/1.1 Vary behavior
 

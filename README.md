@@ -113,19 +113,24 @@ are exposed as parsed metadata only.
 ### Bounded HTTP/1.1 Age and Expires behavior
 
 `Response::age()` parses the response `Age` header as HTTP/1.1 delta-seconds
-metadata. It returns `Ok(None)` when the header is absent, returns the
-non-negative decimal value as `u64` when the header is present and valid, and
-returns an error for empty, signed, fractional, non-numeric, comma-list, or
-overflowing values. `Response::expires()` parses the response `Expires` header
-as an HTTP-date using the same HTTP-date parser used by the client date
-helpers.
+metadata. The helper returns `Ok(None)` when the header is absent, returns the
+non-negative decimal value as `u64` when it is present and valid, and returns an
+error for empty, signed, fractional, non-numeric, comma-list, or overflowing
+values. The accepted bound is exactly the `u64` delta-seconds range: `0`
+through `u64::MAX`.
+
+`Response::expires()` parses the response `Expires` header as an HTTP-date using
+the same HTTP-date parser used by the client date helpers. It returns
+`Ok(None)` when the header is absent, returns `SystemTime` for valid HTTP-date
+values including the standard IMF-fixdate and obsolete HTTP-date forms accepted
+by the parser, and returns an error for malformed or non-date values.
 
 Malformed helper values do not reject the raw response. The original `Age` and
 `Expires` fields remain available through `header_value`, `header_values`, and
 the other raw header accessors. These helpers expose metadata only; RTTP does
-not calculate freshness against wall-clock time, store cache entries,
-revalidate responses, match stored responses, or issue automatic conditional
-requests.
+not calculate freshness, validate cache state against wall-clock time, store
+responses, match stored responses, revalidate responses, apply shared-cache
+policy, or issue automatic conditional requests.
 
 ### Bounded HTTP/1.1 Vary behavior
 
@@ -516,13 +521,22 @@ directives are exposed as parsed metadata for application-owned policy.
 Server `Age` and `Expires` helpers expose adjacent response metadata without
 adding cache policy. `HttpResponse::with_age(delta_seconds)` adds an `Age`
 header from a non-negative `u64` delta-seconds value, and
-`HttpResponse::age()` parses an attached `Age` header back into `u64`,
-rejecting malformed or overflowing values. `HttpResponse::with_expires(time)`
-serializes an HTTP-date `Expires` header from `SystemTime`, and
-`HttpResponse::expires()` parses an attached `Expires` header as an HTTP-date.
+`HttpResponse::age()` parses an attached single `Age` header back into `u64`.
+The accepted bound is exactly the `u64` delta-seconds range: `0` through
+`u64::MAX`. Empty, signed, fractional, non-numeric, comma-list, duplicated, and
+overflowing values return `HttpAgeParseError`.
+
+`HttpResponse::with_expires(time)` serializes an HTTP-date `Expires` header from
+`SystemTime`, and `HttpResponse::expires()` parses an attached single `Expires`
+header as an HTTP-date. Valid HTTP-date values parse to `SystemTime`; malformed,
+duplicated, or non-date values return `HttpExpiresParseError`.
+
 Malformed typed helper reads return validation errors, while raw
 `HttpResponse::header("Age", ...)` and `HttpResponse::header("Expires", ...)`
-values remain preserved exactly as response headers.
+values remain preserved exactly as response headers. These helpers do not
+calculate freshness, validate cache state against wall-clock time, store
+responses, match stored responses, revalidate responses, enforce shared-cache
+policy, or issue automatic conditional requests.
 
 ### Bounded HTTP/1.1 Vary behavior
 
