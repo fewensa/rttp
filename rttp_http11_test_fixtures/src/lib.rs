@@ -699,6 +699,81 @@ pub mod retry_after {
   }
 }
 
+pub mod allow {
+  pub const MAX_VALUE_BYTES: usize = 64 * 1024;
+  pub const MAX_METHODS: usize = 256;
+
+  pub struct ResponseCase {
+    pub name: &'static str,
+    pub values: &'static [&'static str],
+    pub methods: &'static [&'static str],
+  }
+
+  pub struct InvalidCase {
+    pub name: &'static str,
+    pub value: &'static str,
+  }
+
+  const RESPONSE_CASES: &[ResponseCase] = &[
+    ResponseCase {
+      name: "methods across header fields",
+      values: &["GET, HEAD", "POST, OPTIONS"],
+      methods: &["GET", "HEAD", "POST", "OPTIONS"],
+    },
+    ResponseCase {
+      name: "extension methods preserve token order",
+      values: &["PATCH, MKCOL, REPORT"],
+      methods: &["PATCH", "MKCOL", "REPORT"],
+    },
+  ];
+
+  const INVALID_CASES: &[InvalidCase] = &[
+    InvalidCase {
+      name: "empty value",
+      value: "",
+    },
+    InvalidCase {
+      name: "trailing comma",
+      value: "GET,",
+    },
+    InvalidCase {
+      name: "leading comma",
+      value: ", GET",
+    },
+    InvalidCase {
+      name: "empty member",
+      value: "GET,,POST",
+    },
+    InvalidCase {
+      name: "method with whitespace",
+      value: "GET POST",
+    },
+    InvalidCase {
+      name: "method with separator",
+      value: "GET@POST",
+    },
+  ];
+
+  pub fn response_cases() -> &'static [ResponseCase] {
+    RESPONSE_CASES
+  }
+
+  pub fn invalid_cases() -> &'static [InvalidCase] {
+    INVALID_CASES
+  }
+
+  pub fn too_many_methods_value() -> String {
+    (0..=MAX_METHODS)
+      .map(|index| format!("M{index}"))
+      .collect::<Vec<_>>()
+      .join(", ")
+  }
+
+  pub fn oversized_value() -> String {
+    format!("M{}", "A".repeat(MAX_VALUE_BYTES))
+  }
+}
+
 pub mod vary {
   pub const MAX_VALUE_BYTES: usize = 64 * 1024;
   pub const MAX_FIELD_NAMES: usize = 256;
