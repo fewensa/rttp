@@ -18,6 +18,8 @@ const MAX_ALLOW_METHODS: usize = 32;
 const MAX_CONTENT_LANGUAGE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_LANGUAGES: usize = 32;
 const MAX_CONTENT_LOCATION_VALUE_BYTES: usize = 64 * 1024;
+const MAX_CONTENT_DISPOSITION_VALUE_BYTES: usize = 64 * 1024;
+const MAX_CONTENT_DISPOSITION_PARAMETERS: usize = 32;
 const MAX_ACCEPT_RANGES_VALUE_BYTES: usize = 64 * 1024;
 const MAX_ACCEPT_RANGES_UNITS: usize = 32;
 const MAX_RETRY_AFTER_VALUE_BYTES: usize = 64 * 1024;
@@ -4634,6 +4636,43 @@ impl HttpResponse {
     Ok(self)
   }
 
+  pub fn with_content_disposition<D>(
+    mut self,
+    disposition: D,
+  ) -> Result<Self, HttpContentDispositionParseError>
+  where
+    D: IntoHttpContentDisposition,
+  {
+    let disposition = disposition.into_content_disposition()?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Content-Disposition"));
+    self.headers.push(HttpHeader::new(
+      "Content-Disposition",
+      disposition.header_value(),
+    ));
+    Ok(self)
+  }
+
+  pub fn with_inline_content_disposition(self) -> Result<Self, HttpContentDispositionParseError> {
+    self.with_content_disposition(HttpContentDisposition::inline())
+  }
+
+  pub fn with_attachment_content_disposition(
+    self,
+  ) -> Result<Self, HttpContentDispositionParseError> {
+    self.with_content_disposition(HttpContentDisposition::attachment())
+  }
+
+  pub fn with_attachment_filename<V: AsRef<str>>(
+    self,
+    filename: V,
+  ) -> Result<Self, HttpContentDispositionParseError> {
+    self.with_content_disposition(
+      HttpContentDisposition::attachment().with_parameter("filename", filename)?,
+    )
+  }
+
   pub fn with_accept_ranges<I, U>(mut self, units: I) -> Result<Self, HttpAcceptRangesParseError>
   where
     I: IntoIterator<Item = U>,
@@ -4768,6 +4807,19 @@ impl HttpResponse {
       return Ok(None);
     };
     parse_http_content_location(value).map(Some)
+  }
+
+  pub fn content_disposition(
+    &self,
+  ) -> Result<Option<HttpContentDisposition>, HttpContentDispositionParseError> {
+    let Some(value) = self.single_header_value(
+      "Content-Disposition",
+      HttpContentDispositionParseError::new("multiple Content-Disposition headers"),
+    )?
+    else {
+      return Ok(None);
+    };
+    HttpContentDisposition::parse(value).map(Some)
   }
 
   pub fn accept_ranges(&self) -> Result<Option<HttpAcceptRanges>, HttpAcceptRangesParseError> {
@@ -5590,6 +5642,392 @@ fn parse_http_content_location(value: &str) -> Result<&str, HttpContentLocationP
   }
 
   Ok(value)
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpContentDisposition {
+  disposition_type: String,
+  parameters: Vec<(String, String)>,
+}
+
+impl HttpContentDisposition {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpContentDispositionParseError> {
+    let value = value.as_ref();
+    if value.len() > MAX_CONTENT_DISPOSITION_VALUE_BYTES {
+      return Err(HttpContentDispositionParseError::new(
+        "Content-Disposition header value is too large",
+      ));
+    }
+    if value.bytes().any(|byte| byte.is_ascii_control()) {
+      return Err(HttpContentDispositionParseError::new(
+        "invalid Content-Disposition value",
+      ));
+    }
+
+    let mut parts = split_content_disposition_parts(value)?;
+    if parts.is_empty() {
+      return Err(HttpContentDispositionParseError::new(
+        "invalid Content-Disposition type",
+      ));
+    }
+
+    let disposition_type = parts.remove(0).trim().to_ascii_lowercase();
+    if !is_http_token(&disposition_type) {
+      return Err(HttpContentDispositionParseError::new(
+        "invalid Content-Disposition type",
+      ));
+    }
+
+    let mut parameters = Vec::new();
+    for part in parts {
+      let part = part.trim();
+      if part.is_empty() {
+        return Err(HttpContentDispositionParseError::new(
+          "invalid Content-Disposition parameter",
+        ));
+      }
+      let Some((name, value)) = part.split_once('=') else {
+        return Err(HttpContentDispositionParseError::new(
+          "invalid Content-Disposition parameter",
+        ));
+      };
+      let name = name.trim().to_ascii_lowercase();
+      let value = value.trim();
+      if !is_http_token(&name) {
+        return Err(HttpContentDispositionParseError::new(
+          "invalid Content-Disposition parameter name",
+        ));
+      }
+      if parameters
+        .iter()
+        .any(|(known, _): &(String, String)| known.eq_ignore_ascii_case(&name))
+      {
+        return Err(HttpContentDispositionParseError::new(
+          "duplicate Content-Disposition parameter",
+        ));
+      }
+      if parameters.len() >= MAX_CONTENT_DISPOSITION_PARAMETERS {
+        return Err(HttpContentDispositionParseError::new(
+          "too many Content-Disposition parameters",
+        ));
+      }
+
+      let value = parse_content_disposition_parameter_value(value)?;
+      parameters.push((name, value));
+    }
+
+    Ok(Self {
+      disposition_type,
+      parameters,
+    })
+  }
+
+  pub fn new(disposition_type: impl AsRef<str>) -> Result<Self, HttpContentDispositionParseError> {
+    let disposition_type = disposition_type.as_ref().trim().to_ascii_lowercase();
+    if disposition_type.len() > MAX_CONTENT_DISPOSITION_VALUE_BYTES {
+      return Err(HttpContentDispositionParseError::new(
+        "Content-Disposition header value is too large",
+      ));
+    }
+    if !is_http_token(&disposition_type) {
+      return Err(HttpContentDispositionParseError::new(
+        "invalid Content-Disposition type",
+      ));
+    }
+    Ok(Self {
+      disposition_type,
+      parameters: Vec::new(),
+    })
+  }
+
+  pub fn inline() -> Self {
+    Self {
+      disposition_type: "inline".to_string(),
+      parameters: Vec::new(),
+    }
+  }
+
+  pub fn attachment() -> Self {
+    Self {
+      disposition_type: "attachment".to_string(),
+      parameters: Vec::new(),
+    }
+  }
+
+  pub fn with_parameter<N, V>(
+    mut self,
+    name: N,
+    value: V,
+  ) -> Result<Self, HttpContentDispositionParseError>
+  where
+    N: AsRef<str>,
+    V: AsRef<str>,
+  {
+    let name = name.as_ref().trim().to_ascii_lowercase();
+    let value = value.as_ref();
+    if !is_http_token(&name) {
+      return Err(HttpContentDispositionParseError::new(
+        "invalid Content-Disposition parameter name",
+      ));
+    }
+    if value.is_empty() || !value.is_ascii() || value.bytes().any(|byte| byte.is_ascii_control()) {
+      return Err(HttpContentDispositionParseError::new(
+        "invalid Content-Disposition parameter value",
+      ));
+    }
+    if self
+      .parameters
+      .iter()
+      .any(|(known, _)| known.eq_ignore_ascii_case(&name))
+    {
+      return Err(HttpContentDispositionParseError::new(
+        "duplicate Content-Disposition parameter",
+      ));
+    }
+    if self.parameters.len() >= MAX_CONTENT_DISPOSITION_PARAMETERS {
+      return Err(HttpContentDispositionParseError::new(
+        "too many Content-Disposition parameters",
+      ));
+    }
+
+    let mut candidate = self.header_value();
+    candidate.push_str("; ");
+    candidate.push_str(&name);
+    candidate.push('=');
+    candidate.push_str(&serialize_content_disposition_parameter_value(value));
+    if candidate.len() > MAX_CONTENT_DISPOSITION_VALUE_BYTES {
+      return Err(HttpContentDispositionParseError::new(
+        "Content-Disposition header value is too large",
+      ));
+    }
+
+    self.parameters.push((name, value.to_string()));
+    Ok(self)
+  }
+
+  pub fn disposition_type(&self) -> &str {
+    &self.disposition_type
+  }
+
+  pub fn parameter<S: AsRef<str>>(&self, name: S) -> Option<&str> {
+    self
+      .parameters
+      .iter()
+      .find(|(key, _)| key.eq_ignore_ascii_case(name.as_ref()))
+      .map(|(_, value)| value.as_str())
+  }
+
+  pub fn parameters(&self) -> Vec<(&str, &str)> {
+    self
+      .parameters
+      .iter()
+      .map(|(name, value)| (name.as_str(), value.as_str()))
+      .collect()
+  }
+
+  pub fn header_value(&self) -> String {
+    let mut value = self.disposition_type.clone();
+    for (name, parameter_value) in &self.parameters {
+      value.push_str("; ");
+      value.push_str(name);
+      value.push('=');
+      value.push_str(&serialize_content_disposition_parameter_value(
+        parameter_value,
+      ));
+    }
+    value
+  }
+}
+
+pub trait IntoHttpContentDisposition {
+  fn into_content_disposition(
+    self,
+  ) -> Result<HttpContentDisposition, HttpContentDispositionParseError>;
+}
+
+impl IntoHttpContentDisposition for HttpContentDisposition {
+  fn into_content_disposition(
+    self,
+  ) -> Result<HttpContentDisposition, HttpContentDispositionParseError> {
+    Ok(self)
+  }
+}
+
+impl IntoHttpContentDisposition for &HttpContentDisposition {
+  fn into_content_disposition(
+    self,
+  ) -> Result<HttpContentDisposition, HttpContentDispositionParseError> {
+    Ok(self.clone())
+  }
+}
+
+impl IntoHttpContentDisposition for &str {
+  fn into_content_disposition(
+    self,
+  ) -> Result<HttpContentDisposition, HttpContentDispositionParseError> {
+    HttpContentDisposition::parse(self)
+  }
+}
+
+impl IntoHttpContentDisposition for String {
+  fn into_content_disposition(
+    self,
+  ) -> Result<HttpContentDisposition, HttpContentDispositionParseError> {
+    HttpContentDisposition::parse(self)
+  }
+}
+
+impl IntoHttpContentDisposition for &String {
+  fn into_content_disposition(
+    self,
+  ) -> Result<HttpContentDisposition, HttpContentDispositionParseError> {
+    HttpContentDisposition::parse(self)
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpContentDispositionParseError {
+  message: String,
+}
+
+impl HttpContentDispositionParseError {
+  fn new<S: AsRef<str>>(message: S) -> Self {
+    Self {
+      message: message.as_ref().to_string(),
+    }
+  }
+}
+
+impl fmt::Display for HttpContentDispositionParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpContentDispositionParseError {}
+
+fn split_content_disposition_parts(
+  value: &str,
+) -> Result<Vec<&str>, HttpContentDispositionParseError> {
+  let mut parts = Vec::new();
+  let mut quoted = false;
+  let mut escaped = false;
+  let mut start = 0usize;
+
+  for (index, byte) in value.bytes().enumerate() {
+    if escaped {
+      if !is_content_disposition_quoted_pair_byte(byte) {
+        return Err(HttpContentDispositionParseError::new(
+          "invalid Content-Disposition quoted-string",
+        ));
+      }
+      escaped = false;
+      continue;
+    }
+
+    match byte {
+      b'\\' if quoted => escaped = true,
+      b'"' => quoted = !quoted,
+      b';' if !quoted => {
+        parts.push(&value[start..index]);
+        start = index + 1;
+      }
+      _ => {}
+    }
+  }
+
+  if quoted || escaped {
+    return Err(HttpContentDispositionParseError::new(
+      "invalid Content-Disposition quoted-string",
+    ));
+  }
+
+  parts.push(&value[start..]);
+  Ok(parts)
+}
+
+fn parse_content_disposition_parameter_value(
+  value: &str,
+) -> Result<String, HttpContentDispositionParseError> {
+  if value.is_empty() {
+    return Err(HttpContentDispositionParseError::new(
+      "invalid Content-Disposition parameter value",
+    ));
+  }
+  if value.starts_with('"') {
+    parse_content_disposition_quoted_string(value)
+  } else if value.contains('"') || !is_http_token(value) {
+    Err(HttpContentDispositionParseError::new(
+      "invalid Content-Disposition parameter value",
+    ))
+  } else {
+    Ok(value.to_string())
+  }
+}
+
+fn parse_content_disposition_quoted_string(
+  value: &str,
+) -> Result<String, HttpContentDispositionParseError> {
+  if !value.ends_with('"') || value.len() < 2 {
+    return Err(HttpContentDispositionParseError::new(
+      "invalid Content-Disposition quoted-string",
+    ));
+  }
+
+  let inner = &value[1..value.len() - 1];
+  let mut parsed = String::new();
+  let mut escaped = false;
+  for byte in inner.bytes() {
+    if escaped {
+      if !is_content_disposition_quoted_pair_byte(byte) {
+        return Err(HttpContentDispositionParseError::new(
+          "invalid Content-Disposition quoted-string",
+        ));
+      }
+      parsed.push(byte as char);
+      escaped = false;
+    } else if byte == b'\\' {
+      escaped = true;
+    } else if byte == b'"' || !is_content_disposition_quoted_text_byte(byte) {
+      return Err(HttpContentDispositionParseError::new(
+        "invalid Content-Disposition quoted-string",
+      ));
+    } else {
+      parsed.push(byte as char);
+    }
+  }
+
+  if escaped || parsed.is_empty() {
+    return Err(HttpContentDispositionParseError::new(
+      "invalid Content-Disposition quoted-string",
+    ));
+  }
+
+  Ok(parsed)
+}
+
+fn is_content_disposition_quoted_text_byte(byte: u8) -> bool {
+  byte == b'\t' || matches!(byte, 0x20..=0x21 | 0x23..=0x5b | 0x5d..=0x7e)
+}
+
+fn is_content_disposition_quoted_pair_byte(byte: u8) -> bool {
+  byte == b'\t' || matches!(byte, 0x20..=0x7e)
+}
+
+fn serialize_content_disposition_parameter_value(value: &str) -> String {
+  if is_http_token(value) {
+    return value.to_string();
+  }
+
+  let mut quoted = String::from("\"");
+  for byte in value.bytes() {
+    if matches!(byte, b'\\' | b'"') {
+      quoted.push('\\');
+    }
+    quoted.push(byte as char);
+  }
+  quoted.push('"');
+  quoted
 }
 
 fn is_valid_content_language_tag(value: &str) -> bool {

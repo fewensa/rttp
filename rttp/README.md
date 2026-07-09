@@ -356,6 +356,32 @@ not treat `Content-Location` as redirect behavior, cache variant selection,
 representation replacement, retry/replay behavior, route generation, or
 status-policy behavior.
 
+## Bounded HTTP/1.1 Content-Disposition behavior
+
+Server-side `Content-Disposition` helpers expose response metadata declaration
+and parsing without implementing download policy, filesystem handling, MIME
+sniffing, cache behavior, redirect handling, retry, or negotiation.
+`HttpContentDisposition::parse(value)` validates one field value, including a
+token disposition type and bounded parameters. `HttpContentDisposition::inline()`
+and `HttpContentDisposition::attachment()` construct common dispositions, and
+`with_parameter(name, value)` adds safely serialized parameters.
+
+`HttpResponse::with_content_disposition(value)` validates the provided model or
+field value, removes any existing raw `Content-Disposition` fields, and adds one
+validated `Content-Disposition` header. `HttpResponse::with_attachment_filename`
+is a convenience helper for `attachment; filename=...`.
+`HttpResponse::content_disposition()` parses an attached singleton header and
+returns `Ok(None)` when the header is absent.
+
+Parsing is bounded and validation-oriented. The field value is limited to
+64 KiB, parameter count is limited to 32, token positions must be valid HTTP
+tokens, quoted-string input must be well formed, and CR/LF or other control
+characters are rejected. Duplicate parameters and duplicate
+`Content-Disposition` fields are rejected by the typed parser. Raw
+`HttpResponse::header("Content-Disposition", ...)` values remain preserved
+exactly as ordinary response headers until a typed declaration helper replaces
+them or the typed parser is requested.
+
 ## Bounded trailer behavior
 
 HTTP/1.1 server trailer support remains chunked-scope only. Chunked request
@@ -556,6 +582,7 @@ scheduling, or async accept loops.
 | Allow | `HttpAllowedMethods`, `HttpResponse::with_allow`, and `HttpResponse::allow` declare and parse bounded `Allow` method-list metadata | No route dispatch, automatic `405` generation, `OPTIONS` policy, fallback method selection, retry/replay, or status-code policy engine |
 | Content-Language | `HttpContentLanguages`, `HttpResponse::with_content_language`, and `HttpResponse::content_language` declare and parse bounded `Content-Language` response metadata | No automatic language negotiation, route selection, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
 | Content-Location | `HttpResponse::with_content_location` declares one bounded singleton `Content-Location` header, and `HttpResponse::content_location` parses attached singleton response metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |
+| Content-Disposition | `HttpContentDisposition`, `HttpResponse::with_content_disposition`, `with_attachment_filename`, and `content_disposition` declare and parse bounded singleton `Content-Disposition` response metadata while replacing raw duplicates on typed declaration | No download policy, filesystem path handling, MIME sniffing, cache behavior, redirect behavior, retry/replay, negotiation, or status-policy behavior |
 | Upgrade and tunnel targets | `CONNECT` authority-form requests are accepted as HTTP requests; `HttpResponse::upgrade` can hand an upgraded socket to caller code after a matching request | The server does not implement the upgraded protocol after handoff |
 | Trailers | Chunked request trailers are preserved on `Request`; malformed, oversized, forbidden, and pseudo-header trailers are rejected; response trailers can be serialized for chunked responses | Application metadata trailers are allowed; trailer names that affect connection state, routing, authentication/cookies, framing, or payload processing are rejected |
 | Bounded h2c server | The same `socket2` listener detects the HTTP/2 prior-knowledge preface or a valid HTTP/1.1 `Upgrade: h2c` request with `HTTP2-Settings`, validates SETTINGS including legal `SETTINGS_ENABLE_PUSH` and `SETTINGS_ENABLE_CONNECT_PROTOCOL` values of only `0` or `1` and legal `SETTINGS_MAX_FRAME_SIZE` values from 16,384 through 16,777,215 bytes, dispatches RFC 8441 extended CONNECT only after `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1` has been negotiated, exposes negotiated extended CONNECT as a normal `Request` with method `CONNECT`, version `HTTP/2`, target from `:path`, `host` from `:authority`, and `Request::extended_connect_protocol()` from `:protocol`, advertises the default 16,384-byte `SETTINGS_MAX_FRAME_SIZE`, rejects inbound frames above the active local limit, splits outbound HEADERS, DATA, and trailers to the active peer frame-size limit, advertises `SETTINGS_MAX_CONCURRENT_STREAMS` from the bounded active stream allowance, enforces that allowance before dispatching new streams, advertises and enforces a conservative `SETTINGS_MAX_HEADER_LIST_SIZE` for inbound request metadata, bounds HPACK dynamic table use with `SETTINGS_HEADER_TABLE_SIZE`, serves bounded streams including bodyless DELETE, OPTIONS, TRACE, and negotiated extended CONNECT, handles HEAD without response DATA, rejects connection-specific request fields before handler dispatch, strips connection-specific response fields during h2c serialization, treats `RST_STREAM` as a bounded reset/cancellation signal for the affected stream, acknowledges valid PING frames with matching opaque data, accepts padded HEADERS/DATA/trailers without exposing padding, handles HPACK Huffman fields and bounded CONTINUATION header blocks, emits `GOAWAY` with the last completed stream id at bounded shutdown, validates and ignores valid PRIORITY metadata, ignores HTTP/2-allowed unknown/extension frames inside this bounded path, normalizes reserved stream-id high bits, and applies conservative DATA flow control | Ordinary `CONNECT`, missing-negotiation `:protocol`, non-CONNECT `:protocol`, malformed h2c Upgrade, request bodies on h2c Upgrade, and `PUSH_PROMISE` are rejected deterministically before handler dispatch; HTTP/1.1 `CONNECT` and non-h2c `Upgrade` remain separate handoff paths; bounded h2c only, with no public cancellation callback API, no dynamic policy API, no extension callback API, no full extension negotiation, TLS ALPN, external h2 integration, full WebSocket-over-h2, proxy h2, tunnel handoff, connection pooling, persistent multiplex sessions, persistent HTTP/2 session management, automatic retry, server push, full RFC 8441 support, full stream state machine, unbounded multiplexing, unbounded multiplex scheduling, general multiplexing, general tunnel scheduling, priority scheduling, or full HTTP/2 server feature set |
