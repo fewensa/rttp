@@ -160,8 +160,9 @@ be unsigned decimal digits that fit in `u64`, and malformed dates or other
 invalid values return an error. The original response headers remain available
 through `Response::header_value()` and `Response::header_values()`.
 
-RTTP does not sleep, schedule retries, replay requests, apply backoff, calculate
-cache freshness, or decide status-code retry policy from `Retry-After`.
+RTTP does not sleep, retry, replay requests, apply backoff, integrate with a
+scheduler, calculate cache freshness, or decide status-code retry policy from
+`Retry-After`.
 
 ## Bounded HTTP/1.1 Vary behavior
 
