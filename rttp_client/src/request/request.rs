@@ -26,6 +26,7 @@ pub struct Request {
   raw: Option<String>,
   binary: Vec<u8>,
   proxy: Option<Proxy>,
+  http2_extended_connect_protocol: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -47,6 +48,7 @@ impl Request {
       raw: None,
       binary: vec![],
       proxy: None,
+      http2_extended_connect_protocol: None,
     }
   }
 
@@ -95,6 +97,9 @@ impl Request {
   pub fn proxy(&self) -> &Option<Proxy> {
     &self.proxy
   }
+  pub fn http2_extended_connect_protocol(&self) -> &Option<String> {
+    &self.http2_extended_connect_protocol
+  }
 
   pub(crate) fn closed_mut(&mut self) -> &mut bool {
     &mut self.closed
@@ -140,6 +145,9 @@ impl Request {
   }
   pub(crate) fn proxy_mut(&mut self) -> &mut Option<Proxy> {
     &mut self.proxy
+  }
+  pub(crate) fn http2_extended_connect_protocol_mut(&mut self) -> &mut Option<String> {
+    &mut self.http2_extended_connect_protocol
   }
 
   pub(crate) fn closed_set(&mut self, closed: bool) -> &mut Self {
@@ -200,6 +208,13 @@ impl Request {
   }
   pub(crate) fn proxy_set(&mut self, proxy: Proxy) -> &mut Self {
     self.proxy = Some(proxy);
+    self
+  }
+  pub(crate) fn http2_extended_connect_protocol_set<S: AsRef<str>>(
+    &mut self,
+    protocol: S,
+  ) -> &mut Self {
+    self.http2_extended_connect_protocol = Some(protocol.as_ref().into());
     self
   }
 

@@ -32,6 +32,7 @@ const SETTING_MAX_CONCURRENT_STREAMS: u16 = 0x3;
 const SETTING_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const SETTING_MAX_FRAME_SIZE: u16 = 0x5;
 const SETTING_MAX_HEADER_LIST_SIZE: u16 = 0x6;
+const SETTING_ENABLE_CONNECT_PROTOCOL: u16 = 0x8;
 const DEFAULT_MAX_FRAME_SIZE: usize = 16 * 1024;
 const MAX_FRAME_SIZE_LIMIT: usize = 16_777_215;
 
@@ -332,6 +333,156 @@ fn prior_knowledge_upgrade_handoff_is_rejected_before_connecting() {
   assert!(
     matches!(listener.accept(), Err(ref err) if err.kind() == io::ErrorKind::WouldBlock),
     "prior-knowledge upgrade handoff must not open a server connection"
+  );
+}
+
+#[test]
+fn extended_connect_sends_enable_connect_protocol_and_pseudo_headers() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    stream
+      .set_read_timeout(Some(Duration::from_millis(200)))
+      .expect("set h2 peer read timeout");
+    let mut preface = [0; 24];
+    stream
+      .read_exact(&mut preface)
+      .expect("read client preface");
+    assert_eq!(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", &preface);
+
+    let client_settings = read_frame(&mut stream);
+    assert_eq!(FRAME_SETTINGS, client_settings.frame_type);
+    assert_eq!(0, client_settings.stream_id);
+    assert_client_advertises_enable_push_disabled(&client_settings);
+    assert_eq!(
+      Some(1),
+      h2_setting_value(&client_settings.payload, SETTING_ENABLE_CONNECT_PROTOCOL)
+    );
+
+    write_frame(&mut stream, FRAME_SETTINGS, 0, 0, &[]);
+
+    let client_settings_ack = read_frame(&mut stream);
+    assert_eq!(FRAME_SETTINGS, client_settings_ack.frame_type);
+    assert_eq!(FLAG_ACK, client_settings_ack.flags);
+    assert_eq!(0, client_settings_ack.stream_id);
+    assert_eq!(0, client_settings_ack.payload.len());
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_STREAM | FLAG_END_HEADERS, request_headers.flags);
+    assert_eq!(1, request_headers.stream_id);
+    assert_eq!(
+      b"CONNECT",
+      find_header_value(&request_headers.payload, b":method")
+        .expect("request method")
+        .value
+        .as_slice()
+    );
+    assert_eq!(
+      b"websocket",
+      find_header_value(&request_headers.payload, b":protocol")
+        .expect("request protocol")
+        .value
+        .as_slice()
+    );
+    assert!(
+      request_headers.payload.contains(&0x86),
+      "extended CONNECT request must send :scheme http"
+    );
+    assert_eq!(
+      addr.to_string().as_bytes(),
+      find_header_value(&request_headers.payload, b":authority")
+        .expect("request authority")
+        .value
+        .as_slice()
+    );
+    assert_eq!(
+      b"/chat?room=blue",
+      find_header_value(&request_headers.payload, b":path")
+        .expect("request path")
+        .value
+        .as_slice()
+    );
+    assert!(
+      try_read_frame(&mut stream)
+        .expect("check for unexpected extended CONNECT body")
+        .is_none(),
+      "extended CONNECT request must not send DATA frames"
+    );
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"connected");
+  });
+
+  let response = HttpClient::new()
+    .http2_extended_connect("websocket")
+    .url(format!("http://{}/chat?room=blue", addr))
+    .emit_http2_prior_knowledge()
+    .expect("h2 extended CONNECT response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!("connected", response.body().string().unwrap());
+
+  handle.join().expect("h2 extended CONNECT peer thread");
+}
+
+#[test]
+fn extended_connect_rejects_request_body_before_connecting() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  listener
+    .set_nonblocking(true)
+    .expect("set listener nonblocking");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let err = HttpClient::new()
+    .http2_extended_connect("websocket")
+    .url(format!("http://{}/chat", addr))
+    .raw("unsupported body")
+    .emit_http2_prior_knowledge()
+    .expect_err("extended CONNECT with a body must be rejected");
+
+  assert!(err.is_builder());
+  assert!(
+    err
+      .to_string()
+      .contains("HTTP/2 extended CONNECT cannot send a request body"),
+    "unexpected error: {err}"
+  );
+  assert!(
+    matches!(listener.accept(), Err(ref err) if err.kind() == io::ErrorKind::WouldBlock),
+    "extended CONNECT with a body must not open a server connection"
+  );
+}
+
+#[test]
+fn extended_connect_with_proxy_is_rejected_before_connecting() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  listener
+    .set_nonblocking(true)
+    .expect("set listener nonblocking");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let err = HttpClient::new()
+    .http2_extended_connect("websocket")
+    .url(format!("http://{}/chat", addr))
+    .proxy(Proxy::http("127.0.0.1", 8080))
+    .emit_http2_prior_knowledge()
+    .expect_err("extended CONNECT with proxy must be rejected");
+
+  assert!(err.is_builder());
+  assert!(
+    err
+      .to_string()
+      .contains("HTTP/2 prior-knowledge client does not support proxies"),
+    "unexpected error: {err}"
+  );
+  assert!(
+    matches!(listener.accept(), Err(ref err) if err.kind() == io::ErrorKind::WouldBlock),
+    "extended CONNECT with proxy must not open a server connection"
   );
 }
 

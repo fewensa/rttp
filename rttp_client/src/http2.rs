@@ -36,6 +36,7 @@ const SETTING_MAX_CONCURRENT_STREAMS: u16 = 0x3;
 const SETTING_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const SETTING_MAX_FRAME_SIZE: u16 = 0x5;
 const SETTING_MAX_HEADER_LIST_SIZE: u16 = 0x6;
+const SETTING_ENABLE_CONNECT_PROTOCOL: u16 = 0x8;
 const DEFAULT_INITIAL_WINDOW_SIZE: i64 = 65_535;
 const DEFAULT_MAX_FRAME_SIZE: usize = 16 * 1024;
 const MAX_FRAME_SIZE_LIMIT: usize = 16_777_215;
@@ -98,14 +99,35 @@ impl<'a> PriorKnowledgeClient<'a> {
 
   pub fn get(mut self) -> error::Result<Response> {
     let method = self.request.origin().method();
+    let extended_connect_protocol = self
+      .request
+      .origin()
+      .http2_extended_connect_protocol()
+      .as_deref();
     let is_head = method.eq_ignore_ascii_case("HEAD");
     let is_delete = method.eq_ignore_ascii_case("DELETE");
     let is_options = method.eq_ignore_ascii_case("OPTIONS");
     let is_trace = method.eq_ignore_ascii_case("TRACE");
-    if requires_http2_connect_semantics(&self.request) {
+    if has_http2_upgrade_handoff(&self.request)
+      || has_header_configured_extended_connect_protocol(&self.request)
+      || (extended_connect_protocol.is_none() && method.eq_ignore_ascii_case("CONNECT"))
+    {
       return Err(error::builder_with_message(
         "HTTP/2 prior-knowledge CONNECT or extended CONNECT is unsupported",
       ));
+    }
+    if let Some(protocol) = extended_connect_protocol {
+      validate_extended_connect_protocol(protocol)?;
+      if self.request.body().is_some() {
+        return Err(error::builder_with_message(
+          "HTTP/2 extended CONNECT cannot send a request body",
+        ));
+      }
+      if !self.request.origin().trailers().is_empty() {
+        return Err(error::builder_with_message(
+          "HTTP/2 extended CONNECT cannot send request trailers",
+        ));
+      }
     }
     if (method.eq_ignore_ascii_case("GET") || is_head) && self.request.body().is_some() {
       return Err(error::builder_with_message(
@@ -127,7 +149,7 @@ impl<'a> PriorKnowledgeClient<'a> {
         "HTTP/2 prior-knowledge TRACE cannot send a request body",
       ));
     }
-    if !is_supported_request_method(method) {
+    if extended_connect_protocol.is_none() && !is_supported_request_method(method) {
       return Err(error::builder_with_message(
         "HTTP/2 prior-knowledge client supports GET, HEAD, bodyless DELETE, OPTIONS, or TRACE, and buffered POST, PUT, or PATCH",
       ));
@@ -138,7 +160,10 @@ impl<'a> PriorKnowledgeClient<'a> {
       return Err(error::url_bad_scheme(url));
     }
 
-    let local_settings = LocalSettings::from_config(self.request.origin().config())?;
+    let local_settings = LocalSettings::from_config(
+      self.request.origin().config(),
+      extended_connect_protocol.is_some(),
+    )?;
     let mut stream = connect_tcp_stream(addr(&url)?, self.request.origin().config())?;
     write_connection_preface(&mut stream, local_settings)?;
     let mut peer_settings = read_settings_and_ack(&mut stream, local_settings)?;
@@ -164,17 +189,34 @@ impl<'a> PriorKnowledgeClient<'a> {
   }
 }
 
-fn requires_http2_connect_semantics(request: &RawRequest<'_>) -> bool {
-  request.origin().method().eq_ignore_ascii_case("CONNECT")
-    || request.origin().headers().iter().any(|header| {
-      header.name().eq_ignore_ascii_case(":protocol")
-        || header.name().eq_ignore_ascii_case("upgrade")
-    })
+fn has_http2_upgrade_handoff(request: &RawRequest<'_>) -> bool {
+  request
+    .origin()
+    .headers()
+    .iter()
+    .any(|header| header.name().eq_ignore_ascii_case("upgrade"))
+}
+
+fn has_header_configured_extended_connect_protocol(request: &RawRequest<'_>) -> bool {
+  request
+    .origin()
+    .headers()
+    .iter()
+    .any(|header| header.name().eq_ignore_ascii_case(":protocol"))
     || request
       .header()
       .lines()
       .skip(1)
       .any(|line| line.trim_start().starts_with(":protocol:"))
+}
+
+fn validate_extended_connect_protocol(protocol: &str) -> error::Result<()> {
+  if is_http_token(protocol) {
+    return Ok(());
+  }
+  Err(error::builder_with_message(
+    "Invalid HTTP/2 extended CONNECT protocol",
+  ))
 }
 
 fn is_supported_request_method(method: &str) -> bool {
@@ -421,10 +463,11 @@ struct LocalSettings {
   header_table_size_configured: bool,
   max_frame_size: usize,
   max_frame_size_configured: bool,
+  enable_connect_protocol: bool,
 }
 
 impl LocalSettings {
-  fn from_config(config: &Config) -> error::Result<Self> {
+  fn from_config(config: &Config, enable_connect_protocol: bool) -> error::Result<Self> {
     let configured_header_table_size = config.http2_header_table_size();
     let configured_max_frame_size = config.http2_max_frame_size();
     if configured_header_table_size.is_some_and(|size| size > u32::MAX as usize) {
@@ -443,12 +486,16 @@ impl LocalSettings {
       header_table_size_configured: configured_header_table_size.is_some(),
       max_frame_size,
       max_frame_size_configured: configured_max_frame_size.is_some(),
+      enable_connect_protocol,
     })
   }
 
   fn settings_payload(self) -> Vec<u8> {
     let mut payload = Vec::new();
     payload.extend_from_slice(&h2_setting(SETTING_ENABLE_PUSH, 0));
+    if self.enable_connect_protocol {
+      payload.extend_from_slice(&h2_setting(SETTING_ENABLE_CONNECT_PROTOCOL, 1));
+    }
     if self.header_table_size_configured {
       payload.extend_from_slice(&h2_setting(
         SETTING_HEADER_TABLE_SIZE,
@@ -579,6 +626,10 @@ fn write_request(
   let header_block = encode_request_headers(
     request,
     url,
+    request
+      .origin()
+      .http2_extended_connect_protocol()
+      .as_deref(),
     &regular_header_fields,
     &dynamic_field_plan,
     &mut dynamic_field_position,
@@ -645,7 +696,19 @@ fn enforce_peer_request_header_list_size(
   };
 
   let mut size = 0usize;
-  size = add_header_list_field_size(size, ":method", request.origin().method())?;
+  let extended_connect_protocol = request
+    .origin()
+    .http2_extended_connect_protocol()
+    .as_deref();
+  let method = if extended_connect_protocol.is_some() {
+    "CONNECT"
+  } else {
+    request.origin().method()
+  };
+  size = add_header_list_field_size(size, ":method", method)?;
+  if let Some(protocol) = extended_connect_protocol {
+    size = add_header_list_field_size(size, ":protocol", protocol)?;
+  }
   size = add_header_list_field_size(size, ":scheme", url.scheme())?;
   size = add_header_list_field_size(size, ":path", &request_target(url))?;
   size = add_header_list_field_size(size, ":authority", &authority(url)?)?;
@@ -905,13 +968,22 @@ fn handle_settings_while_sending(
 fn encode_request_headers(
   request: &RawRequest<'_>,
   url: &Url,
+  extended_connect_protocol: Option<&str>,
   regular_header_fields: &[(String, String)],
   dynamic_field_plan: &[(String, String)],
   dynamic_field_position: &mut usize,
   hpack: &mut RequestHpackEncoder,
 ) -> error::Result<Vec<u8>> {
   let mut block = Vec::new();
-  encode_method(&mut block, request.origin().method())?;
+  let method = if extended_connect_protocol.is_some() {
+    "CONNECT"
+  } else {
+    request.origin().method()
+  };
+  encode_method(&mut block, method)?;
+  if let Some(protocol) = extended_connect_protocol {
+    encode_literal_new_name_without_indexing(&mut block, b":protocol", protocol.as_bytes())?;
+  }
   if url.scheme() == "http" {
     block.push(0x86);
   } else {
