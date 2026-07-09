@@ -1,7 +1,7 @@
 use std::time::{Duration, UNIX_EPOCH};
 
 use rttp::server::{
-  HttpAllowedMethods, HttpByteRange, HttpByteRangeError, HttpConditionalMetadata,
+  HttpAcceptRanges, HttpAllowedMethods, HttpByteRange, HttpByteRangeError, HttpConditionalMetadata,
   HttpContentLanguages, HttpEntityTag, HttpIfRangeRequestOutcome, HttpRequest,
   HttpRequestCacheControl, HttpResponse, HttpResponseCacheControl, HttpRetryAfter, HttpVary,
 };
@@ -337,6 +337,124 @@ fn raw_content_language_headers_are_preserved_without_helper_validation() {
   assert!(
     response.content_language().is_err(),
     "typed Content-Language parser should reject malformed raw values"
+  );
+}
+
+#[test]
+fn parses_accept_ranges_and_serializes_single_header_value() {
+  let accept_ranges =
+    HttpAcceptRanges::parse("bytes, custom-unit").expect("valid Accept-Ranges should parse");
+
+  assert!(!accept_ranges.is_none());
+  assert_eq!(vec!["bytes", "custom-unit"], accept_ranges.units());
+  assert_eq!("bytes, custom-unit", accept_ranges.header_value());
+
+  let response = HttpResponse::ok("body")
+    .header("Accept-Ranges", "old-unit")
+    .with_accept_ranges(["bytes", "custom-unit"])
+    .expect("valid Accept-Ranges units should be accepted");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nAccept-Ranges: bytes, custom-unit\r\n"));
+  assert_eq!(1, serialized.matches("\r\nAccept-Ranges: ").count());
+  assert_eq!(
+    Some(accept_ranges),
+    response
+      .accept_ranges()
+      .expect("Accept-Ranges should parse")
+  );
+}
+
+#[test]
+fn response_accept_ranges_none_declares_none_sentinel() {
+  let response = HttpResponse::ok("body")
+    .header("Accept-Ranges", "bytes")
+    .with_accept_ranges_none();
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+  let accept_ranges = response
+    .accept_ranges()
+    .expect("Accept-Ranges should parse")
+    .expect("Accept-Ranges should be present");
+
+  assert!(accept_ranges.is_none());
+  assert!(accept_ranges.units().is_empty());
+  assert_eq!("none", accept_ranges.header_value());
+  assert!(serialized.contains("\r\nAccept-Ranges: none\r\n"));
+  assert_eq!(1, serialized.matches("\r\nAccept-Ranges: ").count());
+}
+
+#[test]
+fn response_accept_ranges_helper_parses_attached_header_fields() {
+  let response = HttpResponse::ok("body")
+    .header("Accept-Ranges", "bytes")
+    .header("Accept-Ranges", "custom-unit");
+
+  let accept_ranges = response
+    .accept_ranges()
+    .expect("Accept-Ranges should parse")
+    .expect("Accept-Ranges should be present");
+
+  assert_eq!(vec!["bytes", "custom-unit"], accept_ranges.units());
+}
+
+#[test]
+fn accept_ranges_helpers_reject_malformed_duplicate_oversized_and_excessive_values() {
+  for value in [
+    "",
+    " ",
+    "bytes,",
+    ", bytes",
+    "bytes,,custom",
+    "bad unit",
+    "bytes, bytes",
+    "none, bytes",
+    "bytes, none",
+    "bad:name",
+  ] {
+    assert!(
+      HttpAcceptRanges::parse(value).is_err(),
+      "Accept-Ranges helper should reject {value:?}"
+    );
+  }
+
+  let oversized = "bytes".repeat(64 * 1024);
+  assert!(
+    HttpAcceptRanges::parse(&oversized).is_err(),
+    "Accept-Ranges helper should reject oversized values"
+  );
+
+  let too_many = (0..33)
+    .map(|index| format!("unit{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  assert!(
+    HttpAcceptRanges::parse(too_many).is_err(),
+    "Accept-Ranges helper should reject too many range units"
+  );
+
+  assert!(
+    HttpResponse::ok("body")
+      .with_accept_ranges(["bytes", "bytes"])
+      .is_err(),
+    "response Accept-Ranges helper should reject duplicate range units"
+  );
+  assert!(
+    HttpResponse::ok("body")
+      .with_accept_ranges(["none"])
+      .is_err(),
+    "response Accept-Ranges unit helper should reject the none sentinel"
+  );
+}
+
+#[test]
+fn raw_accept_ranges_headers_are_preserved_without_helper_validation() {
+  let response = HttpResponse::ok("body").header("Accept-Ranges", "bytes,,custom");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nAccept-Ranges: bytes,,custom\r\n"));
+  assert!(
+    response.accept_ranges().is_err(),
+    "typed Accept-Ranges parser should reject malformed raw values"
   );
 }
 
