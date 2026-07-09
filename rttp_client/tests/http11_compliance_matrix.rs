@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use rttp::server::{
   HttpByteRange, HttpByteRangeError, HttpConditionalMetadata, HttpConditionalRequestOutcome,
-  HttpEntityTag, HttpResponse, Request,
+  HttpEntityTag, HttpIfRangeRequestOutcome, HttpResponse, Request,
 };
 use rttp_client::HttpClient;
 use rttp_http11_test_fixtures as fixtures;
@@ -95,6 +95,23 @@ fn range_response(request: Request) -> HttpResponse {
   }
 }
 
+fn if_range_response(request: Request, metadata: HttpConditionalMetadata) -> HttpResponse {
+  match request.evaluate_if_range(&metadata, RANGE_BODY.len()) {
+    Ok(HttpIfRangeRequestOutcome::PartialContent(range)) => {
+      HttpResponse::partial_content(RANGE_BODY, range)
+        .header("ETag", r#""abc""#)
+        .header("Last-Modified", CONDITIONAL_LAST_MODIFIED)
+    }
+    Ok(HttpIfRangeRequestOutcome::RangeNotSatisfiable) => {
+      HttpResponse::range_not_satisfiable(RANGE_BODY.len())
+    }
+    Ok(HttpIfRangeRequestOutcome::FullResponse) => HttpResponse::ok(RANGE_BODY)
+      .header("ETag", r#""abc""#)
+      .header("Last-Modified", CONDITIONAL_LAST_MODIFIED),
+    Err(error) => HttpResponse::new(400, "Bad Request").body(error.to_string()),
+  }
+}
+
 fn spawn_range_server() -> (std::net::SocketAddr, thread::JoinHandle<Option<String>>) {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind range server");
   let addr = server.local_addr().expect("range server addr");
@@ -109,6 +126,33 @@ fn spawn_range_server() -> (std::net::SocketAddr, thread::JoinHandle<Option<Stri
       })
       .expect("serve range request");
     rx.recv().expect("observed range")
+  });
+
+  (addr, handle)
+}
+
+fn spawn_if_range_server(
+  metadata: HttpConditionalMetadata,
+) -> (
+  std::net::SocketAddr,
+  thread::JoinHandle<(Option<String>, Option<String>)>,
+) {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind if-range server");
+  let addr = server.local_addr().expect("if-range server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request.header("range").map(str::to_string),
+          request.header("if-range").map(str::to_string),
+        );
+        tx.send(observed).expect("send observed if-range headers");
+        if_range_response(request, metadata.clone())
+      })
+      .expect("serve if-range request");
+    rx.recv().expect("observed if-range headers")
   });
 
   (addr, handle)
@@ -182,6 +226,22 @@ fn assert_observed_range(
   assert_eq!(
     Some(expected_range.to_string()),
     handle.join().expect("range server thread"),
+    "{name}"
+  );
+}
+
+fn assert_observed_if_range(
+  handle: thread::JoinHandle<(Option<String>, Option<String>)>,
+  expected_range: &str,
+  expected_if_range: &str,
+  name: &str,
+) {
+  assert_eq!(
+    (
+      Some(expected_range.to_string()),
+      Some(expected_if_range.to_string())
+    ),
+    handle.join().expect("if-range server thread"),
     "{name}"
   );
 }
@@ -435,6 +495,137 @@ fn sync_client_range_helpers_interoperate_with_server_partial_content_helper() {
 
     assert_partial_response(name, response, expected_content_range, expected_body);
     assert_observed_range(handle, expected_range, name);
+  }
+}
+
+#[test]
+fn sync_client_if_range_helpers_interoperate_with_server_range_validator_evaluation() {
+  for (name, metadata, expected_range, expected_if_range, expected_code, expected_body, request) in [
+    (
+      "matching strong ETag returns partial content",
+      conditional_metadata(),
+      "bytes=3-7",
+      r#""abc""#,
+      206,
+      "34567",
+      Box::new(|client: &mut HttpClient| {
+        client
+          .range(3, 7)
+          .expect("bounded range should be accepted")
+          .if_range_etag(r#""abc""#)
+          .expect("matching strong etag should be accepted");
+      }) as Box<dyn Fn(&mut HttpClient)>,
+    ),
+    (
+      "non-matching strong ETag falls back to full response",
+      conditional_metadata(),
+      "bytes=3-7",
+      r#""other""#,
+      200,
+      "0123456789abcdef",
+      Box::new(|client: &mut HttpClient| {
+        client
+          .range(3, 7)
+          .expect("bounded range should be accepted")
+          .if_range_etag(r#""other""#)
+          .expect("non-matching strong etag should be accepted");
+      }),
+    ),
+    (
+      "matching HTTP-date returns partial content",
+      conditional_metadata(),
+      "bytes=12-",
+      CONDITIONAL_LAST_MODIFIED,
+      206,
+      "cdef",
+      Box::new(|client: &mut HttpClient| {
+        client
+          .range_from(12)
+          .if_range_date(CONDITIONAL_LAST_MODIFIED)
+          .expect("matching date should be accepted");
+      }),
+    ),
+    (
+      "stale HTTP-date falls back to full response",
+      conditional_metadata(),
+      "bytes=12-",
+      CONDITIONAL_STALE_DATE,
+      200,
+      "0123456789abcdef",
+      Box::new(|client: &mut HttpClient| {
+        client
+          .range_from(12)
+          .if_range_date(CONDITIONAL_STALE_DATE)
+          .expect("stale date should be accepted");
+      }),
+    ),
+    (
+      "missing metadata falls back to full response",
+      HttpConditionalMetadata::new(),
+      "bytes=3-7",
+      r#""abc""#,
+      200,
+      "0123456789abcdef",
+      Box::new(|client: &mut HttpClient| {
+        client
+          .range(3, 7)
+          .expect("bounded range should be accepted")
+          .if_range_etag(r#""abc""#)
+          .expect("strong etag should be accepted");
+      }),
+    ),
+    (
+      "matching validator preserves unsatisfied range response",
+      conditional_metadata(),
+      "bytes=16-",
+      r#""abc""#,
+      416,
+      "",
+      Box::new(|client: &mut HttpClient| {
+        client
+          .range_from(RANGE_BODY.len() as u64)
+          .if_range_etag(r#""abc""#)
+          .expect("matching strong etag should be accepted");
+      }),
+    ),
+    (
+      "manual If-Range header remains available",
+      conditional_metadata(),
+      "bytes=3-7",
+      r#"W/"abc""#,
+      200,
+      "0123456789abcdef",
+      Box::new(|client: &mut HttpClient| {
+        client
+          .range(3, 7)
+          .expect("bounded range should be accepted")
+          .header(("If-Range", r#"W/"abc""#));
+      }),
+    ),
+  ] {
+    let (addr, handle) = spawn_if_range_server(metadata);
+    let mut client = client();
+    client.get().url(format!("http://{}/matrix/if-range", addr));
+    request(&mut client);
+
+    let response = client
+      .emit()
+      .unwrap_or_else(|err| panic!("{name} should parse: {err}"));
+
+    assert_eq!(expected_code, response.code(), "{name}");
+    assert_eq!(expected_body, response.body().string().unwrap(), "{name}");
+    if expected_code == 206 {
+      assert!(response.is_partial_content(), "{name}");
+    }
+    if expected_code == 416 {
+      assert!(response.is_range_not_satisfiable(), "{name}");
+      assert_eq!(
+        Some(&format!("bytes */{}", RANGE_BODY.len())),
+        response.header_value("Content-Range"),
+        "{name}"
+      );
+    }
+    assert_observed_if_range(handle, expected_range, expected_if_range, name);
   }
 }
 
