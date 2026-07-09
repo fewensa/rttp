@@ -6,7 +6,8 @@ use socks::{Socks4Stream, Socks5Stream};
 use url::Url;
 
 use crate::connection::connection::{
-  Connection, ExpectContinueResult, HandoffConnection, HandoffKind, StreamingRequestBody,
+  prepend_informational_responses, Connection, ExpectContinueResult, HandoffConnection,
+  HandoffKind, StreamingRequestBody,
 };
 use crate::connection::connection_reader::ResponseParts;
 use crate::error;
@@ -58,8 +59,12 @@ impl<'a> BlockConnection<'a> {
       };
 
       let close_connection = parts.close_connection;
-      let response =
-        Response::with_trailers(self.conn.rourl().clone(), parts.binary, parts.trailers)?;
+      let response = Response::with_trailers_and_informational(
+        self.conn.rourl().clone(),
+        parts.binary,
+        parts.trailers,
+        parts.informational_responses,
+      )?;
       let config = self.conn.config().clone();
 
       if response.is_redirect() {
@@ -115,8 +120,12 @@ impl<'a> BlockConnection<'a> {
     let url = self.conn.url().map_err(error::builder)?;
     let parts = self.conn.block_send_streaming_parts(&url, body)?;
     let close_connection = parts.close_connection;
-    let response =
-      Response::with_trailers(self.conn.rourl().clone(), parts.binary, parts.trailers)?;
+    let response = Response::with_trailers_and_informational(
+      self.conn.rourl().clone(),
+      parts.binary,
+      parts.trailers,
+      parts.informational_responses,
+    )?;
     self.conn.closed_set(close_connection);
     Ok(response)
   }
@@ -181,7 +190,12 @@ impl<'a> BlockConnection<'a> {
         }
         stream.flush().map_err(error::request)?;
       }
-      ExpectContinueResult::BodySent => {}
+      ExpectContinueResult::BodySent(informational_responses) => {
+        return self
+          .conn
+          .block_read_stream_parts(url, &mut stream)
+          .map(|parts| prepend_informational_responses(parts, informational_responses));
+      }
       ExpectContinueResult::Final(parts) => return Ok(parts),
     }
 

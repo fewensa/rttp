@@ -145,6 +145,39 @@ fn test_async_head_response_is_bodyless_and_preserves_headers() {
 
 #[test]
 #[cfg(feature = "async")]
+fn test_async_client_preserves_informational_response_metadata() {
+  let (addr, _handle) = support::spawn_informational_then_ok_server("103 Early Hints");
+  block_on(async {
+    let response = client()
+      .get()
+      .url(format!("http://{}/early-hints", addr))
+      .rasync()
+      .await
+      .expect("async informational response");
+
+    assert_eq!(200, response.code());
+    assert_eq!("final body", response.body().string().unwrap());
+    assert_eq!(
+      Some("yes"),
+      response.header_value("X-Final").map(String::as_str)
+    );
+    assert!(response.header_value("X-Interim").is_none());
+
+    let informational = response.informational_responses();
+    assert_eq!(1, informational.len());
+    assert_eq!(103, informational[0].code());
+    assert_eq!("Early Hints", informational[0].reason());
+    assert_eq!(
+      Some("ignored"),
+      informational[0]
+        .header_value("X-Interim")
+        .map(String::as_str)
+    );
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
 fn test_async_chunked() {
   let (addr, _handle) = support::spawn_chunked_server();
   block_on(async {

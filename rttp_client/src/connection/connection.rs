@@ -10,11 +10,13 @@ use std::sync::Arc;
 use url::Url;
 
 use crate::connection::connection_reader::{
-  is_skippable_informational_status, read_response_head, read_response_header,
-  read_response_parts_after_header, response_status_code, ConnectionReader, ResponseParts,
+  is_skippable_informational_status, parse_informational_response, read_response_head,
+  read_response_header, read_response_parts_after_header,
+  read_response_parts_after_header_with_informational, response_status_code, ConnectionReader,
+  ResponseParts,
 };
 use crate::request::{RawRequest, RequestBody};
-use crate::response::Response;
+use crate::response::{InformationalResponse, Response};
 use crate::types::{Header, Proxy, RoUrl, ToUrl};
 use crate::{error, Config};
 
@@ -532,8 +534,20 @@ fn response_header_has_upgrade(header: &[u8]) -> error::Result<bool> {
 
 pub(crate) enum ExpectContinueResult {
   NotUsed,
-  BodySent,
+  BodySent(Vec<InformationalResponse>),
   Final(ResponseParts),
+}
+
+pub(crate) fn prepend_informational_responses(
+  mut parts: ResponseParts,
+  mut informational_responses: Vec<InformationalResponse>,
+) -> ResponseParts {
+  if informational_responses.is_empty() {
+    return parts;
+  }
+  informational_responses.extend(parts.informational_responses);
+  parts.informational_responses = informational_responses;
+  parts
 }
 
 pub(crate) enum HandoffKind {
@@ -761,18 +775,26 @@ impl<'a> Connection<'a> {
     }
 
     self.block_write_request_header_with(stream, header)?;
+    let mut informational_responses = Vec::new();
     loop {
       let header = read_response_header(stream)?;
       let status_code = response_status_code(&header)?;
       if status_code == 100 {
+        informational_responses.push(parse_informational_response(&header)?);
         self.block_write_request_body(stream)?;
-        return Ok(ExpectContinueResult::BodySent);
+        return Ok(ExpectContinueResult::BodySent(informational_responses));
       }
       if is_skippable_informational_status(status_code) {
+        informational_responses.push(parse_informational_response(&header)?);
         continue;
       }
-      return read_response_parts_after_header(stream, self.expect_no_response_body(), header)
-        .map(ExpectContinueResult::Final);
+      return read_response_parts_after_header_with_informational(
+        stream,
+        self.expect_no_response_body(),
+        header,
+        informational_responses,
+      )
+      .map(ExpectContinueResult::Final);
     }
   }
 
@@ -879,7 +901,11 @@ impl<'a> Connection<'a> {
   {
     match self.block_send_expect_continue_parts(stream)? {
       ExpectContinueResult::NotUsed => self.block_write_stream(stream)?,
-      ExpectContinueResult::BodySent => {}
+      ExpectContinueResult::BodySent(informational_responses) => {
+        return self
+          .block_read_stream_parts(url, stream)
+          .map(|parts| prepend_informational_responses(parts, informational_responses));
+      }
       ExpectContinueResult::Final(parts) => return Ok(parts),
     }
     self.block_read_stream_parts(url, stream)
@@ -982,7 +1008,11 @@ impl<'a> Connection<'a> {
 
     match self.block_send_expect_continue_parts(&mut ssl_stream)? {
       ExpectContinueResult::NotUsed => self.block_write_stream(&mut ssl_stream)?,
-      ExpectContinueResult::BodySent => {}
+      ExpectContinueResult::BodySent(informational_responses) => {
+        return self
+          .block_read_stream_parts(url, &mut ssl_stream)
+          .map(|parts| prepend_informational_responses(parts, informational_responses));
+      }
       ExpectContinueResult::Final(parts) => return Ok(parts),
     }
     self.block_read_stream_parts(url, &mut ssl_stream)
@@ -1060,7 +1090,11 @@ impl<'a> Connection<'a> {
 
     match self.block_send_expect_continue_parts(&mut tls)? {
       ExpectContinueResult::NotUsed => self.block_write_stream(&mut tls)?,
-      ExpectContinueResult::BodySent => {}
+      ExpectContinueResult::BodySent(informational_responses) => {
+        return self
+          .block_read_stream_parts(url, &mut tls)
+          .map(|parts| prepend_informational_responses(parts, informational_responses));
+      }
       ExpectContinueResult::Final(parts) => return Ok(parts),
     }
     self.block_read_stream_parts(url, &mut tls)

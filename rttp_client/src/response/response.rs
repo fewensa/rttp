@@ -25,12 +25,14 @@ const MAX_VARY_FIELD_NAMES: usize = 256;
 #[derive(Clone)]
 pub struct Response {
   raw: RawResponse,
+  informational_responses: Vec<InformationalResponse>,
 }
 
 impl Response {
   pub fn new(url: RoUrl, binary: Vec<u8>) -> error::Result<Self> {
     Ok(Self {
       raw: RawResponse::new(url, binary)?,
+      informational_responses: Vec::new(),
     })
   }
 
@@ -39,9 +41,76 @@ impl Response {
     binary: Vec<u8>,
     trailers: Vec<Header>,
   ) -> error::Result<Self> {
+    Self::with_trailers_and_informational(url, binary, trailers, Vec::new())
+  }
+
+  pub(crate) fn with_trailers_and_informational(
+    url: RoUrl,
+    binary: Vec<u8>,
+    trailers: Vec<Header>,
+    informational_responses: Vec<InformationalResponse>,
+  ) -> error::Result<Self> {
     Ok(Self {
       raw: RawResponse::with_trailers(url, binary, trailers)?,
+      informational_responses,
     })
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InformationalResponse {
+  code: u16,
+  reason: String,
+  headers: Vec<Header>,
+}
+
+impl InformationalResponse {
+  pub(crate) fn new(code: u16, reason: String, headers: Vec<Header>) -> Self {
+    Self {
+      code,
+      reason,
+      headers,
+    }
+  }
+
+  pub fn code(&self) -> u16 {
+    self.code
+  }
+
+  pub fn reason(&self) -> &String {
+    &self.reason
+  }
+
+  pub fn headers(&self) -> &Vec<Header> {
+    &self.headers
+  }
+
+  pub fn headers_of_name<S: AsRef<str>>(&self, name: S) -> Vec<&Header> {
+    self
+      .headers()
+      .iter()
+      .filter(|header| header.name().eq_ignore_ascii_case(name.as_ref()))
+      .collect()
+  }
+
+  pub fn header<S: AsRef<str>>(&self, name: S) -> Option<&Header> {
+    self
+      .headers()
+      .iter()
+      .find(|header| header.name().eq_ignore_ascii_case(name.as_ref()))
+  }
+
+  pub fn header_values<S: AsRef<str>>(&self, name: S) -> Vec<&String> {
+    self
+      .headers()
+      .iter()
+      .filter(|header| header.name().eq_ignore_ascii_case(name.as_ref()))
+      .map(|header| header.value())
+      .collect()
+  }
+
+  pub fn header_value<S: AsRef<str>>(&self, name: S) -> Option<&String> {
+    self.header(name).map(|header| header.value())
   }
 }
 
@@ -200,6 +269,10 @@ impl Response {
 
   pub fn trailers(&self) -> &Vec<Header> {
     self.raw.trailers_get()
+  }
+
+  pub fn informational_responses(&self) -> &[InformationalResponse] {
+    &self.informational_responses
   }
 
   pub fn headers_of_name<S: AsRef<str>>(&self, name: S) -> Vec<&Header> {

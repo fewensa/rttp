@@ -1000,6 +1000,10 @@ fn test_sync_client_waits_for_100_continue_before_sending_body() {
 
   assert_eq!(200, response.code());
   assert_eq!("accepted", response.body().string().unwrap());
+  let informational = response.informational_responses();
+  assert_eq!(1, informational.len());
+  assert_eq!(100, informational[0].code());
+  assert_eq!("Continue", informational[0].reason());
 
   let request = handle.join().expect("expect continue gate thread");
   assert!(!request.is_empty(), "body was sent before 100 Continue");
@@ -1047,6 +1051,16 @@ fn test_sync_client_skips_103_early_hints_before_final_response() {
   );
   assert_eq!(Some(&"yes".to_string()), response.header_value("X-Final"));
   assert!(response.header_value("X-Interim").is_none());
+  let informational = response.informational_responses();
+  assert_eq!(1, informational.len());
+  assert_eq!(103, informational[0].code());
+  assert_eq!("Early Hints", informational[0].reason());
+  assert_eq!(
+    Some("ignored"),
+    informational[0]
+      .header_value("X-Interim")
+      .map(String::as_str)
+  );
   assert_eq!("final body", response.body().string().unwrap());
 }
 
@@ -1073,6 +1087,7 @@ fn test_sync_client_returns_101_switching_protocols_as_terminal_response() {
     Some(&"test-accept".to_string()),
     response.header_value("Sec-WebSocket-Accept")
   );
+  assert!(response.informational_responses().is_empty());
   assert_eq!("", response.body().string().unwrap());
 }
 
