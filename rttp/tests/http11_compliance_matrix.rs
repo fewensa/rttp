@@ -1013,6 +1013,97 @@ fn server_content_language_helpers_stay_metadata_only() {
 }
 
 #[test]
+fn server_response_with_content_location_declares_single_bounded_header() {
+  let response = HttpResponse::new(201, "Created")
+    .header("Content-Location", "/old")
+    .with_content_location(" /representations/current ")
+    .expect("Content-Location declaration should parse");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert_eq!(
+    Some("/representations/current"),
+    header_value(&serialized, "Content-Location")
+  );
+  assert_eq!(1, serialized.matches("\r\nContent-Location: ").count());
+  assert_eq!(
+    Some("/representations/current"),
+    response
+      .content_location()
+      .expect("Content-Location should parse")
+  );
+}
+
+#[test]
+fn server_content_location_helper_rejects_duplicate_unsafe_and_oversized_values() {
+  for value in [
+    "",
+    " ",
+    "/safe\u{7f}",
+    "/safe\u{1f}",
+    "/safe\r\nInjected: true",
+  ] {
+    assert!(
+      HttpResponse::ok("OK").with_content_location(value).is_err(),
+      "Content-Location declaration should reject {value:?}"
+    );
+  }
+
+  for value in ["", " ", "/safe\u{7f}", "/safe\u{1f}"] {
+    assert!(
+      HttpResponse::ok("OK")
+        .header("Content-Location", value)
+        .content_location()
+        .is_err(),
+      "Content-Location parser should reject {value:?}"
+    );
+  }
+
+  let duplicate = HttpResponse::ok("OK")
+    .header("Content-Location", "/one")
+    .header("Content-Location", "/two");
+  assert!(
+    duplicate.content_location().is_err(),
+    "duplicate Content-Location header fields should be rejected"
+  );
+
+  let oversized = format!("/{}", "a".repeat(64 * 1024 + 1));
+  assert!(
+    HttpResponse::ok("OK")
+      .with_content_location(&oversized)
+      .is_err(),
+    "oversized Content-Location declaration should be rejected"
+  );
+  assert!(
+    HttpResponse::ok("OK")
+      .header("Content-Location", oversized)
+      .content_location()
+      .is_err(),
+    "oversized Content-Location raw value should be rejected"
+  );
+}
+
+#[test]
+fn server_content_location_helpers_stay_metadata_only() {
+  let response = HttpResponse::new(302, "Found")
+    .with_content_location("/representation")
+    .expect("Content-Location declaration should parse")
+    .header("Location", "/fallback")
+    .header("Cache-Control", "no-store");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert_eq!(
+    Some("/representation"),
+    header_value(&serialized, "Content-Location")
+  );
+  assert_eq!(Some("/fallback"), header_value(&serialized, "Location"));
+  assert_eq!(Some("no-store"), header_value(&serialized, "Cache-Control"));
+  assert!(
+    serialized.starts_with("HTTP/1.1 302 Found\r\n"),
+    "Content-Location should not alter response status policy"
+  );
+}
+
+#[test]
 fn server_content_language_helpers_coexist_with_adjacent_metadata_helpers() {
   let response = HttpResponse::new(405, "Method Not Allowed")
     .with_content_language(["fr-CA", "es-419"])

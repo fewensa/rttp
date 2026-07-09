@@ -17,6 +17,7 @@ const MAX_ALLOW_VALUE_BYTES: usize = 64 * 1024;
 const MAX_ALLOW_METHODS: usize = 32;
 const MAX_CONTENT_LANGUAGE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_LANGUAGES: usize = 32;
+const MAX_CONTENT_LOCATION_VALUE_BYTES: usize = 64 * 1024;
 const MAX_ACCEPT_RANGES_VALUE_BYTES: usize = 64 * 1024;
 const MAX_ACCEPT_RANGES_UNITS: usize = 32;
 const MAX_RETRY_AFTER_VALUE_BYTES: usize = 64 * 1024;
@@ -4556,6 +4557,20 @@ impl HttpResponse {
     Ok(self)
   }
 
+  pub fn with_content_location<V: AsRef<str>>(
+    mut self,
+    value: V,
+  ) -> Result<Self, HttpContentLocationParseError> {
+    let value = parse_http_content_location(value.as_ref())?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Content-Location"));
+    self
+      .headers
+      .push(HttpHeader::new("Content-Location", value));
+    Ok(self)
+  }
+
   pub fn with_accept_ranges<I, U>(mut self, units: I) -> Result<Self, HttpAcceptRangesParseError>
   where
     I: IntoIterator<Item = U>,
@@ -4679,6 +4694,17 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpContentLanguages::parse_values(values).map(Some)
+  }
+
+  pub fn content_location(&self) -> Result<Option<&str>, HttpContentLocationParseError> {
+    let Some(value) = self.single_header_value(
+      "Content-Location",
+      HttpContentLocationParseError::new("multiple Content-Location headers"),
+    )?
+    else {
+      return Ok(None);
+    };
+    parse_http_content_location(value).map(Some)
   }
 
   pub fn accept_ranges(&self) -> Result<Option<HttpAcceptRanges>, HttpAcceptRangesParseError> {
@@ -5459,6 +5485,49 @@ impl fmt::Display for HttpContentLanguageParseError {
 }
 
 impl Error for HttpContentLanguageParseError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpContentLocationParseError {
+  message: String,
+}
+
+impl HttpContentLocationParseError {
+  fn new<S: AsRef<str>>(message: S) -> Self {
+    Self {
+      message: message.as_ref().to_string(),
+    }
+  }
+}
+
+impl fmt::Display for HttpContentLocationParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpContentLocationParseError {}
+
+fn parse_http_content_location(value: &str) -> Result<&str, HttpContentLocationParseError> {
+  if value.len() > MAX_CONTENT_LOCATION_VALUE_BYTES {
+    return Err(HttpContentLocationParseError::new(
+      "Content-Location header value is too large",
+    ));
+  }
+
+  let value = value.trim();
+  if value.is_empty() {
+    return Err(HttpContentLocationParseError::new(
+      "invalid Content-Location value",
+    ));
+  }
+  if value.bytes().any(|byte| byte.is_ascii_control()) {
+    return Err(HttpContentLocationParseError::new(
+      "invalid Content-Location value",
+    ));
+  }
+
+  Ok(value)
+}
 
 fn is_valid_content_language_tag(value: &str) -> bool {
   let mut subtags = value.split('-');
