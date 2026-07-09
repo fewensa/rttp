@@ -228,6 +228,15 @@ fn h2_connect_headers(path: &[u8], authority: &[u8]) -> Vec<u8> {
   headers
 }
 
+fn h2_extended_connect_headers(path: &[u8], authority: &[u8], protocol: &[u8]) -> Vec<u8> {
+  let mut headers = h2_literal_indexed_name(2, b"CONNECT");
+  headers.push(0x86);
+  headers.extend(h2_literal_indexed_name(4, path));
+  headers.extend(h2_literal_indexed_name(1, authority));
+  headers.extend(h2_literal_new_name(b":protocol", protocol));
+  headers
+}
+
 fn h2_get_extended_connect_protocol_headers(path: &[u8], authority: &[u8]) -> Vec<u8> {
   let mut headers = h2_get_headers(path, authority);
   headers.extend(h2_literal_new_name(b":protocol", b"websocket"));
@@ -2405,12 +2414,187 @@ fn h2c_extended_connect_protocol_pseudo_header_rejects_before_handler() {
   assert!(
     err
       .to_string()
-      .contains("HTTP/2 extended CONNECT :protocol is unsupported"),
+      .contains("HTTP/2 extended CONNECT :protocol requires SETTINGS_ENABLE_CONNECT_PROTOCOL"),
     "unexpected h2c :protocol rejection error: {err}"
   );
   assert!(
     rx.try_recv().is_err(),
     "h2c :protocol must not be dispatched as a normal request"
+  );
+}
+
+#[test]
+fn h2c_extended_connect_dispatches_after_initial_connect_protocol_negotiation() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind h2 extended connect server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2 extended connect addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        assert_eq!("HTTP/2", request.version());
+        assert_eq!("CONNECT", request.method());
+        assert_eq!("/ws", request.target());
+        assert_eq!(Some(addr.to_string().as_str()), request.header("host"));
+        assert_eq!(Some("websocket"), request.extended_connect_protocol());
+        HttpResponse::ok("extended connect dispatched")
+      })
+      .expect("serve negotiated h2 extended CONNECT")
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 extended connect server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 extended connect read timeout");
+  complete_h2_server_handshake_with_settings(
+    &mut stream,
+    &h2_setting(H2_SETTINGS_ENABLE_CONNECT_PROTOCOL, 1),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_extended_connect_headers(b"/ws", addr.to_string().as_bytes(), b"websocket"),
+  );
+  stream
+    .flush()
+    .expect("flush negotiated h2 extended CONNECT request");
+
+  let response_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(1, response_headers.stream_id);
+  let response_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
+  assert_eq!(
+    b"extended connect dispatched",
+    response_body.payload.as_slice()
+  );
+
+  handle.join().expect("h2 extended connect server thread");
+}
+
+#[test]
+fn h2c_extended_connect_dispatches_after_subsequent_connect_protocol_negotiation() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind h2 extended connect server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2 extended connect addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        assert_eq!("CONNECT", request.method());
+        assert_eq!("/late-ws", request.target());
+        assert_eq!(Some("websocket"), request.extended_connect_protocol());
+        HttpResponse::ok("late extended connect dispatched")
+      })
+      .expect("serve late-negotiated h2 extended CONNECT")
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 extended connect server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 extended connect read timeout");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_SETTINGS,
+    0,
+    0,
+    &h2_setting(H2_SETTINGS_ENABLE_CONNECT_PROTOCOL, 1),
+  );
+  let settings_ack = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_SETTINGS, settings_ack.frame_type);
+  assert_eq!(H2_FLAG_ACK, settings_ack.flags);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_extended_connect_headers(b"/late-ws", addr.to_string().as_bytes(), b"websocket"),
+  );
+  stream
+    .flush()
+    .expect("flush late-negotiated h2 extended CONNECT request");
+
+  let response_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(1, response_headers.stream_id);
+  let response_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
+  assert_eq!(
+    b"late extended connect dispatched",
+    response_body.payload.as_slice()
+  );
+
+  handle.join().expect("h2 extended connect server thread");
+}
+
+#[test]
+fn h2c_ordinary_connect_stays_rejected_after_connect_protocol_negotiation() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind h2 ordinary connect server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("h2 ordinary connect addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send((request.method().to_string(), request.target().to_string()))
+        .expect("send unexpected ordinary CONNECT handler call");
+      HttpResponse::ok("unexpected ordinary CONNECT")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 ordinary connect server");
+  stream
+    .set_read_timeout(Some(Duration::from_millis(200)))
+    .expect("set h2 ordinary connect read timeout");
+  complete_h2_server_handshake_with_settings(
+    &mut stream,
+    &h2_setting(H2_SETTINGS_ENABLE_CONNECT_PROTOCOL, 1),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_connect_headers(b"/ordinary-connect", addr.to_string().as_bytes()),
+  );
+  stream.flush().expect("flush h2 ordinary CONNECT request");
+  let _ = try_read_h2_frame(&mut stream);
+  drop(stream);
+
+  let err = handle
+    .join()
+    .expect("h2 ordinary connect server thread")
+    .expect_err("ordinary h2 CONNECT must reject before handler");
+  assert_eq!(io::ErrorKind::InvalidData, err.kind());
+  assert!(
+    err
+      .to_string()
+      .contains("HTTP/2 prior-knowledge CONNECT/proxy tunneling is unsupported"),
+    "unexpected ordinary h2 CONNECT rejection error: {err}"
+  );
+  assert!(
+    rx.try_recv().is_err(),
+    "ordinary h2 CONNECT must not be dispatched"
+  );
+}
+
+#[test]
+fn h2c_rejects_invalid_connect_protocol_settings_values_before_handler() {
+  assert_malformed_settings_rejected_before_handler(
+    &h2_setting(H2_SETTINGS_ENABLE_CONNECT_PROTOCOL, 2),
+    0,
+    None,
   );
 }
 

@@ -36,6 +36,7 @@ const HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS: u16 = 0x3;
 const HTTP2_SETTINGS_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const HTTP2_SETTINGS_MAX_FRAME_SIZE: u16 = 0x5;
 const HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE: u16 = 0x6;
+const HTTP2_SETTINGS_ENABLE_CONNECT_PROTOCOL: u16 = 0x8;
 const HTTP2_ERROR_NO_ERROR: u32 = 0x0;
 const HTTP2_ERROR_REFUSED_STREAM: u32 = 0x7;
 
@@ -386,6 +387,7 @@ impl HttpServer {
       .unwrap_or(HTTP2_DEFAULT_INITIAL_WINDOW_SIZE);
     let mut peer_header_table_size =
       http2_settings_header_table_size(&frame.payload).unwrap_or(HTTP2_DEFAULT_HEADER_TABLE_SIZE);
+    let mut peer_enable_connect_protocol = http2_settings_enable_connect_protocol(&frame.payload);
 
     self.normalize_connection_error(write_http2_frame(
       &mut stream,
@@ -470,6 +472,9 @@ impl HttpServer {
                 request_stream.send_window.adjust(delta)?;
               }
               peer_initial_stream_send_window = initial_window_size;
+            }
+            if http2_settings_enable_connect_protocol(&frame.payload) {
+              peer_enable_connect_protocol = true;
             }
             self.normalize_connection_error(write_http2_frame(
               &mut stream,
@@ -569,8 +574,11 @@ impl HttpServer {
               .header_block
               .extend_from_slice(header_block_fragment);
             if frame.flags & HTTP2_FLAG_END_HEADERS == HTTP2_FLAG_END_HEADERS {
-              request_stream
-                .finish_header_block(&mut request_header_decoder, HTTP2_MAX_HEADER_LIST_SIZE)?;
+              request_stream.finish_header_block(
+                &mut request_header_decoder,
+                HTTP2_MAX_HEADER_LIST_SIZE,
+                peer_enable_connect_protocol,
+              )?;
             } else {
               request_stream.in_header_continuation = true;
             }
@@ -606,8 +614,11 @@ impl HttpServer {
             .header_block
             .extend_from_slice(&frame.payload);
           if frame.flags & HTTP2_FLAG_END_HEADERS == HTTP2_FLAG_END_HEADERS {
-            request_stream
-              .finish_header_block(&mut request_header_decoder, HTTP2_MAX_HEADER_LIST_SIZE)?;
+            request_stream.finish_header_block(
+              &mut request_header_decoder,
+              HTTP2_MAX_HEADER_LIST_SIZE,
+              peer_enable_connect_protocol,
+            )?;
           }
         }
         (HTTP2_FRAME_DATA, id) if id != 0 => {
@@ -718,6 +729,7 @@ impl HttpServer {
             request_header_decoder: &mut request_header_decoder,
             accepted_stream_count: &mut accepted_stream_count,
             last_accepted_stream_id: &mut last_accepted_stream_id,
+            peer_enable_connect_protocol: &mut peer_enable_connect_protocol,
           },
         ))?;
         last_processed_stream_id = stream_id;
@@ -886,6 +898,7 @@ impl Http2RequestStream {
     &mut self,
     decoder: &mut Http2HeaderDecoder,
     max_header_list_size: usize,
+    enable_connect_protocol: bool,
   ) -> io::Result<()> {
     match self.header_block_kind.take() {
       Some(Http2HeaderBlockKind::RequestHeaders) => {
@@ -893,6 +906,7 @@ impl Http2RequestStream {
           &self.header_block,
           decoder,
           max_header_list_size,
+          enable_connect_protocol,
         )?);
       }
       Some(Http2HeaderBlockKind::RequestTrailers) => {
@@ -1111,6 +1125,9 @@ fn validate_http2_settings_payload(payload: &[u8]) -> io::Result<()> {
       HTTP2_SETTINGS_ENABLE_PUSH if value > 1 => {
         return Err(invalid_http2_enable_push_settings_error());
       }
+      HTTP2_SETTINGS_ENABLE_CONNECT_PROTOCOL if value > 1 => {
+        return Err(invalid_http2_enable_connect_protocol_settings_error());
+      }
       HTTP2_SETTINGS_INITIAL_WINDOW_SIZE if value > 0x7fff_ffff => {
         return Err(invalid_http2_settings_error());
       }
@@ -1235,6 +1252,18 @@ fn http2_settings_initial_window_size(payload: &[u8]) -> Option<i32> {
     })
 }
 
+fn http2_settings_enable_connect_protocol(payload: &[u8]) -> bool {
+  payload.chunks_exact(6).fold(false, |enabled, setting| {
+    let id = u16::from_be_bytes([setting[0], setting[1]]);
+    let value = u32::from_be_bytes([setting[2], setting[3], setting[4], setting[5]]);
+    if id == HTTP2_SETTINGS_ENABLE_CONNECT_PROTOCOL {
+      value == 1
+    } else {
+      enabled
+    }
+  })
+}
+
 fn bounded_http2_max_concurrent_streams(request_limit: usize) -> u32 {
   u32::try_from(request_limit).unwrap_or(u32::MAX)
 }
@@ -1254,6 +1283,13 @@ fn invalid_http2_enable_push_settings_error() -> io::Error {
   io::Error::new(
     io::ErrorKind::InvalidData,
     "invalid HTTP/2 SETTINGS_ENABLE_PUSH value",
+  )
+}
+
+fn invalid_http2_enable_connect_protocol_settings_error() -> io::Error {
+  io::Error::new(
+    io::ErrorKind::InvalidData,
+    "invalid HTTP/2 SETTINGS_ENABLE_CONNECT_PROTOCOL value",
   )
 }
 
@@ -1356,6 +1392,7 @@ struct DecodedHttp2RequestHeaders {
   target: Option<String>,
   scheme: Option<String>,
   authority: Option<String>,
+  extended_connect_protocol: Option<String>,
   headers: Vec<(String, String)>,
 }
 
@@ -1364,10 +1401,16 @@ impl DecodedHttp2RequestHeaders {
     let method = self
       .method
       .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing HTTP/2 :method"))?;
-    if method.eq_ignore_ascii_case("CONNECT") {
+    if method.eq_ignore_ascii_case("CONNECT") && self.extended_connect_protocol.is_none() {
       return Err(io::Error::new(
         io::ErrorKind::InvalidData,
         "HTTP/2 prior-knowledge CONNECT/proxy tunneling is unsupported",
+      ));
+    }
+    if !method.eq_ignore_ascii_case("CONNECT") && self.extended_connect_protocol.is_some() {
+      return Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        "HTTP/2 extended CONNECT :protocol requires CONNECT",
       ));
     }
     let target = self
@@ -1388,6 +1431,7 @@ impl DecodedHttp2RequestHeaders {
       headers,
       trailers,
       body,
+      extended_connect_protocol: self.extended_connect_protocol,
     })
   }
 }
@@ -1486,12 +1530,14 @@ fn decode_http2_request_headers(
   block: &[u8],
   decoder: &mut Http2HeaderDecoder,
   max_header_list_size: usize,
+  enable_connect_protocol: bool,
 ) -> io::Result<DecodedHttp2RequestHeaders> {
   let mut decoded = DecodedHttp2RequestHeaders {
     method: None,
     target: None,
     scheme: None,
     authority: None,
+    extended_connect_protocol: None,
     headers: Vec::new(),
   };
   let mut regular_header_seen = false;
@@ -1527,10 +1573,13 @@ fn decode_http2_request_headers(
       ":scheme" => decoded.scheme = Some(value),
       ":authority" => decoded.authority = Some(value),
       ":protocol" => {
-        return Err(io::Error::new(
-          io::ErrorKind::InvalidData,
-          "HTTP/2 extended CONNECT :protocol is unsupported",
-        ));
+        if !enable_connect_protocol {
+          return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "HTTP/2 extended CONNECT :protocol requires SETTINGS_ENABLE_CONNECT_PROTOCOL",
+          ));
+        }
+        decoded.extended_connect_protocol = Some(value);
       }
       name if name.starts_with(':') => {}
       name if is_forbidden_http2_request_header_name(name) => {
@@ -2120,6 +2169,7 @@ struct Http2ResponseFlowControl<'a> {
   max_frame_size: &'a mut usize,
   peer_header_table_size: &'a mut usize,
   peer_initial_stream_send_window: &'a mut i32,
+  peer_enable_connect_protocol: &'a mut bool,
   connection_send_window: &'a mut Http2SendWindow,
   connection_receive_window: &'a mut i32,
   stream_send_window: &'a mut Http2SendWindow,
@@ -2277,6 +2327,9 @@ fn read_http2_response_flow_control_frame(
             }
             *flow_control.peer_initial_stream_send_window = initial_window_size;
           }
+          if http2_settings_enable_connect_protocol(&frame.payload) {
+            *flow_control.peer_enable_connect_protocol = true;
+          }
           write_http2_frame(stream, HTTP2_FRAME_SETTINGS, HTTP2_FLAG_ACK, 0, &[])?;
           stream.flush()?;
         }
@@ -2344,6 +2397,7 @@ fn read_http2_response_flow_control_frame(
           request_stream.finish_header_block(
             flow_control.request_header_decoder,
             HTTP2_MAX_HEADER_LIST_SIZE,
+            *flow_control.peer_enable_connect_protocol,
           )?;
         } else {
           request_stream.in_header_continuation = true;
@@ -2383,6 +2437,7 @@ fn read_http2_response_flow_control_frame(
           request_stream.finish_header_block(
             flow_control.request_header_decoder,
             HTTP2_MAX_HEADER_LIST_SIZE,
+            *flow_control.peer_enable_connect_protocol,
           )?;
         }
       }
@@ -3010,6 +3065,7 @@ pub struct Request {
   headers: Vec<(String, String)>,
   trailers: Vec<(String, String)>,
   body: Vec<u8>,
+  extended_connect_protocol: Option<String>,
 }
 
 impl Request {
@@ -3031,6 +3087,10 @@ impl Request {
       .iter()
       .find(|(key, _)| key.eq_ignore_ascii_case(name))
       .map(|(_, value)| value.as_str())
+  }
+
+  pub fn extended_connect_protocol(&self) -> Option<&str> {
+    self.extended_connect_protocol.as_deref()
   }
 
   pub fn trailers(&self) -> &[(String, String)] {
@@ -3350,6 +3410,7 @@ impl Request {
       headers: head.headers,
       trailers: Vec::new(),
       body,
+      extended_connect_protocol: None,
     })
   }
 
@@ -3369,6 +3430,7 @@ impl Request {
       headers: head.headers,
       trailers,
       body,
+      extended_connect_protocol: None,
     }
   }
 }
@@ -4807,12 +4869,14 @@ mod tests {
     let mut request_header_decoder = Http2HeaderDecoder::new(HTTP2_DEFAULT_HEADER_TABLE_SIZE);
     let mut accepted_stream_count = 1;
     let mut last_accepted_stream_id = 1;
+    let mut peer_enable_connect_protocol = false;
 
     let read = {
       let mut flow_control = Http2ResponseFlowControl {
         max_frame_size: &mut max_frame_size,
         peer_header_table_size: &mut peer_header_table_size,
         peer_initial_stream_send_window: &mut peer_initial_stream_send_window,
+        peer_enable_connect_protocol: &mut peer_enable_connect_protocol,
         connection_send_window: &mut connection_send_window,
         connection_receive_window: &mut connection_receive_window,
         stream_send_window: &mut stream_send_window,
