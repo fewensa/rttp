@@ -249,24 +249,13 @@ impl Parser {
       return Ok(());
     }
 
-    let content_encoding = response
-      .headers_get()
-      .iter()
-      .find(|header| header.name().eq_ignore_ascii_case("Content-Encoding"));
-
-    if let Some(header) = content_encoding {
-      if header
-        .value()
-        .split(',')
-        .any(|value| value.trim().eq_ignore_ascii_case("gzip"))
-      {
-        let mut decoder = flate2::read::GzDecoder::new(binary.as_slice());
-        let mut buffer = Vec::new();
-        decoder.read_to_end(&mut buffer).map_err(error::decode)?;
-        let body = ResponseBody::new(buffer);
-        response.body(body);
-        return Ok(());
-      }
+    if has_single_gzip_content_encoding(response.headers_get()) {
+      let mut decoder = flate2::read::GzDecoder::new(binary.as_slice());
+      let mut buffer = Vec::new();
+      decoder.read_to_end(&mut buffer).map_err(error::decode)?;
+      let body = ResponseBody::new(buffer);
+      response.body(body);
+      return Ok(());
     }
 
     let body = ResponseBody::new(binary);
@@ -277,4 +266,23 @@ impl Parser {
 
 fn response_status_has_no_body(status_code: u32) -> bool {
   (100..200).contains(&status_code) || status_code == 204 || status_code == 304
+}
+
+fn has_single_gzip_content_encoding(headers: &[Header]) -> bool {
+  let mut values = headers
+    .iter()
+    .filter(|header| header.name().eq_ignore_ascii_case("Content-Encoding"));
+  let Some(header) = values.next() else {
+    return false;
+  };
+  if values.next().is_some() {
+    return false;
+  }
+
+  let mut codings = header.value().split(',').map(str::trim);
+  let Some(coding) = codings.next() else {
+    return false;
+  };
+
+  !coding.is_empty() && coding.eq_ignore_ascii_case("gzip") && codings.next().is_none()
 }

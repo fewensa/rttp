@@ -1,6 +1,13 @@
 use rttp_client::response::{ContentDisposition, ContentEncoding, ContentLocation, Response};
 use rttp_client::types::{Cookie, RoUrl};
+use std::io::Write;
 use std::time::{Duration, UNIX_EPOCH};
+
+fn gzip_bytes(bytes: &[u8]) -> Vec<u8> {
+  let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+  encoder.write_all(bytes).expect("write gzip fixture");
+  encoder.finish().expect("finish gzip fixture")
+}
 
 #[test]
 fn test_parse_cookie_name_can_match_attribute_name() {
@@ -439,6 +446,52 @@ fn test_parse_content_encoding_response_helper_preserves_order_across_fields() {
     vec!["gzip", "br"],
     ContentEncoding::parse("gzip, br")
       .expect("common codings should parse")
+      .codings()
+  );
+}
+
+#[test]
+fn test_content_encoding_runtime_decodes_only_single_supported_gzip_coding() {
+  let body = gzip_bytes(b"OK");
+  let mut raw = concat!("HTTP/1.1 200 OK\r\n", "Content-Encoding: gzip\r\n")
+    .as_bytes()
+    .to_vec();
+  raw.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
+  raw.extend_from_slice(&body);
+
+  let response = Response::new(RoUrl::with("https://example.test"), raw)
+    .expect("single gzip response should decode");
+
+  assert_eq!("OK", response.body().string().unwrap());
+  assert_eq!(
+    vec!["gzip"],
+    response
+      .content_encoding()
+      .expect("content-encoding should parse")
+      .expect("content-encoding should be present")
+      .codings()
+  );
+}
+
+#[test]
+fn test_content_encoding_runtime_leaves_stacked_or_unsupported_codings_undecoded() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Encoding: gzip, br\r\n",
+    "Content-Length: 7\r\n",
+    "\r\n",
+    "encoded"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("stacked unsupported content-encoding should remain usable");
+
+  assert_eq!("encoded", response.body().string().unwrap());
+  assert_eq!(
+    vec!["gzip", "br"],
+    response
+      .content_encoding()
+      .expect("content-encoding should parse")
+      .expect("content-encoding should be present")
       .codings()
   );
 }
