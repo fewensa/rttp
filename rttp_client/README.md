@@ -107,6 +107,33 @@ cache-control engine. Client conditional helpers only set request headers and
 expose response metadata; applications decide when to persist validators, when
 to revalidate, and how to interpret cache directives.
 
+## Bounded HTTP/1.1 informational responses and Early Hints
+
+`rttp_client` skips HTTP/1.1 informational response heads before returning the
+terminal response, and exposes the skipped metadata through
+`Response::informational_responses()`. Each `InformationalResponse` preserves
+the observed status code, reason phrase, and raw headers with accessors such
+as `code()`, `reason()`, `headers()`, `headers_of_name()`,
+`header_value()`, and `header_values()`. This makes `103 Early Hints` link
+metadata observable without changing the final response returned by
+`emit`, `rasync`, or the async request APIs.
+
+The parser is bounded and validation-oriented. Each informational head is
+limited to the normal response-head bound, must use an HTTP/1.1 `1xx` status
+line, must contain valid header field names and values, and must not declare
+body framing with `Content-Length` or `Transfer-Encoding`. Malformed,
+oversized, or ambiguously framed informational heads return an error before
+the final response head is consumed; raw header fields from valid skipped
+heads are preserved on the informational metadata.
+
+`101 Switching Protocols` is intentionally separate from skipped
+informational history. Upgrade and `CONNECT` handoff paths may skip earlier
+interim `1xx` heads, but the `101` or tunnel response remains the terminal
+handoff response and upgraded protocol bytes are caller-owned. Early Hints
+metadata does not trigger automatic preload execution, cache policy, redirect,
+retry, replay, route generation, streaming early-write behavior, TLS/ALPN
+behavior, or status-policy behavior.
+
 ## Bounded HTTP/1.1 Cache-Control behavior
 
 `Response::cache_control()` parses one or more response `Cache-Control` header
@@ -341,6 +368,7 @@ header-block model.
 | Redirects | Auto-redirect covers 301, 302, 303, 307, and 308 method/body behavior, relative and absolute `Location` resolution, same- and cross-authority header handling, loop detection, and redirect bounds | Redirects are HTTP client behavior, not a browser policy implementation |
 | Byte ranges | `range`, `range_from`, `range_suffix`, `if_range_etag`, and `if_range_date` emit bounded HTTP/1.1 range request metadata; `Response::content_range`, `accept_ranges`, `is_partial_content`, and `is_range_not_satisfiable` expose `Content-Range`, `Accept-Ranges`, `206`, and `416` metadata while preserving raw headers | No Range request generation from `Accept-Ranges`, client-side `If-Range` evaluation, partial response engine, byte serving, content slicing, download resume, automatic retry/replay, cache storage, redirect handling, status-policy behavior, multipart range generation, or automatic cache validation policy |
 | Conditional requests | `if_none_match`, `if_match`, `if_modified_since`, and `if_unmodified_since` emit bounded HTTP/1.1 validators; `Response::is_not_modified`, `is_precondition_failed`, `etag`, and `last_modified` expose `304`/`412` metadata | One ETag validator per helper call, `If-Range` is range-scoped, no cache storage, no automatic revalidation, and no cache-control engine |
+| Informational responses and Early Hints | `Response::informational_responses` exposes skipped bounded HTTP/1.1 `1xx` heads, including `103 Early Hints`, with preserved raw headers | `101 Switching Protocols` remains terminal for upgrade handoff; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
 | Cache-Control, Age, and Expires | `Response::cache_control` parses bounded response directives, numeric freshness fields, quoted field-name lists, and extension directives; `Response::age` parses bounded delta-seconds; `Response::expires` parses bounded HTTP-date metadata | No cache storage, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, or automatic conditional requests |
 | Allow | `Response::allow` parses bounded response `Allow` fields into an ordered HTTP method-token list | No fallback method selection, automatic retry/replay, or status-code policy behavior for `405` or `OPTIONS` |
 | Content-Language | `Response::content_language` parses bounded response `Content-Language` fields into ordered language metadata while preserving raw headers | No automatic language negotiation, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
