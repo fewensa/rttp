@@ -1,7 +1,7 @@
 use std::time::{Duration, UNIX_EPOCH};
 
 use rttp::server::{
-  HttpByteRange, HttpByteRangeError, HttpConditionalMetadata, HttpEntityTag,
+  HttpAllowedMethods, HttpByteRange, HttpByteRangeError, HttpConditionalMetadata, HttpEntityTag,
   HttpIfRangeRequestOutcome, HttpRequest, HttpRequestCacheControl, HttpResponse,
   HttpResponseCacheControl, HttpRetryAfter, HttpVary,
 };
@@ -160,6 +160,91 @@ fn response_vary_helper_declares_normalized_vary_header() {
   let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
 
   assert!(serialized.contains("\r\nVary: accept-encoding, x-user\r\n"));
+}
+
+#[test]
+fn parses_allow_methods_and_serializes_single_header_value() {
+  let allow =
+    HttpAllowedMethods::parse("GET, HEAD, POST").expect("valid Allow header should parse");
+
+  assert_eq!(vec!["GET", "HEAD", "POST"], allow.methods());
+  assert_eq!("GET, HEAD, POST", allow.header_value());
+
+  let response = HttpResponse::new(405, "Method Not Allowed")
+    .with_allow(["GET", "HEAD", "POST"])
+    .expect("valid Allow methods should be accepted");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nAllow: GET, HEAD, POST\r\n"));
+  assert_eq!(
+    Some(allow),
+    response.allow().expect("Allow header should parse")
+  );
+}
+
+#[test]
+fn response_allow_helper_parses_attached_header_fields() {
+  let response = HttpResponse::ok("body")
+    .header("Allow", "GET, HEAD")
+    .header("Allow", "POST");
+
+  let allow = response
+    .allow()
+    .expect("Allow header should parse")
+    .expect("Allow header should be present");
+
+  assert_eq!(vec!["GET", "HEAD", "POST"], allow.methods());
+}
+
+#[test]
+fn allow_helpers_reject_malformed_duplicate_oversized_and_excessive_values() {
+  for value in [
+    "",
+    " ",
+    "GET,",
+    ", GET",
+    "GET,,POST",
+    "G ET",
+    "GET, POST, GET",
+    "GET, bad:name",
+  ] {
+    assert!(
+      HttpAllowedMethods::parse(value).is_err(),
+      "Allow helper should reject {value:?}"
+    );
+  }
+
+  let oversized = "GET".repeat(64 * 1024);
+  assert!(
+    HttpAllowedMethods::parse(&oversized).is_err(),
+    "Allow helper should reject oversized values"
+  );
+
+  let too_many = (0..33)
+    .map(|index| format!("M{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  assert!(
+    HttpAllowedMethods::parse(too_many).is_err(),
+    "Allow helper should reject too many methods"
+  );
+
+  assert!(
+    HttpResponse::ok("body").with_allow(["GET", "GET"]).is_err(),
+    "response Allow helper should reject duplicate method values"
+  );
+}
+
+#[test]
+fn raw_allow_headers_are_preserved_without_helper_validation() {
+  let response = HttpResponse::ok("body").header("Allow", "GET,,POST");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nAllow: GET,,POST\r\n"));
+  assert!(
+    response.allow().is_err(),
+    "typed Allow parser should reject malformed raw values"
+  );
 }
 
 #[test]
