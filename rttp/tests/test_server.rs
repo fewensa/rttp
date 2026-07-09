@@ -51,6 +51,16 @@ fn write_h2_frame(
   write_raw_h2_frame(stream, frame_type, flags, stream_id & 0x7fff_ffff, payload);
 }
 
+fn try_write_h2_frame(
+  stream: &mut TcpStream,
+  frame_type: u8,
+  flags: u8,
+  stream_id: u32,
+  payload: &[u8],
+) -> io::Result<()> {
+  try_write_raw_h2_frame(stream, frame_type, flags, stream_id & 0x7fff_ffff, payload)
+}
+
 fn write_h2_header_block(stream: &mut TcpStream, stream_id: u32, end_stream: bool, block: &[u8]) {
   if block.len() <= H2_DEFAULT_MAX_FRAME_SIZE {
     let flags = H2_FLAG_END_HEADERS | if end_stream { H2_FLAG_END_STREAM } else { 0 };
@@ -84,6 +94,16 @@ fn write_raw_h2_frame(
   stream_id: u32,
   payload: &[u8],
 ) {
+  try_write_raw_h2_frame(stream, frame_type, flags, stream_id, payload).expect("write h2 frame");
+}
+
+fn try_write_raw_h2_frame(
+  stream: &mut TcpStream,
+  frame_type: u8,
+  flags: u8,
+  stream_id: u32,
+  payload: &[u8],
+) -> io::Result<()> {
   let length = payload.len();
   let mut header = [0; 9];
   header[0] = ((length >> 16) & 0xff) as u8;
@@ -92,8 +112,8 @@ fn write_raw_h2_frame(
   header[3] = frame_type;
   header[4] = flags;
   header[5..9].copy_from_slice(&stream_id.to_be_bytes());
-  stream.write_all(&header).expect("write h2 frame head");
-  stream.write_all(payload).expect("write h2 frame payload");
+  stream.write_all(&header)?;
+  stream.write_all(payload)
 }
 
 fn read_h2_frame(stream: &mut TcpStream) -> H2Frame {
@@ -3827,13 +3847,21 @@ fn server_rejects_http2_prior_knowledge_oversized_request_trailers_before_handle
     1,
     &trailers[..split],
   );
-  write_h2_frame(
+  match try_write_h2_frame(
     &mut stream,
     H2_FRAME_CONTINUATION,
     H2_FLAG_END_HEADERS,
     1,
     &trailers[split..],
-  );
+  ) {
+    Ok(()) => {}
+    Err(err)
+      if matches!(
+        err.kind(),
+        ErrorKind::BrokenPipe | ErrorKind::ConnectionReset
+      ) => {}
+    Err(err) => panic!("write oversized h2 trailer continuation: {err}"),
+  }
   let _ = stream.shutdown(std::net::Shutdown::Write);
 
   let error = handle
