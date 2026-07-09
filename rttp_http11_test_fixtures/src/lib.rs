@@ -448,6 +448,159 @@ pub mod cache_control {
   }
 }
 
+pub mod vary {
+  pub const MAX_VALUE_BYTES: usize = 64 * 1024;
+  pub const MAX_FIELD_NAMES: usize = 256;
+
+  pub struct ResponseCase {
+    pub name: &'static str,
+    pub values: &'static [&'static str],
+    pub wildcard: bool,
+    pub field_names: &'static [&'static str],
+  }
+
+  pub struct SelectionCase {
+    pub name: &'static str,
+    pub request: &'static [u8],
+    pub value: &'static str,
+    pub wildcard: bool,
+    pub field_names: &'static [&'static str],
+    pub selected_values: &'static [(&'static str, &'static [&'static str])],
+  }
+
+  pub struct InvalidCase {
+    pub name: &'static str,
+    pub value: &'static str,
+  }
+
+  const RESPONSE_CASES: &[ResponseCase] = &[
+    ResponseCase {
+      name: "field names across header fields",
+      values: &["Accept-Encoding, User-Agent", "accept-language, X-Feature"],
+      wildcard: false,
+      field_names: &[
+        "accept-encoding",
+        "user-agent",
+        "accept-language",
+        "x-feature",
+      ],
+    },
+    ResponseCase {
+      name: "case-insensitive duplicate field names are deduplicated",
+      values: &["Accept-Encoding, accept-encoding, ACCEPT-LANGUAGE"],
+      wildcard: false,
+      field_names: &["accept-encoding", "accept-language"],
+    },
+    ResponseCase {
+      name: "wildcard response",
+      values: &["*"],
+      wildcard: true,
+      field_names: &[],
+    },
+  ];
+
+  const ACCEPT_ENCODING_VALUES: &[&str] = &["gzip", "br"];
+  const X_USER_VALUES: &[&str] = &["123"];
+  const EMPTY_VALUES: &[&str] = &[];
+  const SELECTION_VALUES: &[(&str, &[&str])] = &[
+    ("accept-encoding", ACCEPT_ENCODING_VALUES),
+    ("x-user", X_USER_VALUES),
+    ("accept-language", EMPTY_VALUES),
+  ];
+  const EMPTY_SELECTION_VALUES: &[(&str, &[&str])] = &[];
+
+  const SELECTION_CASES: &[SelectionCase] = &[
+    SelectionCase {
+      name: "case-insensitive field selection preserves duplicate request values",
+      request: concat!(
+        "GET /matrix/vary HTTP/1.1\r\n",
+        "Host: example.test\r\n",
+        "Accept-Encoding: gzip\r\n",
+        "accept-encoding: br\r\n",
+        "X-User: 123\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+      value: "ACCEPT-ENCODING, x-user, accept-language",
+      wildcard: false,
+      field_names: &["accept-encoding", "x-user", "accept-language"],
+      selected_values: SELECTION_VALUES,
+    },
+    SelectionCase {
+      name: "wildcard selection does not bind request fields",
+      request: concat!(
+        "GET /matrix/vary HTTP/1.1\r\n",
+        "Host: example.test\r\n",
+        "Accept-Encoding: gzip\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+      value: "*",
+      wildcard: true,
+      field_names: &[],
+      selected_values: EMPTY_SELECTION_VALUES,
+    },
+  ];
+
+  const INVALID_CASES: &[InvalidCase] = &[
+    InvalidCase {
+      name: "empty value",
+      value: "",
+    },
+    InvalidCase {
+      name: "trailing comma",
+      value: "Accept-Encoding,",
+    },
+    InvalidCase {
+      name: "leading comma",
+      value: ", Accept-Encoding",
+    },
+    InvalidCase {
+      name: "empty member",
+      value: "Accept-Encoding,,User-Agent",
+    },
+    InvalidCase {
+      name: "field name with whitespace",
+      value: "Accept Encoding",
+    },
+    InvalidCase {
+      name: "field name with separator",
+      value: "Accept@Encoding",
+    },
+    InvalidCase {
+      name: "wildcard followed by field name",
+      value: "*, Accept-Encoding",
+    },
+    InvalidCase {
+      name: "field name followed by wildcard",
+      value: "Accept-Encoding, *",
+    },
+  ];
+
+  pub fn response_cases() -> &'static [ResponseCase] {
+    RESPONSE_CASES
+  }
+
+  pub fn selection_cases() -> &'static [SelectionCase] {
+    SELECTION_CASES
+  }
+
+  pub fn invalid_cases() -> &'static [InvalidCase] {
+    INVALID_CASES
+  }
+
+  pub fn too_many_field_names_value() -> String {
+    (0..=MAX_FIELD_NAMES)
+      .map(|index| format!("x-vary-{index}"))
+      .collect::<Vec<_>>()
+      .join(", ")
+  }
+
+  pub fn oversized_value() -> String {
+    format!("x-{}", "a".repeat(MAX_VALUE_BYTES))
+  }
+}
+
 pub fn bind_socket2_tcp_listener(name: &str) -> (TcpListener, SocketAddr) {
   let addr: SocketAddr = "127.0.0.1:0".parse().expect("parse local addr");
   let socket = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))
