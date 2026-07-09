@@ -3880,6 +3880,110 @@ pub struct HttpResponse {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HttpByteRange {
+  start: usize,
+  end: usize,
+}
+
+impl HttpByteRange {
+  pub fn new(start: usize, end: usize) -> Self {
+    assert!(start <= end, "byte range start must not exceed end");
+    Self { start, end }
+  }
+
+  pub fn parse<S: AsRef<str>>(
+    range_header: S,
+    entity_length: usize,
+  ) -> Result<Self, HttpByteRangeError> {
+    let range_header = range_header.as_ref().trim();
+    let Some((unit, range_spec)) = range_header.split_once('=') else {
+      return Err(HttpByteRangeError::InvalidRange);
+    };
+    if !unit.trim().eq_ignore_ascii_case("bytes") {
+      return Err(HttpByteRangeError::UnsupportedUnit);
+    }
+
+    let range_spec = range_spec.trim();
+    if range_spec.contains(',') {
+      return Err(HttpByteRangeError::MultipleRanges);
+    }
+
+    let Some((first, last)) = range_spec.split_once('-') else {
+      return Err(HttpByteRangeError::InvalidRange);
+    };
+    if last.contains('-') {
+      return Err(HttpByteRangeError::InvalidRange);
+    }
+
+    let first = first.trim();
+    let last = last.trim();
+    if first.is_empty() {
+      return parse_suffix_byte_range(last, entity_length);
+    }
+
+    let start = parse_byte_range_position(first)?;
+    let end = if last.is_empty() {
+      None
+    } else {
+      let requested_end = parse_byte_range_position(last)?;
+      if start > requested_end {
+        return Err(HttpByteRangeError::InvalidRange);
+      }
+      Some(requested_end)
+    };
+
+    if start >= entity_length {
+      return Err(HttpByteRangeError::UnsatisfiedRange);
+    }
+    let end = end.unwrap_or(entity_length - 1).min(entity_length - 1);
+
+    Ok(Self { start, end })
+  }
+
+  pub fn start(&self) -> usize {
+    self.start
+  }
+
+  pub fn end(&self) -> usize {
+    self.end
+  }
+
+  pub fn len(&self) -> usize {
+    self.end - self.start + 1
+  }
+
+  pub fn is_empty(&self) -> bool {
+    false
+  }
+
+  pub fn slice<'a>(&self, body: &'a [u8]) -> Option<&'a [u8]> {
+    body.get(self.start..=self.end)
+  }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HttpByteRangeError {
+  UnsupportedUnit,
+  MultipleRanges,
+  InvalidRange,
+  UnsatisfiedRange,
+}
+
+impl fmt::Display for HttpByteRangeError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    let message = match self {
+      Self::UnsupportedUnit => "unsupported Range unit",
+      Self::MultipleRanges => "multiple byte ranges are not supported",
+      Self::InvalidRange => "invalid byte range",
+      Self::UnsatisfiedRange => "byte range is not satisfiable",
+    };
+    formatter.write_str(message)
+  }
+}
+
+impl Error for HttpByteRangeError {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DefaultConnectionHeader {
   Close,
   ForceClose,
@@ -3901,6 +4005,25 @@ impl HttpResponse {
 
   pub fn ok(body: impl AsRef<[u8]>) -> Self {
     Self::new(200, "OK").body(body)
+  }
+
+  pub fn partial_content<B: AsRef<[u8]>>(body: B, range: HttpByteRange) -> Self {
+    let body = body.as_ref();
+    let partial = range
+      .slice(body)
+      .expect("partial content range must be satisfiable for body");
+
+    Self::new(206, "Partial Content")
+      .header(
+        "Content-Range",
+        format!("bytes {}-{}/{}", range.start(), range.end(), body.len()),
+      )
+      .body(partial)
+  }
+
+  pub fn range_not_satisfiable(entity_length: usize) -> Self {
+    Self::new(416, "Range Not Satisfiable")
+      .header("Content-Range", format!("bytes */{entity_length}"))
   }
 
   pub fn header<N: AsRef<str>, V: AsRef<str>>(mut self, name: N, value: V) -> Self {
@@ -4144,6 +4267,31 @@ impl HttpResponse {
       .filter(|header| header.name.eq_ignore_ascii_case("Connection"))
       .any(|header| connection_header_has_token(Some(header.value.as_str()), "close"))
   }
+}
+
+fn parse_suffix_byte_range(
+  suffix_length: &str,
+  entity_length: usize,
+) -> Result<HttpByteRange, HttpByteRangeError> {
+  let suffix_length = parse_byte_range_position(suffix_length)?;
+  if suffix_length == 0 {
+    return Err(HttpByteRangeError::InvalidRange);
+  }
+  let end = entity_length
+    .checked_sub(1)
+    .ok_or(HttpByteRangeError::UnsatisfiedRange)?;
+  let start = entity_length.saturating_sub(suffix_length);
+
+  Ok(HttpByteRange { start, end })
+}
+
+fn parse_byte_range_position(value: &str) -> Result<usize, HttpByteRangeError> {
+  if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+    return Err(HttpByteRangeError::InvalidRange);
+  }
+  value
+    .parse::<usize>()
+    .map_err(|_| HttpByteRangeError::InvalidRange)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
