@@ -1,4 +1,6 @@
-use rttp_client::response::{ContentDisposition, ContentEncoding, ContentLocation, Response};
+use rttp_client::response::{
+  ContentDisposition, ContentEncoding, ContentLocation, ContentType, Response,
+};
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
 use std::time::{Duration, UNIX_EPOCH};
@@ -173,6 +175,192 @@ fn test_parse_range_not_satisfiable_metadata_preserves_body_and_headers() {
     response.header_value("Content-Type")
   );
   assert_eq!("range unavailable", response.body().string().unwrap());
+}
+
+#[test]
+fn test_parse_content_type_response_helper_normalizes_media_type_and_preserves_parameters() {
+  let s = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Type: Text/Plain; charset=utf-8; boundary=\"AaB03x\"; format=flowed\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
+    .expect("parse response with content-type");
+
+  let content_type = response
+    .content_type()
+    .expect("valid content-type should parse")
+    .expect("content-type header should be present");
+
+  assert_eq!("text", content_type.type_());
+  assert_eq!("plain", content_type.subtype());
+  assert_eq!("text/plain", content_type.essence());
+  assert!(content_type.is("TEXT", "PLAIN"));
+  assert_eq!(Some("utf-8"), content_type.parameter("charset"));
+  assert_eq!(Some("AaB03x"), content_type.parameter("BOUNDARY"));
+  assert_eq!(
+    vec![
+      ("charset", "utf-8"),
+      ("boundary", "AaB03x"),
+      ("format", "flowed")
+    ],
+    content_type
+      .parameters()
+      .iter()
+      .map(|parameter| (parameter.name(), parameter.value()))
+      .collect::<Vec<_>>()
+  );
+  assert_eq!(
+    Some(&"Text/Plain; charset=utf-8; boundary=\"AaB03x\"; format=flowed".to_string()),
+    response.header_value("Content-Type")
+  );
+}
+
+#[test]
+fn test_parse_content_type_response_helper_accepts_common_application_json() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Type: application/json\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "{}"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("parse response with application/json content-type");
+  let content_type = response
+    .content_type()
+    .expect("valid content-type should parse")
+    .expect("content-type header should be present");
+
+  assert_eq!("application", content_type.type_());
+  assert_eq!("json", content_type.subtype());
+  assert!(content_type.parameters().is_empty());
+}
+
+#[test]
+fn test_parse_content_type_response_helper_returns_none_when_absent() {
+  let raw = concat!("HTTP/1.1 200 OK\r\n", "Content-Length: 2\r\n", "\r\n", "OK");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("parse response without content-type");
+
+  assert_eq!(
+    None,
+    response
+      .content_type()
+      .expect("absent content-type should parse")
+  );
+}
+
+#[test]
+fn test_parse_content_type_rejects_invalid_helper_values_without_rejecting_response() {
+  let invalid_values = [
+    "",
+    "text",
+    "text/",
+    "/plain",
+    "te xt/plain",
+    "text/pla in",
+    "text/plain;",
+    "text/plain; charset",
+    "text/plain; char set=utf-8",
+    "text/plain; charset=utf 8",
+    "text/plain; charset=\"unterminated",
+    "text/plain; charset=\"bad\\\r\"",
+    "text/plain; charset=\"bad\rvalue\"",
+  ];
+
+  for value in invalid_values {
+    let raw = format!("HTTP/1.1 200 OK\r\nContent-Type: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response remains usable");
+
+    assert!(
+      response.content_type().is_err(),
+      "content-type helper should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Content-Type")
+    );
+    assert_eq!("OK", response.body().string().unwrap());
+  }
+}
+
+#[test]
+fn test_parse_content_type_rejects_duplicate_singleton_duplicate_parameter_and_bounds() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Type: text/plain\r\n",
+    "content-type: application/json\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response with duplicate content-type remains usable");
+
+  assert!(
+    response.content_type().is_err(),
+    "content-type helper should reject duplicate singleton fields"
+  );
+  assert_eq!(
+    vec![&"text/plain".to_string(), &"application/json".to_string()],
+    response.header_values("Content-Type")
+  );
+
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Content-Type: text/plain; charset=utf-8; CHARSET=iso-8859-1\r\n",
+      "Content-Length: 2\r\n",
+      "\r\n",
+      "OK"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("raw response with duplicate content-type parameter remains usable");
+  assert!(
+    response.content_type().is_err(),
+    "content-type helper should reject duplicate parameters"
+  );
+
+  let oversized = format!("text/plain; charset={}", "a".repeat(64 * 1024));
+  let raw = format!("HTTP/1.1 200 OK\r\nContent-Type: {oversized}\r\nContent-Length: 2\r\n\r\nOK");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response with oversized content-type remains usable");
+  assert!(
+    response.content_type().is_err(),
+    "content-type helper should reject oversized values"
+  );
+
+  let too_many = (0..257)
+    .map(|ix| format!("p{ix}=v"))
+    .collect::<Vec<_>>()
+    .join("; ");
+  let raw = format!(
+    "HTTP/1.1 200 OK\r\nContent-Type: text/plain; {too_many}\r\nContent-Length: 2\r\n\r\nOK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response with too many content-type parameters remains usable");
+  assert!(
+    response.content_type().is_err(),
+    "content-type helper should reject too many parameters"
+  );
+}
+
+#[test]
+fn test_content_type_parse_rejects_crlf_injection() {
+  let error = ContentType::parse("text/plain; charset=\"bad\r\nX-Evil: yes\"")
+    .expect_err("content-type helper should reject CR/LF injection");
+
+  assert!(
+    error.to_string().contains("Content-Type"),
+    "unexpected error: {error}"
+  );
 }
 
 #[test]

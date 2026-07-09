@@ -22,6 +22,8 @@ const MAX_CONTENT_ENCODINGS: usize = 32;
 const MAX_CONTENT_LOCATION_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_DISPOSITION_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_DISPOSITION_PARAMETERS: usize = 32;
+const MAX_CONTENT_TYPE_VALUE_BYTES: usize = 64 * 1024;
+const MAX_CONTENT_TYPE_PARAMETERS: usize = 32;
 const MAX_ACCEPT_RANGES_VALUE_BYTES: usize = 64 * 1024;
 const MAX_ACCEPT_RANGES_UNITS: usize = 32;
 const MAX_RETRY_AFTER_VALUE_BYTES: usize = 64 * 1024;
@@ -4675,6 +4677,20 @@ impl HttpResponse {
     Ok(self)
   }
 
+  pub fn with_content_type<T>(mut self, content_type: T) -> Result<Self, HttpContentTypeParseError>
+  where
+    T: IntoHttpContentType,
+  {
+    let content_type = content_type.into_content_type()?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Content-Type"));
+    self
+      .headers
+      .push(HttpHeader::new("Content-Type", content_type.header_value()));
+    Ok(self)
+  }
+
   pub fn with_inline_content_disposition(self) -> Result<Self, HttpContentDispositionParseError> {
     self.with_content_disposition(HttpContentDisposition::inline())
   }
@@ -4856,6 +4872,17 @@ impl HttpResponse {
       return Ok(None);
     };
     HttpContentDisposition::parse(value).map(Some)
+  }
+
+  pub fn content_type(&self) -> Result<Option<HttpContentType>, HttpContentTypeParseError> {
+    let Some(value) = self.single_header_value(
+      "Content-Type",
+      HttpContentTypeParseError::new("multiple Content-Type headers"),
+    )?
+    else {
+      return Ok(None);
+    };
+    HttpContentType::parse(value).map(Some)
   }
 
   pub fn accept_ranges(&self) -> Result<Option<HttpAcceptRanges>, HttpAcceptRangesParseError> {
@@ -6159,6 +6186,372 @@ fn is_content_disposition_quoted_pair_byte(byte: u8) -> bool {
 }
 
 fn serialize_content_disposition_parameter_value(value: &str) -> String {
+  if is_http_token(value) {
+    return value.to_string();
+  }
+
+  let mut quoted = String::from("\"");
+  for byte in value.bytes() {
+    if matches!(byte, b'\\' | b'"') {
+      quoted.push('\\');
+    }
+    quoted.push(byte as char);
+  }
+  quoted.push('"');
+  quoted
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpContentType {
+  media_type: String,
+  parameters: Vec<(String, String)>,
+}
+
+impl HttpContentType {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpContentTypeParseError> {
+    let value = value.as_ref();
+    if value.len() > MAX_CONTENT_TYPE_VALUE_BYTES {
+      return Err(HttpContentTypeParseError::new(
+        "Content-Type header value is too large",
+      ));
+    }
+    if value.bytes().any(|byte| byte.is_ascii_control()) {
+      return Err(HttpContentTypeParseError::new("invalid Content-Type value"));
+    }
+
+    let mut parts = split_content_type_parts(value)?;
+    if parts.is_empty() {
+      return Err(HttpContentTypeParseError::new(
+        "invalid Content-Type media type",
+      ));
+    }
+
+    let media_type = parse_content_type_media_type(parts.remove(0).trim())?;
+    let mut parameters = Vec::new();
+    for part in parts {
+      let part = part.trim();
+      if part.is_empty() {
+        return Err(HttpContentTypeParseError::new(
+          "invalid Content-Type parameter",
+        ));
+      }
+      let Some((name, value)) = part.split_once('=') else {
+        return Err(HttpContentTypeParseError::new(
+          "invalid Content-Type parameter",
+        ));
+      };
+      let name = name.trim().to_ascii_lowercase();
+      let value = value.trim();
+      if !is_http_token(&name) {
+        return Err(HttpContentTypeParseError::new(
+          "invalid Content-Type parameter name",
+        ));
+      }
+      if parameters
+        .iter()
+        .any(|(known, _): &(String, String)| known.eq_ignore_ascii_case(&name))
+      {
+        return Err(HttpContentTypeParseError::new(
+          "duplicate Content-Type parameter",
+        ));
+      }
+      if parameters.len() >= MAX_CONTENT_TYPE_PARAMETERS {
+        return Err(HttpContentTypeParseError::new(
+          "too many Content-Type parameters",
+        ));
+      }
+
+      let value = parse_content_type_parameter_value(value)?;
+      parameters.push((name, value));
+    }
+
+    Ok(Self {
+      media_type,
+      parameters,
+    })
+  }
+
+  pub fn new<T, S>(type_name: T, subtype: S) -> Result<Self, HttpContentTypeParseError>
+  where
+    T: AsRef<str>,
+    S: AsRef<str>,
+  {
+    let type_name = type_name.as_ref().trim().to_ascii_lowercase();
+    let subtype = subtype.as_ref().trim().to_ascii_lowercase();
+    if !is_http_token(&type_name) || !is_http_token(&subtype) {
+      return Err(HttpContentTypeParseError::new(
+        "invalid Content-Type media type",
+      ));
+    }
+    let media_type = format!("{type_name}/{subtype}");
+    if media_type.len() > MAX_CONTENT_TYPE_VALUE_BYTES {
+      return Err(HttpContentTypeParseError::new(
+        "Content-Type header value is too large",
+      ));
+    }
+    Ok(Self {
+      media_type,
+      parameters: Vec::new(),
+    })
+  }
+
+  pub fn with_parameter<N, V>(
+    mut self,
+    name: N,
+    value: V,
+  ) -> Result<Self, HttpContentTypeParseError>
+  where
+    N: AsRef<str>,
+    V: AsRef<str>,
+  {
+    let name = name.as_ref().trim().to_ascii_lowercase();
+    let value = value.as_ref();
+    if !is_http_token(&name) {
+      return Err(HttpContentTypeParseError::new(
+        "invalid Content-Type parameter name",
+      ));
+    }
+    if value.is_empty() || !value.is_ascii() || value.bytes().any(|byte| byte.is_ascii_control()) {
+      return Err(HttpContentTypeParseError::new(
+        "invalid Content-Type parameter value",
+      ));
+    }
+    if self
+      .parameters
+      .iter()
+      .any(|(known, _)| known.eq_ignore_ascii_case(&name))
+    {
+      return Err(HttpContentTypeParseError::new(
+        "duplicate Content-Type parameter",
+      ));
+    }
+    if self.parameters.len() >= MAX_CONTENT_TYPE_PARAMETERS {
+      return Err(HttpContentTypeParseError::new(
+        "too many Content-Type parameters",
+      ));
+    }
+
+    let mut candidate = self.header_value();
+    candidate.push_str("; ");
+    candidate.push_str(&name);
+    candidate.push('=');
+    candidate.push_str(&serialize_content_type_parameter_value(value));
+    if candidate.len() > MAX_CONTENT_TYPE_VALUE_BYTES {
+      return Err(HttpContentTypeParseError::new(
+        "Content-Type header value is too large",
+      ));
+    }
+
+    self.parameters.push((name, value.to_string()));
+    Ok(self)
+  }
+
+  pub fn media_type(&self) -> &str {
+    &self.media_type
+  }
+
+  pub fn parameter<S: AsRef<str>>(&self, name: S) -> Option<&str> {
+    self
+      .parameters
+      .iter()
+      .find(|(key, _)| key.eq_ignore_ascii_case(name.as_ref()))
+      .map(|(_, value)| value.as_str())
+  }
+
+  pub fn parameters(&self) -> Vec<(&str, &str)> {
+    self
+      .parameters
+      .iter()
+      .map(|(name, value)| (name.as_str(), value.as_str()))
+      .collect()
+  }
+
+  pub fn header_value(&self) -> String {
+    let mut value = self.media_type.clone();
+    for (name, parameter_value) in &self.parameters {
+      value.push_str("; ");
+      value.push_str(name);
+      value.push('=');
+      value.push_str(&serialize_content_type_parameter_value(parameter_value));
+    }
+    value
+  }
+}
+
+pub trait IntoHttpContentType {
+  fn into_content_type(self) -> Result<HttpContentType, HttpContentTypeParseError>;
+}
+
+impl IntoHttpContentType for HttpContentType {
+  fn into_content_type(self) -> Result<HttpContentType, HttpContentTypeParseError> {
+    Ok(self)
+  }
+}
+
+impl IntoHttpContentType for &HttpContentType {
+  fn into_content_type(self) -> Result<HttpContentType, HttpContentTypeParseError> {
+    Ok(self.clone())
+  }
+}
+
+impl IntoHttpContentType for &str {
+  fn into_content_type(self) -> Result<HttpContentType, HttpContentTypeParseError> {
+    HttpContentType::parse(self)
+  }
+}
+
+impl IntoHttpContentType for String {
+  fn into_content_type(self) -> Result<HttpContentType, HttpContentTypeParseError> {
+    HttpContentType::parse(self)
+  }
+}
+
+impl IntoHttpContentType for &String {
+  fn into_content_type(self) -> Result<HttpContentType, HttpContentTypeParseError> {
+    HttpContentType::parse(self)
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpContentTypeParseError {
+  message: String,
+}
+
+impl HttpContentTypeParseError {
+  fn new<S: AsRef<str>>(message: S) -> Self {
+    Self {
+      message: message.as_ref().to_string(),
+    }
+  }
+}
+
+impl fmt::Display for HttpContentTypeParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpContentTypeParseError {}
+
+fn parse_content_type_media_type(value: &str) -> Result<String, HttpContentTypeParseError> {
+  let Some((type_name, subtype)) = value.split_once('/') else {
+    return Err(HttpContentTypeParseError::new(
+      "invalid Content-Type media type",
+    ));
+  };
+  let type_name = type_name.to_ascii_lowercase();
+  let subtype = subtype.to_ascii_lowercase();
+  if !is_http_token(&type_name) || !is_http_token(&subtype) {
+    return Err(HttpContentTypeParseError::new(
+      "invalid Content-Type media type",
+    ));
+  }
+  Ok(format!("{type_name}/{subtype}"))
+}
+
+fn split_content_type_parts(value: &str) -> Result<Vec<&str>, HttpContentTypeParseError> {
+  let mut parts = Vec::new();
+  let mut quoted = false;
+  let mut escaped = false;
+  let mut start = 0usize;
+
+  for (index, byte) in value.bytes().enumerate() {
+    if escaped {
+      if !is_content_type_quoted_pair_byte(byte) {
+        return Err(HttpContentTypeParseError::new(
+          "invalid Content-Type quoted-string",
+        ));
+      }
+      escaped = false;
+      continue;
+    }
+
+    match byte {
+      b'\\' if quoted => escaped = true,
+      b'"' => quoted = !quoted,
+      b';' if !quoted => {
+        parts.push(&value[start..index]);
+        start = index + 1;
+      }
+      _ => {}
+    }
+  }
+
+  if quoted || escaped {
+    return Err(HttpContentTypeParseError::new(
+      "invalid Content-Type quoted-string",
+    ));
+  }
+
+  parts.push(&value[start..]);
+  Ok(parts)
+}
+
+fn parse_content_type_parameter_value(value: &str) -> Result<String, HttpContentTypeParseError> {
+  if value.is_empty() {
+    return Err(HttpContentTypeParseError::new(
+      "invalid Content-Type parameter value",
+    ));
+  }
+  if value.starts_with('"') {
+    parse_content_type_quoted_string(value)
+  } else if value.contains('"') || !is_http_token(value) {
+    Err(HttpContentTypeParseError::new(
+      "invalid Content-Type parameter value",
+    ))
+  } else {
+    Ok(value.to_string())
+  }
+}
+
+fn parse_content_type_quoted_string(value: &str) -> Result<String, HttpContentTypeParseError> {
+  if !value.ends_with('"') || value.len() < 2 {
+    return Err(HttpContentTypeParseError::new(
+      "invalid Content-Type quoted-string",
+    ));
+  }
+
+  let inner = &value[1..value.len() - 1];
+  let mut parsed = String::new();
+  let mut escaped = false;
+  for byte in inner.bytes() {
+    if escaped {
+      if !is_content_type_quoted_pair_byte(byte) {
+        return Err(HttpContentTypeParseError::new(
+          "invalid Content-Type quoted-string",
+        ));
+      }
+      parsed.push(byte as char);
+      escaped = false;
+    } else if byte == b'\\' {
+      escaped = true;
+    } else if byte == b'"' || !is_content_type_quoted_text_byte(byte) {
+      return Err(HttpContentTypeParseError::new(
+        "invalid Content-Type quoted-string",
+      ));
+    } else {
+      parsed.push(byte as char);
+    }
+  }
+
+  if escaped || parsed.is_empty() {
+    return Err(HttpContentTypeParseError::new(
+      "invalid Content-Type quoted-string",
+    ));
+  }
+
+  Ok(parsed)
+}
+
+fn is_content_type_quoted_text_byte(byte: u8) -> bool {
+  byte == b'\t' || matches!(byte, 0x20..=0x21 | 0x23..=0x5b | 0x5d..=0x7e)
+}
+
+fn is_content_type_quoted_pair_byte(byte: u8) -> bool {
+  byte == b'\t' || matches!(byte, 0x20..=0x7e)
+}
+
+fn serialize_content_type_parameter_value(value: &str) -> String {
   if is_http_token(value) {
     return value.to_string();
   }

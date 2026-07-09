@@ -2,9 +2,9 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use rttp::server::{
   HttpAcceptRanges, HttpAllowedMethods, HttpByteRange, HttpByteRangeError, HttpConditionalMetadata,
-  HttpContentDisposition, HttpContentLanguages, HttpEntityTag, HttpIfRangeRequestOutcome,
-  HttpRequest, HttpRequestCacheControl, HttpResponse, HttpResponseCacheControl,
-  HttpResponseContentEncodings, HttpRetryAfter, HttpVary,
+  HttpContentDisposition, HttpContentLanguages, HttpContentType, HttpEntityTag,
+  HttpIfRangeRequestOutcome, HttpRequest, HttpRequestCacheControl, HttpResponse,
+  HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpVary,
 };
 
 fn parse_request(raw: &str) -> HttpRequest {
@@ -716,6 +716,38 @@ fn parses_content_encoding_and_serializes_single_header_value() {
 }
 
 #[test]
+fn parses_content_type_and_serializes_single_header_value() {
+  let content_type = HttpContentType::parse("Text/HTML; Charset=\"utf-8\"; boundary=abc-123")
+    .expect("valid Content-Type should parse");
+
+  assert_eq!("text/html", content_type.media_type());
+  assert_eq!(Some("utf-8"), content_type.parameter("charset"));
+  assert_eq!(Some("abc-123"), content_type.parameter("boundary"));
+  assert_eq!(
+    "text/html; charset=utf-8; boundary=abc-123",
+    content_type.header_value()
+  );
+
+  let response = HttpResponse::ok("body")
+    .header("Content-Type", "text/plain")
+    .header("content-type", "application/octet-stream")
+    .with_content_type(content_type)
+    .expect("valid Content-Type should be accepted");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nContent-Type: text/html; charset=utf-8; boundary=abc-123\r\n"));
+  assert_eq!(1, serialized.matches("\r\nContent-Type: ").count());
+  assert_eq!(
+    Some("utf-8"),
+    response
+      .content_type()
+      .expect("Content-Type should parse")
+      .expect("Content-Type should be present")
+      .parameter("charset")
+  );
+}
+
+#[test]
 fn response_content_encoding_helper_parses_attached_header_fields_in_order() {
   let response = HttpResponse::ok("body")
     .header("Content-Encoding", "gzip, br")
@@ -775,6 +807,120 @@ fn content_encoding_helpers_reject_malformed_duplicate_oversized_and_excessive_v
 }
 
 #[test]
+fn content_type_helpers_declare_common_media_types_with_safe_parameters() {
+  let content_type = HttpContentType::new("application", "json")
+    .expect("valid media type should be accepted")
+    .with_parameter("charset", "utf-8")
+    .expect("safe parameter should be accepted");
+
+  assert_eq!(
+    "application/json; charset=utf-8",
+    content_type.header_value()
+  );
+
+  let response = HttpResponse::ok("{}")
+    .with_content_type("Application/JSON; Charset=utf-8")
+    .expect("Content-Type string should be accepted");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nContent-Type: application/json; charset=utf-8\r\n"));
+}
+
+#[test]
+fn response_content_type_helper_parses_attached_singleton_header() {
+  let response = HttpResponse::ok("body").header("Content-Type", "text/plain; charset=utf-8");
+
+  let content_type = response
+    .content_type()
+    .expect("Content-Type should parse")
+    .expect("Content-Type should be present");
+
+  assert_eq!("text/plain", content_type.media_type());
+  assert_eq!(Some("utf-8"), content_type.parameter("charset"));
+}
+
+#[test]
+fn content_type_helpers_reject_malformed_duplicate_oversized_and_excessive_values() {
+  for value in [
+    "",
+    " ",
+    "text",
+    "text/",
+    "/plain",
+    "text /plain",
+    "text/plain;",
+    "text/plain; charset",
+    "text/plain; charset=",
+    "text/plain; bad name=value",
+    "text/plain; charset=\"unterminated",
+    "text/plain; charset=\"bad\\\"",
+    "text/plain; charset=\"bad\r\nX-Evil: yes\"",
+    "text/plain; charset=utf-8; CHARSET=us-ascii",
+    "text/plain; charset=\"bad\u{7f}\"",
+  ] {
+    assert!(
+      HttpContentType::parse(value).is_err(),
+      "Content-Type helper should reject {value:?}"
+    );
+  }
+
+  let oversized = format!("text/plain; charset=\"{}\"", "a".repeat(64 * 1024));
+  assert!(
+    HttpContentType::parse(&oversized).is_err(),
+    "Content-Type helper should reject oversized values"
+  );
+
+  let too_many = format!(
+    "text/plain{}",
+    (0..33)
+      .map(|index| format!("; p{index}=v"))
+      .collect::<String>()
+  );
+  assert!(
+    HttpContentType::parse(too_many).is_err(),
+    "Content-Type helper should reject too many parameters"
+  );
+
+  assert!(
+    HttpContentType::new("bad type", "plain").is_err(),
+    "Content-Type builder should reject invalid type tokens"
+  );
+  assert!(
+    HttpContentType::new("text", "plain")
+      .and_then(|content_type| content_type.with_parameter("bad name", "value"))
+      .is_err(),
+    "Content-Type builder should reject invalid parameter names"
+  );
+  assert!(
+    HttpContentType::new("text", "plain")
+      .and_then(|content_type| content_type.with_parameter("charset", "bad\r\nX-Evil: yes"))
+      .is_err(),
+    "Content-Type builder should reject CR/LF injection"
+  );
+  assert!(
+    HttpContentType::new("text", "plain")
+      .and_then(|content_type| content_type.with_parameter("charset", "caf\u{e9}"))
+      .is_err(),
+    "Content-Type builder should reject values that cannot be safely quoted"
+  );
+  assert!(
+    HttpContentType::new("text", "plain")
+      .and_then(|content_type| content_type.with_parameter("charset", "utf-8"))
+      .and_then(|content_type| content_type.with_parameter("CHARSET", "us-ascii"))
+      .is_err(),
+    "Content-Type builder should reject duplicate parameters"
+  );
+
+  let response = HttpResponse::ok("body")
+    .header("Content-Type", "text/plain")
+    .header("Content-Type", "application/json");
+  assert!(
+    response.content_type().is_err(),
+    "Content-Type parser should reject duplicate header fields"
+  );
+}
+
+#[test]
 fn raw_content_encoding_headers_are_preserved_without_helper_validation() {
   let response = HttpResponse::ok("body").header("Content-Encoding", "gzip,");
   let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
@@ -783,6 +929,18 @@ fn raw_content_encoding_headers_are_preserved_without_helper_validation() {
   assert!(
     response.content_encoding().is_err(),
     "typed Content-Encoding parser should reject malformed raw values"
+  );
+}
+
+#[test]
+fn raw_content_type_headers_are_preserved_without_helper_validation() {
+  let response = HttpResponse::ok("body").header("Content-Type", "text/plain;");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nContent-Type: text/plain;\r\n"));
+  assert!(
+    response.content_type().is_err(),
+    "typed Content-Type parser should reject malformed raw values"
   );
 }
 
