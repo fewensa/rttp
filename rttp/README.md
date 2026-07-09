@@ -193,7 +193,10 @@ bounded local response dynamic table decoding, bounded large header blocks via
 CONTINUATION frames, padded incoming response frames, and conservative DATA
 flow-control for single-stream prior-knowledge use. Any received
 `SETTINGS_ENABLE_PUSH` value other than `0` or `1` rejects the bounded h2c
-handshake. Valid response PRIORITY
+handshake. The explicit `http2_extended_connect(protocol)` request mode
+advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1` and emits `:method CONNECT`
+with `:protocol`, `:scheme`, `:authority`, and `:path` on the same bounded
+single-stream path. Valid response PRIORITY
 frames and HEADERS priority fields are validated and ignored as metadata;
 malformed priority metadata is rejected, and no priority scheduling is
 performed. Valid PING frames are acknowledged with PING ACK frames that carry
@@ -247,15 +250,16 @@ connection-specific, routing, authentication/cookie, and framing fields such
 as `Authorization`, `Connection`, `Content-Length`, `Cookie`, `Host`,
 `Keep-Alive`, `Proxy-Authenticate`, `Proxy-Authorization`,
 `Proxy-Connection`, `Set-Cookie`, `TE`, `Trailer`, `Transfer-Encoding`,
-`Upgrade`, and `WWW-Authenticate`. `CONNECT`, RFC 8441 `:protocol` extended
-CONNECT metadata, HTTP/1.1 `Upgrade` handoff requests, and proxy tunneling are
-rejected before a client socket is opened. HTTP/1.1 `CONNECT` tunnel handoff
-and `Upgrade` remain separate client handoff paths; this h2c path does not
-provide WebSocket over h2, proxy h2, tunnel handoff, persistent HTTP/2
-sessions, or full RFC 8441 support. TLS ALPN, extension callback APIs, full
-extension negotiation, external h2 integration, connection pooling, automatic
-retry, server push, full stream state machines, and full HTTP/2 features such
-as unbounded multiplex scheduling, general multiplexing, and priority
+`Upgrade`, and `WWW-Authenticate`. Ordinary `CONNECT`, header-configured RFC
+8441 `:protocol` metadata, HTTP/1.1 `Upgrade` handoff requests, proxy
+tunneling, extended CONNECT request bodies, and extended CONNECT request
+trailers are rejected before a client socket is opened. HTTP/1.1 `CONNECT`
+tunnel handoff and `Upgrade` remain separate client handoff paths; this h2c
+path does not provide proxy h2, tunnel handoff, persistent HTTP/2 sessions, or
+full RFC 8441 support. TLS ALPN, extension callback APIs, full extension
+negotiation, external h2 integration, connection pooling, automatic retry,
+server push, full stream state machines, and full HTTP/2 features such as
+unbounded multiplex scheduling, general multiplexing, and priority
 scheduling remain outside that bounded prior-knowledge path. RTTP does not
 expose a dynamic policy API for changing h2c frame-size or metadata limits at
 runtime.

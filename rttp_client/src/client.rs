@@ -116,6 +116,19 @@ impl HttpClient {
     self
   }
 
+  /// Use RFC 8441 extended CONNECT on the bounded prior-knowledge h2c path.
+  ///
+  /// This is only honored by `emit_http2_prior_knowledge` with the `http2`
+  /// feature enabled. The request is emitted as `:method CONNECT` and includes
+  /// the configured `:protocol` pseudo-header.
+  #[cfg(feature = "http2")]
+  pub fn http2_extended_connect<S: AsRef<str>>(&mut self, protocol: S) -> &mut Self {
+    self
+      .request
+      .http2_extended_connect_protocol_set(protocol.as_ref());
+    self
+  }
+
   /// Set HTTP authentication. Supports Basic Auth and Bearer Token.
   ///
   /// # Examples
