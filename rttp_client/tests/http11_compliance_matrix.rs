@@ -39,6 +39,21 @@ fn vary_response(values: &[&str]) -> Vec<u8> {
   response.into_bytes()
 }
 
+fn age_expires_response(age: &str, expires: &str, include_cache_metadata: bool) -> Vec<u8> {
+  let mut response = String::from("HTTP/1.1 200 OK\r\n");
+  response.push_str("Age: ");
+  response.push_str(age);
+  response.push_str("\r\nExpires: ");
+  response.push_str(expires);
+  response.push_str("\r\n");
+  if include_cache_metadata {
+    response.push_str("Cache-Control: public, max-age=60\r\n");
+    response.push_str("Vary: Accept-Encoding\r\n");
+  }
+  response.push_str("Content-Length: 2\r\n\r\nOK");
+  response.into_bytes()
+}
+
 const RANGE_BODY: &[u8] = b"0123456789abcdef";
 const CONDITIONAL_LAST_MODIFIED: &str = "Sun, 06 Nov 1994 08:49:37 GMT";
 const CONDITIONAL_STALE_DATE: &str = "Sun, 06 Nov 1994 08:49:36 GMT";
@@ -396,6 +411,42 @@ fn assert_vary_helper_rejects_but_preserves_response(name: &str, raw_response: V
   handle.join().expect("raw response server thread");
 }
 
+fn assert_age_helper_rejects_but_preserves_response(name: &str, raw_response: Vec<u8>) {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/age-invalid", addr))
+    .emit()
+    .unwrap_or_else(|err| panic!("{name} response should remain parseable: {err}"));
+
+  assert!(
+    response.age().is_err(),
+    "{name} helper should reject invalid Age"
+  );
+  assert_eq!("OK", response.body().string().unwrap(), "{name}");
+
+  handle.join().expect("raw response server thread");
+}
+
+fn assert_expires_helper_rejects_but_preserves_response(name: &str, raw_response: Vec<u8>) {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/expires-invalid", addr))
+    .emit()
+    .unwrap_or_else(|err| panic!("{name} response should remain parseable: {err}"));
+
+  assert!(
+    response.expires().is_err(),
+    "{name} helper should reject invalid Expires"
+  );
+  assert_eq!("OK", response.body().string().unwrap(), "{name}");
+
+  handle.join().expect("raw response server thread");
+}
+
 enum ConditionalHeader {
   IfNoneMatch(&'static str),
   IfMatch(&'static str),
@@ -439,6 +490,124 @@ fn sync_client_parses_shared_vary_response_matrix() {
 }
 
 #[test]
+fn sync_client_parses_shared_age_response_matrix() {
+  for case in fixtures::age_expires::age_cases() {
+    let raw_response = age_expires_response(
+      case.value,
+      fixtures::age_expires::EXPIRES_IMF_FIXDATE,
+      false,
+    );
+    let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+    let response = client()
+      .get()
+      .url(format!("http://{}/matrix/age", addr))
+      .emit()
+      .unwrap_or_else(|err| panic!("{} response should parse: {err}", case.name));
+
+    assert_eq!(
+      Some(case.delta_seconds),
+      response
+        .age()
+        .unwrap_or_else(|err| panic!("{} Age should parse: {err}", case.name)),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      Some(&case.value.to_string()),
+      response.header_value("Age"),
+      "{}",
+      case.name
+    );
+    assert_eq!("OK", response.body().string().unwrap(), "{}", case.name);
+    handle.join().expect("raw response server thread");
+  }
+}
+
+#[test]
+fn sync_client_parses_shared_expires_response_matrix() {
+  for case in fixtures::age_expires::expires_cases() {
+    let raw_response = age_expires_response("0", case.value, false);
+    let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+    let response = client()
+      .get()
+      .url(format!("http://{}/matrix/expires", addr))
+      .emit()
+      .unwrap_or_else(|err| panic!("{} response should parse: {err}", case.name));
+
+    assert_eq!(
+      Some(std::time::UNIX_EPOCH + Duration::from_secs(case.unix_seconds)),
+      response
+        .expires()
+        .unwrap_or_else(|err| panic!("{} Expires should parse: {err}", case.name)),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      Some(&case.value.to_string()),
+      response.header_value("Expires"),
+      "{}",
+      case.name
+    );
+    assert_eq!("OK", response.body().string().unwrap(), "{}", case.name);
+    handle.join().expect("raw response server thread");
+  }
+}
+
+#[test]
+fn sync_client_parses_age_expires_with_existing_cache_metadata_helpers() {
+  for case in fixtures::age_expires::declaration_cases() {
+    let raw_response = age_expires_response(case.age_value, case.expires_value, true);
+    let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+    let response = client()
+      .get()
+      .url(format!("http://{}/matrix/cache-metadata", addr))
+      .emit()
+      .unwrap_or_else(|err| panic!("{} response should parse: {err}", case.name));
+
+    assert_eq!(
+      Some(case.age),
+      response
+        .age()
+        .unwrap_or_else(|err| panic!("{} Age should parse: {err}", case.name)),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      Some(std::time::UNIX_EPOCH + Duration::from_secs(case.expires_unix_seconds)),
+      response
+        .expires()
+        .unwrap_or_else(|err| panic!("{} Expires should parse: {err}", case.name)),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      Some(60),
+      response
+        .cache_control()
+        .expect("Cache-Control should parse")
+        .expect("Cache-Control should be present")
+        .max_age(),
+      "{}",
+      case.name
+    );
+    assert!(
+      response
+        .vary()
+        .expect("Vary should parse")
+        .expect("Vary should be present")
+        .contains_field_name("accept-encoding"),
+      "{}",
+      case.name
+    );
+    assert_eq!("OK", response.body().string().unwrap(), "{}", case.name);
+    handle.join().expect("raw response server thread");
+  }
+}
+
+#[test]
 fn sync_client_cache_control_helper_rejects_shared_invalid_response_matrix() {
   for case in fixtures::cache_control::invalid_response_cases() {
     assert_cache_control_helper_rejects_but_preserves_response(
@@ -452,6 +621,27 @@ fn sync_client_cache_control_helper_rejects_shared_invalid_response_matrix() {
 fn sync_client_vary_helper_rejects_shared_invalid_response_matrix() {
   for case in fixtures::vary::invalid_cases() {
     assert_vary_helper_rejects_but_preserves_response(case.name, vary_response(&[case.value]));
+  }
+}
+
+#[test]
+fn sync_client_age_and_expires_helpers_reject_shared_invalid_matrix() {
+  for case in fixtures::age_expires::invalid_age_cases() {
+    assert_age_helper_rejects_but_preserves_response(
+      case.name,
+      age_expires_response(
+        case.value,
+        fixtures::age_expires::EXPIRES_IMF_FIXDATE,
+        false,
+      ),
+    );
+  }
+
+  for case in fixtures::age_expires::invalid_expires_cases() {
+    assert_expires_helper_rejects_but_preserves_response(
+      case.name,
+      age_expires_response("0", case.value, false),
+    );
   }
 }
 

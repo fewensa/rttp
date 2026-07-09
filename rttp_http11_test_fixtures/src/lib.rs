@@ -448,6 +448,141 @@ pub mod cache_control {
   }
 }
 
+pub mod age_expires {
+  pub const EXPIRES_UNIX_SECONDS: u64 = 784_111_777;
+  pub const EXPIRES_IMF_FIXDATE: &str = "Sun, 06 Nov 1994 08:49:37 GMT";
+
+  pub struct AgeCase {
+    pub name: &'static str,
+    pub value: &'static str,
+    pub delta_seconds: u64,
+  }
+
+  pub struct ExpiresCase {
+    pub name: &'static str,
+    pub value: &'static str,
+    pub unix_seconds: u64,
+  }
+
+  pub struct DeclarationCase {
+    pub name: &'static str,
+    pub age: u64,
+    pub age_value: &'static str,
+    pub expires_unix_seconds: u64,
+    pub expires_value: &'static str,
+  }
+
+  pub struct InvalidCase {
+    pub name: &'static str,
+    pub value: &'static str,
+  }
+
+  const AGE_CASES: &[AgeCase] = &[
+    AgeCase {
+      name: "Age zero delta-seconds",
+      value: "0",
+      delta_seconds: 0,
+    },
+    AgeCase {
+      name: "Age positive delta-seconds",
+      value: "60",
+      delta_seconds: 60,
+    },
+  ];
+
+  const EXPIRES_CASES: &[ExpiresCase] = &[
+    ExpiresCase {
+      name: "Expires IMF-fixdate",
+      value: EXPIRES_IMF_FIXDATE,
+      unix_seconds: EXPIRES_UNIX_SECONDS,
+    },
+    ExpiresCase {
+      name: "Expires obsolete RFC 850 date",
+      value: "Sunday, 06-Nov-94 08:49:37 GMT",
+      unix_seconds: EXPIRES_UNIX_SECONDS,
+    },
+  ];
+
+  const DECLARATION_CASES: &[DeclarationCase] = &[
+    DeclarationCase {
+      name: "declared zero Age with Expires",
+      age: 0,
+      age_value: "0",
+      expires_unix_seconds: EXPIRES_UNIX_SECONDS,
+      expires_value: EXPIRES_IMF_FIXDATE,
+    },
+    DeclarationCase {
+      name: "declared positive Age with Expires",
+      age: 60,
+      age_value: "60",
+      expires_unix_seconds: EXPIRES_UNIX_SECONDS,
+      expires_value: EXPIRES_IMF_FIXDATE,
+    },
+  ];
+
+  const INVALID_AGE_CASES: &[InvalidCase] = &[
+    InvalidCase {
+      name: "Age empty value",
+      value: "",
+    },
+    InvalidCase {
+      name: "Age signed delta-seconds",
+      value: "-1",
+    },
+    InvalidCase {
+      name: "Age fractional delta-seconds",
+      value: "1.5",
+    },
+    InvalidCase {
+      name: "Age non-numeric delta-seconds",
+      value: "abc",
+    },
+    InvalidCase {
+      name: "Age comma-list delta-seconds",
+      value: "0, 60",
+    },
+    InvalidCase {
+      name: "Age overflowing delta-seconds",
+      value: "18446744073709551616",
+    },
+  ];
+
+  const INVALID_EXPIRES_CASES: &[InvalidCase] = &[
+    InvalidCase {
+      name: "Expires empty value",
+      value: "",
+    },
+    InvalidCase {
+      name: "Expires non-date value",
+      value: "not a date",
+    },
+    InvalidCase {
+      name: "Expires unsupported timezone",
+      value: "Sun, 06 Nov 1994 08:49:37 PST",
+    },
+  ];
+
+  pub fn age_cases() -> &'static [AgeCase] {
+    AGE_CASES
+  }
+
+  pub fn expires_cases() -> &'static [ExpiresCase] {
+    EXPIRES_CASES
+  }
+
+  pub fn declaration_cases() -> &'static [DeclarationCase] {
+    DECLARATION_CASES
+  }
+
+  pub fn invalid_age_cases() -> &'static [InvalidCase] {
+    INVALID_AGE_CASES
+  }
+
+  pub fn invalid_expires_cases() -> &'static [InvalidCase] {
+    INVALID_EXPIRES_CASES
+  }
+}
+
 pub mod vary {
   pub const MAX_VALUE_BYTES: usize = 64 * 1024;
   pub const MAX_FIELD_NAMES: usize = 256;
