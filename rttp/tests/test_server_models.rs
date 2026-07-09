@@ -1,9 +1,9 @@
 use std::time::{Duration, UNIX_EPOCH};
 
 use rttp::server::{
-  HttpAllowedMethods, HttpByteRange, HttpByteRangeError, HttpConditionalMetadata, HttpEntityTag,
-  HttpIfRangeRequestOutcome, HttpRequest, HttpRequestCacheControl, HttpResponse,
-  HttpResponseCacheControl, HttpRetryAfter, HttpVary,
+  HttpAllowedMethods, HttpByteRange, HttpByteRangeError, HttpConditionalMetadata,
+  HttpContentLanguages, HttpEntityTag, HttpIfRangeRequestOutcome, HttpRequest,
+  HttpRequestCacheControl, HttpResponse, HttpResponseCacheControl, HttpRetryAfter, HttpVary,
 };
 
 fn parse_request(raw: &str) -> HttpRequest {
@@ -244,6 +244,99 @@ fn raw_allow_headers_are_preserved_without_helper_validation() {
   assert!(
     response.allow().is_err(),
     "typed Allow parser should reject malformed raw values"
+  );
+}
+
+#[test]
+fn parses_content_languages_and_serializes_single_header_value() {
+  let languages = HttpContentLanguages::parse("en, fr-CA, x-private")
+    .expect("valid Content-Language header should parse");
+
+  assert_eq!(vec!["en", "fr-CA", "x-private"], languages.languages());
+  assert_eq!("en, fr-CA, x-private", languages.header_value());
+
+  let response = HttpResponse::ok("body")
+    .with_content_language(["en", "fr-CA", "x-private"])
+    .expect("valid Content-Language values should be accepted");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nContent-Language: en, fr-CA, x-private\r\n"));
+  assert_eq!(
+    Some(languages),
+    response
+      .content_language()
+      .expect("Content-Language header should parse")
+  );
+}
+
+#[test]
+fn response_content_language_helper_parses_attached_header_fields() {
+  let response = HttpResponse::ok("body")
+    .header("Content-Language", "en, fr-CA")
+    .header("Content-Language", "es-419");
+
+  let languages = response
+    .content_language()
+    .expect("Content-Language header should parse")
+    .expect("Content-Language header should be present");
+
+  assert_eq!(vec!["en", "fr-CA", "es-419"], languages.languages());
+}
+
+#[test]
+fn content_language_helpers_reject_malformed_duplicate_oversized_and_excessive_values() {
+  for value in [
+    "",
+    " ",
+    "en,",
+    ", en",
+    "en,,fr",
+    "en us",
+    "en_US",
+    "en; q=1",
+    "en, fr, en",
+    "-en",
+    "en-",
+    "en--US",
+  ] {
+    assert!(
+      HttpContentLanguages::parse(value).is_err(),
+      "Content-Language helper should reject {value:?}"
+    );
+  }
+
+  let oversized = "en".repeat(64 * 1024);
+  assert!(
+    HttpContentLanguages::parse(&oversized).is_err(),
+    "Content-Language helper should reject oversized values"
+  );
+
+  let too_many = (0..33)
+    .map(|index| format!("x-{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  assert!(
+    HttpContentLanguages::parse(too_many).is_err(),
+    "Content-Language helper should reject too many language tags"
+  );
+
+  assert!(
+    HttpResponse::ok("body")
+      .with_content_language(["en", "en"])
+      .is_err(),
+    "response Content-Language helper should reject duplicate language tags"
+  );
+}
+
+#[test]
+fn raw_content_language_headers_are_preserved_without_helper_validation() {
+  let response = HttpResponse::ok("body").header("Content-Language", "en,,fr");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nContent-Language: en,,fr\r\n"));
+  assert!(
+    response.content_language().is_err(),
+    "typed Content-Language parser should reject malformed raw values"
   );
 }
 

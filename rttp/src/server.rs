@@ -15,6 +15,8 @@ const MAX_VARY_VALUE_BYTES: usize = 64 * 1024;
 const MAX_VARY_FIELDS: usize = 256;
 const MAX_ALLOW_VALUE_BYTES: usize = 64 * 1024;
 const MAX_ALLOW_METHODS: usize = 32;
+const MAX_CONTENT_LANGUAGE_VALUE_BYTES: usize = 64 * 1024;
+const MAX_CONTENT_LANGUAGES: usize = 32;
 const MAX_RETRY_AFTER_VALUE_BYTES: usize = 64 * 1024;
 const HTTP2_CLIENT_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 const HTTP2_FRAME_DATA: u8 = 0x0;
@@ -4536,6 +4538,22 @@ impl HttpResponse {
     Ok(self)
   }
 
+  pub fn with_content_language<I, L>(
+    mut self,
+    languages: I,
+  ) -> Result<Self, HttpContentLanguageParseError>
+  where
+    I: IntoIterator<Item = L>,
+    L: AsRef<str>,
+  {
+    let content_languages = HttpContentLanguages::from_languages(languages)?;
+    self.headers.push(HttpHeader::new(
+      "Content-Language",
+      content_languages.header_value(),
+    ));
+    Ok(self)
+  }
+
   pub fn with_age(mut self, delta_seconds: u64) -> Self {
     self
       .headers
@@ -4617,6 +4635,21 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpAllowedMethods::parse_values(values).map(Some)
+  }
+
+  pub fn content_language(
+    &self,
+  ) -> Result<Option<HttpContentLanguages>, HttpContentLanguageParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Content-Language"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpContentLanguages::parse_values(values).map(Some)
   }
 
   pub fn age(&self) -> Result<Option<u64>, HttpAgeParseError> {
@@ -5276,6 +5309,134 @@ impl fmt::Display for HttpAllowParseError {
 }
 
 impl Error for HttpAllowParseError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpContentLanguages {
+  languages: Vec<String>,
+}
+
+impl HttpContentLanguages {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpContentLanguageParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpContentLanguageParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut languages = Vec::new();
+
+    for value in values {
+      if value.len() > MAX_CONTENT_LANGUAGE_VALUE_BYTES {
+        return Err(HttpContentLanguageParseError::new(
+          "Content-Language header value is too large",
+        ));
+      }
+
+      for language in value.split(',') {
+        let language = language.trim();
+        if !is_valid_content_language_tag(language) {
+          return Err(HttpContentLanguageParseError::new(
+            "invalid Content-Language tag",
+          ));
+        }
+        if languages
+          .iter()
+          .any(|known: &String| known.eq_ignore_ascii_case(language))
+        {
+          return Err(HttpContentLanguageParseError::new(
+            "duplicate Content-Language tag",
+          ));
+        }
+        if languages.len() >= MAX_CONTENT_LANGUAGES {
+          return Err(HttpContentLanguageParseError::new(
+            "too many Content-Language tags",
+          ));
+        }
+        languages.push(language.to_string());
+      }
+    }
+
+    if languages.is_empty() {
+      return Err(HttpContentLanguageParseError::new(
+        "invalid Content-Language tag",
+      ));
+    }
+
+    Ok(Self { languages })
+  }
+
+  pub fn from_languages<I, L>(languages: I) -> Result<Self, HttpContentLanguageParseError>
+  where
+    I: IntoIterator<Item = L>,
+    L: AsRef<str>,
+  {
+    let mut value = String::new();
+
+    for (index, language) in languages.into_iter().enumerate() {
+      if index > 0 {
+        value.push_str(", ");
+      }
+      value.push_str(language.as_ref());
+      if value.len() > MAX_CONTENT_LANGUAGE_VALUE_BYTES {
+        return Err(HttpContentLanguageParseError::new(
+          "Content-Language header value is too large",
+        ));
+      }
+    }
+
+    Self::parse(value)
+  }
+
+  pub fn languages(&self) -> Vec<&str> {
+    self.languages.iter().map(String::as_str).collect()
+  }
+
+  pub fn header_value(&self) -> String {
+    self.languages.join(", ")
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpContentLanguageParseError {
+  message: String,
+}
+
+impl HttpContentLanguageParseError {
+  fn new<S: AsRef<str>>(message: S) -> Self {
+    Self {
+      message: message.as_ref().to_string(),
+    }
+  }
+}
+
+impl fmt::Display for HttpContentLanguageParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpContentLanguageParseError {}
+
+fn is_valid_content_language_tag(value: &str) -> bool {
+  let mut subtags = value.split('-');
+  let Some(primary) = subtags.next() else {
+    return false;
+  };
+
+  if primary.is_empty()
+    || primary.len() > 8
+    || !primary.bytes().all(|byte| byte.is_ascii_alphabetic())
+  {
+    return false;
+  }
+
+  subtags.all(|subtag| {
+    !subtag.is_empty()
+      && subtag.len() <= 8
+      && subtag.bytes().all(|byte| byte.is_ascii_alphanumeric())
+  })
+}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct HttpRequestCacheControl {
