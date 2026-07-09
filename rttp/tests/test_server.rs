@@ -544,9 +544,7 @@ fn assert_invalid_h2_request_trailers_without_handler(trailer_block: &[u8]) {
     1,
     trailer_block,
   );
-  stream
-    .shutdown(std::net::Shutdown::Write)
-    .expect("shutdown h2 write");
+  let _ = stream.shutdown(std::net::Shutdown::Write);
 
   let error = handle
     .join()
@@ -3785,9 +3783,7 @@ fn server_rejects_http2_prior_knowledge_oversized_request_trailers_before_handle
     1,
     &trailers[split..],
   );
-  stream
-    .shutdown(std::net::Shutdown::Write)
-    .expect("shutdown h2 write");
+  let _ = stream.shutdown(std::net::Shutdown::Write);
 
   let error = handle
     .join()

@@ -177,6 +177,67 @@ fn http2_upgrade_sends_http11_upgrade_then_runs_single_h2_stream() {
 }
 
 #[test]
+fn http2_upgrade_rejects_goaway_before_opening_stream_three() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2c upgrade peer");
+  let addr = listener.local_addr().expect("h2c upgrade peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2c upgrade client");
+    let request = String::from_utf8(read_http1_request_head(&mut stream)).expect("request utf8");
+    assert!(request.starts_with("GET /upgrade-goaway HTTP/1.1\r\n"));
+    assert!(request.contains("\r\nConnection: Upgrade, HTTP2-Settings\r\n"));
+    assert!(request.contains("\r\nUpgrade: h2c\r\n"));
+
+    stream
+      .write_all(b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: h2c\r\n\r\n")
+      .expect("write upgrade response");
+
+    let mut preface = [0; 24];
+    stream
+      .read_exact(&mut preface)
+      .expect("read client preface");
+    assert_eq!(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", &preface);
+
+    let client_settings = read_frame(&mut stream);
+    assert_eq!(FRAME_SETTINGS, client_settings.frame_type);
+    assert_eq!(0, client_settings.stream_id);
+    assert_client_advertises_enable_push_disabled(&client_settings);
+
+    write_frame(&mut stream, FRAME_SETTINGS, 0, 0, &[]);
+    write_frame(&mut stream, FRAME_GOAWAY, 0, 0, &[0, 0, 0, 1, 0, 0, 0, 0]);
+
+    let client_settings_ack = read_frame(&mut stream);
+    assert_eq!(FRAME_SETTINGS, client_settings_ack.frame_type);
+    assert_eq!(FLAG_ACK, client_settings_ack.flags);
+    assert_eq!(0, client_settings_ack.stream_id);
+    assert!(client_settings_ack.payload.is_empty());
+
+    stream
+      .set_read_timeout(Some(Duration::from_millis(200)))
+      .expect("set read timeout");
+    let next_frame = try_read_frame(&mut stream).expect("check for refused stream 3 headers");
+    assert!(
+      next_frame.is_none(),
+      "client must not open upgraded stream 3 after GOAWAY last_stream_id=1"
+    );
+  });
+
+  let err = HttpClient::new()
+    .get()
+    .url(format!("http://{}/upgrade-goaway", addr))
+    .emit_http2_upgrade()
+    .expect_err("GOAWAY before upgraded stream assignment must refuse the request");
+
+  assert!(
+    err
+      .to_string()
+      .contains("HTTP/2 connection received GOAWAY before opening request stream"),
+    "unexpected error: {err}"
+  );
+  handle.join().expect("h2c upgrade goaway peer thread");
+}
+
+#[test]
 fn http2_upgrade_post_sends_request_trailers_after_h2_data() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2c upgrade peer");
   let addr = listener.local_addr().expect("h2c upgrade peer addr");
@@ -1839,6 +1900,73 @@ fn prior_knowledge_get_splits_large_huffman_request_headers_at_peer_max_frame_si
   assert_eq!(200, response.code());
   assert_eq!("split", response.body().string().unwrap());
   handle.join().expect("h2 peer thread");
+}
+
+#[test]
+fn http2_upgrade_get_splits_large_request_headers_at_peer_max_frame_size() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2c upgrade peer");
+  let addr = listener.local_addr().expect("h2c upgrade peer addr");
+  let peer_max_frame_size = 16 * 1024;
+  let large_header_value = "{".repeat(peer_max_frame_size + 512);
+  let expected_header_value = large_header_value.clone();
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2c upgrade client");
+    let request = String::from_utf8(read_http1_request_head(&mut stream)).expect("request utf8");
+    assert!(request.starts_with("GET /upgrade-large-headers HTTP/1.1\r\n"));
+    assert!(request.contains("\r\nConnection: Upgrade, HTTP2-Settings\r\n"));
+    assert!(request.contains("\r\nUpgrade: h2c\r\n"));
+
+    stream
+      .write_all(b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: h2c\r\n\r\n")
+      .expect("write upgrade response");
+
+    complete_h2_handshake_without_request_with_settings(
+      &mut stream,
+      &settings_payload(SETTING_MAX_FRAME_SIZE, peer_max_frame_size as u32),
+    );
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+    assert_eq!(FLAG_END_STREAM, request_headers.flags);
+    assert_eq!(3, request_headers.stream_id);
+    assert_eq!(peer_max_frame_size, request_headers.payload.len());
+
+    let request_continuation = read_frame(&mut stream);
+    assert_eq!(FRAME_CONTINUATION, request_continuation.frame_type);
+    assert_eq!(FLAG_END_HEADERS, request_continuation.flags);
+    assert_eq!(3, request_continuation.stream_id);
+    assert!(request_continuation.payload.len() <= peer_max_frame_size);
+    assert!(!request_continuation.payload.is_empty());
+
+    let mut header_block = request_headers.payload;
+    header_block.extend_from_slice(&request_continuation.payload);
+    let large_header =
+      find_header_value(&header_block, b"x-large-header").expect("large request header");
+    assert!(!large_header.huffman);
+    assert_eq!(expected_header_value.as_bytes(), large_header.value);
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 3, &[0x88]);
+    write_frame(
+      &mut stream,
+      FRAME_DATA,
+      FLAG_END_STREAM,
+      3,
+      b"upgrade split",
+    );
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/upgrade-large-headers", addr))
+    .header(("X-Large-Header".to_string(), large_header_value))
+    .emit_http2_upgrade()
+    .expect("h2c upgrade GET response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("upgrade split", response.body().string().unwrap());
+  handle.join().expect("h2c upgrade peer thread");
 }
 
 #[test]
