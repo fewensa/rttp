@@ -263,6 +263,25 @@ fn h2_get_extended_connect_protocol_headers(path: &[u8], authority: &[u8]) -> Ve
   headers
 }
 
+fn h2_extended_connect_headers_with_regular_header_before_protocol(
+  path: &[u8],
+  authority: &[u8],
+) -> Vec<u8> {
+  let mut headers = h2_literal_indexed_name(2, b"CONNECT");
+  headers.push(0x86);
+  headers.extend(h2_literal_indexed_name(4, path));
+  headers.extend(h2_literal_indexed_name(1, authority));
+  headers.extend(h2_literal_new_name(b"x-trace", b"trace-before-protocol"));
+  headers.extend(h2_literal_new_name(b":protocol", b"websocket"));
+  headers
+}
+
+fn h2_extended_connect_headers_with_duplicate_protocol(path: &[u8], authority: &[u8]) -> Vec<u8> {
+  let mut headers = h2_extended_connect_headers(path, authority, b"websocket");
+  headers.extend(h2_literal_new_name(b":protocol", b"websocket"));
+  headers
+}
+
 fn find_request_path(block: &[u8]) -> Option<Vec<u8>> {
   let mut cursor = 0;
   while cursor < block.len() {
@@ -602,6 +621,57 @@ fn assert_malformed_h2c_upgrade_rejected_before_handler(http2_settings: &str) {
     "malformed h2c upgrade should be handled as 400"
   );
   assert!(rx.try_recv().is_err(), "handler must not be called");
+}
+
+fn assert_h2_request_rejected_before_handler(
+  settings_payload: &[u8],
+  header_block: Vec<u8>,
+  expected_error: &str,
+) {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind rejected h2 request server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("rejected h2 request addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send((request.method().to_string(), request.target().to_string()))
+        .expect("send unexpected rejected h2 request handler call");
+      HttpResponse::ok("unexpected rejected h2 request handler")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect rejected h2 request server");
+  stream
+    .set_read_timeout(Some(Duration::from_millis(200)))
+    .expect("set rejected h2 request read timeout");
+  complete_h2_server_handshake_with_settings(&mut stream, settings_payload);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &header_block,
+  );
+  stream.flush().expect("flush rejected h2 request");
+  let _ = try_read_h2_frame(&mut stream);
+  drop(stream);
+
+  let err = handle
+    .join()
+    .expect("rejected h2 request server thread")
+    .expect_err("h2 request must reject before handler");
+  assert_eq!(io::ErrorKind::InvalidData, err.kind());
+  assert!(
+    err.to_string().contains(expected_error),
+    "unexpected h2 request rejection error: {err}"
+  );
+  assert!(
+    rx.try_recv().is_err(),
+    "rejected h2 request must not dispatch"
+  );
 }
 
 fn assert_connect_protocol_settings_accepted(subsequent: bool) {
@@ -3171,6 +3241,31 @@ fn cross_crate_h2c_extended_connect_matrix_preserves_http11_handoffs() {
     .join()
     .expect("cross-crate h2 extended connect server thread");
 
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind cross-crate body preflight peer");
+  listener
+    .set_nonblocking(true)
+    .expect("set cross-crate body preflight peer nonblocking");
+  let addr = listener
+    .local_addr()
+    .expect("cross-crate body preflight addr");
+  let err = HttpClient::new()
+    .http2_extended_connect("websocket")
+    .url(format!("http://{}/chat", addr))
+    .raw("outside bounded extended CONNECT scope")
+    .emit_http2_prior_knowledge()
+    .expect_err("extended CONNECT request body must be rejected before connecting");
+  assert!(err.is_builder());
+  assert!(
+    err
+      .to_string()
+      .contains("HTTP/2 extended CONNECT cannot send a request body"),
+    "unexpected cross-crate body preflight error: {err}"
+  );
+  assert!(
+    matches!(listener.accept(), Err(ref err) if err.kind() == io::ErrorKind::WouldBlock),
+    "cross-crate extended CONNECT body preflight must not open a server connection"
+  );
+
   let server = rttp::Http::server("127.0.0.1:0")
     .expect("bind missing-connect-protocol server")
     .with_read_timeout(Some(Duration::from_secs(2)))
@@ -3221,6 +3316,30 @@ fn cross_crate_h2c_extended_connect_matrix_preserves_http11_handoffs() {
   assert!(
     rx.try_recv().is_err(),
     "missing connect protocol setting must not dispatch"
+  );
+
+  assert_h2_request_rejected_before_handler(
+    &h2_setting(H2_SETTINGS_ENABLE_CONNECT_PROTOCOL, 1),
+    h2_connect_headers(b"/missing-protocol", b"example.test:443"),
+    "HTTP/2 prior-knowledge CONNECT/proxy tunneling is unsupported",
+  );
+
+  assert_h2_request_rejected_before_handler(
+    &h2_setting(H2_SETTINGS_ENABLE_CONNECT_PROTOCOL, 1),
+    h2_extended_connect_headers_with_regular_header_before_protocol(
+      b"/invalid-pseudo-order",
+      b"example.test:443",
+    ),
+    "HTTP/2 pseudo-header appeared after a regular header",
+  );
+
+  assert_h2_request_rejected_before_handler(
+    &h2_setting(H2_SETTINGS_ENABLE_CONNECT_PROTOCOL, 1),
+    h2_extended_connect_headers_with_duplicate_protocol(
+      b"/duplicate-protocol",
+      b"example.test:443",
+    ),
+    "duplicate HTTP/2 pseudo-header",
   );
 
   let server = rttp::Http::server("127.0.0.1:0")
