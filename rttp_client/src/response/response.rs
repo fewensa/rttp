@@ -762,12 +762,12 @@ impl ContentDispositionParameter {
     }
 
     let (parsed_value, value_was_quoted) = parse_content_disposition_parameter_value(raw_value)?;
-    if name.eq_ignore_ascii_case("filename*") {
-      if value_was_quoted || !is_content_disposition_ext_value(&parsed_value) {
-        return Err(error::bad_response(
-          "Invalid Content-Disposition filename* parameter",
-        ));
-      }
+    if name.eq_ignore_ascii_case("filename*")
+      && (value_was_quoted || !is_content_disposition_ext_value(&parsed_value))
+    {
+      return Err(error::bad_response(
+        "Invalid Content-Disposition filename* parameter",
+      ));
     }
 
     Ok(Self {
