@@ -20,6 +20,8 @@ const MAX_CONTENT_LOCATION_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_DISPOSITION_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_DISPOSITION_PARAMETER_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_DISPOSITION_PARAMETERS: usize = 256;
+const MAX_CONTENT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
+const MAX_CONTENT_ENCODINGS: usize = 256;
 const MAX_CONTENT_LANGUAGE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_LANGUAGE_TAGS: usize = 256;
 const MAX_VARY_VALUE_BYTES: usize = 64 * 1024;
@@ -259,6 +261,14 @@ impl Response {
       return Ok(None);
     }
     ContentLanguage::parse_values(values.into_iter().map(String::as_str)).map(Some)
+  }
+
+  pub fn content_encoding(&self) -> error::Result<Option<ContentEncoding>> {
+    let values = self.header_values("content-encoding");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    ContentEncoding::parse_values(values.into_iter().map(String::as_str)).map(Some)
   }
 
   pub fn cache_control(&self) -> error::Result<Option<CacheControl>> {
@@ -992,6 +1002,59 @@ impl ContentLanguage {
 
   pub fn tags(&self) -> Vec<&str> {
     self.tags.iter().map(String::as_str).collect()
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContentEncoding {
+  codings: Vec<String>,
+}
+
+impl ContentEncoding {
+  pub fn parse(value: impl AsRef<str>) -> error::Result<Self> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  fn parse_values<'a, I>(values: I) -> error::Result<Self>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut codings = Vec::new();
+    let mut seen = HashSet::new();
+
+    for value in values {
+      if value.len() > MAX_CONTENT_ENCODING_VALUE_BYTES {
+        return Err(error::bad_response(
+          "Content-Encoding header value is too large",
+        ));
+      }
+
+      for coding in value.split(',') {
+        let coding = coding.trim();
+        if coding.is_empty() || !is_token(coding) {
+          return Err(error::bad_response("Invalid Content-Encoding coding"));
+        }
+        if codings.len() >= MAX_CONTENT_ENCODINGS {
+          return Err(error::bad_response("Too many Content-Encoding codings"));
+        }
+
+        let normalized = coding.to_ascii_lowercase();
+        if !seen.insert(normalized) {
+          return Err(error::bad_response("Duplicate Content-Encoding coding"));
+        }
+        codings.push(coding.to_string());
+      }
+    }
+
+    if codings.is_empty() {
+      return Err(error::bad_response("Invalid Content-Encoding coding"));
+    }
+
+    Ok(Self { codings })
+  }
+
+  pub fn codings(&self) -> Vec<&str> {
+    self.codings.iter().map(String::as_str).collect()
   }
 }
 

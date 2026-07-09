@@ -17,6 +17,8 @@ const MAX_ALLOW_VALUE_BYTES: usize = 64 * 1024;
 const MAX_ALLOW_METHODS: usize = 32;
 const MAX_CONTENT_LANGUAGE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_LANGUAGES: usize = 32;
+const MAX_CONTENT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
+const MAX_CONTENT_ENCODINGS: usize = 32;
 const MAX_CONTENT_LOCATION_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_DISPOSITION_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_DISPOSITION_PARAMETERS: usize = 32;
@@ -4622,6 +4624,25 @@ impl HttpResponse {
     Ok(self)
   }
 
+  pub fn with_content_encoding<I, C>(
+    mut self,
+    codings: I,
+  ) -> Result<Self, HttpContentEncodingParseError>
+  where
+    I: IntoIterator<Item = C>,
+    C: AsRef<str>,
+  {
+    let content_encodings = HttpResponseContentEncodings::from_codings(codings)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Content-Encoding"));
+    self.headers.push(HttpHeader::new(
+      "Content-Encoding",
+      content_encodings.header_value(),
+    ));
+    Ok(self)
+  }
+
   pub fn with_content_location<V: AsRef<str>>(
     mut self,
     value: V,
@@ -4796,6 +4817,21 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpContentLanguages::parse_values(values).map(Some)
+  }
+
+  pub fn content_encoding(
+    &self,
+  ) -> Result<Option<HttpResponseContentEncodings>, HttpContentEncodingParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Content-Encoding"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpResponseContentEncodings::parse_values(values).map(Some)
   }
 
   pub fn content_location(&self) -> Result<Option<&str>, HttpContentLocationParseError> {
@@ -5600,6 +5636,114 @@ impl fmt::Display for HttpContentLanguageParseError {
 }
 
 impl Error for HttpContentLanguageParseError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpResponseContentEncodings {
+  codings: Vec<String>,
+}
+
+impl HttpResponseContentEncodings {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpContentEncodingParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpContentEncodingParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut codings = Vec::new();
+
+    for value in values {
+      if value.len() > MAX_CONTENT_ENCODING_VALUE_BYTES {
+        return Err(HttpContentEncodingParseError::new(
+          "Content-Encoding header value is too large",
+        ));
+      }
+
+      for coding in value.split(',') {
+        let coding = coding.trim();
+        if coding.is_empty() || !is_http_token(coding) {
+          return Err(HttpContentEncodingParseError::new(
+            "invalid Content-Encoding coding",
+          ));
+        }
+        if codings
+          .iter()
+          .any(|known: &String| known.eq_ignore_ascii_case(coding))
+        {
+          return Err(HttpContentEncodingParseError::new(
+            "duplicate Content-Encoding coding",
+          ));
+        }
+        if codings.len() >= MAX_CONTENT_ENCODINGS {
+          return Err(HttpContentEncodingParseError::new(
+            "too many Content-Encoding codings",
+          ));
+        }
+        codings.push(coding.to_string());
+      }
+    }
+
+    if codings.is_empty() {
+      return Err(HttpContentEncodingParseError::new(
+        "invalid Content-Encoding coding",
+      ));
+    }
+
+    Ok(Self { codings })
+  }
+
+  pub fn from_codings<I, C>(codings: I) -> Result<Self, HttpContentEncodingParseError>
+  where
+    I: IntoIterator<Item = C>,
+    C: AsRef<str>,
+  {
+    let mut value = String::new();
+
+    for (index, coding) in codings.into_iter().enumerate() {
+      if index > 0 {
+        value.push_str(", ");
+      }
+      value.push_str(coding.as_ref());
+      if value.len() > MAX_CONTENT_ENCODING_VALUE_BYTES {
+        return Err(HttpContentEncodingParseError::new(
+          "Content-Encoding header value is too large",
+        ));
+      }
+    }
+
+    Self::parse(value)
+  }
+
+  pub fn codings(&self) -> Vec<&str> {
+    self.codings.iter().map(String::as_str).collect()
+  }
+
+  pub fn header_value(&self) -> String {
+    self.codings.join(", ")
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpContentEncodingParseError {
+  message: String,
+}
+
+impl HttpContentEncodingParseError {
+  fn new<S: AsRef<str>>(message: S) -> Self {
+    Self {
+      message: message.as_ref().to_string(),
+    }
+  }
+}
+
+impl fmt::Display for HttpContentEncodingParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpContentEncodingParseError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HttpContentLocationParseError {

@@ -3,8 +3,8 @@ use std::time::{Duration, UNIX_EPOCH};
 use rttp::server::{
   HttpAcceptRanges, HttpAllowedMethods, HttpByteRange, HttpByteRangeError, HttpConditionalMetadata,
   HttpContentDisposition, HttpContentLanguages, HttpEntityTag, HttpIfRangeRequestOutcome,
-  HttpRequest, HttpRequestCacheControl, HttpResponse, HttpResponseCacheControl, HttpRetryAfter,
-  HttpVary,
+  HttpRequest, HttpRequestCacheControl, HttpResponse, HttpResponseCacheControl,
+  HttpResponseContentEncodings, HttpRetryAfter, HttpVary,
 };
 
 fn parse_request(raw: &str) -> HttpRequest {
@@ -688,6 +688,101 @@ fn raw_content_disposition_headers_are_preserved_without_helper_validation() {
   assert!(
     response.content_disposition().is_err(),
     "typed Content-Disposition parser should reject malformed raw values"
+  );
+}
+
+#[test]
+fn parses_content_encoding_and_serializes_single_header_value() {
+  let encodings =
+    HttpResponseContentEncodings::parse("gzip, br").expect("valid Content-Encoding should parse");
+
+  assert_eq!(vec!["gzip", "br"], encodings.codings());
+  assert_eq!("gzip, br", encodings.header_value());
+
+  let response = HttpResponse::ok("body")
+    .header("Content-Encoding", "old")
+    .with_content_encoding(["gzip", "br"])
+    .expect("valid Content-Encoding should be accepted");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nContent-Encoding: gzip, br\r\n"));
+  assert_eq!(1, serialized.matches("\r\nContent-Encoding: ").count());
+  assert_eq!(
+    Some(encodings),
+    response
+      .content_encoding()
+      .expect("Content-Encoding should parse")
+  );
+}
+
+#[test]
+fn response_content_encoding_helper_parses_attached_header_fields_in_order() {
+  let response = HttpResponse::ok("body")
+    .header("Content-Encoding", "gzip, br")
+    .header("content-encoding", "identity");
+
+  let encodings = response
+    .content_encoding()
+    .expect("Content-Encoding should parse")
+    .expect("Content-Encoding should be present");
+
+  assert_eq!(vec!["gzip", "br", "identity"], encodings.codings());
+}
+
+#[test]
+fn content_encoding_helpers_reject_malformed_duplicate_oversized_and_excessive_values() {
+  for value in [
+    "",
+    " ",
+    "gzip,",
+    ", gzip",
+    "gzip,,br",
+    "bad coding",
+    "gzip, g:zip",
+  ] {
+    assert!(
+      HttpResponseContentEncodings::parse(value).is_err(),
+      "Content-Encoding helper should reject {value:?}"
+    );
+  }
+
+  assert!(
+    HttpResponseContentEncodings::parse("gzip, br, GZIP").is_err(),
+    "Content-Encoding helper should reject duplicate codings"
+  );
+
+  let oversized = "gzip".repeat(64 * 1024);
+  assert!(
+    HttpResponseContentEncodings::parse(&oversized).is_err(),
+    "Content-Encoding helper should reject oversized values"
+  );
+
+  let too_many = (0..33)
+    .map(|index| format!("coding{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  assert!(
+    HttpResponseContentEncodings::parse(too_many).is_err(),
+    "Content-Encoding helper should reject excessive codings"
+  );
+
+  assert!(
+    HttpResponse::ok("body")
+      .with_content_encoding(["gzip", "bad coding"])
+      .is_err(),
+    "Content-Encoding declaration helper should reject invalid codings"
+  );
+}
+
+#[test]
+fn raw_content_encoding_headers_are_preserved_without_helper_validation() {
+  let response = HttpResponse::ok("body").header("Content-Encoding", "gzip,");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nContent-Encoding: gzip,\r\n"));
+  assert!(
+    response.content_encoding().is_err(),
+    "typed Content-Encoding parser should reject malformed raw values"
   );
 }
 
