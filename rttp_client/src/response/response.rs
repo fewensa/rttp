@@ -11,6 +11,8 @@ use crate::types::{Cookie, Header, RoUrl};
 
 const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
+const MAX_ALLOW_VALUE_BYTES: usize = 64 * 1024;
+const MAX_ALLOW_METHODS: usize = 256;
 const MAX_RETRY_AFTER_VALUE_BYTES: usize = 64 * 1024;
 const MAX_VARY_VALUE_BYTES: usize = 64 * 1024;
 const MAX_VARY_FIELD_NAMES: usize = 256;
@@ -130,6 +132,14 @@ impl Response {
     }
   }
 
+  pub fn allow(&self) -> error::Result<Option<Allow>> {
+    let values = self.header_values("allow");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Allow::parse_values(values.into_iter().map(String::as_str)).map(Some)
+  }
+
   pub fn content_range(&self) -> Option<ContentRange> {
     self
       .header_value("content-range")
@@ -239,6 +249,65 @@ impl fmt::Display for Response {
   #[inline]
   fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
     fmt::Display::fmt(&self.raw, formatter)
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Allow {
+  methods: Vec<String>,
+}
+
+impl Allow {
+  pub fn parse(value: impl AsRef<str>) -> error::Result<Self> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  fn parse_values<'a, I>(values: I) -> error::Result<Self>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut methods = Vec::new();
+    let mut seen = HashSet::new();
+
+    for value in values {
+      if value.len() > MAX_ALLOW_VALUE_BYTES {
+        return Err(error::bad_response("Allow header value is too large"));
+      }
+
+      for method in value.split(',') {
+        let method = method.trim();
+        if method.is_empty() {
+          return Err(error::bad_response("Invalid Allow method"));
+        }
+        if !is_token(method) {
+          return Err(error::bad_response("Invalid Allow method"));
+        }
+        if methods.len() >= MAX_ALLOW_METHODS {
+          return Err(error::bad_response("Too many Allow methods"));
+        }
+        if !seen.insert(method.to_string()) {
+          return Err(error::bad_response("Duplicate Allow method"));
+        }
+        methods.push(method.to_string());
+      }
+    }
+
+    if methods.is_empty() {
+      return Err(error::bad_response("Invalid Allow method"));
+    }
+
+    Ok(Self { methods })
+  }
+
+  pub fn methods(&self) -> Vec<&str> {
+    self.methods.iter().map(String::as_str).collect()
+  }
+
+  pub fn contains_method(&self, method: impl AsRef<str>) -> bool {
+    self
+      .methods
+      .iter()
+      .any(|candidate| candidate == method.as_ref())
   }
 }
 

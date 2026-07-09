@@ -450,6 +450,116 @@ fn test_parse_retry_after_rejects_duplicate_and_oversized_helper_values() {
 }
 
 #[test]
+fn test_parse_allow_response_helper_preserves_method_order_across_header_fields() {
+  let s = concat!(
+    "HTTP/1.1 405 Method Not Allowed\r\n",
+    "Allow: GET, HEAD\r\n",
+    "allow: POST, OPTIONS\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
+    .expect("parse response with allow headers");
+  let allow = response
+    .allow()
+    .expect("valid allow should parse")
+    .expect("allow header should be present");
+
+  assert_eq!(vec!["GET", "HEAD", "POST", "OPTIONS"], allow.methods());
+  assert!(allow.contains_method("POST"));
+  assert!(!allow.contains_method("PATCH"));
+  assert_eq!(
+    vec![&"GET, HEAD".to_string(), &"POST, OPTIONS".to_string()],
+    response.header_values("Allow")
+  );
+}
+
+#[test]
+fn test_parse_allow_response_helper_returns_none_when_absent() {
+  let s = concat!("HTTP/1.1 200 OK\r\n", "Content-Length: 2\r\n", "\r\n", "OK");
+  let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
+    .expect("parse response without allow");
+
+  assert_eq!(None, response.allow().expect("absent allow should parse"));
+}
+
+#[test]
+fn test_parse_allow_rejects_invalid_helper_values_without_rejecting_response() {
+  let invalid_values = [
+    "",
+    "GET,",
+    ",GET",
+    "GET,,POST",
+    "GET, ,POST",
+    "GET POST",
+    "GET@POST",
+    "GE\tT",
+  ];
+
+  for value in invalid_values {
+    let raw =
+      format!("HTTP/1.1 405 Method Not Allowed\r\nAllow: {value}\r\nContent-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response remains usable");
+
+    assert!(
+      response.allow().is_err(),
+      "allow helper should reject {value:?}"
+    );
+    assert_eq!(Some(&value.to_string()), response.header_value("Allow"));
+  }
+}
+
+#[test]
+fn test_parse_allow_rejects_duplicate_oversized_and_too_many_methods() {
+  let raw = concat!(
+    "HTTP/1.1 405 Method Not Allowed\r\n",
+    "Allow: GET, HEAD\r\n",
+    "allow: POST, GET\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response with duplicate allow remains usable");
+
+  assert!(
+    response.allow().is_err(),
+    "allow helper should reject duplicate method names"
+  );
+  assert_eq!(
+    vec![&"GET, HEAD".to_string(), &"POST, GET".to_string()],
+    response.header_values("Allow")
+  );
+
+  let oversized = "GET".repeat(64 * 1024);
+  let raw =
+    format!("HTTP/1.1 405 Method Not Allowed\r\nAllow: {oversized}\r\nContent-Length: 0\r\n\r\n");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response with oversized allow remains usable");
+
+  assert!(
+    response.allow().is_err(),
+    "allow helper should reject oversized values"
+  );
+  assert_eq!(Some(&oversized), response.header_value("Allow"));
+
+  let too_many = (0..257)
+    .map(|ix| format!("M{ix}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let raw =
+    format!("HTTP/1.1 405 Method Not Allowed\r\nAllow: {too_many}\r\nContent-Length: 0\r\n\r\n");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response with too many allow methods remains usable");
+
+  assert!(
+    response.allow().is_err(),
+    "allow helper should reject too many methods"
+  );
+  assert_eq!(Some(&too_many), response.header_value("Allow"));
+}
+
+#[test]
 fn test_parse_age_rejects_invalid_helper_values_without_rejecting_response() {
   let invalid_values = [
     "",

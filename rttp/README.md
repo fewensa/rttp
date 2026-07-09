@@ -457,9 +457,11 @@ client helpers do not evaluate `If-Range`, retry requests, store cache entries,
 generate multipart range requests, or apply automatic cache validation. The
 client response API also includes `Response::cache_control()` from
 `rttp_client`, which parses bounded response `Cache-Control` directives and
-extensions as metadata only; the wrapper does not add cache storage,
-automatic revalidation, wall-clock freshness calculation, `Vary` matching,
-shared-cache policy enforcement, or automatic conditional requests. The
+extensions as metadata only, and `Response::allow()`, which parses bounded
+ordered HTTP method metadata from `Allow`; the wrapper does not add cache
+storage, automatic revalidation, wall-clock freshness calculation, `Vary`
+matching, shared-cache policy enforcement, automatic conditional requests,
+fallback method selection, retry/replay, or status-code policy behavior. The
 `http2` feature exposes the bounded
 prior-knowledge h2c client path for GET, HEAD, bodyless DELETE, OPTIONS, or
 TRACE, and buffered POST, PUT, or PATCH requests. It opens at most one request

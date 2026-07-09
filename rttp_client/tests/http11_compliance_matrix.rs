@@ -39,6 +39,17 @@ fn vary_response(values: &[&str]) -> Vec<u8> {
   response.into_bytes()
 }
 
+fn allow_response(values: &[&str]) -> Vec<u8> {
+  let mut response = String::from("HTTP/1.1 405 Method Not Allowed\r\n");
+  for value in values {
+    response.push_str("Allow: ");
+    response.push_str(value);
+    response.push_str("\r\n");
+  }
+  response.push_str("Content-Length: 0\r\n\r\n");
+  response.into_bytes()
+}
+
 fn age_expires_response(age: &str, expires: &str, include_cache_metadata: bool) -> Vec<u8> {
   let mut response = String::from("HTTP/1.1 200 OK\r\n");
   response.push_str("Age: ");
@@ -392,6 +403,29 @@ fn assert_response_vary(
   }
 }
 
+fn assert_response_allow(
+  name: &str,
+  response: rttp_client::response::Response,
+  expected: &fixtures::allow::ResponseCase,
+) {
+  let raw_values: Vec<&str> = response
+    .header_values("allow")
+    .into_iter()
+    .map(String::as_str)
+    .collect();
+  assert_eq!(expected.values, raw_values.as_slice(), "{name}");
+
+  let allow = response
+    .allow()
+    .unwrap_or_else(|err| panic!("{name} Allow should parse: {err}"))
+    .unwrap_or_else(|| panic!("{name} should include Allow"));
+
+  assert_eq!(expected.methods, allow.methods().as_slice(), "{name}");
+  for method in expected.methods {
+    assert!(allow.contains_method(method), "{name} {method}");
+  }
+}
+
 fn assert_cache_control_helper_rejects_but_preserves_response(name: &str, raw_response: Vec<u8>) {
   let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
 
@@ -482,12 +516,47 @@ fn assert_retry_after_helper_rejects_but_preserves_response(name: &str, raw_resp
   handle.join().expect("raw response server thread");
 }
 
+fn assert_allow_helper_rejects_but_preserves_response(name: &str, raw_response: Vec<u8>) {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/allow-invalid", addr))
+    .emit()
+    .unwrap_or_else(|err| panic!("{name} response should remain parseable: {err}"));
+
+  assert!(
+    response.allow().is_err(),
+    "{name} helper should reject invalid Allow"
+  );
+  assert_eq!("", response.body().string().unwrap(), "{name}");
+
+  handle.join().expect("raw response server thread");
+}
+
 enum ConditionalHeader {
   IfNoneMatch(&'static str),
   IfMatch(&'static str),
   IfModifiedSince(&'static str),
   IfUnmodifiedSince(&'static str),
   Manual(&'static str, &'static str),
+}
+
+#[test]
+fn sync_client_parses_shared_allow_response_matrix() {
+  for case in fixtures::allow::response_cases() {
+    let raw_response = allow_response(case.values);
+    let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+    let response = client()
+      .get()
+      .url(format!("http://{}/matrix/allow", addr))
+      .emit()
+      .unwrap_or_else(|err| panic!("{} response should parse: {err}", case.name));
+
+    assert_response_allow(case.name, response, case);
+    handle.join().expect("raw response server thread");
+  }
 }
 
 #[test]
@@ -760,6 +829,13 @@ fn sync_client_cache_control_helper_rejects_shared_invalid_response_matrix() {
 }
 
 #[test]
+fn sync_client_allow_helper_rejects_shared_invalid_response_matrix() {
+  for case in fixtures::allow::invalid_cases() {
+    assert_allow_helper_rejects_but_preserves_response(case.name, allow_response(&[case.value]));
+  }
+}
+
+#[test]
 fn sync_client_vary_helper_rejects_shared_invalid_response_matrix() {
   for case in fixtures::vary::invalid_cases() {
     assert_vary_helper_rejects_but_preserves_response(case.name, vary_response(&[case.value]));
@@ -818,6 +894,22 @@ fn sync_client_retry_after_helper_rejects_duplicate_singleton_and_oversized_valu
   assert_retry_after_helper_rejects_but_preserves_response(
     "oversized Retry-After value",
     retry_after_response(&[&fixtures::retry_after::oversized_value()], false),
+  );
+}
+
+#[test]
+fn sync_client_allow_helper_rejects_duplicate_methods_and_enforces_shared_bounds() {
+  assert_allow_helper_rejects_but_preserves_response(
+    "duplicate Allow methods across header fields",
+    allow_response(&["GET, HEAD", "POST, GET"]),
+  );
+  assert_allow_helper_rejects_but_preserves_response(
+    "too many Allow methods",
+    allow_response(&[&fixtures::allow::too_many_methods_value()]),
+  );
+  assert_allow_helper_rejects_but_preserves_response(
+    "oversized Allow value",
+    allow_response(&[&fixtures::allow::oversized_value()]),
   );
 }
 
