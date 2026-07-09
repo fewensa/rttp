@@ -540,6 +540,20 @@ provide a dynamic policy API for changing h2c frame-size or metadata limits at
 runtime.
 
 ```rust,no_run
+# #[cfg(feature = "http2")]
+# fn example() -> Result<(), Box<dyn std::error::Error>> {
+use rttp_client::HttpClient;
+
+let response = HttpClient::new()
+  .get()
+  .url("http://127.0.0.1:8080/chat")
+  .http2_extended_connect("websocket")
+  .emit_http2_prior_knowledge()?;
+# Ok(())
+# }
+```
+
+```rust,no_run
 use rttp_client::HttpClient;
 
 let response = HttpClient::new()
@@ -1100,6 +1114,25 @@ general multiplexing, general tunnel scheduling, server push, and priority
 scheduling remain outside this bounded prior-knowledge server path. RTTP does
 not expose a dynamic policy API for changing the h2c frame-size or metadata
 limit at runtime.
+
+```rust,no_run
+use rttp::server::HttpResponse;
+
+fn main() -> std::io::Result<()> {
+  let server = rttp::Http::server("127.0.0.1:8080")?;
+
+  server.accept_one(|request| {
+    if request.method() == "CONNECT"
+      && request.version() == "HTTP/2"
+      && request.extended_connect_protocol() == Some("websocket")
+    {
+      return HttpResponse::ok("accepted extended CONNECT metadata");
+    }
+
+    HttpResponse::new(400, "Bad Request")
+  })
+}
+```
 
 It is not a full RFC-covering web server and still does not implement server
 TLS or async accept loops.

@@ -579,6 +579,38 @@ and priority scheduling are not part of that bounded prior-knowledge client
 path. RTTP does not expose a dynamic policy API for changing h2c frame-size or
 metadata limits at runtime.
 
+### Bounded RFC 8441 extended CONNECT
+
+`HttpClient::http2_extended_connect(protocol)` is the supported client entry
+point for RFC 8441 metadata on RTTP's bounded HTTP/2 path. It is prior-knowledge
+h2c only, runs over the direct `socket2` TCP transport used by
+`emit_http2_prior_knowledge`, and opens at most one request stream. The client
+advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1` only for this explicit mode,
+then emits `:method CONNECT` with required `:protocol`, `:scheme`,
+`:authority`, and `:path` pseudo-header metadata. The peer's result is returned
+as a normal `Response`.
+
+```rust,no_run
+# #[cfg(feature = "http2")]
+# fn example() -> Result<(), Box<dyn std::error::Error>> {
+use rttp_client::HttpClient;
+
+let response = HttpClient::new()
+  .get()
+  .url("http://127.0.0.1:8080/chat")
+  .http2_extended_connect("websocket")
+  .emit_http2_prior_knowledge()?;
+# Ok(())
+# }
+```
+
+This is not a full WebSocket-over-h2 implementation, arbitrary tunnel
+scheduler, upgraded socket handoff, or general multiplexing guarantee beyond
+the bounded single-stream request/response path. It does not alter HTTP/1.1
+`CONNECT` tunnel handoff or `Upgrade` semantics. Ordinary `CONNECT`,
+header-configured `:protocol` metadata, HTTP/1.1 `Upgrade` handoff requests,
+proxies, request bodies, and request trailers are rejected for this path.
+
 ## Examples
 
 ```rust,no_run

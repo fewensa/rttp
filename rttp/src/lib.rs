@@ -27,13 +27,24 @@
 //! other value rejects the bounded h2c handshake. `PUSH_PROMISE` frames are
 //! rejected before handler dispatch, and this path does not implement
 //! server-side push state.
+//! Peer `SETTINGS_ENABLE_CONNECT_PROTOCOL` values are validated as only `0` or
+//! `1`. After a peer sends `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1`, the server
+//! accepts RFC 8441 extended CONNECT request HEADERS with method `CONNECT` and
+//! required `:protocol`, `:scheme`, `:authority`, and `:path` metadata. The
+//! handler receives a normal `Request` with version `HTTP/2`, target from
+//! `:path`, host from `:authority`, and
+//! `Request::extended_connect_protocol()` set to the `:protocol` value, then
+//! returns a normal `HttpResponse`. Missing negotiation, ordinary h2c
+//! `CONNECT`, non-CONNECT `:protocol`, request bodies, and request trailers are
+//! rejected before handler dispatch.
 //! It remains a bounded prior-knowledge server path: it can accept multiple
 //! open streams only up to the advertised active-stream allowance, uses
 //! synchronous response writes, and does not provide full multiplex scheduling,
 //! persistent HTTP/2 session management, dynamic policy APIs, extension
 //! callbacks, full extension negotiation, TLS ALPN, server push, proxy h2,
-//! tunnel handoff, or a full
-//! HTTP/2 server feature set.
+//! tunnel handoff, full WebSocket-over-h2, arbitrary tunnel scheduling, or a
+//! full HTTP/2 server feature set. HTTP/1.1 `CONNECT` and non-h2c `Upgrade`
+//! handoff semantics are unchanged and remain separate caller-owned paths.
 //!
 //! With the `client` or `http2` feature enabled, the wrapper exposes the
 //! `rttp_client` bounded prior-knowledge h2c client behavior. The client opens
