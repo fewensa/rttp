@@ -50,6 +50,25 @@ fn allow_response(values: &[&str]) -> Vec<u8> {
   response.into_bytes()
 }
 
+fn content_language_response(values: &[&str], include_adjacent_metadata: bool) -> Vec<u8> {
+  let mut response = String::from("HTTP/1.1 200 OK\r\n");
+  for value in values {
+    response.push_str("Content-Language: ");
+    response.push_str(value);
+    response.push_str("\r\n");
+  }
+  if include_adjacent_metadata {
+    response.push_str("Cache-Control: public, max-age=60\r\n");
+    response.push_str("Age: 5\r\n");
+    response.push_str("Expires: Sun, 06 Nov 1994 08:49:37 GMT\r\n");
+    response.push_str("Vary: Accept-Encoding\r\n");
+    response.push_str("Retry-After: 30\r\n");
+    response.push_str("Allow: GET, HEAD\r\n");
+  }
+  response.push_str("Content-Length: 2\r\n\r\nOK");
+  response.into_bytes()
+}
+
 fn allow_response_with_cache_metadata(values: &[&str]) -> Vec<u8> {
   let mut response = String::from("HTTP/1.1 405 Method Not Allowed\r\n");
   for value in values {
@@ -442,6 +461,30 @@ fn assert_response_allow(
   }
 }
 
+fn assert_response_content_language(
+  name: &str,
+  response: &rttp_client::response::Response,
+  expected: &fixtures::content_language::ResponseCase,
+) {
+  let raw_values: Vec<&str> = response
+    .header_values("content-language")
+    .into_iter()
+    .map(String::as_str)
+    .collect();
+  assert_eq!(expected.values, raw_values.as_slice(), "{name}");
+
+  let content_language = response
+    .content_language()
+    .unwrap_or_else(|err| panic!("{name} Content-Language should parse: {err}"))
+    .unwrap_or_else(|| panic!("{name} should include Content-Language"));
+
+  assert_eq!(
+    expected.languages,
+    content_language.tags().as_slice(),
+    "{name}"
+  );
+}
+
 fn assert_cache_control_helper_rejects_but_preserves_response(name: &str, raw_response: Vec<u8>) {
   let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
 
@@ -550,6 +593,28 @@ fn assert_allow_helper_rejects_but_preserves_response(name: &str, raw_response: 
   handle.join().expect("raw response server thread");
 }
 
+fn assert_content_language_helper_rejects_but_preserves_response(
+  name: &str,
+  raw_response: Vec<u8>,
+  expected_body: &str,
+) {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/content-language-invalid", addr))
+    .emit()
+    .unwrap_or_else(|err| panic!("{name} response should remain parseable: {err}"));
+
+  assert!(
+    response.content_language().is_err(),
+    "{name} helper should reject invalid Content-Language"
+  );
+  assert_eq!(expected_body, response.body().string().unwrap(), "{name}");
+
+  handle.join().expect("raw response server thread");
+}
+
 enum ConditionalHeader {
   IfNoneMatch(&'static str),
   IfMatch(&'static str),
@@ -571,6 +636,24 @@ fn sync_client_parses_shared_allow_response_matrix() {
       .unwrap_or_else(|err| panic!("{} response should parse: {err}", case.name));
 
     assert_response_allow(case.name, response, case);
+    handle.join().expect("raw response server thread");
+  }
+}
+
+#[test]
+fn sync_client_parses_shared_content_language_response_matrix() {
+  for case in fixtures::content_language::response_cases() {
+    let raw_response = content_language_response(case.values, false);
+    let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+    let response = client()
+      .get()
+      .url(format!("http://{}/matrix/content-language", addr))
+      .emit()
+      .unwrap_or_else(|err| panic!("{} response should parse: {err}", case.name));
+
+    assert_response_content_language(case.name, &response, case);
+    assert_eq!("OK", response.body().string().unwrap(), "{}", case.name);
     handle.join().expect("raw response server thread");
   }
 }
@@ -886,6 +969,69 @@ fn sync_client_parses_retry_after_with_existing_cache_metadata_helpers() {
 }
 
 #[test]
+fn sync_client_parses_content_language_with_existing_metadata_helpers() {
+  for case in fixtures::content_language::response_cases() {
+    let raw_response = content_language_response(case.values, true);
+    let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+    let response = client()
+      .get()
+      .url(format!("http://{}/matrix/content-language-adjacent", addr))
+      .emit()
+      .unwrap_or_else(|err| panic!("{} response should parse: {err}", case.name));
+
+    assert_response_content_language(case.name, &response, case);
+    assert_eq!(
+      Some(60),
+      response
+        .cache_control()
+        .expect("Cache-Control should parse")
+        .expect("Cache-Control should be present")
+        .max_age(),
+      "{}",
+      case.name
+    );
+    assert_eq!(Some(5), response.age().expect("Age should parse"));
+    assert_eq!(
+      Some(UNIX_EPOCH + Duration::from_secs(fixtures::age_expires::EXPIRES_UNIX_SECONDS)),
+      response.expires().expect("Expires should parse"),
+      "{}",
+      case.name
+    );
+    assert!(
+      response
+        .vary()
+        .expect("Vary should parse")
+        .expect("Vary should be present")
+        .contains_field_name("accept-encoding"),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      Some(30),
+      response
+        .retry_after()
+        .expect("Retry-After should parse")
+        .expect("Retry-After should be present")
+        .delta_seconds(),
+      "{}",
+      case.name
+    );
+    assert!(
+      response
+        .allow()
+        .expect("Allow should parse")
+        .expect("Allow should be present")
+        .contains_method("GET"),
+      "{}",
+      case.name
+    );
+    assert_eq!("OK", response.body().string().unwrap(), "{}", case.name);
+    handle.join().expect("raw response server thread");
+  }
+}
+
+#[test]
 fn sync_client_cache_control_helper_rejects_shared_invalid_response_matrix() {
   for case in fixtures::cache_control::invalid_response_cases() {
     assert_cache_control_helper_rejects_but_preserves_response(
@@ -926,6 +1072,17 @@ fn sync_client_age_and_expires_helpers_reject_shared_invalid_matrix() {
     assert_expires_helper_rejects_but_preserves_response(
       case.name,
       age_expires_response("0", case.value, false),
+    );
+  }
+}
+
+#[test]
+fn sync_client_content_language_helper_rejects_shared_invalid_response_matrix() {
+  for case in fixtures::content_language::invalid_cases() {
+    assert_content_language_helper_rejects_but_preserves_response(
+      case.name,
+      content_language_response(&[case.value], false),
+      "OK",
     );
   }
 }
@@ -977,6 +1134,28 @@ fn sync_client_allow_helper_rejects_duplicate_methods_and_enforces_shared_bounds
   assert_allow_helper_rejects_but_preserves_response(
     "oversized Allow value",
     allow_response(&[&fixtures::allow::oversized_value()]),
+  );
+}
+
+#[test]
+fn sync_client_content_language_helper_rejects_duplicates_and_enforces_client_bounds() {
+  assert_content_language_helper_rejects_but_preserves_response(
+    "duplicate Content-Language tags across header fields",
+    content_language_response(&["en-US, fr", "EN-us"], false),
+    "OK",
+  );
+  assert_content_language_helper_rejects_but_preserves_response(
+    "too many client Content-Language tags",
+    content_language_response(
+      &[&fixtures::content_language::too_many_client_languages_value()],
+      false,
+    ),
+    "OK",
+  );
+  assert_content_language_helper_rejects_but_preserves_response(
+    "oversized Content-Language value",
+    content_language_response(&[&fixtures::content_language::oversized_value()], false),
+    "OK",
   );
 }
 

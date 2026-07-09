@@ -226,6 +226,18 @@ fn assert_response_allow(
   assert_eq!(expected.methods, allow.methods().as_slice(), "{name}");
 }
 
+fn assert_response_content_language(
+  name: &str,
+  content_language: &HttpContentLanguages,
+  expected: &fixtures::content_language::ResponseCase,
+) {
+  assert_eq!(
+    expected.languages,
+    content_language.languages().as_slice(),
+    "{name}"
+  );
+}
+
 #[test]
 fn model_parser_accepts_shared_fixed_length_request_fixture() {
   let fixture = fixtures::request::fixed_length_post();
@@ -320,6 +332,19 @@ fn server_response_helper_accepts_shared_vary_response_matrix() {
       .unwrap_or_else(|| panic!("{} should include Vary", case.name));
 
     assert_response_vary(case.name, &vary, case);
+  }
+}
+
+#[test]
+fn server_response_helper_accepts_shared_content_language_response_matrix() {
+  for case in fixtures::content_language::response_cases() {
+    let response = content_language_response(case.values);
+    let content_language = response
+      .content_language()
+      .unwrap_or_else(|err| panic!("{} Content-Language should parse: {err}", case.name))
+      .unwrap_or_else(|| panic!("{} should include Content-Language", case.name));
+
+    assert_response_content_language(case.name, &content_language, case);
   }
 }
 
@@ -673,68 +698,78 @@ fn server_allow_helper_rejects_duplicate_methods_and_enforces_shared_bounds() {
 
 #[test]
 fn server_response_with_content_language_declares_single_bounded_header() {
-  let response = HttpResponse::ok("OK")
-    .with_content_language(["en", "fr-CA", "es-419"])
-    .expect("Content-Language declaration should parse");
-  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+  for case in fixtures::content_language::response_cases() {
+    let response = HttpResponse::ok("OK")
+      .with_content_language(case.languages.iter().copied())
+      .unwrap_or_else(|err| {
+        panic!(
+          "{} Content-Language declaration should parse: {err}",
+          case.name
+        )
+      });
+    let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
 
-  assert_eq!(
-    Some("en, fr-CA, es-419"),
-    header_value(&serialized, "Content-Language")
-  );
-  assert_eq!(
-    &["en", "fr-CA", "es-419"],
-    response
-      .content_language()
-      .expect("Content-Language should parse")
-      .expect("Content-Language should be present")
-      .languages()
-      .as_slice()
-  );
+    assert_eq!(
+      Some(case.languages.join(", ").as_str()),
+      header_value(&serialized, "Content-Language"),
+      "{}",
+      case.name
+    );
+    assert_response_content_language(
+      case.name,
+      &response
+        .content_language()
+        .expect("Content-Language should parse")
+        .expect("Content-Language should be present"),
+      case,
+    );
+  }
 }
 
 #[test]
 fn server_content_language_helper_parses_multiple_fields_and_enforces_bounds() {
-  let response = content_language_response(&["en, fr-CA", "es-419"]);
-  let languages = response
-    .content_language()
-    .expect("Content-Language should parse")
-    .expect("Content-Language should be present");
-
-  assert_eq!(vec!["en", "fr-CA", "es-419"], languages.languages());
-
-  for value in ["", "en,", "en_US", "en; q=1", "en, fr, EN"] {
+  for case in fixtures::content_language::invalid_cases() {
     assert!(
-      HttpContentLanguages::parse(value).is_err(),
-      "Content-Language helper should reject invalid value {value:?}"
+      HttpContentLanguages::parse(case.value).is_err(),
+      "{} Content-Language helper should reject invalid value",
+      case.name
     );
     assert!(
       HttpResponse::ok("OK")
-        .with_content_language([value])
+        .with_content_language([case.value])
         .is_err(),
-      "response helper should reject invalid Content-Language value {value:?}"
+      "{} response helper should reject invalid Content-Language value",
+      case.name
     );
     assert!(
-      content_language_response(&[value])
+      content_language_response(&[case.value])
         .content_language()
         .is_err(),
-      "response parser should reject invalid Content-Language value {value:?}"
+      "{} response parser should reject invalid Content-Language value",
+      case.name
     );
   }
 
-  let too_many_languages = (0..33)
-    .map(|index| format!("x-{index}"))
-    .collect::<Vec<_>>()
-    .join(", ");
+  let too_many_languages = fixtures::content_language::too_many_server_languages_value();
   assert!(
     HttpContentLanguages::parse(&too_many_languages).is_err(),
     "too many Content-Language tags should be rejected"
   );
 
-  let oversized_value = "en".repeat(64 * 1024);
+  let oversized_value = fixtures::content_language::oversized_value();
   assert!(
     HttpContentLanguages::parse(&oversized_value).is_err(),
     "oversized Content-Language value should be rejected"
+  );
+}
+
+#[test]
+fn server_content_language_helper_rejects_duplicate_tags_across_fields() {
+  let response = content_language_response(&["en-US, fr", "EN-us"]);
+
+  assert!(
+    response.content_language().is_err(),
+    "duplicate Content-Language tags across header fields should be rejected"
   );
 }
 
@@ -753,6 +788,77 @@ fn server_content_language_helpers_stay_metadata_only() {
   assert!(
     serialized.starts_with("HTTP/1.1 302 Found\r\n"),
     "Content-Language should not alter response status policy"
+  );
+}
+
+#[test]
+fn server_content_language_helpers_coexist_with_adjacent_metadata_helpers() {
+  let response = HttpResponse::new(405, "Method Not Allowed")
+    .with_content_language(["fr-CA", "es-419"])
+    .expect("Content-Language declaration should parse")
+    .with_allow(["GET", "HEAD"])
+    .expect("Allow declaration should parse")
+    .with_retry_after_delta(30)
+    .with_age(5)
+    .with_expires(UNIX_EPOCH + Duration::from_secs(fixtures::age_expires::EXPIRES_UNIX_SECONDS))
+    .header("Cache-Control", "public, max-age=60")
+    .with_vary("Accept-Encoding")
+    .expect("Vary declaration should parse");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert_eq!(
+    Some("fr-CA, es-419"),
+    header_value(&serialized, "Content-Language")
+  );
+  assert_eq!(Some("GET, HEAD"), header_value(&serialized, "Allow"));
+  assert_eq!(
+    Some("public, max-age=60"),
+    header_value(&serialized, "Cache-Control")
+  );
+  assert_eq!(Some("5"), header_value(&serialized, "Age"));
+  assert_eq!(
+    Some(fixtures::age_expires::EXPIRES_IMF_FIXDATE),
+    header_value(&serialized, "Expires")
+  );
+  assert_eq!(Some("accept-encoding"), header_value(&serialized, "Vary"));
+  assert_eq!(Some("30"), header_value(&serialized, "Retry-After"));
+  assert_eq!(
+    &["fr-CA", "es-419"],
+    response
+      .content_language()
+      .expect("Content-Language should parse")
+      .expect("Content-Language should be present")
+      .languages()
+      .as_slice()
+  );
+  assert!(response
+    .allow()
+    .expect("Allow should parse")
+    .expect("Allow should be present")
+    .methods()
+    .contains(&"GET"));
+  assert_eq!(
+    Some(60),
+    response
+      .cache_control()
+      .expect("Cache-Control should parse")
+      .expect("Cache-Control should be present")
+      .max_age()
+  );
+  assert_eq!(Some(5), response.age().expect("Age should parse"));
+  assert_eq!(
+    Some(UNIX_EPOCH + Duration::from_secs(fixtures::age_expires::EXPIRES_UNIX_SECONDS)),
+    response.expires().expect("Expires should parse")
+  );
+  assert!(response
+    .vary()
+    .expect("Vary should parse")
+    .expect("Vary should be present")
+    .field_names()
+    .contains(&"accept-encoding"));
+  assert_eq!(
+    Some(HttpRetryAfter::DeltaSeconds(30)),
+    response.retry_after().expect("Retry-After should parse")
   );
 }
 
