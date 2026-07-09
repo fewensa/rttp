@@ -693,6 +693,10 @@ pub mod retry_after {
   pub fn invalid_cases() -> &'static [InvalidCase] {
     INVALID_CASES
   }
+
+  pub fn oversized_value() -> String {
+    "1".repeat(64 * 1024 + 1)
+  }
 }
 
 pub mod vary {

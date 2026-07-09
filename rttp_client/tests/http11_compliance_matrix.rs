@@ -4,7 +4,7 @@ use std::io::Write;
 use std::net::TcpStream;
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, UNIX_EPOCH};
 
 use rttp::server::{
   HttpByteRange, HttpByteRangeError, HttpConditionalMetadata, HttpConditionalRequestOutcome,
@@ -51,6 +51,23 @@ fn age_expires_response(age: &str, expires: &str, include_cache_metadata: bool) 
     response.push_str("Vary: Accept-Encoding\r\n");
   }
   response.push_str("Content-Length: 2\r\n\r\nOK");
+  response.into_bytes()
+}
+
+fn retry_after_response(values: &[&str], include_cache_metadata: bool) -> Vec<u8> {
+  let mut response = String::from("HTTP/1.1 503 Service Unavailable\r\n");
+  for value in values {
+    response.push_str("Retry-After: ");
+    response.push_str(value);
+    response.push_str("\r\n");
+  }
+  if include_cache_metadata {
+    response.push_str("Cache-Control: public, max-age=60\r\n");
+    response.push_str("Age: 5\r\n");
+    response.push_str("Expires: Sun, 06 Nov 1994 08:49:37 GMT\r\n");
+    response.push_str("Vary: Accept-Encoding\r\n");
+  }
+  response.push_str("Content-Length: 4\r\n\r\nbusy");
   response.into_bytes()
 }
 
@@ -447,6 +464,24 @@ fn assert_expires_helper_rejects_but_preserves_response(name: &str, raw_response
   handle.join().expect("raw response server thread");
 }
 
+fn assert_retry_after_helper_rejects_but_preserves_response(name: &str, raw_response: Vec<u8>) {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/retry-after-invalid", addr))
+    .emit()
+    .unwrap_or_else(|err| panic!("{name} response should remain parseable: {err}"));
+
+  assert!(
+    response.retry_after().is_err(),
+    "{name} helper should reject invalid Retry-After"
+  );
+  assert_eq!("busy", response.body().string().unwrap(), "{name}");
+
+  handle.join().expect("raw response server thread");
+}
+
 enum ConditionalHeader {
   IfNoneMatch(&'static str),
   IfMatch(&'static str),
@@ -556,6 +591,53 @@ fn sync_client_parses_shared_expires_response_matrix() {
 }
 
 #[test]
+fn sync_client_parses_shared_retry_after_response_matrix() {
+  for case in fixtures::retry_after::retry_after_cases() {
+    let raw_response = retry_after_response(&[case.value], false);
+    let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+    let response = client()
+      .get()
+      .url(format!("http://{}/matrix/retry-after", addr))
+      .emit()
+      .unwrap_or_else(|err| panic!("{} response should parse: {err}", case.name));
+
+    let retry_after = response
+      .retry_after()
+      .unwrap_or_else(|err| panic!("{} Retry-After should parse: {err}", case.name))
+      .unwrap_or_else(|| panic!("{} should include Retry-After", case.name));
+    match &case.kind {
+      fixtures::retry_after::RetryAfterKind::DeltaSeconds(delta_seconds) => {
+        assert_eq!(
+          Some(*delta_seconds),
+          retry_after.delta_seconds(),
+          "{}",
+          case.name
+        );
+        assert_eq!(None, retry_after.http_date(), "{}", case.name);
+      }
+      fixtures::retry_after::RetryAfterKind::HttpDate(unix_seconds) => {
+        assert_eq!(None, retry_after.delta_seconds(), "{}", case.name);
+        assert_eq!(
+          Some(UNIX_EPOCH + Duration::from_secs(*unix_seconds)),
+          retry_after.http_date(),
+          "{}",
+          case.name
+        );
+      }
+    }
+    assert_eq!(
+      Some(&case.value.to_string()),
+      response.header_value("Retry-After"),
+      "{}",
+      case.name
+    );
+    assert_eq!("busy", response.body().string().unwrap(), "{}", case.name);
+    handle.join().expect("raw response server thread");
+  }
+}
+
+#[test]
 fn sync_client_parses_age_expires_with_existing_cache_metadata_helpers() {
   for case in fixtures::age_expires::declaration_cases() {
     let raw_response = age_expires_response(case.age_value, case.expires_value, true);
@@ -608,6 +690,66 @@ fn sync_client_parses_age_expires_with_existing_cache_metadata_helpers() {
 }
 
 #[test]
+fn sync_client_parses_retry_after_with_existing_cache_metadata_helpers() {
+  for case in fixtures::retry_after::retry_after_cases() {
+    let raw_response = retry_after_response(&[case.value], true);
+    let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+    let response = client()
+      .get()
+      .url(format!("http://{}/matrix/retry-after-cache-metadata", addr))
+      .emit()
+      .unwrap_or_else(|err| panic!("{} response should parse: {err}", case.name));
+
+    assert!(
+      response
+        .retry_after()
+        .unwrap_or_else(|err| panic!("{} Retry-After should parse: {err}", case.name))
+        .is_some(),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      Some(60),
+      response
+        .cache_control()
+        .expect("Cache-Control should parse")
+        .expect("Cache-Control should be present")
+        .max_age(),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      Some(5),
+      response
+        .age()
+        .unwrap_or_else(|err| panic!("{} Age should parse: {err}", case.name)),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      Some(UNIX_EPOCH + Duration::from_secs(fixtures::age_expires::EXPIRES_UNIX_SECONDS)),
+      response
+        .expires()
+        .unwrap_or_else(|err| panic!("{} Expires should parse: {err}", case.name)),
+      "{}",
+      case.name
+    );
+    assert!(
+      response
+        .vary()
+        .expect("Vary should parse")
+        .expect("Vary should be present")
+        .contains_field_name("accept-encoding"),
+      "{}",
+      case.name
+    );
+    assert_eq!("busy", response.body().string().unwrap(), "{}", case.name);
+    handle.join().expect("raw response server thread");
+  }
+}
+
+#[test]
 fn sync_client_cache_control_helper_rejects_shared_invalid_response_matrix() {
   for case in fixtures::cache_control::invalid_response_cases() {
     assert_cache_control_helper_rejects_but_preserves_response(
@@ -646,6 +788,16 @@ fn sync_client_age_and_expires_helpers_reject_shared_invalid_matrix() {
 }
 
 #[test]
+fn sync_client_retry_after_helper_rejects_shared_invalid_response_matrix() {
+  for case in fixtures::retry_after::invalid_cases() {
+    assert_retry_after_helper_rejects_but_preserves_response(
+      case.name,
+      retry_after_response(&[case.value], false),
+    );
+  }
+}
+
+#[test]
 fn sync_client_cache_control_helper_enforces_shared_bounds() {
   assert_cache_control_helper_rejects_but_preserves_response(
     "too many response Cache-Control directives",
@@ -654,6 +806,18 @@ fn sync_client_cache_control_helper_enforces_shared_bounds() {
   assert_cache_control_helper_rejects_but_preserves_response(
     "oversized response Cache-Control value",
     cache_control_response(&[&fixtures::cache_control::oversized_value()]),
+  );
+}
+
+#[test]
+fn sync_client_retry_after_helper_rejects_duplicate_singleton_and_oversized_values() {
+  assert_retry_after_helper_rejects_but_preserves_response(
+    "duplicate Retry-After header fields",
+    retry_after_response(&["60", "120"], false),
+  );
+  assert_retry_after_helper_rejects_but_preserves_response(
+    "oversized Retry-After value",
+    retry_after_response(&[&fixtures::retry_after::oversized_value()], false),
   );
 }
 
