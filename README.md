@@ -132,6 +132,23 @@ not calculate freshness, validate cache state against wall-clock time, store
 responses, match stored responses, revalidate responses, apply shared-cache
 policy, or issue automatic conditional requests.
 
+### Bounded HTTP/1.1 Retry-After behavior
+
+`Response::retry_after()` parses a single response `Retry-After` header as
+either HTTP-date metadata or non-negative delta-seconds. It returns `Ok(None)`
+when the header is absent. Present values are exposed as `RetryAfter`, with
+`delta_seconds()` returning `u64` for the delta form and `http_date()`
+returning `SystemTime` for the date form.
+
+The helper is bounded and validation-oriented. The header value is limited to
+64 KiB, duplicate `Retry-After` header fields are rejected, delta-seconds must
+be unsigned decimal digits that fit in `u64`, and malformed dates or other
+invalid values return an error. The original response headers remain available
+through `Response::header_value()` and `Response::header_values()`.
+
+RTTP does not sleep, schedule retries, replay requests, apply backoff, calculate
+cache freshness, or decide status-code retry policy from `Retry-After`.
+
 ### Bounded HTTP/1.1 Vary behavior
 
 `Response::vary()` parses one or more response `Vary` header fields into

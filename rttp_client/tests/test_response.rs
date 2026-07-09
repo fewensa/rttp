@@ -324,6 +324,132 @@ fn test_parse_age_and_expires_response_metadata() {
 }
 
 #[test]
+fn test_parse_retry_after_response_metadata() {
+  let s = concat!(
+    "HTTP/1.1 503 Service Unavailable\r\n",
+    "Retry-After: 120\r\n",
+    "Content-Length: 4\r\n",
+    "\r\n",
+    "busy"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
+    .expect("parse response with retry-after delta metadata");
+  let retry_after = response
+    .retry_after()
+    .expect("valid retry-after should parse")
+    .expect("retry-after should be present");
+
+  assert_eq!(Some(120), retry_after.delta_seconds());
+  assert_eq!(None, retry_after.http_date());
+  assert_eq!(
+    Some(&"120".to_string()),
+    response.header_value("Retry-After")
+  );
+
+  let s = concat!(
+    "HTTP/1.1 503 Service Unavailable\r\n",
+    "Retry-After: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+    "Content-Length: 4\r\n",
+    "\r\n",
+    "busy"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
+    .expect("parse response with retry-after date metadata");
+  let retry_after = response
+    .retry_after()
+    .expect("valid retry-after date should parse")
+    .expect("retry-after should be present");
+
+  assert_eq!(None, retry_after.delta_seconds());
+  assert_eq!(
+    Some(UNIX_EPOCH + Duration::from_secs(784111777)),
+    retry_after.http_date()
+  );
+  assert_eq!(
+    Some(&"Sun, 06 Nov 1994 08:49:37 GMT".to_string()),
+    response.header_value("Retry-After")
+  );
+
+  let s = concat!("HTTP/1.1 200 OK\r\n", "Content-Length: 2\r\n", "\r\n", "OK");
+  let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
+    .expect("parse response without retry-after");
+  assert_eq!(
+    None,
+    response
+      .retry_after()
+      .expect("absent retry-after should parse")
+  );
+}
+
+#[test]
+fn test_parse_retry_after_rejects_invalid_helper_values_without_rejecting_response() {
+  let invalid_values = [
+    "",
+    "-1",
+    "+1",
+    "1.5",
+    "6 0",
+    "60,61",
+    "abc",
+    "18446744073709551616",
+    "Sun, 06 Nov 1994 08:49:37 PST",
+  ];
+
+  for value in invalid_values {
+    let raw = format!(
+      "HTTP/1.1 503 Service Unavailable\r\nRetry-After: {value}\r\nContent-Length: 4\r\n\r\nbusy"
+    );
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response remains usable");
+
+    assert!(
+      response.retry_after().is_err(),
+      "retry-after helper should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Retry-After")
+    );
+  }
+}
+
+#[test]
+fn test_parse_retry_after_rejects_duplicate_and_oversized_helper_values() {
+  let raw = concat!(
+    "HTTP/1.1 503 Service Unavailable\r\n",
+    "Retry-After: 60\r\n",
+    "retry-after: 120\r\n",
+    "Content-Length: 4\r\n",
+    "\r\n",
+    "busy"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response with duplicate retry-after remains usable");
+
+  assert!(
+    response.retry_after().is_err(),
+    "retry-after helper should reject duplicates"
+  );
+  assert_eq!(
+    vec![&"60".to_string(), &"120".to_string()],
+    response.header_values("Retry-After")
+  );
+
+  let oversized = "1".repeat(64 * 1024 + 1);
+  let raw = format!(
+    "HTTP/1.1 503 Service Unavailable\r\nRetry-After: {oversized}\r\nContent-Length: 4\r\n\r\nbusy"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response with oversized retry-after remains usable");
+
+  assert!(
+    response.retry_after().is_err(),
+    "retry-after helper should reject oversized values"
+  );
+  assert_eq!(Some(&oversized), response.header_value("Retry-After"));
+}
+
+#[test]
 fn test_parse_age_rejects_invalid_helper_values_without_rejecting_response() {
   let invalid_values = [
     "",
