@@ -17,6 +17,8 @@ const MAX_ALLOW_VALUE_BYTES: usize = 64 * 1024;
 const MAX_ALLOW_METHODS: usize = 32;
 const MAX_CONTENT_LANGUAGE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_LANGUAGES: usize = 32;
+const MAX_ACCEPT_RANGES_VALUE_BYTES: usize = 64 * 1024;
+const MAX_ACCEPT_RANGES_UNITS: usize = 32;
 const MAX_RETRY_AFTER_VALUE_BYTES: usize = 64 * 1024;
 const HTTP2_CLIENT_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 const HTTP2_FRAME_DATA: u8 = 0x0;
@@ -4554,6 +4556,33 @@ impl HttpResponse {
     Ok(self)
   }
 
+  pub fn with_accept_ranges<I, U>(mut self, units: I) -> Result<Self, HttpAcceptRangesParseError>
+  where
+    I: IntoIterator<Item = U>,
+    U: AsRef<str>,
+  {
+    let accept_ranges = HttpAcceptRanges::from_units(units)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Accept-Ranges"));
+    self.headers.push(HttpHeader::new(
+      "Accept-Ranges",
+      accept_ranges.header_value(),
+    ));
+    Ok(self)
+  }
+
+  pub fn with_accept_ranges_none(mut self) -> Self {
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Accept-Ranges"));
+    self.headers.push(HttpHeader::new(
+      "Accept-Ranges",
+      HttpAcceptRanges::none().header_value(),
+    ));
+    self
+  }
+
   pub fn with_age(mut self, delta_seconds: u64) -> Self {
     self
       .headers
@@ -4650,6 +4679,19 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpContentLanguages::parse_values(values).map(Some)
+  }
+
+  pub fn accept_ranges(&self) -> Result<Option<HttpAcceptRanges>, HttpAcceptRangesParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Accept-Ranges"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAcceptRanges::parse_values(values).map(Some)
   }
 
   pub fn age(&self) -> Result<Option<u64>, HttpAgeParseError> {
@@ -5437,6 +5479,149 @@ fn is_valid_content_language_tag(value: &str) -> bool {
       && subtag.bytes().all(|byte| byte.is_ascii_alphanumeric())
   })
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpAcceptRanges {
+  none: bool,
+  units: Vec<String>,
+}
+
+impl HttpAcceptRanges {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpAcceptRangesParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpAcceptRangesParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut units = Vec::new();
+    let mut none = false;
+
+    for value in values {
+      if value.len() > MAX_ACCEPT_RANGES_VALUE_BYTES {
+        return Err(HttpAcceptRangesParseError::new(
+          "Accept-Ranges header value is too large",
+        ));
+      }
+
+      for unit in value.split(',') {
+        let unit = unit.trim();
+        if unit.is_empty() || !is_http_token(unit) {
+          return Err(HttpAcceptRangesParseError::new(
+            "invalid Accept-Ranges range unit",
+          ));
+        }
+        if unit.eq_ignore_ascii_case("none") {
+          none = true;
+          continue;
+        }
+        if units
+          .iter()
+          .any(|known: &String| known.eq_ignore_ascii_case(unit))
+        {
+          return Err(HttpAcceptRangesParseError::new(
+            "duplicate Accept-Ranges range unit",
+          ));
+        }
+        if units.len() >= MAX_ACCEPT_RANGES_UNITS {
+          return Err(HttpAcceptRangesParseError::new(
+            "too many Accept-Ranges range units",
+          ));
+        }
+        units.push(unit.to_string());
+      }
+    }
+
+    if none && !units.is_empty() {
+      return Err(HttpAcceptRangesParseError::new(
+        "Accept-Ranges none cannot be combined with range units",
+      ));
+    }
+    if none {
+      return Ok(Self::none());
+    }
+    if units.is_empty() {
+      return Err(HttpAcceptRangesParseError::new(
+        "invalid Accept-Ranges range unit",
+      ));
+    }
+
+    Ok(Self { none: false, units })
+  }
+
+  pub fn from_units<I, U>(units: I) -> Result<Self, HttpAcceptRangesParseError>
+  where
+    I: IntoIterator<Item = U>,
+    U: AsRef<str>,
+  {
+    let mut value = String::new();
+
+    for (index, unit) in units.into_iter().enumerate() {
+      let unit = unit.as_ref();
+      if unit.trim().eq_ignore_ascii_case("none") {
+        return Err(HttpAcceptRangesParseError::new(
+          "Accept-Ranges none must use the none helper",
+        ));
+      }
+      if index > 0 {
+        value.push_str(", ");
+      }
+      value.push_str(unit);
+      if value.len() > MAX_ACCEPT_RANGES_VALUE_BYTES {
+        return Err(HttpAcceptRangesParseError::new(
+          "Accept-Ranges header value is too large",
+        ));
+      }
+    }
+
+    Self::parse(value)
+  }
+
+  pub fn none() -> Self {
+    Self {
+      none: true,
+      units: Vec::new(),
+    }
+  }
+
+  pub fn is_none(&self) -> bool {
+    self.none
+  }
+
+  pub fn units(&self) -> Vec<&str> {
+    self.units.iter().map(String::as_str).collect()
+  }
+
+  pub fn header_value(&self) -> String {
+    if self.none {
+      "none".to_string()
+    } else {
+      self.units.join(", ")
+    }
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpAcceptRangesParseError {
+  message: String,
+}
+
+impl HttpAcceptRangesParseError {
+  fn new<S: AsRef<str>>(message: S) -> Self {
+    Self {
+      message: message.as_ref().to_string(),
+    }
+  }
+}
+
+impl fmt::Display for HttpAcceptRangesParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpAcceptRangesParseError {}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct HttpRequestCacheControl {
