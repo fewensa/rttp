@@ -1,4 +1,4 @@
-use rttp::server::{HttpRequest, HttpResponse};
+use rttp::server::{HttpByteRange, HttpByteRangeError, HttpRequest, HttpResponse};
 
 #[test]
 fn parses_http_request_target_headers_and_body() {
@@ -357,6 +357,74 @@ fn write_to_preserves_explicit_connection_header() {
     )
     .as_bytes(),
     serialized.as_slice()
+  );
+}
+
+#[test]
+fn parses_single_bounded_byte_ranges_against_entity_length() {
+  assert_eq!(
+    HttpByteRange::new(2, 5),
+    HttpByteRange::parse("bytes=2-5", 10).expect("closed range should parse")
+  );
+  assert_eq!(
+    HttpByteRange::new(7, 9),
+    HttpByteRange::parse("bytes=7-", 10).expect("open range should parse")
+  );
+  assert_eq!(
+    HttpByteRange::new(6, 9),
+    HttpByteRange::parse("bytes=-4", 10).expect("suffix range should parse")
+  );
+}
+
+#[test]
+fn rejects_unsupported_multiple_invalid_and_unsatisfied_byte_ranges() {
+  for (header, entity_length, expected) in [
+    ("items=0-1", 10, HttpByteRangeError::UnsupportedUnit),
+    ("bytes=0-1,4-5", 10, HttpByteRangeError::MultipleRanges),
+    ("bytes=5-2", 10, HttpByteRangeError::InvalidRange),
+    ("bytes=10-5", 10, HttpByteRangeError::InvalidRange),
+    ("bytes=-0", 10, HttpByteRangeError::InvalidRange),
+    ("bytes=10-", 10, HttpByteRangeError::UnsatisfiedRange),
+    ("bytes=-5", 0, HttpByteRangeError::UnsatisfiedRange),
+  ] {
+    let error = HttpByteRange::parse(header, entity_length).expect_err("range should reject");
+
+    assert_eq!(expected, error);
+  }
+}
+
+#[test]
+fn serializes_partial_content_response_for_parsed_byte_range() {
+  let body = b"0123456789";
+  let range = HttpByteRange::parse("bytes=3-6", body.len()).expect("range should parse");
+  let response = HttpResponse::partial_content(body, range);
+
+  assert_eq!(
+    concat!(
+      "HTTP/1.1 206 Partial Content\r\n",
+      "Content-Range: bytes 3-6/10\r\n",
+      "Content-Length: 4\r\n",
+      "\r\n",
+      "3456"
+    )
+    .as_bytes(),
+    response.to_bytes().as_slice()
+  );
+}
+
+#[test]
+fn serializes_range_not_satisfiable_response() {
+  let response = HttpResponse::range_not_satisfiable(10);
+
+  assert_eq!(
+    concat!(
+      "HTTP/1.1 416 Range Not Satisfiable\r\n",
+      "Content-Range: bytes */10\r\n",
+      "Content-Length: 0\r\n",
+      "\r\n"
+    )
+    .as_bytes(),
+    response.to_bytes().as_slice()
   );
 }
 
