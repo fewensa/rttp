@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fmt;
 
 use url::Url;
@@ -8,6 +9,8 @@ use crate::types::{Cookie, Header, RoUrl};
 
 const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
+const MAX_VARY_VALUE_BYTES: usize = 64 * 1024;
+const MAX_VARY_FIELD_NAMES: usize = 256;
 
 #[derive(Clone)]
 pub struct Response {
@@ -109,6 +112,14 @@ impl Response {
       return Ok(None);
     }
     CacheControl::parse_values(values.into_iter().map(String::as_str)).map(Some)
+  }
+
+  pub fn vary(&self) -> error::Result<Option<Vary>> {
+    let values = self.header_values("vary");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Vary::parse_values(values.into_iter().map(String::as_str)).map(Some)
   }
 
   pub fn headers(&self) -> &Vec<Header> {
@@ -269,6 +280,93 @@ fn parse_complete_length(value: &str) -> Option<Option<u64>> {
     return Some(None);
   }
   value.parse::<u64>().ok().map(Some)
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Vary {
+  any: bool,
+  field_names: Vec<String>,
+}
+
+impl Vary {
+  pub fn parse(value: impl AsRef<str>) -> error::Result<Self> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  fn parse_values<'a, I>(values: I) -> error::Result<Self>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut any = false;
+    let mut field_names = Vec::new();
+    let mut seen = HashSet::new();
+    let mut field_name_count = 0usize;
+
+    for value in values {
+      if value.len() > MAX_VARY_VALUE_BYTES {
+        return Err(error::bad_response("Vary header value is too large"));
+      }
+
+      for member in value.split(',') {
+        let member = member.trim();
+        if member.is_empty() {
+          return Err(error::bad_response("Invalid Vary field name"));
+        }
+
+        if member == "*" {
+          if any || field_names.is_empty() {
+            any = true;
+            continue;
+          }
+          return Err(error::bad_response(
+            "Vary wildcard cannot be combined with field names",
+          ));
+        }
+
+        if any {
+          return Err(error::bad_response(
+            "Vary wildcard cannot be combined with field names",
+          ));
+        }
+        if !is_token(member) {
+          return Err(error::bad_response("Invalid Vary field name"));
+        }
+
+        field_name_count += 1;
+        if field_name_count > MAX_VARY_FIELD_NAMES {
+          return Err(error::bad_response("Too many Vary field names"));
+        }
+
+        let normalized = member.to_ascii_lowercase();
+        if seen.insert(normalized.clone()) {
+          field_names.push(normalized);
+        }
+      }
+    }
+
+    if !any && field_names.is_empty() {
+      return Err(error::bad_response("Invalid Vary field name"));
+    }
+
+    Ok(Self { any, field_names })
+  }
+
+  pub fn is_any(&self) -> bool {
+    self.any
+  }
+
+  pub fn field_names(&self) -> Vec<&str> {
+    self.field_names.iter().map(String::as_str).collect()
+  }
+
+  pub fn contains_field_name(&self, field_name: impl AsRef<str>) -> bool {
+    let field_name = field_name.as_ref();
+    if !is_token(field_name) {
+      return false;
+    }
+    let field_name = field_name.to_ascii_lowercase();
+    self.field_names.iter().any(|name| name == &field_name)
+  }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
