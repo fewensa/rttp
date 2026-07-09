@@ -18,6 +18,7 @@ readme = "README.md"
 edition = "2021"
 
 [dependencies]
+httpdate = "1.0"
 socket2 = "0.5"
 
 rttp_client = { optional = true, path = "../rttp_client", features = [ "tls-native", "async" ] }
