@@ -342,10 +342,18 @@ only the selected body bytes. For an unsatisfied range,
 `416 Range Not Satisfiable` with `Content-Range: bytes */length` and an empty
 body.
 
+For conditional range requests, `Request::evaluate_if_range(&metadata,
+entity_length)` composes caller-provided `HttpConditionalMetadata` with the
+existing single-range parser. Matching strong ETags or exact HTTP-date
+`Last-Modified` validators return `PartialContent(HttpByteRange)`;
+non-matching, weak, invalid, or metadata-missing validators return
+`FullResponse`; guarded unsatisfied ranges return `RangeNotSatisfiable`.
+Application code still chooses the final `200`, `206`, or `416` response.
+
 Multipart ranges are intentionally not generated: RTTP does not serialize
 `multipart/byteranges` or pick a multipart response for multiple requested
-ranges. `If-Range`, filesystem path normalization, MIME detection, ETag,
-Last-Modified, cache behavior, authorization, directory indexes, and dotfile
+ranges. Filesystem path normalization, MIME detection, ETag or Last-Modified
+generation, cache behavior, authorization, directory indexes, and dotfile
 visibility remain caller-owned policy before choosing `200`, `206`, or `416`.
 
 ### Bounded HTTP/1.1 conditional requests
@@ -509,7 +517,7 @@ TLS or async accept loops.
 | HTTP/1.1 request parsing | Required `Host` validation, origin-form, absolute-form, asterisk-form `OPTIONS`, authority-form `CONNECT`, fixed and chunked bodies, chunk extensions, `Expect: 100-continue`, and obsolete line folding rejection | Intended for local tests and simple embedded use, not full RFC coverage |
 | HTTP/1.1 connection handling | Bounded sequential `serve_requests`, keep-alive and close behavior for HTTP/1.1 and HTTP/1.0, pipelined request boundaries, malformed request rejection before handler dispatch | Blocking listener only; no async accept loop |
 | HTTP/1.1 response framing | Automatic `Content-Length`, explicit chunked responses, bodyless `HEAD`, `101`, `204`, and `304`, response trailers after the terminating chunk | No server TLS |
-| Byte ranges | `HttpByteRange` parses one `bytes` range and `HttpResponse::partial_content`/`range_not_satisfiable` serialize `206`/`416` with `Content-Range` | No multipart range serialization, `If-Range` evaluation, filesystem serving, or static-file policy |
+| Byte ranges | `HttpByteRange` parses one `bytes` range, `Request::evaluate_if_range` gates it with caller-provided strong ETag or exact HTTP-date metadata, and `HttpResponse::partial_content`/`range_not_satisfiable` serialize `206`/`416` with `Content-Range` | No multipart range serialization, filesystem serving, MIME detection, cache storage, or automatic static-file policy |
 | Conditional requests | `Request::evaluate_conditional`, `evaluate_conditional_request`, `HttpConditionalMetadata`, and `HttpEntityTag` evaluate bounded HTTP/1.1 validators; `HttpResponse::not_modified` and `precondition_failed` serialize `304` and `412` outcomes | No cache storage, static-file serving policy, automatic revalidation, or cache-control engine |
 | Upgrade and tunnel targets | `CONNECT` authority-form requests are accepted as HTTP requests; `HttpResponse::upgrade` can hand an upgraded socket to caller code after a matching request | The server does not implement the upgraded protocol after handoff |
 | Trailers | Chunked request trailers are preserved on `Request`; malformed, oversized, forbidden, and pseudo-header trailers are rejected; response trailers can be serialized for chunked responses | Application metadata trailers are allowed; trailer names that affect connection state, routing, authentication/cookies, framing, or payload processing are rejected |
