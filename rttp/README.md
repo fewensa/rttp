@@ -59,7 +59,9 @@ requests. The server advertises `SETTINGS_MAX_CONCURRENT_STREAMS` from the
 active request allowance for that bounded accept path and rejects new h2c
 streams once the open-stream count plus completed requests reaches that
 allowance. The h2c path handles `HEAD` without writing response DATA frames.
-The server also advertises and enforces a conservative
+The server validates peer `SETTINGS_ENABLE_PUSH` values as only `0` or `1`;
+any other value rejects the bounded h2c handshake. The server also advertises
+and enforces a conservative
 `SETTINGS_MAX_HEADER_LIST_SIZE` for inbound request metadata; request HEADERS
 and trailing HEADERS can span CONTINUATION frames, but decoded metadata remains
 bounded before handler dispatch. It advertises the default 16,384-byte
@@ -116,7 +118,8 @@ adding unbounded multiplexing, session management, or external h2-stack
 support.
 Server push is outside this bounded server path: inbound `PUSH_PROMISE` frames
 are rejected deterministically before handler dispatch instead of attempting
-push state management.
+push state management, and RTTP does not implement server-side push state even
+when a peer sends `SETTINGS_ENABLE_PUSH = 1`.
 Responses are still written synchronously as requests complete. The bounded
 h2c path supports conservative DATA flow-control for prior-knowledge use. It
 uses `GOAWAY` as a bounded shutdown signal when the loop ends, reporting the
@@ -159,7 +162,7 @@ push, and priority scheduling, or async accept loops.
 | HTTP/1.1 response framing | Automatic `Content-Length`, explicit chunked responses, bodyless `HEAD`, `101`, `204`, and `304`, response trailers after the terminating chunk | No server TLS |
 | Upgrade and tunnel targets | `CONNECT` authority-form requests are accepted as HTTP requests; `HttpResponse::upgrade` can hand an upgraded socket to caller code after a matching request | The server does not implement the upgraded protocol after handoff |
 | Trailers | Chunked request trailers are preserved on `Request`; malformed, oversized, forbidden, and pseudo-header trailers are rejected; response trailers can be serialized for chunked responses | Application metadata trailers are allowed; trailer names that affect connection state, routing, authentication/cookies, framing, or payload processing are rejected |
-| Prior-knowledge h2c | The same `socket2` listener detects the HTTP/2 preface, validates SETTINGS including legal `SETTINGS_MAX_FRAME_SIZE` values from 16,384 through 16,777,215 bytes, advertises the default 16,384-byte `SETTINGS_MAX_FRAME_SIZE`, rejects inbound frames above the active local limit, splits outbound HEADERS, DATA, and trailers to the active peer frame-size limit, advertises `SETTINGS_MAX_CONCURRENT_STREAMS` from the bounded active stream allowance, enforces that allowance before dispatching new streams, advertises and enforces a conservative `SETTINGS_MAX_HEADER_LIST_SIZE` for inbound request metadata, bounds HPACK dynamic table use with `SETTINGS_HEADER_TABLE_SIZE`, serves bounded prior-knowledge streams including bodyless DELETE, OPTIONS, and TRACE, handles HEAD without response DATA, rejects connection-specific request fields before handler dispatch, strips connection-specific response fields during h2c serialization, treats `RST_STREAM` as a bounded reset/cancellation signal for the affected stream, acknowledges valid PING frames with matching opaque data, accepts padded HEADERS/DATA/trailers without exposing padding, handles HPACK Huffman fields and bounded CONTINUATION header blocks, emits `GOAWAY` with the last completed stream id at bounded shutdown, validates and ignores valid PRIORITY metadata, ignores HTTP/2-allowed unknown/extension frames inside this bounded path, normalizes reserved stream-id high bits, and applies conservative DATA flow control | Ordinary `CONNECT`, RFC 8441 extended `CONNECT`/`:protocol`, and `PUSH_PROMISE` are rejected deterministically before handler dispatch; HTTP/1.1 `CONNECT` and `Upgrade` remain separate handoff paths; bounded prior-knowledge h2c only, with no public cancellation callback API, no dynamic policy API, no extension callback API, full extension negotiation, TLS ALPN, external h2 integration, WebSocket over h2, proxy h2, tunnel handoff, connection pooling, persistent HTTP/2 session management, automatic retry, server push, full RFC 8441 support, full stream state machine, unbounded multiplexing, unbounded multiplex scheduling, general multiplexing, priority scheduling, or full HTTP/2 server feature set |
+| Prior-knowledge h2c | The same `socket2` listener detects the HTTP/2 preface, validates SETTINGS including legal `SETTINGS_ENABLE_PUSH` values of only `0` or `1` and legal `SETTINGS_MAX_FRAME_SIZE` values from 16,384 through 16,777,215 bytes, advertises the default 16,384-byte `SETTINGS_MAX_FRAME_SIZE`, rejects inbound frames above the active local limit, splits outbound HEADERS, DATA, and trailers to the active peer frame-size limit, advertises `SETTINGS_MAX_CONCURRENT_STREAMS` from the bounded active stream allowance, enforces that allowance before dispatching new streams, advertises and enforces a conservative `SETTINGS_MAX_HEADER_LIST_SIZE` for inbound request metadata, bounds HPACK dynamic table use with `SETTINGS_HEADER_TABLE_SIZE`, serves bounded prior-knowledge streams including bodyless DELETE, OPTIONS, and TRACE, handles HEAD without response DATA, rejects connection-specific request fields before handler dispatch, strips connection-specific response fields during h2c serialization, treats `RST_STREAM` as a bounded reset/cancellation signal for the affected stream, acknowledges valid PING frames with matching opaque data, accepts padded HEADERS/DATA/trailers without exposing padding, handles HPACK Huffman fields and bounded CONTINUATION header blocks, emits `GOAWAY` with the last completed stream id at bounded shutdown, validates and ignores valid PRIORITY metadata, ignores HTTP/2-allowed unknown/extension frames inside this bounded path, normalizes reserved stream-id high bits, and applies conservative DATA flow control | Ordinary `CONNECT`, RFC 8441 extended `CONNECT`/`:protocol`, and `PUSH_PROMISE` are rejected deterministically before handler dispatch; HTTP/1.1 `CONNECT` and `Upgrade` remain separate handoff paths; bounded prior-knowledge h2c only, with no public cancellation callback API, no dynamic policy API, no extension callback API, no full extension negotiation, TLS ALPN, external h2 integration, WebSocket over h2, proxy h2, tunnel handoff, connection pooling, persistent HTTP/2 session management, automatic retry, server push, full RFC 8441 support, full stream state machine, unbounded multiplexing, unbounded multiplex scheduling, general multiplexing, priority scheduling, or full HTTP/2 server feature set |
 
 ## Client feature
 
@@ -168,10 +171,13 @@ Enable the `client` feature to access `rttp::Http::client`, or enable `async`,
 `rttp_client` capabilities. The `http2` feature exposes the bounded
 prior-knowledge h2c client path for GET, HEAD, bodyless DELETE, OPTIONS, or
 TRACE, and buffered POST, PUT, or PATCH requests. It opens at most one request
-stream and honors the peer's initial `SETTINGS_MAX_CONCURRENT_STREAMS` by
-failing before request HEADERS when the peer allows zero streams. The bounded
-client path also honors peer-advertised `SETTINGS_MAX_HEADER_LIST_SIZE` request
-metadata limits before sending request HEADERS or trailing HEADERS. It
+stream, advertises `SETTINGS_ENABLE_PUSH = 0` so peers see server push
+disabled on the client side, validates received `SETTINGS_ENABLE_PUSH` values
+as only `0` or `1`, and honors the peer's initial
+`SETTINGS_MAX_CONCURRENT_STREAMS` by failing before request HEADERS when the
+peer allows zero streams. The bounded client path also honors peer-advertised
+`SETTINGS_MAX_HEADER_LIST_SIZE` request metadata limits before sending request
+HEADERS or trailing HEADERS. It
 validates `SETTINGS_MAX_FRAME_SIZE` on both sides of the bounded h2c handshake:
 a configured local `http2_max_frame_size` is advertised only when set, must be
 in the legal HTTP/2 range of 16,384 through 16,777,215 bytes, and rejects
@@ -185,7 +191,9 @@ connection-specific peer response fields, HPACK static Huffman strings, request
 dynamic entries within the peer's advertised `SETTINGS_HEADER_TABLE_SIZE`,
 bounded local response dynamic table decoding, bounded large header blocks via
 CONTINUATION frames, padded incoming response frames, and conservative DATA
-flow-control for single-stream prior-knowledge use. Valid response PRIORITY
+flow-control for single-stream prior-knowledge use. Any received
+`SETTINGS_ENABLE_PUSH` value other than `0` or `1` rejects the bounded h2c
+handshake. Valid response PRIORITY
 frames and HEADERS priority fields are validated and ignored as metadata;
 malformed priority metadata is rejected, and no priority scheduling is
 performed. Valid PING frames are acknowledged with PING ACK frames that carry
@@ -205,7 +213,8 @@ full extension negotiation. Reserved stream identifier high bits are masked
 when frames are parsed or written, which normalizes wire framing but does not
 add broader multiplex scheduling or persistent session management. Incoming
 `PUSH_PROMISE` frames are rejected
-deterministically instead of creating or tracking push state. HTTP/1.1
+deterministically instead of creating or tracking push state even when the
+peer advertises `SETTINGS_ENABLE_PUSH = 1`. HTTP/1.1
 `CONNECT` tunnel handoff remains a separate path; prior-knowledge h2c `GOAWAY`
 is treated as a bounded shutdown signal: completed responses remain usable,
 active responses continue only when the peer's `last-stream-id` includes the

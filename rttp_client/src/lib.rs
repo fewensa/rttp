@@ -19,6 +19,10 @@
 //! that active local limit. Peer-advertised values outside the same range
 //! reject the handshake, while legal peer values are used to split outbound
 //! request HEADERS, DATA, and trailing HEADERS.
+//! The client advertises `SETTINGS_ENABLE_PUSH = 0` so peers see server push
+//! disabled, validates received `SETTINGS_ENABLE_PUSH` values as only `0` or
+//! `1`, and rejects any incoming `PUSH_PROMISE` frame instead of creating or
+//! tracking push state.
 //! It decodes incoming padded HEADERS, DATA, and trailer frames without
 //! exposing padding bytes, including response HPACK dynamic table entries.
 //! Peer `SETTINGS_HEADER_TABLE_SIZE` bounds outbound request dynamic indexing;
@@ -37,8 +41,9 @@
 //! request before request HEADERS are sent. RTTP reports those conditions to
 //! the caller and does not retry automatically; transport disconnects remain
 //! ordinary socket errors without an HTTP/2 stream boundary. TLS ALPN, proxy
-//! h2, full HTTP/2 multiplexing, dynamic policy APIs, and priority scheduling
-//! are not part of that single-stream path.
+//! h2, full extension negotiation, full HTTP/2 multiplexing, dynamic policy
+//! APIs, server push, and priority scheduling are not part of that
+//! single-stream path.
 //!
 //! ```rust,no_run
 //! use rttp_client::HttpClient;
