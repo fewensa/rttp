@@ -5620,6 +5620,275 @@ impl CrossCrateTrailerTransport {
       Self::Upgrade => "h2c-upgrade",
     }
   }
+
+  fn request_stream_id(self) -> u32 {
+    match self {
+      Self::PriorKnowledge => 1,
+      Self::Upgrade => 3,
+    }
+  }
+
+  fn connect(self, addr: SocketAddr) -> TcpStream {
+    let mut stream = TcpStream::connect(addr).expect("connect cross-crate h2c server");
+    stream
+      .set_read_timeout(Some(Duration::from_millis(200)))
+      .expect("set cross-crate h2c read timeout");
+    stream
+      .set_write_timeout(Some(Duration::from_secs(2)))
+      .expect("set cross-crate h2c write timeout");
+    match self {
+      Self::PriorKnowledge => complete_h2_server_handshake_with_settings(&mut stream, &[]),
+      Self::Upgrade => complete_h2c_upgrade(&mut stream, &addr.to_string(), &[]),
+    }
+    stream
+  }
+}
+
+#[test]
+fn cross_crate_http2_continuation_matrix_round_trips_large_headers_on_each_h2c_path() {
+  for transport in [
+    CrossCrateTrailerTransport::PriorKnowledge,
+    CrossCrateTrailerTransport::Upgrade,
+  ] {
+    let server = rttp::Http::server("127.0.0.1:0")
+      .expect("bind cross-crate CONTINUATION matrix server")
+      .with_read_timeout(Some(Duration::from_secs(2)))
+      .with_write_timeout(Some(Duration::from_secs(2)));
+    let addr = server
+      .local_addr()
+      .expect("cross-crate CONTINUATION matrix addr");
+    let request_header = format!("request-{}-{}", transport.name(), "r".repeat(18 * 1024));
+    let expected_request_header = request_header.clone();
+    let response_header = format!("response-{}-{}", transport.name(), "s".repeat(18 * 1024));
+    let expected_response_header = response_header.clone();
+    let path = format!("/cross-crate-continuation/{}", transport.name());
+    let expected_path = path.clone();
+    let (tx, rx) = mpsc::channel();
+
+    let handle = thread::spawn(move || {
+      server
+        .accept_one(|request| {
+          tx.send((
+            request.version().to_string(),
+            request.target().to_string(),
+            request.header("x-large-request").map(str::to_string),
+          ))
+          .expect("send parsed cross-crate CONTINUATION request");
+
+          HttpResponse::ok(format!("large header matrix via {}", transport.name()))
+            .header("X-Large-Response", response_header)
+        })
+        .expect("serve cross-crate CONTINUATION matrix request");
+    });
+
+    let mut client = rttp_client::HttpClient::new();
+    client
+      .get()
+      .url(format!("http://{}{}", addr, path))
+      .header(("X-Large-Request".to_string(), request_header));
+    let response = match transport {
+      CrossCrateTrailerTransport::PriorKnowledge => client
+        .emit_http2_prior_knowledge()
+        .expect("cross-crate prior-knowledge large-header response"),
+      CrossCrateTrailerTransport::Upgrade => client
+        .emit_http2_upgrade()
+        .expect("cross-crate h2c upgrade large-header response"),
+    };
+
+    assert_eq!("HTTP/2", response.version(), "{}", transport.name());
+    assert_eq!(200, response.code(), "{}", transport.name());
+    assert_eq!(
+      format!("large header matrix via {}", transport.name()),
+      response.body().string().unwrap(),
+      "{}",
+      transport.name()
+    );
+    assert_eq!(
+      Some(&expected_response_header),
+      response.header_value("X-Large-Response"),
+      "{}",
+      transport.name()
+    );
+    assert_eq!(
+      (
+        "HTTP/2".to_string(),
+        expected_path,
+        Some(expected_request_header),
+      ),
+      rx.recv()
+        .expect("receive parsed cross-crate CONTINUATION request"),
+      "{}",
+      transport.name()
+    );
+
+    handle
+      .join()
+      .expect("cross-crate CONTINUATION matrix server thread");
+  }
+}
+
+#[test]
+fn cross_crate_http2_continuation_matrix_accepts_max_frame_size_boundaries_on_each_h2c_path() {
+  for (transport, max_frame_size) in [
+    (CrossCrateTrailerTransport::PriorKnowledge, 16_384),
+    (CrossCrateTrailerTransport::Upgrade, 16_384),
+    (CrossCrateTrailerTransport::PriorKnowledge, 16_777_215),
+    (CrossCrateTrailerTransport::Upgrade, 16_777_215),
+  ] {
+    let server = rttp::Http::server("127.0.0.1:0")
+      .expect("bind cross-crate frame-size boundary server")
+      .with_read_timeout(Some(Duration::from_secs(2)))
+      .with_write_timeout(Some(Duration::from_secs(2)));
+    let addr = server
+      .local_addr()
+      .expect("cross-crate frame-size boundary addr");
+    let path = format!(
+      "/cross-crate-frame-size/{}/{}",
+      transport.name(),
+      max_frame_size
+    );
+    let expected_path = path.clone();
+    let large_response_header = format!(
+      "frame-size-{}-{}-{}",
+      transport.name(),
+      max_frame_size,
+      "f".repeat(18 * 1024)
+    );
+    let expected_response_header = large_response_header.clone();
+    let (tx, rx) = mpsc::channel();
+
+    let handle = thread::spawn(move || {
+      server
+        .accept_one(|request| {
+          tx.send((request.version().to_string(), request.target().to_string()))
+            .expect("send cross-crate frame-size boundary request");
+          HttpResponse::ok(format!(
+            "frame-size boundary {} via {}",
+            max_frame_size,
+            transport.name()
+          ))
+          .header("X-Frame-Size-Boundary", large_response_header)
+        })
+        .expect("serve cross-crate frame-size boundary request");
+    });
+
+    let config = Config::builder()
+      .http2_max_frame_size(max_frame_size)
+      .build();
+    let mut client = rttp_client::HttpClient::new();
+    client
+      .config(&config)
+      .get()
+      .url(format!("http://{}{}", addr, path));
+    let response = match transport {
+      CrossCrateTrailerTransport::PriorKnowledge => client
+        .emit_http2_prior_knowledge()
+        .expect("cross-crate prior-knowledge frame-size boundary response"),
+      CrossCrateTrailerTransport::Upgrade => client
+        .emit_http2_upgrade()
+        .expect("cross-crate h2c upgrade frame-size boundary response"),
+    };
+
+    assert_eq!("HTTP/2", response.version(), "{}", transport.name());
+    assert_eq!(
+      format!(
+        "frame-size boundary {} via {}",
+        max_frame_size,
+        transport.name()
+      ),
+      response.body().string().unwrap(),
+      "{}",
+      transport.name()
+    );
+    assert_eq!(
+      Some(&expected_response_header),
+      response.header_value("X-Frame-Size-Boundary"),
+      "{} {}",
+      transport.name(),
+      max_frame_size
+    );
+    assert_eq!(
+      ("HTTP/2".to_string(), expected_path),
+      rx.recv()
+        .expect("receive cross-crate frame-size boundary request"),
+      "{} {}",
+      transport.name(),
+      max_frame_size
+    );
+
+    handle
+      .join()
+      .expect("cross-crate frame-size boundary server thread");
+  }
+}
+
+#[test]
+fn cross_crate_http2_continuation_matrix_rejects_interleaved_frames_on_each_h2c_path() {
+  for transport in [
+    CrossCrateTrailerTransport::PriorKnowledge,
+    CrossCrateTrailerTransport::Upgrade,
+  ] {
+    let server = rttp::Http::server("127.0.0.1:0")
+      .expect("bind interleaved CONTINUATION matrix server")
+      .with_read_timeout(Some(Duration::from_secs(2)))
+      .with_write_timeout(Some(Duration::from_secs(2)));
+    let addr = server
+      .local_addr()
+      .expect("interleaved CONTINUATION matrix addr");
+    let (tx, rx) = mpsc::channel();
+
+    let handle = thread::spawn(move || {
+      let result = server.accept_one(|request| {
+        tx.send(request.target().to_string())
+          .expect("send unexpected interleaved CONTINUATION dispatch");
+        HttpResponse::ok("unexpected interleaved continuation")
+      });
+      let error = result.expect_err("interleaved CONTINUATION must reject the h2c connection");
+      assert!(
+        matches!(
+          error.kind(),
+          io::ErrorKind::InvalidData
+            | io::ErrorKind::UnexpectedEof
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::TimedOut
+        ),
+        "unexpected {} interleaved CONTINUATION error: {error}",
+        transport.name()
+      );
+    });
+
+    let mut stream = transport.connect(addr);
+    let stream_id = transport.request_stream_id();
+    write_h2_frame(
+      &mut stream,
+      H2_FRAME_HEADERS,
+      H2_FLAG_END_STREAM,
+      stream_id,
+      &h2_get_headers(
+        format!("/interleaved-continuation/{}", transport.name()).as_bytes(),
+        addr.to_string().as_bytes(),
+      ),
+    );
+    write_h2_frame(
+      &mut stream,
+      H2_FRAME_DATA,
+      H2_FLAG_END_STREAM,
+      stream_id,
+      b"illegal while header block is open",
+    );
+    stream
+      .shutdown(std::net::Shutdown::Write)
+      .expect("shutdown interleaved CONTINUATION writer");
+
+    handle
+      .join()
+      .expect("interleaved CONTINUATION matrix server thread");
+    assert!(
+      rx.try_recv().is_err(),
+      "{} interleaved CONTINUATION must not dispatch",
+      transport.name()
+    );
+  }
 }
 
 #[test]
