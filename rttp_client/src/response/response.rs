@@ -14,6 +14,8 @@ const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
 const MAX_ALLOW_VALUE_BYTES: usize = 64 * 1024;
 const MAX_ALLOW_METHODS: usize = 256;
 const MAX_RETRY_AFTER_VALUE_BYTES: usize = 64 * 1024;
+const MAX_CONTENT_LANGUAGE_VALUE_BYTES: usize = 64 * 1024;
+const MAX_CONTENT_LANGUAGE_TAGS: usize = 256;
 const MAX_VARY_VALUE_BYTES: usize = 64 * 1024;
 const MAX_VARY_FIELD_NAMES: usize = 256;
 
@@ -144,6 +146,14 @@ impl Response {
     self
       .header_value("content-range")
       .and_then(ContentRange::parse)
+  }
+
+  pub fn content_language(&self) -> error::Result<Option<ContentLanguage>> {
+    let values = self.header_values("content-language");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    ContentLanguage::parse_values(values.into_iter().map(String::as_str)).map(Some)
   }
 
   pub fn cache_control(&self) -> error::Result<Option<CacheControl>> {
@@ -420,6 +430,59 @@ fn parse_complete_length(value: &str) -> Option<Option<u64>> {
     return Some(None);
   }
   value.parse::<u64>().ok().map(Some)
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContentLanguage {
+  tags: Vec<String>,
+}
+
+impl ContentLanguage {
+  pub fn parse(value: impl AsRef<str>) -> error::Result<Self> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  fn parse_values<'a, I>(values: I) -> error::Result<Self>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut tags = Vec::new();
+    let mut seen = HashSet::new();
+
+    for value in values {
+      if value.len() > MAX_CONTENT_LANGUAGE_VALUE_BYTES {
+        return Err(error::bad_response(
+          "Content-Language header value is too large",
+        ));
+      }
+
+      for tag in value.split(',') {
+        let tag = tag.trim();
+        if tag.is_empty() || !is_language_range(tag) {
+          return Err(error::bad_response("Invalid Content-Language tag"));
+        }
+        if tags.len() >= MAX_CONTENT_LANGUAGE_TAGS {
+          return Err(error::bad_response("Too many Content-Language tags"));
+        }
+
+        let normalized = tag.to_ascii_lowercase();
+        if !seen.insert(normalized) {
+          return Err(error::bad_response("Duplicate Content-Language tag"));
+        }
+        tags.push(tag.to_string());
+      }
+    }
+
+    if tags.is_empty() {
+      return Err(error::bad_response("Invalid Content-Language tag"));
+    }
+
+    Ok(Self { tags })
+  }
+
+  pub fn tags(&self) -> Vec<&str> {
+    self.tags.iter().map(String::as_str).collect()
+  }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -831,6 +894,30 @@ fn split_field_names(value: &str) -> Vec<String> {
     .filter(|field| !field.is_empty())
     .map(ToString::to_string)
     .collect()
+}
+
+fn is_language_range(value: &str) -> bool {
+  if value == "*" {
+    return true;
+  }
+
+  let mut subtags = value.split('-');
+  let Some(primary) = subtags.next() else {
+    return false;
+  };
+  if !is_language_primary_subtag(primary) {
+    return false;
+  }
+
+  subtags.all(is_language_subtag)
+}
+
+fn is_language_primary_subtag(value: &str) -> bool {
+  (1..=8).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_alphabetic())
+}
+
+fn is_language_subtag(value: &str) -> bool {
+  (1..=8).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_alphanumeric())
 }
 
 fn is_token(value: &str) -> bool {
