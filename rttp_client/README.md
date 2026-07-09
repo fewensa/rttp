@@ -124,6 +124,28 @@ policy enforcement, or automatic conditional requests. Directives such as
 `max-age`, `s-maxage`, `no-cache`, `must-revalidate`, and extension directives
 are exposed as parsed metadata only.
 
+## Bounded HTTP/1.1 Vary behavior
+
+`Response::vary()` parses one or more response `Vary` header fields into
+`Vary` metadata. A parsed value is either the wildcard form, exposed by
+`Vary::is_any()`, or a bounded list of normalized field names exposed by
+`Vary::field_names()` and checked with `Vary::contains_field_name(name)`.
+Field-name comparison is case-insensitive, and parsed field names are
+deduplicated in lowercase form.
+
+`Vary: *` is treated as a distinct wildcard result: it means the response
+cannot be selected by comparing a bounded set of request header fields. The
+wildcard form cannot be combined with named fields. Each `Vary` field value is
+limited to 64 KiB, the parsed field-name list is limited to 256 entries, and
+each named member must be a valid HTTP token. Empty members, malformed field
+names, mixed wildcard/named values, oversized values, and too many field names
+make `Response::vary()` return an error while leaving the original response
+headers and body available through the ordinary response APIs.
+
+The helper is metadata-only. `rttp_client` does not store cache entries, match
+stored responses, persist cache keys, replay requests, enforce shared-cache
+policy, or issue automatic conditional requests based on `Vary`.
+
 ## Bounded trailer behavior
 
 Trailer support is explicit and bounded by protocol path. Use
@@ -195,6 +217,7 @@ header-block model.
 | Byte ranges | `range`, `range_from`, `range_suffix`, `if_range_etag`, and `if_range_date` emit bounded HTTP/1.1 range request metadata; `Response::content_range`, `is_partial_content`, and `is_range_not_satisfiable` expose `206` and `416` metadata | No client-side `If-Range` evaluation, automatic retry, cache storage, multipart range generation, or automatic cache validation policy |
 | Conditional requests | `if_none_match`, `if_match`, `if_modified_since`, and `if_unmodified_since` emit bounded HTTP/1.1 validators; `Response::is_not_modified`, `is_precondition_failed`, `etag`, and `last_modified` expose `304`/`412` metadata | One ETag validator per helper call, `If-Range` is range-scoped, no cache storage, no automatic revalidation, and no cache-control engine |
 | Cache-Control | `Response::cache_control` parses bounded response directives, numeric freshness fields, quoted field-name lists, and extension directives into metadata helpers | No cache storage, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, or automatic conditional requests |
+| Vary | `Response::vary` parses bounded response `Vary` fields into wildcard or normalized case-insensitive field-name metadata | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | Trailers | Chunked response trailers are exposed for blocking and async APIs; streaming chunked uploads can send declared request trailers | Application metadata trailers such as `X-Trace` are allowed; pseudo-header, connection-specific, routing, authentication/cookie, and framing trailer fields are rejected |
 | Bounded h2c client | With `http2`, direct `socket2` h2c sends GET, HEAD, bodyless DELETE, OPTIONS, or TRACE, buffered POST, PUT, or PATCH requests, and opt-in RFC 8441 extended CONNECT request HEADERS via `http2_extended_connect`, opens at most one request stream, supports prior-knowledge with `emit_http2_prior_knowledge`, supports explicit HTTP/1.1 `Upgrade: h2c` negotiation with `emit_http2_upgrade`, advertises `SETTINGS_ENABLE_PUSH = 0`, advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1` only for the explicit extended CONNECT path, validates received `SETTINGS_ENABLE_PUSH` values as only `0` or `1`, honors initial peer `SETTINGS_MAX_CONCURRENT_STREAMS` by failing before request HEADERS when the peer allows zero streams, honors peer-advertised `SETTINGS_MAX_HEADER_LIST_SIZE` request metadata limits, accepts only legal `SETTINGS_MAX_FRAME_SIZE` values from 16,384 through 16,777,215 bytes, splits outbound HEADERS, DATA, and trailers to the active peer frame-size limit, rejects oversized inbound frames when a configured local frame-size limit is exceeded, bounds HPACK dynamic table use with `SETTINGS_HEADER_TABLE_SIZE`, strips HTTP/1.x connection-specific request fields before emission, rejects connection-specific peer response fields, suppresses HEAD response bodies, treats `RST_STREAM` on the active stream as a bounded reset/cancellation signal, acknowledges valid PING frames with matching opaque data, DATA bodies, trailers, HPACK static Huffman strings, bounded large header blocks, padded incoming frames, `GOAWAY` shutdown boundaries, PRIORITY metadata validation without scheduling, HTTP/2-allowed unknown/extension frame ignoring inside this bounded path, reserved stream-id high-bit normalization, and conservative DATA flow control | Ordinary `CONNECT`, header-configured `:protocol` metadata, non-h2c HTTP/1.1 `Upgrade` handoff requests, and proxies are rejected deterministically, and `PUSH_PROMISE`/server push is rejected instead of managed; bounded direct h2c only, with no public cancellation callback API, no dynamic policy API, no extension callback API, no full extension negotiation, TLS ALPN, external h2 integration, proxy tunneling to h2, proxy h2, tunnel handoff, connection pooling, persistent HTTP/2 session management, automatic retry, server push, full stream state machine, unbounded multiplex scheduling, general multiplexing, priority scheduling, request bodies or trailers for extended CONNECT, or request bodies for GET, HEAD, DELETE, OPTIONS, or TRACE |
 
