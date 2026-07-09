@@ -16,6 +16,7 @@ const MAX_ALLOW_METHODS: usize = 256;
 const MAX_ACCEPT_RANGES_VALUE_BYTES: usize = 64 * 1024;
 const MAX_ACCEPT_RANGE_UNITS: usize = 256;
 const MAX_RETRY_AFTER_VALUE_BYTES: usize = 64 * 1024;
+const MAX_CONTENT_LOCATION_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_LANGUAGE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_LANGUAGE_TAGS: usize = 256;
 const MAX_VARY_VALUE_BYTES: usize = 64 * 1024;
@@ -156,6 +157,17 @@ impl Response {
     self
       .header_value("content-range")
       .and_then(ContentRange::parse)
+  }
+
+  pub fn content_location(&self) -> error::Result<Option<ContentLocation>> {
+    let values = self.header_values("content-location");
+    match values.as_slice() {
+      [] => Ok(None),
+      [value] => ContentLocation::parse(value).map(Some),
+      _ => Err(error::bad_response(
+        "Duplicate Content-Location header values",
+      )),
+    }
   }
 
   pub fn content_language(&self) -> error::Result<Option<ContentLanguage>> {
@@ -506,6 +518,53 @@ fn parse_complete_length(value: &str) -> Option<Option<u64>> {
     return Some(None);
   }
   value.parse::<u64>().ok().map(Some)
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContentLocation {
+  value: String,
+}
+
+impl ContentLocation {
+  pub fn parse(value: impl AsRef<str>) -> error::Result<Self> {
+    let value = value.as_ref();
+    if value.len() > MAX_CONTENT_LOCATION_VALUE_BYTES {
+      return Err(error::bad_response(
+        "Content-Location header value is too large",
+      ));
+    }
+
+    let value = trim_http_optional_whitespace(value);
+    if value.is_empty() {
+      return Err(error::bad_response("Invalid Content-Location value"));
+    }
+    if !is_content_location_field_value(value) {
+      return Err(error::bad_response("Invalid Content-Location value"));
+    }
+
+    if Url::parse(value).is_ok() {
+      return Ok(Self {
+        value: value.to_string(),
+      });
+    }
+
+    let base = Url::parse("http://example.invalid/").expect("valid internal base URL");
+    if !is_relative_uri_reference_field_value(value) {
+      return Err(error::bad_response("Invalid Content-Location value"));
+    }
+    Url::options()
+      .base_url(Some(&base))
+      .parse(value)
+      .map_err(|_| error::bad_response("Invalid Content-Location value"))?;
+
+    Ok(Self {
+      value: value.to_string(),
+    })
+  }
+
+  pub fn as_str(&self) -> &str {
+    &self.value
+  }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -970,6 +1029,100 @@ fn split_field_names(value: &str) -> Vec<String> {
     .filter(|field| !field.is_empty())
     .map(ToString::to_string)
     .collect()
+}
+
+fn trim_http_optional_whitespace(value: &str) -> &str {
+  value.trim_matches(|ch| matches!(ch, ' ' | '\t'))
+}
+
+fn is_content_location_field_value(value: &str) -> bool {
+  value.bytes().all(|byte| {
+    byte.is_ascii_graphic() && byte != b'"' && byte != b'<' && byte != b'>' && byte != b'\\'
+  })
+}
+
+fn is_relative_uri_reference_field_value(value: &str) -> bool {
+  let mut fragment_seen = false;
+  let mut query_seen = false;
+  let mut bytes = value.bytes().peekable();
+
+  while let Some(byte) = bytes.next() {
+    match byte {
+      b'%' => {
+        let Some(first) = bytes.next() else {
+          return false;
+        };
+        let Some(second) = bytes.next() else {
+          return false;
+        };
+        if !first.is_ascii_hexdigit() || !second.is_ascii_hexdigit() {
+          return false;
+        }
+      }
+      b'#' => {
+        if fragment_seen {
+          return false;
+        }
+        fragment_seen = true;
+      }
+      b'?' => {
+        if !fragment_seen {
+          query_seen = true;
+        }
+      }
+      _ => {
+        if fragment_seen {
+          if !is_fragment_char(byte) {
+            return false;
+          }
+        } else if query_seen {
+          if !is_query_char(byte) {
+            return false;
+          }
+        } else if !is_uri_path_char(byte) {
+          return false;
+        }
+      }
+    }
+  }
+
+  true
+}
+
+fn is_uri_path_char(byte: u8) -> bool {
+  is_uri_pchar(byte) || byte == b'/'
+}
+
+fn is_query_char(byte: u8) -> bool {
+  is_uri_pchar(byte) || matches!(byte, b'/' | b'?')
+}
+
+fn is_fragment_char(byte: u8) -> bool {
+  is_query_char(byte)
+}
+
+fn is_uri_pchar(byte: u8) -> bool {
+  byte.is_ascii_alphanumeric()
+    || matches!(
+      byte,
+      b'-'
+        | b'.'
+        | b'_'
+        | b'~'
+        | b'!'
+        | b'$'
+        | b'&'
+        | b'\''
+        | b'('
+        | b')'
+        | b'*'
+        | b'+'
+        | b','
+        | b';'
+        | b'='
+        | b':'
+        | b'@'
+    )
 }
 
 fn is_language_range(value: &str) -> bool {

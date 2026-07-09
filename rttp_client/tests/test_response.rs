@@ -1,4 +1,4 @@
-use rttp_client::response::Response;
+use rttp_client::response::{ContentLocation, Response};
 use rttp_client::types::{Cookie, RoUrl};
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -208,6 +208,160 @@ fn test_parse_conditional_response_metadata() {
   assert!(response.is_precondition_failed());
   assert_eq!(Some(&"W/\"stale\"".to_string()), response.etag());
   assert_eq!(None, response.last_modified());
+}
+
+#[test]
+fn test_parse_content_location_response_helper_accepts_uri_references() {
+  let cases = [
+    (
+      "https://cdn.example.test/images/logo.png?size=small#v1",
+      "absolute URI",
+    ),
+    (
+      "http://[::1]/images/logo.png",
+      "absolute URI with IPv6 authority",
+    ),
+    ("/images/logo.png?size=small#v1", "absolute path"),
+    ("images/logo.png?size=small#v1", "relative path reference"),
+    ("../images/logo.png", "relative dot segment reference"),
+    ("?variant=small", "query-only relative reference"),
+  ];
+
+  for (value, name) in cases {
+    let raw =
+      format!("HTTP/1.1 200 OK\r\nContent-Location: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(
+      RoUrl::with("https://example.test/base/page"),
+      raw.into_bytes(),
+    )
+    .unwrap_or_else(|err| panic!("{name} response should parse: {err}"));
+    let content_location = response
+      .content_location()
+      .unwrap_or_else(|err| panic!("{name} content-location should parse: {err}"))
+      .unwrap_or_else(|| panic!("{name} content-location should be present"));
+
+    assert_eq!(value, content_location.as_str());
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Content-Location")
+    );
+  }
+}
+
+#[test]
+fn test_parse_content_location_response_helper_trims_outer_whitespace_and_allows_absent() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Location:   /representations/current.json   \r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/base/page"),
+    raw.as_bytes().to_vec(),
+  )
+  .expect("parse response with content-location");
+  let content_location = response
+    .content_location()
+    .expect("valid content-location should parse")
+    .expect("content-location header should be present");
+
+  assert_eq!("/representations/current.json", content_location.as_str());
+  assert_eq!(
+    Some(&"/representations/current.json".to_string()),
+    response.header_value("Content-Location")
+  );
+
+  let raw = concat!("HTTP/1.1 200 OK\r\n", "Content-Length: 2\r\n", "\r\n", "OK");
+  let response = Response::new(
+    RoUrl::with("https://example.test/base/page"),
+    raw.as_bytes().to_vec(),
+  )
+  .expect("parse response without content-location");
+  assert_eq!(
+    None,
+    response
+      .content_location()
+      .expect("absent content-location should parse")
+  );
+}
+
+#[test]
+fn test_parse_content_location_rejects_invalid_helper_values_without_rejecting_response() {
+  let invalid_values = ["", "http://[::1", "not valid", "/bad path", "ok\u{7f}"];
+
+  for value in invalid_values {
+    let raw =
+      format!("HTTP/1.1 200 OK\r\nContent-Location: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(
+      RoUrl::with("https://example.test/base/page"),
+      raw.into_bytes(),
+    )
+    .expect("raw response remains usable");
+
+    assert!(
+      response.content_location().is_err(),
+      "content-location helper should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.trim().to_string()),
+      response.header_value("Content-Location")
+    );
+  }
+}
+
+#[test]
+fn test_parse_content_location_rejects_duplicate_and_oversized_values() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Location: /one\r\n",
+    "content-location: /two\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/base/page"),
+    raw.as_bytes().to_vec(),
+  )
+  .expect("raw response with duplicate content-location remains usable");
+
+  assert!(
+    response.content_location().is_err(),
+    "content-location helper should reject duplicate singleton headers"
+  );
+  assert_eq!(
+    vec![&"/one".to_string(), &"/two".to_string()],
+    response.header_values("Content-Location")
+  );
+
+  let oversized = format!("/{}", "a".repeat(64 * 1024));
+  let raw =
+    format!("HTTP/1.1 200 OK\r\nContent-Location: {oversized}\r\nContent-Length: 2\r\n\r\nOK");
+  let response = Response::new(
+    RoUrl::with("https://example.test/base/page"),
+    raw.into_bytes(),
+  )
+  .expect("raw response with oversized content-location remains usable");
+
+  assert!(
+    response.content_location().is_err(),
+    "content-location helper should reject oversized values"
+  );
+  assert_eq!(Some(&oversized), response.header_value("Content-Location"));
+}
+
+#[test]
+fn test_parse_content_location_rejects_control_characters_and_crlf_injection() {
+  let invalid_values = ["\r\nLocation: /evil", "/ok\r", "/ok\n", "/ok\tinner"];
+
+  for value in invalid_values {
+    assert!(
+      ContentLocation::parse(value).is_err(),
+      "content-location parser should reject {value:?}"
+    );
+  }
 }
 
 #[test]
