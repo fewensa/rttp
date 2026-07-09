@@ -55,6 +55,39 @@ through `emit_http2_upgrade` and replaces the initial HTTP/1.1 exchange with
 the bounded HTTP/2 stream model after `101 Switching Protocols`; non-h2c
 Upgrade handoffs remain caller-owned bytes.
 
+### Bounded HTTP/2 CONTINUATION behavior
+
+With the `http2` feature enabled, RTTP supports large HTTP/2 header blocks by
+splitting outbound HEADERS or trailing HEADERS into an initial HEADERS frame
+followed by CONTINUATION frames when the encoded HPACK block is larger than the
+active peer `SETTINGS_MAX_FRAME_SIZE`. The same bounded decoder reassembles
+inbound HEADERS plus CONTINUATION fragments before normal HPACK decoding and
+header-list validation. This applies to request headers, response headers, and
+trailing HEADERS on the bounded h2c paths.
+
+Frame-size settings remain frame limits, not metadata-size limits. A legal
+peer `SETTINGS_MAX_FRAME_SIZE` value from 16,384 through 16,777,215 bytes
+controls how RTTP fragments outbound header blocks, DATA, and trailing
+HEADERS. Inbound frames larger than the active local frame-size limit are
+rejected even if their decoded metadata would otherwise be acceptable. Decoded
+metadata is still bounded separately by `SETTINGS_MAX_HEADER_LIST_SIZE` and by
+the HPACK dynamic table limits documented for the client and server paths.
+
+CONTINUATION ordering is strict. Once a HEADERS frame starts a header block
+without `END_HEADERS`, only CONTINUATION frames for that same stream may appear
+until `END_HEADERS` closes the block. RTTP rejects orphan CONTINUATION frames,
+CONTINUATION on stream 0, CONTINUATION on the wrong stream, interleaved DATA or
+control frames before `END_HEADERS`, and EOF before a pending header block is
+closed. Rejected header-block ordering failures happen before handler dispatch
+or before a client response is returned.
+
+The behavior is the same h2c stream model after both entry points:
+`emit_http2_prior_knowledge` and explicit `emit_http2_upgrade` on the client,
+and HTTP/2 prior-knowledge preface detection or valid `Upgrade: h2c` on the
+server. Generic HTTP/1.1 `Upgrade`, `CONNECT`, proxy, TLS ALPN, server push,
+extension callback, persistent session, and unbounded multiplexing paths do not
+gain additional HTTP/2 header-block handling.
+
 ### Tested client protocol coverage
 
 | area | tested coverage | limits |

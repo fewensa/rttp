@@ -55,6 +55,38 @@ through `emit_http2_upgrade` and replaces the initial HTTP/1.1 exchange with
 the bounded HTTP/2 stream model after `101 Switching Protocols`; non-h2c
 Upgrade handoffs remain caller-owned bytes.
 
+## Bounded HTTP/2 CONTINUATION behavior
+
+With the `http2` feature enabled, `rttp_client` supports large HTTP/2 header
+blocks by fragmenting outbound request HEADERS and trailing HEADERS into an
+initial HEADERS frame plus CONTINUATION frames whenever the encoded HPACK block
+exceeds the active peer `SETTINGS_MAX_FRAME_SIZE`. It reassembles inbound
+response HEADERS or trailing HEADERS that arrive as HEADERS plus CONTINUATION
+fragments before HPACK decoding, header-list-size enforcement, and trailer
+validation.
+
+The active frame-size limit controls only frame payload size. Legal peer
+`SETTINGS_MAX_FRAME_SIZE` values from 16,384 through 16,777,215 bytes become
+the outbound fragmentation boundary for request HEADERS, DATA, and trailing
+HEADERS. A configured local `http2_max_frame_size` advertises the client's
+inbound limit and causes larger inbound frame payloads to be rejected.
+`SETTINGS_MAX_HEADER_LIST_SIZE` and `SETTINGS_HEADER_TABLE_SIZE` remain the
+separate decoded-metadata and HPACK compression-state limits.
+
+CONTINUATION sequencing is enforced before a response is returned. After a
+response HEADERS frame starts a header block without `END_HEADERS`, the client
+requires the following frames for that pending block to be CONTINUATION frames
+on the same stream until `END_HEADERS`. Orphan CONTINUATION frames,
+wrong-stream CONTINUATION frames, interleaved non-CONTINUATION frames, and EOF
+before `END_HEADERS` are rejected deterministically.
+
+The same behavior applies to both bounded h2c client entry points:
+`emit_http2_prior_knowledge` and explicit `emit_http2_upgrade` after a valid
+`101 Switching Protocols` h2c negotiation. Generic HTTP/1.1 `upgrade()` and
+`connect()` handoffs, proxies, TLS ALPN, persistent sessions, server push,
+extension callbacks, and general multiplexing stay outside this bounded
+header-block model.
+
 ## Tested protocol coverage
 
 | area | tested coverage | limits |
