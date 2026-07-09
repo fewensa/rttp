@@ -4004,6 +4004,172 @@ fn wrapper_http2_prior_knowledge_large_request_header_reaches_socket2_server() {
 }
 
 #[test]
+fn prior_knowledge_server_reassembles_request_headers_split_by_continuation() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send((
+          request.version().to_string(),
+          request.target().to_string(),
+          request.header("x-split-179").map(str::to_string),
+        ))
+        .expect("send parsed split h2 request header");
+        HttpResponse::ok("split request headers")
+      })
+      .expect("serve split h2 request headers");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set client read timeout");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+
+  let mut headers = h2_get_headers(b"/split-request-headers", addr.to_string().as_bytes());
+  for index in 0..180 {
+    headers.extend(h2_literal_new_name(
+      format!("x-split-{index:03}").as_bytes(),
+      format!("value-{index:03}-{}", "r".repeat(84)).as_bytes(),
+    ));
+  }
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_STREAM,
+    1,
+    &headers[..64],
+  );
+  let mut continuation_chunks = headers[64..].chunks(4096).peekable();
+  while let Some(chunk) = continuation_chunks.next() {
+    let flags = if continuation_chunks.peek().is_none() {
+      H2_FLAG_END_HEADERS
+    } else {
+      0
+    };
+    write_h2_frame(&mut stream, H2_FRAME_CONTINUATION, flags, 1, chunk);
+  }
+  stream.flush().expect("flush split h2 request headers");
+
+  let response_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  let response_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(b"split request headers", response_body.payload.as_slice());
+  assert_eq!(
+    (
+      "HTTP/2".to_string(),
+      "/split-request-headers".to_string(),
+      Some(format!("value-179-{}", "r".repeat(84)))
+    ),
+    rx.recv().expect("receive parsed split h2 request header")
+  );
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn prior_knowledge_server_splits_large_response_headers_to_peer_max_frame_size() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        assert_eq!("/large-response-headers", request.target());
+        let mut response = HttpResponse::ok("large response headers");
+        for index in 0..420 {
+          response = response.header(
+            format!("X-Split-{index:03}"),
+            format!("value-{index:03}-{}", "s".repeat(84)),
+          );
+        }
+        response
+      })
+      .expect("serve large split h2 response headers");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set client read timeout");
+  complete_h2_server_handshake_with_settings(
+    &mut stream,
+    &h2_setting(H2_SETTINGS_MAX_FRAME_SIZE, H2_DEFAULT_MAX_FRAME_SIZE as u32),
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_headers(b"/large-response-headers", addr.to_string().as_bytes()),
+  );
+  stream.flush().expect("flush h2 request");
+
+  let first_headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, first_headers.frame_type);
+  assert_eq!(1, first_headers.stream_id);
+  assert!(first_headers.payload.len() <= H2_DEFAULT_MAX_FRAME_SIZE);
+  assert_eq!(0, first_headers.flags & H2_FLAG_END_HEADERS);
+
+  let mut saw_final_continuation = false;
+  for _ in 0..8 {
+    let frame = read_h2_frame(&mut stream);
+    assert_eq!(1, frame.stream_id);
+    assert!(frame.payload.len() <= H2_DEFAULT_MAX_FRAME_SIZE);
+    if frame.frame_type == H2_FRAME_CONTINUATION
+      && frame.flags & H2_FLAG_END_HEADERS == H2_FLAG_END_HEADERS
+    {
+      saw_final_continuation = true;
+      break;
+    }
+  }
+  assert!(
+    saw_final_continuation,
+    "large response headers should be split with CONTINUATION frames"
+  );
+
+  let response_body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(b"large response headers", response_body.payload.as_slice());
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn prior_knowledge_server_rejects_continuation_on_stream_zero_before_handler() {
+  assert_malformed_h2_request_rejected_before_handler(|stream, addr| {
+    write_h2_frame(
+      stream,
+      H2_FRAME_CONTINUATION,
+      H2_FLAG_END_HEADERS,
+      0,
+      b"orphaned header block",
+    );
+    write_h2_frame(
+      stream,
+      H2_FRAME_HEADERS,
+      H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+      1,
+      &h2_get_headers(
+        b"/ignored-after-bad-continuation",
+        addr.to_string().as_bytes(),
+      ),
+    );
+  });
+}
+
+#[test]
 fn wrapper_http2_prior_knowledge_huffman_request_headers_reach_socket2_server_decoded() {
   let server = rttp::Http::server("127.0.0.1:0")
     .expect("bind server")
