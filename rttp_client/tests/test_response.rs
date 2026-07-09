@@ -1,6 +1,15 @@
-use rttp_client::response::{ContentDisposition, ContentLocation, ContentType, Response};
+use rttp_client::response::{
+  ContentDisposition, ContentEncoding, ContentLocation, ContentType, Response,
+};
 use rttp_client::types::{Cookie, RoUrl};
+use std::io::Write;
 use std::time::{Duration, UNIX_EPOCH};
+
+fn gzip_bytes(bytes: &[u8]) -> Vec<u8> {
+  let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+  encoder.write_all(bytes).expect("write gzip fixture");
+  encoder.finish().expect("finish gzip fixture")
+}
 
 #[test]
 fn test_parse_cookie_name_can_match_attribute_name() {
@@ -590,6 +599,125 @@ fn test_parse_content_disposition_rejects_duplicate_singleton_duplicate_paramete
   assert!(
     response.content_disposition().is_err(),
     "content-disposition helper should reject too many parameters"
+  );
+}
+
+#[test]
+fn test_parse_content_encoding_response_helper_preserves_order_across_fields() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Encoding: compress, br\r\n",
+    "content-encoding: identity\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response with content-encoding remains usable");
+
+  let content_encoding = response
+    .content_encoding()
+    .expect("valid content-encoding should parse")
+    .expect("content-encoding header should be present");
+
+  assert_eq!(
+    vec!["compress", "br", "identity"],
+    content_encoding.codings()
+  );
+  assert_eq!(
+    vec![&"compress, br".to_string(), &"identity".to_string()],
+    response.header_values("Content-Encoding")
+  );
+  assert_eq!("OK", response.body().string().unwrap());
+
+  assert_eq!(
+    vec!["gzip", "br"],
+    ContentEncoding::parse("gzip, br")
+      .expect("common codings should parse")
+      .codings()
+  );
+}
+
+#[test]
+fn test_content_encoding_runtime_decodes_only_single_supported_gzip_coding() {
+  let body = gzip_bytes(b"OK");
+  let mut raw = concat!("HTTP/1.1 200 OK\r\n", "Content-Encoding: gzip\r\n")
+    .as_bytes()
+    .to_vec();
+  raw.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
+  raw.extend_from_slice(&body);
+
+  let response = Response::new(RoUrl::with("https://example.test"), raw)
+    .expect("single gzip response should decode");
+
+  assert_eq!("OK", response.body().string().unwrap());
+  assert_eq!(
+    vec!["gzip"],
+    response
+      .content_encoding()
+      .expect("content-encoding should parse")
+      .expect("content-encoding should be present")
+      .codings()
+  );
+}
+
+#[test]
+fn test_content_encoding_runtime_leaves_stacked_or_unsupported_codings_undecoded() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Encoding: gzip, br\r\n",
+    "Content-Length: 7\r\n",
+    "\r\n",
+    "encoded"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("stacked unsupported content-encoding should remain usable");
+
+  assert_eq!("encoded", response.body().string().unwrap());
+  assert_eq!(
+    vec!["gzip", "br"],
+    response
+      .content_encoding()
+      .expect("content-encoding should parse")
+      .expect("content-encoding should be present")
+      .codings()
+  );
+}
+
+#[test]
+fn test_parse_content_encoding_rejects_invalid_duplicate_and_excessive_values() {
+  for value in [
+    "",
+    "compress,",
+    ", compress",
+    "compress,,br",
+    "bad coding",
+    "compress, g:zip",
+  ] {
+    let raw =
+      format!("HTTP/1.1 200 OK\r\nContent-Encoding: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response remains usable");
+
+    assert!(
+      response.content_encoding().is_err(),
+      "content-encoding helper should reject {value:?}"
+    );
+    assert_eq!("OK", response.body().string().unwrap());
+  }
+
+  assert!(
+    ContentEncoding::parse("gzip, br, GZIP").is_err(),
+    "content-encoding helper should reject duplicate codings"
+  );
+
+  let too_many = (0..257)
+    .map(|index| format!("coding{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  assert!(
+    ContentEncoding::parse(too_many).is_err(),
+    "content-encoding helper should reject excessive codings"
   );
 }
 
