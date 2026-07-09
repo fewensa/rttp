@@ -40,9 +40,20 @@ with the generic header API for cases outside those helpers.
 `Response::is_partial_content()` and `Response::is_range_not_satisfiable()`.
 `Response::content_range()` parses `Content-Range` into `ContentRange`, using
 `start` and `end` for satisfiable ranges such as `bytes 10-19/200`, and no
-`start` or `end` for unsatisfied ranges such as `bytes */200`. RTTP does not
-evaluate `If-Range`, retry range requests, or apply client cache validation
-policy.
+`start` or `end` for unsatisfied ranges such as `bytes */200`.
+
+`If-Range` is available through bounded request helpers that compose with the
+range helpers: `if_range_etag(etag)` writes a single strong entity-tag
+validator, and `if_range_date(http_date)` writes an HTTP-date validator. The
+ETag helper rejects weak tags, `*`, lists, and malformed tag syntax before a
+socket is opened; the date helper requires a value that parses as an HTTP-date.
+Manual `If-Range` headers remain available through the generic header API for
+cases outside the helper validation.
+
+On the client side, these APIs only emit request metadata and expose response
+metadata. RTTP does not evaluate `If-Range`, automatically retry a failed or
+full-response range request, store cached responses, synthesize multipart range
+requests, or apply automatic cache validation policy.
 
 ### Bounded HTTP/1.1 conditional requests
 
@@ -61,10 +72,11 @@ Responses expose conditional metadata with `Response::is_not_modified()` for
 misleading body framing is present; `412` remains an ordinary response status
 for the caller to handle.
 
-These helpers do not add cache storage, automatic revalidation, `If-Range`
-handling, or a cache-control engine. RTTP only emits bounded request headers
-and exposes response metadata; cache persistence and validation policy remain
-application-owned.
+These helpers do not add cache storage, automatic revalidation, or a
+cache-control engine. `If-Range` is range-scoped and uses the dedicated
+`if_range_etag` and `if_range_date` helpers above. RTTP only emits bounded
+request headers and exposes response metadata; cache persistence and validation
+policy remain application-owned.
 
 ### Bounded trailer behavior
 
@@ -135,8 +147,8 @@ gain additional HTTP/2 header-block handling.
 | HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and `Expect: 100-continue` | SOCKS handshakes are delegated to the `socks` crate |
 | Upgrade and tunnel handoff | `CONNECT` returns the tunnel socket after a successful `200`; `upgrade()` returns the socket after `101 Switching Protocols` and skips interim `1xx` responses | Upgraded protocols are handed to the caller and are not parsed by `rttp_client` |
 | Redirects | Auto-redirect covers 301, 302, 303, 307, and 308 method/body behavior, relative and absolute `Location` resolution, same- and cross-authority header handling, loop detection, and redirect bounds | Redirects are HTTP client behavior, not a browser policy implementation |
-| Byte ranges | `range`, `range_from`, and `range_suffix` emit single HTTP/1.1 `bytes` ranges; `Response::content_range`, `is_partial_content`, and `is_range_not_satisfiable` expose `206` and `416` metadata | No automatic `If-Range`, multipart range generation, retry, or cache validation policy |
-| Conditional requests | `if_none_match`, `if_match`, `if_modified_since`, and `if_unmodified_since` emit bounded HTTP/1.1 validators; `Response::is_not_modified`, `is_precondition_failed`, `etag`, and `last_modified` expose `304`/`412` metadata | One ETag validator per helper call, no `If-Range`, no cache storage, no automatic revalidation, and no cache-control engine |
+| Byte ranges | `range`, `range_from`, `range_suffix`, `if_range_etag`, and `if_range_date` emit bounded HTTP/1.1 range request metadata; `Response::content_range`, `is_partial_content`, and `is_range_not_satisfiable` expose `206` and `416` metadata | No client-side `If-Range` evaluation, automatic retry, cache storage, multipart range generation, or automatic cache validation policy |
+| Conditional requests | `if_none_match`, `if_match`, `if_modified_since`, and `if_unmodified_since` emit bounded HTTP/1.1 validators; `Response::is_not_modified`, `is_precondition_failed`, `etag`, and `last_modified` expose `304`/`412` metadata | One ETag validator per helper call, `If-Range` is range-scoped, no cache storage, no automatic revalidation, and no cache-control engine |
 | Trailers | Chunked response trailers are exposed for blocking and async APIs; streaming chunked uploads can send declared request trailers | Application metadata trailers such as `X-Trace` are allowed; pseudo-header, connection-specific, routing, authentication/cookie, and framing trailer fields are rejected |
 | Bounded h2c client | With `http2`, direct `socket2` h2c sends GET, HEAD, bodyless DELETE, OPTIONS, or TRACE, buffered POST, PUT, or PATCH requests, and opt-in RFC 8441 extended CONNECT request HEADERS via `http2_extended_connect`, opens at most one request stream, supports prior-knowledge with `emit_http2_prior_knowledge`, supports explicit HTTP/1.1 `Upgrade: h2c` negotiation with `emit_http2_upgrade`, advertises `SETTINGS_ENABLE_PUSH = 0`, advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1` only for the explicit extended CONNECT path, validates received `SETTINGS_ENABLE_PUSH` values as only `0` or `1`, honors initial peer `SETTINGS_MAX_CONCURRENT_STREAMS` by failing before request HEADERS when the peer allows zero streams, honors peer-advertised `SETTINGS_MAX_HEADER_LIST_SIZE` request metadata limits, accepts only legal `SETTINGS_MAX_FRAME_SIZE` values from 16,384 through 16,777,215 bytes, splits outbound HEADERS, DATA, and trailers to the active peer frame-size limit, rejects oversized inbound frames when a configured local frame-size limit is exceeded, bounds HPACK dynamic table use with `SETTINGS_HEADER_TABLE_SIZE`, strips HTTP/1.x connection-specific request fields before emission, rejects connection-specific peer response fields, suppresses HEAD response bodies, treats `RST_STREAM` on the active stream as a bounded reset/cancellation signal, acknowledges valid PING frames with matching opaque data, DATA bodies, trailers, HPACK static Huffman strings, bounded large header blocks, padded incoming frames, `GOAWAY` shutdown boundaries, PRIORITY metadata validation without scheduling, HTTP/2-allowed unknown/extension frame ignoring inside this bounded path, reserved stream-id high-bit normalization, and conservative DATA flow control | Ordinary `CONNECT`, header-configured `:protocol` metadata, non-h2c HTTP/1.1 `Upgrade` handoff requests, and proxies are rejected deterministically, and `PUSH_PROMISE`/server push is rejected instead of managed; bounded direct h2c only, with no public cancellation callback API, no dynamic policy API, no extension callback API, no full extension negotiation, TLS ALPN, external h2 integration, proxy tunneling to h2, proxy h2, tunnel handoff, connection pooling, persistent HTTP/2 session management, automatic retry, server push, full stream state machine, unbounded multiplex scheduling, general multiplexing, priority scheduling, request bodies or trailers for extended CONNECT, or request bodies for GET, HEAD, DELETE, OPTIONS, or TRACE |
 
@@ -353,8 +365,9 @@ Application code still chooses the final `200`, `206`, or `416` response.
 Multipart ranges are intentionally not generated: RTTP does not serialize
 `multipart/byteranges` or pick a multipart response for multiple requested
 ranges. Filesystem path normalization, MIME detection, ETag or Last-Modified
-generation, cache behavior, authorization, directory indexes, and dotfile
-visibility remain caller-owned policy before choosing `200`, `206`, or `416`.
+generation, authorization, directory indexes, dotfile visibility, cache
+storage, automatic cache validation, and any automatic retry policy remain
+caller-owned policy before choosing `200`, `206`, or `416`.
 
 ### Bounded HTTP/1.1 conditional requests
 
@@ -517,7 +530,7 @@ TLS or async accept loops.
 | HTTP/1.1 request parsing | Required `Host` validation, origin-form, absolute-form, asterisk-form `OPTIONS`, authority-form `CONNECT`, fixed and chunked bodies, chunk extensions, `Expect: 100-continue`, and obsolete line folding rejection | Intended for local tests and simple embedded use, not full RFC coverage |
 | HTTP/1.1 connection handling | Bounded sequential `serve_requests`, keep-alive and close behavior for HTTP/1.1 and HTTP/1.0, pipelined request boundaries, malformed request rejection before handler dispatch | Blocking listener only; no async accept loop |
 | HTTP/1.1 response framing | Automatic `Content-Length`, explicit chunked responses, bodyless `HEAD`, `101`, `204`, and `304`, response trailers after the terminating chunk | No server TLS |
-| Byte ranges | `HttpByteRange` parses one `bytes` range, `Request::evaluate_if_range` gates it with caller-provided strong ETag or exact HTTP-date metadata, and `HttpResponse::partial_content`/`range_not_satisfiable` serialize `206`/`416` with `Content-Range` | No multipart range serialization, filesystem serving, MIME detection, cache storage, or automatic static-file policy |
+| Byte ranges | `HttpByteRange` parses one `bytes` range, `Request::evaluate_if_range` gates it with caller-provided strong ETag or exact HTTP-date metadata, and `HttpResponse::partial_content`/`range_not_satisfiable` serialize `206`/`416` with `Content-Range` | No multipart range serialization, automatic retry, cache storage, filesystem serving, MIME detection, automatic cache validation, or automatic static-file policy |
 | Conditional requests | `Request::evaluate_conditional`, `evaluate_conditional_request`, `HttpConditionalMetadata`, and `HttpEntityTag` evaluate bounded HTTP/1.1 validators; `HttpResponse::not_modified` and `precondition_failed` serialize `304` and `412` outcomes | No cache storage, static-file serving policy, automatic revalidation, or cache-control engine |
 | Upgrade and tunnel targets | `CONNECT` authority-form requests are accepted as HTTP requests; `HttpResponse::upgrade` can hand an upgraded socket to caller code after a matching request | The server does not implement the upgraded protocol after handoff |
 | Trailers | Chunked request trailers are preserved on `Request`; malformed, oversized, forbidden, and pseudo-header trailers are rejected; response trailers can be serialized for chunked responses | Application metadata trailers are allowed; trailer names that affect connection state, routing, authentication/cookies, framing, or payload processing are rejected |
