@@ -488,6 +488,10 @@ fn complete_h2c_upgrade(stream: &mut TcpStream, authority: &str, settings_payloa
   assert!(response.contains("\r\nConnection: Upgrade\r\n"));
   assert!(response.contains("\r\nUpgrade: h2c\r\n"));
 
+  stream
+    .write_all(H2_PREFACE)
+    .expect("write h2c upgraded client preface");
+
   let settings = read_h2_frame(stream);
   assert_eq!(H2_FRAME_SETTINGS, settings.frame_type);
   assert_eq!(0, settings.flags);
@@ -1729,6 +1733,201 @@ fn h2c_upgrade_rejects_malformed_http2_settings_before_handler_dispatch() {
     H2_SETTINGS_ENABLE_PUSH,
     2,
   )));
+}
+
+#[test]
+fn cross_crate_http11_h2c_upgrade_client_server_matrix() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind cross-crate h2c upgrade server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("cross-crate h2c addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        assert_eq!("HTTP/2", request.version());
+        assert_eq!("GET", request.method());
+        assert_eq!("/upgrade-matrix?mode=http11", request.target());
+        assert_eq!(Some(addr.to_string().as_str()), request.header("host"));
+        HttpResponse::ok("cross-crate h2c upgrade").header("x-cross-crate-path", "http11-upgrade")
+      })
+      .expect("serve cross-crate h2c upgrade request")
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/upgrade-matrix?mode=http11", addr))
+    .emit_http2_upgrade()
+    .expect("cross-crate h2c upgrade response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(
+    Some(&"http11-upgrade".to_string()),
+    response.header_value("x-cross-crate-path")
+  );
+  assert_eq!("cross-crate h2c upgrade", response.body().string().unwrap());
+
+  handle.join().expect("cross-crate h2c upgrade thread");
+}
+
+#[test]
+fn cross_crate_http11_h2c_upgrade_rejects_invalid_or_missing_settings_before_dispatch() {
+  for request in [
+    format!(
+      "GET /bad-h2c HTTP/1.1\r\n\
+       Host: ignored\r\n\
+       Connection: Upgrade, HTTP2-Settings\r\n\
+       Upgrade: h2c\r\n\
+       HTTP2-Settings: {}\r\n\
+       \r\n",
+      base64url_encode_unpadded(&h2_setting(H2_SETTINGS_ENABLE_PUSH, 2))
+    ),
+    "GET /missing-h2c HTTP/1.1\r\n\
+     Host: ignored\r\n\
+     Connection: Upgrade, HTTP2-Settings\r\n\
+     Upgrade: h2c\r\n\
+     \r\n"
+      .to_string(),
+  ] {
+    let server = rttp::Http::server("127.0.0.1:0")
+      .expect("bind cross-crate h2c rejection server")
+      .with_read_timeout(Some(Duration::from_secs(2)))
+      .with_write_timeout(Some(Duration::from_secs(2)));
+    let addr = server.local_addr().expect("h2c rejection addr");
+    let (tx, rx) = mpsc::channel();
+
+    let handle = thread::spawn(move || {
+      server.accept_one(|_| {
+        tx.send(()).expect("send unexpected handler call");
+        HttpResponse::ok("unexpected")
+      })
+    });
+
+    let mut stream = TcpStream::connect(addr).expect("connect h2c rejection server");
+    stream
+      .set_read_timeout(Some(Duration::from_secs(2)))
+      .expect("set h2c rejection read timeout");
+    stream
+      .write_all(
+        request
+          .replace("Host: ignored", &format!("Host: {addr}"))
+          .as_bytes(),
+      )
+      .expect("write h2c rejection request");
+    stream
+      .shutdown(std::net::Shutdown::Write)
+      .expect("shutdown h2c rejection client write");
+
+    let mut response = String::new();
+    stream
+      .read_to_string(&mut response)
+      .expect("read h2c rejection response");
+    assert_eq!(
+      "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+      response
+    );
+
+    let result = handle.join().expect("h2c rejection server thread");
+    assert!(result.is_ok(), "invalid h2c upgrade must map to HTTP 400");
+    assert!(rx.try_recv().is_err(), "handler must not be dispatched");
+  }
+}
+
+#[test]
+fn cross_crate_http11_h2c_upgrade_detection_preserves_non_h2c_upgrade_handoff() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind non-h2c upgrade handoff server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("non-h2c upgrade addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one_handoff(|request| {
+        assert_eq!("GET", request.method());
+        assert_eq!("/chat", request.target());
+        assert_eq!(Some("websocket"), request.header("Upgrade"));
+        rttp::server::HttpHandoff::upgrade(
+          HttpResponse::new(101, "Switching Protocols")
+            .header("Connection", "Upgrade")
+            .header("Upgrade", "websocket"),
+          |mut stream| {
+            stream.write_all(b"server-websocket")?;
+            let mut client_bytes = [0u8; 16];
+            stream.read_exact(&mut client_bytes)?;
+            assert_eq!(b"client-websocket", &client_bytes);
+            Ok(())
+          },
+        )
+      })
+      .expect("serve non-h2c upgrade handoff")
+  });
+
+  let mut upgraded = HttpClient::new()
+    .url(format!("http://{}/chat", addr))
+    .header(("Connection", "Upgrade"))
+    .header(("Upgrade", "websocket"))
+    .upgrade()
+    .expect("non-h2c upgrade handoff");
+  assert_eq!(101, upgraded.response().code());
+  assert_eq!(
+    Some(&"websocket".to_string()),
+    upgraded.response().header_value("Upgrade")
+  );
+
+  let mut server_bytes = [0u8; 16];
+  upgraded
+    .stream_mut()
+    .read_exact(&mut server_bytes)
+    .expect("read non-h2c upgraded server bytes");
+  assert_eq!(b"server-websocket", &server_bytes);
+  upgraded
+    .stream_mut()
+    .write_all(b"client-websocket")
+    .expect("write non-h2c upgraded client bytes");
+
+  handle.join().expect("non-h2c upgrade handoff thread");
+}
+
+#[test]
+fn cross_crate_prior_knowledge_h2c_still_bypasses_http11_upgrade_path() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind prior-knowledge regression server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server
+    .local_addr()
+    .expect("prior-knowledge regression addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        assert_eq!("HTTP/2", request.version());
+        assert_eq!("GET", request.method());
+        assert_eq!("/prior-knowledge-regression", request.target());
+        assert!(request.header("upgrade").is_none());
+        assert!(request.header("http2-settings").is_none());
+        HttpResponse::ok("prior knowledge unchanged")
+      })
+      .expect("serve prior-knowledge regression request")
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/prior-knowledge-regression", addr))
+    .emit_http2_prior_knowledge()
+    .expect("prior-knowledge h2c regression response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("HTTP/2", response.version());
+  assert_eq!(
+    "prior knowledge unchanged",
+    response.body().string().unwrap()
+  );
+
+  handle.join().expect("prior-knowledge regression thread");
 }
 
 #[test]

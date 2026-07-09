@@ -486,6 +486,16 @@ impl HttpServer {
       ))?;
     }
     self.normalize_connection_error(stream.flush())?;
+    if upgraded {
+      let mut preface = [0; HTTP2_CLIENT_PREFACE.len()];
+      self.normalize_connection_error(stream.read_exact(&mut preface))?;
+      if preface != *HTTP2_CLIENT_PREFACE {
+        return Err(io::Error::new(
+          io::ErrorKind::InvalidData,
+          "invalid HTTP/2 client preface after h2c upgrade",
+        ));
+      }
+    }
 
     let mut streams = Vec::<Http2RequestStream>::new();
     let mut reset_streams = Vec::<u32>::new();
