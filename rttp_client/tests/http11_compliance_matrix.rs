@@ -50,6 +50,22 @@ fn allow_response(values: &[&str]) -> Vec<u8> {
   response.into_bytes()
 }
 
+fn allow_response_with_cache_metadata(values: &[&str]) -> Vec<u8> {
+  let mut response = String::from("HTTP/1.1 405 Method Not Allowed\r\n");
+  for value in values {
+    response.push_str("Allow: ");
+    response.push_str(value);
+    response.push_str("\r\n");
+  }
+  response.push_str("Cache-Control: public, max-age=60\r\n");
+  response.push_str("Age: 5\r\n");
+  response.push_str("Expires: Sun, 06 Nov 1994 08:49:37 GMT\r\n");
+  response.push_str("Vary: Accept-Encoding\r\n");
+  response.push_str("Retry-After: 30\r\n");
+  response.push_str("Content-Length: 0\r\n\r\n");
+  response.into_bytes()
+}
+
 fn age_expires_response(age: &str, expires: &str, include_cache_metadata: bool) -> Vec<u8> {
   let mut response = String::from("HTTP/1.1 200 OK\r\n");
   response.push_str("Age: ");
@@ -704,6 +720,57 @@ fn sync_client_parses_shared_retry_after_response_matrix() {
     assert_eq!("busy", response.body().string().unwrap(), "{}", case.name);
     handle.join().expect("raw response server thread");
   }
+}
+
+#[test]
+fn sync_client_parses_allow_with_existing_cache_and_retry_metadata_helpers() {
+  let raw_response = allow_response_with_cache_metadata(&["GET, HEAD", "POST"]);
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/allow-cache-metadata", addr))
+    .emit()
+    .expect("Allow response with cache metadata should parse");
+
+  assert_eq!(
+    &["GET", "HEAD", "POST"],
+    response
+      .allow()
+      .expect("Allow should parse")
+      .expect("Allow should be present")
+      .methods()
+      .as_slice()
+  );
+  assert_eq!(
+    Some(60),
+    response
+      .cache_control()
+      .expect("Cache-Control should parse")
+      .expect("Cache-Control should be present")
+      .max_age()
+  );
+  assert_eq!(Some(5), response.age().expect("Age should parse"));
+  assert_eq!(
+    Some(UNIX_EPOCH + Duration::from_secs(fixtures::age_expires::EXPIRES_UNIX_SECONDS)),
+    response.expires().expect("Expires should parse")
+  );
+  assert!(response
+    .vary()
+    .expect("Vary should parse")
+    .expect("Vary should be present")
+    .contains_field_name("accept-encoding"));
+  assert_eq!(
+    Some(30),
+    response
+      .retry_after()
+      .expect("Retry-After should parse")
+      .expect("Retry-After should be present")
+      .delta_seconds()
+  );
+  assert_eq!("", response.body().string().unwrap());
+
+  handle.join().expect("raw response server thread");
 }
 
 #[test]

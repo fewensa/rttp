@@ -716,8 +716,18 @@ pub mod allow {
 
   const RESPONSE_CASES: &[ResponseCase] = &[
     ResponseCase {
+      name: "single method",
+      values: &["GET"],
+      methods: &["GET"],
+    },
+    ResponseCase {
       name: "methods across header fields",
       values: &["GET, HEAD", "POST, OPTIONS"],
+      methods: &["GET", "HEAD", "POST", "OPTIONS"],
+    },
+    ResponseCase {
+      name: "optional whitespace around commas",
+      values: &["GET,\tHEAD , POST ,OPTIONS"],
       methods: &["GET", "HEAD", "POST", "OPTIONS"],
     },
     ResponseCase {

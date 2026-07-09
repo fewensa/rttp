@@ -5,8 +5,8 @@ use std::thread;
 use std::time::{Duration, UNIX_EPOCH};
 
 use rttp::server::{
-  HttpRequest, HttpRequestCacheControl, HttpResponse, HttpResponseCacheControl, HttpRetryAfter,
-  HttpVary,
+  HttpAllowedMethods, HttpRequest, HttpRequestCacheControl, HttpResponse, HttpResponseCacheControl,
+  HttpRetryAfter, HttpVary,
 };
 use rttp_http11_test_fixtures as fixtures;
 
@@ -64,6 +64,13 @@ fn vary_response(values: &[&str]) -> HttpResponse {
     })
 }
 
+fn allow_response(values: &[&str]) -> HttpResponse {
+  values.iter().fold(
+    HttpResponse::new(405, "Method Not Allowed"),
+    |response, value| response.header("Allow", value),
+  )
+}
+
 fn age_expires_response(age: u64, expires: std::time::SystemTime) -> HttpResponse {
   HttpResponse::ok("OK")
     .with_age(age)
@@ -76,6 +83,18 @@ fn age_expires_response(age: u64, expires: std::time::SystemTime) -> HttpRespons
 fn retry_after_response(retry_after: std::time::SystemTime) -> HttpResponse {
   HttpResponse::new(503, "Service Unavailable")
     .with_retry_after_date(retry_after)
+    .with_age(5)
+    .with_expires(UNIX_EPOCH + Duration::from_secs(fixtures::age_expires::EXPIRES_UNIX_SECONDS))
+    .header("Cache-Control", "public, max-age=60")
+    .with_vary("Accept-Encoding")
+    .expect("test Vary should parse")
+}
+
+fn allow_with_cache_metadata_response(methods: &[&str]) -> HttpResponse {
+  HttpResponse::new(405, "Method Not Allowed")
+    .with_allow(methods.iter().copied())
+    .expect("test Allow should parse")
+    .with_retry_after_delta(30)
     .with_age(5)
     .with_expires(UNIX_EPOCH + Duration::from_secs(fixtures::age_expires::EXPIRES_UNIX_SECONDS))
     .header("Cache-Control", "public, max-age=60")
@@ -191,6 +210,14 @@ fn assert_response_vary(name: &str, vary: &HttpVary, expected: &fixtures::vary::
   );
 }
 
+fn assert_response_allow(
+  name: &str,
+  allow: &HttpAllowedMethods,
+  expected: &fixtures::allow::ResponseCase,
+) {
+  assert_eq!(expected.methods, allow.methods().as_slice(), "{name}");
+}
+
 #[test]
 fn model_parser_accepts_shared_fixed_length_request_fixture() {
   let fixture = fixtures::request::fixed_length_post();
@@ -260,6 +287,19 @@ fn model_parser_cache_control_helper_enforces_shared_bounds() {
     HttpRequestCacheControl::parse(&oversized_value).is_err(),
     "oversized request Cache-Control value helper should reject invalid Cache-Control"
   );
+}
+
+#[test]
+fn server_response_helper_accepts_shared_allow_response_matrix() {
+  for case in fixtures::allow::response_cases() {
+    let response = allow_response(case.values);
+    let allow = response
+      .allow()
+      .unwrap_or_else(|err| panic!("{} Allow should parse: {err}", case.name))
+      .unwrap_or_else(|| panic!("{} should include Allow", case.name));
+
+    assert_response_allow(case.name, &allow, case);
+  }
 }
 
 #[test]
@@ -488,6 +528,138 @@ fn server_response_retry_after_helper_rejects_duplicate_singleton_and_oversized_
   assert!(
     oversized.retry_after().is_err(),
     "oversized Retry-After value should be rejected"
+  );
+}
+
+#[test]
+fn server_response_with_allow_declares_normalized_shared_allow_matrix() {
+  for case in fixtures::allow::response_cases() {
+    let response = HttpResponse::new(405, "Method Not Allowed")
+      .with_allow(case.methods.iter().copied())
+      .unwrap_or_else(|err| panic!("{} Allow declaration should parse: {err}", case.name));
+    let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+    let expected = HttpAllowedMethods::from_methods(case.methods.iter().copied())
+      .expect("already parsed by with_allow")
+      .header_value();
+
+    assert_eq!(
+      Some(expected.as_str()),
+      header_value(&serialized, "Allow"),
+      "{}",
+      case.name
+    );
+  }
+}
+
+#[test]
+fn server_response_with_allow_coexists_with_cache_and_retry_metadata_helpers() {
+  let response = allow_with_cache_metadata_response(&["GET", "HEAD", "POST"]);
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert_eq!(Some("GET, HEAD, POST"), header_value(&serialized, "Allow"));
+  assert_eq!(
+    Some("public, max-age=60"),
+    header_value(&serialized, "Cache-Control")
+  );
+  assert_eq!(Some("5"), header_value(&serialized, "Age"));
+  assert_eq!(
+    Some(fixtures::age_expires::EXPIRES_IMF_FIXDATE),
+    header_value(&serialized, "Expires")
+  );
+  assert_eq!(Some("accept-encoding"), header_value(&serialized, "Vary"));
+  assert_eq!(Some("30"), header_value(&serialized, "Retry-After"));
+  assert_eq!(
+    &["GET", "HEAD", "POST"],
+    response
+      .allow()
+      .expect("Allow should parse with cache metadata")
+      .expect("Allow should be present")
+      .methods()
+      .as_slice()
+  );
+  assert_eq!(
+    Some(60),
+    response
+      .cache_control()
+      .expect("Cache-Control should parse")
+      .expect("Cache-Control should be present")
+      .max_age()
+  );
+  assert_eq!(Some(5), response.age().expect("Age should parse"));
+  assert_eq!(
+    Some(UNIX_EPOCH + Duration::from_secs(fixtures::age_expires::EXPIRES_UNIX_SECONDS)),
+    response.expires().expect("Expires should parse")
+  );
+  assert!(response
+    .vary()
+    .expect("Vary should parse")
+    .expect("Vary should be present")
+    .field_names()
+    .iter()
+    .any(|name| *name == "accept-encoding"));
+  assert_eq!(
+    Some(HttpRetryAfter::DeltaSeconds(30)),
+    response.retry_after().expect("Retry-After should parse")
+  );
+}
+
+#[test]
+fn server_allow_helpers_reject_shared_invalid_matrix() {
+  for case in fixtures::allow::invalid_cases() {
+    assert!(
+      HttpAllowedMethods::parse(case.value).is_err(),
+      "{} Allow helper should reject invalid value",
+      case.name
+    );
+    assert!(
+      HttpResponse::new(405, "Method Not Allowed")
+        .with_allow([case.value])
+        .is_err(),
+      "{} response helper should reject invalid Allow value",
+      case.name
+    );
+
+    let response = allow_response(&[case.value]);
+    assert!(
+      response.allow().is_err(),
+      "{} response parser should reject invalid Allow value",
+      case.name
+    );
+  }
+}
+
+#[test]
+fn server_allow_helper_rejects_duplicate_methods_and_enforces_shared_bounds() {
+  let duplicate = allow_response(&["GET, HEAD", "POST, GET"]);
+  assert!(
+    duplicate.allow().is_err(),
+    "duplicate Allow methods across header fields should be rejected"
+  );
+  assert!(
+    HttpResponse::new(405, "Method Not Allowed")
+      .with_allow(["GET", "HEAD", "GET"])
+      .is_err(),
+    "duplicate Allow methods from declaration helper should be rejected"
+  );
+
+  let too_many_methods = fixtures::allow::too_many_methods_value();
+  assert!(
+    HttpAllowedMethods::parse(&too_many_methods).is_err(),
+    "too many Allow methods should be rejected"
+  );
+  assert!(
+    allow_response(&[&too_many_methods]).allow().is_err(),
+    "too many response Allow methods should be rejected"
+  );
+
+  let oversized_value = fixtures::allow::oversized_value();
+  assert!(
+    HttpAllowedMethods::parse(&oversized_value).is_err(),
+    "oversized Allow value should be rejected"
+  );
+  assert!(
+    allow_response(&[&oversized_value]).allow().is_err(),
+    "oversized response Allow value should be rejected"
   );
 }
 
