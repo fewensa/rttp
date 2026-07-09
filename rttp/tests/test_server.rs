@@ -414,6 +414,26 @@ fn captured_hpack_literal<'a>(
     .unwrap_or_else(|| panic!("missing HPACK literal {name}"))
 }
 
+fn base64url_encode_unpadded(bytes: &[u8]) -> String {
+  const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  let mut encoded = String::new();
+  for chunk in bytes.chunks(3) {
+    let first = chunk[0];
+    let second = *chunk.get(1).unwrap_or(&0);
+    let third = *chunk.get(2).unwrap_or(&0);
+    let value = ((first as u32) << 16) | ((second as u32) << 8) | third as u32;
+    encoded.push(ALPHABET[((value >> 18) & 0x3f) as usize] as char);
+    encoded.push(ALPHABET[((value >> 12) & 0x3f) as usize] as char);
+    if chunk.len() >= 2 {
+      encoded.push(ALPHABET[((value >> 6) & 0x3f) as usize] as char);
+    }
+    if chunk.len() == 3 {
+      encoded.push(ALPHABET[(value & 0x3f) as usize] as char);
+    }
+  }
+  encoded
+}
+
 const H2_HUFFMAN_PATH: &[u8] = &[0x62, 0x7b, 0x65, 0x96, 0x91, 0xd4, 0xb5, 0x63, 0x4c, 0xff];
 const H2_HUFFMAN_LOCALHOST: &[u8] = &[0xa0, 0xe4, 0x1d, 0x13, 0x9d, 0x09];
 const H2_HUFFMAN_X_HUFFMAN: &[u8] = &[0xf2, 0xb4, 0xf6, 0xcb, 0x2d, 0x23, 0xab];
@@ -440,6 +460,45 @@ fn complete_h2_server_handshake(stream: &mut TcpStream) {
 
 fn complete_h2_server_handshake_with_settings(stream: &mut TcpStream, payload: &[u8]) {
   let _ = read_h2_server_settings_during_handshake(stream, payload);
+}
+
+fn complete_h2c_upgrade(stream: &mut TcpStream, authority: &str, settings_payload: &[u8]) {
+  let settings = base64url_encode_unpadded(settings_payload);
+  let request = format!(
+    "GET /upgrade HTTP/1.1\r\n\
+     Host: {authority}\r\n\
+     Connection: keep-alive, HTTP2-Settings, Upgrade\r\n\
+     Upgrade: h2c\r\n\
+     HTTP2-Settings: {settings}\r\n\
+     \r\n"
+  );
+  stream
+    .write_all(request.as_bytes())
+    .expect("write h2c upgrade request");
+
+  let mut response = Vec::new();
+  let mut byte = [0; 1];
+  while !response.ends_with(b"\r\n\r\n") {
+    stream
+      .read_exact(&mut byte)
+      .expect("read h2c upgrade response");
+    response.push(byte[0]);
+  }
+  let response = String::from_utf8(response).expect("utf8 h2c upgrade response");
+  assert!(response.starts_with("HTTP/1.1 101 Switching Protocols\r\n"));
+  assert!(response.contains("\r\nConnection: Upgrade\r\n"));
+  assert!(response.contains("\r\nUpgrade: h2c\r\n"));
+
+  stream
+    .write_all(H2_PREFACE)
+    .expect("write h2c upgraded client preface");
+
+  let settings = read_h2_frame(stream);
+  assert_eq!(H2_FRAME_SETTINGS, settings.frame_type);
+  assert_eq!(0, settings.flags);
+  assert_eq!(0, settings.stream_id);
+
+  write_h2_frame(stream, H2_FRAME_SETTINGS, H2_FLAG_ACK, 0, &[]);
 }
 
 fn read_h2_server_settings_during_handshake(stream: &mut TcpStream, payload: &[u8]) -> H2Frame {
@@ -1988,6 +2047,173 @@ fn server_sends_http2_window_updates_while_consuming_large_request_body() {
 #[test]
 fn server_rejects_http2_prior_knowledge_zero_window_update_increment() {
   assert_invalid_h2_frame_without_handler(H2_FRAME_WINDOW_UPDATE, 0, 0, &0u32.to_be_bytes());
+}
+
+#[test]
+fn server_acks_http2_prior_knowledge_ping_and_keeps_serving_request_streams() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request.target().to_string())
+          .expect("send h2 target");
+        HttpResponse::ok("pong request")
+      })
+      .expect("serve h2 request after ping");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+
+  let opaque = *b"12345678";
+  write_h2_frame(&mut stream, H2_FRAME_PING, 0, 0, &opaque);
+
+  let ping_ack = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_PING, ping_ack.frame_type);
+  assert_eq!(H2_FLAG_ACK, ping_ack.flags);
+  assert_eq!(0, ping_ack.stream_id);
+  assert_eq!(opaque, ping_ack.payload.as_slice());
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_headers(b"/after-ping", addr.to_string().as_bytes()),
+  );
+
+  let response_headers = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(1, response_headers.stream_id);
+  let response_body = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
+  assert_eq!(1, response_body.stream_id);
+  assert_eq!(b"pong request", response_body.payload.as_slice());
+
+  assert_eq!("/after-ping", rx.recv().expect("receive h2 target"));
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_ignores_http2_prior_knowledge_ping_ack_and_keeps_serving_request_streams() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request.target().to_string())
+          .expect("send h2 target");
+        HttpResponse::ok("ack ignored")
+      })
+      .expect("serve h2 request after ping ack");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2_server_handshake(&mut stream);
+
+  write_h2_frame(&mut stream, H2_FRAME_PING, H2_FLAG_ACK, 0, b"abcdefgh");
+  assert!(
+    rx.try_recv().is_err(),
+    "PING ACK must not dispatch a request"
+  );
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &h2_get_headers(b"/after-ping-ack", addr.to_string().as_bytes()),
+  );
+
+  let response_headers = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(1, response_headers.stream_id);
+  let response_body = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
+  assert_eq!(1, response_body.stream_id);
+  assert_eq!(b"ack ignored", response_body.payload.as_slice());
+
+  assert_eq!("/after-ping-ack", rx.recv().expect("receive h2 target"));
+
+  handle.join().expect("server thread");
+}
+
+#[test]
+fn server_acks_http2_upgrade_ping_and_keeps_serving_request_streams() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        tx.send(request.target().to_string())
+          .expect("send upgraded h2 target");
+        HttpResponse::ok("upgraded pong")
+      })
+      .expect("serve upgraded h2 request after ping");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_secs(2)))
+    .expect("set h2 read timeout");
+  complete_h2c_upgrade(&mut stream, &addr.to_string(), &[]);
+
+  let opaque = *b"upgrade!";
+  write_h2_frame(&mut stream, H2_FRAME_PING, 0, 0, &opaque);
+
+  let ping_ack = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_PING, ping_ack.frame_type);
+  assert_eq!(H2_FLAG_ACK, ping_ack.flags);
+  assert_eq!(0, ping_ack.stream_id);
+  assert_eq!(opaque, ping_ack.payload.as_slice());
+
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    3,
+    &h2_get_headers(b"/upgraded-after-ping", addr.to_string().as_bytes()),
+  );
+
+  let response_headers = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, response_headers.frame_type);
+  assert_eq!(3, response_headers.stream_id);
+  let response_body = read_h2_frame_skipping_window_updates(&mut stream);
+  assert_eq!(H2_FRAME_DATA, response_body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, response_body.flags);
+  assert_eq!(3, response_body.stream_id);
+  assert_eq!(b"upgraded pong", response_body.payload.as_slice());
+
+  assert_eq!(
+    "/upgraded-after-ping",
+    rx.recv().expect("receive upgraded h2 target")
+  );
+
+  handle.join().expect("server thread");
 }
 
 #[test]
