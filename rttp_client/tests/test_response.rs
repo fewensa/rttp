@@ -691,6 +691,132 @@ fn test_parse_vary_rejects_invalid_helper_values_without_rejecting_response() {
 }
 
 #[test]
+fn test_parse_content_language_response_helper_preserves_order_across_header_fields() {
+  let s = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Language: en-US, fr\r\n",
+    "content-language: zh-Hant-TW, *\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
+    .expect("parse response with content-language headers");
+
+  let content_language = response
+    .content_language()
+    .expect("valid content-language should parse")
+    .expect("content-language header should be present");
+
+  assert_eq!(
+    vec!["en-US", "fr", "zh-Hant-TW", "*"],
+    content_language.tags()
+  );
+  assert_eq!(
+    vec![&"en-US, fr".to_string(), &"zh-Hant-TW, *".to_string()],
+    response.header_values("Content-Language")
+  );
+}
+
+#[test]
+fn test_parse_content_language_response_helper_returns_none_when_absent() {
+  let s = concat!("HTTP/1.1 200 OK\r\n", "Content-Length: 2\r\n", "\r\n", "OK");
+  let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
+    .expect("parse response without content-language");
+
+  assert_eq!(
+    None,
+    response
+      .content_language()
+      .expect("absent content-language should parse")
+  );
+}
+
+#[test]
+fn test_parse_content_language_rejects_invalid_helper_values_without_rejecting_response() {
+  let invalid_values = [
+    "",
+    "en-US,",
+    ",en-US",
+    "en-US,,fr",
+    "en-US, ,fr",
+    "en_US",
+    "en US",
+    "en-",
+    "-en",
+    "englishlong",
+    "en-toolongsubtag",
+    "en-@",
+  ];
+
+  for value in invalid_values {
+    let raw =
+      format!("HTTP/1.1 200 OK\r\nContent-Language: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response remains usable");
+
+    assert!(
+      response.content_language().is_err(),
+      "content-language helper should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Content-Language")
+    );
+  }
+}
+
+#[test]
+fn test_parse_content_language_rejects_duplicate_oversized_and_too_many_values() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Language: en-US, fr\r\n",
+    "content-language: EN-us\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response with duplicate content-language remains usable");
+
+  assert!(
+    response.content_language().is_err(),
+    "content-language helper should reject normalized duplicate tags"
+  );
+  assert_eq!(
+    vec![&"en-US, fr".to_string(), &"EN-us".to_string()],
+    response.header_values("Content-Language")
+  );
+
+  let oversized = "en".repeat(32 * 1024 + 1);
+  let raw =
+    format!("HTTP/1.1 200 OK\r\nContent-Language: {oversized}\r\nContent-Length: 2\r\n\r\nOK");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response with oversized content-language remains usable");
+
+  assert!(
+    response.content_language().is_err(),
+    "content-language helper should reject oversized values"
+  );
+  assert_eq!(Some(&oversized), response.header_value("Content-Language"));
+
+  let too_many = (0..257)
+    .map(|ix| format!("x-{ix}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let raw =
+    format!("HTTP/1.1 200 OK\r\nContent-Language: {too_many}\r\nContent-Length: 2\r\n\r\nOK");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response with too many content-language values remains usable");
+
+  assert!(
+    response.content_language().is_err(),
+    "content-language helper should reject too many values"
+  );
+  assert_eq!(Some(&too_many), response.header_value("Content-Language"));
+}
+
+#[test]
 fn test_parse_response_rejects_header_without_colon() {
   let s = concat!(
     "HTTP/1.1 200 OK\r\n",
