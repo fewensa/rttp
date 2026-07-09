@@ -2,8 +2,9 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use rttp::server::{
   HttpAcceptRanges, HttpAllowedMethods, HttpByteRange, HttpByteRangeError, HttpConditionalMetadata,
-  HttpContentLanguages, HttpEntityTag, HttpIfRangeRequestOutcome, HttpRequest,
-  HttpRequestCacheControl, HttpResponse, HttpResponseCacheControl, HttpRetryAfter, HttpVary,
+  HttpContentDisposition, HttpContentLanguages, HttpEntityTag, HttpIfRangeRequestOutcome,
+  HttpRequest, HttpRequestCacheControl, HttpResponse, HttpResponseCacheControl, HttpRetryAfter,
+  HttpVary,
 };
 
 fn parse_request(raw: &str) -> HttpRequest {
@@ -533,6 +534,160 @@ fn content_location_helper_rejects_empty_control_duplicate_and_oversized_values(
   assert!(
     response.content_location().is_err(),
     "Content-Location parser should reject oversized raw values"
+  );
+}
+
+#[test]
+fn parses_content_disposition_and_serializes_single_header_value() {
+  let disposition = HttpContentDisposition::parse(
+    "attachment; filename=\"report \\\"Q1\\\".txt\"; creation-date=2026-07-09",
+  )
+  .expect("valid Content-Disposition should parse");
+
+  assert_eq!("attachment", disposition.disposition_type());
+  assert_eq!(Some("report \"Q1\".txt"), disposition.parameter("filename"));
+  assert_eq!(Some("2026-07-09"), disposition.parameter("creation-date"));
+
+  let response = HttpResponse::ok("body")
+    .header("Content-Disposition", "inline")
+    .header("content-disposition", "attachment; filename=old.txt")
+    .with_content_disposition(disposition)
+    .expect("valid Content-Disposition should be accepted");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains(
+    "\r\nContent-Disposition: attachment; filename=\"report \\\"Q1\\\".txt\"; creation-date=2026-07-09\r\n"
+  ));
+  assert_eq!(1, serialized.matches("\r\nContent-Disposition: ").count());
+  assert_eq!(
+    Some("report \"Q1\".txt"),
+    response
+      .content_disposition()
+      .expect("Content-Disposition should parse")
+      .expect("Content-Disposition should be present")
+      .parameter("filename")
+  );
+}
+
+#[test]
+fn content_disposition_helpers_declare_common_dispositions_with_safe_parameters() {
+  let attachment = HttpContentDisposition::attachment()
+    .with_parameter("filename", "financial report.txt")
+    .expect("safe filename parameter should be accepted");
+  let inline = HttpContentDisposition::inline();
+
+  assert_eq!(
+    "attachment; filename=\"financial report.txt\"",
+    attachment.header_value()
+  );
+  assert_eq!("inline", inline.header_value());
+
+  let response = HttpResponse::ok("body")
+    .with_attachment_filename("financial report.txt")
+    .expect("attachment filename should be accepted");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized
+    .contains("\r\nContent-Disposition: attachment; filename=\"financial report.txt\"\r\n"));
+}
+
+#[test]
+fn response_content_disposition_helper_parses_attached_singleton_header() {
+  let response =
+    HttpResponse::ok("body").header("Content-Disposition", "inline; filename=readme.txt");
+
+  let disposition = response
+    .content_disposition()
+    .expect("Content-Disposition should parse")
+    .expect("Content-Disposition should be present");
+
+  assert_eq!("inline", disposition.disposition_type());
+  assert_eq!(Some("readme.txt"), disposition.parameter("filename"));
+}
+
+#[test]
+fn content_disposition_helpers_reject_malformed_duplicate_oversized_and_excessive_values() {
+  for value in [
+    "",
+    " ",
+    "bad type",
+    "attachment;",
+    "attachment; filename",
+    "attachment; filename=",
+    "attachment; bad name=value",
+    "attachment; filename=\"unterminated",
+    "attachment; filename=\"bad\\\"",
+    "attachment; filename=\"bad\r\nX-Evil: yes\"",
+    "attachment; filename=one; FILENAME=two",
+    "attachment; filename=\"bad\u{7f}\"",
+  ] {
+    assert!(
+      HttpContentDisposition::parse(value).is_err(),
+      "Content-Disposition helper should reject {value:?}"
+    );
+  }
+
+  let oversized = format!("attachment; filename=\"{}\"", "a".repeat(64 * 1024));
+  assert!(
+    HttpContentDisposition::parse(&oversized).is_err(),
+    "Content-Disposition helper should reject oversized values"
+  );
+
+  let too_many = format!(
+    "attachment{}",
+    (0..33)
+      .map(|index| format!("; p{index}=v"))
+      .collect::<String>()
+  );
+  assert!(
+    HttpContentDisposition::parse(too_many).is_err(),
+    "Content-Disposition helper should reject too many parameters"
+  );
+
+  assert!(
+    HttpContentDisposition::attachment()
+      .with_parameter("bad name", "value")
+      .is_err(),
+    "Content-Disposition builder should reject invalid parameter names"
+  );
+  assert!(
+    HttpContentDisposition::attachment()
+      .with_parameter("filename", "bad\r\nX-Evil: yes")
+      .is_err(),
+    "Content-Disposition builder should reject CR/LF injection"
+  );
+  assert!(
+    HttpContentDisposition::attachment()
+      .with_parameter("filename", "caf\u{e9}.txt")
+      .is_err(),
+    "Content-Disposition builder should reject values that cannot be safely quoted"
+  );
+  assert!(
+    HttpContentDisposition::attachment()
+      .with_parameter("filename", "one")
+      .and_then(|disposition| disposition.with_parameter("FILENAME", "two"))
+      .is_err(),
+    "Content-Disposition builder should reject duplicate parameters"
+  );
+
+  let response = HttpResponse::ok("body")
+    .header("Content-Disposition", "inline")
+    .header("Content-Disposition", "attachment");
+  assert!(
+    response.content_disposition().is_err(),
+    "Content-Disposition parser should reject duplicate header fields"
+  );
+}
+
+#[test]
+fn raw_content_disposition_headers_are_preserved_without_helper_validation() {
+  let response = HttpResponse::ok("body").header("Content-Disposition", "attachment;");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nContent-Disposition: attachment;\r\n"));
+  assert!(
+    response.content_disposition().is_err(),
+    "typed Content-Disposition parser should reject malformed raw values"
   );
 }
 
