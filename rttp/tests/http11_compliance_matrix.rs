@@ -1481,6 +1481,65 @@ fn model_parser_rejects_shared_obsolete_line_folding_fixtures() {
 }
 
 #[test]
+fn server_serializes_shared_early_hints_link_metadata_fixture() {
+  let early_hints = HttpResponse::early_hints_with_headers(
+    fixtures::response::EARLY_HINTS_LINKS.iter().copied(),
+    fixtures::response::EARLY_HINTS_METADATA.iter().copied(),
+  )
+  .expect("shared Early Hints fixture should serialize");
+
+  assert_eq!(
+    fixtures::response::VALID_EARLY_HINTS_HEAD,
+    early_hints.to_bytes().as_slice()
+  );
+}
+
+#[test]
+fn server_serialization_preserves_shared_final_response_after_early_hints() {
+  let early_hints = HttpResponse::early_hints_with_headers(
+    fixtures::response::EARLY_HINTS_LINKS.iter().copied(),
+    fixtures::response::EARLY_HINTS_METADATA.iter().copied(),
+  )
+  .expect("shared Early Hints fixture should serialize");
+  let final_response = HttpResponse::new(200, "OK")
+    .header("X-Final", "early-hints")
+    .body("OK");
+  let mut serialized = early_hints.to_bytes();
+  serialized.extend(final_response.to_bytes());
+
+  assert_eq!(
+    fixtures::response::VALID_EARLY_HINTS_WITH_FINAL,
+    serialized.as_slice()
+  );
+}
+
+#[test]
+fn server_serializes_shared_101_handoff_without_body_framing() {
+  let response = HttpResponse::new(101, "Switching Protocols")
+    .header("Connection", "Upgrade")
+    .header("Upgrade", "websocket")
+    .header("Sec-WebSocket-Accept", "shared-accept");
+
+  assert_eq!(
+    fixtures::response::SWITCHING_PROTOCOLS_HEAD,
+    response.to_bytes().as_slice()
+  );
+}
+
+#[test]
+fn server_early_hints_helper_rejects_shared_invalid_metadata() {
+  for case in fixtures::response::invalid_early_hints_metadata_cases() {
+    let error = HttpResponse::early_hints_with_headers(
+      fixtures::response::EARLY_HINTS_LINKS.iter().copied(),
+      [(case.header_name, case.value)],
+    )
+    .expect_err(case.name);
+
+    assert_eq!(case.error, error.to_string(), "{}", case.name);
+  }
+}
+
+#[test]
 fn live_socket2_server_accepts_shared_chunk_extensions_and_trailers_fixture() {
   let fixture = fixtures::request::chunked_with_extensions_and_trailers();
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
