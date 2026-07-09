@@ -5,8 +5,8 @@ use std::thread;
 use std::time::{Duration, UNIX_EPOCH};
 
 use rttp::server::{
-  HttpAllowedMethods, HttpContentLanguages, HttpRequest, HttpRequestCacheControl, HttpResponse,
-  HttpResponseCacheControl, HttpRetryAfter, HttpVary,
+  HttpAcceptRanges, HttpAllowedMethods, HttpContentLanguages, HttpRequest, HttpRequestCacheControl,
+  HttpResponse, HttpResponseCacheControl, HttpRetryAfter, HttpVary,
 };
 use rttp_http11_test_fixtures as fixtures;
 
@@ -69,6 +69,14 @@ fn allow_response(values: &[&str]) -> HttpResponse {
     HttpResponse::new(405, "Method Not Allowed"),
     |response, value| response.header("Allow", value),
   )
+}
+
+fn accept_ranges_response(values: &[&str]) -> HttpResponse {
+  values
+    .iter()
+    .fold(HttpResponse::new(200, "OK"), |response, value| {
+      response.header("Accept-Ranges", value)
+    })
 }
 
 fn content_language_response(values: &[&str]) -> HttpResponse {
@@ -226,6 +234,25 @@ fn assert_response_allow(
   assert_eq!(expected.methods, allow.methods().as_slice(), "{name}");
 }
 
+fn assert_response_accept_ranges(
+  name: &str,
+  accept_ranges: &HttpAcceptRanges,
+  expected: &fixtures::accept_ranges::ResponseCase,
+) {
+  assert_eq!(expected.none, accept_ranges.is_none(), "{name}");
+  if expected.none {
+    assert!(accept_ranges.units().is_empty(), "{name}");
+    assert_eq!("none", accept_ranges.header_value(), "{name}");
+  } else {
+    assert_eq!(expected.units, accept_ranges.units().as_slice(), "{name}");
+    assert_eq!(
+      expected.units.join(", "),
+      accept_ranges.header_value(),
+      "{name}"
+    );
+  }
+}
+
 fn assert_response_content_language(
   name: &str,
   content_language: &HttpContentLanguages,
@@ -319,6 +346,19 @@ fn server_response_helper_accepts_shared_allow_response_matrix() {
       .unwrap_or_else(|| panic!("{} should include Allow", case.name));
 
     assert_response_allow(case.name, &allow, case);
+  }
+}
+
+#[test]
+fn server_response_helper_accepts_shared_accept_ranges_response_matrix() {
+  for case in fixtures::accept_ranges::response_cases() {
+    let response = accept_ranges_response(case.values);
+    let accept_ranges = response
+      .accept_ranges()
+      .unwrap_or_else(|err| panic!("{} Accept-Ranges should parse: {err}", case.name))
+      .unwrap_or_else(|| panic!("{} should include Accept-Ranges", case.name));
+
+    assert_response_accept_ranges(case.name, &accept_ranges, case);
   }
 }
 
@@ -693,6 +733,187 @@ fn server_allow_helper_rejects_duplicate_methods_and_enforces_shared_bounds() {
   assert!(
     allow_response(&[&oversized_value]).allow().is_err(),
     "oversized response Allow value should be rejected"
+  );
+}
+
+#[test]
+fn server_response_with_accept_ranges_declares_shared_matrix() {
+  for case in fixtures::accept_ranges::response_cases() {
+    let response = if case.none {
+      HttpResponse::ok("OK").with_accept_ranges_none()
+    } else {
+      HttpResponse::ok("OK")
+        .with_accept_ranges(case.units.iter().copied())
+        .unwrap_or_else(|err| {
+          panic!(
+            "{} Accept-Ranges declaration should parse: {err}",
+            case.name
+          )
+        })
+    };
+    let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+    assert_eq!(
+      Some(case.header_value),
+      header_value(&serialized, "Accept-Ranges"),
+      "{}",
+      case.name
+    );
+    assert_response_accept_ranges(
+      case.name,
+      &response
+        .accept_ranges()
+        .expect("Accept-Ranges should parse")
+        .expect("Accept-Ranges should be present"),
+      case,
+    );
+  }
+}
+
+#[test]
+fn server_accept_ranges_helpers_reject_shared_invalid_matrix() {
+  for case in fixtures::accept_ranges::invalid_cases() {
+    assert!(
+      HttpAcceptRanges::parse(case.value).is_err(),
+      "{} Accept-Ranges helper should reject invalid value",
+      case.name
+    );
+    assert!(
+      accept_ranges_response(&[case.value])
+        .accept_ranges()
+        .is_err(),
+      "{} response parser should reject invalid Accept-Ranges value",
+      case.name
+    );
+  }
+}
+
+#[test]
+fn server_accept_ranges_helper_rejects_duplicates_and_enforces_shared_bounds() {
+  let duplicate = accept_ranges_response(&["bytes, pages", "BYTES"]);
+  assert!(
+    duplicate.accept_ranges().is_err(),
+    "duplicate Accept-Ranges units across header fields should be rejected"
+  );
+  assert!(
+    HttpResponse::ok("OK")
+      .with_accept_ranges(["bytes", "BYTES"])
+      .is_err(),
+    "duplicate Accept-Ranges units from declaration helper should be rejected"
+  );
+  assert!(
+    HttpResponse::ok("OK").with_accept_ranges(["none"]).is_err(),
+    "Accept-Ranges none sentinel should use the none helper"
+  );
+
+  let too_many_units = fixtures::accept_ranges::too_many_server_units_value();
+  assert!(
+    HttpAcceptRanges::parse(&too_many_units).is_err(),
+    "too many Accept-Ranges units should be rejected"
+  );
+
+  let oversized_value = fixtures::accept_ranges::oversized_value();
+  assert!(
+    HttpAcceptRanges::parse(&oversized_value).is_err(),
+    "oversized Accept-Ranges value should be rejected"
+  );
+}
+
+#[test]
+fn server_accept_ranges_raw_headers_are_preserved_without_helper_validation() {
+  let response = HttpResponse::ok("OK").header("Accept-Ranges", "bytes,,custom");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nAccept-Ranges: bytes,,custom\r\n"));
+  assert!(
+    response.accept_ranges().is_err(),
+    "typed Accept-Ranges parser should reject malformed raw values"
+  );
+}
+
+#[test]
+fn server_accept_ranges_helpers_coexist_with_adjacent_metadata_helpers() {
+  let response = HttpResponse::new(405, "Method Not Allowed")
+    .with_accept_ranges(["bytes", "pages"])
+    .expect("Accept-Ranges declaration should parse")
+    .with_content_language(["fr-CA", "es-419"])
+    .expect("Content-Language declaration should parse")
+    .with_allow(["GET", "HEAD"])
+    .expect("Allow declaration should parse")
+    .with_retry_after_delta(30)
+    .with_age(5)
+    .with_expires(UNIX_EPOCH + Duration::from_secs(fixtures::age_expires::EXPIRES_UNIX_SECONDS))
+    .header("Cache-Control", "public, max-age=60")
+    .with_vary("Accept-Encoding")
+    .expect("Vary declaration should parse");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert_eq!(
+    Some("bytes, pages"),
+    header_value(&serialized, "Accept-Ranges")
+  );
+  assert_eq!(
+    Some("fr-CA, es-419"),
+    header_value(&serialized, "Content-Language")
+  );
+  assert_eq!(Some("GET, HEAD"), header_value(&serialized, "Allow"));
+  assert_eq!(
+    Some("public, max-age=60"),
+    header_value(&serialized, "Cache-Control")
+  );
+  assert_eq!(Some("5"), header_value(&serialized, "Age"));
+  assert_eq!(
+    Some(fixtures::age_expires::EXPIRES_IMF_FIXDATE),
+    header_value(&serialized, "Expires")
+  );
+  assert_eq!(Some("accept-encoding"), header_value(&serialized, "Vary"));
+  assert_eq!(Some("30"), header_value(&serialized, "Retry-After"));
+  assert_eq!(
+    &["bytes", "pages"],
+    response
+      .accept_ranges()
+      .expect("Accept-Ranges should parse")
+      .expect("Accept-Ranges should be present")
+      .units()
+      .as_slice()
+  );
+  assert_eq!(
+    &["fr-CA", "es-419"],
+    response
+      .content_language()
+      .expect("Content-Language should parse")
+      .expect("Content-Language should be present")
+      .languages()
+      .as_slice()
+  );
+  assert!(response
+    .allow()
+    .expect("Allow should parse")
+    .expect("Allow should be present")
+    .methods()
+    .contains(&"GET"));
+  assert_eq!(
+    Some(60),
+    response
+      .cache_control()
+      .expect("Cache-Control should parse")
+      .expect("Cache-Control should be present")
+      .max_age()
+  );
+  assert_eq!(Some(5), response.age().expect("Age should parse"));
+  assert_eq!(
+    Some(UNIX_EPOCH + Duration::from_secs(fixtures::age_expires::EXPIRES_UNIX_SECONDS)),
+    response.expires().expect("Expires should parse")
+  );
+  assert!(response
+    .vary()
+    .expect("Vary should parse")
+    .expect("Vary should be present")
+    .field_names()
+    .contains(&"accept-encoding"));
+  assert_eq!(
+    Some(HttpRetryAfter::DeltaSeconds(30)),
+    response.retry_after().expect("Retry-After should parse")
   );
 }
 
