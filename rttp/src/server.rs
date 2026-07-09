@@ -717,6 +717,12 @@ impl HttpServer {
             )?;
           }
         }
+        (HTTP2_FRAME_CONTINUATION, _) => {
+          return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "HTTP/2 CONTINUATION frame arrived without request headers",
+          ));
+        }
         (HTTP2_FRAME_DATA, id) if id != 0 => {
           let Some(request_stream) = streams
             .iter_mut()
@@ -2640,6 +2646,12 @@ fn read_http2_response_flow_control_frame<S: Read + Write>(
             *flow_control.peer_enable_connect_protocol,
           )?;
         }
+      }
+      (HTTP2_FRAME_CONTINUATION, _) => {
+        return Err(io::Error::new(
+          io::ErrorKind::InvalidData,
+          "HTTP/2 CONTINUATION frame arrived without request headers",
+        ));
       }
       (HTTP2_FRAME_DATA, id) if id != 0 => {
         let Some(request_stream) = flow_control
