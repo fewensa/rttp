@@ -265,6 +265,50 @@ requested. It is metadata-only: RTTP does not treat `Content-Location` as
 redirect behavior, cache variant selection, representation replacement,
 retry/replay behavior, route generation, or status-policy behavior.
 
+### Bounded HTTP/1.1 representation metadata behavior
+
+`Response::content_type()` parses a singleton response `Content-Type` header
+into `ContentType` metadata. It returns `Ok(None)` when the header is absent
+and rejects duplicate `Content-Type` fields. Present values expose the
+normalized media type through `type_()`, `subtype()`, `essence()`, and
+`is(type, subtype)`, plus ordered parameters through `parameters()` and
+case-insensitive `parameter(name)`. `ContentType::parse(value)` is available
+when callers want to validate one raw field value directly.
+
+`Response::content_encoding()` parses one or more response `Content-Encoding`
+fields into `ContentEncoding` metadata. It returns `Ok(None)` when the header
+is absent. Present values are parsed as comma-separated content codings across
+all fields in wire order and exposed through `ContentEncoding::codings()`.
+Coding spelling and order are preserved, while duplicate detection is
+case-insensitive.
+
+Both helpers are bounded and validation-oriented. Each field value is limited
+to 64 KiB. Client `Content-Type` parsing accepts at most 256 parameters, lowers
+the media type and parameter names, rejects missing or malformed media types,
+malformed parameter syntax, malformed quoted strings, duplicate parameters,
+duplicate singleton fields, CR/LF injection, oversized values, and too many
+parameters. Client `Content-Encoding` parsing accepts at most 256 codings and
+rejects empty members, malformed tokens, duplicate codings, oversized values,
+and too many codings. Parse errors do not reject the raw response: original
+headers and body remain available through `Response::header_value()`,
+`Response::header_values()`, and the ordinary body APIs.
+
+```rust
+let content_type = response.content_type()?.expect("Content-Type");
+if content_type.is("application", "json") {
+  let charset = content_type.parameter("charset");
+}
+
+let content_encoding = response.content_encoding()?.expect("Content-Encoding");
+assert_eq!(vec!["gzip", "br"], content_encoding.codings());
+```
+
+These helpers are representation metadata only. `rttp_client` does not perform
+MIME sniffing, body decoding from this metadata, charset transcoding,
+compression or decompression policy, negotiation, cache policy, redirects,
+retry/replay, or filesystem serving from `Content-Type` or
+`Content-Encoding`.
+
 ### Bounded HTTP/1.1 Vary behavior
 
 `Response::vary()` parses one or more response `Vary` header fields into
@@ -362,6 +406,7 @@ gain additional HTTP/2 header-block handling.
 | Cache-Control, Age, Expires, Retry-After, and Allow | `Response::cache_control` parses bounded response directives, numeric freshness fields, quoted field-name lists, and extension directives; `Response::age` parses bounded delta-seconds; `Response::expires` parses bounded HTTP-date metadata; `Response::retry_after` parses bounded delta-seconds or HTTP-date metadata; `Response::allow` parses bounded ordered method metadata | No cache storage, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, automatic conditional requests, automatic sleep, retry, replay, backoff, scheduler integration, fallback method selection, or status-code policy engine |
 | Content-Language | `Response::content_language` parses bounded response `Content-Language` fields into ordered language metadata while preserving raw headers | No automatic language negotiation, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
 | Content-Location | `Response::content_location` and `ContentLocation::parse` parse bounded singleton response `Content-Location` metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |
+| Content-Type and Content-Encoding | `Response::content_type`/`ContentType::parse` parse bounded singleton `Content-Type` metadata, and `Response::content_encoding`/`ContentEncoding::parse` parse bounded ordered `Content-Encoding` codings while preserving raw headers on parse failures | No MIME sniffing, body decoding, charset transcoding, compression/decompression policy, negotiation, cache policy, redirects, retry/replay, or filesystem serving |
 | Content-Disposition | Client `Response::content_disposition` and server `HttpContentDisposition`, `HttpResponse::with_content_disposition`, `with_attachment_filename`, and `content_disposition` parse or declare bounded singleton response `Content-Disposition` metadata, preserve raw headers on parse failures, and preserve parsed `filename` plus `filename*` parameter values as metadata | No automatic download, filesystem path handling, MIME sniffing, cache behavior, redirect behavior, retry/replay, negotiation, or status-policy behavior |
 | Vary | `Response::vary` parses bounded response `Vary` fields into wildcard or normalized case-insensitive field-name metadata | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | Trailers | Chunked response trailers are exposed for blocking and async APIs; streaming chunked uploads can send declared request trailers | Application metadata trailers such as `X-Trace` are allowed; pseudo-header, connection-specific, routing, authentication/cookie, and framing trailer fields are rejected |
@@ -851,6 +896,59 @@ metadata-only: RTTP does not start automatic downloads, derive filesystem
 paths, sniff MIME types, negotiate response variants, redirect, retry/replay,
 cache, or attach status-code policy from `Content-Disposition`.
 
+### Bounded HTTP/1.1 representation metadata behavior
+
+Server-side representation metadata helpers expose response declaration and
+parsing without changing payload bytes. `HttpContentType::parse(value)`
+validates a `Content-Type` field, normalizes the media type and parameter
+names to lowercase, preserves parameter values, and exposes
+`media_type()`, `parameter(name)`, `parameters()`, and `header_value()`.
+`HttpContentType::new(type_name, subtype)` constructs a normalized media type,
+and `with_parameter(name, value)` appends safely serialized parameters.
+`HttpResponse::with_content_type(value)` accepts any `IntoHttpContentType`,
+removes existing raw `Content-Type` fields, and adds one validated
+`Content-Type` header. `HttpResponse::content_type()` parses an attached
+singleton header and returns `Ok(None)` when the header is absent.
+
+`HttpResponseContentEncodings::parse(value)` validates comma-separated
+`Content-Encoding` codings, while
+`HttpResponseContentEncodings::from_codings(codings)` validates an explicit
+coding list for declarations. `HttpResponse::with_content_encoding(codings)`
+removes existing raw `Content-Encoding` fields and adds one validated
+comma-separated header. `HttpResponse::content_encoding()` parses all attached
+`Content-Encoding` fields in wire order and returns `Ok(None)` when absent.
+Coding spelling and order are preserved, and duplicate detection is
+case-insensitive.
+
+Parsing and declaration are bounded. Each `Content-Type` and
+`Content-Encoding` field value is limited to 64 KiB. Server `Content-Type`
+helpers accept at most 32 parameters and reject malformed media types,
+malformed parameter syntax, malformed quoted strings, duplicate parameters,
+duplicate singleton fields, CR/LF or other control bytes, oversized values,
+and too many parameters. Server `Content-Encoding` helpers accept at most 32
+codings and reject empty members, malformed tokens, duplicate codings,
+oversized values, and too many codings. Raw `HttpResponse::header(...)` values
+remain preserved exactly as ordinary response headers until a typed
+declaration helper replaces them or the typed parser is requested; parser
+errors do not remove existing headers.
+
+```rust
+let content_type = HttpContentType::new("application", "json")?
+  .with_parameter("charset", "utf-8")?;
+
+let response = HttpResponse::ok("{}")
+  .with_content_type(content_type)?
+  .with_content_encoding(["gzip", "br"])?;
+
+let codings = response.content_encoding()?.expect("Content-Encoding");
+assert_eq!(vec!["gzip", "br"], codings.codings());
+```
+
+These helpers are metadata-only. RTTP does not perform MIME sniffing, body
+decoding from this metadata, charset transcoding, compression or
+decompression, negotiation, cache policy, redirects, retry/replay, or
+filesystem serving from `Content-Type` or `Content-Encoding`.
+
 ### Bounded HTTP/1.1 Vary behavior
 
 Server-side `Vary` helpers expose response declaration and request-selection
@@ -1021,6 +1119,7 @@ TLS or async accept loops.
 | Allow | `HttpAllowedMethods`, `HttpResponse::with_allow`, and `HttpResponse::allow` declare and parse bounded `Allow` method-list metadata | No route dispatch, automatic `405` generation, `OPTIONS` policy, fallback method selection, retry/replay, or status-code policy engine |
 | Content-Language | `HttpContentLanguages`, `HttpResponse::with_content_language`, and `HttpResponse::content_language` declare and parse bounded `Content-Language` response metadata | No automatic language negotiation, route selection, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
 | Content-Location | `HttpResponse::with_content_location` declares one bounded singleton `Content-Location` header, and `HttpResponse::content_location` parses attached singleton response metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |
+| Content-Type and Content-Encoding | `HttpContentType`, `HttpResponse::with_content_type`, `content_type`, `HttpResponseContentEncodings`, `HttpResponse::with_content_encoding`, and `content_encoding` declare and parse bounded representation metadata while preserving raw headers on parse failures and replacing raw duplicates on typed declaration | No MIME sniffing, body decoding, charset transcoding, compression/decompression, negotiation, cache policy, redirects, retry/replay, or filesystem serving |
 | Content-Disposition | `HttpContentDisposition`, `HttpResponse::with_content_disposition`, `with_attachment_filename`, and `content_disposition` declare and parse bounded singleton `Content-Disposition` response metadata, preserve parsed `filename` and `filename*` parameter values, preserve raw headers on parse failures, and replace raw duplicates on typed declaration | No automatic download, filesystem path handling, MIME sniffing, cache behavior, redirect behavior, retry/replay, negotiation, or status-policy behavior |
 | Upgrade and tunnel targets | `CONNECT` authority-form requests are accepted as HTTP requests; `HttpResponse::upgrade` can hand an upgraded socket to caller code after a matching request | The server does not implement the upgraded protocol after handoff |
 | Trailers | Chunked request trailers are preserved on `Request`; malformed, oversized, forbidden, and pseudo-header trailers are rejected; response trailers can be serialized for chunked responses | Application metadata trailers are allowed; trailer names that affect connection state, routing, authentication/cookies, framing, or payload processing are rejected |
