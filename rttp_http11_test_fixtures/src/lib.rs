@@ -784,6 +784,127 @@ pub mod allow {
   }
 }
 
+pub mod accept_ranges {
+  pub const MAX_VALUE_BYTES: usize = 64 * 1024;
+  pub const SERVER_MAX_UNITS: usize = 32;
+  pub const CLIENT_MAX_UNITS: usize = 256;
+
+  pub struct ResponseCase {
+    pub name: &'static str,
+    pub values: &'static [&'static str],
+    pub units: &'static [&'static str],
+    pub header_value: &'static str,
+    pub none: bool,
+    pub accepts_bytes: bool,
+  }
+
+  pub struct InvalidCase {
+    pub name: &'static str,
+    pub value: &'static str,
+  }
+
+  const RESPONSE_CASES: &[ResponseCase] = &[
+    ResponseCase {
+      name: "single bytes unit",
+      values: &["bytes"],
+      units: &["bytes"],
+      header_value: "bytes",
+      none: false,
+      accepts_bytes: true,
+    },
+    ResponseCase {
+      name: "range units across header fields preserve order",
+      values: &["bytes, pages", "records"],
+      units: &["bytes", "pages", "records"],
+      header_value: "bytes, pages, records",
+      none: false,
+      accepts_bytes: true,
+    },
+    ResponseCase {
+      name: "optional whitespace around range units",
+      values: &["bytes,\tcustom-unit , pages"],
+      units: &["bytes", "custom-unit", "pages"],
+      header_value: "bytes, custom-unit, pages",
+      none: false,
+      accepts_bytes: true,
+    },
+    ResponseCase {
+      name: "none sentinel",
+      values: &["none"],
+      units: &["none"],
+      header_value: "none",
+      none: true,
+      accepts_bytes: false,
+    },
+  ];
+
+  const INVALID_CASES: &[InvalidCase] = &[
+    InvalidCase {
+      name: "empty value",
+      value: "",
+    },
+    InvalidCase {
+      name: "blank value",
+      value: " ",
+    },
+    InvalidCase {
+      name: "trailing comma",
+      value: "bytes,",
+    },
+    InvalidCase {
+      name: "leading comma",
+      value: ", bytes",
+    },
+    InvalidCase {
+      name: "empty member",
+      value: "bytes,,pages",
+    },
+    InvalidCase {
+      name: "unit with whitespace",
+      value: "byte ranges",
+    },
+    InvalidCase {
+      name: "unit with separator",
+      value: "bytes:pages",
+    },
+    InvalidCase {
+      name: "none followed by unit",
+      value: "none, bytes",
+    },
+    InvalidCase {
+      name: "unit followed by none",
+      value: "bytes, none",
+    },
+  ];
+
+  pub fn response_cases() -> &'static [ResponseCase] {
+    RESPONSE_CASES
+  }
+
+  pub fn invalid_cases() -> &'static [InvalidCase] {
+    INVALID_CASES
+  }
+
+  pub fn too_many_server_units_value() -> String {
+    too_many_units_value(SERVER_MAX_UNITS)
+  }
+
+  pub fn too_many_client_units_value() -> String {
+    too_many_units_value(CLIENT_MAX_UNITS)
+  }
+
+  pub fn oversized_value() -> String {
+    format!("unit-{}", "a".repeat(MAX_VALUE_BYTES))
+  }
+
+  fn too_many_units_value(max_units: usize) -> String {
+    (0..=max_units)
+      .map(|index| format!("unit{index}"))
+      .collect::<Vec<_>>()
+      .join(", ")
+  }
+}
+
 pub mod vary {
   pub const MAX_VALUE_BYTES: usize = 64 * 1024;
   pub const MAX_FIELD_NAMES: usize = 256;

@@ -50,6 +50,26 @@ fn allow_response(values: &[&str]) -> Vec<u8> {
   response.into_bytes()
 }
 
+fn accept_ranges_response(values: &[&str], include_adjacent_metadata: bool) -> Vec<u8> {
+  let mut response = String::from("HTTP/1.1 200 OK\r\n");
+  for value in values {
+    response.push_str("Accept-Ranges: ");
+    response.push_str(value);
+    response.push_str("\r\n");
+  }
+  if include_adjacent_metadata {
+    response.push_str("Cache-Control: public, max-age=60\r\n");
+    response.push_str("Age: 5\r\n");
+    response.push_str("Expires: Sun, 06 Nov 1994 08:49:37 GMT\r\n");
+    response.push_str("Vary: Accept-Encoding\r\n");
+    response.push_str("Retry-After: 30\r\n");
+    response.push_str("Allow: GET, HEAD\r\n");
+    response.push_str("Content-Language: fr-CA, es-419\r\n");
+  }
+  response.push_str("Content-Length: 2\r\n\r\nOK");
+  response.into_bytes()
+}
+
 fn content_language_response(values: &[&str], include_adjacent_metadata: bool) -> Vec<u8> {
   let mut response = String::from("HTTP/1.1 200 OK\r\n");
   for value in values {
@@ -461,6 +481,32 @@ fn assert_response_allow(
   }
 }
 
+fn assert_response_accept_ranges(
+  name: &str,
+  response: &rttp_client::response::Response,
+  expected: &fixtures::accept_ranges::ResponseCase,
+) {
+  let raw_values: Vec<&str> = response
+    .header_values("accept-ranges")
+    .into_iter()
+    .map(String::as_str)
+    .collect();
+  assert_eq!(expected.values, raw_values.as_slice(), "{name}");
+
+  let accept_ranges = response
+    .accept_ranges()
+    .unwrap_or_else(|err| panic!("{name} Accept-Ranges should parse: {err}"))
+    .unwrap_or_else(|| panic!("{name} should include Accept-Ranges"));
+
+  assert_eq!(expected.none, accept_ranges.is_none(), "{name}");
+  assert_eq!(
+    expected.accepts_bytes,
+    accept_ranges.accepts_bytes(),
+    "{name}"
+  );
+  assert_eq!(expected.units, accept_ranges.units().as_slice(), "{name}");
+}
+
 fn assert_response_content_language(
   name: &str,
   response: &rttp_client::response::Response,
@@ -593,6 +639,24 @@ fn assert_allow_helper_rejects_but_preserves_response(name: &str, raw_response: 
   handle.join().expect("raw response server thread");
 }
 
+fn assert_accept_ranges_helper_rejects_but_preserves_response(name: &str, raw_response: Vec<u8>) {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/accept-ranges-invalid", addr))
+    .emit()
+    .unwrap_or_else(|err| panic!("{name} response should remain parseable: {err}"));
+
+  assert!(
+    response.accept_ranges().is_err(),
+    "{name} helper should reject invalid Accept-Ranges"
+  );
+  assert_eq!("OK", response.body().string().unwrap(), "{name}");
+
+  handle.join().expect("raw response server thread");
+}
+
 fn assert_content_language_helper_rejects_but_preserves_response(
   name: &str,
   raw_response: Vec<u8>,
@@ -636,6 +700,24 @@ fn sync_client_parses_shared_allow_response_matrix() {
       .unwrap_or_else(|err| panic!("{} response should parse: {err}", case.name));
 
     assert_response_allow(case.name, response, case);
+    handle.join().expect("raw response server thread");
+  }
+}
+
+#[test]
+fn sync_client_parses_shared_accept_ranges_response_matrix() {
+  for case in fixtures::accept_ranges::response_cases() {
+    let raw_response = accept_ranges_response(case.values, false);
+    let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+    let response = client()
+      .get()
+      .url(format!("http://{}/matrix/accept-ranges", addr))
+      .emit()
+      .unwrap_or_else(|err| panic!("{} response should parse: {err}", case.name));
+
+    assert_response_accept_ranges(case.name, &response, case);
+    assert_eq!("OK", response.body().string().unwrap(), "{}", case.name);
     handle.join().expect("raw response server thread");
   }
 }
@@ -857,6 +939,71 @@ fn sync_client_parses_allow_with_existing_cache_and_retry_metadata_helpers() {
 }
 
 #[test]
+fn sync_client_parses_accept_ranges_with_existing_metadata_helpers() {
+  let raw_response = accept_ranges_response(&["bytes, pages"], true);
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/accept-ranges-metadata", addr))
+    .emit()
+    .expect("Accept-Ranges response with adjacent metadata should parse");
+
+  assert_eq!(
+    &["bytes", "pages"],
+    response
+      .accept_ranges()
+      .expect("Accept-Ranges should parse")
+      .expect("Accept-Ranges should be present")
+      .units()
+      .as_slice()
+  );
+  assert_eq!(
+    Some(60),
+    response
+      .cache_control()
+      .expect("Cache-Control should parse")
+      .expect("Cache-Control should be present")
+      .max_age()
+  );
+  assert_eq!(Some(5), response.age().expect("Age should parse"));
+  assert_eq!(
+    Some(UNIX_EPOCH + Duration::from_secs(fixtures::age_expires::EXPIRES_UNIX_SECONDS)),
+    response.expires().expect("Expires should parse")
+  );
+  assert!(response
+    .vary()
+    .expect("Vary should parse")
+    .expect("Vary should be present")
+    .contains_field_name("accept-encoding"));
+  assert_eq!(
+    Some(30),
+    response
+      .retry_after()
+      .expect("Retry-After should parse")
+      .expect("Retry-After should be present")
+      .delta_seconds()
+  );
+  assert!(response
+    .allow()
+    .expect("Allow should parse")
+    .expect("Allow should be present")
+    .contains_method("GET"));
+  assert_eq!(
+    &["fr-CA", "es-419"],
+    response
+      .content_language()
+      .expect("Content-Language should parse")
+      .expect("Content-Language should be present")
+      .tags()
+      .as_slice()
+  );
+  assert_eq!("OK", response.body().string().unwrap());
+
+  handle.join().expect("raw response server thread");
+}
+
+#[test]
 fn sync_client_parses_age_expires_with_existing_cache_metadata_helpers() {
   for case in fixtures::age_expires::declaration_cases() {
     let raw_response = age_expires_response(case.age_value, case.expires_value, true);
@@ -1049,6 +1196,16 @@ fn sync_client_allow_helper_rejects_shared_invalid_response_matrix() {
 }
 
 #[test]
+fn sync_client_accept_ranges_helper_rejects_shared_invalid_response_matrix() {
+  for case in fixtures::accept_ranges::invalid_cases() {
+    assert_accept_ranges_helper_rejects_but_preserves_response(
+      case.name,
+      accept_ranges_response(&[case.value], false),
+    );
+  }
+}
+
+#[test]
 fn sync_client_vary_helper_rejects_shared_invalid_response_matrix() {
   for case in fixtures::vary::invalid_cases() {
     assert_vary_helper_rejects_but_preserves_response(case.name, vary_response(&[case.value]));
@@ -1134,6 +1291,25 @@ fn sync_client_allow_helper_rejects_duplicate_methods_and_enforces_shared_bounds
   assert_allow_helper_rejects_but_preserves_response(
     "oversized Allow value",
     allow_response(&[&fixtures::allow::oversized_value()]),
+  );
+}
+
+#[test]
+fn sync_client_accept_ranges_helper_rejects_duplicates_and_enforces_shared_bounds() {
+  assert_accept_ranges_helper_rejects_but_preserves_response(
+    "duplicate Accept-Ranges units across header fields",
+    accept_ranges_response(&["bytes, pages", "BYTES"], false),
+  );
+  assert_accept_ranges_helper_rejects_but_preserves_response(
+    "too many client Accept-Ranges units",
+    accept_ranges_response(
+      &[&fixtures::accept_ranges::too_many_client_units_value()],
+      false,
+    ),
+  );
+  assert_accept_ranges_helper_rejects_but_preserves_response(
+    "oversized Accept-Ranges value",
+    accept_ranges_response(&[&fixtures::accept_ranges::oversized_value()], false),
   );
 }
 
