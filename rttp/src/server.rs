@@ -3336,6 +3336,14 @@ impl Request {
     evaluate_conditional_request(self, metadata)
   }
 
+  pub fn evaluate_if_range(
+    &self,
+    metadata: &HttpConditionalMetadata,
+    entity_length: usize,
+  ) -> Result<HttpIfRangeRequestOutcome, HttpByteRangeError> {
+    evaluate_if_range_request(self, metadata, entity_length)
+  }
+
   fn connection_header_has_token(&self, token: &str) -> bool {
     self
       .headers
@@ -3807,6 +3815,66 @@ pub fn evaluate_conditional_request(
   HttpConditionalRequestOutcome::Proceed
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HttpIfRangeRequestOutcome {
+  FullResponse,
+  PartialContent(HttpByteRange),
+  RangeNotSatisfiable,
+}
+
+pub fn evaluate_if_range_request(
+  request: &Request,
+  metadata: &HttpConditionalMetadata,
+  entity_length: usize,
+) -> Result<HttpIfRangeRequestOutcome, HttpByteRangeError> {
+  evaluate_if_range_headers(
+    request.header("Range"),
+    request.header("If-Range"),
+    metadata,
+    entity_length,
+  )
+}
+
+fn evaluate_if_range_headers(
+  range_header: Option<&str>,
+  if_range: Option<&str>,
+  metadata: &HttpConditionalMetadata,
+  entity_length: usize,
+) -> Result<HttpIfRangeRequestOutcome, HttpByteRangeError> {
+  let Some(range_header) = range_header else {
+    return Ok(HttpIfRangeRequestOutcome::FullResponse);
+  };
+
+  if let Some(if_range) = if_range {
+    if !if_range_matches(if_range, metadata) {
+      return Ok(HttpIfRangeRequestOutcome::FullResponse);
+    }
+  }
+
+  match HttpByteRange::parse(range_header, entity_length) {
+    Ok(range) => Ok(HttpIfRangeRequestOutcome::PartialContent(range)),
+    Err(HttpByteRangeError::UnsatisfiedRange) => Ok(HttpIfRangeRequestOutcome::RangeNotSatisfiable),
+    Err(error) => Err(error),
+  }
+}
+
+fn if_range_matches(if_range: &str, metadata: &HttpConditionalMetadata) -> bool {
+  if let Ok(candidate) = HttpEntityTag::parse(if_range) {
+    return metadata
+      .entity_tag
+      .as_ref()
+      .is_some_and(|current| current.strong_matches(&candidate));
+  }
+
+  let Ok(candidate) = httpdate::parse_http_date(if_range) else {
+    return false;
+  };
+
+  metadata
+    .last_modified
+    .is_some_and(|last_modified| http_date_seconds_equal(last_modified, candidate))
+}
+
 fn request_if_match_matches(request: &Request, metadata: &HttpConditionalMetadata) -> Option<bool> {
   request_entity_tag_validator_matches(request, "If-Match", metadata, EntityTagComparison::Strong)
 }
@@ -3872,6 +3940,16 @@ fn http_date_seconds_after(left: SystemTime, right: SystemTime) -> bool {
   ) {
     (Ok(left), Ok(right)) => left.as_secs() > right.as_secs(),
     _ => left > right,
+  }
+}
+
+fn http_date_seconds_equal(left: SystemTime, right: SystemTime) -> bool {
+  match (
+    left.duration_since(UNIX_EPOCH),
+    right.duration_since(UNIX_EPOCH),
+  ) {
+    (Ok(left), Ok(right)) => left.as_secs() == right.as_secs(),
+    _ => left == right,
   }
 }
 
@@ -4165,6 +4243,19 @@ impl HttpRequest {
 
   pub fn body(&self) -> &[u8] {
     &self.body
+  }
+
+  pub fn evaluate_if_range(
+    &self,
+    metadata: &HttpConditionalMetadata,
+    entity_length: usize,
+  ) -> Result<HttpIfRangeRequestOutcome, HttpByteRangeError> {
+    evaluate_if_range_headers(
+      self.header("Range"),
+      self.header("If-Range"),
+      metadata,
+      entity_length,
+    )
   }
 }
 

@@ -68,12 +68,23 @@ and sends only the selected body bytes. Use
 it returns `416 Range Not Satisfiable` with
 `Content-Range: bytes */length` and an empty body.
 
+For conditional range requests, build `HttpConditionalMetadata` from the
+selected representation and call `Request::evaluate_if_range(&metadata,
+entity_length)` or `HttpRequest::evaluate_if_range(&metadata, entity_length)`.
+The helper returns `PartialContent(HttpByteRange)` when the request can use the
+parsed single byte range, `RangeNotSatisfiable` when the guarded range is
+outside the representation, or `FullResponse` when there is no `Range` header
+or an `If-Range` validator is absent, invalid, weak, stale, or missing from the
+caller-provided metadata. Strong ETags use strong comparison, and HTTP-date
+validators require an exact `Last-Modified` match at HTTP-date second
+precision.
+
 Multipart byte ranges are intentionally not serialized: RTTP does not generate
 `multipart/byteranges` responses or choose a response for multiple requested
-ranges. `If-Range` is not evaluated by the server helper, and there is no
-built-in filesystem serving, path normalization, MIME selection, ETag,
-Last-Modified, cache, authorization, directory-index, or dotfile policy. Those
-remain application decisions before choosing `200`, `206`, or `416`.
+ranges. There is no built-in filesystem serving, path normalization, MIME
+selection, ETag or Last-Modified generation, cache, authorization,
+directory-index, or dotfile policy. Those remain application decisions before
+choosing `200`, `206`, or `416`.
 
 ## Bounded HTTP/1.1 conditional requests
 

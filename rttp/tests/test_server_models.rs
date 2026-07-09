@@ -1,4 +1,11 @@
-use rttp::server::{HttpByteRange, HttpByteRangeError, HttpRequest, HttpResponse};
+use rttp::server::{
+  HttpByteRange, HttpByteRangeError, HttpConditionalMetadata, HttpEntityTag,
+  HttpIfRangeRequestOutcome, HttpRequest, HttpResponse,
+};
+
+fn parse_request(raw: &str) -> HttpRequest {
+  HttpRequest::parse(raw.as_bytes()).expect("request should parse")
+}
 
 #[test]
 fn parses_http_request_target_headers_and_body() {
@@ -425,6 +432,152 @@ fn serializes_range_not_satisfiable_response() {
     )
     .as_bytes(),
     response.to_bytes().as_slice()
+  );
+}
+
+#[test]
+fn if_range_allows_partial_content_for_matching_strong_etag() {
+  let request = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Range: bytes=2-5\r\n",
+    "If-Range: \"abc123\"\r\n",
+    "\r\n"
+  ));
+  let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("abc123"));
+
+  assert_eq!(
+    Ok(HttpIfRangeRequestOutcome::PartialContent(
+      HttpByteRange::new(2, 5)
+    )),
+    request.evaluate_if_range(&metadata, 10)
+  );
+}
+
+#[test]
+fn if_range_falls_back_to_full_response_for_non_matching_or_weak_etag() {
+  for if_range in [r#""other""#, r#"W/"abc123""#] {
+    let request = parse_request(&format!(
+      concat!(
+        "GET /asset HTTP/1.1\r\n",
+        "Host: example.test\r\n",
+        "Range: bytes=2-5\r\n",
+        "If-Range: {if_range}\r\n",
+        "\r\n"
+      ),
+      if_range = if_range
+    ));
+    let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("abc123"));
+
+    assert_eq!(
+      Ok(HttpIfRangeRequestOutcome::FullResponse),
+      request.evaluate_if_range(&metadata, 10)
+    );
+  }
+}
+
+#[test]
+fn if_range_allows_partial_content_for_exact_http_date_match() {
+  let request = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Range: bytes=7-\r\n",
+    "If-Range: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+    "\r\n"
+  ));
+  let metadata = HttpConditionalMetadata::new().last_modified(
+    httpdate::parse_http_date("Sun, 06 Nov 1994 08:49:37 GMT").expect("metadata date"),
+  );
+
+  assert_eq!(
+    Ok(HttpIfRangeRequestOutcome::PartialContent(
+      HttpByteRange::new(7, 9)
+    )),
+    request.evaluate_if_range(&metadata, 10)
+  );
+}
+
+#[test]
+fn if_range_falls_back_to_full_response_for_stale_invalid_or_missing_validator_metadata() {
+  for (if_range, metadata) in [
+    (
+      "Sun, 06 Nov 1994 08:49:36 GMT",
+      HttpConditionalMetadata::new().last_modified(
+        httpdate::parse_http_date("Sun, 06 Nov 1994 08:49:37 GMT").expect("metadata date"),
+      ),
+    ),
+    ("not a validator", HttpConditionalMetadata::new()),
+    (r#""abc123""#, HttpConditionalMetadata::new()),
+  ] {
+    let request = parse_request(&format!(
+      concat!(
+        "GET /asset HTTP/1.1\r\n",
+        "Host: example.test\r\n",
+        "Range: bytes=2-5\r\n",
+        "If-Range: {if_range}\r\n",
+        "\r\n"
+      ),
+      if_range = if_range
+    ));
+
+    assert_eq!(
+      Ok(HttpIfRangeRequestOutcome::FullResponse),
+      request.evaluate_if_range(&metadata, 10)
+    );
+  }
+}
+
+#[test]
+fn if_range_without_if_range_header_uses_existing_range_parser_outcomes() {
+  let partial = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Range: bytes=-4\r\n",
+    "\r\n"
+  ));
+  let unsatisfied = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Range: bytes=10-\r\n",
+    "\r\n"
+  ));
+  let invalid = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Range: bytes=5-2\r\n",
+    "\r\n"
+  ));
+  let metadata = HttpConditionalMetadata::new();
+
+  assert_eq!(
+    Ok(HttpIfRangeRequestOutcome::PartialContent(
+      HttpByteRange::new(6, 9)
+    )),
+    partial.evaluate_if_range(&metadata, 10)
+  );
+  assert_eq!(
+    Ok(HttpIfRangeRequestOutcome::RangeNotSatisfiable),
+    unsatisfied.evaluate_if_range(&metadata, 10)
+  );
+  assert_eq!(
+    Err(HttpByteRangeError::InvalidRange),
+    invalid.evaluate_if_range(&metadata, 10)
+  );
+}
+
+#[test]
+fn if_range_without_range_header_falls_back_to_full_response() {
+  let request = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "If-Range: \"abc123\"\r\n",
+    "\r\n"
+  ));
+  let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("abc123"));
+
+  assert_eq!(
+    Ok(HttpIfRangeRequestOutcome::FullResponse),
+    request.evaluate_if_range(&metadata, 10)
   );
 }
 
