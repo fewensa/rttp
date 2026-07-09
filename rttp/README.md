@@ -46,6 +46,35 @@ zero-size chunk, and can be inspected before serialization with
 `HttpResponse::trailers` or `HttpResponse::trailer_value`. Add a `Trailer`
 response header when advertising which trailer fields will follow.
 
+## Bounded HTTP/1.1 byte ranges
+
+The server exposes byte-range primitives, not an automatic static-file server.
+Applications that want range support should read the request `Range` header,
+decide whether it applies to the selected representation, and call
+`HttpByteRange::parse(range_header, entity_length)`.
+
+`HttpByteRange::parse` supports one `bytes` range at a time:
+`bytes=start-end`, `bytes=start-`, and `bytes=-suffix`. Closed ranges must have
+`start <= end`; open-ended ranges are clipped to the entity length; suffix
+ranges must request at least one byte. Unsupported units return
+`UnsupportedUnit`, comma-separated ranges return `MultipleRanges`, malformed
+or inverted ranges return `InvalidRange`, and ranges outside the entity return
+`UnsatisfiedRange`.
+
+Use `HttpResponse::partial_content(body, range)` for a satisfiable range. It
+returns `206 Partial Content`, writes `Content-Range: bytes start-end/length`,
+and sends only the selected body bytes. Use
+`HttpResponse::range_not_satisfiable(entity_length)` for an unsatisfied range;
+it returns `416 Range Not Satisfiable` with
+`Content-Range: bytes */length` and an empty body.
+
+Multipart byte ranges are intentionally not serialized: RTTP does not generate
+`multipart/byteranges` responses or choose a response for multiple requested
+ranges. `If-Range` is not evaluated by the server helper, and there is no
+built-in filesystem serving, path normalization, MIME selection, ETag,
+Last-Modified, cache, authorization, directory-index, or dotfile policy. Those
+remain application decisions before choosing `200`, `206`, or `416`.
+
 ## Bounded trailer behavior
 
 HTTP/1.1 server trailer support remains chunked-scope only. Chunked request
@@ -238,6 +267,7 @@ scheduling, or async accept loops.
 | HTTP/1.1 request parsing | Required `Host` validation, origin-form, absolute-form, asterisk-form `OPTIONS`, authority-form `CONNECT`, fixed and chunked bodies, chunk extensions, `Expect: 100-continue`, and obsolete line folding rejection | Intended for local tests and simple embedded use, not full RFC coverage |
 | HTTP/1.1 connection handling | Bounded sequential `serve_requests`, keep-alive and close behavior for HTTP/1.1 and HTTP/1.0, pipelined request boundaries, malformed request rejection before handler dispatch | Blocking listener only; no async accept loop |
 | HTTP/1.1 response framing | Automatic `Content-Length`, explicit chunked responses, bodyless `HEAD`, `101`, `204`, and `304`, response trailers after the terminating chunk | No server TLS |
+| Byte ranges | `HttpByteRange` parses one `bytes` range and `HttpResponse::partial_content`/`range_not_satisfiable` serialize `206`/`416` with `Content-Range` | No multipart range serialization, `If-Range` evaluation, filesystem serving, or static-file policy |
 | Upgrade and tunnel targets | `CONNECT` authority-form requests are accepted as HTTP requests; `HttpResponse::upgrade` can hand an upgraded socket to caller code after a matching request | The server does not implement the upgraded protocol after handoff |
 | Trailers | Chunked request trailers are preserved on `Request`; malformed, oversized, forbidden, and pseudo-header trailers are rejected; response trailers can be serialized for chunked responses | Application metadata trailers are allowed; trailer names that affect connection state, routing, authentication/cookies, framing, or payload processing are rejected |
 | Bounded h2c server | The same `socket2` listener detects the HTTP/2 prior-knowledge preface or a valid HTTP/1.1 `Upgrade: h2c` request with `HTTP2-Settings`, validates SETTINGS including legal `SETTINGS_ENABLE_PUSH` and `SETTINGS_ENABLE_CONNECT_PROTOCOL` values of only `0` or `1` and legal `SETTINGS_MAX_FRAME_SIZE` values from 16,384 through 16,777,215 bytes, dispatches RFC 8441 extended CONNECT only after `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1` has been negotiated, exposes negotiated extended CONNECT as a normal `Request` with method `CONNECT`, version `HTTP/2`, target from `:path`, `host` from `:authority`, and `Request::extended_connect_protocol()` from `:protocol`, advertises the default 16,384-byte `SETTINGS_MAX_FRAME_SIZE`, rejects inbound frames above the active local limit, splits outbound HEADERS, DATA, and trailers to the active peer frame-size limit, advertises `SETTINGS_MAX_CONCURRENT_STREAMS` from the bounded active stream allowance, enforces that allowance before dispatching new streams, advertises and enforces a conservative `SETTINGS_MAX_HEADER_LIST_SIZE` for inbound request metadata, bounds HPACK dynamic table use with `SETTINGS_HEADER_TABLE_SIZE`, serves bounded streams including bodyless DELETE, OPTIONS, TRACE, and negotiated extended CONNECT, handles HEAD without response DATA, rejects connection-specific request fields before handler dispatch, strips connection-specific response fields during h2c serialization, treats `RST_STREAM` as a bounded reset/cancellation signal for the affected stream, acknowledges valid PING frames with matching opaque data, accepts padded HEADERS/DATA/trailers without exposing padding, handles HPACK Huffman fields and bounded CONTINUATION header blocks, emits `GOAWAY` with the last completed stream id at bounded shutdown, validates and ignores valid PRIORITY metadata, ignores HTTP/2-allowed unknown/extension frames inside this bounded path, normalizes reserved stream-id high bits, and applies conservative DATA flow control | Ordinary `CONNECT`, missing-negotiation `:protocol`, non-CONNECT `:protocol`, malformed h2c Upgrade, request bodies on h2c Upgrade, and `PUSH_PROMISE` are rejected deterministically before handler dispatch; HTTP/1.1 `CONNECT` and non-h2c `Upgrade` remain separate handoff paths; bounded h2c only, with no public cancellation callback API, no dynamic policy API, no extension callback API, no full extension negotiation, TLS ALPN, external h2 integration, full WebSocket-over-h2, proxy h2, tunnel handoff, connection pooling, persistent multiplex sessions, persistent HTTP/2 session management, automatic retry, server push, full RFC 8441 support, full stream state machine, unbounded multiplexing, unbounded multiplex scheduling, general multiplexing, general tunnel scheduling, priority scheduling, or full HTTP/2 server feature set |
@@ -246,7 +276,12 @@ scheduling, or async accept loops.
 
 Enable the `client` feature to access `rttp::Http::client`, or enable `async`,
 `http2`, `tls-native`, `tls-rustls`, or `all` for the corresponding
-`rttp_client` capabilities. The `http2` feature exposes the bounded
+`rttp_client` capabilities. The client feature includes the bounded HTTP/1.1
+Range helpers from `rttp_client`: `range(start, end)`, `range_from(start)`, and
+`range_suffix(length)` set single `bytes` ranges, while `Response` exposes
+`is_partial_content()`, `is_range_not_satisfiable()`, and `content_range()` for
+`206` and `416` responses. Manual `Range` headers remain available through the
+generic header API. The `http2` feature exposes the bounded
 prior-knowledge h2c client path for GET, HEAD, bodyless DELETE, OPTIONS, or
 TRACE, and buffered POST, PUT, or PATCH requests. It opens at most one request
 stream, advertises `SETTINGS_ENABLE_PUSH = 0` so peers see server push
