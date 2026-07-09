@@ -13,6 +13,8 @@ const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
 const MAX_VARY_VALUE_BYTES: usize = 64 * 1024;
 const MAX_VARY_FIELDS: usize = 256;
+const MAX_ALLOW_VALUE_BYTES: usize = 64 * 1024;
+const MAX_ALLOW_METHODS: usize = 32;
 const MAX_RETRY_AFTER_VALUE_BYTES: usize = 64 * 1024;
 const HTTP2_CLIENT_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 const HTTP2_FRAME_DATA: u8 = 0x0;
@@ -4522,6 +4524,18 @@ impl HttpResponse {
     Ok(self)
   }
 
+  pub fn with_allow<I, M>(mut self, methods: I) -> Result<Self, HttpAllowParseError>
+  where
+    I: IntoIterator<Item = M>,
+    M: AsRef<str>,
+  {
+    let allow = HttpAllowedMethods::from_methods(methods)?;
+    self
+      .headers
+      .push(HttpHeader::new("Allow", allow.header_value()));
+    Ok(self)
+  }
+
   pub fn with_age(mut self, delta_seconds: u64) -> Self {
     self
       .headers
@@ -4590,6 +4604,19 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpVary::parse_values(values).map(Some)
+  }
+
+  pub fn allow(&self) -> Result<Option<HttpAllowedMethods>, HttpAllowParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Allow"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAllowedMethods::parse_values(values).map(Some)
   }
 
   pub fn age(&self) -> Result<Option<u64>, HttpAgeParseError> {
@@ -5156,6 +5183,99 @@ impl fmt::Display for HttpVaryParseError {
 }
 
 impl Error for HttpVaryParseError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpAllowedMethods {
+  methods: Vec<String>,
+}
+
+impl HttpAllowedMethods {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpAllowParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpAllowParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut methods = Vec::new();
+
+    for value in values {
+      if value.len() > MAX_ALLOW_VALUE_BYTES {
+        return Err(HttpAllowParseError::new("Allow header value is too large"));
+      }
+
+      for method in value.split(',') {
+        let method = method.trim();
+        if method.is_empty() || !is_http_token(method) {
+          return Err(HttpAllowParseError::new("invalid Allow method"));
+        }
+        if methods.iter().any(|known| known == method) {
+          return Err(HttpAllowParseError::new("duplicate Allow method"));
+        }
+        if methods.len() >= MAX_ALLOW_METHODS {
+          return Err(HttpAllowParseError::new("too many Allow methods"));
+        }
+        methods.push(method.to_string());
+      }
+    }
+
+    if methods.is_empty() {
+      return Err(HttpAllowParseError::new("invalid Allow method"));
+    }
+
+    Ok(Self { methods })
+  }
+
+  pub fn from_methods<I, M>(methods: I) -> Result<Self, HttpAllowParseError>
+  where
+    I: IntoIterator<Item = M>,
+    M: AsRef<str>,
+  {
+    let mut value = String::new();
+
+    for (index, method) in methods.into_iter().enumerate() {
+      if index > 0 {
+        value.push_str(", ");
+      }
+      value.push_str(method.as_ref());
+      if value.len() > MAX_ALLOW_VALUE_BYTES {
+        return Err(HttpAllowParseError::new("Allow header value is too large"));
+      }
+    }
+
+    Self::parse(value)
+  }
+
+  pub fn methods(&self) -> Vec<&str> {
+    self.methods.iter().map(String::as_str).collect()
+  }
+
+  pub fn header_value(&self) -> String {
+    self.methods.join(", ")
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpAllowParseError {
+  message: String,
+}
+
+impl HttpAllowParseError {
+  fn new<S: AsRef<str>>(message: S) -> Self {
+    Self {
+      message: message.as_ref().to_string(),
+    }
+  }
+}
+
+impl fmt::Display for HttpAllowParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpAllowParseError {}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct HttpRequestCacheControl {
