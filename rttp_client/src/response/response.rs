@@ -34,6 +34,14 @@ impl Response {
     self.code() == 200
   }
 
+  pub fn is_partial_content(&self) -> bool {
+    self.code() == 206
+  }
+
+  pub fn is_range_not_satisfiable(&self) -> bool {
+    self.code() == 416
+  }
+
   pub fn is_redirect(&self) -> bool {
     matches!(self.code(), 301 | 302 | 303 | 307 | 308)
   }
@@ -68,6 +76,12 @@ impl Response {
 
   pub fn location(&self) -> Option<&String> {
     self.header_value("location")
+  }
+
+  pub fn content_range(&self) -> Option<ContentRange> {
+    self
+      .header_value("content-range")
+      .and_then(|value| ContentRange::parse(value))
   }
 
   pub fn headers(&self) -> &Vec<Header> {
@@ -158,6 +172,76 @@ impl fmt::Display for Response {
   fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
     fmt::Display::fmt(&self.raw, formatter)
   }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContentRange {
+  unit: String,
+  start: Option<u64>,
+  end: Option<u64>,
+  complete_length: Option<u64>,
+}
+
+impl ContentRange {
+  pub fn parse(value: impl AsRef<str>) -> Option<Self> {
+    let value = value.as_ref().trim();
+    let (unit, range_and_length) = value.split_once(' ')?;
+    if unit.is_empty() {
+      return None;
+    }
+
+    let (range, complete_length) = range_and_length.split_once('/')?;
+    let complete_length = parse_complete_length(complete_length)?;
+    if range == "*" {
+      return Some(Self {
+        unit: unit.to_string(),
+        start: None,
+        end: None,
+        complete_length,
+      });
+    }
+
+    let (start, end) = range.split_once('-')?;
+    let start = start.parse::<u64>().ok()?;
+    let end = end.parse::<u64>().ok()?;
+    if start > end {
+      return None;
+    }
+
+    Some(Self {
+      unit: unit.to_string(),
+      start: Some(start),
+      end: Some(end),
+      complete_length,
+    })
+  }
+
+  pub fn unit(&self) -> &str {
+    &self.unit
+  }
+
+  pub fn start(&self) -> Option<u64> {
+    self.start
+  }
+
+  pub fn end(&self) -> Option<u64> {
+    self.end
+  }
+
+  pub fn complete_length(&self) -> Option<u64> {
+    self.complete_length
+  }
+
+  pub fn is_unsatisfied(&self) -> bool {
+    self.start.is_none() && self.end.is_none()
+  }
+}
+
+fn parse_complete_length(value: &str) -> Option<Option<u64>> {
+  if value == "*" {
+    return Some(None);
+  }
+  value.parse::<u64>().ok().map(Some)
 }
 
 #[derive(Clone)]
