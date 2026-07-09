@@ -107,6 +107,67 @@ fn test_parse_response_preserves_duplicate_headers_with_case_insensitive_lookup(
 }
 
 #[test]
+fn test_parse_partial_content_range_metadata() {
+  let s = concat!(
+    "HTTP/1.1 206 Partial Content\r\n",
+    "Content-Range: bytes 10-19/200\r\n",
+    "Content-Length: 10\r\n",
+    "\r\n",
+    "0123456789"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/asset"),
+    s.as_bytes().to_vec(),
+  )
+  .expect("parse partial content response");
+  let content_range = response
+    .content_range()
+    .expect("partial content response should expose content range");
+
+  assert!(response.is_partial_content());
+  assert!(!response.is_range_not_satisfiable());
+  assert_eq!("bytes", content_range.unit());
+  assert_eq!(Some(10), content_range.start());
+  assert_eq!(Some(19), content_range.end());
+  assert_eq!(Some(200), content_range.complete_length());
+  assert!(!content_range.is_unsatisfied());
+  assert_eq!("0123456789", response.body().string().unwrap());
+}
+
+#[test]
+fn test_parse_range_not_satisfiable_metadata_preserves_body_and_headers() {
+  let s = concat!(
+    "HTTP/1.1 416 Range Not Satisfiable\r\n",
+    "Content-Range: bytes */200\r\n",
+    "Content-Type: text/plain\r\n",
+    "Content-Length: 17\r\n",
+    "\r\n",
+    "range unavailable"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/asset"),
+    s.as_bytes().to_vec(),
+  )
+  .expect("parse range not satisfiable response");
+  let content_range = response
+    .content_range()
+    .expect("416 response should expose unsatisfied content range");
+
+  assert!(!response.is_partial_content());
+  assert!(response.is_range_not_satisfiable());
+  assert_eq!("bytes", content_range.unit());
+  assert_eq!(None, content_range.start());
+  assert_eq!(None, content_range.end());
+  assert_eq!(Some(200), content_range.complete_length());
+  assert!(content_range.is_unsatisfied());
+  assert_eq!(
+    Some(&"text/plain".to_string()),
+    response.header_value("Content-Type")
+  );
+  assert_eq!("range unavailable", response.body().string().unwrap());
+}
+
+#[test]
 fn test_parse_response_rejects_header_without_colon() {
   let s = concat!(
     "HTTP/1.1 200 OK\r\n",

@@ -193,6 +193,31 @@ impl HttpClient {
     self.header(("Cookie", cookie.as_ref()))
   }
 
+  /// Set a single bounded byte range request header, `Range: bytes=start-end`.
+  pub fn range(&mut self, start: u64, end: u64) -> error::Result<&mut Self> {
+    if start > end {
+      return Err(error::builder_with_message(
+        "byte range start cannot be greater than end",
+      ));
+    }
+    Ok(self.header(("Range", format!("bytes={}-{}", start, end).as_str())))
+  }
+
+  /// Set a single open-ended byte range request header, `Range: bytes=start-`.
+  pub fn range_from(&mut self, start: u64) -> &mut Self {
+    self.header(("Range", format!("bytes={}-", start).as_str()))
+  }
+
+  /// Set a single suffix byte range request header, `Range: bytes=-suffix`.
+  pub fn range_suffix(&mut self, suffix: u64) -> error::Result<&mut Self> {
+    if suffix == 0 {
+      return Err(error::builder_with_message(
+        "byte range suffix length must be greater than zero",
+      ));
+    }
+    Ok(self.header(("Range", format!("bytes=-{}", suffix).as_str())))
+  }
+
   /// Set request content type
   pub fn content_type<S: AsRef<str>>(&mut self, content_type: S) -> &mut Self {
     self.header(("Content-Type", content_type.as_ref()))

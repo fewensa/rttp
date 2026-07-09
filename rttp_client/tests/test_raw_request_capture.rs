@@ -179,6 +179,94 @@ fn get_with_query_parameters_sends_request_target_without_body() {
 }
 
 #[test]
+fn range_helpers_emit_single_byte_range_headers() {
+  let bounded = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .range(10, 19)
+      .expect("bounded range should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let bounded = request_text(&bounded);
+  assert_eq!(Some("bytes=10-19"), header_value(&bounded, "Range"));
+
+  let open_ended = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .range_from(20)
+      .emit()
+      .expect("request should succeed");
+  });
+  let open_ended = request_text(&open_ended);
+  assert_eq!(Some("bytes=20-"), header_value(&open_ended, "Range"));
+
+  let suffix = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .range_suffix(128)
+      .expect("suffix range should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let suffix = request_text(&suffix);
+  assert_eq!(Some("bytes=-128"), header_value(&suffix, "Range"));
+}
+
+#[test]
+fn range_helper_rejects_malformed_inputs_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .range(20, 10)
+      .expect_err("inverted range should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "malformed range helper should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .range_suffix(0)
+      .expect_err("empty suffix range should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "malformed suffix helper should not open a socket"
+  );
+}
+
+#[test]
+fn manual_range_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Range", "bytes=5-9"))
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("bytes=5-9"), header_value(&request, "Range"));
+}
+
+#[test]
 fn streaming_fixed_framing_does_not_leak_into_later_emit() {
   let (addr, handle) = spawn_streaming_then_capture_server();
   let mut client = client();
