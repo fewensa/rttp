@@ -1475,3 +1475,85 @@ fn serializes_empty_http_response_without_content_length_for_1xx() {
     serialized.as_slice()
   );
 }
+
+#[test]
+fn early_hints_serializes_link_metadata_without_body_or_content_length() {
+  let response = HttpResponse::early_hints([
+    r#"</style.css>; rel=preload; as=style"#,
+    r#"</app.js>; rel=preload; as=script"#,
+  ])
+  .expect("early hints should build");
+
+  assert_eq!(
+    concat!(
+      "HTTP/1.1 103 Early Hints\r\n",
+      "Link: </style.css>; rel=preload; as=style\r\n",
+      "Link: </app.js>; rel=preload; as=script\r\n",
+      "\r\n"
+    )
+    .as_bytes(),
+    response.body("ignored").to_bytes().as_slice()
+  );
+}
+
+#[test]
+fn early_hints_accepts_safe_metadata_headers() {
+  let response = HttpResponse::early_hints_with_headers(
+    [r#"</style.css>; rel=preload; as=style"#],
+    [("Server", "rttp"), ("Cache-Control", "public, max-age=60")],
+  )
+  .expect("safe metadata should build");
+
+  assert_eq!(
+    concat!(
+      "HTTP/1.1 103 Early Hints\r\n",
+      "Link: </style.css>; rel=preload; as=style\r\n",
+      "Server: rttp\r\n",
+      "Cache-Control: public, max-age=60\r\n",
+      "\r\n"
+    )
+    .as_bytes(),
+    response.to_bytes().as_slice()
+  );
+}
+
+#[test]
+fn early_hints_rejects_invalid_injected_forbidden_and_oversized_headers() {
+  assert!(HttpResponse::early_hints([r#"</style.css>; rel=preload; as=style"#]).is_ok());
+  assert!(HttpResponse::early_hints([""]).is_err());
+  assert!(HttpResponse::early_hints(["/safe\r\nX-Evil: true"]).is_err());
+  assert!(HttpResponse::early_hints(["x".repeat(64 * 1024 + 1)]).is_err());
+
+  for name in [
+    "",
+    "Bad Name",
+    "Content-Length",
+    "Transfer-Encoding",
+    "Connection",
+    "TE",
+    "Trailer",
+    "Upgrade",
+    "Keep-Alive",
+    "Proxy-Connection",
+  ] {
+    assert!(
+      HttpResponse::early_hints_with_headers(
+        [r#"</style.css>; rel=preload; as=style"#],
+        [(name, "safe")]
+      )
+      .is_err(),
+      "{name:?} metadata header should reject"
+    );
+  }
+
+  assert!(HttpResponse::early_hints_with_headers(
+    [r#"</style.css>; rel=preload; as=style"#],
+    [("X-Trace", "safe\r\nX-Evil: true")]
+  )
+  .is_err());
+  assert!(HttpResponse::early_hints_with_headers(
+    [r#"</style.css>; rel=preload; as=style"#],
+    [("X-Trace", "x".repeat(64 * 1024 + 1))]
+  )
+  .is_err());
+}
