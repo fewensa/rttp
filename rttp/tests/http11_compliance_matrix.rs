@@ -8,7 +8,7 @@ use rttp::server::{
   HttpAcceptRanges, HttpAllowedMethods, HttpContentDisposition, HttpContentLanguages, HttpRequest,
   HttpRequestCacheControl, HttpResponse, HttpResponseCacheControl, HttpRetryAfter, HttpVary,
 };
-use rttp_http11_test_fixtures as fixtures;
+use rttp_test_support as fixtures;
 
 #[derive(Debug)]
 struct ParsedResponse<'a> {

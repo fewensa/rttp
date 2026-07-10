@@ -1,5 +1,5 @@
 [package]
-name = "rttp_http11_test_fixtures"
+name = "rttp_test_support"
 version = "0.0.0"
 edition = "2021"
 publish = false
