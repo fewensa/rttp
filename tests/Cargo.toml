@@ -6,6 +6,7 @@ publish = false
 
 [dependencies]
 flate2 = "1.0"
+futures = "0.3"
 httpdate = "1.0"
 rttp_client = { path = "../crates/rttp-client", features = ["http2"] }
 rttp_server = { package = "rttp-server", path = "../crates/rttp-server" }

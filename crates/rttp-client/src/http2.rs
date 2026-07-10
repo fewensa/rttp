@@ -728,7 +728,7 @@ fn response_header_has_h2c_upgrade(header: &[u8]) -> error::Result<bool> {
 }
 
 fn validate_settings_payload(payload: &[u8]) -> error::Result<PeerSettings> {
-  if payload.len() % 6 != 0 {
+  if !payload.len().is_multiple_of(6) {
     return Err(error::bad_response("invalid HTTP/2 SETTINGS frame"));
   }
 
@@ -995,6 +995,7 @@ fn write_header_block_frames(
   Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_data_frames(
   stream: &mut TcpStream,
   body: &[u8],
@@ -1054,6 +1055,7 @@ fn write_data_frames(
   Ok(None)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn read_until_send_window_available(
   stream: &mut TcpStream,
   connection_send_window: &mut SendWindow,
