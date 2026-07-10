@@ -45,7 +45,7 @@ fn test_client_async_http() {
     let response = rttp::Http::client()
       .post()
       .url(format!("http://{}/post", addr))
-      .form(("debug", "true", "name=Form&file=@cargo#../Cargo.toml"))
+      .form(("debug", "true", "name=Form&file=@cargo#../../Cargo.toml"))
       .rasync()
       .await;
     assert!(response.is_ok());
