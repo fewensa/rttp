@@ -1,0 +1,19 @@
+//! Compatibility facade for the RTTP client and server crates.
+
+pub struct Http {}
+
+pub use rttp_server::server;
+
+impl Http {
+  #[cfg(feature = "client")]
+  pub fn client() -> rttp_client::HttpClient {
+    rttp_client::HttpClient::new()
+  }
+
+  pub fn server<A>(addr: A) -> std::io::Result<server::HttpServer>
+  where
+    A: std::net::ToSocketAddrs,
+  {
+    server::HttpServer::bind(addr)
+  }
+}

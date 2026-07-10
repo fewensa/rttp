@@ -1,0 +1,41 @@
+[package]
+name = "rttp"
+version = "0.2.0"
+authors = ["fewensa <fewensa@protonmail.com>"]
+description = "Rust http lib"
+homepage = "https://github.com/fewensa/rttp"
+repository = "https://github.com/fewensa/rttp"
+license = "MIT"
+keywords = ["http"]
+include = [
+  "Cargo.toml",
+  "**/*.rs",
+  "README.md",
+  "LICENSE"
+]
+
+readme = "README.md"
+edition = "2021"
+
+[dependencies]
+rttp_client = { version = "0.2.0", optional = true, path = "../rttp-client", features = [ "tls-native", "async" ] }
+rttp-server = { version = "0.2.0", path = "../rttp-server" }
+
+[dev-dependencies]
+async-std = { version = "1" }
+httpdate = "1.0"
+rcgen = "0.11"
+rustls = "0.23"
+rttp_test_support = { path = "../rttp-test-support" }
+rttp_client = { path = "../rttp-client", features = ["http2"] }
+
+
+[features]
+default = []
+
+client = ["rttp_client"]
+async = ["client", "rttp_client/async"]
+http2 = ["client", "rttp_client/http2"]
+tls-native = ["client", "rttp_client/tls-native"]
+tls-rustls = ["client", "rttp_client/tls-rustls"]
+all = ["client", "async", "http2", "tls-native", "tls-rustls"]
