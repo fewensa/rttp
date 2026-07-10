@@ -14,7 +14,7 @@ use rttp::server::{
   Request,
 };
 use rttp_client::HttpClient;
-use rttp_http11_test_fixtures as fixtures;
+use rttp_test_support as fixtures;
 
 fn client() -> HttpClient {
   HttpClient::new()

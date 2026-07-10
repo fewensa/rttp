@@ -1,3 +1,8 @@
+//! Private shared support for the RTTP workspace test suites.
+//!
+//! This crate is intentionally unpublished and is only consumed through
+//! development dependencies by workspace members.
+
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener};
 use std::thread::{self, JoinHandle};
