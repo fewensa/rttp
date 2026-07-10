@@ -1,0 +1,10 @@
+[package]
+name = "rttp-protocol"
+version = "0.1.0"
+description = "Internal HTTP wire protocol primitives for rttp"
+publish = false
+edition = "2021"
+
+[lib]
+name = "rttp_protocol"
+path = "src/lib.rs"

@@ -19,3 +19,4 @@ edition = "2021"
 [dependencies]
 httpdate = "1.0"
 socket2 = "0.5"
+rttp-protocol = { path = "../rttp-protocol" }
