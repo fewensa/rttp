@@ -1,7 +1,7 @@
 use std::process::Command;
 
 #[test]
-fn package_includes_server_tests_and_support_files() {
+fn package_includes_facade_test_files() {
   let output = Command::new(env!("CARGO"))
     .arg("package")
     .arg("--list")
@@ -21,8 +21,7 @@ fn package_includes_server_tests_and_support_files() {
     "tests/test_server.rs",
     "tests/test_server_models.rs",
     "tests/test_client.rs",
-    "tests/support/mod.rs",
-    "tests/support/local_http.rs",
+    "tests/connect_upgrade_handoff.rs",
   ] {
     assert!(
       package_files.lines().any(|line| line == expected),

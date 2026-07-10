@@ -10,6 +10,11 @@ use std::time::Duration;
 
 use socket2::{Domain, Protocol, Socket, Type};
 
+#[cfg(feature = "tls-rustls")]
+mod client_helpers;
+#[cfg(feature = "tls-rustls")]
+pub use client_helpers::*;
+
 pub mod request {
   pub struct FixedLengthRequest {
     pub raw: &'static [u8],

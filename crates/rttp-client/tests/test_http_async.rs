@@ -1,4 +1,5 @@
-mod support;
+#[cfg(feature = "async")]
+use rttp_test_support as support;
 
 #[cfg(feature = "async")]
 use std::collections::HashMap;

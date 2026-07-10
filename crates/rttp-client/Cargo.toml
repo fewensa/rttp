@@ -66,5 +66,4 @@ tls-rustls  = ["rustls", "webpki-roots", "futures-rustls"]
 
 [dev-dependencies]
 rcgen = "0.11"
-rttp = { path = "../rttp" }
-rttp_test_support = { path = "../rttp-test-support" }
+rttp_test_support = { path = "../rttp-test-support", features = ["tls-rustls"] }

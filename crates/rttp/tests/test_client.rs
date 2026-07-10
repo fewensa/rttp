@@ -1,5 +1,11 @@
-#[cfg(any(feature = "all", feature = "client"))]
-mod support;
+#[cfg(any(
+  feature = "all",
+  feature = "client",
+  feature = "async",
+  feature = "tls-native",
+  feature = "tls-rustls"
+))]
+use rttp_test_support as support;
 
 #[test]
 #[cfg(any(feature = "all", feature = "client"))]

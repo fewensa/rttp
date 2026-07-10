@@ -1,4 +1,4 @@
-mod support;
+use rttp_test_support as support;
 
 use std::collections::HashMap;
 use std::io::{self, Cursor, Read, Write};

@@ -1,5 +1,5 @@
 #[cfg(feature = "tls-rustls")]
-mod support;
+use rttp_test_support as support;
 
 #[cfg(feature = "tls-rustls")]
 use std::io::{Read, Write};
