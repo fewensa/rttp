@@ -2,7 +2,17 @@
 name = "rttp-protocol"
 version = "0.1.0"
 description = "Internal HTTP wire protocol primitives for rttp"
-publish = false
+homepage = "https://github.com/fewensa/rttp"
+repository = "https://github.com/fewensa/rttp"
+license = "MIT"
+keywords = ["http"]
+include = [
+  "Cargo.toml",
+  "**/*.rs",
+  "README.md",
+  "LICENSE"
+]
+readme = "README.md"
 edition = "2021"
 
 [lib]
