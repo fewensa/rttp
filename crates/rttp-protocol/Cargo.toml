@@ -1,8 +1,7 @@
 [package]
-name = "rttp-server"
-version = "0.2.0"
-authors = ["fewensa <fewensa@protonmail.com>"]
-description = "Rust HTTP server lib"
+name = "rttp-protocol"
+version = "0.1.0"
+description = "Internal HTTP wire protocol primitives for rttp"
 homepage = "https://github.com/fewensa/rttp"
 repository = "https://github.com/fewensa/rttp"
 license = "MIT"
@@ -16,7 +15,6 @@ include = [
 readme = "README.md"
 edition = "2021"
 
-[dependencies]
-httpdate = "1.0"
-socket2 = "0.5"
-rttp-protocol = { version = "0.1.0", path = "../rttp-protocol" }
+[lib]
+name = "rttp_protocol"
+path = "src/lib.rs"

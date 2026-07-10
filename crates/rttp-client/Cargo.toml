@@ -33,6 +33,7 @@ socks    = "0.3"
 base64   = "0.22"
 flate2   = "1.0"
 httpdate = "1.0"
+rttp-protocol = { version = "0.1.0", path = "../rttp-protocol" }
 
 
 native-tls       = { optional = true, version = "0.2" }

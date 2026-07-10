@@ -2,6 +2,7 @@
 members = [
   "crates/rttp",
   "crates/rttp-client",
+  "crates/rttp-protocol",
   "crates/rttp-server",
   "crates/rttp-test-support",
   "tests",
