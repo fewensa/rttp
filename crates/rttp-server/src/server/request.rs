@@ -1,0 +1,935 @@
+use super::*;
+
+pub(crate) const MAX_REQUEST_HEAD_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Request {
+  pub(crate) method: String,
+  pub(crate) target: String,
+  pub(crate) version: String,
+  pub(crate) headers: Vec<(String, String)>,
+  pub(crate) trailers: Vec<(String, String)>,
+  pub(crate) body: Vec<u8>,
+  pub(crate) extended_connect_protocol: Option<String>,
+}
+
+impl Request {
+  pub fn method(&self) -> &str {
+    &self.method
+  }
+
+  pub fn target(&self) -> &str {
+    &self.target
+  }
+
+  pub fn version(&self) -> &str {
+    &self.version
+  }
+
+  pub fn header(&self, name: &str) -> Option<&str> {
+    self
+      .headers
+      .iter()
+      .find(|(key, _)| key.eq_ignore_ascii_case(name))
+      .map(|(_, value)| value.as_str())
+  }
+
+  pub fn extended_connect_protocol(&self) -> Option<&str> {
+    self.extended_connect_protocol.as_deref()
+  }
+
+  pub fn trailers(&self) -> &[(String, String)] {
+    &self.trailers
+  }
+
+  pub fn trailer(&self, name: &str) -> Option<&str> {
+    self
+      .trailers
+      .iter()
+      .find(|(key, _)| key.eq_ignore_ascii_case(name))
+      .map(|(_, value)| value.as_str())
+  }
+
+  pub fn body(&self) -> &[u8] {
+    &self.body
+  }
+
+  pub fn closes_connection(&self) -> bool {
+    if self.connection_header_has_token("close") {
+      return true;
+    }
+
+    self.version == "HTTP/1.0" && !self.connection_header_has_token("keep-alive")
+  }
+
+  pub fn evaluate_conditional(
+    &self,
+    metadata: &HttpConditionalMetadata,
+  ) -> HttpConditionalRequestOutcome {
+    evaluate_conditional_request(self, metadata)
+  }
+
+  pub fn evaluate_if_range(
+    &self,
+    metadata: &HttpConditionalMetadata,
+    entity_length: usize,
+  ) -> Result<HttpIfRangeRequestOutcome, HttpByteRangeError> {
+    evaluate_if_range_request(self, metadata, entity_length)
+  }
+
+  pub fn cache_control(
+    &self,
+  ) -> Result<Option<HttpRequestCacheControl>, HttpCacheControlParseError> {
+    let values: Vec<&str> = self.headers_named("Cache-Control").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpRequestCacheControl::parse_values(values).map(Some)
+  }
+
+  pub fn vary_selection(&self, vary: &HttpVary) -> HttpVarySelection {
+    if vary.is_wildcard() {
+      return HttpVarySelection::wildcard();
+    }
+
+    HttpVarySelection::from_fields(vary.fields.iter().map(|field| {
+      HttpVarySelectedField::new(
+        field,
+        self
+          .headers_named(field)
+          .map(ToString::to_string)
+          .collect::<Vec<_>>(),
+      )
+    }))
+  }
+
+  pub(crate) fn connection_header_has_token(&self, token: &str) -> bool {
+    self
+      .headers
+      .iter()
+      .filter(|(name, _)| name.eq_ignore_ascii_case("Connection"))
+      .any(|(_, value)| connection_header_has_token(Some(value), token))
+  }
+
+  pub(crate) fn headers_named<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a str> + 'a {
+    self
+      .headers
+      .iter()
+      .filter(move |(key, _)| key.eq_ignore_ascii_case(name))
+      .map(|(_, value)| value.as_str())
+  }
+
+  #[cfg(test)]
+  pub(crate) fn read_next_from<R>(reader: &mut R) -> io::Result<Option<Self>>
+  where
+    R: BufRead,
+  {
+    Self::read_next_from_without_continue(reader)
+  }
+
+  pub(crate) fn read_next_from_with_continue<S>(
+    reader: &mut BufReader<S>,
+  ) -> io::Result<Option<Self>>
+  where
+    S: Read + Write,
+  {
+    let mut raw = Vec::new();
+    let mut body_kind: Option<RequestBodyKind> = None;
+
+    loop {
+      if let (Some(header_end), Some(RequestBodyKind::ContentLength(content_length))) =
+        (find_header_end(&raw), body_kind)
+      {
+        let message_len = checked_request_message_len(header_end, content_length)?;
+        if raw.len() == message_len {
+          return Ok(Some(Self::from_raw_frame(&raw)?));
+        }
+      }
+
+      let available = reader.fill_buf()?;
+      if available.is_empty() {
+        if raw.is_empty() {
+          return Ok(None);
+        }
+        if let (Some(header_end), Some(RequestBodyKind::ContentLength(content_length))) =
+          (find_header_end(&raw), body_kind)
+        {
+          let body_start = header_end + 4;
+          let body_end = checked_request_message_len(header_end, content_length)?;
+          if raw.len() < body_end || body_end < body_start {
+            return Err(io::Error::new(
+              io::ErrorKind::UnexpectedEof,
+              "incomplete HTTP request body",
+            ));
+          }
+        }
+        return Err(io::Error::new(
+          io::ErrorKind::InvalidData,
+          "incomplete HTTP request",
+        ));
+      }
+
+      if let (Some(header_end), Some(RequestBodyKind::ContentLength(content_length))) =
+        (find_header_end(&raw), body_kind)
+      {
+        let message_len = checked_request_message_len(header_end, content_length)?;
+        let take = (message_len - raw.len()).min(available.len());
+        raw.extend_from_slice(&available[..take]);
+        reader.consume(take);
+        continue;
+      }
+
+      let mut combined = raw.clone();
+      combined.extend_from_slice(available);
+      match find_header_end(&combined) {
+        Some(header_end) => {
+          let take = header_end + 4 - raw.len();
+          reject_oversized_request_head(header_end + 4)?;
+          raw.extend_from_slice(&available[..take]);
+          reader.consume(take);
+          let head = parse_request_head(&raw[..header_end])?;
+          let parsed_body_kind = request_body_kind(&head.headers)?;
+          if request_needs_continue(&head.headers, parsed_body_kind)? {
+            write_continue_response(reader.get_mut())?;
+          }
+          match parsed_body_kind {
+            RequestBodyKind::ContentLength(0) => {
+              return Ok(Some(Self::from_head_and_body(head, Vec::new())));
+            }
+            RequestBodyKind::ContentLength(content_length) => {
+              reject_oversized_request_body(content_length)?;
+              body_kind = Some(RequestBodyKind::ContentLength(content_length));
+            }
+            RequestBodyKind::Chunked => {
+              let chunked = read_chunked_request_body(reader)?;
+              return Ok(Some(Self::from_head_body_and_trailers(
+                head,
+                chunked.body,
+                chunked.trailers,
+              )));
+            }
+          }
+        }
+        None => {
+          let take = available.len();
+          reject_oversized_request_head(raw.len().saturating_add(take))?;
+          raw.extend_from_slice(available);
+          reader.consume(take);
+        }
+      }
+    }
+  }
+
+  pub(crate) fn read_next_head_from_with_continue<S>(
+    reader: &mut BufReader<S>,
+  ) -> io::Result<Option<(Self, RequestBodyKind)>>
+  where
+    S: Read + Write,
+  {
+    Self::read_next_head_and_body_kind_from_with_continue(reader)?
+      .map_or(Ok(None), |(head, kind)| {
+        Ok(Some((Self::from_head_and_body(head, Vec::new()), kind)))
+      })
+  }
+
+  pub(crate) fn read_next_head_and_body_kind_from_with_continue<S>(
+    reader: &mut BufReader<S>,
+  ) -> io::Result<Option<(RequestHead, RequestBodyKind)>>
+  where
+    S: Read + Write,
+  {
+    let mut raw = Vec::new();
+
+    loop {
+      let available = reader.fill_buf()?;
+      if available.is_empty() {
+        if raw.is_empty() {
+          return Ok(None);
+        }
+        return Err(io::Error::new(
+          io::ErrorKind::InvalidData,
+          "incomplete HTTP request",
+        ));
+      }
+
+      let mut combined = raw.clone();
+      combined.extend_from_slice(available);
+      match find_header_end(&combined) {
+        Some(header_end) => {
+          let take = header_end + 4 - raw.len();
+          reject_oversized_request_head(header_end + 4)?;
+          raw.extend_from_slice(&available[..take]);
+          reader.consume(take);
+          let head = parse_request_head(&raw[..header_end])?;
+          let body_kind = request_body_kind(&head.headers)?;
+          match body_kind {
+            RequestBodyKind::ContentLength(content_length) => {
+              reject_oversized_request_body(content_length)?;
+            }
+            RequestBodyKind::Chunked => {}
+          }
+          if request_needs_continue(&head.headers, body_kind)? {
+            write_continue_response(reader.get_mut())?;
+          }
+          return Ok(Some((head, body_kind)));
+        }
+        None => {
+          let take = available.len();
+          reject_oversized_request_head(raw.len().saturating_add(take))?;
+          raw.extend_from_slice(available);
+          reader.consume(take);
+        }
+      }
+    }
+  }
+
+  #[cfg(test)]
+  pub(crate) fn read_next_from_without_continue<R>(reader: &mut R) -> io::Result<Option<Self>>
+  where
+    R: BufRead,
+  {
+    let mut raw = Vec::new();
+    let mut body_kind: Option<RequestBodyKind> = None;
+
+    loop {
+      if let (Some(header_end), Some(RequestBodyKind::ContentLength(content_length))) =
+        (find_header_end(&raw), body_kind)
+      {
+        let message_len = checked_request_message_len(header_end, content_length)?;
+        if raw.len() == message_len {
+          return Ok(Some(Self::from_raw_frame(&raw)?));
+        }
+      }
+
+      let available = reader.fill_buf()?;
+      if available.is_empty() {
+        if raw.is_empty() {
+          return Ok(None);
+        }
+        if let (Some(header_end), Some(RequestBodyKind::ContentLength(content_length))) =
+          (find_header_end(&raw), body_kind)
+        {
+          let body_start = header_end + 4;
+          let body_end = checked_request_message_len(header_end, content_length)?;
+          if raw.len() < body_end || body_end < body_start {
+            return Err(io::Error::new(
+              io::ErrorKind::UnexpectedEof,
+              "incomplete HTTP request body",
+            ));
+          }
+        }
+        return Err(io::Error::new(
+          io::ErrorKind::InvalidData,
+          "incomplete HTTP request",
+        ));
+      }
+
+      if let (Some(header_end), Some(RequestBodyKind::ContentLength(content_length))) =
+        (find_header_end(&raw), body_kind)
+      {
+        let message_len = checked_request_message_len(header_end, content_length)?;
+        let take = (message_len - raw.len()).min(available.len());
+        raw.extend_from_slice(&available[..take]);
+        reader.consume(take);
+        continue;
+      }
+
+      let mut combined = raw.clone();
+      combined.extend_from_slice(available);
+      match find_header_end(&combined) {
+        Some(header_end) => {
+          let take = header_end + 4 - raw.len();
+          reject_oversized_request_head(header_end + 4)?;
+          raw.extend_from_slice(&available[..take]);
+          reader.consume(take);
+          let head = parse_request_head(&raw[..header_end])?;
+          match request_body_kind(&head.headers)? {
+            RequestBodyKind::ContentLength(0) => {
+              return Ok(Some(Self::from_head_and_body(head, Vec::new())));
+            }
+            RequestBodyKind::ContentLength(content_length) => {
+              reject_oversized_request_body(content_length)?;
+              body_kind = Some(RequestBodyKind::ContentLength(content_length));
+            }
+            RequestBodyKind::Chunked => {
+              let chunked = read_chunked_request_body(reader)?;
+              return Ok(Some(Self::from_head_body_and_trailers(
+                head,
+                chunked.body,
+                chunked.trailers,
+              )));
+            }
+          }
+        }
+        None => {
+          let take = available.len();
+          reject_oversized_request_head(raw.len().saturating_add(take))?;
+          raw.extend_from_slice(available);
+          reader.consume(take);
+        }
+      }
+    }
+  }
+
+  pub(crate) fn from_raw_frame(raw: &[u8]) -> io::Result<Self> {
+    let header_end = find_header_end(raw)
+      .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))?;
+    reject_oversized_request_head(header_end + 4)?;
+    let head = parse_request_head(&raw[..header_end])?;
+    let body_start = header_end + 4;
+    let body = match request_body_kind(&head.headers)? {
+      RequestBodyKind::ContentLength(content_length) => {
+        reject_oversized_request_body(content_length)?;
+        let body_end = checked_request_message_len(header_end, content_length)?;
+
+        if raw.len() < body_end {
+          return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "incomplete HTTP request body",
+          ));
+        }
+
+        raw[body_start..body_end].to_vec()
+      }
+      RequestBodyKind::Chunked => {
+        return Err(io::Error::new(
+          io::ErrorKind::InvalidData,
+          "chunked request body requires streaming reader",
+        ));
+      }
+    };
+
+    Ok(Self {
+      method: head.method,
+      target: head.target,
+      version: head.version,
+      headers: head.headers,
+      trailers: Vec::new(),
+      body,
+      extended_connect_protocol: None,
+    })
+  }
+
+  pub(crate) fn from_head_and_body(head: RequestHead, body: Vec<u8>) -> Self {
+    Self::from_head_body_and_trailers(head, body, Vec::new())
+  }
+
+  pub(crate) fn from_head_body_and_trailers(
+    head: RequestHead,
+    body: Vec<u8>,
+    trailers: Vec<(String, String)>,
+  ) -> Self {
+    Self {
+      method: head.method,
+      target: head.target,
+      version: head.version,
+      headers: head.headers,
+      trailers,
+      body,
+      extended_connect_protocol: None,
+    }
+  }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HttpConditionalMetadata {
+  pub(crate) entity_tag: Option<HttpEntityTag>,
+  pub(crate) last_modified: Option<SystemTime>,
+}
+
+impl HttpConditionalMetadata {
+  pub fn new() -> Self {
+    Self::default()
+  }
+
+  pub fn entity_tag(mut self, entity_tag: HttpEntityTag) -> Self {
+    self.entity_tag = Some(entity_tag);
+    self
+  }
+
+  pub fn last_modified(mut self, last_modified: SystemTime) -> Self {
+    self.last_modified = Some(last_modified);
+    self
+  }
+
+  pub fn entity_tag_value(&self) -> Option<&HttpEntityTag> {
+    self.entity_tag.as_ref()
+  }
+
+  pub fn last_modified_value(&self) -> Option<SystemTime> {
+    self.last_modified
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpEntityTag {
+  pub(crate) weak: bool,
+  pub(crate) opaque_tag: String,
+}
+
+impl HttpEntityTag {
+  pub fn strong<S: AsRef<str>>(opaque_tag: S) -> Self {
+    Self::new(false, opaque_tag)
+  }
+
+  pub fn weak<S: AsRef<str>>(opaque_tag: S) -> Self {
+    Self::new(true, opaque_tag)
+  }
+
+  pub fn parse<S: AsRef<str>>(value: S) -> Result<Self, HttpEntityTagParseError> {
+    parse_entity_tag(value.as_ref().trim()).ok_or(HttpEntityTagParseError)
+  }
+
+  pub fn is_weak(&self) -> bool {
+    self.weak
+  }
+
+  pub fn opaque_tag(&self) -> &str {
+    &self.opaque_tag
+  }
+
+  pub fn header_value(&self) -> String {
+    let mut value = String::new();
+    if self.weak {
+      value.push_str("W/");
+    }
+    value.push('"');
+    value.push_str(&self.opaque_tag);
+    value.push('"');
+    value
+  }
+
+  pub(crate) fn new<S: AsRef<str>>(weak: bool, opaque_tag: S) -> Self {
+    let opaque_tag = opaque_tag.as_ref();
+    assert_valid_entity_tag_opaque_tag(opaque_tag);
+    Self {
+      weak,
+      opaque_tag: opaque_tag.to_string(),
+    }
+  }
+
+  pub(crate) fn strong_matches(&self, other: &Self) -> bool {
+    !self.weak && !other.weak && self.opaque_tag == other.opaque_tag
+  }
+
+  pub(crate) fn weak_matches(&self, other: &Self) -> bool {
+    self.opaque_tag == other.opaque_tag
+  }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HttpEntityTagParseError;
+
+impl fmt::Display for HttpEntityTagParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str("invalid entity tag")
+  }
+}
+
+impl Error for HttpEntityTagParseError {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HttpConditionalRequestOutcome {
+  Proceed,
+  NotModified,
+  PreconditionFailed,
+}
+
+pub fn evaluate_conditional_request(
+  request: &Request,
+  metadata: &HttpConditionalMetadata,
+) -> HttpConditionalRequestOutcome {
+  if let Some(matches) = request_if_match_matches(request, metadata) {
+    if !matches {
+      return HttpConditionalRequestOutcome::PreconditionFailed;
+    }
+  } else if let Some(if_unmodified_since) = request_http_date(request, "If-Unmodified-Since") {
+    if metadata
+      .last_modified
+      .is_some_and(|last_modified| http_date_seconds_after(last_modified, if_unmodified_since))
+    {
+      return HttpConditionalRequestOutcome::PreconditionFailed;
+    }
+  }
+
+  if let Some(matches) = request_if_none_match_matches(request, metadata) {
+    if matches {
+      if method_uses_not_modified_for_if_none_match(request.method()) {
+        return HttpConditionalRequestOutcome::NotModified;
+      }
+      return HttpConditionalRequestOutcome::PreconditionFailed;
+    }
+    return HttpConditionalRequestOutcome::Proceed;
+  }
+
+  if method_uses_not_modified_for_if_none_match(request.method()) {
+    if let Some(if_modified_since) = request_http_date(request, "If-Modified-Since") {
+      if metadata
+        .last_modified
+        .is_some_and(|last_modified| !http_date_seconds_after(last_modified, if_modified_since))
+      {
+        return HttpConditionalRequestOutcome::NotModified;
+      }
+    }
+  }
+
+  HttpConditionalRequestOutcome::Proceed
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HttpIfRangeRequestOutcome {
+  FullResponse,
+  PartialContent(HttpByteRange),
+  RangeNotSatisfiable,
+}
+
+pub fn evaluate_if_range_request(
+  request: &Request,
+  metadata: &HttpConditionalMetadata,
+  entity_length: usize,
+) -> Result<HttpIfRangeRequestOutcome, HttpByteRangeError> {
+  evaluate_if_range_headers(
+    request.header("Range"),
+    request.header("If-Range"),
+    metadata,
+    entity_length,
+  )
+}
+
+pub(crate) fn evaluate_if_range_headers(
+  range_header: Option<&str>,
+  if_range: Option<&str>,
+  metadata: &HttpConditionalMetadata,
+  entity_length: usize,
+) -> Result<HttpIfRangeRequestOutcome, HttpByteRangeError> {
+  let Some(range_header) = range_header else {
+    return Ok(HttpIfRangeRequestOutcome::FullResponse);
+  };
+
+  if let Some(if_range) = if_range {
+    if !if_range_matches(if_range, metadata) {
+      return Ok(HttpIfRangeRequestOutcome::FullResponse);
+    }
+  }
+
+  match HttpByteRange::parse(range_header, entity_length) {
+    Ok(range) => Ok(HttpIfRangeRequestOutcome::PartialContent(range)),
+    Err(HttpByteRangeError::UnsatisfiedRange) => Ok(HttpIfRangeRequestOutcome::RangeNotSatisfiable),
+    Err(error) => Err(error),
+  }
+}
+
+pub(crate) fn if_range_matches(if_range: &str, metadata: &HttpConditionalMetadata) -> bool {
+  if let Ok(candidate) = HttpEntityTag::parse(if_range) {
+    return metadata
+      .entity_tag
+      .as_ref()
+      .is_some_and(|current| current.strong_matches(&candidate));
+  }
+
+  let Ok(candidate) = httpdate::parse_http_date(if_range) else {
+    return false;
+  };
+
+  metadata
+    .last_modified
+    .is_some_and(|last_modified| http_date_seconds_equal(last_modified, candidate))
+}
+
+pub(crate) fn request_if_match_matches(
+  request: &Request,
+  metadata: &HttpConditionalMetadata,
+) -> Option<bool> {
+  request_entity_tag_validator_matches(request, "If-Match", metadata, EntityTagComparison::Strong)
+}
+
+pub(crate) fn request_if_none_match_matches(
+  request: &Request,
+  metadata: &HttpConditionalMetadata,
+) -> Option<bool> {
+  request_entity_tag_validator_matches(
+    request,
+    "If-None-Match",
+    metadata,
+    EntityTagComparison::Weak,
+  )
+}
+
+pub(crate) fn request_entity_tag_validator_matches(
+  request: &Request,
+  header_name: &str,
+  metadata: &HttpConditionalMetadata,
+  comparison: EntityTagComparison,
+) -> Option<bool> {
+  let mut saw_header = false;
+  let mut saw_valid_validator = false;
+
+  for value in request.headers_named(header_name) {
+    saw_header = true;
+    for validator in EntityTagValidatorList::parse(value)? {
+      saw_valid_validator = true;
+      match validator {
+        EntityTagValidator::Any => return Some(true),
+        EntityTagValidator::Tag(candidate) => {
+          let Some(current) = metadata.entity_tag.as_ref() else {
+            continue;
+          };
+          let matches = match comparison {
+            EntityTagComparison::Strong => current.strong_matches(&candidate),
+            EntityTagComparison::Weak => current.weak_matches(&candidate),
+          };
+          if matches {
+            return Some(true);
+          }
+        }
+      }
+    }
+  }
+
+  if saw_header && saw_valid_validator {
+    Some(false)
+  } else {
+    None
+  }
+}
+
+pub(crate) fn request_http_date(request: &Request, header_name: &str) -> Option<SystemTime> {
+  httpdate::parse_http_date(request.header(header_name)?).ok()
+}
+
+pub(crate) fn http_date_seconds_after(left: SystemTime, right: SystemTime) -> bool {
+  match (
+    left.duration_since(UNIX_EPOCH),
+    right.duration_since(UNIX_EPOCH),
+  ) {
+    (Ok(left), Ok(right)) => left.as_secs() > right.as_secs(),
+    _ => left > right,
+  }
+}
+
+pub(crate) fn http_date_seconds_equal(left: SystemTime, right: SystemTime) -> bool {
+  match (
+    left.duration_since(UNIX_EPOCH),
+    right.duration_since(UNIX_EPOCH),
+  ) {
+    (Ok(left), Ok(right)) => left.as_secs() == right.as_secs(),
+    _ => left == right,
+  }
+}
+
+pub(crate) fn method_uses_not_modified_for_if_none_match(method: &str) -> bool {
+  method.eq_ignore_ascii_case("GET") || method.eq_ignore_ascii_case("HEAD")
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum EntityTagComparison {
+  Strong,
+  Weak,
+}
+pub(crate) enum EntityTagValidator {
+  Any,
+  Tag(HttpEntityTag),
+}
+
+pub(crate) struct EntityTagValidatorList {
+  pub(crate) validators: Vec<EntityTagValidator>,
+}
+
+impl EntityTagValidatorList {
+  pub(crate) fn parse(value: &str) -> Option<Self> {
+    let value = value.trim();
+    if value == "*" {
+      return Some(Self {
+        validators: vec![EntityTagValidator::Any],
+      });
+    }
+
+    let mut validators = Vec::new();
+    for part in value.split(',') {
+      validators.push(EntityTagValidator::Tag(parse_entity_tag(part.trim())?));
+    }
+    if validators.is_empty() {
+      None
+    } else {
+      Some(Self { validators })
+    }
+  }
+}
+
+impl IntoIterator for EntityTagValidatorList {
+  type Item = EntityTagValidator;
+  type IntoIter = std::vec::IntoIter<EntityTagValidator>;
+
+  fn into_iter(self) -> Self::IntoIter {
+    self.validators.into_iter()
+  }
+}
+
+pub(crate) fn parse_entity_tag(value: &str) -> Option<HttpEntityTag> {
+  let (weak, value) = if let Some(rest) = value.strip_prefix("W/") {
+    (true, rest)
+  } else {
+    (false, value)
+  };
+  let opaque_tag = value.strip_prefix('"')?.strip_suffix('"')?;
+  if !is_valid_entity_tag_opaque_tag(opaque_tag) {
+    return None;
+  }
+  Some(HttpEntityTag {
+    weak,
+    opaque_tag: opaque_tag.to_string(),
+  })
+}
+
+pub(crate) fn assert_valid_entity_tag_opaque_tag(opaque_tag: &str) {
+  assert!(
+    is_valid_entity_tag_opaque_tag(opaque_tag),
+    "entity tag opaque value must be valid for an HTTP ETag header"
+  );
+}
+
+pub(crate) fn is_valid_entity_tag_opaque_tag(opaque_tag: &str) -> bool {
+  opaque_tag
+    .bytes()
+    .all(|byte| matches!(byte, b'\x21' | b'\x23'..=b'\x7e' | b'\x80'..=b'\xff'))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpRequest {
+  pub(crate) method: String,
+  pub(crate) path: String,
+  pub(crate) query: Option<String>,
+  pub(crate) version: String,
+  pub(crate) headers: Vec<HttpHeader>,
+  pub(crate) body: Vec<u8>,
+}
+
+impl HttpRequest {
+  pub fn parse(raw: &[u8]) -> Result<Self, HttpParseError> {
+    let header_end = find_header_end(raw)
+      .ok_or_else(|| HttpParseError::new("request is missing header terminator"))?;
+    reject_oversized_request_head(header_end + 4).map_err(HttpParseError::from_io_error)?;
+    let head = parse_request_head(&raw[..header_end]).map_err(HttpParseError::from_io_error)?;
+    let body_bytes = &raw[(header_end + 4)..];
+
+    let (path, query) = match head.target.split_once('?') {
+      Some((path, query)) => (path.to_string(), Some(query.to_string())),
+      None => (head.target.clone(), None),
+    };
+
+    let body = match request_body_kind(&head.headers).map_err(HttpParseError::from_io_error)? {
+      RequestBodyKind::ContentLength(content_length) => {
+        reject_oversized_request_body(content_length).map_err(HttpParseError::from_io_error)?;
+        if body_bytes.len() != content_length {
+          return Err(HttpParseError::new(
+            "request body length does not match Content-Length",
+          ));
+        }
+        body_bytes.to_vec()
+      }
+      RequestBodyKind::Chunked => {
+        let mut reader = Cursor::new(body_bytes);
+        let chunked =
+          read_chunked_request_body(&mut reader).map_err(HttpParseError::from_io_error)?;
+        if reader.position() as usize != body_bytes.len() {
+          return Err(HttpParseError::new(
+            "request body length does not match Transfer-Encoding",
+          ));
+        }
+        chunked.body
+      }
+    };
+    let headers = head
+      .headers
+      .into_iter()
+      .map(|(name, value)| HttpHeader::new(name, value))
+      .collect();
+
+    Ok(Self {
+      method: head.method,
+      path,
+      query,
+      version: head.version,
+      headers,
+      body,
+    })
+  }
+
+  pub fn method(&self) -> &str {
+    &self.method
+  }
+
+  pub fn path(&self) -> &str {
+    &self.path
+  }
+
+  pub fn query(&self) -> Option<&str> {
+    self.query.as_deref()
+  }
+
+  pub fn version(&self) -> &str {
+    &self.version
+  }
+
+  pub fn headers(&self) -> &[HttpHeader] {
+    &self.headers
+  }
+
+  pub fn header<S: AsRef<str>>(&self, name: S) -> Option<&str> {
+    self
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case(name.as_ref()))
+      .map(|header| header.value.as_str())
+  }
+
+  pub fn cache_control(
+    &self,
+  ) -> Result<Option<HttpRequestCacheControl>, HttpCacheControlParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Cache-Control"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpRequestCacheControl::parse_values(values).map(Some)
+  }
+
+  pub fn vary_selection(&self, vary: &HttpVary) -> HttpVarySelection {
+    if vary.is_wildcard() {
+      return HttpVarySelection::wildcard();
+    }
+
+    HttpVarySelection::from_fields(vary.fields.iter().map(|field| {
+      HttpVarySelectedField::new(
+        field,
+        self
+          .headers
+          .iter()
+          .filter(|header| header.name.eq_ignore_ascii_case(field))
+          .map(|header| header.value.clone())
+          .collect::<Vec<_>>(),
+      )
+    }))
+  }
+
+  pub fn body(&self) -> &[u8] {
+    &self.body
+  }
+
+  pub fn evaluate_if_range(
+    &self,
+    metadata: &HttpConditionalMetadata,
+    entity_length: usize,
+  ) -> Result<HttpIfRangeRequestOutcome, HttpByteRangeError> {
+    evaluate_if_range_headers(
+      self.header("Range"),
+      self.header("If-Range"),
+      metadata,
+      entity_length,
+    )
+  }
+}

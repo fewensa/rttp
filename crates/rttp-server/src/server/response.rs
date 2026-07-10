@@ -1,0 +1,2984 @@
+use super::*;
+
+pub(crate) const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
+pub(crate) const MAX_VARY_VALUE_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_VARY_FIELDS: usize = 256;
+pub(crate) const MAX_ALLOW_VALUE_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_ALLOW_METHODS: usize = 32;
+pub(crate) const MAX_CONTENT_LANGUAGE_VALUE_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_CONTENT_LANGUAGES: usize = 32;
+pub(crate) const MAX_CONTENT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_CONTENT_ENCODINGS: usize = 32;
+pub(crate) const MAX_CONTENT_LOCATION_VALUE_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_CONTENT_DISPOSITION_VALUE_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_CONTENT_DISPOSITION_PARAMETERS: usize = 32;
+pub(crate) const MAX_CONTENT_TYPE_VALUE_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_CONTENT_TYPE_PARAMETERS: usize = 32;
+pub(crate) const MAX_ACCEPT_RANGES_VALUE_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_ACCEPT_RANGES_UNITS: usize = 32;
+pub(crate) const MAX_RETRY_AFTER_VALUE_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_EARLY_HINTS_VALUE_BYTES: usize = 64 * 1024;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpResponse {
+  pub(crate) version: String,
+  pub(crate) status_code: u16,
+  pub(crate) reason: String,
+  pub(crate) headers: Vec<HttpHeader>,
+  pub(crate) trailers: Vec<HttpHeader>,
+  pub(crate) body: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HttpByteRange {
+  pub(crate) start: usize,
+  pub(crate) end: usize,
+}
+
+impl HttpByteRange {
+  pub fn new(start: usize, end: usize) -> Self {
+    assert!(start <= end, "byte range start must not exceed end");
+    Self { start, end }
+  }
+
+  pub fn parse<S: AsRef<str>>(
+    range_header: S,
+    entity_length: usize,
+  ) -> Result<Self, HttpByteRangeError> {
+    let range_header = range_header.as_ref().trim();
+    let Some((unit, range_spec)) = range_header.split_once('=') else {
+      return Err(HttpByteRangeError::InvalidRange);
+    };
+    if !unit.trim().eq_ignore_ascii_case("bytes") {
+      return Err(HttpByteRangeError::UnsupportedUnit);
+    }
+
+    let range_spec = range_spec.trim();
+    if range_spec.contains(',') {
+      return Err(HttpByteRangeError::MultipleRanges);
+    }
+
+    let Some((first, last)) = range_spec.split_once('-') else {
+      return Err(HttpByteRangeError::InvalidRange);
+    };
+    if last.contains('-') {
+      return Err(HttpByteRangeError::InvalidRange);
+    }
+
+    let first = first.trim();
+    let last = last.trim();
+    if first.is_empty() {
+      return parse_suffix_byte_range(last, entity_length);
+    }
+
+    let start = parse_byte_range_position(first)?;
+    let end = if last.is_empty() {
+      None
+    } else {
+      let requested_end = parse_byte_range_position(last)?;
+      if start > requested_end {
+        return Err(HttpByteRangeError::InvalidRange);
+      }
+      Some(requested_end)
+    };
+
+    if start >= entity_length {
+      return Err(HttpByteRangeError::UnsatisfiedRange);
+    }
+    let end = end.unwrap_or(entity_length - 1).min(entity_length - 1);
+
+    Ok(Self { start, end })
+  }
+
+  pub fn start(&self) -> usize {
+    self.start
+  }
+
+  pub fn end(&self) -> usize {
+    self.end
+  }
+
+  pub fn len(&self) -> usize {
+    self.end - self.start + 1
+  }
+
+  pub fn is_empty(&self) -> bool {
+    false
+  }
+
+  pub fn slice<'a>(&self, body: &'a [u8]) -> Option<&'a [u8]> {
+    body.get(self.start..=self.end)
+  }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HttpByteRangeError {
+  UnsupportedUnit,
+  MultipleRanges,
+  InvalidRange,
+  UnsatisfiedRange,
+}
+
+impl fmt::Display for HttpByteRangeError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    let message = match self {
+      Self::UnsupportedUnit => "unsupported Range unit",
+      Self::MultipleRanges => "multiple byte ranges are not supported",
+      Self::InvalidRange => "invalid byte range",
+      Self::UnsatisfiedRange => "byte range is not satisfiable",
+    };
+    formatter.write_str(message)
+  }
+}
+
+impl Error for HttpByteRangeError {}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpEarlyHintsError {
+  pub(crate) message: String,
+}
+
+impl HttpEarlyHintsError {
+  pub(crate) fn new<S: AsRef<str>>(message: S) -> Self {
+    Self {
+      message: message.as_ref().to_string(),
+    }
+  }
+}
+
+impl fmt::Display for HttpEarlyHintsError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpEarlyHintsError {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DefaultConnectionHeader {
+  Close,
+  ForceClose,
+  KeepAlive,
+  Omit,
+}
+
+impl HttpResponse {
+  pub fn new<S: AsRef<str>>(status_code: u16, reason: S) -> Self {
+    Self {
+      version: "HTTP/1.1".to_string(),
+      status_code,
+      reason: reason.as_ref().to_string(),
+      headers: Vec::new(),
+      trailers: Vec::new(),
+      body: Vec::new(),
+    }
+  }
+
+  pub fn ok(body: impl AsRef<[u8]>) -> Self {
+    Self::new(200, "OK").body(body)
+  }
+
+  pub fn partial_content<B: AsRef<[u8]>>(body: B, range: HttpByteRange) -> Self {
+    let body = body.as_ref();
+    let partial = range
+      .slice(body)
+      .expect("partial content range must be satisfiable for body");
+
+    Self::new(206, "Partial Content")
+      .header(
+        "Content-Range",
+        format!("bytes {}-{}/{}", range.start(), range.end(), body.len()),
+      )
+      .body(partial)
+  }
+
+  pub fn range_not_satisfiable(entity_length: usize) -> Self {
+    Self::new(416, "Range Not Satisfiable")
+      .header("Content-Range", format!("bytes */{entity_length}"))
+  }
+
+  pub fn not_modified(metadata: &HttpConditionalMetadata) -> Self {
+    let mut response = Self::new(304, "Not Modified");
+    if let Some(entity_tag) = metadata.entity_tag_value() {
+      response = response.header("ETag", entity_tag.header_value());
+    }
+    if let Some(last_modified) = metadata.last_modified_value() {
+      response = response.header("Last-Modified", httpdate::fmt_http_date(last_modified));
+    }
+    response
+  }
+
+  pub fn precondition_failed() -> Self {
+    Self::new(412, "Precondition Failed")
+  }
+
+  pub fn early_hints<I, L>(links: I) -> Result<Self, HttpEarlyHintsError>
+  where
+    I: IntoIterator<Item = L>,
+    L: AsRef<str>,
+  {
+    Self::early_hints_with_headers(links, std::iter::empty::<(&str, &str)>())
+  }
+
+  pub fn early_hints_with_headers<I, L, H, N, V>(
+    links: I,
+    metadata: H,
+  ) -> Result<Self, HttpEarlyHintsError>
+  where
+    I: IntoIterator<Item = L>,
+    L: AsRef<str>,
+    H: IntoIterator<Item = (N, V)>,
+    N: AsRef<str>,
+    V: AsRef<str>,
+  {
+    let mut response = Self::new(103, "Early Hints");
+    let mut link_count = 0usize;
+    for link in links {
+      let link = validate_early_hints_link_value(link.as_ref())?;
+      response.headers.push(HttpHeader::new("Link", link));
+      link_count += 1;
+    }
+    if link_count == 0 {
+      return Err(HttpEarlyHintsError::new(
+        "Early Hints requires at least one Link header",
+      ));
+    }
+
+    for (name, value) in metadata {
+      let name = validate_early_hints_metadata_name(name.as_ref())?;
+      let value = validate_early_hints_header_value(value.as_ref())?;
+      response.headers.push(HttpHeader::new(name, value));
+    }
+
+    Ok(response)
+  }
+
+  pub fn header<N: AsRef<str>, V: AsRef<str>>(mut self, name: N, value: V) -> Self {
+    let name = name.as_ref();
+    let value = value.as_ref();
+    assert_valid_header_component(name);
+    assert_valid_header_component(value);
+    self.headers.push(HttpHeader::new(name, value));
+    self
+  }
+
+  pub fn trailer<N: AsRef<str>, V: AsRef<str>>(mut self, name: N, value: V) -> Self {
+    let name = name.as_ref();
+    let value = value.as_ref();
+    assert_valid_header_component(name);
+    assert_valid_header_component(value);
+    assert_allowed_trailer_name(name);
+    self.trailers.push(HttpHeader::new(name, value));
+    self
+  }
+
+  pub fn with_vary<V: AsRef<str>>(mut self, value: V) -> Result<Self, HttpVaryParseError> {
+    let vary = HttpVary::parse(value)?;
+    self
+      .headers
+      .push(HttpHeader::new("Vary", vary.header_value()));
+    Ok(self)
+  }
+
+  pub fn with_allow<I, M>(mut self, methods: I) -> Result<Self, HttpAllowParseError>
+  where
+    I: IntoIterator<Item = M>,
+    M: AsRef<str>,
+  {
+    let allow = HttpAllowedMethods::from_methods(methods)?;
+    self
+      .headers
+      .push(HttpHeader::new("Allow", allow.header_value()));
+    Ok(self)
+  }
+
+  pub fn with_content_language<I, L>(
+    mut self,
+    languages: I,
+  ) -> Result<Self, HttpContentLanguageParseError>
+  where
+    I: IntoIterator<Item = L>,
+    L: AsRef<str>,
+  {
+    let content_languages = HttpContentLanguages::from_languages(languages)?;
+    self.headers.push(HttpHeader::new(
+      "Content-Language",
+      content_languages.header_value(),
+    ));
+    Ok(self)
+  }
+
+  pub fn with_content_encoding<I, C>(
+    mut self,
+    codings: I,
+  ) -> Result<Self, HttpContentEncodingParseError>
+  where
+    I: IntoIterator<Item = C>,
+    C: AsRef<str>,
+  {
+    let content_encodings = HttpResponseContentEncodings::from_codings(codings)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Content-Encoding"));
+    self.headers.push(HttpHeader::new(
+      "Content-Encoding",
+      content_encodings.header_value(),
+    ));
+    Ok(self)
+  }
+
+  pub fn with_content_location<V: AsRef<str>>(
+    mut self,
+    value: V,
+  ) -> Result<Self, HttpContentLocationParseError> {
+    let value = parse_http_content_location(value.as_ref())?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Content-Location"));
+    self
+      .headers
+      .push(HttpHeader::new("Content-Location", value));
+    Ok(self)
+  }
+
+  pub fn with_content_disposition<D>(
+    mut self,
+    disposition: D,
+  ) -> Result<Self, HttpContentDispositionParseError>
+  where
+    D: IntoHttpContentDisposition,
+  {
+    let disposition = disposition.into_content_disposition()?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Content-Disposition"));
+    self.headers.push(HttpHeader::new(
+      "Content-Disposition",
+      disposition.header_value(),
+    ));
+    Ok(self)
+  }
+
+  pub fn with_content_type<T>(mut self, content_type: T) -> Result<Self, HttpContentTypeParseError>
+  where
+    T: IntoHttpContentType,
+  {
+    let content_type = content_type.into_content_type()?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Content-Type"));
+    self
+      .headers
+      .push(HttpHeader::new("Content-Type", content_type.header_value()));
+    Ok(self)
+  }
+
+  pub fn with_inline_content_disposition(self) -> Result<Self, HttpContentDispositionParseError> {
+    self.with_content_disposition(HttpContentDisposition::inline())
+  }
+
+  pub fn with_attachment_content_disposition(
+    self,
+  ) -> Result<Self, HttpContentDispositionParseError> {
+    self.with_content_disposition(HttpContentDisposition::attachment())
+  }
+
+  pub fn with_attachment_filename<V: AsRef<str>>(
+    self,
+    filename: V,
+  ) -> Result<Self, HttpContentDispositionParseError> {
+    self.with_content_disposition(
+      HttpContentDisposition::attachment().with_parameter("filename", filename)?,
+    )
+  }
+
+  pub fn with_accept_ranges<I, U>(mut self, units: I) -> Result<Self, HttpAcceptRangesParseError>
+  where
+    I: IntoIterator<Item = U>,
+    U: AsRef<str>,
+  {
+    let accept_ranges = HttpAcceptRanges::from_units(units)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Accept-Ranges"));
+    self.headers.push(HttpHeader::new(
+      "Accept-Ranges",
+      accept_ranges.header_value(),
+    ));
+    Ok(self)
+  }
+
+  pub fn with_accept_ranges_none(mut self) -> Self {
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Accept-Ranges"));
+    self.headers.push(HttpHeader::new(
+      "Accept-Ranges",
+      HttpAcceptRanges::none().header_value(),
+    ));
+    self
+  }
+
+  pub fn with_age(mut self, delta_seconds: u64) -> Self {
+    self
+      .headers
+      .push(HttpHeader::new("Age", delta_seconds.to_string()));
+    self
+  }
+
+  pub fn with_expires(mut self, http_date: SystemTime) -> Self {
+    self.headers.push(HttpHeader::new(
+      "Expires",
+      httpdate::fmt_http_date(http_date),
+    ));
+    self
+  }
+
+  pub fn with_retry_after_delta(mut self, delta_seconds: u64) -> Self {
+    self
+      .headers
+      .push(HttpHeader::new("Retry-After", delta_seconds.to_string()));
+    self
+  }
+
+  pub fn with_retry_after_date(mut self, http_date: SystemTime) -> Self {
+    self.headers.push(HttpHeader::new(
+      "Retry-After",
+      httpdate::fmt_http_date(http_date),
+    ));
+    self
+  }
+
+  pub fn trailers(&self) -> &[HttpHeader] {
+    &self.trailers
+  }
+
+  pub fn trailer_value<S: AsRef<str>>(&self, name: S) -> Option<&str> {
+    self
+      .trailers
+      .iter()
+      .find(|trailer| trailer.name.eq_ignore_ascii_case(name.as_ref()))
+      .map(|trailer| trailer.value.as_str())
+  }
+
+  pub fn cache_control(
+    &self,
+  ) -> Result<Option<HttpResponseCacheControl>, HttpCacheControlParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Cache-Control"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpResponseCacheControl::parse_values(values).map(Some)
+  }
+
+  pub fn vary(&self) -> Result<Option<HttpVary>, HttpVaryParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Vary"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpVary::parse_values(values).map(Some)
+  }
+
+  pub fn allow(&self) -> Result<Option<HttpAllowedMethods>, HttpAllowParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Allow"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAllowedMethods::parse_values(values).map(Some)
+  }
+
+  pub fn content_language(
+    &self,
+  ) -> Result<Option<HttpContentLanguages>, HttpContentLanguageParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Content-Language"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpContentLanguages::parse_values(values).map(Some)
+  }
+
+  pub fn content_encoding(
+    &self,
+  ) -> Result<Option<HttpResponseContentEncodings>, HttpContentEncodingParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Content-Encoding"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpResponseContentEncodings::parse_values(values).map(Some)
+  }
+
+  pub fn content_location(&self) -> Result<Option<&str>, HttpContentLocationParseError> {
+    let Some(value) = self.single_header_value(
+      "Content-Location",
+      HttpContentLocationParseError::new("multiple Content-Location headers"),
+    )?
+    else {
+      return Ok(None);
+    };
+    parse_http_content_location(value).map(Some)
+  }
+
+  pub fn content_disposition(
+    &self,
+  ) -> Result<Option<HttpContentDisposition>, HttpContentDispositionParseError> {
+    let Some(value) = self.single_header_value(
+      "Content-Disposition",
+      HttpContentDispositionParseError::new("multiple Content-Disposition headers"),
+    )?
+    else {
+      return Ok(None);
+    };
+    HttpContentDisposition::parse(value).map(Some)
+  }
+
+  pub fn content_type(&self) -> Result<Option<HttpContentType>, HttpContentTypeParseError> {
+    let Some(value) = self.single_header_value(
+      "Content-Type",
+      HttpContentTypeParseError::new("multiple Content-Type headers"),
+    )?
+    else {
+      return Ok(None);
+    };
+    HttpContentType::parse(value).map(Some)
+  }
+
+  pub fn accept_ranges(&self) -> Result<Option<HttpAcceptRanges>, HttpAcceptRangesParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Accept-Ranges"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAcceptRanges::parse_values(values).map(Some)
+  }
+
+  pub fn age(&self) -> Result<Option<u64>, HttpAgeParseError> {
+    let Some(value) =
+      self.single_header_value("Age", HttpAgeParseError::new("multiple Age headers"))?
+    else {
+      return Ok(None);
+    };
+    parse_http_age(value).map(Some)
+  }
+
+  pub fn expires(&self) -> Result<Option<SystemTime>, HttpExpiresParseError> {
+    let Some(value) = self.single_header_value(
+      "Expires",
+      HttpExpiresParseError::new("multiple Expires headers"),
+    )?
+    else {
+      return Ok(None);
+    };
+    httpdate::parse_http_date(value)
+      .map(Some)
+      .map_err(|_| HttpExpiresParseError::new("invalid Expires HTTP-date"))
+  }
+
+  pub fn retry_after(&self) -> Result<Option<HttpRetryAfter>, HttpRetryAfterParseError> {
+    let Some(value) = self.single_header_value(
+      "Retry-After",
+      HttpRetryAfterParseError::new("multiple Retry-After headers"),
+    )?
+    else {
+      return Ok(None);
+    };
+    parse_http_retry_after(value).map(Some)
+  }
+
+  pub fn body<B: AsRef<[u8]>>(mut self, body: B) -> Self {
+    self.body = body.as_ref().to_vec();
+    self
+  }
+
+  pub fn to_bytes(&self) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    self
+      .write_head_to(&mut bytes, DefaultConnectionHeader::Omit)
+      .expect("write to Vec cannot fail");
+    if self.allows_body() {
+      self
+        .write_body_to(&mut bytes)
+        .expect("write to Vec cannot fail");
+    }
+    bytes
+  }
+
+  pub fn write_to<W>(&self, writer: &mut W) -> io::Result<()>
+  where
+    W: Write,
+  {
+    self.write_to_with_default_connection(writer, DefaultConnectionHeader::Close)
+  }
+
+  pub(crate) fn write_to_with_default_connection<W>(
+    &self,
+    writer: &mut W,
+    default_connection: DefaultConnectionHeader,
+  ) -> io::Result<()>
+  where
+    W: Write,
+  {
+    self.write_to_with_default_connection_and_body(writer, default_connection, true)
+  }
+
+  pub(crate) fn write_to_with_default_connection_and_body<W>(
+    &self,
+    writer: &mut W,
+    default_connection: DefaultConnectionHeader,
+    write_body: bool,
+  ) -> io::Result<()>
+  where
+    W: Write,
+  {
+    self.write_head_to(writer, default_connection)?;
+    if write_body && self.allows_body() {
+      self.write_body_to(writer)?;
+    }
+    writer.flush()
+  }
+
+  pub(crate) fn write_head_to<W>(
+    &self,
+    writer: &mut W,
+    default_connection: DefaultConnectionHeader,
+  ) -> io::Result<()>
+  where
+    W: Write,
+  {
+    write!(
+      writer,
+      "{} {} {}\r\n",
+      self.version, self.status_code, self.reason
+    )?;
+
+    let connection_header_index = self.connection_header_index();
+    for (index, header) in self.headers.iter().enumerate() {
+      if self.should_write_head_header(header, index, connection_header_index, default_connection) {
+        write!(writer, "{}: {}\r\n", header.name, header.value)?;
+      }
+    }
+
+    if self.allows_body() {
+      if self.uses_chunked_transfer_encoding() {
+        self.write_http11_trailer_declaration(writer)?;
+      } else {
+        write!(writer, "Content-Length: {}\r\n", self.body.len())?;
+      }
+    }
+    if default_connection == DefaultConnectionHeader::ForceClose
+      || connection_header_index.is_none()
+    {
+      match default_connection {
+        DefaultConnectionHeader::Close | DefaultConnectionHeader::ForceClose => {
+          writer.write_all(b"Connection: close\r\n")?
+        }
+        DefaultConnectionHeader::KeepAlive => writer.write_all(b"Connection: keep-alive\r\n")?,
+        DefaultConnectionHeader::Omit => {}
+      }
+    }
+
+    writer.write_all(b"\r\n")
+  }
+
+  pub(crate) fn write_http11_trailer_declaration<W>(&self, writer: &mut W) -> io::Result<()>
+  where
+    W: Write,
+  {
+    if self.trailers.is_empty() {
+      return Ok(());
+    }
+
+    writer.write_all(b"Trailer: ")?;
+    for (index, trailer) in self.trailers.iter().enumerate() {
+      if index > 0 {
+        writer.write_all(b", ")?;
+      }
+      writer.write_all(trailer.name.as_bytes())?;
+    }
+    writer.write_all(b"\r\n")
+  }
+
+  pub(crate) fn write_handoff_head_to<W>(&self, writer: &mut W) -> io::Result<()>
+  where
+    W: Write,
+  {
+    write!(
+      writer,
+      "{} {} {}\r\n",
+      self.version, self.status_code, self.reason
+    )?;
+
+    let connection_header_index = self.connection_header_index();
+    for (index, header) in self.headers.iter().enumerate() {
+      if !header.name.eq_ignore_ascii_case("Content-Length")
+        && (!header.name.eq_ignore_ascii_case("Connection")
+          || Some(index) == connection_header_index)
+      {
+        write!(writer, "{}: {}\r\n", header.name, header.value)?;
+      }
+    }
+
+    writer.write_all(b"\r\n")?;
+    writer.flush()
+  }
+
+  pub(crate) fn write_body_to<W>(&self, writer: &mut W) -> io::Result<()>
+  where
+    W: Write,
+  {
+    if self.uses_chunked_transfer_encoding() {
+      write!(writer, "{:x}\r\n", self.body.len())?;
+      writer.write_all(&self.body)?;
+      writer.write_all(b"\r\n0\r\n")?;
+      for trailer in &self.trailers {
+        write!(writer, "{}: {}\r\n", trailer.name, trailer.value)?;
+      }
+      writer.write_all(b"\r\n")
+    } else {
+      writer.write_all(&self.body)
+    }
+  }
+
+  pub(crate) fn allows_body(&self) -> bool {
+    response_status_allows_body(self.status_code)
+  }
+
+  pub(crate) fn uses_chunked_transfer_encoding(&self) -> bool {
+    self.headers.iter().any(|header| {
+      header.name.eq_ignore_ascii_case("Transfer-Encoding")
+        && header
+          .value
+          .split(',')
+          .any(|token| token.trim().eq_ignore_ascii_case("chunked"))
+    })
+  }
+
+  pub(crate) fn should_write_head_header(
+    &self,
+    header: &HttpHeader,
+    index: usize,
+    connection_header_index: Option<usize>,
+    default_connection: DefaultConnectionHeader,
+  ) -> bool {
+    if header.name.eq_ignore_ascii_case("Content-Length") {
+      return false;
+    }
+    if !self.allows_body() && header.name.eq_ignore_ascii_case("Transfer-Encoding") {
+      return false;
+    }
+    if self.allows_body()
+      && self.uses_chunked_transfer_encoding()
+      && !self.trailers.is_empty()
+      && header.name.eq_ignore_ascii_case("Trailer")
+    {
+      return false;
+    }
+    if !header.name.eq_ignore_ascii_case("Connection") {
+      return true;
+    }
+
+    default_connection != DefaultConnectionHeader::ForceClose
+      && Some(index) == connection_header_index
+  }
+
+  pub(crate) fn connection_header_index(&self) -> Option<usize> {
+    self
+      .headers
+      .iter()
+      .rposition(|header| header.name.eq_ignore_ascii_case("Connection"))
+  }
+
+  pub(crate) fn single_header_value<E>(
+    &self,
+    name: &str,
+    multiple_error: E,
+  ) -> Result<Option<&str>, E> {
+    let mut values = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case(name))
+      .map(|header| header.value.as_str());
+    let Some(value) = values.next() else {
+      return Ok(None);
+    };
+    if values.next().is_some() {
+      return Err(multiple_error);
+    }
+    Ok(Some(value))
+  }
+
+  pub(crate) fn closes_connection(&self) -> bool {
+    self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Connection"))
+      .any(|header| connection_header_has_token(Some(header.value.as_str()), "close"))
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpAgeParseError {
+  pub(crate) message: String,
+}
+
+impl HttpAgeParseError {
+  pub(crate) fn new<S: AsRef<str>>(message: S) -> Self {
+    Self {
+      message: message.as_ref().to_string(),
+    }
+  }
+}
+
+impl fmt::Display for HttpAgeParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpAgeParseError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpExpiresParseError {
+  pub(crate) message: String,
+}
+
+impl HttpExpiresParseError {
+  pub(crate) fn new<S: AsRef<str>>(message: S) -> Self {
+    Self {
+      message: message.as_ref().to_string(),
+    }
+  }
+}
+
+impl fmt::Display for HttpExpiresParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpExpiresParseError {}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HttpRetryAfter {
+  DeltaSeconds(u64),
+  HttpDate(SystemTime),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpRetryAfterParseError {
+  pub(crate) message: String,
+}
+
+impl HttpRetryAfterParseError {
+  pub(crate) fn new<S: AsRef<str>>(message: S) -> Self {
+    Self {
+      message: message.as_ref().to_string(),
+    }
+  }
+}
+
+impl fmt::Display for HttpRetryAfterParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpRetryAfterParseError {}
+
+pub(crate) fn parse_http_age(value: &str) -> Result<u64, HttpAgeParseError> {
+  let value = value.trim();
+  if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+    return Err(HttpAgeParseError::new("invalid Age delta-seconds"));
+  }
+  value
+    .parse::<u64>()
+    .map_err(|_| HttpAgeParseError::new("invalid Age delta-seconds"))
+}
+
+pub(crate) fn parse_http_retry_after(
+  value: &str,
+) -> Result<HttpRetryAfter, HttpRetryAfterParseError> {
+  if value.len() > MAX_RETRY_AFTER_VALUE_BYTES {
+    return Err(HttpRetryAfterParseError::new(
+      "Retry-After value is too large",
+    ));
+  }
+
+  let value = value.trim();
+  if value.is_empty() {
+    return Err(HttpRetryAfterParseError::new("invalid Retry-After value"));
+  }
+
+  if value.bytes().all(|byte| byte.is_ascii_digit()) {
+    return value
+      .parse::<u64>()
+      .map(HttpRetryAfter::DeltaSeconds)
+      .map_err(|_| HttpRetryAfterParseError::new("invalid Retry-After delta-seconds"));
+  }
+
+  httpdate::parse_http_date(value)
+    .map(HttpRetryAfter::HttpDate)
+    .map_err(|_| HttpRetryAfterParseError::new("invalid Retry-After HTTP-date"))
+}
+
+pub(crate) fn parse_suffix_byte_range(
+  suffix_length: &str,
+  entity_length: usize,
+) -> Result<HttpByteRange, HttpByteRangeError> {
+  let suffix_length = parse_byte_range_position(suffix_length)?;
+  if suffix_length == 0 {
+    return Err(HttpByteRangeError::InvalidRange);
+  }
+  let end = entity_length
+    .checked_sub(1)
+    .ok_or(HttpByteRangeError::UnsatisfiedRange)?;
+  let start = entity_length.saturating_sub(suffix_length);
+
+  Ok(HttpByteRange { start, end })
+}
+
+pub(crate) fn parse_byte_range_position(value: &str) -> Result<usize, HttpByteRangeError> {
+  if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+    return Err(HttpByteRangeError::InvalidRange);
+  }
+  value
+    .parse::<usize>()
+    .map_err(|_| HttpByteRangeError::InvalidRange)
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpVary {
+  pub(crate) wildcard: bool,
+  pub(crate) fields: Vec<String>,
+}
+
+impl HttpVary {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpVaryParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpVaryParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut fields = Vec::new();
+    let mut wildcard = false;
+
+    for value in values {
+      if value.len() > MAX_VARY_VALUE_BYTES {
+        return Err(HttpVaryParseError::new("Vary header value is too large"));
+      }
+
+      for field in value.split(',') {
+        let field = field.trim();
+        if field.is_empty() {
+          return Err(HttpVaryParseError::new("invalid Vary field name"));
+        }
+        if field == "*" {
+          wildcard = true;
+          continue;
+        }
+        if !is_http_token(field) {
+          return Err(HttpVaryParseError::new("invalid Vary field name"));
+        }
+        let normalized = field.to_ascii_lowercase();
+        if !fields.iter().any(|known| known == &normalized) {
+          if fields.len() >= MAX_VARY_FIELDS {
+            return Err(HttpVaryParseError::new("too many Vary field names"));
+          }
+          fields.push(normalized);
+        }
+      }
+    }
+
+    if wildcard && !fields.is_empty() {
+      return Err(HttpVaryParseError::new(
+        "Vary wildcard cannot be combined with field names",
+      ));
+    }
+    if wildcard {
+      return Ok(Self::wildcard());
+    }
+    if fields.is_empty() {
+      return Err(HttpVaryParseError::new("invalid Vary field name"));
+    }
+
+    Ok(Self {
+      wildcard: false,
+      fields,
+    })
+  }
+
+  pub fn wildcard() -> Self {
+    Self {
+      wildcard: true,
+      fields: Vec::new(),
+    }
+  }
+
+  pub fn is_wildcard(&self) -> bool {
+    self.wildcard
+  }
+
+  pub fn field_names(&self) -> Vec<&str> {
+    self.fields.iter().map(String::as_str).collect()
+  }
+
+  pub fn header_value(&self) -> String {
+    if self.wildcard {
+      "*".to_string()
+    } else {
+      self.fields.join(", ")
+    }
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpVarySelection {
+  pub(crate) wildcard: bool,
+  pub(crate) fields: Vec<HttpVarySelectedField>,
+}
+
+impl HttpVarySelection {
+  pub(crate) fn wildcard() -> Self {
+    Self {
+      wildcard: true,
+      fields: Vec::new(),
+    }
+  }
+
+  pub(crate) fn from_fields<I>(fields: I) -> Self
+  where
+    I: IntoIterator<Item = HttpVarySelectedField>,
+  {
+    Self {
+      wildcard: false,
+      fields: fields.into_iter().collect(),
+    }
+  }
+
+  pub fn is_wildcard(&self) -> bool {
+    self.wildcard
+  }
+
+  pub fn fields(&self) -> &[HttpVarySelectedField] {
+    &self.fields
+  }
+
+  pub fn field_names(&self) -> Vec<&str> {
+    self.fields.iter().map(|field| field.name()).collect()
+  }
+
+  pub fn values<S: AsRef<str>>(&self, name: S) -> Vec<&str> {
+    self
+      .fields
+      .iter()
+      .find(|field| field.name.eq_ignore_ascii_case(name.as_ref()))
+      .map(|field| field.values())
+      .unwrap_or_default()
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpVarySelectedField {
+  pub(crate) name: String,
+  pub(crate) values: Vec<String>,
+}
+
+impl HttpVarySelectedField {
+  pub(crate) fn new<S: AsRef<str>>(name: S, values: Vec<String>) -> Self {
+    Self {
+      name: name.as_ref().to_ascii_lowercase(),
+      values,
+    }
+  }
+
+  pub fn name(&self) -> &str {
+    &self.name
+  }
+
+  pub fn values(&self) -> Vec<&str> {
+    self.values.iter().map(String::as_str).collect()
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpVaryParseError {
+  pub(crate) message: String,
+}
+
+impl HttpVaryParseError {
+  pub(crate) fn new<S: AsRef<str>>(message: S) -> Self {
+    Self {
+      message: message.as_ref().to_string(),
+    }
+  }
+}
+
+impl fmt::Display for HttpVaryParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpVaryParseError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpAllowedMethods {
+  pub(crate) methods: Vec<String>,
+}
+
+impl HttpAllowedMethods {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpAllowParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpAllowParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut methods = Vec::new();
+
+    for value in values {
+      if value.len() > MAX_ALLOW_VALUE_BYTES {
+        return Err(HttpAllowParseError::new("Allow header value is too large"));
+      }
+
+      for method in value.split(',') {
+        let method = method.trim();
+        if method.is_empty() || !is_http_token(method) {
+          return Err(HttpAllowParseError::new("invalid Allow method"));
+        }
+        if methods.iter().any(|known| known == method) {
+          return Err(HttpAllowParseError::new("duplicate Allow method"));
+        }
+        if methods.len() >= MAX_ALLOW_METHODS {
+          return Err(HttpAllowParseError::new("too many Allow methods"));
+        }
+        methods.push(method.to_string());
+      }
+    }
+
+    if methods.is_empty() {
+      return Err(HttpAllowParseError::new("invalid Allow method"));
+    }
+
+    Ok(Self { methods })
+  }
+
+  pub fn from_methods<I, M>(methods: I) -> Result<Self, HttpAllowParseError>
+  where
+    I: IntoIterator<Item = M>,
+    M: AsRef<str>,
+  {
+    let mut value = String::new();
+
+    for (index, method) in methods.into_iter().enumerate() {
+      if index > 0 {
+        value.push_str(", ");
+      }
+      value.push_str(method.as_ref());
+      if value.len() > MAX_ALLOW_VALUE_BYTES {
+        return Err(HttpAllowParseError::new("Allow header value is too large"));
+      }
+    }
+
+    Self::parse(value)
+  }
+
+  pub fn methods(&self) -> Vec<&str> {
+    self.methods.iter().map(String::as_str).collect()
+  }
+
+  pub fn header_value(&self) -> String {
+    self.methods.join(", ")
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpAllowParseError {
+  pub(crate) message: String,
+}
+
+impl HttpAllowParseError {
+  pub(crate) fn new<S: AsRef<str>>(message: S) -> Self {
+    Self {
+      message: message.as_ref().to_string(),
+    }
+  }
+}
+
+impl fmt::Display for HttpAllowParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpAllowParseError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpContentLanguages {
+  pub(crate) languages: Vec<String>,
+}
+
+impl HttpContentLanguages {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpContentLanguageParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpContentLanguageParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut languages = Vec::new();
+
+    for value in values {
+      if value.len() > MAX_CONTENT_LANGUAGE_VALUE_BYTES {
+        return Err(HttpContentLanguageParseError::new(
+          "Content-Language header value is too large",
+        ));
+      }
+
+      for language in value.split(',') {
+        let language = language.trim();
+        if !is_valid_content_language_tag(language) {
+          return Err(HttpContentLanguageParseError::new(
+            "invalid Content-Language tag",
+          ));
+        }
+        if languages
+          .iter()
+          .any(|known: &String| known.eq_ignore_ascii_case(language))
+        {
+          return Err(HttpContentLanguageParseError::new(
+            "duplicate Content-Language tag",
+          ));
+        }
+        if languages.len() >= MAX_CONTENT_LANGUAGES {
+          return Err(HttpContentLanguageParseError::new(
+            "too many Content-Language tags",
+          ));
+        }
+        languages.push(language.to_string());
+      }
+    }
+
+    if languages.is_empty() {
+      return Err(HttpContentLanguageParseError::new(
+        "invalid Content-Language tag",
+      ));
+    }
+
+    Ok(Self { languages })
+  }
+
+  pub fn from_languages<I, L>(languages: I) -> Result<Self, HttpContentLanguageParseError>
+  where
+    I: IntoIterator<Item = L>,
+    L: AsRef<str>,
+  {
+    let mut value = String::new();
+
+    for (index, language) in languages.into_iter().enumerate() {
+      if index > 0 {
+        value.push_str(", ");
+      }
+      value.push_str(language.as_ref());
+      if value.len() > MAX_CONTENT_LANGUAGE_VALUE_BYTES {
+        return Err(HttpContentLanguageParseError::new(
+          "Content-Language header value is too large",
+        ));
+      }
+    }
+
+    Self::parse(value)
+  }
+
+  pub fn languages(&self) -> Vec<&str> {
+    self.languages.iter().map(String::as_str).collect()
+  }
+
+  pub fn header_value(&self) -> String {
+    self.languages.join(", ")
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpContentLanguageParseError {
+  pub(crate) message: String,
+}
+
+impl HttpContentLanguageParseError {
+  pub(crate) fn new<S: AsRef<str>>(message: S) -> Self {
+    Self {
+      message: message.as_ref().to_string(),
+    }
+  }
+}
+
+impl fmt::Display for HttpContentLanguageParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpContentLanguageParseError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpResponseContentEncodings {
+  pub(crate) codings: Vec<String>,
+}
+
+impl HttpResponseContentEncodings {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpContentEncodingParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpContentEncodingParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut codings = Vec::new();
+
+    for value in values {
+      if value.len() > MAX_CONTENT_ENCODING_VALUE_BYTES {
+        return Err(HttpContentEncodingParseError::new(
+          "Content-Encoding header value is too large",
+        ));
+      }
+
+      for coding in value.split(',') {
+        let coding = coding.trim();
+        if coding.is_empty() || !is_http_token(coding) {
+          return Err(HttpContentEncodingParseError::new(
+            "invalid Content-Encoding coding",
+          ));
+        }
+        if codings
+          .iter()
+          .any(|known: &String| known.eq_ignore_ascii_case(coding))
+        {
+          return Err(HttpContentEncodingParseError::new(
+            "duplicate Content-Encoding coding",
+          ));
+        }
+        if codings.len() >= MAX_CONTENT_ENCODINGS {
+          return Err(HttpContentEncodingParseError::new(
+            "too many Content-Encoding codings",
+          ));
+        }
+        codings.push(coding.to_string());
+      }
+    }
+
+    if codings.is_empty() {
+      return Err(HttpContentEncodingParseError::new(
+        "invalid Content-Encoding coding",
+      ));
+    }
+
+    Ok(Self { codings })
+  }
+
+  pub fn from_codings<I, C>(codings: I) -> Result<Self, HttpContentEncodingParseError>
+  where
+    I: IntoIterator<Item = C>,
+    C: AsRef<str>,
+  {
+    let mut value = String::new();
+
+    for (index, coding) in codings.into_iter().enumerate() {
+      if index > 0 {
+        value.push_str(", ");
+      }
+      value.push_str(coding.as_ref());
+      if value.len() > MAX_CONTENT_ENCODING_VALUE_BYTES {
+        return Err(HttpContentEncodingParseError::new(
+          "Content-Encoding header value is too large",
+        ));
+      }
+    }
+
+    Self::parse(value)
+  }
+
+  pub fn codings(&self) -> Vec<&str> {
+    self.codings.iter().map(String::as_str).collect()
+  }
+
+  pub fn header_value(&self) -> String {
+    self.codings.join(", ")
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpContentEncodingParseError {
+  pub(crate) message: String,
+}
+
+impl HttpContentEncodingParseError {
+  pub(crate) fn new<S: AsRef<str>>(message: S) -> Self {
+    Self {
+      message: message.as_ref().to_string(),
+    }
+  }
+}
+
+impl fmt::Display for HttpContentEncodingParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpContentEncodingParseError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpContentLocationParseError {
+  pub(crate) message: String,
+}
+
+impl HttpContentLocationParseError {
+  pub(crate) fn new<S: AsRef<str>>(message: S) -> Self {
+    Self {
+      message: message.as_ref().to_string(),
+    }
+  }
+}
+
+impl fmt::Display for HttpContentLocationParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpContentLocationParseError {}
+
+pub(crate) fn parse_http_content_location(
+  value: &str,
+) -> Result<&str, HttpContentLocationParseError> {
+  if value.len() > MAX_CONTENT_LOCATION_VALUE_BYTES {
+    return Err(HttpContentLocationParseError::new(
+      "Content-Location header value is too large",
+    ));
+  }
+
+  let value = value.trim();
+  if value.is_empty() {
+    return Err(HttpContentLocationParseError::new(
+      "invalid Content-Location value",
+    ));
+  }
+  if value.bytes().any(|byte| byte.is_ascii_control()) {
+    return Err(HttpContentLocationParseError::new(
+      "invalid Content-Location value",
+    ));
+  }
+
+  Ok(value)
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpContentDisposition {
+  pub(crate) disposition_type: String,
+  pub(crate) parameters: Vec<(String, String)>,
+}
+
+impl HttpContentDisposition {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpContentDispositionParseError> {
+    let value = value.as_ref();
+    if value.len() > MAX_CONTENT_DISPOSITION_VALUE_BYTES {
+      return Err(HttpContentDispositionParseError::new(
+        "Content-Disposition header value is too large",
+      ));
+    }
+    if value.bytes().any(|byte| byte.is_ascii_control()) {
+      return Err(HttpContentDispositionParseError::new(
+        "invalid Content-Disposition value",
+      ));
+    }
+
+    let mut parts = split_content_disposition_parts(value)?;
+    if parts.is_empty() {
+      return Err(HttpContentDispositionParseError::new(
+        "invalid Content-Disposition type",
+      ));
+    }
+
+    let disposition_type = parts.remove(0).trim().to_ascii_lowercase();
+    if !is_http_token(&disposition_type) {
+      return Err(HttpContentDispositionParseError::new(
+        "invalid Content-Disposition type",
+      ));
+    }
+
+    let mut parameters = Vec::new();
+    for part in parts {
+      let part = part.trim();
+      if part.is_empty() {
+        return Err(HttpContentDispositionParseError::new(
+          "invalid Content-Disposition parameter",
+        ));
+      }
+      let Some((name, value)) = part.split_once('=') else {
+        return Err(HttpContentDispositionParseError::new(
+          "invalid Content-Disposition parameter",
+        ));
+      };
+      let name = name.trim().to_ascii_lowercase();
+      let value = value.trim();
+      if !is_http_token(&name) {
+        return Err(HttpContentDispositionParseError::new(
+          "invalid Content-Disposition parameter name",
+        ));
+      }
+      if parameters
+        .iter()
+        .any(|(known, _): &(String, String)| known.eq_ignore_ascii_case(&name))
+      {
+        return Err(HttpContentDispositionParseError::new(
+          "duplicate Content-Disposition parameter",
+        ));
+      }
+      if parameters.len() >= MAX_CONTENT_DISPOSITION_PARAMETERS {
+        return Err(HttpContentDispositionParseError::new(
+          "too many Content-Disposition parameters",
+        ));
+      }
+
+      let value = parse_content_disposition_parameter_value(value)?;
+      parameters.push((name, value));
+    }
+
+    Ok(Self {
+      disposition_type,
+      parameters,
+    })
+  }
+
+  pub fn new(disposition_type: impl AsRef<str>) -> Result<Self, HttpContentDispositionParseError> {
+    let disposition_type = disposition_type.as_ref().trim().to_ascii_lowercase();
+    if disposition_type.len() > MAX_CONTENT_DISPOSITION_VALUE_BYTES {
+      return Err(HttpContentDispositionParseError::new(
+        "Content-Disposition header value is too large",
+      ));
+    }
+    if !is_http_token(&disposition_type) {
+      return Err(HttpContentDispositionParseError::new(
+        "invalid Content-Disposition type",
+      ));
+    }
+    Ok(Self {
+      disposition_type,
+      parameters: Vec::new(),
+    })
+  }
+
+  pub fn inline() -> Self {
+    Self {
+      disposition_type: "inline".to_string(),
+      parameters: Vec::new(),
+    }
+  }
+
+  pub fn attachment() -> Self {
+    Self {
+      disposition_type: "attachment".to_string(),
+      parameters: Vec::new(),
+    }
+  }
+
+  pub fn with_parameter<N, V>(
+    mut self,
+    name: N,
+    value: V,
+  ) -> Result<Self, HttpContentDispositionParseError>
+  where
+    N: AsRef<str>,
+    V: AsRef<str>,
+  {
+    let name = name.as_ref().trim().to_ascii_lowercase();
+    let value = value.as_ref();
+    if !is_http_token(&name) {
+      return Err(HttpContentDispositionParseError::new(
+        "invalid Content-Disposition parameter name",
+      ));
+    }
+    if value.is_empty() || !value.is_ascii() || value.bytes().any(|byte| byte.is_ascii_control()) {
+      return Err(HttpContentDispositionParseError::new(
+        "invalid Content-Disposition parameter value",
+      ));
+    }
+    if self
+      .parameters
+      .iter()
+      .any(|(known, _)| known.eq_ignore_ascii_case(&name))
+    {
+      return Err(HttpContentDispositionParseError::new(
+        "duplicate Content-Disposition parameter",
+      ));
+    }
+    if self.parameters.len() >= MAX_CONTENT_DISPOSITION_PARAMETERS {
+      return Err(HttpContentDispositionParseError::new(
+        "too many Content-Disposition parameters",
+      ));
+    }
+
+    let mut candidate = self.header_value();
+    candidate.push_str("; ");
+    candidate.push_str(&name);
+    candidate.push('=');
+    candidate.push_str(&serialize_content_disposition_parameter_value(value));
+    if candidate.len() > MAX_CONTENT_DISPOSITION_VALUE_BYTES {
+      return Err(HttpContentDispositionParseError::new(
+        "Content-Disposition header value is too large",
+      ));
+    }
+
+    self.parameters.push((name, value.to_string()));
+    Ok(self)
+  }
+
+  pub fn disposition_type(&self) -> &str {
+    &self.disposition_type
+  }
+
+  pub fn parameter<S: AsRef<str>>(&self, name: S) -> Option<&str> {
+    self
+      .parameters
+      .iter()
+      .find(|(key, _)| key.eq_ignore_ascii_case(name.as_ref()))
+      .map(|(_, value)| value.as_str())
+  }
+
+  pub fn parameters(&self) -> Vec<(&str, &str)> {
+    self
+      .parameters
+      .iter()
+      .map(|(name, value)| (name.as_str(), value.as_str()))
+      .collect()
+  }
+
+  pub fn header_value(&self) -> String {
+    let mut value = self.disposition_type.clone();
+    for (name, parameter_value) in &self.parameters {
+      value.push_str("; ");
+      value.push_str(name);
+      value.push('=');
+      value.push_str(&serialize_content_disposition_parameter_value(
+        parameter_value,
+      ));
+    }
+    value
+  }
+}
+
+pub trait IntoHttpContentDisposition {
+  fn into_content_disposition(
+    self,
+  ) -> Result<HttpContentDisposition, HttpContentDispositionParseError>;
+}
+
+impl IntoHttpContentDisposition for HttpContentDisposition {
+  fn into_content_disposition(
+    self,
+  ) -> Result<HttpContentDisposition, HttpContentDispositionParseError> {
+    Ok(self)
+  }
+}
+
+impl IntoHttpContentDisposition for &HttpContentDisposition {
+  fn into_content_disposition(
+    self,
+  ) -> Result<HttpContentDisposition, HttpContentDispositionParseError> {
+    Ok(self.clone())
+  }
+}
+
+impl IntoHttpContentDisposition for &str {
+  fn into_content_disposition(
+    self,
+  ) -> Result<HttpContentDisposition, HttpContentDispositionParseError> {
+    HttpContentDisposition::parse(self)
+  }
+}
+
+impl IntoHttpContentDisposition for String {
+  fn into_content_disposition(
+    self,
+  ) -> Result<HttpContentDisposition, HttpContentDispositionParseError> {
+    HttpContentDisposition::parse(self)
+  }
+}
+
+impl IntoHttpContentDisposition for &String {
+  fn into_content_disposition(
+    self,
+  ) -> Result<HttpContentDisposition, HttpContentDispositionParseError> {
+    HttpContentDisposition::parse(self)
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpContentDispositionParseError {
+  pub(crate) message: String,
+}
+
+impl HttpContentDispositionParseError {
+  pub(crate) fn new<S: AsRef<str>>(message: S) -> Self {
+    Self {
+      message: message.as_ref().to_string(),
+    }
+  }
+}
+
+impl fmt::Display for HttpContentDispositionParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpContentDispositionParseError {}
+
+pub(crate) fn split_content_disposition_parts(
+  value: &str,
+) -> Result<Vec<&str>, HttpContentDispositionParseError> {
+  let mut parts = Vec::new();
+  let mut quoted = false;
+  let mut escaped = false;
+  let mut start = 0usize;
+
+  for (index, byte) in value.bytes().enumerate() {
+    if escaped {
+      if !is_content_disposition_quoted_pair_byte(byte) {
+        return Err(HttpContentDispositionParseError::new(
+          "invalid Content-Disposition quoted-string",
+        ));
+      }
+      escaped = false;
+      continue;
+    }
+
+    match byte {
+      b'\\' if quoted => escaped = true,
+      b'"' => quoted = !quoted,
+      b';' if !quoted => {
+        parts.push(&value[start..index]);
+        start = index + 1;
+      }
+      _ => {}
+    }
+  }
+
+  if quoted || escaped {
+    return Err(HttpContentDispositionParseError::new(
+      "invalid Content-Disposition quoted-string",
+    ));
+  }
+
+  parts.push(&value[start..]);
+  Ok(parts)
+}
+
+pub(crate) fn parse_content_disposition_parameter_value(
+  value: &str,
+) -> Result<String, HttpContentDispositionParseError> {
+  if value.is_empty() {
+    return Err(HttpContentDispositionParseError::new(
+      "invalid Content-Disposition parameter value",
+    ));
+  }
+  if value.starts_with('"') {
+    parse_content_disposition_quoted_string(value)
+  } else if value.contains('"') || !is_http_token(value) {
+    Err(HttpContentDispositionParseError::new(
+      "invalid Content-Disposition parameter value",
+    ))
+  } else {
+    Ok(value.to_string())
+  }
+}
+
+pub(crate) fn parse_content_disposition_quoted_string(
+  value: &str,
+) -> Result<String, HttpContentDispositionParseError> {
+  if !value.ends_with('"') || value.len() < 2 {
+    return Err(HttpContentDispositionParseError::new(
+      "invalid Content-Disposition quoted-string",
+    ));
+  }
+
+  let inner = &value[1..value.len() - 1];
+  let mut parsed = String::new();
+  let mut escaped = false;
+  for byte in inner.bytes() {
+    if escaped {
+      if !is_content_disposition_quoted_pair_byte(byte) {
+        return Err(HttpContentDispositionParseError::new(
+          "invalid Content-Disposition quoted-string",
+        ));
+      }
+      parsed.push(byte as char);
+      escaped = false;
+    } else if byte == b'\\' {
+      escaped = true;
+    } else if byte == b'"' || !is_content_disposition_quoted_text_byte(byte) {
+      return Err(HttpContentDispositionParseError::new(
+        "invalid Content-Disposition quoted-string",
+      ));
+    } else {
+      parsed.push(byte as char);
+    }
+  }
+
+  if escaped || parsed.is_empty() {
+    return Err(HttpContentDispositionParseError::new(
+      "invalid Content-Disposition quoted-string",
+    ));
+  }
+
+  Ok(parsed)
+}
+
+pub(crate) fn is_content_disposition_quoted_text_byte(byte: u8) -> bool {
+  byte == b'\t' || matches!(byte, 0x20..=0x21 | 0x23..=0x5b | 0x5d..=0x7e)
+}
+
+pub(crate) fn is_content_disposition_quoted_pair_byte(byte: u8) -> bool {
+  byte == b'\t' || matches!(byte, 0x20..=0x7e)
+}
+
+pub(crate) fn serialize_content_disposition_parameter_value(value: &str) -> String {
+  if is_http_token(value) {
+    return value.to_string();
+  }
+
+  let mut quoted = String::from("\"");
+  for byte in value.bytes() {
+    if matches!(byte, b'\\' | b'"') {
+      quoted.push('\\');
+    }
+    quoted.push(byte as char);
+  }
+  quoted.push('"');
+  quoted
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpContentType {
+  pub(crate) media_type: String,
+  pub(crate) parameters: Vec<(String, String)>,
+}
+
+impl HttpContentType {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpContentTypeParseError> {
+    let value = value.as_ref();
+    if value.len() > MAX_CONTENT_TYPE_VALUE_BYTES {
+      return Err(HttpContentTypeParseError::new(
+        "Content-Type header value is too large",
+      ));
+    }
+    if value.bytes().any(|byte| byte.is_ascii_control()) {
+      return Err(HttpContentTypeParseError::new("invalid Content-Type value"));
+    }
+
+    let mut parts = split_content_type_parts(value)?;
+    if parts.is_empty() {
+      return Err(HttpContentTypeParseError::new(
+        "invalid Content-Type media type",
+      ));
+    }
+
+    let media_type = parse_content_type_media_type(parts.remove(0).trim())?;
+    let mut parameters = Vec::new();
+    for part in parts {
+      let part = part.trim();
+      if part.is_empty() {
+        return Err(HttpContentTypeParseError::new(
+          "invalid Content-Type parameter",
+        ));
+      }
+      let Some((name, value)) = part.split_once('=') else {
+        return Err(HttpContentTypeParseError::new(
+          "invalid Content-Type parameter",
+        ));
+      };
+      let name = name.trim().to_ascii_lowercase();
+      let value = value.trim();
+      if !is_http_token(&name) {
+        return Err(HttpContentTypeParseError::new(
+          "invalid Content-Type parameter name",
+        ));
+      }
+      if parameters
+        .iter()
+        .any(|(known, _): &(String, String)| known.eq_ignore_ascii_case(&name))
+      {
+        return Err(HttpContentTypeParseError::new(
+          "duplicate Content-Type parameter",
+        ));
+      }
+      if parameters.len() >= MAX_CONTENT_TYPE_PARAMETERS {
+        return Err(HttpContentTypeParseError::new(
+          "too many Content-Type parameters",
+        ));
+      }
+
+      let value = parse_content_type_parameter_value(value)?;
+      parameters.push((name, value));
+    }
+
+    Ok(Self {
+      media_type,
+      parameters,
+    })
+  }
+
+  pub fn new<T, S>(type_name: T, subtype: S) -> Result<Self, HttpContentTypeParseError>
+  where
+    T: AsRef<str>,
+    S: AsRef<str>,
+  {
+    let type_name = type_name.as_ref().trim().to_ascii_lowercase();
+    let subtype = subtype.as_ref().trim().to_ascii_lowercase();
+    if !is_http_token(&type_name) || !is_http_token(&subtype) {
+      return Err(HttpContentTypeParseError::new(
+        "invalid Content-Type media type",
+      ));
+    }
+    let media_type = format!("{type_name}/{subtype}");
+    if media_type.len() > MAX_CONTENT_TYPE_VALUE_BYTES {
+      return Err(HttpContentTypeParseError::new(
+        "Content-Type header value is too large",
+      ));
+    }
+    Ok(Self {
+      media_type,
+      parameters: Vec::new(),
+    })
+  }
+
+  pub fn with_parameter<N, V>(
+    mut self,
+    name: N,
+    value: V,
+  ) -> Result<Self, HttpContentTypeParseError>
+  where
+    N: AsRef<str>,
+    V: AsRef<str>,
+  {
+    let name = name.as_ref().trim().to_ascii_lowercase();
+    let value = value.as_ref();
+    if !is_http_token(&name) {
+      return Err(HttpContentTypeParseError::new(
+        "invalid Content-Type parameter name",
+      ));
+    }
+    if value.is_empty() || !value.is_ascii() || value.bytes().any(|byte| byte.is_ascii_control()) {
+      return Err(HttpContentTypeParseError::new(
+        "invalid Content-Type parameter value",
+      ));
+    }
+    if self
+      .parameters
+      .iter()
+      .any(|(known, _)| known.eq_ignore_ascii_case(&name))
+    {
+      return Err(HttpContentTypeParseError::new(
+        "duplicate Content-Type parameter",
+      ));
+    }
+    if self.parameters.len() >= MAX_CONTENT_TYPE_PARAMETERS {
+      return Err(HttpContentTypeParseError::new(
+        "too many Content-Type parameters",
+      ));
+    }
+
+    let mut candidate = self.header_value();
+    candidate.push_str("; ");
+    candidate.push_str(&name);
+    candidate.push('=');
+    candidate.push_str(&serialize_content_type_parameter_value(value));
+    if candidate.len() > MAX_CONTENT_TYPE_VALUE_BYTES {
+      return Err(HttpContentTypeParseError::new(
+        "Content-Type header value is too large",
+      ));
+    }
+
+    self.parameters.push((name, value.to_string()));
+    Ok(self)
+  }
+
+  pub fn media_type(&self) -> &str {
+    &self.media_type
+  }
+
+  pub fn parameter<S: AsRef<str>>(&self, name: S) -> Option<&str> {
+    self
+      .parameters
+      .iter()
+      .find(|(key, _)| key.eq_ignore_ascii_case(name.as_ref()))
+      .map(|(_, value)| value.as_str())
+  }
+
+  pub fn parameters(&self) -> Vec<(&str, &str)> {
+    self
+      .parameters
+      .iter()
+      .map(|(name, value)| (name.as_str(), value.as_str()))
+      .collect()
+  }
+
+  pub fn header_value(&self) -> String {
+    let mut value = self.media_type.clone();
+    for (name, parameter_value) in &self.parameters {
+      value.push_str("; ");
+      value.push_str(name);
+      value.push('=');
+      value.push_str(&serialize_content_type_parameter_value(parameter_value));
+    }
+    value
+  }
+}
+
+pub trait IntoHttpContentType {
+  fn into_content_type(self) -> Result<HttpContentType, HttpContentTypeParseError>;
+}
+
+impl IntoHttpContentType for HttpContentType {
+  fn into_content_type(self) -> Result<HttpContentType, HttpContentTypeParseError> {
+    Ok(self)
+  }
+}
+
+impl IntoHttpContentType for &HttpContentType {
+  fn into_content_type(self) -> Result<HttpContentType, HttpContentTypeParseError> {
+    Ok(self.clone())
+  }
+}
+
+impl IntoHttpContentType for &str {
+  fn into_content_type(self) -> Result<HttpContentType, HttpContentTypeParseError> {
+    HttpContentType::parse(self)
+  }
+}
+
+impl IntoHttpContentType for String {
+  fn into_content_type(self) -> Result<HttpContentType, HttpContentTypeParseError> {
+    HttpContentType::parse(self)
+  }
+}
+
+impl IntoHttpContentType for &String {
+  fn into_content_type(self) -> Result<HttpContentType, HttpContentTypeParseError> {
+    HttpContentType::parse(self)
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpContentTypeParseError {
+  pub(crate) message: String,
+}
+
+impl HttpContentTypeParseError {
+  pub(crate) fn new<S: AsRef<str>>(message: S) -> Self {
+    Self {
+      message: message.as_ref().to_string(),
+    }
+  }
+}
+
+impl fmt::Display for HttpContentTypeParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpContentTypeParseError {}
+
+pub(crate) fn parse_content_type_media_type(
+  value: &str,
+) -> Result<String, HttpContentTypeParseError> {
+  let Some((type_name, subtype)) = value.split_once('/') else {
+    return Err(HttpContentTypeParseError::new(
+      "invalid Content-Type media type",
+    ));
+  };
+  let type_name = type_name.to_ascii_lowercase();
+  let subtype = subtype.to_ascii_lowercase();
+  if !is_http_token(&type_name) || !is_http_token(&subtype) {
+    return Err(HttpContentTypeParseError::new(
+      "invalid Content-Type media type",
+    ));
+  }
+  Ok(format!("{type_name}/{subtype}"))
+}
+
+pub(crate) fn split_content_type_parts(
+  value: &str,
+) -> Result<Vec<&str>, HttpContentTypeParseError> {
+  let mut parts = Vec::new();
+  let mut quoted = false;
+  let mut escaped = false;
+  let mut start = 0usize;
+
+  for (index, byte) in value.bytes().enumerate() {
+    if escaped {
+      if !is_content_type_quoted_pair_byte(byte) {
+        return Err(HttpContentTypeParseError::new(
+          "invalid Content-Type quoted-string",
+        ));
+      }
+      escaped = false;
+      continue;
+    }
+
+    match byte {
+      b'\\' if quoted => escaped = true,
+      b'"' => quoted = !quoted,
+      b';' if !quoted => {
+        parts.push(&value[start..index]);
+        start = index + 1;
+      }
+      _ => {}
+    }
+  }
+
+  if quoted || escaped {
+    return Err(HttpContentTypeParseError::new(
+      "invalid Content-Type quoted-string",
+    ));
+  }
+
+  parts.push(&value[start..]);
+  Ok(parts)
+}
+
+pub(crate) fn parse_content_type_parameter_value(
+  value: &str,
+) -> Result<String, HttpContentTypeParseError> {
+  if value.is_empty() {
+    return Err(HttpContentTypeParseError::new(
+      "invalid Content-Type parameter value",
+    ));
+  }
+  if value.starts_with('"') {
+    parse_content_type_quoted_string(value)
+  } else if value.contains('"') || !is_http_token(value) {
+    Err(HttpContentTypeParseError::new(
+      "invalid Content-Type parameter value",
+    ))
+  } else {
+    Ok(value.to_string())
+  }
+}
+
+pub(crate) fn parse_content_type_quoted_string(
+  value: &str,
+) -> Result<String, HttpContentTypeParseError> {
+  if !value.ends_with('"') || value.len() < 2 {
+    return Err(HttpContentTypeParseError::new(
+      "invalid Content-Type quoted-string",
+    ));
+  }
+
+  let inner = &value[1..value.len() - 1];
+  let mut parsed = String::new();
+  let mut escaped = false;
+  for byte in inner.bytes() {
+    if escaped {
+      if !is_content_type_quoted_pair_byte(byte) {
+        return Err(HttpContentTypeParseError::new(
+          "invalid Content-Type quoted-string",
+        ));
+      }
+      parsed.push(byte as char);
+      escaped = false;
+    } else if byte == b'\\' {
+      escaped = true;
+    } else if byte == b'"' || !is_content_type_quoted_text_byte(byte) {
+      return Err(HttpContentTypeParseError::new(
+        "invalid Content-Type quoted-string",
+      ));
+    } else {
+      parsed.push(byte as char);
+    }
+  }
+
+  if escaped || parsed.is_empty() {
+    return Err(HttpContentTypeParseError::new(
+      "invalid Content-Type quoted-string",
+    ));
+  }
+
+  Ok(parsed)
+}
+
+pub(crate) fn is_content_type_quoted_text_byte(byte: u8) -> bool {
+  byte == b'\t' || matches!(byte, 0x20..=0x21 | 0x23..=0x5b | 0x5d..=0x7e)
+}
+
+pub(crate) fn is_content_type_quoted_pair_byte(byte: u8) -> bool {
+  byte == b'\t' || matches!(byte, 0x20..=0x7e)
+}
+
+pub(crate) fn serialize_content_type_parameter_value(value: &str) -> String {
+  if is_http_token(value) {
+    return value.to_string();
+  }
+
+  let mut quoted = String::from("\"");
+  for byte in value.bytes() {
+    if matches!(byte, b'\\' | b'"') {
+      quoted.push('\\');
+    }
+    quoted.push(byte as char);
+  }
+  quoted.push('"');
+  quoted
+}
+
+pub(crate) fn is_valid_content_language_tag(value: &str) -> bool {
+  let mut subtags = value.split('-');
+  let Some(primary) = subtags.next() else {
+    return false;
+  };
+
+  if primary.is_empty()
+    || primary.len() > 8
+    || !primary.bytes().all(|byte| byte.is_ascii_alphabetic())
+  {
+    return false;
+  }
+
+  subtags.all(|subtag| {
+    !subtag.is_empty()
+      && subtag.len() <= 8
+      && subtag.bytes().all(|byte| byte.is_ascii_alphanumeric())
+  })
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpAcceptRanges {
+  pub(crate) none: bool,
+  pub(crate) units: Vec<String>,
+}
+
+impl HttpAcceptRanges {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpAcceptRangesParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpAcceptRangesParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut units = Vec::new();
+    let mut none = false;
+
+    for value in values {
+      if value.len() > MAX_ACCEPT_RANGES_VALUE_BYTES {
+        return Err(HttpAcceptRangesParseError::new(
+          "Accept-Ranges header value is too large",
+        ));
+      }
+
+      for unit in value.split(',') {
+        let unit = unit.trim();
+        if unit.is_empty() || !is_http_token(unit) {
+          return Err(HttpAcceptRangesParseError::new(
+            "invalid Accept-Ranges range unit",
+          ));
+        }
+        if unit.eq_ignore_ascii_case("none") {
+          none = true;
+          continue;
+        }
+        if units
+          .iter()
+          .any(|known: &String| known.eq_ignore_ascii_case(unit))
+        {
+          return Err(HttpAcceptRangesParseError::new(
+            "duplicate Accept-Ranges range unit",
+          ));
+        }
+        if units.len() >= MAX_ACCEPT_RANGES_UNITS {
+          return Err(HttpAcceptRangesParseError::new(
+            "too many Accept-Ranges range units",
+          ));
+        }
+        units.push(unit.to_string());
+      }
+    }
+
+    if none && !units.is_empty() {
+      return Err(HttpAcceptRangesParseError::new(
+        "Accept-Ranges none cannot be combined with range units",
+      ));
+    }
+    if none {
+      return Ok(Self::none());
+    }
+    if units.is_empty() {
+      return Err(HttpAcceptRangesParseError::new(
+        "invalid Accept-Ranges range unit",
+      ));
+    }
+
+    Ok(Self { none: false, units })
+  }
+
+  pub fn from_units<I, U>(units: I) -> Result<Self, HttpAcceptRangesParseError>
+  where
+    I: IntoIterator<Item = U>,
+    U: AsRef<str>,
+  {
+    let mut value = String::new();
+
+    for (index, unit) in units.into_iter().enumerate() {
+      let unit = unit.as_ref();
+      if unit.trim().eq_ignore_ascii_case("none") {
+        return Err(HttpAcceptRangesParseError::new(
+          "Accept-Ranges none must use the none helper",
+        ));
+      }
+      if index > 0 {
+        value.push_str(", ");
+      }
+      value.push_str(unit);
+      if value.len() > MAX_ACCEPT_RANGES_VALUE_BYTES {
+        return Err(HttpAcceptRangesParseError::new(
+          "Accept-Ranges header value is too large",
+        ));
+      }
+    }
+
+    Self::parse(value)
+  }
+
+  pub fn none() -> Self {
+    Self {
+      none: true,
+      units: Vec::new(),
+    }
+  }
+
+  pub fn is_none(&self) -> bool {
+    self.none
+  }
+
+  pub fn units(&self) -> Vec<&str> {
+    self.units.iter().map(String::as_str).collect()
+  }
+
+  pub fn header_value(&self) -> String {
+    if self.none {
+      "none".to_string()
+    } else {
+      self.units.join(", ")
+    }
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpAcceptRangesParseError {
+  pub(crate) message: String,
+}
+
+impl HttpAcceptRangesParseError {
+  pub(crate) fn new<S: AsRef<str>>(message: S) -> Self {
+    Self {
+      message: message.as_ref().to_string(),
+    }
+  }
+}
+
+impl fmt::Display for HttpAcceptRangesParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpAcceptRangesParseError {}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct HttpRequestCacheControl {
+  pub(crate) no_cache: bool,
+  pub(crate) no_store: bool,
+  pub(crate) max_age: Option<u64>,
+  pub(crate) max_stale: Option<Option<u64>>,
+  pub(crate) min_fresh: Option<u64>,
+  pub(crate) no_transform: bool,
+  pub(crate) only_if_cached: bool,
+  pub(crate) extensions: Vec<HttpCacheControlExtension>,
+}
+
+impl HttpRequestCacheControl {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpCacheControlParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpCacheControlParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut cache_control = Self::default();
+    let mut directive_count = 0usize;
+    for value in values {
+      for directive in split_cache_control_directives(value)? {
+        directive_count += 1;
+        if directive_count > MAX_CACHE_CONTROL_DIRECTIVES {
+          return Err(HttpCacheControlParseError::new(
+            "too many Cache-Control directives",
+          ));
+        }
+        cache_control.apply_directive(&directive)?;
+      }
+    }
+    Ok(cache_control)
+  }
+
+  pub(crate) fn apply_directive(
+    &mut self,
+    directive: &str,
+  ) -> Result<(), HttpCacheControlParseError> {
+    let parsed = parse_cache_control_directive(directive)?;
+
+    match parsed.name.to_ascii_lowercase().as_str() {
+      "no-cache" => self.no_cache = true,
+      "no-store" => self.no_store = true,
+      "max-age" => {
+        self.max_age = Some(parse_cache_control_delta_seconds(
+          parsed.name,
+          parsed.value.as_deref(),
+          parsed.value_was_quoted,
+        )?)
+      }
+      "max-stale" => {
+        self.max_stale = Some(match parsed.value {
+          Some(value) => Some(parse_cache_control_delta_seconds(
+            parsed.name,
+            Some(&value),
+            parsed.value_was_quoted,
+          )?),
+          None => None,
+        })
+      }
+      "min-fresh" => {
+        self.min_fresh = Some(parse_cache_control_delta_seconds(
+          parsed.name,
+          parsed.value.as_deref(),
+          parsed.value_was_quoted,
+        )?)
+      }
+      "no-transform" => self.no_transform = true,
+      "only-if-cached" => self.only_if_cached = true,
+      _ => self.extensions.push(HttpCacheControlExtension::new(
+        parsed.name,
+        parsed.value.as_deref(),
+      )),
+    }
+
+    Ok(())
+  }
+
+  pub fn no_cache(&self) -> bool {
+    self.no_cache
+  }
+
+  pub fn no_store(&self) -> bool {
+    self.no_store
+  }
+
+  pub fn max_age(&self) -> Option<u64> {
+    self.max_age
+  }
+
+  pub fn max_stale(&self) -> Option<Option<u64>> {
+    self.max_stale
+  }
+
+  pub fn min_fresh(&self) -> Option<u64> {
+    self.min_fresh
+  }
+
+  pub fn no_transform(&self) -> bool {
+    self.no_transform
+  }
+
+  pub fn only_if_cached(&self) -> bool {
+    self.only_if_cached
+  }
+
+  pub fn extensions(&self) -> &[HttpCacheControlExtension] {
+    &self.extensions
+  }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct HttpResponseCacheControl {
+  pub(crate) no_cache: bool,
+  pub(crate) no_cache_fields: Vec<String>,
+  pub(crate) no_store: bool,
+  pub(crate) max_age: Option<u64>,
+  pub(crate) s_maxage: Option<u64>,
+  pub(crate) private: bool,
+  pub(crate) private_fields: Vec<String>,
+  pub(crate) public: bool,
+  pub(crate) must_revalidate: bool,
+  pub(crate) proxy_revalidate: bool,
+  pub(crate) immutable: bool,
+  pub(crate) stale_while_revalidate: Option<u64>,
+  pub(crate) stale_if_error: Option<u64>,
+  pub(crate) extensions: Vec<HttpCacheControlExtension>,
+}
+
+impl HttpResponseCacheControl {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpCacheControlParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpCacheControlParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut cache_control = Self::default();
+    let mut directive_count = 0usize;
+    for value in values {
+      for directive in split_cache_control_directives(value)? {
+        directive_count += 1;
+        if directive_count > MAX_CACHE_CONTROL_DIRECTIVES {
+          return Err(HttpCacheControlParseError::new(
+            "too many Cache-Control directives",
+          ));
+        }
+        cache_control.apply_directive(&directive)?;
+      }
+    }
+    Ok(cache_control)
+  }
+
+  pub(crate) fn apply_directive(
+    &mut self,
+    directive: &str,
+  ) -> Result<(), HttpCacheControlParseError> {
+    let parsed = parse_cache_control_directive(directive)?;
+
+    match parsed.name.to_ascii_lowercase().as_str() {
+      "no-cache" => {
+        self.no_cache = true;
+        if let Some(value) = parsed.value {
+          self.no_cache_fields = split_cache_control_field_names(&value);
+        }
+      }
+      "no-store" => self.no_store = true,
+      "max-age" => {
+        self.max_age = Some(parse_cache_control_delta_seconds(
+          parsed.name,
+          parsed.value.as_deref(),
+          parsed.value_was_quoted,
+        )?)
+      }
+      "s-maxage" => {
+        self.s_maxage = Some(parse_cache_control_delta_seconds(
+          parsed.name,
+          parsed.value.as_deref(),
+          parsed.value_was_quoted,
+        )?)
+      }
+      "private" => {
+        self.private = true;
+        if let Some(value) = parsed.value {
+          self.private_fields = split_cache_control_field_names(&value);
+        }
+      }
+      "public" => self.public = true,
+      "must-revalidate" => self.must_revalidate = true,
+      "proxy-revalidate" => self.proxy_revalidate = true,
+      "immutable" => self.immutable = true,
+      "stale-while-revalidate" => {
+        self.stale_while_revalidate = Some(parse_cache_control_delta_seconds(
+          parsed.name,
+          parsed.value.as_deref(),
+          parsed.value_was_quoted,
+        )?)
+      }
+      "stale-if-error" => {
+        self.stale_if_error = Some(parse_cache_control_delta_seconds(
+          parsed.name,
+          parsed.value.as_deref(),
+          parsed.value_was_quoted,
+        )?)
+      }
+      _ => self.extensions.push(HttpCacheControlExtension::new(
+        parsed.name,
+        parsed.value.as_deref(),
+      )),
+    }
+
+    Ok(())
+  }
+
+  pub fn no_cache(&self) -> bool {
+    self.no_cache
+  }
+
+  pub fn no_cache_fields(&self) -> Vec<&str> {
+    self.no_cache_fields.iter().map(String::as_str).collect()
+  }
+
+  pub fn no_store(&self) -> bool {
+    self.no_store
+  }
+
+  pub fn max_age(&self) -> Option<u64> {
+    self.max_age
+  }
+
+  pub fn s_maxage(&self) -> Option<u64> {
+    self.s_maxage
+  }
+
+  pub fn private(&self) -> bool {
+    self.private
+  }
+
+  pub fn private_fields(&self) -> Vec<&str> {
+    self.private_fields.iter().map(String::as_str).collect()
+  }
+
+  pub fn public(&self) -> bool {
+    self.public
+  }
+
+  pub fn must_revalidate(&self) -> bool {
+    self.must_revalidate
+  }
+
+  pub fn proxy_revalidate(&self) -> bool {
+    self.proxy_revalidate
+  }
+
+  pub fn immutable(&self) -> bool {
+    self.immutable
+  }
+
+  pub fn stale_while_revalidate(&self) -> Option<u64> {
+    self.stale_while_revalidate
+  }
+
+  pub fn stale_if_error(&self) -> Option<u64> {
+    self.stale_if_error
+  }
+
+  pub fn extensions(&self) -> &[HttpCacheControlExtension] {
+    &self.extensions
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpCacheControlExtension {
+  pub(crate) name: String,
+  pub(crate) value: Option<String>,
+}
+
+impl HttpCacheControlExtension {
+  pub(crate) fn new(name: &str, value: Option<&str>) -> Self {
+    Self {
+      name: name.to_string(),
+      value: value.map(ToString::to_string),
+    }
+  }
+
+  pub fn name(&self) -> &str {
+    &self.name
+  }
+
+  pub fn value(&self) -> Option<&str> {
+    self.value.as_deref()
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpCacheControlParseError {
+  pub(crate) message: String,
+}
+
+impl HttpCacheControlParseError {
+  pub(crate) fn new<S: AsRef<str>>(message: S) -> Self {
+    Self {
+      message: message.as_ref().to_string(),
+    }
+  }
+}
+
+impl fmt::Display for HttpCacheControlParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpCacheControlParseError {}
+
+pub(crate) struct ParsedCacheControlDirective<'a> {
+  pub(crate) name: &'a str,
+  pub(crate) value: Option<String>,
+  pub(crate) value_was_quoted: bool,
+}
+
+pub(crate) fn split_cache_control_directives(
+  value: &str,
+) -> Result<Vec<String>, HttpCacheControlParseError> {
+  if value.len() > MAX_CACHE_CONTROL_VALUE_BYTES {
+    return Err(HttpCacheControlParseError::new(
+      "Cache-Control header value is too large",
+    ));
+  }
+
+  let mut directives = Vec::new();
+  let mut current = String::new();
+  let mut in_quote = false;
+  let mut escaped = false;
+
+  for ch in value.chars() {
+    if escaped {
+      current.push(ch);
+      escaped = false;
+      continue;
+    }
+
+    match ch {
+      '\\' if in_quote => {
+        current.push(ch);
+        escaped = true;
+      }
+      '"' => {
+        current.push(ch);
+        in_quote = !in_quote;
+      }
+      ',' if !in_quote => {
+        push_cache_control_directive(&mut directives, &current)?;
+        current.clear();
+      }
+      _ => current.push(ch),
+    }
+  }
+
+  if in_quote || escaped {
+    return Err(HttpCacheControlParseError::new(
+      "malformed Cache-Control quoted-string",
+    ));
+  }
+  push_cache_control_directive(&mut directives, &current)?;
+  Ok(directives)
+}
+
+pub(crate) fn push_cache_control_directive(
+  directives: &mut Vec<String>,
+  directive: &str,
+) -> Result<(), HttpCacheControlParseError> {
+  let directive = directive.trim();
+  if directive.is_empty() {
+    return Err(HttpCacheControlParseError::new(
+      "invalid Cache-Control directive",
+    ));
+  }
+  if directives.len() >= MAX_CACHE_CONTROL_DIRECTIVES {
+    return Err(HttpCacheControlParseError::new(
+      "too many Cache-Control directives",
+    ));
+  }
+  directives.push(directive.to_string());
+  Ok(())
+}
+
+pub(crate) fn parse_cache_control_directive(
+  directive: &str,
+) -> Result<ParsedCacheControlDirective<'_>, HttpCacheControlParseError> {
+  let (name, value, value_was_quoted) = match directive.split_once('=') {
+    Some((name, value)) => {
+      let value = value.trim();
+      (
+        name.trim(),
+        Some(parse_cache_control_directive_value(value)?),
+        value.starts_with('"'),
+      )
+    }
+    None => (directive.trim(), None, false),
+  };
+  if !is_http_token(name) {
+    return Err(HttpCacheControlParseError::new(
+      "invalid Cache-Control directive",
+    ));
+  }
+
+  Ok(ParsedCacheControlDirective {
+    name,
+    value,
+    value_was_quoted,
+  })
+}
+
+pub(crate) fn parse_cache_control_directive_value(
+  value: &str,
+) -> Result<String, HttpCacheControlParseError> {
+  if let Some(value) = value.strip_prefix('"') {
+    return parse_cache_control_quoted_string(value);
+  }
+  if value.contains('"') || value.is_empty() {
+    return Err(HttpCacheControlParseError::new(
+      "invalid Cache-Control directive value",
+    ));
+  }
+  Ok(value.to_string())
+}
+
+pub(crate) fn parse_cache_control_quoted_string(
+  value: &str,
+) -> Result<String, HttpCacheControlParseError> {
+  let mut chars = value.bytes();
+  let mut parsed = Vec::new();
+  let mut closed = false;
+
+  while let Some(byte) = chars.next() {
+    match byte {
+      b'"' => {
+        closed = true;
+        break;
+      }
+      b'\\' => {
+        let Some(escaped) = chars.next() else {
+          return Err(HttpCacheControlParseError::new(
+            "malformed Cache-Control quoted-string",
+          ));
+        };
+        if !is_quoted_pair_char(escaped) {
+          return Err(HttpCacheControlParseError::new(
+            "malformed Cache-Control quoted-string",
+          ));
+        }
+        parsed.push(escaped);
+      }
+      _ if is_qdtext(byte) => parsed.push(byte),
+      _ => {
+        return Err(HttpCacheControlParseError::new(
+          "malformed Cache-Control quoted-string",
+        ))
+      }
+    }
+  }
+
+  if !closed || chars.any(|byte| !byte.is_ascii_whitespace()) {
+    return Err(HttpCacheControlParseError::new(
+      "malformed Cache-Control quoted-string",
+    ));
+  }
+
+  String::from_utf8(parsed)
+    .map_err(|_| HttpCacheControlParseError::new("malformed Cache-Control quoted-string"))
+}
+
+pub(crate) fn parse_cache_control_delta_seconds(
+  name: &str,
+  value: Option<&str>,
+  value_was_quoted: bool,
+) -> Result<u64, HttpCacheControlParseError> {
+  let Some(value) = value else {
+    return Err(HttpCacheControlParseError::new(format!(
+      "missing Cache-Control {name} delta-seconds"
+    )));
+  };
+  if value_was_quoted || value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+    return Err(HttpCacheControlParseError::new(format!(
+      "invalid Cache-Control {name} delta-seconds"
+    )));
+  }
+  value.parse::<u64>().map_err(|_| {
+    HttpCacheControlParseError::new(format!("invalid Cache-Control {name} delta-seconds"))
+  })
+}
+
+pub(crate) fn split_cache_control_field_names(value: &str) -> Vec<String> {
+  value
+    .split(',')
+    .map(str::trim)
+    .filter(|field| !field.is_empty())
+    .map(ToString::to_string)
+    .collect()
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpHeader {
+  pub(crate) name: String,
+  pub(crate) value: String,
+}
+
+impl HttpHeader {
+  pub fn new<N: AsRef<str>, V: AsRef<str>>(name: N, value: V) -> Self {
+    Self {
+      name: name.as_ref().to_string(),
+      value: value.as_ref().to_string(),
+    }
+  }
+
+  pub fn name(&self) -> &str {
+    &self.name
+  }
+
+  pub fn value(&self) -> &str {
+    &self.value
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpParseError {
+  pub(crate) message: String,
+}
+
+impl HttpParseError {
+  pub(crate) fn new<S: AsRef<str>>(message: S) -> Self {
+    Self {
+      message: message.as_ref().to_string(),
+    }
+  }
+
+  pub(crate) fn from_io_error(error: io::Error) -> Self {
+    Self::new(error.to_string())
+  }
+}
+
+impl fmt::Display for HttpParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpParseError {}
