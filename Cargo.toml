@@ -1,7 +1,8 @@
 [workspace]
 members = [
-  "rttp",
-  "rttp_client",
-  "rttp_test_support",
+  "crates/rttp",
+  "crates/rttp-client",
+  "crates/rttp-server",
+  "crates/rttp-test-support",
 ]
 resolver = "2"

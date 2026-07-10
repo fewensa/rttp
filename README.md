@@ -1,10 +1,10 @@
 rttp
 ====
 
-A small Rust HTTP workspace with a client crate (`rttp_client`) and a wrapper
-crate (`rttp`) that also provides a minimal blocking HTTP server. The private,
-unpublished `rttp_test_support` crate contains shared test fixtures and local
-socket helpers for those workspace crates.
+A small Rust HTTP workspace with public client (`rttp_client`) and server
+(`rttp-server`) crates. The `rttp` crate remains a compatibility facade for
+their established APIs, while the private, unpublished `rttp_test_support`
+crate contains shared test fixtures and local socket helpers.
 
 ## Client
 

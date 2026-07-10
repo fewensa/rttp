@@ -15,7 +15,7 @@ jobs:
       script:
         - sudo apt update -y
         - sudo apt install -y libssl-dev pkg-config
-        - cd rttp_client
+        - cd crates/rttp-client
         - cargo test --release
         - cargo test --features "tls-native" --release
         - cargo test --features "tls-rustls" --release
@@ -30,7 +30,9 @@ jobs:
         - sudo apt update -y
         - sudo apt install -y libssl-dev pkg-config
         - cargo login $CRATES_TOKEN
-        - cd rttp_client
+        - cd crates/rttp-client
+        - cargo publish
+        - cd ../rttp-server
         - cargo publish
         - cd ../rttp
         - cargo publish
