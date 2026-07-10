@@ -6,7 +6,6 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use rttp::server::HttpResponse;
 use socket2::{Domain, Protocol, Socket, Type};
 
 #[path = "local_http.rs"]
@@ -143,17 +142,25 @@ pub fn spawn_chunked_server() -> (SocketAddr, JoinHandle<()>) {
 }
 
 pub fn spawn_socket2_chunked_trailer_server() -> (SocketAddr, JoinHandle<()>) {
-  let server = rttp::Http::server("127.0.0.1:0").expect("bind socket2 trailer server");
-  let addr = server.local_addr().expect("socket2 trailer server addr");
+  let (listener, addr) = bind_local_http_listener("chunked trailer server");
   let handle = thread::spawn(move || {
-    server
-      .accept_one(|_request| {
-        HttpResponse::ok("socket2 chunked body")
-          .header("Transfer-Encoding", "chunked")
-          .trailer("X-Trace", "abc")
-          .trailer("X-Signature", "signed")
-      })
-      .expect("serve socket2 trailer response");
+    if let Ok((mut stream, _)) = listener.accept() {
+      let _ = read_http_request(&mut stream);
+      let _ = stream.write_all(
+        concat!(
+          "HTTP/1.1 200 OK\r\n",
+          "Transfer-Encoding: chunked\r\n",
+          "Connection: close\r\n",
+          "\r\n",
+          "14\r\nsocket2 chunked body\r\n",
+          "0\r\n",
+          "X-Trace: abc\r\n",
+          "X-Signature: signed\r\n",
+          "\r\n"
+        )
+        .as_bytes(),
+      );
+    }
   });
   (addr, handle)
 }

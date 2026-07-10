@@ -1,0 +1,23 @@
+[package]
+name = "rttp-workspace-tests"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+flate2 = "1.0"
+httpdate = "1.0"
+rttp_client = { path = "../crates/rttp-client", features = ["http2"] }
+rttp_server = { package = "rttp-server", path = "../crates/rttp-server" }
+rttp_test_support = { path = "../crates/rttp-test-support" }
+
+[features]
+async = ["rttp_client/async"]
+
+[[test]]
+name = "http11_client_server_matrix"
+path = "http11_client_server_matrix.rs"
+
+[[test]]
+name = "http2_client_server_roundtrip"
+path = "http2_client_server_roundtrip.rs"

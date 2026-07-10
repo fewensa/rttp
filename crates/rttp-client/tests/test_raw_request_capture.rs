@@ -1,4 +1,4 @@
-mod support;
+use rttp_test_support as support;
 
 #[cfg(feature = "async")]
 use futures::executor::block_on;

@@ -8,12 +8,12 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, UNIX_EPOCH};
 
-use rttp::server::{
+use rttp_client::HttpClient;
+use rttp_server::server::{
   HttpByteRange, HttpByteRangeError, HttpConditionalMetadata, HttpConditionalRequestOutcome,
   HttpContentDisposition, HttpContentType, HttpEntityTag, HttpIfRangeRequestOutcome, HttpResponse,
   Request,
 };
-use rttp_client::HttpClient;
 use rttp_test_support as fixtures;
 
 fn client() -> HttpClient {
@@ -318,7 +318,7 @@ fn if_range_response(request: Request, metadata: HttpConditionalMetadata) -> Htt
 }
 
 fn spawn_range_server() -> (std::net::SocketAddr, thread::JoinHandle<Option<String>>) {
-  let server = rttp::Http::server("127.0.0.1:0").expect("bind range server");
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind range server");
   let addr = server.local_addr().expect("range server addr");
   let (tx, rx) = mpsc::channel();
 
@@ -342,7 +342,7 @@ fn spawn_if_range_server(
   std::net::SocketAddr,
   thread::JoinHandle<(Option<String>, Option<String>)>,
 ) {
-  let server = rttp::Http::server("127.0.0.1:0").expect("bind if-range server");
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind if-range server");
   let addr = server.local_addr().expect("if-range server addr");
   let (tx, rx) = mpsc::channel();
 
@@ -381,7 +381,8 @@ fn conditional_response(request: Request) -> HttpResponse {
 }
 
 fn spawn_conditional_server() -> (std::net::SocketAddr, thread::JoinHandle<Option<String>>) {
-  let server = rttp::Http::server("127.0.0.1:0").expect("bind conditional server");
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind conditional server");
   let addr = server.local_addr().expect("conditional server addr");
   let (tx, rx) = mpsc::channel();
 
@@ -410,7 +411,8 @@ fn spawn_conditional_server() -> (std::net::SocketAddr, thread::JoinHandle<Optio
 fn spawn_content_disposition_server(
   disposition: HttpContentDisposition,
 ) -> (std::net::SocketAddr, thread::JoinHandle<()>) {
-  let server = rttp::Http::server("127.0.0.1:0").expect("bind content-disposition server");
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind content-disposition server");
   let addr = server
     .local_addr()
     .expect("content-disposition server addr");
@@ -432,7 +434,8 @@ fn spawn_content_disposition_server(
 fn spawn_content_type_server(
   content_type: HttpContentType,
 ) -> (std::net::SocketAddr, thread::JoinHandle<()>) {
-  let server = rttp::Http::server("127.0.0.1:0").expect("bind content-type server");
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind content-type server");
   let addr = server.local_addr().expect("content-type server addr");
 
   let handle = thread::spawn(move || {
@@ -452,7 +455,8 @@ fn spawn_content_type_server(
 fn spawn_content_encoding_server(
   codings: &'static [&'static str],
 ) -> (std::net::SocketAddr, thread::JoinHandle<()>) {
-  let server = rttp::Http::server("127.0.0.1:0").expect("bind content-encoding server");
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind content-encoding server");
   let addr = server.local_addr().expect("content-encoding server addr");
 
   let handle = thread::spawn(move || {
@@ -3011,7 +3015,7 @@ fn sync_client_unsatisfied_range_maps_to_server_416_response() {
 
 #[test]
 fn sync_client_malformed_range_helpers_reject_before_reaching_server() {
-  let server = rttp::Http::server("127.0.0.1:0").expect("bind range server");
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind range server");
   let addr = server.local_addr().expect("range server addr");
   let (tx, rx) = mpsc::channel();
   let handle = thread::spawn(move || {

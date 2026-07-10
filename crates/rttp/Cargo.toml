@@ -26,7 +26,7 @@ async-std = { version = "1" }
 httpdate = "1.0"
 rcgen = "0.11"
 rustls = "0.23"
-rttp_test_support = { path = "../rttp-test-support" }
+rttp_test_support = { path = "../rttp-test-support", features = ["tls-rustls"] }
 rttp_client = { path = "../rttp-client", features = ["http2"] }
 
 

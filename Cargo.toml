@@ -4,5 +4,6 @@ members = [
   "crates/rttp-client",
   "crates/rttp-server",
   "crates/rttp-test-support",
+  "tests",
 ]
 resolver = "2"
