@@ -49,6 +49,8 @@ use std::net::TcpStream as StdTcpStream;
 
     let read = {
       let mut flow_control = Http2ResponseFlowControl {
+        max_inbound_frame_size: HTTP2_DEFAULT_MAX_FRAME_SIZE,
+        max_header_list_size: HTTP2_MAX_HEADER_LIST_SIZE,
         max_frame_size: &mut max_frame_size,
         peer_header_table_size: &mut peer_header_table_size,
         peer_initial_stream_send_window: &mut peer_initial_stream_send_window,

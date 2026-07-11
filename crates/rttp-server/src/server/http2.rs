@@ -31,6 +31,66 @@ pub(crate) const HTTP2_SETTINGS_ENABLE_CONNECT_PROTOCOL: u16 = 0x8;
 pub(crate) const HTTP2_ERROR_NO_ERROR: u32 = 0x0;
 pub(crate) const HTTP2_ERROR_REFUSED_STREAM: u32 = 0x7;
 
+/// Bounds advertised and accepted HTTP/2 settings on the server's h2c path.
+///
+/// The policy applies to each bounded h2c connection accepted by an
+/// [`HttpServer`]. It is fixed for that connection; changing policy at runtime
+/// would require the session management that this server deliberately does not
+/// provide.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Http2ServerPolicy {
+  max_frame_size: usize,
+  max_header_list_size: usize,
+}
+
+impl Default for Http2ServerPolicy {
+  fn default() -> Self {
+    Self {
+      max_frame_size: HTTP2_DEFAULT_MAX_FRAME_SIZE,
+      max_header_list_size: HTTP2_MAX_HEADER_LIST_SIZE,
+    }
+  }
+}
+
+impl Http2ServerPolicy {
+  /// Creates the default bounded h2c server policy.
+  pub fn new() -> Self {
+    Self::default()
+  }
+
+  /// Advertises and enforces a local `SETTINGS_MAX_FRAME_SIZE` value.
+  pub fn with_max_frame_size(mut self, max_frame_size: usize) -> Self {
+    self.max_frame_size = max_frame_size;
+    self
+  }
+
+  /// Advertises and enforces a local `SETTINGS_MAX_HEADER_LIST_SIZE` value.
+  pub fn with_max_header_list_size(mut self, max_header_list_size: usize) -> Self {
+    self.max_header_list_size = max_header_list_size;
+    self
+  }
+
+  pub fn max_frame_size(&self) -> usize {
+    self.max_frame_size
+  }
+
+  pub fn max_header_list_size(&self) -> usize {
+    self.max_header_list_size
+  }
+
+  pub(crate) fn validate(&self) -> io::Result<()> {
+    if !(16_384..=16_777_215).contains(&self.max_frame_size)
+      || u32::try_from(self.max_header_list_size).is_err()
+    {
+      return Err(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "invalid bounded HTTP/2 server policy",
+      ));
+    }
+    Ok(())
+  }
+}
+
 pub(crate) enum AcceptedConnection {
   Http1(Http1Stream),
   Http2(TcpStream),
@@ -741,11 +801,14 @@ pub(crate) fn write_http2_window_update<S: Write>(
   )
 }
 
-pub(crate) fn server_http2_settings_payload(request_limit: usize) -> Vec<u8> {
+pub(crate) fn server_http2_settings_payload(
+  request_limit: usize,
+  policy: &Http2ServerPolicy,
+) -> Vec<u8> {
   let mut payload = Vec::with_capacity(18);
   payload.extend_from_slice(&http2_setting(
     HTTP2_SETTINGS_MAX_FRAME_SIZE,
-    HTTP2_DEFAULT_MAX_FRAME_SIZE as u32,
+    policy.max_frame_size as u32,
   ));
   payload.extend_from_slice(&http2_setting(
     HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS,
@@ -753,7 +816,7 @@ pub(crate) fn server_http2_settings_payload(request_limit: usize) -> Vec<u8> {
   ));
   payload.extend_from_slice(&http2_setting(
     HTTP2_SETTINGS_MAX_HEADER_LIST_SIZE,
-    HTTP2_MAX_HEADER_LIST_SIZE as u32,
+    policy.max_header_list_size as u32,
   ));
   payload
 }
@@ -1563,6 +1626,8 @@ pub(crate) const HTTP2_HUFFMAN_CODES: [(u8, u32); 257] = [
 ];
 
 pub(crate) struct Http2ResponseFlowControl<'a> {
+  pub(crate) max_inbound_frame_size: usize,
+  pub(crate) max_header_list_size: usize,
   pub(crate) max_frame_size: &'a mut usize,
   pub(crate) peer_header_table_size: &'a mut usize,
   pub(crate) peer_initial_stream_send_window: &'a mut i32,
@@ -1668,7 +1733,7 @@ pub(crate) fn read_http2_response_flow_control_frame<S: Read + Write>(
   flow_control: &mut Http2ResponseFlowControl<'_>,
 ) -> io::Result<Http2ResponseFlowControlRead> {
   loop {
-    let frame = read_http2_frame(stream, HTTP2_DEFAULT_MAX_FRAME_SIZE)?;
+    let frame = read_http2_frame(stream, flow_control.max_inbound_frame_size)?;
     if let Some(stream_id) = active_http2_header_continuation_stream(flow_control.streams) {
       if frame.frame_type != HTTP2_FRAME_CONTINUATION || frame.stream_id != stream_id {
         return Err(io::Error::new(
@@ -1796,7 +1861,7 @@ pub(crate) fn read_http2_response_flow_control_frame<S: Read + Write>(
         if frame.flags & HTTP2_FLAG_END_HEADERS == HTTP2_FLAG_END_HEADERS {
           request_stream.finish_header_block(
             flow_control.request_header_decoder,
-            HTTP2_MAX_HEADER_LIST_SIZE,
+            flow_control.max_header_list_size,
             *flow_control.peer_enable_connect_protocol,
           )?;
         } else {
@@ -1836,7 +1901,7 @@ pub(crate) fn read_http2_response_flow_control_frame<S: Read + Write>(
         if frame.flags & HTTP2_FLAG_END_HEADERS == HTTP2_FLAG_END_HEADERS {
           request_stream.finish_header_block(
             flow_control.request_header_decoder,
-            HTTP2_MAX_HEADER_LIST_SIZE,
+            flow_control.max_header_list_size,
             *flow_control.peer_enable_connect_protocol,
           )?;
         }
