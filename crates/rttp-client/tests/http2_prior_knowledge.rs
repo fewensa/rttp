@@ -8,7 +8,7 @@ use std::time::Duration;
 use base64::Engine;
 use rttp_client::types::Header;
 use rttp_client::types::Proxy;
-use rttp_client::{Config, HttpClient};
+use rttp_client::{Config, H2cClientPolicy, HttpClient};
 
 const FRAME_DATA: u8 = 0x0;
 const FRAME_HEADERS: u8 = 0x1;
@@ -2436,6 +2436,89 @@ fn prior_knowledge_advertises_configured_legal_max_frame_size_boundaries() {
       .join()
       .expect("configured max frame size peer thread");
   }
+}
+
+#[test]
+fn h2c_client_policy_defaults_leave_local_settings_at_protocol_defaults() {
+  let policy = H2cClientPolicy::default();
+
+  assert_eq!(None, policy.configured_max_frame_size());
+  assert_eq!(None, policy.configured_header_table_size());
+}
+
+#[test]
+fn prior_knowledge_advertises_h2c_client_policy_settings() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    let mut preface = [0; 24];
+    stream
+      .read_exact(&mut preface)
+      .expect("read client preface");
+    assert_eq!(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", &preface);
+
+    let client_settings = read_frame(&mut stream);
+    assert_eq!(
+      Some(32_768),
+      h2_setting_value(&client_settings.payload, SETTING_MAX_FRAME_SIZE)
+    );
+    assert_eq!(
+      Some(64),
+      h2_setting_value(&client_settings.payload, SETTING_HEADER_TABLE_SIZE)
+    );
+
+    write_frame(&mut stream, FRAME_SETTINGS, 0, 0, &[]);
+    let client_settings_ack = read_frame(&mut stream);
+    assert_eq!(FRAME_SETTINGS, client_settings_ack.frame_type);
+    assert_eq!(FLAG_ACK, client_settings_ack.flags);
+
+    let request_headers = read_frame(&mut stream);
+    assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"ok");
+  });
+
+  let response = HttpClient::new()
+    .h2c_policy(
+      H2cClientPolicy::default()
+        .max_frame_size(32_768)
+        .header_table_size(64),
+    )
+    .get()
+    .url(format!("http://{}/h2c-client-policy", addr))
+    .emit_http2_prior_knowledge()
+    .expect("configured h2c policy should work");
+
+  assert_eq!(200, response.code());
+  assert_eq!("ok", response.body().string().unwrap());
+  handle.join().expect("h2 policy peer thread");
+}
+
+#[test]
+fn prior_knowledge_rejects_invalid_h2c_client_policy_before_connecting() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  listener
+    .set_nonblocking(true)
+    .expect("set h2 listener nonblocking");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let err = HttpClient::new()
+    .h2c_policy(H2cClientPolicy::default().max_frame_size(DEFAULT_MAX_FRAME_SIZE - 1))
+    .get()
+    .url(format!("http://{}/invalid-h2c-client-policy", addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("invalid h2c policy must fail before connecting");
+
+  assert!(err.is_builder());
+  assert!(err.to_string().contains("SETTINGS_MAX_FRAME_SIZE"));
+  assert!(
+    listener.accept().is_err(),
+    "client must reject invalid h2c policy before connecting"
+  );
 }
 
 #[test]
