@@ -4,7 +4,7 @@ use crate::connection::{BlockConnection, HandoffConnection, StreamingRequestBody
 use crate::request::{RawRequest, Request};
 use crate::response::Response;
 use crate::types::{Auth, Header, IntoHeader, IntoPara, Proxy, ToFormData, ToRoUrl};
-use crate::{error, Config};
+use crate::{error, Config, H2cClientPolicy};
 #[cfg(feature = "async")]
 use futures::io::AsyncRead;
 use std::io;
@@ -89,6 +89,16 @@ impl HttpClient {
   /// Set request config
   pub fn config<C: AsRef<Config>>(&mut self, config: C) -> &mut Self {
     self.request.config_set(config);
+    self
+  }
+
+  /// Configure local settings for the bounded prior-knowledge h2c client path.
+  ///
+  /// This is honored only by `emit_http2_prior_knowledge` and does not enable
+  /// pooling, retries, server push, or multiplexing. Invalid HTTP/2 settings
+  /// are rejected before the client opens its TCP socket.
+  pub fn h2c_policy(&mut self, policy: H2cClientPolicy) -> &mut Self {
+    self.request.config_mut().h2c_policy_set(policy);
     self
   }
 

@@ -1,3 +1,41 @@
+/// Local settings for the bounded prior-knowledge h2c client path.
+///
+/// The default policy leaves both settings unadvertised, retaining the HTTP/2
+/// protocol defaults of a 16,384-byte maximum frame size and a 4,096-byte
+/// HPACK dynamic table. Configured values are validated before the client
+/// opens its h2c socket.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct H2cClientPolicy {
+  max_frame_size: Option<usize>,
+  header_table_size: Option<usize>,
+}
+
+impl H2cClientPolicy {
+  pub fn new() -> Self {
+    Self::default()
+  }
+
+  /// Advertise a local h2c `SETTINGS_MAX_FRAME_SIZE` value.
+  pub fn max_frame_size(mut self, max_frame_size: usize) -> Self {
+    self.max_frame_size = Some(max_frame_size);
+    self
+  }
+
+  /// Advertise a local h2c `SETTINGS_HEADER_TABLE_SIZE` value.
+  pub fn header_table_size(mut self, header_table_size: usize) -> Self {
+    self.header_table_size = Some(header_table_size);
+    self
+  }
+
+  pub fn configured_max_frame_size(&self) -> Option<usize> {
+    self.max_frame_size
+  }
+
+  pub fn configured_header_table_size(&self) -> Option<usize> {
+    self.header_table_size
+  }
+}
+
 #[derive(Clone, Debug)]
 pub struct Config {
   read_timeout: u64,
@@ -51,6 +89,18 @@ impl Config {
   }
   pub fn http2_header_table_size(&self) -> Option<usize> {
     self.http2_header_table_size
+  }
+  /// Return the bounded prior-knowledge h2c settings configured for this request.
+  pub fn h2c_policy(&self) -> H2cClientPolicy {
+    H2cClientPolicy {
+      max_frame_size: self.http2_max_frame_size,
+      header_table_size: self.http2_header_table_size,
+    }
+  }
+
+  pub(crate) fn h2c_policy_set(&mut self, policy: H2cClientPolicy) {
+    self.http2_max_frame_size = policy.max_frame_size;
+    self.http2_header_table_size = policy.header_table_size;
   }
 }
 
@@ -110,6 +160,11 @@ impl ConfigBuilder {
   }
   pub fn verify_ssl_cert(&mut self, verify_ssl_cert: bool) -> &mut Self {
     self.config.verify_ssl_cert = verify_ssl_cert;
+    self
+  }
+  /// Configure local settings for the bounded prior-knowledge h2c client path.
+  pub fn h2c_policy(&mut self, policy: H2cClientPolicy) -> &mut Self {
+    self.config.h2c_policy_set(policy);
     self
   }
   /// Configure the local h2c `SETTINGS_MAX_FRAME_SIZE` value.

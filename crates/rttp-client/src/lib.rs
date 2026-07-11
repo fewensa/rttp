@@ -13,8 +13,8 @@
 //! With the `http2` feature enabled, `emit_http2_prior_knowledge` sends a
 //! bounded prior-knowledge h2c request over a direct socket2 TCP connection.
 //! It opens at most one stream and validates `SETTINGS_MAX_FRAME_SIZE` on both
-//! sides of the handshake. A configured local `http2_max_frame_size` is
-//! advertised only when set, must be in the legal HTTP/2 range of 16,384
+//! sides of the handshake. A configured local `H2cClientPolicy::max_frame_size`
+//! is advertised only when set, must be in the legal HTTP/2 range of 16,384
 //! through 16,777,215 bytes, and rejects inbound frame payloads larger than
 //! that active local limit. Peer-advertised values outside the same range
 //! reject the handshake, while legal peer values are used to split outbound
@@ -51,8 +51,9 @@
 //! a peer value of zero disables request dynamic indexing for HEADERS and
 //! trailers. Response decoding uses the locally advertised HPACK dynamic table
 //! limit, defaulting to 4,096 bytes unless
-//! `ConfigBuilder::http2_header_table_size` configures another `u32`-sized
-//! value. Incoming dynamic table size updates may shrink that decoder table,
+//! `H2cClientPolicy::header_table_size` configures another `u32`-sized value
+//! through `HttpClient::h2c_policy`. Incoming dynamic table size updates may
+//! shrink that decoder table,
 //! including to zero, but updates above the local advertised limit are
 //! rejected. These boundaries affect HPACK compression state only and do not
 //! change trailer validation, body framing, DATA flow control, or the
