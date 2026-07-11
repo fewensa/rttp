@@ -6,7 +6,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use rttp::server::HttpResponse;
+use rttp::server::{Http2ServerPolicy, HttpResponse};
 use rttp_client::{Config, HttpClient};
 
 const H2_FRAME_DATA: u8 = 0x0;
@@ -30,6 +30,7 @@ const H2_SETTINGS_HEADER_TABLE_SIZE: u16 = 0x1;
 const H2_SETTINGS_MAX_CONCURRENT_STREAMS: u16 = 0x3;
 const H2_SETTINGS_INITIAL_WINDOW_SIZE: u16 = 0x4;
 const H2_SETTINGS_MAX_FRAME_SIZE: u16 = 0x5;
+const H2_SETTINGS_MAX_HEADER_LIST_SIZE: u16 = 0x6;
 const H2_SETTINGS_ENABLE_CONNECT_PROTOCOL: u16 = 0x8;
 const H2_DEFAULT_MAX_FRAME_SIZE: usize = 16 * 1024;
 const H2_DEFAULT_INITIAL_WINDOW_SIZE: usize = 65_535;
@@ -2291,9 +2292,77 @@ fn prior_knowledge_server_advertises_conservative_max_frame_size() {
 }
 
 #[test]
-fn prior_knowledge_server_rejects_inbound_frame_exceeding_active_max_before_handler() {
+fn prior_knowledge_server_policy_advertises_and_enforces_frame_and_metadata_bounds() {
+  let policy = Http2ServerPolicy::new()
+    .with_max_frame_size(32_768)
+    .with_max_header_list_size(256);
   let server = rttp::Http::server("127.0.0.1:0")
     .expect("bind server")
+    .with_http2_policy(policy)
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send(request.target().to_string())
+        .expect("send unexpected bounded h2 request");
+      HttpResponse::ok("unexpected bounded h2 request")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  stream
+    .set_read_timeout(Some(Duration::from_millis(200)))
+    .expect("set client read timeout");
+  stream.write_all(H2_PREFACE).expect("write h2 preface");
+  write_h2_frame(&mut stream, H2_FRAME_SETTINGS, 0, 0, &[]);
+  let settings = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_SETTINGS, settings.frame_type);
+  assert_eq!(
+    Some(32_768),
+    h2_setting_value(&settings.payload, H2_SETTINGS_MAX_FRAME_SIZE)
+  );
+  assert_eq!(
+    Some(256),
+    h2_setting_value(&settings.payload, H2_SETTINGS_MAX_HEADER_LIST_SIZE)
+  );
+  let settings_ack = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_SETTINGS, settings_ack.frame_type);
+  assert_eq!(H2_FLAG_ACK, settings_ack.flags);
+
+  write_h2_frame(&mut stream, H2_FRAME_SETTINGS, H2_FLAG_ACK, 0, &[]);
+  let mut headers = h2_head_headers(b"/policy", addr.to_string().as_bytes());
+  headers.extend(h2_literal_new_name(b"x-policy-limit", &vec![b'x'; 100]));
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
+    1,
+    &headers,
+  );
+  stream.flush().expect("flush bounded h2 request");
+  let _ = try_read_h2_frame(&mut stream);
+  drop(stream);
+
+  let error = handle
+    .join()
+    .expect("server thread")
+    .expect_err("oversized h2 metadata must reject the connection");
+  assert_eq!(io::ErrorKind::InvalidData, error.kind());
+  assert_eq!("HTTP/2 header list size exceeded", error.to_string());
+  assert!(
+    rx.try_recv().is_err(),
+    "oversized metadata must not dispatch"
+  );
+}
+
+#[test]
+fn prior_knowledge_server_policy_rejects_inbound_frame_exceeding_configured_max_before_handler() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_http2_policy(Http2ServerPolicy::new().with_max_frame_size(32_768))
     .with_read_timeout(Some(Duration::from_secs(2)))
     .with_write_timeout(Some(Duration::from_secs(2)));
   let addr = server.local_addr().expect("server addr");
@@ -2317,7 +2386,7 @@ fn prior_knowledge_server_rejects_inbound_frame_exceeding_active_max_before_hand
     H2_FRAME_HEADERS,
     H2_FLAG_END_HEADERS | H2_FLAG_END_STREAM,
     1,
-    &vec![0x82; H2_DEFAULT_MAX_FRAME_SIZE + 1],
+    &vec![0x82; 32_768 + 1],
   );
   stream.flush().expect("flush oversized h2 frame");
   let _ = try_read_h2_frame(&mut stream);

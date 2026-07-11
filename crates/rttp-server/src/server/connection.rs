@@ -4,6 +4,7 @@ pub struct HttpServer {
   pub(crate) listener: TcpListener,
   pub(crate) read_timeout: Option<Duration>,
   pub(crate) write_timeout: Option<Duration>,
+  pub(crate) http2_policy: Http2ServerPolicy,
 }
 
 impl HttpServer {
@@ -39,6 +40,7 @@ impl HttpServer {
         listener: TcpListener::from(socket),
         read_timeout: None,
         write_timeout: None,
+        http2_policy: Http2ServerPolicy::default(),
       });
     }
 
@@ -61,6 +63,12 @@ impl HttpServer {
   /// Sets the write timeout applied to each accepted connection before writing responses.
   pub fn with_write_timeout(mut self, timeout: Option<Duration>) -> Self {
     self.write_timeout = timeout;
+    self
+  }
+
+  /// Sets the fixed bounds advertised and enforced for accepted h2c connections.
+  pub fn with_http2_policy(mut self, policy: Http2ServerPolicy) -> Self {
+    self.http2_policy = policy;
     self
   }
 
@@ -404,25 +412,27 @@ impl HttpServer {
     S: Read + Write,
     F: FnMut(Request) -> HttpResponse,
   {
-    let (initial_payload, acknowledge_initial_settings, upgraded) = if let Some(initial_settings) =
-      initial_settings
-    {
-      (
-        initial_settings.payload,
-        initial_settings.acknowledge,
-        initial_settings.upgraded,
-      )
-    } else {
-      let frame = self
-        .normalize_connection_error(read_http2_frame(&mut stream, HTTP2_DEFAULT_MAX_FRAME_SIZE))?;
-      if frame.frame_type != HTTP2_FRAME_SETTINGS
-        || frame.flags & HTTP2_FLAG_ACK == HTTP2_FLAG_ACK
-        || frame.stream_id != 0
-      {
-        return Err(invalid_http2_settings_error());
-      }
-      (frame.payload, true, false)
-    };
+    self.http2_policy.validate()?;
+    let (initial_payload, acknowledge_initial_settings, upgraded) =
+      if let Some(initial_settings) = initial_settings {
+        (
+          initial_settings.payload,
+          initial_settings.acknowledge,
+          initial_settings.upgraded,
+        )
+      } else {
+        let frame = self.normalize_connection_error(read_http2_frame(
+          &mut stream,
+          self.http2_policy.max_frame_size(),
+        ))?;
+        if frame.frame_type != HTTP2_FRAME_SETTINGS
+          || frame.flags & HTTP2_FLAG_ACK == HTTP2_FLAG_ACK
+          || frame.stream_id != 0
+        {
+          return Err(invalid_http2_settings_error());
+        }
+        (frame.payload, true, false)
+      };
     validate_http2_settings_payload(&initial_payload)?;
     let mut peer_max_frame_size =
       http2_settings_max_frame_size(&initial_payload).unwrap_or(HTTP2_DEFAULT_MAX_FRAME_SIZE);
@@ -437,7 +447,7 @@ impl HttpServer {
       HTTP2_FRAME_SETTINGS,
       0,
       0,
-      &server_http2_settings_payload(request_limit),
+      &server_http2_settings_payload(request_limit, &self.http2_policy),
     ))?;
     if acknowledge_initial_settings {
       self.normalize_connection_error(write_http2_frame(
@@ -480,9 +490,10 @@ impl HttpServer {
     while served < request_limit
       && ((!graceful_goaway_sent && !peer_goaway_received) || !streams.is_empty())
     {
-      let frame = match self
-        .normalize_connection_error(read_http2_frame(&mut stream, HTTP2_DEFAULT_MAX_FRAME_SIZE))
-      {
+      let frame = match self.normalize_connection_error(read_http2_frame(
+        &mut stream,
+        self.http2_policy.max_frame_size(),
+      )) {
         Ok(frame) => frame,
         Err(err)
           if err.kind() == io::ErrorKind::UnexpectedEof
@@ -638,7 +649,7 @@ impl HttpServer {
             if frame.flags & HTTP2_FLAG_END_HEADERS == HTTP2_FLAG_END_HEADERS {
               request_stream.finish_header_block(
                 &mut request_header_decoder,
-                HTTP2_MAX_HEADER_LIST_SIZE,
+                self.http2_policy.max_header_list_size(),
                 peer_enable_connect_protocol,
               )?;
             } else {
@@ -678,7 +689,7 @@ impl HttpServer {
           if frame.flags & HTTP2_FLAG_END_HEADERS == HTTP2_FLAG_END_HEADERS {
             request_stream.finish_header_block(
               &mut request_header_decoder,
-              HTTP2_MAX_HEADER_LIST_SIZE,
+              self.http2_policy.max_header_list_size(),
               peer_enable_connect_protocol,
             )?;
           }
@@ -788,6 +799,8 @@ impl HttpServer {
           &response,
           !request_is_head,
           &mut Http2ResponseFlowControl {
+            max_inbound_frame_size: self.http2_policy.max_frame_size(),
+            max_header_list_size: self.http2_policy.max_header_list_size(),
             max_frame_size: &mut peer_max_frame_size,
             peer_header_table_size: &mut peer_header_table_size,
             peer_initial_stream_send_window: &mut peer_initial_stream_send_window,

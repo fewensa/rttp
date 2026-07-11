@@ -21,6 +21,7 @@ mod response;
 
 pub use connection::HttpServer;
 pub use handoff::*;
+pub use http2::Http2ServerPolicy;
 pub use request::*;
 pub use response::*;
 

@@ -2623,6 +2623,13 @@ fn server_rejects_http2_prior_knowledge_data_beyond_receive_window() {
   );
   stream
     .shutdown(std::net::Shutdown::Write)
+    .or_else(|error| {
+      if error.kind() == ErrorKind::NotConnected {
+        Ok(())
+      } else {
+        Err(error)
+      }
+    })
     .expect("shutdown h2 write");
 
   let error = handle
