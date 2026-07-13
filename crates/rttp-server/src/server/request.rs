@@ -124,6 +124,15 @@ impl Request {
     HttpAcceptLanguages::parse_values(values).map(Some)
   }
 
+  /// Parses received HTTP `Priority` metadata without changing transport scheduling.
+  pub fn priority(&self) -> Result<Option<HttpPriority>, HttpPriorityParseError> {
+    let values: Vec<&str> = self.headers_named("Priority").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpPriority::parse_values(values).map(Some)
+  }
+
   /// Parses bounded RFC 7239 `Forwarded` request metadata without applying a
   /// proxy trust policy or rewriting request addresses.
   pub fn forwarded(&self) -> Result<Option<HttpForwarded>, HttpForwardedParseError> {

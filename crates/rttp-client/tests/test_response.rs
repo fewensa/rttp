@@ -636,6 +636,24 @@ fn test_digest_response_helpers_parse_bounded_digest_fields() {
 }
 
 #[test]
+fn test_priority_response_helper_parses_known_and_extension_metadata() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Priority: u=1, i, x=token\r\n",
+    "Content-Length: 0\r\n\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+  let priority = response
+    .priority()
+    .expect("Priority should parse")
+    .expect("Priority should be present");
+  assert_eq!(Some(1), priority.urgency());
+  assert!(priority.incremental());
+  assert_eq!(Some("token"), priority.extensions()[0].value());
+}
+
+#[test]
 fn test_server_timing_response_helper_parses_metrics_extensions_and_duplicates() {
   let raw = concat!(
     "HTTP/1.1 200 OK\r\n",
@@ -645,12 +663,10 @@ fn test_server_timing_response_helper_parses_metrics_extensions_and_duplicates()
   );
   let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
     .expect("raw response should remain usable");
-
   let timing = response
     .server_timing()
     .expect("valid Server-Timing should parse")
     .expect("Server-Timing should be present");
-
   assert_eq!(3, timing.len());
   assert_eq!("db", timing.metrics()[0].name());
   assert_eq!(Some(53.2), timing.metrics()[0].duration());
@@ -666,10 +682,7 @@ fn test_server_timing_response_helper_parses_metrics_extensions_and_duplicates()
   assert_eq!("db", timing.metrics()[1].name());
   assert_eq!(Some(4.0), timing.metrics()[1].duration());
   assert_eq!(Some("render \"home\""), timing.metrics()[2].description());
-  assert_eq!(
-    "db; dur=53.2; desc=\"primary database\"; region=us-east; cached, db; dur=4, app; desc=\"render \\\"home\\\"\"; build=2026",
-    timing.header_value()
-  );
+  assert_eq!("db; dur=53.2; desc=\"primary database\"; region=us-east; cached, db; dur=4, app; desc=\"render \\\"home\\\"\"; build=2026", timing.header_value());
 }
 
 #[test]
@@ -714,7 +727,6 @@ fn test_server_timing_rejects_malformed_and_oversized_values_without_hiding_head
       response.header_value("Server-Timing")
     );
   }
-
   assert!(ServerTiming::parse(format!("db;desc=\"{}\"", "a".repeat(64 * 1024))).is_err());
   assert!(ServerTiming::parse(
     (0..257)

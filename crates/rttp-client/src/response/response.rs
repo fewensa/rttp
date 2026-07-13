@@ -8,6 +8,7 @@ use url::Url;
 use crate::error;
 use crate::response::raw_response::RawResponse;
 use crate::response::Digest;
+use crate::response::Priority;
 use crate::response::ReprDigest;
 use crate::response::ServerTiming;
 use crate::response::WwwAuthenticate;
@@ -313,6 +314,17 @@ impl Response {
       return Ok(None);
     }
     Digest::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses all `Priority` fields as bounded RFC 9218 metadata.
+  pub fn priority(&self) -> error::Result<Option<Priority>> {
+    let values = self.header_values("priority");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Priority::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

@@ -8,6 +8,7 @@ use crate::{error, Config, H2cClientPolicy};
 #[cfg(feature = "async")]
 use futures::io::AsyncRead;
 use rttp_protocol::forwarded::{Forwarded, MAX_FORWARDED_VALUE_BYTES};
+use rttp_protocol::priority::Priority;
 use std::io;
 
 #[derive(Debug)]
@@ -219,6 +220,17 @@ impl HttpClient {
   {
     let value = build_accept_language_value(ranges)?;
     Ok(self.header(Header::new("Accept-Language", value)))
+  }
+
+  /// Set bounded HTTP `Priority` request metadata.
+  ///
+  /// This validates RFC 9218 urgency, incremental, and extension parameters
+  /// before connecting. It only declares request metadata; it does not change
+  /// transport scheduling.
+  pub fn priority<V: AsRef<str>>(&mut self, value: V) -> error::Result<&mut Self> {
+    let priority = Priority::parse(value)
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new("Priority", priority.header_value())))
   }
 
   /// Append bounded RFC 7239 `Forwarded` request metadata.
