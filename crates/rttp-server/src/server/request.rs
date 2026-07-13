@@ -96,7 +96,10 @@ impl Request {
 
   /// Parses received `Max-Forwards` request metadata without automatically
   /// decrementing or forwarding the request.
-  pub fn max_forwards(&self) -> Result<Option<u8>, HttpMaxForwardsParseError> {
+  ///
+  /// The validated decimal count is returned verbatim so valid values are not
+  /// constrained by a machine integer width.
+  pub fn max_forwards(&self) -> Result<Option<String>, HttpMaxForwardsParseError> {
     parse_max_forwards_values(self.headers_named("Max-Forwards"))
   }
 
@@ -926,7 +929,7 @@ impl Error for HttpMaxForwardsParseError {}
 
 fn parse_max_forwards_values<'a>(
   values: impl IntoIterator<Item = &'a str>,
-) -> Result<Option<u8>, HttpMaxForwardsParseError> {
+) -> Result<Option<String>, HttpMaxForwardsParseError> {
   let mut values = values.into_iter();
   let Some(value) = values.next() else {
     return Ok(None);
@@ -943,10 +946,7 @@ fn parse_max_forwards_values<'a>(
       "invalid Max-Forwards header value",
     ));
   }
-  value
-    .parse::<u8>()
-    .map(Some)
-    .map_err(|_| HttpMaxForwardsParseError::new("invalid Max-Forwards header value"))
+  Ok(Some(value.to_owned()))
 }
 
 fn split_accept_members(value: &str) -> Result<Vec<&str>, HttpAcceptParseError> {
@@ -1692,7 +1692,10 @@ impl HttpRequest {
 
   /// Parses received `Max-Forwards` request metadata without automatically
   /// decrementing or forwarding the request.
-  pub fn max_forwards(&self) -> Result<Option<u8>, HttpMaxForwardsParseError> {
+  ///
+  /// The validated decimal count is returned verbatim so valid values are not
+  /// constrained by a machine integer width.
+  pub fn max_forwards(&self) -> Result<Option<String>, HttpMaxForwardsParseError> {
     parse_max_forwards_values(
       self
         .headers

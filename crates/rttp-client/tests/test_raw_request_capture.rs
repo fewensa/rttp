@@ -445,6 +445,7 @@ fn te_and_prefer_helpers_emit_bounded_request_metadata() {
     Some("trailers, deflate;q=0.5"),
     header_value(&request, "TE")
   );
+  assert_eq!(Some("Close, TE"), header_value(&request, "Connection"));
   assert_eq!(
     Some("respond-async, return=minimal"),
     header_value(&request, "Prefer")
