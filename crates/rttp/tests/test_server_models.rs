@@ -172,6 +172,107 @@ fn request_forwarded_rejects_duplicate_and_excessive_metadata() {
 }
 
 #[test]
+fn request_max_forwards_is_optional_and_rejects_invalid_metadata() {
+  let absent = parse_request("OPTIONS / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .max_forwards()
+      .expect("missing Max-Forwards should be valid")
+  );
+
+  let valid = parse_request(concat!(
+    "OPTIONS / HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Max-Forwards: 256\r\n",
+    "\r\n"
+  ));
+  assert_eq!(
+    Some("256".to_owned()),
+    valid.max_forwards().expect("value should parse")
+  );
+
+  for value in ["abc", "1.0"] {
+    let request = parse_request(&format!(
+      "OPTIONS / HTTP/1.1\r\nHost: example.test\r\nMax-Forwards: {value}\r\n\r\n"
+    ));
+    assert!(request.max_forwards().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Max-Forwards"));
+  }
+
+  let duplicate = parse_request(concat!(
+    "OPTIONS / HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Max-Forwards: 1\r\n",
+    "max-forwards: 2\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.max_forwards().is_err());
+  assert_eq!(Some("1"), duplicate.header("Max-Forwards"));
+}
+
+#[test]
+fn request_te_and_prefer_parse_bounded_metadata_without_enabling_behavior() {
+  let request = parse_request(concat!(
+    "GET /metadata HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "TE: trailers, deflate;q=0.5\r\n",
+    "Prefer: respond-async, return=minimal\r\n",
+    "\r\n"
+  ));
+
+  let te = request
+    .te()
+    .expect("TE should parse")
+    .expect("TE should exist");
+  assert_eq!(2, te.len());
+  assert_eq!("trailers", te.codings()[0].coding());
+  assert_eq!(1000, te.codings()[0].quality());
+  assert_eq!("deflate", te.codings()[1].coding());
+  assert_eq!(500, te.codings()[1].quality());
+
+  let preferences = request
+    .prefer()
+    .expect("Prefer should parse")
+    .expect("Prefer should exist");
+  assert_eq!(2, preferences.len());
+  assert_eq!("respond-async", preferences.preferences()[0].name());
+  assert_eq!(None, preferences.preferences()[0].value());
+  assert_eq!("return", preferences.preferences()[1].name());
+  assert_eq!(Some("minimal"), preferences.preferences()[1].value());
+}
+
+#[test]
+fn request_te_and_prefer_reject_invalid_or_duplicate_metadata() {
+  for value in ["trailers,, deflate", "gzip;q=1.1"] {
+    let request = parse_request(&format!(
+      "GET /metadata HTTP/1.1\r\nHost: example.test\r\nTE: {value}\r\n\r\n"
+    ));
+    assert!(request.te().is_err(), "TE should reject {value:?}");
+    assert_eq!(Some(value), request.header("TE"));
+  }
+  for value in ["return=bad value", "respond-async; wait=1"] {
+    let request = parse_request(&format!(
+      "GET /metadata HTTP/1.1\r\nHost: example.test\r\nPrefer: {value}\r\n\r\n"
+    ));
+    assert!(request.prefer().is_err(), "Prefer should reject {value:?}");
+    assert_eq!(Some(value), request.header("Prefer"));
+  }
+
+  let duplicate_te = parse_request(concat!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\n",
+    "TE: trailers\r\nte: TRAILERS;q=0.5\r\n\r\n"
+  ));
+  assert!(duplicate_te.te().is_err());
+
+  let duplicate_prefer = parse_request(concat!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\n",
+    "Prefer: return=minimal\r\nprefer: RETURN=representation\r\n\r\n"
+  ));
+  assert!(duplicate_prefer.prefer().is_err());
+}
+
+#[test]
 fn parses_request_accept_media_ranges_in_field_order() {
   let request = parse_request(concat!(
     "GET /resource HTTP/1.1\r\n",

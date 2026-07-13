@@ -1,5 +1,40 @@
 use std::net::TcpStream as StdTcpStream;
 
+#[test]
+fn request_max_forwards_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(None, absent.max_forwards().expect("missing value should be valid"));
+
+  let valid = Request::from_raw_frame(
+    b"OPTIONS / HTTP/1.1\r\nHost: example.test\r\nMax-Forwards: 256\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert_eq!(
+    Some("256".to_owned()),
+    valid.max_forwards().expect("value should parse")
+  );
+
+  for value in ["", "-1", "+1", "1.0"] {
+    let request = Request::from_raw_frame(
+      format!(
+        "OPTIONS / HTTP/1.1\r\nHost: example.test\r\nMax-Forwards: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should retain malformed metadata");
+    assert!(request.max_forwards().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Max-Forwards"));
+  }
+
+  let duplicate = Request::from_raw_frame(
+    b"OPTIONS / HTTP/1.1\r\nHost: example.test\r\nMax-Forwards: 1\r\nmax-forwards: 2\r\n\r\n",
+  )
+  .expect("request should retain duplicate metadata");
+  assert!(duplicate.max_forwards().is_err());
+  assert_eq!(Some("1"), duplicate.header("Max-Forwards"));
+}
+
   #[test]
   fn http2_huffman_decode_table_resolves_symbols_without_linear_scan() {
     let table = http2_huffman_decode_table();

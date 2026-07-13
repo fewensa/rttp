@@ -344,6 +344,20 @@ connection is opened.
 These helpers declare request metadata only. They do not enable automatic
 compression, decompression, or content negotiation.
 
+## Bounded HTTP request control metadata
+
+`HttpClient::te()`, `te_with_q()`, and `te_trailers()` build a bounded `TE`
+field. `HttpClient::prefer()` and `prefer_with_value()` build a bounded
+`Prefer` field with token-only values. Both helpers reject malformed tokens,
+invalid q-values, duplicates, oversized values, and more than 32 members
+before opening a connection. `TE: chunked` is rejected because framing remains
+owned by the existing HTTP/1 implementation.
+
+These are declaration helpers only. RTTP does not enable a transfer-coding
+engine, change request framing, apply response preferences, schedule async
+work, forward requests, retry, or otherwise infer behavior from `TE` or
+`Prefer`.
+
 ## Bounded HTTP/1.1 Content-Disposition behavior
 
 `Response::content_disposition()` parses a singleton response

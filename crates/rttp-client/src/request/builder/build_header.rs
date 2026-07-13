@@ -113,13 +113,27 @@ impl<'a> RawBuilder<'a> {
   }
 
   fn auto_add_connection(&mut self) -> error::Result<()> {
-    if self.found_header("connection") {
-      return Ok(());
-    }
-    self
+    let declares_te = self.found_header("te");
+    if let Some(header) = self
       .request
       .headers_mut()
-      .push(Header::new("Connection", "Close"));
+      .iter_mut()
+      .find(|header| header.name().eq_ignore_ascii_case("connection"))
+    {
+      if declares_te
+        && !header
+          .value()
+          .split(',')
+          .any(|token| token.trim().eq_ignore_ascii_case("te"))
+      {
+        header.replace(Header::new("Connection", format!("{}, TE", header.value())));
+      }
+      return Ok(());
+    }
+    self.request.headers_mut().push(Header::new(
+      "Connection",
+      if declares_te { "Close, TE" } else { "Close" },
+    ));
     Ok(())
   }
 }
