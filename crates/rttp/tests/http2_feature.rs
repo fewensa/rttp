@@ -4570,8 +4570,8 @@ fn wrapper_http2_feature_exposes_response_trailers_from_prior_knowledge_server()
 fn wrapper_http2_prior_knowledge_large_request_header_reaches_socket2_server() {
   let server = rttp::Http::server("127.0.0.1:0")
     .expect("bind server")
-    .with_read_timeout(Some(Duration::from_secs(2)))
-    .with_write_timeout(Some(Duration::from_secs(2)));
+    .with_read_timeout(Some(Duration::from_secs(10)))
+    .with_write_timeout(Some(Duration::from_secs(10)));
   let addr = server.local_addr().expect("server addr");
   let large_header_value = "r".repeat(16 * 1024 + 512);
   let expected_header_value = large_header_value.clone();

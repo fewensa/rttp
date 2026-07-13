@@ -89,6 +89,18 @@ impl Request {
     HttpRequestCacheControl::parse_values(values).map(Some)
   }
 
+  /// Parses received `Accept-Encoding` request metadata without enabling
+  /// automatic compression, decompression, or content negotiation.
+  pub fn accept_encoding(
+    &self,
+  ) -> Result<Option<HttpRequestAcceptEncodings>, HttpAcceptEncodingParseError> {
+    let values: Vec<&str> = self.headers_named("Accept-Encoding").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpRequestAcceptEncodings::parse_values(values).map(Some)
+  }
+
   pub fn accept(&self) -> Result<Option<HttpAccept>, HttpAcceptParseError> {
     let values: Vec<&str> = self.headers_named("Accept").collect();
     if values.is_empty() {
@@ -1340,6 +1352,23 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpRequestCacheControl::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Accept-Encoding` request metadata without enabling
+  /// automatic compression, decompression, or content negotiation.
+  pub fn accept_encoding(
+    &self,
+  ) -> Result<Option<HttpRequestAcceptEncodings>, HttpAcceptEncodingParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Accept-Encoding"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpRequestAcceptEncodings::parse_values(values).map(Some)
   }
 
   pub fn accept(&self) -> Result<Option<HttpAccept>, HttpAcceptParseError> {

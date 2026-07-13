@@ -320,6 +320,19 @@ compression or decompression policy, negotiation, cache policy, redirects,
 retry/replay, or filesystem serving from `Content-Type` or
 `Content-Encoding`.
 
+## Bounded Accept-Encoding request metadata
+
+`HttpClient::accept_encoding()` appends a validated request coding, while
+`accept_encoding_with_q()` accepts an HTTP q-value from `0` through `1` with
+at most three fractional digits. Convenience helpers cover `gzip`, `deflate`,
+`br`, and `identity`, including q-value variants. The helpers emit one
+comma-separated `Accept-Encoding` field and reject invalid coding tokens,
+q-values, duplicates, oversized values, and more than 32 codings before a
+connection is opened.
+
+These helpers declare request metadata only. They do not enable automatic
+compression, decompression, or content negotiation.
+
 ## Bounded HTTP/1.1 Content-Disposition behavior
 
 `Response::content_disposition()` parses a singleton response
