@@ -46,23 +46,25 @@ impl HttpExpectations {
       }
       for member in value.split(',') {
         let expectation = member.trim();
-        if !is_http_token(expectation) {
+        let name = expectation
+          .split(['=', ';'])
+          .next()
+          .unwrap_or_default()
+          .trim();
+        if !is_http_token(name) {
           return Err(HttpExpectParseError::new("invalid Expect expectation"));
         }
-        if seen
-          .iter()
-          .any(|known| known.eq_ignore_ascii_case(expectation))
-        {
+        if seen.iter().any(|known| known.eq_ignore_ascii_case(name)) {
           return Err(HttpExpectParseError::new("duplicate Expect expectation"));
         }
         if seen.len() >= MAX_EXPECTATIONS {
           return Err(HttpExpectParseError::new("too many Expect expectations"));
         }
-        seen.push(expectation.to_string());
-        if expectation.eq_ignore_ascii_case("100-continue") {
+        seen.push(name.to_string());
+        if name.eq_ignore_ascii_case("100-continue") {
           expects_continue = true;
         } else {
-          unsupported.push(expectation.to_string());
+          unsupported.push(name.to_string());
         }
       }
     }

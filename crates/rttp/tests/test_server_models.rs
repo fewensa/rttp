@@ -191,6 +191,21 @@ fn request_expectations_distinguish_continue_from_unsupported_extensions() {
 }
 
 #[test]
+fn request_expectations_preserve_extension_names_with_values_and_parameters() {
+  let request = parse_request(concat!(
+    "POST / HTTP/1.1\r\nHost: example.test\r\n",
+    "Expect: preview=sha256; chunk=1\r\n\r\n"
+  ));
+
+  let expectations = request
+    .expectations()
+    .expect("Expect should parse")
+    .expect("Expect should be present");
+  assert!(!expectations.expects_continue());
+  assert_eq!(["preview"], expectations.unsupported());
+}
+
+#[test]
 fn request_expectations_reject_duplicate_and_oversized_values() {
   let duplicate = parse_request(concat!(
     "POST / HTTP/1.1\r\nHost: example.test\r\n",
