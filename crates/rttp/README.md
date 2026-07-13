@@ -275,6 +275,16 @@ enforcement, or automatic conditional requests. Applications that build a
 cache must persist any selected request metadata and enforce their own cache
 policy around these helpers.
 
+## Bounded Authorization request metadata
+
+`Request::authorization()` and `HttpRequest::authorization()` parse a single
+`Authorization` field into `HttpAuthorization` metadata with `scheme()` and
+`credentials()` accessors. They return `Ok(None)` when the field is absent and
+reject invalid, oversized (over 64 KiB), or duplicate fields so credentials are
+not ambiguous. Credential interpretation remains application-owned; RTTP does
+not verify schemes, store or refresh credentials, process challenges, retry,
+or forward credentials across redirects.
+
 ## Bounded HTTP/1.1 Allow behavior
 
 Server-side `Allow` helpers expose response declaration and method-list parsing
