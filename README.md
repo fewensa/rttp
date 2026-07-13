@@ -240,6 +240,30 @@ automatic language negotiation, locale fallback, variant matching, cache
 policy, retry, replay, redirect, or status-policy behavior from
 `Content-Language`.
 
+### Bounded HTTP/1.1 Accept-Language behavior
+
+`HttpClient::accept_language(ranges)` validates and emits one
+`Accept-Language` request header from ordered language ranges. Each range may
+include an optional `q` weight, for example `fr-CA; q=0.8`; `*` is also
+accepted. The helper limits each supplied value to 64 KiB and the parsed range
+list to 32 entries, rejects malformed ranges or q-values and case-insensitive
+duplicates, and returns a builder error before opening a connection. Raw
+`header(("Accept-Language", value))` remains available when callers need to
+preserve unvalidated metadata.
+
+On the server, `Request::accept_language()` and
+`HttpRequest::accept_language()` parse received fields in wire order into
+`HttpAcceptLanguages`, returning `Ok(None)` when the header is absent.
+`HttpAcceptLanguages::ranges()` and `HttpAcceptLanguages::qualities()` expose
+the validated ranges and optional q-values. Each received field is bounded to
+64 KiB and the combined range list to 32 entries; malformed values, invalid
+q-values, and duplicate ranges return `HttpAcceptLanguageParseError` without
+changing the raw request headers.
+
+These helpers are metadata-only. RTTP does not perform locale matching,
+fallback selection, translation lookup, routing, or automatic response choice
+from `Accept-Language`.
+
 ### Bounded HTTP/1.1 Content-Location behavior
 
 `Response::content_location()` parses a response `Content-Location` header into

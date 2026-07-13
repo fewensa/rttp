@@ -327,6 +327,61 @@ fn range_helper_rejects_malformed_inputs_before_connecting() {
 }
 
 #[test]
+fn accept_language_helper_emits_bounded_language_ranges() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/localized", base_url))
+      .accept_language(["en-US", "fr-CA; q=0.8", "de; q=1.", "*"])
+      .expect("language ranges should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+
+  assert_eq!(
+    Some("en-US, fr-CA; q=0.8, de; q=1., *"),
+    header_value(&request_text(&request), "Accept-Language")
+  );
+}
+
+#[test]
+fn accept_language_helper_rejects_invalid_values_before_connecting() {
+  for value in ["en_US", "en; q=1.001", "en, EN"] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/localized", base_url))
+        .accept_language([value])
+        .expect_err("invalid language range should be rejected");
+
+      assert!(error.is_builder());
+    });
+
+    assert!(
+      request.is_empty(),
+      "invalid Accept-Language helper input should not open a socket"
+    );
+  }
+
+  let oversized = format!("{}en", " ".repeat(64 * 1024));
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/localized", base_url))
+      .accept_language([oversized.as_str()])
+      .expect_err("oversized language value should be rejected");
+
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "oversized Accept-Language helper input should not open a socket"
+  );
+}
+
+#[test]
 fn manual_range_header_remains_available_as_escape_hatch() {
   let request = capture_request(|base_url| {
     client()

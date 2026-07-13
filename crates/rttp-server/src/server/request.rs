@@ -2,6 +2,8 @@ use super::*;
 
 pub(crate) const MAX_REQUEST_HEAD_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
+pub(crate) const MAX_ACCEPT_VALUE_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_ACCEPT_MEDIA_RANGES: usize = 256;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request {
   pub(crate) method: String,
@@ -97,6 +99,24 @@ impl Request {
       return Ok(None);
     }
     HttpRequestAcceptEncodings::parse_values(values).map(Some)
+  }
+
+  pub fn accept(&self) -> Result<Option<HttpAccept>, HttpAcceptParseError> {
+    let values: Vec<&str> = self.headers_named("Accept").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAccept::parse_values(values).map(Some)
+  }
+
+  pub fn accept_language(
+    &self,
+  ) -> Result<Option<HttpAcceptLanguages>, HttpAcceptLanguageParseError> {
+    let values: Vec<&str> = self.headers_named("Accept-Language").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAcceptLanguages::parse_values(values).map(Some)
   }
 
   pub fn vary_selection(&self, vary: &HttpVary) -> HttpVarySelection {
@@ -441,6 +461,262 @@ impl Request {
       extended_connect_protocol: None,
     }
   }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpAccept {
+  media_ranges: Vec<HttpMediaRange>,
+}
+
+impl HttpAccept {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpAcceptParseError> {
+    Self::parse_values(std::iter::once(value.as_ref()))
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpAcceptParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut media_ranges = Vec::new();
+    for value in values {
+      if value.len() > MAX_ACCEPT_VALUE_BYTES {
+        return Err(HttpAcceptParseError::new(
+          "Accept header value is too large",
+        ));
+      }
+      if value.bytes().any(|byte| byte.is_ascii_control()) {
+        return Err(HttpAcceptParseError::new("invalid Accept header value"));
+      }
+
+      for member in split_accept_members(value)? {
+        if media_ranges.len() >= MAX_ACCEPT_MEDIA_RANGES {
+          return Err(HttpAcceptParseError::new("too many Accept media ranges"));
+        }
+        media_ranges.push(HttpMediaRange::parse(member)?);
+      }
+    }
+
+    if media_ranges.is_empty() {
+      return Err(HttpAcceptParseError::new("invalid Accept header value"));
+    }
+
+    Ok(Self { media_ranges })
+  }
+
+  pub fn media_ranges(&self) -> &[HttpMediaRange] {
+    &self.media_ranges
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpMediaRange {
+  media_type: String,
+  parameters: Vec<(String, String)>,
+  quality: Option<u16>,
+}
+
+impl HttpMediaRange {
+  fn parse(value: &str) -> Result<Self, HttpAcceptParseError> {
+    let mut parts = split_accept_parameters(value)?;
+    let Some(media_type) = parts.first() else {
+      return Err(HttpAcceptParseError::new("invalid Accept media range"));
+    };
+    let media_type = parse_accept_media_type(media_type.trim())?;
+    parts.remove(0);
+
+    let mut parameters = Vec::new();
+    let mut quality = None;
+    let mut parsing_extensions = false;
+    for part in parts {
+      let part = part.trim();
+      let (name, value) = match part.split_once('=') {
+        Some((name, value)) => (name.trim().to_ascii_lowercase(), Some(value.trim())),
+        None if parsing_extensions => (part.to_ascii_lowercase(), None),
+        None => return Err(HttpAcceptParseError::new("invalid Accept parameter")),
+      };
+      if !is_http_token(&name) {
+        return Err(HttpAcceptParseError::new("invalid Accept parameter name"));
+      }
+      if parsing_extensions {
+        if let Some(value) = value {
+          parse_accept_parameter_value(value)?;
+        }
+        continue;
+      }
+      let Some(value) = value else {
+        return Err(HttpAcceptParseError::new("invalid Accept parameter"));
+      };
+      if name == "q" {
+        if quality.is_some() {
+          return Err(HttpAcceptParseError::new("duplicate Accept quality value"));
+        }
+        quality = Some(parse_accept_quality(value)?);
+        parsing_extensions = true;
+        continue;
+      }
+      if parameters.iter().any(|(known, _)| known == &name) {
+        return Err(HttpAcceptParseError::new("duplicate Accept parameter"));
+      }
+      parameters.push((name, parse_accept_parameter_value(value)?));
+    }
+
+    Ok(Self {
+      media_type,
+      parameters,
+      quality,
+    })
+  }
+
+  pub fn media_type(&self) -> &str {
+    &self.media_type
+  }
+
+  pub fn parameters(&self) -> Vec<(&str, &str)> {
+    self
+      .parameters
+      .iter()
+      .map(|(name, value)| (name.as_str(), value.as_str()))
+      .collect()
+  }
+
+  pub fn parameter(&self, name: impl AsRef<str>) -> Option<&str> {
+    self
+      .parameters
+      .iter()
+      .find(|(known, _)| known.eq_ignore_ascii_case(name.as_ref()))
+      .map(|(_, value)| value.as_str())
+  }
+
+  pub fn quality(&self) -> Option<u16> {
+    self.quality
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpAcceptParseError {
+  message: String,
+}
+
+impl HttpAcceptParseError {
+  fn new(message: impl Into<String>) -> Self {
+    Self {
+      message: message.into(),
+    }
+  }
+}
+
+impl fmt::Display for HttpAcceptParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpAcceptParseError {}
+
+fn split_accept_members(value: &str) -> Result<Vec<&str>, HttpAcceptParseError> {
+  split_accept_delimited(value, b',', "invalid Accept header value")
+}
+
+fn split_accept_parameters(value: &str) -> Result<Vec<&str>, HttpAcceptParseError> {
+  split_accept_delimited(value, b';', "invalid Accept parameter")
+}
+
+fn split_accept_delimited<'a>(
+  value: &'a str,
+  delimiter: u8,
+  error: &'static str,
+) -> Result<Vec<&'a str>, HttpAcceptParseError> {
+  let mut members = Vec::new();
+  let mut quoted = false;
+  let mut escaped = false;
+  let mut start = 0usize;
+
+  for (index, byte) in value.bytes().enumerate() {
+    if escaped {
+      if !is_content_type_quoted_pair_byte(byte) {
+        return Err(HttpAcceptParseError::new(error));
+      }
+      escaped = false;
+      continue;
+    }
+    match byte {
+      b'\\' if quoted => escaped = true,
+      b'"' => quoted = !quoted,
+      byte if byte == delimiter && !quoted => {
+        let member = value[start..index].trim();
+        if member.is_empty() {
+          return Err(HttpAcceptParseError::new(error));
+        }
+        members.push(member);
+        start = index + 1;
+      }
+      _ => {}
+    }
+  }
+
+  if quoted || escaped {
+    return Err(HttpAcceptParseError::new(error));
+  }
+  let member = value[start..].trim();
+  if member.is_empty() {
+    return Err(HttpAcceptParseError::new(error));
+  }
+  members.push(member);
+  Ok(members)
+}
+
+fn parse_accept_media_type(value: &str) -> Result<String, HttpAcceptParseError> {
+  let Some((type_name, subtype)) = value.split_once('/') else {
+    return Err(HttpAcceptParseError::new("invalid Accept media range"));
+  };
+  if subtype.contains('/') {
+    return Err(HttpAcceptParseError::new("invalid Accept media range"));
+  }
+  let type_name = type_name.trim().to_ascii_lowercase();
+  let subtype = subtype.trim().to_ascii_lowercase();
+  if type_name == "*" && subtype != "*" {
+    return Err(HttpAcceptParseError::new("invalid Accept media range"));
+  }
+  if !(type_name == "*" || is_http_token(&type_name))
+    || !(subtype == "*" || is_http_token(&subtype))
+  {
+    return Err(HttpAcceptParseError::new("invalid Accept media range"));
+  }
+  Ok(format!("{type_name}/{subtype}"))
+}
+
+fn parse_accept_parameter_value(value: &str) -> Result<String, HttpAcceptParseError> {
+  parse_content_type_parameter_value(value)
+    .map_err(|_| HttpAcceptParseError::new("invalid Accept parameter value"))
+}
+
+fn parse_accept_quality(value: &str) -> Result<u16, HttpAcceptParseError> {
+  let value = value.trim();
+  let valid = match value {
+    "0" => Some(0),
+    "1" => Some(1000),
+    _ => {
+      let Some((whole, fractional)) = value.split_once('.') else {
+        return Err(HttpAcceptParseError::new("invalid Accept quality value"));
+      };
+      if fractional.is_empty()
+        || fractional.len() > 3
+        || !fractional.bytes().all(|byte| byte.is_ascii_digit())
+      {
+        return Err(HttpAcceptParseError::new("invalid Accept quality value"));
+      }
+      let scale = 10u16.pow((3 - fractional.len()) as u32);
+      match whole {
+        "0" => fractional
+          .parse::<u16>()
+          .ok()
+          .map(|fraction| fraction * scale),
+        "1" if fractional.bytes().all(|byte| byte == b'0') => Some(1000),
+        _ => None,
+      }
+    }
+  };
+  valid.ok_or_else(|| HttpAcceptParseError::new("invalid Accept quality value"))
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -806,6 +1082,174 @@ pub(crate) fn is_valid_entity_tag_opaque_tag(opaque_tag: &str) -> bool {
     .all(|byte| matches!(byte, b'\x21' | b'\x23'..=b'\x7e' | b'\x80'..=b'\xff'))
 }
 
+const MAX_ACCEPT_LANGUAGE_VALUE_BYTES: usize = 64 * 1024;
+const MAX_ACCEPT_LANGUAGE_RANGES: usize = 32;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpAcceptLanguages {
+  ranges: Vec<String>,
+  qualities: Vec<Option<String>>,
+}
+
+impl HttpAcceptLanguages {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpAcceptLanguageParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpAcceptLanguageParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let parsed = Self::parse_values_inner(values)?;
+    if parsed.ranges.is_empty() {
+      return Err(HttpAcceptLanguageParseError::new(
+        "invalid Accept-Language range",
+      ));
+    }
+    Ok(parsed)
+  }
+
+  fn parse_optional_values<'a, I>(values: I) -> Result<Option<Self>, HttpAcceptLanguageParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let parsed = Self::parse_values_inner(values)?;
+    if parsed.ranges.is_empty() {
+      Ok(None)
+    } else {
+      Ok(Some(parsed))
+    }
+  }
+
+  fn parse_values_inner<'a, I>(values: I) -> Result<Self, HttpAcceptLanguageParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut ranges = Vec::new();
+    let mut qualities = Vec::new();
+
+    for value in values {
+      if value.len() > MAX_ACCEPT_LANGUAGE_VALUE_BYTES {
+        return Err(HttpAcceptLanguageParseError::new(
+          "Accept-Language header value is too large",
+        ));
+      }
+      for item in value.split(',') {
+        let (range, quality) = parse_accept_language_item(item.trim())?;
+        if ranges.len() >= MAX_ACCEPT_LANGUAGE_RANGES {
+          return Err(HttpAcceptLanguageParseError::new(
+            "too many Accept-Language ranges",
+          ));
+        }
+        if ranges
+          .iter()
+          .any(|known: &String| known.eq_ignore_ascii_case(range))
+        {
+          return Err(HttpAcceptLanguageParseError::new(
+            "duplicate Accept-Language range",
+          ));
+        }
+        ranges.push(range.to_string());
+        qualities.push(quality.map(ToString::to_string));
+      }
+    }
+
+    Ok(Self { ranges, qualities })
+  }
+
+  pub fn ranges(&self) -> Vec<&str> {
+    self.ranges.iter().map(String::as_str).collect()
+  }
+
+  pub fn qualities(&self) -> Vec<Option<&str>> {
+    self
+      .qualities
+      .iter()
+      .map(|quality| quality.as_deref())
+      .collect()
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpAcceptLanguageParseError {
+  message: String,
+}
+
+impl HttpAcceptLanguageParseError {
+  fn new(message: impl AsRef<str>) -> Self {
+    Self {
+      message: message.as_ref().to_string(),
+    }
+  }
+}
+
+impl fmt::Display for HttpAcceptLanguageParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpAcceptLanguageParseError {}
+
+fn parse_accept_language_item(
+  value: &str,
+) -> Result<(&str, Option<&str>), HttpAcceptLanguageParseError> {
+  let mut parts = value.split(';');
+  let range = parts.next().unwrap_or_default().trim();
+  if !is_valid_accept_language_range(range) {
+    return Err(HttpAcceptLanguageParseError::new(
+      "invalid Accept-Language range",
+    ));
+  }
+  let Some(parameter) = parts.next() else {
+    return Ok((range, None));
+  };
+  if parts.next().is_some() {
+    return Err(HttpAcceptLanguageParseError::new(
+      "invalid Accept-Language q-value",
+    ));
+  }
+  let Some((name, quality)) = parameter.trim().split_once('=') else {
+    return Err(HttpAcceptLanguageParseError::new(
+      "invalid Accept-Language q-value",
+    ));
+  };
+  let quality = quality.trim();
+  if !name.trim().eq_ignore_ascii_case("q") || !is_valid_qvalue(quality) {
+    return Err(HttpAcceptLanguageParseError::new(
+      "invalid Accept-Language q-value",
+    ));
+  }
+  Ok((range, Some(quality)))
+}
+
+fn is_valid_accept_language_range(value: &str) -> bool {
+  if value == "*" {
+    return true;
+  }
+  let mut subtags = value.split('-');
+  let Some(primary) = subtags.next() else {
+    return false;
+  };
+  (1..=8).contains(&primary.len())
+    && primary.bytes().all(|byte| byte.is_ascii_alphabetic())
+    && subtags.all(|subtag| {
+      (1..=8).contains(&subtag.len()) && subtag.bytes().all(|byte| byte.is_ascii_alphanumeric())
+    })
+}
+
+fn is_valid_qvalue(value: &str) -> bool {
+  match value.split_once('.') {
+    Some((whole, fraction)) => {
+      (whole == "0" || whole == "1")
+        && fraction.len() <= 3
+        && fraction.bytes().all(|byte| byte.is_ascii_digit())
+        && (whole == "0" || fraction.bytes().all(|byte| byte == b'0'))
+    }
+    None => value == "0" || value == "1",
+  }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HttpRequest {
   pub(crate) method: String,
@@ -925,6 +1369,31 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpRequestAcceptEncodings::parse_values(values).map(Some)
+  }
+
+  pub fn accept(&self) -> Result<Option<HttpAccept>, HttpAcceptParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Accept"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAccept::parse_values(values).map(Some)
+  }
+
+  /// Parse bounded `Accept-Language` request metadata without selecting a locale.
+  pub fn accept_language(
+    &self,
+  ) -> Result<Option<HttpAcceptLanguages>, HttpAcceptLanguageParseError> {
+    let values = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Accept-Language"))
+      .map(|header| header.value.as_str());
+    HttpAcceptLanguages::parse_optional_values(values)
   }
 
   pub fn vary_selection(&self, vary: &HttpVary) -> HttpVarySelection {
