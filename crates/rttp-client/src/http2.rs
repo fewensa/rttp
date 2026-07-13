@@ -632,6 +632,11 @@ fn write_h2c_upgrade_request(
 
 fn h2c_upgrade_request_header(header: &str, settings: &str) -> String {
   let mut rewritten = String::new();
+  let has_te = header.lines().skip(1).any(|line| {
+    line
+      .split_once(':')
+      .is_some_and(|(name, _)| name.trim().eq_ignore_ascii_case("TE"))
+  });
   let mut lines = header.split_inclusive("\r\n");
   if let Some(request_line) = lines.next() {
     rewritten.push_str(request_line);
@@ -656,7 +661,11 @@ fn h2c_upgrade_request_header(header: &str, settings: &str) -> String {
     rewritten.push_str(line);
   }
 
-  rewritten.push_str("Connection: Upgrade, HTTP2-Settings\r\n");
+  rewritten.push_str("Connection: Upgrade, HTTP2-Settings");
+  if has_te {
+    rewritten.push_str(", TE");
+  }
+  rewritten.push_str("\r\n");
   rewritten.push_str("Upgrade: h2c\r\n");
   rewritten.push_str("HTTP2-Settings: ");
   rewritten.push_str(settings);
@@ -1382,15 +1391,25 @@ fn regular_headers(header: &str) -> Vec<(String, String)> {
     .lines()
     .skip(1)
     .filter_map(|line| line.split_once(':'))
-    .map(|(name, value)| (name.trim().to_ascii_lowercase(), value.trim().to_string()))
-    .filter(|(name, _)| !is_forbidden_request_header_name(name, &connection_tokens))
+    .filter_map(|(name, value)| {
+      let name = name.trim().to_ascii_lowercase();
+      let value = value.trim();
+      if name.eq_ignore_ascii_case("te") {
+        return value
+          .split(',')
+          .any(|member| member.trim().eq_ignore_ascii_case("trailers"))
+          .then_some((name, "trailers".to_string()));
+      }
+      if is_forbidden_request_header_name(&name, &connection_tokens) {
+        return None;
+      }
+      Some((name, value.to_string()))
+    })
     .collect()
 }
 
 fn is_forbidden_request_header_name(name: &str, connection_tokens: &[String]) -> bool {
-  is_connection_specific_header_name(name)
-    || name == "te"
-    || connection_tokens.iter().any(|token| token == name)
+  is_connection_specific_header_name(name) || connection_tokens.iter().any(|token| token == name)
 }
 
 fn is_connection_specific_header_name(name: &str) -> bool {

@@ -4,7 +4,7 @@ use rttp::server::{
   HttpAccept, HttpAcceptRanges, HttpAllowedMethods, HttpAuthorization, HttpByteRange,
   HttpByteRangeError, HttpConditionalMetadata, HttpContentDisposition, HttpContentLanguages,
   HttpContentType, HttpDigest, HttpEntityTag, HttpIfRangeRequestOutcome, HttpLinkValues,
-  HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpResponse,
+  HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
   HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming,
   HttpVary,
 };
@@ -270,9 +270,10 @@ fn request_te_and_prefer_parse_bounded_metadata_without_enabling_behavior() {
     .expect("TE should exist");
   assert_eq!(2, te.len());
   assert_eq!("trailers", te.codings()[0].coding());
-  assert_eq!(1000, te.codings()[0].quality());
+  assert!(te.codings()[0].is_trailers());
+  assert_eq!(None, te.codings()[0].quality());
   assert_eq!("deflate", te.codings()[1].coding());
-  assert_eq!(500, te.codings()[1].quality());
+  assert_eq!(Some(500), te.codings()[1].quality());
 
   let preferences = request
     .prefer()
@@ -287,7 +288,7 @@ fn request_te_and_prefer_parse_bounded_metadata_without_enabling_behavior() {
 
 #[test]
 fn request_te_and_prefer_reject_invalid_or_duplicate_metadata() {
-  for value in ["trailers,, deflate", "gzip;q=1.1"] {
+  for value in ["trailers,, deflate", "gzip;q=1.1", "trailers;q=0.5"] {
     let request = parse_request(&format!(
       "GET /metadata HTTP/1.1\r\nHost: example.test\r\nTE: {value}\r\n\r\n"
     ));
@@ -313,6 +314,8 @@ fn request_te_and_prefer_reject_invalid_or_duplicate_metadata() {
     "Prefer: return=minimal\r\nprefer: RETURN=representation\r\n\r\n"
   ));
   assert!(duplicate_prefer.prefer().is_err());
+
+  assert!(HttpRequestTe::parse("gzip".repeat(64 * 1024)).is_err());
 }
 
 #[test]

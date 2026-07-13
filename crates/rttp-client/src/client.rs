@@ -391,12 +391,16 @@ impl HttpClient {
     self.accept_encoding_with_q("identity", qvalue)
   }
 
-  /// Append bounded `TE` request metadata without enabling transfer codings.
+  /// Append a validated `TE` transfer coding. This declares request metadata
+  /// only; it does not enable a transfer-coding engine.
   pub fn te<S: AsRef<str>>(&mut self, coding: S) -> error::Result<&mut Self> {
     self.te_member(coding.as_ref(), None)
   }
 
-  /// Append bounded `TE` request metadata with an HTTP q-value.
+  /// Append a validated `TE` transfer coding with an HTTP q-value.
+  ///
+  /// The q-value must be between `0` and `1` with at most three fractional
+  /// digits. `trailers` cannot carry a q-value.
   pub fn te_with_q<C: AsRef<str>, Q: AsRef<str>>(
     &mut self,
     coding: C,
@@ -405,9 +409,12 @@ impl HttpClient {
     self.te_member(coding.as_ref(), Some(qvalue.as_ref()))
   }
 
-  /// Declare support for request trailers through bounded `TE` metadata.
+  /// Append `trailers` to `TE`.
+  ///
+  /// On bounded HTTP/2 paths, this is the only `TE` value emitted; other `TE`
+  /// values are stripped with connection-specific request metadata.
   pub fn te_trailers(&mut self) -> error::Result<&mut Self> {
-    self.te("trailers")
+    self.te_member("trailers", None)
   }
 
   /// Append a token-only `Prefer` request metadata item.
@@ -539,7 +546,12 @@ impl HttpClient {
     if !is_http_token(coding) || coding.eq_ignore_ascii_case("chunked") {
       return Err(error::builder_with_message("invalid TE coding"));
     }
-    let qvalue = qvalue.map(validate_accept_encoding_qvalue).transpose()?;
+    if coding.eq_ignore_ascii_case("trailers") && qvalue.is_some() {
+      return Err(error::builder_with_message(
+        "TE trailers cannot carry a q-value",
+      ));
+    }
+    let qvalue = qvalue.map(validate_te_qvalue).transpose()?;
     let member = qvalue.map_or_else(
       || coding.to_string(),
       |qvalue| format!("{coding};q={qvalue}"),
@@ -555,7 +567,26 @@ impl HttpClient {
       "TE header value is too large",
       parse_te_codings,
     )?;
+    self.ensure_connection_te_token();
     Ok(self)
+  }
+
+  fn ensure_connection_te_token(&mut self) {
+    let headers = self.request.headers_mut();
+    if let Some(header) = headers
+      .iter_mut()
+      .find(|header| header.name().eq_ignore_ascii_case("Connection"))
+    {
+      if !header
+        .value()
+        .split(',')
+        .any(|token| token.trim().eq_ignore_ascii_case("TE"))
+      {
+        header.replace(Header::new("Connection", format!("{}, TE", header.value())));
+      }
+    } else {
+      headers.push(Header::new("Connection", "Close, TE"));
+    }
   }
 
   fn prefer_member(&mut self, name: &str, value: Option<&str>) -> error::Result<&mut Self> {
@@ -902,13 +933,31 @@ fn parse_te_codings(value: &str) -> error::Result<Vec<&str>> {
       None => Some(coding),
       Some(parameter) if parts.next().is_none() => {
         let (name, value) = parameter.trim().split_once('=')?;
-        (name.trim().eq_ignore_ascii_case("q")
-          && validate_accept_encoding_qvalue(value.trim()).is_ok())
+        (!coding.eq_ignore_ascii_case("trailers")
+          && name.trim().eq_ignore_ascii_case("q")
+          && validate_te_qvalue(value.trim()).is_ok())
         .then_some(coding)
       }
       Some(_) => None,
     }
   })
+}
+
+fn validate_te_qvalue(qvalue: &str) -> error::Result<&str> {
+  let valid = match qvalue.split_once('.') {
+    Some((whole, fraction)) => {
+      fraction.len() <= 3
+        && fraction.bytes().all(|byte| byte.is_ascii_digit())
+        && matches!(whole, "0" | "1")
+        && (whole == "0" || fraction.bytes().all(|byte| byte == b'0'))
+    }
+    None => matches!(qvalue, "0" | "1"),
+  };
+  if valid {
+    Ok(qvalue)
+  } else {
+    Err(error::builder_with_message("invalid TE q-value"))
+  }
 }
 
 fn parse_prefer_names(value: &str) -> error::Result<Vec<&str>> {

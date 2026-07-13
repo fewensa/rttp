@@ -386,6 +386,23 @@ Credential interpretation remains application-owned. These helpers do not
 store credentials, validate individual schemes, refresh tokens, process
 challenges, retry requests, or forward credentials across redirects.
 
+### Bounded TE request metadata
+
+`HttpClient::te()` appends a validated transfer coding, `te_with_q()` accepts
+an HTTP q-value from `0` through `1` with at most three fractional digits, and
+`te_trailers()` declares support for trailers. The helpers emit one
+comma-separated `TE` field and reject invalid tokens, q-values, duplicates,
+oversized values, and more than 32 codings before a connection is opened.
+`trailers` cannot carry a q-value.
+
+On the server, `Request::te()` and `HttpRequest::te()` parse received fields in
+wire order into `HttpRequestTe`; each `HttpTe` exposes `coding()`, optional
+thousandths `quality()`, and `is_trailers()`. This is metadata parsing only:
+it does not implement transfer coding, trailer negotiation, compression, or
+proxy behavior. Bounded h2c remains conservative: it emits only an exact
+`TE: trailers` field and strips every other `TE` value with HTTP/1.x
+connection-specific request metadata.
+
 ### Bounded WWW-Authenticate response metadata
 
 `Response::www_authenticate()` parses all received `WWW-Authenticate` fields

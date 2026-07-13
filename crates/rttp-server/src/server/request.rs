@@ -200,11 +200,6 @@ impl Request {
     parse_max_forwards_values(self.headers_named("Max-Forwards"))
   }
 
-  /// Parses received `TE` request metadata without enabling transfer codings.
-  pub fn te(&self) -> Result<Option<HttpRequestTe>, HttpTeParseError> {
-    parse_te_values(self.headers_named("TE"))
-  }
-
   /// Parses received `Prefer` request metadata without applying preferences.
   pub fn prefer(&self) -> Result<Option<HttpRequestPreferences>, HttpPreferParseError> {
     parse_prefer_values(self.headers_named("Prefer"))
@@ -220,6 +215,16 @@ impl Request {
       return Ok(None);
     }
     HttpRequestAcceptEncodings::parse_values(values).map(Some)
+  }
+
+  /// Parses received `TE` request metadata without enabling transfer coding,
+  /// trailer negotiation, compression, or proxy behavior.
+  pub fn te(&self) -> Result<Option<HttpRequestTe>, HttpTeParseError> {
+    let values: Vec<&str> = self.headers_named("TE").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpRequestTe::parse_values(values).map(Some)
   }
 
   pub fn accept(&self) -> Result<Option<HttpAccept>, HttpAcceptParseError> {
@@ -758,65 +763,6 @@ pub struct HttpMaxForwardsParseError {
   message: String,
 }
 
-/// A validated `TE` coding received on an HTTP request.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HttpTe {
-  coding: String,
-  quality: u16,
-}
-
-impl HttpTe {
-  pub fn coding(&self) -> &str {
-    &self.coding
-  }
-
-  /// Returns the q-value as thousandths, where `1000` is the default.
-  pub fn quality(&self) -> u16 {
-    self.quality
-  }
-}
-
-/// Bounded `TE` request metadata.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HttpRequestTe {
-  codings: Vec<HttpTe>,
-}
-
-impl HttpRequestTe {
-  pub fn codings(&self) -> &[HttpTe] {
-    &self.codings
-  }
-
-  pub fn len(&self) -> usize {
-    self.codings.len()
-  }
-
-  pub fn is_empty(&self) -> bool {
-    self.codings.is_empty()
-  }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HttpTeParseError {
-  message: String,
-}
-
-impl HttpTeParseError {
-  fn new(message: impl Into<String>) -> Self {
-    Self {
-      message: message.into(),
-    }
-  }
-}
-
-impl fmt::Display for HttpTeParseError {
-  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    formatter.write_str(&self.message)
-  }
-}
-
-impl Error for HttpTeParseError {}
-
 /// A validated `Prefer` item received on an HTTP request.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HttpPreference {
@@ -878,62 +824,6 @@ impl Error for HttpPreferParseError {}
 const MAX_REQUEST_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 const MAX_REQUEST_CONTROL_MEMBERS: usize = 32;
 
-fn parse_te_values<'a>(
-  values: impl IntoIterator<Item = &'a str>,
-) -> Result<Option<HttpRequestTe>, HttpTeParseError> {
-  let mut codings = Vec::new();
-  for value in values {
-    if value.len() > MAX_REQUEST_CONTROL_VALUE_BYTES {
-      return Err(HttpTeParseError::new("TE header value is too large"));
-    }
-    for member in value.split(',') {
-      let (coding, quality) = parse_te_member(member)?;
-      if codings
-        .iter()
-        .any(|known: &HttpTe| known.coding.eq_ignore_ascii_case(coding))
-      {
-        return Err(HttpTeParseError::new("duplicate TE coding"));
-      }
-      if codings.len() >= MAX_REQUEST_CONTROL_MEMBERS {
-        return Err(HttpTeParseError::new("too many TE codings"));
-      }
-      codings.push(HttpTe {
-        coding: coding.to_string(),
-        quality,
-      });
-    }
-  }
-  if codings.is_empty() {
-    Ok(None)
-  } else {
-    Ok(Some(HttpRequestTe { codings }))
-  }
-}
-
-fn parse_te_member(member: &str) -> Result<(&str, u16), HttpTeParseError> {
-  let mut parts = member.split(';');
-  let coding = parts.next().unwrap_or_default().trim();
-  if !is_http_token(coding) || coding.eq_ignore_ascii_case("chunked") {
-    return Err(HttpTeParseError::new("invalid TE coding"));
-  }
-  let Some(parameter) = parts.next() else {
-    return Ok((coding, 1000));
-  };
-  if parts.next().is_some() {
-    return Err(HttpTeParseError::new("invalid TE coding"));
-  }
-  let Some((name, value)) = parameter.trim().split_once('=') else {
-    return Err(HttpTeParseError::new("invalid TE coding"));
-  };
-  if !name.trim().eq_ignore_ascii_case("q") {
-    return Err(HttpTeParseError::new("invalid TE coding"));
-  }
-  Ok((
-    coding,
-    parse_request_control_qvalue(value.trim()).map_err(HttpTeParseError::new)?,
-  ))
-}
-
 fn parse_prefer_values<'a>(
   values: impl IntoIterator<Item = &'a str>,
 ) -> Result<Option<HttpRequestPreferences>, HttpPreferParseError> {
@@ -979,33 +869,6 @@ fn parse_prefer_member(member: &str) -> Result<(&str, Option<&str>), HttpPreferP
     return Err(HttpPreferParseError::new("invalid Prefer preference"));
   }
   Ok((name, value))
-}
-
-fn parse_request_control_qvalue(value: &str) -> Result<u16, &'static str> {
-  let Some((whole, fraction)) = value.split_once('.') else {
-    return match value {
-      "0" => Ok(0),
-      "1" => Ok(1000),
-      _ => Err("invalid TE q-value"),
-    };
-  };
-  if !matches!(whole, "0" | "1")
-    || fraction.len() > 3
-    || !fraction.bytes().all(|byte| byte.is_ascii_digit())
-    || (whole == "1" && !fraction.bytes().all(|byte| byte == b'0'))
-  {
-    return Err("invalid TE q-value");
-  }
-  let fractional = if fraction.is_empty() {
-    0
-  } else {
-    fraction.parse::<u16>().expect("validated q-value")
-  };
-  Ok(if whole == "1" {
-    1000
-  } else {
-    fractional * 10_u16.pow(3 - fraction.len() as u32)
-  })
 }
 
 impl HttpMaxForwardsParseError {
@@ -1821,17 +1684,6 @@ impl HttpRequest {
     )
   }
 
-  /// Parses received `TE` request metadata without enabling transfer codings.
-  pub fn te(&self) -> Result<Option<HttpRequestTe>, HttpTeParseError> {
-    parse_te_values(
-      self
-        .headers
-        .iter()
-        .filter(|header| header.name.eq_ignore_ascii_case("TE"))
-        .map(|header| header.value.as_str()),
-    )
-  }
-
   /// Parses received `Prefer` request metadata without applying preferences.
   pub fn prefer(&self) -> Result<Option<HttpRequestPreferences>, HttpPreferParseError> {
     parse_prefer_values(
@@ -1858,6 +1710,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpRequestAcceptEncodings::parse_values(values).map(Some)
+  }
+
+  /// Parses received `TE` request metadata without enabling transfer coding,
+  /// trailer negotiation, compression, or proxy behavior.
+  pub fn te(&self) -> Result<Option<HttpRequestTe>, HttpTeParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("TE"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpRequestTe::parse_values(values).map(Some)
   }
 
   pub fn accept(&self) -> Result<Option<HttpAccept>, HttpAcceptParseError> {
