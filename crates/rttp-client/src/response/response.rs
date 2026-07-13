@@ -7,6 +7,7 @@ use url::Url;
 
 use crate::error;
 use crate::response::raw_response::RawResponse;
+use crate::response::WwwAuthenticate;
 use crate::types::{Cookie, Header, RoUrl};
 
 const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
@@ -280,6 +281,17 @@ impl Response {
       return Ok(None);
     }
     ContentEncoding::parse_values(values.into_iter().map(String::as_str)).map(Some)
+  }
+
+  /// Parses all `WWW-Authenticate` fields as bounded authentication challenge metadata.
+  pub fn www_authenticate(&self) -> error::Result<Option<WwwAuthenticate>> {
+    let values = self.header_values("www-authenticate");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    WwwAuthenticate::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   pub fn cache_control(&self) -> error::Result<Option<CacheControl>> {

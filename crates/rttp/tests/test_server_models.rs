@@ -8,6 +8,32 @@ use rttp::server::{
   HttpRetryAfter, HttpVary,
 };
 
+#[test]
+fn response_www_authenticate_helper_validates_and_preserves_raw_headers() {
+  let response = HttpResponse::new(401, "Unauthorized")
+    .with_www_authenticate("Digest realm=\"apps\", nonce=\"n-1\", Basic")
+    .expect("valid challenges should be accepted");
+  let challenges = response
+    .www_authenticate()
+    .expect("attached challenges should parse")
+    .expect("WWW-Authenticate should be present");
+  assert_eq!(2, challenges.len());
+  assert_eq!(Some("apps"), challenges.challenges()[0].parameter("realm"));
+  assert_eq!("Basic", challenges.challenges()[1].scheme());
+  assert!(String::from_utf8(response.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nWWW-Authenticate: Digest realm=\"apps\", nonce=n-1, Basic\r\n"));
+
+  assert!(HttpResponse::ok("body")
+    .with_www_authenticate("Basic realm=")
+    .is_err());
+  let raw = HttpResponse::ok("body").header("WWW-Authenticate", "Basic realm=");
+  assert!(raw.www_authenticate().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nWWW-Authenticate: Basic realm=\r\n"));
+}
+
 fn parse_request(raw: &str) -> HttpRequest {
   HttpRequest::parse(raw.as_bytes()).expect("request should parse")
 }
