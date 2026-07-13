@@ -89,6 +89,12 @@ impl Request {
     HttpRequestCacheControl::parse_values(values).map(Some)
   }
 
+  /// Parses received `Max-Forwards` request metadata without automatically
+  /// decrementing or forwarding the request.
+  pub fn max_forwards(&self) -> Result<Option<u8>, HttpMaxForwardsParseError> {
+    parse_max_forwards_values(self.headers_named("Max-Forwards"))
+  }
+
   /// Parses received `Accept-Encoding` request metadata without enabling
   /// automatic compression, decompression, or content negotiation.
   pub fn accept_encoding(
@@ -612,6 +618,52 @@ impl fmt::Display for HttpAcceptParseError {
 }
 
 impl Error for HttpAcceptParseError {}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpMaxForwardsParseError {
+  message: String,
+}
+
+impl HttpMaxForwardsParseError {
+  fn new(message: impl Into<String>) -> Self {
+    Self {
+      message: message.into(),
+    }
+  }
+}
+
+impl fmt::Display for HttpMaxForwardsParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpMaxForwardsParseError {}
+
+fn parse_max_forwards_values<'a>(
+  values: impl IntoIterator<Item = &'a str>,
+) -> Result<Option<u8>, HttpMaxForwardsParseError> {
+  let mut values = values.into_iter();
+  let Some(value) = values.next() else {
+    return Ok(None);
+  };
+  if values.next().is_some() {
+    return Err(HttpMaxForwardsParseError::new(
+      "duplicate Max-Forwards headers",
+    ));
+  }
+
+  let value = value.trim();
+  if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+    return Err(HttpMaxForwardsParseError::new(
+      "invalid Max-Forwards header value",
+    ));
+  }
+  value
+    .parse::<u8>()
+    .map(Some)
+    .map_err(|_| HttpMaxForwardsParseError::new("invalid Max-Forwards header value"))
+}
 
 fn split_accept_members(value: &str) -> Result<Vec<&str>, HttpAcceptParseError> {
   split_accept_delimited(value, b',', "invalid Accept header value")
@@ -1352,6 +1404,18 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpRequestCacheControl::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Max-Forwards` request metadata without automatically
+  /// decrementing or forwarding the request.
+  pub fn max_forwards(&self) -> Result<Option<u8>, HttpMaxForwardsParseError> {
+    parse_max_forwards_values(
+      self
+        .headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("Max-Forwards"))
+        .map(|header| header.value.as_str()),
+    )
   }
 
   /// Parses received `Accept-Encoding` request metadata without enabling
