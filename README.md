@@ -449,16 +449,17 @@ does not decrement the value, route the request, or infer forwarding behavior.
 
 `HttpClient::te()`, `te_with_q()`, and `te_trailers()` build a single bounded
 `TE` field. `HttpClient::prefer()` and `prefer_with_value()` build a single
-bounded `Prefer` field. Both client helpers reject malformed tokens, invalid
-q-values, duplicates, oversized field values, and more than 32 members before
-opening a connection; `TE: chunked` is rejected because request framing remains
-owned by the existing HTTP/1 implementation.
+bounded `Prefer` field. `Prefer` values are limited to 8 KiB and `wait` accepts
+only unsigned decimal integers. Both client helpers reject malformed tokens,
+invalid q-values, duplicates, oversized field values, and more than 32 members
+before opening a connection; `TE: chunked` is rejected because request framing
+remains owned by the existing HTTP/1 implementation.
 
 On the server, `Request::te()`/`HttpRequest::te()` parse ordered `TE` codings
 and their q-values, while `Request::prefer()`/`HttpRequest::prefer()` parse
-ordered token-only `Prefer` items. Absent fields return `Ok(None)` and invalid,
-duplicate, oversized, or excessive values return a parse error without
-changing the request's raw headers.
+ordered token-only `Prefer` items, including validated `wait` values. Absent
+fields return `Ok(None)` and invalid, duplicate, oversized, or excessive values
+return a parse error without changing the request's raw headers.
 
 These APIs only declare or parse HTTP/1.1 metadata. They do not add transfer
 coding engines, trailer scheduling, proxy routing, automatic retries,

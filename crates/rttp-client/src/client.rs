@@ -419,16 +419,16 @@ impl HttpClient {
 
   /// Append a token-only `Prefer` request metadata item.
   ///
-  /// This records application preference metadata only; it does not schedule
-  /// asynchronous work or alter response handling.
+  /// This records preference metadata only; it does not schedule asynchronous
+  /// work or alter response handling.
   pub fn prefer<S: AsRef<str>>(&mut self, name: S) -> error::Result<&mut Self> {
     self.prefer_member(name.as_ref(), None)
   }
 
   /// Append a token-valued `Prefer` request metadata item.
   ///
-  /// This records application preference metadata only; it does not apply
-  /// response preference policy.
+  /// `wait` values must be unsigned decimal integers. This records preference
+  /// metadata only; it does not apply response preference policy.
   pub fn prefer_with_value<N: AsRef<str>, V: AsRef<str>>(
     &mut self,
     name: N,
@@ -591,24 +591,43 @@ impl HttpClient {
 
   fn prefer_member(&mut self, name: &str, value: Option<&str>) -> error::Result<&mut Self> {
     let name = name.trim();
-    if !is_http_token(name) || !value.is_none_or(|value| is_http_token(value.trim())) {
+    let value = value.map(str::trim);
+    if !is_http_token(name)
+      || (name.eq_ignore_ascii_case("wait")
+        && !value.is_some_and(|value| value.bytes().all(|byte| byte.is_ascii_digit())))
+      || value.is_some_and(|value| value.len() > MAX_PREFER_VALUE_BYTES || !is_http_token(value))
+    {
       return Err(error::builder_with_message("invalid Prefer preference"));
     }
-    let member = value.map_or_else(
-      || name.to_string(),
-      |value| format!("{name}={}", value.trim()),
-    );
-    append_unique_metadata_member(
-      self.request.headers_mut(),
-      "Prefer",
-      name,
-      member,
-      "invalid Prefer preference",
-      "duplicate Prefer preference",
-      "too many Prefer preferences",
-      "Prefer header value is too large",
-      parse_prefer_names,
-    )?;
+    let member = value.map_or_else(|| name.to_string(), |value| format!("{name}={value}"));
+    if member.len() > MAX_PREFER_FIELD_BYTES {
+      return Err(error::builder_with_message(
+        "Prefer header value is too large",
+      ));
+    }
+
+    let headers = self.request.headers_mut();
+    if let Some(header) = headers
+      .iter_mut()
+      .find(|header| header.name().eq_ignore_ascii_case("Prefer"))
+    {
+      let names = parse_prefer_names(header.value())?;
+      if names.iter().any(|known| known.eq_ignore_ascii_case(name)) {
+        return Err(error::builder_with_message("duplicate Prefer preference"));
+      }
+      if names.len() >= MAX_PREFERENCES {
+        return Err(error::builder_with_message("too many Prefer preferences"));
+      }
+      let value = format!("{}, {member}", header.value());
+      if value.len() > MAX_PREFER_FIELD_BYTES {
+        return Err(error::builder_with_message(
+          "Prefer header value is too large",
+        ));
+      }
+      header.replace(Header::new("Prefer", value));
+    } else {
+      headers.push(Header::new("Prefer", member));
+    }
     Ok(self)
   }
 
@@ -884,7 +903,11 @@ const MAX_ACCEPT_ENCODINGS: usize = 32;
 const MAX_AUTHORIZATION_VALUE_BYTES: usize = 64 * 1024;
 const MAX_REQUEST_METADATA_VALUE_BYTES: usize = 64 * 1024;
 const MAX_REQUEST_METADATA_MEMBERS: usize = 32;
+const MAX_PREFER_FIELD_BYTES: usize = 64 * 1024;
+const MAX_PREFER_VALUE_BYTES: usize = 8 * 1024;
+const MAX_PREFERENCES: usize = 32;
 
+#[allow(clippy::too_many_arguments)]
 fn append_unique_metadata_member(
   headers: &mut Vec<Header>,
   header_name: &str,
@@ -961,13 +984,44 @@ fn validate_te_qvalue(qvalue: &str) -> error::Result<&str> {
 }
 
 fn parse_prefer_names(value: &str) -> error::Result<Vec<&str>> {
-  parse_metadata_members(value, "invalid Prefer preference", |member| {
-    let (name, value) = member
-      .split_once('=')
-      .map_or((member, None), |(name, value)| (name, Some(value)));
-    let name = name.trim();
-    (is_http_token(name) && value.is_none_or(|value| is_http_token(value.trim()))).then_some(name)
-  })
+  if value.len() > MAX_PREFER_FIELD_BYTES {
+    return Err(error::builder_with_message(
+      "Prefer header value is too large",
+    ));
+  }
+  let mut names = Vec::new();
+  for member in value.split(',') {
+    let (name, preference_value) = split_prefer_member(member)?;
+    if names
+      .iter()
+      .any(|known: &&str| known.eq_ignore_ascii_case(name))
+    {
+      return Err(error::builder_with_message("duplicate Prefer preference"));
+    }
+    if names.len() >= MAX_PREFERENCES {
+      return Err(error::builder_with_message("too many Prefer preferences"));
+    }
+    let _ = preference_value;
+    names.push(name);
+  }
+  Ok(names)
+}
+
+fn split_prefer_member(member: &str) -> error::Result<(&str, Option<&str>)> {
+  let (name, value) = member
+    .trim()
+    .split_once('=')
+    .map_or((member.trim(), None), |(name, value)| {
+      (name.trim(), Some(value.trim()))
+    });
+  if !is_http_token(name)
+    || (name.eq_ignore_ascii_case("wait")
+      && !value.is_some_and(|value| value.bytes().all(|byte| byte.is_ascii_digit())))
+    || value.is_some_and(|value| value.len() > MAX_PREFER_VALUE_BYTES || !is_http_token(value))
+  {
+    return Err(error::builder_with_message("invalid Prefer preference"));
+  }
+  Ok((name, value))
 }
 
 fn parse_metadata_members<'a>(

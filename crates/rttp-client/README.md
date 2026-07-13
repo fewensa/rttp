@@ -357,12 +357,13 @@ credentials, process challenges, retry, or forward credentials on redirects.
 
 `HttpClient::te()`, `te_with_q()`, and `te_trailers()` build a bounded `TE`
 field. `HttpClient::prefer()` and `prefer_with_value()` build a bounded
-`Prefer` field with token-only values. Both helpers reject malformed tokens,
-invalid q-values, duplicates, oversized values, and more than 32 members
-before opening a connection. `TE: chunked` is rejected because framing remains
-owned by the existing HTTP/1 implementation, and `trailers` cannot carry a
-q-value. Bounded h2c emits only an exact `TE: trailers` field and strips other
-`TE` values with HTTP/1.x connection-specific request metadata.
+`Prefer` field with token-only values. `Prefer` values are limited to 8 KiB and
+`wait` accepts only unsigned decimal integers. Both helpers reject malformed
+tokens, invalid q-values, duplicates, oversized values, and more than 32
+members before opening a connection. `TE: chunked` is rejected because framing
+remains owned by the existing HTTP/1 implementation, and `trailers` cannot
+carry a q-value. Bounded h2c emits only an exact `TE: trailers` field and strips
+other `TE` values with HTTP/1.x connection-specific request metadata.
 
 These are declaration helpers only. RTTP does not enable a transfer-coding
 engine, change request framing, apply response preferences, schedule async

@@ -582,6 +582,10 @@ fn te_and_prefer_helpers_emit_bounded_request_metadata() {
       .expect("token preference should be accepted")
       .prefer_with_value("return", "minimal")
       .expect("valued preference should be accepted")
+      .prefer_with_value("wait", "30")
+      .expect("wait should be accepted")
+      .prefer_with_value("example-extension", "enabled")
+      .expect("unknown extension should be accepted")
       .emit()
       .expect("request should succeed");
   });
@@ -593,7 +597,7 @@ fn te_and_prefer_helpers_emit_bounded_request_metadata() {
   );
   assert_eq!(Some("Close, TE"), header_value(&request, "Connection"));
   assert_eq!(
-    Some("respond-async, return=minimal"),
+    Some("respond-async, return=minimal, wait=30, example-extension=enabled"),
     header_value(&request, "Prefer")
   );
 }
@@ -626,6 +630,77 @@ fn te_and_prefer_helpers_reject_invalid_values_before_connecting() {
   assert!(
     request.is_empty(),
     "invalid Prefer input should not open a socket"
+  );
+}
+
+#[test]
+fn prefer_helpers_reject_invalid_wait_and_bound_values_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    assert!(client
+      .get()
+      .url(format!("{}/metadata", base_url))
+      .prefer("wait")
+      .expect_err("valueless wait preference should be rejected")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "invalid Prefer input should not open a socket"
+  );
+
+  for (name, value) in [
+    ("wait", "-1"),
+    ("wait", "1.5"),
+    ("wait", "abc"),
+    ("return", "not a token"),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      assert!(client
+        .get()
+        .url(format!("{}/metadata", base_url))
+        .prefer_with_value(name, value)
+        .expect_err("invalid Prefer input should be rejected")
+        .is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid Prefer input should not open a socket"
+    );
+  }
+
+  let request = capture_optional_request(|base_url| {
+    let oversized_value = "a".repeat(8 * 1024 + 1);
+    let mut client = client();
+    assert!(client
+      .get()
+      .url(format!("{}/metadata", base_url))
+      .prefer_with_value("extension", oversized_value)
+      .expect_err("oversized preference value should be rejected")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "oversized Prefer input should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    client.get().url(format!("{}/metadata", base_url));
+    for index in 0..32 {
+      client
+        .prefer(format!("extension{index}"))
+        .expect("preference within the limit should be accepted");
+    }
+    assert!(client
+      .prefer("one-too-many")
+      .expect_err("excessive preferences should be rejected")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "excessive Prefer input should not open a socket"
   );
 }
 
