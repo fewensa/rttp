@@ -375,6 +375,111 @@ fn accept_encoding_helpers_reject_invalid_members_before_connecting() {
 }
 
 #[test]
+fn accept_helpers_emit_validated_media_ranges_and_quality_values() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/document", base_url))
+      .accept_json()
+      .expect("JSON should be accepted")
+      .accept_html_with_q("0.8")
+      .expect("HTML quality should be accepted")
+      .accept("text/plain; charset=utf-8; q=0.5")
+      .expect("parameterized media range should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("application/json, text/html;q=0.8, text/plain; charset=utf-8; q=0.5"),
+    header_value(&request, "Accept")
+  );
+}
+
+#[test]
+fn accept_helpers_reject_invalid_values_before_connecting() {
+  for value in [
+    "text",
+    "text/html; q=0.8; q=0.5",
+    "text/html; q=1.001",
+    "text/html\n;level=1",
+    "text/html\r;level=1",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/document", base_url))
+        .accept(value)
+        .expect_err("invalid Accept media range should be rejected");
+
+      assert!(error.is_builder());
+    });
+
+    assert!(
+      request.is_empty(),
+      "invalid Accept helper input should not open a socket"
+    );
+  }
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    client.get().url(format!("{}/document", base_url));
+    for index in 0..32 {
+      client
+        .accept(format!("application/x-{index}"))
+        .expect("bounded Accept media range should be accepted");
+    }
+    let error = client
+      .accept("application/x-overflow")
+      .expect_err("too many media ranges should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized Accept media range list should not open a socket"
+  );
+
+  let oversized = format!("application/{}", "a".repeat(64 * 1024));
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/document", base_url))
+      .accept(&oversized)
+      .expect_err("oversized media range should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized Accept helper input should not open a socket"
+  );
+}
+
+#[test]
+fn manual_accept_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/document", base_url))
+      .header(("Accept", "application/example; feature=?experimental"))
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("application/example; feature=?experimental"),
+    header_value(&request, "Accept")
+  );
+}
+
+#[test]
 fn te_helpers_emit_validated_codings_and_trailers() {
   let request = capture_request(|base_url| {
     client()
