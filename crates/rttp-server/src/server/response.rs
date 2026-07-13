@@ -1,5 +1,9 @@
 use super::*;
 
+pub use rttp_protocol::priority::{
+  Priority as HttpPriority, PriorityExtension as HttpPriorityExtension,
+  PriorityParseError as HttpPriorityParseError,
+};
 pub use rttp_protocol::www_authenticate::{
   WwwAuthenticate as HttpWwwAuthenticate, WwwAuthenticateChallenge as HttpWwwAuthenticateChallenge,
   WwwAuthenticateParameter as HttpWwwAuthenticateParameter,
@@ -352,6 +356,18 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces HTTP `Priority` response metadata.
+  pub fn with_priority(mut self, value: impl AsRef<str>) -> Result<Self, HttpPriorityParseError> {
+    let priority = HttpPriority::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Priority"));
+    self
+      .headers
+      .push(HttpHeader::new("Priority", priority.header_value()));
+    Ok(self)
+  }
+
   pub fn with_content_location<V: AsRef<str>>(
     mut self,
     value: V,
@@ -571,6 +587,20 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpWwwAuthenticate::parse_values(values).map(Some)
+  }
+
+  /// Parses attached HTTP `Priority` metadata without changing raw headers.
+  pub fn priority(&self) -> Result<Option<HttpPriority>, HttpPriorityParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Priority"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpPriority::parse_values(values).map(Some)
   }
 
   pub fn content_location(&self) -> Result<Option<&str>, HttpContentLocationParseError> {

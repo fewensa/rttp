@@ -292,6 +292,47 @@ fn accept_encoding_helpers_reject_invalid_members_before_connecting() {
 }
 
 #[test]
+fn priority_helper_emits_bounded_known_and_extension_metadata() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .priority("u=1, i, x=token")
+      .expect("Priority should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+
+  assert_eq!(
+    Some("u=1, i, x=token"),
+    header_value(&request_text(&request), "Priority")
+  );
+}
+
+#[test]
+fn priority_helper_rejects_oversized_parameter_sets_before_connecting() {
+  let too_many = (0..257)
+    .map(|index| format!("x{index}=?1"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .priority(&too_many)
+      .expect_err("too many Priority parameters should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "invalid Priority should not open a socket"
+  );
+}
+
+#[test]
 fn range_helper_rejects_malformed_inputs_before_connecting() {
   let request = capture_optional_request(|base_url| {
     let mut client = client();

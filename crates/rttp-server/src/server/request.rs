@@ -119,6 +119,15 @@ impl Request {
     HttpAcceptLanguages::parse_values(values).map(Some)
   }
 
+  /// Parses received HTTP `Priority` metadata without changing transport scheduling.
+  pub fn priority(&self) -> Result<Option<HttpPriority>, HttpPriorityParseError> {
+    let values: Vec<&str> = self.headers_named("Priority").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpPriority::parse_values(values).map(Some)
+  }
+
   pub fn vary_selection(&self, vary: &HttpVary) -> HttpVarySelection {
     if vary.is_wildcard() {
       return HttpVarySelection::wildcard();

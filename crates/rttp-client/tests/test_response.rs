@@ -600,6 +600,26 @@ fn test_www_authenticate_rejects_malformed_duplicate_and_bounded_values() {
 }
 
 #[test]
+fn test_priority_response_helper_parses_known_and_extension_metadata() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Priority: u=1, i, x=token\r\n",
+    "Content-Length: 0\r\n\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  let priority = response
+    .priority()
+    .expect("Priority should parse")
+    .expect("Priority should be present");
+
+  assert_eq!(Some(1), priority.urgency());
+  assert!(priority.incremental());
+  assert_eq!(Some("token"), priority.extensions()[0].value());
+}
+
+#[test]
 fn test_parse_content_disposition_rejects_invalid_helper_values_without_rejecting_response() {
   let invalid_values = [
     "",

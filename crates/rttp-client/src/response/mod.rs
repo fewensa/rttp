@@ -5,6 +5,7 @@ pub use self::response::*;
 mod raw_response;
 mod response;
 
+pub use rttp_protocol::priority::{Priority, PriorityExtension, PriorityParseError};
 pub use rttp_protocol::www_authenticate::{
   WwwAuthenticate, WwwAuthenticateChallenge, WwwAuthenticateParameter, WwwAuthenticateParseError,
 };
