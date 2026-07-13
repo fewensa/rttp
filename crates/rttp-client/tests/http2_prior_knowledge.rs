@@ -212,7 +212,7 @@ fn http2_upgrade_sends_http11_upgrade_then_runs_single_h2_stream() {
     let (mut stream, _) = listener.accept().expect("accept h2c upgrade client");
     let request = String::from_utf8(read_http1_request_head(&mut stream)).expect("request utf8");
     assert!(request.starts_with("GET /upgrade?via=h2c HTTP/1.1\r\n"));
-    assert!(request.contains("\r\nConnection: Upgrade, HTTP2-Settings\r\n"));
+    assert!(request.contains("\r\nConnection: Upgrade, HTTP2-Settings, TE\r\n"));
     assert!(request.contains("\r\nUpgrade: h2c\r\n"));
     let settings = header_value(&request, "HTTP2-Settings").expect("http2 settings header");
     assert_eq!(
@@ -248,6 +248,8 @@ fn http2_upgrade_sends_http11_upgrade_then_runs_single_h2_stream() {
   let response = HttpClient::new()
     .get()
     .url(format!("http://{}/upgrade?via=h2c", addr))
+    .te("gzip")
+    .expect("transfer coding should be accepted")
     .emit_http2_upgrade()
     .expect("h2c upgrade response");
 
@@ -1415,6 +1417,72 @@ fn prior_knowledge_request_omits_connection_specific_headers_and_connection_toke
       .value
       .as_slice()
   );
+}
+
+#[test]
+fn prior_knowledge_request_preserves_only_trailers_te() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_handshake_without_request(&mut stream);
+
+    let request_headers = read_frame(&mut stream);
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"filtered");
+    request_headers.payload
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/te", addr))
+    .te("gzip")
+    .expect("transfer coding should be accepted")
+    .te_trailers()
+    .expect("trailers should be accepted")
+    .emit_http2_prior_knowledge()
+    .expect("h2 GET response");
+  assert_eq!(200, response.code());
+
+  let request_header_block = handle.join().expect("h2 peer thread");
+  assert_eq!(
+    b"trailers",
+    find_header_value(&request_header_block, b"te")
+      .expect("HTTP/2 should preserve TE: trailers")
+      .value
+      .as_slice()
+  );
+}
+
+#[test]
+fn prior_knowledge_request_strips_non_trailers_te() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_handshake_without_request(&mut stream);
+
+    let request_headers = read_frame(&mut stream);
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"filtered");
+    request_headers.payload
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/te", addr))
+    .te_with_q("gzip", "0.5")
+    .expect("transfer coding should be accepted")
+    .emit_http2_prior_knowledge()
+    .expect("h2 GET response");
+  assert_eq!(200, response.code());
+
+  let request_header_block = handle.join().expect("h2 peer thread");
+  assert!(find_header_value(&request_header_block, b"te").is_none());
 }
 
 #[test]
@@ -3827,19 +3895,64 @@ fn prior_knowledge_get_reports_stream_reset_and_goaway() {
     .emit_http2_prior_knowledge()
     .expect_err("reset stream must fail the response");
   assert!(
-    reset_error.to_string().contains("RST_STREAM error code 8"),
+    reset_error
+      .to_string()
+      .contains("RST_STREAM error code 8 (CANCEL)"),
     "unexpected error: {reset_error}"
   );
   reset_handle.join().expect("reset peer thread");
 
-  let (goaway_addr, goaway_handle) = spawn_control_frame_peer(FRAME_GOAWAY);
+  let (unknown_reset_addr, unknown_reset_handle) =
+    spawn_rst_stream_peer(1, &[0xde, 0xad, 0xbe, 0xef], None);
+  let unknown_reset_error = HttpClient::new()
+    .get()
+    .url(format!("http://{}/unknown-reset", unknown_reset_addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("unknown reset code must fail the response");
+  assert!(
+    unknown_reset_error
+      .to_string()
+      .contains("RST_STREAM error code 3735928559 (UNKNOWN)"),
+    "unexpected error: {unknown_reset_error}"
+  );
+  unknown_reset_handle
+    .join()
+    .expect("unknown reset peer thread");
+
+  let (goaway_addr, goaway_handle) =
+    spawn_goaway_peer(0, &[0x80, 0, 0, 0, 0, 0, 0, 10], Some(b"ignored"));
   let goaway_error = HttpClient::new()
     .get()
     .url(format!("http://{}/goaway", goaway_addr))
     .emit_http2_prior_knowledge()
     .expect_err("goaway must fail the response");
-  assert!(goaway_error.to_string().contains("GOAWAY"));
+  assert!(
+    goaway_error
+      .to_string()
+      .contains("GOAWAY last stream ID 0 with error code 10 (CONNECT_ERROR)"),
+    "unexpected error: {goaway_error}"
+  );
   goaway_handle.join().expect("goaway peer thread");
+
+  let (unknown_goaway_addr, unknown_goaway_handle) = spawn_goaway_peer(
+    0,
+    &[0x80, 0, 0, 0, 0xde, 0xad, 0xbe, 0xef],
+    Some(b"ignored"),
+  );
+  let unknown_goaway_error = HttpClient::new()
+    .get()
+    .url(format!("http://{}/unknown-goaway", unknown_goaway_addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("unknown GOAWAY code must fail the response");
+  assert!(
+    unknown_goaway_error
+      .to_string()
+      .contains("GOAWAY last stream ID 0 with error code 3735928559 (UNKNOWN)"),
+    "unexpected error: {unknown_goaway_error}"
+  );
+  unknown_goaway_handle
+    .join()
+    .expect("unknown GOAWAY peer thread");
 }
 
 #[test]
@@ -4023,31 +4136,24 @@ fn prior_knowledge_get_rejects_malformed_goaway_frames() {
 
 #[test]
 fn prior_knowledge_rejects_invalid_window_update_frames() {
-  let (zero_addr, zero_handle) = spawn_window_update_peer(1, &[0]);
-  let zero_error = HttpClient::new()
-    .get()
-    .url(format!("http://{}/zero-window-update", zero_addr))
-    .emit_http2_prior_knowledge()
-    .expect_err("zero WINDOW_UPDATE increment must fail");
-  assert!(
-    zero_error.to_string().contains("WINDOW_UPDATE"),
-    "unexpected error: {zero_error}"
-  );
-  zero_handle.join().expect("zero window update peer thread");
-
-  let (overflow_addr, overflow_handle) = spawn_window_update_peer(0, &[0x7fff_ffff]);
-  let overflow_error = HttpClient::new()
-    .get()
-    .url(format!("http://{}/overflow-window-update", overflow_addr))
-    .emit_http2_prior_knowledge()
-    .expect_err("overflowing WINDOW_UPDATE increment must fail");
-  assert!(
-    overflow_error.to_string().contains("overflow"),
-    "unexpected error: {overflow_error}"
-  );
-  overflow_handle
-    .join()
-    .expect("overflow window update peer thread");
+  for (scope, stream_id, increment, expected_error) in [
+    ("connection-zero", 0, 0, "WINDOW_UPDATE"),
+    ("stream-zero", 1, 0, "WINDOW_UPDATE"),
+    ("connection-overflow", 0, 0x7fff_ffff, "overflow"),
+    ("stream-overflow", 1, 0x7fff_ffff, "overflow"),
+  ] {
+    let (addr, handle) = spawn_window_update_peer(stream_id, vec![increment]);
+    let error = HttpClient::new()
+      .get()
+      .url(format!("http://{addr}/{scope}-window-update"))
+      .emit_http2_prior_knowledge()
+      .expect_err("invalid WINDOW_UPDATE increment must fail");
+    assert!(
+      error.to_string().contains(expected_error),
+      "unexpected {scope} error: {error}"
+    );
+    handle.join().expect("invalid window update peer thread");
+  }
 }
 
 #[test]
@@ -4653,7 +4759,7 @@ fn spawn_initial_settings_peer(
 
 fn spawn_window_update_peer(
   stream_id: u32,
-  increments: &'static [u32],
+  increments: Vec<u32>,
 ) -> (SocketAddr, thread::JoinHandle<()>) {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");
@@ -5224,23 +5330,6 @@ fn write_raw_frame(
   stream.write_all(&header).expect("write frame header");
   stream.write_all(payload).expect("write frame payload");
   stream.flush().expect("flush frame");
-}
-
-fn spawn_control_frame_peer(frame_type: u8) -> (SocketAddr, thread::JoinHandle<()>) {
-  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
-  let addr = listener.local_addr().expect("h2 peer addr");
-
-  let handle = thread::spawn(move || {
-    let (mut stream, _) = listener.accept().expect("accept h2 client");
-    complete_h2_request_handshake(&mut stream);
-    match frame_type {
-      FRAME_RST_STREAM => write_frame(&mut stream, FRAME_RST_STREAM, 0, 1, &0u32.to_be_bytes()),
-      FRAME_GOAWAY => write_frame(&mut stream, FRAME_GOAWAY, 0, 0, &[0, 0, 0, 0, 0, 0, 0, 0]),
-      _ => unreachable!("unexpected control frame"),
-    }
-  });
-
-  (addr, handle)
 }
 
 fn spawn_rst_stream_peer(

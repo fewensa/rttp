@@ -369,10 +369,16 @@ fn reject_goaway_before_opening_request_stream(
     let frame = read_frame(stream, local_settings)?;
     match (frame.frame_type, frame.stream_id) {
       (FRAME_GOAWAY, _) => {
-        if goaway_last_stream_id(&frame)? < stream_id {
+        let goaway = goaway_metadata(&frame)?;
+        if goaway.last_stream_id < stream_id {
           return Err(error::request(io::Error::new(
             io::ErrorKind::ConnectionAborted,
-            "HTTP/2 connection received GOAWAY before opening request stream; no new streams may be created on this connection",
+            format!(
+              "HTTP/2 connection received GOAWAY before opening request stream; no new streams may be created on this connection (last stream ID {} with error code {} ({}))",
+              goaway.last_stream_id,
+              goaway.error_code,
+              http2_error_code_name(goaway.error_code),
+            ),
           )));
         }
       }
@@ -626,6 +632,11 @@ fn write_h2c_upgrade_request(
 
 fn h2c_upgrade_request_header(header: &str, settings: &str) -> String {
   let mut rewritten = String::new();
+  let has_te = header.lines().skip(1).any(|line| {
+    line
+      .split_once(':')
+      .is_some_and(|(name, _)| name.trim().eq_ignore_ascii_case("TE"))
+  });
   let mut lines = header.split_inclusive("\r\n");
   if let Some(request_line) = lines.next() {
     rewritten.push_str(request_line);
@@ -650,7 +661,11 @@ fn h2c_upgrade_request_header(header: &str, settings: &str) -> String {
     rewritten.push_str(line);
   }
 
-  rewritten.push_str("Connection: Upgrade, HTTP2-Settings\r\n");
+  rewritten.push_str("Connection: Upgrade, HTTP2-Settings");
+  if has_te {
+    rewritten.push_str(", TE");
+  }
+  rewritten.push_str("\r\n");
   rewritten.push_str("Upgrade: h2c\r\n");
   rewritten.push_str("HTTP2-Settings: ");
   rewritten.push_str(settings);
@@ -1098,9 +1113,11 @@ fn read_until_send_window_available(
         reject_push_promise_frame(&frame)?;
       }
       (FRAME_RST_STREAM, id) if id == stream_id => {
+        let error_code = rst_stream_error_code(&frame)?;
         return Err(error::bad_response(format!(
-          "HTTP/2 stream received RST_STREAM error code {}",
-          rst_stream_error_code(&frame)?
+          "HTTP/2 stream received RST_STREAM error code {} ({})",
+          error_code,
+          http2_error_code_name(error_code),
         )));
       }
       (FRAME_RST_STREAM, _) => {
@@ -1113,8 +1130,14 @@ fn read_until_send_window_available(
         return Err(error::bad_response("invalid HTTP/2 PING frame"));
       }
       (FRAME_GOAWAY, _) => {
-        if goaway_last_stream_id(&frame)? < stream_id {
-          return Err(error::bad_response("HTTP/2 connection received GOAWAY"));
+        let goaway = goaway_metadata(&frame)?;
+        if goaway.last_stream_id < stream_id {
+          return Err(error::bad_response(format!(
+            "HTTP/2 connection received GOAWAY last stream ID {} with error code {} ({})",
+            goaway.last_stream_id,
+            goaway.error_code,
+            http2_error_code_name(goaway.error_code),
+          )));
         }
       }
       (FRAME_HEADERS, id) | (FRAME_DATA, id) | (FRAME_CONTINUATION, id) if id == stream_id => {
@@ -1368,15 +1391,25 @@ fn regular_headers(header: &str) -> Vec<(String, String)> {
     .lines()
     .skip(1)
     .filter_map(|line| line.split_once(':'))
-    .map(|(name, value)| (name.trim().to_ascii_lowercase(), value.trim().to_string()))
-    .filter(|(name, _)| !is_forbidden_request_header_name(name, &connection_tokens))
+    .filter_map(|(name, value)| {
+      let name = name.trim().to_ascii_lowercase();
+      let value = value.trim();
+      if name.eq_ignore_ascii_case("te") {
+        return value
+          .split(',')
+          .any(|member| member.trim().eq_ignore_ascii_case("trailers"))
+          .then_some((name, "trailers".to_string()));
+      }
+      if is_forbidden_request_header_name(&name, &connection_tokens) {
+        return None;
+      }
+      Some((name, value.to_string()))
+    })
     .collect()
 }
 
 fn is_forbidden_request_header_name(name: &str, connection_tokens: &[String]) -> bool {
-  is_connection_specific_header_name(name)
-    || name == "te"
-    || connection_tokens.iter().any(|token| token == name)
+  is_connection_specific_header_name(name) || connection_tokens.iter().any(|token| token == name)
 }
 
 fn is_connection_specific_header_name(name: &str) -> bool {
@@ -1577,9 +1610,11 @@ fn read_single_stream_response_with_first_frame(
         reject_push_promise_frame(&frame)?;
       }
       (FRAME_RST_STREAM, id) if id == stream_id => {
+        let error_code = rst_stream_error_code(&frame)?;
         return Err(error::bad_response(format!(
-          "HTTP/2 stream received RST_STREAM error code {}",
-          rst_stream_error_code(&frame)?
+          "HTTP/2 stream received RST_STREAM error code {} ({})",
+          error_code,
+          http2_error_code_name(error_code),
         )));
       }
       (FRAME_RST_STREAM, _) => {
@@ -1592,8 +1627,14 @@ fn read_single_stream_response_with_first_frame(
         return Err(error::bad_response("invalid HTTP/2 PING frame"));
       }
       (FRAME_GOAWAY, _) => {
-        if goaway_last_stream_id(&frame)? < stream_id {
-          return Err(error::bad_response("HTTP/2 connection received GOAWAY"));
+        let goaway = goaway_metadata(&frame)?;
+        if goaway.last_stream_id < stream_id {
+          return Err(error::bad_response(format!(
+            "HTTP/2 connection received GOAWAY last stream ID {} with error code {} ({})",
+            goaway.last_stream_id,
+            goaway.error_code,
+            http2_error_code_name(goaway.error_code),
+          )));
         }
       }
       (_, id) if id == stream_id => {}
@@ -1763,6 +1804,26 @@ fn rst_stream_error_code(frame: &Frame) -> error::Result<u32> {
   ]))
 }
 
+fn http2_error_code_name(error_code: u32) -> &'static str {
+  match error_code {
+    0 => "NO_ERROR",
+    1 => "PROTOCOL_ERROR",
+    2 => "INTERNAL_ERROR",
+    3 => "FLOW_CONTROL_ERROR",
+    4 => "SETTINGS_TIMEOUT",
+    5 => "STREAM_CLOSED",
+    6 => "FRAME_SIZE_ERROR",
+    7 => "REFUSED_STREAM",
+    8 => "CANCEL",
+    9 => "COMPRESSION_ERROR",
+    10 => "CONNECT_ERROR",
+    11 => "ENHANCE_YOUR_CALM",
+    12 => "INADEQUATE_SECURITY",
+    13 => "HTTP_1_1_REQUIRED",
+    _ => "UNKNOWN",
+  }
+}
+
 fn data_payload(frame: &Frame) -> error::Result<&[u8]> {
   if frame.flags & FLAG_PADDED == 0 {
     return Ok(&frame.payload);
@@ -1842,16 +1903,29 @@ fn is_informational_status(status: u32) -> bool {
   (100..200).contains(&status)
 }
 
-fn goaway_last_stream_id(frame: &Frame) -> error::Result<u32> {
+struct GoawayMetadata {
+  last_stream_id: u32,
+  error_code: u32,
+}
+
+fn goaway_metadata(frame: &Frame) -> error::Result<GoawayMetadata> {
   if frame.stream_id != 0 || frame.payload.len() < 8 {
     return Err(error::bad_response("invalid HTTP/2 GOAWAY frame"));
   }
-  Ok(u32::from_be_bytes([
-    frame.payload[0] & 0x7f,
-    frame.payload[1],
-    frame.payload[2],
-    frame.payload[3],
-  ]))
+  Ok(GoawayMetadata {
+    last_stream_id: u32::from_be_bytes([
+      frame.payload[0] & 0x7f,
+      frame.payload[1],
+      frame.payload[2],
+      frame.payload[3],
+    ]),
+    error_code: u32::from_be_bytes([
+      frame.payload[4],
+      frame.payload[5],
+      frame.payload[6],
+      frame.payload[7],
+    ]),
+  })
 }
 
 fn build_response(

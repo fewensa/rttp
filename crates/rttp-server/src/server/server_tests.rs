@@ -1,5 +1,40 @@
 use std::net::TcpStream as StdTcpStream;
 
+#[test]
+fn request_max_forwards_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(None, absent.max_forwards().expect("missing value should be valid"));
+
+  let valid = Request::from_raw_frame(
+    b"OPTIONS / HTTP/1.1\r\nHost: example.test\r\nMax-Forwards: 256\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert_eq!(
+    Some("256".to_owned()),
+    valid.max_forwards().expect("value should parse")
+  );
+
+  for value in ["", "-1", "+1", "1.0"] {
+    let request = Request::from_raw_frame(
+      format!(
+        "OPTIONS / HTTP/1.1\r\nHost: example.test\r\nMax-Forwards: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should retain malformed metadata");
+    assert!(request.max_forwards().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Max-Forwards"));
+  }
+
+  let duplicate = Request::from_raw_frame(
+    b"OPTIONS / HTTP/1.1\r\nHost: example.test\r\nMax-Forwards: 1\r\nmax-forwards: 2\r\n\r\n",
+  )
+  .expect("request should retain duplicate metadata");
+  assert!(duplicate.max_forwards().is_err());
+  assert_eq!(Some("1"), duplicate.header("Max-Forwards"));
+}
+
   #[test]
   fn http2_huffman_decode_table_resolves_symbols_without_linear_scan() {
     let table = http2_huffman_decode_table();
@@ -12,6 +47,28 @@ use std::net::TcpStream as StdTcpStream;
       table.decode_symbol(0x3fff_ffff, 30)
     );
     assert_eq!(None, table.decode_symbol(0x00, 1));
+  }
+
+  #[test]
+  fn http2_window_update_rejects_zero_increment() {
+    let error = http2_window_update_increment(&[0, 0, 0, 0])
+      .expect_err("zero WINDOW_UPDATE increment must be rejected");
+
+    assert_eq!(io::ErrorKind::InvalidData, error.kind());
+    assert_eq!("invalid HTTP/2 WINDOW_UPDATE frame", error.to_string());
+  }
+
+  #[test]
+  fn http2_send_window_rejects_increment_above_maximum() {
+    let mut window = Http2SendWindow::new(1);
+
+    let error = window
+      .increase(0x7fff_ffff)
+      .expect_err("WINDOW_UPDATE must not exceed the HTTP/2 maximum window");
+
+    assert_eq!(io::ErrorKind::InvalidData, error.kind());
+    assert_eq!("HTTP/2 flow-control window overflow", error.to_string());
+    assert_eq!(1, window.size);
   }
 
   #[test]
@@ -405,4 +462,67 @@ hello\r\n\
     assert_eq!("/first", first.target());
     assert_eq!(io::ErrorKind::InvalidData, error.kind());
     assert_eq!("invalid request header", error.to_string());
+  }
+
+  #[test]
+  fn priority_helpers_parse_requests_and_build_responses() {
+    let raw = concat!(
+      "GET / HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Priority: u=1, i, x=token\r\n",
+      "\r\n"
+    );
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+    let request = Request::read_next_from(&mut reader)
+      .expect("request should parse")
+      .expect("request should be present");
+    let priority = request
+      .priority()
+      .expect("Priority should parse")
+      .expect("Priority should be present");
+
+    assert_eq!(Some(1), priority.urgency());
+    assert!(priority.incremental());
+    assert_eq!(Some("token"), priority.extensions()[0].value());
+
+    let response = HttpResponse::ok([])
+      .with_priority("u=1, i, x=token")
+      .expect("Priority should be accepted");
+    assert_eq!(
+      "u=1, i, x=token",
+      response
+        .priority()
+        .expect("response Priority should parse")
+        .expect("response Priority should be present")
+        .header_value()
+    );
+  }
+
+  #[test]
+  fn alt_svc_helpers_validate_build_and_parse_response_metadata() {
+    let response = HttpResponse::ok([])
+      .with_alt_svc("h3=\":443\"; ma=3600; persist=1; region=\"us-east\"")
+      .expect("Alt-Svc should be accepted");
+    let alt_svc = response
+      .alt_svc()
+      .expect("response Alt-Svc should parse")
+      .expect("response Alt-Svc should be present");
+
+    assert_eq!("h3", alt_svc.alternatives()[0].protocol_id());
+    assert_eq!(":443", alt_svc.alternatives()[0].authority());
+    assert_eq!(Some(3600), alt_svc.alternatives()[0].max_age());
+    assert_eq!(Some(true), alt_svc.alternatives()[0].persist());
+    assert_eq!(
+      "h3=\":443\"; ma=3600; persist=1; region=us-east",
+      alt_svc.header_value()
+    );
+
+    let clear = HttpResponse::ok([])
+      .with_alt_svc("clear")
+      .expect("clear should be accepted");
+    assert!(clear
+      .alt_svc()
+      .expect("clear should parse")
+      .expect("clear should be present")
+      .is_clear());
   }
