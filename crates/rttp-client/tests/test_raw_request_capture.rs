@@ -518,6 +518,91 @@ fn manual_range_header_remains_available_as_escape_hatch() {
 }
 
 #[test]
+fn max_forwards_helper_emits_bounded_trace_and_options_headers() {
+  let trace = capture_request(|base_url| {
+    client()
+      .trace()
+      .url(format!("{}/diagnostics", base_url))
+      .max_forwards("0")
+      .expect("zero Max-Forwards should be accepted")
+      .emit()
+      .expect("TRACE request should succeed");
+  });
+  let trace = request_text(&trace);
+  assert!(trace.starts_with("TRACE /diagnostics HTTP/1.1\r\n"));
+  assert_eq!(Some("0"), header_value(&trace, "Max-Forwards"));
+
+  let options = capture_request(|base_url| {
+    client()
+      .options()
+      .url(format!("{}/diagnostics", base_url))
+      .max_forwards("4294967295")
+      .expect("u32::MAX Max-Forwards should be accepted")
+      .emit()
+      .expect("OPTIONS request should succeed");
+  });
+  let options = request_text(&options);
+  assert!(options.starts_with("OPTIONS /diagnostics HTTP/1.1\r\n"));
+  assert_eq!(Some("4294967295"), header_value(&options, "Max-Forwards"));
+}
+
+#[test]
+fn max_forwards_helper_rejects_invalid_values_before_connecting() {
+  for value in ["-1", "1.5", "", "4294967296", "99999999999"] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .trace()
+        .url(format!("{}/diagnostics", base_url))
+        .max_forwards(value)
+        .expect_err("invalid Max-Forwards should be rejected");
+
+      assert!(error.is_builder());
+    });
+
+    assert!(
+      request.is_empty(),
+      "invalid Max-Forwards helper input should not open a socket"
+    );
+  }
+
+  let oversized = "0".repeat(64 * 1024 + 1);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .options()
+      .url(format!("{}/diagnostics", base_url))
+      .max_forwards(oversized.as_str())
+      .expect_err("oversized Max-Forwards should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized Max-Forwards helper input should not open a socket"
+  );
+}
+
+#[test]
+fn manual_max_forwards_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .trace()
+      .url(format!("{}/diagnostics", base_url))
+      .header(("Max-Forwards", "unusual-value"))
+      .emit()
+      .expect("manual Max-Forwards header should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("unusual-value"),
+    header_value(&request, "Max-Forwards")
+  );
+}
+
+#[test]
 fn conditional_request_helpers_emit_validator_headers() {
   let request = capture_request(|base_url| {
     client()

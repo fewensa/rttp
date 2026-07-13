@@ -284,6 +284,17 @@ impl HttpClient {
     Ok(self.header(("Range", format!("bytes=-{}", suffix).as_str())))
   }
 
+  /// Set a bounded `Max-Forwards` request header for TRACE or OPTIONS diagnostics.
+  ///
+  /// The value must be at most ten ASCII decimal digits and fit in the `u32`
+  /// range (`0` through `4294967295`). This only emits the header; it does not
+  /// route through proxies, decrement the value, retry requests, or select a
+  /// TRACE or OPTIONS policy. Use `header` directly for unusual values.
+  pub fn max_forwards<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let value = validate_max_forwards(value.as_ref())?;
+    Ok(self.header(Header::new("Max-Forwards", value)))
+  }
+
   /// Append a validated `Accept-Encoding` coding with the default quality of
   /// `1`. This declares request metadata only; it does not enable compression
   /// or decompression.
@@ -699,6 +710,22 @@ fn bounded_forwarded_header_value(forwarded: Forwarded) -> error::Result<String>
   Ok(value)
 }
 
+fn validate_max_forwards(value: &str) -> error::Result<&str> {
+  if value.is_empty()
+    || value.len() > MAX_MAX_FORWARDS_VALUE_BYTES
+    || !value.bytes().all(|byte| byte.is_ascii_digit())
+  {
+    return Err(error::builder_with_message(
+      "Max-Forwards must be a non-empty decimal u32",
+    ));
+  }
+  value.parse::<u32>().map_err(|_| {
+    error::builder_with_message("Max-Forwards must be a decimal value no greater than u32::MAX")
+  })?;
+  Ok(value)
+}
+
+const MAX_MAX_FORWARDS_VALUE_BYTES: usize = 10;
 const MAX_ACCEPT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
 const MAX_ACCEPT_ENCODINGS: usize = 32;
 
