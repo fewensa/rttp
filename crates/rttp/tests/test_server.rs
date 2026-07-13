@@ -845,6 +845,51 @@ fn server_handler_can_parse_request_cache_control_directives() {
 }
 
 #[test]
+fn rttp_client_accept_header_exposes_ordered_server_media_ranges() {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let accept = request
+          .accept()
+          .expect("valid Accept should parse")
+          .expect("Accept header should be present");
+        tx.send(
+          accept
+            .media_ranges()
+            .iter()
+            .map(|range| (range.media_type().to_string(), range.quality()))
+            .collect::<Vec<_>>(),
+        )
+        .expect("send parsed Accept metadata");
+        HttpResponse::ok("accepted")
+      })
+      .expect("serve one request");
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/resource"))
+    .header(("Accept", "application/json; q=1, text/plain; q=0.5"))
+    .emit()
+    .expect("client request");
+
+  assert_eq!(
+    vec![
+      ("application/json".to_string(), Some(1000)),
+      ("text/plain".to_string(), Some(500)),
+    ],
+    rx.recv().expect("parsed Accept metadata")
+  );
+  assert_eq!("accepted", response.body().string().expect("response body"));
+
+  handle.join().expect("server thread");
+}
+
+#[test]
 fn server_accepts_absolute_form_get_request_as_origin_target() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
