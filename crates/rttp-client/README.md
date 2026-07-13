@@ -27,6 +27,17 @@ HTTP/1.x chunked responses are decoded, and response trailers are exposed
 through `Response::trailers`, `Response::trailer`, and
 `Response::trailer_value` for both blocking and async request APIs.
 
+## Bounded Max-Forwards diagnostics
+
+`HttpClient::max_forwards(value)` sets a `Max-Forwards` request header for
+application-selected `TRACE` or `OPTIONS` diagnostics. The helper accepts only
+up to ten ASCII decimal digits that fit in the `u32` range (`0` through
+`4294967295`) and rejects negative, fractional, empty, oversized, and
+overflowing values before a socket is opened. It only validates and emits the
+header: RTTP does not select a diagnostic policy, route through proxies,
+decrement the value, or retry the request. Callers needing an unusual value can
+retain full raw-header control with `header(("Max-Forwards", "..."))`.
+
 ## Bounded HTTP/1.1 byte ranges
 
 `HttpClient` includes helpers for the single-range `bytes` forms RTTP keeps
@@ -333,18 +344,31 @@ connection is opened.
 These helpers declare request metadata only. They do not enable automatic
 compression, decompression, or content negotiation.
 
-## Bounded Prefer request metadata
+## Bounded Authorization request metadata
 
-`HttpClient::prefer()` appends a token-only preference, and
-`prefer_with_value()` appends a token-valued preference. The helpers emit one
-ordered, comma-separated `Prefer` field and reject malformed tokens, duplicate
-names, values above 8 KiB, fields above 64 KiB, and more than 32 preferences
-before opening a connection. `wait` accepts only unsigned decimal integers;
-`respond-async`, `return=minimal`, `return=representation`, and unknown token
-extensions remain metadata declarations.
+`HttpClient::authorization(scheme, credentials)` emits one `Authorization`
+field after validating its HTTP-token scheme and non-empty credential value,
+with a 64 KiB bound. Use `header(("Authorization", value))` as the raw escape
+hatch for custom scheme syntax. Credential interpretation remains
+application-owned: RTTP does not validate individual schemes, store or refresh
+credentials, process challenges, retry, or forward credentials on redirects.
 
-These helpers do not schedule asynchronous work, shape responses, apply cache
-policy, retry requests, or infer server behavior from a preference.
+## Bounded HTTP request control metadata
+
+`HttpClient::te()`, `te_with_q()`, and `te_trailers()` build a bounded `TE`
+field. `HttpClient::prefer()` and `prefer_with_value()` build a bounded
+`Prefer` field with token-only values. `Prefer` values are limited to 8 KiB and
+`wait` accepts only unsigned decimal integers. Both helpers reject malformed
+tokens, invalid q-values, duplicates, oversized values, and more than 32
+members before opening a connection. `TE: chunked` is rejected because framing
+remains owned by the existing HTTP/1 implementation, and `trailers` cannot
+carry a q-value. Bounded h2c emits only an exact `TE: trailers` field and strips
+other `TE` values with HTTP/1.x connection-specific request metadata.
+
+These are declaration helpers only. RTTP does not enable a transfer-coding
+engine, change request framing, apply response preferences, schedule async
+work, forward requests, retry, or otherwise infer behavior from `TE` or
+`Prefer`.
 
 ## Bounded HTTP/1.1 Content-Disposition behavior
 

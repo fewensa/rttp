@@ -7,6 +7,8 @@ use crate::types::{Auth, Header, IntoHeader, IntoPara, Proxy, ToFormData, ToRoUr
 use crate::{error, Config, H2cClientPolicy};
 #[cfg(feature = "async")]
 use futures::io::AsyncRead;
+use rttp_protocol::forwarded::{Forwarded, MAX_FORWARDED_VALUE_BYTES};
+use rttp_protocol::priority::Priority;
 use std::io;
 
 #[derive(Debug)]
@@ -158,6 +160,42 @@ impl HttpClient {
     self.header(("Authorization", auth.as_ref().header_value().as_str()))
   }
 
+  /// Set bounded `Authorization` request metadata from an authentication
+  /// scheme and opaque credentials.
+  ///
+  /// The scheme must be an HTTP token and credentials must be a non-empty,
+  /// bounded header value. RTTP does not interpret credentials or implement
+  /// scheme-specific authentication behavior. Use [`Self::header`] when an
+  /// application needs to send a custom Authorization syntax.
+  pub fn authorization<S: AsRef<str>, C: AsRef<str>>(
+    &mut self,
+    scheme: S,
+    credentials: C,
+  ) -> error::Result<&mut Self> {
+    let scheme = scheme.as_ref().trim();
+    let credentials = credentials.as_ref();
+    if !is_http_token(scheme) {
+      return Err(error::builder_with_message(
+        "invalid Authorization authentication scheme",
+      ));
+    }
+    if credentials.is_empty()
+      || credentials.bytes().all(|byte| matches!(byte, b' ' | b'\t'))
+      || !credentials.bytes().all(is_header_value_byte)
+    {
+      return Err(error::builder_with_message(
+        "invalid Authorization credentials",
+      ));
+    }
+    let value = format!("{scheme} {credentials}");
+    if value.len() > MAX_AUTHORIZATION_VALUE_BYTES {
+      return Err(error::builder_with_message(
+        "Authorization header value is too large",
+      ));
+    }
+    Ok(self.header(Header::new("Authorization", value)))
+  }
+
   ///  Add request header
   pub fn header<P: IntoHeader>(&mut self, header: P) -> &mut Self {
     let headers = self.request.headers_mut();
@@ -220,6 +258,43 @@ impl HttpClient {
     Ok(self.header(Header::new("Accept-Language", value)))
   }
 
+  /// Set bounded HTTP `Priority` request metadata.
+  ///
+  /// This validates RFC 9218 urgency, incremental, and extension parameters
+  /// before connecting. It only declares request metadata; it does not change
+  /// transport scheduling.
+  pub fn priority<V: AsRef<str>>(&mut self, value: V) -> error::Result<&mut Self> {
+    let priority = Priority::parse(value)
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new("Priority", priority.header_value())))
+  }
+
+  /// Append bounded RFC 7239 `Forwarded` request metadata.
+  ///
+  /// This validates and preserves forwarding elements such as `for`, `by`,
+  /// `host`, and `proto`; it does not select a proxy, establish trust, or
+  /// rewrite any address.
+  pub fn forwarded<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let forwarded = Forwarded::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    let headers = self.request.headers_mut();
+    if let Some(header) = headers
+      .iter_mut()
+      .find(|header| header.name().eq_ignore_ascii_case("Forwarded"))
+    {
+      let combined = Forwarded::parse_values([header.value().as_str(), value.as_ref()])
+        .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+      let value = bounded_forwarded_header_value(combined)?;
+      header.replace(Header::new("Forwarded", value));
+    } else {
+      headers.push(Header::new(
+        "Forwarded",
+        bounded_forwarded_header_value(forwarded)?,
+      ));
+    }
+    Ok(self)
+  }
+
   /// Set a single bounded byte range request header, `Range: bytes=start-end`.
   pub fn range(&mut self, start: u64, end: u64) -> error::Result<&mut Self> {
     if start > end {
@@ -243,6 +318,17 @@ impl HttpClient {
       ));
     }
     Ok(self.header(("Range", format!("bytes=-{}", suffix).as_str())))
+  }
+
+  /// Set a bounded `Max-Forwards` request header for TRACE or OPTIONS diagnostics.
+  ///
+  /// The value must be at most ten ASCII decimal digits and fit in the `u32`
+  /// range (`0` through `4294967295`). This only emits the header; it does not
+  /// route through proxies, decrement the value, retry requests, or select a
+  /// TRACE or OPTIONS policy. Use `header` directly for unusual values.
+  pub fn max_forwards<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let value = validate_max_forwards(value.as_ref())?;
+    Ok(self.header(Header::new("Max-Forwards", value)))
   }
 
   /// Append a validated `Accept-Encoding` coding with the default quality of
@@ -303,6 +389,32 @@ impl HttpClient {
   /// Append `identity` to `Accept-Encoding` with an HTTP q-value.
   pub fn accept_identity_with_q<Q: AsRef<str>>(&mut self, qvalue: Q) -> error::Result<&mut Self> {
     self.accept_encoding_with_q("identity", qvalue)
+  }
+
+  /// Append a validated `TE` transfer coding. This declares request metadata
+  /// only; it does not enable a transfer-coding engine.
+  pub fn te<S: AsRef<str>>(&mut self, coding: S) -> error::Result<&mut Self> {
+    self.te_member(coding.as_ref(), None)
+  }
+
+  /// Append a validated `TE` transfer coding with an HTTP q-value.
+  ///
+  /// The q-value must be between `0` and `1` with at most three fractional
+  /// digits. `trailers` cannot carry a q-value.
+  pub fn te_with_q<C: AsRef<str>, Q: AsRef<str>>(
+    &mut self,
+    coding: C,
+    qvalue: Q,
+  ) -> error::Result<&mut Self> {
+    self.te_member(coding.as_ref(), Some(qvalue.as_ref()))
+  }
+
+  /// Append `trailers` to `TE`.
+  ///
+  /// On bounded HTTP/2 paths, this is the only `TE` value emitted; other `TE`
+  /// values are stripped with connection-specific request metadata.
+  pub fn te_trailers(&mut self) -> error::Result<&mut Self> {
+    self.te_member("trailers", None)
   }
 
   /// Append a token-only `Prefer` request metadata item.
@@ -427,6 +539,54 @@ impl HttpClient {
       headers.push(Header::new("Accept-Encoding", member));
     }
     Ok(self)
+  }
+
+  fn te_member(&mut self, coding: &str, qvalue: Option<&str>) -> error::Result<&mut Self> {
+    let coding = coding.trim();
+    if !is_http_token(coding) || coding.eq_ignore_ascii_case("chunked") {
+      return Err(error::builder_with_message("invalid TE coding"));
+    }
+    if coding.eq_ignore_ascii_case("trailers") && qvalue.is_some() {
+      return Err(error::builder_with_message(
+        "TE trailers cannot carry a q-value",
+      ));
+    }
+    let qvalue = qvalue.map(validate_te_qvalue).transpose()?;
+    let member = qvalue.map_or_else(
+      || coding.to_string(),
+      |qvalue| format!("{coding};q={qvalue}"),
+    );
+    append_unique_metadata_member(
+      self.request.headers_mut(),
+      "TE",
+      coding,
+      member,
+      "invalid TE coding",
+      "duplicate TE coding",
+      "too many TE codings",
+      "TE header value is too large",
+      parse_te_codings,
+    )?;
+    self.ensure_connection_te_token();
+    Ok(self)
+  }
+
+  fn ensure_connection_te_token(&mut self) {
+    let headers = self.request.headers_mut();
+    if let Some(header) = headers
+      .iter_mut()
+      .find(|header| header.name().eq_ignore_ascii_case("Connection"))
+    {
+      if !header
+        .value()
+        .split(',')
+        .any(|token| token.trim().eq_ignore_ascii_case("TE"))
+      {
+        header.replace(Header::new("Connection", format!("{}, TE", header.value())));
+      }
+    } else {
+      headers.push(Header::new("Connection", "Close, TE"));
+    }
   }
 
   fn prefer_member(&mut self, name: &str, value: Option<&str>) -> error::Result<&mut Self> {
@@ -714,11 +874,115 @@ impl HttpClient {
   }
 }
 
+fn bounded_forwarded_header_value(forwarded: Forwarded) -> error::Result<String> {
+  let value = forwarded.header_value();
+  if value.len() > MAX_FORWARDED_VALUE_BYTES {
+    return Err(error::builder_with_message(
+      "Forwarded header value is too large",
+    ));
+  }
+  Ok(value)
+}
+
+fn validate_max_forwards(value: &str) -> error::Result<&str> {
+  if value.is_empty()
+    || value.len() > MAX_MAX_FORWARDS_VALUE_BYTES
+    || !value.bytes().all(|byte| byte.is_ascii_digit())
+  {
+    return Err(error::builder_with_message(
+      "Max-Forwards must be a non-empty decimal u32",
+    ));
+  }
+  value.parse::<u32>().map_err(|_| {
+    error::builder_with_message("Max-Forwards must be a decimal value no greater than u32::MAX")
+  })?;
+  Ok(value)
+}
+
+const MAX_MAX_FORWARDS_VALUE_BYTES: usize = 10;
 const MAX_ACCEPT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
 const MAX_ACCEPT_ENCODINGS: usize = 32;
+const MAX_AUTHORIZATION_VALUE_BYTES: usize = 64 * 1024;
+const MAX_REQUEST_METADATA_VALUE_BYTES: usize = 64 * 1024;
+const MAX_REQUEST_METADATA_MEMBERS: usize = 32;
 const MAX_PREFER_FIELD_BYTES: usize = 64 * 1024;
 const MAX_PREFER_VALUE_BYTES: usize = 8 * 1024;
 const MAX_PREFERENCES: usize = 32;
+
+fn append_unique_metadata_member(
+  headers: &mut Vec<Header>,
+  header_name: &str,
+  key: &str,
+  member: String,
+  invalid_error: &str,
+  duplicate_error: &str,
+  count_error: &str,
+  size_error: &str,
+  parse_keys: fn(&str) -> error::Result<Vec<&str>>,
+) -> error::Result<()> {
+  if member.len() > MAX_REQUEST_METADATA_VALUE_BYTES {
+    return Err(error::builder_with_message(size_error));
+  }
+  if let Some(header) = headers
+    .iter_mut()
+    .find(|header| header.name().eq_ignore_ascii_case(header_name))
+  {
+    let known =
+      parse_keys(header.value()).map_err(|_| error::builder_with_message(invalid_error))?;
+    if known.iter().any(|known| known.eq_ignore_ascii_case(key)) {
+      return Err(error::builder_with_message(duplicate_error));
+    }
+    if known.len() >= MAX_REQUEST_METADATA_MEMBERS {
+      return Err(error::builder_with_message(count_error));
+    }
+    let value = format!("{}, {member}", header.value());
+    if value.len() > MAX_REQUEST_METADATA_VALUE_BYTES {
+      return Err(error::builder_with_message(size_error));
+    }
+    header.replace(Header::new(header_name, value));
+  } else {
+    headers.push(Header::new(header_name, member));
+  }
+  Ok(())
+}
+
+fn parse_te_codings(value: &str) -> error::Result<Vec<&str>> {
+  parse_metadata_members(value, "invalid TE coding", |member| {
+    let mut parts = member.split(';');
+    let coding = parts.next().unwrap_or_default().trim();
+    if !is_http_token(coding) || coding.eq_ignore_ascii_case("chunked") {
+      return None;
+    }
+    match parts.next() {
+      None => Some(coding),
+      Some(parameter) if parts.next().is_none() => {
+        let (name, value) = parameter.trim().split_once('=')?;
+        (!coding.eq_ignore_ascii_case("trailers")
+          && name.trim().eq_ignore_ascii_case("q")
+          && validate_te_qvalue(value.trim()).is_ok())
+        .then_some(coding)
+      }
+      Some(_) => None,
+    }
+  })
+}
+
+fn validate_te_qvalue(qvalue: &str) -> error::Result<&str> {
+  let valid = match qvalue.split_once('.') {
+    Some((whole, fraction)) => {
+      fraction.len() <= 3
+        && fraction.bytes().all(|byte| byte.is_ascii_digit())
+        && matches!(whole, "0" | "1")
+        && (whole == "0" || fraction.bytes().all(|byte| byte == b'0'))
+    }
+    None => matches!(qvalue, "0" | "1"),
+  };
+  if valid {
+    Ok(qvalue)
+  } else {
+    Err(error::builder_with_message("invalid TE q-value"))
+  }
+}
 
 fn parse_prefer_names(value: &str) -> error::Result<Vec<&str>> {
   if value.len() > MAX_PREFER_FIELD_BYTES {
@@ -761,6 +1025,31 @@ fn split_prefer_member(member: &str) -> error::Result<(&str, Option<&str>)> {
     return Err(error::builder_with_message("invalid Prefer preference"));
   }
   Ok((name, value))
+}
+
+fn parse_metadata_members<'a>(
+  value: &'a str,
+  error_message: &str,
+  parse: impl Fn(&'a str) -> Option<&'a str>,
+) -> error::Result<Vec<&'a str>> {
+  if value.len() > MAX_REQUEST_METADATA_VALUE_BYTES {
+    return Err(error::builder_with_message(error_message));
+  }
+  let mut members = Vec::new();
+  for member in value.split(',') {
+    let Some(key) = parse(member.trim()) else {
+      return Err(error::builder_with_message(error_message));
+    };
+    if members
+      .iter()
+      .any(|known: &&str| known.eq_ignore_ascii_case(key))
+      || members.len() >= MAX_REQUEST_METADATA_MEMBERS
+    {
+      return Err(error::builder_with_message(error_message));
+    }
+    members.push(key);
+  }
+  Ok(members)
 }
 
 fn parse_accept_encoding_codings(value: &str) -> error::Result<Vec<&str>> {

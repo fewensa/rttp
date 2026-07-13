@@ -1,5 +1,6 @@
 use rttp_client::response::{
-  ContentDisposition, ContentEncoding, ContentLocation, ContentType, Response,
+  AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType, Digest, LinkValues,
+  Response, ServerTiming, WwwAuthenticate,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -506,6 +507,319 @@ fn test_parse_content_disposition_response_helper_returns_none_when_absent() {
 }
 
 #[test]
+fn test_www_authenticate_response_helper_parses_bounded_challenges() {
+  let raw = concat!(
+    "HTTP/1.1 401 Unauthorized\r\n",
+    "WWW-Authenticate: Basic realm=\"users\"\r\n",
+    "WWW-Authenticate: Bearer mF_9.B5f-4.1JqM, Digest realm=\"apps\", nonce=\"a\\\\b\"\r\n",
+    "Content-Length: 2\r\n\r\nOK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  let challenges = response
+    .www_authenticate()
+    .expect("valid challenges should parse")
+    .expect("WWW-Authenticate should be present");
+
+  assert_eq!(3, challenges.len());
+  assert_eq!("Basic", challenges.challenges()[0].scheme());
+  assert_eq!(Some("users"), challenges.challenges()[0].parameter("realm"));
+  assert_eq!("Bearer", challenges.challenges()[1].scheme());
+  assert_eq!(
+    Some("mF_9.B5f-4.1JqM"),
+    challenges.challenges()[1].token68()
+  );
+  assert_eq!("Digest", challenges.challenges()[2].scheme());
+  assert_eq!(Some("a\\b"), challenges.challenges()[2].parameter("nonce"));
+}
+
+#[test]
+fn test_www_authenticate_preserves_utf8_quoted_parameter_values() {
+  let raw = concat!(
+    "HTTP/1.1 401 Unauthorized\r\n",
+    "WWW-Authenticate: Digest realm=\"caf\u{e9}\"\r\n",
+    "Content-Length: 0\r\n\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  let challenges = response
+    .www_authenticate()
+    .expect("valid challenge should parse")
+    .expect("WWW-Authenticate should be present");
+
+  assert_eq!(
+    Some("caf\u{e9}"),
+    challenges.challenges()[0].parameter("realm")
+  );
+}
+
+#[test]
+fn test_www_authenticate_rejects_malformed_duplicate_and_bounded_values() {
+  for value in [
+    "Basic realm=",
+    "Basic realm=\"unterminated",
+    "Basic realm=one, REALM=two",
+    "Basic @",
+    "Basic token===more",
+  ] {
+    let raw = format!(
+      "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: {value}\r\nContent-Length: 2\r\n\r\nOK"
+    );
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(
+      response.www_authenticate().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("WWW-Authenticate")
+    );
+  }
+
+  let oversized = "Basic realm=".to_string() + &"a".repeat(64 * 1024);
+  assert!(
+    WwwAuthenticate::parse(oversized).is_err(),
+    "helper should reject an oversized field"
+  );
+  let too_many = (0..257)
+    .map(|index| format!("Scheme{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  assert!(WwwAuthenticate::parse(too_many).is_err());
+  let too_many_parameters = format!(
+    "Digest {}",
+    (0..257)
+      .map(|index| format!("p{index}=v"))
+      .collect::<Vec<_>>()
+      .join(", ")
+  );
+  assert!(WwwAuthenticate::parse(too_many_parameters).is_err());
+  assert!(WwwAuthenticate::parse(format!("Basic realm={}", "a".repeat(64 * 1024 + 1))).is_err());
+}
+
+#[test]
+fn test_digest_response_helpers_parse_bounded_digest_fields() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Digest: sha-256=:YWJj:, sha-512=:ZGVm:\r\n",
+    "Repr-Digest: sha-256=:Z2hp:\r\n",
+    "Content-Length: 0\r\n\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  let digest = response
+    .digest()
+    .expect("Digest should parse")
+    .expect("Digest should be present");
+  assert_eq!(2, digest.len());
+  assert_eq!(
+    Some(&b"abc"[..]),
+    digest.entry("sha-256").map(|entry| entry.value())
+  );
+  assert_eq!(
+    Some(&b"def"[..]),
+    digest.entry("sha-512").map(|entry| entry.value())
+  );
+
+  let repr_digest = response
+    .repr_digest()
+    .expect("Repr-Digest should parse")
+    .expect("Repr-Digest should be present");
+  assert_eq!(
+    Some(&b"ghi"[..]),
+    repr_digest.entry("sha-256").map(|entry| entry.value())
+  );
+}
+
+#[test]
+fn test_priority_response_helper_parses_known_and_extension_metadata() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Priority: u=1, i, x=token\r\n",
+    "Content-Length: 0\r\n\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+  let priority = response
+    .priority()
+    .expect("Priority should parse")
+    .expect("Priority should be present");
+  assert_eq!(Some(1), priority.urgency());
+  assert!(priority.incremental());
+  assert_eq!(Some("token"), priority.extensions()[0].value());
+}
+
+#[test]
+fn test_server_timing_response_helper_parses_metrics_extensions_and_duplicates() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Server-Timing: db;dur=53.2;desc=\"primary database\";region=us-east;cached, db;dur=4\r\n",
+    "Server-Timing: app;desc=\"render \\\"home\\\"\";build=2026\r\n",
+    "Content-Length: 2\r\n\r\nOK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+  let timing = response
+    .server_timing()
+    .expect("valid Server-Timing should parse")
+    .expect("Server-Timing should be present");
+  assert_eq!(3, timing.len());
+  assert_eq!("db", timing.metrics()[0].name());
+  assert_eq!(Some(53.2), timing.metrics()[0].duration());
+  assert_eq!(Some("primary database"), timing.metrics()[0].description());
+  assert_eq!(
+    vec![("region", Some("us-east")), ("cached", None)],
+    timing.metrics()[0]
+      .parameters()
+      .iter()
+      .map(|parameter| (parameter.name(), parameter.value()))
+      .collect::<Vec<_>>()
+  );
+  assert_eq!("db", timing.metrics()[1].name());
+  assert_eq!(Some(4.0), timing.metrics()[1].duration());
+  assert_eq!(Some("render \"home\""), timing.metrics()[2].description());
+  assert_eq!("db; dur=53.2; desc=\"primary database\"; region=us-east; cached, db; dur=4, app; desc=\"render \\\"home\\\"\"; build=2026", timing.header_value());
+}
+
+#[test]
+fn test_alt_svc_response_helper_parses_and_round_trips_alternatives() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Alt-Svc: h3=\":443\"; ma=3600; persist=1; region=\"us-east\", h2=\"alt.example:8443\"; ma=60\r\n",
+    "Content-Length: 0\r\n\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+  let alt_svc = response
+    .alt_svc()
+    .expect("Alt-Svc should parse")
+    .expect("Alt-Svc should be present");
+
+  assert!(!alt_svc.is_clear());
+  assert_eq!(2, alt_svc.len());
+  assert_eq!("h3", alt_svc.alternatives()[0].protocol_id());
+  assert_eq!(":443", alt_svc.alternatives()[0].authority());
+  assert_eq!(Some(3600), alt_svc.alternatives()[0].max_age());
+  assert_eq!(Some(true), alt_svc.alternatives()[0].persist());
+  assert_eq!(
+    vec![("region", Some("us-east"))],
+    alt_svc.alternatives()[0]
+      .parameters()
+      .iter()
+      .map(|parameter| (parameter.name(), parameter.value()))
+      .collect::<Vec<_>>()
+  );
+  assert_eq!(
+    "h3=\":443\"; ma=3600; persist=1; region=us-east, h2=\"alt.example:8443\"; ma=60",
+    alt_svc.header_value()
+  );
+  assert_eq!(
+    alt_svc,
+    AltSvc::parse(alt_svc.header_value()).expect("round-tripped Alt-Svc should parse")
+  );
+}
+
+#[test]
+fn test_alt_svc_rejects_invalid_or_unbounded_metadata_without_hiding_headers() {
+  for value in [
+    "h3=:443",
+    "h 3=\":443\"",
+    "h3=\"unterminated",
+    "clear, h3=\":443\"",
+    "h3=\":443\"; ma=forever",
+    "h3=\":443\"; ma=\"60\"",
+    "h3=\":443\"; region",
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\nAlt-Svc: {value}\r\nContent-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(response.alt_svc().is_err(), "should reject {value:?}");
+    assert_eq!(Some(&value.to_string()), response.header_value("Alt-Svc"));
+  }
+
+  assert!(AltSvc::parse(format!("h3=\":443\"; x=\"{}\"", "a".repeat(64 * 1024))).is_err());
+  assert!(AltSvc::parse(
+    (0..257)
+      .map(|index| format!("h{index}=\":443\""))
+      .collect::<Vec<_>>()
+      .join(", ")
+  )
+  .is_err());
+}
+
+#[test]
+fn test_alt_svc_clear_is_an_exclusive_sentinel() {
+  let alt_svc = AltSvc::parse("clear").expect("clear should parse");
+  assert!(alt_svc.is_clear());
+  assert!(alt_svc.is_empty());
+  assert_eq!("clear", alt_svc.header_value());
+  assert!(AltSvc::parse_values(["clear", "h3=\":443\""]).is_err());
+}
+
+#[test]
+fn test_digest_response_helpers_recover_from_empty_duplicate_and_oversized_fields() {
+  for (header, value) in [
+    ("Content-Digest", ""),
+    ("Content-Digest", "sha-256=:YWJj:, sha-256=:ZGVm:"),
+    ("Repr-Digest", "sha-256=:YWJj:, sha-256=:ZGVm:"),
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\n{header}: {value}\r\nContent-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    let result = if header == "Content-Digest" {
+      response.digest().map(|_| ())
+    } else {
+      response.repr_digest().map(|_| ())
+    };
+    assert!(result.is_err(), "{header} should reject {value:?}");
+    assert_eq!(Some(&value.to_string()), response.header_value(header));
+  }
+
+  let oversized = format!("sha-256=:{}:", "A".repeat(64 * 1024));
+  assert!(Digest::parse(oversized).is_err());
+}
+
+#[test]
+fn test_server_timing_rejects_malformed_and_oversized_values_without_hiding_headers() {
+  for value in [
+    "db;dur=not-a-number",
+    "db;dur=-1",
+    "db;desc=unterminated value",
+    "db;=value",
+    "db;dur=1;dur=2",
+    "db;desc=\"unterminated",
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\nServer-Timing: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(response.server_timing().is_err(), "should reject {value:?}");
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Server-Timing")
+    );
+  }
+  assert!(ServerTiming::parse(format!("db;desc=\"{}\"", "a".repeat(64 * 1024))).is_err());
+  assert!(ServerTiming::parse(
+    (0..257)
+      .map(|index| format!("metric{index}"))
+      .collect::<Vec<_>>()
+      .join(", ")
+  )
+  .is_err());
+  assert!(ServerTiming::parse(format!(
+    "db{}",
+    (0..257)
+      .map(|index| format!(";ext{index}=value"))
+      .collect::<String>()
+  ))
+  .is_err());
+}
+
+#[test]
 fn test_parse_content_disposition_rejects_invalid_helper_values_without_rejecting_response() {
   let invalid_values = [
     "",
@@ -600,6 +914,129 @@ fn test_parse_content_disposition_rejects_duplicate_singleton_duplicate_paramete
     response.content_disposition().is_err(),
     "content-disposition helper should reject too many parameters"
   );
+}
+
+#[test]
+fn test_parse_link_response_metadata_preserves_multiple_values_and_parameters() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Link: </style.css>; rel=preload; as=style, <https://cdn.example.test/app.js>; rel=modulepreload\r\n",
+    "link: <../manifest.json>; type=\"application/manifest+json\"; anchor=\"/app\"\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/app/page"),
+    raw.as_bytes().to_vec(),
+  )
+  .expect("raw response with Link metadata remains usable");
+
+  let links = response
+    .links()
+    .expect("Link metadata should parse")
+    .expect("Link metadata should be present");
+
+  assert_eq!(3, links.len());
+  assert_eq!("/style.css", links.values()[0].target());
+  assert_eq!(Some("preload"), links.values()[0].parameter("rel"));
+  assert_eq!(Some("style"), links.values()[0].parameter("as"));
+  assert_eq!(
+    "https://cdn.example.test/app.js",
+    links.values()[1].target()
+  );
+  assert_eq!(Some("modulepreload"), links.values()[1].parameter("rel"));
+  assert_eq!("../manifest.json", links.values()[2].target());
+  assert_eq!(
+    Some("application/manifest+json"),
+    links.values()[2].parameter("type")
+  );
+  assert_eq!(Some("/app"), links.values()[2].parameter("anchor"));
+  assert_eq!(
+    vec![("type", "application/manifest+json"), ("anchor", "/app")],
+    links.values()[2]
+      .parameters()
+      .iter()
+      .map(|parameter| (parameter.name(), parameter.value()))
+      .collect::<Vec<_>>()
+  );
+  assert_eq!(
+    vec![
+      &"</style.css>; rel=preload; as=style, <https://cdn.example.test/app.js>; rel=modulepreload"
+        .to_string(),
+      &"<../manifest.json>; type=\"application/manifest+json\"; anchor=\"/app\"".to_string(),
+    ],
+    response.header_values("Link")
+  );
+}
+
+#[test]
+fn test_parse_link_response_metadata_preserves_valueless_extensions() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Link: </style.css>; rel=preload; nopush\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response with Link metadata remains usable");
+
+  let links = response
+    .links()
+    .expect("Link metadata should parse")
+    .expect("Link metadata should be present");
+
+  assert_eq!(Some(""), links.values()[0].parameter("nopush"));
+  assert_eq!(
+    vec![("rel", "preload"), ("nopush", "")],
+    links.values()[0]
+      .parameters()
+      .iter()
+      .map(|parameter| (parameter.name(), parameter.value()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn test_link_response_metadata_rejects_invalid_and_bounded_values_without_losing_headers() {
+  for value in [
+    "style.css; rel=preload",
+    "<style.css; rel=preload",
+    "</style.css> rel=preload",
+    "</style.css>; =preload",
+    "</style.css>; bad name=value",
+    "</style.css>; rel=\"unterminated",
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\nLink: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response remains usable");
+    assert!(
+      response.links().is_err(),
+      "Link parser should reject {value:?}"
+    );
+    assert_eq!(Some(&value.to_string()), response.header_value("Link"));
+  }
+
+  let oversized = format!("</{}>", "a".repeat(64 * 1024));
+  assert!(LinkValues::parse(oversized).is_err());
+
+  let too_many = (0..257)
+    .map(|index| format!("</asset-{index}>"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  assert!(LinkValues::parse(too_many).is_err());
+
+  let too_many_parameters = format!(
+    "</asset>{}",
+    (0..257)
+      .map(|index| format!("; p{index}=v"))
+      .collect::<String>()
+  );
+  assert!(LinkValues::parse(too_many_parameters).is_err());
+
+  let oversized_parameter = format!("</asset>; title={}", "a".repeat(64 * 1024 + 1));
+  assert!(LinkValues::parse(oversized_parameter).is_err());
 }
 
 #[test]
