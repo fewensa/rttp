@@ -5,7 +5,7 @@ use rttp::server::{
   HttpConditionalMetadata, HttpContentDisposition, HttpContentLanguages, HttpContentType,
   HttpEntityTag, HttpIfRangeRequestOutcome, HttpRequest, HttpRequestAcceptEncodings,
   HttpRequestCacheControl, HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings,
-  HttpRetryAfter, HttpVary,
+  HttpRetryAfter, HttpServerTiming, HttpVary,
 };
 
 #[test]
@@ -32,6 +32,45 @@ fn response_www_authenticate_helper_validates_and_preserves_raw_headers() {
   assert!(String::from_utf8(raw.to_bytes())
     .expect("response should serialize")
     .contains("\r\nWWW-Authenticate: Basic realm=\r\n"));
+}
+
+#[test]
+fn response_server_timing_helper_validates_formats_and_preserves_raw_headers() {
+  let response = HttpResponse::ok("body")
+    .header("Server-Timing", "old;dur=1")
+    .with_server_timing("db;dur=53.2;desc=\"primary database\";region=us-east, db;cached")
+    .expect("valid timing metadata should be accepted");
+  let timing = response
+    .server_timing()
+    .expect("attached timing should parse")
+    .expect("Server-Timing should be present");
+  assert_eq!(2, timing.len());
+  assert_eq!("db", timing.metrics()[0].name());
+  assert_eq!(Some(53.2), timing.metrics()[0].duration());
+  assert_eq!(Some("primary database"), timing.metrics()[0].description());
+  assert_eq!("db", timing.metrics()[1].name());
+  assert_eq!(
+    "db; dur=53.2; desc=\"primary database\"; region=us-east, db; cached",
+    String::from_utf8(response.to_bytes())
+      .expect("response should serialize")
+      .split("Server-Timing: ")
+      .nth(1)
+      .expect("Server-Timing should serialize")
+      .split("\r\n")
+      .next()
+      .expect("Server-Timing line should end")
+  );
+
+  assert!(HttpResponse::ok("body")
+    .with_server_timing("db;dur=not-a-number")
+    .is_err());
+  let raw = HttpResponse::ok("body").header("Server-Timing", "db;dur=not-a-number");
+  assert!(raw.server_timing().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nServer-Timing: db;dur=not-a-number\r\n"));
+
+  assert!(HttpServerTiming::parse(format!("db;desc=\"{}\"", "a".repeat(64 * 1024))).is_err());
 }
 
 fn parse_request(raw: &str) -> HttpRequest {
