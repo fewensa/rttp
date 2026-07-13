@@ -306,6 +306,23 @@ fn accept_encoding_helpers_emit_validated_codings_and_quality_values() {
 }
 
 #[test]
+fn expect_continue_helper_emits_metadata_without_gating_the_request_body() {
+  let request = capture_request(|base_url| {
+    client()
+      .post()
+      .url(format!("{}/upload", base_url))
+      .expect_continue()
+      .raw("request body")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("100-continue"), header_value(&request, "Expect"));
+  assert!(request.ends_with("request body"));
+}
+
+#[test]
 fn accept_encoding_helpers_reject_invalid_members_before_connecting() {
   let request = capture_optional_request(|base_url| {
     let mut client = client();

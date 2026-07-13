@@ -2102,7 +2102,7 @@ fn live_socket2_server_keeps_http10_alive_when_explicitly_requested() {
 }
 
 #[test]
-fn live_socket2_server_sends_continue_before_reading_shared_body_fixture() {
+fn live_socket2_server_reads_shared_expect_body_without_an_interim_response() {
   let fixture = fixtures::request::expect_continue_fixed_length();
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
@@ -2126,12 +2126,6 @@ fn live_socket2_server_sends_continue_before_reading_shared_body_fixture() {
     .write_all(fixture.head)
     .expect("write expect-continue head");
 
-  let mut interim = vec![0; fixtures::response::CONTINUE.len()];
-  stream
-    .read_exact(&mut interim)
-    .expect("read interim response");
-  assert_eq!(fixtures::response::CONTINUE, interim.as_slice());
-
   stream
     .write_all(fixture.body)
     .expect("write expect-continue body");
@@ -2152,7 +2146,7 @@ fn live_socket2_server_sends_continue_before_reading_shared_body_fixture() {
 }
 
 #[test]
-fn live_socket2_server_rejects_unsupported_expectation_without_reading_body() {
+fn live_socket2_server_exposes_unsupported_expectation_without_rejecting_body() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
   let (tx, rx) = mpsc::channel();
@@ -2160,8 +2154,7 @@ fn live_socket2_server_rejects_unsupported_expectation_without_reading_body() {
   let handle = thread::spawn(move || {
     server
       .accept_one(|request| {
-        tx.send(request.target().to_string())
-          .expect("send unexpected request");
+        tx.send(request.target().to_string()).expect("send request");
         HttpResponse::ok("unexpected")
       })
       .expect("serve one request");
@@ -2184,15 +2177,17 @@ fn live_socket2_server_rejects_unsupported_expectation_without_reading_body() {
     )
     .expect("write unsupported expectation head");
 
-  let mut response = String::new();
   stream
-    .read_to_string(&mut response)
-    .expect("read expectation failure");
+    .write_all(b"request body")
+    .expect("write request body");
+  stream.shutdown(Shutdown::Write).expect("shutdown write");
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
 
-  assert!(response.starts_with("HTTP/1.1 417 Expectation Failed"));
-  assert!(
-    rx.try_recv().is_err(),
-    "unsupported expectation reached the request handler"
+  assert!(response.starts_with("HTTP/1.1 200 OK"));
+  assert_eq!(
+    "/matrix/unsupported-expect",
+    rx.recv().expect("parsed request")
   );
 
   handle.join().expect("server thread");

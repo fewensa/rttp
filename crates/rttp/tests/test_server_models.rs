@@ -3,10 +3,10 @@ use std::time::{Duration, UNIX_EPOCH};
 use rttp::server::{
   HttpAccept, HttpAcceptRanges, HttpAllowedMethods, HttpAuthorization, HttpByteRange,
   HttpByteRangeError, HttpConditionalMetadata, HttpContentDisposition, HttpContentLanguages,
-  HttpContentType, HttpDigest, HttpEntityTag, HttpIfRangeRequestOutcome, HttpLinkValues,
-  HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
-  HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming,
-  HttpVary,
+  HttpContentType, HttpDigest, HttpEntityTag, HttpExpectations, HttpIfRangeRequestOutcome,
+  HttpLinkValues, HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe,
+  HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter,
+  HttpServerTiming, HttpVary,
 };
 
 #[test]
@@ -523,6 +523,53 @@ fn request_accept_encoding_rejects_duplicate_invalid_and_oversized_values() {
     .collect::<Vec<_>>()
     .join(", ");
   assert!(HttpRequestAcceptEncodings::parse(too_many).is_err());
+}
+
+#[test]
+fn request_expectations_distinguish_continue_from_unsupported_extensions() {
+  assert_eq!(
+    None,
+    parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .expectations()
+      .expect("absent Expect should be accepted")
+  );
+
+  let request = parse_request(concat!(
+    "POST / HTTP/1.1\r\nHost: example.test\r\n",
+    "Expect: 100-continue\r\nExpect: preview\r\n\r\n"
+  ));
+  let expectations = request
+    .expectations()
+    .expect("Expect should parse")
+    .expect("Expect should be present");
+  assert!(expectations.expects_continue());
+  assert_eq!(["preview"], expectations.unsupported());
+}
+
+#[test]
+fn request_expectations_preserve_extension_names_with_values_and_parameters() {
+  let request = parse_request(concat!(
+    "POST / HTTP/1.1\r\nHost: example.test\r\n",
+    "Expect: preview=sha256; chunk=1\r\n\r\n"
+  ));
+
+  let expectations = request
+    .expectations()
+    .expect("Expect should parse")
+    .expect("Expect should be present");
+  assert!(!expectations.expects_continue());
+  assert_eq!(["preview"], expectations.unsupported());
+}
+
+#[test]
+fn request_expectations_reject_duplicate_and_oversized_values() {
+  let duplicate = parse_request(concat!(
+    "POST / HTTP/1.1\r\nHost: example.test\r\n",
+    "Expect: 100-continue\r\nExpect: 100-CONTINUE\r\n\r\n"
+  ));
+  assert!(duplicate.expectations().is_err());
+
+  assert!(HttpExpectations::parse("a".repeat(64 * 1024 + 1)).is_err());
 }
 
 #[test]

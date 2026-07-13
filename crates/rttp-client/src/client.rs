@@ -258,6 +258,14 @@ impl HttpClient {
     Ok(self.header(Header::new("Accept-Language", value)))
   }
 
+  /// Emit the standardized `Expect: 100-continue` request metadata.
+  ///
+  /// This is metadata only: the client still writes the request body normally
+  /// and does not wait for an interim response before sending it.
+  pub fn expect_continue(&mut self) -> &mut Self {
+    self.header(("Expect", "100-continue"))
+  }
+
   /// Set bounded HTTP `Priority` request metadata.
   ///
   /// This validates RFC 9218 urgency, incremental, and extension parameters
