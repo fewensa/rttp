@@ -65,6 +65,17 @@ fn request_accept_helper_is_optional_and_keeps_raw_invalid_headers() {
 }
 
 #[test]
+fn request_accept_ignores_extensions_after_quality() {
+  let accept = HttpAccept::parse("text/html; level=1; q=0.8; foo; bar=quoted")
+    .expect("Accept extensions after quality should parse");
+  let range = &accept.media_ranges()[0];
+
+  assert_eq!("text/html", range.media_type());
+  assert_eq!(vec![("level", "1")], range.parameters());
+  assert_eq!(Some(800), range.quality());
+}
+
+#[test]
 fn parses_request_cache_control_directives() {
   let request = parse_request(concat!(
     "GET /cached HTTP/1.1\r\n",

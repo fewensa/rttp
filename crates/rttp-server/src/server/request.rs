@@ -504,21 +504,32 @@ impl HttpMediaRange {
 
     let mut parameters = Vec::new();
     let mut quality = None;
+    let mut parsing_extensions = false;
     for part in parts {
       let part = part.trim();
-      let Some((name, value)) = part.split_once('=') else {
-        return Err(HttpAcceptParseError::new("invalid Accept parameter"));
+      let (name, value) = match part.split_once('=') {
+        Some((name, value)) => (name.trim().to_ascii_lowercase(), Some(value.trim())),
+        None if parsing_extensions => (part.to_ascii_lowercase(), None),
+        None => return Err(HttpAcceptParseError::new("invalid Accept parameter")),
       };
-      let name = name.trim().to_ascii_lowercase();
-      let value = value.trim();
       if !is_http_token(&name) {
         return Err(HttpAcceptParseError::new("invalid Accept parameter name"));
       }
+      if parsing_extensions {
+        if let Some(value) = value {
+          parse_accept_parameter_value(value)?;
+        }
+        continue;
+      }
+      let Some(value) = value else {
+        return Err(HttpAcceptParseError::new("invalid Accept parameter"));
+      };
       if name == "q" {
         if quality.is_some() {
           return Err(HttpAcceptParseError::new("duplicate Accept quality value"));
         }
         quality = Some(parse_accept_quality(value)?);
+        parsing_extensions = true;
         continue;
       }
       if parameters.iter().any(|(known, _)| known == &name) {
