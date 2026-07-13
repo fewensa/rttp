@@ -7,6 +7,11 @@ use url::Url;
 
 use crate::error;
 use crate::response::raw_response::RawResponse;
+use crate::response::Digest;
+use crate::response::Priority;
+use crate::response::ReprDigest;
+use crate::response::ServerTiming;
+use crate::response::WwwAuthenticate;
 use crate::types::{Cookie, Header, RoUrl};
 
 const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
@@ -280,6 +285,59 @@ impl Response {
       return Ok(None);
     }
     ContentEncoding::parse_values(values.into_iter().map(String::as_str)).map(Some)
+  }
+
+  /// Parses all `WWW-Authenticate` fields as bounded authentication challenge metadata.
+  pub fn www_authenticate(&self) -> error::Result<Option<WwwAuthenticate>> {
+    let values = self.header_values("www-authenticate");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    WwwAuthenticate::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses all `Content-Digest` fields as bounded response metadata.
+  pub fn digest(&self) -> error::Result<Option<Digest>> {
+    self.digest_field("content-digest")
+  }
+
+  /// Parses all `Repr-Digest` fields as bounded response metadata.
+  pub fn repr_digest(&self) -> error::Result<Option<ReprDigest>> {
+    self.digest_field("repr-digest")
+  }
+
+  fn digest_field(&self, name: &str) -> error::Result<Option<Digest>> {
+    let values = self.header_values(name);
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Digest::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses all `Priority` fields as bounded RFC 9218 metadata.
+  pub fn priority(&self) -> error::Result<Option<Priority>> {
+    let values = self.header_values("priority");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Priority::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses all `Server-Timing` fields as bounded response timing metadata.
+  pub fn server_timing(&self) -> error::Result<Option<ServerTiming>> {
+    let values = self.header_values("server-timing");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    ServerTiming::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   pub fn cache_control(&self) -> error::Result<Option<CacheControl>> {
