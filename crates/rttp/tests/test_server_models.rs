@@ -22,15 +22,17 @@ fn request_max_forwards_is_optional_and_rejects_invalid_metadata() {
       .expect("missing Max-Forwards should be valid")
   );
 
-  let valid = parse_request(concat!(
-    "OPTIONS / HTTP/1.1\r\n",
-    "Host: example.test\r\n",
-    "Max-Forwards: 0\r\n",
-    "\r\n"
-  ));
-  assert_eq!(Some(0), valid.max_forwards().expect("value should parse"));
+  for value in ["0", "256", "999999999999999999999"] {
+    let valid = parse_request(&format!(
+      "OPTIONS / HTTP/1.1\r\nHost: example.test\r\nMax-Forwards: {value}\r\n\r\n"
+    ));
+    assert_eq!(
+      Some(value),
+      valid.max_forwards().expect("value should parse")
+    );
+  }
 
-  for value in ["abc", "1.0", "256", "999999999999999999999"] {
+  for value in ["abc", "1.0"] {
     let request = parse_request(&format!(
       "OPTIONS / HTTP/1.1\r\nHost: example.test\r\nMax-Forwards: {value}\r\n\r\n"
     ));
