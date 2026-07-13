@@ -382,6 +382,66 @@ fn accept_language_helper_rejects_invalid_values_before_connecting() {
 }
 
 #[test]
+fn te_and_prefer_helpers_emit_bounded_request_metadata() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/metadata", base_url))
+      .te_trailers()
+      .expect("trailers should be accepted")
+      .te_with_q("deflate", "0.5")
+      .expect("TE coding should be accepted")
+      .prefer("respond-async")
+      .expect("token preference should be accepted")
+      .prefer_with_value("return", "minimal")
+      .expect("valued preference should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("trailers, deflate;q=0.5"),
+    header_value(&request, "TE")
+  );
+  assert_eq!(
+    Some("respond-async, return=minimal"),
+    header_value(&request, "Prefer")
+  );
+}
+
+#[test]
+fn te_and_prefer_helpers_reject_invalid_values_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    assert!(client
+      .get()
+      .url(format!("{}/metadata", base_url))
+      .te_with_q("bad coding", "1")
+      .expect_err("invalid TE coding should be rejected")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "invalid TE input should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    assert!(client
+      .get()
+      .url(format!("{}/metadata", base_url))
+      .prefer_with_value("return", "bad value")
+      .expect_err("invalid preference value should be rejected")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "invalid Prefer input should not open a socket"
+  );
+}
+
+#[test]
 fn manual_range_header_remains_available_as_escape_hatch() {
   let request = capture_request(|base_url| {
     client()

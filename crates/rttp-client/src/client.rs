@@ -305,6 +305,45 @@ impl HttpClient {
     self.accept_encoding_with_q("identity", qvalue)
   }
 
+  /// Append bounded `TE` request metadata without enabling transfer codings.
+  pub fn te<S: AsRef<str>>(&mut self, coding: S) -> error::Result<&mut Self> {
+    self.te_member(coding.as_ref(), None)
+  }
+
+  /// Append bounded `TE` request metadata with an HTTP q-value.
+  pub fn te_with_q<C: AsRef<str>, Q: AsRef<str>>(
+    &mut self,
+    coding: C,
+    qvalue: Q,
+  ) -> error::Result<&mut Self> {
+    self.te_member(coding.as_ref(), Some(qvalue.as_ref()))
+  }
+
+  /// Declare support for request trailers through bounded `TE` metadata.
+  pub fn te_trailers(&mut self) -> error::Result<&mut Self> {
+    self.te("trailers")
+  }
+
+  /// Append a token-only `Prefer` request metadata item.
+  ///
+  /// This records application preference metadata only; it does not schedule
+  /// asynchronous work or alter response handling.
+  pub fn prefer<S: AsRef<str>>(&mut self, name: S) -> error::Result<&mut Self> {
+    self.prefer_member(name.as_ref(), None)
+  }
+
+  /// Append a token-valued `Prefer` request metadata item.
+  ///
+  /// This records application preference metadata only; it does not apply
+  /// response preference policy.
+  pub fn prefer_with_value<N: AsRef<str>, V: AsRef<str>>(
+    &mut self,
+    name: N,
+    value: V,
+  ) -> error::Result<&mut Self> {
+    self.prefer_member(name.as_ref(), Some(value.as_ref()))
+  }
+
   /// Set an `If-Range` validator with a single strong entity tag.
   ///
   /// `If-Range` only permits strong entity-tag validators. Use `header`
@@ -406,6 +445,53 @@ impl HttpClient {
     } else {
       headers.push(Header::new("Accept-Encoding", member));
     }
+    Ok(self)
+  }
+
+  fn te_member(&mut self, coding: &str, qvalue: Option<&str>) -> error::Result<&mut Self> {
+    let coding = coding.trim();
+    if !is_http_token(coding) || coding.eq_ignore_ascii_case("chunked") {
+      return Err(error::builder_with_message("invalid TE coding"));
+    }
+    let qvalue = qvalue.map(validate_accept_encoding_qvalue).transpose()?;
+    let member = qvalue.map_or_else(
+      || coding.to_string(),
+      |qvalue| format!("{coding};q={qvalue}"),
+    );
+    append_unique_metadata_member(
+      self.request.headers_mut(),
+      "TE",
+      coding,
+      member,
+      "invalid TE coding",
+      "duplicate TE coding",
+      "too many TE codings",
+      "TE header value is too large",
+      parse_te_codings,
+    )?;
+    Ok(self)
+  }
+
+  fn prefer_member(&mut self, name: &str, value: Option<&str>) -> error::Result<&mut Self> {
+    let name = name.trim();
+    if !is_http_token(name) || !value.is_none_or(|value| is_http_token(value.trim())) {
+      return Err(error::builder_with_message("invalid Prefer preference"));
+    }
+    let member = value.map_or_else(
+      || name.to_string(),
+      |value| format!("{name}={}", value.trim()),
+    );
+    append_unique_metadata_member(
+      self.request.headers_mut(),
+      "Prefer",
+      name,
+      member,
+      "invalid Prefer preference",
+      "duplicate Prefer preference",
+      "too many Prefer preferences",
+      "Prefer header value is too large",
+      parse_prefer_names,
+    )?;
     Ok(self)
   }
 
@@ -652,6 +738,100 @@ impl HttpClient {
 
 const MAX_ACCEPT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
 const MAX_ACCEPT_ENCODINGS: usize = 32;
+const MAX_REQUEST_METADATA_VALUE_BYTES: usize = 64 * 1024;
+const MAX_REQUEST_METADATA_MEMBERS: usize = 32;
+
+fn append_unique_metadata_member(
+  headers: &mut Vec<Header>,
+  header_name: &str,
+  key: &str,
+  member: String,
+  invalid_error: &str,
+  duplicate_error: &str,
+  count_error: &str,
+  size_error: &str,
+  parse_keys: fn(&str) -> error::Result<Vec<&str>>,
+) -> error::Result<()> {
+  if member.len() > MAX_REQUEST_METADATA_VALUE_BYTES {
+    return Err(error::builder_with_message(size_error));
+  }
+  if let Some(header) = headers
+    .iter_mut()
+    .find(|header| header.name().eq_ignore_ascii_case(header_name))
+  {
+    let known =
+      parse_keys(header.value()).map_err(|_| error::builder_with_message(invalid_error))?;
+    if known.iter().any(|known| known.eq_ignore_ascii_case(key)) {
+      return Err(error::builder_with_message(duplicate_error));
+    }
+    if known.len() >= MAX_REQUEST_METADATA_MEMBERS {
+      return Err(error::builder_with_message(count_error));
+    }
+    let value = format!("{}, {member}", header.value());
+    if value.len() > MAX_REQUEST_METADATA_VALUE_BYTES {
+      return Err(error::builder_with_message(size_error));
+    }
+    header.replace(Header::new(header_name, value));
+  } else {
+    headers.push(Header::new(header_name, member));
+  }
+  Ok(())
+}
+
+fn parse_te_codings(value: &str) -> error::Result<Vec<&str>> {
+  parse_metadata_members(value, "invalid TE coding", |member| {
+    let mut parts = member.split(';');
+    let coding = parts.next().unwrap_or_default().trim();
+    if !is_http_token(coding) || coding.eq_ignore_ascii_case("chunked") {
+      return None;
+    }
+    match parts.next() {
+      None => Some(coding),
+      Some(parameter) if parts.next().is_none() => {
+        let (name, value) = parameter.trim().split_once('=')?;
+        (name.trim().eq_ignore_ascii_case("q")
+          && validate_accept_encoding_qvalue(value.trim()).is_ok())
+        .then_some(coding)
+      }
+      Some(_) => None,
+    }
+  })
+}
+
+fn parse_prefer_names(value: &str) -> error::Result<Vec<&str>> {
+  parse_metadata_members(value, "invalid Prefer preference", |member| {
+    let (name, value) = member
+      .split_once('=')
+      .map_or((member, None), |(name, value)| (name, Some(value)));
+    let name = name.trim();
+    (is_http_token(name) && value.is_none_or(|value| is_http_token(value.trim()))).then_some(name)
+  })
+}
+
+fn parse_metadata_members<'a>(
+  value: &'a str,
+  error_message: &str,
+  parse: impl Fn(&'a str) -> Option<&'a str>,
+) -> error::Result<Vec<&'a str>> {
+  if value.len() > MAX_REQUEST_METADATA_VALUE_BYTES {
+    return Err(error::builder_with_message(error_message));
+  }
+  let mut members = Vec::new();
+  for member in value.split(',') {
+    let Some(key) = parse(member.trim()) else {
+      return Err(error::builder_with_message(error_message));
+    };
+    if members
+      .iter()
+      .any(|known: &&str| known.eq_ignore_ascii_case(key))
+      || members.len() >= MAX_REQUEST_METADATA_MEMBERS
+    {
+      return Err(error::builder_with_message(error_message));
+    }
+    members.push(key);
+  }
+  Ok(members)
+}
 
 fn parse_accept_encoding_codings(value: &str) -> error::Result<Vec<&str>> {
   if value.len() > MAX_ACCEPT_ENCODING_VALUE_BYTES {
