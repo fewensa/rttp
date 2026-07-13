@@ -558,42 +558,6 @@ pub(crate) fn request_body_kind(headers: &[(String, String)]) -> io::Result<Requ
   }
 }
 
-pub(crate) fn request_needs_continue(
-  headers: &[(String, String)],
-  body_kind: RequestBodyKind,
-) -> io::Result<bool> {
-  let mut has_expect = false;
-
-  for (_, value) in headers
-    .iter()
-    .filter(|(name, _)| name.eq_ignore_ascii_case("Expect"))
-  {
-    has_expect = true;
-    if !value.eq_ignore_ascii_case("100-continue") {
-      return Err(io::Error::new(
-        io::ErrorKind::InvalidData,
-        UnsupportedExpectation,
-      ));
-    }
-  }
-
-  Ok(
-    has_expect
-      && (matches!(
-        body_kind,
-        RequestBodyKind::ContentLength(content_length) if content_length > 0
-      ) || body_kind == RequestBodyKind::Chunked),
-  )
-}
-
-pub(crate) fn write_continue_response<W>(writer: &mut W) -> io::Result<()>
-where
-  W: Write,
-{
-  writer.write_all(b"HTTP/1.1 100 Continue\r\n\r\n")?;
-  writer.flush()
-}
-
 pub(crate) fn read_chunked_request_body<R>(reader: &mut R) -> io::Result<ChunkedRequestBody>
 where
   R: BufRead,

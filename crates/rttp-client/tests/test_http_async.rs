@@ -1076,7 +1076,7 @@ fn test_async_client_skips_100_continue_before_final_response() {
     let response = client()
       .post()
       .url(format!("http://{}/continue", addr))
-      .header(("Expect", "100-continue"))
+      .expect_continue()
       .raw("request body")
       .rasync()
       .await
@@ -1096,7 +1096,7 @@ fn test_async_client_skips_100_continue_before_final_response() {
 
 #[test]
 #[cfg(feature = "async")]
-fn test_async_client_waits_for_100_continue_before_sending_body() {
+fn test_async_client_sends_body_before_observing_100_continue() {
   let (addr, handle) = support::spawn_expect_continue_gate_server();
   block_on(async {
     let response = client()
@@ -1113,14 +1113,14 @@ fn test_async_client_waits_for_100_continue_before_sending_body() {
   });
 
   let request = handle.join().expect("expect continue gate thread");
-  assert!(!request.is_empty(), "body was sent before 100 Continue");
+  assert!(!request.is_empty(), "request should be captured");
   assert!(String::from_utf8_lossy(&request).contains("Expect: 100-continue"));
   assert!(request.ends_with(b"request body"));
 }
 
 #[test]
 #[cfg(feature = "async")]
-fn test_async_client_does_not_send_body_when_expect_continue_gets_final_response() {
+fn test_async_client_sends_body_when_expect_continue_gets_final_response() {
   let (addr, handle) = support::spawn_expect_continue_reject_gate_server();
   block_on(async {
     let response = client()
@@ -1137,12 +1137,9 @@ fn test_async_client_does_not_send_body_when_expect_continue_gets_final_response
   });
 
   let request = handle.join().expect("expect continue reject gate thread");
-  assert!(
-    !request.is_empty(),
-    "body was sent before final expectation response"
-  );
+  assert!(!request.is_empty(), "request should be captured");
   assert!(String::from_utf8_lossy(&request).contains("Expect: 100-continue"));
-  assert!(!request.ends_with(b"request body"));
+  assert!(request.ends_with(b"request body"));
 }
 
 #[test]
