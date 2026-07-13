@@ -90,8 +90,12 @@ impl Priority {
     if let Some(urgency) = self.urgency {
       members.push(format!("u={urgency}"));
     }
-    if self.incremental() {
-      members.push("i".to_string());
+    if let Some(incremental) = self.incremental {
+      members.push(if incremental {
+        "i".to_string()
+      } else {
+        "i=?0".to_string()
+      });
     }
     members.extend(self.extensions.iter().map(PriorityExtension::header_value));
     members.join(", ")
@@ -104,9 +108,6 @@ impl Priority {
     };
     if !is_key(name) || value.is_some_and(|value| !is_bare_item(value)) {
       return Err(PriorityParseError::new("invalid Priority parameter"));
-    }
-    if self.has_name(name) {
-      return Err(PriorityParseError::new("duplicate Priority parameter"));
     }
     match name {
       "u" => {
@@ -131,23 +132,15 @@ impl Priority {
           }
         });
       }
-      _ => self.extensions.push(PriorityExtension {
-        name: name.to_string(),
-        value: value.map(ToString::to_string),
-      }),
+      _ => {
+        self.extensions.retain(|extension| extension.name != name);
+        self.extensions.push(PriorityExtension {
+          name: name.to_string(),
+          value: value.map(ToString::to_string),
+        });
+      }
     }
     Ok(())
-  }
-
-  fn has_name(&self, name: &str) -> bool {
-    match name {
-      "u" => self.urgency.is_some(),
-      "i" => self.incremental.is_some(),
-      _ => self
-        .extensions
-        .iter()
-        .any(|extension| extension.name == name),
-    }
   }
 }
 
@@ -265,8 +258,8 @@ fn is_string(value: &str) -> bool {
 
 fn is_token(value: &str) -> bool {
   let mut bytes = value.bytes();
-  matches!(bytes.next(), Some(b'*' | b'a'..=b'z'))
-    && bytes.all(|byte| matches!(byte, b'*' | b'a'..=b'z' | b'0'..=b'9' | b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'+' | b'-' | b'.' | b'^' | b'_' | b'`' | b'|' | b'~' | b':' | b'/'))
+  matches!(bytes.next(), Some(b'*' | b'a'..=b'z' | b'A'..=b'Z'))
+    && bytes.all(|byte| matches!(byte, b'*' | b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'+' | b'-' | b'.' | b'^' | b'_' | b'`' | b'|' | b'~' | b':' | b'/'))
 }
 
 fn is_byte_sequence(value: &str) -> bool {
@@ -296,6 +289,36 @@ mod tests {
     assert_eq!("x", priority.extensions()[0].name());
     assert_eq!(Some("token"), priority.extensions()[0].value());
     assert_eq!("u=1, i, x=token", priority.header_value());
+  }
+
+  #[test]
+  fn priority_round_trips_explicit_false_incremental() {
+    let priority = Priority::parse("i=?0").expect("Priority should parse");
+
+    assert!(!priority.incremental());
+    assert_eq!("i=?0", priority.header_value());
+    assert_eq!(
+      priority,
+      Priority::parse(priority.header_value()).expect("header should parse")
+    );
+  }
+
+  #[test]
+  fn priority_uses_last_value_for_duplicate_dictionary_keys() {
+    let priority =
+      Priority::parse_values(["u=1, x=first", "u=7, x=last"]).expect("Priority should parse");
+
+    assert_eq!(Some(7), priority.urgency());
+    assert_eq!(1, priority.extensions().len());
+    assert_eq!(Some("last"), priority.extensions()[0].value());
+  }
+
+  #[test]
+  fn priority_accepts_uppercase_structured_field_tokens() {
+    let priority = Priority::parse("x=Token, y=abc/DEF").expect("Priority should parse");
+
+    assert_eq!(Some("Token"), priority.extensions()[0].value());
+    assert_eq!(Some("abc/DEF"), priority.extensions()[1].value());
   }
 
   #[test]
