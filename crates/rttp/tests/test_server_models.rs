@@ -3,7 +3,7 @@ use std::time::{Duration, UNIX_EPOCH};
 use rttp::server::{
   HttpAccept, HttpAcceptRanges, HttpAllowedMethods, HttpByteRange, HttpByteRangeError,
   HttpConditionalMetadata, HttpContentDisposition, HttpContentLanguages, HttpContentType,
-  HttpEntityTag, HttpIfRangeRequestOutcome, HttpRequest, HttpRequestAcceptEncodings,
+  HttpDigest, HttpEntityTag, HttpIfRangeRequestOutcome, HttpRequest, HttpRequestAcceptEncodings,
   HttpRequestCacheControl, HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings,
   HttpRetryAfter, HttpServerTiming, HttpVary,
 };
@@ -32,6 +32,49 @@ fn response_www_authenticate_helper_validates_and_preserves_raw_headers() {
   assert!(String::from_utf8(raw.to_bytes())
     .expect("response should serialize")
     .contains("\r\nWWW-Authenticate: Basic realm=\r\n"));
+}
+
+#[test]
+fn response_digest_helpers_format_and_preserve_recoverable_metadata_errors() {
+  let response = HttpResponse::ok("body")
+    .with_digest("sha-256=:YWJj:, sha-512=:ZGVm:")
+    .expect("Digest should be accepted")
+    .with_repr_digest("sha-256=:Z2hp:")
+    .expect("Repr-Digest should be accepted");
+  assert_eq!(
+    Some(&b"abc"[..]),
+    response
+      .digest()
+      .expect("Digest should parse")
+      .expect("Digest should be present")
+      .entry("sha-256")
+      .map(|entry| entry.value())
+  );
+  assert_eq!(
+    Some(&b"ghi"[..]),
+    response
+      .repr_digest()
+      .expect("Repr-Digest should parse")
+      .expect("Repr-Digest should be present")
+      .entry("sha-256")
+      .map(|entry| entry.value())
+  );
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert!(serialized.contains("\r\nContent-Digest: sha-256=:YWJj:, sha-512=:ZGVm:\r\n"));
+  assert!(serialized.contains("\r\nRepr-Digest: sha-256=:Z2hp:\r\n"));
+
+  assert!(HttpResponse::ok("body").with_digest("").is_err());
+  assert!(HttpResponse::ok("body")
+    .with_repr_digest("sha-256=:YWJj:, sha-256=:ZGVm:")
+    .is_err());
+  let raw = HttpResponse::ok("body").header("Content-Digest", "sha-256=:YWJj:, sha-256=:ZGVm:");
+  assert!(raw.digest().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nContent-Digest: sha-256=:YWJj:, sha-256=:ZGVm:\r\n"));
+
+  let oversized = format!("sha-256=:{}:", "A".repeat(64 * 1024));
+  assert!(HttpDigest::parse(oversized).is_err());
 }
 
 #[test]
