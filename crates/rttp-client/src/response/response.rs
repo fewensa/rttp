@@ -296,9 +296,9 @@ impl Response {
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
-  /// Parses all `Digest` fields as bounded response metadata.
+  /// Parses all `Content-Digest` fields as bounded response metadata.
   pub fn digest(&self) -> error::Result<Option<Digest>> {
-    self.digest_field("digest")
+    self.digest_field("content-digest")
   }
 
   /// Parses all `Repr-Digest` fields as bounded response metadata.

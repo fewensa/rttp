@@ -10,7 +10,7 @@ pub const MAX_DIGEST_ENTRY_VALUE_BYTES: usize = 64 * 1024;
 
 /// Parsed, bounded HTTP Digest Fields response metadata.
 ///
-/// The same Structured Fields dictionary syntax is used by both `Digest` and
+/// The same Structured Fields dictionary syntax is used by both `Content-Digest` and
 /// `Repr-Digest`; callers select the field through their response helper.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Digest {
@@ -20,7 +20,7 @@ pub struct Digest {
 /// Parsed `Repr-Digest` response metadata.
 ///
 /// `Repr-Digest` uses the same bounded Structured Fields dictionary as
-/// `Digest`, but refers to a representation rather than message content.
+/// `Content-Digest`, but refers to a representation rather than message content.
 pub type ReprDigest = Digest;
 
 #[derive(Clone, Debug, Eq, PartialEq)]

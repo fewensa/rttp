@@ -604,7 +604,7 @@ fn test_www_authenticate_rejects_malformed_duplicate_and_bounded_values() {
 fn test_digest_response_helpers_parse_bounded_digest_fields() {
   let raw = concat!(
     "HTTP/1.1 200 OK\r\n",
-    "Digest: sha-256=:YWJj:, sha-512=:ZGVm:\r\n",
+    "Content-Digest: sha-256=:YWJj:, sha-512=:ZGVm:\r\n",
     "Repr-Digest: sha-256=:Z2hp:\r\n",
     "Content-Length: 0\r\n\r\n"
   );
@@ -638,14 +638,14 @@ fn test_digest_response_helpers_parse_bounded_digest_fields() {
 #[test]
 fn test_digest_response_helpers_recover_from_empty_duplicate_and_oversized_fields() {
   for (header, value) in [
-    ("Digest", ""),
-    ("Digest", "sha-256=:YWJj:, sha-256=:ZGVm:"),
+    ("Content-Digest", ""),
+    ("Content-Digest", "sha-256=:YWJj:, sha-256=:ZGVm:"),
     ("Repr-Digest", "sha-256=:YWJj:, sha-256=:ZGVm:"),
   ] {
     let raw = format!("HTTP/1.1 200 OK\r\n{header}: {value}\r\nContent-Length: 0\r\n\r\n");
     let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
       .expect("raw response should remain usable");
-    let result = if header == "Digest" {
+    let result = if header == "Content-Digest" {
       response.digest().map(|_| ())
     } else {
       response.repr_digest().map(|_| ())

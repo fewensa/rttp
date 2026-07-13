@@ -356,15 +356,15 @@ impl HttpResponse {
     Ok(self)
   }
 
-  /// Validates and replaces `Digest` response metadata.
+  /// Validates and replaces `Content-Digest` response metadata.
   pub fn with_digest(mut self, value: impl AsRef<str>) -> Result<Self, HttpDigestParseError> {
     let digest = HttpDigest::parse(value)?;
     self
       .headers
-      .retain(|header| !header.name.eq_ignore_ascii_case("Digest"));
+      .retain(|header| !header.name.eq_ignore_ascii_case("Content-Digest"));
     self
       .headers
-      .push(HttpHeader::new("Digest", digest.header_value()));
+      .push(HttpHeader::new("Content-Digest", digest.header_value()));
     Ok(self)
   }
 
@@ -601,9 +601,9 @@ impl HttpResponse {
     HttpWwwAuthenticate::parse_values(values).map(Some)
   }
 
-  /// Parses attached `Digest` metadata without changing raw headers.
+  /// Parses attached `Content-Digest` metadata without changing raw headers.
   pub fn digest(&self) -> Result<Option<HttpDigest>, HttpDigestParseError> {
-    self.digest_field("Digest")
+    self.digest_field("Content-Digest")
   }
 
   /// Parses attached `Repr-Digest` metadata without changing raw headers.
