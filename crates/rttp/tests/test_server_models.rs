@@ -1,11 +1,12 @@
 use std::time::{Duration, UNIX_EPOCH};
 
 use rttp::server::{
-  HttpAccept, HttpAcceptRanges, HttpAllowedMethods, HttpByteRange, HttpByteRangeError,
-  HttpConditionalMetadata, HttpContentDisposition, HttpContentLanguages, HttpContentType,
-  HttpDigest, HttpEntityTag, HttpIfRangeRequestOutcome, HttpLinkValues, HttpRequest,
-  HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpResponse, HttpResponseCacheControl,
-  HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming, HttpVary,
+  HttpAccept, HttpAcceptRanges, HttpAllowedMethods, HttpAuthorization, HttpByteRange,
+  HttpByteRangeError, HttpConditionalMetadata, HttpContentDisposition, HttpContentLanguages,
+  HttpContentType, HttpDigest, HttpEntityTag, HttpIfRangeRequestOutcome, HttpLinkValues,
+  HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpResponse,
+  HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming,
+  HttpVary,
 };
 
 #[test]
@@ -118,6 +119,48 @@ fn response_server_timing_helper_validates_formats_and_preserves_raw_headers() {
 
 fn parse_request(raw: &str) -> HttpRequest {
   HttpRequest::parse(raw.as_bytes()).expect("request should parse")
+}
+
+#[test]
+fn request_authorization_parses_one_bounded_opaque_credential() {
+  let request = parse_request(concat!(
+    "GET / HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Authorization: Bearer token-123\r\n",
+    "\r\n"
+  ));
+  let authorization = request
+    .authorization()
+    .expect("Authorization should parse")
+    .expect("Authorization should be present");
+
+  assert_eq!("Bearer", authorization.scheme());
+  assert_eq!("token-123", authorization.credentials());
+  assert!(!format!("{authorization:?}").contains("token-123"));
+}
+
+#[test]
+fn request_authorization_rejects_duplicate_invalid_and_oversized_values() {
+  assert_eq!(
+    None,
+    parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .authorization()
+      .expect("absent Authorization should be accepted")
+  );
+
+  for value in ["Bearer", "bad(scheme credentials", "Bearer \t"] {
+    assert!(
+      HttpAuthorization::parse(value).is_err(),
+      "should reject {value:?}"
+    );
+  }
+
+  let duplicate = parse_request(concat!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\n",
+    "Authorization: Bearer first\r\nauthorization: Bearer second\r\n\r\n"
+  ));
+  assert!(duplicate.authorization().is_err());
+  assert!(HttpAuthorization::parse(format!("Bearer {}", "x".repeat(64 * 1024))).is_err());
 }
 
 #[test]

@@ -217,6 +217,72 @@ fn range_helpers_emit_single_byte_range_headers() {
 }
 
 #[test]
+fn authorization_helpers_emit_basic_bearer_and_custom_scheme_credentials() {
+  for (scheme, credentials, expected) in [
+    ("Basic", "dXNlcjpzZWNyZXQ=", "Basic dXNlcjpzZWNyZXQ="),
+    ("Bearer", "token-123", "Bearer token-123"),
+    ("ApiKey", "v1:client-42", "ApiKey v1:client-42"),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .authorization(scheme, credentials)
+        .expect("authorization metadata should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    assert_eq!(
+      Some(expected),
+      header_value(&request_text(&request), "Authorization")
+    );
+  }
+}
+
+#[test]
+fn authorization_helper_rejects_invalid_or_oversized_metadata_before_connecting() {
+  for (scheme, credentials) in [
+    ("bad scheme", "token".to_string()),
+    ("Bearer", "".to_string()),
+    ("Bearer", " \t ".to_string()),
+    ("Bearer", "x".repeat(64 * 1024 + 1)),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .authorization(scheme, &credentials)
+        .expect_err("invalid authorization metadata should be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid metadata should not open a socket"
+    );
+  }
+}
+
+#[test]
+fn raw_headers_remain_an_escape_hatch_for_custom_authorization_schemes() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header((
+        "Authorization",
+        "Signature keyId=\"client\",algorithm=\"hs2019\"",
+      ))
+      .emit()
+      .expect("request should succeed");
+  });
+  assert_eq!(
+    Some("Signature keyId=\"client\",algorithm=\"hs2019\""),
+    header_value(&request_text(&request), "Authorization")
+  );
+}
+
+#[test]
 fn accept_encoding_helpers_emit_validated_codings_and_quality_values() {
   let request = capture_request(|base_url| {
     client()
