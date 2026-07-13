@@ -1,14 +1,67 @@
 use std::time::{Duration, UNIX_EPOCH};
 
 use rttp::server::{
-  HttpAcceptRanges, HttpAllowedMethods, HttpByteRange, HttpByteRangeError, HttpConditionalMetadata,
-  HttpContentDisposition, HttpContentLanguages, HttpContentType, HttpEntityTag,
-  HttpIfRangeRequestOutcome, HttpRequest, HttpRequestCacheControl, HttpResponse,
+  HttpAccept, HttpAcceptRanges, HttpAllowedMethods, HttpByteRange, HttpByteRangeError,
+  HttpConditionalMetadata, HttpContentDisposition, HttpContentLanguages, HttpContentType,
+  HttpEntityTag, HttpIfRangeRequestOutcome, HttpRequest, HttpRequestCacheControl, HttpResponse,
   HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpVary,
 };
 
 fn parse_request(raw: &str) -> HttpRequest {
   HttpRequest::parse(raw.as_bytes()).expect("request should parse")
+}
+
+#[test]
+fn parses_request_accept_media_ranges_in_field_order() {
+  let request = parse_request(concat!(
+    "GET /resource HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Accept: text/html; level=1; q=0.7, application/json\r\n",
+    "Accept: application/*; profile=compact; q=1, */*; q=0\r\n",
+    "\r\n"
+  ));
+
+  let accept = request
+    .accept()
+    .expect("valid Accept should parse")
+    .expect("Accept header should be present");
+
+  assert_eq!(
+    vec!["text/html", "application/json", "application/*", "*/*"],
+    accept
+      .media_ranges()
+      .iter()
+      .map(|range| range.media_type())
+      .collect::<Vec<_>>()
+  );
+  assert_eq!(Some(700), accept.media_ranges()[0].quality());
+  assert_eq!(vec![("level", "1")], accept.media_ranges()[0].parameters());
+  assert_eq!(None, accept.media_ranges()[1].quality());
+  assert_eq!(Some(1000), accept.media_ranges()[2].quality());
+  assert_eq!(Some(0), accept.media_ranges()[3].quality());
+}
+
+#[test]
+fn request_accept_helper_is_optional_and_keeps_raw_invalid_headers() {
+  let missing = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    missing.accept().expect("missing Accept should be valid")
+  );
+
+  let malformed = parse_request(concat!(
+    "GET / HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Accept: text/plain; q=1.001\r\n",
+    "\r\n"
+  ));
+  assert!(malformed.accept().is_err());
+  assert_eq!(Some("text/plain; q=1.001"), malformed.header("Accept"));
+
+  assert!(HttpAccept::parse("*/json").is_err());
+  let oversized = "text/plain,".repeat(257);
+  assert!(HttpAccept::parse(&oversized).is_err());
+  assert!(HttpAccept::parse("a".repeat(64 * 1024 + 1)).is_err());
 }
 
 #[test]
