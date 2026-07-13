@@ -18,6 +18,7 @@ pub(crate) const HTTP2_FLAG_PADDED: u8 = 0x8;
 pub(crate) const HTTP2_FLAG_PRIORITY: u8 = 0x20;
 pub(crate) const HTTP2_DEFAULT_MAX_FRAME_SIZE: usize = 16 * 1024;
 pub(crate) const HTTP2_DEFAULT_INITIAL_WINDOW_SIZE: i32 = 65_535;
+pub(crate) const HTTP2_MAX_WINDOW_SIZE: i32 = 2_147_483_647;
 pub(crate) const HTTP2_DEFAULT_HEADER_TABLE_SIZE: usize = 4096;
 pub(crate) const HTTP2_MAX_HEADER_LIST_SIZE: usize = MAX_REQUEST_HEAD_BYTES;
 pub(crate) const HTTP2_STATIC_TABLE_LEN: usize = 61;
@@ -341,6 +342,7 @@ impl Http2SendWindow {
     self.size = self
       .size
       .checked_add(increment)
+      .filter(|window| *window <= HTTP2_MAX_WINDOW_SIZE)
       .ok_or_else(http2_flow_control_overflow_error)?;
     Ok(())
   }
