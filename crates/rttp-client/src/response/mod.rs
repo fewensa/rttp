@@ -8,6 +8,9 @@ mod response;
 pub use rttp_protocol::digest::{
   Digest, DigestEntry, DigestParseError, ReprDigest, ReprDigestEntry,
 };
+pub use rttp_protocol::server_timing::{
+  ServerTiming, ServerTimingMetric, ServerTimingParameter, ServerTimingParseError,
+};
 pub use rttp_protocol::www_authenticate::{
   WwwAuthenticate, WwwAuthenticateChallenge, WwwAuthenticateParameter, WwwAuthenticateParseError,
 };

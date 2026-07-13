@@ -5,7 +5,7 @@ use rttp::server::{
   HttpConditionalMetadata, HttpContentDisposition, HttpContentLanguages, HttpContentType,
   HttpDigest, HttpEntityTag, HttpIfRangeRequestOutcome, HttpRequest, HttpRequestAcceptEncodings,
   HttpRequestCacheControl, HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings,
-  HttpRetryAfter, HttpVary,
+  HttpRetryAfter, HttpServerTiming, HttpVary,
 };
 
 #[test]
@@ -77,8 +77,98 @@ fn response_digest_helpers_format_and_preserve_recoverable_metadata_errors() {
   assert!(HttpDigest::parse(oversized).is_err());
 }
 
+#[test]
+fn response_server_timing_helper_validates_formats_and_preserves_raw_headers() {
+  let response = HttpResponse::ok("body")
+    .header("Server-Timing", "old;dur=1")
+    .with_server_timing("db;dur=53.2;desc=\"primary database\";region=us-east, db;cached")
+    .expect("valid timing metadata should be accepted");
+  let timing = response
+    .server_timing()
+    .expect("attached timing should parse")
+    .expect("Server-Timing should be present");
+  assert_eq!(2, timing.len());
+  assert_eq!("db", timing.metrics()[0].name());
+  assert_eq!(Some(53.2), timing.metrics()[0].duration());
+  assert_eq!(Some("primary database"), timing.metrics()[0].description());
+  assert_eq!("db", timing.metrics()[1].name());
+  assert_eq!(
+    "db; dur=53.2; desc=\"primary database\"; region=us-east, db; cached",
+    String::from_utf8(response.to_bytes())
+      .expect("response should serialize")
+      .split("Server-Timing: ")
+      .nth(1)
+      .expect("Server-Timing should serialize")
+      .split("\r\n")
+      .next()
+      .expect("Server-Timing line should end")
+  );
+
+  assert!(HttpResponse::ok("body")
+    .with_server_timing("db;dur=not-a-number")
+    .is_err());
+  let raw = HttpResponse::ok("body").header("Server-Timing", "db;dur=not-a-number");
+  assert!(raw.server_timing().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nServer-Timing: db;dur=not-a-number\r\n"));
+
+  assert!(HttpServerTiming::parse(format!("db;desc=\"{}\"", "a".repeat(64 * 1024))).is_err());
+}
+
 fn parse_request(raw: &str) -> HttpRequest {
   HttpRequest::parse(raw.as_bytes()).expect("request should parse")
+}
+
+#[test]
+fn request_forwarded_parses_standard_parameters_and_multiple_entries() {
+  let request = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: internal.test\r\n",
+    "Forwarded: for=192.0.2.60;by=203.0.113.43;host=example.test;proto=\"https\"\r\n",
+    "Forwarded: for=\"[2001:db8:cafe::17]\"\r\n",
+    "\r\n"
+  ));
+
+  let forwarded = request
+    .forwarded()
+    .expect("Forwarded should parse")
+    .expect("Forwarded should be present");
+
+  assert_eq!(2, forwarded.len());
+  assert_eq!(Some("192.0.2.60"), forwarded.elements()[0].for_value());
+  assert_eq!(Some("203.0.113.43"), forwarded.elements()[0].by());
+  assert_eq!(Some("example.test"), forwarded.elements()[0].host());
+  assert_eq!(Some("https"), forwarded.elements()[0].proto());
+  assert_eq!(
+    Some("[2001:db8:cafe::17]"),
+    forwarded.elements()[1].for_value()
+  );
+}
+
+#[test]
+fn request_forwarded_rejects_duplicate_and_excessive_metadata() {
+  assert_eq!(
+    None,
+    parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .forwarded()
+      .expect("absent Forwarded should be accepted")
+  );
+
+  let duplicate = parse_request(concat!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\n",
+    "Forwarded: for=192.0.2.60;FOR=198.51.100.17\r\n\r\n"
+  ));
+  assert!(duplicate.forwarded().is_err());
+
+  let excessive = (0..257)
+    .map(|index| format!("for=192.0.2.{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let request = parse_request(&format!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\nForwarded: {excessive}\r\n\r\n"
+  ));
+  assert!(request.forwarded().is_err());
 }
 
 #[test]

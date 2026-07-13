@@ -4,6 +4,11 @@ pub use rttp_protocol::digest::{
   Digest as HttpDigest, DigestEntry as HttpDigestEntry, DigestParseError as HttpDigestParseError,
   ReprDigest as HttpReprDigest, ReprDigestEntry as HttpReprDigestEntry,
 };
+pub use rttp_protocol::server_timing::{
+  ServerTiming as HttpServerTiming, ServerTimingMetric as HttpServerTimingMetric,
+  ServerTimingParameter as HttpServerTimingParameter,
+  ServerTimingParseError as HttpServerTimingParseError,
+};
 pub use rttp_protocol::www_authenticate::{
   WwwAuthenticate as HttpWwwAuthenticate, WwwAuthenticateChallenge as HttpWwwAuthenticateChallenge,
   WwwAuthenticateParameter as HttpWwwAuthenticateParameter,
@@ -380,6 +385,21 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Server-Timing` response metadata.
+  pub fn with_server_timing(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpServerTimingParseError> {
+    let timing = HttpServerTiming::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Server-Timing"));
+    self
+      .headers
+      .push(HttpHeader::new("Server-Timing", timing.header_value()));
+    Ok(self)
+  }
+
   pub fn with_content_location<V: AsRef<str>>(
     mut self,
     value: V,
@@ -622,6 +642,20 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpDigest::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Server-Timing` response metadata without changing raw headers.
+  pub fn server_timing(&self) -> Result<Option<HttpServerTiming>, HttpServerTimingParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Server-Timing"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpServerTiming::parse_values(values).map(Some)
   }
 
   pub fn content_location(&self) -> Result<Option<&str>, HttpContentLocationParseError> {

@@ -1,6 +1,6 @@
 use rttp_client::response::{
   ContentDisposition, ContentEncoding, ContentLocation, ContentType, Digest, Response,
-  WwwAuthenticate,
+  ServerTiming, WwwAuthenticate,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -636,6 +636,43 @@ fn test_digest_response_helpers_parse_bounded_digest_fields() {
 }
 
 #[test]
+fn test_server_timing_response_helper_parses_metrics_extensions_and_duplicates() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Server-Timing: db;dur=53.2;desc=\"primary database\";region=us-east;cached, db;dur=4\r\n",
+    "Server-Timing: app;desc=\"render \\\"home\\\"\";build=2026\r\n",
+    "Content-Length: 2\r\n\r\nOK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  let timing = response
+    .server_timing()
+    .expect("valid Server-Timing should parse")
+    .expect("Server-Timing should be present");
+
+  assert_eq!(3, timing.len());
+  assert_eq!("db", timing.metrics()[0].name());
+  assert_eq!(Some(53.2), timing.metrics()[0].duration());
+  assert_eq!(Some("primary database"), timing.metrics()[0].description());
+  assert_eq!(
+    vec![("region", Some("us-east")), ("cached", None)],
+    timing.metrics()[0]
+      .parameters()
+      .iter()
+      .map(|parameter| (parameter.name(), parameter.value()))
+      .collect::<Vec<_>>()
+  );
+  assert_eq!("db", timing.metrics()[1].name());
+  assert_eq!(Some(4.0), timing.metrics()[1].duration());
+  assert_eq!(Some("render \"home\""), timing.metrics()[2].description());
+  assert_eq!(
+    "db; dur=53.2; desc=\"primary database\"; region=us-east; cached, db; dur=4, app; desc=\"render \\\"home\\\"\"; build=2026",
+    timing.header_value()
+  );
+}
+
+#[test]
 fn test_digest_response_helpers_recover_from_empty_duplicate_and_oversized_fields() {
   for (header, value) in [
     ("Content-Digest", ""),
@@ -656,6 +693,43 @@ fn test_digest_response_helpers_recover_from_empty_duplicate_and_oversized_field
 
   let oversized = format!("sha-256=:{}:", "A".repeat(64 * 1024));
   assert!(Digest::parse(oversized).is_err());
+}
+
+#[test]
+fn test_server_timing_rejects_malformed_and_oversized_values_without_hiding_headers() {
+  for value in [
+    "db;dur=not-a-number",
+    "db;dur=-1",
+    "db;desc=unterminated value",
+    "db;=value",
+    "db;dur=1;dur=2",
+    "db;desc=\"unterminated",
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\nServer-Timing: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(response.server_timing().is_err(), "should reject {value:?}");
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Server-Timing")
+    );
+  }
+
+  assert!(ServerTiming::parse(format!("db;desc=\"{}\"", "a".repeat(64 * 1024))).is_err());
+  assert!(ServerTiming::parse(
+    (0..257)
+      .map(|index| format!("metric{index}"))
+      .collect::<Vec<_>>()
+      .join(", ")
+  )
+  .is_err());
+  assert!(ServerTiming::parse(format!(
+    "db{}",
+    (0..257)
+      .map(|index| format!(";ext{index}=value"))
+      .collect::<String>()
+  ))
+  .is_err());
 }
 
 #[test]
