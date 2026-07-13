@@ -428,3 +428,37 @@ hello\r\n\
     assert_eq!(io::ErrorKind::InvalidData, error.kind());
     assert_eq!("invalid request header", error.to_string());
   }
+
+  #[test]
+  fn priority_helpers_parse_requests_and_build_responses() {
+    let raw = concat!(
+      "GET / HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Priority: u=1, i, x=token\r\n",
+      "\r\n"
+    );
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+    let request = Request::read_next_from(&mut reader)
+      .expect("request should parse")
+      .expect("request should be present");
+    let priority = request
+      .priority()
+      .expect("Priority should parse")
+      .expect("Priority should be present");
+
+    assert_eq!(Some(1), priority.urgency());
+    assert!(priority.incremental());
+    assert_eq!(Some("token"), priority.extensions()[0].value());
+
+    let response = HttpResponse::ok([])
+      .with_priority("u=1, i, x=token")
+      .expect("Priority should be accepted");
+    assert_eq!(
+      "u=1, i, x=token",
+      response
+        .priority()
+        .expect("response Priority should parse")
+        .expect("response Priority should be present")
+        .header_value()
+    );
+  }

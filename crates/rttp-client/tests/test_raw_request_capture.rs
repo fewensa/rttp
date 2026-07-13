@@ -292,11 +292,16 @@ fn accept_encoding_helpers_reject_invalid_members_before_connecting() {
 }
 
 #[test]
+<<<<<<< HEAD
 fn te_helpers_emit_validated_codings_and_trailers() {
+=======
+fn priority_helper_emits_bounded_known_and_extension_metadata() {
+>>>>>>> origin/main
   let request = capture_request(|base_url| {
     client()
       .get()
       .url(format!("{}/asset", base_url))
+<<<<<<< HEAD
       .te("gzip")
       .expect("transfer coding should be accepted")
       .te_with_q("deflate", "0.5")
@@ -311,16 +316,36 @@ fn te_helpers_emit_validated_codings_and_trailers() {
   assert_eq!(
     Some("gzip, deflate;q=0.5, trailers"),
     header_value(&request, "TE")
+=======
+      .priority("u=1, i, x=token")
+      .expect("Priority should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+
+  assert_eq!(
+    Some("u=1, i, x=token"),
+    header_value(&request_text(&request), "Priority")
+>>>>>>> origin/main
   );
 }
 
 #[test]
+<<<<<<< HEAD
 fn te_helpers_reject_invalid_members_before_connecting() {
+=======
+fn priority_helper_rejects_oversized_parameter_sets_before_connecting() {
+  let too_many = (0..257)
+    .map(|index| format!("x{index}=?1"))
+    .collect::<Vec<_>>()
+    .join(", ");
+>>>>>>> origin/main
   let request = capture_optional_request(|base_url| {
     let mut client = client();
     let error = client
       .get()
       .url(format!("{}/asset", base_url))
+<<<<<<< HEAD
       .te_with_q("bad coding", "1.1")
       .expect_err("invalid coding should be rejected");
 
@@ -353,6 +378,18 @@ fn te_helpers_reject_invalid_members_before_connecting() {
     .te_with_q("trailers", "0.5")
     .expect_err("trailers must not carry a q-value");
   assert!(error.is_builder());
+=======
+      .priority(&too_many)
+      .expect_err("too many Priority parameters should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "invalid Priority should not open a socket"
+  );
+>>>>>>> origin/main
 }
 
 #[test]
@@ -442,6 +479,86 @@ fn accept_language_helper_rejects_invalid_values_before_connecting() {
   assert!(
     request.is_empty(),
     "oversized Accept-Language helper input should not open a socket"
+  );
+}
+
+#[test]
+fn forwarded_helper_emits_bounded_forwarding_metadata() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .forwarded(r#"for=192.0.2.60;by=203.0.113.43;host=example.test;proto="https""#)
+      .expect("first forwarding element should be accepted")
+      .forwarded(r#"for="[2001:db8:cafe::17]""#)
+      .expect("second forwarding element should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+
+  assert_eq!(
+    Some(
+      r#"for=192.0.2.60; by=203.0.113.43; host=example.test; proto=https, for="[2001:db8:cafe::17]""#
+    ),
+    header_value(&request_text(&request), "Forwarded")
+  );
+}
+
+#[test]
+fn forwarded_helper_rejects_duplicate_or_excessive_metadata_before_connecting() {
+  for value in ["for=192.0.2.60;for=198.51.100.17", "for="] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .forwarded(value)
+        .expect_err("invalid forwarding metadata should be rejected");
+
+      assert!(error.is_builder());
+    });
+
+    assert!(
+      request.is_empty(),
+      "invalid Forwarded input should not open a socket"
+    );
+  }
+
+  let excessive = (0..257)
+    .map(|index| format!("for=192.0.2.{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .forwarded(excessive.as_str())
+      .expect_err("too many forwarding elements should be rejected");
+
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "excessive Forwarded input should not open a socket"
+  );
+
+  let first = format!("for={}", "a".repeat(64 * 1024 - 4));
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .forwarded(first.as_str())
+      .expect("a bounded first element should be accepted")
+      .forwarded("for=second")
+      .expect_err("combined Forwarded metadata should remain bounded");
+
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "oversized Forwarded output should not open a socket"
   );
 }
 
