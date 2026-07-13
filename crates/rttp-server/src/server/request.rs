@@ -870,11 +870,9 @@ fn parse_prefer_member(member: &str) -> Result<(&str, Option<&str>), HttpPreferP
       (name.trim(), Some(value.trim()))
     });
   if !is_http_token(name)
-    || value.is_some_and(|value| {
-      value.len() > MAX_PREFER_VALUE_BYTES
-        || !is_http_token(value)
-        || (name.eq_ignore_ascii_case("wait") && value.parse::<u64>().is_err())
-    })
+    || (name.eq_ignore_ascii_case("wait")
+      && !value.is_some_and(|value| value.bytes().all(|byte| byte.is_ascii_digit())))
+    || value.is_some_and(|value| value.len() > MAX_PREFER_VALUE_BYTES || !is_http_token(value))
   {
     return Err(HttpPreferParseError::new("invalid Prefer preference"));
   }

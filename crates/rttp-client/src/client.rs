@@ -593,11 +593,9 @@ impl HttpClient {
     let name = name.trim();
     let value = value.map(str::trim);
     if !is_http_token(name)
-      || value.is_some_and(|value| {
-        value.len() > MAX_PREFER_VALUE_BYTES
-          || !is_http_token(value)
-          || (name.eq_ignore_ascii_case("wait") && value.parse::<u64>().is_err())
-      })
+      || (name.eq_ignore_ascii_case("wait")
+        && !value.is_some_and(|value| value.bytes().all(|byte| byte.is_ascii_digit())))
+      || value.is_some_and(|value| value.len() > MAX_PREFER_VALUE_BYTES || !is_http_token(value))
     {
       return Err(error::builder_with_message("invalid Prefer preference"));
     }
@@ -909,6 +907,7 @@ const MAX_PREFER_FIELD_BYTES: usize = 64 * 1024;
 const MAX_PREFER_VALUE_BYTES: usize = 8 * 1024;
 const MAX_PREFERENCES: usize = 32;
 
+#[allow(clippy::too_many_arguments)]
 fn append_unique_metadata_member(
   headers: &mut Vec<Header>,
   header_name: &str,
@@ -1016,11 +1015,9 @@ fn split_prefer_member(member: &str) -> error::Result<(&str, Option<&str>)> {
       (name.trim(), Some(value.trim()))
     });
   if !is_http_token(name)
-    || value.is_some_and(|value| {
-      value.len() > MAX_PREFER_VALUE_BYTES
-        || !is_http_token(value)
-        || (name.eq_ignore_ascii_case("wait") && value.parse::<u64>().is_err())
-    })
+    || (name.eq_ignore_ascii_case("wait")
+      && !value.is_some_and(|value| value.bytes().all(|byte| byte.is_ascii_digit())))
+    || value.is_some_and(|value| value.len() > MAX_PREFER_VALUE_BYTES || !is_http_token(value))
   {
     return Err(error::builder_with_message("invalid Prefer preference"));
   }

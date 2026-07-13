@@ -635,6 +635,20 @@ fn te_and_prefer_helpers_reject_invalid_values_before_connecting() {
 
 #[test]
 fn prefer_helpers_reject_invalid_wait_and_bound_values_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    assert!(client
+      .get()
+      .url(format!("{}/metadata", base_url))
+      .prefer("wait")
+      .expect_err("valueless wait preference should be rejected")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "invalid Prefer input should not open a socket"
+  );
+
   for (name, value) in [
     ("wait", "-1"),
     ("wait", "1.5"),

@@ -399,6 +399,7 @@ fn request_prefer_preserves_ordered_known_and_extension_metadata() {
 #[test]
 fn request_prefer_rejects_malformed_wait_oversized_values_and_excessive_preferences() {
   for value in [
+    "wait",
     "wait=-1",
     "wait=1.5",
     "wait=abc",
