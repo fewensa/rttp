@@ -13,6 +13,43 @@ fn parse_request(raw: &str) -> HttpRequest {
 }
 
 #[test]
+fn request_max_forwards_is_optional_and_rejects_invalid_metadata() {
+  let absent = parse_request("OPTIONS / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .max_forwards()
+      .expect("missing Max-Forwards should be valid")
+  );
+
+  let valid = parse_request(concat!(
+    "OPTIONS / HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Max-Forwards: 0\r\n",
+    "\r\n"
+  ));
+  assert_eq!(Some(0), valid.max_forwards().expect("value should parse"));
+
+  for value in ["abc", "1.0", "256", "999999999999999999999"] {
+    let request = parse_request(&format!(
+      "OPTIONS / HTTP/1.1\r\nHost: example.test\r\nMax-Forwards: {value}\r\n\r\n"
+    ));
+    assert!(request.max_forwards().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Max-Forwards"));
+  }
+
+  let duplicate = parse_request(concat!(
+    "OPTIONS / HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Max-Forwards: 1\r\n",
+    "max-forwards: 2\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.max_forwards().is_err());
+  assert_eq!(Some("1"), duplicate.header("Max-Forwards"));
+}
+
+#[test]
 fn parses_request_accept_media_ranges_in_field_order() {
   let request = parse_request(concat!(
     "GET /resource HTTP/1.1\r\n",
