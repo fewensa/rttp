@@ -1,5 +1,9 @@
 use super::*;
 
+pub use rttp_protocol::alt_svc::{
+  AltSvc as HttpAltSvc, AltSvcAlternative as HttpAltSvcAlternative,
+  AltSvcParameter as HttpAltSvcParameter, AltSvcParseError as HttpAltSvcParseError,
+};
 pub use rttp_protocol::digest::{
   Digest as HttpDigest, DigestEntry as HttpDigestEntry, DigestParseError as HttpDigestParseError,
   ReprDigest as HttpReprDigest, ReprDigestEntry as HttpReprDigestEntry,
@@ -658,6 +662,18 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Alt-Svc` response metadata without selecting an endpoint.
+  pub fn with_alt_svc(mut self, value: impl AsRef<str>) -> Result<Self, HttpAltSvcParseError> {
+    let alt_svc = HttpAltSvc::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Alt-Svc"));
+    self
+      .headers
+      .push(HttpHeader::new("Alt-Svc", alt_svc.header_value()));
+    Ok(self)
+  }
+
   pub fn with_content_location<V: AsRef<str>>(
     mut self,
     value: V,
@@ -943,6 +959,20 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpServerTiming::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Alt-Svc` metadata without changing raw headers or connections.
+  pub fn alt_svc(&self) -> Result<Option<HttpAltSvc>, HttpAltSvcParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Alt-Svc"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAltSvc::parse_values(values).map(Some)
   }
 
   pub fn content_location(&self) -> Result<Option<&str>, HttpContentLocationParseError> {

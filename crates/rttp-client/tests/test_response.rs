@@ -1,6 +1,6 @@
 use rttp_client::response::{
-  ContentDisposition, ContentEncoding, ContentLocation, ContentType, Digest, LinkValues, Response,
-  ServerTiming, WwwAuthenticate,
+  AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType, Digest, LinkValues,
+  Response, ServerTiming, WwwAuthenticate,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -683,6 +683,81 @@ fn test_server_timing_response_helper_parses_metrics_extensions_and_duplicates()
   assert_eq!(Some(4.0), timing.metrics()[1].duration());
   assert_eq!(Some("render \"home\""), timing.metrics()[2].description());
   assert_eq!("db; dur=53.2; desc=\"primary database\"; region=us-east; cached, db; dur=4, app; desc=\"render \\\"home\\\"\"; build=2026", timing.header_value());
+}
+
+#[test]
+fn test_alt_svc_response_helper_parses_and_round_trips_alternatives() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Alt-Svc: h3=\":443\"; ma=3600; persist=1; region=\"us-east\", h2=\"alt.example:8443\"; ma=60\r\n",
+    "Content-Length: 0\r\n\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+  let alt_svc = response
+    .alt_svc()
+    .expect("Alt-Svc should parse")
+    .expect("Alt-Svc should be present");
+
+  assert!(!alt_svc.is_clear());
+  assert_eq!(2, alt_svc.len());
+  assert_eq!("h3", alt_svc.alternatives()[0].protocol_id());
+  assert_eq!(":443", alt_svc.alternatives()[0].authority());
+  assert_eq!(Some(3600), alt_svc.alternatives()[0].max_age());
+  assert_eq!(Some(true), alt_svc.alternatives()[0].persist());
+  assert_eq!(
+    vec![("region", Some("us-east"))],
+    alt_svc.alternatives()[0]
+      .parameters()
+      .iter()
+      .map(|parameter| (parameter.name(), parameter.value()))
+      .collect::<Vec<_>>()
+  );
+  assert_eq!(
+    "h3=\":443\"; ma=3600; persist=1; region=us-east, h2=\"alt.example:8443\"; ma=60",
+    alt_svc.header_value()
+  );
+  assert_eq!(
+    alt_svc,
+    AltSvc::parse(alt_svc.header_value()).expect("round-tripped Alt-Svc should parse")
+  );
+}
+
+#[test]
+fn test_alt_svc_rejects_invalid_or_unbounded_metadata_without_hiding_headers() {
+  for value in [
+    "h3=:443",
+    "h 3=\":443\"",
+    "h3=\"unterminated",
+    "clear, h3=\":443\"",
+    "h3=\":443\"; ma=forever",
+    "h3=\":443\"; ma=\"60\"",
+    "h3=\":443\"; region",
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\nAlt-Svc: {value}\r\nContent-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(response.alt_svc().is_err(), "should reject {value:?}");
+    assert_eq!(Some(&value.to_string()), response.header_value("Alt-Svc"));
+  }
+
+  assert!(AltSvc::parse(format!("h3=\":443\"; x=\"{}\"", "a".repeat(64 * 1024))).is_err());
+  assert!(AltSvc::parse(
+    (0..257)
+      .map(|index| format!("h{index}=\":443\""))
+      .collect::<Vec<_>>()
+      .join(", ")
+  )
+  .is_err());
+}
+
+#[test]
+fn test_alt_svc_clear_is_an_exclusive_sentinel() {
+  let alt_svc = AltSvc::parse("clear").expect("clear should parse");
+  assert!(alt_svc.is_clear());
+  assert!(alt_svc.is_empty());
+  assert_eq!("clear", alt_svc.header_value());
+  assert!(AltSvc::parse_values(["clear", "h3=\":443\""]).is_err());
 }
 
 #[test]

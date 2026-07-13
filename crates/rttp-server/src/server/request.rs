@@ -94,6 +94,25 @@ impl Request {
     HttpRequestCacheControl::parse_values(values).map(Some)
   }
 
+  /// Parses received `Max-Forwards` request metadata without automatically
+  /// decrementing or forwarding the request.
+  ///
+  /// The validated decimal count is returned verbatim so valid values are not
+  /// constrained by a machine integer width.
+  pub fn max_forwards(&self) -> Result<Option<String>, HttpMaxForwardsParseError> {
+    parse_max_forwards_values(self.headers_named("Max-Forwards"))
+  }
+
+  /// Parses received `TE` request metadata without enabling transfer codings.
+  pub fn te(&self) -> Result<Option<HttpRequestTe>, HttpTeParseError> {
+    parse_te_values(self.headers_named("TE"))
+  }
+
+  /// Parses received `Prefer` request metadata without applying preferences.
+  pub fn prefer(&self) -> Result<Option<HttpRequestPreferences>, HttpPreferParseError> {
+    parse_prefer_values(self.headers_named("Prefer"))
+  }
+
   /// Parses received `Accept-Encoding` request metadata without enabling
   /// automatic compression, decompression, or content negotiation.
   pub fn accept_encoding(
@@ -636,6 +655,299 @@ impl fmt::Display for HttpAcceptParseError {
 }
 
 impl Error for HttpAcceptParseError {}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpMaxForwardsParseError {
+  message: String,
+}
+
+/// A validated `TE` coding received on an HTTP request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpTe {
+  coding: String,
+  quality: u16,
+}
+
+impl HttpTe {
+  pub fn coding(&self) -> &str {
+    &self.coding
+  }
+
+  /// Returns the q-value as thousandths, where `1000` is the default.
+  pub fn quality(&self) -> u16 {
+    self.quality
+  }
+}
+
+/// Bounded `TE` request metadata.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpRequestTe {
+  codings: Vec<HttpTe>,
+}
+
+impl HttpRequestTe {
+  pub fn codings(&self) -> &[HttpTe] {
+    &self.codings
+  }
+
+  pub fn len(&self) -> usize {
+    self.codings.len()
+  }
+
+  pub fn is_empty(&self) -> bool {
+    self.codings.is_empty()
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpTeParseError {
+  message: String,
+}
+
+impl HttpTeParseError {
+  fn new(message: impl Into<String>) -> Self {
+    Self {
+      message: message.into(),
+    }
+  }
+}
+
+impl fmt::Display for HttpTeParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpTeParseError {}
+
+/// A validated `Prefer` item received on an HTTP request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpPreference {
+  name: String,
+  value: Option<String>,
+}
+
+impl HttpPreference {
+  pub fn name(&self) -> &str {
+    &self.name
+  }
+
+  pub fn value(&self) -> Option<&str> {
+    self.value.as_deref()
+  }
+}
+
+/// Bounded `Prefer` request metadata.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpRequestPreferences {
+  preferences: Vec<HttpPreference>,
+}
+
+impl HttpRequestPreferences {
+  pub fn preferences(&self) -> &[HttpPreference] {
+    &self.preferences
+  }
+
+  pub fn len(&self) -> usize {
+    self.preferences.len()
+  }
+
+  pub fn is_empty(&self) -> bool {
+    self.preferences.is_empty()
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpPreferParseError {
+  message: String,
+}
+
+impl HttpPreferParseError {
+  fn new(message: impl Into<String>) -> Self {
+    Self {
+      message: message.into(),
+    }
+  }
+}
+
+impl fmt::Display for HttpPreferParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpPreferParseError {}
+
+const MAX_REQUEST_CONTROL_VALUE_BYTES: usize = 64 * 1024;
+const MAX_REQUEST_CONTROL_MEMBERS: usize = 32;
+
+fn parse_te_values<'a>(
+  values: impl IntoIterator<Item = &'a str>,
+) -> Result<Option<HttpRequestTe>, HttpTeParseError> {
+  let mut codings = Vec::new();
+  for value in values {
+    if value.len() > MAX_REQUEST_CONTROL_VALUE_BYTES {
+      return Err(HttpTeParseError::new("TE header value is too large"));
+    }
+    for member in value.split(',') {
+      let (coding, quality) = parse_te_member(member)?;
+      if codings
+        .iter()
+        .any(|known: &HttpTe| known.coding.eq_ignore_ascii_case(coding))
+      {
+        return Err(HttpTeParseError::new("duplicate TE coding"));
+      }
+      if codings.len() >= MAX_REQUEST_CONTROL_MEMBERS {
+        return Err(HttpTeParseError::new("too many TE codings"));
+      }
+      codings.push(HttpTe {
+        coding: coding.to_string(),
+        quality,
+      });
+    }
+  }
+  if codings.is_empty() {
+    Ok(None)
+  } else {
+    Ok(Some(HttpRequestTe { codings }))
+  }
+}
+
+fn parse_te_member(member: &str) -> Result<(&str, u16), HttpTeParseError> {
+  let mut parts = member.split(';');
+  let coding = parts.next().unwrap_or_default().trim();
+  if !is_http_token(coding) || coding.eq_ignore_ascii_case("chunked") {
+    return Err(HttpTeParseError::new("invalid TE coding"));
+  }
+  let Some(parameter) = parts.next() else {
+    return Ok((coding, 1000));
+  };
+  if parts.next().is_some() {
+    return Err(HttpTeParseError::new("invalid TE coding"));
+  }
+  let Some((name, value)) = parameter.trim().split_once('=') else {
+    return Err(HttpTeParseError::new("invalid TE coding"));
+  };
+  if !name.trim().eq_ignore_ascii_case("q") {
+    return Err(HttpTeParseError::new("invalid TE coding"));
+  }
+  Ok((
+    coding,
+    parse_request_control_qvalue(value.trim()).map_err(HttpTeParseError::new)?,
+  ))
+}
+
+fn parse_prefer_values<'a>(
+  values: impl IntoIterator<Item = &'a str>,
+) -> Result<Option<HttpRequestPreferences>, HttpPreferParseError> {
+  let mut preferences = Vec::new();
+  for value in values {
+    if value.len() > MAX_REQUEST_CONTROL_VALUE_BYTES {
+      return Err(HttpPreferParseError::new(
+        "Prefer header value is too large",
+      ));
+    }
+    for member in value.split(',') {
+      let (name, preference_value) = parse_prefer_member(member)?;
+      if preferences
+        .iter()
+        .any(|known: &HttpPreference| known.name.eq_ignore_ascii_case(name))
+      {
+        return Err(HttpPreferParseError::new("duplicate Prefer preference"));
+      }
+      if preferences.len() >= MAX_REQUEST_CONTROL_MEMBERS {
+        return Err(HttpPreferParseError::new("too many Prefer preferences"));
+      }
+      preferences.push(HttpPreference {
+        name: name.to_string(),
+        value: preference_value.map(ToString::to_string),
+      });
+    }
+  }
+  if preferences.is_empty() {
+    Ok(None)
+  } else {
+    Ok(Some(HttpRequestPreferences { preferences }))
+  }
+}
+
+fn parse_prefer_member(member: &str) -> Result<(&str, Option<&str>), HttpPreferParseError> {
+  let (name, value) = member
+    .trim()
+    .split_once('=')
+    .map_or((member.trim(), None), |(name, value)| {
+      (name.trim(), Some(value.trim()))
+    });
+  if !is_http_token(name) || value.is_some_and(|value| !is_http_token(value)) {
+    return Err(HttpPreferParseError::new("invalid Prefer preference"));
+  }
+  Ok((name, value))
+}
+
+fn parse_request_control_qvalue(value: &str) -> Result<u16, &'static str> {
+  let Some((whole, fraction)) = value.split_once('.') else {
+    return match value {
+      "0" => Ok(0),
+      "1" => Ok(1000),
+      _ => Err("invalid TE q-value"),
+    };
+  };
+  if !matches!(whole, "0" | "1")
+    || fraction.len() > 3
+    || !fraction.bytes().all(|byte| byte.is_ascii_digit())
+    || (whole == "1" && !fraction.bytes().all(|byte| byte == b'0'))
+  {
+    return Err("invalid TE q-value");
+  }
+  let fractional = if fraction.is_empty() {
+    0
+  } else {
+    fraction.parse::<u16>().expect("validated q-value")
+  };
+  Ok(if whole == "1" {
+    1000
+  } else {
+    fractional * 10_u16.pow(3 - fraction.len() as u32)
+  })
+}
+
+impl HttpMaxForwardsParseError {
+  fn new(message: impl Into<String>) -> Self {
+    Self {
+      message: message.into(),
+    }
+  }
+}
+
+impl fmt::Display for HttpMaxForwardsParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpMaxForwardsParseError {}
+
+fn parse_max_forwards_values<'a>(
+  values: impl IntoIterator<Item = &'a str>,
+) -> Result<Option<String>, HttpMaxForwardsParseError> {
+  let mut values = values.into_iter();
+  let Some(value) = values.next() else {
+    return Ok(None);
+  };
+  if values.next().is_some() {
+    return Err(HttpMaxForwardsParseError::new(
+      "duplicate Max-Forwards headers",
+    ));
+  }
+
+  let value = value.trim();
+  if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+    return Err(HttpMaxForwardsParseError::new(
+      "invalid Max-Forwards header value",
+    ));
+  }
+  Ok(Some(value.to_owned()))
+}
 
 fn split_accept_members(value: &str) -> Result<Vec<&str>, HttpAcceptParseError> {
   split_accept_delimited(value, b',', "invalid Accept header value")
@@ -1376,6 +1688,43 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpRequestCacheControl::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Max-Forwards` request metadata without automatically
+  /// decrementing or forwarding the request.
+  ///
+  /// The validated decimal count is returned verbatim so valid values are not
+  /// constrained by a machine integer width.
+  pub fn max_forwards(&self) -> Result<Option<String>, HttpMaxForwardsParseError> {
+    parse_max_forwards_values(
+      self
+        .headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("Max-Forwards"))
+        .map(|header| header.value.as_str()),
+    )
+  }
+
+  /// Parses received `TE` request metadata without enabling transfer codings.
+  pub fn te(&self) -> Result<Option<HttpRequestTe>, HttpTeParseError> {
+    parse_te_values(
+      self
+        .headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("TE"))
+        .map(|header| header.value.as_str()),
+    )
+  }
+
+  /// Parses received `Prefer` request metadata without applying preferences.
+  pub fn prefer(&self) -> Result<Option<HttpRequestPreferences>, HttpPreferParseError> {
+    parse_prefer_values(
+      self
+        .headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("Prefer"))
+        .map(|header| header.value.as_str()),
+    )
   }
 
   /// Parses received `Accept-Encoding` request metadata without enabling

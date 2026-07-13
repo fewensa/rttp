@@ -406,6 +406,30 @@ on demand without changing them.
 These helpers only parse and format timing metadata. They do not collect
 metrics, record measurements, export telemetry, or add a metrics backend.
 
+### Bounded HTTP/1.1 request control metadata
+
+`Request::max_forwards()` and `HttpRequest::max_forwards()` expose one bounded
+`Max-Forwards` value as a `u8`. They return `Ok(None)` when the field is absent
+and reject duplicate, empty, signed, non-decimal, or out-of-range values. RTTP
+does not decrement the value, route the request, or infer forwarding behavior.
+
+`HttpClient::te()`, `te_with_q()`, and `te_trailers()` build a single bounded
+`TE` field. `HttpClient::prefer()` and `prefer_with_value()` build a single
+bounded `Prefer` field. Both client helpers reject malformed tokens, invalid
+q-values, duplicates, oversized field values, and more than 32 members before
+opening a connection; `TE: chunked` is rejected because request framing remains
+owned by the existing HTTP/1 implementation.
+
+On the server, `Request::te()`/`HttpRequest::te()` parse ordered `TE` codings
+and their q-values, while `Request::prefer()`/`HttpRequest::prefer()` parse
+ordered token-only `Prefer` items. Absent fields return `Ok(None)` and invalid,
+duplicate, oversized, or excessive values return a parse error without
+changing the request's raw headers.
+
+These APIs only declare or parse HTTP/1.1 metadata. They do not add transfer
+coding engines, trailer scheduling, proxy routing, automatic retries,
+automatic preference handling, cache policy, or forwarding behavior.
+
 ### Bounded HTTP/1.1 Vary behavior
 
 `Response::vary()` parses one or more response `Vary` header fields into
