@@ -18,3 +18,6 @@ edition = "2021"
 [lib]
 name = "rttp_protocol"
 path = "src/lib.rs"
+
+[dependencies]
+base64 = "0.22"

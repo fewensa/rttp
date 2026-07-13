@@ -1,5 +1,24 @@
 use super::*;
 
+pub use rttp_protocol::digest::{
+  Digest as HttpDigest, DigestEntry as HttpDigestEntry, DigestParseError as HttpDigestParseError,
+  ReprDigest as HttpReprDigest, ReprDigestEntry as HttpReprDigestEntry,
+};
+pub use rttp_protocol::priority::{
+  Priority as HttpPriority, PriorityExtension as HttpPriorityExtension,
+  PriorityParseError as HttpPriorityParseError,
+};
+pub use rttp_protocol::server_timing::{
+  ServerTiming as HttpServerTiming, ServerTimingMetric as HttpServerTimingMetric,
+  ServerTimingParameter as HttpServerTimingParameter,
+  ServerTimingParseError as HttpServerTimingParseError,
+};
+pub use rttp_protocol::www_authenticate::{
+  WwwAuthenticate as HttpWwwAuthenticate, WwwAuthenticateChallenge as HttpWwwAuthenticateChallenge,
+  WwwAuthenticateParameter as HttpWwwAuthenticateParameter,
+  WwwAuthenticateParseError as HttpWwwAuthenticateParseError,
+};
+
 pub(crate) const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
 pub(crate) const MAX_VARY_VALUE_BYTES: usize = 64 * 1024;
@@ -330,6 +349,73 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `WWW-Authenticate` response metadata.
+  pub fn with_www_authenticate(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpWwwAuthenticateParseError> {
+    let challenges = HttpWwwAuthenticate::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("WWW-Authenticate"));
+    self.headers.push(HttpHeader::new(
+      "WWW-Authenticate",
+      challenges.header_value(),
+    ));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Content-Digest` response metadata.
+  pub fn with_digest(mut self, value: impl AsRef<str>) -> Result<Self, HttpDigestParseError> {
+    let digest = HttpDigest::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Content-Digest"));
+    self
+      .headers
+      .push(HttpHeader::new("Content-Digest", digest.header_value()));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Repr-Digest` response metadata.
+  pub fn with_repr_digest(mut self, value: impl AsRef<str>) -> Result<Self, HttpDigestParseError> {
+    let digest = HttpDigest::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Repr-Digest"));
+    self
+      .headers
+      .push(HttpHeader::new("Repr-Digest", digest.header_value()));
+    Ok(self)
+  }
+
+  /// Validates and replaces HTTP `Priority` response metadata.
+  pub fn with_priority(mut self, value: impl AsRef<str>) -> Result<Self, HttpPriorityParseError> {
+    let priority = HttpPriority::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Priority"));
+    self
+      .headers
+      .push(HttpHeader::new("Priority", priority.header_value()));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Server-Timing` response metadata.
+  pub fn with_server_timing(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpServerTimingParseError> {
+    let timing = HttpServerTiming::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Server-Timing"));
+    self
+      .headers
+      .push(HttpHeader::new("Server-Timing", timing.header_value()));
+    Ok(self)
+  }
+
   pub fn with_content_location<V: AsRef<str>>(
     mut self,
     value: V,
@@ -533,6 +619,73 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpResponseContentEncodings::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `WWW-Authenticate` response metadata without changing raw headers.
+  pub fn www_authenticate(
+    &self,
+  ) -> Result<Option<HttpWwwAuthenticate>, HttpWwwAuthenticateParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("WWW-Authenticate"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpWwwAuthenticate::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Content-Digest` metadata without changing raw headers.
+  pub fn digest(&self) -> Result<Option<HttpDigest>, HttpDigestParseError> {
+    self.digest_field("Content-Digest")
+  }
+
+  /// Parses attached `Repr-Digest` metadata without changing raw headers.
+  pub fn repr_digest(&self) -> Result<Option<HttpReprDigest>, HttpDigestParseError> {
+    self.digest_field("Repr-Digest")
+  }
+
+  fn digest_field(&self, name: &str) -> Result<Option<HttpDigest>, HttpDigestParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case(name))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDigest::parse_values(values).map(Some)
+  }
+
+  /// Parses attached HTTP `Priority` metadata without changing raw headers.
+  pub fn priority(&self) -> Result<Option<HttpPriority>, HttpPriorityParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Priority"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpPriority::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Server-Timing` response metadata without changing raw headers.
+  pub fn server_timing(&self) -> Result<Option<HttpServerTiming>, HttpServerTimingParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Server-Timing"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpServerTiming::parse_values(values).map(Some)
   }
 
   pub fn content_location(&self) -> Result<Option<&str>, HttpContentLocationParseError> {

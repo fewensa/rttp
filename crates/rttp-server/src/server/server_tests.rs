@@ -15,6 +15,28 @@ use std::net::TcpStream as StdTcpStream;
   }
 
   #[test]
+  fn http2_window_update_rejects_zero_increment() {
+    let error = http2_window_update_increment(&[0, 0, 0, 0])
+      .expect_err("zero WINDOW_UPDATE increment must be rejected");
+
+    assert_eq!(io::ErrorKind::InvalidData, error.kind());
+    assert_eq!("invalid HTTP/2 WINDOW_UPDATE frame", error.to_string());
+  }
+
+  #[test]
+  fn http2_send_window_rejects_increment_above_maximum() {
+    let mut window = Http2SendWindow::new(1);
+
+    let error = window
+      .increase(0x7fff_ffff)
+      .expect_err("WINDOW_UPDATE must not exceed the HTTP/2 maximum window");
+
+    assert_eq!(io::ErrorKind::InvalidData, error.kind());
+    assert_eq!("HTTP/2 flow-control window overflow", error.to_string());
+    assert_eq!(1, window.size);
+  }
+
+  #[test]
   fn response_flow_control_reads_update_accepted_stream_tracking() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("test listener should bind");
     let mut client =
@@ -405,4 +427,38 @@ hello\r\n\
     assert_eq!("/first", first.target());
     assert_eq!(io::ErrorKind::InvalidData, error.kind());
     assert_eq!("invalid request header", error.to_string());
+  }
+
+  #[test]
+  fn priority_helpers_parse_requests_and_build_responses() {
+    let raw = concat!(
+      "GET / HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Priority: u=1, i, x=token\r\n",
+      "\r\n"
+    );
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+    let request = Request::read_next_from(&mut reader)
+      .expect("request should parse")
+      .expect("request should be present");
+    let priority = request
+      .priority()
+      .expect("Priority should parse")
+      .expect("Priority should be present");
+
+    assert_eq!(Some(1), priority.urgency());
+    assert!(priority.incremental());
+    assert_eq!(Some("token"), priority.extensions()[0].value());
+
+    let response = HttpResponse::ok([])
+      .with_priority("u=1, i, x=token")
+      .expect("Priority should be accepted");
+    assert_eq!(
+      "u=1, i, x=token",
+      response
+        .priority()
+        .expect("response Priority should parse")
+        .expect("response Priority should be present")
+        .header_value()
+    );
   }
