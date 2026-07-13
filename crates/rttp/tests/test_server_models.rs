@@ -3,9 +3,9 @@ use std::time::{Duration, UNIX_EPOCH};
 use rttp::server::{
   HttpAccept, HttpAcceptRanges, HttpAllowedMethods, HttpByteRange, HttpByteRangeError,
   HttpConditionalMetadata, HttpContentDisposition, HttpContentLanguages, HttpContentType,
-  HttpEntityTag, HttpIfRangeRequestOutcome, HttpRequest, HttpRequestAcceptEncodings,
-  HttpRequestCacheControl, HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings,
-  HttpRetryAfter, HttpVary,
+  HttpEntityTag, HttpIfRangeRequestOutcome, HttpLinkValues, HttpRequest,
+  HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpResponse, HttpResponseCacheControl,
+  HttpResponseContentEncodings, HttpRetryAfter, HttpVary,
 };
 
 fn parse_request(raw: &str) -> HttpRequest {
@@ -736,6 +736,83 @@ fn parses_content_disposition_and_serializes_single_header_value() {
       .expect("Content-Disposition should be present")
       .parameter("filename")
   );
+}
+
+#[test]
+fn response_link_metadata_parses_multiple_values_and_preserves_unknown_parameters() {
+  let response = HttpResponse::ok("body")
+    .header(
+      "Link",
+      "</style.css>; rel=preload; as=style, <https://cdn.example.test/app.js>; rel=modulepreload",
+    )
+    .header(
+      "link",
+      "<../manifest.json>; type=\"application/manifest+json\"; anchor=\"/app\"",
+    );
+
+  let links = response
+    .links()
+    .expect("Link metadata should parse")
+    .expect("Link metadata should be present");
+
+  assert_eq!(3, links.len());
+  assert_eq!("/style.css", links.values()[0].target());
+  assert_eq!(Some("preload"), links.values()[0].parameter("rel"));
+  assert_eq!(Some("style"), links.values()[0].parameter("as"));
+  assert_eq!(
+    "https://cdn.example.test/app.js",
+    links.values()[1].target()
+  );
+  assert_eq!(Some("modulepreload"), links.values()[1].parameter("rel"));
+  assert_eq!("../manifest.json", links.values()[2].target());
+  assert_eq!(
+    vec![("type", "application/manifest+json"), ("anchor", "/app")],
+    links.values()[2].parameters()
+  );
+}
+
+#[test]
+fn response_link_metadata_rejects_invalid_and_bounded_values_without_losing_headers() {
+  for value in [
+    "style.css; rel=preload",
+    "<style.css; rel=preload",
+    "</style.css> rel=preload",
+    "</style.css>; rel",
+    "</style.css>; bad name=value",
+    "</style.css>; rel=\"unterminated",
+  ] {
+    let response = HttpResponse::ok("body").header("Link", value);
+    assert!(
+      response.links().is_err(),
+      "Link parser should reject {value:?}"
+    );
+    assert!(
+      String::from_utf8(response.to_bytes())
+        .expect("response should remain UTF-8")
+        .contains(&format!("\r\nLink: {value}\r\n")),
+      "raw Link header should remain available"
+    );
+  }
+
+  let oversized = format!("</{}>", "a".repeat(64 * 1024));
+  assert!(HttpLinkValues::parse(oversized).is_err());
+
+  let too_many = (0..257)
+    .map(|index| format!("</asset-{index}>"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  assert!(HttpLinkValues::parse(too_many).is_err());
+
+  let too_many_parameters = format!(
+    "</asset>{}",
+    (0..257)
+      .map(|index| format!("; p{index}=v"))
+      .collect::<String>()
+  );
+  assert!(HttpLinkValues::parse(too_many_parameters).is_err());
+
+  let oversized_parameter = format!("</asset>; title={}", "a".repeat(64 * 1024 + 1));
+  assert!(HttpLinkValues::parse(oversized_parameter).is_err());
 }
 
 #[test]

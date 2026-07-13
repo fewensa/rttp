@@ -28,6 +28,10 @@ const MAX_CONTENT_LANGUAGE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_LANGUAGE_TAGS: usize = 256;
 const MAX_VARY_VALUE_BYTES: usize = 64 * 1024;
 const MAX_VARY_FIELD_NAMES: usize = 256;
+const MAX_LINK_VALUE_BYTES: usize = 64 * 1024;
+const MAX_LINK_VALUES: usize = 256;
+const MAX_LINK_PARAMETERS: usize = 256;
+const MAX_LINK_PARAMETER_VALUE_BYTES: usize = 64 * 1024;
 
 #[derive(Clone)]
 pub struct Response {
@@ -296,6 +300,16 @@ impl Response {
       return Ok(None);
     }
     Vary::parse_values(values.into_iter().map(String::as_str)).map(Some)
+  }
+
+  /// Parses `Link` response metadata without enabling preload, redirects,
+  /// caching, or fetch scheduling.
+  pub fn links(&self) -> error::Result<Option<LinkValues>> {
+    let values = self.header_values("link");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    LinkValues::parse_values(values.into_iter().map(String::as_str)).map(Some)
   }
 
   pub fn headers(&self) -> &Vec<Header> {
@@ -969,6 +983,224 @@ impl ContentDisposition {
 pub struct ContentDispositionParameter {
   name: String,
   value: String,
+}
+
+/// Bounded `Link` response metadata.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LinkValues {
+  values: Vec<LinkValue>,
+}
+
+impl LinkValues {
+  pub fn parse(value: impl AsRef<str>) -> error::Result<Self> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  fn parse_values<'a, I>(values: I) -> error::Result<Self>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut parsed = Vec::new();
+    for value in values {
+      if value.len() > MAX_LINK_VALUE_BYTES {
+        return Err(error::bad_response("Link header value is too large"));
+      }
+      for member in split_link_values(value)? {
+        if parsed.len() >= MAX_LINK_VALUES {
+          return Err(error::bad_response("Too many Link values"));
+        }
+        parsed.push(LinkValue::parse_member(&member)?);
+      }
+    }
+    if parsed.is_empty() {
+      return Err(error::bad_response("Invalid Link value"));
+    }
+    Ok(Self { values: parsed })
+  }
+
+  pub fn values(&self) -> &[LinkValue] {
+    &self.values
+  }
+
+  pub fn len(&self) -> usize {
+    self.values.len()
+  }
+
+  pub fn is_empty(&self) -> bool {
+    self.values.is_empty()
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LinkValue {
+  target: String,
+  parameters: Vec<LinkParameter>,
+}
+
+impl LinkValue {
+  fn parse_member(member: &str) -> error::Result<Self> {
+    let member = member.trim();
+    let Some(target_and_tail) = member.strip_prefix('<') else {
+      return Err(error::bad_response("Invalid Link target"));
+    };
+    let Some(target_end) = target_and_tail.find('>') else {
+      return Err(error::bad_response("Invalid Link target"));
+    };
+    let target = &target_and_tail[..target_end];
+    validate_link_target(target)?;
+
+    let mut parameters = Vec::new();
+    let tail = target_and_tail[target_end + 1..].trim();
+    if !tail.is_empty() {
+      if !tail.starts_with(';') {
+        return Err(error::bad_response("Invalid Link parameter"));
+      }
+      for parameter in split_link_parameters(&tail[1..])? {
+        if parameters.len() >= MAX_LINK_PARAMETERS {
+          return Err(error::bad_response("Too many Link parameters"));
+        }
+        let parameter = LinkParameter::parse(&parameter)?;
+        if parameters
+          .iter()
+          .any(|known: &LinkParameter| known.name.eq_ignore_ascii_case(&parameter.name))
+        {
+          return Err(error::bad_response("Duplicate Link parameter"));
+        }
+        parameters.push(parameter);
+      }
+    }
+    Ok(Self {
+      target: target.to_string(),
+      parameters,
+    })
+  }
+
+  pub fn target(&self) -> &str {
+    &self.target
+  }
+
+  pub fn parameters(&self) -> &[LinkParameter] {
+    &self.parameters
+  }
+
+  pub fn parameter(&self, name: impl AsRef<str>) -> Option<&str> {
+    self
+      .parameters
+      .iter()
+      .find(|parameter| parameter.name.eq_ignore_ascii_case(name.as_ref()))
+      .map(LinkParameter::value)
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LinkParameter {
+  name: String,
+  value: String,
+}
+
+impl LinkParameter {
+  fn parse(value: &str) -> error::Result<Self> {
+    let (name, value) = value
+      .split_once('=')
+      .ok_or_else(|| error::bad_response("Invalid Link parameter"))?;
+    let name = name.trim();
+    let value = value.trim();
+    if !is_token(name) {
+      return Err(error::bad_response("Invalid Link parameter name"));
+    }
+    if value.len() > MAX_LINK_PARAMETER_VALUE_BYTES {
+      return Err(error::bad_response("Link parameter value is too large"));
+    }
+    let value = parse_link_parameter_value(value)?;
+    Ok(Self {
+      name: name.to_ascii_lowercase(),
+      value,
+    })
+  }
+
+  pub fn name(&self) -> &str {
+    &self.name
+  }
+
+  pub fn value(&self) -> &str {
+    &self.value
+  }
+}
+
+fn validate_link_target(target: &str) -> error::Result<()> {
+  if target.is_empty()
+    || target
+      .bytes()
+      .any(|byte| byte.is_ascii_control() || byte == b'<' || byte == b'>')
+  {
+    return Err(error::bad_response("Invalid Link target"));
+  }
+  let base = Url::parse("http://example.invalid/").expect("valid internal base URL");
+  Url::options()
+    .base_url(Some(&base))
+    .parse(target)
+    .map_err(|_| error::bad_response("Invalid Link target"))?;
+  Ok(())
+}
+
+fn split_link_values(value: &str) -> error::Result<Vec<String>> {
+  split_link_members(value, b',', "Invalid Link value")
+}
+
+fn split_link_parameters(value: &str) -> error::Result<Vec<String>> {
+  split_link_members(value, b';', "Invalid Link parameter")
+}
+
+fn split_link_members(value: &str, delimiter: u8, message: &str) -> error::Result<Vec<String>> {
+  let mut members = Vec::new();
+  let mut start = 0usize;
+  let mut quoted = false;
+  let mut escaped = false;
+  let mut in_target = false;
+  for (index, byte) in value.bytes().enumerate() {
+    if escaped {
+      escaped = false;
+      continue;
+    }
+    match byte {
+      b'\\' if quoted => escaped = true,
+      b'"' if !in_target => quoted = !quoted,
+      b'<' if !quoted => in_target = true,
+      b'>' if !quoted => in_target = false,
+      byte if byte == delimiter && !quoted && !in_target => {
+        let member = value[start..index].trim();
+        if member.is_empty() {
+          return Err(error::bad_response(message));
+        }
+        members.push(member.to_string());
+        start = index + 1;
+      }
+      _ => {}
+    }
+  }
+  if quoted || escaped || in_target {
+    return Err(error::bad_response(message));
+  }
+  let member = value[start..].trim();
+  if member.is_empty() {
+    return Err(error::bad_response(message));
+  }
+  members.push(member.to_string());
+  Ok(members)
+}
+
+fn parse_link_parameter_value(value: &str) -> error::Result<String> {
+  if value.is_empty() {
+    return Err(error::bad_response("Invalid Link parameter value"));
+  }
+  if let Some(value) = value.strip_prefix('"') {
+    return parse_content_disposition_quoted_string(value)
+      .map_err(|_| error::bad_response("Malformed Link quoted-string"));
+  }
+  if value.contains('"') || !is_token(value) {
+    return Err(error::bad_response("Invalid Link parameter value"));
+  }
+  Ok(value.to_string())
 }
 
 impl ContentDispositionParameter {

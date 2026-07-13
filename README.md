@@ -125,6 +125,19 @@ linked resources, apply cache policy, redirect, retry, replay requests,
 generate routes, expose a streaming early-write API, or add TLS/ALPN behavior
 from `103` metadata.
 
+### Bounded HTTP/1.1 Link response metadata
+
+`Response::links()` parses one or more final-response `Link` fields into
+ordered `LinkValues` and `LinkValue` metadata. Each value retains its target
+URI/reference and ordered parameters, including unknown parameters such as
+extensions alongside `rel`. Parsing is on demand, so malformed or oversized
+metadata returns an error without discarding raw response headers. Fields and
+parameter values are limited to 64 KiB, with at most 256 link-values and 256
+parameters per value.
+
+This shares Early Hints' bounded metadata posture, but it does not preload,
+schedule fetches, redirect, apply cache policy, or generate routes.
+
 ### Bounded HTTP/1.1 Cache-Control behavior
 
 `Response::cache_control()` parses one or more response `Cache-Control` header
@@ -773,6 +786,18 @@ Early Hints support is metadata-only. The server does not execute preloads,
 choose cache policy, redirect, retry, replay requests, generate routes, expose
 a streaming early-write API, alter TLS/ALPN behavior, or decide final response
 status from `103` metadata.
+
+### Bounded HTTP/1.1 Link response metadata
+
+`HttpResponse::links()` parses final-response `Link` fields into ordered
+`HttpLinkValues` and `HttpLinkValue` metadata. URI/reference targets and both
+standard and unknown parameters are retained in order. The parser applies 64
+KiB per-field and parameter-value limits, plus limits of 256 link-values and
+256 parameters per value; parsing errors leave raw response headers intact.
+
+Link metadata uses the same bounded model as Early Hints, but does not execute
+preloads or enable fetch scheduling, redirects, cache policy, or route
+generation.
 
 ### Bounded HTTP/1.1 Cache-Control behavior
 
