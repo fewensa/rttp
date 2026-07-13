@@ -1,5 +1,6 @@
 use rttp_client::response::{
-  ContentDisposition, ContentEncoding, ContentLocation, ContentType, LinkValues, Response,
+  ContentDisposition, ContentEncoding, ContentLocation, ContentType, Digest, LinkValues, Response,
+  ServerTiming, WwwAuthenticate,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -503,6 +504,244 @@ fn test_parse_content_disposition_response_helper_returns_none_when_absent() {
       .content_disposition()
       .expect("absent content-disposition should parse")
   );
+}
+
+#[test]
+fn test_www_authenticate_response_helper_parses_bounded_challenges() {
+  let raw = concat!(
+    "HTTP/1.1 401 Unauthorized\r\n",
+    "WWW-Authenticate: Basic realm=\"users\"\r\n",
+    "WWW-Authenticate: Bearer mF_9.B5f-4.1JqM, Digest realm=\"apps\", nonce=\"a\\\\b\"\r\n",
+    "Content-Length: 2\r\n\r\nOK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  let challenges = response
+    .www_authenticate()
+    .expect("valid challenges should parse")
+    .expect("WWW-Authenticate should be present");
+
+  assert_eq!(3, challenges.len());
+  assert_eq!("Basic", challenges.challenges()[0].scheme());
+  assert_eq!(Some("users"), challenges.challenges()[0].parameter("realm"));
+  assert_eq!("Bearer", challenges.challenges()[1].scheme());
+  assert_eq!(
+    Some("mF_9.B5f-4.1JqM"),
+    challenges.challenges()[1].token68()
+  );
+  assert_eq!("Digest", challenges.challenges()[2].scheme());
+  assert_eq!(Some("a\\b"), challenges.challenges()[2].parameter("nonce"));
+}
+
+#[test]
+fn test_www_authenticate_preserves_utf8_quoted_parameter_values() {
+  let raw = concat!(
+    "HTTP/1.1 401 Unauthorized\r\n",
+    "WWW-Authenticate: Digest realm=\"caf\u{e9}\"\r\n",
+    "Content-Length: 0\r\n\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  let challenges = response
+    .www_authenticate()
+    .expect("valid challenge should parse")
+    .expect("WWW-Authenticate should be present");
+
+  assert_eq!(
+    Some("caf\u{e9}"),
+    challenges.challenges()[0].parameter("realm")
+  );
+}
+
+#[test]
+fn test_www_authenticate_rejects_malformed_duplicate_and_bounded_values() {
+  for value in [
+    "Basic realm=",
+    "Basic realm=\"unterminated",
+    "Basic realm=one, REALM=two",
+    "Basic @",
+    "Basic token===more",
+  ] {
+    let raw = format!(
+      "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: {value}\r\nContent-Length: 2\r\n\r\nOK"
+    );
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(
+      response.www_authenticate().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("WWW-Authenticate")
+    );
+  }
+
+  let oversized = "Basic realm=".to_string() + &"a".repeat(64 * 1024);
+  assert!(
+    WwwAuthenticate::parse(oversized).is_err(),
+    "helper should reject an oversized field"
+  );
+  let too_many = (0..257)
+    .map(|index| format!("Scheme{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  assert!(WwwAuthenticate::parse(too_many).is_err());
+  let too_many_parameters = format!(
+    "Digest {}",
+    (0..257)
+      .map(|index| format!("p{index}=v"))
+      .collect::<Vec<_>>()
+      .join(", ")
+  );
+  assert!(WwwAuthenticate::parse(too_many_parameters).is_err());
+  assert!(WwwAuthenticate::parse(format!("Basic realm={}", "a".repeat(64 * 1024 + 1))).is_err());
+}
+
+#[test]
+fn test_digest_response_helpers_parse_bounded_digest_fields() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Digest: sha-256=:YWJj:, sha-512=:ZGVm:\r\n",
+    "Repr-Digest: sha-256=:Z2hp:\r\n",
+    "Content-Length: 0\r\n\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  let digest = response
+    .digest()
+    .expect("Digest should parse")
+    .expect("Digest should be present");
+  assert_eq!(2, digest.len());
+  assert_eq!(
+    Some(&b"abc"[..]),
+    digest.entry("sha-256").map(|entry| entry.value())
+  );
+  assert_eq!(
+    Some(&b"def"[..]),
+    digest.entry("sha-512").map(|entry| entry.value())
+  );
+
+  let repr_digest = response
+    .repr_digest()
+    .expect("Repr-Digest should parse")
+    .expect("Repr-Digest should be present");
+  assert_eq!(
+    Some(&b"ghi"[..]),
+    repr_digest.entry("sha-256").map(|entry| entry.value())
+  );
+}
+
+#[test]
+fn test_priority_response_helper_parses_known_and_extension_metadata() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Priority: u=1, i, x=token\r\n",
+    "Content-Length: 0\r\n\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+  let priority = response
+    .priority()
+    .expect("Priority should parse")
+    .expect("Priority should be present");
+  assert_eq!(Some(1), priority.urgency());
+  assert!(priority.incremental());
+  assert_eq!(Some("token"), priority.extensions()[0].value());
+}
+
+#[test]
+fn test_server_timing_response_helper_parses_metrics_extensions_and_duplicates() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Server-Timing: db;dur=53.2;desc=\"primary database\";region=us-east;cached, db;dur=4\r\n",
+    "Server-Timing: app;desc=\"render \\\"home\\\"\";build=2026\r\n",
+    "Content-Length: 2\r\n\r\nOK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+  let timing = response
+    .server_timing()
+    .expect("valid Server-Timing should parse")
+    .expect("Server-Timing should be present");
+  assert_eq!(3, timing.len());
+  assert_eq!("db", timing.metrics()[0].name());
+  assert_eq!(Some(53.2), timing.metrics()[0].duration());
+  assert_eq!(Some("primary database"), timing.metrics()[0].description());
+  assert_eq!(
+    vec![("region", Some("us-east")), ("cached", None)],
+    timing.metrics()[0]
+      .parameters()
+      .iter()
+      .map(|parameter| (parameter.name(), parameter.value()))
+      .collect::<Vec<_>>()
+  );
+  assert_eq!("db", timing.metrics()[1].name());
+  assert_eq!(Some(4.0), timing.metrics()[1].duration());
+  assert_eq!(Some("render \"home\""), timing.metrics()[2].description());
+  assert_eq!("db; dur=53.2; desc=\"primary database\"; region=us-east; cached, db; dur=4, app; desc=\"render \\\"home\\\"\"; build=2026", timing.header_value());
+}
+
+#[test]
+fn test_digest_response_helpers_recover_from_empty_duplicate_and_oversized_fields() {
+  for (header, value) in [
+    ("Content-Digest", ""),
+    ("Content-Digest", "sha-256=:YWJj:, sha-256=:ZGVm:"),
+    ("Repr-Digest", "sha-256=:YWJj:, sha-256=:ZGVm:"),
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\n{header}: {value}\r\nContent-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    let result = if header == "Content-Digest" {
+      response.digest().map(|_| ())
+    } else {
+      response.repr_digest().map(|_| ())
+    };
+    assert!(result.is_err(), "{header} should reject {value:?}");
+    assert_eq!(Some(&value.to_string()), response.header_value(header));
+  }
+
+  let oversized = format!("sha-256=:{}:", "A".repeat(64 * 1024));
+  assert!(Digest::parse(oversized).is_err());
+}
+
+#[test]
+fn test_server_timing_rejects_malformed_and_oversized_values_without_hiding_headers() {
+  for value in [
+    "db;dur=not-a-number",
+    "db;dur=-1",
+    "db;desc=unterminated value",
+    "db;=value",
+    "db;dur=1;dur=2",
+    "db;desc=\"unterminated",
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\nServer-Timing: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(response.server_timing().is_err(), "should reject {value:?}");
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Server-Timing")
+    );
+  }
+  assert!(ServerTiming::parse(format!("db;desc=\"{}\"", "a".repeat(64 * 1024))).is_err());
+  assert!(ServerTiming::parse(
+    (0..257)
+      .map(|index| format!("metric{index}"))
+      .collect::<Vec<_>>()
+      .join(", ")
+  )
+  .is_err());
+  assert!(ServerTiming::parse(format!(
+    "db{}",
+    (0..257)
+      .map(|index| format!(";ext{index}=value"))
+      .collect::<String>()
+  ))
+  .is_err());
 }
 
 #[test]

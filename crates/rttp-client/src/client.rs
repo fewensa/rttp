@@ -7,6 +7,8 @@ use crate::types::{Auth, Header, IntoHeader, IntoPara, Proxy, ToFormData, ToRoUr
 use crate::{error, Config, H2cClientPolicy};
 #[cfg(feature = "async")]
 use futures::io::AsyncRead;
+use rttp_protocol::forwarded::{Forwarded, MAX_FORWARDED_VALUE_BYTES};
+use rttp_protocol::priority::Priority;
 use std::io;
 
 #[derive(Debug)]
@@ -218,6 +220,43 @@ impl HttpClient {
   {
     let value = build_accept_language_value(ranges)?;
     Ok(self.header(Header::new("Accept-Language", value)))
+  }
+
+  /// Set bounded HTTP `Priority` request metadata.
+  ///
+  /// This validates RFC 9218 urgency, incremental, and extension parameters
+  /// before connecting. It only declares request metadata; it does not change
+  /// transport scheduling.
+  pub fn priority<V: AsRef<str>>(&mut self, value: V) -> error::Result<&mut Self> {
+    let priority = Priority::parse(value)
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new("Priority", priority.header_value())))
+  }
+
+  /// Append bounded RFC 7239 `Forwarded` request metadata.
+  ///
+  /// This validates and preserves forwarding elements such as `for`, `by`,
+  /// `host`, and `proto`; it does not select a proxy, establish trust, or
+  /// rewrite any address.
+  pub fn forwarded<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let forwarded = Forwarded::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    let headers = self.request.headers_mut();
+    if let Some(header) = headers
+      .iter_mut()
+      .find(|header| header.name().eq_ignore_ascii_case("Forwarded"))
+    {
+      let combined = Forwarded::parse_values([header.value().as_str(), value.as_ref()])
+        .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+      let value = bounded_forwarded_header_value(combined)?;
+      header.replace(Header::new("Forwarded", value));
+    } else {
+      headers.push(Header::new(
+        "Forwarded",
+        bounded_forwarded_header_value(forwarded)?,
+      ));
+    }
+    Ok(self)
   }
 
   /// Set a single bounded byte range request header, `Range: bytes=start-end`.
@@ -648,6 +687,16 @@ impl HttpClient {
     self.request.clear_streaming_chunked_body_headers();
     result
   }
+}
+
+fn bounded_forwarded_header_value(forwarded: Forwarded) -> error::Result<String> {
+  let value = forwarded.header_value();
+  if value.len() > MAX_FORWARDED_VALUE_BYTES {
+    return Err(error::builder_with_message(
+      "Forwarded header value is too large",
+    ));
+  }
+  Ok(value)
 }
 
 const MAX_ACCEPT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
