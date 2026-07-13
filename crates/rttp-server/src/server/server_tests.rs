@@ -462,3 +462,32 @@ hello\r\n\
         .header_value()
     );
   }
+
+  #[test]
+  fn alt_svc_helpers_validate_build_and_parse_response_metadata() {
+    let response = HttpResponse::ok([])
+      .with_alt_svc("h3=\":443\"; ma=3600; persist=1; region=\"us-east\"")
+      .expect("Alt-Svc should be accepted");
+    let alt_svc = response
+      .alt_svc()
+      .expect("response Alt-Svc should parse")
+      .expect("response Alt-Svc should be present");
+
+    assert_eq!("h3", alt_svc.alternatives()[0].protocol_id());
+    assert_eq!(":443", alt_svc.alternatives()[0].authority());
+    assert_eq!(Some(3600), alt_svc.alternatives()[0].max_age());
+    assert_eq!(Some(true), alt_svc.alternatives()[0].persist());
+    assert_eq!(
+      "h3=\":443\"; ma=3600; persist=1; region=us-east",
+      alt_svc.header_value()
+    );
+
+    let clear = HttpResponse::ok([])
+      .with_alt_svc("clear")
+      .expect("clear should be accepted");
+    assert!(clear
+      .alt_svc()
+      .expect("clear should parse")
+      .expect("clear should be present")
+      .is_clear());
+  }
