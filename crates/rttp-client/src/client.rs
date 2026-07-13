@@ -479,6 +479,9 @@ impl HttpClient {
     if !is_http_token(coding) {
       return Err(error::builder_with_message("invalid TE coding"));
     }
+    if coding.eq_ignore_ascii_case("chunked") {
+      return Err(error::builder_with_message("TE must not advertise chunked"));
+    }
     if coding.eq_ignore_ascii_case("trailers") && qvalue.is_some() {
       return Err(error::builder_with_message(
         "TE trailers cannot carry a q-value",
@@ -493,30 +496,51 @@ impl HttpClient {
       return Err(error::builder_with_message("TE header value is too large"));
     }
 
-    let headers = self.request.headers_mut();
-    let existing = headers
-      .iter_mut()
-      .find(|header| header.name().eq_ignore_ascii_case("TE"));
-    if let Some(header) = existing {
-      let existing_codings = parse_te_codings(header.value())?;
-      if existing_codings
-        .iter()
-        .any(|known| known.eq_ignore_ascii_case(coding))
-      {
-        return Err(error::builder_with_message("duplicate TE coding"));
+    {
+      let headers = self.request.headers_mut();
+      let existing = headers
+        .iter_mut()
+        .find(|header| header.name().eq_ignore_ascii_case("TE"));
+      if let Some(header) = existing {
+        let existing_codings = parse_te_codings(header.value())?;
+        if existing_codings
+          .iter()
+          .any(|known| known.eq_ignore_ascii_case(coding))
+        {
+          return Err(error::builder_with_message("duplicate TE coding"));
+        }
+        if existing_codings.len() >= MAX_TE_CODINGS {
+          return Err(error::builder_with_message("too many TE codings"));
+        }
+        let value = format!("{}, {member}", header.value());
+        if value.len() > MAX_TE_VALUE_BYTES {
+          return Err(error::builder_with_message("TE header value is too large"));
+        }
+        header.replace(Header::new("TE", value));
+      } else {
+        headers.push(Header::new("TE", member));
       }
-      if existing_codings.len() >= MAX_TE_CODINGS {
-        return Err(error::builder_with_message("too many TE codings"));
-      }
-      let value = format!("{}, {member}", header.value());
-      if value.len() > MAX_TE_VALUE_BYTES {
-        return Err(error::builder_with_message("TE header value is too large"));
-      }
-      header.replace(Header::new("TE", value));
-    } else {
-      headers.push(Header::new("TE", member));
     }
+    self.ensure_connection_te_token();
     Ok(self)
+  }
+
+  fn ensure_connection_te_token(&mut self) {
+    let headers = self.request.headers_mut();
+    if let Some(header) = headers
+      .iter_mut()
+      .find(|header| header.name().eq_ignore_ascii_case("Connection"))
+    {
+      if !header
+        .value()
+        .split(',')
+        .any(|token| token.trim().eq_ignore_ascii_case("TE"))
+      {
+        header.replace(Header::new("Connection", format!("{}, TE", header.value())));
+      }
+    } else {
+      headers.push(Header::new("Connection", "Close, TE"));
+    }
   }
 
   /// Add request para

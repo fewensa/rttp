@@ -212,7 +212,7 @@ fn http2_upgrade_sends_http11_upgrade_then_runs_single_h2_stream() {
     let (mut stream, _) = listener.accept().expect("accept h2c upgrade client");
     let request = String::from_utf8(read_http1_request_head(&mut stream)).expect("request utf8");
     assert!(request.starts_with("GET /upgrade?via=h2c HTTP/1.1\r\n"));
-    assert!(request.contains("\r\nConnection: Upgrade, HTTP2-Settings\r\n"));
+    assert!(request.contains("\r\nConnection: Upgrade, HTTP2-Settings, TE\r\n"));
     assert!(request.contains("\r\nUpgrade: h2c\r\n"));
     let settings = header_value(&request, "HTTP2-Settings").expect("http2 settings header");
     assert_eq!(
@@ -248,6 +248,8 @@ fn http2_upgrade_sends_http11_upgrade_then_runs_single_h2_stream() {
   let response = HttpClient::new()
     .get()
     .url(format!("http://{}/upgrade?via=h2c", addr))
+    .te("gzip")
+    .expect("transfer coding should be accepted")
     .emit_http2_upgrade()
     .expect("h2c upgrade response");
 
@@ -1436,6 +1438,8 @@ fn prior_knowledge_request_preserves_only_trailers_te() {
   let response = HttpClient::new()
     .get()
     .url(format!("http://{}/te", addr))
+    .te("gzip")
+    .expect("transfer coding should be accepted")
     .te_trailers()
     .expect("trailers should be accepted")
     .emit_http2_prior_knowledge()

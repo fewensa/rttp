@@ -3,15 +3,9 @@ use std::time::{Duration, UNIX_EPOCH};
 use rttp::server::{
   HttpAccept, HttpAcceptRanges, HttpAllowedMethods, HttpByteRange, HttpByteRangeError,
   HttpConditionalMetadata, HttpContentDisposition, HttpContentLanguages, HttpContentType,
-<<<<<<< HEAD
-  HttpEntityTag, HttpIfRangeRequestOutcome, HttpRequest, HttpRequestAcceptEncodings,
-  HttpRequestCacheControl, HttpRequestTe, HttpResponse, HttpResponseCacheControl,
-  HttpResponseContentEncodings, HttpRetryAfter, HttpVary,
-=======
   HttpDigest, HttpEntityTag, HttpIfRangeRequestOutcome, HttpRequest, HttpRequestAcceptEncodings,
-  HttpRequestCacheControl, HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings,
-  HttpRetryAfter, HttpServerTiming, HttpVary,
->>>>>>> origin/main
+  HttpRequestCacheControl, HttpRequestTe, HttpResponse, HttpResponseCacheControl,
+  HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming, HttpVary,
 };
 
 #[test]
