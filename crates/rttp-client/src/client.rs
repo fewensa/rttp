@@ -177,7 +177,10 @@ impl HttpClient {
         "invalid Authorization authentication scheme",
       ));
     }
-    if credentials.is_empty() || !credentials.bytes().all(is_header_value_byte) {
+    if credentials.is_empty()
+      || credentials.bytes().all(|byte| matches!(byte, b' ' | b'\t'))
+      || !credentials.bytes().all(is_header_value_byte)
+    {
       return Err(error::builder_with_message(
         "invalid Authorization credentials",
       ));

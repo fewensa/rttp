@@ -244,6 +244,7 @@ fn authorization_helper_rejects_invalid_or_oversized_metadata_before_connecting(
   for (scheme, credentials) in [
     ("bad scheme", "token".to_string()),
     ("Bearer", "".to_string()),
+    ("Bearer", " \t ".to_string()),
     ("Bearer", "x".repeat(64 * 1024 + 1)),
   ] {
     let request = capture_optional_request(|base_url| {
