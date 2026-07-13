@@ -1100,9 +1100,7 @@ pub struct LinkParameter {
 
 impl LinkParameter {
   fn parse(value: &str) -> error::Result<Self> {
-    let (name, value) = value
-      .split_once('=')
-      .ok_or_else(|| error::bad_response("Invalid Link parameter"))?;
+    let (name, value) = value.split_once('=').unwrap_or((value, ""));
     let name = name.trim();
     let value = value.trim();
     if !is_token(name) {
@@ -1111,7 +1109,11 @@ impl LinkParameter {
     if value.len() > MAX_LINK_PARAMETER_VALUE_BYTES {
       return Err(error::bad_response("Link parameter value is too large"));
     }
-    let value = parse_link_parameter_value(value)?;
+    let value = if value.is_empty() {
+      String::new()
+    } else {
+      parse_link_parameter_value(value)?
+    };
     Ok(Self {
       name: name.to_ascii_lowercase(),
       value,

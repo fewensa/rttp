@@ -772,12 +772,30 @@ fn response_link_metadata_parses_multiple_values_and_preserves_unknown_parameter
 }
 
 #[test]
+fn response_link_metadata_preserves_valueless_extensions_and_empty_quoted_values() {
+  let response =
+    HttpResponse::ok("body").header("Link", "</style.css>; rel=preload; nopush; title=\"\"");
+
+  let links = response
+    .links()
+    .expect("Link metadata should parse")
+    .expect("Link metadata should be present");
+
+  assert_eq!(Some(""), links.values()[0].parameter("nopush"));
+  assert_eq!(Some(""), links.values()[0].parameter("title"));
+  assert_eq!(
+    vec![("rel", "preload"), ("nopush", ""), ("title", "")],
+    links.values()[0].parameters()
+  );
+}
+
+#[test]
 fn response_link_metadata_rejects_invalid_and_bounded_values_without_losing_headers() {
   for value in [
     "style.css; rel=preload",
     "<style.css; rel=preload",
     "</style.css> rel=preload",
-    "</style.css>; rel",
+    "</style.css>; =preload",
     "</style.css>; bad name=value",
     "</style.css>; rel=\"unterminated",
   ] {

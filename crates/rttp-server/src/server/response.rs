@@ -348,9 +348,7 @@ fn split_http_link_members(value: &str, delimiter: u8) -> Result<Vec<String>, Ht
 }
 
 fn parse_http_link_parameter(value: &str) -> Result<(String, String), HttpLinkParseError> {
-  let Some((name, value)) = value.split_once('=') else {
-    return Err(HttpLinkParseError::new("invalid Link parameter"));
-  };
+  let (name, value) = value.split_once('=').unwrap_or((value, ""));
   let name = name.trim();
   let value = value.trim();
   if !is_http_token(name) {
@@ -359,15 +357,46 @@ fn parse_http_link_parameter(value: &str) -> Result<(String, String), HttpLinkPa
   if value.len() > MAX_LINK_PARAMETER_VALUE_BYTES {
     return Err(HttpLinkParseError::new("Link parameter value is too large"));
   }
-  let value = if value.starts_with('"') {
-    parse_content_disposition_quoted_string(value)
-      .map_err(|_| HttpLinkParseError::new("invalid Link quoted-string"))?
+  let value = if value.is_empty() {
+    String::new()
+  } else if value.starts_with('"') {
+    parse_http_link_quoted_string(value)?
   } else if value.contains('"') || !is_http_token(value) {
     return Err(HttpLinkParseError::new("invalid Link parameter value"));
   } else {
     value.to_string()
   };
   Ok((name.to_ascii_lowercase(), value))
+}
+
+fn parse_http_link_quoted_string(value: &str) -> Result<String, HttpLinkParseError> {
+  if !value.ends_with('"') || value.len() < 2 {
+    return Err(HttpLinkParseError::new("invalid Link quoted-string"));
+  }
+
+  let inner = &value[1..value.len() - 1];
+  let mut parsed = String::new();
+  let mut escaped = false;
+  for byte in inner.bytes() {
+    if escaped {
+      if !is_content_disposition_quoted_pair_byte(byte) {
+        return Err(HttpLinkParseError::new("invalid Link quoted-string"));
+      }
+      parsed.push(byte as char);
+      escaped = false;
+    } else if byte == b'\\' {
+      escaped = true;
+    } else if byte == b'"' || !is_content_disposition_quoted_text_byte(byte) {
+      return Err(HttpLinkParseError::new("invalid Link quoted-string"));
+    } else {
+      parsed.push(byte as char);
+    }
+  }
+
+  if escaped {
+    return Err(HttpLinkParseError::new("invalid Link quoted-string"));
+  }
+  Ok(parsed)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

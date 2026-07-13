@@ -657,12 +657,40 @@ fn test_parse_link_response_metadata_preserves_multiple_values_and_parameters() 
 }
 
 #[test]
+fn test_parse_link_response_metadata_preserves_valueless_extensions() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Link: </style.css>; rel=preload; nopush\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response with Link metadata remains usable");
+
+  let links = response
+    .links()
+    .expect("Link metadata should parse")
+    .expect("Link metadata should be present");
+
+  assert_eq!(Some(""), links.values()[0].parameter("nopush"));
+  assert_eq!(
+    vec![("rel", "preload"), ("nopush", "")],
+    links.values()[0]
+      .parameters()
+      .iter()
+      .map(|parameter| (parameter.name(), parameter.value()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
 fn test_link_response_metadata_rejects_invalid_and_bounded_values_without_losing_headers() {
   for value in [
     "style.css; rel=preload",
     "<style.css; rel=preload",
     "</style.css> rel=preload",
-    "</style.css>; rel",
+    "</style.css>; =preload",
     "</style.css>; bad name=value",
     "</style.css>; rel=\"unterminated",
   ] {
