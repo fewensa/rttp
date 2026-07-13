@@ -3,8 +3,8 @@ use std::time::{Duration, UNIX_EPOCH};
 use rttp::server::{
   HttpAcceptRanges, HttpAllowedMethods, HttpByteRange, HttpByteRangeError, HttpConditionalMetadata,
   HttpContentDisposition, HttpContentLanguages, HttpContentType, HttpEntityTag,
-  HttpIfRangeRequestOutcome, HttpRequest, HttpRequestCacheControl, HttpResponse,
-  HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpVary,
+  HttpIfRangeRequestOutcome, HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl,
+  HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpVary,
 };
 
 fn parse_request(raw: &str) -> HttpRequest {
@@ -36,6 +36,72 @@ fn parses_request_cache_control_directives() {
   assert_eq!(1, cache_control.extensions().len());
   assert_eq!("ext", cache_control.extensions()[0].name());
   assert_eq!(Some("a,b"), cache_control.extensions()[0].value());
+}
+
+#[test]
+fn request_accept_encoding_parses_codings_and_quality_values() {
+  let request = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Accept-Encoding: gzip, br;q=0.8\r\n",
+    "accept-encoding: identity; q=0\r\n",
+    "\r\n"
+  ));
+
+  let encodings = request
+    .accept_encoding()
+    .expect("Accept-Encoding should parse")
+    .expect("Accept-Encoding should be present");
+
+  assert_eq!(3, encodings.len());
+  assert_eq!("gzip", encodings.codings()[0].coding());
+  assert_eq!(1000, encodings.codings()[0].quality());
+  assert_eq!("br", encodings.codings()[1].coding());
+  assert_eq!(800, encodings.codings()[1].quality());
+  assert_eq!("identity", encodings.codings()[2].coding());
+  assert_eq!(0, encodings.codings()[2].quality());
+}
+
+#[test]
+fn request_accept_encoding_rejects_duplicate_invalid_and_oversized_values() {
+  assert_eq!(
+    None,
+    parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .accept_encoding()
+      .expect("absent Accept-Encoding should be accepted")
+  );
+
+  for value in [
+    "",
+    "gzip,",
+    ", gzip",
+    "gzip,,br",
+    "bad coding",
+    "gzip;q=1.1",
+  ] {
+    let request = parse_request(&format!(
+      "GET / HTTP/1.1\r\nHost: example.test\r\nAccept-Encoding: {value}\r\n\r\n"
+    ));
+    assert!(
+      request.accept_encoding().is_err(),
+      "should reject {value:?}"
+    );
+  }
+
+  let duplicate = parse_request(concat!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\n",
+    "Accept-Encoding: gzip\r\naccept-encoding: GZIP;q=0.5\r\n\r\n"
+  ));
+  assert!(duplicate.accept_encoding().is_err());
+
+  let oversized = "gzip".repeat(64 * 1024);
+  assert!(HttpRequestAcceptEncodings::parse(oversized).is_err());
+
+  let too_many = (0..33)
+    .map(|index| format!("coding{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  assert!(HttpRequestAcceptEncodings::parse(too_many).is_err());
 }
 
 #[test]

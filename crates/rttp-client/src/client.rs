@@ -231,6 +231,66 @@ impl HttpClient {
     Ok(self.header(("Range", format!("bytes=-{}", suffix).as_str())))
   }
 
+  /// Append a validated `Accept-Encoding` coding with the default quality of
+  /// `1`. This declares request metadata only; it does not enable compression
+  /// or decompression.
+  pub fn accept_encoding<S: AsRef<str>>(&mut self, coding: S) -> error::Result<&mut Self> {
+    self.accept_encoding_member(coding.as_ref(), None)
+  }
+
+  /// Append a validated `Accept-Encoding` coding with an HTTP q-value.
+  ///
+  /// The q-value must be between `0` and `1` with at most three fractional
+  /// digits. This declares request metadata only; it does not enable
+  /// compression or decompression.
+  pub fn accept_encoding_with_q<C: AsRef<str>, Q: AsRef<str>>(
+    &mut self,
+    coding: C,
+    qvalue: Q,
+  ) -> error::Result<&mut Self> {
+    self.accept_encoding_member(coding.as_ref(), Some(qvalue.as_ref()))
+  }
+
+  /// Append `gzip` to `Accept-Encoding`.
+  pub fn accept_gzip(&mut self) -> error::Result<&mut Self> {
+    self.accept_encoding("gzip")
+  }
+
+  /// Append `gzip` to `Accept-Encoding` with an HTTP q-value.
+  pub fn accept_gzip_with_q<Q: AsRef<str>>(&mut self, qvalue: Q) -> error::Result<&mut Self> {
+    self.accept_encoding_with_q("gzip", qvalue)
+  }
+
+  /// Append `deflate` to `Accept-Encoding`.
+  pub fn accept_deflate(&mut self) -> error::Result<&mut Self> {
+    self.accept_encoding("deflate")
+  }
+
+  /// Append `deflate` to `Accept-Encoding` with an HTTP q-value.
+  pub fn accept_deflate_with_q<Q: AsRef<str>>(&mut self, qvalue: Q) -> error::Result<&mut Self> {
+    self.accept_encoding_with_q("deflate", qvalue)
+  }
+
+  /// Append `br` to `Accept-Encoding`.
+  pub fn accept_br(&mut self) -> error::Result<&mut Self> {
+    self.accept_encoding("br")
+  }
+
+  /// Append `br` to `Accept-Encoding` with an HTTP q-value.
+  pub fn accept_br_with_q<Q: AsRef<str>>(&mut self, qvalue: Q) -> error::Result<&mut Self> {
+    self.accept_encoding_with_q("br", qvalue)
+  }
+
+  /// Append `identity` to `Accept-Encoding`.
+  pub fn accept_identity(&mut self) -> error::Result<&mut Self> {
+    self.accept_encoding("identity")
+  }
+
+  /// Append `identity` to `Accept-Encoding` with an HTTP q-value.
+  pub fn accept_identity_with_q<Q: AsRef<str>>(&mut self, qvalue: Q) -> error::Result<&mut Self> {
+    self.accept_encoding_with_q("identity", qvalue)
+  }
+
   /// Set an `If-Range` validator with a single strong entity tag.
   ///
   /// `If-Range` only permits strong entity-tag validators. Use `header`
@@ -279,6 +339,55 @@ impl HttpClient {
   /// Set request content type
   pub fn content_type<S: AsRef<str>>(&mut self, content_type: S) -> &mut Self {
     self.header(("Content-Type", content_type.as_ref()))
+  }
+
+  fn accept_encoding_member(
+    &mut self,
+    coding: &str,
+    qvalue: Option<&str>,
+  ) -> error::Result<&mut Self> {
+    let coding = coding.trim();
+    if !is_http_token(coding) {
+      return Err(error::builder_with_message(
+        "invalid Accept-Encoding coding",
+      ));
+    }
+    let qvalue = qvalue.map(validate_accept_encoding_qvalue).transpose()?;
+    let member = qvalue.map_or_else(
+      || coding.to_string(),
+      |qvalue| format!("{coding};q={qvalue}"),
+    );
+
+    let headers = self.request.headers_mut();
+    let existing = headers
+      .iter_mut()
+      .find(|header| header.name().eq_ignore_ascii_case("Accept-Encoding"));
+    if let Some(header) = existing {
+      let existing_codings = parse_accept_encoding_codings(header.value())?;
+      if existing_codings
+        .iter()
+        .any(|known| known.eq_ignore_ascii_case(coding))
+      {
+        return Err(error::builder_with_message(
+          "duplicate Accept-Encoding coding",
+        ));
+      }
+      if existing_codings.len() >= MAX_ACCEPT_ENCODINGS {
+        return Err(error::builder_with_message(
+          "too many Accept-Encoding codings",
+        ));
+      }
+      let value = format!("{}, {member}", header.value());
+      if value.len() > MAX_ACCEPT_ENCODING_VALUE_BYTES {
+        return Err(error::builder_with_message(
+          "Accept-Encoding header value is too large",
+        ));
+      }
+      header.replace(Header::new("Accept-Encoding", value));
+    } else {
+      headers.push(Header::new("Accept-Encoding", member));
+    }
+    Ok(self)
   }
 
   /// Add request para
@@ -519,6 +628,86 @@ impl HttpClient {
     .await;
     self.request.clear_streaming_chunked_body_headers();
     result
+  }
+}
+
+const MAX_ACCEPT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
+const MAX_ACCEPT_ENCODINGS: usize = 32;
+
+fn parse_accept_encoding_codings(value: &str) -> error::Result<Vec<&str>> {
+  if value.len() > MAX_ACCEPT_ENCODING_VALUE_BYTES {
+    return Err(error::builder_with_message(
+      "Accept-Encoding header value is too large",
+    ));
+  }
+
+  let mut codings = Vec::new();
+  for member in value.split(',') {
+    let (coding, _) = split_accept_encoding_member(member)?;
+    if codings
+      .iter()
+      .any(|known: &&str| known.eq_ignore_ascii_case(coding))
+    {
+      return Err(error::builder_with_message(
+        "duplicate Accept-Encoding coding",
+      ));
+    }
+    if codings.len() >= MAX_ACCEPT_ENCODINGS {
+      return Err(error::builder_with_message(
+        "too many Accept-Encoding codings",
+      ));
+    }
+    codings.push(coding);
+  }
+  Ok(codings)
+}
+
+fn split_accept_encoding_member(member: &str) -> error::Result<(&str, Option<&str>)> {
+  let mut parts = member.split(';');
+  let coding = parts.next().unwrap_or_default().trim();
+  if !is_http_token(coding) {
+    return Err(error::builder_with_message(
+      "invalid Accept-Encoding coding",
+    ));
+  }
+  let Some(parameter) = parts.next() else {
+    return Ok((coding, None));
+  };
+  if parts.next().is_some() {
+    return Err(error::builder_with_message(
+      "invalid Accept-Encoding q-value",
+    ));
+  }
+  let Some((name, qvalue)) = parameter.trim().split_once('=') else {
+    return Err(error::builder_with_message(
+      "invalid Accept-Encoding q-value",
+    ));
+  };
+  if !name.trim().eq_ignore_ascii_case("q") {
+    return Err(error::builder_with_message(
+      "invalid Accept-Encoding q-value",
+    ));
+  }
+  let qvalue = validate_accept_encoding_qvalue(qvalue.trim())?;
+  Ok((coding, Some(qvalue)))
+}
+
+fn validate_accept_encoding_qvalue(qvalue: &str) -> error::Result<&str> {
+  let valid = match qvalue.split_once('.') {
+    Some((whole, fraction)) => {
+      fraction.len() <= 3
+        && fraction.bytes().all(|byte| byte.is_ascii_digit())
+        && matches!(whole, "0" | "1")
+        && (whole == "0" || fraction.bytes().all(|byte| byte == b'0'))
+    }
+    None => matches!(qvalue, "0" | "1"),
+  };
+  if valid {
+    Ok(qvalue)
+  } else {
+    Err(error::builder_with_message(
+      "invalid Accept-Encoding q-value",
+    ))
   }
 }
 

@@ -217,6 +217,64 @@ fn range_helpers_emit_single_byte_range_headers() {
 }
 
 #[test]
+fn accept_encoding_helpers_emit_validated_codings_and_quality_values() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .accept_gzip()
+      .expect("gzip should be accepted")
+      .accept_br_with_q("0.8")
+      .expect("br quality should be accepted")
+      .accept_identity_with_q("0")
+      .expect("identity quality should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("gzip, br;q=0.8, identity;q=0"),
+    header_value(&request, "Accept-Encoding")
+  );
+}
+
+#[test]
+fn accept_encoding_helpers_reject_invalid_members_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .accept_encoding_with_q("bad coding", "1.1")
+      .expect_err("invalid coding should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "invalid Accept-Encoding helper input should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .accept_encoding_with_q("gzip", "1.1")
+      .expect_err("invalid q-value should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "invalid Accept-Encoding q-value should not open a socket"
+  );
+}
+
+#[test]
 fn range_helper_rejects_malformed_inputs_before_connecting() {
   let request = capture_optional_request(|base_url| {
     let mut client = client();
