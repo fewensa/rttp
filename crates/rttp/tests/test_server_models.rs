@@ -20,6 +20,9 @@ fn response_www_authenticate_helper_validates_and_preserves_raw_headers() {
   assert_eq!(2, challenges.len());
   assert_eq!(Some("apps"), challenges.challenges()[0].parameter("realm"));
   assert_eq!("Basic", challenges.challenges()[1].scheme());
+  assert!(String::from_utf8(response.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nWWW-Authenticate: Digest realm=\"apps\", nonce=n-1, Basic\r\n"));
 
   assert!(HttpResponse::ok("body")
     .with_www_authenticate("Basic realm=")

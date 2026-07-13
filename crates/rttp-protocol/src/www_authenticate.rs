@@ -139,7 +139,7 @@ impl WwwAuthenticateParameter {
     &self.value
   }
   fn header_value(&self) -> String {
-    if is_token(&self.value) {
+    if !self.name.eq_ignore_ascii_case("realm") && is_token(&self.value) {
       format!("{}={}", self.name, self.value)
     } else {
       format!(
