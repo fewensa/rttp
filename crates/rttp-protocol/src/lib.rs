@@ -3,5 +3,6 @@
 //! This crate is intentionally unpublished. It owns protocol syntax and framing
 //! validation only; client and server application policy remains in its callers.
 
+pub mod forwarded;
 pub mod http1;
 pub mod www_authenticate;

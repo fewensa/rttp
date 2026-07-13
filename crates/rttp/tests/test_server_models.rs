@@ -39,6 +39,57 @@ fn parse_request(raw: &str) -> HttpRequest {
 }
 
 #[test]
+fn request_forwarded_parses_standard_parameters_and_multiple_entries() {
+  let request = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: internal.test\r\n",
+    "Forwarded: for=192.0.2.60;by=203.0.113.43;host=example.test;proto=\"https\"\r\n",
+    "Forwarded: for=\"[2001:db8:cafe::17]\"\r\n",
+    "\r\n"
+  ));
+
+  let forwarded = request
+    .forwarded()
+    .expect("Forwarded should parse")
+    .expect("Forwarded should be present");
+
+  assert_eq!(2, forwarded.len());
+  assert_eq!(Some("192.0.2.60"), forwarded.elements()[0].for_value());
+  assert_eq!(Some("203.0.113.43"), forwarded.elements()[0].by());
+  assert_eq!(Some("example.test"), forwarded.elements()[0].host());
+  assert_eq!(Some("https"), forwarded.elements()[0].proto());
+  assert_eq!(
+    Some("[2001:db8:cafe::17]"),
+    forwarded.elements()[1].for_value()
+  );
+}
+
+#[test]
+fn request_forwarded_rejects_duplicate_and_excessive_metadata() {
+  assert_eq!(
+    None,
+    parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .forwarded()
+      .expect("absent Forwarded should be accepted")
+  );
+
+  let duplicate = parse_request(concat!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\n",
+    "Forwarded: for=192.0.2.60;FOR=198.51.100.17\r\n\r\n"
+  ));
+  assert!(duplicate.forwarded().is_err());
+
+  let excessive = (0..257)
+    .map(|index| format!("for=192.0.2.{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let request = parse_request(&format!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\nForwarded: {excessive}\r\n\r\n"
+  ));
+  assert!(request.forwarded().is_err());
+}
+
+#[test]
 fn parses_request_accept_media_ranges_in_field_order() {
   let request = parse_request(concat!(
     "GET /resource HTTP/1.1\r\n",

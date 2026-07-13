@@ -382,6 +382,86 @@ fn accept_language_helper_rejects_invalid_values_before_connecting() {
 }
 
 #[test]
+fn forwarded_helper_emits_bounded_forwarding_metadata() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .forwarded(r#"for=192.0.2.60;by=203.0.113.43;host=example.test;proto="https""#)
+      .expect("first forwarding element should be accepted")
+      .forwarded(r#"for="[2001:db8:cafe::17]""#)
+      .expect("second forwarding element should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+
+  assert_eq!(
+    Some(
+      r#"for=192.0.2.60; by=203.0.113.43; host=example.test; proto=https, for="[2001:db8:cafe::17]""#
+    ),
+    header_value(&request_text(&request), "Forwarded")
+  );
+}
+
+#[test]
+fn forwarded_helper_rejects_duplicate_or_excessive_metadata_before_connecting() {
+  for value in ["for=192.0.2.60;for=198.51.100.17", "for="] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .forwarded(value)
+        .expect_err("invalid forwarding metadata should be rejected");
+
+      assert!(error.is_builder());
+    });
+
+    assert!(
+      request.is_empty(),
+      "invalid Forwarded input should not open a socket"
+    );
+  }
+
+  let excessive = (0..257)
+    .map(|index| format!("for=192.0.2.{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .forwarded(excessive.as_str())
+      .expect_err("too many forwarding elements should be rejected");
+
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "excessive Forwarded input should not open a socket"
+  );
+
+  let first = format!("for={}", "a".repeat(64 * 1024 - 4));
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .forwarded(first.as_str())
+      .expect("a bounded first element should be accepted")
+      .forwarded("for=second")
+      .expect_err("combined Forwarded metadata should remain bounded");
+
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "oversized Forwarded output should not open a socket"
+  );
+}
+
+#[test]
 fn manual_range_header_remains_available_as_escape_hatch() {
   let request = capture_request(|base_url| {
     client()
