@@ -14,7 +14,10 @@ fn request_max_forwards_is_optional_bounded_and_preserves_invalid_headers() {
       .as_bytes(),
     )
     .expect("request should parse");
-    assert_eq!(Some(value), valid.max_forwards().expect("value should parse"));
+    assert_eq!(
+      Some(value.to_owned()),
+      valid.max_forwards().expect("value should parse")
+    );
   }
 
   for value in ["", "-1", "+1", "1.0"] {
@@ -464,4 +467,67 @@ hello\r\n\
     assert_eq!("/first", first.target());
     assert_eq!(io::ErrorKind::InvalidData, error.kind());
     assert_eq!("invalid request header", error.to_string());
+  }
+
+  #[test]
+  fn priority_helpers_parse_requests_and_build_responses() {
+    let raw = concat!(
+      "GET / HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Priority: u=1, i, x=token\r\n",
+      "\r\n"
+    );
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+    let request = Request::read_next_from(&mut reader)
+      .expect("request should parse")
+      .expect("request should be present");
+    let priority = request
+      .priority()
+      .expect("Priority should parse")
+      .expect("Priority should be present");
+
+    assert_eq!(Some(1), priority.urgency());
+    assert!(priority.incremental());
+    assert_eq!(Some("token"), priority.extensions()[0].value());
+
+    let response = HttpResponse::ok([])
+      .with_priority("u=1, i, x=token")
+      .expect("Priority should be accepted");
+    assert_eq!(
+      "u=1, i, x=token",
+      response
+        .priority()
+        .expect("response Priority should parse")
+        .expect("response Priority should be present")
+        .header_value()
+    );
+  }
+
+  #[test]
+  fn alt_svc_helpers_validate_build_and_parse_response_metadata() {
+    let response = HttpResponse::ok([])
+      .with_alt_svc("h3=\":443\"; ma=3600; persist=1; region=\"us-east\"")
+      .expect("Alt-Svc should be accepted");
+    let alt_svc = response
+      .alt_svc()
+      .expect("response Alt-Svc should parse")
+      .expect("response Alt-Svc should be present");
+
+    assert_eq!("h3", alt_svc.alternatives()[0].protocol_id());
+    assert_eq!(":443", alt_svc.alternatives()[0].authority());
+    assert_eq!(Some(3600), alt_svc.alternatives()[0].max_age());
+    assert_eq!(Some(true), alt_svc.alternatives()[0].persist());
+    assert_eq!(
+      "h3=\":443\"; ma=3600; persist=1; region=us-east",
+      alt_svc.header_value()
+    );
+
+    let clear = HttpResponse::ok([])
+      .with_alt_svc("clear")
+      .expect("clear should be accepted");
+    assert!(clear
+      .alt_svc()
+      .expect("clear should parse")
+      .expect("clear should be present")
+      .is_clear());
   }

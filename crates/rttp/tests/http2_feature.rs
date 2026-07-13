@@ -6134,7 +6134,13 @@ fn wrapper_http2_prior_knowledge_strips_connection_specific_headers_across_crate
 
   assert_eq!("clean h2c response", response.body().string().unwrap());
   assert_eq!(
-    (None, None, None, None, Some("present".to_string())),
+    (
+      None,
+      None,
+      Some("trailers".to_string()),
+      None,
+      Some("present".to_string())
+    ),
     rx.recv()
       .expect("receive h2 connection header boundary observation")
   );
