@@ -4,3 +4,4 @@
 //! validation only; client and server application policy remains in its callers.
 
 pub mod http1;
+pub mod www_authenticate;

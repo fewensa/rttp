@@ -1,5 +1,11 @@
 use super::*;
 
+pub use rttp_protocol::www_authenticate::{
+  WwwAuthenticate as HttpWwwAuthenticate, WwwAuthenticateChallenge as HttpWwwAuthenticateChallenge,
+  WwwAuthenticateParameter as HttpWwwAuthenticateParameter,
+  WwwAuthenticateParseError as HttpWwwAuthenticateParseError,
+};
+
 pub(crate) const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
 pub(crate) const MAX_VARY_VALUE_BYTES: usize = 64 * 1024;
@@ -330,6 +336,22 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `WWW-Authenticate` response metadata.
+  pub fn with_www_authenticate(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpWwwAuthenticateParseError> {
+    let challenges = HttpWwwAuthenticate::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("WWW-Authenticate"));
+    self.headers.push(HttpHeader::new(
+      "WWW-Authenticate",
+      challenges.header_value(),
+    ));
+    Ok(self)
+  }
+
   pub fn with_content_location<V: AsRef<str>>(
     mut self,
     value: V,
@@ -533,6 +555,22 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpResponseContentEncodings::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `WWW-Authenticate` response metadata without changing raw headers.
+  pub fn www_authenticate(
+    &self,
+  ) -> Result<Option<HttpWwwAuthenticate>, HttpWwwAuthenticateParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("WWW-Authenticate"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpWwwAuthenticate::parse_values(values).map(Some)
   }
 
   pub fn content_location(&self) -> Result<Option<&str>, HttpContentLocationParseError> {

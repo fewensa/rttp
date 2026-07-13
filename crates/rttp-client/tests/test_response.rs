@@ -1,5 +1,5 @@
 use rttp_client::response::{
-  ContentDisposition, ContentEncoding, ContentLocation, ContentType, Response,
+  ContentDisposition, ContentEncoding, ContentLocation, ContentType, Response, WwwAuthenticate,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -503,6 +503,79 @@ fn test_parse_content_disposition_response_helper_returns_none_when_absent() {
       .content_disposition()
       .expect("absent content-disposition should parse")
   );
+}
+
+#[test]
+fn test_www_authenticate_response_helper_parses_bounded_challenges() {
+  let raw = concat!(
+    "HTTP/1.1 401 Unauthorized\r\n",
+    "WWW-Authenticate: Basic realm=\"users\"\r\n",
+    "WWW-Authenticate: Bearer mF_9.B5f-4.1JqM, Digest realm=\"apps\", nonce=\"a\\\\b\"\r\n",
+    "Content-Length: 2\r\n\r\nOK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  let challenges = response
+    .www_authenticate()
+    .expect("valid challenges should parse")
+    .expect("WWW-Authenticate should be present");
+
+  assert_eq!(3, challenges.len());
+  assert_eq!("Basic", challenges.challenges()[0].scheme());
+  assert_eq!(Some("users"), challenges.challenges()[0].parameter("realm"));
+  assert_eq!("Bearer", challenges.challenges()[1].scheme());
+  assert_eq!(
+    Some("mF_9.B5f-4.1JqM"),
+    challenges.challenges()[1].token68()
+  );
+  assert_eq!("Digest", challenges.challenges()[2].scheme());
+  assert_eq!(Some("a\\b"), challenges.challenges()[2].parameter("nonce"));
+}
+
+#[test]
+fn test_www_authenticate_rejects_malformed_duplicate_and_bounded_values() {
+  for value in [
+    "Basic realm=",
+    "Basic realm=\"unterminated",
+    "Basic realm=one, REALM=two",
+    "Basic @",
+    "Basic token===more",
+  ] {
+    let raw = format!(
+      "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: {value}\r\nContent-Length: 2\r\n\r\nOK"
+    );
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(
+      response.www_authenticate().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("WWW-Authenticate")
+    );
+  }
+
+  let oversized = "Basic realm=".to_string() + &"a".repeat(64 * 1024);
+  assert!(
+    WwwAuthenticate::parse(oversized).is_err(),
+    "helper should reject an oversized field"
+  );
+  let too_many = (0..257)
+    .map(|index| format!("Scheme{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  assert!(WwwAuthenticate::parse(too_many).is_err());
+  let too_many_parameters = format!(
+    "Digest {}",
+    (0..257)
+      .map(|index| format!("p{index}=v"))
+      .collect::<Vec<_>>()
+      .join(", ")
+  );
+  assert!(WwwAuthenticate::parse(too_many_parameters).is_err());
+  assert!(WwwAuthenticate::parse(format!("Basic realm={}", "a".repeat(64 * 1024 + 1))).is_err());
 }
 
 #[test]
