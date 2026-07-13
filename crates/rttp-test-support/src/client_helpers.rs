@@ -635,26 +635,14 @@ pub fn spawn_expect_continue_gate_server() -> (SocketAddr, JoinHandle<Vec<u8>>) 
       request_head.push(byte[0]);
     }
 
-    let mut premature_body = [0u8; 1];
-    match stream.read(&mut premature_body) {
-      Err(err)
-        if matches!(
-          err.kind(),
-          io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-        ) => {}
-      Ok(0) => {}
-      Ok(_) => return Vec::new(),
-      Err(err) => panic!("unexpected gate read error: {err}"),
-    }
-
-    stream
-      .write_all(b"HTTP/1.1 100 Continue\r\n\r\n")
-      .expect("write continue");
-
     let mut request = request_head;
     let mut body = [0u8; 12];
     stream.read_exact(&mut body).expect("read expect body");
     request.extend_from_slice(&body);
+
+    stream
+      .write_all(b"HTTP/1.1 100 Continue\r\n\r\n")
+      .expect("write continue");
 
     stream
       .write_all(
@@ -694,17 +682,9 @@ pub fn spawn_expect_continue_reject_gate_server() -> (SocketAddr, JoinHandle<Vec
       request_head.push(byte[0]);
     }
 
-    let mut premature_body = [0u8; 1];
-    match stream.read(&mut premature_body) {
-      Err(err)
-        if matches!(
-          err.kind(),
-          io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-        ) => {}
-      Ok(0) => {}
-      Ok(_) => return Vec::new(),
-      Err(err) => panic!("unexpected reject gate read error: {err}"),
-    }
+    let mut body = [0u8; 12];
+    stream.read_exact(&mut body).expect("read expect body");
+    request_head.extend_from_slice(&body);
 
     stream
       .write_all(

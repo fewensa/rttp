@@ -5167,7 +5167,7 @@ fn server_request_body_stops_at_declared_content_length() {
 }
 
 #[test]
-fn server_sends_continue_before_reading_expected_content_length_body() {
+fn server_exposes_continue_metadata_without_sending_an_interim_response() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
   let (tx, rx) = mpsc::channel();
@@ -5198,12 +5198,6 @@ fn server_sends_continue_before_reading_expected_content_length_body() {
     )
     .expect("write request head");
 
-  let mut interim = [0u8; 25];
-  stream
-    .read_exact(&mut interim)
-    .expect("read interim response");
-  assert_eq!(b"HTTP/1.1 100 Continue\r\n\r\n", &interim);
-
   stream.write_all(b"hello").expect("write request body");
   stream
     .shutdown(std::net::Shutdown::Write)
@@ -5223,7 +5217,7 @@ fn server_sends_continue_before_reading_expected_content_length_body() {
 }
 
 #[test]
-fn server_keeps_continue_request_body_aligned_before_follow_up_request() {
+fn server_keeps_expect_metadata_request_body_aligned_before_follow_up_request() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
   let (tx, rx) = mpsc::channel();
@@ -5255,13 +5249,6 @@ fn server_keeps_continue_request_body_aligned_before_follow_up_request() {
       .as_bytes(),
     )
     .expect("write first request head");
-
-  let expected_interim = b"HTTP/1.1 100 Continue\r\n\r\n";
-  let mut interim = vec![0u8; expected_interim.len()];
-  stream
-    .read_exact(&mut interim)
-    .expect("read interim response");
-  assert_eq!(expected_interim, interim.as_slice());
 
   stream
     .write_all(
@@ -5311,7 +5298,7 @@ fn server_keeps_continue_request_body_aligned_before_follow_up_request() {
 }
 
 #[test]
-fn server_sends_continue_before_reading_expected_chunked_body() {
+fn server_reads_expected_chunked_body_without_sending_an_interim_response() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
   let (tx, rx) = mpsc::channel();
@@ -5341,12 +5328,6 @@ fn server_sends_continue_before_reading_expected_chunked_body() {
       .as_bytes(),
     )
     .expect("write request head");
-
-  let mut interim = [0u8; 25];
-  stream
-    .read_exact(&mut interim)
-    .expect("read interim response");
-  assert_eq!(b"HTTP/1.1 100 Continue\r\n\r\n", &interim);
 
   stream
     .write_all(b"4\r\nWiki\r\n5\r\npedia\r\n0\r\n\r\n")
@@ -5408,7 +5389,7 @@ fn server_does_not_send_continue_for_expect_with_zero_content_length() {
 }
 
 #[test]
-fn server_returns_expectation_failed_for_unsupported_expectation_without_calling_handler() {
+fn server_exposes_unsupported_expectation_to_the_handler() {
   let (response, handler_called) = send_raw_request(
     concat!(
       "POST /submit HTTP/1.1\r\n",
@@ -5421,15 +5402,15 @@ fn server_returns_expectation_failed_for_unsupported_expectation_without_calling
     .as_bytes(),
   );
 
-  assert!(!handler_called);
+  assert!(handler_called);
   assert_eq!(
-    "HTTP/1.1 417 Expectation Failed\r\nContent-Length: 18\r\nConnection: close\r\n\r\nExpectation Failed",
+    "HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nunexpected",
     response
   );
 }
 
 #[test]
-fn server_rejects_unsupported_expectation_before_body_is_sent() {
+fn server_does_not_reject_unsupported_expectation_before_body_is_sent() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
   let (tx, rx) = mpsc::channel();
@@ -5460,14 +5441,15 @@ fn server_rejects_unsupported_expectation_before_body_is_sent() {
     )
     .expect("write request head");
 
-  let expected = b"HTTP/1.1 417 Expectation Failed\r\nContent-Length: 18\r\nConnection: close\r\n\r\nExpectation Failed";
-  let mut response = vec![0; expected.len()];
+  stream.write_all(b"hello").expect("write request body");
   stream
-    .read_exact(&mut response)
-    .expect("read final response");
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown write");
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
 
-  assert_eq!(expected, response.as_slice());
-  assert!(rx.try_recv().is_err());
+  assert!(response.starts_with("HTTP/1.1 200 OK"));
+  assert_eq!(b"hello", rx.recv().expect("receive request").body());
 
   handle.join().expect("server thread");
 }

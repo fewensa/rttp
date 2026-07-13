@@ -496,16 +496,8 @@ where
 }
 
 pub(crate) fn request_expects_continue(header: &str, body: Option<&RequestBody>) -> bool {
-  if body.is_none_or(|body| body.len() == 0) {
-    return false;
-  }
-
-  header.lines().skip(1).any(|line| {
-    let Some((name, value)) = line.split_once(':') else {
-      return false;
-    };
-    name.eq_ignore_ascii_case("Expect") && value.trim().eq_ignore_ascii_case("100-continue")
-  })
+  let _ = (header, body);
+  false
 }
 
 fn response_header_has_upgrade(header: &[u8]) -> error::Result<bool> {

@@ -220,6 +220,14 @@ impl HttpClient {
     Ok(self.header(Header::new("Accept-Language", value)))
   }
 
+  /// Emit the standardized `Expect: 100-continue` request metadata.
+  ///
+  /// This is metadata only: the client still writes the request body normally
+  /// and does not wait for an interim response before sending it.
+  pub fn expect_continue(&mut self) -> &mut Self {
+    self.header(("Expect", "100-continue"))
+  }
+
   /// Set a single bounded byte range request header, `Range: bytes=start-end`.
   pub fn range(&mut self, start: u64, end: u64) -> error::Result<&mut Self> {
     if start > end {

@@ -4,6 +4,99 @@ pub(crate) const MAX_REQUEST_HEAD_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 pub(crate) const MAX_ACCEPT_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_ACCEPT_MEDIA_RANGES: usize = 256;
+const MAX_EXPECT_VALUE_BYTES: usize = 64 * 1024;
+const MAX_EXPECTATIONS: usize = 32;
+
+/// Bounded `Expect` request metadata.
+///
+/// The standardized `100-continue` expectation is exposed separately from
+/// unsupported extension expectations so handlers can make their own policy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HttpExpectations {
+  expects_continue: bool,
+  unsupported: Vec<String>,
+}
+
+impl HttpExpectations {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpExpectParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn expects_continue(&self) -> bool {
+    self.expects_continue
+  }
+
+  pub fn unsupported(&self) -> &[String] {
+    &self.unsupported
+  }
+
+  fn parse_values<'a, I>(values: I) -> Result<Self, HttpExpectParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut expects_continue = false;
+    let mut unsupported = Vec::new();
+    let mut seen = Vec::<String>::new();
+
+    for value in values {
+      if value.len() > MAX_EXPECT_VALUE_BYTES {
+        return Err(HttpExpectParseError::new(
+          "Expect header value is too large",
+        ));
+      }
+      for member in value.split(',') {
+        let expectation = member.trim();
+        if !is_http_token(expectation) {
+          return Err(HttpExpectParseError::new("invalid Expect expectation"));
+        }
+        if seen
+          .iter()
+          .any(|known| known.eq_ignore_ascii_case(expectation))
+        {
+          return Err(HttpExpectParseError::new("duplicate Expect expectation"));
+        }
+        if seen.len() >= MAX_EXPECTATIONS {
+          return Err(HttpExpectParseError::new("too many Expect expectations"));
+        }
+        seen.push(expectation.to_string());
+        if expectation.eq_ignore_ascii_case("100-continue") {
+          expects_continue = true;
+        } else {
+          unsupported.push(expectation.to_string());
+        }
+      }
+    }
+
+    if seen.is_empty() {
+      return Err(HttpExpectParseError::new("invalid Expect expectation"));
+    }
+    Ok(Self {
+      expects_continue,
+      unsupported,
+    })
+  }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HttpExpectParseError {
+  message: String,
+}
+
+impl HttpExpectParseError {
+  fn new(message: impl Into<String>) -> Self {
+    Self {
+      message: message.into(),
+    }
+  }
+}
+
+impl fmt::Display for HttpExpectParseError {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.write_str(&self.message)
+  }
+}
+
+impl Error for HttpExpectParseError {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request {
   pub(crate) method: String,
@@ -99,6 +192,16 @@ impl Request {
       return Ok(None);
     }
     HttpRequestAcceptEncodings::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Expect` request metadata without automatically sending
+  /// an interim response or rejecting unsupported expectations.
+  pub fn expectations(&self) -> Result<Option<HttpExpectations>, HttpExpectParseError> {
+    let values: Vec<&str> = self.headers_named("Expect").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpExpectations::parse_values(values).map(Some)
   }
 
   pub fn accept(&self) -> Result<Option<HttpAccept>, HttpAcceptParseError> {
@@ -221,9 +324,6 @@ impl Request {
           reader.consume(take);
           let head = parse_request_head(&raw[..header_end])?;
           let parsed_body_kind = request_body_kind(&head.headers)?;
-          if request_needs_continue(&head.headers, parsed_body_kind)? {
-            write_continue_response(reader.get_mut())?;
-          }
           match parsed_body_kind {
             RequestBodyKind::ContentLength(0) => {
               return Ok(Some(Self::from_head_and_body(head, Vec::new())));
@@ -299,9 +399,6 @@ impl Request {
               reject_oversized_request_body(content_length)?;
             }
             RequestBodyKind::Chunked => {}
-          }
-          if request_needs_continue(&head.headers, body_kind)? {
-            write_continue_response(reader.get_mut())?;
           }
           return Ok(Some((head, body_kind)));
         }
@@ -1369,6 +1466,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpRequestAcceptEncodings::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Expect` request metadata without automatically sending
+  /// an interim response or rejecting unsupported expectations.
+  pub fn expectations(&self) -> Result<Option<HttpExpectations>, HttpExpectParseError> {
+    let values = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Expect"))
+      .map(|header| header.value.as_str());
+    let values: Vec<&str> = values.collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpExpectations::parse_values(values).map(Some)
   }
 
   pub fn accept(&self) -> Result<Option<HttpAccept>, HttpAcceptParseError> {

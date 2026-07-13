@@ -356,6 +356,22 @@ the request itself.
 These helpers declare and parse metadata only. They do not enable automatic
 compression, decompression, or content negotiation.
 
+### Bounded `Expect: 100-continue` request metadata
+
+`HttpClient::expect_continue()` emits the validated standardized
+`Expect: 100-continue` field. It is metadata only: the client does not delay
+the request body or wait for an interim response. `Response::informational_responses()`
+continues to expose a received `100 Continue` alongside other bounded
+informational responses.
+
+On the server, `Request::expectations()` and `HttpRequest::expectations()`
+return bounded `HttpExpectations` metadata. `expects_continue()` identifies
+the standardized expectation, while `unsupported()` preserves extension names
+for handler policy. Absent fields return `Ok(None)`; malformed, duplicate,
+oversized, or excessive values return `HttpExpectParseError` without changing
+the raw request. The server does not automatically send `100 Continue` or
+reject unsupported expectations.
+
 ### Bounded HTTP/1.1 Vary behavior
 
 `Response::vary()` parses one or more response `Vary` header fields into
@@ -444,7 +460,7 @@ gain additional HTTP/2 header-block handling.
 | area | tested coverage | limits |
 |------|-----------------|--------|
 | HTTP/1.1 response parsing | `Content-Length`, chunked transfer coding, chunk extensions, informational responses, bodyless `204`/`304`, duplicate `Set-Cookie`, and framing ambiguity rejection | Not a complete RFC conformance suite |
-| HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and `Expect: 100-continue` | SOCKS handshakes are delegated to the `socks` crate |
+| HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and explicit `Expect: 100-continue` metadata | Expect metadata does not gate body transmission; SOCKS handshakes are delegated to the `socks` crate |
 | Upgrade and tunnel handoff | `CONNECT` returns the tunnel socket after a successful `200`; `upgrade()` returns the socket after `101 Switching Protocols` and skips interim `1xx` responses | Upgraded protocols are handed to the caller and are not parsed by `rttp_client` |
 | Redirects | Auto-redirect covers 301, 302, 303, 307, and 308 method/body behavior, relative and absolute `Location` resolution, same- and cross-authority header handling, loop detection, and redirect bounds | Redirects are HTTP client behavior, not a browser policy implementation |
 | Byte ranges | `range`, `range_from`, `range_suffix`, `if_range_etag`, and `if_range_date` emit bounded HTTP/1.1 range request metadata; `Response::content_range`, `accept_ranges`, `is_partial_content`, and `is_range_not_satisfiable` expose `Content-Range`, `Accept-Ranges`, `206`, and `416` metadata while preserving raw headers | No Range request generation from `Accept-Ranges`, client-side `If-Range` evaluation, partial response engine, byte serving, content slicing, download resume, automatic retry/replay, cache storage, redirect handling, status-policy behavior, multipart range generation, or automatic cache validation policy |
@@ -1052,7 +1068,8 @@ chunked request bodies, exposes chunked request trailers, applies bounded
 request head/body validation, handles `HEAD` without writing a response body,
 honors `Connection` close/keep-alive semantics across a bounded
 `serve_requests` loop, writes response body framing and response trailers
-consistently, and accepts `Expect: 100-continue`. On the same socket2 listener,
+consistently, and exposes `Expect: 100-continue` metadata without automatically
+sending an interim response or rejecting extensions. On the same socket2 listener,
 the accept path detects either the HTTP/2 client preface or an HTTP/1.1
 `Upgrade: h2c` request and dispatches the resulting h2c connection to the same
 minimal bounded handler, including bodyless DELETE, OPTIONS, and TRACE

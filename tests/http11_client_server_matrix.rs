@@ -2618,7 +2618,7 @@ fn sync_client_rejects_shared_response_framing_ambiguity_fixture() {
 }
 
 #[test]
-fn sync_client_waits_for_shared_expect_continue_fixture() {
+fn sync_client_parses_shared_expect_continue_after_sending_the_body() {
   let fixture = fixtures::request::expect_continue_fixed_length();
   let (addr, handle) = fixtures::spawn_socket2_expect_continue_server(
     concat!(
@@ -2634,7 +2634,7 @@ fn sync_client_waits_for_shared_expect_continue_fixture() {
   let response = client()
     .post()
     .url(format!("http://{}{}", addr, fixture.target))
-    .header(("Expect", "100-continue"))
+    .expect_continue()
     .raw(String::from_utf8_lossy(fixture.body).as_ref())
     .emit()
     .expect("expect-continue response should parse");
@@ -3309,7 +3309,7 @@ fn async_client_rejects_shared_response_framing_ambiguity_fixture() {
 
 #[test]
 #[cfg(feature = "async")]
-fn async_client_waits_for_shared_expect_continue_fixture() {
+fn async_client_parses_shared_expect_continue_after_sending_the_body() {
   let fixture = fixtures::request::expect_continue_fixed_length();
   let (addr, handle) = fixtures::spawn_socket2_expect_continue_server(
     concat!(
@@ -3326,7 +3326,7 @@ fn async_client_waits_for_shared_expect_continue_fixture() {
     let response = client()
       .post()
       .url(format!("http://{}{}", addr, fixture.target))
-      .header(("Expect", "100-continue"))
+      .expect_continue()
       .raw(String::from_utf8_lossy(fixture.body).as_ref())
       .rasync()
       .await

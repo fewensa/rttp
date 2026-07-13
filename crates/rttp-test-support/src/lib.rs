@@ -1999,12 +1999,6 @@ fn serve_expect_continue_stream<S: Read + Write>(stream: &mut S, final_response:
     .map(|position| position + 4)
     .unwrap_or(request.len());
   let body_bytes_read = request.len().saturating_sub(header_end);
-  if body_bytes_read != 0 {
-    return Vec::new();
-  }
-
-  let _ = stream.write_all(response::CONTINUE);
-
   if body_bytes_read < content_length {
     let mut body = vec![0; content_length - body_bytes_read];
     if stream.read_exact(&mut body).is_ok() {
@@ -2012,6 +2006,7 @@ fn serve_expect_continue_stream<S: Read + Write>(stream: &mut S, final_response:
     }
   }
 
+  let _ = stream.write_all(response::CONTINUE);
   let _ = stream.write_all(final_response);
   request
 }
@@ -2088,23 +2083,23 @@ mod tests {
   }
 
   #[test]
-  fn expect_continue_server_rejects_premature_body_bytes() {
+  fn expect_continue_server_accepts_body_sent_before_informational_response() {
     let fixture = request::expect_continue_fixed_length();
     let mut request = Vec::new();
     request.extend_from_slice(fixture.head);
     request.extend_from_slice(fixture.body);
-    let mut stream = InMemoryStream::new(request);
+    let mut stream = InMemoryStream::new(request.clone());
 
     assert_eq!(
-      Vec::<u8>::new(),
+      request,
       serve_expect_continue_stream(&mut stream, b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
     );
     assert!(
-      !stream
+      stream
         .written
         .windows(super::response::CONTINUE.len())
         .any(|window| window == super::response::CONTINUE),
-      "server must not send 100 Continue after premature body"
+      "server should send 100 Continue after reading the body"
     );
   }
 }
