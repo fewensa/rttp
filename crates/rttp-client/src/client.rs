@@ -481,6 +481,9 @@ impl HttpClient {
   }
 
   fn accept_member(&mut self, media_range: &str, qvalue: Option<&str>) -> error::Result<&mut Self> {
+    if media_range.bytes().any(|byte| byte.is_ascii_control()) {
+      return Err(error::builder_with_message("invalid Accept media range"));
+    }
     let media_range = media_range.trim();
     let has_quality = validate_accept_media_range(media_range)?;
     let qvalue = qvalue.map(validate_accept_qvalue).transpose()?;

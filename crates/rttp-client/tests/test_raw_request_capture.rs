@@ -316,7 +316,13 @@ fn accept_helpers_emit_validated_media_ranges_and_quality_values() {
 
 #[test]
 fn accept_helpers_reject_invalid_values_before_connecting() {
-  for value in ["text", "text/html; q=0.8; q=0.5", "text/html; q=1.001"] {
+  for value in [
+    "text",
+    "text/html; q=0.8; q=0.5",
+    "text/html; q=1.001",
+    "text/html\n;level=1",
+    "text/html\r;level=1",
+  ] {
     let request = capture_optional_request(|base_url| {
       let mut client = client();
       let error = client
