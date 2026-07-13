@@ -27,6 +27,17 @@ HTTP/1.x chunked responses are decoded, and response trailers are exposed
 through `Response::trailers`, `Response::trailer`, and
 `Response::trailer_value` for both blocking and async request APIs.
 
+## Bounded Max-Forwards diagnostics
+
+`HttpClient::max_forwards(value)` sets a `Max-Forwards` request header for
+application-selected `TRACE` or `OPTIONS` diagnostics. The helper accepts only
+up to ten ASCII decimal digits that fit in the `u32` range (`0` through
+`4294967295`) and rejects negative, fractional, empty, oversized, and
+overflowing values before a socket is opened. It only validates and emits the
+header: RTTP does not select a diagnostic policy, route through proxies,
+decrement the value, or retry the request. Callers needing an unusual value can
+retain full raw-header control with `header(("Max-Forwards", "..."))`.
+
 ## Bounded HTTP/1.1 byte ranges
 
 `HttpClient` includes helpers for the single-range `bytes` forms RTTP keeps
