@@ -1,5 +1,10 @@
 use super::*;
 
+pub use rttp_protocol::forwarded::{
+  Forwarded as HttpForwarded, ForwardedElement as HttpForwardedElement,
+  ForwardedParameter as HttpForwardedParameter, ForwardedParseError as HttpForwardedParseError,
+};
+
 pub(crate) const MAX_REQUEST_HEAD_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 pub(crate) const MAX_ACCEPT_VALUE_BYTES: usize = 64 * 1024;
@@ -117,6 +122,16 @@ impl Request {
       return Ok(None);
     }
     HttpAcceptLanguages::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded RFC 7239 `Forwarded` request metadata without applying a
+  /// proxy trust policy or rewriting request addresses.
+  pub fn forwarded(&self) -> Result<Option<HttpForwarded>, HttpForwardedParseError> {
+    let values: Vec<&str> = self.headers_named("Forwarded").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpForwarded::parse_values(values).map(Some)
   }
 
   pub fn vary_selection(&self, vary: &HttpVary) -> HttpVarySelection {
@@ -1394,6 +1409,21 @@ impl HttpRequest {
       .filter(|header| header.name.eq_ignore_ascii_case("Accept-Language"))
       .map(|header| header.value.as_str());
     HttpAcceptLanguages::parse_optional_values(values)
+  }
+
+  /// Parses bounded RFC 7239 `Forwarded` request metadata without applying a
+  /// proxy trust policy or rewriting request addresses.
+  pub fn forwarded(&self) -> Result<Option<HttpForwarded>, HttpForwardedParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Forwarded"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpForwarded::parse_values(values).map(Some)
   }
 
   pub fn vary_selection(&self, vary: &HttpVary) -> HttpVarySelection {
