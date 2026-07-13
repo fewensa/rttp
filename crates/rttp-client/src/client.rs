@@ -357,6 +357,11 @@ impl HttpClient {
       || coding.to_string(),
       |qvalue| format!("{coding};q={qvalue}"),
     );
+    if member.len() > MAX_ACCEPT_ENCODING_VALUE_BYTES {
+      return Err(error::builder_with_message(
+        "Accept-Encoding header value is too large",
+      ));
+    }
 
     let headers = self.request.headers_mut();
     let existing = headers

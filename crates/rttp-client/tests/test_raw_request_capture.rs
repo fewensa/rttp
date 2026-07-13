@@ -272,6 +272,23 @@ fn accept_encoding_helpers_reject_invalid_members_before_connecting() {
     request.is_empty(),
     "invalid Accept-Encoding q-value should not open a socket"
   );
+
+  let request = capture_optional_request(|base_url| {
+    let oversized_coding = "a".repeat(64 * 1024 + 1);
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .accept_encoding(&oversized_coding)
+      .expect_err("oversized first coding should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized first Accept-Encoding coding should not open a socket"
+  );
 }
 
 #[test]
