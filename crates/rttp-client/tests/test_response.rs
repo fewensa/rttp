@@ -534,6 +534,27 @@ fn test_www_authenticate_response_helper_parses_bounded_challenges() {
 }
 
 #[test]
+fn test_www_authenticate_preserves_utf8_quoted_parameter_values() {
+  let raw = concat!(
+    "HTTP/1.1 401 Unauthorized\r\n",
+    "WWW-Authenticate: Digest realm=\"caf\u{e9}\"\r\n",
+    "Content-Length: 0\r\n\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  let challenges = response
+    .www_authenticate()
+    .expect("valid challenge should parse")
+    .expect("WWW-Authenticate should be present");
+
+  assert_eq!(
+    Some("caf\u{e9}"),
+    challenges.challenges()[0].parameter("realm")
+  );
+}
+
+#[test]
 fn test_www_authenticate_rejects_malformed_duplicate_and_bounded_values() {
   for value in [
     "Basic realm=",

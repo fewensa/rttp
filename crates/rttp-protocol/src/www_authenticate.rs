@@ -291,11 +291,12 @@ fn parse_parameter_value(
   if bytes.get(*position) == Some(&b'"') {
     *position += 1;
     let mut parsed = String::new();
+    let mut unescaped_start = *position;
     let mut escaped = false;
     while *position < bytes.len() {
       let byte = bytes[*position];
-      *position += 1;
       if escaped {
+        *position += 1;
         if !(byte == b'\t' || (0x20..=0x7e).contains(&byte)) {
           return Err(WwwAuthenticateParseError::new(
             "invalid WWW-Authenticate quoted-string",
@@ -303,9 +304,14 @@ fn parse_parameter_value(
         }
         parsed.push(byte as char);
         escaped = false;
+        unescaped_start = *position;
       } else if byte == b'\\' {
+        parsed.push_str(&value[unescaped_start..*position]);
+        *position += 1;
         escaped = true;
       } else if byte == b'"' {
+        parsed.push_str(&value[unescaped_start..*position]);
+        *position += 1;
         return Ok(parsed);
       } else if !(byte == b'\t'
         || matches!(byte, 0x20..=0x21 | 0x23..=0x5b | 0x5d..=0x7e | 0x80..=0xff))
@@ -314,7 +320,7 @@ fn parse_parameter_value(
           "invalid WWW-Authenticate quoted-string",
         ));
       } else {
-        parsed.push(byte as char);
+        *position += 1;
       }
     }
     Err(WwwAuthenticateParseError::new(
