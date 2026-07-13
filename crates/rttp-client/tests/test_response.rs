@@ -1,5 +1,6 @@
 use rttp_client::response::{
-  ContentDisposition, ContentEncoding, ContentLocation, ContentType, Response, WwwAuthenticate,
+  ContentDisposition, ContentEncoding, ContentLocation, ContentType, Digest, Response,
+  WwwAuthenticate,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -597,6 +598,64 @@ fn test_www_authenticate_rejects_malformed_duplicate_and_bounded_values() {
   );
   assert!(WwwAuthenticate::parse(too_many_parameters).is_err());
   assert!(WwwAuthenticate::parse(format!("Basic realm={}", "a".repeat(64 * 1024 + 1))).is_err());
+}
+
+#[test]
+fn test_digest_response_helpers_parse_bounded_digest_fields() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Digest: sha-256=:YWJj:, sha-512=:ZGVm:\r\n",
+    "Repr-Digest: sha-256=:Z2hp:\r\n",
+    "Content-Length: 0\r\n\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  let digest = response
+    .digest()
+    .expect("Digest should parse")
+    .expect("Digest should be present");
+  assert_eq!(2, digest.len());
+  assert_eq!(
+    Some(&b"abc"[..]),
+    digest.entry("sha-256").map(|entry| entry.value())
+  );
+  assert_eq!(
+    Some(&b"def"[..]),
+    digest.entry("sha-512").map(|entry| entry.value())
+  );
+
+  let repr_digest = response
+    .repr_digest()
+    .expect("Repr-Digest should parse")
+    .expect("Repr-Digest should be present");
+  assert_eq!(
+    Some(&b"ghi"[..]),
+    repr_digest.entry("sha-256").map(|entry| entry.value())
+  );
+}
+
+#[test]
+fn test_digest_response_helpers_recover_from_empty_duplicate_and_oversized_fields() {
+  for (header, value) in [
+    ("Digest", ""),
+    ("Digest", "sha-256=:YWJj:, sha-256=:ZGVm:"),
+    ("Repr-Digest", "sha-256=:YWJj:, sha-256=:ZGVm:"),
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\n{header}: {value}\r\nContent-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    let result = if header == "Digest" {
+      response.digest().map(|_| ())
+    } else {
+      response.repr_digest().map(|_| ())
+    };
+    assert!(result.is_err(), "{header} should reject {value:?}");
+    assert_eq!(Some(&value.to_string()), response.header_value(header));
+  }
+
+  let oversized = format!("sha-256=:{}:", "A".repeat(64 * 1024));
+  assert!(Digest::parse(oversized).is_err());
 }
 
 #[test]

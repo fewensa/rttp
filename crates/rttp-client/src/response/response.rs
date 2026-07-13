@@ -7,6 +7,8 @@ use url::Url;
 
 use crate::error;
 use crate::response::raw_response::RawResponse;
+use crate::response::Digest;
+use crate::response::ReprDigest;
 use crate::response::WwwAuthenticate;
 use crate::types::{Cookie, Header, RoUrl};
 
@@ -290,6 +292,26 @@ impl Response {
       return Ok(None);
     }
     WwwAuthenticate::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses all `Digest` fields as bounded response metadata.
+  pub fn digest(&self) -> error::Result<Option<Digest>> {
+    self.digest_field("digest")
+  }
+
+  /// Parses all `Repr-Digest` fields as bounded response metadata.
+  pub fn repr_digest(&self) -> error::Result<Option<ReprDigest>> {
+    self.digest_field("repr-digest")
+  }
+
+  fn digest_field(&self, name: &str) -> error::Result<Option<Digest>> {
+    let values = self.header_values(name);
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Digest::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

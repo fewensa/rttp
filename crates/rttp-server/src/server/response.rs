@@ -1,5 +1,9 @@
 use super::*;
 
+pub use rttp_protocol::digest::{
+  Digest as HttpDigest, DigestEntry as HttpDigestEntry, DigestParseError as HttpDigestParseError,
+  ReprDigest as HttpReprDigest, ReprDigestEntry as HttpReprDigestEntry,
+};
 pub use rttp_protocol::www_authenticate::{
   WwwAuthenticate as HttpWwwAuthenticate, WwwAuthenticateChallenge as HttpWwwAuthenticateChallenge,
   WwwAuthenticateParameter as HttpWwwAuthenticateParameter,
@@ -352,6 +356,30 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Digest` response metadata.
+  pub fn with_digest(mut self, value: impl AsRef<str>) -> Result<Self, HttpDigestParseError> {
+    let digest = HttpDigest::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Digest"));
+    self
+      .headers
+      .push(HttpHeader::new("Digest", digest.header_value()));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Repr-Digest` response metadata.
+  pub fn with_repr_digest(mut self, value: impl AsRef<str>) -> Result<Self, HttpDigestParseError> {
+    let digest = HttpDigest::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Repr-Digest"));
+    self
+      .headers
+      .push(HttpHeader::new("Repr-Digest", digest.header_value()));
+    Ok(self)
+  }
+
   pub fn with_content_location<V: AsRef<str>>(
     mut self,
     value: V,
@@ -571,6 +599,29 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpWwwAuthenticate::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Digest` metadata without changing raw headers.
+  pub fn digest(&self) -> Result<Option<HttpDigest>, HttpDigestParseError> {
+    self.digest_field("Digest")
+  }
+
+  /// Parses attached `Repr-Digest` metadata without changing raw headers.
+  pub fn repr_digest(&self) -> Result<Option<HttpReprDigest>, HttpDigestParseError> {
+    self.digest_field("Repr-Digest")
+  }
+
+  fn digest_field(&self, name: &str) -> Result<Option<HttpDigest>, HttpDigestParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case(name))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDigest::parse_values(values).map(Some)
   }
 
   pub fn content_location(&self) -> Result<Option<&str>, HttpContentLocationParseError> {
