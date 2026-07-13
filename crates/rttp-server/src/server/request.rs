@@ -303,7 +303,6 @@ impl Request {
   pub fn prefer(&self) -> Result<Option<HttpRequestPreferences>, HttpPreferParseError> {
     parse_prefer_values(self.headers_named("Prefer"))
   }
-
   /// Parses received `Accept-Encoding` request metadata without enabling
   /// automatic compression, decompression, or content negotiation.
   pub fn accept_encoding(
@@ -978,7 +977,6 @@ fn parse_prefer_member(member: &str) -> Result<(&str, Option<&str>), HttpPreferP
   }
   Ok((name, value))
 }
-
 impl HttpMaxForwardsParseError {
   fn new(message: impl Into<String>) -> Self {
     Self {
@@ -1802,7 +1800,6 @@ impl HttpRequest {
         .map(|header| header.value.as_str()),
     )
   }
-
   /// Parses received `Accept-Encoding` request metadata without enabling
   /// automatic compression, decompression, or content negotiation.
   pub fn accept_encoding(
