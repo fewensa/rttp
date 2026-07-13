@@ -1418,6 +1418,70 @@ fn prior_knowledge_request_omits_connection_specific_headers_and_connection_toke
 }
 
 #[test]
+fn prior_knowledge_request_preserves_only_trailers_te() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_handshake_without_request(&mut stream);
+
+    let request_headers = read_frame(&mut stream);
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"filtered");
+    request_headers.payload
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/te", addr))
+    .te_trailers()
+    .expect("trailers should be accepted")
+    .emit_http2_prior_knowledge()
+    .expect("h2 GET response");
+  assert_eq!(200, response.code());
+
+  let request_header_block = handle.join().expect("h2 peer thread");
+  assert_eq!(
+    b"trailers",
+    find_header_value(&request_header_block, b"te")
+      .expect("HTTP/2 should preserve TE: trailers")
+      .value
+      .as_slice()
+  );
+}
+
+#[test]
+fn prior_knowledge_request_strips_non_trailers_te() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_handshake_without_request(&mut stream);
+
+    let request_headers = read_frame(&mut stream);
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"filtered");
+    request_headers.payload
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/te", addr))
+    .te_with_q("gzip", "0.5")
+    .expect("transfer coding should be accepted")
+    .emit_http2_prior_knowledge()
+    .expect("h2 GET response");
+  assert_eq!(200, response.code());
+
+  let request_header_block = handle.join().expect("h2 peer thread");
+  assert!(find_header_value(&request_header_block, b"te").is_none());
+}
+
+#[test]
 fn prior_knowledge_post_sends_request_trailers_after_body_data_frame() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");

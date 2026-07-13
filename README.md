@@ -356,6 +356,23 @@ the request itself.
 These helpers declare and parse metadata only. They do not enable automatic
 compression, decompression, or content negotiation.
 
+### Bounded TE request metadata
+
+`HttpClient::te()` appends a validated transfer coding, `te_with_q()` accepts
+an HTTP q-value from `0` through `1` with at most three fractional digits, and
+`te_trailers()` declares support for trailers. The helpers emit one
+comma-separated `TE` field and reject invalid tokens, q-values, duplicates,
+oversized values, and more than 32 codings before a connection is opened.
+`trailers` cannot carry a q-value.
+
+On the server, `Request::te()` and `HttpRequest::te()` parse received fields in
+wire order into `HttpRequestTe`; each `HttpTe` exposes `coding()`, optional
+thousandths `quality()`, and `is_trailers()`. This is metadata parsing only:
+it does not implement transfer coding, trailer negotiation, compression, or
+proxy behavior. Bounded h2c remains conservative: it emits only an exact
+`TE: trailers` field and strips every other `TE` value with HTTP/1.x
+connection-specific request metadata.
+
 ### Bounded HTTP/1.1 Vary behavior
 
 `Response::vary()` parses one or more response `Vary` header fields into
@@ -506,7 +523,7 @@ HEADERS, DATA, and trailing HEADERS are split into frames no larger than the
 active peer limit while the client remains a single-stream prior-knowledge
 path. Before encoding request HEADERS, this bounded h2c client path
 strips HTTP/1.x connection-specific fields: `Connection`, `Keep-Alive`,
-`Proxy-Connection`, `Transfer-Encoding`, `Upgrade`, `TE`, `Trailer`, `Host`,
+`Proxy-Connection`, `Transfer-Encoding`, `Upgrade`, `Trailer`, `Host`,
 and any field named by a `Connection` token. Peer response HEADERS are rejected
 when they contain `Connection`, `Keep-Alive`, `Proxy-Connection`, `TE`,
 `Transfer-Encoding`, or `Upgrade`. Application request trailers such as

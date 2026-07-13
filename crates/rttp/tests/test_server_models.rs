@@ -4,8 +4,8 @@ use rttp::server::{
   HttpAccept, HttpAcceptRanges, HttpAllowedMethods, HttpByteRange, HttpByteRangeError,
   HttpConditionalMetadata, HttpContentDisposition, HttpContentLanguages, HttpContentType,
   HttpEntityTag, HttpIfRangeRequestOutcome, HttpRequest, HttpRequestAcceptEncodings,
-  HttpRequestCacheControl, HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings,
-  HttpRetryAfter, HttpVary,
+  HttpRequestCacheControl, HttpRequestTe, HttpResponse, HttpResponseCacheControl,
+  HttpResponseContentEncodings, HttpRetryAfter, HttpVary,
 };
 
 fn parse_request(raw: &str) -> HttpRequest {
@@ -167,6 +167,67 @@ fn request_accept_encoding_rejects_duplicate_invalid_and_oversized_values() {
     .collect::<Vec<_>>()
     .join(", ");
   assert!(HttpRequestAcceptEncodings::parse(too_many).is_err());
+}
+
+#[test]
+fn request_te_parses_codings_quality_values_and_trailers() {
+  let request = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "TE: gzip, deflate;q=0.8\r\n",
+    "te: trailers\r\n",
+    "\r\n"
+  ));
+
+  let te = request
+    .te()
+    .expect("TE should parse")
+    .expect("TE should be present");
+
+  assert_eq!(3, te.len());
+  assert_eq!("gzip", te.codings()[0].coding());
+  assert_eq!(Some(1000), te.codings()[0].quality());
+  assert_eq!("deflate", te.codings()[1].coding());
+  assert_eq!(Some(800), te.codings()[1].quality());
+  assert!(te.codings()[2].is_trailers());
+  assert_eq!(None, te.codings()[2].quality());
+}
+
+#[test]
+fn request_te_rejects_ambiguous_invalid_and_oversized_values() {
+  assert_eq!(
+    None,
+    parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .te()
+      .expect("absent TE should be accepted")
+  );
+
+  for value in [
+    "",
+    "gzip,",
+    "bad coding",
+    "gzip;q=1.1",
+    "trailers;q=0.5",
+    "gzip;q=0.5;q=0.4",
+  ] {
+    let request = parse_request(&format!(
+      "GET / HTTP/1.1\r\nHost: example.test\r\nTE: {value}\r\n\r\n"
+    ));
+    assert!(request.te().is_err(), "should reject {value:?}");
+  }
+
+  let duplicate = parse_request(concat!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\n",
+    "TE: gzip\r\nte: GZIP;q=0.5\r\n\r\n"
+  ));
+  assert!(duplicate.te().is_err());
+
+  assert!(HttpRequestTe::parse("gzip".repeat(64 * 1024)).is_err());
+  let too_many = (0..33)
+    .map(|index| format!("coding{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  assert!(HttpRequestTe::parse(too_many).is_err());
 }
 
 #[test]

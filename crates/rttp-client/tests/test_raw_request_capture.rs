@@ -292,6 +292,70 @@ fn accept_encoding_helpers_reject_invalid_members_before_connecting() {
 }
 
 #[test]
+fn te_helpers_emit_validated_codings_and_trailers() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .te("gzip")
+      .expect("transfer coding should be accepted")
+      .te_with_q("deflate", "0.5")
+      .expect("transfer coding quality should be accepted")
+      .te_trailers()
+      .expect("trailers should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("gzip, deflate;q=0.5, trailers"),
+    header_value(&request, "TE")
+  );
+}
+
+#[test]
+fn te_helpers_reject_invalid_members_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .te_with_q("bad coding", "1.1")
+      .expect_err("invalid coding should be rejected");
+
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "invalid TE input should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .te_with_q("gzip", "1.1")
+      .expect_err("invalid q-value should be rejected");
+
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "invalid TE q-value should not open a socket"
+  );
+
+  let mut trailers_client = client();
+  let error = trailers_client
+    .get()
+    .url("http://example.test/asset")
+    .te_with_q("trailers", "0.5")
+    .expect_err("trailers must not carry a q-value");
+  assert!(error.is_builder());
+}
+
+#[test]
 fn range_helper_rejects_malformed_inputs_before_connecting() {
   let request = capture_optional_request(|base_url| {
     let mut client = client();

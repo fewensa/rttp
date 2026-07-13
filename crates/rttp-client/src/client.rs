@@ -305,6 +305,32 @@ impl HttpClient {
     self.accept_encoding_with_q("identity", qvalue)
   }
 
+  /// Append a validated `TE` transfer coding. This declares request metadata
+  /// only; it does not enable a transfer-coding engine.
+  pub fn te<S: AsRef<str>>(&mut self, coding: S) -> error::Result<&mut Self> {
+    self.te_member(coding.as_ref(), None)
+  }
+
+  /// Append a validated `TE` transfer coding with an HTTP q-value.
+  ///
+  /// The q-value must be between `0` and `1` with at most three fractional
+  /// digits. `trailers` cannot carry a q-value.
+  pub fn te_with_q<C: AsRef<str>, Q: AsRef<str>>(
+    &mut self,
+    coding: C,
+    qvalue: Q,
+  ) -> error::Result<&mut Self> {
+    self.te_member(coding.as_ref(), Some(qvalue.as_ref()))
+  }
+
+  /// Append `trailers` to `TE`.
+  ///
+  /// On bounded HTTP/2 paths, this is the only `TE` value emitted; other `TE`
+  /// values are stripped with connection-specific request metadata.
+  pub fn te_trailers(&mut self) -> error::Result<&mut Self> {
+    self.te_member("trailers", None)
+  }
+
   /// Set an `If-Range` validator with a single strong entity tag.
   ///
   /// `If-Range` only permits strong entity-tag validators. Use `header`
@@ -405,6 +431,51 @@ impl HttpClient {
       header.replace(Header::new("Accept-Encoding", value));
     } else {
       headers.push(Header::new("Accept-Encoding", member));
+    }
+    Ok(self)
+  }
+
+  fn te_member(&mut self, coding: &str, qvalue: Option<&str>) -> error::Result<&mut Self> {
+    let coding = coding.trim();
+    if !is_http_token(coding) {
+      return Err(error::builder_with_message("invalid TE coding"));
+    }
+    if coding.eq_ignore_ascii_case("trailers") && qvalue.is_some() {
+      return Err(error::builder_with_message(
+        "TE trailers cannot carry a q-value",
+      ));
+    }
+    let qvalue = qvalue.map(validate_te_qvalue).transpose()?;
+    let member = qvalue.map_or_else(
+      || coding.to_string(),
+      |qvalue| format!("{coding};q={qvalue}"),
+    );
+    if member.len() > MAX_TE_VALUE_BYTES {
+      return Err(error::builder_with_message("TE header value is too large"));
+    }
+
+    let headers = self.request.headers_mut();
+    let existing = headers
+      .iter_mut()
+      .find(|header| header.name().eq_ignore_ascii_case("TE"));
+    if let Some(header) = existing {
+      let existing_codings = parse_te_codings(header.value())?;
+      if existing_codings
+        .iter()
+        .any(|known| known.eq_ignore_ascii_case(coding))
+      {
+        return Err(error::builder_with_message("duplicate TE coding"));
+      }
+      if existing_codings.len() >= MAX_TE_CODINGS {
+        return Err(error::builder_with_message("too many TE codings"));
+      }
+      let value = format!("{}, {member}", header.value());
+      if value.len() > MAX_TE_VALUE_BYTES {
+        return Err(error::builder_with_message("TE header value is too large"));
+      }
+      header.replace(Header::new("TE", value));
+    } else {
+      headers.push(Header::new("TE", member));
     }
     Ok(self)
   }
@@ -652,6 +723,8 @@ impl HttpClient {
 
 const MAX_ACCEPT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
 const MAX_ACCEPT_ENCODINGS: usize = 32;
+const MAX_TE_VALUE_BYTES: usize = 64 * 1024;
+const MAX_TE_CODINGS: usize = 32;
 
 fn parse_accept_encoding_codings(value: &str) -> error::Result<Vec<&str>> {
   if value.len() > MAX_ACCEPT_ENCODING_VALUE_BYTES {
@@ -727,6 +800,71 @@ fn validate_accept_encoding_qvalue(qvalue: &str) -> error::Result<&str> {
     Err(error::builder_with_message(
       "invalid Accept-Encoding q-value",
     ))
+  }
+}
+
+fn parse_te_codings(value: &str) -> error::Result<Vec<&str>> {
+  if value.len() > MAX_TE_VALUE_BYTES {
+    return Err(error::builder_with_message("TE header value is too large"));
+  }
+
+  let mut codings = Vec::new();
+  for member in value.split(',') {
+    let (coding, _) = split_te_member(member)?;
+    if codings
+      .iter()
+      .any(|known: &&str| known.eq_ignore_ascii_case(coding))
+    {
+      return Err(error::builder_with_message("duplicate TE coding"));
+    }
+    if codings.len() >= MAX_TE_CODINGS {
+      return Err(error::builder_with_message("too many TE codings"));
+    }
+    codings.push(coding);
+  }
+  Ok(codings)
+}
+
+fn split_te_member(member: &str) -> error::Result<(&str, Option<&str>)> {
+  let mut parts = member.split(';');
+  let coding = parts.next().unwrap_or_default().trim();
+  if !is_http_token(coding) {
+    return Err(error::builder_with_message("invalid TE coding"));
+  }
+  let Some(parameter) = parts.next() else {
+    return Ok((coding, None));
+  };
+  if coding.eq_ignore_ascii_case("trailers") {
+    return Err(error::builder_with_message(
+      "TE trailers cannot carry a q-value",
+    ));
+  }
+  if parts.next().is_some() {
+    return Err(error::builder_with_message("invalid TE q-value"));
+  }
+  let Some((name, qvalue)) = parameter.trim().split_once('=') else {
+    return Err(error::builder_with_message("invalid TE q-value"));
+  };
+  if !name.trim().eq_ignore_ascii_case("q") {
+    return Err(error::builder_with_message("invalid TE q-value"));
+  }
+  Ok((coding, Some(validate_te_qvalue(qvalue.trim())?)))
+}
+
+fn validate_te_qvalue(qvalue: &str) -> error::Result<&str> {
+  let valid = match qvalue.split_once('.') {
+    Some((whole, fraction)) => {
+      fraction.len() <= 3
+        && fraction.bytes().all(|byte| byte.is_ascii_digit())
+        && matches!(whole, "0" | "1")
+        && (whole == "0" || fraction.bytes().all(|byte| byte == b'0'))
+    }
+    None => matches!(qvalue, "0" | "1"),
+  };
+  if valid {
+    Ok(qvalue)
+  } else {
+    Err(error::builder_with_message("invalid TE q-value"))
   }
 }
 

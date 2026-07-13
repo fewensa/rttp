@@ -101,6 +101,16 @@ impl Request {
     HttpRequestAcceptEncodings::parse_values(values).map(Some)
   }
 
+  /// Parses received `TE` request metadata without enabling transfer coding,
+  /// trailer negotiation, compression, or proxy behavior.
+  pub fn te(&self) -> Result<Option<HttpRequestTe>, HttpTeParseError> {
+    let values: Vec<&str> = self.headers_named("TE").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpRequestTe::parse_values(values).map(Some)
+  }
+
   pub fn accept(&self) -> Result<Option<HttpAccept>, HttpAcceptParseError> {
     let values: Vec<&str> = self.headers_named("Accept").collect();
     if values.is_empty() {
@@ -1369,6 +1379,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpRequestAcceptEncodings::parse_values(values).map(Some)
+  }
+
+  /// Parses received `TE` request metadata without enabling transfer coding,
+  /// trailer negotiation, compression, or proxy behavior.
+  pub fn te(&self) -> Result<Option<HttpRequestTe>, HttpTeParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("TE"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpRequestTe::parse_values(values).map(Some)
   }
 
   pub fn accept(&self) -> Result<Option<HttpAccept>, HttpAcceptParseError> {

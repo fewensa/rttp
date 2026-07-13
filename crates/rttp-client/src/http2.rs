@@ -1369,14 +1369,15 @@ fn regular_headers(header: &str) -> Vec<(String, String)> {
     .skip(1)
     .filter_map(|line| line.split_once(':'))
     .map(|(name, value)| (name.trim().to_ascii_lowercase(), value.trim().to_string()))
-    .filter(|(name, _)| !is_forbidden_request_header_name(name, &connection_tokens))
+    .filter(|(name, value)| {
+      !is_forbidden_request_header_name(name, &connection_tokens)
+        && (!name.eq_ignore_ascii_case("te") || value.eq_ignore_ascii_case("trailers"))
+    })
     .collect()
 }
 
 fn is_forbidden_request_header_name(name: &str, connection_tokens: &[String]) -> bool {
-  is_connection_specific_header_name(name)
-    || name == "te"
-    || connection_tokens.iter().any(|token| token == name)
+  is_connection_specific_header_name(name) || connection_tokens.iter().any(|token| token == name)
 }
 
 fn is_connection_specific_header_name(name: &str) -> bool {
