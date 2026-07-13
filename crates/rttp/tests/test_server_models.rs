@@ -111,6 +111,44 @@ fn parses_request_cache_control_max_stale_without_value() {
 }
 
 #[test]
+fn parses_request_accept_language_metadata() {
+  let request = parse_request(concat!(
+    "GET /localized HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Accept-Language: en-US, fr-CA; q=0.8\r\n",
+    "Accept-Language: *;q=0\r\n",
+    "\r\n"
+  ));
+
+  let languages = request
+    .accept_language()
+    .expect("valid Accept-Language should parse")
+    .expect("Accept-Language header should be present");
+
+  assert_eq!(vec!["en-US", "fr-CA", "*"], languages.ranges());
+  assert_eq!(vec![None, Some("0.8"), Some("0")], languages.qualities());
+}
+
+#[test]
+fn request_accept_language_helper_rejects_invalid_wire_values() {
+  for value in [
+    "en_US",
+    "en; q=1.001",
+    "en; q=0.1234",
+    "en; level=1",
+    "en, EN",
+  ] {
+    let request = parse_request(&format!(
+      "GET /localized HTTP/1.1\r\nHost: example.test\r\nAccept-Language: {value}\r\n\r\n"
+    ));
+    assert!(
+      request.accept_language().is_err(),
+      "Accept-Language helper should reject {value:?}"
+    );
+  }
+}
+
+#[test]
 fn parses_response_cache_control_directives() {
   let response = HttpResponse::new(200, "OK")
     .header(
