@@ -5,5 +5,6 @@
 
 pub mod forwarded;
 pub mod http1;
+pub mod priority;
 pub mod server_timing;
 pub mod www_authenticate;
