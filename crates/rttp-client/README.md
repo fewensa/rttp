@@ -333,6 +333,19 @@ connection is opened.
 These helpers declare request metadata only. They do not enable automatic
 compression, decompression, or content negotiation.
 
+## Bounded Accept request metadata
+
+`HttpClient::accept()` appends one validated media range, and
+`accept_with_q()` adds a q-value from `0` through `1` with at most three
+fractional digits. Convenience helpers cover `*/*`, JSON, HTML, XML, and plain
+text, including q-value variants. Media types, parameter names, parameter
+values, and q-values are validated; duplicate parameters, oversized values,
+and more than 32 media ranges are rejected before a connection is opened.
+
+The helpers emit one comma-separated `Accept` field and do not choose a
+response representation. `header(("Accept", value))` remains available for
+media ranges or extensions outside this bounded helper API.
+
 ## Bounded HTTP/1.1 Content-Disposition behavior
 
 `Response::content_disposition()` parses a singleton response

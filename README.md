@@ -356,6 +356,21 @@ the request itself.
 These helpers declare and parse metadata only. They do not enable automatic
 compression, decompression, or content negotiation.
 
+### Bounded Accept request metadata
+
+`HttpClient::accept()` appends one validated media range, while
+`accept_with_q()` adds a q-value from `0` through `1` with at most three
+fractional digits. Convenience helpers cover `*/*`, JSON, HTML, XML, and plain
+text, including q-value variants. The client rejects malformed media types or
+parameters, duplicate parameters, invalid q-values, oversized fields, and more
+than 32 media ranges before opening a connection. Raw
+`header(("Accept", value))` remains available for values outside the bounded
+helper API.
+
+These helpers only declare request metadata. RTTP does not perform automatic
+representation selection, retries, redirects, caching, or server policy from
+`Accept`.
+
 ### Bounded HTTP/1.1 Vary behavior
 
 `Response::vary()` parses one or more response `Vary` header fields into
