@@ -356,6 +356,27 @@ the request itself.
 These helpers declare and parse metadata only. They do not enable automatic
 compression, decompression, or content negotiation.
 
+### Bounded Prefer request metadata
+
+`HttpClient::prefer()` appends a token-only request preference, and
+`prefer_with_value()` appends a token-valued preference. They emit one ordered,
+comma-separated `Prefer` field and validate preference tokens, optional values,
+duplicate names, a 64 KiB field limit, an 8 KiB individual value limit, and a
+32-preference limit before a connection is opened. `wait` is additionally
+validated as an unsigned decimal integer. Common values such as
+`respond-async`, `return=minimal`, `return=representation`, and `wait=n` are
+handled as metadata alongside unknown token extensions.
+
+On the server, `Request::prefer()` and `HttpRequest::prefer()` parse all
+received `Prefer` fields in wire order into `HttpRequestPreferences`. Each item
+exposes its original `name()` and optional `value()`; unknown extensions remain
+available. Absent metadata returns `Ok(None)`, while malformed, duplicate,
+oversized, or excessive preferences return a parse error without changing the
+raw request headers.
+
+These helpers only exchange metadata. They do not schedule asynchronous jobs,
+shape responses, choose server behavior, apply cache policy, or retry requests.
+
 ### Bounded HTTP/1.1 Vary behavior
 
 `Response::vary()` parses one or more response `Vary` header fields into

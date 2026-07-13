@@ -333,6 +333,19 @@ connection is opened.
 These helpers declare request metadata only. They do not enable automatic
 compression, decompression, or content negotiation.
 
+## Bounded Prefer request metadata
+
+`HttpClient::prefer()` appends a token-only preference, and
+`prefer_with_value()` appends a token-valued preference. The helpers emit one
+ordered, comma-separated `Prefer` field and reject malformed tokens, duplicate
+names, values above 8 KiB, fields above 64 KiB, and more than 32 preferences
+before opening a connection. `wait` accepts only unsigned decimal integers;
+`respond-async`, `return=minimal`, `return=representation`, and unknown token
+extensions remain metadata declarations.
+
+These helpers do not schedule asynchronous work, shape responses, apply cache
+policy, retry requests, or infer server behavior from a preference.
+
 ## Bounded HTTP/1.1 Content-Disposition behavior
 
 `Response::content_disposition()` parses a singleton response

@@ -66,6 +66,55 @@ fn request_accept_helper_is_optional_and_keeps_raw_invalid_headers() {
 }
 
 #[test]
+fn request_prefer_preserves_ordered_known_and_extension_metadata() {
+  let request = parse_request(concat!(
+    "GET /metadata HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Prefer: respond-async, return=representation\r\n",
+    "Prefer: wait=15, example-extension=enabled\r\n",
+    "\r\n"
+  ));
+
+  let preferences = request
+    .prefer()
+    .expect("Prefer should parse")
+    .expect("Prefer should be present");
+  assert_eq!(4, preferences.len());
+  assert_eq!("respond-async", preferences.preferences()[0].name());
+  assert_eq!(None, preferences.preferences()[0].value());
+  assert_eq!("return", preferences.preferences()[1].name());
+  assert_eq!(Some("representation"), preferences.preferences()[1].value());
+  assert_eq!("wait", preferences.preferences()[2].name());
+  assert_eq!(Some("15"), preferences.preferences()[2].value());
+  assert_eq!("example-extension", preferences.preferences()[3].name());
+  assert_eq!(Some("enabled"), preferences.preferences()[3].value());
+}
+
+#[test]
+fn request_prefer_rejects_malformed_wait_oversized_values_and_excessive_preferences() {
+  for value in [
+    "wait=-1",
+    "wait=1.5",
+    "wait=abc",
+    "return=bad value",
+    "respond-async,",
+  ] {
+    let request = parse_request(&format!(
+      "GET /metadata HTTP/1.1\r\nHost: example.test\r\nPrefer: {value}\r\n\r\n"
+    ));
+    assert!(request.prefer().is_err(), "Prefer should reject {value:?}");
+    assert_eq!(Some(value), request.header("Prefer"));
+  }
+
+  assert!(rttp::server::HttpRequestPreferences::parse("a".repeat(64 * 1024 + 1)).is_err());
+  let too_many = (0..33)
+    .map(|index| format!("extension{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  assert!(rttp::server::HttpRequestPreferences::parse(too_many).is_err());
+}
+
+#[test]
 fn request_accept_ignores_extensions_after_quality() {
   let accept = HttpAccept::parse("text/html; level=1; q=0.8; foo; bar=quoted")
     .expect("Accept extensions after quality should parse");

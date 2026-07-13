@@ -4,6 +4,9 @@ pub(crate) const MAX_REQUEST_HEAD_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 pub(crate) const MAX_ACCEPT_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_ACCEPT_MEDIA_RANGES: usize = 256;
+const MAX_PREFER_FIELD_BYTES: usize = 64 * 1024;
+const MAX_PREFER_VALUE_BYTES: usize = 8 * 1024;
+const MAX_PREFERENCES: usize = 32;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request {
   pub(crate) method: String,
@@ -117,6 +120,15 @@ impl Request {
       return Ok(None);
     }
     HttpAcceptLanguages::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Prefer` request metadata without applying preferences.
+  pub fn prefer(&self) -> Result<Option<HttpRequestPreferences>, HttpPreferParseError> {
+    let values: Vec<&str> = self.headers_named("Prefer").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpRequestPreferences::parse_values(values).map(Some)
   }
 
   pub fn vary_selection(&self, vary: &HttpVary) -> HttpVarySelection {
@@ -461,6 +473,121 @@ impl Request {
       extended_connect_protocol: None,
     }
   }
+}
+
+/// A validated `Prefer` item received on an HTTP request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpPreference {
+  name: String,
+  value: Option<String>,
+}
+
+impl HttpPreference {
+  pub fn name(&self) -> &str {
+    &self.name
+  }
+
+  pub fn value(&self) -> Option<&str> {
+    self.value.as_deref()
+  }
+}
+
+/// Bounded, ordered `Prefer` request metadata.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpRequestPreferences {
+  preferences: Vec<HttpPreference>,
+}
+
+impl HttpRequestPreferences {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpPreferParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpPreferParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut preferences = Vec::new();
+    for value in values {
+      if value.len() > MAX_PREFER_FIELD_BYTES {
+        return Err(HttpPreferParseError::new(
+          "Prefer header value is too large",
+        ));
+      }
+      for member in value.split(',') {
+        let (name, preference_value) = parse_prefer_member(member)?;
+        if preferences
+          .iter()
+          .any(|known: &HttpPreference| known.name.eq_ignore_ascii_case(name))
+        {
+          return Err(HttpPreferParseError::new("duplicate Prefer preference"));
+        }
+        if preferences.len() >= MAX_PREFERENCES {
+          return Err(HttpPreferParseError::new("too many Prefer preferences"));
+        }
+        preferences.push(HttpPreference {
+          name: name.to_string(),
+          value: preference_value.map(ToString::to_string),
+        });
+      }
+    }
+    if preferences.is_empty() {
+      return Err(HttpPreferParseError::new("invalid Prefer preference"));
+    }
+    Ok(Self { preferences })
+  }
+
+  pub fn preferences(&self) -> &[HttpPreference] {
+    &self.preferences
+  }
+
+  pub fn len(&self) -> usize {
+    self.preferences.len()
+  }
+
+  pub fn is_empty(&self) -> bool {
+    self.preferences.is_empty()
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpPreferParseError {
+  message: String,
+}
+
+impl HttpPreferParseError {
+  fn new(message: impl Into<String>) -> Self {
+    Self {
+      message: message.into(),
+    }
+  }
+}
+
+impl fmt::Display for HttpPreferParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpPreferParseError {}
+
+fn parse_prefer_member(member: &str) -> Result<(&str, Option<&str>), HttpPreferParseError> {
+  let (name, value) = member
+    .trim()
+    .split_once('=')
+    .map_or((member.trim(), None), |(name, value)| {
+      (name.trim(), Some(value.trim()))
+    });
+  if !is_http_token(name)
+    || value.is_some_and(|value| {
+      value.len() > MAX_PREFER_VALUE_BYTES
+        || !is_http_token(value)
+        || (name.eq_ignore_ascii_case("wait") && value.parse::<u64>().is_err())
+    })
+  {
+    return Err(HttpPreferParseError::new("invalid Prefer preference"));
+  }
+  Ok((name, value))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1394,6 +1521,20 @@ impl HttpRequest {
       .filter(|header| header.name.eq_ignore_ascii_case("Accept-Language"))
       .map(|header| header.value.as_str());
     HttpAcceptLanguages::parse_optional_values(values)
+  }
+
+  /// Parses received `Prefer` request metadata without applying preferences.
+  pub fn prefer(&self) -> Result<Option<HttpRequestPreferences>, HttpPreferParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Prefer"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpRequestPreferences::parse_values(values).map(Some)
   }
 
   pub fn vary_selection(&self, vary: &HttpVary) -> HttpVarySelection {
