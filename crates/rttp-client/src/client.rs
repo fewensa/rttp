@@ -158,6 +158,39 @@ impl HttpClient {
     self.header(("Authorization", auth.as_ref().header_value().as_str()))
   }
 
+  /// Set bounded `Authorization` request metadata from an authentication
+  /// scheme and opaque credentials.
+  ///
+  /// The scheme must be an HTTP token and credentials must be a non-empty,
+  /// bounded header value. RTTP does not interpret credentials or implement
+  /// scheme-specific authentication behavior. Use [`Self::header`] when an
+  /// application needs to send a custom Authorization syntax.
+  pub fn authorization<S: AsRef<str>, C: AsRef<str>>(
+    &mut self,
+    scheme: S,
+    credentials: C,
+  ) -> error::Result<&mut Self> {
+    let scheme = scheme.as_ref().trim();
+    let credentials = credentials.as_ref();
+    if !is_http_token(scheme) {
+      return Err(error::builder_with_message(
+        "invalid Authorization authentication scheme",
+      ));
+    }
+    if credentials.is_empty() || !credentials.bytes().all(is_header_value_byte) {
+      return Err(error::builder_with_message(
+        "invalid Authorization credentials",
+      ));
+    }
+    let value = format!("{scheme} {credentials}");
+    if value.len() > MAX_AUTHORIZATION_VALUE_BYTES {
+      return Err(error::builder_with_message(
+        "Authorization header value is too large",
+      ));
+    }
+    Ok(self.header(Header::new("Authorization", value)))
+  }
+
   ///  Add request header
   pub fn header<P: IntoHeader>(&mut self, header: P) -> &mut Self {
     let headers = self.request.headers_mut();
@@ -652,6 +685,7 @@ impl HttpClient {
 
 const MAX_ACCEPT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
 const MAX_ACCEPT_ENCODINGS: usize = 32;
+const MAX_AUTHORIZATION_VALUE_BYTES: usize = 64 * 1024;
 
 fn parse_accept_encoding_codings(value: &str) -> error::Result<Vec<&str>> {
   if value.len() > MAX_ACCEPT_ENCODING_VALUE_BYTES {

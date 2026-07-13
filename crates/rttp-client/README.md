@@ -333,6 +333,15 @@ connection is opened.
 These helpers declare request metadata only. They do not enable automatic
 compression, decompression, or content negotiation.
 
+## Bounded Authorization request metadata
+
+`HttpClient::authorization(scheme, credentials)` emits one `Authorization`
+field after validating its HTTP-token scheme and non-empty credential value,
+with a 64 KiB bound. Use `header(("Authorization", value))` as the raw escape
+hatch for custom scheme syntax. Credential interpretation remains
+application-owned: RTTP does not validate individual schemes, store or refresh
+credentials, process challenges, retry, or forward credentials on redirects.
+
 ## Bounded HTTP/1.1 Content-Disposition behavior
 
 `Response::content_disposition()` parses a singleton response

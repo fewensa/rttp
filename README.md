@@ -356,6 +356,23 @@ the request itself.
 These helpers declare and parse metadata only. They do not enable automatic
 compression, decompression, or content negotiation.
 
+### Bounded Authorization request metadata
+
+`HttpClient::authorization(scheme, credentials)` emits one validated
+`Authorization` field from an HTTP-token scheme and a non-empty credential
+value bounded to 64 KiB. `header(("Authorization", value))` remains available
+as the raw escape hatch for application-specific schemes and syntaxes.
+
+On the server, `Request::authorization()` and `HttpRequest::authorization()`
+parse exactly one field into `HttpAuthorization`, exposing `scheme()` and
+`credentials()`. Absent metadata returns `Ok(None)`; invalid, oversized, or
+duplicate fields return an error so handlers do not receive ambiguous
+credentials. Typed debug output redacts credential values.
+
+Credential interpretation remains application-owned. These helpers do not
+store credentials, validate individual schemes, refresh tokens, process
+challenges, retry requests, or forward credentials across redirects.
+
 ### Bounded HTTP/1.1 Vary behavior
 
 `Response::vary()` parses one or more response `Vary` header fields into

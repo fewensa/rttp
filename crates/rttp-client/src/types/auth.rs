@@ -1,5 +1,6 @@
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use std::fmt;
 
 /// HTTP authentication type for use with [`rttp_client::HttpClient::auth`].
 ///
@@ -11,12 +12,28 @@ use base64::Engine;
 /// let basic = Auth::basic("user", "password");
 /// let bearer = Auth::bearer("my-token");
 /// ```
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum Auth {
   /// HTTP Basic authentication (`Authorization: Basic <base64(user:pass)>`).
   Basic { username: String, password: String },
   /// Bearer token authentication (`Authorization: Bearer <token>`).
   Bearer { token: String },
+}
+
+impl fmt::Debug for Auth {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    match self {
+      Self::Basic { .. } => formatter
+        .debug_struct("Auth::Basic")
+        .field("username", &"[REDACTED]")
+        .field("password", &"[REDACTED]")
+        .finish(),
+      Self::Bearer { .. } => formatter
+        .debug_struct("Auth::Bearer")
+        .field("token", &"[REDACTED]")
+        .finish(),
+    }
+  }
 }
 
 impl Auth {
@@ -84,5 +101,13 @@ mod tests {
       "Bearer eyJhbGciOiJIUzI1NiJ9.payload.signature",
       auth.header_value()
     );
+  }
+
+  #[test]
+  fn test_auth_debug_redacts_credentials() {
+    let basic = format!("{:?}", Auth::basic("user", "secret"));
+    assert!(!basic.contains("\"user\""));
+    assert!(!basic.contains("\"secret\""));
+    assert!(!format!("{:?}", Auth::bearer("secret")).contains("secret"));
   }
 }

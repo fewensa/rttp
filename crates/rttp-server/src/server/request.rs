@@ -4,6 +4,88 @@ pub(crate) const MAX_REQUEST_HEAD_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 pub(crate) const MAX_ACCEPT_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_ACCEPT_MEDIA_RANGES: usize = 256;
+pub(crate) const MAX_AUTHORIZATION_VALUE_BYTES: usize = 64 * 1024;
+
+/// Typed, bounded `Authorization` request metadata.
+///
+/// Credentials are opaque application-owned values. RTTP validates only the
+/// generic HTTP header shape and does not select, verify, or log them.
+#[derive(Clone, PartialEq, Eq)]
+pub struct HttpAuthorization {
+  scheme: String,
+  credentials: String,
+}
+
+impl HttpAuthorization {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpAuthorizationParseError> {
+    let value = value.as_ref();
+    if value.len() > MAX_AUTHORIZATION_VALUE_BYTES {
+      return Err(HttpAuthorizationParseError::new(
+        "Authorization header value is too large",
+      ));
+    }
+    let Some(separator) = value.bytes().position(|byte| byte == b' ' || byte == b'\t') else {
+      return Err(HttpAuthorizationParseError::new(
+        "Authorization header requires credentials",
+      ));
+    };
+    let scheme = &value[..separator];
+    let credentials = value[separator..].trim_matches([' ', '\t']);
+    if !is_http_token(scheme) {
+      return Err(HttpAuthorizationParseError::new(
+        "invalid Authorization authentication scheme",
+      ));
+    }
+    if credentials.is_empty() || !credentials.bytes().all(is_header_value_byte) {
+      return Err(HttpAuthorizationParseError::new(
+        "invalid Authorization credentials",
+      ));
+    }
+    Ok(Self {
+      scheme: scheme.to_string(),
+      credentials: credentials.to_string(),
+    })
+  }
+
+  pub fn scheme(&self) -> &str {
+    &self.scheme
+  }
+
+  pub fn credentials(&self) -> &str {
+    &self.credentials
+  }
+}
+
+impl fmt::Debug for HttpAuthorization {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter
+      .debug_struct("HttpAuthorization")
+      .field("scheme", &self.scheme)
+      .field("credentials", &"[REDACTED]")
+      .finish()
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpAuthorizationParseError {
+  message: String,
+}
+
+impl HttpAuthorizationParseError {
+  fn new(message: impl Into<String>) -> Self {
+    Self {
+      message: message.into(),
+    }
+  }
+}
+
+impl fmt::Display for HttpAuthorizationParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpAuthorizationParseError {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request {
   pub(crate) method: String,
@@ -87,6 +169,21 @@ impl Request {
       return Ok(None);
     }
     HttpRequestCacheControl::parse_values(values).map(Some)
+  }
+
+  /// Parses exactly one bounded `Authorization` field as opaque typed
+  /// metadata. Duplicate fields are rejected to avoid ambiguous credentials.
+  pub fn authorization(&self) -> Result<Option<HttpAuthorization>, HttpAuthorizationParseError> {
+    let mut values = self.headers_named("Authorization");
+    let Some(value) = values.next() else {
+      return Ok(None);
+    };
+    if values.next().is_some() {
+      return Err(HttpAuthorizationParseError::new(
+        "duplicate Authorization headers",
+      ));
+    }
+    HttpAuthorization::parse(value).map(Some)
   }
 
   /// Parses received `Accept-Encoding` request metadata without enabling
@@ -1352,6 +1449,25 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpRequestCacheControl::parse_values(values).map(Some)
+  }
+
+  /// Parses exactly one bounded `Authorization` field as opaque typed
+  /// metadata. Duplicate fields are rejected to avoid ambiguous credentials.
+  pub fn authorization(&self) -> Result<Option<HttpAuthorization>, HttpAuthorizationParseError> {
+    let mut values = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Authorization"))
+      .map(|header| header.value.as_str());
+    let Some(value) = values.next() else {
+      return Ok(None);
+    };
+    if values.next().is_some() {
+      return Err(HttpAuthorizationParseError::new(
+        "duplicate Authorization headers",
+      ));
+    }
+    HttpAuthorization::parse(value).map(Some)
   }
 
   /// Parses received `Accept-Encoding` request metadata without enabling
