@@ -125,6 +125,19 @@ linked resources, apply cache policy, redirect, retry, replay requests,
 generate routes, expose a streaming early-write API, or add TLS/ALPN behavior
 from `103` metadata.
 
+### Bounded HTTP/1.1 Link response metadata
+
+`Response::links()` parses one or more final-response `Link` fields into
+ordered `LinkValues` and `LinkValue` metadata. Each value retains its target
+URI/reference and ordered parameters, including unknown parameters such as
+extensions alongside `rel`. Parsing is on demand, so malformed or oversized
+metadata returns an error without discarding raw response headers. Fields and
+parameter values are limited to 64 KiB, with at most 256 link-values and 256
+parameters per value.
+
+This shares Early Hints' bounded metadata posture, but it does not preload,
+schedule fetches, redirect, apply cache policy, or generate routes.
+
 ### Bounded HTTP/1.1 Cache-Control behavior
 
 `Response::cache_control()` parses one or more response `Cache-Control` header
@@ -409,6 +422,30 @@ on demand without changing them.
 
 These helpers only parse and format timing metadata. They do not collect
 metrics, record measurements, export telemetry, or add a metrics backend.
+
+### Bounded HTTP/1.1 request control metadata
+
+`Request::max_forwards()` and `HttpRequest::max_forwards()` expose one bounded
+`Max-Forwards` value as a `u8`. They return `Ok(None)` when the field is absent
+and reject duplicate, empty, signed, non-decimal, or out-of-range values. RTTP
+does not decrement the value, route the request, or infer forwarding behavior.
+
+`HttpClient::te()`, `te_with_q()`, and `te_trailers()` build a single bounded
+`TE` field. `HttpClient::prefer()` and `prefer_with_value()` build a single
+bounded `Prefer` field. Both client helpers reject malformed tokens, invalid
+q-values, duplicates, oversized field values, and more than 32 members before
+opening a connection; `TE: chunked` is rejected because request framing remains
+owned by the existing HTTP/1 implementation.
+
+On the server, `Request::te()`/`HttpRequest::te()` parse ordered `TE` codings
+and their q-values, while `Request::prefer()`/`HttpRequest::prefer()` parse
+ordered token-only `Prefer` items. Absent fields return `Ok(None)` and invalid,
+duplicate, oversized, or excessive values return a parse error without
+changing the request's raw headers.
+
+These APIs only declare or parse HTTP/1.1 metadata. They do not add transfer
+coding engines, trailer scheduling, proxy routing, automatic retries,
+automatic preference handling, cache policy, or forwarding behavior.
 
 ### Bounded HTTP/1.1 Vary behavior
 
@@ -829,6 +866,18 @@ Early Hints support is metadata-only. The server does not execute preloads,
 choose cache policy, redirect, retry, replay requests, generate routes, expose
 a streaming early-write API, alter TLS/ALPN behavior, or decide final response
 status from `103` metadata.
+
+### Bounded HTTP/1.1 Link response metadata
+
+`HttpResponse::links()` parses final-response `Link` fields into ordered
+`HttpLinkValues` and `HttpLinkValue` metadata. URI/reference targets and both
+standard and unknown parameters are retained in order. The parser applies 64
+KiB per-field and parameter-value limits, plus limits of 256 link-values and
+256 parameters per value; parsing errors leave raw response headers intact.
+
+Link metadata uses the same bounded model as Early Hints, but does not execute
+preloads or enable fetch scheduling, redirects, cache policy, or route
+generation.
 
 ### Bounded HTTP/1.1 Cache-Control behavior
 
