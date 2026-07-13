@@ -11,6 +11,7 @@ use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use socket2::{Domain, Protocol, Socket, Type};
+use url::Url;
 
 mod connection;
 mod handoff;

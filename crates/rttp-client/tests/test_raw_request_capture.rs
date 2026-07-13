@@ -217,6 +217,72 @@ fn range_helpers_emit_single_byte_range_headers() {
 }
 
 #[test]
+fn authorization_helpers_emit_basic_bearer_and_custom_scheme_credentials() {
+  for (scheme, credentials, expected) in [
+    ("Basic", "dXNlcjpzZWNyZXQ=", "Basic dXNlcjpzZWNyZXQ="),
+    ("Bearer", "token-123", "Bearer token-123"),
+    ("ApiKey", "v1:client-42", "ApiKey v1:client-42"),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .authorization(scheme, credentials)
+        .expect("authorization metadata should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    assert_eq!(
+      Some(expected),
+      header_value(&request_text(&request), "Authorization")
+    );
+  }
+}
+
+#[test]
+fn authorization_helper_rejects_invalid_or_oversized_metadata_before_connecting() {
+  for (scheme, credentials) in [
+    ("bad scheme", "token".to_string()),
+    ("Bearer", "".to_string()),
+    ("Bearer", " \t ".to_string()),
+    ("Bearer", "x".repeat(64 * 1024 + 1)),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .authorization(scheme, &credentials)
+        .expect_err("invalid authorization metadata should be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid metadata should not open a socket"
+    );
+  }
+}
+
+#[test]
+fn raw_headers_remain_an_escape_hatch_for_custom_authorization_schemes() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header((
+        "Authorization",
+        "Signature keyId=\"client\",algorithm=\"hs2019\"",
+      ))
+      .emit()
+      .expect("request should succeed");
+  });
+  assert_eq!(
+    Some("Signature keyId=\"client\",algorithm=\"hs2019\""),
+    header_value(&request_text(&request), "Authorization")
+  );
+}
+
+#[test]
 fn accept_encoding_helpers_emit_validated_codings_and_quality_values() {
   let request = capture_request(|base_url| {
     client()
@@ -503,6 +569,67 @@ fn accept_language_helper_rejects_invalid_values_before_connecting() {
 }
 
 #[test]
+fn te_and_prefer_helpers_emit_bounded_request_metadata() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/metadata", base_url))
+      .te_trailers()
+      .expect("trailers should be accepted")
+      .te_with_q("deflate", "0.5")
+      .expect("TE coding should be accepted")
+      .prefer("respond-async")
+      .expect("token preference should be accepted")
+      .prefer_with_value("return", "minimal")
+      .expect("valued preference should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("trailers, deflate;q=0.5"),
+    header_value(&request, "TE")
+  );
+  assert_eq!(Some("Close, TE"), header_value(&request, "Connection"));
+  assert_eq!(
+    Some("respond-async, return=minimal"),
+    header_value(&request, "Prefer")
+  );
+}
+
+#[test]
+fn te_and_prefer_helpers_reject_invalid_values_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    assert!(client
+      .get()
+      .url(format!("{}/metadata", base_url))
+      .te_with_q("bad coding", "1")
+      .expect_err("invalid TE coding should be rejected")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "invalid TE input should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    assert!(client
+      .get()
+      .url(format!("{}/metadata", base_url))
+      .prefer_with_value("return", "bad value")
+      .expect_err("invalid preference value should be rejected")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "invalid Prefer input should not open a socket"
+  );
+}
+
+#[test]
 fn forwarded_helper_emits_bounded_forwarding_metadata() {
   let request = capture_request(|base_url| {
     client()
@@ -595,6 +722,91 @@ fn manual_range_header_remains_available_as_escape_hatch() {
   let request = request_text(&request);
 
   assert_eq!(Some("bytes=5-9"), header_value(&request, "Range"));
+}
+
+#[test]
+fn max_forwards_helper_emits_bounded_trace_and_options_headers() {
+  let trace = capture_request(|base_url| {
+    client()
+      .trace()
+      .url(format!("{}/diagnostics", base_url))
+      .max_forwards("0")
+      .expect("zero Max-Forwards should be accepted")
+      .emit()
+      .expect("TRACE request should succeed");
+  });
+  let trace = request_text(&trace);
+  assert!(trace.starts_with("TRACE /diagnostics HTTP/1.1\r\n"));
+  assert_eq!(Some("0"), header_value(&trace, "Max-Forwards"));
+
+  let options = capture_request(|base_url| {
+    client()
+      .options()
+      .url(format!("{}/diagnostics", base_url))
+      .max_forwards("4294967295")
+      .expect("u32::MAX Max-Forwards should be accepted")
+      .emit()
+      .expect("OPTIONS request should succeed");
+  });
+  let options = request_text(&options);
+  assert!(options.starts_with("OPTIONS /diagnostics HTTP/1.1\r\n"));
+  assert_eq!(Some("4294967295"), header_value(&options, "Max-Forwards"));
+}
+
+#[test]
+fn max_forwards_helper_rejects_invalid_values_before_connecting() {
+  for value in ["-1", "1.5", "", "4294967296", "99999999999"] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .trace()
+        .url(format!("{}/diagnostics", base_url))
+        .max_forwards(value)
+        .expect_err("invalid Max-Forwards should be rejected");
+
+      assert!(error.is_builder());
+    });
+
+    assert!(
+      request.is_empty(),
+      "invalid Max-Forwards helper input should not open a socket"
+    );
+  }
+
+  let oversized = "0".repeat(64 * 1024 + 1);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .options()
+      .url(format!("{}/diagnostics", base_url))
+      .max_forwards(oversized.as_str())
+      .expect_err("oversized Max-Forwards should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized Max-Forwards helper input should not open a socket"
+  );
+}
+
+#[test]
+fn manual_max_forwards_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .trace()
+      .url(format!("{}/diagnostics", base_url))
+      .header(("Max-Forwards", "unusual-value"))
+      .emit()
+      .expect("manual Max-Forwards header should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("unusual-value"),
+    header_value(&request, "Max-Forwards")
+  );
 }
 
 #[test]

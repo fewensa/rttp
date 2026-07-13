@@ -9,6 +9,88 @@ pub(crate) const MAX_REQUEST_HEAD_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 pub(crate) const MAX_ACCEPT_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_ACCEPT_MEDIA_RANGES: usize = 256;
+pub(crate) const MAX_AUTHORIZATION_VALUE_BYTES: usize = 64 * 1024;
+
+/// Typed, bounded `Authorization` request metadata.
+///
+/// Credentials are opaque application-owned values. RTTP validates only the
+/// generic HTTP header shape and does not select, verify, or log them.
+#[derive(Clone, PartialEq, Eq)]
+pub struct HttpAuthorization {
+  scheme: String,
+  credentials: String,
+}
+
+impl HttpAuthorization {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpAuthorizationParseError> {
+    let value = value.as_ref();
+    if value.len() > MAX_AUTHORIZATION_VALUE_BYTES {
+      return Err(HttpAuthorizationParseError::new(
+        "Authorization header value is too large",
+      ));
+    }
+    let Some(separator) = value.bytes().position(|byte| byte == b' ' || byte == b'\t') else {
+      return Err(HttpAuthorizationParseError::new(
+        "Authorization header requires credentials",
+      ));
+    };
+    let scheme = &value[..separator];
+    let credentials = value[separator..].trim_matches([' ', '\t']);
+    if !is_http_token(scheme) {
+      return Err(HttpAuthorizationParseError::new(
+        "invalid Authorization authentication scheme",
+      ));
+    }
+    if credentials.is_empty() || !credentials.bytes().all(is_header_value_byte) {
+      return Err(HttpAuthorizationParseError::new(
+        "invalid Authorization credentials",
+      ));
+    }
+    Ok(Self {
+      scheme: scheme.to_string(),
+      credentials: credentials.to_string(),
+    })
+  }
+
+  pub fn scheme(&self) -> &str {
+    &self.scheme
+  }
+
+  pub fn credentials(&self) -> &str {
+    &self.credentials
+  }
+}
+
+impl fmt::Debug for HttpAuthorization {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter
+      .debug_struct("HttpAuthorization")
+      .field("scheme", &self.scheme)
+      .field("credentials", &"[REDACTED]")
+      .finish()
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpAuthorizationParseError {
+  message: String,
+}
+
+impl HttpAuthorizationParseError {
+  fn new(message: impl Into<String>) -> Self {
+    Self {
+      message: message.into(),
+    }
+  }
+}
+
+impl fmt::Display for HttpAuthorizationParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpAuthorizationParseError {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request {
   pub(crate) method: String,
@@ -92,6 +174,35 @@ impl Request {
       return Ok(None);
     }
     HttpRequestCacheControl::parse_values(values).map(Some)
+  }
+
+  /// Parses exactly one bounded `Authorization` field as opaque typed
+  /// metadata. Duplicate fields are rejected to avoid ambiguous credentials.
+  pub fn authorization(&self) -> Result<Option<HttpAuthorization>, HttpAuthorizationParseError> {
+    let mut values = self.headers_named("Authorization");
+    let Some(value) = values.next() else {
+      return Ok(None);
+    };
+    if values.next().is_some() {
+      return Err(HttpAuthorizationParseError::new(
+        "duplicate Authorization headers",
+      ));
+    }
+    HttpAuthorization::parse(value).map(Some)
+  }
+
+  /// Parses received `Max-Forwards` request metadata without automatically
+  /// decrementing or forwarding the request.
+  ///
+  /// The validated decimal count is returned verbatim so valid values are not
+  /// constrained by a machine integer width.
+  pub fn max_forwards(&self) -> Result<Option<String>, HttpMaxForwardsParseError> {
+    parse_max_forwards_values(self.headers_named("Max-Forwards"))
+  }
+
+  /// Parses received `Prefer` request metadata without applying preferences.
+  pub fn prefer(&self) -> Result<Option<HttpRequestPreferences>, HttpPreferParseError> {
+    parse_prefer_values(self.headers_named("Prefer"))
   }
 
   /// Parses received `Accept-Encoding` request metadata without enabling
@@ -646,6 +757,157 @@ impl fmt::Display for HttpAcceptParseError {
 }
 
 impl Error for HttpAcceptParseError {}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpMaxForwardsParseError {
+  message: String,
+}
+
+/// A validated `Prefer` item received on an HTTP request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpPreference {
+  name: String,
+  value: Option<String>,
+}
+
+impl HttpPreference {
+  pub fn name(&self) -> &str {
+    &self.name
+  }
+
+  pub fn value(&self) -> Option<&str> {
+    self.value.as_deref()
+  }
+}
+
+/// Bounded `Prefer` request metadata.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpRequestPreferences {
+  preferences: Vec<HttpPreference>,
+}
+
+impl HttpRequestPreferences {
+  pub fn preferences(&self) -> &[HttpPreference] {
+    &self.preferences
+  }
+
+  pub fn len(&self) -> usize {
+    self.preferences.len()
+  }
+
+  pub fn is_empty(&self) -> bool {
+    self.preferences.is_empty()
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpPreferParseError {
+  message: String,
+}
+
+impl HttpPreferParseError {
+  fn new(message: impl Into<String>) -> Self {
+    Self {
+      message: message.into(),
+    }
+  }
+}
+
+impl fmt::Display for HttpPreferParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpPreferParseError {}
+
+const MAX_REQUEST_CONTROL_VALUE_BYTES: usize = 64 * 1024;
+const MAX_REQUEST_CONTROL_MEMBERS: usize = 32;
+
+fn parse_prefer_values<'a>(
+  values: impl IntoIterator<Item = &'a str>,
+) -> Result<Option<HttpRequestPreferences>, HttpPreferParseError> {
+  let mut preferences = Vec::new();
+  for value in values {
+    if value.len() > MAX_REQUEST_CONTROL_VALUE_BYTES {
+      return Err(HttpPreferParseError::new(
+        "Prefer header value is too large",
+      ));
+    }
+    for member in value.split(',') {
+      let (name, preference_value) = parse_prefer_member(member)?;
+      if preferences
+        .iter()
+        .any(|known: &HttpPreference| known.name.eq_ignore_ascii_case(name))
+      {
+        return Err(HttpPreferParseError::new("duplicate Prefer preference"));
+      }
+      if preferences.len() >= MAX_REQUEST_CONTROL_MEMBERS {
+        return Err(HttpPreferParseError::new("too many Prefer preferences"));
+      }
+      preferences.push(HttpPreference {
+        name: name.to_string(),
+        value: preference_value.map(ToString::to_string),
+      });
+    }
+  }
+  if preferences.is_empty() {
+    Ok(None)
+  } else {
+    Ok(Some(HttpRequestPreferences { preferences }))
+  }
+}
+
+fn parse_prefer_member(member: &str) -> Result<(&str, Option<&str>), HttpPreferParseError> {
+  let (name, value) = member
+    .trim()
+    .split_once('=')
+    .map_or((member.trim(), None), |(name, value)| {
+      (name.trim(), Some(value.trim()))
+    });
+  if !is_http_token(name) || value.is_some_and(|value| !is_http_token(value)) {
+    return Err(HttpPreferParseError::new("invalid Prefer preference"));
+  }
+  Ok((name, value))
+}
+
+impl HttpMaxForwardsParseError {
+  fn new(message: impl Into<String>) -> Self {
+    Self {
+      message: message.into(),
+    }
+  }
+}
+
+impl fmt::Display for HttpMaxForwardsParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpMaxForwardsParseError {}
+
+fn parse_max_forwards_values<'a>(
+  values: impl IntoIterator<Item = &'a str>,
+) -> Result<Option<String>, HttpMaxForwardsParseError> {
+  let mut values = values.into_iter();
+  let Some(value) = values.next() else {
+    return Ok(None);
+  };
+  if values.next().is_some() {
+    return Err(HttpMaxForwardsParseError::new(
+      "duplicate Max-Forwards headers",
+    ));
+  }
+
+  let value = value.trim();
+  if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+    return Err(HttpMaxForwardsParseError::new(
+      "invalid Max-Forwards header value",
+    ));
+  }
+  Ok(Some(value.to_owned()))
+}
 
 fn split_accept_members(value: &str) -> Result<Vec<&str>, HttpAcceptParseError> {
   split_accept_delimited(value, b',', "invalid Accept header value")
@@ -1386,6 +1648,51 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpRequestCacheControl::parse_values(values).map(Some)
+  }
+
+  /// Parses exactly one bounded `Authorization` field as opaque typed
+  /// metadata. Duplicate fields are rejected to avoid ambiguous credentials.
+  pub fn authorization(&self) -> Result<Option<HttpAuthorization>, HttpAuthorizationParseError> {
+    let mut values = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Authorization"))
+      .map(|header| header.value.as_str());
+    let Some(value) = values.next() else {
+      return Ok(None);
+    };
+    if values.next().is_some() {
+      return Err(HttpAuthorizationParseError::new(
+        "duplicate Authorization headers",
+      ));
+    }
+    HttpAuthorization::parse(value).map(Some)
+  }
+
+  /// Parses received `Max-Forwards` request metadata without automatically
+  /// decrementing or forwarding the request.
+  ///
+  /// The validated decimal count is returned verbatim so valid values are not
+  /// constrained by a machine integer width.
+  pub fn max_forwards(&self) -> Result<Option<String>, HttpMaxForwardsParseError> {
+    parse_max_forwards_values(
+      self
+        .headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("Max-Forwards"))
+        .map(|header| header.value.as_str()),
+    )
+  }
+
+  /// Parses received `Prefer` request metadata without applying preferences.
+  pub fn prefer(&self) -> Result<Option<HttpRequestPreferences>, HttpPreferParseError> {
+    parse_prefer_values(
+      self
+        .headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("Prefer"))
+        .map(|header| header.value.as_str()),
+    )
   }
 
   /// Parses received `Accept-Encoding` request metadata without enabling

@@ -1,5 +1,9 @@
 use super::*;
 
+pub use rttp_protocol::alt_svc::{
+  AltSvc as HttpAltSvc, AltSvcAlternative as HttpAltSvcAlternative,
+  AltSvcParameter as HttpAltSvcParameter, AltSvcParseError as HttpAltSvcParseError,
+};
 pub use rttp_protocol::digest::{
   Digest as HttpDigest, DigestEntry as HttpDigestEntry, DigestParseError as HttpDigestParseError,
   ReprDigest as HttpReprDigest, ReprDigestEntry as HttpReprDigestEntry,
@@ -42,6 +46,10 @@ pub(crate) const MAX_ACCEPT_RANGES_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_ACCEPT_RANGES_UNITS: usize = 32;
 pub(crate) const MAX_RETRY_AFTER_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_EARLY_HINTS_VALUE_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_LINK_VALUE_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_LINK_VALUES: usize = 256;
+pub(crate) const MAX_LINK_PARAMETERS: usize = 256;
+pub(crate) const MAX_LINK_PARAMETER_VALUE_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HttpResponse {
@@ -177,6 +185,244 @@ impl fmt::Display for HttpEarlyHintsError {
 }
 
 impl Error for HttpEarlyHintsError {}
+
+/// Bounded `Link` response metadata.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpLinkValues {
+  values: Vec<HttpLinkValue>,
+}
+
+impl HttpLinkValues {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpLinkParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpLinkParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut parsed = Vec::new();
+    for value in values {
+      if value.len() > MAX_LINK_VALUE_BYTES {
+        return Err(HttpLinkParseError::new("Link header value is too large"));
+      }
+      for member in split_http_link_members(value, b',')? {
+        if parsed.len() >= MAX_LINK_VALUES {
+          return Err(HttpLinkParseError::new("too many Link values"));
+        }
+        parsed.push(HttpLinkValue::parse_member(&member)?);
+      }
+    }
+    if parsed.is_empty() {
+      return Err(HttpLinkParseError::new("invalid Link value"));
+    }
+    Ok(Self { values: parsed })
+  }
+
+  pub fn values(&self) -> &[HttpLinkValue] {
+    &self.values
+  }
+
+  pub fn len(&self) -> usize {
+    self.values.len()
+  }
+
+  pub fn is_empty(&self) -> bool {
+    self.values.is_empty()
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpLinkValue {
+  target: String,
+  parameters: Vec<(String, String)>,
+}
+
+impl HttpLinkValue {
+  fn parse_member(member: &str) -> Result<Self, HttpLinkParseError> {
+    let member = member.trim();
+    let Some(target_and_tail) = member.strip_prefix('<') else {
+      return Err(HttpLinkParseError::new("invalid Link target"));
+    };
+    let Some(target_end) = target_and_tail.find('>') else {
+      return Err(HttpLinkParseError::new("invalid Link target"));
+    };
+    let target = &target_and_tail[..target_end];
+    validate_http_link_target(target)?;
+
+    let mut parameters = Vec::new();
+    let tail = target_and_tail[target_end + 1..].trim();
+    if !tail.is_empty() {
+      if !tail.starts_with(';') {
+        return Err(HttpLinkParseError::new("invalid Link parameter"));
+      }
+      for parameter in split_http_link_members(&tail[1..], b';')? {
+        if parameters.len() >= MAX_LINK_PARAMETERS {
+          return Err(HttpLinkParseError::new("too many Link parameters"));
+        }
+        let (name, value) = parse_http_link_parameter(&parameter)?;
+        if parameters
+          .iter()
+          .any(|(known, _): &(String, String)| known.eq_ignore_ascii_case(&name))
+        {
+          return Err(HttpLinkParseError::new("duplicate Link parameter"));
+        }
+        parameters.push((name, value));
+      }
+    }
+    Ok(Self {
+      target: target.to_string(),
+      parameters,
+    })
+  }
+
+  pub fn target(&self) -> &str {
+    &self.target
+  }
+
+  pub fn parameters(&self) -> Vec<(&str, &str)> {
+    self
+      .parameters
+      .iter()
+      .map(|(name, value)| (name.as_str(), value.as_str()))
+      .collect()
+  }
+
+  pub fn parameter(&self, name: impl AsRef<str>) -> Option<&str> {
+    self
+      .parameters
+      .iter()
+      .find(|(known, _)| known.eq_ignore_ascii_case(name.as_ref()))
+      .map(|(_, value)| value.as_str())
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpLinkParseError {
+  pub(crate) message: String,
+}
+
+impl HttpLinkParseError {
+  pub(crate) fn new<S: AsRef<str>>(message: S) -> Self {
+    Self {
+      message: message.as_ref().to_string(),
+    }
+  }
+}
+
+impl fmt::Display for HttpLinkParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpLinkParseError {}
+
+fn validate_http_link_target(target: &str) -> Result<(), HttpLinkParseError> {
+  if target.is_empty()
+    || target
+      .bytes()
+      .any(|byte| byte.is_ascii_control() || matches!(byte, b'<' | b'>'))
+  {
+    return Err(HttpLinkParseError::new("invalid Link target"));
+  }
+  let base = Url::parse("http://example.invalid/").expect("valid internal base URL");
+  Url::options()
+    .base_url(Some(&base))
+    .parse(target)
+    .map_err(|_| HttpLinkParseError::new("invalid Link target"))?;
+  Ok(())
+}
+
+fn split_http_link_members(value: &str, delimiter: u8) -> Result<Vec<String>, HttpLinkParseError> {
+  let mut members = Vec::new();
+  let mut start = 0usize;
+  let mut quoted = false;
+  let mut escaped = false;
+  let mut in_target = false;
+  for (index, byte) in value.bytes().enumerate() {
+    if escaped {
+      escaped = false;
+      continue;
+    }
+    match byte {
+      b'\\' if quoted => escaped = true,
+      b'"' if !in_target => quoted = !quoted,
+      b'<' if !quoted => in_target = true,
+      b'>' if !quoted => in_target = false,
+      byte if byte == delimiter && !quoted && !in_target => {
+        let member = value[start..index].trim();
+        if member.is_empty() {
+          return Err(HttpLinkParseError::new("invalid Link value"));
+        }
+        members.push(member.to_string());
+        start = index + 1;
+      }
+      _ => {}
+    }
+  }
+  if quoted || escaped || in_target {
+    return Err(HttpLinkParseError::new("invalid Link value"));
+  }
+  let member = value[start..].trim();
+  if member.is_empty() {
+    return Err(HttpLinkParseError::new("invalid Link value"));
+  }
+  members.push(member.to_string());
+  Ok(members)
+}
+
+fn parse_http_link_parameter(value: &str) -> Result<(String, String), HttpLinkParseError> {
+  let (name, value) = value.split_once('=').unwrap_or((value, ""));
+  let name = name.trim();
+  let value = value.trim();
+  if !is_http_token(name) {
+    return Err(HttpLinkParseError::new("invalid Link parameter name"));
+  }
+  if value.len() > MAX_LINK_PARAMETER_VALUE_BYTES {
+    return Err(HttpLinkParseError::new("Link parameter value is too large"));
+  }
+  let value = if value.is_empty() {
+    String::new()
+  } else if value.starts_with('"') {
+    parse_http_link_quoted_string(value)?
+  } else if value.contains('"') || !is_http_token(value) {
+    return Err(HttpLinkParseError::new("invalid Link parameter value"));
+  } else {
+    value.to_string()
+  };
+  Ok((name.to_ascii_lowercase(), value))
+}
+
+fn parse_http_link_quoted_string(value: &str) -> Result<String, HttpLinkParseError> {
+  if !value.ends_with('"') || value.len() < 2 {
+    return Err(HttpLinkParseError::new("invalid Link quoted-string"));
+  }
+
+  let inner = &value[1..value.len() - 1];
+  let mut parsed = String::new();
+  let mut escaped = false;
+  for byte in inner.bytes() {
+    if escaped {
+      if !is_content_disposition_quoted_pair_byte(byte) {
+        return Err(HttpLinkParseError::new("invalid Link quoted-string"));
+      }
+      parsed.push(byte as char);
+      escaped = false;
+    } else if byte == b'\\' {
+      escaped = true;
+    } else if byte == b'"' || !is_content_disposition_quoted_text_byte(byte) {
+      return Err(HttpLinkParseError::new("invalid Link quoted-string"));
+    } else {
+      parsed.push(byte as char);
+    }
+  }
+
+  if escaped {
+    return Err(HttpLinkParseError::new("invalid Link quoted-string"));
+  }
+  Ok(parsed)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DefaultConnectionHeader {
@@ -418,6 +664,18 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Alt-Svc` response metadata without selecting an endpoint.
+  pub fn with_alt_svc(mut self, value: impl AsRef<str>) -> Result<Self, HttpAltSvcParseError> {
+    let alt_svc = HttpAltSvc::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Alt-Svc"));
+    self
+      .headers
+      .push(HttpHeader::new("Alt-Svc", alt_svc.header_value()));
+    Ok(self)
+  }
+
   pub fn with_content_location<V: AsRef<str>>(
     mut self,
     value: V,
@@ -580,6 +838,21 @@ impl HttpResponse {
     HttpVary::parse_values(values).map(Some)
   }
 
+  /// Parses `Link` response metadata without enabling preload, redirects,
+  /// caching, or fetch scheduling.
+  pub fn links(&self) -> Result<Option<HttpLinkValues>, HttpLinkParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Link"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpLinkValues::parse_values(values).map(Some)
+  }
+
   pub fn allow(&self) -> Result<Option<HttpAllowedMethods>, HttpAllowParseError> {
     let values: Vec<&str> = self
       .headers
@@ -688,6 +961,20 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpServerTiming::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Alt-Svc` metadata without changing raw headers or connections.
+  pub fn alt_svc(&self) -> Result<Option<HttpAltSvc>, HttpAltSvcParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Alt-Svc"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAltSvc::parse_values(values).map(Some)
   }
 
   pub fn content_location(&self) -> Result<Option<&str>, HttpContentLocationParseError> {

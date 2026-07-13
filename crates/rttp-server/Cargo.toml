@@ -20,3 +20,4 @@ edition = "2021"
 httpdate = "1.0"
 socket2 = "0.5"
 rttp-protocol = { version = "0.1.0", path = "../rttp-protocol" }
+url = "2"

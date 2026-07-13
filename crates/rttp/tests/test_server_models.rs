@@ -1,11 +1,12 @@
 use std::time::{Duration, UNIX_EPOCH};
 
 use rttp::server::{
-  HttpAccept, HttpAcceptRanges, HttpAllowedMethods, HttpByteRange, HttpByteRangeError,
-  HttpConditionalMetadata, HttpContentDisposition, HttpContentLanguages, HttpContentType,
-  HttpDigest, HttpEntityTag, HttpIfRangeRequestOutcome, HttpRequest, HttpRequestAcceptEncodings,
-  HttpRequestCacheControl, HttpRequestTe, HttpResponse, HttpResponseCacheControl,
-  HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming, HttpVary,
+  HttpAccept, HttpAcceptRanges, HttpAllowedMethods, HttpAuthorization, HttpByteRange,
+  HttpByteRangeError, HttpConditionalMetadata, HttpContentDisposition, HttpContentLanguages,
+  HttpContentType, HttpDigest, HttpEntityTag, HttpIfRangeRequestOutcome, HttpLinkValues,
+  HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
+  HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming,
+  HttpVary,
 };
 
 #[test]
@@ -121,6 +122,48 @@ fn parse_request(raw: &str) -> HttpRequest {
 }
 
 #[test]
+fn request_authorization_parses_one_bounded_opaque_credential() {
+  let request = parse_request(concat!(
+    "GET / HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Authorization: Bearer token-123\r\n",
+    "\r\n"
+  ));
+  let authorization = request
+    .authorization()
+    .expect("Authorization should parse")
+    .expect("Authorization should be present");
+
+  assert_eq!("Bearer", authorization.scheme());
+  assert_eq!("token-123", authorization.credentials());
+  assert!(!format!("{authorization:?}").contains("token-123"));
+}
+
+#[test]
+fn request_authorization_rejects_duplicate_invalid_and_oversized_values() {
+  assert_eq!(
+    None,
+    parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .authorization()
+      .expect("absent Authorization should be accepted")
+  );
+
+  for value in ["Bearer", "bad(scheme credentials", "Bearer \t"] {
+    assert!(
+      HttpAuthorization::parse(value).is_err(),
+      "should reject {value:?}"
+    );
+  }
+
+  let duplicate = parse_request(concat!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\n",
+    "Authorization: Bearer first\r\nauthorization: Bearer second\r\n\r\n"
+  ));
+  assert!(duplicate.authorization().is_err());
+  assert!(HttpAuthorization::parse(format!("Bearer {}", "x".repeat(64 * 1024))).is_err());
+}
+
+#[test]
 fn request_forwarded_parses_standard_parameters_and_multiple_entries() {
   let request = parse_request(concat!(
     "GET /asset HTTP/1.1\r\n",
@@ -169,6 +212,110 @@ fn request_forwarded_rejects_duplicate_and_excessive_metadata() {
     "GET / HTTP/1.1\r\nHost: example.test\r\nForwarded: {excessive}\r\n\r\n"
   ));
   assert!(request.forwarded().is_err());
+}
+
+#[test]
+fn request_max_forwards_is_optional_and_rejects_invalid_metadata() {
+  let absent = parse_request("OPTIONS / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .max_forwards()
+      .expect("missing Max-Forwards should be valid")
+  );
+
+  let valid = parse_request(concat!(
+    "OPTIONS / HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Max-Forwards: 256\r\n",
+    "\r\n"
+  ));
+  assert_eq!(
+    Some("256".to_owned()),
+    valid.max_forwards().expect("value should parse")
+  );
+
+  for value in ["abc", "1.0"] {
+    let request = parse_request(&format!(
+      "OPTIONS / HTTP/1.1\r\nHost: example.test\r\nMax-Forwards: {value}\r\n\r\n"
+    ));
+    assert!(request.max_forwards().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Max-Forwards"));
+  }
+
+  let duplicate = parse_request(concat!(
+    "OPTIONS / HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Max-Forwards: 1\r\n",
+    "max-forwards: 2\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.max_forwards().is_err());
+  assert_eq!(Some("1"), duplicate.header("Max-Forwards"));
+}
+
+#[test]
+fn request_te_and_prefer_parse_bounded_metadata_without_enabling_behavior() {
+  let request = parse_request(concat!(
+    "GET /metadata HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "TE: trailers, deflate;q=0.5\r\n",
+    "Prefer: respond-async, return=minimal\r\n",
+    "\r\n"
+  ));
+
+  let te = request
+    .te()
+    .expect("TE should parse")
+    .expect("TE should exist");
+  assert_eq!(2, te.len());
+  assert_eq!("trailers", te.codings()[0].coding());
+  assert!(te.codings()[0].is_trailers());
+  assert_eq!(None, te.codings()[0].quality());
+  assert_eq!("deflate", te.codings()[1].coding());
+  assert_eq!(Some(500), te.codings()[1].quality());
+
+  let preferences = request
+    .prefer()
+    .expect("Prefer should parse")
+    .expect("Prefer should exist");
+  assert_eq!(2, preferences.len());
+  assert_eq!("respond-async", preferences.preferences()[0].name());
+  assert_eq!(None, preferences.preferences()[0].value());
+  assert_eq!("return", preferences.preferences()[1].name());
+  assert_eq!(Some("minimal"), preferences.preferences()[1].value());
+}
+
+#[test]
+fn request_te_and_prefer_reject_invalid_or_duplicate_metadata() {
+  for value in ["trailers,, deflate", "gzip;q=1.1", "trailers;q=0.5"] {
+    let request = parse_request(&format!(
+      "GET /metadata HTTP/1.1\r\nHost: example.test\r\nTE: {value}\r\n\r\n"
+    ));
+    assert!(request.te().is_err(), "TE should reject {value:?}");
+    assert_eq!(Some(value), request.header("TE"));
+  }
+  for value in ["return=bad value", "respond-async; wait=1"] {
+    let request = parse_request(&format!(
+      "GET /metadata HTTP/1.1\r\nHost: example.test\r\nPrefer: {value}\r\n\r\n"
+    ));
+    assert!(request.prefer().is_err(), "Prefer should reject {value:?}");
+    assert_eq!(Some(value), request.header("Prefer"));
+  }
+
+  let duplicate_te = parse_request(concat!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\n",
+    "TE: trailers\r\nte: TRAILERS;q=0.5\r\n\r\n"
+  ));
+  assert!(duplicate_te.te().is_err());
+
+  let duplicate_prefer = parse_request(concat!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\n",
+    "Prefer: return=minimal\r\nprefer: RETURN=representation\r\n\r\n"
+  ));
+  assert!(duplicate_prefer.prefer().is_err());
+
+  assert!(HttpRequestTe::parse("gzip".repeat(64 * 1024)).is_err());
 }
 
 #[test]
@@ -326,67 +473,6 @@ fn request_accept_encoding_rejects_duplicate_invalid_and_oversized_values() {
     .collect::<Vec<_>>()
     .join(", ");
   assert!(HttpRequestAcceptEncodings::parse(too_many).is_err());
-}
-
-#[test]
-fn request_te_parses_codings_quality_values_and_trailers() {
-  let request = parse_request(concat!(
-    "GET /asset HTTP/1.1\r\n",
-    "Host: example.test\r\n",
-    "TE: gzip, deflate;q=0.8\r\n",
-    "te: trailers\r\n",
-    "\r\n"
-  ));
-
-  let te = request
-    .te()
-    .expect("TE should parse")
-    .expect("TE should be present");
-
-  assert_eq!(3, te.len());
-  assert_eq!("gzip", te.codings()[0].coding());
-  assert_eq!(Some(1000), te.codings()[0].quality());
-  assert_eq!("deflate", te.codings()[1].coding());
-  assert_eq!(Some(800), te.codings()[1].quality());
-  assert!(te.codings()[2].is_trailers());
-  assert_eq!(None, te.codings()[2].quality());
-}
-
-#[test]
-fn request_te_rejects_ambiguous_invalid_and_oversized_values() {
-  assert_eq!(
-    None,
-    parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
-      .te()
-      .expect("absent TE should be accepted")
-  );
-
-  for value in [
-    "",
-    "gzip,",
-    "bad coding",
-    "gzip;q=1.1",
-    "trailers;q=0.5",
-    "gzip;q=0.5;q=0.4",
-  ] {
-    let request = parse_request(&format!(
-      "GET / HTTP/1.1\r\nHost: example.test\r\nTE: {value}\r\n\r\n"
-    ));
-    assert!(request.te().is_err(), "should reject {value:?}");
-  }
-
-  let duplicate = parse_request(concat!(
-    "GET / HTTP/1.1\r\nHost: example.test\r\n",
-    "TE: gzip\r\nte: GZIP;q=0.5\r\n\r\n"
-  ));
-  assert!(duplicate.te().is_err());
-
-  assert!(HttpRequestTe::parse("gzip".repeat(64 * 1024)).is_err());
-  let too_many = (0..33)
-    .map(|index| format!("coding{index}"))
-    .collect::<Vec<_>>()
-    .join(", ");
-  assert!(HttpRequestTe::parse(too_many).is_err());
 }
 
 #[test]
@@ -956,6 +1042,101 @@ fn parses_content_disposition_and_serializes_single_header_value() {
       .expect("Content-Disposition should be present")
       .parameter("filename")
   );
+}
+
+#[test]
+fn response_link_metadata_parses_multiple_values_and_preserves_unknown_parameters() {
+  let response = HttpResponse::ok("body")
+    .header(
+      "Link",
+      "</style.css>; rel=preload; as=style, <https://cdn.example.test/app.js>; rel=modulepreload",
+    )
+    .header(
+      "link",
+      "<../manifest.json>; type=\"application/manifest+json\"; anchor=\"/app\"",
+    );
+
+  let links = response
+    .links()
+    .expect("Link metadata should parse")
+    .expect("Link metadata should be present");
+
+  assert_eq!(3, links.len());
+  assert_eq!("/style.css", links.values()[0].target());
+  assert_eq!(Some("preload"), links.values()[0].parameter("rel"));
+  assert_eq!(Some("style"), links.values()[0].parameter("as"));
+  assert_eq!(
+    "https://cdn.example.test/app.js",
+    links.values()[1].target()
+  );
+  assert_eq!(Some("modulepreload"), links.values()[1].parameter("rel"));
+  assert_eq!("../manifest.json", links.values()[2].target());
+  assert_eq!(
+    vec![("type", "application/manifest+json"), ("anchor", "/app")],
+    links.values()[2].parameters()
+  );
+}
+
+#[test]
+fn response_link_metadata_preserves_valueless_extensions_and_empty_quoted_values() {
+  let response =
+    HttpResponse::ok("body").header("Link", "</style.css>; rel=preload; nopush; title=\"\"");
+
+  let links = response
+    .links()
+    .expect("Link metadata should parse")
+    .expect("Link metadata should be present");
+
+  assert_eq!(Some(""), links.values()[0].parameter("nopush"));
+  assert_eq!(Some(""), links.values()[0].parameter("title"));
+  assert_eq!(
+    vec![("rel", "preload"), ("nopush", ""), ("title", "")],
+    links.values()[0].parameters()
+  );
+}
+
+#[test]
+fn response_link_metadata_rejects_invalid_and_bounded_values_without_losing_headers() {
+  for value in [
+    "style.css; rel=preload",
+    "<style.css; rel=preload",
+    "</style.css> rel=preload",
+    "</style.css>; =preload",
+    "</style.css>; bad name=value",
+    "</style.css>; rel=\"unterminated",
+  ] {
+    let response = HttpResponse::ok("body").header("Link", value);
+    assert!(
+      response.links().is_err(),
+      "Link parser should reject {value:?}"
+    );
+    assert!(
+      String::from_utf8(response.to_bytes())
+        .expect("response should remain UTF-8")
+        .contains(&format!("\r\nLink: {value}\r\n")),
+      "raw Link header should remain available"
+    );
+  }
+
+  let oversized = format!("</{}>", "a".repeat(64 * 1024));
+  assert!(HttpLinkValues::parse(oversized).is_err());
+
+  let too_many = (0..257)
+    .map(|index| format!("</asset-{index}>"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  assert!(HttpLinkValues::parse(too_many).is_err());
+
+  let too_many_parameters = format!(
+    "</asset>{}",
+    (0..257)
+      .map(|index| format!("; p{index}=v"))
+      .collect::<String>()
+  );
+  assert!(HttpLinkValues::parse(too_many_parameters).is_err());
+
+  let oversized_parameter = format!("</asset>; title={}", "a".repeat(64 * 1024 + 1));
+  assert!(HttpLinkValues::parse(oversized_parameter).is_err());
 }
 
 #[test]

@@ -1,6 +1,6 @@
 use rttp_client::response::{
-  ContentDisposition, ContentEncoding, ContentLocation, ContentType, Digest, Response,
-  ServerTiming, WwwAuthenticate,
+  AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType, Digest, LinkValues,
+  Response, ServerTiming, WwwAuthenticate,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -686,6 +686,81 @@ fn test_server_timing_response_helper_parses_metrics_extensions_and_duplicates()
 }
 
 #[test]
+fn test_alt_svc_response_helper_parses_and_round_trips_alternatives() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Alt-Svc: h3=\":443\"; ma=3600; persist=1; region=\"us-east\", h2=\"alt.example:8443\"; ma=60\r\n",
+    "Content-Length: 0\r\n\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+  let alt_svc = response
+    .alt_svc()
+    .expect("Alt-Svc should parse")
+    .expect("Alt-Svc should be present");
+
+  assert!(!alt_svc.is_clear());
+  assert_eq!(2, alt_svc.len());
+  assert_eq!("h3", alt_svc.alternatives()[0].protocol_id());
+  assert_eq!(":443", alt_svc.alternatives()[0].authority());
+  assert_eq!(Some(3600), alt_svc.alternatives()[0].max_age());
+  assert_eq!(Some(true), alt_svc.alternatives()[0].persist());
+  assert_eq!(
+    vec![("region", Some("us-east"))],
+    alt_svc.alternatives()[0]
+      .parameters()
+      .iter()
+      .map(|parameter| (parameter.name(), parameter.value()))
+      .collect::<Vec<_>>()
+  );
+  assert_eq!(
+    "h3=\":443\"; ma=3600; persist=1; region=us-east, h2=\"alt.example:8443\"; ma=60",
+    alt_svc.header_value()
+  );
+  assert_eq!(
+    alt_svc,
+    AltSvc::parse(alt_svc.header_value()).expect("round-tripped Alt-Svc should parse")
+  );
+}
+
+#[test]
+fn test_alt_svc_rejects_invalid_or_unbounded_metadata_without_hiding_headers() {
+  for value in [
+    "h3=:443",
+    "h 3=\":443\"",
+    "h3=\"unterminated",
+    "clear, h3=\":443\"",
+    "h3=\":443\"; ma=forever",
+    "h3=\":443\"; ma=\"60\"",
+    "h3=\":443\"; region",
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\nAlt-Svc: {value}\r\nContent-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(response.alt_svc().is_err(), "should reject {value:?}");
+    assert_eq!(Some(&value.to_string()), response.header_value("Alt-Svc"));
+  }
+
+  assert!(AltSvc::parse(format!("h3=\":443\"; x=\"{}\"", "a".repeat(64 * 1024))).is_err());
+  assert!(AltSvc::parse(
+    (0..257)
+      .map(|index| format!("h{index}=\":443\""))
+      .collect::<Vec<_>>()
+      .join(", ")
+  )
+  .is_err());
+}
+
+#[test]
+fn test_alt_svc_clear_is_an_exclusive_sentinel() {
+  let alt_svc = AltSvc::parse("clear").expect("clear should parse");
+  assert!(alt_svc.is_clear());
+  assert!(alt_svc.is_empty());
+  assert_eq!("clear", alt_svc.header_value());
+  assert!(AltSvc::parse_values(["clear", "h3=\":443\""]).is_err());
+}
+
+#[test]
 fn test_digest_response_helpers_recover_from_empty_duplicate_and_oversized_fields() {
   for (header, value) in [
     ("Content-Digest", ""),
@@ -839,6 +914,129 @@ fn test_parse_content_disposition_rejects_duplicate_singleton_duplicate_paramete
     response.content_disposition().is_err(),
     "content-disposition helper should reject too many parameters"
   );
+}
+
+#[test]
+fn test_parse_link_response_metadata_preserves_multiple_values_and_parameters() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Link: </style.css>; rel=preload; as=style, <https://cdn.example.test/app.js>; rel=modulepreload\r\n",
+    "link: <../manifest.json>; type=\"application/manifest+json\"; anchor=\"/app\"\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/app/page"),
+    raw.as_bytes().to_vec(),
+  )
+  .expect("raw response with Link metadata remains usable");
+
+  let links = response
+    .links()
+    .expect("Link metadata should parse")
+    .expect("Link metadata should be present");
+
+  assert_eq!(3, links.len());
+  assert_eq!("/style.css", links.values()[0].target());
+  assert_eq!(Some("preload"), links.values()[0].parameter("rel"));
+  assert_eq!(Some("style"), links.values()[0].parameter("as"));
+  assert_eq!(
+    "https://cdn.example.test/app.js",
+    links.values()[1].target()
+  );
+  assert_eq!(Some("modulepreload"), links.values()[1].parameter("rel"));
+  assert_eq!("../manifest.json", links.values()[2].target());
+  assert_eq!(
+    Some("application/manifest+json"),
+    links.values()[2].parameter("type")
+  );
+  assert_eq!(Some("/app"), links.values()[2].parameter("anchor"));
+  assert_eq!(
+    vec![("type", "application/manifest+json"), ("anchor", "/app")],
+    links.values()[2]
+      .parameters()
+      .iter()
+      .map(|parameter| (parameter.name(), parameter.value()))
+      .collect::<Vec<_>>()
+  );
+  assert_eq!(
+    vec![
+      &"</style.css>; rel=preload; as=style, <https://cdn.example.test/app.js>; rel=modulepreload"
+        .to_string(),
+      &"<../manifest.json>; type=\"application/manifest+json\"; anchor=\"/app\"".to_string(),
+    ],
+    response.header_values("Link")
+  );
+}
+
+#[test]
+fn test_parse_link_response_metadata_preserves_valueless_extensions() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Link: </style.css>; rel=preload; nopush\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response with Link metadata remains usable");
+
+  let links = response
+    .links()
+    .expect("Link metadata should parse")
+    .expect("Link metadata should be present");
+
+  assert_eq!(Some(""), links.values()[0].parameter("nopush"));
+  assert_eq!(
+    vec![("rel", "preload"), ("nopush", "")],
+    links.values()[0]
+      .parameters()
+      .iter()
+      .map(|parameter| (parameter.name(), parameter.value()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn test_link_response_metadata_rejects_invalid_and_bounded_values_without_losing_headers() {
+  for value in [
+    "style.css; rel=preload",
+    "<style.css; rel=preload",
+    "</style.css> rel=preload",
+    "</style.css>; =preload",
+    "</style.css>; bad name=value",
+    "</style.css>; rel=\"unterminated",
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\nLink: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response remains usable");
+    assert!(
+      response.links().is_err(),
+      "Link parser should reject {value:?}"
+    );
+    assert_eq!(Some(&value.to_string()), response.header_value("Link"));
+  }
+
+  let oversized = format!("</{}>", "a".repeat(64 * 1024));
+  assert!(LinkValues::parse(oversized).is_err());
+
+  let too_many = (0..257)
+    .map(|index| format!("</asset-{index}>"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  assert!(LinkValues::parse(too_many).is_err());
+
+  let too_many_parameters = format!(
+    "</asset>{}",
+    (0..257)
+      .map(|index| format!("; p{index}=v"))
+      .collect::<String>()
+  );
+  assert!(LinkValues::parse(too_many_parameters).is_err());
+
+  let oversized_parameter = format!("</asset>; title={}", "a".repeat(64 * 1024 + 1));
+  assert!(LinkValues::parse(oversized_parameter).is_err());
 }
 
 #[test]

@@ -27,6 +27,17 @@ HTTP/1.x chunked responses are decoded, and response trailers are exposed
 through `Response::trailers`, `Response::trailer`, and
 `Response::trailer_value` for both blocking and async request APIs.
 
+## Bounded Max-Forwards diagnostics
+
+`HttpClient::max_forwards(value)` sets a `Max-Forwards` request header for
+application-selected `TRACE` or `OPTIONS` diagnostics. The helper accepts only
+up to ten ASCII decimal digits that fit in the `u32` range (`0` through
+`4294967295`) and rejects negative, fractional, empty, oversized, and
+overflowing values before a socket is opened. It only validates and emits the
+header: RTTP does not select a diagnostic policy, route through proxies,
+decrement the value, or retry the request. Callers needing an unusual value can
+retain full raw-header control with `header(("Max-Forwards", "..."))`.
+
 ## Bounded HTTP/1.1 byte ranges
 
 `HttpClient` includes helpers for the single-range `bytes` forms RTTP keeps
@@ -333,20 +344,30 @@ connection is opened.
 These helpers declare request metadata only. They do not enable automatic
 compression, decompression, or content negotiation.
 
-## Bounded TE request metadata
+## Bounded Authorization request metadata
 
-`HttpClient::te()` appends a validated transfer coding, `te_with_q()` accepts
-an HTTP q-value from `0` through `1` with at most three fractional digits, and
-`te_trailers()` declares support for trailers. The helpers emit one
-comma-separated `TE` field and reject invalid tokens, q-values, duplicates,
-oversized values, and more than 32 codings before a connection is opened.
-`trailers` cannot carry a q-value. This declares request metadata only; it does
-not enable a transfer-coding engine, automatic trailer negotiation,
-compression, or proxy behavior.
+`HttpClient::authorization(scheme, credentials)` emits one `Authorization`
+field after validating its HTTP-token scheme and non-empty credential value,
+with a 64 KiB bound. Use `header(("Authorization", value))` as the raw escape
+hatch for custom scheme syntax. Credential interpretation remains
+application-owned: RTTP does not validate individual schemes, store or refresh
+credentials, process challenges, retry, or forward credentials on redirects.
 
-Bounded h2c remains conservative: it emits only an exact `TE: trailers` field
-on HTTP/2 paths and strips every other `TE` value with HTTP/1.x
-connection-specific request metadata.
+## Bounded HTTP request control metadata
+
+`HttpClient::te()`, `te_with_q()`, and `te_trailers()` build a bounded `TE`
+field. `HttpClient::prefer()` and `prefer_with_value()` build a bounded
+`Prefer` field with token-only values. Both helpers reject malformed tokens,
+invalid q-values, duplicates, oversized values, and more than 32 members
+before opening a connection. `TE: chunked` is rejected because framing remains
+owned by the existing HTTP/1 implementation, and `trailers` cannot carry a
+q-value. Bounded h2c emits only an exact `TE: trailers` field and strips other
+`TE` values with HTTP/1.x connection-specific request metadata.
+
+These are declaration helpers only. RTTP does not enable a transfer-coding
+engine, change request framing, apply response preferences, schedule async
+work, forward requests, retry, or otherwise infer behavior from `TE` or
+`Prefer`.
 
 ## Bounded HTTP/1.1 Content-Disposition behavior
 
@@ -528,7 +549,7 @@ frames no larger than the active peer limit while the client remains a
 single-stream prior-knowledge path. Before encoding
 request HEADERS, this bounded h2c path strips
 HTTP/1.x connection-specific fields: `Connection`, `Keep-Alive`,
-`Proxy-Connection`, `Transfer-Encoding`, `Upgrade`, `Trailer`, `Host`,
+`Proxy-Connection`, `Transfer-Encoding`, `Upgrade`, `TE`, `Trailer`, `Host`,
 and any field named by a `Connection` token. Peer response HEADERS are rejected
 when they contain `Connection`, `Keep-Alive`, `Proxy-Connection`, `TE`,
 `Transfer-Encoding`, or `Upgrade`. Application request trailers such as
