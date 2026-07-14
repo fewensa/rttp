@@ -4,6 +4,7 @@
 //! does not implement a cookie jar, domain/path matching, expiry, or any other
 //! storage and sending policy.
 
+use crate::http1::is_token;
 use std::error::Error;
 use std::fmt;
 
@@ -209,7 +210,7 @@ fn parse_pair(value: &str) -> Result<HttpCookiePair, HttpCookieParseError> {
   };
   let name = name.trim_matches([' ', '\t']);
   let value = value.trim_matches([' ', '\t']);
-  if name.is_empty() {
+  if !is_token(name) {
     return Err(HttpCookieParseError::new("invalid cookie name"));
   }
   validate_value(value)?;
@@ -258,5 +259,11 @@ mod tests {
 
     let fields = std::iter::repeat("name=value").take(MAX_COOKIE_COUNT + 1);
     assert!(HttpSetCookies::parse_values(fields).is_err());
+  }
+
+  #[test]
+  fn cookie_metadata_rejects_non_token_names() {
+    assert!(HttpCookies::parse("bad name=value").is_err());
+    assert!(HttpSetCookie::parse("bad name=value").is_err());
   }
 }
