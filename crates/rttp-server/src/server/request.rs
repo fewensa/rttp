@@ -4,6 +4,9 @@ pub use rttp_protocol::forwarded::{
   Forwarded as HttpForwarded, ForwardedElement as HttpForwardedElement,
   ForwardedParameter as HttpForwardedParameter, ForwardedParseError as HttpForwardedParseError,
 };
+pub use rttp_protocol::trailer::{
+  Trailer as HttpTrailer, TrailerParseError as HttpTrailerParseError,
+};
 
 pub(crate) const MAX_REQUEST_HEAD_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
@@ -356,6 +359,16 @@ impl Request {
       return Ok(None);
     }
     HttpRequestTe::parse_values(values).map(Some)
+  }
+
+  /// Parses announced trailer field names without waiting for or exposing a
+  /// trailer block.
+  pub fn trailer_header(&self) -> Result<Option<HttpTrailer>, HttpTrailerParseError> {
+    let values: Vec<&str> = self.headers_named("Trailer").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpTrailer::parse_values(values).map(Some)
   }
 
   pub fn accept(&self) -> Result<Option<HttpAccept>, HttpAcceptParseError> {
@@ -2140,6 +2153,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpRequestTe::parse_values(values).map(Some)
+  }
+
+  /// Parses announced trailer field names without waiting for or exposing a
+  /// trailer block.
+  pub fn trailer_header(&self) -> Result<Option<HttpTrailer>, HttpTrailerParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Trailer"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpTrailer::parse_values(values).map(Some)
   }
 
   pub fn accept(&self) -> Result<Option<HttpAccept>, HttpAcceptParseError> {

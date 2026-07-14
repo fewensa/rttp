@@ -398,6 +398,43 @@ fn request_te_and_prefer_reject_invalid_or_duplicate_metadata() {
 }
 
 #[test]
+fn request_trailer_header_parses_bounded_field_names_separately_from_te_trailers() {
+  let request = parse_request(concat!(
+    "POST /upload HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "TE: trailers\r\n",
+    "Trailer: X-Checksum, x-signature\r\n",
+    "Trailer: X-Checksum\r\n",
+    "\r\n"
+  ));
+
+  let trailer = request
+    .trailer_header()
+    .expect("Trailer header should parse")
+    .expect("Trailer header should be present");
+  assert_eq!(vec!["x-checksum", "x-signature"], trailer.field_names());
+  assert!(request
+    .te()
+    .expect("TE should parse")
+    .expect("TE should be present")
+    .codings()[0]
+    .is_trailers());
+}
+
+#[test]
+fn request_trailer_header_rejects_forbidden_and_invalid_field_names() {
+  for value in ["Content-Length", "TE", "bad field"] {
+    let request = parse_request(&format!(
+      "POST /upload HTTP/1.1\r\nHost: example.test\r\nTrailer: {value}\r\n\r\n"
+    ));
+    assert!(
+      request.trailer_header().is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+}
+
+#[test]
 fn parses_request_accept_media_ranges_in_field_order() {
   let request = parse_request(concat!(
     "GET /resource HTTP/1.1\r\n",
