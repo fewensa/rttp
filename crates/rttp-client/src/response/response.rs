@@ -23,6 +23,7 @@ const MAX_ALLOW_VALUE_BYTES: usize = 64 * 1024;
 const MAX_ALLOW_METHODS: usize = 256;
 const MAX_ACCEPT_RANGES_VALUE_BYTES: usize = 64 * 1024;
 const MAX_ACCEPT_RANGE_UNITS: usize = 256;
+const MAX_ACCEPT_MEDIA_TYPES: usize = 256;
 const MAX_RETRY_AFTER_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_TYPE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_TYPE_PARAMETERS: usize = 256;
@@ -239,6 +240,26 @@ impl Response {
       return Ok(None);
     }
     AcceptRanges::parse_values(values.into_iter().map(String::as_str)).map(Some)
+  }
+
+  /// Parses `Accept-Patch` media-type metadata without selecting a request
+  /// method or sending a follow-up request.
+  pub fn accept_patch(&self) -> error::Result<Option<AcceptPatch>> {
+    let values = self.header_values("accept-patch");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    AcceptPatch::parse_values(values.into_iter().map(String::as_str)).map(Some)
+  }
+
+  /// Parses `Accept-Post` media-type metadata without choosing an upload or
+  /// sending a follow-up request.
+  pub fn accept_post(&self) -> error::Result<Option<AcceptPost>> {
+    let values = self.header_values("accept-post");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    AcceptPost::parse_values(values.into_iter().map(String::as_str)).map(Some)
   }
 
   pub fn content_range(&self) -> Option<ContentRange> {
@@ -567,6 +588,82 @@ pub struct AcceptRanges {
   units: Vec<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AcceptPatch {
+  media_types: Vec<ContentType>,
+}
+
+impl AcceptPatch {
+  pub fn parse(value: impl AsRef<str>) -> error::Result<Self> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  fn parse_values<'a, I>(values: I) -> error::Result<Self>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    Ok(Self {
+      media_types: parse_accepted_media_types(values, "Accept-Patch")?,
+    })
+  }
+
+  pub fn media_types(&self) -> &[ContentType] {
+    &self.media_types
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AcceptPost {
+  media_types: Vec<ContentType>,
+}
+
+impl AcceptPost {
+  pub fn parse(value: impl AsRef<str>) -> error::Result<Self> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  fn parse_values<'a, I>(values: I) -> error::Result<Self>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    Ok(Self {
+      media_types: parse_accepted_media_types(values, "Accept-Post")?,
+    })
+  }
+
+  pub fn media_types(&self) -> &[ContentType] {
+    &self.media_types
+  }
+}
+
+fn parse_accepted_media_types<'a, I>(values: I, header: &str) -> error::Result<Vec<ContentType>>
+where
+  I: IntoIterator<Item = &'a str>,
+{
+  let mut media_types = Vec::new();
+
+  for value in values {
+    if value.len() > MAX_CONTENT_TYPE_VALUE_BYTES {
+      return Err(error::bad_response(format!(
+        "{header} header value is too large"
+      )));
+    }
+    for member in split_accepted_media_type_members(value)? {
+      if media_types.len() >= MAX_ACCEPT_MEDIA_TYPES {
+        return Err(error::bad_response(format!(
+          "Too many {header} media types"
+        )));
+      }
+      media_types.push(ContentType::parse(member)?);
+    }
+  }
+
+  if media_types.is_empty() {
+    return Err(error::bad_response(format!("Invalid {header} media type")));
+  }
+  Ok(media_types)
+}
+
 impl AcceptRanges {
   pub fn parse(value: impl AsRef<str>) -> error::Result<Self> {
     Self::parse_values([value.as_ref()])
@@ -892,6 +989,52 @@ fn split_content_type_members(value: &str) -> error::Result<Vec<String>> {
   }
   push_content_type_member(&mut members, &current)?;
   Ok(members)
+}
+
+fn split_accepted_media_type_members(value: &str) -> error::Result<Vec<String>> {
+  let mut members = Vec::new();
+  let mut current = String::new();
+  let mut in_quote = false;
+  let mut escaped = false;
+
+  for ch in value.chars() {
+    if escaped {
+      current.push(ch);
+      escaped = false;
+      continue;
+    }
+
+    match ch {
+      '\\' if in_quote => {
+        current.push(ch);
+        escaped = true;
+      }
+      '"' => {
+        current.push(ch);
+        in_quote = !in_quote;
+      }
+      ',' if !in_quote => {
+        push_accepted_media_type_member(&mut members, &current)?;
+        current.clear();
+      }
+      _ => current.push(ch),
+    }
+  }
+
+  if in_quote || escaped {
+    return Err(error::bad_response("Invalid accepted media type"));
+  }
+  push_accepted_media_type_member(&mut members, &current)?;
+  Ok(members)
+}
+
+fn push_accepted_media_type_member(members: &mut Vec<String>, current: &str) -> error::Result<()> {
+  let member = current.trim();
+  if member.is_empty() {
+    return Err(error::bad_response("Invalid accepted media type"));
+  }
+  members.push(member.to_string());
+  Ok(())
 }
 
 fn push_content_type_member(members: &mut Vec<String>, member: &str) -> error::Result<()> {
