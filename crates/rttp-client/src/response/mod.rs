@@ -2,6 +2,10 @@
 
 pub use self::response::*;
 
+pub use rttp_protocol::cookie::{
+  HttpCookieParseError, HttpSetCookie, HttpSetCookieAttribute, HttpSetCookies,
+};
+
 mod raw_response;
 mod response;
 

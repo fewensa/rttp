@@ -40,6 +40,28 @@ fn request_max_forwards_is_optional_bounded_and_preserves_invalid_headers() {
   assert_eq!(Some("1"), duplicate.header("Max-Forwards"));
 }
 
+#[test]
+fn request_cookies_are_bounded_and_preserve_pairs() {
+  let request = Request::from_raw_frame(
+    b"GET / HTTP/1.1\r\nHost: example.test\r\nCookie: session=abc; theme=dark\r\nCookie: flag=\r\n\r\n",
+  )
+  .expect("request should parse");
+  let cookies = request
+    .cookies()
+    .expect("cookie metadata should parse")
+    .expect("Cookie header should be present");
+  assert_eq!(
+    vec![("session", "abc"), ("theme", "dark"), ("flag", "")],
+    cookies
+      .pairs()
+      .iter()
+      .map(|pair| (pair.name(), pair.value()))
+      .collect::<Vec<_>>()
+  );
+
+  assert!(HttpCookies::parse("session=abc\x01").is_err());
+}
+
   #[test]
   fn http2_huffman_decode_table_resolves_symbols_without_linear_scan() {
     let table = http2_huffman_decode_table();

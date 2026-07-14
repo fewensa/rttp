@@ -14,6 +14,7 @@ use crate::response::ReprDigest;
 use crate::response::ServerTiming;
 use crate::response::WwwAuthenticate;
 use crate::types::{Cookie, Header, RoUrl};
+use rttp_protocol::cookie::HttpSetCookies;
 
 const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
@@ -381,6 +382,18 @@ impl Response {
       return Ok(None);
     }
     LinkValues::parse_values(values.into_iter().map(String::as_str)).map(Some)
+  }
+
+  /// Parses response `Set-Cookie` fields as bounded opaque metadata without
+  /// creating a cookie jar or applying storage and matching policy.
+  pub fn set_cookies(&self) -> error::Result<Option<HttpSetCookies>> {
+    let values = self.header_values("set-cookie");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSetCookies::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   pub fn headers(&self) -> &Vec<Header> {
