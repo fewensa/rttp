@@ -560,6 +560,43 @@ fn te_helpers_reject_invalid_members_before_connecting() {
 }
 
 #[test]
+fn trailer_header_helper_declares_validated_fields_without_enabling_trailer_streaming() {
+  let request = capture_request(|base_url| {
+    client()
+      .post()
+      .url(format!("{}/upload", base_url))
+      .trailer_header(["X-Checksum", "x-signature", "X-Checksum"])
+      .expect("Trailer field names should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("x-checksum, x-signature"),
+    header_value(&request, "Trailer")
+  );
+  assert_eq!(None, header_value(&request, "TE"));
+
+  for field in [
+    "Content-Length",
+    "TE",
+    "bad field",
+    "X-Good\r\nInjected: yes",
+  ] {
+    let mut client = client();
+    let error = client
+      .post()
+      .url("http://example.test/upload")
+      .trailer_header([field])
+      .expect_err("invalid Trailer field name should be rejected");
+    assert!(
+      error.is_builder(),
+      "{field:?} should be rejected before connecting"
+    );
+  }
+}
+
+#[test]
 fn priority_helper_emits_bounded_known_and_extension_metadata() {
   let request = capture_request(|base_url| {
     client()
