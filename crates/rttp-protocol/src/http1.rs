@@ -165,16 +165,24 @@ mod tests {
   use super::{is_header_value_byte, is_token, parse_chunk_size, ChunkSizeError};
 
   #[test]
-  fn parses_chunk_sizes_with_valid_extensions() {
+  fn parses_plain_chunk_sizes_and_valid_extensions() {
+    assert_eq!(parse_chunk_size(b"4\r\n"), Ok(4));
+    assert_eq!(parse_chunk_size(b"4;foo=bar;flag\r\n"), Ok(4));
     assert_eq!(parse_chunk_size(b"A;foo=bar;quoted=\"a\\\"b\"\r\n"), Ok(10));
   }
 
   #[test]
   fn rejects_invalid_chunk_extensions() {
-    assert_eq!(
-      parse_chunk_size(b"A;foo=\"unterminated\r\n"),
-      Err(ChunkSizeError::InvalidExtension)
-    );
+    for line in [
+      b"A;foo=\"unterminated\r\n".as_slice(),
+      b"A;=bar\r\n",
+      b"A;foo=\r\n",
+    ] {
+      assert_eq!(
+        parse_chunk_size(line),
+        Err(ChunkSizeError::InvalidExtension)
+      );
+    }
   }
 
   #[test]
