@@ -4,6 +4,10 @@ pub use rttp_protocol::alt_svc::{
   AltSvc as HttpAltSvc, AltSvcAlternative as HttpAltSvcAlternative,
   AltSvcParameter as HttpAltSvcParameter, AltSvcParseError as HttpAltSvcParseError,
 };
+pub use rttp_protocol::clear_site_data::{
+  ClearSiteData as HttpClearSiteData, ClearSiteDataDirective as HttpClearSiteDataDirective,
+  ClearSiteDataParseError as HttpClearSiteDataParseError,
+};
 pub use rttp_protocol::digest::{
   Digest as HttpDigest, DigestEntry as HttpDigestEntry, DigestParseError as HttpDigestParseError,
   ReprDigest as HttpReprDigest, ReprDigestEntry as HttpReprDigestEntry,
@@ -680,6 +684,22 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Clear-Site-Data` metadata without clearing server state.
+  pub fn with_clear_site_data(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpClearSiteDataParseError> {
+    let clear_site_data = HttpClearSiteData::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Clear-Site-Data"));
+    self.headers.push(HttpHeader::new(
+      "Clear-Site-Data",
+      clear_site_data.header_value(),
+    ));
+    Ok(self)
+  }
+
   pub fn with_content_location<V: AsRef<str>>(
     mut self,
     value: V,
@@ -1012,6 +1032,20 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpAltSvc::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Clear-Site-Data` metadata without changing server state.
+  pub fn clear_site_data(&self) -> Result<Option<HttpClearSiteData>, HttpClearSiteDataParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Clear-Site-Data"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpClearSiteData::parse_values(values).map(Some)
   }
 
   pub fn content_location(&self) -> Result<Option<&str>, HttpContentLocationParseError> {
