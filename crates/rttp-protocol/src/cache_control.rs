@@ -39,6 +39,17 @@ mod tests {
   }
 
   #[test]
+  fn ignores_empty_list_members() {
+    let cache_control = CacheControl::parse("public,, max-age=60,")
+      .expect("Cache-Control should ignore empty list members");
+
+    assert_eq!(cache_control.len(), 2);
+    assert_eq!(cache_control.directives()[0].name(), "public");
+    assert_eq!(cache_control.directives()[1].name(), "max-age");
+    assert_eq!(cache_control.directives()[1].value(), Some("60"));
+  }
+
+  #[test]
   fn rejects_invalid_syntax_and_control_bytes() {
     for value in [
       "max-age=",
@@ -46,7 +57,6 @@ mod tests {
       "custom=\"unterminated",
       "custom=\"invalid\\\x01\"",
       "max-age=60\r\nno-store",
-      "max-age=60,, no-store",
     ] {
       assert!(CacheControl::parse(value).is_err(), "{value:?} should fail");
     }
@@ -195,6 +205,14 @@ fn parse_field(
   }
 
   loop {
+    skip_ows(bytes, &mut position);
+    while bytes.get(position) == Some(&b',') {
+      position += 1;
+      skip_ows(bytes, &mut position);
+    }
+    if position == bytes.len() {
+      return Ok(());
+    }
     if directives.len() >= MAX_CACHE_CONTROL_DIRECTIVES {
       return Err(CacheControlParseError::new(
         "too many Cache-Control directives",
@@ -206,13 +224,6 @@ fn parse_field(
       return Ok(());
     }
     if bytes[position] != b',' {
-      return Err(CacheControlParseError::new(
-        "invalid Cache-Control directive",
-      ));
-    }
-    position += 1;
-    skip_ows(bytes, &mut position);
-    if position == bytes.len() {
       return Err(CacheControlParseError::new(
         "invalid Cache-Control directive",
       ));
