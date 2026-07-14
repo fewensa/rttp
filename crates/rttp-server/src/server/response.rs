@@ -1436,6 +1436,7 @@ impl HttpVary {
   {
     let mut fields = Vec::new();
     let mut wildcard = false;
+    let mut field_count = 0usize;
 
     for value in values {
       if value.len() > MAX_VARY_VALUE_BYTES {
@@ -1454,11 +1455,14 @@ impl HttpVary {
         if !is_http_token(field) {
           return Err(HttpVaryParseError::new("invalid Vary field name"));
         }
+
+        field_count += 1;
+        if field_count > MAX_VARY_FIELDS {
+          return Err(HttpVaryParseError::new("too many Vary field names"));
+        }
+
         let normalized = field.to_ascii_lowercase();
         if !fields.iter().any(|known| known == &normalized) {
-          if fields.len() >= MAX_VARY_FIELDS {
-            return Err(HttpVaryParseError::new("too many Vary field names"));
-          }
           fields.push(normalized);
         }
       }

@@ -1,6 +1,82 @@
 use std::net::TcpStream as StdTcpStream;
 
 #[test]
+fn request_cache_control_combines_case_insensitive_header_fields() {
+  let request = Request::from_raw_frame(
+    b"GET / HTTP/1.1\r\nHost: example.test\r\nCache-Control: no-cache, max-age=60\r\ncache-control: min-fresh=30, only-if-cached\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let cache_control = request
+    .cache_control()
+    .expect("Cache-Control should parse")
+    .expect("Cache-Control should be present");
+
+  assert!(cache_control.no_cache());
+  assert_eq!(Some(60), cache_control.max_age());
+  assert_eq!(Some(30), cache_control.min_fresh());
+  assert!(cache_control.only_if_cached());
+}
+
+#[test]
+fn request_cache_control_preserves_malformed_headers_for_handler_policy() {
+  let request = Request::from_raw_frame(
+    b"GET / HTTP/1.1\r\nHost: example.test\r\nCache-Control: max-age=invalid\r\n\r\n",
+  )
+  .expect("request should retain malformed metadata");
+
+  assert!(request.cache_control().is_err());
+  assert_eq!(Some("max-age=invalid"), request.header("Cache-Control"));
+}
+
+#[test]
+fn request_cache_control_rejects_oversized_values_without_panicking() {
+  let request = Request {
+    method: "GET".to_string(),
+    target: "/".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![(
+      "Cache-Control".to_string(),
+      format!("x={}", "a".repeat(MAX_CACHE_CONTROL_VALUE_BYTES)),
+    )],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    extended_connect_protocol: None,
+  };
+
+  let error = request
+    .cache_control()
+    .expect_err("oversized Cache-Control should be rejected");
+
+  assert_eq!("Cache-Control header value is too large", error.to_string());
+}
+
+#[test]
+fn request_cache_control_rejects_directive_counts_across_header_fields() {
+  let directive_field = std::iter::repeat_n("extension", MAX_CACHE_CONTROL_DIRECTIVES)
+    .collect::<Vec<_>>()
+    .join(", ");
+  let request = Request {
+    method: "GET".to_string(),
+    target: "/".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Cache-Control".to_string(), directive_field),
+      ("cache-control".to_string(), "another-extension".to_string()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    extended_connect_protocol: None,
+  };
+
+  let error = request
+    .cache_control()
+    .expect_err("too many Cache-Control directives should be rejected");
+
+  assert_eq!("too many Cache-Control directives", error.to_string());
+}
+
+#[test]
 fn request_max_forwards_is_optional_bounded_and_preserves_invalid_headers() {
   let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
     .expect("request should parse");
