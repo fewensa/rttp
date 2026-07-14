@@ -724,6 +724,39 @@ fn vary_helpers_reject_malformed_values() {
 }
 
 #[test]
+fn response_vary_helper_enforces_the_field_item_limit_before_deduplicating() {
+  let value = std::iter::repeat_n("Accept-Encoding", 257)
+    .collect::<Vec<_>>()
+    .join(", ");
+
+  assert!(
+    HttpResponse::ok("body")
+      .header("Vary", value)
+      .vary()
+      .is_err(),
+    "all parsed Vary list members must count toward the bound, including duplicates"
+  );
+}
+
+#[test]
+fn response_vary_helper_combines_multiple_headers_and_deduplicates_names() {
+  let response = HttpResponse::ok("body")
+    .header("Vary", "Accept-Encoding, User-Agent")
+    .header("vArY", "accept-encoding, X-Feature");
+
+  let vary = response
+    .vary()
+    .expect("attached Vary headers should parse")
+    .expect("Vary should be present");
+
+  assert!(!vary.is_wildcard());
+  assert_eq!(
+    vec!["accept-encoding", "user-agent", "x-feature"],
+    vary.field_names()
+  );
+}
+
+#[test]
 fn response_vary_helper_declares_normalized_vary_header() {
   let response = HttpResponse::ok("body")
     .with_vary("Accept-Encoding, X-User")
