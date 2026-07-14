@@ -727,35 +727,6 @@ impl HttpResponse {
     Ok(self)
   }
 
-  /// Validates and replaces `Accept-CH` response metadata without selecting
-  /// client hints or retaining per-client state.
-  pub fn with_accept_ch(mut self, value: impl AsRef<str>) -> Result<Self, HttpAcceptChParseError> {
-    let accept_ch = HttpAcceptCh::parse(value)?;
-    self
-      .headers
-      .retain(|header| !header.name.eq_ignore_ascii_case("Accept-CH"));
-    self
-      .headers
-      .push(HttpHeader::new("Accept-CH", accept_ch.header_value()));
-    Ok(self)
-  }
-
-  /// Validates and replaces `Critical-CH` response metadata without triggering
-  /// request retries.
-  pub fn with_critical_ch(
-    mut self,
-    value: impl AsRef<str>,
-  ) -> Result<Self, HttpCriticalChParseError> {
-    let critical_ch = HttpCriticalCh::parse(value)?;
-    self
-      .headers
-      .retain(|header| !header.name.eq_ignore_ascii_case("Critical-CH"));
-    self
-      .headers
-      .push(HttpHeader::new("Critical-CH", critical_ch.header_value()));
-    Ok(self)
-  }
-
   pub fn with_content_location<V: AsRef<str>>(
     mut self,
     value: V,
@@ -832,6 +803,46 @@ impl HttpResponse {
     self
       .headers
       .push(HttpHeader::new("Accept-Post", accept_post.header_value()));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Accept-CH` metadata without applying Client Hints policy.
+  pub fn with_accept_ch<I, H>(mut self, client_hints: I) -> Result<Self, HttpAcceptChParseError>
+  where
+    I: IntoIterator<Item = H>,
+    H: AsRef<str>,
+  {
+    let client_hints: Vec<String> = client_hints
+      .into_iter()
+      .map(|hint| hint.as_ref().to_owned())
+      .collect();
+    let accept_ch = HttpAcceptCh::parse_values(client_hints.iter().map(String::as_str))?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Accept-CH"));
+    self
+      .headers
+      .push(HttpHeader::new("Accept-CH", accept_ch.header_value()));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Critical-CH` metadata without requiring clients to retry.
+  pub fn with_critical_ch<I, H>(mut self, client_hints: I) -> Result<Self, HttpCriticalChParseError>
+  where
+    I: IntoIterator<Item = H>,
+    H: AsRef<str>,
+  {
+    let client_hints: Vec<String> = client_hints
+      .into_iter()
+      .map(|hint| hint.as_ref().to_owned())
+      .collect();
+    let critical_ch = HttpCriticalCh::parse_values(client_hints.iter().map(String::as_str))?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Critical-CH"));
+    self
+      .headers
+      .push(HttpHeader::new("Critical-CH", critical_ch.header_value()));
     Ok(self)
   }
 
@@ -1120,35 +1131,6 @@ impl HttpResponse {
     HttpClearSiteData::parse_values(values).map(Some)
   }
 
-  /// Parses attached `Accept-CH` metadata without selecting client hints or
-  /// retaining per-client state.
-  pub fn accept_ch(&self) -> Result<Option<HttpAcceptCh>, HttpAcceptChParseError> {
-    let values: Vec<&str> = self
-      .headers
-      .iter()
-      .filter(|header| header.name.eq_ignore_ascii_case("Accept-CH"))
-      .map(|header| header.value.as_str())
-      .collect();
-    if values.is_empty() {
-      return Ok(None);
-    }
-    HttpAcceptCh::parse_values(values).map(Some)
-  }
-
-  /// Parses attached `Critical-CH` metadata without retrying a request.
-  pub fn critical_ch(&self) -> Result<Option<HttpCriticalCh>, HttpCriticalChParseError> {
-    let values: Vec<&str> = self
-      .headers
-      .iter()
-      .filter(|header| header.name.eq_ignore_ascii_case("Critical-CH"))
-      .map(|header| header.value.as_str())
-      .collect();
-    if values.is_empty() {
-      return Ok(None);
-    }
-    HttpCriticalCh::parse_values(values).map(Some)
-  }
-
   pub fn content_location(&self) -> Result<Option<&str>, HttpContentLocationParseError> {
     let Some(value) = self.single_header_value(
       "Content-Location",
@@ -1208,6 +1190,34 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpAcceptPost::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Accept-CH` metadata without applying Client Hints policy.
+  pub fn accept_ch(&self) -> Result<Option<HttpAcceptCh>, HttpAcceptChParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Accept-CH"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAcceptCh::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Critical-CH` metadata without requiring clients to retry.
+  pub fn critical_ch(&self) -> Result<Option<HttpCriticalCh>, HttpCriticalChParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Critical-CH"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpCriticalCh::parse_values(values).map(Some)
   }
 
   pub fn accept_ranges(&self) -> Result<Option<HttpAcceptRanges>, HttpAcceptRangesParseError> {
