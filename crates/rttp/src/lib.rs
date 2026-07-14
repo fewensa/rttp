@@ -4,6 +4,9 @@ pub struct Http {}
 
 pub use rttp_server::server;
 
+#[cfg(feature = "client")]
+pub use rttp_client::response::{AcceptPatch, AcceptPost};
+
 impl Http {
   #[cfg(feature = "client")]
   pub fn client() -> rttp_client::HttpClient {
