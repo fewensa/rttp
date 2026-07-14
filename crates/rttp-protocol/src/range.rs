@@ -81,22 +81,28 @@ impl Range {
   where
     I: IntoIterator<Item = &'a str>,
   {
+    let mut values = values.into_iter();
+    let Some(value) = values.next() else {
+      return Err(RangeParseError::new("invalid Range header value"));
+    };
+    if values.next().is_some() {
+      return Err(RangeParseError::new("multiple Range header values"));
+    }
+
     let mut ranges = Vec::new();
-    for value in values {
-      validate_value(value, MAX_RANGE_VALUE_BYTES, "Range").map_err(RangeParseError::new)?;
-      let value = value.trim();
-      let Some((unit, members)) = value.split_once('=') else {
-        return Err(RangeParseError::new("invalid Range header value"));
-      };
-      if !unit.trim().eq_ignore_ascii_case("bytes") || members.is_empty() {
-        return Err(RangeParseError::new("invalid Range header value"));
+    validate_value(value, MAX_RANGE_VALUE_BYTES, "Range").map_err(RangeParseError::new)?;
+    let value = value.trim();
+    let Some((unit, members)) = value.split_once('=') else {
+      return Err(RangeParseError::new("invalid Range header value"));
+    };
+    if !unit.trim().eq_ignore_ascii_case("bytes") || members.is_empty() {
+      return Err(RangeParseError::new("invalid Range header value"));
+    }
+    for member in members.split(',') {
+      if ranges.len() >= MAX_RANGE_COUNT {
+        return Err(RangeParseError::new("too many Range members"));
       }
-      for member in members.split(',') {
-        if ranges.len() >= MAX_RANGE_COUNT {
-          return Err(RangeParseError::new("too many Range members"));
-        }
-        ranges.push(parse_range_member(member.trim())?);
-      }
+      ranges.push(parse_range_member(member.trim())?);
     }
     if ranges.is_empty() {
       return Err(RangeParseError::new("invalid Range header value"));

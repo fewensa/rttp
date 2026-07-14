@@ -1,8 +1,8 @@
 use rttp_protocol::range::{ByteRangeSpec, ContentRange, Range, MAX_RANGE_COUNT};
 
 #[test]
-fn range_parses_byte_and_suffix_specs_across_field_values() {
-  let range = Range::parse_values(["bytes=0-499, 500-", "bytes=-200"]).expect("valid range");
+fn range_parses_byte_and_suffix_specs_from_one_field_value() {
+  let range = Range::parse("bytes=0-499, 500-, -200").expect("valid range");
 
   assert_eq!(
     &[
@@ -19,6 +19,11 @@ fn range_parses_byte_and_suffix_specs_across_field_values() {
     range.ranges()
   );
   assert_eq!("bytes=0-499, 500-, -200", range.header_value());
+}
+
+#[test]
+fn range_rejects_repeated_field_values() {
+  assert!(Range::parse_values(["bytes=0-1", "bytes=2-3"]).is_err());
 }
 
 #[test]
