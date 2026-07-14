@@ -10,6 +10,7 @@ pub mod digest;
 pub mod forwarded;
 pub mod http1;
 pub mod priority;
+pub mod range;
 pub mod server_timing;
 pub mod trailer;
 pub mod www_authenticate;
