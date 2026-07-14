@@ -361,7 +361,7 @@ impl HttpClient {
 
   /// Append a valueless Cache-Control extension directive.
   pub fn cache_control_extension<N: AsRef<str>>(&mut self, name: N) -> error::Result<&mut Self> {
-    self.cache_control_member(name.as_ref(), None)
+    self.cache_control_extension_member(name.as_ref(), None)
   }
 
   /// Append a token-valued Cache-Control extension directive.
@@ -373,7 +373,7 @@ impl HttpClient {
     name: N,
     value: V,
   ) -> error::Result<&mut Self> {
-    self.cache_control_member(name.as_ref(), Some(value.as_ref()))
+    self.cache_control_extension_member(name.as_ref(), Some(value.as_ref()))
   }
 
   /// Set bounded HTTP `Priority` request metadata.
@@ -837,6 +837,22 @@ impl HttpClient {
       headers.push(Header::new("Cache-Control", member));
     }
     Ok(self)
+  }
+
+  fn cache_control_extension_member(
+    &mut self,
+    name: &str,
+    value: Option<&str>,
+  ) -> error::Result<&mut Self> {
+    if ["no-cache", "no-store", "max-age"]
+      .iter()
+      .any(|directive| directive.eq_ignore_ascii_case(name.trim()))
+    {
+      return Err(error::builder_with_message(
+        "Cache-Control directive must use a dedicated helper",
+      ));
+    }
+    self.cache_control_member(name, value)
   }
 
   /// Add request para

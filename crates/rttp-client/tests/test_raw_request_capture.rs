@@ -463,6 +463,34 @@ fn cache_control_helpers_reject_invalid_or_excessive_values_before_connecting() 
     request.is_empty(),
     "excessive Cache-Control directives should not open a socket"
   );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/document", base_url))
+      .cache_control_extension("max-age")
+      .expect_err("dedicated Cache-Control directives should not be extensions");
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "reserved Cache-Control directive names should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/document", base_url))
+      .cache_control_extension_with_value("no-store", "1")
+      .expect_err("dedicated Cache-Control directives should not be extensions");
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "reserved Cache-Control directive names should not open a socket"
+  );
 }
 
 #[test]
