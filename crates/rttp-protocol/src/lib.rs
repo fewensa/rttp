@@ -8,6 +8,7 @@ pub mod accept_post;
 pub mod alt_svc;
 pub mod cache_control;
 pub mod clear_site_data;
+pub mod client_hints;
 pub mod cookie;
 pub mod digest;
 pub mod forwarded;
