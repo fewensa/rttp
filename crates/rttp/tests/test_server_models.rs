@@ -2,12 +2,41 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use rttp::server::{
   HttpAccept, HttpAcceptRanges, HttpAllowedMethods, HttpAuthorization, HttpByteRange,
-  HttpByteRangeError, HttpConditionalMetadata, HttpContentDisposition, HttpContentLanguages,
-  HttpContentType, HttpDigest, HttpEntityTag, HttpExpectations, HttpIfNoneMatch, HttpIfRange,
-  HttpIfRangeRequestOutcome, HttpLinkValues, HttpRequest, HttpRequestAcceptEncodings,
-  HttpRequestCacheControl, HttpRequestTe, HttpResponse, HttpResponseCacheControl,
-  HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming, HttpVary,
+  HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata, HttpContentDisposition,
+  HttpContentLanguages, HttpContentType, HttpDigest, HttpEntityTag, HttpExpectations,
+  HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome, HttpLinkValues, HttpRequest,
+  HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
+  HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming,
+  HttpVary,
 };
+
+#[test]
+fn response_clear_site_data_builder_and_parser_preserve_metadata_only_directives() {
+  let response = HttpResponse::ok("body")
+    .header("Clear-Site-Data", "\"cache\"")
+    .with_clear_site_data("\"cookies\", \"executionContexts\"")
+    .expect("Clear-Site-Data should be accepted");
+  let metadata = response
+    .clear_site_data()
+    .expect("Clear-Site-Data should parse")
+    .expect("Clear-Site-Data should be present");
+  assert_eq!(
+    vec!["cookies", "executionContexts"],
+    metadata
+      .directives()
+      .iter()
+      .map(|directive| directive.as_str())
+      .collect::<Vec<_>>()
+  );
+  assert!(String::from_utf8(response.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nClear-Site-Data: \"cookies\", \"executionContexts\"\r\n"));
+
+  assert!(HttpResponse::ok("body")
+    .with_clear_site_data("cache")
+    .is_err());
+  assert!(HttpClearSiteData::parse("\"cache\", \"cache\"").is_err());
+}
 
 #[test]
 fn response_www_authenticate_helper_validates_and_preserves_raw_headers() {
