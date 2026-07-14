@@ -4,9 +4,10 @@ use rttp::server::{
   HttpAccept, HttpAcceptRanges, HttpAllowedMethods, HttpAuthorization, HttpByteRange,
   HttpByteRangeError, HttpConditionalMetadata, HttpContentDisposition, HttpContentLanguages,
   HttpContentType, HttpDigest, HttpEntityTag, HttpExpectations, HttpIfNoneMatch, HttpIfRange,
-  HttpIfRangeRequestOutcome, HttpLinkValues, HttpRequest, HttpRequestAcceptEncodings,
-  HttpRequestCacheControl, HttpRequestTe, HttpResponse, HttpResponseCacheControl,
-  HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming, HttpVary,
+  HttpIfRangeRequestOutcome, HttpLinkValues, HttpReportingEndpoints, HttpRequest,
+  HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
+  HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming,
+  HttpVary,
 };
 
 #[test]
@@ -732,6 +733,18 @@ fn request_accept_language_helper_rejects_invalid_wire_values() {
       "Accept-Language helper should reject {value:?}"
     );
   }
+
+  assert!(
+    HttpReportingEndpoints::parse(format!("default=\"{}\"", "x".repeat(64 * 1024))).is_err(),
+    "should reject oversized Reporting-Endpoints fields"
+  );
+  assert!(
+    HttpReportingEndpoints::from_endpoints(
+      (0..33).map(|index| (format!("endpoint{index}"), "https://reports.example/")),
+    )
+    .is_err(),
+    "should reject excessive Reporting-Endpoints entries"
+  );
 }
 
 #[test]
@@ -1060,6 +1073,55 @@ fn raw_content_language_headers_are_preserved_without_helper_validation() {
     response.content_language().is_err(),
     "typed Content-Language parser should reject malformed raw values"
   );
+}
+
+#[test]
+fn reporting_endpoints_helpers_parse_and_build_bounded_metadata() {
+  let endpoints = HttpReportingEndpoints::parse(
+    "default=\"https://reports.example/default\", csp=\"https://reports.example/csp\"",
+  )
+  .expect("valid Reporting-Endpoints header should parse");
+  assert_eq!(
+    vec![
+      ("default", "https://reports.example/default"),
+      ("csp", "https://reports.example/csp"),
+    ],
+    endpoints.endpoints()
+  );
+  assert_eq!(
+    Some("https://reports.example/csp"),
+    endpoints.endpoint("csp")
+  );
+
+  let response = HttpResponse::ok("body")
+    .header(
+      "Reporting-Endpoints",
+      "default=\"https://reports.example/default\"",
+    )
+    .with_reporting_endpoints([("csp", "https://reports.example/csp")])
+    .expect("valid Reporting-Endpoints values should be accepted");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+  assert_eq!(1, serialized.matches("\r\nReporting-Endpoints: ").count());
+  assert!(serialized.contains("csp=\"https://reports.example/csp\""));
+  let parsed = response
+    .reporting_endpoints()
+    .expect("Reporting-Endpoints header should parse")
+    .expect("Reporting-Endpoints should be present");
+  assert_eq!(
+    vec![("csp", "https://reports.example/csp")],
+    parsed.endpoints()
+  );
+
+  for value in [
+    "default=https://reports.example/default",
+    "Default=\"https://reports.example/default\"",
+    "default=\"https://reports.example/default\", default=\"https://reports.example/other\"",
+  ] {
+    assert!(
+      HttpReportingEndpoints::parse(value).is_err(),
+      "should reject {value:?}"
+    );
+  }
 }
 
 #[test]
