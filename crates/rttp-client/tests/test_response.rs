@@ -180,6 +180,40 @@ fn test_parse_response_preserves_duplicate_headers_with_case_insensitive_lookup(
 }
 
 #[test]
+fn test_parse_reporting_endpoints_response_metadata() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Reporting-Endpoints: default=\"https://reports.example/default\"\r\n",
+    "Reporting-Endpoints: csp=\"https://reports.example/csp\"\r\n",
+    "Content-Length: 0\r\n\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("response should parse");
+  let endpoints = response
+    .reporting_endpoints()
+    .expect("Reporting-Endpoints metadata should parse")
+    .expect("Reporting-Endpoints should be present");
+  assert_eq!(
+    vec![
+      ("default", "https://reports.example/default"),
+      ("csp", "https://reports.example/csp"),
+    ],
+    endpoints.endpoints()
+  );
+  assert_eq!(
+    Some("https://reports.example/csp"),
+    endpoints.endpoint("csp")
+  );
+
+  let invalid = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nReporting-Endpoints: Default=\"https://reports.example/default\"\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("raw response should remain inspectable");
+  assert!(invalid.reporting_endpoints().is_err());
+}
+
+#[test]
 fn set_cookie_metadata_is_bounded_and_preserves_unknown_attributes() {
   let raw = concat!(
     "HTTP/1.1 200 OK\r\n",
