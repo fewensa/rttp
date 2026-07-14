@@ -2042,6 +2042,73 @@ fn test_accept_patch_and_accept_post_helpers_return_none_when_absent() {
 }
 
 #[test]
+fn test_accept_ch_and_critical_ch_response_helpers_parse_metadata_only() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Accept-CH: Sec-CH-UA, DPR\r\n",
+    "accept-ch: Viewport-Width\r\n",
+    "Critical-CH: Sec-CH-UA-Platform, Downlink\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("parse response with client hint metadata");
+
+  assert_eq!(
+    ["Sec-CH-UA", "DPR", "Viewport-Width"],
+    response
+      .accept_ch()
+      .expect("Accept-CH should parse")
+      .expect("Accept-CH should be present")
+      .client_hints()
+  );
+  assert_eq!(
+    ["Sec-CH-UA-Platform", "Downlink"],
+    response
+      .critical_ch()
+      .expect("Critical-CH should parse")
+      .expect("Critical-CH should be present")
+      .client_hints()
+  );
+}
+
+#[test]
+fn test_client_hint_response_helpers_preserve_invalid_or_absent_metadata() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Accept-CH: DPR,\r\n",
+    "Critical-CH: 1Downlink\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  assert!(response.accept_ch().is_err());
+  assert!(response.critical_ch().is_err());
+  assert_eq!(
+    Some(&"DPR,".to_string()),
+    response.header_value("Accept-CH")
+  );
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("parse response without client hint metadata");
+  assert_eq!(
+    None,
+    absent.accept_ch().expect("absent Accept-CH should parse")
+  );
+  assert_eq!(
+    None,
+    absent
+      .critical_ch()
+      .expect("absent Critical-CH should parse")
+  );
+}
+
+#[test]
 fn test_parse_age_rejects_invalid_helper_values_without_rejecting_response() {
   let invalid_values = [
     "",

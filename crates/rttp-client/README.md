@@ -712,6 +712,20 @@ the bounded single-stream request/response path. It does not alter HTTP/1.1
 header-configured `:protocol` metadata, HTTP/1.1 `Upgrade` handoff requests,
 proxies, request bodies, and request trailers are rejected for this path.
 
+## Client Hints response metadata
+
+`Response::accept_ch()` and `Response::critical_ch()` parse `Accept-CH` and
+`Critical-CH` response fields into `AcceptCh` and `CriticalCh` metadata. Both
+helpers combine case-insensitive repeated fields in wire order and return
+`Ok(None)` when the respective field is absent. Parsed client-hint tokens are
+available through `client_hints()`; malformed, empty, oversized, or
+overlong-field-set values return an error while the raw response headers remain
+available through `Response::header_value()` and `Response::header_values()`.
+
+These helpers are observation-only. `rttp_client` does not select or send
+client hints, persist an `Accept-CH` opt-in, retry after `Critical-CH`, or add
+any automatic client-hint negotiation behavior.
+
 ## Examples
 
 ```rust,no_run

@@ -61,7 +61,7 @@ fn response_client_hints_helpers_declare_and_parse_metadata_without_policy() {
     .header("Accept-CH", "DPR")
     .with_accept_ch(["Sec-CH-UA", "Viewport-Width"])
     .expect("Accept-CH should be accepted")
-    .with_critical_ch(["Sec-CH-UA"])
+    .with_critical_ch(["Sec-CH-UA-Platform", "Downlink"])
     .expect("Critical-CH should be accepted");
 
   let accept_ch: HttpAcceptCh = response
@@ -73,12 +73,21 @@ fn response_client_hints_helpers_declare_and_parse_metadata_without_policy() {
     .critical_ch()
     .expect("Critical-CH should parse")
     .expect("Critical-CH should be present");
-  assert_eq!(&["Sec-CH-UA"], critical_ch.client_hints());
-
+  assert_eq!(
+    &["Sec-CH-UA-Platform", "Downlink"],
+    critical_ch.client_hints()
+  );
   let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
   assert_eq!(1, serialized.matches("\r\nAccept-CH: ").count());
   assert!(serialized.contains("\r\nAccept-CH: Sec-CH-UA, Viewport-Width\r\n"));
-  assert!(serialized.contains("\r\nCritical-CH: Sec-CH-UA\r\n"));
+  assert!(serialized.contains("\r\nCritical-CH: Sec-CH-UA-Platform, Downlink\r\n"));
+
+  assert!(HttpResponse::ok("body").with_accept_ch(["DPR,"]).is_err());
+  assert!(HttpResponse::ok("body")
+    .with_critical_ch(["1Downlink"])
+    .is_err());
+  assert!(HttpAcceptCh::parse("DPR,").is_err());
+  assert!(HttpCriticalCh::parse("1Downlink").is_err());
 }
 
 #[test]
