@@ -337,6 +337,45 @@ impl HttpClient {
     self.accept_with_q("text/plain", qvalue)
   }
 
+  /// Append `no-cache` to bounded `Cache-Control` request metadata.
+  ///
+  /// This declares request metadata only; it does not enable cache storage or
+  /// automatic revalidation.
+  pub fn cache_control_no_cache(&mut self) -> error::Result<&mut Self> {
+    self.cache_control_member("no-cache", None)
+  }
+
+  /// Append `no-store` to bounded `Cache-Control` request metadata.
+  ///
+  /// This declares request metadata only; it does not enable cache storage or
+  /// automatic revalidation.
+  pub fn cache_control_no_store(&mut self) -> error::Result<&mut Self> {
+    self.cache_control_member("no-store", None)
+  }
+
+  /// Append `max-age=<seconds>` to bounded `Cache-Control` request metadata.
+  pub fn cache_control_max_age(&mut self, seconds: u64) -> error::Result<&mut Self> {
+    let value = seconds.to_string();
+    self.cache_control_member("max-age", Some(&value))
+  }
+
+  /// Append a valueless Cache-Control extension directive.
+  pub fn cache_control_extension<N: AsRef<str>>(&mut self, name: N) -> error::Result<&mut Self> {
+    self.cache_control_member(name.as_ref(), None)
+  }
+
+  /// Append a token-valued Cache-Control extension directive.
+  ///
+  /// Both the extension name and value must be HTTP tokens. Use [`Self::header`]
+  /// directly for extension values that require quoted-string syntax.
+  pub fn cache_control_extension_with_value<N: AsRef<str>, V: AsRef<str>>(
+    &mut self,
+    name: N,
+    value: V,
+  ) -> error::Result<&mut Self> {
+    self.cache_control_member(name.as_ref(), Some(value.as_ref()))
+  }
+
   /// Set bounded HTTP `Priority` request metadata.
   ///
   /// This validates RFC 9218 urgency, incremental, and extension parameters
@@ -750,6 +789,52 @@ impl HttpClient {
       header.replace(Header::new("Accept", value));
     } else {
       headers.push(Header::new("Accept", member));
+    }
+    Ok(self)
+  }
+
+  fn cache_control_member(&mut self, name: &str, value: Option<&str>) -> error::Result<&mut Self> {
+    let name = name.trim();
+    if !is_http_token(name) || value.is_some_and(|value| !is_http_token(value)) {
+      return Err(error::builder_with_message(
+        "invalid Cache-Control directive",
+      ));
+    }
+    let member = value.map_or_else(|| name.to_string(), |value| format!("{name}={value}"));
+    if member.len() > MAX_CACHE_CONTROL_VALUE_BYTES {
+      return Err(error::builder_with_message(
+        "Cache-Control header value is too large",
+      ));
+    }
+
+    let headers = self.request.headers_mut();
+    if let Some(header) = headers
+      .iter_mut()
+      .find(|header| header.name().eq_ignore_ascii_case("Cache-Control"))
+    {
+      let directives = parse_cache_control_directive_names(header.value())?;
+      if directives
+        .iter()
+        .any(|known| known.eq_ignore_ascii_case(name))
+      {
+        return Err(error::builder_with_message(
+          "duplicate Cache-Control directive",
+        ));
+      }
+      if directives.len() >= MAX_CACHE_CONTROL_DIRECTIVES {
+        return Err(error::builder_with_message(
+          "too many Cache-Control directives",
+        ));
+      }
+      let value = format!("{}, {member}", header.value());
+      if value.len() > MAX_CACHE_CONTROL_VALUE_BYTES {
+        return Err(error::builder_with_message(
+          "Cache-Control header value is too large",
+        ));
+      }
+      header.replace(Header::new("Cache-Control", value));
+    } else {
+      headers.push(Header::new("Cache-Control", member));
     }
     Ok(self)
   }
@@ -1174,6 +1259,45 @@ fn parse_metadata_members<'a>(
 
 const MAX_ACCEPT_VALUE_BYTES: usize = 64 * 1024;
 const MAX_ACCEPT_MEDIA_RANGES: usize = 32;
+const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
+const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
+
+fn parse_cache_control_directive_names(value: &str) -> error::Result<Vec<&str>> {
+  if value.len() > MAX_CACHE_CONTROL_VALUE_BYTES {
+    return Err(error::builder_with_message(
+      "Cache-Control header value is too large",
+    ));
+  }
+  let mut names = Vec::new();
+  for directive in value.split(',') {
+    let (name, directive_value) = directive
+      .trim()
+      .split_once('=')
+      .map_or((directive.trim(), None), |(name, value)| {
+        (name.trim(), Some(value.trim()))
+      });
+    if !is_http_token(name) || directive_value.is_some_and(|value| !is_http_token(value)) {
+      return Err(error::builder_with_message(
+        "invalid Cache-Control directive",
+      ));
+    }
+    if names
+      .iter()
+      .any(|known: &&str| known.eq_ignore_ascii_case(name))
+    {
+      return Err(error::builder_with_message(
+        "duplicate Cache-Control directive",
+      ));
+    }
+    if names.len() >= MAX_CACHE_CONTROL_DIRECTIVES {
+      return Err(error::builder_with_message(
+        "too many Cache-Control directives",
+      ));
+    }
+    names.push(name);
+  }
+  Ok(names)
+}
 
 fn parse_accept_media_ranges(value: &str) -> error::Result<usize> {
   if value.len() > MAX_ACCEPT_VALUE_BYTES {

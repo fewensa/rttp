@@ -145,6 +145,21 @@ metadata does not trigger automatic preload execution, cache policy, redirect,
 retry, replay, route generation, streaming early-write behavior, TLS/ALPN
 behavior, or status-policy behavior.
 
+## Bounded Cache-Control request metadata
+
+`HttpClient::cache_control_no_cache()`, `cache_control_no_store()`, and
+`cache_control_max_age(seconds)` append common request directives to one
+`Cache-Control` field. `cache_control_extension(name)` and
+`cache_control_extension_with_value(name, value)` append valueless and
+token-valued extension directives. The helpers reject malformed tokens,
+duplicate directives, oversized values, and more than 256 directives before a
+connection is opened.
+
+The helpers only declare request metadata: they do not create a cache, compute
+freshness, or automatically revalidate. Raw `header(("Cache-Control", value))`
+remains available for quoted-string extension values or other syntax outside
+this bounded API.
+
 ## Bounded HTTP/1.1 Cache-Control behavior
 
 `Response::cache_control()` parses one or more response `Cache-Control` header

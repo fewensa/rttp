@@ -398,6 +398,74 @@ fn accept_helpers_emit_validated_media_ranges_and_quality_values() {
 }
 
 #[test]
+fn cache_control_helpers_emit_bounded_request_directives() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/document", base_url))
+      .cache_control_no_cache()
+      .expect("no-cache should be accepted")
+      .cache_control_no_store()
+      .expect("no-store should be accepted")
+      .cache_control_max_age(60)
+      .expect("max-age should be accepted")
+      .cache_control_extension_with_value("community", "private")
+      .expect("extension should be accepted")
+      .cache_control_extension("immutable")
+      .expect("valueless extension should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("no-cache, no-store, max-age=60, community=private, immutable"),
+    header_value(&request, "Cache-Control")
+  );
+}
+
+#[test]
+fn cache_control_helpers_reject_invalid_or_excessive_values_before_connecting() {
+  for (name, value) in [
+    ("bad name", "value".to_string()),
+    ("community", "bad\r\nvalue".to_string()),
+    ("community", "a".repeat(64 * 1024 + 1)),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/document", base_url))
+        .cache_control_extension_with_value(name, value)
+        .expect_err("invalid Cache-Control extension should be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid Cache-Control metadata should not open a socket"
+    );
+  }
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    client.get().url(format!("{}/document", base_url));
+    for index in 0..256 {
+      client
+        .cache_control_extension(format!("extension-{index}"))
+        .expect("bounded Cache-Control directive should be accepted");
+    }
+    let error = client
+      .cache_control_extension("overflow")
+      .expect_err("too many Cache-Control directives should be rejected");
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "excessive Cache-Control directives should not open a socket"
+  );
+}
+
+#[test]
 fn accept_helpers_reject_invalid_values_before_connecting() {
   for value in [
     "text",
