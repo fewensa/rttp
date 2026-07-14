@@ -614,6 +614,7 @@ impl RetryAfter {
     if value.len() > MAX_RETRY_AFTER_VALUE_BYTES {
       return Err(error::bad_response("Retry-After header value is too large"));
     }
+    let value = value.trim();
     if value.is_empty() {
       return Err(error::bad_response("Invalid Retry-After value"));
     }

@@ -1,6 +1,6 @@
 use rttp_client::response::{
   AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType, Digest, LinkValues,
-  Response, ServerTiming, WwwAuthenticate,
+  Response, RetryAfter, ServerTiming, WwwAuthenticate,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -1453,6 +1453,34 @@ fn test_parse_retry_after_response_metadata() {
     response
       .retry_after()
       .expect("absent retry-after should parse")
+  );
+}
+
+#[test]
+fn test_parse_retry_after_response_metadata_accepts_surrounding_http_whitespace() {
+  let raw = concat!(
+    "HTTP/1.1 503 Service Unavailable\r\n",
+    "Retry-After: \t120 \r\n",
+    "Content-Length: 4\r\n",
+    "\r\n",
+    "busy"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("parse response with Retry-After whitespace");
+
+  assert_eq!(
+    Some(120),
+    response
+      .retry_after()
+      .expect("Retry-After metadata should parse")
+      .expect("Retry-After metadata should be present")
+      .delta_seconds()
+  );
+  assert_eq!(
+    Some(120),
+    RetryAfter::parse("\t120 ")
+      .expect("RetryAfter parser should accept HTTP whitespace")
+      .delta_seconds()
   );
 }
 
