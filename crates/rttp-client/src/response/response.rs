@@ -16,6 +16,7 @@ use crate::response::Trailer;
 use crate::response::WwwAuthenticate;
 use crate::types::{Cookie, Header, RoUrl};
 use rttp_protocol::clear_site_data::ClearSiteData;
+use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::cookie::HttpSetCookies;
 
 const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
@@ -263,6 +264,28 @@ impl Response {
       return Ok(None);
     }
     AcceptPost::parse_values(values.into_iter().map(String::as_str)).map(Some)
+  }
+
+  /// Parses bounded `Accept-CH` response metadata without applying Client Hints policy.
+  pub fn accept_ch(&self) -> error::Result<Option<AcceptCh>> {
+    let values = self.header_values("accept-ch");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    AcceptCh::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Critical-CH` response metadata without retrying requests.
+  pub fn critical_ch(&self) -> error::Result<Option<CriticalCh>> {
+    let values = self.header_values("critical-ch");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    CriticalCh::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   pub fn content_range(&self) -> Option<ContentRange> {

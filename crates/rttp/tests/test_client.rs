@@ -47,6 +47,32 @@ fn compatibility_facade_reexports_accept_response_metadata() {
 }
 
 #[test]
+#[cfg(any(feature = "all", feature = "client"))]
+fn compatibility_facade_reexports_client_hints_response_metadata() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Accept-CH: Sec-CH-UA, DPR\r\n",
+    "Critical-CH: Sec-CH-UA\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("https://example.test"),
+    raw.as_bytes().to_vec(),
+  )
+  .expect("response should parse");
+
+  let _: rttp::AcceptCh = response
+    .accept_ch()
+    .expect("Accept-CH should parse")
+    .expect("Accept-CH should be present");
+  let _: rttp::CriticalCh = response
+    .critical_ch()
+    .expect("Critical-CH should parse")
+    .expect("Critical-CH should be present");
+}
+
+#[test]
 #[cfg(any(
   feature = "all",
   feature = "client",
