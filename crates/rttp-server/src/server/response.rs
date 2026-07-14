@@ -60,6 +60,87 @@ pub(crate) const MAX_LINK_PARAMETERS: usize = 256;
 pub(crate) const MAX_LINK_PARAMETER_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_REPORTING_ENDPOINTS_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_REPORTING_ENDPOINTS: usize = 32;
+pub(crate) const MAX_BROWSER_POLICY_VALUE_BYTES: usize = 64 * 1024;
+
+macro_rules! browser_policy_metadata {
+  ($name:ident, $header:literal) => {
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct $name(String);
+
+    impl $name {
+      /// Parses bounded response metadata without applying browser behavior.
+      pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpBrowserPolicyParseError> {
+        let value = value.as_ref();
+        validate_browser_policy_value($header, value)?;
+        Ok(Self(value.to_owned()))
+      }
+
+      pub fn as_str(&self) -> &str {
+        &self.0
+      }
+
+      pub fn header_value(&self) -> &str {
+        self.as_str()
+      }
+    }
+
+    impl AsRef<str> for $name {
+      fn as_ref(&self) -> &str {
+        self.as_str()
+      }
+    }
+  };
+}
+
+browser_policy_metadata!(HttpContentSecurityPolicy, "Content-Security-Policy");
+browser_policy_metadata!(HttpPermissionsPolicy, "Permissions-Policy");
+browser_policy_metadata!(HttpReferrerPolicy, "Referrer-Policy");
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpBrowserPolicyParseError {
+  message: String,
+}
+
+impl HttpBrowserPolicyParseError {
+  fn new(message: impl Into<String>) -> Self {
+    Self {
+      message: message.into(),
+    }
+  }
+}
+
+impl fmt::Display for HttpBrowserPolicyParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpBrowserPolicyParseError {}
+
+fn validate_browser_policy_value(
+  header: &str,
+  value: &str,
+) -> Result<(), HttpBrowserPolicyParseError> {
+  if value.is_empty() {
+    return Err(HttpBrowserPolicyParseError::new(format!(
+      "{header} header value is empty"
+    )));
+  }
+  if value.len() > MAX_BROWSER_POLICY_VALUE_BYTES {
+    return Err(HttpBrowserPolicyParseError::new(format!(
+      "{header} header value is too large"
+    )));
+  }
+  if value
+    .bytes()
+    .any(|byte| byte != b'\t' && (byte <= 0x1f || byte == 0x7f))
+  {
+    return Err(HttpBrowserPolicyParseError::new(format!(
+      "invalid {header} control byte"
+    )));
+  }
+  Ok(())
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HttpResponse {
@@ -609,6 +690,36 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Content-Security-Policy` metadata without enforcing it.
+  pub fn with_content_security_policy(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpBrowserPolicyParseError> {
+    let policy = HttpContentSecurityPolicy::parse(value)?;
+    self.set_browser_policy_header("Content-Security-Policy", policy.header_value());
+    Ok(self)
+  }
+
+  /// Validates and replaces `Permissions-Policy` metadata without enforcing it.
+  pub fn with_permissions_policy(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpBrowserPolicyParseError> {
+    let policy = HttpPermissionsPolicy::parse(value)?;
+    self.set_browser_policy_header("Permissions-Policy", policy.header_value());
+    Ok(self)
+  }
+
+  /// Validates and replaces `Referrer-Policy` metadata without altering requests.
+  pub fn with_referrer_policy(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpBrowserPolicyParseError> {
+    let policy = HttpReferrerPolicy::parse(value)?;
+    self.set_browser_policy_header("Referrer-Policy", policy.header_value());
+    Ok(self)
+  }
+
   pub fn with_content_encoding<I, C>(
     mut self,
     codings: I,
@@ -977,6 +1088,29 @@ impl HttpResponse {
     HttpReportingEndpoints::parse_values(values).map(Some)
   }
 
+  /// Returns attached `Content-Security-Policy` metadata without enforcing it.
+  pub fn content_security_policy(
+    &self,
+  ) -> Result<Option<HttpContentSecurityPolicy>, HttpBrowserPolicyParseError> {
+    self.browser_policy_value("Content-Security-Policy", |value| {
+      HttpContentSecurityPolicy::parse(value)
+    })
+  }
+
+  /// Returns attached `Permissions-Policy` metadata without enforcing it.
+  pub fn permissions_policy(
+    &self,
+  ) -> Result<Option<HttpPermissionsPolicy>, HttpBrowserPolicyParseError> {
+    self.browser_policy_value("Permissions-Policy", |value| {
+      HttpPermissionsPolicy::parse(value)
+    })
+  }
+
+  /// Returns attached `Referrer-Policy` metadata without altering requests.
+  pub fn referrer_policy(&self) -> Result<Option<HttpReferrerPolicy>, HttpBrowserPolicyParseError> {
+    self.browser_policy_value("Referrer-Policy", |value| HttpReferrerPolicy::parse(value))
+  }
+
   pub fn content_encoding(
     &self,
   ) -> Result<Option<HttpResponseContentEncodings>, HttpContentEncodingParseError> {
@@ -1029,6 +1163,33 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpDigest::parse_values(values).map(Some)
+  }
+
+  fn set_browser_policy_header(&mut self, name: &str, value: &str) {
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case(name));
+    self.headers.push(HttpHeader::new(name, value));
+  }
+
+  fn browser_policy_value<P>(
+    &self,
+    name: &str,
+    parse: impl FnOnce(&str) -> Result<P, HttpBrowserPolicyParseError>,
+  ) -> Result<Option<P>, HttpBrowserPolicyParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case(name))
+      .map(|header| header.value.as_str())
+      .collect();
+    match values.as_slice() {
+      [] => Ok(None),
+      [value] => parse(value).map(Some),
+      _ => Err(HttpBrowserPolicyParseError::new(format!(
+        "multiple {name} headers"
+      ))),
+    }
   }
 
   /// Parses attached HTTP `Priority` metadata without changing raw headers.

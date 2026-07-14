@@ -3,12 +3,57 @@ use std::time::{Duration, UNIX_EPOCH};
 use rttp::server::{
   HttpAccept, HttpAcceptRanges, HttpAllowedMethods, HttpAuthorization, HttpByteRange,
   HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata, HttpContentDisposition,
-  HttpContentLanguages, HttpContentType, HttpDigest, HttpEntityTag, HttpExpectations,
-  HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome, HttpLinkValues, HttpReportingEndpoints,
-  HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
+  HttpContentLanguages, HttpContentSecurityPolicy, HttpContentType, HttpDigest, HttpEntityTag,
+  HttpExpectations, HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome, HttpLinkValues,
+  HttpPermissionsPolicy, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
+  HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
   HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming,
   HttpVary,
 };
+
+#[test]
+fn response_browser_policy_helpers_preserve_metadata_without_enforcing_it() {
+  let response = HttpResponse::ok("body")
+    .header("Content-Security-Policy", "default-src 'self'")
+    .with_content_security_policy("default-src 'none'")
+    .expect("Content-Security-Policy metadata should be accepted")
+    .with_permissions_policy("geolocation=(), camera=()")
+    .expect("Permissions-Policy metadata should be accepted")
+    .with_referrer_policy("strict-origin-when-cross-origin")
+    .expect("Referrer-Policy metadata should be accepted");
+
+  assert_eq!(
+    Some("default-src 'none'"),
+    response
+      .content_security_policy()
+      .expect("Content-Security-Policy metadata should parse")
+      .as_ref()
+      .map(HttpContentSecurityPolicy::as_str)
+  );
+  assert_eq!(
+    Some("geolocation=(), camera=()"),
+    response
+      .permissions_policy()
+      .expect("Permissions-Policy metadata should parse")
+      .as_ref()
+      .map(HttpPermissionsPolicy::as_str)
+  );
+  assert_eq!(
+    Some("strict-origin-when-cross-origin"),
+    response
+      .referrer_policy()
+      .expect("Referrer-Policy metadata should parse")
+      .as_ref()
+      .map(HttpReferrerPolicy::as_str)
+  );
+  assert!(String::from_utf8(response.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nContent-Security-Policy: default-src 'none'\r\n"));
+
+  assert!(HttpContentSecurityPolicy::parse("default-src\r\nblocked").is_err());
+  assert!(HttpPermissionsPolicy::parse("").is_err());
+  assert!(HttpReferrerPolicy::parse("origin\0").is_err());
+}
 
 #[test]
 fn response_clear_site_data_builder_and_parser_preserve_metadata_only_directives() {
