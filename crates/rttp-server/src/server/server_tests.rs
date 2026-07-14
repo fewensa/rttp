@@ -40,6 +40,26 @@ fn request_max_forwards_is_optional_bounded_and_preserves_invalid_headers() {
   assert_eq!(Some("1"), duplicate.header("Max-Forwards"));
 }
 
+#[test]
+fn request_exposes_bounded_range_and_conditional_metadata() {
+  let request = Request::from_raw_frame(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Range: bytes=-4\r\n",
+    "If-Range: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+    "If-None-Match: *\r\n",
+    "If-Modified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+    "\r\n"
+  )
+  .as_bytes())
+  .expect("request should retain metadata");
+
+  assert_eq!(Some(HttpByteRange::new(6, 9)), request.range(10).expect("Range should parse"));
+  assert!(matches!(request.if_range(), Ok(Some(HttpIfRange::Date(_)))));
+  assert_eq!(Ok(Some(HttpIfNoneMatch::Any)), request.if_none_match());
+  assert!(matches!(request.if_modified_since(), Ok(Some(_))));
+}
+
   #[test]
   fn http2_huffman_decode_table_resolves_symbols_without_linear_scan() {
     let table = http2_huffman_decode_table();

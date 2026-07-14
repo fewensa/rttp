@@ -11,6 +11,8 @@ pub(crate) const MAX_ACCEPT_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_ACCEPT_MEDIA_RANGES: usize = 256;
 const MAX_EXPECT_VALUE_BYTES: usize = 64 * 1024;
 const MAX_EXPECTATIONS: usize = 32;
+const MAX_CONDITIONAL_VALUE_BYTES: usize = 64 * 1024;
+const MAX_IF_NONE_MATCH_TAGS: usize = 32;
 
 /// Bounded `Expect` request metadata.
 ///
@@ -263,6 +265,27 @@ impl Request {
     entity_length: usize,
   ) -> Result<HttpIfRangeRequestOutcome, HttpByteRangeError> {
     evaluate_if_range_request(self, metadata, entity_length)
+  }
+
+  /// Parses one bounded `Range` field against an entity length without
+  /// selecting or serving a representation.
+  pub fn range(&self, entity_length: usize) -> Result<Option<HttpByteRange>, HttpByteRangeError> {
+    parse_range_values(self.headers_named("Range"), entity_length)
+  }
+
+  /// Parses one strong entity-tag or HTTP-date `If-Range` validator.
+  pub fn if_range(&self) -> Result<Option<HttpIfRange>, HttpIfRangeParseError> {
+    HttpIfRange::parse_optional_values(self.headers_named("If-Range"))
+  }
+
+  /// Parses bounded `If-None-Match` validators without evaluating them.
+  pub fn if_none_match(&self) -> Result<Option<HttpIfNoneMatch>, HttpIfNoneMatchParseError> {
+    HttpIfNoneMatch::parse_optional_values(self.headers_named("If-None-Match"))
+  }
+
+  /// Parses one HTTP-date `If-Modified-Since` validator without evaluating it.
+  pub fn if_modified_since(&self) -> Result<Option<SystemTime>, HttpIfModifiedSinceParseError> {
+    parse_if_modified_since_values(self.headers_named("If-Modified-Since"))
   }
 
   pub fn cache_control(
@@ -1127,6 +1150,232 @@ pub struct HttpConditionalMetadata {
   pub(crate) last_modified: Option<SystemTime>,
 }
 
+/// A parsed `If-Range` validator.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HttpIfRange {
+  EntityTag(HttpEntityTag),
+  Date(SystemTime),
+}
+
+impl HttpIfRange {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpIfRangeParseError> {
+    Self::parse_value(value.as_ref())
+  }
+
+  fn parse_optional_values<'a, I>(values: I) -> Result<Option<Self>, HttpIfRangeParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut values = values.into_iter();
+    let Some(value) = values.next() else {
+      return Ok(None);
+    };
+    if values.next().is_some() {
+      return Err(HttpIfRangeParseError::new("duplicate If-Range headers"));
+    }
+    Self::parse_value(value).map(Some)
+  }
+
+  fn parse_value(value: &str) -> Result<Self, HttpIfRangeParseError> {
+    if value.len() > MAX_CONDITIONAL_VALUE_BYTES {
+      return Err(HttpIfRangeParseError::new(
+        "If-Range header value is too large",
+      ));
+    }
+    let value = value.trim();
+    if let Ok(entity_tag) = HttpEntityTag::parse(value) {
+      if entity_tag.is_weak() {
+        return Err(HttpIfRangeParseError::new(
+          "If-Range requires a strong entity tag or HTTP-date",
+        ));
+      }
+      return Ok(Self::EntityTag(entity_tag));
+    }
+    httpdate::parse_http_date(value)
+      .map(Self::Date)
+      .map_err(|_| HttpIfRangeParseError::new("invalid If-Range validator"))
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpIfRangeParseError {
+  message: String,
+}
+
+impl HttpIfRangeParseError {
+  fn new(message: impl Into<String>) -> Self {
+    Self {
+      message: message.into(),
+    }
+  }
+}
+
+impl fmt::Display for HttpIfRangeParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpIfRangeParseError {}
+
+/// Parsed `If-None-Match` validators.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HttpIfNoneMatch {
+  Any,
+  Tags(Vec<HttpEntityTag>),
+}
+
+impl HttpIfNoneMatch {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpIfNoneMatchParseError> {
+    Self::parse_optional_values([value.as_ref()])?
+      .ok_or_else(|| HttpIfNoneMatchParseError::new("invalid If-None-Match validator"))
+  }
+
+  fn parse_optional_values<'a, I>(values: I) -> Result<Option<Self>, HttpIfNoneMatchParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut tags = Vec::new();
+    let mut saw_value = false;
+    let mut wildcard = false;
+    for value in values {
+      saw_value = true;
+      if value.len() > MAX_CONDITIONAL_VALUE_BYTES {
+        return Err(HttpIfNoneMatchParseError::new(
+          "If-None-Match header value is too large",
+        ));
+      }
+      for member in value.split(',') {
+        let member = member.trim();
+        if member == "*" {
+          if wildcard || !tags.is_empty() {
+            return Err(HttpIfNoneMatchParseError::new(
+              "If-None-Match wildcard cannot be combined with entity tags",
+            ));
+          }
+          wildcard = true;
+          continue;
+        }
+        if wildcard {
+          return Err(HttpIfNoneMatchParseError::new(
+            "If-None-Match wildcard cannot be combined with entity tags",
+          ));
+        }
+        if tags.len() >= MAX_IF_NONE_MATCH_TAGS {
+          return Err(HttpIfNoneMatchParseError::new(
+            "too many If-None-Match validators",
+          ));
+        }
+        let tag = HttpEntityTag::parse(member)
+          .map_err(|_| HttpIfNoneMatchParseError::new("invalid If-None-Match validator"))?;
+        if tags.iter().any(|known: &HttpEntityTag| {
+          known.is_weak() == tag.is_weak() && known.opaque_tag() == tag.opaque_tag()
+        }) {
+          return Err(HttpIfNoneMatchParseError::new(
+            "duplicate If-None-Match validator",
+          ));
+        }
+        tags.push(tag);
+      }
+    }
+    if !saw_value {
+      Ok(None)
+    } else if wildcard {
+      Ok(Some(Self::Any))
+    } else if tags.is_empty() {
+      Err(HttpIfNoneMatchParseError::new(
+        "invalid If-None-Match validator",
+      ))
+    } else {
+      Ok(Some(Self::Tags(tags)))
+    }
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpIfNoneMatchParseError {
+  message: String,
+}
+
+impl HttpIfNoneMatchParseError {
+  fn new(message: impl Into<String>) -> Self {
+    Self {
+      message: message.into(),
+    }
+  }
+}
+
+impl fmt::Display for HttpIfNoneMatchParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpIfNoneMatchParseError {}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpIfModifiedSinceParseError {
+  message: String,
+}
+
+impl HttpIfModifiedSinceParseError {
+  fn new(message: impl Into<String>) -> Self {
+    Self {
+      message: message.into(),
+    }
+  }
+}
+
+impl fmt::Display for HttpIfModifiedSinceParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpIfModifiedSinceParseError {}
+
+fn parse_range_values<'a, I>(
+  values: I,
+  entity_length: usize,
+) -> Result<Option<HttpByteRange>, HttpByteRangeError>
+where
+  I: IntoIterator<Item = &'a str>,
+{
+  let mut values = values.into_iter();
+  let Some(value) = values.next() else {
+    return Ok(None);
+  };
+  if values.next().is_some() {
+    return Err(HttpByteRangeError::MultipleRanges);
+  }
+  HttpByteRange::parse(value, entity_length).map(Some)
+}
+
+fn parse_if_modified_since_values<'a, I>(
+  values: I,
+) -> Result<Option<SystemTime>, HttpIfModifiedSinceParseError>
+where
+  I: IntoIterator<Item = &'a str>,
+{
+  let mut values = values.into_iter();
+  let Some(value) = values.next() else {
+    return Ok(None);
+  };
+  if values.next().is_some() {
+    return Err(HttpIfModifiedSinceParseError::new(
+      "duplicate If-Modified-Since headers",
+    ));
+  }
+  if value.len() > MAX_CONDITIONAL_VALUE_BYTES {
+    return Err(HttpIfModifiedSinceParseError::new(
+      "If-Modified-Since header value is too large",
+    ));
+  }
+  httpdate::parse_http_date(value.trim())
+    .map(Some)
+    .map_err(|_| HttpIfModifiedSinceParseError::new("invalid If-Modified-Since validator"))
+}
+
 impl HttpConditionalMetadata {
   pub fn new() -> Self {
     Self::default()
@@ -1739,6 +1988,52 @@ impl HttpRequest {
       .iter()
       .find(|header| header.name.eq_ignore_ascii_case(name.as_ref()))
       .map(|header| header.value.as_str())
+  }
+
+  /// Parses one bounded `Range` field against an entity length without
+  /// selecting or serving a representation.
+  pub fn range(&self, entity_length: usize) -> Result<Option<HttpByteRange>, HttpByteRangeError> {
+    parse_range_values(
+      self
+        .headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("Range"))
+        .map(|header| header.value.as_str()),
+      entity_length,
+    )
+  }
+
+  /// Parses one strong entity-tag or HTTP-date `If-Range` validator.
+  pub fn if_range(&self) -> Result<Option<HttpIfRange>, HttpIfRangeParseError> {
+    HttpIfRange::parse_optional_values(
+      self
+        .headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("If-Range"))
+        .map(|header| header.value.as_str()),
+    )
+  }
+
+  /// Parses bounded `If-None-Match` validators without evaluating them.
+  pub fn if_none_match(&self) -> Result<Option<HttpIfNoneMatch>, HttpIfNoneMatchParseError> {
+    HttpIfNoneMatch::parse_optional_values(
+      self
+        .headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("If-None-Match"))
+        .map(|header| header.value.as_str()),
+    )
+  }
+
+  /// Parses one HTTP-date `If-Modified-Since` validator without evaluating it.
+  pub fn if_modified_since(&self) -> Result<Option<SystemTime>, HttpIfModifiedSinceParseError> {
+    parse_if_modified_since_values(
+      self
+        .headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("If-Modified-Since"))
+        .map(|header| header.value.as_str()),
+    )
   }
 
   pub fn cache_control(
