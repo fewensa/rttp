@@ -48,6 +48,15 @@ zero suffix length before a socket is opened. They are request-header helpers;
 manual `Range` headers remain available through `header(("Range", "..."))`
 when callers need behavior outside the helper validation.
 
+```rust
+client
+  .get()
+  .url("http://example.test/archive")
+  .range(1_024, 2_047)?
+  .if_range_etag(r#""revision-42""#)?
+  .emit()?;
+```
+
 Partial-content responses are exposed through the normal `Response` API.
 `Response::is_partial_content()` identifies `206 Partial Content`, and
 `Response::content_range()` parses a `Content-Range` field such as
@@ -102,6 +111,15 @@ emission and then write the value as provided. They do not normalize date text
 or choose a validator policy for the request. `If-Range` uses its own helpers
 because it is intended to compose with range requests and permits only strong
 entity tags or HTTP-date validators.
+
+```rust
+client
+  .get()
+  .url("http://example.test/manifest")
+  .if_none_match(r#""revision-42""#)?
+  .if_modified_since("Sun, 06 Nov 1994 08:49:37 GMT")?
+  .emit()?;
+```
 
 Conditional responses are exposed through response metadata helpers.
 `Response::is_not_modified()` identifies `304 Not Modified`,

@@ -1406,8 +1406,15 @@ fn validate_request_trailer_header(name: &str, value: &str) -> error::Result<()>
   Ok(())
 }
 
+const MAX_CONDITIONAL_VALIDATOR_VALUE_BYTES: usize = 64 * 1024;
+
 fn validate_single_etag(etag: &str) -> error::Result<&str> {
   let etag = etag.trim();
+  if etag.len() > MAX_CONDITIONAL_VALIDATOR_VALUE_BYTES {
+    return Err(error::builder_with_message(
+      "conditional entity-tag validator is too large",
+    ));
+  }
   if etag == "*" {
     return Ok(etag);
   }
