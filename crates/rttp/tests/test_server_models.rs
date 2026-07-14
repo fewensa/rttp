@@ -1,14 +1,51 @@
 use std::time::{Duration, UNIX_EPOCH};
 
 use rttp::server::{
-  HttpAccept, HttpAcceptRanges, HttpAllowedMethods, HttpAuthorization, HttpByteRange,
+  HttpAccept, HttpAcceptCh, HttpAcceptRanges, HttpAllowedMethods, HttpAuthorization, HttpByteRange,
   HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata, HttpContentDisposition,
-  HttpContentLanguages, HttpContentType, HttpDigest, HttpEntityTag, HttpExpectations,
-  HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome, HttpLinkValues, HttpReportingEndpoints,
-  HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
-  HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming,
-  HttpVary,
+  HttpContentLanguages, HttpContentType, HttpCriticalCh, HttpDigest, HttpEntityTag,
+  HttpExpectations, HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome, HttpLinkValues,
+  HttpReportingEndpoints, HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl,
+  HttpRequestTe, HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings,
+  HttpRetryAfter, HttpServerTiming, HttpVary,
 };
+
+#[test]
+fn response_client_hint_builders_emit_validated_metadata() {
+  let response = HttpResponse::ok("body")
+    .header("Accept-CH", "DPR")
+    .with_accept_ch("Sec-CH-UA, Viewport-Width")
+    .expect("Accept-CH should be accepted")
+    .with_critical_ch("Sec-CH-UA-Platform, Downlink")
+    .expect("Critical-CH should be accepted");
+
+  assert_eq!(
+    ["Sec-CH-UA", "Viewport-Width"],
+    response
+      .accept_ch()
+      .expect("Accept-CH should parse")
+      .expect("Accept-CH should be present")
+      .client_hints()
+  );
+  assert_eq!(
+    ["Sec-CH-UA-Platform", "Downlink"],
+    response
+      .critical_ch()
+      .expect("Critical-CH should parse")
+      .expect("Critical-CH should be present")
+      .client_hints()
+  );
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert!(serialized.contains("\r\nAccept-CH: Sec-CH-UA, Viewport-Width\r\n"));
+  assert!(serialized.contains("\r\nCritical-CH: Sec-CH-UA-Platform, Downlink\r\n"));
+
+  assert!(HttpResponse::ok("body").with_accept_ch("DPR,").is_err());
+  assert!(HttpResponse::ok("body")
+    .with_critical_ch("1Downlink")
+    .is_err());
+  assert!(HttpAcceptCh::parse("DPR,").is_err());
+  assert!(HttpCriticalCh::parse("1Downlink").is_err());
+}
 
 #[test]
 fn response_clear_site_data_builder_and_parser_preserve_metadata_only_directives() {

@@ -8,6 +8,10 @@ pub use rttp_protocol::clear_site_data::{
   ClearSiteData as HttpClearSiteData, ClearSiteDataDirective as HttpClearSiteDataDirective,
   ClearSiteDataParseError as HttpClearSiteDataParseError,
 };
+pub use rttp_protocol::client_hints::{
+  AcceptCh as HttpAcceptCh, AcceptChParseError as HttpAcceptChParseError,
+  CriticalCh as HttpCriticalCh, CriticalChParseError as HttpCriticalChParseError,
+};
 pub use rttp_protocol::digest::{
   Digest as HttpDigest, DigestEntry as HttpDigestEntry, DigestParseError as HttpDigestParseError,
   ReprDigest as HttpReprDigest, ReprDigestEntry as HttpReprDigestEntry,
@@ -723,6 +727,35 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Accept-CH` response metadata without selecting
+  /// client hints or retaining per-client state.
+  pub fn with_accept_ch(mut self, value: impl AsRef<str>) -> Result<Self, HttpAcceptChParseError> {
+    let accept_ch = HttpAcceptCh::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Accept-CH"));
+    self
+      .headers
+      .push(HttpHeader::new("Accept-CH", accept_ch.header_value()));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Critical-CH` response metadata without triggering
+  /// request retries.
+  pub fn with_critical_ch(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpCriticalChParseError> {
+    let critical_ch = HttpCriticalCh::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Critical-CH"));
+    self
+      .headers
+      .push(HttpHeader::new("Critical-CH", critical_ch.header_value()));
+    Ok(self)
+  }
+
   pub fn with_content_location<V: AsRef<str>>(
     mut self,
     value: V,
@@ -1085,6 +1118,35 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpClearSiteData::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Accept-CH` metadata without selecting client hints or
+  /// retaining per-client state.
+  pub fn accept_ch(&self) -> Result<Option<HttpAcceptCh>, HttpAcceptChParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Accept-CH"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAcceptCh::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Critical-CH` metadata without retrying a request.
+  pub fn critical_ch(&self) -> Result<Option<HttpCriticalCh>, HttpCriticalChParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Critical-CH"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpCriticalCh::parse_values(values).map(Some)
   }
 
   pub fn content_location(&self) -> Result<Option<&str>, HttpContentLocationParseError> {
