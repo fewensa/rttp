@@ -38,6 +38,15 @@ available through `Response::trailers`, `Response::trailer`, and
 suffix before opening a socket. Callers can still set a manual `Range` header
 with the generic header API for cases outside those helpers.
 
+```rust
+client
+  .get()
+  .url("http://example.test/archive")
+  .range(1_024, 2_047)?
+  .if_range_etag(r#""revision-42""#)?
+  .emit()?;
+```
+
 `206 Partial Content` and `416 Range Not Satisfiable` are visible through
 `Response::is_partial_content()` and `Response::is_range_not_satisfiable()`.
 `Response::content_range()` parses `Content-Range` into `ContentRange`, using
@@ -78,6 +87,15 @@ call: `*`, a strong tag such as `"abc"`, or a weak tag such as `W/"abc"`.
 Comma-separated validator lists remain available through the generic `header`
 API. The date helpers require values that parse as HTTP-date values before a
 socket is opened.
+
+```rust
+client
+  .get()
+  .url("http://example.test/manifest")
+  .if_none_match(r#""revision-42""#)?
+  .if_modified_since("Sun, 06 Nov 1994 08:49:37 GMT")?
+  .emit()?;
+```
 
 Responses expose conditional metadata with `Response::is_not_modified()` for
 `304 Not Modified`, `Response::is_precondition_failed()` for

@@ -1,6 +1,6 @@
 use rttp_client::response::{
-  AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType, Digest, LinkValues,
-  Response, ServerTiming, WwwAuthenticate,
+  AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType, Digest,
+  HttpSetCookies, LinkValues, Response, RetryAfter, ServerTiming, WwwAuthenticate,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -115,6 +115,40 @@ fn test_parse_response_preserves_duplicate_headers_with_case_insensitive_lookup(
       .cookie("theme")
       .map(|cookie| cookie.value().as_str())
   );
+}
+
+#[test]
+fn set_cookie_metadata_is_bounded_and_preserves_unknown_attributes() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Set-Cookie: session=abc; Path=/; Priority=high; Partitioned\r\n",
+    "SET-COOKIE: theme=dark; SameSite=Lax\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("response should parse");
+  let cookies = response
+    .set_cookies()
+    .expect("Set-Cookie metadata should parse")
+    .expect("Set-Cookie headers should be present");
+  assert_eq!(2, cookies.cookies().len());
+  assert_eq!("session", cookies.cookies()[0].name());
+  assert_eq!("abc", cookies.cookies()[0].value());
+  assert_eq!(
+    vec![
+      ("Path", Some("/")),
+      ("Priority", Some("high")),
+      ("Partitioned", None),
+    ],
+    cookies.cookies()[0]
+      .attributes()
+      .iter()
+      .map(|attribute| (attribute.name(), attribute.value()))
+      .collect::<Vec<_>>()
+  );
+
+  assert!(HttpSetCookies::parse("session=abc\x01").is_err());
 }
 
 #[test]
@@ -1457,6 +1491,34 @@ fn test_parse_retry_after_response_metadata() {
 }
 
 #[test]
+fn test_parse_retry_after_response_metadata_accepts_surrounding_http_whitespace() {
+  let raw = concat!(
+    "HTTP/1.1 503 Service Unavailable\r\n",
+    "Retry-After: \t120 \r\n",
+    "Content-Length: 4\r\n",
+    "\r\n",
+    "busy"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("parse response with Retry-After whitespace");
+
+  assert_eq!(
+    Some(120),
+    response
+      .retry_after()
+      .expect("Retry-After metadata should parse")
+      .expect("Retry-After metadata should be present")
+      .delta_seconds()
+  );
+  assert_eq!(
+    Some(120),
+    RetryAfter::parse("\t120 ")
+      .expect("RetryAfter parser should accept HTTP whitespace")
+      .delta_seconds()
+  );
+}
+
+#[test]
 fn test_parse_retry_after_rejects_invalid_helper_values_without_rejecting_response() {
   let invalid_values = [
     "",
@@ -1845,6 +1907,35 @@ fn test_parse_vary_response_helper_normalizes_and_deduplicates_field_names() {
     ],
     response.header_values("vary")
   );
+}
+
+#[test]
+fn test_parse_trailer_header_metadata_keeps_te_capability_separate() {
+  let response = Response::new(
+    RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "TE: trailers\r\n",
+      "Trailer: X-Checksum, x-signature\r\n",
+      "Trailer: X-Checksum\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+  let trailer = response
+    .trailer_header()
+    .expect("Trailer metadata should parse")
+    .expect("Trailer metadata should be present");
+  assert_eq!(vec!["x-checksum", "x-signature"], trailer.field_names());
+
+  let invalid = Response::new(
+    RoUrl::with("http://example.test/"),
+    b"HTTP/1.1 200 OK\r\nTrailer: Content-Length\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response framing should parse");
+  assert!(invalid.trailer_header().is_err());
 }
 
 #[test]

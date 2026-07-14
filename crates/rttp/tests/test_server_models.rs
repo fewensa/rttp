@@ -3,10 +3,10 @@ use std::time::{Duration, UNIX_EPOCH};
 use rttp::server::{
   HttpAccept, HttpAcceptRanges, HttpAllowedMethods, HttpAuthorization, HttpByteRange,
   HttpByteRangeError, HttpConditionalMetadata, HttpContentDisposition, HttpContentLanguages,
-  HttpContentType, HttpDigest, HttpEntityTag, HttpExpectations, HttpIfRangeRequestOutcome,
-  HttpLinkValues, HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe,
-  HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter,
-  HttpServerTiming, HttpVary,
+  HttpContentType, HttpDigest, HttpEntityTag, HttpExpectations, HttpIfNoneMatch, HttpIfRange,
+  HttpIfRangeRequestOutcome, HttpLinkValues, HttpRequest, HttpRequestAcceptEncodings,
+  HttpRequestCacheControl, HttpRequestTe, HttpResponse, HttpResponseCacheControl,
+  HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming, HttpVary,
 };
 
 #[test]
@@ -119,6 +119,86 @@ fn response_server_timing_helper_validates_formats_and_preserves_raw_headers() {
 
 fn parse_request(raw: &str) -> HttpRequest {
   HttpRequest::parse(raw.as_bytes()).expect("request should parse")
+}
+
+#[test]
+fn request_parses_bounded_range_and_conditional_metadata() {
+  let request = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Range: bytes=2-99\r\n",
+    "If-Range: \"version-7\"\r\n",
+    "If-None-Match: W/\"stale\", \"version-7\"\r\n",
+    "If-Modified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+    "\r\n"
+  ));
+
+  assert_eq!(
+    Some(HttpByteRange::new(2, 9)),
+    request.range(10).expect("Range should parse")
+  );
+  assert_eq!(
+    Some(HttpIfRange::EntityTag(HttpEntityTag::strong("version-7"))),
+    request.if_range().expect("If-Range should parse")
+  );
+  assert_eq!(
+    Some(HttpIfNoneMatch::Tags(vec![
+      HttpEntityTag::weak("stale"),
+      HttpEntityTag::strong("version-7"),
+    ])),
+    request.if_none_match().expect("If-None-Match should parse")
+  );
+  assert_eq!(
+    Some(
+      httpdate::parse_http_date("Sun, 06 Nov 1994 08:49:37 GMT").expect("HTTP-date should parse")
+    ),
+    request
+      .if_modified_since()
+      .expect("If-Modified-Since should parse")
+  );
+}
+
+#[test]
+fn request_conditional_metadata_helpers_preserve_absent_and_invalid_headers() {
+  let absent = parse_request("GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent.range(10).expect("missing Range should be valid")
+  );
+  assert_eq!(
+    None,
+    absent.if_range().expect("missing If-Range should be valid")
+  );
+  assert_eq!(
+    None,
+    absent
+      .if_none_match()
+      .expect("missing If-None-Match should be valid")
+  );
+  assert_eq!(
+    None,
+    absent
+      .if_modified_since()
+      .expect("missing If-Modified-Since should be valid")
+  );
+
+  let invalid = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Range: bytes=9-2\r\n",
+    "If-Range: W/\"weak\"\r\n",
+    "If-None-Match: *, \"version-7\"\r\n",
+    "If-Modified-Since: not-a-date\r\n",
+    "\r\n"
+  ));
+  assert_eq!(Some("bytes=9-2"), invalid.header("Range"));
+  assert!(invalid.range(10).is_err());
+  assert_eq!(Some(r#"W/"weak""#), invalid.header("If-Range"));
+  assert!(invalid.if_range().is_err());
+  assert_eq!(Some(r#"*, "version-7""#), invalid.header("If-None-Match"));
+  assert!(invalid.if_none_match().is_err());
+  assert_eq!(Some("not-a-date"), invalid.header("If-Modified-Since"));
+  assert!(invalid.if_modified_since().is_err());
 }
 
 #[test]
@@ -315,6 +395,43 @@ fn request_te_and_prefer_reject_invalid_or_duplicate_metadata() {
   assert!(duplicate_prefer.prefer().is_err());
 
   assert!(HttpRequestTe::parse("gzip".repeat(64 * 1024)).is_err());
+}
+
+#[test]
+fn request_trailer_header_parses_bounded_field_names_separately_from_te_trailers() {
+  let request = parse_request(concat!(
+    "POST /upload HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "TE: trailers\r\n",
+    "Trailer: X-Checksum, x-signature\r\n",
+    "Trailer: X-Checksum\r\n",
+    "\r\n"
+  ));
+
+  let trailer = request
+    .trailer_header()
+    .expect("Trailer header should parse")
+    .expect("Trailer header should be present");
+  assert_eq!(vec!["x-checksum", "x-signature"], trailer.field_names());
+  assert!(request
+    .te()
+    .expect("TE should parse")
+    .expect("TE should be present")
+    .codings()[0]
+    .is_trailers());
+}
+
+#[test]
+fn request_trailer_header_rejects_forbidden_and_invalid_field_names() {
+  for value in ["Content-Length", "TE", "bad field"] {
+    let request = parse_request(&format!(
+      "POST /upload HTTP/1.1\r\nHost: example.test\r\nTrailer: {value}\r\n\r\n"
+    ));
+    assert!(
+      request.trailer_header().is_err(),
+      "{value:?} must be rejected"
+    );
+  }
 }
 
 #[test]
@@ -720,6 +837,39 @@ fn vary_helpers_reject_malformed_values() {
       .with_vary("Accept Encoding")
       .is_err(),
     "response Vary helper should reject invalid field names"
+  );
+}
+
+#[test]
+fn response_vary_helper_enforces_the_field_item_limit_before_deduplicating() {
+  let value = std::iter::repeat_n("Accept-Encoding", 257)
+    .collect::<Vec<_>>()
+    .join(", ");
+
+  assert!(
+    HttpResponse::ok("body")
+      .header("Vary", value)
+      .vary()
+      .is_err(),
+    "all parsed Vary list members must count toward the bound, including duplicates"
+  );
+}
+
+#[test]
+fn response_vary_helper_combines_multiple_headers_and_deduplicates_names() {
+  let response = HttpResponse::ok("body")
+    .header("Vary", "Accept-Encoding, User-Agent")
+    .header("vArY", "accept-encoding, X-Feature");
+
+  let vary = response
+    .vary()
+    .expect("attached Vary headers should parse")
+    .expect("Vary should be present");
+
+  assert!(!vary.is_wildcard());
+  assert_eq!(
+    vec!["accept-encoding", "user-agent", "x-feature"],
+    vary.field_names()
   );
 }
 

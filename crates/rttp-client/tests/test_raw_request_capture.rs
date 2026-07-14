@@ -560,6 +560,43 @@ fn te_helpers_reject_invalid_members_before_connecting() {
 }
 
 #[test]
+fn trailer_header_helper_declares_validated_fields_without_enabling_trailer_streaming() {
+  let request = capture_request(|base_url| {
+    client()
+      .post()
+      .url(format!("{}/upload", base_url))
+      .trailer_header(["X-Checksum", "x-signature", "X-Checksum"])
+      .expect("Trailer field names should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("x-checksum, x-signature"),
+    header_value(&request, "Trailer")
+  );
+  assert_eq!(None, header_value(&request, "TE"));
+
+  for field in [
+    "Content-Length",
+    "TE",
+    "bad field",
+    "X-Good\r\nInjected: yes",
+  ] {
+    let mut client = client();
+    let error = client
+      .post()
+      .url("http://example.test/upload")
+      .trailer_header([field])
+      .expect_err("invalid Trailer field name should be rejected");
+    assert!(
+      error.is_builder(),
+      "{field:?} should be rejected before connecting"
+    );
+  }
+}
+
+#[test]
 fn priority_helper_emits_bounded_known_and_extension_metadata() {
   let request = capture_request(|base_url| {
     client()
@@ -1178,6 +1215,32 @@ fn conditional_request_helpers_reject_obvious_malformed_inputs_before_connecting
     request.is_empty(),
     "malformed http date helper should not open a socket"
   );
+}
+
+#[test]
+fn conditional_etag_helpers_reject_oversized_validators_before_connecting() {
+  let oversized = format!("\"{}\"", "a".repeat(64 * 1024));
+
+  for helper in ["If-Match", "If-None-Match", "If-Range"] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let request = client.get().url(format!("{}/asset", base_url));
+      let error = match helper {
+        "If-Match" => request.if_match(&oversized),
+        "If-None-Match" => request.if_none_match(&oversized),
+        "If-Range" => request.if_range_etag(&oversized),
+        _ => unreachable!("test helper names are exhaustive"),
+      }
+      .expect_err("oversized entity tag should be rejected");
+
+      assert!(error.is_builder());
+    });
+
+    assert!(
+      request.is_empty(),
+      "oversized {helper} helper input should not open a socket"
+    );
+  }
 }
 
 #[test]
