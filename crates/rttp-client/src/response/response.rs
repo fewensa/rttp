@@ -15,6 +15,7 @@ use crate::response::ServerTiming;
 use crate::response::Trailer;
 use crate::response::WwwAuthenticate;
 use crate::types::{Cookie, Header, RoUrl};
+use rttp_protocol::clear_site_data::ClearSiteData;
 use rttp_protocol::cookie::HttpSetCookies;
 
 const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
@@ -365,6 +366,17 @@ impl Response {
       return Ok(None);
     }
     CacheControl::parse_values(values.into_iter().map(String::as_str)).map(Some)
+  }
+
+  /// Parses `Clear-Site-Data` response metadata without clearing any client state.
+  pub fn clear_site_data(&self) -> error::Result<Option<ClearSiteData>> {
+    let values = self.header_values("clear-site-data");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    ClearSiteData::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   pub fn vary(&self) -> error::Result<Option<Vary>> {

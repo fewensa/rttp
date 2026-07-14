@@ -1,6 +1,7 @@
 use rttp_client::response::{
   AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType, Digest,
-  HttpSetCookies, LinkValues, Response, RetryAfter, ServerTiming, WwwAuthenticate,
+  HttpClearSiteData, HttpSetCookies, LinkValues, Response, RetryAfter, ServerTiming,
+  WwwAuthenticate,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -23,6 +24,67 @@ fn test_parse_cookie_name_can_match_attribute_name() {
   assert_eq!("Path", path.name());
   assert_eq!("value", path.value());
   assert!(path.http_only());
+}
+
+#[test]
+fn clear_site_data_metadata_parses_quoted_directives_and_wildcard_without_clearing_state() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Clear-Site-Data: \"cache\", \"cookies\"\r\n",
+      "Clear-Site-Data: \"storage\", \"executionContexts\"\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+  let metadata = response
+    .clear_site_data()
+    .expect("Clear-Site-Data should parse")
+    .expect("Clear-Site-Data should be present");
+  assert_eq!(
+    vec!["cache", "cookies", "storage", "executionContexts"],
+    metadata
+      .directives()
+      .iter()
+      .map(|directive| directive.as_str())
+      .collect::<Vec<_>>()
+  );
+  assert!(metadata.clears_cache());
+  assert!(metadata.clears_cookies());
+  assert!(metadata.clears_storage());
+  assert!(metadata.clears_execution_contexts());
+
+  let wildcard = HttpClearSiteData::parse("\"*\"").expect("wildcard should parse");
+  assert!(wildcard.is_wildcard());
+  assert!(wildcard.clears_cache());
+  assert!(wildcard.clears_cookies());
+  assert!(wildcard.clears_storage());
+  assert!(wildcard.clears_execution_contexts());
+}
+
+#[test]
+fn clear_site_data_metadata_rejects_invalid_duplicate_and_unbounded_values() {
+  for value in [
+    "cache",
+    "\"unknown\"",
+    "\"cache\", \"cache\"",
+    "\"unterminated",
+  ] {
+    assert!(
+      HttpClearSiteData::parse(value).is_err(),
+      "should reject {value:?}"
+    );
+  }
+  assert!(HttpClearSiteData::parse(format!("\"{}\"", "x".repeat(64 * 1024))).is_err());
+  assert!(HttpClearSiteData::parse(
+    std::iter::repeat_n("\"cache\"", 257)
+      .collect::<Vec<_>>()
+      .join(","),
+  )
+  .is_err());
 }
 
 #[test]
