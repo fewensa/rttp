@@ -473,6 +473,28 @@ fn spawn_content_encoding_server(
   (addr, handle)
 }
 
+fn spawn_metadata_response_server(
+  headers: &'static [(&'static str, &'static str)],
+) -> (std::net::SocketAddr, thread::JoinHandle<()>) {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind metadata response server");
+  let addr = server.local_addr().expect("metadata response server addr");
+
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        headers
+          .iter()
+          .fold(HttpResponse::ok("OK"), |response, (name, value)| {
+            response.header(*name, *value)
+          })
+      })
+      .expect("serve metadata response request");
+  });
+
+  (addr, handle)
+}
+
 fn assert_partial_response(
   name: &str,
   response: rttp_client::response::Response,
@@ -2450,6 +2472,77 @@ fn sync_client_cache_control_matrix_keeps_cache_engine_non_goals_explicit() {
   assert_eq!("OK", response.body().string().unwrap());
 
   handle.join().expect("raw response server thread");
+}
+
+#[test]
+fn sync_client_preserves_new_metadata_headers_without_applying_policy() {
+  const HEADERS: &[(&str, &str)] = &[
+    (
+      "Accept-Patch",
+      "application/json, application/merge-patch+json",
+    ),
+    ("Accept-Post", "application/json"),
+    ("Accept-CH", "Sec-CH-UA, Sec-CH-UA-Platform"),
+    ("Critical-CH", "Sec-CH-UA-Platform"),
+    ("Clear-Site-Data", "\"cache\", \"cookies\""),
+    (
+      "Reporting-Endpoints",
+      "default=\"https://reports.example/default\"",
+    ),
+  ];
+  let (addr, handle) = spawn_metadata_response_server(HEADERS);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/new-metadata", addr))
+    .emit()
+    .expect("metadata response should parse without client policy handling");
+
+  assert_eq!(200, response.code());
+  assert_eq!("OK", response.body().string().unwrap());
+  for (name, value) in HEADERS {
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value(name),
+      "{name}"
+    );
+  }
+
+  handle.join().expect("metadata response server thread");
+}
+
+#[test]
+fn sync_client_preserves_semantically_malformed_new_metadata_headers() {
+  const HEADERS: &[(&str, &str)] = &[
+    ("Accept-Patch", "application/json; q=bogus"),
+    ("Accept-Post", "not a media type"),
+    ("Accept-CH", "Sec-CH-UA,, Sec-CH-UA-Platform"),
+    ("Critical-CH", "Sec-CH-UA,,"),
+    ("Clear-Site-Data", "cache"),
+    (
+      "Reporting-Endpoints",
+      "default=https://reports.example/default",
+    ),
+  ];
+  let (addr, handle) = spawn_metadata_response_server(HEADERS);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/new-metadata-malformed", addr))
+    .emit()
+    .expect("malformed metadata should not prevent response parsing");
+
+  assert_eq!(200, response.code());
+  assert_eq!("OK", response.body().string().unwrap());
+  for (name, value) in HEADERS {
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value(name),
+      "{name}"
+    );
+  }
+
+  handle.join().expect("metadata response server thread");
 }
 
 impl ConditionalHeader {
