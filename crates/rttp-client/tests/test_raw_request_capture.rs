@@ -1181,6 +1181,32 @@ fn conditional_request_helpers_reject_obvious_malformed_inputs_before_connecting
 }
 
 #[test]
+fn conditional_etag_helpers_reject_oversized_validators_before_connecting() {
+  let oversized = format!("\"{}\"", "a".repeat(64 * 1024));
+
+  for helper in ["If-Match", "If-None-Match", "If-Range"] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let request = client.get().url(format!("{}/asset", base_url));
+      let error = match helper {
+        "If-Match" => request.if_match(&oversized),
+        "If-None-Match" => request.if_none_match(&oversized),
+        "If-Range" => request.if_range_etag(&oversized),
+        _ => unreachable!("test helper names are exhaustive"),
+      }
+      .expect_err("oversized entity tag should be rejected");
+
+      assert!(error.is_builder());
+    });
+
+    assert!(
+      request.is_empty(),
+      "oversized {helper} helper input should not open a socket"
+    );
+  }
+}
+
+#[test]
 fn manual_conditional_headers_remain_available_as_escape_hatch() {
   let request = capture_request(|base_url| {
     client()
