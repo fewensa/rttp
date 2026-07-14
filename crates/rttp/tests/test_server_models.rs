@@ -1,14 +1,40 @@
 use std::time::{Duration, UNIX_EPOCH};
 
 use rttp::server::{
-  HttpAccept, HttpAcceptRanges, HttpAllowedMethods, HttpAuthorization, HttpByteRange,
+  HttpAccept, HttpAcceptCh, HttpAcceptRanges, HttpAllowedMethods, HttpAuthorization, HttpByteRange,
   HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata, HttpContentDisposition,
-  HttpContentLanguages, HttpContentType, HttpDigest, HttpEntityTag, HttpExpectations,
-  HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome, HttpLinkValues, HttpReportingEndpoints,
-  HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
-  HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming,
-  HttpVary,
+  HttpContentLanguages, HttpContentType, HttpCriticalCh, HttpDigest, HttpEntityTag,
+  HttpExpectations, HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome, HttpLinkValues,
+  HttpReportingEndpoints, HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl,
+  HttpRequestTe, HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings,
+  HttpRetryAfter, HttpServerTiming, HttpVary,
 };
+
+#[test]
+fn response_client_hints_helpers_declare_and_parse_metadata_without_policy() {
+  let response = HttpResponse::ok("body")
+    .header("Accept-CH", "DPR")
+    .with_accept_ch(["Sec-CH-UA", "Viewport-Width"])
+    .expect("Accept-CH should be accepted")
+    .with_critical_ch(["Sec-CH-UA"])
+    .expect("Critical-CH should be accepted");
+
+  let accept_ch: HttpAcceptCh = response
+    .accept_ch()
+    .expect("Accept-CH should parse")
+    .expect("Accept-CH should be present");
+  assert_eq!(&["Sec-CH-UA", "Viewport-Width"], accept_ch.client_hints());
+  let critical_ch: HttpCriticalCh = response
+    .critical_ch()
+    .expect("Critical-CH should parse")
+    .expect("Critical-CH should be present");
+  assert_eq!(&["Sec-CH-UA"], critical_ch.client_hints());
+
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert_eq!(1, serialized.matches("\r\nAccept-CH: ").count());
+  assert!(serialized.contains("\r\nAccept-CH: Sec-CH-UA, Viewport-Width\r\n"));
+  assert!(serialized.contains("\r\nCritical-CH: Sec-CH-UA\r\n"));
+}
 
 #[test]
 fn response_clear_site_data_builder_and_parser_preserve_metadata_only_directives() {

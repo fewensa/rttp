@@ -6,6 +6,9 @@ pub use rttp_protocol::clear_site_data::{
   ClearSiteData as HttpClearSiteData, ClearSiteDataDirective as HttpClearSiteDataDirective,
   ClearSiteDataParseError as HttpClearSiteDataParseError,
 };
+pub use rttp_protocol::client_hints::{
+  AcceptCh, AcceptChParseError, CriticalCh, CriticalChParseError,
+};
 pub use rttp_protocol::cookie::{
   HttpCookieParseError, HttpSetCookie, HttpSetCookieAttribute, HttpSetCookies,
 };
