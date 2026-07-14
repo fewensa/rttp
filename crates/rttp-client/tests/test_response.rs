@@ -1,6 +1,7 @@
 use rttp_client::response::{
   AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType, Digest,
-  HttpSetCookies, LinkValues, Response, RetryAfter, ServerTiming, WwwAuthenticate,
+  HttpClearSiteData, HttpSetCookies, LinkValues, Response, RetryAfter, ServerTiming,
+  WwwAuthenticate,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -23,6 +24,67 @@ fn test_parse_cookie_name_can_match_attribute_name() {
   assert_eq!("Path", path.name());
   assert_eq!("value", path.value());
   assert!(path.http_only());
+}
+
+#[test]
+fn clear_site_data_metadata_parses_quoted_directives_and_wildcard_without_clearing_state() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Clear-Site-Data: \"cache\", \"cookies\"\r\n",
+      "Clear-Site-Data: \"storage\", \"executionContexts\"\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+  let metadata = response
+    .clear_site_data()
+    .expect("Clear-Site-Data should parse")
+    .expect("Clear-Site-Data should be present");
+  assert_eq!(
+    vec!["cache", "cookies", "storage", "executionContexts"],
+    metadata
+      .directives()
+      .iter()
+      .map(|directive| directive.as_str())
+      .collect::<Vec<_>>()
+  );
+  assert!(metadata.clears_cache());
+  assert!(metadata.clears_cookies());
+  assert!(metadata.clears_storage());
+  assert!(metadata.clears_execution_contexts());
+
+  let wildcard = HttpClearSiteData::parse("\"*\"").expect("wildcard should parse");
+  assert!(wildcard.is_wildcard());
+  assert!(wildcard.clears_cache());
+  assert!(wildcard.clears_cookies());
+  assert!(wildcard.clears_storage());
+  assert!(wildcard.clears_execution_contexts());
+}
+
+#[test]
+fn clear_site_data_metadata_rejects_invalid_duplicate_and_unbounded_values() {
+  for value in [
+    "cache",
+    "\"unknown\"",
+    "\"cache\", \"cache\"",
+    "\"unterminated",
+  ] {
+    assert!(
+      HttpClearSiteData::parse(value).is_err(),
+      "should reject {value:?}"
+    );
+  }
+  assert!(HttpClearSiteData::parse(format!("\"{}\"", "x".repeat(64 * 1024))).is_err());
+  assert!(HttpClearSiteData::parse(
+    std::iter::repeat_n("\"cache\"", 257)
+      .collect::<Vec<_>>()
+      .join(","),
+  )
+  .is_err());
 }
 
 #[test]
@@ -1863,6 +1925,120 @@ fn test_parse_accept_ranges_rejects_duplicate_oversized_and_too_many_values() {
     "accept-ranges helper should reject too many values"
   );
   assert_eq!(Some(&too_many), response.header_value("Accept-Ranges"));
+}
+
+#[test]
+fn test_parse_accept_patch_response_helper_preserves_media_types_across_header_fields() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Accept-Patch: application/json; charset=utf-8, application/merge-patch+json\r\n",
+    "accept-patch: application/example; profile=\"https://example.test/schema,v1\"\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("parse response with Accept-Patch headers");
+  let accept_patch = response
+    .accept_patch()
+    .expect("valid Accept-Patch should parse")
+    .expect("Accept-Patch header should be present");
+
+  assert_eq!(
+    vec![
+      "application/json",
+      "application/merge-patch+json",
+      "application/example",
+    ],
+    accept_patch
+      .media_types()
+      .iter()
+      .map(|media_type| media_type.essence())
+      .collect::<Vec<_>>()
+  );
+  assert_eq!(
+    Some("https://example.test/schema,v1"),
+    accept_patch.media_types()[2].parameter("profile")
+  );
+  assert_eq!(
+    vec![
+      &"application/json; charset=utf-8, application/merge-patch+json".to_string(),
+      &"application/example; profile=\"https://example.test/schema,v1\"".to_string(),
+    ],
+    response.header_values("Accept-Patch")
+  );
+}
+
+#[test]
+fn test_parse_accept_post_response_helper_preserves_parameters_across_header_fields() {
+  let raw = concat!(
+    "HTTP/1.1 201 Created\r\n",
+    "Accept-Post: text/plain; charset=utf-8\r\n",
+    "accept-post: application/json; profile=\"https://example.test/v1\"\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("parse response with Accept-Post headers");
+  let accept_post = response
+    .accept_post()
+    .expect("valid Accept-Post should parse")
+    .expect("Accept-Post header should be present");
+
+  assert_eq!(
+    vec!["text/plain", "application/json"],
+    accept_post
+      .media_types()
+      .iter()
+      .map(|media_type| media_type.essence())
+      .collect::<Vec<_>>()
+  );
+  assert_eq!(
+    Some("utf-8"),
+    accept_post.media_types()[0].parameter("charset")
+  );
+  assert_eq!(
+    Some("https://example.test/v1"),
+    accept_post.media_types()[1].parameter("profile")
+  );
+}
+
+#[test]
+fn test_accept_patch_and_accept_post_helpers_preserve_malformed_headers() {
+  for (header, value) in [
+    ("Accept-Patch", "application/json,"),
+    ("Accept-Post", "application/json; charset=\"unterminated"),
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\n{header}: {value}\r\nContent-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response remains usable");
+
+    if header == "Accept-Patch" {
+      assert!(response.accept_patch().is_err());
+    } else {
+      assert!(response.accept_post().is_err());
+    }
+    assert_eq!(Some(&value.to_string()), response.header_value(header));
+  }
+}
+
+#[test]
+fn test_accept_patch_and_accept_post_helpers_return_none_when_absent() {
+  let raw = concat!("HTTP/1.1 200 OK\r\n", "Content-Length: 0\r\n", "\r\n");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("parse response without accept metadata");
+
+  assert_eq!(
+    None,
+    response
+      .accept_patch()
+      .expect("absent Accept-Patch should parse")
+  );
+  assert_eq!(
+    None,
+    response
+      .accept_post()
+      .expect("absent Accept-Post should parse")
+  );
 }
 
 #[test]

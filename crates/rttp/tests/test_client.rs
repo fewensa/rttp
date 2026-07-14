@@ -21,6 +21,32 @@ fn test_client_http() {
 }
 
 #[test]
+#[cfg(any(feature = "all", feature = "client"))]
+fn compatibility_facade_reexports_accept_response_metadata() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Accept-Patch: application/json\r\n",
+    "Accept-Post: text/plain\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("https://example.test"),
+    raw.as_bytes().to_vec(),
+  )
+  .expect("response should parse");
+
+  let _: rttp::AcceptPatch = response
+    .accept_patch()
+    .expect("Accept-Patch should parse")
+    .expect("Accept-Patch should be present");
+  let _: rttp::AcceptPost = response
+    .accept_post()
+    .expect("Accept-Post should parse")
+    .expect("Accept-Post should be present");
+}
+
+#[test]
 #[cfg(any(
   feature = "all",
   feature = "client",

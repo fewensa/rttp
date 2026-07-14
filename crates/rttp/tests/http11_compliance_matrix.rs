@@ -869,6 +869,97 @@ fn server_response_with_allow_coexists_with_cache_and_retry_metadata_helpers() {
 }
 
 #[test]
+fn server_response_accept_patch_and_accept_post_helpers_declare_and_parse_media_types() {
+  let response = HttpResponse::ok("OK")
+    .with_accept_patch([
+      "application/json; charset=utf-8",
+      "application/merge-patch+json",
+    ])
+    .expect("Accept-Patch declaration should parse")
+    .with_accept_post(["application/json", "text/plain; profile=summary"])
+    .expect("Accept-Post declaration should parse");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert_eq!(
+    Some("application/json; charset=utf-8, application/merge-patch+json"),
+    header_value(&serialized, "Accept-Patch")
+  );
+  assert_eq!(
+    Some("application/json, text/plain; profile=summary"),
+    header_value(&serialized, "Accept-Post")
+  );
+
+  let accept_patch = response
+    .accept_patch()
+    .expect("Accept-Patch should parse")
+    .expect("Accept-Patch should be present");
+  assert_eq!(
+    vec!["application/json", "application/merge-patch+json"],
+    accept_patch
+      .media_types()
+      .iter()
+      .map(|media_type| media_type.media_type())
+      .collect::<Vec<_>>()
+  );
+  assert_eq!(
+    Some("utf-8"),
+    accept_patch.media_types()[0].parameter("charset")
+  );
+
+  let accept_post = response
+    .accept_post()
+    .expect("Accept-Post should parse")
+    .expect("Accept-Post should be present");
+  assert_eq!(
+    vec!["application/json", "text/plain"],
+    accept_post
+      .media_types()
+      .iter()
+      .map(|media_type| media_type.media_type())
+      .collect::<Vec<_>>()
+  );
+  assert_eq!(
+    Some("summary"),
+    accept_post.media_types()[1].parameter("profile")
+  );
+}
+
+#[test]
+fn server_response_accept_patch_and_accept_post_helpers_reject_invalid_raw_metadata() {
+  for (header, value) in [
+    ("Accept-Patch", "application/json,"),
+    ("Accept-Post", "application/json; profile=\"unterminated"),
+  ] {
+    let response = HttpResponse::ok("OK").header(header, value);
+
+    if header == "Accept-Patch" {
+      assert!(
+        response.accept_patch().is_err(),
+        "{header} should reject {value:?}"
+      );
+      assert!(
+        HttpResponse::ok("OK").with_accept_patch([value]).is_err(),
+        "{header} declaration should reject {value:?}"
+      );
+    } else {
+      assert!(
+        response.accept_post().is_err(),
+        "{header} should reject {value:?}"
+      );
+      assert!(
+        HttpResponse::ok("OK").with_accept_post([value]).is_err(),
+        "{header} declaration should reject {value:?}"
+      );
+    }
+
+    assert_eq!(
+      Some(value),
+      header_value(&String::from_utf8(response.to_bytes()).unwrap(), header)
+    );
+  }
+}
+
+#[test]
 fn server_allow_helpers_reject_shared_invalid_matrix() {
   for case in fixtures::allow::invalid_cases() {
     assert!(

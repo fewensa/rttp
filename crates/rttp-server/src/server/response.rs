@@ -4,6 +4,10 @@ pub use rttp_protocol::alt_svc::{
   AltSvc as HttpAltSvc, AltSvcAlternative as HttpAltSvcAlternative,
   AltSvcParameter as HttpAltSvcParameter, AltSvcParseError as HttpAltSvcParseError,
 };
+pub use rttp_protocol::clear_site_data::{
+  ClearSiteData as HttpClearSiteData, ClearSiteDataDirective as HttpClearSiteDataDirective,
+  ClearSiteDataParseError as HttpClearSiteDataParseError,
+};
 pub use rttp_protocol::digest::{
   Digest as HttpDigest, DigestEntry as HttpDigestEntry, DigestParseError as HttpDigestParseError,
   ReprDigest as HttpReprDigest, ReprDigestEntry as HttpReprDigestEntry,
@@ -42,6 +46,10 @@ pub(crate) const MAX_CONTENT_DISPOSITION_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_CONTENT_DISPOSITION_PARAMETERS: usize = 32;
 pub(crate) const MAX_CONTENT_TYPE_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_CONTENT_TYPE_PARAMETERS: usize = 32;
+pub(crate) const MAX_ACCEPT_PATCH_VALUE_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_ACCEPT_PATCH_MEDIA_TYPES: usize = 32;
+pub(crate) const MAX_ACCEPT_POST_VALUE_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_ACCEPT_POST_MEDIA_TYPES: usize = 32;
 pub(crate) const MAX_ACCEPT_RANGES_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_ACCEPT_RANGES_UNITS: usize = 32;
 pub(crate) const MAX_RETRY_AFTER_VALUE_BYTES: usize = 64 * 1024;
@@ -699,6 +707,22 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Clear-Site-Data` metadata without clearing server state.
+  pub fn with_clear_site_data(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpClearSiteDataParseError> {
+    let clear_site_data = HttpClearSiteData::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Clear-Site-Data"));
+    self.headers.push(HttpHeader::new(
+      "Clear-Site-Data",
+      clear_site_data.header_value(),
+    ));
+    Ok(self)
+  }
+
   pub fn with_content_location<V: AsRef<str>>(
     mut self,
     value: V,
@@ -742,6 +766,39 @@ impl HttpResponse {
     self
       .headers
       .push(HttpHeader::new("Content-Type", content_type.header_value()));
+    Ok(self)
+  }
+
+  pub fn with_accept_patch<I, M>(
+    mut self,
+    media_types: I,
+  ) -> Result<Self, HttpAcceptPatchParseError>
+  where
+    I: IntoIterator<Item = M>,
+    M: AsRef<str>,
+  {
+    let accept_patch = HttpAcceptPatch::from_media_types(media_types)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Accept-Patch"));
+    self
+      .headers
+      .push(HttpHeader::new("Accept-Patch", accept_patch.header_value()));
+    Ok(self)
+  }
+
+  pub fn with_accept_post<I, M>(mut self, media_types: I) -> Result<Self, HttpAcceptPostParseError>
+  where
+    I: IntoIterator<Item = M>,
+    M: AsRef<str>,
+  {
+    let accept_post = HttpAcceptPost::from_media_types(media_types)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Accept-Post"));
+    self
+      .headers
+      .push(HttpHeader::new("Accept-Post", accept_post.header_value()));
     Ok(self)
   }
 
@@ -1016,6 +1073,20 @@ impl HttpResponse {
     HttpAltSvc::parse_values(values).map(Some)
   }
 
+  /// Parses attached `Clear-Site-Data` metadata without changing server state.
+  pub fn clear_site_data(&self) -> Result<Option<HttpClearSiteData>, HttpClearSiteDataParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Clear-Site-Data"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpClearSiteData::parse_values(values).map(Some)
+  }
+
   pub fn content_location(&self) -> Result<Option<&str>, HttpContentLocationParseError> {
     let Some(value) = self.single_header_value(
       "Content-Location",
@@ -1049,6 +1120,32 @@ impl HttpResponse {
       return Ok(None);
     };
     HttpContentType::parse(value).map(Some)
+  }
+
+  pub fn accept_patch(&self) -> Result<Option<HttpAcceptPatch>, HttpAcceptPatchParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Accept-Patch"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAcceptPatch::parse_values(values).map(Some)
+  }
+
+  pub fn accept_post(&self) -> Result<Option<HttpAcceptPost>, HttpAcceptPostParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Accept-Post"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAcceptPost::parse_values(values).map(Some)
   }
 
   pub fn accept_ranges(&self) -> Result<Option<HttpAcceptRanges>, HttpAcceptRangesParseError> {
@@ -3133,6 +3230,249 @@ impl fmt::Display for HttpContentTypeParseError {
 }
 
 impl Error for HttpContentTypeParseError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct HttpAcceptedMediaTypes {
+  media_types: Vec<HttpContentType>,
+}
+
+impl HttpAcceptedMediaTypes {
+  fn parse_values<'a, I>(
+    values: I,
+    header_name: &str,
+    max_value_bytes: usize,
+    max_media_types: usize,
+  ) -> Result<Self, String>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut media_types = Vec::new();
+    for value in values {
+      if value.len() > max_value_bytes {
+        return Err(format!("{header_name} header value is too large"));
+      }
+      for member in split_accept_capability_members(value)? {
+        if media_types.len() >= max_media_types {
+          return Err(format!("too many {header_name} media types"));
+        }
+        media_types.push(
+          HttpContentType::parse(member)
+            .map_err(|_| format!("invalid {header_name} media type"))?,
+        );
+      }
+    }
+    if media_types.is_empty() {
+      return Err(format!("invalid {header_name} media type"));
+    }
+    Ok(Self { media_types })
+  }
+
+  fn from_media_types<I, M>(
+    media_types: I,
+    header_name: &str,
+    max_value_bytes: usize,
+    max_media_types: usize,
+  ) -> Result<Self, String>
+  where
+    I: IntoIterator<Item = M>,
+    M: AsRef<str>,
+  {
+    let mut value = String::new();
+    for (index, media_type) in media_types.into_iter().enumerate() {
+      if index > 0 {
+        value.push_str(", ");
+      }
+      value.push_str(media_type.as_ref());
+      if value.len() > max_value_bytes {
+        return Err(format!("{header_name} header value is too large"));
+      }
+    }
+    Self::parse_values(
+      [value.as_str()],
+      header_name,
+      max_value_bytes,
+      max_media_types,
+    )
+  }
+
+  fn media_types(&self) -> &[HttpContentType] {
+    &self.media_types
+  }
+
+  fn header_value(&self) -> String {
+    self
+      .media_types
+      .iter()
+      .map(HttpContentType::header_value)
+      .collect::<Vec<_>>()
+      .join(", ")
+  }
+}
+
+fn split_accept_capability_members(value: &str) -> Result<Vec<&str>, String> {
+  let mut members = Vec::new();
+  let mut start = 0usize;
+  let mut quoted = false;
+  let mut escaped = false;
+  for (index, byte) in value.bytes().enumerate() {
+    if escaped {
+      escaped = false;
+      continue;
+    }
+    match byte {
+      b'\\' if quoted => escaped = true,
+      b'"' => quoted = !quoted,
+      b',' if !quoted => {
+        let member = value[start..index].trim();
+        if member.is_empty() {
+          return Err("empty media type".to_string());
+        }
+        members.push(member);
+        start = index + 1;
+      }
+      _ => {}
+    }
+  }
+  if quoted || escaped {
+    return Err("unterminated media type parameter".to_string());
+  }
+  let member = value[start..].trim();
+  if member.is_empty() {
+    return Err("empty media type".to_string());
+  }
+  members.push(member);
+  Ok(members)
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpAcceptPatch(HttpAcceptedMediaTypes);
+
+impl HttpAcceptPatch {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpAcceptPatchParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpAcceptPatchParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    HttpAcceptedMediaTypes::parse_values(
+      values,
+      "Accept-Patch",
+      MAX_ACCEPT_PATCH_VALUE_BYTES,
+      MAX_ACCEPT_PATCH_MEDIA_TYPES,
+    )
+    .map(Self)
+    .map_err(HttpAcceptPatchParseError::new)
+  }
+
+  pub fn from_media_types<I, M>(media_types: I) -> Result<Self, HttpAcceptPatchParseError>
+  where
+    I: IntoIterator<Item = M>,
+    M: AsRef<str>,
+  {
+    HttpAcceptedMediaTypes::from_media_types(
+      media_types,
+      "Accept-Patch",
+      MAX_ACCEPT_PATCH_VALUE_BYTES,
+      MAX_ACCEPT_PATCH_MEDIA_TYPES,
+    )
+    .map(Self)
+    .map_err(HttpAcceptPatchParseError::new)
+  }
+
+  pub fn media_types(&self) -> &[HttpContentType] {
+    self.0.media_types()
+  }
+
+  pub fn header_value(&self) -> String {
+    self.0.header_value()
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpAcceptPatchParseError {
+  message: String,
+}
+
+impl HttpAcceptPatchParseError {
+  fn new(message: String) -> Self {
+    Self { message }
+  }
+}
+
+impl fmt::Display for HttpAcceptPatchParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpAcceptPatchParseError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpAcceptPost(HttpAcceptedMediaTypes);
+
+impl HttpAcceptPost {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpAcceptPostParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpAcceptPostParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    HttpAcceptedMediaTypes::parse_values(
+      values,
+      "Accept-Post",
+      MAX_ACCEPT_POST_VALUE_BYTES,
+      MAX_ACCEPT_POST_MEDIA_TYPES,
+    )
+    .map(Self)
+    .map_err(HttpAcceptPostParseError::new)
+  }
+
+  pub fn from_media_types<I, M>(media_types: I) -> Result<Self, HttpAcceptPostParseError>
+  where
+    I: IntoIterator<Item = M>,
+    M: AsRef<str>,
+  {
+    HttpAcceptedMediaTypes::from_media_types(
+      media_types,
+      "Accept-Post",
+      MAX_ACCEPT_POST_VALUE_BYTES,
+      MAX_ACCEPT_POST_MEDIA_TYPES,
+    )
+    .map(Self)
+    .map_err(HttpAcceptPostParseError::new)
+  }
+
+  pub fn media_types(&self) -> &[HttpContentType] {
+    self.0.media_types()
+  }
+
+  pub fn header_value(&self) -> String {
+    self.0.header_value()
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpAcceptPostParseError {
+  message: String,
+}
+
+impl HttpAcceptPostParseError {
+  fn new(message: String) -> Self {
+    Self { message }
+  }
+}
+
+impl fmt::Display for HttpAcceptPostParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for HttpAcceptPostParseError {}
 
 pub(crate) fn parse_content_type_media_type(
   value: &str,
