@@ -4,6 +4,7 @@
 //! validation only; client and server application policy remains in its callers.
 
 pub mod alt_svc;
+pub mod cache_control;
 pub mod cookie;
 pub mod digest;
 pub mod forwarded;
