@@ -1,5 +1,6 @@
 use super::*;
 
+pub use rttp_protocol::cookie::{HttpCookiePair, HttpCookieParseError, HttpCookies};
 pub use rttp_protocol::forwarded::{
   Forwarded as HttpForwarded, ForwardedElement as HttpForwardedElement,
   ForwardedParameter as HttpForwardedParameter, ForwardedParseError as HttpForwardedParseError,
@@ -314,6 +315,16 @@ impl Request {
       ));
     }
     HttpAuthorization::parse(value).map(Some)
+  }
+
+  /// Parses request `Cookie` pairs as bounded opaque metadata without applying
+  /// cookie storage, matching, or authorization policy.
+  pub fn cookies(&self) -> Result<Option<HttpCookies>, HttpCookieParseError> {
+    let values: Vec<&str> = self.headers_named("Cookie").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpCookies::parse_values(values).map(Some)
   }
 
   /// Parses received `Max-Forwards` request metadata without automatically
@@ -2081,6 +2092,21 @@ impl HttpRequest {
       ));
     }
     HttpAuthorization::parse(value).map(Some)
+  }
+
+  /// Parses request `Cookie` pairs as bounded opaque metadata without applying
+  /// cookie storage, matching, or authorization policy.
+  pub fn cookies(&self) -> Result<Option<HttpCookies>, HttpCookieParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Cookie"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpCookies::parse_values(values).map(Some)
   }
 
   /// Parses received `Max-Forwards` request metadata without automatically

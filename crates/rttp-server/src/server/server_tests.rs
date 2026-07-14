@@ -117,6 +117,28 @@ fn request_max_forwards_is_optional_bounded_and_preserves_invalid_headers() {
 }
 
 #[test]
+fn request_cookies_are_bounded_and_preserve_pairs() {
+  let request = Request::from_raw_frame(
+    b"GET / HTTP/1.1\r\nHost: example.test\r\nCookie: session=abc; theme=dark\r\nCookie: flag=\r\n\r\n",
+  )
+  .expect("request should parse");
+  let cookies = request
+    .cookies()
+    .expect("cookie metadata should parse")
+    .expect("Cookie header should be present");
+  assert_eq!(
+    vec![("session", "abc"), ("theme", "dark"), ("flag", "")],
+    cookies
+      .pairs()
+      .iter()
+      .map(|pair| (pair.name(), pair.value()))
+      .collect::<Vec<_>>()
+  );
+
+  assert!(HttpCookies::parse("session=abc\x01").is_err());
+}
+
+#[test]
 fn request_exposes_bounded_range_and_conditional_metadata() {
   let request = Request::from_raw_frame(concat!(
     "GET /asset HTTP/1.1\r\n",

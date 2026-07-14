@@ -1,6 +1,6 @@
 use rttp_client::response::{
-  AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType, Digest, LinkValues,
-  Response, RetryAfter, ServerTiming, WwwAuthenticate,
+  AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType, Digest,
+  HttpSetCookies, LinkValues, Response, RetryAfter, ServerTiming, WwwAuthenticate,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -115,6 +115,40 @@ fn test_parse_response_preserves_duplicate_headers_with_case_insensitive_lookup(
       .cookie("theme")
       .map(|cookie| cookie.value().as_str())
   );
+}
+
+#[test]
+fn set_cookie_metadata_is_bounded_and_preserves_unknown_attributes() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Set-Cookie: session=abc; Path=/; Priority=high; Partitioned\r\n",
+    "SET-COOKIE: theme=dark; SameSite=Lax\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("response should parse");
+  let cookies = response
+    .set_cookies()
+    .expect("Set-Cookie metadata should parse")
+    .expect("Set-Cookie headers should be present");
+  assert_eq!(2, cookies.cookies().len());
+  assert_eq!("session", cookies.cookies()[0].name());
+  assert_eq!("abc", cookies.cookies()[0].value());
+  assert_eq!(
+    vec![
+      ("Path", Some("/")),
+      ("Priority", Some("high")),
+      ("Partitioned", None),
+    ],
+    cookies.cookies()[0]
+      .attributes()
+      .iter()
+      .map(|attribute| (attribute.name(), attribute.value()))
+      .collect::<Vec<_>>()
+  );
+
+  assert!(HttpSetCookies::parse("session=abc\x01").is_err());
 }
 
 #[test]
