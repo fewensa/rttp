@@ -12,6 +12,7 @@ use crate::response::Digest;
 use crate::response::Priority;
 use crate::response::ReprDigest;
 use crate::response::ServerTiming;
+use crate::response::Trailer;
 use crate::response::WwwAuthenticate;
 use crate::types::{Cookie, Header, RoUrl};
 use rttp_protocol::cookie::HttpSetCookies;
@@ -372,6 +373,18 @@ impl Response {
       return Ok(None);
     }
     Vary::parse_values(values.into_iter().map(String::as_str)).map(Some)
+  }
+
+  /// Parses announced trailer field names without waiting for or exposing a
+  /// trailer block.
+  pub fn trailer_header(&self) -> error::Result<Option<Trailer>> {
+    let values = self.header_values("trailer");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Trailer::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|error| error::bad_response(error.to_string()))
   }
 
   /// Parses `Link` response metadata without enabling preload, redirects,

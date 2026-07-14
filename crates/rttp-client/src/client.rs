@@ -9,6 +9,7 @@ use crate::{error, Config, H2cClientPolicy};
 use futures::io::AsyncRead;
 use rttp_protocol::forwarded::{Forwarded, MAX_FORWARDED_VALUE_BYTES};
 use rttp_protocol::priority::Priority;
+use rttp_protocol::trailer::Trailer;
 use std::io;
 
 #[derive(Debug)]
@@ -237,6 +238,22 @@ impl HttpClient {
       }
     }
     Ok(self)
+  }
+
+  /// Declare bounded `Trailer` field-name metadata without enabling streaming
+  /// request trailers or adding `TE` capability metadata.
+  pub fn trailer_header<I, S>(&mut self, field_names: I) -> error::Result<&mut Self>
+  where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+  {
+    let fields: Vec<String> = field_names
+      .into_iter()
+      .map(|field_name| field_name.as_ref().to_string())
+      .collect();
+    let trailer = Trailer::parse_values(fields.iter().map(String::as_str))
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("Trailer", trailer.header_value())))
   }
 
   /// Add request cookie
@@ -1406,8 +1423,15 @@ fn validate_request_trailer_header(name: &str, value: &str) -> error::Result<()>
   Ok(())
 }
 
+const MAX_CONDITIONAL_VALIDATOR_VALUE_BYTES: usize = 64 * 1024;
+
 fn validate_single_etag(etag: &str) -> error::Result<&str> {
   let etag = etag.trim();
+  if etag.len() > MAX_CONDITIONAL_VALIDATOR_VALUE_BYTES {
+    return Err(error::builder_with_message(
+      "conditional entity-tag validator is too large",
+    ));
+  }
   if etag == "*" {
     return Ok(etag);
   }

@@ -1910,6 +1910,35 @@ fn test_parse_vary_response_helper_normalizes_and_deduplicates_field_names() {
 }
 
 #[test]
+fn test_parse_trailer_header_metadata_keeps_te_capability_separate() {
+  let response = Response::new(
+    RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "TE: trailers\r\n",
+      "Trailer: X-Checksum, x-signature\r\n",
+      "Trailer: X-Checksum\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+  let trailer = response
+    .trailer_header()
+    .expect("Trailer metadata should parse")
+    .expect("Trailer metadata should be present");
+  assert_eq!(vec!["x-checksum", "x-signature"], trailer.field_names());
+
+  let invalid = Response::new(
+    RoUrl::with("http://example.test/"),
+    b"HTTP/1.1 200 OK\r\nTrailer: Content-Length\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response framing should parse");
+  assert!(invalid.trailer_header().is_err());
+}
+
+#[test]
 fn test_parse_vary_response_helper_supports_wildcard_and_absent_header() {
   let s = concat!(
     "HTTP/1.1 200 OK\r\n",
