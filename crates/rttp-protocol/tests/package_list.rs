@@ -1,7 +1,7 @@
 use std::process::Command;
 
 #[test]
-fn package_includes_client_test_files() {
+fn package_includes_protocol_metadata_facade_test() {
   let output = Command::new(env!("CARGO"))
     .arg("package")
     .arg("--list")
@@ -18,18 +18,15 @@ fn package_includes_client_test_files() {
 
   let package_files = String::from_utf8(output.stdout).expect("package list is utf-8");
   for expected in [
-    "tests/test_http_basic.rs",
-    "tests/test_http_async.rs",
-    "tests/test_rustls.rs",
-    "tests/test_raw_request_capture.rs",
+    "README.md",
+    "tests/package_list.rs",
     "tests/metadata_facade.rs",
   ] {
     assert!(
-      package_files.lines().any(|line| line == expected),
+      package_files.lines().any(|path| path == expected),
       "missing {expected} from package list:\n{package_files}"
     );
   }
-
   assert!(
     package_files
       .lines()
