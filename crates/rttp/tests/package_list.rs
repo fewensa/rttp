@@ -22,10 +22,18 @@ fn package_includes_facade_test_files() {
     "tests/test_server_models.rs",
     "tests/test_client.rs",
     "tests/connect_upgrade_handoff.rs",
+    "tests/metadata_facade.rs",
   ] {
     assert!(
       package_files.lines().any(|line| line == expected),
       "missing {expected} from package list:\n{package_files}"
     );
   }
+
+  assert!(
+    package_files
+      .lines()
+      .all(|path| !path.contains("rttp-test-support")),
+    "private test-support sources leaked into the package list:\n{package_files}"
+  );
 }
