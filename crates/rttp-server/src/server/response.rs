@@ -1020,6 +1020,9 @@ impl HttpResponse {
   }
 
   pub fn with_sunset(mut self, http_date: SystemTime) -> Self {
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Sunset"));
     self.headers.push(HttpHeader::new(
       "Sunset",
       httpdate::fmt_http_date(http_date),
