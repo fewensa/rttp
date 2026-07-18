@@ -672,6 +672,66 @@ hello\r\n\
   }
 
   #[test]
+  fn authentication_helpers_parse_bounded_metadata_without_authentication_policy() {
+    let raw = concat!(
+      "GET / HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Authorization: Bearer origin-token\r\n",
+      "Proxy-Authorization: Basic cHJveHk6c2VjcmV0\r\n",
+      "\r\n"
+    );
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+    let request = Request::read_next_from(&mut reader)
+      .expect("request should parse")
+      .expect("request should be present");
+
+    assert_eq!(
+      "Bearer",
+      request
+        .authorization()
+        .expect("Authorization should parse")
+        .expect("Authorization should be present")
+        .scheme()
+    );
+    let proxy_authorization = request
+      .proxy_authorization()
+      .expect("Proxy-Authorization should parse")
+      .expect("Proxy-Authorization should be present");
+    assert_eq!("Basic", proxy_authorization.scheme());
+    assert_eq!("cHJveHk6c2VjcmV0", proxy_authorization.credentials());
+
+    let response = HttpResponse::new(401, "Unauthorized")
+      .header("WWW-Authenticate", "Broken")
+      .with_www_authenticate("Basic realm=\"private\", Bearer")
+      .expect("WWW-Authenticate should be accepted");
+    let challenges = response
+      .www_authenticate()
+      .expect("WWW-Authenticate should parse")
+      .expect("WWW-Authenticate should be present");
+    assert_eq!(2, challenges.challenges().len());
+    assert_eq!("Basic", challenges.challenges()[0].scheme());
+    assert_eq!("Bearer", challenges.challenges()[1].scheme());
+    assert!(HttpResponse::ok([])
+      .with_www_authenticate("Basic @")
+      .is_err());
+    let malformed = HttpRequest::parse(
+      concat!(
+        "GET / HTTP/1.1\r\n",
+        "Host: example.test\r\n",
+        "Proxy-Authorization: invalid\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should parse");
+    assert!(malformed.proxy_authorization().is_err());
+    assert_eq!(
+      Some("invalid"),
+      malformed.header("Proxy-Authorization")
+    );
+  }
+
+  #[test]
   fn alt_svc_helpers_validate_build_and_parse_response_metadata() {
     let response = HttpResponse::ok([])
       .with_alt_svc("h3=\":443\"; ma=3600; persist=1; region=\"us-east\"")

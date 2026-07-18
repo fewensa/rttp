@@ -275,15 +275,27 @@ enforcement, or automatic conditional requests. Applications that build a
 cache must persist any selected request metadata and enforce their own cache
 policy around these helpers.
 
-## Bounded Authorization request metadata
+## Bounded authentication metadata
 
 `Request::authorization()` and `HttpRequest::authorization()` parse a single
 `Authorization` field into `HttpAuthorization` metadata with `scheme()` and
 `credentials()` accessors. They return `Ok(None)` when the field is absent and
 reject invalid, oversized (over 64 KiB), or duplicate fields so credentials are
-not ambiguous. Credential interpretation remains application-owned; RTTP does
-not verify schemes, store or refresh credentials, process challenges, retry,
-or forward credentials across redirects.
+not ambiguous. `Request::proxy_authorization()` and
+`HttpRequest::proxy_authorization()` expose `Proxy-Authorization` with the
+same bounded opaque representation and duplicate handling. Raw request headers
+remain available when either typed parser reports an error.
+
+`HttpResponse::with_www_authenticate(value)` validates bounded challenges from
+`rttp_protocol::www_authenticate`, replaces existing raw `WWW-Authenticate`
+fields with one normalized declaration, and rejects malformed declarations
+before emission. `HttpResponse::www_authenticate()` parses attached raw
+challenge fields while preserving them on errors.
+
+Credential interpretation remains application-owned. RTTP does not validate
+credentials, select realms, challenge clients automatically, enforce
+authentication or authorization decisions, verify schemes, store or refresh
+credentials, retry, or forward credentials across redirects.
 
 ## Bounded HTTP/1.1 Allow behavior
 
@@ -675,6 +687,7 @@ scheduling, or async accept loops.
 | Informational responses and Early Hints | `HttpResponse::early_hints` and `early_hints_with_headers` construct validated bodyless `103 Early Hints` response metadata with bounded `Link` and safe metadata headers | `101 Switching Protocols` remains a separate terminal handoff response; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
 | Cache-Control | `Request::cache_control`, `HttpRequest::cache_control`, and `HttpResponse::cache_control` parse bounded request/response directives, numeric freshness fields, quoted field-name lists, and extension directives; `HttpResponse::with_age`/`age`, `with_expires`/`expires`, and `with_retry_after_delta`/`with_retry_after_date`/`retry_after` declare and parse response `Age`, `Expires`, and `Retry-After` metadata | No cache storage, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, automatic conditional requests, directive-based validator evaluation, automatic sleep, retry, replay, backoff, scheduler integration, or status-code policy engine |
 | Vary | `HttpVary`, `HttpResponse::with_vary`, `HttpResponse::vary`, `Request::vary_selection`, and `HttpRequest::vary_selection` parse, declare, and select bounded `Vary` metadata with case-insensitive field-name handling | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
+| Authentication metadata | `Request::authorization`/`proxy_authorization` and `HttpRequest::authorization`/`proxy_authorization` expose one bounded opaque credential field, while `HttpResponse::with_www_authenticate`/`www_authenticate` declare and parse bounded `WWW-Authenticate` challenges | No credential validation, realm selection, automatic client challenge, or authentication/authorization enforcement |
 | Allow | `HttpAllowedMethods`, `HttpResponse::with_allow`, and `HttpResponse::allow` declare and parse bounded `Allow` method-list metadata | No route dispatch, automatic `405` generation, `OPTIONS` policy, fallback method selection, retry/replay, or status-code policy engine |
 | Client Hints | `HttpAcceptCh`/`HttpCriticalCh`, `HttpResponse::with_accept_ch`/`with_critical_ch`, and `accept_ch`/`critical_ch` declare and parse bounded Client Hints opt-in metadata; `Response::accept_ch` and `critical_ch` expose it to clients | No browser opt-in state, request-header generation, automatic retry, persistence, or Client Hints policy |
 | Content-Language | `HttpContentLanguages`, `HttpResponse::with_content_language`, and `HttpResponse::content_language` declare and parse bounded `Content-Language` response metadata | No automatic language negotiation, route selection, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |

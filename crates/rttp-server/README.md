@@ -11,6 +11,26 @@ fields, preserves the request for handler-defined error policy, and returns an
 error for malformed values, values larger than 64 KiB, or more than 256
 directives. It only parses metadata; it does not apply caching behavior.
 
+## Authentication metadata
+
+`Request::authorization()` / `HttpRequest::authorization()` and
+`Request::proxy_authorization()` / `HttpRequest::proxy_authorization()` expose
+one bounded opaque credential field as `HttpAuthorization` metadata. Both
+helpers return `Ok(None)` when absent and reject malformed, oversized (over 64
+KiB), or duplicate fields while leaving the raw request headers available to
+handler code.
+
+`HttpResponse::with_www_authenticate(value)` validates and replaces attached
+`WWW-Authenticate` fields with one normalized declaration, and
+`HttpResponse::www_authenticate()` parses attached raw challenge fields without
+changing them. Invalid typed declarations are rejected before a response is
+emitted; raw headers remain intact unless a typed declaration deliberately
+replaces them.
+
+These helpers only expose metadata. RTTP does not validate credentials, select
+realms, challenge clients automatically, or enforce authentication or
+authorization decisions.
+
 ## Fetch Metadata request metadata
 
 Handlers can call `Request::sec_fetch_site()`, `sec_fetch_mode()`,

@@ -549,6 +549,68 @@ fn sync_client_sec_fetch_metadata_is_observed_by_server_helpers() {
 }
 
 #[test]
+fn sync_client_and_server_exchange_bounded_authentication_metadata() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind authentication server");
+  let addr = server.local_addr().expect("authentication server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let authorization = request
+          .authorization()
+          .expect("Authorization should parse")
+          .map(|value| (value.scheme().to_string(), value.credentials().to_string()));
+        let proxy_authorization = request
+          .proxy_authorization()
+          .expect("Proxy-Authorization should parse")
+          .map(|value| (value.scheme().to_string(), value.credentials().to_string()));
+        observed_tx
+          .send((authorization, proxy_authorization))
+          .expect("send observed authentication metadata");
+        HttpResponse::new(401, "Unauthorized")
+          .header("WWW-Authenticate", "Broken")
+          .with_www_authenticate("Basic realm=\"private\", Bearer")
+          .expect("WWW-Authenticate declaration should parse")
+      })
+      .expect("serve authentication request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/authentication"))
+    .header(("Authorization", "Bearer origin-token"))
+    .header(("Proxy-Authorization", "Basic cHJveHk6c2VjcmV0"))
+    .emit()
+    .expect("authentication response should parse");
+
+  let (authorization, proxy_authorization) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe authentication metadata");
+  assert_eq!(
+    Some(("Bearer".to_string(), "origin-token".to_string())),
+    authorization
+  );
+  assert_eq!(
+    Some(("Basic".to_string(), "cHJveHk6c2VjcmV0".to_string())),
+    proxy_authorization
+  );
+
+  let challenges = response
+    .www_authenticate()
+    .expect("WWW-Authenticate should parse")
+    .expect("WWW-Authenticate should be present");
+  assert_eq!(2, challenges.challenges().len());
+  assert_eq!("Basic", challenges.challenges()[0].scheme());
+  assert_eq!("Bearer", challenges.challenges()[1].scheme());
+  assert_eq!(
+    Some(&"Basic realm=\"private\", Bearer".to_string()),
+    response.header_value("WWW-Authenticate")
+  );
+  handle.join().expect("authentication server thread");
+}
+
+#[test]
 fn server_sec_fetch_helpers_reject_malformed_values_without_losing_raw_headers() {
   let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
     .expect("bind malformed Sec-Fetch metadata server");

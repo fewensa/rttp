@@ -134,28 +134,31 @@ pub struct HttpAuthorization {
 
 impl HttpAuthorization {
   pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpAuthorizationParseError> {
-    let value = value.as_ref();
+    Self::parse_header(value.as_ref(), "Authorization")
+  }
+
+  fn parse_header(value: &str, header_name: &str) -> Result<Self, HttpAuthorizationParseError> {
     if value.len() > MAX_AUTHORIZATION_VALUE_BYTES {
-      return Err(HttpAuthorizationParseError::new(
-        "Authorization header value is too large",
-      ));
+      return Err(HttpAuthorizationParseError::new(format!(
+        "{header_name} header value is too large"
+      )));
     }
     let Some(separator) = value.bytes().position(|byte| byte == b' ' || byte == b'\t') else {
-      return Err(HttpAuthorizationParseError::new(
-        "Authorization header requires credentials",
-      ));
+      return Err(HttpAuthorizationParseError::new(format!(
+        "{header_name} header requires credentials"
+      )));
     };
     let scheme = &value[..separator];
     let credentials = value[separator..].trim_matches([' ', '\t']);
     if !is_http_token(scheme) {
-      return Err(HttpAuthorizationParseError::new(
-        "invalid Authorization authentication scheme",
-      ));
+      return Err(HttpAuthorizationParseError::new(format!(
+        "invalid {header_name} authentication scheme"
+      )));
     }
     if credentials.is_empty() || !credentials.bytes().all(is_header_value_byte) {
-      return Err(HttpAuthorizationParseError::new(
-        "invalid Authorization credentials",
-      ));
+      return Err(HttpAuthorizationParseError::new(format!(
+        "invalid {header_name} credentials"
+      )));
     }
     Ok(Self {
       scheme: scheme.to_string(),
@@ -353,6 +356,23 @@ impl Request {
       ));
     }
     HttpAuthorization::parse(value).map(Some)
+  }
+
+  /// Parses exactly one bounded `Proxy-Authorization` field as opaque typed
+  /// metadata. Duplicate fields are rejected to avoid ambiguous credentials.
+  pub fn proxy_authorization(
+    &self,
+  ) -> Result<Option<HttpAuthorization>, HttpAuthorizationParseError> {
+    let mut values = self.headers_named("Proxy-Authorization");
+    let Some(value) = values.next() else {
+      return Ok(None);
+    };
+    if values.next().is_some() {
+      return Err(HttpAuthorizationParseError::new(
+        "duplicate Proxy-Authorization headers",
+      ));
+    }
+    HttpAuthorization::parse_header(value, "Proxy-Authorization").map(Some)
   }
 
   /// Parses request `Cookie` pairs as bounded opaque metadata without applying
@@ -2031,6 +2051,27 @@ impl HttpRequest {
       ));
     }
     HttpAuthorization::parse(value).map(Some)
+  }
+
+  /// Parses exactly one bounded `Proxy-Authorization` field as opaque typed
+  /// metadata. Duplicate fields are rejected to avoid ambiguous credentials.
+  pub fn proxy_authorization(
+    &self,
+  ) -> Result<Option<HttpAuthorization>, HttpAuthorizationParseError> {
+    let mut values = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Proxy-Authorization"))
+      .map(|header| header.value.as_str());
+    let Some(value) = values.next() else {
+      return Ok(None);
+    };
+    if values.next().is_some() {
+      return Err(HttpAuthorizationParseError::new(
+        "duplicate Proxy-Authorization headers",
+      ));
+    }
+    HttpAuthorization::parse_header(value, "Proxy-Authorization").map(Some)
   }
 
   /// Parses request `Cookie` pairs as bounded opaque metadata without applying
