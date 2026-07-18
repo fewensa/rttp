@@ -52,3 +52,15 @@ when the field is absent.
 
 The helpers only declare and inspect metadata. The server does not retain
 per-client opt-ins, select hints, alter response policy, or trigger retries.
+
+## Digest response metadata
+
+`HttpResponse::with_digest(value)` and `HttpResponse::with_repr_digest(value)`
+validate bounded Structured Fields dictionaries and replace existing
+`Content-Digest` or `Repr-Digest` response fields with their normalized values.
+`HttpResponse::digest()` and `HttpResponse::repr_digest()` parse attached raw
+fields into `HttpDigest` and `HttpReprDigest` metadata, returning parser errors
+without changing those raw fields.
+
+These helpers only declare and parse metadata. They do not calculate hashes,
+verify bodies, canonicalize representations, sign values, or enforce integrity.
