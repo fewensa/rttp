@@ -1947,6 +1947,53 @@ fn response_age_and_expires_helpers_declare_metadata_headers() {
 }
 
 #[test]
+fn response_sunset_helper_declares_and_parses_metadata() {
+  let sunset = UNIX_EPOCH + Duration::from_secs(784_111_777);
+  let response = HttpResponse::ok("body").with_sunset(sunset);
+
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nSunset: Sun, 06 Nov 1994 08:49:37 GMT\r\n"));
+  assert_eq!(
+    Some(sunset),
+    response.sunset().expect("Sunset should parse")
+  );
+}
+
+#[test]
+fn response_sunset_helper_replaces_existing_metadata() {
+  let initial_sunset = UNIX_EPOCH + Duration::from_secs(784_111_777);
+  let sunset = initial_sunset + Duration::from_secs(1);
+  let response = HttpResponse::ok("body")
+    .header("Sunset", httpdate::fmt_http_date(initial_sunset))
+    .with_sunset(initial_sunset)
+    .with_sunset(sunset);
+
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert_eq!(1, serialized.matches("\r\nSunset: ").count());
+  assert_eq!(
+    Some(sunset),
+    response.sunset().expect("Sunset should parse")
+  );
+}
+
+#[test]
+fn response_sunset_helper_rejects_invalid_and_duplicate_raw_values() {
+  for response in [
+    HttpResponse::ok("body").header("Sunset", "not a date"),
+    HttpResponse::ok("body")
+      .header("Sunset", "Sun, 06 Nov 1994 08:49:37 GMT")
+      .header("Sunset", "Sun, 06 Nov 1994 08:49:38 GMT"),
+  ] {
+    assert!(
+      response.sunset().is_err(),
+      "Sunset helper should reject invalid metadata"
+    );
+  }
+}
+
+#[test]
 fn response_age_and_expires_helpers_parse_raw_metadata_headers() {
   let response = HttpResponse::ok("body")
     .header("Age", "0")

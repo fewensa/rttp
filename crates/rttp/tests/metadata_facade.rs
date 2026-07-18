@@ -1,4 +1,7 @@
-use rttp::server::{HttpAcceptCh, HttpConditionalMetadata, HttpEntityTag};
+use rttp::server::{
+  HttpAcceptCh, HttpConditionalMetadata, HttpEntityTag, HttpResponse, HttpSunsetParseError,
+};
+use std::time::{Duration, UNIX_EPOCH};
 
 #[test]
 #[cfg(feature = "client")]
@@ -34,5 +37,17 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
       .expect("entity tag should be retained")
       .header_value(),
     "\"revision-42\""
+  );
+}
+
+#[test]
+fn compatibility_facade_exposes_sunset_response_metadata() {
+  let sunset = UNIX_EPOCH + Duration::from_secs(784_111_777);
+  let response = HttpResponse::ok("").with_sunset(sunset);
+  let _: Result<Option<std::time::SystemTime>, HttpSunsetParseError> = response.sunset();
+
+  assert_eq!(
+    Some(sunset),
+    response.sunset().expect("Sunset should parse")
   );
 }

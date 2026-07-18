@@ -1568,6 +1568,35 @@ fn sync_client_parses_shared_expires_response_matrix() {
 }
 
 #[test]
+fn sync_client_reads_sunset_emitted_by_server() {
+  let sunset = UNIX_EPOCH + Duration::from_secs(784_111_777);
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Sunset response server");
+  let addr = server.local_addr().expect("Sunset response server addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| HttpResponse::ok("OK").with_sunset(sunset))
+      .expect("serve Sunset response request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/sunset"))
+    .emit()
+    .expect("Sunset response should parse");
+
+  assert_eq!(
+    Some(sunset),
+    response.sunset().expect("Sunset should parse")
+  );
+  assert_eq!(
+    Some(&"Sun, 06 Nov 1994 08:49:37 GMT".to_string()),
+    response.sunset_value()
+  );
+  handle.join().expect("Sunset response server thread");
+}
+
+#[test]
 fn sync_client_parses_shared_retry_after_response_matrix() {
   for case in fixtures::retry_after::retry_after_cases() {
     let raw_response = retry_after_response(&[case.value], false);

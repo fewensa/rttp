@@ -25,6 +25,7 @@ pub use rttp_protocol::server_timing::{
   ServerTimingParameter as HttpServerTimingParameter,
   ServerTimingParseError as HttpServerTimingParseError,
 };
+pub use rttp_protocol::sunset::SunsetParseError as HttpSunsetParseError;
 pub use rttp_protocol::www_authenticate::{
   WwwAuthenticate as HttpWwwAuthenticate, WwwAuthenticateChallenge as HttpWwwAuthenticateChallenge,
   WwwAuthenticateParameter as HttpWwwAuthenticateParameter,
@@ -1018,6 +1019,17 @@ impl HttpResponse {
     self
   }
 
+  pub fn with_sunset(mut self, http_date: SystemTime) -> Self {
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Sunset"));
+    self.headers.push(HttpHeader::new(
+      "Sunset",
+      httpdate::fmt_http_date(http_date),
+    ));
+    self
+  }
+
   pub fn with_retry_after_delta(mut self, delta_seconds: u64) -> Self {
     self
       .headers
@@ -1414,6 +1426,16 @@ impl HttpResponse {
     httpdate::parse_http_date(value)
       .map(Some)
       .map_err(|_| HttpExpiresParseError::new("invalid Expires HTTP-date"))
+  }
+
+  pub fn sunset(&self) -> Result<Option<SystemTime>, HttpSunsetParseError> {
+    rttp_protocol::sunset::parse_sunset_values(
+      self
+        .headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("Sunset"))
+        .map(|header| header.value.as_str()),
+    )
   }
 
   pub fn retry_after(&self) -> Result<Option<HttpRetryAfter>, HttpRetryAfterParseError> {
