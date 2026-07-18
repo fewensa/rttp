@@ -4537,6 +4537,111 @@ fn streaming_handler_can_reject_before_reading_request_body() {
 }
 
 #[test]
+fn server_rejects_content_length_above_configured_request_body_limit() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_max_request_body_bytes(4);
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|_request| {
+      tx.send(()).expect("record unexpected handler call");
+      HttpResponse::ok("unexpected")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(b"POST /upload HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\n")
+    .expect("write oversized request head");
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  assert!(
+    rx.try_recv().is_err(),
+    "oversized request must not reach handler"
+  );
+  assert_eq!(
+    "HTTP/1.1 413 Payload Too Large\r\nContent-Length: 17\r\nConnection: close\r\n\r\nPayload Too Large",
+    response
+  );
+  handle
+    .join()
+    .expect("server thread")
+    .expect("serve oversized request");
+}
+
+#[test]
+fn server_rejects_chunked_body_that_accumulates_above_configured_limit() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_max_request_body_bytes(4);
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|_request| {
+      tx.send(()).expect("record unexpected handler call");
+      HttpResponse::ok("unexpected")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(
+      b"POST /upload HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nab\r\n3\r\ncde\r\n0\r\n\r\n",
+    )
+    .expect("write oversized chunked request");
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  assert!(
+    rx.try_recv().is_err(),
+    "oversized request must not reach handler"
+  );
+  assert_eq!(
+    "HTTP/1.1 413 Payload Too Large\r\nContent-Length: 17\r\nConnection: close\r\n\r\nPayload Too Large",
+    response
+  );
+  handle
+    .join()
+    .expect("server thread")
+    .expect("serve oversized request");
+}
+
+#[test]
+fn server_accepts_request_body_exactly_at_configured_limit() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_max_request_body_bytes(4);
+  let addr = server.local_addr().expect("server addr");
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      assert_eq!(b"body", request.body());
+      HttpResponse::ok("accepted")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect server");
+  stream
+    .write_all(b"POST /upload HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4\r\n\r\nbody")
+    .expect("write request at limit");
+  let mut response = String::new();
+  stream.read_to_string(&mut response).expect("read response");
+
+  assert_eq!(
+    "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\naccepted",
+    response
+  );
+  handle
+    .join()
+    .expect("server thread")
+    .expect("serve request at limit");
+}
+
+#[test]
 fn streaming_handler_is_not_invoked_for_transfer_encoding_with_content_length() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
@@ -6080,7 +6185,7 @@ fn server_accepts_chunk_extension_without_exposing_extension_metadata() {
 }
 
 #[test]
-fn server_returns_bad_request_for_oversized_chunked_request_body() {
+fn server_returns_payload_too_large_for_oversized_chunked_request_body() {
   let server = rttp::Http::server("127.0.0.1:0").expect("bind server");
   let addr = server.local_addr().expect("server addr");
   let (tx, rx) = mpsc::channel();
@@ -6117,7 +6222,7 @@ fn server_returns_bad_request_for_oversized_chunked_request_body() {
   handle.join().expect("server thread");
   assert!(rx.try_recv().is_err());
   assert_eq!(
-    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    "HTTP/1.1 413 Payload Too Large\r\nContent-Length: 17\r\nConnection: close\r\n\r\nPayload Too Large",
     response
   );
 }
@@ -6452,7 +6557,7 @@ fn server_returns_bad_request_for_malformed_chunked_request_trailer() {
 }
 
 #[test]
-fn server_returns_bad_request_for_oversized_chunked_request_trailer() {
+fn server_returns_payload_too_large_for_oversized_chunked_request_trailer() {
   let trailer_value = "x".repeat(1024 * 1024);
   let raw = format!(
     "POST /upload HTTP/1.1\r\n\
@@ -6467,7 +6572,7 @@ fn server_returns_bad_request_for_oversized_chunked_request_trailer() {
 
   assert!(!handler_called);
   assert_eq!(
-    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    "HTTP/1.1 413 Payload Too Large\r\nContent-Length: 17\r\nConnection: close\r\n\r\nPayload Too Large",
     response
   );
 }
