@@ -1,6 +1,6 @@
 use rttp_server::server::{
-  HttpAcceptCh, HttpConditionalMetadata, HttpEntityTag, HttpResponse, SecFetchDest, SecFetchMode,
-  SecFetchSite, SecFetchUser,
+  HttpAcceptCh, HttpConditionalMetadata, HttpEntityTag, HttpPreferenceKind, HttpRequest,
+  HttpResponse, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
 };
 
 #[test]
@@ -35,4 +35,20 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_mode.header_value(), "navigate");
   assert_eq!(fetch_dest.header_value(), "document");
   assert_eq!(fetch_user.header_value(), "?1");
+}
+
+#[test]
+fn request_facade_parses_structured_prefer_metadata() {
+  let request = HttpRequest::parse(
+    b"GET / HTTP/1.1\r\nHost: example.test\r\nPrefer: handling=strict, vendor=enabled; trace=\"a b\"\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let prefer = request
+    .prefer()
+    .expect("Prefer should parse")
+    .expect("Prefer should be present");
+
+  assert_eq!(prefer.preferences()[0].kind(), HttpPreferenceKind::Handling);
+  assert_eq!(prefer.preferences()[1].parameters()[0].value(), Some("a b"));
 }

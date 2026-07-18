@@ -1,5 +1,5 @@
 use rttp_client::response::{
-  AcceptCh, AltSvc, Digest, HttpClearSiteData, Priority, ServerTiming, Trailer,
+  AcceptCh, AltSvc, Digest, HttpClearSiteData, PreferenceApplied, Priority, ServerTiming, Trailer,
 };
 use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 
@@ -29,4 +29,22 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_mode.header_value(), "navigate");
   assert_eq!(fetch_dest.header_value(), "document");
   assert_eq!(fetch_user.header_value(), "?1");
+}
+
+#[test]
+fn response_facade_parses_preference_applied_metadata() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    b"HTTP/1.1 200 OK\r\nPreference-Applied: return=minimal; source=cache\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  let applied: PreferenceApplied = response
+    .preference_applied()
+    .expect("Preference-Applied should parse")
+    .expect("Preference-Applied should be present");
+
+  assert_eq!(applied.preferences()[0].name(), "return");
+  assert_eq!(applied.preferences()[0].value(), Some("minimal"));
+  assert_eq!(applied.preferences()[0].parameters()[0].name(), "source");
 }
