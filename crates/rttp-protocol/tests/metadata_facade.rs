@@ -1,6 +1,7 @@
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::entity_tag::{EntityTag, IfMatch};
 use rttp_protocol::fetch_metadata::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
+use rttp_protocol::prefer::{Prefer, PreferenceApplied, PreferenceKind};
 
 #[test]
 fn protocol_exports_representative_bounded_metadata_types() {
@@ -24,4 +25,30 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_mode.header_value(), "navigate");
   assert_eq!(fetch_dest.header_value(), "document");
   assert_eq!(fetch_user.header_value(), "?1");
+}
+
+#[test]
+fn protocol_exports_structured_preference_metadata() {
+  let prefer = Prefer::parse(
+    "return=representation, wait=10; priority=high, example=\"quoted value\"; mode=fast",
+  )
+  .expect("Prefer should parse");
+  let applied = PreferenceApplied::parse("respond-async; accepted=true")
+    .expect("Preference-Applied should parse");
+
+  assert_eq!(prefer.preferences().len(), 3);
+  assert_eq!(prefer.preferences()[0].kind(), PreferenceKind::Return);
+  assert_eq!(prefer.preferences()[1].parameters()[0].name(), "priority");
+  assert_eq!(
+    prefer.header_value(),
+    "return=representation, wait=10; priority=high, example=\"quoted value\"; mode=fast"
+  );
+  assert_eq!(
+    applied.preferences()[0].kind(),
+    PreferenceKind::RespondAsync
+  );
+  assert_eq!(
+    applied.preferences()[0].parameters()[0].value(),
+    Some("true")
+  );
 }

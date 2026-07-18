@@ -4,6 +4,7 @@ pub struct HttpServer {
   pub(crate) listener: TcpListener,
   pub(crate) read_timeout: Option<Duration>,
   pub(crate) write_timeout: Option<Duration>,
+  pub(crate) max_request_body_bytes: usize,
   pub(crate) http2_policy: Http2ServerPolicy,
 }
 
@@ -40,6 +41,7 @@ impl HttpServer {
         listener: TcpListener::from(socket),
         read_timeout: None,
         write_timeout: None,
+        max_request_body_bytes: MAX_REQUEST_BODY_BYTES,
         http2_policy: Http2ServerPolicy::default(),
       });
     }
@@ -63,6 +65,12 @@ impl HttpServer {
   /// Sets the write timeout applied to each accepted connection before writing responses.
   pub fn with_write_timeout(mut self, timeout: Option<Duration>) -> Self {
     self.write_timeout = timeout;
+    self
+  }
+
+  /// Sets the maximum number of request body bytes accepted per request.
+  pub fn with_max_request_body_bytes(mut self, max_request_body_bytes: usize) -> Self {
+    self.max_request_body_bytes = max_request_body_bytes;
     self
   }
 
@@ -128,14 +136,21 @@ impl HttpServer {
     let mut served = 0;
 
     while served < request_limit {
-      let request = match self
-        .normalize_connection_error(Request::read_next_from_with_continue(&mut reader))
-      {
+      let request = match self.normalize_connection_error(Request::read_next_from_with_continue(
+        &mut reader,
+        self.max_request_body_bytes,
+      )) {
         Ok(Some(request)) => request,
         Ok(None) => break,
         Err(err) if is_expectation_failed_error(&err) => {
           self
             .normalize_connection_error(expectation_failed_response().write_to(reader.get_mut()))?;
+          served += 1;
+          break;
+        }
+        Err(err) if is_payload_too_large_error(&err) => {
+          self
+            .normalize_connection_error(payload_too_large_response().write_to(reader.get_mut()))?;
           served += 1;
           break;
         }
@@ -219,14 +234,21 @@ impl HttpServer {
     };
     let mut reader = BufReader::new(stream);
     let request = match self.normalize_connection_error(
-      Request::read_next_from_with_continue(&mut reader).and_then(|request| {
-        request.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))
-      }),
+      Request::read_next_from_with_continue(&mut reader, self.max_request_body_bytes).and_then(
+        |request| {
+          request
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))
+        },
+      ),
     ) {
       Ok(request) => request,
       Err(err) if is_expectation_failed_error(&err) => {
         return self
           .normalize_connection_error(expectation_failed_response().write_to(reader.get_mut()));
+      }
+      Err(err) if is_payload_too_large_error(&err) => {
+        return self
+          .normalize_connection_error(payload_too_large_response().write_to(reader.get_mut()));
       }
       Err(err) if is_bad_request_error(&err) => {
         return self.normalize_connection_error(bad_request_response().write_to(reader.get_mut()));
@@ -274,14 +296,20 @@ impl HttpServer {
     self.configure_stream(&stream)?;
     let mut reader = BufReader::new(stream);
     let (request, body_kind) = match self.normalize_connection_error(
-      Request::read_next_head_from_with_continue(&mut reader).and_then(|request| {
-        request.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))
-      }),
+      Request::read_next_head_from_with_continue(&mut reader, self.max_request_body_bytes)
+        .and_then(|request| {
+          request
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))
+        }),
     ) {
       Ok(request) => request,
       Err(err) if is_expectation_failed_error(&err) => {
         return self
           .normalize_connection_error(expectation_failed_response().write_to(reader.get_mut()));
+      }
+      Err(err) if is_payload_too_large_error(&err) => {
+        return self
+          .normalize_connection_error(payload_too_large_response().write_to(reader.get_mut()));
       }
       Err(err) if is_bad_request_error(&err) => {
         return self.normalize_connection_error(bad_request_response().write_to(reader.get_mut()));
@@ -292,7 +320,12 @@ impl HttpServer {
       return self.normalize_connection_error(bad_request_response().write_to(reader.get_mut()));
     }
     let request_is_head = request.method() == "HEAD";
-    let body = RequestBodyReader::new(&mut reader, body_kind, self.read_timeout.is_some());
+    let body = RequestBodyReader::new(
+      &mut reader,
+      body_kind,
+      self.max_request_body_bytes,
+      self.read_timeout.is_some(),
+    );
     let response = handler(request, body);
     self.normalize_connection_error(response.write_to_with_default_connection_and_body(
       reader.get_mut(),
@@ -309,16 +342,21 @@ impl HttpServer {
     self.configure_stream(&stream)?;
     let mut reader = BufReader::new(stream);
     let request = match self.normalize_connection_error(
-      Request::read_next_head_from_with_continue(&mut reader).and_then(|request| {
-        request
-          .map(|(request, _)| request)
-          .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))
-      }),
+      Request::read_next_head_from_with_continue(&mut reader, self.max_request_body_bytes)
+        .and_then(|request| {
+          request
+            .map(|(request, _)| request)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))
+        }),
     ) {
       Ok(request) => request,
       Err(err) if is_expectation_failed_error(&err) => {
         return self
           .normalize_connection_error(expectation_failed_response().write_to(reader.get_mut()));
+      }
+      Err(err) if is_payload_too_large_error(&err) => {
+        return self
+          .normalize_connection_error(payload_too_large_response().write_to(reader.get_mut()));
       }
       Err(err) if is_bad_request_error(&err) => {
         return self.normalize_connection_error(bad_request_response().write_to(reader.get_mut()));
@@ -738,7 +776,7 @@ impl HttpServer {
             .ok_or_else(|| {
               io::Error::new(io::ErrorKind::InvalidData, "request body is too large")
             })?;
-          reject_oversized_request_body(new_len)?;
+          reject_oversized_request_body(new_len, self.max_request_body_bytes)?;
           request_stream.body.extend_from_slice(data_payload);
           if !frame.payload.is_empty() {
             write_http2_window_update(&mut stream, 0, frame.payload.len())?;
