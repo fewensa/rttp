@@ -19,6 +19,32 @@ fn request_cache_control_combines_case_insensitive_header_fields() {
 }
 
 #[test]
+fn request_raw_parser_rejects_folded_and_bare_lf_headers() {
+  for raw in [
+    b"GET / HTTP/1.1\r\nHost: example.test\r\nX-Test: first\r\n second\r\n\r\n".as_slice(),
+    b"GET / HTTP/1.1\r\nHost: example.test\r\nX-Test: first\r\n\tsecond\r\n\r\n".as_slice(),
+    b"GET / HTTP/1.1\r\nHost: example.test\r\nX-Test: first\nsecond\r\n\r\n".as_slice(),
+  ] {
+    let error = Request::from_raw_frame(raw)
+      .expect_err("folded and bare-LF request headers must be rejected");
+    assert_eq!(std::io::ErrorKind::InvalidData, error.kind());
+    assert_eq!("invalid request header", error.to_string());
+  }
+}
+
+#[test]
+fn request_raw_parser_preserves_obs_text_header_values_as_latin1_code_points() {
+  let request = Request::from_raw_frame(
+    b"GET / HTTP/1.1\r\nHost: example.test\r\nX-Obs: \x80\xff\r\n\r\n",
+  )
+  .expect("obs-text request header should parse");
+
+  // Request headers use `String`, so raw obs-text bytes cross the API boundary
+  // as their corresponding Latin-1 code points.
+  assert_eq!(Some("\u{0080}\u{00ff}"), request.header("X-Obs"));
+}
+
+#[test]
 fn request_cache_control_preserves_malformed_headers_for_handler_policy() {
   let request = Request::from_raw_frame(
     b"GET / HTTP/1.1\r\nHost: example.test\r\nCache-Control: max-age=invalid\r\n\r\n",

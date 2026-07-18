@@ -195,8 +195,7 @@ pub(crate) struct ChunkedRequestBody {
 }
 
 pub(crate) fn parse_request_head(raw: &[u8]) -> io::Result<RequestHead> {
-  let text = std::str::from_utf8(raw)
-    .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "request head is not UTF-8"))?;
+  let text = decode_http1_text(raw);
   let mut lines = text.split("\r\n");
   let request_line = lines
     .next()
@@ -230,6 +229,29 @@ pub(crate) fn parse_request_head(raw: &[u8]) -> io::Result<RequestHead> {
     version: version.to_string(),
     headers,
   })
+}
+
+fn decode_http1_text(bytes: &[u8]) -> String {
+  let mut text = String::new();
+  let mut remaining = bytes;
+  while !remaining.is_empty() {
+    match std::str::from_utf8(remaining) {
+      Ok(valid) => {
+        text.push_str(valid);
+        break;
+      }
+      Err(error) => {
+        let valid_up_to = error.valid_up_to();
+        text.push_str(std::str::from_utf8(&remaining[..valid_up_to]).expect("valid UTF-8 prefix"));
+        let invalid_len = error.error_len().unwrap_or(remaining.len() - valid_up_to);
+        for byte in &remaining[valid_up_to..valid_up_to + invalid_len] {
+          text.push(*byte as char);
+        }
+        remaining = &remaining[valid_up_to + invalid_len..];
+      }
+    }
+  }
+  text
 }
 
 pub(crate) fn validate_request_line(method: &str, target: &str, version: &str) -> io::Result<()> {

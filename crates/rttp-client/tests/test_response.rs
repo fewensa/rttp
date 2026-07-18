@@ -180,6 +180,33 @@ fn test_parse_response_preserves_duplicate_headers_with_case_insensitive_lookup(
 }
 
 #[test]
+fn test_parse_response_rejects_folded_and_bare_lf_headers() {
+  for raw in [
+    b"HTTP/1.1 200 OK\r\nX-Test: first\r\n second\r\nContent-Length: 0\r\n\r\n".as_slice(),
+    b"HTTP/1.1 200 OK\r\nX-Test: first\r\n\tsecond\r\nContent-Length: 0\r\n\r\n".as_slice(),
+    b"HTTP/1.1 200 OK\r\nX-Test: first\nsecond\r\nContent-Length: 0\r\n\r\n".as_slice(),
+  ] {
+    let error = Response::new(RoUrl::with("https://example.test"), raw.to_vec())
+      .expect_err("folded and bare-LF response headers must be rejected");
+    assert!(error.to_string().contains("Invalid response header"));
+  }
+}
+
+#[test]
+fn test_parse_response_preserves_obs_text_header_values_as_latin1_code_points() {
+  let raw = b"HTTP/1.1 200 OK\r\nX-Obs: \x80\xff\r\nContent-Length: 0\r\n\r\n";
+  let response = Response::new(RoUrl::with("https://example.test"), raw.to_vec())
+    .expect("obs-text response header should parse");
+
+  // Header values are exposed as `String`, so each accepted raw obs-text byte is
+  // represented by the matching Latin-1 code point rather than returned as bytes.
+  assert_eq!(
+    Some(&"\u{0080}\u{00ff}".to_string()),
+    response.header_value("X-Obs")
+  );
+}
+
+#[test]
 fn test_parse_reporting_endpoints_response_metadata() {
   let raw = concat!(
     "HTTP/1.1 200 OK\r\n",
