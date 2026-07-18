@@ -24,12 +24,26 @@ fn request_raw_parser_rejects_folded_and_bare_lf_headers() {
     b"GET / HTTP/1.1\r\nHost: example.test\r\nX-Test: first\r\n second\r\n\r\n".as_slice(),
     b"GET / HTTP/1.1\r\nHost: example.test\r\nX-Test: first\r\n\tsecond\r\n\r\n".as_slice(),
     b"GET / HTTP/1.1\r\nHost: example.test\r\nX-Test: first\nsecond\r\n\r\n".as_slice(),
+    b"GET / HTTP/1.1\r\nHost: example.test\r\nX-Test: first\rsecond\r\n\r\n".as_slice(),
   ] {
     let error = Request::from_raw_frame(raw)
       .expect_err("folded and bare-LF request headers must be rejected");
     assert_eq!(std::io::ErrorKind::InvalidData, error.kind());
     assert_eq!("invalid request header", error.to_string());
   }
+}
+
+#[test]
+fn request_raw_parser_preserves_duplicate_ordinary_headers_in_wire_order() {
+  let request = Request::from_raw_frame(
+    b"GET / HTTP/1.1\r\nHost: example.test\r\nX-Test: first\r\nx-test: second\r\n\r\n",
+  )
+  .expect("duplicate ordinary request headers should parse");
+
+  assert_eq!(
+    vec!["first", "second"],
+    request.headers_named("X-Test").collect::<Vec<_>>()
+  );
 }
 
 #[test]
