@@ -7,21 +7,31 @@ use std::error::Error;
 use std::fmt;
 
 pub const MAX_FETCH_METADATA_VALUE_BYTES: usize = 64 * 1024;
+pub const MAX_SEC_FETCH_SITE_VALUE_BYTES: usize = MAX_FETCH_METADATA_VALUE_BYTES;
+pub const MAX_SEC_FETCH_MODE_VALUE_BYTES: usize = MAX_FETCH_METADATA_VALUE_BYTES;
+pub const MAX_SEC_FETCH_DEST_VALUE_BYTES: usize = MAX_FETCH_METADATA_VALUE_BYTES;
+pub const MAX_SEC_FETCH_USER_VALUE_BYTES: usize = MAX_FETCH_METADATA_VALUE_BYTES;
 
 macro_rules! fetch_metadata_enum {
-  ($name:ident { $($variant:ident => $value:literal),+ $(,)? }) => {
-    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+  ($doc:literal, $name:ident, $header_name:literal, $max_value_bytes:ident { $($variant:ident => $value:literal),+ $(,)? }) => {
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    #[doc = $doc]
     pub enum $name {
       $($variant),+
     }
 
     impl $name {
       pub fn parse(value: impl AsRef<str>) -> Result<Self, FetchMetadataParseError> {
-        let value = value.as_ref();
-        validate_value(value)?;
-        match value {
+        Self::parse_values([value.as_ref()])
+      }
+
+      pub fn parse_values<'a, I>(values: I) -> Result<Self, FetchMetadataParseError>
+      where
+        I: IntoIterator<Item = &'a str>,
+      {
+        match parse_singleton(values, $header_name, $max_value_bytes)? {
           $($value => Ok(Self::$variant),)+
-          _ => Err(FetchMetadataParseError::new(concat!("invalid ", stringify!($name), " value"))),
+          _ => Err(invalid_value($header_name)),
         }
       }
 
@@ -38,27 +48,28 @@ macro_rules! fetch_metadata_enum {
   };
 }
 
-fetch_metadata_enum!(SecFetchSite {
+fetch_metadata_enum!("The request-site relationship declared by `Sec-Fetch-Site`.", SecFetchSite, "Sec-Fetch-Site", MAX_SEC_FETCH_SITE_VALUE_BYTES {
+  CrossSite => "cross-site",
   SameOrigin => "same-origin",
   SameSite => "same-site",
-  CrossSite => "cross-site",
   None => "none",
 });
 
-fetch_metadata_enum!(SecFetchMode {
-  Navigate => "navigate",
+fetch_metadata_enum!("The request mode declared by `Sec-Fetch-Mode`.", SecFetchMode, "Sec-Fetch-Mode", MAX_SEC_FETCH_MODE_VALUE_BYTES {
   Cors => "cors",
+  Navigate => "navigate",
   NoCors => "no-cors",
   SameOrigin => "same-origin",
   Websocket => "websocket",
 });
 
-fetch_metadata_enum!(SecFetchDest {
+fetch_metadata_enum!("The request destination declared by `Sec-Fetch-Dest`.", SecFetchDest, "Sec-Fetch-Dest", MAX_SEC_FETCH_DEST_VALUE_BYTES {
+  Empty => "empty",
   Audio => "audio",
   AudioWorklet => "audioworklet",
   Document => "document",
   Embed => "embed",
-  Empty => "empty",
+  FencedFrame => "fencedframe",
   Font => "font",
   Frame => "frame",
   Iframe => "iframe",
@@ -72,24 +83,30 @@ fetch_metadata_enum!(SecFetchDest {
   ServiceWorker => "serviceworker",
   SharedWorker => "sharedworker",
   Style => "style",
+  Text => "text",
   Track => "track",
   Video => "video",
+  WebIdentity => "webidentity",
   Worker => "worker",
   Xslt => "xslt",
 });
 
 /// The sole permitted `Sec-Fetch-User` value, serialized as `?1`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct SecFetchUser;
 
 impl SecFetchUser {
   pub fn parse(value: impl AsRef<str>) -> Result<Self, FetchMetadataParseError> {
-    let value = value.as_ref();
-    validate_value(value)?;
-    if value == "?1" {
-      Ok(Self)
-    } else {
-      Err(FetchMetadataParseError::new("invalid SecFetchUser value"))
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, FetchMetadataParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    match parse_singleton(values, "Sec-Fetch-User", MAX_SEC_FETCH_USER_VALUE_BYTES)? {
+      "?1" => Ok(Self),
+      _ => Err(invalid_value("Sec-Fetch-User")),
     }
   }
 
@@ -102,6 +119,11 @@ impl SecFetchUser {
 pub struct FetchMetadataParseError {
   message: String,
 }
+
+pub type SecFetchSiteParseError = FetchMetadataParseError;
+pub type SecFetchModeParseError = FetchMetadataParseError;
+pub type SecFetchDestParseError = FetchMetadataParseError;
+pub type SecFetchUserParseError = FetchMetadataParseError;
 
 impl FetchMetadataParseError {
   fn new(message: impl Into<String>) -> Self {
@@ -156,11 +178,43 @@ macro_rules! impl_fetch_metadata_value {
 
 impl_fetch_metadata_value!(SecFetchSite, SecFetchMode, SecFetchDest, SecFetchUser);
 
-fn validate_value(value: &str) -> Result<(), FetchMetadataParseError> {
-  if value.len() > MAX_FETCH_METADATA_VALUE_BYTES {
-    return Err(FetchMetadataParseError::new(
-      "Sec-Fetch header value is too large",
-    ));
+fn parse_singleton<'a, I>(
+  values: I,
+  header_name: &str,
+  max_value_bytes: usize,
+) -> Result<&'a str, FetchMetadataParseError>
+where
+  I: IntoIterator<Item = &'a str>,
+{
+  let mut values = values.into_iter();
+  let value = values.next().ok_or_else(|| invalid_value(header_name))?;
+  validate_bounded_value(value, header_name, max_value_bytes)?;
+  let mut has_duplicate = false;
+  for value in values {
+    has_duplicate = true;
+    validate_bounded_value(value, header_name, max_value_bytes)?;
+  }
+  if has_duplicate {
+    return Err(FetchMetadataParseError::new(format!(
+      "duplicate {header_name} header fields"
+    )));
+  }
+  let value = trim_ows(value);
+  if value.is_empty() {
+    return Err(invalid_value(header_name));
+  }
+  Ok(value)
+}
+
+fn validate_bounded_value(
+  value: &str,
+  header_name: &str,
+  max_value_bytes: usize,
+) -> Result<(), FetchMetadataParseError> {
+  if value.len() > max_value_bytes {
+    return Err(FetchMetadataParseError::new(format!(
+      "{header_name} header value is too large"
+    )));
   }
   if value.bytes().any(|byte| byte.is_ascii_control()) {
     return Err(FetchMetadataParseError::new(
@@ -168,4 +222,12 @@ fn validate_value(value: &str) -> Result<(), FetchMetadataParseError> {
     ));
   }
   Ok(())
+}
+
+fn invalid_value(header_name: &str) -> FetchMetadataParseError {
+  FetchMetadataParseError::new(format!("invalid {header_name} header value"))
+}
+
+fn trim_ows(value: &str) -> &str {
+  value.trim_matches([' ', '\t'])
 }
