@@ -12,6 +12,7 @@ pub mod client_hints;
 pub mod cookie;
 pub mod digest;
 pub mod entity_tag;
+pub mod fetch_metadata;
 pub mod forwarded;
 pub mod http1;
 mod media_type;
