@@ -7,6 +7,7 @@ use crate::types::{Auth, Header, IntoHeader, IntoPara, Proxy, ToFormData, ToRoUr
 use crate::{error, Config, H2cClientPolicy};
 #[cfg(feature = "async")]
 use futures::io::AsyncRead;
+use rttp_protocol::fetch_metadata::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 use rttp_protocol::forwarded::{Forwarded, MAX_FORWARDED_VALUE_BYTES};
 use rttp_protocol::priority::Priority;
 use rttp_protocol::trailer::Trailer;
@@ -281,6 +282,26 @@ impl HttpClient {
   /// and does not wait for an interim response before sending it.
   pub fn expect_continue(&mut self) -> &mut Self {
     self.header(("Expect", "100-continue"))
+  }
+
+  /// Set bounded `Sec-Fetch-Site` request metadata without applying browser policy.
+  pub fn sec_fetch_site(&mut self, site: SecFetchSite) -> &mut Self {
+    self.header(("Sec-Fetch-Site", site.header_value()))
+  }
+
+  /// Set bounded `Sec-Fetch-Mode` request metadata without applying browser policy.
+  pub fn sec_fetch_mode(&mut self, mode: SecFetchMode) -> &mut Self {
+    self.header(("Sec-Fetch-Mode", mode.header_value()))
+  }
+
+  /// Set bounded `Sec-Fetch-Dest` request metadata without applying browser policy.
+  pub fn sec_fetch_dest(&mut self, dest: SecFetchDest) -> &mut Self {
+    self.header(("Sec-Fetch-Dest", dest.header_value()))
+  }
+
+  /// Set the `Sec-Fetch-User: ?1` request metadata without applying browser policy.
+  pub fn sec_fetch_user(&mut self) -> &mut Self {
+    self.header(("Sec-Fetch-User", SecFetchUser.header_value()))
   }
 
   /// Append a validated `Accept` media range with its supplied quality value.

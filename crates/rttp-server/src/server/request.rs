@@ -1,6 +1,10 @@
 use super::*;
 
 pub use rttp_protocol::cookie::{HttpCookiePair, HttpCookieParseError, HttpCookies};
+pub use rttp_protocol::fetch_metadata::{
+  FetchMetadataParseError as HttpFetchMetadataParseError, SecFetchDest, SecFetchMode, SecFetchSite,
+  SecFetchUser,
+};
 pub use rttp_protocol::forwarded::{
   Forwarded as HttpForwarded, ForwardedElement as HttpForwardedElement,
   ForwardedParameter as HttpForwardedParameter, ForwardedParseError as HttpForwardedParseError,
@@ -300,6 +304,38 @@ impl Request {
       return Ok(None);
     }
     HttpRequestCacheControl::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Sec-Fetch-Site` metadata without enforcing browser policy.
+  pub fn sec_fetch_site(&self) -> Result<Option<SecFetchSite>, HttpFetchMetadataParseError> {
+    rttp_protocol::fetch_metadata::parse_optional_value(
+      self.headers_named("Sec-Fetch-Site"),
+      "Sec-Fetch-Site",
+    )
+  }
+
+  /// Parses received `Sec-Fetch-Mode` metadata without enforcing browser policy.
+  pub fn sec_fetch_mode(&self) -> Result<Option<SecFetchMode>, HttpFetchMetadataParseError> {
+    rttp_protocol::fetch_metadata::parse_optional_value(
+      self.headers_named("Sec-Fetch-Mode"),
+      "Sec-Fetch-Mode",
+    )
+  }
+
+  /// Parses received `Sec-Fetch-Dest` metadata without enforcing browser policy.
+  pub fn sec_fetch_dest(&self) -> Result<Option<SecFetchDest>, HttpFetchMetadataParseError> {
+    rttp_protocol::fetch_metadata::parse_optional_value(
+      self.headers_named("Sec-Fetch-Dest"),
+      "Sec-Fetch-Dest",
+    )
+  }
+
+  /// Parses received `Sec-Fetch-User` metadata without enforcing browser policy.
+  pub fn sec_fetch_user(&self) -> Result<Option<SecFetchUser>, HttpFetchMetadataParseError> {
+    rttp_protocol::fetch_metadata::parse_optional_value(
+      self.headers_named("Sec-Fetch-User"),
+      "Sec-Fetch-User",
+    )
   }
 
   /// Parses exactly one bounded `Authorization` field as opaque typed
