@@ -1,7 +1,6 @@
 use rttp_client::response::{
   AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType, Digest,
   HttpClearSiteData, HttpSetCookies, LinkValues, Response, RetryAfter, ServerTiming,
-  WwwAuthenticate,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -748,15 +747,10 @@ fn test_www_authenticate_rejects_malformed_duplicate_and_bounded_values() {
   }
 
   let oversized = "Basic realm=".to_string() + &"a".repeat(64 * 1024);
-  assert!(
-    WwwAuthenticate::parse(oversized).is_err(),
-    "helper should reject an oversized field"
-  );
-  let too_many = (0..257)
+  let too_many_challenges = (0..257)
     .map(|index| format!("Scheme{index}"))
     .collect::<Vec<_>>()
     .join(", ");
-  assert!(WwwAuthenticate::parse(too_many).is_err());
   let too_many_parameters = format!(
     "Digest {}",
     (0..257)
@@ -764,8 +758,30 @@ fn test_www_authenticate_rejects_malformed_duplicate_and_bounded_values() {
       .collect::<Vec<_>>()
       .join(", ")
   );
-  assert!(WwwAuthenticate::parse(too_many_parameters).is_err());
-  assert!(WwwAuthenticate::parse(format!("Basic realm={}", "a".repeat(64 * 1024 + 1))).is_err());
+  let oversized_parameter = format!("Basic realm={}", "a".repeat(64 * 1024 + 1));
+
+  for value in [
+    oversized,
+    too_many_challenges,
+    too_many_parameters,
+    oversized_parameter,
+  ] {
+    let raw = format!(
+      "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: {value}\r\nContent-Length: 0\r\n\r\n"
+    );
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+
+    assert!(
+      response.www_authenticate().is_err(),
+      "should reject bounded value"
+    );
+    assert_eq!(
+      Some(&value),
+      response.header_value("WWW-Authenticate"),
+      "raw header should remain available after a parse failure"
+    );
+  }
 }
 
 #[test]
