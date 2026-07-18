@@ -1215,6 +1215,19 @@ fn test_auto_redirect() {
   assert!(response.ok());
 }
 
+#[test]
+fn test_redirect_is_not_followed_by_default() {
+  let (addr, _handle) = support::spawn_redirect_server();
+  let response = client()
+    .get()
+    .url(format!("http://{}/", addr))
+    .emit()
+    .expect("default redirect policy should return the redirect response");
+
+  assert_eq!(302, response.code());
+  assert!(response.is_redirect());
+}
+
 fn assert_redirect_resolves_to_target<F>(location: F, expected_target: &str)
 where
   F: FnOnce(std::net::SocketAddr) -> String + Send + 'static,
