@@ -497,6 +497,7 @@ impl Request {
 
   pub(crate) fn read_next_from_with_continue<S>(
     reader: &mut BufReader<S>,
+    max_request_body_bytes: usize,
   ) -> io::Result<Option<Self>>
   where
     S: Read + Write,
@@ -562,11 +563,11 @@ impl Request {
               return Ok(Some(Self::from_head_and_body(head, Vec::new())));
             }
             RequestBodyKind::ContentLength(content_length) => {
-              reject_oversized_request_body(content_length)?;
+              reject_oversized_request_body(content_length, max_request_body_bytes)?;
               body_kind = Some(RequestBodyKind::ContentLength(content_length));
             }
             RequestBodyKind::Chunked => {
-              let chunked = read_chunked_request_body(reader)?;
+              let chunked = read_chunked_request_body(reader, max_request_body_bytes)?;
               return Ok(Some(Self::from_head_body_and_trailers(
                 head,
                 chunked.body,
@@ -587,11 +588,12 @@ impl Request {
 
   pub(crate) fn read_next_head_from_with_continue<S>(
     reader: &mut BufReader<S>,
+    max_request_body_bytes: usize,
   ) -> io::Result<Option<(Self, RequestBodyKind)>>
   where
     S: Read + Write,
   {
-    Self::read_next_head_and_body_kind_from_with_continue(reader)?
+    Self::read_next_head_and_body_kind_from_with_continue(reader, max_request_body_bytes)?
       .map_or(Ok(None), |(head, kind)| {
         Ok(Some((Self::from_head_and_body(head, Vec::new()), kind)))
       })
@@ -599,6 +601,7 @@ impl Request {
 
   pub(crate) fn read_next_head_and_body_kind_from_with_continue<S>(
     reader: &mut BufReader<S>,
+    max_request_body_bytes: usize,
   ) -> io::Result<Option<(RequestHead, RequestBodyKind)>>
   where
     S: Read + Write,
@@ -629,7 +632,7 @@ impl Request {
           let body_kind = request_body_kind(&head.headers)?;
           match body_kind {
             RequestBodyKind::ContentLength(content_length) => {
-              reject_oversized_request_body(content_length)?;
+              reject_oversized_request_body(content_length, max_request_body_bytes)?;
             }
             RequestBodyKind::Chunked => {}
           }
@@ -710,11 +713,11 @@ impl Request {
               return Ok(Some(Self::from_head_and_body(head, Vec::new())));
             }
             RequestBodyKind::ContentLength(content_length) => {
-              reject_oversized_request_body(content_length)?;
+              reject_oversized_request_body(content_length, MAX_REQUEST_BODY_BYTES)?;
               body_kind = Some(RequestBodyKind::ContentLength(content_length));
             }
             RequestBodyKind::Chunked => {
-              let chunked = read_chunked_request_body(reader)?;
+              let chunked = read_chunked_request_body(reader, MAX_REQUEST_BODY_BYTES)?;
               return Ok(Some(Self::from_head_body_and_trailers(
                 head,
                 chunked.body,
@@ -741,7 +744,7 @@ impl Request {
     let body_start = header_end + 4;
     let body = match request_body_kind(&head.headers)? {
       RequestBodyKind::ContentLength(content_length) => {
-        reject_oversized_request_body(content_length)?;
+        reject_oversized_request_body(content_length, MAX_REQUEST_BODY_BYTES)?;
         let body_end = checked_request_message_len(header_end, content_length)?;
 
         if raw.len() < body_end {
@@ -1986,7 +1989,8 @@ impl HttpRequest {
 
     let body = match request_body_kind(&head.headers).map_err(HttpParseError::from_io_error)? {
       RequestBodyKind::ContentLength(content_length) => {
-        reject_oversized_request_body(content_length).map_err(HttpParseError::from_io_error)?;
+        reject_oversized_request_body(content_length, MAX_REQUEST_BODY_BYTES)
+          .map_err(HttpParseError::from_io_error)?;
         if body_bytes.len() != content_length {
           return Err(HttpParseError::new(
             "request body length does not match Content-Length",
@@ -1996,8 +2000,8 @@ impl HttpRequest {
       }
       RequestBodyKind::Chunked => {
         let mut reader = Cursor::new(body_bytes);
-        let chunked =
-          read_chunked_request_body(&mut reader).map_err(HttpParseError::from_io_error)?;
+        let chunked = read_chunked_request_body(&mut reader, MAX_REQUEST_BODY_BYTES)
+          .map_err(HttpParseError::from_io_error)?;
         if reader.position() as usize != body_bytes.len() {
           return Err(HttpParseError::new(
             "request body length does not match Transfer-Encoding",
