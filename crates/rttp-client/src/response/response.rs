@@ -18,6 +18,7 @@ use crate::types::{Cookie, Header, RoUrl};
 use rttp_protocol::clear_site_data::ClearSiteData;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::cookie::HttpSetCookies;
+use rttp_protocol::prefer::PreferenceApplied;
 
 const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
@@ -284,6 +285,17 @@ impl Response {
       return Ok(None);
     }
     CriticalCh::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses `Preference-Applied` response metadata without applying preference semantics.
+  pub fn preference_applied(&self) -> error::Result<Option<PreferenceApplied>> {
+    let values = self.header_values("preference-applied");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    PreferenceApplied::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

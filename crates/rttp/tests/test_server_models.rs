@@ -483,7 +483,7 @@ fn request_te_and_prefer_reject_invalid_or_duplicate_metadata() {
     assert!(request.te().is_err(), "TE should reject {value:?}");
     assert_eq!(Some(value), request.header("TE"));
   }
-  for value in ["return=bad value", "respond-async; wait=1"] {
+  for value in ["return=bad value", "respond-async; wait=bad value"] {
     let request = parse_request(&format!(
       "GET /metadata HTTP/1.1\r\nHost: example.test\r\nPrefer: {value}\r\n\r\n"
     ));
