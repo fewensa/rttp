@@ -2795,6 +2795,23 @@ fn prior_knowledge_rejects_initial_settings_with_invalid_initial_window_size() {
 }
 
 #[test]
+fn prior_knowledge_accepts_initial_settings_with_maximum_initial_window_size() {
+  let (addr, handle) = spawn_h2_prior_knowledge_peer_with_initial_window_size(2_147_483_647);
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/maximum-initial-window-size", addr))
+    .emit_http2_prior_knowledge()
+    .expect("maximum SETTINGS_INITIAL_WINDOW_SIZE must be accepted");
+
+  assert_eq!(200, response.code());
+  assert_eq!("ok", response.body().string().unwrap());
+  handle
+    .join()
+    .expect("maximum initial window size peer thread");
+}
+
+#[test]
 fn prior_knowledge_rejects_initial_settings_ack_with_payload() {
   let payload = settings_payload(SETTING_MAX_FRAME_SIZE, 16 * 1024);
   let (addr, handle) = spawn_initial_settings_peer(FLAG_ACK, 0, &payload);
@@ -4757,6 +4774,24 @@ fn spawn_initial_settings_peer(
   (addr, handle)
 }
 
+fn spawn_h2_prior_knowledge_peer_with_initial_window_size(
+  initial_window_size: u32,
+) -> (SocketAddr, thread::JoinHandle<()>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake_with_initial_window_size(&mut stream, initial_window_size);
+
+    write_frame(&mut stream, FRAME_SETTINGS, FLAG_ACK, 0, &[]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, FLAG_END_STREAM, 1, b"ok");
+  });
+
+  (addr, handle)
+}
+
 fn spawn_window_update_peer(
   stream_id: u32,
   increments: Vec<u32>,
@@ -4786,6 +4821,21 @@ fn spawn_window_update_peer(
 
 fn complete_h2_request_handshake(stream: &mut impl ReadWrite) {
   complete_h2_handshake_without_request(stream);
+
+  let request_headers = read_frame(stream);
+  assert_eq!(FRAME_HEADERS, request_headers.frame_type);
+  assert_eq!(FLAG_END_STREAM | FLAG_END_HEADERS, request_headers.flags);
+  assert_eq!(1, request_headers.stream_id);
+}
+
+fn complete_h2_request_handshake_with_initial_window_size(
+  stream: &mut impl ReadWrite,
+  initial_window_size: u32,
+) {
+  complete_h2_handshake_without_request_with_settings(
+    stream,
+    &settings_payload(SETTING_INITIAL_WINDOW_SIZE, initial_window_size),
+  );
 
   let request_headers = read_frame(stream);
   assert_eq!(FRAME_HEADERS, request_headers.frame_type);

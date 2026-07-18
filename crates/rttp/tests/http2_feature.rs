@@ -3880,6 +3880,37 @@ fn prior_knowledge_server_rejects_initial_settings_with_invalid_initial_window_s
 }
 
 #[test]
+fn prior_knowledge_server_accepts_initial_settings_with_maximum_initial_window_size() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+
+  let handle =
+    thread::spawn(move || server.accept_one(|_| HttpResponse::ok("maximum initial window size")));
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  complete_h2_server_handshake_with_settings(
+    &mut stream,
+    &h2_setting(H2_SETTINGS_INITIAL_WINDOW_SIZE, 2_147_483_647),
+  );
+  write_h2_get_request(&mut stream, addr.to_string().as_bytes()).expect("write h2 request");
+
+  let headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, headers.frame_type);
+  let body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, body.flags);
+  assert_eq!(b"maximum initial window size", body.payload.as_slice());
+
+  handle
+    .join()
+    .expect("server thread")
+    .expect("server result");
+}
+
+#[test]
 fn h2c_connect_protocol_settings_metadata_is_ignored_for_ordinary_requests() {
   assert_connect_protocol_settings_accepted(false);
   assert_connect_protocol_settings_accepted(true);
