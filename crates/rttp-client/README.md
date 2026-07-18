@@ -382,15 +382,15 @@ compression, decompression, or content negotiation.
 `HttpClient::want_content_digest()` and `want_content_digest_with_q()` append
 validated algorithms to one `Want-Content-Digest` field. `want_repr_digest()`
 and `want_repr_digest_with_q()` do the same for `Want-Repr-Digest`. The
-q-value variants accept values from `0` through `1` with at most three
-fractional digits.
+`_with_q` variants accept RFC 9530 relative preference values from `0` through
+`10`; the default helper value is `10`.
 
 ```rust
 HttpClient::new()
   .get()
   .url("http://example.test/asset")
   .want_content_digest("sha-256")?
-  .want_repr_digest_with_q("sha-512", "0.8")?;
+  .want_repr_digest_with_q("sha-512", "8")?;
 ```
 
 Each helper emits a comma-separated field and rejects malformed algorithm

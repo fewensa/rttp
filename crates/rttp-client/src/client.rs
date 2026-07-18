@@ -547,7 +547,8 @@ impl HttpClient {
     self.accept_encoding_with_q("identity", qvalue)
   }
 
-  /// Append a validated digest algorithm to `Want-Content-Digest`.
+  /// Append a validated digest algorithm to `Want-Content-Digest` with the
+  /// highest preference.
   ///
   /// This declares request metadata only; it does not compute or validate
   /// content digests.
@@ -555,8 +556,8 @@ impl HttpClient {
     self.want_digest_member("Want-Content-Digest", algorithm.as_ref(), None)
   }
 
-  /// Append a validated digest algorithm with an HTTP q-value to
-  /// `Want-Content-Digest`.
+  /// Append a validated digest algorithm with a relative preference from `0`
+  /// through `10` to `Want-Content-Digest`.
   pub fn want_content_digest_with_q<A: AsRef<str>, Q: AsRef<str>>(
     &mut self,
     algorithm: A,
@@ -569,7 +570,8 @@ impl HttpClient {
     )
   }
 
-  /// Append a validated digest algorithm to `Want-Repr-Digest`.
+  /// Append a validated digest algorithm to `Want-Repr-Digest` with the
+  /// highest preference.
   ///
   /// This declares request metadata only; it does not compute or validate
   /// representation digests.
@@ -577,8 +579,8 @@ impl HttpClient {
     self.want_digest_member("Want-Repr-Digest", algorithm.as_ref(), None)
   }
 
-  /// Append a validated digest algorithm with an HTTP q-value to
-  /// `Want-Repr-Digest`.
+  /// Append a validated digest algorithm with a relative preference from `0`
+  /// through `10` to `Want-Repr-Digest`.
   pub fn want_repr_digest_with_q<A: AsRef<str>, Q: AsRef<str>>(
     &mut self,
     algorithm: A,
@@ -781,10 +783,10 @@ impl HttpClient {
     if !is_http_token(algorithm) {
       return Err(error::builder_with_message("invalid digest algorithm"));
     }
-    let qvalue = qvalue.map(validate_digest_qvalue).transpose()?;
-    let member = qvalue.map_or_else(
-      || algorithm.to_string(),
-      |qvalue| format!("{algorithm};q={qvalue}"),
+    let preference = qvalue.map(validate_digest_qvalue).transpose()?;
+    let member = preference.map_or_else(
+      || format!("{algorithm}=10"),
+      |preference| format!("{algorithm}={preference}"),
     );
     append_unique_metadata_member(
       self.request.headers_mut(),
@@ -1320,38 +1322,20 @@ fn validate_te_qvalue(qvalue: &str) -> error::Result<&str> {
 
 fn parse_digest_algorithms(value: &str) -> error::Result<Vec<&str>> {
   parse_metadata_members(value, "invalid digest algorithm", |member| {
-    let mut parts = member.split(';');
-    let algorithm = parts.next().unwrap_or_default().trim();
-    if !is_http_token(algorithm) {
-      return None;
-    }
-    match parts.next() {
-      None => Some(algorithm),
-      Some(parameter) if parts.next().is_none() => {
-        let (name, value) = parameter.trim().split_once('=')?;
-        (name.trim().eq_ignore_ascii_case("q") && validate_digest_qvalue(value.trim()).is_ok())
-          .then_some(algorithm)
-      }
-      Some(_) => None,
-    }
+    let (algorithm, preference) = member.trim().split_once('=')?;
+    let algorithm = algorithm.trim();
+    (is_http_token(algorithm) && validate_digest_qvalue(preference.trim()).is_ok())
+      .then_some(algorithm)
   })
 }
 
 fn validate_digest_qvalue(qvalue: &str) -> error::Result<&str> {
-  let valid = match qvalue.split_once('.') {
-    Some((whole, fraction)) => {
-      fraction.len() <= 3
-        && fraction.bytes().all(|byte| byte.is_ascii_digit())
-        && matches!(whole, "0" | "1")
-        && (whole == "0" || fraction.bytes().all(|byte| byte == b'0'))
-    }
-    None => matches!(qvalue, "0" | "1"),
-  };
-  if valid {
-    Ok(qvalue)
-  } else {
-    Err(error::builder_with_message("invalid digest q-value"))
-  }
+  matches!(
+    qvalue,
+    "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "10"
+  )
+  .then_some(qvalue)
+  .ok_or_else(|| error::builder_with_message("invalid digest preference"))
 }
 
 fn parse_prefer_names(value: &str) -> error::Result<Vec<&str>> {

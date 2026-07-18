@@ -424,6 +424,20 @@ fn want_digest_helpers_reject_invalid_or_excessive_values_before_connecting() {
     assert!(client
       .get()
       .url(format!("{}/asset", base_url))
+      .want_content_digest_with_q("sha-256", "1.0")
+      .expect_err("malformed digest preference should be rejected")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "invalid digest preference helper input should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    assert!(client
+      .get()
+      .url(format!("{}/asset", base_url))
       .want_repr_digest_with_q("sha-256", "11")
       .expect_err("invalid digest preference should be rejected")
       .is_builder());
@@ -490,6 +504,7 @@ fn raw_want_digest_headers_remain_available_for_extended_syntax() {
       .get()
       .url(format!("{}/asset", base_url))
       .header(("Want-Content-Digest", "sha-256;example=custom"))
+      .header(("Want-Repr-Digest", "sha-512;example=custom"))
       .emit()
       .expect("request should succeed");
   });
@@ -497,6 +512,10 @@ fn raw_want_digest_headers_remain_available_for_extended_syntax() {
   assert_eq!(
     Some("sha-256;example=custom"),
     header_value(&request_text(&request), "Want-Content-Digest")
+  );
+  assert_eq!(
+    Some("sha-512;example=custom"),
+    header_value(&request_text(&request), "Want-Repr-Digest")
   );
 }
 
