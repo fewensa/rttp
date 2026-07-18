@@ -11,6 +11,15 @@ fields, preserves the request for handler-defined error policy, and returns an
 error for malformed values, values larger than 64 KiB, or more than 256
 directives. It only parses metadata; it does not apply caching behavior.
 
+## Fetch Metadata request metadata
+
+Handlers can call `Request::sec_fetch_site()`, `sec_fetch_mode()`,
+`sec_fetch_dest()`, and `sec_fetch_user()` to observe bounded typed
+`Sec-Fetch-*` request metadata. Malformed values return a parser error while
+`Request::header()` continues to expose the original raw field. RTTP does not
+enforce browser security policy, block requests, validate origins, or infer
+navigation policy from these fields.
+
 ## Client Hints response metadata
 
 `HttpResponse::with_accept_ch(value)` and
