@@ -9,7 +9,7 @@ use url::Url;
 
 use crate::error;
 use crate::response::{InformationalResponse, Response};
-use crate::types::{Header, IntoHeader, RoUrl};
+use crate::types::{Header, RoUrl};
 
 const HEADER_END: &[u8] = b"\r\n\r\n";
 const CRLF: &[u8] = b"\r\n";
@@ -357,20 +357,25 @@ pub(crate) fn response_connection_reusable(
 }
 
 pub(crate) fn response_headers(header: &[u8]) -> error::Result<Vec<Header>> {
-  validate_response_header_lines(header)?;
-  let header = String::from_utf8(header.to_vec()).map_err(error::response)?;
-  Ok(
-    header
-      .lines()
-      .skip(1)
-      .filter(|line| !line.is_empty())
-      .flat_map(|line| line.into_headers())
-      .collect(),
-  )
+  let (_, header_lines) = split_response_head_lines(header)?;
+  let mut headers = Vec::new();
+  for line in header_lines.into_iter().filter(|line| !line.is_empty()) {
+    let Some(colon) = line.iter().position(|byte| *byte == b':') else {
+      return Err(error::bad_response("Invalid response header"));
+    };
+    if matches!(line.first(), Some(b' ' | b'\t')) {
+      return Err(error::bad_response("Invalid response header"));
+    }
+    let (name, value) = line.split_at(colon);
+    let value = &value[1..];
+    let name = std::str::from_utf8(name).map_err(error::response)?;
+    headers.push(Header::from_http1(name, decode_http1_text(value)));
+  }
+  Ok(headers)
 }
 
 pub(crate) fn response_connection_should_close(header: &[u8]) -> error::Result<bool> {
-  let header = String::from_utf8(header.to_vec()).map_err(error::response)?;
+  let header = decode_http1_text(header);
   let version = header
     .lines()
     .next()
@@ -543,11 +548,13 @@ pub(crate) fn parse_informational_response(header: &[u8]) -> error::Result<Infor
     if line.is_empty() {
       continue;
     }
-    let line = std::str::from_utf8(line).map_err(error::response)?;
-    let (name, value) = line
-      .split_once(':')
-      .ok_or_else(|| error::bad_response("Invalid informational response header"))?;
-    if !is_http_token(name) || !value.bytes().all(is_header_value_byte) {
+    let Some(colon) = line.iter().position(|byte| *byte == b':') else {
+      return Err(error::bad_response("Invalid informational response header"));
+    };
+    let (name, value) = line.split_at(colon);
+    let value = &value[1..];
+    let name = std::str::from_utf8(name).map_err(error::response)?;
+    if !is_http_token(name) || !value.iter().copied().all(is_header_value_byte) {
       return Err(error::bad_response("Invalid informational response header"));
     }
     if name.eq_ignore_ascii_case("Content-Length") || name.eq_ignore_ascii_case("Transfer-Encoding")
@@ -556,7 +563,7 @@ pub(crate) fn parse_informational_response(header: &[u8]) -> error::Result<Infor
         "Informational response must not declare body framing",
       ));
     }
-    headers.push(Header::new(name, value));
+    headers.push(Header::from_http1(name, decode_http1_text(value)));
   }
 
   Ok(InformationalResponse::new(
@@ -605,6 +612,10 @@ fn has_only_crlf_line_breaks(bytes: &[u8]) -> bool {
     }
   }
   true
+}
+
+fn decode_http1_text(bytes: &[u8]) -> String {
+  bytes.iter().map(|byte| *byte as char).collect()
 }
 
 fn parse_response_status_line(status_line: &[u8]) -> error::Result<(&str, u16, &str)> {
