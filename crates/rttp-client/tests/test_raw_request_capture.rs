@@ -375,6 +375,132 @@ fn accept_encoding_helpers_reject_invalid_members_before_connecting() {
 }
 
 #[test]
+fn want_digest_helpers_emit_validated_algorithms_and_quality_values() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .want_content_digest("sha-256")
+      .expect("content digest algorithm should be accepted")
+      .want_content_digest_with_q("sha-512", "0.8")
+      .expect("content digest quality should be accepted")
+      .want_repr_digest("sha-256")
+      .expect("representation digest algorithm should be accepted")
+      .want_repr_digest_with_q("sha-512", "0")
+      .expect("representation digest quality should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("sha-256, sha-512;q=0.8"),
+    header_value(&request, "Want-Content-Digest")
+  );
+  assert_eq!(
+    Some("sha-256, sha-512;q=0"),
+    header_value(&request, "Want-Repr-Digest")
+  );
+}
+
+#[test]
+fn want_digest_helpers_reject_invalid_or_excessive_values_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    assert!(client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .want_content_digest("bad algorithm")
+      .expect_err("invalid digest algorithm should be rejected")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "invalid digest preference helper input should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    assert!(client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .want_repr_digest_with_q("sha-256", "1.1")
+      .expect_err("invalid digest quality should be rejected")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "invalid digest preference helper input should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    client.get().url(format!("{}/asset", base_url));
+    client
+      .want_content_digest("sha-256")
+      .expect("first digest algorithm should be accepted");
+    assert!(client
+      .want_content_digest("SHA-256")
+      .expect_err("duplicate digest algorithm should be rejected")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "invalid digest preference helper input should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let oversized_algorithm = "a".repeat(64 * 1024 + 1);
+    let mut client = client();
+    assert!(client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .want_repr_digest(&oversized_algorithm)
+      .expect_err("oversized digest algorithm should be rejected")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "invalid digest preference helper input should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    client.get().url(format!("{}/asset", base_url));
+    for index in 0..32 {
+      client
+        .want_repr_digest(format!("algorithm{index}"))
+        .expect("digest algorithm within the limit should be accepted");
+    }
+    assert!(client
+      .want_repr_digest("one-too-many")
+      .expect_err("too many digest algorithms should be rejected")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "excessive digest preference helper input should not open a socket"
+  );
+}
+
+#[test]
+fn raw_want_digest_headers_remain_available_for_extended_syntax() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Want-Content-Digest", "sha-256;example=custom"))
+      .emit()
+      .expect("request should succeed");
+  });
+
+  assert_eq!(
+    Some("sha-256;example=custom"),
+    header_value(&request_text(&request), "Want-Content-Digest")
+  );
+}
+
+#[test]
 fn accept_helpers_emit_validated_media_ranges_and_quality_values() {
   let request = capture_request(|base_url| {
     client()

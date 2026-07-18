@@ -547,6 +547,50 @@ impl HttpClient {
     self.accept_encoding_with_q("identity", qvalue)
   }
 
+  /// Append a validated digest algorithm to `Want-Content-Digest`.
+  ///
+  /// This declares request metadata only; it does not compute or validate
+  /// content digests.
+  pub fn want_content_digest<S: AsRef<str>>(&mut self, algorithm: S) -> error::Result<&mut Self> {
+    self.want_digest_member("Want-Content-Digest", algorithm.as_ref(), None)
+  }
+
+  /// Append a validated digest algorithm with an HTTP q-value to
+  /// `Want-Content-Digest`.
+  pub fn want_content_digest_with_q<A: AsRef<str>, Q: AsRef<str>>(
+    &mut self,
+    algorithm: A,
+    qvalue: Q,
+  ) -> error::Result<&mut Self> {
+    self.want_digest_member(
+      "Want-Content-Digest",
+      algorithm.as_ref(),
+      Some(qvalue.as_ref()),
+    )
+  }
+
+  /// Append a validated digest algorithm to `Want-Repr-Digest`.
+  ///
+  /// This declares request metadata only; it does not compute or validate
+  /// representation digests.
+  pub fn want_repr_digest<S: AsRef<str>>(&mut self, algorithm: S) -> error::Result<&mut Self> {
+    self.want_digest_member("Want-Repr-Digest", algorithm.as_ref(), None)
+  }
+
+  /// Append a validated digest algorithm with an HTTP q-value to
+  /// `Want-Repr-Digest`.
+  pub fn want_repr_digest_with_q<A: AsRef<str>, Q: AsRef<str>>(
+    &mut self,
+    algorithm: A,
+    qvalue: Q,
+  ) -> error::Result<&mut Self> {
+    self.want_digest_member(
+      "Want-Repr-Digest",
+      algorithm.as_ref(),
+      Some(qvalue.as_ref()),
+    )
+  }
+
   /// Append a validated `TE` transfer coding. This declares request metadata
   /// only; it does not enable a transfer-coding engine.
   pub fn te<S: AsRef<str>>(&mut self, coding: S) -> error::Result<&mut Self> {
@@ -724,6 +768,35 @@ impl HttpClient {
       parse_te_codings,
     )?;
     self.ensure_connection_te_token();
+    Ok(self)
+  }
+
+  fn want_digest_member(
+    &mut self,
+    header_name: &str,
+    algorithm: &str,
+    qvalue: Option<&str>,
+  ) -> error::Result<&mut Self> {
+    let algorithm = algorithm.trim();
+    if !is_http_token(algorithm) {
+      return Err(error::builder_with_message("invalid digest algorithm"));
+    }
+    let qvalue = qvalue.map(validate_digest_qvalue).transpose()?;
+    let member = qvalue.map_or_else(
+      || algorithm.to_string(),
+      |qvalue| format!("{algorithm};q={qvalue}"),
+    );
+    append_unique_metadata_member(
+      self.request.headers_mut(),
+      header_name,
+      algorithm,
+      member,
+      "invalid digest algorithm",
+      "duplicate digest algorithm",
+      "too many digest algorithms",
+      "digest header value is too large",
+      parse_digest_algorithms,
+    )?;
     Ok(self)
   }
 
@@ -1242,6 +1315,42 @@ fn validate_te_qvalue(qvalue: &str) -> error::Result<&str> {
     Ok(qvalue)
   } else {
     Err(error::builder_with_message("invalid TE q-value"))
+  }
+}
+
+fn parse_digest_algorithms(value: &str) -> error::Result<Vec<&str>> {
+  parse_metadata_members(value, "invalid digest algorithm", |member| {
+    let mut parts = member.split(';');
+    let algorithm = parts.next().unwrap_or_default().trim();
+    if !is_http_token(algorithm) {
+      return None;
+    }
+    match parts.next() {
+      None => Some(algorithm),
+      Some(parameter) if parts.next().is_none() => {
+        let (name, value) = parameter.trim().split_once('=')?;
+        (name.trim().eq_ignore_ascii_case("q") && validate_digest_qvalue(value.trim()).is_ok())
+          .then_some(algorithm)
+      }
+      Some(_) => None,
+    }
+  })
+}
+
+fn validate_digest_qvalue(qvalue: &str) -> error::Result<&str> {
+  let valid = match qvalue.split_once('.') {
+    Some((whole, fraction)) => {
+      fraction.len() <= 3
+        && fraction.bytes().all(|byte| byte.is_ascii_digit())
+        && matches!(whole, "0" | "1")
+        && (whole == "0" || fraction.bytes().all(|byte| byte == b'0'))
+    }
+    None => matches!(qvalue, "0" | "1"),
+  };
+  if valid {
+    Ok(qvalue)
+  } else {
+    Err(error::builder_with_message("invalid digest q-value"))
   }
 }
 
