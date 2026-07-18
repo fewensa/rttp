@@ -194,14 +194,26 @@ fn test_parse_response_rejects_folded_and_bare_lf_headers() {
 
 #[test]
 fn test_parse_response_preserves_obs_text_header_values_as_latin1_code_points() {
-  let raw = b"HTTP/1.1 200 OK\r\nX-Obs: \x80\xff\r\nContent-Length: 0\r\n\r\n";
+  let raw = b"HTTP/1.1 200 OK\r\nX-Obs: \x80\xc3\xa9\xff\r\nContent-Length: 0\r\n\r\n";
   let response = Response::new(RoUrl::with("https://example.test"), raw.to_vec())
     .expect("obs-text response header should parse");
 
   // Header values are exposed as `String`, so each accepted raw obs-text byte is
   // represented by the matching Latin-1 code point rather than returned as bytes.
   assert_eq!(
-    Some(&"\u{0080}\u{00ff}".to_string()),
+    Some(&"\u{0080}\u{00c3}\u{00a9}\u{00ff}".to_string()),
+    response.header_value("X-Obs")
+  );
+}
+
+#[test]
+fn test_parse_response_preserves_non_ows_obs_text_header_value_edges() {
+  let raw = b"HTTP/1.1 200 OK\r\nX-Obs: \xa0value\xa0\r\nContent-Length: 0\r\n\r\n";
+  let response = Response::new(RoUrl::with("https://example.test"), raw.to_vec())
+    .expect("obs-text response header should parse");
+
+  assert_eq!(
+    Some(&"\u{00a0}value\u{00a0}".to_string()),
     response.header_value("X-Obs")
   );
 }
@@ -692,7 +704,7 @@ fn test_www_authenticate_response_helper_parses_bounded_challenges() {
 }
 
 #[test]
-fn test_www_authenticate_preserves_utf8_quoted_parameter_values() {
+fn test_www_authenticate_preserves_quoted_parameter_wire_bytes() {
   let raw = concat!(
     "HTTP/1.1 401 Unauthorized\r\n",
     "WWW-Authenticate: Digest realm=\"caf\u{e9}\"\r\n",
@@ -707,7 +719,7 @@ fn test_www_authenticate_preserves_utf8_quoted_parameter_values() {
     .expect("WWW-Authenticate should be present");
 
   assert_eq!(
-    Some("caf\u{e9}"),
+    Some("caf\u{00c3}\u{00a9}"),
     challenges.challenges()[0].parameter("realm")
   );
 }

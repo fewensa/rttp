@@ -232,26 +232,7 @@ pub(crate) fn parse_request_head(raw: &[u8]) -> io::Result<RequestHead> {
 }
 
 fn decode_http1_text(bytes: &[u8]) -> String {
-  let mut text = String::new();
-  let mut remaining = bytes;
-  while !remaining.is_empty() {
-    match std::str::from_utf8(remaining) {
-      Ok(valid) => {
-        text.push_str(valid);
-        break;
-      }
-      Err(error) => {
-        let valid_up_to = error.valid_up_to();
-        text.push_str(std::str::from_utf8(&remaining[..valid_up_to]).expect("valid UTF-8 prefix"));
-        let invalid_len = error.error_len().unwrap_or(remaining.len() - valid_up_to);
-        for byte in &remaining[valid_up_to..valid_up_to + invalid_len] {
-          text.push(*byte as char);
-        }
-        remaining = &remaining[valid_up_to + invalid_len..];
-      }
-    }
-  }
-  text
+  bytes.iter().map(|byte| *byte as char).collect()
 }
 
 pub(crate) fn validate_request_line(method: &str, target: &str, version: &str) -> io::Result<()> {
@@ -451,7 +432,10 @@ pub(crate) fn parse_header_lines_with_error<'a>(
         invalid_line_error,
       ));
     }
-    headers.push((name.trim().to_string(), value.trim().to_string()));
+    headers.push((
+      name.trim_matches([' ', '\t']).to_string(),
+      value.trim_matches([' ', '\t']).to_string(),
+    ));
   }
 
   Ok(headers)

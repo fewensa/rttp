@@ -35,13 +35,23 @@ fn request_raw_parser_rejects_folded_and_bare_lf_headers() {
 #[test]
 fn request_raw_parser_preserves_obs_text_header_values_as_latin1_code_points() {
   let request = Request::from_raw_frame(
-    b"GET / HTTP/1.1\r\nHost: example.test\r\nX-Obs: \x80\xff\r\n\r\n",
+    b"GET / HTTP/1.1\r\nHost: example.test\r\nX-Obs: \x80\xc3\xa9\xff\r\n\r\n",
   )
   .expect("obs-text request header should parse");
 
   // Request headers use `String`, so raw obs-text bytes cross the API boundary
   // as their corresponding Latin-1 code points.
-  assert_eq!(Some("\u{0080}\u{00ff}"), request.header("X-Obs"));
+  assert_eq!(Some("\u{0080}\u{00c3}\u{00a9}\u{00ff}"), request.header("X-Obs"));
+}
+
+#[test]
+fn request_raw_parser_preserves_non_ows_obs_text_header_value_edges() {
+  let request = Request::from_raw_frame(
+    b"GET / HTTP/1.1\r\nHost: example.test\r\nX-Obs: \xa0value\xa0\r\n\r\n",
+  )
+  .expect("obs-text request header should parse");
+
+  assert_eq!(Some("\u{00a0}value\u{00a0}"), request.header("X-Obs"));
 }
 
 #[test]

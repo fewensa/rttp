@@ -369,7 +369,7 @@ pub(crate) fn response_headers(header: &[u8]) -> error::Result<Vec<Header>> {
     let (name, value) = line.split_at(colon);
     let value = &value[1..];
     let name = std::str::from_utf8(name).map_err(error::response)?;
-    headers.push(Header::new(name, decode_http1_text(value)));
+    headers.push(Header::from_http1(name, decode_http1_text(value)));
   }
   Ok(headers)
 }
@@ -563,7 +563,7 @@ pub(crate) fn parse_informational_response(header: &[u8]) -> error::Result<Infor
         "Informational response must not declare body framing",
       ));
     }
-    headers.push(Header::new(name, decode_http1_text(value)));
+    headers.push(Header::from_http1(name, decode_http1_text(value)));
   }
 
   Ok(InformationalResponse::new(
@@ -615,26 +615,7 @@ fn has_only_crlf_line_breaks(bytes: &[u8]) -> bool {
 }
 
 fn decode_http1_text(bytes: &[u8]) -> String {
-  let mut text = String::new();
-  let mut remaining = bytes;
-  while !remaining.is_empty() {
-    match std::str::from_utf8(remaining) {
-      Ok(valid) => {
-        text.push_str(valid);
-        break;
-      }
-      Err(error) => {
-        let valid_up_to = error.valid_up_to();
-        text.push_str(std::str::from_utf8(&remaining[..valid_up_to]).expect("valid UTF-8 prefix"));
-        let invalid_len = error.error_len().unwrap_or(remaining.len() - valid_up_to);
-        for byte in &remaining[valid_up_to..valid_up_to + invalid_len] {
-          text.push(*byte as char);
-        }
-        remaining = &remaining[valid_up_to + invalid_len..];
-      }
-    }
-  }
-  text
+  bytes.iter().map(|byte| *byte as char).collect()
 }
 
 fn parse_response_status_line(status_line: &[u8]) -> error::Result<(&str, u16, &str)> {
