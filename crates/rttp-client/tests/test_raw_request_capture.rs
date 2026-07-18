@@ -375,30 +375,30 @@ fn accept_encoding_helpers_reject_invalid_members_before_connecting() {
 }
 
 #[test]
-fn want_digest_helpers_emit_validated_algorithms_and_quality_values() {
+fn want_digest_helpers_emit_rfc_9530_dictionary_members() {
   let request = capture_request(|base_url| {
     client()
       .get()
       .url(format!("{}/asset", base_url))
       .want_content_digest("sha-256")
       .expect("content digest algorithm should be accepted")
-      .want_content_digest_with_q("sha-512", "0.8")
-      .expect("content digest quality should be accepted")
+      .want_content_digest_with_q("sha-512", "8")
+      .expect("content digest preference should be accepted")
       .want_repr_digest("sha-256")
       .expect("representation digest algorithm should be accepted")
       .want_repr_digest_with_q("sha-512", "0")
-      .expect("representation digest quality should be accepted")
+      .expect("representation digest preference should be accepted")
       .emit()
       .expect("request should succeed");
   });
   let request = request_text(&request);
 
   assert_eq!(
-    Some("sha-256, sha-512;q=0.8"),
+    Some("sha-256=10, sha-512=8"),
     header_value(&request, "Want-Content-Digest")
   );
   assert_eq!(
-    Some("sha-256, sha-512;q=0"),
+    Some("sha-256=10, sha-512=0"),
     header_value(&request, "Want-Repr-Digest")
   );
 }
@@ -424,8 +424,8 @@ fn want_digest_helpers_reject_invalid_or_excessive_values_before_connecting() {
     assert!(client
       .get()
       .url(format!("{}/asset", base_url))
-      .want_repr_digest_with_q("sha-256", "1.1")
-      .expect_err("invalid digest quality should be rejected")
+      .want_repr_digest_with_q("sha-256", "11")
+      .expect_err("invalid digest preference should be rejected")
       .is_builder());
   });
   assert!(
