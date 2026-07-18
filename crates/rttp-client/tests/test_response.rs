@@ -180,14 +180,15 @@ fn test_parse_response_preserves_duplicate_headers_with_case_insensitive_lookup(
 }
 
 #[test]
-fn test_parse_response_rejects_folded_and_bare_lf_headers() {
+fn test_parse_response_rejects_folded_and_invalid_line_break_headers() {
   for raw in [
     b"HTTP/1.1 200 OK\r\nX-Test: first\r\n second\r\nContent-Length: 0\r\n\r\n".as_slice(),
     b"HTTP/1.1 200 OK\r\nX-Test: first\r\n\tsecond\r\nContent-Length: 0\r\n\r\n".as_slice(),
     b"HTTP/1.1 200 OK\r\nX-Test: first\nsecond\r\nContent-Length: 0\r\n\r\n".as_slice(),
+    b"HTTP/1.1 200 OK\r\nX-Test: first\rsecond\r\nContent-Length: 0\r\n\r\n".as_slice(),
   ] {
     let error = Response::new(RoUrl::with("https://example.test"), raw.to_vec())
-      .expect_err("folded and bare-LF response headers must be rejected");
+      .expect_err("folded and invalid response header line breaks must be rejected");
     assert!(error.to_string().contains("Invalid response header"));
   }
 }
@@ -437,8 +438,6 @@ fn test_parse_content_type_rejects_invalid_helper_values_without_rejecting_respo
     "text/plain; char set=utf-8",
     "text/plain; charset=utf 8",
     "text/plain; charset=\"unterminated",
-    "text/plain; charset=\"bad\\\r\"",
-    "text/plain; charset=\"bad\rvalue\"",
   ];
 
   for value in invalid_values {
@@ -998,8 +997,6 @@ fn test_parse_content_disposition_rejects_invalid_helper_values_without_rejectin
     "attachment; file name=report.txt",
     "attachment; filename=report txt",
     "attachment; filename=\"unterminated",
-    "attachment; filename=\"bad\\\r\"",
-    "attachment; filename=\"bad\rname\"",
     "attachment; filename*=UTF-8''bad%ZZname",
   ];
 

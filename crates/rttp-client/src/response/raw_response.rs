@@ -261,10 +261,14 @@ impl Parser {
 }
 
 fn has_only_crlf_line_breaks(bytes: &[u8]) -> bool {
-  bytes
-    .iter()
-    .enumerate()
-    .all(|(index, byte)| *byte != LF || (index > 0 && bytes.get(index - 1) == Some(&CR)))
+  for (index, byte) in bytes.iter().enumerate() {
+    match *byte {
+      b'\r' if bytes.get(index + 1) != Some(&LF) => return false,
+      b'\n' if index == 0 || bytes.get(index - 1) != Some(&CR) => return false,
+      _ => {}
+    }
+  }
+  true
 }
 
 fn decode_http1_text(bytes: &[u8]) -> String {
