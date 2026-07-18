@@ -19,6 +19,13 @@ impl Header {
     }
   }
 
+  pub(crate) fn from_http1<N: AsRef<str>, V: AsRef<str>>(name: N, value: V) -> Self {
+    Self {
+      name: name.as_ref().trim_matches([' ', '\t']).into(),
+      value: value.as_ref().trim_matches([' ', '\t']).into(),
+    }
+  }
+
   pub(crate) fn replace(&mut self, header: Header) -> &mut Self {
     self.name = header.name().clone();
     self.value = header.value().clone();

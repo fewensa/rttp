@@ -19,6 +19,56 @@ fn request_cache_control_combines_case_insensitive_header_fields() {
 }
 
 #[test]
+fn request_raw_parser_rejects_folded_and_bare_lf_headers() {
+  for raw in [
+    b"GET / HTTP/1.1\r\nHost: example.test\r\nX-Test: first\r\n second\r\n\r\n".as_slice(),
+    b"GET / HTTP/1.1\r\nHost: example.test\r\nX-Test: first\r\n\tsecond\r\n\r\n".as_slice(),
+    b"GET / HTTP/1.1\r\nHost: example.test\r\nX-Test: first\nsecond\r\n\r\n".as_slice(),
+    b"GET / HTTP/1.1\r\nHost: example.test\r\nX-Test: first\rsecond\r\n\r\n".as_slice(),
+  ] {
+    let error = Request::from_raw_frame(raw)
+      .expect_err("folded and bare-LF request headers must be rejected");
+    assert_eq!(std::io::ErrorKind::InvalidData, error.kind());
+    assert_eq!("invalid request header", error.to_string());
+  }
+}
+
+#[test]
+fn request_raw_parser_preserves_duplicate_ordinary_headers_in_wire_order() {
+  let request = Request::from_raw_frame(
+    b"GET / HTTP/1.1\r\nHost: example.test\r\nX-Test: first\r\nx-test: second\r\n\r\n",
+  )
+  .expect("duplicate ordinary request headers should parse");
+
+  assert_eq!(
+    vec!["first", "second"],
+    request.headers_named("X-Test").collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn request_raw_parser_preserves_obs_text_header_values_as_latin1_code_points() {
+  let request = Request::from_raw_frame(
+    b"GET / HTTP/1.1\r\nHost: example.test\r\nX-Obs: \x80\xc3\xa9\xff\r\n\r\n",
+  )
+  .expect("obs-text request header should parse");
+
+  // Request headers use `String`, so raw obs-text bytes cross the API boundary
+  // as their corresponding Latin-1 code points.
+  assert_eq!(Some("\u{0080}\u{00c3}\u{00a9}\u{00ff}"), request.header("X-Obs"));
+}
+
+#[test]
+fn request_raw_parser_preserves_non_ows_obs_text_header_value_edges() {
+  let request = Request::from_raw_frame(
+    b"GET / HTTP/1.1\r\nHost: example.test\r\nX-Obs: \xa0value\xa0\r\n\r\n",
+  )
+  .expect("obs-text request header should parse");
+
+  assert_eq!(Some("\u{00a0}value\u{00a0}"), request.header("X-Obs"));
+}
+
+#[test]
 fn request_cache_control_preserves_malformed_headers_for_handler_policy() {
   let request = Request::from_raw_frame(
     b"GET / HTTP/1.1\r\nHost: example.test\r\nCache-Control: max-age=invalid\r\n\r\n",
@@ -618,6 +668,66 @@ hello\r\n\
         .expect("response Priority should parse")
         .expect("response Priority should be present")
         .header_value()
+    );
+  }
+
+  #[test]
+  fn authentication_helpers_parse_bounded_metadata_without_authentication_policy() {
+    let raw = concat!(
+      "GET / HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Authorization: Bearer origin-token\r\n",
+      "Proxy-Authorization: Basic cHJveHk6c2VjcmV0\r\n",
+      "\r\n"
+    );
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+    let request = Request::read_next_from(&mut reader)
+      .expect("request should parse")
+      .expect("request should be present");
+
+    assert_eq!(
+      "Bearer",
+      request
+        .authorization()
+        .expect("Authorization should parse")
+        .expect("Authorization should be present")
+        .scheme()
+    );
+    let proxy_authorization = request
+      .proxy_authorization()
+      .expect("Proxy-Authorization should parse")
+      .expect("Proxy-Authorization should be present");
+    assert_eq!("Basic", proxy_authorization.scheme());
+    assert_eq!("cHJveHk6c2VjcmV0", proxy_authorization.credentials());
+
+    let response = HttpResponse::new(401, "Unauthorized")
+      .header("WWW-Authenticate", "Broken")
+      .with_www_authenticate("Basic realm=\"private\", Bearer")
+      .expect("WWW-Authenticate should be accepted");
+    let challenges = response
+      .www_authenticate()
+      .expect("WWW-Authenticate should parse")
+      .expect("WWW-Authenticate should be present");
+    assert_eq!(2, challenges.challenges().len());
+    assert_eq!("Basic", challenges.challenges()[0].scheme());
+    assert_eq!("Bearer", challenges.challenges()[1].scheme());
+    assert!(HttpResponse::ok([])
+      .with_www_authenticate("Basic @")
+      .is_err());
+    let malformed = HttpRequest::parse(
+      concat!(
+        "GET / HTTP/1.1\r\n",
+        "Host: example.test\r\n",
+        "Proxy-Authorization: invalid\r\n",
+        "\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should parse");
+    assert!(malformed.proxy_authorization().is_err());
+    assert_eq!(
+      Some("invalid"),
+      malformed.header("Proxy-Authorization")
     );
   }
 

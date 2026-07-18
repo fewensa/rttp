@@ -7,6 +7,7 @@ use crate::types::{Auth, Header, IntoHeader, IntoPara, Proxy, ToFormData, ToRoUr
 use crate::{error, Config, H2cClientPolicy};
 #[cfg(feature = "async")]
 use futures::io::AsyncRead;
+use rttp_protocol::fetch_metadata::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 use rttp_protocol::forwarded::{Forwarded, MAX_FORWARDED_VALUE_BYTES};
 use rttp_protocol::priority::Priority;
 use rttp_protocol::trailer::Trailer;
@@ -283,6 +284,26 @@ impl HttpClient {
     self.header(("Expect", "100-continue"))
   }
 
+  /// Set bounded `Sec-Fetch-Site` request metadata without applying browser policy.
+  pub fn sec_fetch_site(&mut self, site: SecFetchSite) -> &mut Self {
+    self.header(("Sec-Fetch-Site", site.header_value()))
+  }
+
+  /// Set bounded `Sec-Fetch-Mode` request metadata without applying browser policy.
+  pub fn sec_fetch_mode(&mut self, mode: SecFetchMode) -> &mut Self {
+    self.header(("Sec-Fetch-Mode", mode.header_value()))
+  }
+
+  /// Set bounded `Sec-Fetch-Dest` request metadata without applying browser policy.
+  pub fn sec_fetch_dest(&mut self, dest: SecFetchDest) -> &mut Self {
+    self.header(("Sec-Fetch-Dest", dest.header_value()))
+  }
+
+  /// Set the `Sec-Fetch-User: ?1` request metadata without applying browser policy.
+  pub fn sec_fetch_user(&mut self) -> &mut Self {
+    self.header(("Sec-Fetch-User", SecFetchUser.header_value()))
+  }
+
   /// Append a validated `Accept` media range with its supplied quality value.
   ///
   /// This declares request metadata only; it does not select a response
@@ -526,6 +547,52 @@ impl HttpClient {
     self.accept_encoding_with_q("identity", qvalue)
   }
 
+  /// Append a validated digest algorithm to `Want-Content-Digest` with the
+  /// highest preference.
+  ///
+  /// This declares request metadata only; it does not compute or validate
+  /// content digests.
+  pub fn want_content_digest<S: AsRef<str>>(&mut self, algorithm: S) -> error::Result<&mut Self> {
+    self.want_digest_member("Want-Content-Digest", algorithm.as_ref(), None)
+  }
+
+  /// Append a validated digest algorithm with a relative preference from `0`
+  /// through `10` to `Want-Content-Digest`.
+  pub fn want_content_digest_with_q<A: AsRef<str>, Q: AsRef<str>>(
+    &mut self,
+    algorithm: A,
+    qvalue: Q,
+  ) -> error::Result<&mut Self> {
+    self.want_digest_member(
+      "Want-Content-Digest",
+      algorithm.as_ref(),
+      Some(qvalue.as_ref()),
+    )
+  }
+
+  /// Append a validated digest algorithm to `Want-Repr-Digest` with the
+  /// highest preference.
+  ///
+  /// This declares request metadata only; it does not compute or validate
+  /// representation digests.
+  pub fn want_repr_digest<S: AsRef<str>>(&mut self, algorithm: S) -> error::Result<&mut Self> {
+    self.want_digest_member("Want-Repr-Digest", algorithm.as_ref(), None)
+  }
+
+  /// Append a validated digest algorithm with a relative preference from `0`
+  /// through `10` to `Want-Repr-Digest`.
+  pub fn want_repr_digest_with_q<A: AsRef<str>, Q: AsRef<str>>(
+    &mut self,
+    algorithm: A,
+    qvalue: Q,
+  ) -> error::Result<&mut Self> {
+    self.want_digest_member(
+      "Want-Repr-Digest",
+      algorithm.as_ref(),
+      Some(qvalue.as_ref()),
+    )
+  }
+
   /// Append a validated `TE` transfer coding. This declares request metadata
   /// only; it does not enable a transfer-coding engine.
   pub fn te<S: AsRef<str>>(&mut self, coding: S) -> error::Result<&mut Self> {
@@ -703,6 +770,35 @@ impl HttpClient {
       parse_te_codings,
     )?;
     self.ensure_connection_te_token();
+    Ok(self)
+  }
+
+  fn want_digest_member(
+    &mut self,
+    header_name: &str,
+    algorithm: &str,
+    qvalue: Option<&str>,
+  ) -> error::Result<&mut Self> {
+    let algorithm = algorithm.trim();
+    if !is_http_token(algorithm) {
+      return Err(error::builder_with_message("invalid digest algorithm"));
+    }
+    let preference = qvalue.map(validate_digest_qvalue).transpose()?;
+    let member = preference.map_or_else(
+      || format!("{algorithm}=10"),
+      |preference| format!("{algorithm}={preference}"),
+    );
+    append_unique_metadata_member(
+      self.request.headers_mut(),
+      header_name,
+      algorithm,
+      member,
+      "invalid digest algorithm",
+      "duplicate digest algorithm",
+      "too many digest algorithms",
+      "digest header value is too large",
+      parse_digest_algorithms,
+    )?;
     Ok(self)
   }
 
@@ -1222,6 +1318,24 @@ fn validate_te_qvalue(qvalue: &str) -> error::Result<&str> {
   } else {
     Err(error::builder_with_message("invalid TE q-value"))
   }
+}
+
+fn parse_digest_algorithms(value: &str) -> error::Result<Vec<&str>> {
+  parse_metadata_members(value, "invalid digest algorithm", |member| {
+    let (algorithm, preference) = member.trim().split_once('=')?;
+    let algorithm = algorithm.trim();
+    (is_http_token(algorithm) && validate_digest_qvalue(preference.trim()).is_ok())
+      .then_some(algorithm)
+  })
+}
+
+fn validate_digest_qvalue(qvalue: &str) -> error::Result<&str> {
+  matches!(
+    qvalue,
+    "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "10"
+  )
+  .then_some(qvalue)
+  .ok_or_else(|| error::builder_with_message("invalid digest preference"))
 }
 
 fn parse_prefer_names(value: &str) -> error::Result<Vec<&str>> {

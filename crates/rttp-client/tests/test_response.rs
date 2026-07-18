@@ -1,7 +1,6 @@
 use rttp_client::response::{
   AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType, Digest,
   HttpClearSiteData, HttpSetCookies, LinkValues, Response, RetryAfter, ServerTiming,
-  WwwAuthenticate,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -176,6 +175,46 @@ fn test_parse_response_preserves_duplicate_headers_with_case_insensitive_lookup(
     response
       .cookie("theme")
       .map(|cookie| cookie.value().as_str())
+  );
+}
+
+#[test]
+fn test_parse_response_rejects_folded_and_invalid_line_break_headers() {
+  for raw in [
+    b"HTTP/1.1 200 OK\r\nX-Test: first\r\n second\r\nContent-Length: 0\r\n\r\n".as_slice(),
+    b"HTTP/1.1 200 OK\r\nX-Test: first\r\n\tsecond\r\nContent-Length: 0\r\n\r\n".as_slice(),
+    b"HTTP/1.1 200 OK\r\nX-Test: first\nsecond\r\nContent-Length: 0\r\n\r\n".as_slice(),
+    b"HTTP/1.1 200 OK\r\nX-Test: first\rsecond\r\nContent-Length: 0\r\n\r\n".as_slice(),
+  ] {
+    let error = Response::new(RoUrl::with("https://example.test"), raw.to_vec())
+      .expect_err("folded and invalid response header line breaks must be rejected");
+    assert!(error.to_string().contains("Invalid response header"));
+  }
+}
+
+#[test]
+fn test_parse_response_preserves_obs_text_header_values_as_latin1_code_points() {
+  let raw = b"HTTP/1.1 200 OK\r\nX-Obs: \x80\xc3\xa9\xff\r\nContent-Length: 0\r\n\r\n";
+  let response = Response::new(RoUrl::with("https://example.test"), raw.to_vec())
+    .expect("obs-text response header should parse");
+
+  // Header values are exposed as `String`, so each accepted raw obs-text byte is
+  // represented by the matching Latin-1 code point rather than returned as bytes.
+  assert_eq!(
+    Some(&"\u{0080}\u{00c3}\u{00a9}\u{00ff}".to_string()),
+    response.header_value("X-Obs")
+  );
+}
+
+#[test]
+fn test_parse_response_preserves_non_ows_obs_text_header_value_edges() {
+  let raw = b"HTTP/1.1 200 OK\r\nX-Obs: \xa0value\xa0\r\nContent-Length: 0\r\n\r\n";
+  let response = Response::new(RoUrl::with("https://example.test"), raw.to_vec())
+    .expect("obs-text response header should parse");
+
+  assert_eq!(
+    Some(&"\u{00a0}value\u{00a0}".to_string()),
+    response.header_value("X-Obs")
   );
 }
 
@@ -398,8 +437,6 @@ fn test_parse_content_type_rejects_invalid_helper_values_without_rejecting_respo
     "text/plain; char set=utf-8",
     "text/plain; charset=utf 8",
     "text/plain; charset=\"unterminated",
-    "text/plain; charset=\"bad\\\r\"",
-    "text/plain; charset=\"bad\rvalue\"",
   ];
 
   for value in invalid_values {
@@ -665,7 +702,7 @@ fn test_www_authenticate_response_helper_parses_bounded_challenges() {
 }
 
 #[test]
-fn test_www_authenticate_preserves_utf8_quoted_parameter_values() {
+fn test_www_authenticate_preserves_quoted_parameter_wire_bytes() {
   let raw = concat!(
     "HTTP/1.1 401 Unauthorized\r\n",
     "WWW-Authenticate: Digest realm=\"caf\u{e9}\"\r\n",
@@ -680,7 +717,7 @@ fn test_www_authenticate_preserves_utf8_quoted_parameter_values() {
     .expect("WWW-Authenticate should be present");
 
   assert_eq!(
-    Some("caf\u{e9}"),
+    Some("caf\u{00c3}\u{00a9}"),
     challenges.challenges()[0].parameter("realm")
   );
 }
@@ -710,15 +747,10 @@ fn test_www_authenticate_rejects_malformed_duplicate_and_bounded_values() {
   }
 
   let oversized = "Basic realm=".to_string() + &"a".repeat(64 * 1024);
-  assert!(
-    WwwAuthenticate::parse(oversized).is_err(),
-    "helper should reject an oversized field"
-  );
-  let too_many = (0..257)
+  let too_many_challenges = (0..257)
     .map(|index| format!("Scheme{index}"))
     .collect::<Vec<_>>()
     .join(", ");
-  assert!(WwwAuthenticate::parse(too_many).is_err());
   let too_many_parameters = format!(
     "Digest {}",
     (0..257)
@@ -726,8 +758,30 @@ fn test_www_authenticate_rejects_malformed_duplicate_and_bounded_values() {
       .collect::<Vec<_>>()
       .join(", ")
   );
-  assert!(WwwAuthenticate::parse(too_many_parameters).is_err());
-  assert!(WwwAuthenticate::parse(format!("Basic realm={}", "a".repeat(64 * 1024 + 1))).is_err());
+  let oversized_parameter = format!("Basic realm={}", "a".repeat(64 * 1024 + 1));
+
+  for value in [
+    oversized,
+    too_many_challenges,
+    too_many_parameters,
+    oversized_parameter,
+  ] {
+    let raw = format!(
+      "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: {value}\r\nContent-Length: 0\r\n\r\n"
+    );
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+
+    assert!(
+      response.www_authenticate().is_err(),
+      "should reject bounded value"
+    );
+    assert_eq!(
+      Some(&value),
+      response.header_value("WWW-Authenticate"),
+      "raw header should remain available after a parse failure"
+    );
+  }
 }
 
 #[test]
@@ -959,8 +1013,6 @@ fn test_parse_content_disposition_rejects_invalid_helper_values_without_rejectin
     "attachment; file name=report.txt",
     "attachment; filename=report txt",
     "attachment; filename=\"unterminated",
-    "attachment; filename=\"bad\\\r\"",
-    "attachment; filename=\"bad\rname\"",
     "attachment; filename*=UTF-8''bad%ZZname",
   ];
 
@@ -1526,6 +1578,47 @@ fn test_parse_age_and_expires_response_metadata() {
     None,
     response.expires().expect("absent expires should parse")
   );
+}
+
+#[test]
+fn test_parse_sunset_response_metadata_and_preserves_raw_value() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Sunset: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(
+    Some(UNIX_EPOCH + Duration::from_secs(784_111_777)),
+    response.sunset().expect("Sunset should parse")
+  );
+  assert_eq!(
+    Some(&"Sun, 06 Nov 1994 08:49:37 GMT".to_string()),
+    response.sunset_value()
+  );
+}
+
+#[test]
+fn test_parse_sunset_rejects_invalid_and_duplicate_values_without_rejecting_response() {
+  for header in [
+    "Sunset: not a date\r\n",
+    "Sunset: Sun, 06 Nov 1994 08:49:37 GMT\r\nSunset: Sun, 06 Nov 1994 08:49:38 GMT\r\n",
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\n{header}Content-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("response should remain usable");
+
+    assert!(
+      response.sunset().is_err(),
+      "Sunset helper should reject {header:?}"
+    );
+  }
 }
 
 #[test]

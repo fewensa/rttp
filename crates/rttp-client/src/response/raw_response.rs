@@ -3,12 +3,11 @@ use std::io::Read;
 
 use crate::error;
 use crate::response::ResponseBody;
-use crate::types::{Cookie, Header, IntoHeader, RoUrl, ToUrl};
+use crate::types::{Cookie, Header, RoUrl, ToUrl};
 use url::Url;
 
 static CR: u8 = b'\r';
 static LF: u8 = b'\n';
-static CRLF: &str = "\r\n";
 
 #[derive(Clone)]
 pub struct RawResponse {
@@ -163,21 +162,15 @@ impl Parser {
         && self.binary.get(i + 2) == Some(&CR)
         && self.binary.get(i + 3) == Some(&LF)
       {
-        position = i + 3;
+        position = i;
         break;
       }
-      //      if self.binary[i] == CR && self.binary[i + 1] == LF && self.binary[i + 2] == CR && self.binary[i + 3] == LF {
-      //        position = i + 3;
-      //        break;
-      //      }
     }
     if position == 0 {
       return Err(error::bad_response("No http response"));
     }
-    let (header_b, body_b): (&[u8], &[u8]) = self.binary.split_at(position);
-
-    let header = String::from_utf8(header_b.to_vec()).map_err(error::response)?;
-    let body = body_b[1..].to_owned();
+    let header = &self.binary[..position];
+    let body = self.binary[position + 4..].to_owned();
 
     self.parse_header(response, header)?;
     self.parse_body(response, body)?;
@@ -186,11 +179,17 @@ impl Parser {
     Ok(())
   }
 
-  fn parse_header(&self, response: &mut RawResponse, text: String) -> error::Result<()> {
-    let parts: Vec<&str> = text.split(CRLF).collect();
-    let status_line = parts
-      .first()
+  fn parse_header(&self, response: &mut RawResponse, text: &[u8]) -> error::Result<()> {
+    if !has_only_crlf_line_breaks(text) {
+      return Err(error::bad_response("Invalid response header"));
+    }
+    let mut lines = text
+      .split(|byte| *byte == LF)
+      .map(|line| line.strip_suffix(&[CR]).unwrap_or(line));
+    let status_line = lines
+      .next()
       .ok_or(error::bad_response("Response not have status line"))?;
+    let status_line = std::str::from_utf8(status_line).map_err(error::response)?;
     let status_parts: Vec<&str> = status_line.splitn(3, " ").collect();
 
     let http_version = status_parts
@@ -210,24 +209,21 @@ impl Parser {
       .code(status_code)
       .reason(reason);
 
-    for header_line in parts
-      .iter()
-      .skip(1)
-      .map(|part| part.trim_end_matches('\r'))
-      .filter(|part| !part.is_empty())
-    {
-      if !header_line.contains(':') {
+    let mut headers = Vec::new();
+    for line in lines.filter(|line| !line.is_empty()) {
+      if matches!(line.first(), Some(b' ' | b'\t')) {
         return Err(error::bad_response("Invalid response header"));
       }
+      let Some(colon) = line.iter().position(|byte| *byte == b':') else {
+        return Err(error::bad_response("Invalid response header"));
+      };
+      let (name, value) = line.split_at(colon);
+      let value = &value[1..];
+      headers.push(Header::from_http1(
+        decode_http1_text(name),
+        decode_http1_text(value),
+      ));
     }
-
-    let headers = parts
-      .iter()
-      .enumerate()
-      .filter(|(ix, _)| *ix > 0)
-      .filter(|(_, v)| !v.is_empty())
-      .flat_map(|(_, v)| v.into_headers())
-      .collect::<Vec<Header>>();
 
     let cookies: Vec<Cookie> = headers
       .iter()
@@ -262,6 +258,21 @@ impl Parser {
     response.body(body);
     Ok(())
   }
+}
+
+fn has_only_crlf_line_breaks(bytes: &[u8]) -> bool {
+  for (index, byte) in bytes.iter().enumerate() {
+    match *byte {
+      b'\r' if bytes.get(index + 1) != Some(&LF) => return false,
+      b'\n' if index == 0 || bytes.get(index - 1) != Some(&CR) => return false,
+      _ => {}
+    }
+  }
+  true
+}
+
+fn decode_http1_text(bytes: &[u8]) -> String {
+  bytes.iter().map(|byte| *byte as char).collect()
 }
 
 fn response_status_has_no_body(status_code: u32) -> bool {

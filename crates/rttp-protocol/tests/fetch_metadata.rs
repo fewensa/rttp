@@ -18,7 +18,7 @@ fn fetch_metadata_parses_standard_browser_values() {
     SecFetchDest::parse("image").expect("valid Sec-Fetch-Dest")
   );
   assert_eq!(
-    SecFetchUser::Activated,
+    SecFetchUser,
     SecFetchUser::parse("?1").expect("valid Sec-Fetch-User")
   );
 }
@@ -28,7 +28,7 @@ fn fetch_metadata_serializes_standard_browser_values() {
   assert_eq!("cross-site", SecFetchSite::CrossSite.header_value());
   assert_eq!("no-cors", SecFetchMode::NoCors.header_value());
   assert_eq!("empty", SecFetchDest::Empty.header_value());
-  assert_eq!("?1", SecFetchUser::Activated.header_value());
+  assert_eq!("?1", SecFetchUser.header_value());
 }
 
 #[test]

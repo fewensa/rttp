@@ -3,9 +3,9 @@ use std::time::{Duration, UNIX_EPOCH};
 use rttp::server::{
   HttpAccept, HttpAcceptCh, HttpAcceptRanges, HttpAllowedMethods, HttpAuthorization, HttpByteRange,
   HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata, HttpContentDisposition,
-  HttpContentLanguages, HttpContentSecurityPolicy, HttpContentType, HttpCriticalCh, HttpDigest,
-  HttpEntityTag, HttpExpectations, HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome,
-  HttpLinkValues, HttpPermissionsPolicy, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
+  HttpContentLanguages, HttpContentSecurityPolicy, HttpContentType, HttpCriticalCh, HttpEntityTag,
+  HttpExpectations, HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome, HttpLinkValues,
+  HttpPermissionsPolicy, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
   HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
   HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming,
   HttpVary,
@@ -145,8 +145,11 @@ fn response_www_authenticate_helper_validates_and_preserves_raw_headers() {
 }
 
 #[test]
-fn response_digest_helpers_format_and_preserve_recoverable_metadata_errors() {
+fn response_digest_helpers_declare_multiple_algorithms_and_replace_raw_fields() {
   let response = HttpResponse::ok("body")
+    .header("Content-Digest", "sha-256=:b2xk:")
+    .header("Content-Digest", "sha-512=:b2xk:")
+    .header("Repr-Digest", "sha-256=:b2xk:")
     .with_digest("sha-256=:YWJj:, sha-512=:ZGVm:")
     .expect("Digest should be accepted")
     .with_repr_digest("sha-256=:Z2hp:")
@@ -170,21 +173,48 @@ fn response_digest_helpers_format_and_preserve_recoverable_metadata_errors() {
       .map(|entry| entry.value())
   );
   let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert_eq!(1, serialized.matches("\r\nContent-Digest: ").count());
+  assert_eq!(1, serialized.matches("\r\nRepr-Digest: ").count());
   assert!(serialized.contains("\r\nContent-Digest: sha-256=:YWJj:, sha-512=:ZGVm:\r\n"));
   assert!(serialized.contains("\r\nRepr-Digest: sha-256=:Z2hp:\r\n"));
+}
+
+#[test]
+fn response_digest_helpers_reject_invalid_raw_fields_without_mutating_them() {
+  for (header, value) in [
+    ("Content-Digest", "sha-256=:YWJj:, sha-256=:ZGVm:"),
+    ("Repr-Digest", "sha-256=:invalid!:"),
+  ] {
+    let raw = HttpResponse::ok("body").header(header, value);
+    let parsed = if header == "Content-Digest" {
+      raw.digest().map(|_| ())
+    } else {
+      raw.repr_digest().map(|_| ())
+    };
+    assert!(parsed.is_err());
+    assert!(String::from_utf8(raw.to_bytes())
+      .expect("response should serialize")
+      .contains(&format!("\r\n{header}: {value}\r\n")));
+  }
+
+  for header in ["Content-Digest", "Repr-Digest"] {
+    let oversized = format!("sha-256=:{}:", "A".repeat(64 * 1024));
+    let raw = HttpResponse::ok("body").header(header, &oversized);
+    let parsed = if header == "Content-Digest" {
+      raw.digest().map(|_| ())
+    } else {
+      raw.repr_digest().map(|_| ())
+    };
+    assert!(parsed.is_err());
+    assert!(String::from_utf8(raw.to_bytes())
+      .expect("response should serialize")
+      .contains(&format!("\r\n{header}: {oversized}\r\n")));
+  }
 
   assert!(HttpResponse::ok("body").with_digest("").is_err());
   assert!(HttpResponse::ok("body")
     .with_repr_digest("sha-256=:YWJj:, sha-256=:ZGVm:")
     .is_err());
-  let raw = HttpResponse::ok("body").header("Content-Digest", "sha-256=:YWJj:, sha-256=:ZGVm:");
-  assert!(raw.digest().is_err());
-  assert!(String::from_utf8(raw.to_bytes())
-    .expect("response should serialize")
-    .contains("\r\nContent-Digest: sha-256=:YWJj:, sha-256=:ZGVm:\r\n"));
-
-  let oversized = format!("sha-256=:{}:", "A".repeat(64 * 1024));
-  assert!(HttpDigest::parse(oversized).is_err());
 }
 
 #[test]
@@ -483,7 +513,7 @@ fn request_te_and_prefer_reject_invalid_or_duplicate_metadata() {
     assert!(request.te().is_err(), "TE should reject {value:?}");
     assert_eq!(Some(value), request.header("TE"));
   }
-  for value in ["return=bad value", "respond-async; wait=1"] {
+  for value in ["return=bad value", "respond-async; wait=bad value"] {
     let request = parse_request(&format!(
       "GET /metadata HTTP/1.1\r\nHost: example.test\r\nPrefer: {value}\r\n\r\n"
     ));
@@ -1944,6 +1974,53 @@ fn response_age_and_expires_helpers_declare_metadata_headers() {
     Some(expires),
     response.expires().expect("Expires should parse")
   );
+}
+
+#[test]
+fn response_sunset_helper_declares_and_parses_metadata() {
+  let sunset = UNIX_EPOCH + Duration::from_secs(784_111_777);
+  let response = HttpResponse::ok("body").with_sunset(sunset);
+
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nSunset: Sun, 06 Nov 1994 08:49:37 GMT\r\n"));
+  assert_eq!(
+    Some(sunset),
+    response.sunset().expect("Sunset should parse")
+  );
+}
+
+#[test]
+fn response_sunset_helper_replaces_existing_metadata() {
+  let initial_sunset = UNIX_EPOCH + Duration::from_secs(784_111_777);
+  let sunset = initial_sunset + Duration::from_secs(1);
+  let response = HttpResponse::ok("body")
+    .header("Sunset", httpdate::fmt_http_date(initial_sunset))
+    .with_sunset(initial_sunset)
+    .with_sunset(sunset);
+
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert_eq!(1, serialized.matches("\r\nSunset: ").count());
+  assert_eq!(
+    Some(sunset),
+    response.sunset().expect("Sunset should parse")
+  );
+}
+
+#[test]
+fn response_sunset_helper_rejects_invalid_and_duplicate_raw_values() {
+  for response in [
+    HttpResponse::ok("body").header("Sunset", "not a date"),
+    HttpResponse::ok("body")
+      .header("Sunset", "Sun, 06 Nov 1994 08:49:37 GMT")
+      .header("Sunset", "Sun, 06 Nov 1994 08:49:38 GMT"),
+  ] {
+    assert!(
+      response.sunset().is_err(),
+      "Sunset helper should reject invalid metadata"
+    );
+  }
 }
 
 #[test]

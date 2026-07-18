@@ -2359,6 +2359,52 @@ fn prior_knowledge_server_policy_advertises_and_enforces_frame_and_metadata_boun
 }
 
 #[test]
+fn prior_knowledge_server_rejects_data_accumulation_above_configured_body_limit() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_max_request_body_bytes(4)
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+  let (tx, rx) = mpsc::channel();
+
+  let handle = thread::spawn(move || {
+    server.accept_one(|request| {
+      tx.send(request.body().to_vec())
+        .expect("record unexpected handler call");
+      HttpResponse::ok("unexpected")
+    })
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  complete_h2_server_handshake_with_settings(&mut stream, &[]);
+  write_h2_frame(
+    &mut stream,
+    H2_FRAME_HEADERS,
+    H2_FLAG_END_HEADERS,
+    1,
+    &h2_post_headers(b"/upload", addr.to_string().as_bytes()),
+  );
+  write_h2_frame(&mut stream, H2_FRAME_DATA, 0, 1, b"abc");
+  write_h2_frame(&mut stream, H2_FRAME_DATA, H2_FLAG_END_STREAM, 1, b"de");
+  stream.flush().expect("flush oversized h2 request");
+  stream
+    .shutdown(std::net::Shutdown::Write)
+    .expect("shutdown h2 request write side");
+
+  let error = handle
+    .join()
+    .expect("server thread")
+    .expect_err("oversized h2 request must fail before dispatch");
+  assert_eq!(io::ErrorKind::InvalidData, error.kind());
+  assert_eq!("request body is too large", error.to_string());
+  assert!(
+    rx.try_recv().is_err(),
+    "oversized request must not reach handler"
+  );
+}
+
+#[test]
 fn prior_knowledge_server_policy_rejects_inbound_frame_exceeding_configured_max_before_handler() {
   let server = rttp::Http::server("127.0.0.1:0")
     .expect("bind server")
@@ -3877,6 +3923,37 @@ fn prior_knowledge_server_rejects_initial_settings_with_invalid_initial_window_s
     0,
     None,
   );
+}
+
+#[test]
+fn prior_knowledge_server_accepts_initial_settings_with_maximum_initial_window_size() {
+  let server = rttp::Http::server("127.0.0.1:0")
+    .expect("bind server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("server addr");
+
+  let handle =
+    thread::spawn(move || server.accept_one(|_| HttpResponse::ok("maximum initial window size")));
+
+  let mut stream = TcpStream::connect(addr).expect("connect h2 server");
+  complete_h2_server_handshake_with_settings(
+    &mut stream,
+    &h2_setting(H2_SETTINGS_INITIAL_WINDOW_SIZE, 2_147_483_647),
+  );
+  write_h2_get_request(&mut stream, addr.to_string().as_bytes()).expect("write h2 request");
+
+  let headers = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_HEADERS, headers.frame_type);
+  let body = read_h2_frame(&mut stream);
+  assert_eq!(H2_FRAME_DATA, body.frame_type);
+  assert_eq!(H2_FLAG_END_STREAM, body.flags);
+  assert_eq!(b"maximum initial window size", body.payload.as_slice());
+
+  handle
+    .join()
+    .expect("server thread")
+    .expect("server result");
 }
 
 #[test]

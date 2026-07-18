@@ -1,9 +1,18 @@
 use super::*;
 
 pub use rttp_protocol::cookie::{HttpCookiePair, HttpCookieParseError, HttpCookies};
+pub use rttp_protocol::fetch_metadata::{
+  FetchMetadataParseError as HttpFetchMetadataParseError, SecFetchDest, SecFetchMode, SecFetchSite,
+  SecFetchUser,
+};
 pub use rttp_protocol::forwarded::{
   Forwarded as HttpForwarded, ForwardedElement as HttpForwardedElement,
   ForwardedParameter as HttpForwardedParameter, ForwardedParseError as HttpForwardedParseError,
+};
+pub use rttp_protocol::prefer::{
+  Prefer as HttpRequestPreferences, PreferParseError as HttpPreferParseError,
+  Preference as HttpPreference, PreferenceKind as HttpPreferenceKind,
+  PreferenceParameter as HttpPreferenceParameter,
 };
 pub use rttp_protocol::trailer::{
   Trailer as HttpTrailer, TrailerParseError as HttpTrailerParseError,
@@ -112,9 +121,6 @@ impl fmt::Display for HttpExpectParseError {
 impl Error for HttpExpectParseError {}
 
 pub(crate) const MAX_AUTHORIZATION_VALUE_BYTES: usize = 64 * 1024;
-const MAX_PREFER_FIELD_BYTES: usize = 64 * 1024;
-const MAX_PREFER_VALUE_BYTES: usize = 8 * 1024;
-const MAX_PREFERENCES: usize = 32;
 
 /// Typed, bounded `Authorization` request metadata.
 ///
@@ -128,28 +134,31 @@ pub struct HttpAuthorization {
 
 impl HttpAuthorization {
   pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpAuthorizationParseError> {
-    let value = value.as_ref();
+    Self::parse_header(value.as_ref(), "Authorization")
+  }
+
+  fn parse_header(value: &str, header_name: &str) -> Result<Self, HttpAuthorizationParseError> {
     if value.len() > MAX_AUTHORIZATION_VALUE_BYTES {
-      return Err(HttpAuthorizationParseError::new(
-        "Authorization header value is too large",
-      ));
+      return Err(HttpAuthorizationParseError::new(format!(
+        "{header_name} header value is too large"
+      )));
     }
     let Some(separator) = value.bytes().position(|byte| byte == b' ' || byte == b'\t') else {
-      return Err(HttpAuthorizationParseError::new(
-        "Authorization header requires credentials",
-      ));
+      return Err(HttpAuthorizationParseError::new(format!(
+        "{header_name} header requires credentials"
+      )));
     };
     let scheme = &value[..separator];
     let credentials = value[separator..].trim_matches([' ', '\t']);
     if !is_http_token(scheme) {
-      return Err(HttpAuthorizationParseError::new(
-        "invalid Authorization authentication scheme",
-      ));
+      return Err(HttpAuthorizationParseError::new(format!(
+        "invalid {header_name} authentication scheme"
+      )));
     }
     if credentials.is_empty() || !credentials.bytes().all(is_header_value_byte) {
-      return Err(HttpAuthorizationParseError::new(
-        "invalid Authorization credentials",
-      ));
+      return Err(HttpAuthorizationParseError::new(format!(
+        "invalid {header_name} credentials"
+      )));
     }
     Ok(Self {
       scheme: scheme.to_string(),
@@ -302,6 +311,38 @@ impl Request {
     HttpRequestCacheControl::parse_values(values).map(Some)
   }
 
+  /// Parses received `Sec-Fetch-Site` metadata without enforcing browser policy.
+  pub fn sec_fetch_site(&self) -> Result<Option<SecFetchSite>, HttpFetchMetadataParseError> {
+    rttp_protocol::fetch_metadata::parse_optional_value(
+      self.headers_named("Sec-Fetch-Site"),
+      "Sec-Fetch-Site",
+    )
+  }
+
+  /// Parses received `Sec-Fetch-Mode` metadata without enforcing browser policy.
+  pub fn sec_fetch_mode(&self) -> Result<Option<SecFetchMode>, HttpFetchMetadataParseError> {
+    rttp_protocol::fetch_metadata::parse_optional_value(
+      self.headers_named("Sec-Fetch-Mode"),
+      "Sec-Fetch-Mode",
+    )
+  }
+
+  /// Parses received `Sec-Fetch-Dest` metadata without enforcing browser policy.
+  pub fn sec_fetch_dest(&self) -> Result<Option<SecFetchDest>, HttpFetchMetadataParseError> {
+    rttp_protocol::fetch_metadata::parse_optional_value(
+      self.headers_named("Sec-Fetch-Dest"),
+      "Sec-Fetch-Dest",
+    )
+  }
+
+  /// Parses received `Sec-Fetch-User` metadata without enforcing browser policy.
+  pub fn sec_fetch_user(&self) -> Result<Option<SecFetchUser>, HttpFetchMetadataParseError> {
+    rttp_protocol::fetch_metadata::parse_optional_value(
+      self.headers_named("Sec-Fetch-User"),
+      "Sec-Fetch-User",
+    )
+  }
+
   /// Parses exactly one bounded `Authorization` field as opaque typed
   /// metadata. Duplicate fields are rejected to avoid ambiguous credentials.
   pub fn authorization(&self) -> Result<Option<HttpAuthorization>, HttpAuthorizationParseError> {
@@ -315,6 +356,23 @@ impl Request {
       ));
     }
     HttpAuthorization::parse(value).map(Some)
+  }
+
+  /// Parses exactly one bounded `Proxy-Authorization` field as opaque typed
+  /// metadata. Duplicate fields are rejected to avoid ambiguous credentials.
+  pub fn proxy_authorization(
+    &self,
+  ) -> Result<Option<HttpAuthorization>, HttpAuthorizationParseError> {
+    let mut values = self.headers_named("Proxy-Authorization");
+    let Some(value) = values.next() else {
+      return Ok(None);
+    };
+    if values.next().is_some() {
+      return Err(HttpAuthorizationParseError::new(
+        "duplicate Proxy-Authorization headers",
+      ));
+    }
+    HttpAuthorization::parse_header(value, "Proxy-Authorization").map(Some)
   }
 
   /// Parses request `Cookie` pairs as bounded opaque metadata without applying
@@ -461,6 +519,7 @@ impl Request {
 
   pub(crate) fn read_next_from_with_continue<S>(
     reader: &mut BufReader<S>,
+    max_request_body_bytes: usize,
   ) -> io::Result<Option<Self>>
   where
     S: Read + Write,
@@ -526,11 +585,11 @@ impl Request {
               return Ok(Some(Self::from_head_and_body(head, Vec::new())));
             }
             RequestBodyKind::ContentLength(content_length) => {
-              reject_oversized_request_body(content_length)?;
+              reject_oversized_request_body(content_length, max_request_body_bytes)?;
               body_kind = Some(RequestBodyKind::ContentLength(content_length));
             }
             RequestBodyKind::Chunked => {
-              let chunked = read_chunked_request_body(reader)?;
+              let chunked = read_chunked_request_body(reader, max_request_body_bytes)?;
               return Ok(Some(Self::from_head_body_and_trailers(
                 head,
                 chunked.body,
@@ -551,11 +610,12 @@ impl Request {
 
   pub(crate) fn read_next_head_from_with_continue<S>(
     reader: &mut BufReader<S>,
+    max_request_body_bytes: usize,
   ) -> io::Result<Option<(Self, RequestBodyKind)>>
   where
     S: Read + Write,
   {
-    Self::read_next_head_and_body_kind_from_with_continue(reader)?
+    Self::read_next_head_and_body_kind_from_with_continue(reader, max_request_body_bytes)?
       .map_or(Ok(None), |(head, kind)| {
         Ok(Some((Self::from_head_and_body(head, Vec::new()), kind)))
       })
@@ -563,6 +623,7 @@ impl Request {
 
   pub(crate) fn read_next_head_and_body_kind_from_with_continue<S>(
     reader: &mut BufReader<S>,
+    max_request_body_bytes: usize,
   ) -> io::Result<Option<(RequestHead, RequestBodyKind)>>
   where
     S: Read + Write,
@@ -593,7 +654,7 @@ impl Request {
           let body_kind = request_body_kind(&head.headers)?;
           match body_kind {
             RequestBodyKind::ContentLength(content_length) => {
-              reject_oversized_request_body(content_length)?;
+              reject_oversized_request_body(content_length, max_request_body_bytes)?;
             }
             RequestBodyKind::Chunked => {}
           }
@@ -674,11 +735,11 @@ impl Request {
               return Ok(Some(Self::from_head_and_body(head, Vec::new())));
             }
             RequestBodyKind::ContentLength(content_length) => {
-              reject_oversized_request_body(content_length)?;
+              reject_oversized_request_body(content_length, MAX_REQUEST_BODY_BYTES)?;
               body_kind = Some(RequestBodyKind::ContentLength(content_length));
             }
             RequestBodyKind::Chunked => {
-              let chunked = read_chunked_request_body(reader)?;
+              let chunked = read_chunked_request_body(reader, MAX_REQUEST_BODY_BYTES)?;
               return Ok(Some(Self::from_head_body_and_trailers(
                 head,
                 chunked.body,
@@ -705,7 +766,7 @@ impl Request {
     let body_start = header_end + 4;
     let body = match request_body_kind(&head.headers)? {
       RequestBodyKind::ContentLength(content_length) => {
-        reject_oversized_request_body(content_length)?;
+        reject_oversized_request_body(content_length, MAX_REQUEST_BODY_BYTES)?;
         let body_end = checked_request_message_len(header_end, content_length)?;
 
         if raw.len() < body_end {
@@ -912,117 +973,14 @@ pub struct HttpMaxForwardsParseError {
   message: String,
 }
 
-/// A validated `Prefer` item received on an HTTP request.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HttpPreference {
-  name: String,
-  value: Option<String>,
-}
-
-impl HttpPreference {
-  pub fn name(&self) -> &str {
-    &self.name
-  }
-
-  pub fn value(&self) -> Option<&str> {
-    self.value.as_deref()
-  }
-}
-
-/// Bounded `Prefer` request metadata.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HttpRequestPreferences {
-  preferences: Vec<HttpPreference>,
-}
-
-impl HttpRequestPreferences {
-  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpPreferParseError> {
-    parse_prefer_values([value.as_ref()])?
-      .ok_or_else(|| HttpPreferParseError::new("invalid Prefer preference"))
-  }
-
-  pub fn preferences(&self) -> &[HttpPreference] {
-    &self.preferences
-  }
-
-  pub fn len(&self) -> usize {
-    self.preferences.len()
-  }
-
-  pub fn is_empty(&self) -> bool {
-    self.preferences.is_empty()
-  }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HttpPreferParseError {
-  message: String,
-}
-
-impl HttpPreferParseError {
-  fn new(message: impl Into<String>) -> Self {
-    Self {
-      message: message.into(),
-    }
-  }
-}
-
-impl fmt::Display for HttpPreferParseError {
-  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    formatter.write_str(&self.message)
-  }
-}
-
-impl Error for HttpPreferParseError {}
-
 fn parse_prefer_values<'a>(
   values: impl IntoIterator<Item = &'a str>,
 ) -> Result<Option<HttpRequestPreferences>, HttpPreferParseError> {
-  let mut preferences = Vec::new();
-  for value in values {
-    if value.len() > MAX_PREFER_FIELD_BYTES {
-      return Err(HttpPreferParseError::new(
-        "Prefer header value is too large",
-      ));
-    }
-    for member in value.split(',') {
-      let (name, preference_value) = parse_prefer_member(member)?;
-      if preferences
-        .iter()
-        .any(|known: &HttpPreference| known.name.eq_ignore_ascii_case(name))
-      {
-        return Err(HttpPreferParseError::new("duplicate Prefer preference"));
-      }
-      if preferences.len() >= MAX_PREFERENCES {
-        return Err(HttpPreferParseError::new("too many Prefer preferences"));
-      }
-      preferences.push(HttpPreference {
-        name: name.to_string(),
-        value: preference_value.map(ToString::to_string),
-      });
-    }
+  let values: Vec<&str> = values.into_iter().collect();
+  if values.is_empty() {
+    return Ok(None);
   }
-  if preferences.is_empty() {
-    return Err(HttpPreferParseError::new("invalid Prefer preference"));
-  }
-  Ok(Some(HttpRequestPreferences { preferences }))
-}
-
-fn parse_prefer_member(member: &str) -> Result<(&str, Option<&str>), HttpPreferParseError> {
-  let (name, value) = member
-    .trim()
-    .split_once('=')
-    .map_or((member.trim(), None), |(name, value)| {
-      (name.trim(), Some(value.trim()))
-    });
-  if !is_http_token(name)
-    || (name.eq_ignore_ascii_case("wait")
-      && !value.is_some_and(|value| value.bytes().all(|byte| byte.is_ascii_digit())))
-    || value.is_some_and(|value| value.len() > MAX_PREFER_VALUE_BYTES || !is_http_token(value))
-  {
-    return Err(HttpPreferParseError::new("invalid Prefer preference"));
-  }
-  Ok((name, value))
+  HttpRequestPreferences::parse_values(values).map(Some)
 }
 impl HttpMaxForwardsParseError {
   fn new(message: impl Into<String>) -> Self {
@@ -1950,7 +1908,8 @@ impl HttpRequest {
 
     let body = match request_body_kind(&head.headers).map_err(HttpParseError::from_io_error)? {
       RequestBodyKind::ContentLength(content_length) => {
-        reject_oversized_request_body(content_length).map_err(HttpParseError::from_io_error)?;
+        reject_oversized_request_body(content_length, MAX_REQUEST_BODY_BYTES)
+          .map_err(HttpParseError::from_io_error)?;
         if body_bytes.len() != content_length {
           return Err(HttpParseError::new(
             "request body length does not match Content-Length",
@@ -1960,8 +1919,8 @@ impl HttpRequest {
       }
       RequestBodyKind::Chunked => {
         let mut reader = Cursor::new(body_bytes);
-        let chunked =
-          read_chunked_request_body(&mut reader).map_err(HttpParseError::from_io_error)?;
+        let chunked = read_chunked_request_body(&mut reader, MAX_REQUEST_BODY_BYTES)
+          .map_err(HttpParseError::from_io_error)?;
         if reader.position() as usize != body_bytes.len() {
           return Err(HttpParseError::new(
             "request body length does not match Transfer-Encoding",
@@ -2092,6 +2051,27 @@ impl HttpRequest {
       ));
     }
     HttpAuthorization::parse(value).map(Some)
+  }
+
+  /// Parses exactly one bounded `Proxy-Authorization` field as opaque typed
+  /// metadata. Duplicate fields are rejected to avoid ambiguous credentials.
+  pub fn proxy_authorization(
+    &self,
+  ) -> Result<Option<HttpAuthorization>, HttpAuthorizationParseError> {
+    let mut values = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Proxy-Authorization"))
+      .map(|header| header.value.as_str());
+    let Some(value) = values.next() else {
+      return Ok(None);
+    };
+    if values.next().is_some() {
+      return Err(HttpAuthorizationParseError::new(
+        "duplicate Proxy-Authorization headers",
+      ));
+    }
+    HttpAuthorization::parse_header(value, "Proxy-Authorization").map(Some)
   }
 
   /// Parses request `Cookie` pairs as bounded opaque metadata without applying

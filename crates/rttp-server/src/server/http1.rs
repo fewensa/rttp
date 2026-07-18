@@ -11,13 +11,19 @@ pub struct RequestBodyReader<'a, R: BufRead> {
   pub(crate) chunk_remaining: usize,
   pub(crate) chunk_needs_crlf: bool,
   pub(crate) body_bytes_read: usize,
+  pub(crate) max_request_body_bytes: usize,
   pub(crate) trailers: Vec<(String, String)>,
   pub(crate) eof: bool,
   pub(crate) normalize_timeouts: bool,
 }
 
 impl<'a, R: BufRead> RequestBodyReader<'a, R> {
-  pub(crate) fn new(reader: &'a mut R, kind: RequestBodyKind, normalize_timeouts: bool) -> Self {
+  pub(crate) fn new(
+    reader: &'a mut R,
+    kind: RequestBodyKind,
+    max_request_body_bytes: usize,
+    normalize_timeouts: bool,
+  ) -> Self {
     let remaining = match kind {
       RequestBodyKind::ContentLength(length) => length,
       RequestBodyKind::Chunked => 0,
@@ -29,6 +35,7 @@ impl<'a, R: BufRead> RequestBodyReader<'a, R> {
       chunk_remaining: 0,
       chunk_needs_crlf: false,
       body_bytes_read: 0,
+      max_request_body_bytes,
       trailers: Vec::new(),
       eof: matches!(kind, RequestBodyKind::ContentLength(0)),
       normalize_timeouts,
@@ -69,22 +76,38 @@ impl<'a, R: BufRead> RequestBodyReader<'a, R> {
     }
 
     if self.chunk_needs_crlf {
-      consume_crlf(self.reader, &mut self.body_bytes_read)
-        .map_err(|err| self.normalize_error(err))?;
+      consume_crlf(
+        self.reader,
+        &mut self.body_bytes_read,
+        self.max_request_body_bytes,
+      )
+      .map_err(|err| self.normalize_error(err))?;
       self.chunk_needs_crlf = false;
     }
 
     while self.chunk_remaining == 0 {
-      let line = read_bounded_crlf_line(self.reader, &mut self.body_bytes_read)
-        .map_err(|err| self.normalize_error(err))?;
+      let line = read_bounded_crlf_line(
+        self.reader,
+        &mut self.body_bytes_read,
+        self.max_request_body_bytes,
+      )
+      .map_err(|err| self.normalize_error(err))?;
       let chunk_size = parse_chunk_size(&line)?;
       if chunk_size == 0 {
-        self.trailers = read_trailers(self.reader, &mut self.body_bytes_read)
-          .map_err(|err| self.normalize_error(err))?;
+        self.trailers = read_trailers(
+          self.reader,
+          &mut self.body_bytes_read,
+          self.max_request_body_bytes,
+        )
+        .map_err(|err| self.normalize_error(err))?;
         self.eof = true;
         return Ok(0);
       }
-      add_request_body_bytes(&mut self.body_bytes_read, chunk_size)?;
+      add_request_body_bytes(
+        &mut self.body_bytes_read,
+        chunk_size,
+        self.max_request_body_bytes,
+      )?;
       self.chunk_remaining = chunk_size;
     }
 
@@ -139,8 +162,11 @@ pub(crate) fn reject_oversized_request_head(length: usize) -> io::Result<()> {
   }
 }
 
-pub(crate) fn reject_oversized_request_body(length: usize) -> io::Result<()> {
-  if length > MAX_REQUEST_BODY_BYTES {
+pub(crate) fn reject_oversized_request_body(
+  length: usize,
+  max_request_body_bytes: usize,
+) -> io::Result<()> {
+  if length > max_request_body_bytes {
     Err(io::Error::new(
       io::ErrorKind::InvalidData,
       "request body is too large",
@@ -195,8 +221,7 @@ pub(crate) struct ChunkedRequestBody {
 }
 
 pub(crate) fn parse_request_head(raw: &[u8]) -> io::Result<RequestHead> {
-  let text = std::str::from_utf8(raw)
-    .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "request head is not UTF-8"))?;
+  let text = decode_http1_text(raw);
   let mut lines = text.split("\r\n");
   let request_line = lines
     .next()
@@ -230,6 +255,10 @@ pub(crate) fn parse_request_head(raw: &[u8]) -> io::Result<RequestHead> {
     version: version.to_string(),
     headers,
   })
+}
+
+fn decode_http1_text(bytes: &[u8]) -> String {
+  bytes.iter().map(|byte| *byte as char).collect()
 }
 
 pub(crate) fn validate_request_line(method: &str, target: &str, version: &str) -> io::Result<()> {
@@ -429,7 +458,10 @@ pub(crate) fn parse_header_lines_with_error<'a>(
         invalid_line_error,
       ));
     }
-    headers.push((name.trim().to_string(), value.trim().to_string()));
+    headers.push((
+      name.trim_matches([' ', '\t']).to_string(),
+      value.trim_matches([' ', '\t']).to_string(),
+    ));
   }
 
   Ok(headers)
@@ -558,7 +590,10 @@ pub(crate) fn request_body_kind(headers: &[(String, String)]) -> io::Result<Requ
   }
 }
 
-pub(crate) fn read_chunked_request_body<R>(reader: &mut R) -> io::Result<ChunkedRequestBody>
+pub(crate) fn read_chunked_request_body<R>(
+  reader: &mut R,
+  max_request_body_bytes: usize,
+) -> io::Result<ChunkedRequestBody>
 where
   R: BufRead,
 {
@@ -566,15 +601,15 @@ where
   let mut body_bytes_read = 0;
 
   loop {
-    let line = read_bounded_crlf_line(reader, &mut body_bytes_read)?;
+    let line = read_bounded_crlf_line(reader, &mut body_bytes_read, max_request_body_bytes)?;
     let chunk_size = parse_chunk_size(&line)?;
 
     if chunk_size == 0 {
-      let trailers = read_trailers(reader, &mut body_bytes_read)?;
+      let trailers = read_trailers(reader, &mut body_bytes_read, max_request_body_bytes)?;
       return Ok(ChunkedRequestBody { body, trailers });
     }
 
-    add_request_body_bytes(&mut body_bytes_read, chunk_size)?;
+    add_request_body_bytes(&mut body_bytes_read, chunk_size, max_request_body_bytes)?;
 
     let copied = {
       let mut chunk_reader = reader.take(chunk_size as u64);
@@ -587,26 +622,31 @@ where
         "incomplete chunked request body",
       ));
     };
-    consume_crlf(reader, &mut body_bytes_read)?;
+    consume_crlf(reader, &mut body_bytes_read, max_request_body_bytes)?;
   }
 }
 
-pub(crate) fn add_request_body_bytes(total: &mut usize, length: usize) -> io::Result<()> {
+pub(crate) fn add_request_body_bytes(
+  total: &mut usize,
+  length: usize,
+  max_request_body_bytes: usize,
+) -> io::Result<()> {
   *total = total
     .checked_add(length)
     .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "request body is too large"))?;
-  reject_oversized_request_body(*total)
+  reject_oversized_request_body(*total, max_request_body_bytes)
 }
 
 pub(crate) fn read_bounded_crlf_line<R>(
   reader: &mut R,
   body_bytes_read: &mut usize,
+  max_request_body_bytes: usize,
 ) -> io::Result<Vec<u8>>
 where
   R: BufRead,
 {
   let mut line = Vec::new();
-  let remaining = MAX_REQUEST_BODY_BYTES
+  let remaining = max_request_body_bytes
     .checked_sub(*body_bytes_read)
     .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "request body is too large"))?;
   let read = {
@@ -619,7 +659,7 @@ where
       "incomplete chunked request body",
     ));
   }
-  add_request_body_bytes(body_bytes_read, read)?;
+  add_request_body_bytes(body_bytes_read, read, max_request_body_bytes)?;
   if line.ends_with(b"\r\n") {
     Ok(line)
   } else {
@@ -634,11 +674,15 @@ pub(crate) fn parse_chunk_size(line: &[u8]) -> io::Result<usize> {
   parse_protocol_chunk_size(line).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
-pub(crate) fn consume_crlf<R>(reader: &mut R, body_bytes_read: &mut usize) -> io::Result<()>
+pub(crate) fn consume_crlf<R>(
+  reader: &mut R,
+  body_bytes_read: &mut usize,
+  max_request_body_bytes: usize,
+) -> io::Result<()>
 where
   R: BufRead,
 {
-  add_request_body_bytes(body_bytes_read, 2)?;
+  add_request_body_bytes(body_bytes_read, 2, max_request_body_bytes)?;
   let mut suffix = [0u8; 2];
   reader.read_exact(&mut suffix).map_err(|err| {
     if err.kind() == io::ErrorKind::UnexpectedEof {
@@ -663,6 +707,7 @@ where
 pub(crate) fn read_trailers<R>(
   reader: &mut R,
   body_bytes_read: &mut usize,
+  max_request_body_bytes: usize,
 ) -> io::Result<Vec<(String, String)>>
 where
   R: BufRead,
@@ -670,7 +715,7 @@ where
   let mut lines = Vec::new();
 
   loop {
-    let line = read_bounded_crlf_line(reader, body_bytes_read)?;
+    let line = read_bounded_crlf_line(reader, body_bytes_read, max_request_body_bytes)?;
     if line == b"\r\n" {
       return parse_trailer_lines(lines.iter().map(String::as_str));
     }
@@ -825,6 +870,14 @@ pub(crate) fn is_expectation_failed_error(err: &io::Error) -> bool {
 
 pub(crate) fn bad_request_response() -> HttpResponse {
   HttpResponse::new(400, "Bad Request").body("Bad Request")
+}
+
+pub(crate) fn is_payload_too_large_error(err: &io::Error) -> bool {
+  err.kind() == io::ErrorKind::InvalidData && err.to_string() == "request body is too large"
+}
+
+pub(crate) fn payload_too_large_response() -> HttpResponse {
+  HttpResponse::new(413, "Payload Too Large").body("Payload Too Large")
 }
 
 pub(crate) fn expectation_failed_response() -> HttpResponse {

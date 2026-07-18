@@ -1951,7 +1951,7 @@ pub(crate) fn read_http2_response_flow_control_frame<S: Read + Write>(
           .len()
           .checked_add(data_payload.len())
           .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "request body is too large"))?;
-        reject_oversized_request_body(new_len)?;
+        reject_oversized_request_body(new_len, MAX_REQUEST_BODY_BYTES)?;
         request_stream.body.extend_from_slice(data_payload);
         if !frame.payload.is_empty() {
           write_http2_window_update(stream, 0, frame.payload.len())?;

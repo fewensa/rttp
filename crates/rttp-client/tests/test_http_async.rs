@@ -1214,6 +1214,23 @@ fn test_async_auto_redirect() {
   });
 }
 
+#[test]
+#[cfg(feature = "async")]
+fn test_async_redirect_is_not_followed_by_default() {
+  let (addr, _handle) = support::spawn_redirect_server();
+  block_on(async {
+    let response = client()
+      .get()
+      .url(format!("http://{}/", addr))
+      .rasync()
+      .await
+      .expect("default redirect policy should return the redirect response");
+
+    assert_eq!(302, response.code());
+    assert!(response.is_redirect());
+  });
+}
+
 #[cfg(feature = "async")]
 async fn assert_async_redirect_resolves_to_target<F>(location: F, expected_target: &str)
 where

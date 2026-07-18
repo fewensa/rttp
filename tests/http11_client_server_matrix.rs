@@ -12,7 +12,7 @@ use rttp_client::HttpClient;
 use rttp_server::server::{
   HttpByteRange, HttpByteRangeError, HttpConditionalMetadata, HttpConditionalRequestOutcome,
   HttpContentDisposition, HttpContentType, HttpEntityTag, HttpIfRangeRequestOutcome, HttpResponse,
-  Request,
+  Request, SecFetchDest, SecFetchMode, SecFetchSite,
 };
 use rttp_test_support as fixtures;
 
@@ -493,6 +493,161 @@ fn spawn_metadata_response_server(
   });
 
   (addr, handle)
+}
+
+#[test]
+fn sync_client_sec_fetch_metadata_is_observed_by_server_helpers() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Sec-Fetch metadata server");
+  let addr = server.local_addr().expect("Sec-Fetch metadata server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send((
+            request.sec_fetch_site(),
+            request.sec_fetch_mode(),
+            request.sec_fetch_dest(),
+            request.sec_fetch_user(),
+          ))
+          .expect("send observed Sec-Fetch metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve Sec-Fetch metadata request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/sec-fetch-metadata"))
+    .sec_fetch_site(SecFetchSite::SameOrigin)
+    .sec_fetch_mode(SecFetchMode::Navigate)
+    .sec_fetch_dest(SecFetchDest::Document)
+    .sec_fetch_user()
+    .emit()
+    .expect("Sec-Fetch metadata request should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  let (site, mode, dest, user) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe Sec-Fetch metadata");
+  assert_eq!(
+    Some(SecFetchSite::SameOrigin),
+    site.expect("Sec-Fetch-Site should parse")
+  );
+  assert_eq!(
+    Some(SecFetchMode::Navigate),
+    mode.expect("Sec-Fetch-Mode should parse")
+  );
+  assert_eq!(
+    Some(SecFetchDest::Document),
+    dest.expect("Sec-Fetch-Dest should parse")
+  );
+  assert!(user.expect("Sec-Fetch-User should parse").is_some());
+
+  handle.join().expect("Sec-Fetch metadata server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_bounded_authentication_metadata() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind authentication server");
+  let addr = server.local_addr().expect("authentication server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let authorization = request
+          .authorization()
+          .expect("Authorization should parse")
+          .map(|value| (value.scheme().to_string(), value.credentials().to_string()));
+        let proxy_authorization = request
+          .proxy_authorization()
+          .expect("Proxy-Authorization should parse")
+          .map(|value| (value.scheme().to_string(), value.credentials().to_string()));
+        observed_tx
+          .send((authorization, proxy_authorization))
+          .expect("send observed authentication metadata");
+        HttpResponse::new(401, "Unauthorized")
+          .header("WWW-Authenticate", "Broken")
+          .with_www_authenticate("Basic realm=\"private\", Bearer")
+          .expect("WWW-Authenticate declaration should parse")
+      })
+      .expect("serve authentication request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/authentication"))
+    .header(("Authorization", "Bearer origin-token"))
+    .header(("Proxy-Authorization", "Basic cHJveHk6c2VjcmV0"))
+    .emit()
+    .expect("authentication response should parse");
+
+  let (authorization, proxy_authorization) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe authentication metadata");
+  assert_eq!(
+    Some(("Bearer".to_string(), "origin-token".to_string())),
+    authorization
+  );
+  assert_eq!(
+    Some(("Basic".to_string(), "cHJveHk6c2VjcmV0".to_string())),
+    proxy_authorization
+  );
+
+  let challenges = response
+    .www_authenticate()
+    .expect("WWW-Authenticate should parse")
+    .expect("WWW-Authenticate should be present");
+  assert_eq!(2, challenges.challenges().len());
+  assert_eq!("Basic", challenges.challenges()[0].scheme());
+  assert_eq!("Bearer", challenges.challenges()[1].scheme());
+  assert_eq!(
+    Some(&"Basic realm=\"private\", Bearer".to_string()),
+    response.header_value("WWW-Authenticate")
+  );
+  handle.join().expect("authentication server thread");
+}
+
+#[test]
+fn server_sec_fetch_helpers_reject_malformed_values_without_losing_raw_headers() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind malformed Sec-Fetch metadata server");
+  let addr = server
+    .local_addr()
+    .expect("malformed Sec-Fetch metadata server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send((
+            request.header("Sec-Fetch-Site").map(str::to_string),
+            request.sec_fetch_site().is_err(),
+          ))
+          .expect("send malformed Sec-Fetch observation");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve malformed Sec-Fetch request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect malformed Sec-Fetch request");
+  stream
+    .write_all(
+      b"GET /matrix/malformed-sec-fetch HTTP/1.1\r\nHost: example.test\r\nSec-Fetch-Site: invalid\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write malformed Sec-Fetch request");
+
+  assert_eq!(
+    (Some("invalid".to_string()), true),
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe malformed Sec-Fetch metadata"),
+  );
+  handle
+    .join()
+    .expect("malformed Sec-Fetch metadata server thread");
 }
 
 fn assert_partial_response(
@@ -1472,6 +1627,35 @@ fn sync_client_parses_shared_expires_response_matrix() {
     assert_eq!("OK", response.body().string().unwrap(), "{}", case.name);
     handle.join().expect("raw response server thread");
   }
+}
+
+#[test]
+fn sync_client_reads_sunset_emitted_by_server() {
+  let sunset = UNIX_EPOCH + Duration::from_secs(784_111_777);
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Sunset response server");
+  let addr = server.local_addr().expect("Sunset response server addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| HttpResponse::ok("OK").with_sunset(sunset))
+      .expect("serve Sunset response request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/sunset"))
+    .emit()
+    .expect("Sunset response should parse");
+
+  assert_eq!(
+    Some(sunset),
+    response.sunset().expect("Sunset should parse")
+  );
+  assert_eq!(
+    Some(&"Sun, 06 Nov 1994 08:49:37 GMT".to_string()),
+    response.sunset_value()
+  );
+  handle.join().expect("Sunset response server thread");
 }
 
 #[test]
