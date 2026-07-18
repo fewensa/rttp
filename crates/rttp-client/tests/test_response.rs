@@ -1529,6 +1529,47 @@ fn test_parse_age_and_expires_response_metadata() {
 }
 
 #[test]
+fn test_parse_sunset_response_metadata_and_preserves_raw_value() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Sunset: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(
+    Some(UNIX_EPOCH + Duration::from_secs(784_111_777)),
+    response.sunset().expect("Sunset should parse")
+  );
+  assert_eq!(
+    Some(&"Sun, 06 Nov 1994 08:49:37 GMT".to_string()),
+    response.sunset_value()
+  );
+}
+
+#[test]
+fn test_parse_sunset_rejects_invalid_and_duplicate_values_without_rejecting_response() {
+  for header in [
+    "Sunset: not a date\r\n",
+    "Sunset: Sun, 06 Nov 1994 08:49:37 GMT\r\nSunset: Sun, 06 Nov 1994 08:49:38 GMT\r\n",
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\n{header}Content-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("response should remain usable");
+
+    assert!(
+      response.sunset().is_err(),
+      "Sunset helper should reject {header:?}"
+    );
+  }
+}
+
+#[test]
 fn test_parse_retry_after_response_metadata() {
   let s = concat!(
     "HTTP/1.1 503 Service Unavailable\r\n",

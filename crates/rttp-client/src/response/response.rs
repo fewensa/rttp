@@ -18,6 +18,7 @@ use crate::types::{Cookie, Header, RoUrl};
 use rttp_protocol::clear_site_data::ClearSiteData;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::cookie::HttpSetCookies;
+use rttp_protocol::sunset::parse_sunset_values;
 
 const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
@@ -219,6 +220,15 @@ impl Response {
           .map_err(|_| error::bad_response("Invalid Expires HTTP-date"))
       })
       .unwrap_or(Ok(None))
+  }
+
+  pub fn sunset_value(&self) -> Option<&String> {
+    self.header_value("sunset")
+  }
+
+  pub fn sunset(&self) -> error::Result<Option<SystemTime>> {
+    parse_sunset_values(self.header_values("sunset").into_iter().map(String::as_str))
+      .map_err(|err| error::bad_response(err.to_string()))
   }
 
   pub fn retry_after(&self) -> error::Result<Option<RetryAfter>> {
