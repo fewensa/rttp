@@ -34,7 +34,7 @@ impl Vary {
       for member in value.split(',') {
         let field_name = member.trim_matches([' ', '\t']);
         if field_name == "*" {
-          if any || field_count != 0 {
+          if field_count != 0 {
             return Err(VaryParseError::new("invalid Vary field name"));
           }
           any = true;

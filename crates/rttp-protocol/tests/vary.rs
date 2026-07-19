@@ -10,6 +10,24 @@ fn vary_parses_wildcard() {
 }
 
 #[test]
+fn vary_deduplicates_wildcards_across_values() {
+  let vary = Vary::parse_values(["*", "*"]).expect("duplicate wildcard Vary");
+
+  assert!(vary.is_any());
+  assert_eq!(Vec::<&str>::new(), vary.field_names());
+  assert_eq!("*", vary.header_value());
+}
+
+#[test]
+fn vary_deduplicates_wildcards_in_a_comma_list() {
+  let vary = Vary::parse("*, *").expect("duplicate wildcard Vary");
+
+  assert!(vary.is_any());
+  assert_eq!(Vec::<&str>::new(), vary.field_names());
+  assert_eq!("*", vary.header_value());
+}
+
+#[test]
 fn vary_normalizes_singleton_field_names_case_insensitively() {
   let vary = Vary::parse("Accept-Language").expect("valid Vary field name");
 
