@@ -1114,11 +1114,7 @@ fn read_until_send_window_available(
       }
       (FRAME_RST_STREAM, id) if id == stream_id => {
         let error_code = rst_stream_error_code(&frame)?;
-        return Err(error::bad_response(format!(
-          "HTTP/2 stream received RST_STREAM error code {} ({})",
-          error_code,
-          http2_error_code_name(error_code),
-        )));
+        return Err(response_stream_reset_error(error_code, false));
       }
       (FRAME_RST_STREAM, _) => {
         rst_stream_error_code(&frame)?;
@@ -1501,6 +1497,9 @@ fn read_single_stream_response_with_first_frame(
         Err(err) if pending_header_block.is_some() && is_unexpected_eof(&err) => {
           return Err(error::bad_response("incomplete HTTP/2 header block"));
         }
+        Err(err) if is_unexpected_eof(&err) => {
+          return Err(response_connection_abort_error(response_body_started));
+        }
         Err(err) => return Err(err),
       },
     };
@@ -1611,11 +1610,10 @@ fn read_single_stream_response_with_first_frame(
       }
       (FRAME_RST_STREAM, id) if id == stream_id => {
         let error_code = rst_stream_error_code(&frame)?;
-        return Err(error::bad_response(format!(
-          "HTTP/2 stream received RST_STREAM error code {} ({})",
+        return Err(response_stream_reset_error(
           error_code,
-          http2_error_code_name(error_code),
-        )));
+          response_body_started,
+        ));
       }
       (FRAME_RST_STREAM, _) => {
         rst_stream_error_code(&frame)?;
@@ -1802,6 +1800,32 @@ fn rst_stream_error_code(frame: &Frame) -> error::Result<u32> {
     frame.payload[2],
     frame.payload[3],
   ]))
+}
+
+fn response_stream_reset_error(error_code: u32, response_body_started: bool) -> error::Error {
+  let phase = if response_body_started {
+    "during response body"
+  } else {
+    "before response body"
+  };
+  error::bad_response(format!(
+    "HTTP/2 stream reset {}: RST_STREAM error code {} ({})",
+    phase,
+    error_code,
+    http2_error_code_name(error_code),
+  ))
+}
+
+fn response_connection_abort_error(response_body_started: bool) -> error::Error {
+  let phase = if response_body_started {
+    "during response body"
+  } else {
+    "before response body"
+  };
+  error::bad_response(format!(
+    "HTTP/2 connection aborted {} without GOAWAY or RST_STREAM",
+    phase,
+  ))
 }
 
 fn http2_error_code_name(error_code: u32) -> &'static str {
