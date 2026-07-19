@@ -1472,6 +1472,40 @@ fn test_auto_redirect_308_post_preserves_method_body_and_body_framing() {
 }
 
 #[test]
+fn test_auto_redirect_307_put_preserves_method_body_and_body_framing() {
+  let request = captured_redirected_put(307, "Temporary Redirect");
+
+  assert_eq!("PUT", request.method);
+  assert_eq!("/final?via=redirect", request.target);
+  assert_eq!(b"redirect-body", request.body.as_slice());
+  assert_eq!(
+    Some("13"),
+    request.headers.get("content-length").map(String::as_str)
+  );
+  assert_eq!(
+    Some("text/plain"),
+    request.headers.get("content-type").map(String::as_str)
+  );
+}
+
+#[test]
+fn test_auto_redirect_308_put_preserves_method_body_and_body_framing() {
+  let request = captured_redirected_put(308, "Permanent Redirect");
+
+  assert_eq!("PUT", request.method);
+  assert_eq!("/final?via=redirect", request.target);
+  assert_eq!(b"redirect-body", request.body.as_slice());
+  assert_eq!(
+    Some("13"),
+    request.headers.get("content-length").map(String::as_str)
+  );
+  assert_eq!(
+    Some("text/plain"),
+    request.headers.get("content-type").map(String::as_str)
+  );
+}
+
+#[test]
 fn test_auto_redirect_resolves_absolute_location() {
   assert_redirect_resolves_to_target(|addr| format!("http://{}/final", addr), "/final");
 }
