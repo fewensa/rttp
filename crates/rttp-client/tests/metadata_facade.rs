@@ -1,12 +1,15 @@
 use rttp_client::response::{
-  AcceptCh, AltSvc, CrossOriginResourcePolicy, Digest, HttpClearSiteData, PreferenceApplied,
-  Priority, ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Trailer,
+  AcceptCh, AccessControlExposeHeaders, AltSvc, CrossOriginResourcePolicy, Digest,
+  HttpClearSiteData, PreferenceApplied, Priority, ReferrerPolicy, ReferrerPolicyToken,
+  ServerTiming, Trailer,
 };
 use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 
 #[test]
 fn response_facade_exports_representative_bounded_metadata_types() {
   let accept_ch = AcceptCh::parse("Sec-CH-UA, DPR").expect("Accept-CH should parse");
+  let expose_headers = AccessControlExposeHeaders::parse("X-Request-Id")
+    .expect("Access-Control-Expose-Headers should parse");
   let clear_site_data =
     HttpClearSiteData::parse("\"cache\"").expect("Clear-Site-Data should parse");
   let digest = Digest::parse("sha-256=:YWJj:").expect("Digest should parse");
@@ -22,6 +25,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     CrossOriginResourcePolicy::parse("same-origin").expect("CORP should parse");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
+  assert_eq!(expose_headers.field_names(), ["x-request-id"]);
   assert_eq!(clear_site_data.directives().len(), 1);
   assert_eq!(digest.entries().len(), 1);
   assert_eq!(priority.urgency(), Some(1));

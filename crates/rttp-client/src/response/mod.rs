@@ -2,6 +2,9 @@
 
 pub use self::response::*;
 
+pub use rttp_protocol::access_control_expose_headers::{
+  AccessControlExposeHeaders, AccessControlExposeHeadersParseError,
+};
 pub use rttp_protocol::clear_site_data::{
   ClearSiteData as HttpClearSiteData, ClearSiteDataDirective as HttpClearSiteDataDirective,
   ClearSiteDataParseError as HttpClearSiteDataParseError,
