@@ -22,5 +22,6 @@ pub mod range;
 pub mod rate_limit;
 pub mod server_timing;
 pub mod sunset;
+pub mod timing_allow_origin;
 pub mod trailer;
 pub mod www_authenticate;

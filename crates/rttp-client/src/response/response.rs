@@ -20,6 +20,7 @@ use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::cookie::HttpSetCookies;
 use rttp_protocol::prefer::PreferenceApplied;
 use rttp_protocol::sunset::parse_sunset_values;
+use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
 
 const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
@@ -295,6 +296,17 @@ impl Response {
       return Ok(None);
     }
     CriticalCh::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Timing-Allow-Origin` response metadata without applying timing policy.
+  pub fn timing_allow_origin(&self) -> error::Result<Option<TimingAllowOrigin>> {
+    let values = self.header_values("timing-allow-origin");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    TimingAllowOrigin::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
