@@ -1,7 +1,7 @@
 use rttp_client::response::{
   AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType,
-  CrossOriginResourcePolicy, Digest, HttpClearSiteData, HttpSetCookies, LinkValues, Response,
-  RetryAfter, ServerTiming,
+  CrossOriginResourcePolicy, Digest, HttpClearSiteData, HttpSetCookies, LinkValues, ReferrerPolicy,
+  ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -85,6 +85,79 @@ fn clear_site_data_metadata_rejects_invalid_duplicate_and_unbounded_values() {
       .join(","),
   )
   .is_err());
+}
+
+#[test]
+fn referrer_policy_metadata_preserves_repeated_declarations_and_raw_headers() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Referrer-Policy: origin\r\n",
+      "Referrer-Policy: origin\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(
+    response
+      .referrer_policy()
+      .expect("Referrer-Policy should parse")
+      .expect("Referrer-Policy should be present")
+      .policies(),
+    &[ReferrerPolicyToken::Origin, ReferrerPolicyToken::Origin]
+  );
+  assert_eq!(
+    response.header_values("Referrer-Policy"),
+    [&"origin".to_string(), &"origin".to_string()]
+  );
+}
+
+#[test]
+fn referrer_policy_metadata_rejects_malformed_and_oversized_values_without_hiding_headers() {
+  for value in ["", "invalid", "origin,"] {
+    let response = Response::new(
+      RoUrl::with("https://example.test"),
+      format!("HTTP/1.1 200 OK\r\nReferrer-Policy: {value}\r\nContent-Length: 0\r\n\r\n")
+        .into_bytes(),
+    )
+    .expect("response should parse");
+
+    assert!(
+      response.referrer_policy().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      response.header_value("Referrer-Policy"),
+      Some(&value.to_string())
+    );
+  }
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!("HTTP/1.1 200 OK\r\nReferrer-Policy: {oversized}\r\nContent-Length: 0\r\n\r\n")
+      .into_bytes(),
+  )
+  .expect("response should parse");
+
+  assert!(response.referrer_policy().is_err());
+  assert_eq!(response.header_value("Referrer-Policy"), Some(&oversized));
+}
+
+#[test]
+fn referrer_policy_metadata_is_absent_without_a_header() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(response.referrer_policy().expect("header is absent"), None);
+  let _: Option<ReferrerPolicy> = response.referrer_policy().expect("header is absent");
 }
 
 #[test]
