@@ -19,6 +19,7 @@ mod media_type;
 pub mod prefer;
 pub mod priority;
 pub mod range;
+pub mod rate_limit;
 pub mod server_timing;
 pub mod sunset;
 pub mod trailer;
