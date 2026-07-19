@@ -27,6 +27,7 @@ impl AccessControlExposeHeaders {
   {
     let mut wildcard = false;
     let mut field_names = Vec::new();
+    let mut field_count = 0usize;
 
     for value in values {
       if value.len() > MAX_ACCESS_CONTROL_EXPOSE_HEADERS_VALUE_BYTES {
@@ -38,42 +39,27 @@ impl AccessControlExposeHeaders {
       for field_name in value.split(',') {
         let field_name = field_name.trim();
         if field_name.is_empty() {
+          continue;
+        }
+        field_count += 1;
+        if field_count > MAX_ACCESS_CONTROL_EXPOSE_HEADERS_FIELD_NAMES {
           return Err(AccessControlExposeHeadersParseError::new(
-            "invalid Access-Control-Expose-Headers field name",
+            "too many Access-Control-Expose-Headers field names",
           ));
         }
         if field_name == "*" {
-          if wildcard || !field_names.is_empty() {
-            return Err(AccessControlExposeHeadersParseError::new(
-              "Access-Control-Expose-Headers wildcard cannot be combined with field names",
-            ));
-          }
           wildcard = true;
           continue;
-        }
-        if wildcard {
-          return Err(AccessControlExposeHeadersParseError::new(
-            "Access-Control-Expose-Headers wildcard cannot be combined with field names",
-          ));
         }
         if !is_http_token(field_name) {
           return Err(AccessControlExposeHeadersParseError::new(
             "invalid Access-Control-Expose-Headers field name",
           ));
         }
-        if field_names.len() >= MAX_ACCESS_CONTROL_EXPOSE_HEADERS_FIELD_NAMES {
-          return Err(AccessControlExposeHeadersParseError::new(
-            "too many Access-Control-Expose-Headers field names",
-          ));
-        }
-
         let normalized = field_name.to_ascii_lowercase();
-        if field_names.contains(&normalized) {
-          return Err(AccessControlExposeHeadersParseError::new(
-            "duplicate Access-Control-Expose-Headers field name",
-          ));
+        if !field_names.contains(&normalized) {
+          field_names.push(normalized);
         }
-        field_names.push(normalized);
       }
     }
 
@@ -113,7 +99,11 @@ impl AccessControlExposeHeaders {
 
   pub fn header_value(&self) -> String {
     if self.wildcard {
-      "*".to_string()
+      if self.field_names.is_empty() {
+        "*".to_string()
+      } else {
+        format!("*, {}", self.field_names.join(", "))
+      }
     } else {
       self.field_names.join(", ")
     }

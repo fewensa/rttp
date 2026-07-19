@@ -24,6 +24,33 @@ fn access_control_expose_headers_accepts_wildcard() {
 }
 
 #[test]
+fn access_control_expose_headers_ignores_empty_list_elements() {
+  let expose_headers = AccessControlExposeHeaders::parse("X-Request-Id,, ETag,")
+    .expect("empty list elements should be ignored");
+
+  assert_eq!(expose_headers.field_names(), ["x-request-id", "etag"]);
+}
+
+#[test]
+fn access_control_expose_headers_preserves_wildcard_with_field_names() {
+  let expose_headers = AccessControlExposeHeaders::parse("*, X-Request-Id")
+    .expect("wildcard and field names should be preserved");
+
+  assert!(expose_headers.is_wildcard());
+  assert_eq!(expose_headers.field_names(), ["x-request-id"]);
+  assert_eq!(expose_headers.header_value(), "*, x-request-id");
+}
+
+#[test]
+fn access_control_expose_headers_deduplicates_field_names_across_header_fields() {
+  let expose_headers =
+    AccessControlExposeHeaders::parse_values(["X-Request-Id, ETag", "x-request-id, X-Request-Id"])
+      .expect("duplicate field names should be deduplicated");
+
+  assert_eq!(expose_headers.field_names(), ["x-request-id", "etag"]);
+}
+
+#[test]
 fn access_control_expose_headers_combines_multiple_header_fields() {
   let expose_headers =
     AccessControlExposeHeaders::parse_values(["X-Request-Id, ETag", "X-RateLimit-Remaining"])
@@ -36,25 +63,13 @@ fn access_control_expose_headers_combines_multiple_header_fields() {
 }
 
 #[test]
-fn access_control_expose_headers_rejects_malformed_duplicate_and_mixed_wildcard_values() {
-  for value in [
-    "",
-    "X-Request-Id,",
-    "X Request Id",
-    "X-Request-Id, x-request-id",
-    "*, X-Request-Id",
-    "X-Request-Id, *",
-    "*, *",
-  ] {
+fn access_control_expose_headers_rejects_malformed_values() {
+  for value in ["", "X Request Id"] {
     assert!(
       AccessControlExposeHeaders::parse(value).is_err(),
       "{value:?} must be rejected"
     );
   }
-
-  assert!(AccessControlExposeHeaders::parse_values(["X-Request-Id", "x-request-id"]).is_err());
-  assert!(AccessControlExposeHeaders::parse_values(["*", "X-Request-Id"]).is_err());
-  assert!(AccessControlExposeHeaders::parse_values(["X-Request-Id", "*"]).is_err());
 }
 
 #[test]
