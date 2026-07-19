@@ -1,6 +1,6 @@
 use rttp_client::response::{
-  AcceptCh, AccessControlExposeHeaders, AltSvc, Digest, HttpClearSiteData, PreferenceApplied,
-  Priority, ServerTiming, Trailer,
+  AcceptCh, AccessControlExposeHeaders, AltSvc, CrossOriginResourcePolicy, Digest,
+  HttpClearSiteData, PreferenceApplied, Priority, ServerTiming, Trailer,
 };
 use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 
@@ -20,6 +20,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
   let fetch_user = SecFetchUser::parse("?1").expect("Sec-Fetch-User should parse");
+  let cross_origin_resource_policy =
+    CrossOriginResourcePolicy::parse("same-origin").expect("CORP should parse");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
@@ -33,6 +35,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_mode.header_value(), "navigate");
   assert_eq!(fetch_dest.header_value(), "document");
   assert_eq!(fetch_user.header_value(), "?1");
+  assert_eq!(cross_origin_resource_policy.header_value(), "same-origin");
 }
 
 #[test]

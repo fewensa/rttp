@@ -19,8 +19,10 @@ use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::clear_site_data::ClearSiteData;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::cookie::HttpSetCookies;
+use rttp_protocol::cross_origin_resource_policy::CrossOriginResourcePolicy;
 use rttp_protocol::prefer::PreferenceApplied;
 use rttp_protocol::sunset::parse_sunset_values;
+use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
 
 const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
@@ -300,6 +302,17 @@ impl Response {
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
+  /// Parses bounded `Timing-Allow-Origin` response metadata without applying timing policy.
+  pub fn timing_allow_origin(&self) -> error::Result<Option<TimingAllowOrigin>> {
+    let values = self.header_values("timing-allow-origin");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    TimingAllowOrigin::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
   /// Parses bounded `Access-Control-Expose-Headers` response metadata without
   /// applying CORS exposure policy.
   pub fn access_control_expose_headers(&self) -> error::Result<Option<AccessControlExposeHeaders>> {
@@ -465,6 +478,17 @@ impl Response {
       return Ok(None);
     }
     ClearSiteData::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses `Cross-Origin-Resource-Policy` response metadata without enforcing resource isolation.
+  pub fn cross_origin_resource_policy(&self) -> error::Result<Option<CrossOriginResourcePolicy>> {
+    let values = self.header_values("cross-origin-resource-policy");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    CrossOriginResourcePolicy::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
