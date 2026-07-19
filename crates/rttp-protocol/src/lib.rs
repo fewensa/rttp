@@ -28,4 +28,5 @@ pub mod server_timing;
 pub mod sunset;
 pub mod timing_allow_origin;
 pub mod trailer;
+pub mod vary;
 pub mod www_authenticate;
