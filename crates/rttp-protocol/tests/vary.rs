@@ -46,6 +46,11 @@ fn vary_rejects_empty_members() {
 }
 
 #[test]
+fn vary_rejects_control_bytes() {
+  assert!(Vary::parse("\rAccept-Encoding").is_err());
+}
+
+#[test]
 fn vary_deduplicates_field_names_case_insensitively() {
   let vary = Vary::parse("Accept-Encoding, accept-encoding, ACCEPT-ENCODING")
     .expect("duplicate Vary field names are valid");

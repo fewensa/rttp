@@ -28,8 +28,11 @@ impl Vary {
       if value.len() > MAX_VARY_VALUE_BYTES {
         return Err(VaryParseError::new("Vary header value is too large"));
       }
+      if value.bytes().any(is_invalid_control_byte) {
+        return Err(VaryParseError::new("invalid Vary control byte"));
+      }
       for member in value.split(',') {
-        let field_name = member.trim();
+        let field_name = member.trim_matches([' ', '\t']);
         if field_name == "*" {
           if any || field_count != 0 {
             return Err(VaryParseError::new("invalid Vary field name"));
@@ -105,6 +108,10 @@ impl Error for VaryParseError {}
 
 fn is_http_token(value: &str) -> bool {
   !value.is_empty() && value.bytes().all(is_http_token_byte)
+}
+
+fn is_invalid_control_byte(byte: u8) -> bool {
+  byte != b'\t' && (byte <= 0x1f || byte == 0x7f)
 }
 
 fn is_http_token_byte(byte: u8) -> bool {
