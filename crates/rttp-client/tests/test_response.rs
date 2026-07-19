@@ -2329,7 +2329,8 @@ fn test_access_control_expose_headers_response_helper_supports_wildcard_and_abse
 }
 
 #[test]
-fn test_access_control_expose_headers_response_helper_preserves_invalid_metadata() {
+fn test_access_control_expose_headers_response_helper_deduplicates_metadata_and_preserves_raw_header(
+) {
   let raw = concat!(
     "HTTP/1.1 200 OK\r\n",
     "Access-Control-Expose-Headers: X-Request-Id, x-request-id\r\n",
@@ -2339,7 +2340,14 @@ fn test_access_control_expose_headers_response_helper_preserves_invalid_metadata
   let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
     .expect("raw response should remain usable");
 
-  assert!(response.access_control_expose_headers().is_err());
+  assert_eq!(
+    ["x-request-id"],
+    response
+      .access_control_expose_headers()
+      .expect("duplicate Access-Control-Expose-Headers should parse")
+      .expect("Access-Control-Expose-Headers should be present")
+      .field_names()
+  );
   assert_eq!(
     Some(&"X-Request-Id, x-request-id".to_string()),
     response.header_value("Access-Control-Expose-Headers")
