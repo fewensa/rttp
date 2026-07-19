@@ -383,6 +383,93 @@ fn request_exposes_bounded_range_and_conditional_metadata() {
   }
 
   #[test]
+  fn read_next_from_enforces_request_body_framing_conflict_matrix() {
+    let cases = [
+      (
+        "matching duplicate Content-Length",
+        concat!(
+          "POST /upload HTTP/1.1\r\n",
+          "Host: example.test\r\n",
+          "Content-Length: 5\r\n",
+          "Content-Length: 5\r\n",
+          "\r\n",
+          "hello"
+        )
+        .as_bytes(),
+        Ok(b"hello".as_slice()),
+      ),
+      (
+        "conflicting duplicate Content-Length",
+        concat!(
+          "POST /upload HTTP/1.1\r\n",
+          "Host: example.test\r\n",
+          "Content-Length: 5\r\n",
+          "Content-Length: 6\r\n",
+          "\r\n",
+          "hello!"
+        )
+        .as_bytes(),
+        Err("conflicting Content-Length headers"),
+      ),
+      (
+        "Transfer-Encoding with Content-Length",
+        concat!(
+          "POST /upload HTTP/1.1\r\n",
+          "Host: example.test\r\n",
+          "Transfer-Encoding: chunked\r\n",
+          "Content-Length: 0\r\n",
+          "\r\n",
+          "0\r\n\r\n"
+        )
+        .as_bytes(),
+        Err("Transfer-Encoding conflicts with Content-Length"),
+      ),
+      (
+        "empty chunked body",
+        concat!(
+          "POST /upload HTTP/1.1\r\n",
+          "Host: example.test\r\n",
+          "Transfer-Encoding: chunked\r\n",
+          "\r\n",
+          "0\r\n\r\n"
+        )
+        .as_bytes(),
+        Ok(b"".as_slice()),
+      ),
+      (
+        "malformed chunk terminator",
+        concat!(
+          "POST /upload HTTP/1.1\r\n",
+          "Host: example.test\r\n",
+          "Transfer-Encoding: chunked\r\n",
+          "\r\n",
+          "5\r\nhelloXX0\r\n\r\n"
+        )
+        .as_bytes(),
+        Err("invalid chunk terminator"),
+      ),
+    ];
+
+    for (name, raw, expected) in cases {
+      let mut reader = BufReader::new(Cursor::new(raw));
+      match expected {
+        Ok(body) => {
+          let request = Request::read_next_from(&mut reader)
+            .unwrap_or_else(|error| panic!("{name} should parse: {error}"))
+            .unwrap_or_else(|| panic!("{name} should include a request"));
+          assert_eq!(body, request.body(), "{name}");
+        }
+        Err(message) => {
+          let error = Request::read_next_from(&mut reader)
+            .expect_err("{name} should be rejected");
+          assert_eq!(io::ErrorKind::InvalidData, error.kind(), "{name}");
+          assert_eq!(message, error.to_string(), "{name}");
+        }
+      }
+    }
+  }
+
+  #[test]
   fn read_next_from_consumes_one_chunked_request_at_a_time() {
     let raw = concat!(
       "POST /first HTTP/1.1\r\n",
