@@ -12,6 +12,9 @@ pub use rttp_protocol::client_hints::{
 pub use rttp_protocol::cookie::{
   HttpCookieParseError, HttpSetCookie, HttpSetCookieAttribute, HttpSetCookies,
 };
+pub use rttp_protocol::cross_origin_resource_policy::{
+  CrossOriginResourcePolicy, CrossOriginResourcePolicyParseError,
+};
 
 mod raw_response;
 mod response;
@@ -28,6 +31,7 @@ pub use rttp_protocol::priority::{Priority, PriorityExtension, PriorityParseErro
 pub use rttp_protocol::server_timing::{
   ServerTiming, ServerTimingMetric, ServerTimingParameter, ServerTimingParseError,
 };
+pub use rttp_protocol::timing_allow_origin::{TimingAllowOrigin, TimingAllowOriginParseError};
 pub use rttp_protocol::trailer::{Trailer, TrailerParseError};
 pub use rttp_protocol::www_authenticate::{
   WwwAuthenticate, WwwAuthenticateChallenge, WwwAuthenticateParameter, WwwAuthenticateParseError,
