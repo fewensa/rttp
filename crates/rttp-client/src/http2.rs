@@ -1483,6 +1483,7 @@ fn read_single_stream_response_with_first_frame(
   let mut pending_header_block = None;
   let mut final_response_started = false;
   let mut response_body_started = false;
+  let mut goaway_received = false;
   let mut hpack = HpackDecoder::new(local_settings.header_table_size);
   let mut connection_receive_window = ReceiveWindow::new();
   let mut stream_receive_window = ReceiveWindow::new();
@@ -1498,7 +1499,10 @@ fn read_single_stream_response_with_first_frame(
           return Err(error::bad_response("incomplete HTTP/2 header block"));
         }
         Err(err) if is_unexpected_eof(&err) => {
-          return Err(response_connection_abort_error(response_body_started));
+          return Err(response_connection_abort_error(
+            response_body_started,
+            goaway_received,
+          ));
         }
         Err(err) => return Err(err),
       },
@@ -1634,6 +1638,7 @@ fn read_single_stream_response_with_first_frame(
             http2_error_code_name(goaway.error_code),
           )));
         }
+        goaway_received = true;
       }
       (_, id) if id == stream_id => {}
       (FRAME_CONTINUATION, _) => {
@@ -1816,16 +1821,21 @@ fn response_stream_reset_error(error_code: u32, response_body_started: bool) -> 
   ))
 }
 
-fn response_connection_abort_error(response_body_started: bool) -> error::Error {
+fn response_connection_abort_error(
+  response_body_started: bool,
+  goaway_received: bool,
+) -> error::Error {
   let phase = if response_body_started {
     "during response body"
   } else {
     "before response body"
   };
-  error::bad_response(format!(
-    "HTTP/2 connection aborted {} without GOAWAY or RST_STREAM",
-    phase,
-  ))
+  let shutdown = if goaway_received {
+    "after GOAWAY without RST_STREAM"
+  } else {
+    "without GOAWAY or RST_STREAM"
+  };
+  error::bad_response(format!("HTTP/2 connection aborted {} {}", phase, shutdown,))
 }
 
 fn http2_error_code_name(error_code: u32) -> &'static str {
