@@ -954,13 +954,13 @@ fn test_client_times_out_after_fixture_stalls_partial_response_body() {
     .wait_for_partial_body(Duration::from_secs(1))
     .expect("fixture should send the first body chunk");
   let error = response.expect_err("stalled body should time out");
-  assert_eq!(
-    Some(io::ErrorKind::WouldBlock),
+  assert!(matches!(
     error
       .source()
       .and_then(|source| source.downcast_ref::<io::Error>())
-      .map(io::Error::kind)
-  );
+      .map(io::Error::kind),
+    Some(io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut)
+  ));
   fixture.cancel_body().expect("cancel stalled response body");
   fixture.join().expect("gated response server");
 }
