@@ -1114,11 +1114,7 @@ fn read_until_send_window_available(
       }
       (FRAME_RST_STREAM, id) if id == stream_id => {
         let error_code = rst_stream_error_code(&frame)?;
-        return Err(error::bad_response(format!(
-          "HTTP/2 stream received RST_STREAM error code {} ({})",
-          error_code,
-          http2_error_code_name(error_code),
-        )));
+        return Err(response_stream_reset_error(error_code, false));
       }
       (FRAME_RST_STREAM, _) => {
         rst_stream_error_code(&frame)?;
@@ -1487,6 +1483,7 @@ fn read_single_stream_response_with_first_frame(
   let mut pending_header_block = None;
   let mut final_response_started = false;
   let mut response_body_started = false;
+  let mut goaway = None;
   let mut hpack = HpackDecoder::new(local_settings.header_table_size);
   let mut connection_receive_window = ReceiveWindow::new();
   let mut stream_receive_window = ReceiveWindow::new();
@@ -1500,6 +1497,12 @@ fn read_single_stream_response_with_first_frame(
         Ok(frame) => frame,
         Err(err) if pending_header_block.is_some() && is_unexpected_eof(&err) => {
           return Err(error::bad_response("incomplete HTTP/2 header block"));
+        }
+        Err(err) if is_unexpected_eof(&err) => {
+          return Err(response_connection_abort_error(
+            response_body_started,
+            goaway.as_ref(),
+          ));
         }
         Err(err) => return Err(err),
       },
@@ -1611,11 +1614,10 @@ fn read_single_stream_response_with_first_frame(
       }
       (FRAME_RST_STREAM, id) if id == stream_id => {
         let error_code = rst_stream_error_code(&frame)?;
-        return Err(error::bad_response(format!(
-          "HTTP/2 stream received RST_STREAM error code {} ({})",
+        return Err(response_stream_reset_error(
           error_code,
-          http2_error_code_name(error_code),
-        )));
+          response_body_started,
+        ));
       }
       (FRAME_RST_STREAM, _) => {
         rst_stream_error_code(&frame)?;
@@ -1627,15 +1629,16 @@ fn read_single_stream_response_with_first_frame(
         return Err(error::bad_response("invalid HTTP/2 PING frame"));
       }
       (FRAME_GOAWAY, _) => {
-        let goaway = goaway_metadata(&frame)?;
-        if goaway.last_stream_id < stream_id {
+        let received_goaway = goaway_metadata(&frame)?;
+        if received_goaway.last_stream_id < stream_id {
           return Err(error::bad_response(format!(
             "HTTP/2 connection received GOAWAY last stream ID {} with error code {} ({})",
-            goaway.last_stream_id,
-            goaway.error_code,
-            http2_error_code_name(goaway.error_code),
+            received_goaway.last_stream_id,
+            received_goaway.error_code,
+            http2_error_code_name(received_goaway.error_code),
           )));
         }
+        goaway = Some(received_goaway);
       }
       (_, id) if id == stream_id => {}
       (FRAME_CONTINUATION, _) => {
@@ -1802,6 +1805,41 @@ fn rst_stream_error_code(frame: &Frame) -> error::Result<u32> {
     frame.payload[2],
     frame.payload[3],
   ]))
+}
+
+fn response_stream_reset_error(error_code: u32, response_body_started: bool) -> error::Error {
+  let phase = if response_body_started {
+    "during response body"
+  } else {
+    "before response body"
+  };
+  error::bad_response(format!(
+    "HTTP/2 stream reset {}: RST_STREAM error code {} ({})",
+    phase,
+    error_code,
+    http2_error_code_name(error_code),
+  ))
+}
+
+fn response_connection_abort_error(
+  response_body_started: bool,
+  goaway: Option<&GoawayMetadata>,
+) -> error::Error {
+  let phase = if response_body_started {
+    "during response body"
+  } else {
+    "before response body"
+  };
+  let shutdown = if let Some(goaway) = goaway {
+    format!(
+      "after GOAWAY error code {} ({}) without RST_STREAM",
+      goaway.error_code,
+      http2_error_code_name(goaway.error_code),
+    )
+  } else {
+    "without GOAWAY or RST_STREAM".to_string()
+  };
+  error::bad_response(format!("HTTP/2 connection aborted {} {}", phase, shutdown,))
 }
 
 fn http2_error_code_name(error_code: u32) -> &'static str {

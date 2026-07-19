@@ -3973,6 +3973,125 @@ fn prior_knowledge_get_reports_stream_reset_and_goaway() {
 }
 
 #[test]
+fn prior_knowledge_get_reports_stream_reset_during_response_body() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, 0, 1, b"partial body");
+    write_frame(&mut stream, FRAME_RST_STREAM, 0, 1, &[0, 0, 0, 8]);
+  });
+
+  let error = HttpClient::new()
+    .get()
+    .url(format!("http://{}/reset-during-body", addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("stream reset during response body must fail the response");
+
+  assert!(
+    error
+      .to_string()
+      .contains("HTTP/2 stream reset during response body: RST_STREAM error code 8 (CANCEL)"),
+    "unexpected error: {error}"
+  );
+  handle.join().expect("reset peer thread");
+}
+
+#[test]
+fn prior_knowledge_get_reports_connection_abort_after_goaway_with_error_details() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, 0, 1, b"partial body");
+    write_frame(&mut stream, FRAME_GOAWAY, 0, 0, &[0, 0, 0, 1, 0, 0, 0, 11]);
+  });
+
+  let error = HttpClient::new()
+    .get()
+    .url(format!("http://{}/abort-after-goaway", addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("connection abort after GOAWAY must fail the response");
+
+  assert!(
+    error
+      .to_string()
+      .contains(
+        "HTTP/2 connection aborted during response body after GOAWAY error code 11 (ENHANCE_YOUR_CALM) without RST_STREAM",
+      ),
+    "unexpected error: {error}"
+  );
+  handle.join().expect("GOAWAY peer thread");
+}
+
+#[test]
+fn prior_knowledge_get_reports_connection_abort_during_response_body() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(&mut stream, FRAME_DATA, 0, 1, b"partial body");
+  });
+
+  let error = HttpClient::new()
+    .get()
+    .url(format!("http://{}/abort-during-body", addr))
+    .emit_http2_prior_knowledge()
+    .expect_err("connection abort during response body must fail the response");
+
+  assert!(
+    error
+      .to_string()
+      .contains("HTTP/2 connection aborted during response body without GOAWAY or RST_STREAM"),
+    "unexpected error: {error}"
+  );
+  handle.join().expect("aborting peer thread");
+}
+
+#[test]
+fn prior_knowledge_get_continues_after_reset_of_unaffected_stream() {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
+  let addr = listener.local_addr().expect("h2 peer addr");
+
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept h2 client");
+    complete_h2_request_handshake(&mut stream);
+
+    write_frame(&mut stream, FRAME_RST_STREAM, 0, 3, &[0, 0, 0, 8]);
+    write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
+    write_frame(
+      &mut stream,
+      FRAME_DATA,
+      FLAG_END_STREAM,
+      1,
+      b"unaffected response",
+    );
+  });
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{}/unaffected-stream", addr))
+    .emit_http2_prior_knowledge()
+    .expect("unaffected stream response");
+
+  assert_eq!(200, response.code());
+  assert_eq!("unaffected response", response.body().string().unwrap());
+  handle.join().expect("unaffected peer thread");
+}
+
+#[test]
 fn prior_knowledge_get_rejects_malformed_rst_stream_frames() {
   let cases: &[(&str, u32, &[u8])] = &[
     ("stream-zero", 0, &[0, 0, 0, 0]),
