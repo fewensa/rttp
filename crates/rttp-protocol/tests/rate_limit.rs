@@ -1,6 +1,7 @@
 use rttp_protocol::rate_limit::{
-  RateLimitLimit, RateLimitLimitParseError, RateLimitRemaining, RateLimitRemainingParseError,
-  RateLimitReset, RateLimitResetParseError, MAX_RATE_LIMIT_VALUE_BYTES,
+  RateLimitLimit, RateLimitLimitItem, RateLimitLimitParseError, RateLimitRemaining,
+  RateLimitRemainingParseError, RateLimitReset, RateLimitResetParseError,
+  MAX_RATE_LIMIT_VALUE_BYTES,
 };
 
 #[test]
@@ -11,15 +12,22 @@ fn rate_limit_exposes_per_header_parse_error_aliases() {
 }
 
 #[test]
-fn rate_limit_parses_singleton_response_values() {
-  let limit = RateLimitLimit::parse("100").expect("RateLimit-Limit should parse");
+fn rate_limit_parses_response_values() {
+  let limit =
+    RateLimitLimit::parse("100, 50;w=3600").expect("RateLimit-Limit structured list should parse");
   let remaining = RateLimitRemaining::parse("42").expect("RateLimit-Remaining should parse");
   let reset = RateLimitReset::parse("60").expect("RateLimit-Reset should parse");
 
-  assert_eq!(limit.value(), 100);
+  assert_eq!(
+    limit.items(),
+    &[
+      RateLimitLimitItem::new(100),
+      RateLimitLimitItem::new(50).with_window(3600),
+    ]
+  );
   assert_eq!(remaining.value(), 42);
   assert_eq!(reset.value(), 60);
-  assert_eq!(limit.header_value(), "100");
+  assert_eq!(limit.header_value(), "100, 50;w=3600");
   assert_eq!(remaining.header_value(), "42");
   assert_eq!(reset.header_value(), "60");
 }
@@ -27,8 +35,8 @@ fn rate_limit_parses_singleton_response_values() {
 #[test]
 fn rate_limit_trims_optional_whitespace() {
   assert_eq!(
-    RateLimitLimit::parse(" \t100\t ").expect("whitespace is allowed"),
-    RateLimitLimit::new(100)
+    RateLimitLimit::parse(" \t100;w=60\t ").expect("whitespace is allowed"),
+    RateLimitLimit::new([RateLimitLimitItem::new(100).with_window(60)])
   );
   assert_eq!(
     RateLimitRemaining::parse(" 42 ").expect("whitespace is allowed"),
@@ -48,7 +56,7 @@ fn rate_limit_rejects_malformed_numeric_values() {
     "+1",
     "1.5",
     "one",
-    "18446744073709551616",
+    "1000000000000000",
     "1\r\nX: y",
   ] {
     assert!(
@@ -67,30 +75,37 @@ fn rate_limit_rejects_malformed_numeric_values() {
 }
 
 #[test]
-fn rate_limit_rejects_duplicate_and_list_values() {
-  assert!(RateLimitLimit::parse("100, 50").is_err());
+fn rate_limit_rejects_invalid_list_and_duplicate_values() {
+  assert!(RateLimitLimit::parse("100, (50)").is_err());
   assert!(RateLimitRemaining::parse("42, 21").is_err());
   assert!(RateLimitReset::parse("60, 30").is_err());
 
-  assert!(RateLimitLimit::parse_values(["100", "50"]).is_err());
+  assert_eq!(
+    RateLimitLimit::parse_values(["100", "50;w=3600"])
+      .expect("multiple header fields form one structured list"),
+    RateLimitLimit::new([
+      RateLimitLimitItem::new(100),
+      RateLimitLimitItem::new(50).with_window(3600),
+    ])
+  );
   assert!(RateLimitRemaining::parse_values(["42", "21"]).is_err());
   assert!(RateLimitReset::parse_values(["60", "30"]).is_err());
 }
 
 #[test]
-fn rate_limit_stops_after_the_first_duplicate_field() {
-  let mut values = ["100", "50", "must not be inspected"].into_iter();
+fn rate_limit_combines_all_list_fields() {
+  let mut values = ["100", "50"].into_iter();
   let mut calls = 0;
 
-  assert!(RateLimitLimit::parse_values(std::iter::from_fn(|| {
-    calls += 1;
-    assert!(
-      calls <= 2,
-      "parser must not inspect fields after a duplicate"
-    );
-    values.next()
-  }))
-  .is_err());
+  assert_eq!(
+    RateLimitLimit::parse_values(std::iter::from_fn(|| {
+      calls += 1;
+      assert!(calls <= 3, "parser must inspect every list field");
+      values.next()
+    }))
+    .expect("multiple fields form one structured list"),
+    RateLimitLimit::new([RateLimitLimitItem::new(100), RateLimitLimitItem::new(50),])
+  );
 }
 
 #[test]

@@ -6,12 +6,93 @@
 use std::error::Error;
 use std::fmt;
 
+use sfv::{BareItem, List, ListEntry, Parser};
+
 pub const MAX_RATE_LIMIT_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_RATE_LIMIT_LIMIT_VALUE_BYTES: usize = MAX_RATE_LIMIT_VALUE_BYTES;
 pub const MAX_RATE_LIMIT_REMAINING_VALUE_BYTES: usize = MAX_RATE_LIMIT_VALUE_BYTES;
 pub const MAX_RATE_LIMIT_RESET_VALUE_BYTES: usize = MAX_RATE_LIMIT_VALUE_BYTES;
 
-macro_rules! rate_limit_value {
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct RateLimitLimit(Vec<RateLimitLimitItem>);
+
+impl RateLimitLimit {
+  pub fn new(items: impl IntoIterator<Item = RateLimitLimitItem>) -> Self {
+    Self(items.into_iter().collect())
+  }
+
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, RateLimitParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, RateLimitParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let values = collect_list_values(values, "RateLimit-Limit", MAX_RATE_LIMIT_LIMIT_VALUE_BYTES)?;
+    let values = Parser::new(trim_ows(&values))
+      .parse::<List>()
+      .map_err(|_| invalid_value("RateLimit-Limit"))?;
+    if values.is_empty() {
+      return Err(invalid_value("RateLimit-Limit"));
+    }
+    let items = values
+      .into_iter()
+      .map(parse_limit_item)
+      .collect::<Result<_, _>>()?;
+    Ok(Self(items))
+  }
+
+  pub fn items(&self) -> &[RateLimitLimitItem] {
+    &self.0
+  }
+
+  pub fn header_value(&self) -> String {
+    self
+      .0
+      .iter()
+      .map(RateLimitLimitItem::header_value)
+      .collect::<Vec<_>>()
+      .join(", ")
+  }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct RateLimitLimitItem {
+  value: u64,
+  window: Option<u64>,
+}
+
+impl RateLimitLimitItem {
+  pub const fn new(value: u64) -> Self {
+    Self {
+      value,
+      window: None,
+    }
+  }
+
+  pub const fn with_window(mut self, window: u64) -> Self {
+    self.window = Some(window);
+    self
+  }
+
+  pub const fn value(self) -> u64 {
+    self.value
+  }
+
+  pub const fn window(self) -> Option<u64> {
+    self.window
+  }
+
+  fn header_value(&self) -> String {
+    match self.window {
+      Some(window) => format!("{};w={window}", self.value),
+      None => self.value.to_string(),
+    }
+  }
+}
+
+macro_rules! rate_limit_singleton_value {
   ($doc:literal, $name:ident, $header_name:literal, $max_value_bytes:ident) => {
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     #[doc = $doc]
@@ -44,19 +125,13 @@ macro_rules! rate_limit_value {
   };
 }
 
-rate_limit_value!(
-  "The limit declared by the `RateLimit-Limit` response header.",
-  RateLimitLimit,
-  "RateLimit-Limit",
-  MAX_RATE_LIMIT_LIMIT_VALUE_BYTES
-);
-rate_limit_value!(
+rate_limit_singleton_value!(
   "The remaining quota declared by the `RateLimit-Remaining` response header.",
   RateLimitRemaining,
   "RateLimit-Remaining",
   MAX_RATE_LIMIT_REMAINING_VALUE_BYTES
 );
-rate_limit_value!(
+rate_limit_singleton_value!(
   "The seconds until reset declared by the `RateLimit-Reset` response header.",
   RateLimitReset,
   "RateLimit-Reset",
@@ -109,7 +184,57 @@ where
   if value.is_empty() || value.bytes().any(|byte| !byte.is_ascii_digit()) {
     return Err(invalid_value(header_name));
   }
-  value.parse().map_err(|_| invalid_value(header_name))
+  parse_structured_integer(value, header_name)
+}
+
+fn collect_list_values<'a, I>(
+  values: I,
+  header_name: &str,
+  max_value_bytes: usize,
+) -> Result<String, RateLimitParseError>
+where
+  I: IntoIterator<Item = &'a str>,
+{
+  let mut values = values.into_iter();
+  let value = values.next().ok_or_else(|| invalid_value(header_name))?;
+  validate_bounded_value(value, header_name, max_value_bytes)?;
+  let mut combined = value.to_owned();
+  for value in values {
+    validate_bounded_value(value, header_name, max_value_bytes)?;
+    combined.push(',');
+    combined.push_str(value);
+  }
+  Ok(combined)
+}
+
+fn parse_limit_item(value: ListEntry) -> Result<RateLimitLimitItem, RateLimitParseError> {
+  let ListEntry::Item(item) = value else {
+    return Err(invalid_value("RateLimit-Limit"));
+  };
+  let value = parse_structured_bare_integer(item.bare_item, "RateLimit-Limit")?;
+  let window = item
+    .params
+    .get("w")
+    .map(|value| parse_structured_bare_integer(value.clone(), "RateLimit-Limit"))
+    .transpose()?;
+  Ok(RateLimitLimitItem { value, window })
+}
+
+fn parse_structured_integer(value: &str, header_name: &str) -> Result<u64, RateLimitParseError> {
+  let value = Parser::new(trim_ows(value))
+    .parse::<sfv::Item>()
+    .map_err(|_| invalid_value(header_name))?;
+  parse_structured_bare_integer(value.bare_item, header_name)
+}
+
+fn parse_structured_bare_integer(
+  value: BareItem,
+  header_name: &str,
+) -> Result<u64, RateLimitParseError> {
+  let BareItem::Integer(value) = value else {
+    return Err(invalid_value(header_name));
+  };
+  u64::try_from(value).map_err(|_| invalid_value(header_name))
 }
 
 fn validate_bounded_value(
