@@ -549,6 +549,116 @@ fn sync_client_sec_fetch_metadata_is_observed_by_server_helpers() {
 }
 
 #[test]
+fn sync_client_and_server_exchange_forwarded_metadata_without_proxy_policy() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Forwarded metadata server");
+  let addr = server.local_addr().expect("Forwarded metadata server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let forwarded = request
+          .forwarded()
+          .expect("Forwarded should parse")
+          .expect("Forwarded should be present");
+        observed_tx
+          .send((
+            request.header("Forwarded").map(str::to_string),
+            forwarded
+              .elements()
+              .iter()
+              .map(|element| {
+                (
+                  element.for_value().map(str::to_string),
+                  element.by().map(str::to_string),
+                  element.host().map(str::to_string),
+                  element.proto().map(str::to_string),
+                )
+              })
+              .collect::<Vec<_>>(),
+          ))
+          .expect("send observed Forwarded metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve Forwarded metadata request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/forwarded-metadata"))
+    .forwarded(r#"for=192.0.2.60;by=203.0.113.43;host=example.test;proto="https""#)
+    .expect("first Forwarded value should be accepted")
+    .forwarded(r#"for="[2001:db8:cafe::17]""#)
+    .expect("second Forwarded value should be accepted")
+    .emit()
+    .expect("Forwarded metadata request should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  let (raw_header, forwarded) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe Forwarded metadata");
+  assert!(raw_header.is_some());
+  assert_eq!(
+    vec![
+      (
+        Some("192.0.2.60".to_string()),
+        Some("203.0.113.43".to_string()),
+        Some("example.test".to_string()),
+        Some("https".to_string()),
+      ),
+      (Some("[2001:db8:cafe::17]".to_string()), None, None, None),
+    ],
+    forwarded
+  );
+  handle.join().expect("Forwarded metadata server thread");
+}
+
+#[test]
+fn server_forwarded_helper_rejects_malformed_values_without_losing_raw_headers() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind malformed Forwarded metadata server");
+  let addr = server
+    .local_addr()
+    .expect("malformed Forwarded metadata server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send((
+            request.header("Forwarded").map(str::to_string),
+            request.header("Host").map(str::to_string),
+            request.forwarded().is_err(),
+          ))
+          .expect("send malformed Forwarded observation");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve malformed Forwarded request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect malformed Forwarded request");
+  stream
+    .write_all(
+      b"GET /matrix/malformed-forwarded HTTP/1.1\r\nHost: example.test\r\nForwarded: for=192.0.2.60;host\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write malformed Forwarded request");
+
+  assert_eq!(
+    (
+      Some("for=192.0.2.60;host".to_string()),
+      Some("example.test".to_string()),
+      true,
+    ),
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe malformed Forwarded metadata"),
+  );
+  handle
+    .join()
+    .expect("malformed Forwarded metadata server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_bounded_authentication_metadata() {
   let server =
     rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind authentication server");
