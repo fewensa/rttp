@@ -28,6 +28,9 @@ pub use rttp_protocol::prefer::{
   PreferenceParameter,
 };
 pub use rttp_protocol::priority::{Priority, PriorityExtension, PriorityParseError};
+pub use rttp_protocol::referrer_policy::{
+  ReferrerPolicy, ReferrerPolicyParseError, ReferrerPolicyToken,
+};
 pub use rttp_protocol::server_timing::{
   ServerTiming, ServerTimingMetric, ServerTimingParameter, ServerTimingParseError,
 };

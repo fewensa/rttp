@@ -1,6 +1,6 @@
 use rttp_client::response::{
   AcceptCh, AltSvc, CrossOriginResourcePolicy, Digest, HttpClearSiteData, PreferenceApplied,
-  Priority, ServerTiming, Trailer,
+  Priority, ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Trailer,
 };
 use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 
@@ -51,4 +51,34 @@ fn response_facade_parses_preference_applied_metadata() {
   assert_eq!(applied.preferences()[0].name(), "return");
   assert_eq!(applied.preferences()[0].value(), Some("minimal"));
   assert_eq!(applied.preferences()[0].parameters()[0].name(), "source");
+}
+
+#[test]
+fn response_facade_parses_referrer_policy_metadata() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Referrer-Policy: strict-origin\r\n",
+      "Referrer-Policy: no-referrer, origin\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let policy: ReferrerPolicy = response
+    .referrer_policy()
+    .expect("Referrer-Policy should parse")
+    .expect("Referrer-Policy should be present");
+
+  assert_eq!(
+    policy.policies(),
+    &[
+      ReferrerPolicyToken::StrictOrigin,
+      ReferrerPolicyToken::NoReferrer,
+      ReferrerPolicyToken::Origin,
+    ]
+  );
 }

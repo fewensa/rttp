@@ -2,6 +2,7 @@ use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::entity_tag::{EntityTag, IfMatch};
 use rttp_protocol::fetch_metadata::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 use rttp_protocol::prefer::{Prefer, PreferenceApplied, PreferenceKind};
+use rttp_protocol::referrer_policy::{ReferrerPolicy, ReferrerPolicyToken};
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
 
 #[test]
@@ -54,5 +55,25 @@ fn protocol_exports_structured_preference_metadata() {
   assert_eq!(
     applied.preferences()[0].parameters()[0].value(),
     Some("true")
+  );
+}
+
+#[test]
+fn protocol_exports_bounded_referrer_policy_metadata() {
+  let policy =
+    ReferrerPolicy::parse_values(["strict-origin-when-cross-origin, origin", "no-referrer"])
+      .expect("Referrer-Policy fields should parse");
+
+  assert_eq!(
+    policy.policies(),
+    &[
+      ReferrerPolicyToken::StrictOriginWhenCrossOrigin,
+      ReferrerPolicyToken::Origin,
+      ReferrerPolicyToken::NoReferrer,
+    ]
+  );
+  assert_eq!(
+    policy.header_value(),
+    "strict-origin-when-cross-origin, origin, no-referrer"
   );
 }

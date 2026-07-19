@@ -20,6 +20,7 @@ use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::cookie::HttpSetCookies;
 use rttp_protocol::cross_origin_resource_policy::CrossOriginResourcePolicy;
 use rttp_protocol::prefer::PreferenceApplied;
+use rttp_protocol::referrer_policy::ReferrerPolicy;
 use rttp_protocol::sunset::parse_sunset_values;
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
 
@@ -319,6 +320,18 @@ impl Response {
       return Ok(None);
     }
     PreferenceApplied::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Referrer-Policy` response metadata without changing
+  /// outbound Referer behavior or redirect policy.
+  pub fn referrer_policy(&self) -> error::Result<Option<ReferrerPolicy>> {
+    let values = self.header_values("referrer-policy");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    ReferrerPolicy::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
