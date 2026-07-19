@@ -4002,7 +4002,7 @@ fn prior_knowledge_get_reports_stream_reset_during_response_body() {
 }
 
 #[test]
-fn prior_knowledge_get_reports_connection_abort_after_graceful_goaway() {
+fn prior_knowledge_get_reports_connection_abort_after_goaway_with_error_details() {
   let listener = TcpListener::bind("127.0.0.1:0").expect("bind h2 peer");
   let addr = listener.local_addr().expect("h2 peer addr");
 
@@ -4012,22 +4012,24 @@ fn prior_knowledge_get_reports_connection_abort_after_graceful_goaway() {
 
     write_frame(&mut stream, FRAME_HEADERS, FLAG_END_HEADERS, 1, &[0x88]);
     write_frame(&mut stream, FRAME_DATA, 0, 1, b"partial body");
-    write_frame(&mut stream, FRAME_GOAWAY, 0, 0, &[0, 0, 0, 1, 0, 0, 0, 0]);
+    write_frame(&mut stream, FRAME_GOAWAY, 0, 0, &[0, 0, 0, 1, 0, 0, 0, 11]);
   });
 
   let error = HttpClient::new()
     .get()
     .url(format!("http://{}/abort-after-goaway", addr))
     .emit_http2_prior_knowledge()
-    .expect_err("connection abort after graceful GOAWAY must fail the response");
+    .expect_err("connection abort after GOAWAY must fail the response");
 
   assert!(
     error
       .to_string()
-      .contains("HTTP/2 connection aborted during response body after GOAWAY without RST_STREAM"),
+      .contains(
+        "HTTP/2 connection aborted during response body after GOAWAY error code 11 (ENHANCE_YOUR_CALM) without RST_STREAM",
+      ),
     "unexpected error: {error}"
   );
-  handle.join().expect("graceful GOAWAY peer thread");
+  handle.join().expect("GOAWAY peer thread");
 }
 
 #[test]
