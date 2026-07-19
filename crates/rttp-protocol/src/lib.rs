@@ -5,6 +5,7 @@
 
 pub mod accept_patch;
 pub mod accept_post;
+pub mod access_control_expose_headers;
 pub mod alt_svc;
 pub mod cache_control;
 pub mod clear_site_data;

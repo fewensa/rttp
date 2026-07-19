@@ -15,6 +15,7 @@ use crate::response::ServerTiming;
 use crate::response::Trailer;
 use crate::response::WwwAuthenticate;
 use crate::types::{Cookie, Header, RoUrl};
+use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::clear_site_data::ClearSiteData;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::cookie::HttpSetCookies;
@@ -295,6 +296,18 @@ impl Response {
       return Ok(None);
     }
     CriticalCh::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Access-Control-Expose-Headers` response metadata without
+  /// applying CORS exposure policy.
+  pub fn access_control_expose_headers(&self) -> error::Result<Option<AccessControlExposeHeaders>> {
+    let values = self.header_values("access-control-expose-headers");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    AccessControlExposeHeaders::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

@@ -2202,6 +2202,79 @@ fn test_client_hint_response_helpers_preserve_invalid_or_absent_metadata() {
 }
 
 #[test]
+fn test_access_control_expose_headers_response_helper_parses_metadata_only() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Access-Control-Expose-Headers: X-Request-Id, ETag\r\n",
+    "access-control-expose-headers: X-RateLimit-Remaining\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("parse response with Access-Control-Expose-Headers metadata");
+
+  let expose_headers = response
+    .access_control_expose_headers()
+    .expect("Access-Control-Expose-Headers should parse")
+    .expect("Access-Control-Expose-Headers should be present");
+  assert_eq!(
+    expose_headers.field_names(),
+    ["x-request-id", "etag", "x-ratelimit-remaining"]
+  );
+  assert_eq!(
+    vec![
+      &"X-Request-Id, ETag".to_string(),
+      &"X-RateLimit-Remaining".to_string()
+    ],
+    response.header_values("access-control-expose-headers")
+  );
+}
+
+#[test]
+fn test_access_control_expose_headers_response_helper_supports_wildcard_and_absence() {
+  let wildcard = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nAccess-Control-Expose-Headers: *\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("parse response with wildcard Access-Control-Expose-Headers");
+  assert!(wildcard
+    .access_control_expose_headers()
+    .expect("wildcard Access-Control-Expose-Headers should parse")
+    .expect("Access-Control-Expose-Headers should be present")
+    .is_wildcard());
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("parse response without Access-Control-Expose-Headers");
+  assert_eq!(
+    None,
+    absent
+      .access_control_expose_headers()
+      .expect("absent Access-Control-Expose-Headers should parse")
+  );
+}
+
+#[test]
+fn test_access_control_expose_headers_response_helper_preserves_invalid_metadata() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Access-Control-Expose-Headers: X-Request-Id, x-request-id\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  assert!(response.access_control_expose_headers().is_err());
+  assert_eq!(
+    Some(&"X-Request-Id, x-request-id".to_string()),
+    response.header_value("Access-Control-Expose-Headers")
+  );
+}
+
+#[test]
 fn test_parse_age_rejects_invalid_helper_values_without_rejecting_response() {
   let invalid_values = [
     "",
