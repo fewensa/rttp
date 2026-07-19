@@ -3,7 +3,6 @@
 //! This module validates declared policy tokens only. Callers decide whether
 //! and how to apply referrer behavior.
 
-use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
 
@@ -27,7 +26,6 @@ impl ReferrerPolicy {
     I: IntoIterator<Item = &'a str>,
   {
     let mut policies = Vec::new();
-    let mut seen = HashSet::new();
 
     for value in values {
       if value.len() > MAX_REFERRER_POLICY_VALUE_BYTES {
@@ -41,15 +39,12 @@ impl ReferrerPolicy {
         if token.is_empty() {
           return Err(invalid_value());
         }
-        let policy = ReferrerPolicyToken::parse(token).ok_or_else(invalid_value)?;
+        let Some(policy) = ReferrerPolicyToken::parse(token) else {
+          continue;
+        };
         if policies.len() >= MAX_REFERRER_POLICY_TOKENS {
           return Err(ReferrerPolicyParseError::new(
             "too many Referrer-Policy tokens",
-          ));
-        }
-        if !seen.insert(policy) {
-          return Err(ReferrerPolicyParseError::new(
-            "duplicate Referrer-Policy declarations",
           ));
         }
         policies.push(policy);
@@ -91,16 +86,24 @@ pub enum ReferrerPolicyToken {
 
 impl ReferrerPolicyToken {
   pub fn parse(value: &str) -> Option<Self> {
-    match value {
-      "no-referrer" => Some(Self::NoReferrer),
-      "no-referrer-when-downgrade" => Some(Self::NoReferrerWhenDowngrade),
-      "origin" => Some(Self::Origin),
-      "origin-when-cross-origin" => Some(Self::OriginWhenCrossOrigin),
-      "same-origin" => Some(Self::SameOrigin),
-      "strict-origin" => Some(Self::StrictOrigin),
-      "strict-origin-when-cross-origin" => Some(Self::StrictOriginWhenCrossOrigin),
-      "unsafe-url" => Some(Self::UnsafeUrl),
-      _ => None,
+    if value.eq_ignore_ascii_case("no-referrer") {
+      Some(Self::NoReferrer)
+    } else if value.eq_ignore_ascii_case("no-referrer-when-downgrade") {
+      Some(Self::NoReferrerWhenDowngrade)
+    } else if value.eq_ignore_ascii_case("origin") {
+      Some(Self::Origin)
+    } else if value.eq_ignore_ascii_case("origin-when-cross-origin") {
+      Some(Self::OriginWhenCrossOrigin)
+    } else if value.eq_ignore_ascii_case("same-origin") {
+      Some(Self::SameOrigin)
+    } else if value.eq_ignore_ascii_case("strict-origin") {
+      Some(Self::StrictOrigin)
+    } else if value.eq_ignore_ascii_case("strict-origin-when-cross-origin") {
+      Some(Self::StrictOriginWhenCrossOrigin)
+    } else if value.eq_ignore_ascii_case("unsafe-url") {
+      Some(Self::UnsafeUrl)
+    } else {
+      None
     }
   }
 

@@ -1,7 +1,7 @@
 use rttp_client::response::{
   AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType,
   CrossOriginResourcePolicy, Digest, HttpClearSiteData, HttpSetCookies, LinkValues, ReferrerPolicy,
-  Response, RetryAfter, ServerTiming,
+  ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -88,7 +88,7 @@ fn clear_site_data_metadata_rejects_invalid_duplicate_and_unbounded_values() {
 }
 
 #[test]
-fn referrer_policy_metadata_reports_parse_errors_without_hiding_raw_headers() {
+fn referrer_policy_metadata_preserves_repeated_declarations_and_raw_headers() {
   let response = Response::new(
     RoUrl::with("https://example.test"),
     concat!(
@@ -102,7 +102,14 @@ fn referrer_policy_metadata_reports_parse_errors_without_hiding_raw_headers() {
   )
   .expect("response should parse");
 
-  assert!(response.referrer_policy().is_err());
+  assert_eq!(
+    response
+      .referrer_policy()
+      .expect("Referrer-Policy should parse")
+      .expect("Referrer-Policy should be present")
+      .policies(),
+    &[ReferrerPolicyToken::Origin, ReferrerPolicyToken::Origin]
+  );
   assert_eq!(
     response.header_values("Referrer-Policy"),
     [&"origin".to_string(), &"origin".to_string()]
