@@ -2166,6 +2166,77 @@ fn test_accept_ch_and_critical_ch_response_helpers_parse_metadata_only() {
 }
 
 #[test]
+fn test_timing_allow_origin_response_helper_parses_metadata_and_preserves_raw_headers() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Timing-Allow-Origin: https://example.test, https://api.example.test\r\n",
+    "timing-allow-origin: https://static.example.test\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("parse response with timing metadata");
+
+  let timing_allow_origin = response
+    .timing_allow_origin()
+    .expect("Timing-Allow-Origin should parse")
+    .expect("Timing-Allow-Origin should be present");
+  assert_eq!(
+    timing_allow_origin.origins(),
+    [
+      "https://example.test",
+      "https://api.example.test",
+      "https://static.example.test",
+    ]
+  );
+  assert_eq!(
+    response.header_values("Timing-Allow-Origin"),
+    vec![
+      &"https://example.test, https://api.example.test".to_string(),
+      &"https://static.example.test".to_string(),
+    ]
+  );
+}
+
+#[test]
+fn test_timing_allow_origin_response_helper_supports_wildcard_and_absence() {
+  let wildcard = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nTiming-Allow-Origin: *\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("parse response with wildcard timing metadata");
+  assert!(wildcard
+    .timing_allow_origin()
+    .expect("wildcard should parse")
+    .expect("Timing-Allow-Origin should be present")
+    .is_wildcard());
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("parse response without timing metadata");
+  assert_eq!(
+    None,
+    absent.timing_allow_origin().expect("absence should parse")
+  );
+}
+
+#[test]
+fn test_timing_allow_origin_response_helper_preserves_invalid_raw_headers() {
+  let value = "https://example.test, *";
+  let raw = format!("HTTP/1.1 200 OK\r\nTiming-Allow-Origin: {value}\r\nContent-Length: 0\r\n\r\n");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response should remain usable");
+
+  assert!(response.timing_allow_origin().is_err());
+  assert_eq!(
+    Some(&value.to_string()),
+    response.header_value("Timing-Allow-Origin")
+  );
+}
+
+#[test]
 fn test_client_hint_response_helpers_preserve_invalid_or_absent_metadata() {
   let raw = concat!(
     "HTTP/1.1 200 OK\r\n",
