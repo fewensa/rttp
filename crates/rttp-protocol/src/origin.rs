@@ -6,7 +6,7 @@
 
 use std::error::Error;
 use std::fmt;
-use std::net::Ipv6Addr;
+use url::Host;
 
 pub const MAX_ORIGIN_VALUE_BYTES: usize = 64 * 1024;
 
@@ -99,6 +99,13 @@ impl OriginScheme {
       Self::Https => "https",
     }
   }
+
+  fn default_port(self) -> u16 {
+    match self {
+      Self::Http => 80,
+      Self::Https => 443,
+    }
+  }
 }
 
 impl OriginParseError {
@@ -143,7 +150,10 @@ fn validate_value(value: &str) -> Result<(), OriginParseError> {
   if value.len() > MAX_ORIGIN_VALUE_BYTES {
     return Err(OriginParseError::new("Origin header value is too large"));
   }
-  if value.bytes().any(|byte| byte.is_ascii_control()) {
+  if value
+    .bytes()
+    .any(|byte| byte.is_ascii_control() && byte != b'\t')
+  {
     return Err(OriginParseError::new("invalid Origin header control byte"));
   }
   Ok(())
@@ -157,6 +167,7 @@ fn parse_tuple(value: &str) -> Result<OriginTuple, OriginParseError> {
     _ => return Err(invalid_value()),
   };
   let (host, port) = parse_authority(authority)?;
+  let port = port.filter(|port| *port != scheme.default_port());
   Ok(OriginTuple { scheme, host, port })
 }
 
@@ -166,14 +177,15 @@ fn parse_authority(value: &str) -> Result<(String, Option<u16>), OriginParseErro
   }
   if let Some(value) = value.strip_prefix('[') {
     let (host, port) = value.split_once(']').ok_or_else(invalid_value)?;
-    if host.is_empty() || host.parse::<Ipv6Addr>().is_err() {
+    let host = Host::parse(&format!("[{host}]")).map_err(|_| invalid_value())?;
+    if !matches!(host, Host::Ipv6(_)) {
       return Err(invalid_value());
     }
     let port = match port {
       "" => None,
       port => parse_port(port.strip_prefix(':').ok_or_else(invalid_value)?)?,
     };
-    return Ok((format!("[{host}]"), port));
+    return Ok((host.to_string(), port));
   }
   let (host, port) = match value.split_once(':') {
     Some((host, port)) => {
@@ -187,10 +199,8 @@ fn parse_authority(value: &str) -> Result<(String, Option<u16>), OriginParseErro
     }
     None => (value, None),
   };
-  if !is_valid_host(host) {
-    return Err(invalid_value());
-  }
-  Ok((host.to_ascii_lowercase(), port))
+  let host = Host::parse(host).map_err(|_| invalid_value())?;
+  Ok((host.to_string(), port))
 }
 
 fn parse_port(value: &str) -> Result<Option<u16>, OriginParseError> {
@@ -198,13 +208,6 @@ fn parse_port(value: &str) -> Result<Option<u16>, OriginParseError> {
     return Err(invalid_value());
   }
   value.parse().map(Some).map_err(|_| invalid_value())
-}
-
-fn is_valid_host(value: &str) -> bool {
-  !value.is_empty()
-    && value
-      .bytes()
-      .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
 }
 
 fn invalid_value() -> OriginParseError {
