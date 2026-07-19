@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -175,6 +176,87 @@ pub fn spawn_chunked_response_server(response: impl Into<Vec<u8>>) -> (SocketAdd
     }
   });
   (addr, handle)
+}
+
+enum GatedResponseBodyControl {
+  Release,
+  Cancel,
+}
+
+pub struct GatedResponseBody {
+  addr: SocketAddr,
+  partial_body_sent: Receiver<()>,
+  control: Sender<GatedResponseBodyControl>,
+  handle: JoinHandle<()>,
+}
+
+impl GatedResponseBody {
+  pub fn addr(&self) -> SocketAddr {
+    self.addr
+  }
+
+  pub fn wait_for_partial_body(&self, timeout: Duration) -> Result<(), RecvTimeoutError> {
+    self.partial_body_sent.recv_timeout(timeout)
+  }
+
+  pub fn release_body(&self) -> Result<(), ()> {
+    self
+      .control
+      .send(GatedResponseBodyControl::Release)
+      .map_err(|_| ())
+  }
+
+  pub fn cancel_body(&self) -> Result<(), ()> {
+    self
+      .control
+      .send(GatedResponseBodyControl::Cancel)
+      .map_err(|_| ())
+  }
+
+  pub fn join(self) -> thread::Result<()> {
+    self.handle.join()
+  }
+}
+
+pub fn spawn_gated_response_body(
+  partial_body: impl Into<Vec<u8>>,
+  remaining_body: impl Into<Vec<u8>>,
+) -> GatedResponseBody {
+  let (listener, addr) = bind_local_http_listener("gated response body server");
+  let (partial_body_sent_tx, partial_body_sent) = mpsc::channel();
+  let (control, control_rx) = mpsc::channel();
+  let partial_body = partial_body.into();
+  let remaining_body = remaining_body.into();
+  let handle = thread::spawn(move || {
+    let Ok((mut stream, _)) = listener.accept() else {
+      return;
+    };
+    let _ = read_http_request(&mut stream);
+    let response_head = format!(
+      "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+      partial_body.len() + remaining_body.len()
+    );
+    if stream.write_all(response_head.as_bytes()).is_err()
+      || stream.write_all(&partial_body).is_err()
+      || stream.flush().is_err()
+    {
+      return;
+    }
+    if partial_body_sent_tx.send(()).is_err() {
+      return;
+    }
+    if matches!(control_rx.recv(), Ok(GatedResponseBodyControl::Release)) {
+      let _ = stream.write_all(&remaining_body);
+      let _ = stream.flush();
+    }
+  });
+
+  GatedResponseBody {
+    addr,
+    partial_body_sent,
+    control,
+    handle,
+  }
 }
 
 pub fn spawn_chunked_server_without_trailers() -> (SocketAddr, JoinHandle<()>) {
