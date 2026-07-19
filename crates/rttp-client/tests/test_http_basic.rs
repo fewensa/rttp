@@ -1,9 +1,11 @@
 use rttp_test_support as support;
 
 use std::collections::HashMap;
+use std::error::Error as _;
 use std::io::{self, Cursor, Read, Write};
 use std::net::TcpListener;
 use std::thread;
+use std::time::Duration;
 
 use rttp_client::types::{Auth, Para, Proxy, RoUrl};
 use rttp_client::ConnectionReader;
@@ -912,6 +914,55 @@ fn test_content_length_response_does_not_wait_for_eof() {
 
   let response = response.unwrap();
   assert_eq!("OK", response.body().string().unwrap());
+}
+
+#[test]
+fn test_client_receives_response_body_after_fixture_releases_remaining_bytes() {
+  let fixture = support::spawn_gated_response_body(b"first ", b"second");
+  let addr = fixture.addr();
+  let client = thread::spawn(move || {
+    client()
+      .get()
+      .config(Config::builder().read_timeout(1_000))
+      .url(format!("http://{}/gated-response", addr))
+      .emit()
+      .expect("response after releasing body")
+  });
+
+  fixture
+    .wait_for_partial_body(Duration::from_secs(1))
+    .expect("fixture should send the first body chunk");
+  fixture
+    .release_body()
+    .expect("release remaining body bytes");
+
+  let response = client.join().expect("client thread");
+  assert_eq!("first second", response.body().string().unwrap());
+  fixture.join().expect("gated response server");
+}
+
+#[test]
+fn test_client_times_out_after_fixture_stalls_partial_response_body() {
+  let fixture = support::spawn_gated_response_body(b"first ", b"second");
+  let response = client()
+    .get()
+    .config(Config::builder().read_timeout(100))
+    .url(format!("http://{}/gated-response", fixture.addr()))
+    .emit();
+
+  fixture
+    .wait_for_partial_body(Duration::from_secs(1))
+    .expect("fixture should send the first body chunk");
+  let error = response.expect_err("stalled body should time out");
+  assert!(matches!(
+    error
+      .source()
+      .and_then(|source| source.downcast_ref::<io::Error>())
+      .map(io::Error::kind),
+    Some(io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut)
+  ));
+  fixture.cancel_body().expect("cancel stalled response body");
+  fixture.join().expect("gated response server");
 }
 
 #[test]
