@@ -22,3 +22,4 @@ path = "src/lib.rs"
 [dependencies]
 base64 = "0.22"
 httpdate = "1.0"
+sfv = "0.15.0"
