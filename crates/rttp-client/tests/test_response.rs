@@ -2428,6 +2428,59 @@ fn test_access_control_expose_headers_response_helper_deduplicates_metadata_and_
 }
 
 #[test]
+fn test_access_control_allow_methods_response_helper_parses_repeated_metadata_only() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Access-Control-Allow-Methods: get, POST\r\n",
+    "access-control-allow-methods: PATCH, get\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("parse response with Access-Control-Allow-Methods metadata");
+
+  assert_eq!(
+    response
+      .access_control_allow_methods()
+      .expect("Access-Control-Allow-Methods should parse")
+      .expect("Access-Control-Allow-Methods should be present")
+      .methods(),
+    ["GET", "POST", "PATCH"]
+  );
+  assert_eq!(
+    response.header_values("access-control-allow-methods"),
+    [&"get, POST".to_string(), &"PATCH, get".to_string()]
+  );
+}
+
+#[test]
+fn test_access_control_allow_methods_response_helper_preserves_invalid_or_absent_metadata() {
+  let malformed = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nAccess-Control-Allow-Methods: GET,,\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("raw response should remain usable");
+
+  assert!(malformed.access_control_allow_methods().is_err());
+  assert_eq!(
+    malformed.header_value("Access-Control-Allow-Methods"),
+    Some(&"GET,,".to_string())
+  );
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("parse response without Access-Control-Allow-Methods");
+  assert_eq!(
+    absent
+      .access_control_allow_methods()
+      .expect("absent Access-Control-Allow-Methods should parse"),
+    None
+  );
+}
+
+#[test]
 fn test_cross_origin_resource_policy_response_metadata_preserves_raw_headers() {
   for (value, policy) in [
     ("SAME-ORIGIN", CrossOriginResourcePolicy::SameOrigin),

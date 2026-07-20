@@ -15,6 +15,7 @@ use crate::response::ServerTiming;
 use crate::response::Trailer;
 use crate::response::WwwAuthenticate;
 use crate::types::{Cookie, Header, RoUrl};
+use rttp_protocol::access_control_allow_methods::AccessControlAllowMethods;
 use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::clear_site_data::ClearSiteData;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
@@ -322,6 +323,18 @@ impl Response {
       return Ok(None);
     }
     AccessControlExposeHeaders::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Access-Control-Allow-Methods` response metadata without
+  /// applying CORS method policy.
+  pub fn access_control_allow_methods(&self) -> error::Result<Option<AccessControlAllowMethods>> {
+    let values = self.header_values("access-control-allow-methods");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    AccessControlAllowMethods::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

@@ -2,6 +2,9 @@
 
 pub use self::response::*;
 
+pub use rttp_protocol::access_control_allow_methods::{
+  AccessControlAllowMethods, AccessControlAllowMethodsParseError,
+};
 pub use rttp_protocol::access_control_expose_headers::{
   AccessControlExposeHeaders, AccessControlExposeHeadersParseError,
 };
