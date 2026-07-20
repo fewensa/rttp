@@ -1,17 +1,23 @@
 use std::collections::HashSet;
+use std::future::Future;
 use std::net::TcpStream;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use std::time::Duration;
 
-use futures::io::{AllowStdIo, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use async_io::{Async, Timer};
+use futures::channel::oneshot;
+use futures::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use rttp_protocol::http1::{parse_chunk_size as parse_protocol_chunk_size, ChunkSizeError};
-use socks::{Socks4Stream, Socks5Stream};
-use std::io::{self, Write};
+use socks::{TargetAddr, ToTargetAddr};
+use std::io;
 use url::Url;
 
 #[cfg(feature = "tls-rustls")]
 use std::sync::Arc;
 
 use crate::connection::connection::{
-  connect_tcp_stream, prepend_informational_responses, read_proxy_connect_response,
+  connect_tcp_stream, parse_proxy_connect_response, prepend_informational_responses,
   request_expects_continue, Connection, ExpectContinueResult,
 };
 use crate::connection::connection_reader::{
@@ -25,6 +31,94 @@ use crate::request::RawRequest;
 use crate::response::Response;
 use crate::types::{Header, Proxy, ProxyType};
 const CRLF: &[u8] = b"\r\n";
+
+struct AsyncTcpStream {
+  inner: Async<TcpStream>,
+  read_timeout: Duration,
+  write_timeout: Duration,
+  read_timer: Option<Timer>,
+  write_timer: Option<Timer>,
+}
+
+impl AsyncTcpStream {
+  fn new(stream: TcpStream, read_timeout: Duration, write_timeout: Duration) -> io::Result<Self> {
+    Ok(Self {
+      inner: Async::new(stream)?,
+      read_timeout,
+      write_timeout,
+      read_timer: None,
+      write_timer: None,
+    })
+  }
+
+  fn poll_timeout<T>(
+    timer: &mut Option<Timer>,
+    timeout: Duration,
+    cx: &mut Context<'_>,
+  ) -> Poll<io::Result<T>> {
+    let timer = timer.get_or_insert_with(|| Timer::after(timeout));
+    if Pin::new(timer).poll(cx).is_ready() {
+      Poll::Ready(Err(io::Error::new(
+        io::ErrorKind::TimedOut,
+        "operation timed out",
+      )))
+    } else {
+      Poll::Pending
+    }
+  }
+}
+
+impl AsyncRead for AsyncTcpStream {
+  fn poll_read(
+    self: Pin<&mut Self>,
+    cx: &mut Context<'_>,
+    buf: &mut [u8],
+  ) -> Poll<io::Result<usize>> {
+    let this = self.get_mut();
+    match Pin::new(&mut this.inner).poll_read(cx, buf) {
+      Poll::Ready(result) => {
+        this.read_timer = None;
+        Poll::Ready(result)
+      }
+      Poll::Pending => Self::poll_timeout(&mut this.read_timer, this.read_timeout, cx),
+    }
+  }
+}
+
+impl AsyncWrite for AsyncTcpStream {
+  fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+    let this = self.get_mut();
+    match Pin::new(&mut this.inner).poll_write(cx, buf) {
+      Poll::Ready(result) => {
+        this.write_timer = None;
+        Poll::Ready(result)
+      }
+      Poll::Pending => Self::poll_timeout(&mut this.write_timer, this.write_timeout, cx),
+    }
+  }
+
+  fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+    let this = self.get_mut();
+    match Pin::new(&mut this.inner).poll_flush(cx) {
+      Poll::Ready(result) => {
+        this.write_timer = None;
+        Poll::Ready(result)
+      }
+      Poll::Pending => Self::poll_timeout(&mut this.write_timer, this.write_timeout, cx),
+    }
+  }
+
+  fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+    let this = self.get_mut();
+    match Pin::new(&mut this.inner).poll_close(cx) {
+      Poll::Ready(result) => {
+        this.write_timer = None;
+        Poll::Ready(result)
+      }
+      Poll::Pending => Self::poll_timeout(&mut this.write_timer, this.write_timeout, cx),
+    }
+  }
+}
 
 pub struct AsyncStreamingResponse<'a, S: AsyncRead + Unpin + ?Sized> {
   head: Vec<u8>,
@@ -224,7 +318,7 @@ impl<'a> AsyncConnection<'a> {
 
   pub async fn async_call(mut self) -> error::Result<Response> {
     let mut visited_urls = HashSet::new();
-    let mut reusable_stream: Option<AllowStdIo<TcpStream>> = None;
+    let mut reusable_stream: Option<AsyncTcpStream> = None;
 
     loop {
       let url = self.conn.url().map_err(error::builder)?;
@@ -241,7 +335,7 @@ impl<'a> AsyncConnection<'a> {
           Some(stream) => stream,
           None => {
             let addr = self.conn.addr(&url)?;
-            AllowStdIo::new(self.async_tcp_stream(&addr).await?)
+            self.async_tcp_stream(&addr).await?
           }
         };
         let parts = self.async_send_http_parts(&url, &mut stream).await?;
@@ -329,8 +423,25 @@ impl<'a> AsyncConnection<'a> {
 }
 
 impl<'a> AsyncConnection<'a> {
-  async fn async_tcp_stream(&self, addr: &str) -> error::Result<TcpStream> {
-    connect_tcp_stream(addr, self.conn.config())
+  async fn async_tcp_stream(&self, addr: &str) -> error::Result<AsyncTcpStream> {
+    let addr = addr.to_string();
+    let config = self.conn.config().clone();
+    let read_timeout = Duration::from_millis(config.read_timeout());
+    let write_timeout = Duration::from_millis(config.write_timeout());
+    let (sender, receiver) = oneshot::channel();
+    std::thread::Builder::new()
+      .name("rttp-connect".to_string())
+      .spawn(move || {
+        let _ = sender.send(connect_tcp_stream(addr, &config));
+      })
+      .map_err(error::request)?;
+    let stream = receiver.await.map_err(|_| {
+      error::request(io::Error::other(
+        "TCP connection worker exited without a result",
+      ))
+    })??;
+
+    AsyncTcpStream::new(stream, read_timeout, write_timeout).map_err(error::request)
   }
 
   async fn async_write_stream<S>(&self, stream: &mut S) -> error::Result<()>
@@ -682,12 +793,12 @@ impl<'a> AsyncConnection<'a> {
   async fn async_send_streaming_with_stream_parts(
     &self,
     url: &Url,
-    stream: TcpStream,
+    stream: AsyncTcpStream,
     body: AsyncStreamingRequestBody<'_>,
   ) -> error::Result<ResponseParts> {
     match url.scheme() {
       "http" => {
-        let mut stream = AllowStdIo::new(stream);
+        let mut stream = stream;
         self
           .async_write_streaming_request(&mut stream, body)
           .await?;
@@ -705,11 +816,11 @@ impl<'a> AsyncConnection<'a> {
   async fn async_send_with_stream_parts(
     &self,
     url: &Url,
-    stream: TcpStream,
+    stream: AsyncTcpStream,
   ) -> error::Result<ResponseParts> {
     match url.scheme() {
       "http" => {
-        let mut stream = AllowStdIo::new(stream);
+        let mut stream = stream;
         self.async_send_http_parts(url, &mut stream).await
       }
       "https" => self.async_send_https_parts(url, stream).await,
@@ -741,7 +852,7 @@ impl<'a> AsyncConnection<'a> {
   async fn async_send_https_parts(
     &self,
     url: &Url,
-    stream: TcpStream,
+    stream: AsyncTcpStream,
   ) -> error::Result<ResponseParts> {
     #[cfg(feature = "tls-rustls")]
     {
@@ -750,8 +861,7 @@ impl<'a> AsyncConnection<'a> {
 
     #[cfg(all(feature = "tls-native", not(feature = "tls-rustls")))]
     {
-      let mut stream = stream;
-      return self.conn.block_send_https_parts(url, &mut stream);
+      return self.async_send_https_native_parts(url, stream).await;
     }
 
     #[cfg(not(any(feature = "tls-native", feature = "tls-rustls")))]
@@ -767,7 +877,7 @@ impl<'a> AsyncConnection<'a> {
   async fn async_send_https_streaming_parts(
     &self,
     url: &Url,
-    stream: TcpStream,
+    stream: AsyncTcpStream,
     body: AsyncStreamingRequestBody<'_>,
   ) -> error::Result<ResponseParts> {
     #[cfg(feature = "tls-rustls")]
@@ -798,11 +908,42 @@ impl<'a> AsyncConnection<'a> {
     }
   }
 
+  #[cfg(all(feature = "tls-native", not(feature = "tls-rustls")))]
+  async fn async_send_https_native_parts(
+    &self,
+    url: &Url,
+    stream: AsyncTcpStream,
+  ) -> error::Result<ResponseParts> {
+    let config = self.conn.config();
+    let connector = async_native_tls::TlsConnector::new()
+      .danger_accept_invalid_certs(!config.verify_ssl_cert())
+      .danger_accept_invalid_hostnames(!config.verify_ssl_hostname());
+    let mut tls_stream = connector
+      .connect(self.conn.host(url)?.as_str(), stream)
+      .await
+      .map_err(|_| error::bad_ssl("Native tls handshake error"))?;
+
+    match self
+      .async_send_expect_continue_parts(&mut tls_stream)
+      .await?
+    {
+      ExpectContinueResult::NotUsed => self.async_write_stream(&mut tls_stream).await?,
+      ExpectContinueResult::BodySent(informational_responses) => {
+        return self
+          .async_read_stream_parts(url, &mut tls_stream)
+          .await
+          .map(|parts| prepend_informational_responses(parts, informational_responses));
+      }
+      ExpectContinueResult::Final(parts) => return Ok(parts),
+    }
+    self.async_read_stream_parts(url, &mut tls_stream).await
+  }
+
   #[cfg(feature = "tls-rustls")]
   async fn async_send_https_rustls_parts(
     &self,
     url: &Url,
-    stream: TcpStream,
+    stream: AsyncTcpStream,
   ) -> error::Result<ResponseParts> {
     use futures_rustls::TlsConnector;
     use rustls::pki_types::ServerName;
@@ -845,9 +986,8 @@ impl<'a> AsyncConnection<'a> {
     };
 
     let connector = TlsConnector::from(Arc::new(rustls_config));
-    let async_tcp = AllowStdIo::new(stream);
     let mut tls_stream = connector
-      .connect(server_name, async_tcp)
+      .connect(server_name, stream)
       .await
       .map_err(|e| error::bad_ssl(e.to_string()))?;
 
@@ -871,7 +1011,7 @@ impl<'a> AsyncConnection<'a> {
   async fn async_send_https_rustls_streaming_parts(
     &self,
     url: &Url,
-    stream: TcpStream,
+    stream: AsyncTcpStream,
     body: AsyncStreamingRequestBody<'_>,
   ) -> error::Result<ResponseParts> {
     use futures_rustls::TlsConnector;
@@ -915,9 +1055,8 @@ impl<'a> AsyncConnection<'a> {
     };
 
     let connector = TlsConnector::from(Arc::new(rustls_config));
-    let async_tcp = AllowStdIo::new(stream);
     let mut tls_stream = connector
-      .connect(server_name, async_tcp)
+      .connect(server_name, stream)
       .await
       .map_err(|e| error::bad_ssl(e.to_string()))?;
 
@@ -1000,6 +1139,284 @@ where
   writer.write_all(CRLF).await.map_err(error::request)
 }
 
+async fn async_read_proxy_connect_response<S>(stream: &mut S) -> error::Result<()>
+where
+  S: AsyncRead + Unpin,
+{
+  loop {
+    let mut header = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+      let read = stream.read(&mut byte).await.map_err(error::request)?;
+      if read == 0 {
+        return Err(if header.is_empty() {
+          error::bad_proxy("Proxy server response error.")
+        } else {
+          error::bad_proxy("Incomplete proxy response headers")
+        });
+      }
+      header.push(byte[0]);
+      if header.ends_with(b"\r\n\r\n") {
+        break;
+      }
+    }
+    let status_code = response_status_code(&header)
+      .map_err(|_| error::bad_proxy("parse proxy server response error."))?;
+    if is_skippable_informational_status(status_code) {
+      continue;
+    }
+    return parse_proxy_connect_response(&header);
+  }
+}
+
+async fn async_socks4_handshake<S>(stream: &mut S, target: &str, user: &str) -> error::Result<()>
+where
+  S: AsyncRead + AsyncWrite + Unpin,
+{
+  let target = target.to_target_addr().map_err(error::request)?;
+  let mut request = vec![4, 1];
+  match target {
+    TargetAddr::Ip(std::net::SocketAddr::V4(addr)) => {
+      request.extend_from_slice(&addr.port().to_be_bytes());
+      request.extend_from_slice(&addr.ip().octets());
+      request.extend_from_slice(user.as_bytes());
+      request.push(0);
+    }
+    TargetAddr::Ip(std::net::SocketAddr::V6(_)) => {
+      return Err(error::request(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "SOCKS4 does not support IPv6",
+      )));
+    }
+    TargetAddr::Domain(host, port) => {
+      request.extend_from_slice(&port.to_be_bytes());
+      request.extend_from_slice(&[0, 0, 0, 1]);
+      request.extend_from_slice(user.as_bytes());
+      request.push(0);
+      request.extend_from_slice(host.as_bytes());
+      request.push(0);
+    }
+  }
+  stream.write_all(&request).await.map_err(error::request)?;
+  stream.flush().await.map_err(error::request)?;
+
+  let mut response = [0u8; 8];
+  stream
+    .read_exact(&mut response)
+    .await
+    .map_err(error::request)?;
+  if response[0] != 0 {
+    return Err(error::request(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "invalid response version",
+    )));
+  }
+  match response[1] {
+    90 => Ok(()),
+    91 => Err(error::request(io::Error::other(
+      "request rejected or failed",
+    ))),
+    92 => Err(error::request(io::Error::new(
+      io::ErrorKind::PermissionDenied,
+      "request rejected because SOCKS server cannot connect to identd on the client",
+    ))),
+    93 => Err(error::request(io::Error::new(
+      io::ErrorKind::PermissionDenied,
+      "request rejected because the client program and identd report different user-ids",
+    ))),
+    _ => Err(error::request(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "invalid response code",
+    ))),
+  }
+}
+
+async fn async_socks5_handshake<S>(
+  stream: &mut S,
+  target: &str,
+  username: Option<&str>,
+  password: Option<&str>,
+) -> error::Result<()>
+where
+  S: AsyncRead + AsyncWrite + Unpin,
+{
+  let greeting: &[u8] = if username.is_some() {
+    &[5, 2, 2, 0]
+  } else {
+    &[5, 1, 0]
+  };
+  stream.write_all(greeting).await.map_err(error::request)?;
+  stream.flush().await.map_err(error::request)?;
+
+  let mut method = [0u8; 2];
+  stream
+    .read_exact(&mut method)
+    .await
+    .map_err(error::request)?;
+  if method[0] != 5 {
+    return Err(error::request(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "invalid response version",
+    )));
+  }
+  match method[1] {
+    0 => {}
+    2 if username.is_some() => {
+      async_socks5_password_authentication(
+        stream,
+        username.unwrap_or_default(),
+        password.unwrap_or_default(),
+      )
+      .await?
+    }
+    0xff => {
+      return Err(error::request(io::Error::other(
+        "no acceptable auth methods",
+      )));
+    }
+    _ => return Err(error::request(io::Error::other("unknown auth method"))),
+  }
+
+  let target = target.to_target_addr().map_err(error::request)?;
+  let mut request = vec![5, 1, 0];
+  encode_socks5_target(&mut request, &target)?;
+  stream.write_all(&request).await.map_err(error::request)?;
+  stream.flush().await.map_err(error::request)?;
+
+  let mut response = [0u8; 4];
+  stream
+    .read_exact(&mut response)
+    .await
+    .map_err(error::request)?;
+  if response[0] != 5 {
+    return Err(error::request(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "invalid response version",
+    )));
+  }
+  if response[1] != 0 {
+    let message = match response[1] {
+      1 => "general SOCKS server failure",
+      2 => "connection not allowed by ruleset",
+      3 => "network unreachable",
+      4 => "host unreachable",
+      5 => "connection refused",
+      6 => "TTL expired",
+      7 => "command not supported",
+      8 => "address kind not supported",
+      _ => "unknown error",
+    };
+    return Err(error::request(io::Error::other(message)));
+  }
+  if response[2] != 0 {
+    return Err(error::request(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "invalid reserved byte",
+    )));
+  }
+  async_discard_socks5_address(stream, response[3]).await
+}
+
+async fn async_socks5_password_authentication<S>(
+  stream: &mut S,
+  username: &str,
+  password: &str,
+) -> error::Result<()>
+where
+  S: AsyncRead + AsyncWrite + Unpin,
+{
+  if username.is_empty() || username.len() > 255 {
+    return Err(error::request(io::Error::new(
+      io::ErrorKind::InvalidInput,
+      "invalid username",
+    )));
+  }
+  if password.is_empty() || password.len() > 255 {
+    return Err(error::request(io::Error::new(
+      io::ErrorKind::InvalidInput,
+      "invalid password",
+    )));
+  }
+
+  let mut request = Vec::with_capacity(3 + username.len() + password.len());
+  request.extend_from_slice(&[1, username.len() as u8]);
+  request.extend_from_slice(username.as_bytes());
+  request.push(password.len() as u8);
+  request.extend_from_slice(password.as_bytes());
+  stream.write_all(&request).await.map_err(error::request)?;
+  stream.flush().await.map_err(error::request)?;
+
+  let mut response = [0u8; 2];
+  stream
+    .read_exact(&mut response)
+    .await
+    .map_err(error::request)?;
+  if response[0] != 1 {
+    return Err(error::request(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "invalid response version",
+    )));
+  }
+  if response[1] != 0 {
+    return Err(error::request(io::Error::new(
+      io::ErrorKind::PermissionDenied,
+      "password authentication failed",
+    )));
+  }
+  Ok(())
+}
+
+fn encode_socks5_target(request: &mut Vec<u8>, target: &TargetAddr) -> error::Result<()> {
+  match target {
+    TargetAddr::Ip(std::net::SocketAddr::V4(addr)) => {
+      request.push(1);
+      request.extend_from_slice(&addr.ip().octets());
+      request.extend_from_slice(&addr.port().to_be_bytes());
+    }
+    TargetAddr::Ip(std::net::SocketAddr::V6(addr)) => {
+      request.push(4);
+      request.extend_from_slice(&addr.ip().octets());
+      request.extend_from_slice(&addr.port().to_be_bytes());
+    }
+    TargetAddr::Domain(host, port) => {
+      let host_len = u8::try_from(host.len()).map_err(|_| {
+        error::request(io::Error::new(
+          io::ErrorKind::InvalidInput,
+          "domain name too long",
+        ))
+      })?;
+      request.extend_from_slice(&[3, host_len]);
+      request.extend_from_slice(host.as_bytes());
+      request.extend_from_slice(&port.to_be_bytes());
+    }
+  }
+  Ok(())
+}
+
+async fn async_discard_socks5_address<S>(stream: &mut S, address_type: u8) -> error::Result<()>
+where
+  S: AsyncRead + Unpin,
+{
+  let address_len = match address_type {
+    1 => 4,
+    4 => 16,
+    3 => {
+      let mut len = [0u8; 1];
+      stream.read_exact(&mut len).await.map_err(error::request)?;
+      usize::from(len[0])
+    }
+    _ => {
+      return Err(error::request(io::Error::other("unsupported address type")));
+    }
+  };
+  let mut address_and_port = vec![0u8; address_len + 2];
+  stream
+    .read_exact(&mut address_and_port)
+    .await
+    .map_err(error::request)?;
+  Ok(())
+}
+
 // proxy connection
 impl<'a> AsyncConnection<'a> {
   async fn call_with_proxy(&self, url: &Url, proxy: &Proxy) -> error::Result<ResponseParts> {
@@ -1019,8 +1436,7 @@ impl<'a> AsyncConnection<'a> {
 
   async fn call_with_proxy_http(&self, url: &Url, proxy: &Proxy) -> error::Result<ResponseParts> {
     let addr = format!("{}:{}", proxy.host(), proxy.port());
-    let stream = self.async_tcp_stream(&addr).await?;
-    let mut stream = AllowStdIo::new(stream);
+    let mut stream = self.async_tcp_stream(&addr).await?;
     let header = self.conn.proxy_http_header(url, proxy);
 
     match self
@@ -1047,44 +1463,39 @@ impl<'a> AsyncConnection<'a> {
 
     stream
       .write_all(connect_header.as_bytes())
+      .await
       .map_err(error::request)?;
-    stream.flush().map_err(error::request)?;
-    read_proxy_connect_response(&mut stream)?;
+    stream.flush().await.map_err(error::request)?;
+    async_read_proxy_connect_response(&mut stream).await?;
 
     self.async_send_with_stream_parts(url, stream).await
   }
 
   async fn call_with_proxy_socks4(&self, url: &Url, proxy: &Proxy) -> error::Result<ResponseParts> {
-    // The SOCKS crate is sync-only, but its established stream still plugs into the existing
-    // response path. Keeping it avoids duplicating the handshake state machine here.
     let addr_proxy = format!("{}:{}", proxy.host(), proxy.port());
     let addr_target = self.conn.addr(url)?;
-    let user = if let Some(u) = proxy.username() {
-      u.to_string()
-    } else {
-      "".to_string()
-    };
-    let mut stream = Socks4Stream::connect(&addr_proxy[..], &addr_target[..], &user[..])
-      .map_err(error::request)?;
-    self.conn.block_send_with_stream_parts(url, &mut stream)
+    let mut stream = self.async_tcp_stream(&addr_proxy).await?;
+    async_socks4_handshake(
+      &mut stream,
+      &addr_target,
+      proxy.username().as_deref().unwrap_or_default(),
+    )
+    .await?;
+    self.async_send_with_stream_parts(url, stream).await
   }
 
   async fn call_with_proxy_socks5(&self, url: &Url, proxy: &Proxy) -> error::Result<ResponseParts> {
-    // socket2 already covers the direct TCP path; the SOCKS exception stays isolated to the
-    // proxy handshake and keeps the async API surface unchanged.
     let addr_proxy = format!("{}:{}", proxy.host(), proxy.port());
     let addr_target = self.conn.addr(url)?;
-    let mut stream = if let Some(u) = proxy.username() {
-      if let Some(p) = proxy.password() {
-        Socks5Stream::connect_with_password(&addr_proxy[..], &addr_target[..], &u[..], &p[..])
-      } else {
-        Socks5Stream::connect_with_password(&addr_proxy[..], &addr_target[..], &u[..], "")
-      }
-    } else {
-      Socks5Stream::connect(&addr_proxy[..], &addr_target[..])
-    }
-    .map_err(error::request)?;
-    self.conn.block_send_with_stream_parts(url, &mut stream)
+    let mut stream = self.async_tcp_stream(&addr_proxy).await?;
+    async_socks5_handshake(
+      &mut stream,
+      &addr_target,
+      proxy.username().as_deref(),
+      proxy.password().as_deref(),
+    )
+    .await?;
+    self.async_send_with_stream_parts(url, stream).await
   }
 }
 

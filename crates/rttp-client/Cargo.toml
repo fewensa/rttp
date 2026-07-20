@@ -42,11 +42,12 @@ async-native-tls = { optional = true, version = "0.5" }
 rustls           = { optional = true, version = "0.23" }
 webpki-roots     = { optional = true, version = "0.26" }
 futures-rustls   = { optional = true, version = "0.26" }
+async-io         = { optional = true, version = "2" }
 
 
 [features]
 default = []
-async = []
+async = ["async-io"]
 http2 = []
 tls-native  = ["native-tls", "async-native-tls"]
 tls-rustls  = ["rustls", "webpki-roots", "futures-rustls"]
