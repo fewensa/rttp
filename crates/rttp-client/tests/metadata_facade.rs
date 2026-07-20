@@ -1,13 +1,17 @@
 use rttp_client::response::{
-  AcceptCh, AccessControlExposeHeaders, AltSvc, CrossOriginResourcePolicy, Digest,
-  HttpClearSiteData, PreferenceApplied, Priority, ReferrerPolicy, ReferrerPolicyToken,
-  ServerTiming, Trailer,
+  AcceptCh, AccessControlAllowMethods, AccessControlAllowMethodsParseError,
+  AccessControlExposeHeaders, AltSvc, CrossOriginResourcePolicy, Digest, HttpClearSiteData,
+  PreferenceApplied, Priority, ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Trailer,
 };
 use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 
 #[test]
 fn response_facade_exports_representative_bounded_metadata_types() {
   let accept_ch = AcceptCh::parse("Sec-CH-UA, DPR").expect("Accept-CH should parse");
+  let allow_methods = AccessControlAllowMethods::parse("GET, POST")
+    .expect("Access-Control-Allow-Methods should parse");
+  let _: AccessControlAllowMethodsParseError = AccessControlAllowMethods::parse("")
+    .expect_err("empty Access-Control-Allow-Methods should be rejected");
   let expose_headers = AccessControlExposeHeaders::parse("X-Request-Id")
     .expect("Access-Control-Expose-Headers should parse");
   let clear_site_data =
@@ -25,6 +29,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     CrossOriginResourcePolicy::parse("same-origin").expect("CORP should parse");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
+  assert_eq!(allow_methods.methods(), ["GET", "POST"]);
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
   assert_eq!(clear_site_data.directives().len(), 1);
   assert_eq!(digest.entries().len(), 1);
