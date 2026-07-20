@@ -62,6 +62,19 @@ impl Error {
     self.source().map(|e| e.is::<TimedOut>()).unwrap_or(false)
   }
 
+  /// Returns true if a buffered response body exceeded its configured limit.
+  pub fn is_body_too_large(&self) -> bool {
+    matches!(self.inner.kind, Kind::BodyTooLarge { .. })
+  }
+
+  /// Returns the configured response body limit for a body-too-large error.
+  pub fn body_limit(&self) -> Option<usize> {
+    match self.inner.kind {
+      Kind::BodyTooLarge { limit } => Some(limit),
+      _ => None,
+    }
+  }
+
   /// Returns the status code, if the error was generated from a response.
   pub fn status(&self) -> Option<StatusCode> {
     match self.inner.kind {
@@ -120,6 +133,7 @@ impl fmt::Display for Error {
       Kind::Response => f.write_str("error receive response")?,
       Kind::Body => f.write_str("request or response body error")?,
       Kind::Decode => f.write_str("error decoding response body")?,
+      Kind::BodyTooLarge { limit } => write!(f, "buffered response body exceeded {} bytes", limit)?,
       Kind::Redirect => f.write_str("error following redirect")?,
       Kind::Status(ref code) => {
         let prefix = if code.is_client_error() {
@@ -172,6 +186,7 @@ pub(crate) enum Kind {
   Status(StatusCode),
   Body,
   Decode,
+  BodyTooLarge { limit: usize },
 }
 
 // constructors
@@ -186,6 +201,10 @@ pub(crate) fn body<E: Into<BoxError>>(e: E) -> Error {
 
 pub(crate) fn decode<E: Into<BoxError>>(e: E) -> Error {
   Error::new(Kind::Decode, Some(e))
+}
+
+pub(crate) fn body_too_large(limit: usize) -> Error {
+  Error::new(Kind::BodyTooLarge { limit }, None::<Error>)
 }
 
 pub(crate) fn request<E: Into<BoxError>>(e: E) -> Error {

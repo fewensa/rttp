@@ -7,6 +7,7 @@ use rttp_protocol::http1::{
 };
 use url::Url;
 
+use crate::config::DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES;
 use crate::error;
 use crate::response::{InformationalResponse, Response};
 use crate::types::{Header, RoUrl};
@@ -72,7 +73,11 @@ impl<'a, R: Read + ?Sized> StreamingResponse<'a, R> {
 
   pub fn read_to_response(mut self) -> error::Result<Response> {
     let mut binary = self.head.clone();
-    self.body.read_to_end(&mut binary).map_err(error::request)?;
+    read_response_body_to_end(
+      &mut self.body,
+      &mut binary,
+      DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES,
+    )?;
     Response::with_trailers(self.url, binary, self.body.trailers().clone())
   }
 }
@@ -190,6 +195,7 @@ pub struct ConnectionReader<'a> {
   url: &'a Url,
   reader: &'a mut dyn io::Read,
   expect_no_body: bool,
+  max_buffered_response_body_bytes: usize,
 }
 
 impl<'a> ConnectionReader<'a> {
@@ -198,20 +204,46 @@ impl<'a> ConnectionReader<'a> {
     reader: &'a mut dyn io::Read,
     expect_no_body: bool,
   ) -> ConnectionReader<'a> {
+    Self::new_with_limit(
+      url,
+      reader,
+      expect_no_body,
+      DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES,
+    )
+  }
+
+  pub(crate) fn new_with_limit(
+    url: &'a Url,
+    reader: &'a mut dyn io::Read,
+    expect_no_body: bool,
+    max_buffered_response_body_bytes: usize,
+  ) -> ConnectionReader<'a> {
     Self {
       url,
       reader,
       expect_no_body,
+      max_buffered_response_body_bytes,
     }
   }
 
   #[allow(dead_code)]
   pub fn binary(&mut self) -> error::Result<Vec<u8>> {
-    Ok(read_response_parts(self.reader, self.expect_no_body)?.binary)
+    Ok(
+      read_response_parts_with_limit(
+        self.reader,
+        self.expect_no_body,
+        self.max_buffered_response_body_bytes,
+      )?
+      .binary,
+    )
   }
 
   pub(crate) fn response_parts(&mut self) -> error::Result<ResponseParts> {
-    read_response_parts(self.reader, self.expect_no_body)
+    read_response_parts_with_limit(
+      self.reader,
+      self.expect_no_body,
+      self.max_buffered_response_body_bytes,
+    )
   }
 
   pub fn streaming_response(&mut self) -> error::Result<StreamingResponse<'_, dyn io::Read + '_>> {
@@ -227,40 +259,44 @@ impl<'a> ConnectionReader<'a> {
   #[allow(dead_code)]
   pub fn response(&mut self) -> error::Result<Response> {
     let parts = self.response_parts()?;
-    Response::with_trailers_and_informational(
+    Response::with_trailers_and_informational_and_limit(
       RoUrl::from(self.url.clone()),
       parts.binary,
       parts.trailers,
       parts.informational_responses,
+      self.max_buffered_response_body_bytes,
     )
   }
 
   // todo Connection reader will read more type from io::Reader, like Chunk data, and Stream data.
 }
 
-pub(crate) fn read_response_parts<R>(
+pub(crate) fn read_response_parts_with_limit<R>(
   reader: &mut R,
   expect_no_body: bool,
+  max_body_bytes: usize,
 ) -> error::Result<ResponseParts>
 where
   R: Read + ?Sized,
 {
-  read_response_parts_with_informational(reader, expect_no_body)
+  read_response_parts_with_informational_and_limit(reader, expect_no_body, max_body_bytes)
 }
 
-pub(crate) fn read_response_parts_with_informational<R>(
+pub(crate) fn read_response_parts_with_informational_and_limit<R>(
   reader: &mut R,
   expect_no_body: bool,
+  max_body_bytes: usize,
 ) -> error::Result<ResponseParts>
 where
   R: Read + ?Sized,
 {
   let (binary, informational_responses) = read_response_head_with_informational(reader)?;
-  read_response_parts_after_header_with_informational(
+  read_response_parts_after_header_with_informational_and_limit(
     reader,
     expect_no_body,
     binary,
     informational_responses,
+    max_body_bytes,
   )
 }
 
@@ -304,14 +340,21 @@ pub(crate) fn read_response_parts_after_header<R>(
 where
   R: Read + ?Sized,
 {
-  read_response_parts_after_header_with_informational(reader, expect_no_body, binary, Vec::new())
+  read_response_parts_after_header_with_informational_and_limit(
+    reader,
+    expect_no_body,
+    binary,
+    Vec::new(),
+    DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES,
+  )
 }
 
-pub(crate) fn read_response_parts_after_header_with_informational<R>(
+pub(crate) fn read_response_parts_after_header_with_informational_and_limit<R>(
   reader: &mut R,
   expect_no_body: bool,
   mut binary: Vec<u8>,
   informational_responses: Vec<InformationalResponse>,
+  max_body_bytes: usize,
 ) -> error::Result<ResponseParts>
 where
   R: Read + ?Sized,
@@ -324,20 +367,16 @@ where
     ResponseBodyKind::NoBody => {}
     ResponseBodyKind::Chunked => {
       let mut body_reader = ResponseBodyReader::new(reader, ResponseBodyKind::Chunked);
-      body_reader
-        .read_to_end(&mut binary)
-        .map_err(response_body_read_error)?;
+      read_response_body_to_end(&mut body_reader, &mut binary, max_body_bytes)?;
       trailers = body_reader.trailers().clone();
     }
     ResponseBodyKind::ContentLength(content_length) => {
       let mut body_reader =
         ResponseBodyReader::new(reader, ResponseBodyKind::ContentLength(content_length));
-      body_reader
-        .read_to_end(&mut binary)
-        .map_err(response_body_read_error)?;
+      read_response_body_to_end(&mut body_reader, &mut binary, max_body_bytes)?;
     }
     ResponseBodyKind::UntilEof => {
-      reader.read_to_end(&mut binary).map_err(error::request)?;
+      read_response_body_to_end(reader, &mut binary, max_body_bytes)?;
     }
   }
   Ok(ResponseParts {
@@ -347,6 +386,33 @@ where
     connection_reusable,
     close_connection,
   })
+}
+
+fn read_response_body_to_end<R>(
+  reader: &mut R,
+  binary: &mut Vec<u8>,
+  max_body_bytes: usize,
+) -> error::Result<usize>
+where
+  R: Read + ?Sized,
+{
+  let start = binary.len();
+  let mut buffer = [0u8; 8 * 1024];
+  loop {
+    let body_len = binary.len() - start;
+    let remaining = max_body_bytes - body_len;
+    let read_limit = buffer.len().min(remaining.saturating_add(1));
+    let read = reader
+      .read(&mut buffer[..read_limit])
+      .map_err(response_body_read_error)?;
+    if read == 0 {
+      return Ok(body_len);
+    }
+    if read > remaining {
+      return Err(error::body_too_large(max_body_bytes));
+    }
+    binary.extend_from_slice(&buffer[..read]);
+  }
 }
 
 pub(crate) fn response_connection_reusable(

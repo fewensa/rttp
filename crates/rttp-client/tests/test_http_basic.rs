@@ -7,12 +7,25 @@ use std::net::TcpListener;
 use std::thread;
 use std::time::Duration;
 
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use rttp_client::types::{Auth, Para, Proxy, RoUrl};
 use rttp_client::ConnectionReader;
-use rttp_client::{Config, HttpClient};
+use rttp_client::{Config, HttpClient, DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES};
 
 fn client() -> HttpClient {
   HttpClient::new()
+}
+
+fn buffered_response_config(limit: usize) -> Config {
+  Config::builder()
+    .max_buffered_response_body_bytes(limit)
+    .build()
+}
+
+fn assert_body_too_large(error: rttp_client::error::Error, limit: usize) {
+  assert!(error.is_body_too_large(), "unexpected error: {error}");
+  assert_eq!(Some(limit), error.body_limit());
 }
 
 fn spawn_streaming_upload_capture_server() -> (std::net::SocketAddr, thread::JoinHandle<Vec<u8>>) {
@@ -228,6 +241,107 @@ fn test_gzip() {
     .header(("Accept-Encoding", "gzip, deflate"))
     .emit();
   assert!(response.is_ok());
+}
+
+#[test]
+fn test_buffered_content_length_response_enforces_exact_body_limit() {
+  for (body, should_succeed) in [(b"12345".as_slice(), true), (b"123456".as_slice(), false)] {
+    let mut response = format!(
+      "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+      body.len()
+    )
+    .into_bytes();
+    response.extend_from_slice(body);
+    let (addr, _handle) = support::spawn_chunked_response_server(response);
+    let result = client()
+      .url(format!("http://{addr}/fixed"))
+      .config(buffered_response_config(5))
+      .emit();
+
+    if should_succeed {
+      assert_eq!(b"12345", result.unwrap().body().binary());
+    } else {
+      assert_body_too_large(result.unwrap_err(), 5);
+    }
+  }
+}
+
+#[test]
+fn test_buffered_chunked_response_enforces_exact_body_limit() {
+  for (chunk, should_succeed) in [("5\r\n12345\r\n", true), ("6\r\n123456\r\n", false)] {
+    let response = format!(
+      "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{chunk}0\r\n\r\n"
+    );
+    let (addr, _handle) = support::spawn_chunked_response_server(response);
+    let result = client()
+      .url(format!("http://{addr}/chunked"))
+      .config(buffered_response_config(5))
+      .emit();
+
+    if should_succeed {
+      assert_eq!(b"12345", result.unwrap().body().binary());
+    } else {
+      assert_body_too_large(result.unwrap_err(), 5);
+    }
+  }
+}
+
+#[test]
+fn test_buffered_eof_delimited_response_enforces_exact_body_limit() {
+  for (body, should_succeed) in [("12345", true), ("123456", false)] {
+    let response = format!("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{body}");
+    let (addr, _handle) = support::spawn_chunked_response_server(response);
+    let result = client()
+      .url(format!("http://{addr}/eof"))
+      .config(buffered_response_config(5))
+      .emit();
+
+    if should_succeed {
+      assert_eq!(b"12345", result.unwrap().body().binary());
+    } else {
+      assert_body_too_large(result.unwrap_err(), 5);
+    }
+  }
+}
+
+#[test]
+fn test_buffered_gzip_response_limits_decoded_body() {
+  let decoded = vec![b'a'; 256];
+  let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+  encoder.write_all(&decoded).unwrap();
+  let compressed = encoder.finish().unwrap();
+  assert!(compressed.len() <= 64);
+  let mut response = format!(
+    "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+    compressed.len()
+  )
+  .into_bytes();
+  response.extend_from_slice(&compressed);
+  let (addr, _handle) = support::spawn_chunked_response_server(response);
+
+  let error = client()
+    .url(format!("http://{addr}/gzip"))
+    .config(buffered_response_config(64))
+    .emit()
+    .unwrap_err();
+
+  assert_body_too_large(error, 64);
+}
+
+#[test]
+fn test_streaming_response_can_read_body_larger_than_buffered_limit() {
+  let body_len = DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES + 1;
+  let mut raw = format!("HTTP/1.1 200 OK\r\nContent-Length: {body_len}\r\n\r\n").into_bytes();
+  raw.resize(raw.len() + body_len, b'x');
+  let mut cursor = Cursor::new(raw);
+  let url = url::Url::parse("http://localhost/stream").unwrap();
+  let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+  let mut response = reader.streaming_response().unwrap();
+  let mut body = Vec::new();
+
+  response.body_mut().read_to_end(&mut body).unwrap();
+
+  assert_eq!(body_len, body.len());
 }
 
 #[test]

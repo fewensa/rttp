@@ -1,3 +1,6 @@
+/// Default maximum number of bytes buffered for a client response body.
+pub const DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES: usize = 16 * 1024 * 1024;
+
 /// Local settings for the bounded prior-knowledge h2c client path.
 ///
 /// The default policy leaves both settings unadvertised, retaining the HTTP/2
@@ -44,6 +47,7 @@ pub struct Config {
   max_redirect: u32,
   verify_ssl_hostname: bool,
   verify_ssl_cert: bool,
+  max_buffered_response_body_bytes: usize,
   http2_max_frame_size: Option<usize>,
   http2_header_table_size: Option<usize>,
 }
@@ -83,6 +87,9 @@ impl Config {
   }
   pub fn verify_ssl_hostname(&self) -> bool {
     self.verify_ssl_hostname
+  }
+  pub fn max_buffered_response_body_bytes(&self) -> usize {
+    self.max_buffered_response_body_bytes
   }
   pub fn http2_max_frame_size(&self) -> Option<usize> {
     self.http2_max_frame_size
@@ -125,6 +132,7 @@ impl ConfigBuilder {
         max_redirect: 0,
         verify_ssl_hostname: true,
         verify_ssl_cert: true,
+        max_buffered_response_body_bytes: DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES,
         http2_max_frame_size: None,
         http2_header_table_size: None,
       },
@@ -160,6 +168,17 @@ impl ConfigBuilder {
   }
   pub fn verify_ssl_cert(&mut self, verify_ssl_cert: bool) -> &mut Self {
     self.config.verify_ssl_cert = verify_ssl_cert;
+    self
+  }
+  /// Set the maximum number of wire or decoded body bytes buffered by a response.
+  ///
+  /// This limit does not apply when callers consume a streaming response body
+  /// directly.
+  pub fn max_buffered_response_body_bytes(
+    &mut self,
+    max_buffered_response_body_bytes: usize,
+  ) -> &mut Self {
+    self.config.max_buffered_response_body_bytes = max_buffered_response_body_bytes;
     self
   }
   /// Configure local settings for the bounded prior-knowledge h2c client path.
@@ -216,6 +235,7 @@ mod tests {
       .max_redirect(5)
       .verify_ssl_hostname(false)
       .verify_ssl_cert(false)
+      .max_buffered_response_body_bytes(123)
       .http2_max_frame_size(16_384)
       .http2_header_table_size(64)
       .build();
@@ -226,6 +246,7 @@ mod tests {
     assert_eq!(config.max_redirect(), 5);
     assert!(!config.verify_ssl_hostname());
     assert!(!config.verify_ssl_cert());
+    assert_eq!(123, config.max_buffered_response_body_bytes());
     assert_eq!(Some(16_384), config.http2_max_frame_size());
     assert_eq!(Some(64), config.http2_header_table_size());
   }
@@ -234,6 +255,12 @@ mod tests {
   fn default_config_matches_builder_defaults() {
     let default_config = Config::default();
     let builder_config = Config::builder().build();
+
+    assert_eq!(
+      DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES,
+      default_config.max_buffered_response_body_bytes()
+    );
+    assert!(default_config.max_buffered_response_body_bytes() > 0);
 
     assert_eq!(default_config.read_timeout(), builder_config.read_timeout());
     assert_eq!(
@@ -252,6 +279,10 @@ mod tests {
     assert_eq!(
       default_config.verify_ssl_cert(),
       builder_config.verify_ssl_cert()
+    );
+    assert_eq!(
+      default_config.max_buffered_response_body_bytes(),
+      builder_config.max_buffered_response_body_bytes()
     );
     assert_eq!(
       default_config.http2_max_frame_size(),
