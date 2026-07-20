@@ -5,6 +5,8 @@ use rttp_test_support as support;
 use std::collections::HashMap;
 
 #[cfg(feature = "async")]
+use futures::channel::oneshot;
+#[cfg(feature = "async")]
 use futures::executor::block_on;
 #[cfg(feature = "async")]
 use futures::io::{AllowStdIo, AsyncRead, AsyncReadExt, Cursor as AsyncCursor};
@@ -17,7 +19,11 @@ use std::io::{Cursor, Read, Write};
 #[cfg(feature = "async")]
 use std::net::TcpListener;
 #[cfg(feature = "async")]
+use std::sync::mpsc;
+#[cfg(feature = "async")]
 use std::thread;
+#[cfg(feature = "async")]
+use std::time::{Duration, Instant};
 
 #[cfg(feature = "async")]
 fn client() -> HttpClient {
@@ -89,6 +95,90 @@ fn spawn_async_head_metadata_server() -> (std::net::SocketAddr, thread::JoinHand
       )
       .expect("write async HEAD metadata response");
     request
+  });
+  (addr, handle)
+}
+
+#[cfg(feature = "async")]
+fn spawn_delayed_socks5_http_server() -> (
+  std::net::SocketAddr,
+  thread::JoinHandle<bool>,
+  oneshot::Receiver<()>,
+  mpsc::Sender<()>,
+) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind delayed SOCKS5 server");
+  let addr = listener.local_addr().expect("delayed SOCKS5 server addr");
+  let (handshake_sender, handshake_receiver) = oneshot::channel();
+  let (release_sender, release_receiver) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept SOCKS5 connection");
+    let mut greeting = [0u8; 3];
+    stream
+      .read_exact(&mut greeting)
+      .expect("read SOCKS5 greeting");
+    assert_eq!([5, 1, 0], greeting);
+
+    handshake_sender
+      .send(())
+      .expect("signal delayed SOCKS5 handshake");
+    let progressed_before_timeout = release_receiver
+      .recv_timeout(Duration::from_millis(500))
+      .is_ok();
+    stream
+      .write_all(&[5, 0])
+      .expect("write SOCKS5 greeting response");
+
+    let mut request = [0u8; 10];
+    stream
+      .read_exact(&mut request)
+      .expect("read SOCKS5 connect request");
+    assert_eq!([5, 1, 0, 1], request[..4]);
+    stream
+      .write_all(&[5, 0, 0, 1, 127, 0, 0, 1, 0, 0])
+      .expect("write SOCKS5 connect response");
+
+    support::read_http_request(&mut stream);
+    stream
+      .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK")
+      .expect("write delayed SOCKS5 response");
+    progressed_before_timeout
+  });
+  (addr, handle, handshake_receiver, release_sender)
+}
+
+#[cfg(feature = "async")]
+fn spawn_socks4_http_server() -> (std::net::SocketAddr, thread::JoinHandle<()>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind SOCKS4 server");
+  let addr = listener.local_addr().expect("SOCKS4 server addr");
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept SOCKS4 connection");
+    let mut request = [0u8; 9];
+    stream
+      .read_exact(&mut request)
+      .expect("read SOCKS4 connect request");
+    assert_eq!([4, 1], request[..2]);
+    assert_eq!([127, 0, 0, 1], request[4..8]);
+    assert_eq!(0, request[8]);
+    stream
+      .write_all(&[0, 90, 0, 0, 127, 0, 0, 1])
+      .expect("write SOCKS4 connect response");
+
+    support::read_http_request(&mut stream);
+    stream
+      .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK")
+      .expect("write SOCKS4 HTTP response");
+  });
+  (addr, handle)
+}
+
+#[cfg(feature = "async")]
+fn spawn_stalled_http_server() -> (std::net::SocketAddr, thread::JoinHandle<()>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind stalled HTTP server");
+  let addr = listener.local_addr().expect("stalled HTTP server addr");
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept stalled HTTP request");
+    support::read_http_request(&mut stream);
+    thread::sleep(Duration::from_millis(250));
   });
   (addr, handle)
 }
@@ -1002,6 +1092,26 @@ fn test_async_content_length_response_does_not_wait_for_eof() {
     let response = response.unwrap();
     assert_eq!("OK", response.body().string().unwrap());
   });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_read_timeout_remains_enforced() {
+  let (addr, handle) = spawn_stalled_http_server();
+  let start = Instant::now();
+  let error = block_on(async {
+    client()
+      .get()
+      .config(Config::builder().read_timeout(50))
+      .url(format!("http://{}/timeout", addr))
+      .rasync()
+      .await
+      .expect_err("stalled async response should time out")
+  });
+
+  assert!(start.elapsed() < Duration::from_millis(200));
+  assert!(error.to_string().contains("operation timed out"));
+  handle.join().expect("stalled HTTP server thread");
 }
 
 #[test]
@@ -1954,7 +2064,7 @@ fn test_async_auto_redirect_preserves_sensitive_headers_for_same_authority_locat
 }
 
 #[test]
-#[cfg(all(feature = "async", feature = "tls-rustls"))]
+#[cfg(all(feature = "async", any(feature = "tls-native", feature = "tls-rustls")))]
 fn test_async_https() {
   let (addr, _handle) = support::spawn_tls_server();
   block_on(async {
@@ -2075,7 +2185,77 @@ fn test_async_proxy_socks5() {
 }
 
 #[test]
-#[cfg(all(feature = "async", feature = "tls-rustls"))]
+#[cfg(feature = "async")]
+fn test_async_proxy_socks4() {
+  let (proxy_addr, proxy_handle) = spawn_socks4_http_server();
+  block_on(async {
+    let response = client()
+      .get()
+      .url("http://127.0.0.1:80/socks4")
+      .proxy(Proxy::socks4("127.0.0.1", proxy_addr.port().into()))
+      .rasync()
+      .await
+      .expect("async SOCKS4 response");
+    assert_eq!("OK", response.body().string().unwrap());
+  });
+  proxy_handle.join().expect("SOCKS4 server thread");
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_proxy_socks5_with_authentication() {
+  let (addr, _handle) = support::spawn_http_server();
+  let (proxy_addr, _proxy_handle) =
+    support::spawn_socks5_proxy_server_with_credentials("username", "password");
+  block_on(async {
+    let response = client()
+      .get()
+      .url(format!("http://{}/get", addr))
+      .proxy(Proxy::socks5_with_authorization(
+        "127.0.0.1",
+        proxy_addr.port().into(),
+        "username",
+        "password",
+      ))
+      .rasync()
+      .await
+      .expect("authenticated async SOCKS5 response");
+    assert_eq!("127.0.0.1", response.host());
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_socks5_handshake_does_not_block_other_tasks() {
+  let (proxy_addr, proxy_handle, handshake_receiver, release_sender) =
+    spawn_delayed_socks5_http_server();
+
+  block_on(async {
+    let mut client = client();
+    let request = client
+      .get()
+      .url("http://127.0.0.1:80/progress")
+      .proxy(Proxy::socks5("127.0.0.1", proxy_addr.port().into()))
+      .rasync();
+    let progress = async {
+      handshake_receiver
+        .await
+        .expect("delayed SOCKS5 handshake start");
+      release_sender.send(()).expect("release SOCKS5 handshake");
+    };
+
+    let (response, ()) = futures::join!(request, progress);
+    assert_eq!("OK", response.unwrap().body().string().unwrap());
+  });
+
+  assert!(
+    proxy_handle.join().expect("delayed SOCKS5 server thread"),
+    "progress task was blocked by the SOCKS5 handshake"
+  );
+}
+
+#[test]
+#[cfg(all(feature = "async", any(feature = "tls-native", feature = "tls-rustls")))]
 fn test_async_https_proxy_with_auth_uses_connect_tunnel() {
   let (proxy_addr, target_addr, _proxy_handle) =
     support::spawn_https_proxy_server_with_credentials("user", "secret");
