@@ -57,7 +57,8 @@ impl Error {
     matches!(self.inner.kind, Kind::Status(_))
   }
 
-  /// Returns true if the error is related to a timeout.
+  /// Returns true if the error is related to a timeout, including a TCP
+  /// connect timeout.
   pub fn is_timeout(&self) -> bool {
     self.source().map(|e| e.is::<TimedOut>()).unwrap_or(false)
   }
@@ -192,6 +193,17 @@ pub(crate) fn request<E: Into<BoxError>>(e: E) -> Error {
   Error::new(Kind::Request, Some(e))
 }
 
+pub(crate) fn connect(e: io::Error) -> Error {
+  if matches!(
+    e.kind(),
+    io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+  ) {
+    Error::new(Kind::Request, Some(TimedOut(e)))
+  } else {
+    request(e)
+  }
+}
+
 pub(crate) fn response<E: Into<BoxError>>(e: E) -> Error {
   Error::new(Kind::Response, Some(e))
 }
@@ -277,12 +289,28 @@ pub(crate) fn decode_io(e: io::Error) -> Error {
 // internal Error "sources"
 
 #[derive(Debug)]
-pub(crate) struct TimedOut;
+pub(crate) struct TimedOut(io::Error);
 
 impl fmt::Display for TimedOut {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    f.write_str("operation timed out")
+    f.write_str("TCP connect timed out")
   }
 }
 
-impl StdError for TimedOut {}
+impl StdError for TimedOut {
+  fn source(&self) -> Option<&(dyn StdError + 'static)> {
+    Some(&self.0)
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn connect_timeout_is_exposed_as_timeout() {
+    let err = connect(io::Error::new(io::ErrorKind::TimedOut, "connect timed out"));
+
+    assert!(err.is_timeout());
+  }
+}

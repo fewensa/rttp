@@ -38,6 +38,7 @@ impl H2cClientPolicy {
 
 #[derive(Clone, Debug)]
 pub struct Config {
+  connect_timeout: u64,
   read_timeout: u64,
   write_timeout: u64,
   auto_redirect: bool,
@@ -51,6 +52,7 @@ pub struct Config {
 impl Default for Config {
   fn default() -> Self {
     Config::builder()
+      .connect_timeout(10000)
       .read_timeout(10000)
       .write_timeout(10000)
       .auto_redirect(false)
@@ -66,6 +68,13 @@ impl Config {
 }
 
 impl Config {
+  /// Return the TCP connect timeout in milliseconds.
+  ///
+  /// Each resolved address receives this timeout independently. The default
+  /// is 10,000 milliseconds.
+  pub fn connect_timeout(&self) -> u64 {
+    self.connect_timeout
+  }
   pub fn read_timeout(&self) -> u64 {
     self.read_timeout
   }
@@ -119,6 +128,7 @@ impl ConfigBuilder {
   pub fn new() -> Self {
     Self {
       config: Config {
+        connect_timeout: 10000,
         read_timeout: 10000,
         write_timeout: 10000,
         auto_redirect: false,
@@ -133,6 +143,16 @@ impl ConfigBuilder {
 
   pub fn build(&self) -> Config {
     self.config.clone()
+  }
+
+  /// Set the TCP connect timeout in milliseconds for each resolved address.
+  ///
+  /// The value must be greater than zero. Addresses are attempted in resolver
+  /// order, so the total connect time is bounded by the number of resolved
+  /// addresses multiplied by this timeout.
+  pub fn connect_timeout(&mut self, connect_timeout: u64) -> &mut Self {
+    self.config.connect_timeout = connect_timeout;
+    self
   }
 
   pub fn read_timeout(&mut self, read_timeout: u64) -> &mut Self {
@@ -210,6 +230,7 @@ mod tests {
   #[test]
   fn builder_updates_values() {
     let config = Config::builder()
+      .connect_timeout(2468)
       .read_timeout(1234)
       .write_timeout(4321)
       .auto_redirect(true)
@@ -220,6 +241,7 @@ mod tests {
       .http2_header_table_size(64)
       .build();
 
+    assert_eq!(config.connect_timeout(), 2468);
     assert_eq!(config.read_timeout(), 1234);
     assert_eq!(config.write_timeout(), 4321);
     assert!(config.auto_redirect());
@@ -235,6 +257,11 @@ mod tests {
     let default_config = Config::default();
     let builder_config = Config::builder().build();
 
+    assert_eq!(
+      default_config.connect_timeout(),
+      builder_config.connect_timeout()
+    );
+    assert_eq!(default_config.connect_timeout(), 10_000);
     assert_eq!(default_config.read_timeout(), builder_config.read_timeout());
     assert_eq!(
       default_config.write_timeout(),
