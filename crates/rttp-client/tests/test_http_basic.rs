@@ -205,7 +205,7 @@ fn test_multi() {
     .header("User-Agent: Mozilla/5.0")
     .header(("Host", addr.to_string().as_str()))
     .para("name=Chico")
-    .para(&"name=文".to_string())
+    .para("name=文".to_string())
     .para(para_map)
     .form(("debug", "true", "name=Form"))
     .cookie("token=123234")
@@ -1338,7 +1338,7 @@ fn captured_request(request: Vec<u8>) -> CapturedRequest {
     .expect("captured request method")
     .to_string();
   let target = request_line_parts
-    .nth(0)
+    .next()
     .expect("captured request target")
     .to_string();
   let headers = lines

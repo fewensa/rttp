@@ -19,10 +19,7 @@ pub fn read_http_request<R: Read>(stream: &mut R) -> Vec<u8> {
   let mut buf = [0u8; 1024];
   let mut content_length = None;
 
-  loop {
-    let Ok(read) = stream.read(&mut buf) else {
-      break;
-    };
+  while let Ok(read) = stream.read(&mut buf) {
     if read == 0 {
       break;
     }

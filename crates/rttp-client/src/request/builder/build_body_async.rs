@@ -44,7 +44,7 @@ impl<'a> RawBuilder<'a> {
         let file = formdata
           .file()
           .clone()
-          .ok_or(error::builder_with_message(&format!(
+          .ok_or(error::builder_with_message(format!(
             "Missing file path for field: {}",
             formdata.name()
           )))?;
