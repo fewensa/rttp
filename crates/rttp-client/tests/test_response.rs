@@ -2481,6 +2481,101 @@ fn test_access_control_allow_methods_response_helper_preserves_invalid_or_absent
 }
 
 #[test]
+fn test_access_control_allow_headers_response_helper_parses_valid_lists_wildcard_and_multiple_fields(
+) {
+  let listed = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nAccess-Control-Allow-Headers: X-Request-Id, ETag\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("parse response with Access-Control-Allow-Headers list");
+  assert_eq!(
+    listed
+      .access_control_allow_headers()
+      .expect("Access-Control-Allow-Headers should parse")
+      .expect("Access-Control-Allow-Headers should be present")
+      .field_names(),
+    ["x-request-id", "etag"]
+  );
+
+  let wildcard = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nAccess-Control-Allow-Headers: *\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("parse response with wildcard Access-Control-Allow-Headers");
+  assert!(wildcard
+    .access_control_allow_headers()
+    .expect("wildcard Access-Control-Allow-Headers should parse")
+    .expect("Access-Control-Allow-Headers should be present")
+    .is_wildcard());
+
+  let repeated = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Access-Control-Allow-Headers: X-Request-Id\r\n",
+      "access-control-allow-headers: ETag, X-RateLimit-Remaining\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("parse response with repeated Access-Control-Allow-Headers");
+  assert_eq!(
+    repeated
+      .access_control_allow_headers()
+      .expect("repeated Access-Control-Allow-Headers should parse")
+      .expect("Access-Control-Allow-Headers should be present")
+      .field_names(),
+    ["x-request-id", "etag", "x-ratelimit-remaining"]
+  );
+  assert_eq!(
+    repeated.header_values("access-control-allow-headers"),
+    [
+      &"X-Request-Id".to_string(),
+      &"ETag, X-RateLimit-Remaining".to_string()
+    ]
+  );
+}
+
+#[test]
+fn test_access_control_allow_headers_response_helper_handles_absent_invalid_duplicate_and_bounded_metadata(
+) {
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("parse response without Access-Control-Allow-Headers");
+  assert_eq!(
+    absent
+      .access_control_allow_headers()
+      .expect("absent Access-Control-Allow-Headers should parse"),
+    None
+  );
+
+  for value in [
+    "X-Request-Id,,ETag".to_string(),
+    "X-Request-Id, x-request-id".to_string(),
+    "x".repeat(64 * 1024 + 1),
+    (0..=256)
+      .map(|index| format!("x{index}"))
+      .collect::<Vec<_>>()
+      .join(","),
+  ] {
+    let raw = format!(
+      "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Headers: {value}\r\nContent-Length: 0\r\n\r\n"
+    );
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+
+    assert!(response.access_control_allow_headers().is_err());
+    assert_eq!(
+      response.header_value("Access-Control-Allow-Headers"),
+      Some(&value)
+    );
+  }
+}
+
+#[test]
 fn test_access_control_max_age_response_helper_parses_valid_and_maximum_values() {
   for (value, expected_seconds) in [("600", 600), ("18446744073709551615", u64::MAX)] {
     let raw =
