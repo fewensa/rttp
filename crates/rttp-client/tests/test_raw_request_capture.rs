@@ -2,7 +2,7 @@ use rttp_test_support as support;
 
 #[cfg(feature = "async")]
 use futures::executor::block_on;
-use rttp_client::types::Proxy;
+use rttp_client::types::{Header, Proxy};
 use rttp_client::HttpClient;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -53,6 +53,145 @@ fn request_body(request: &[u8]) -> &[u8] {
     .map(|position| position + 4)
     .expect("request should contain header terminator");
   &request[body_start..]
+}
+
+#[test]
+fn outbound_headers_reject_invalid_names_and_values_before_connecting() {
+  let invalid_headers = [
+    Header::new("X Request", "safe"),
+    Header::new("X:Request", "safe"),
+    Header::new(" X-Request", "safe"),
+    Header::new("X-Request", "safe\r\ninjected"),
+    Header::new("X-Request", "safe\r"),
+    Header::new("X-Request", "safe\n"),
+    Header::new("X-Request", "safe\0value"),
+    Header::new("X-Request", "safe\u{1}value"),
+    Header::new("X-Request", "safe\u{b}value"),
+    Header::new("X-Request", "safe\u{1f}value"),
+    Header::new("X-Request", "safe\u{7f}value"),
+  ];
+
+  for header in invalid_headers {
+    let request = capture_optional_request(|base_url| {
+      let error = client()
+        .get()
+        .url(format!("{}/invalid-header", base_url))
+        .header(header)
+        .emit()
+        .expect_err("invalid outbound header must be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(request.is_empty(), "invalid header must not open a socket");
+  }
+}
+
+#[test]
+fn outbound_header_convenience_apis_reject_line_breaks_before_connecting() {
+  let tuple_request = capture_optional_request(|base_url| {
+    let error = client()
+      .get()
+      .url(format!("{}/invalid-tuple-header", base_url))
+      .header(("X-Request", "safe\nvalue"))
+      .emit()
+      .expect_err("tuple header with a line break must be rejected");
+    assert!(error.is_builder());
+  });
+  assert!(tuple_request.is_empty());
+
+  let raw_request = capture_optional_request(|base_url| {
+    let error = client()
+      .get()
+      .url(format!("{}/invalid-raw-header", base_url))
+      .header("X-Request: safe\nInjected: value")
+      .emit()
+      .expect_err("raw header with a line break must be rejected");
+    assert!(error.is_builder());
+  });
+  assert!(raw_request.is_empty());
+
+  let empty_name_request = capture_optional_request(|base_url| {
+    let error = client()
+      .get()
+      .url(format!("{}/empty-raw-header-name", base_url))
+      .header(": safe")
+      .emit()
+      .expect_err("raw header with an empty name must be rejected");
+    assert!(error.is_builder());
+  });
+  assert!(empty_name_request.is_empty());
+}
+
+#[test]
+fn outbound_headers_preserve_permitted_visible_bytes_and_horizontal_tabs() {
+  let mut visible_value = (0x20..=0x7e).collect::<Vec<u8>>();
+  visible_value.extend_from_slice("\tobsé".as_bytes());
+  let visible_value = String::from_utf8(visible_value).expect("valid UTF-8 header value");
+
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/valid-header", base_url))
+      .header(Header::new("X-Token!#$%&'*+-.^_`|~", &visible_value))
+      .header(Header::new("X-Tab", "\tinside\t"))
+      .emit()
+      .expect("valid outbound headers should be sent");
+  });
+
+  let visible_header = format!("X-Token!#$%&'*+-.^_`|~: {visible_value}\r\n");
+  assert!(request
+    .windows(visible_header.len())
+    .any(|window| window == visible_header.as_bytes()));
+  assert!(request
+    .windows(b"X-Tab: \tinside\t\r\n".len())
+    .any(|window| window == b"X-Tab: \tinside\t\r\n"));
+}
+
+#[test]
+fn outbound_trailers_reject_untrimmed_invalid_bytes() {
+  for trailer in [
+    Header::new(" X-Trace", "safe"),
+    Header::new("X-Trace", "safe\r"),
+    Header::new("X-Trace", "safe\n"),
+    Header::new("X-Trace", "safe\0value"),
+  ] {
+    let mut client = client();
+    let error = client
+      .trailer(trailer)
+      .expect_err("invalid outbound trailer must be rejected");
+    assert!(error.is_builder());
+  }
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn async_outbound_headers_are_rejected_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let error = block_on(
+      client()
+        .get()
+        .url(format!("{}/invalid-async-header", base_url))
+        .header(("X-Request", "safe\rvalue"))
+        .rasync(),
+    )
+    .expect_err("invalid async outbound header must be rejected");
+    assert!(error.is_builder());
+  });
+  assert!(request.is_empty());
+}
+
+#[cfg(feature = "http2")]
+#[test]
+fn http2_outbound_headers_are_rejected_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let error = client()
+      .get()
+      .url(format!("{}/invalid-http2-header", base_url))
+      .header(("X-Request", "safe\u{7f}value"))
+      .emit_http2_prior_knowledge()
+      .expect_err("invalid HTTP/2 outbound header must be rejected");
+    assert!(error.is_builder());
+  });
+  assert!(request.is_empty());
 }
 
 fn read_request_head(stream: &mut TcpStream) -> Vec<u8> {
