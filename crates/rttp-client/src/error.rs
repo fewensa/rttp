@@ -216,6 +216,14 @@ pub(crate) fn too_many_redirects(url: Url) -> Error {
   Error::new(Kind::Redirect, Some("too many redirects")).with_url(url)
 }
 
+pub(crate) fn https_to_http_redirect(url: Url) -> Error {
+  Error::new(
+    Kind::Redirect,
+    Some("HTTPS to HTTP redirect is not allowed"),
+  )
+  .with_url(url)
+}
+
 #[allow(dead_code)]
 pub(crate) fn status_code(url: Url, status: StatusCode) -> Error {
   Error::new(Kind::Status(status), None::<Error>).with_url(url)

@@ -369,6 +369,12 @@ impl<'a> AsyncConnection<'a> {
           }
 
           let redirect_url = self.conn.resolve_redirect_url(&url, location)?;
+          if url.scheme() == "https"
+            && redirect_url.url.scheme() == "http"
+            && !config.allow_https_to_http_redirects()
+          {
+            return Err(error::https_to_http_redirect(url));
+          }
           let strip_sensitive_headers = !self.conn.is_same_origin_url(&url, &redirect_url.url);
           if !self.conn.is_same_origin_url(&url, &redirect_url.url)
             || redirect_url.url.scheme() != "http"
