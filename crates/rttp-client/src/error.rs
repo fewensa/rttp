@@ -59,7 +59,7 @@ impl Error {
 
   /// Returns true if the error is related to a timeout.
   pub fn is_timeout(&self) -> bool {
-    self.source().map(|e| e.is::<TimedOut>()).unwrap_or(false)
+    self.source().is_some_and(is_timeout_source)
   }
 
   /// Returns the status code, if the error was generated from a response.
@@ -251,8 +251,8 @@ pub(crate) fn connection_closed() -> Error {
 }
 
 #[allow(dead_code)]
-pub(crate) fn bad_ssl(message: impl AsRef<str>) -> Error {
-  Error::new(Kind::Request, Some(message.as_ref()))
+pub(crate) fn bad_ssl<E: Into<BoxError>>(e: E) -> Error {
+  Error::new(Kind::Request, Some(e))
 }
 
 // io::Error helpers
@@ -286,3 +286,73 @@ impl fmt::Display for TimedOut {
 }
 
 impl StdError for TimedOut {}
+
+fn is_timeout_source(error: &(dyn StdError + 'static)) -> bool {
+  if error.is::<TimedOut>() {
+    return true;
+  }
+  if let Some(error) = error.downcast_ref::<io::Error>() {
+    if matches!(
+      error.kind(),
+      io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+    ) || error
+      .get_ref()
+      .is_some_and(|error| is_timeout_source(error))
+    {
+      return true;
+    }
+  }
+  error.source().is_some_and(is_timeout_source)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn request_io_timeout_kinds_are_timeouts() {
+    for kind in [io::ErrorKind::TimedOut, io::ErrorKind::WouldBlock] {
+      let error = request(io::Error::new(kind, "socket operation timed out"));
+
+      assert!(error.is_timeout(), "{kind:?} should be a timeout");
+    }
+  }
+
+  #[test]
+  fn nested_io_timeout_source_is_a_timeout() {
+    let timeout = io::Error::new(io::ErrorKind::TimedOut, "socket operation timed out");
+    let wrapped = io::Error::other(timeout);
+
+    assert!(request(wrapped).is_timeout());
+  }
+
+  #[test]
+  fn tls_io_timeout_is_a_timeout() {
+    let error = bad_ssl(io::Error::new(
+      io::ErrorKind::TimedOut,
+      "TLS handshake timed out",
+    ));
+
+    assert!(error.is_timeout());
+  }
+
+  #[test]
+  fn non_timeout_errors_are_not_timeouts() {
+    let errors = [
+      request(io::Error::new(
+        io::ErrorKind::ConnectionRefused,
+        "connection refused",
+      )),
+      request(io::Error::new(
+        io::ErrorKind::UnexpectedEof,
+        "unexpected EOF",
+      )),
+      decode_io(io::Error::new(io::ErrorKind::InvalidData, "decode error")),
+      builder_with_message("builder error"),
+    ];
+
+    for error in errors {
+      assert!(!error.is_timeout(), "{error:?} should not be a timeout");
+    }
+  }
+}

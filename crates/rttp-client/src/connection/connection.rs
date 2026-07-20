@@ -996,7 +996,7 @@ impl<'a> Connection<'a> {
       .map_err(error::request)?;
     let mut ssl_stream = connector
       .connect(&self.host(url)?[..], stream)
-      .map_err(|_| error::bad_ssl("Native tls handshake error"))?;
+      .map_err(native_tls_handshake_error)?;
 
     match self.block_send_expect_continue_parts(&mut ssl_stream)? {
       ExpectContinueResult::NotUsed => self.block_write_stream(&mut ssl_stream)?,
@@ -1028,7 +1028,7 @@ impl<'a> Connection<'a> {
       .map_err(error::request)?;
     let mut ssl_stream = connector
       .connect(&self.host(url)?[..], stream)
-      .map_err(|_| error::bad_ssl("Native tls handshake error"))?;
+      .map_err(native_tls_handshake_error)?;
 
     self.block_write_streaming_request(&mut ssl_stream, body)?;
     self.block_read_stream_parts(url, &mut ssl_stream)
@@ -1058,7 +1058,7 @@ impl<'a> Connection<'a> {
     } else if !config.verify_ssl_hostname() {
       let verifier = WebPkiServerVerifier::builder(Arc::new(root_store))
         .build()
-        .map_err(|e| error::bad_ssl(e.to_string()))?;
+        .map_err(error::bad_ssl)?;
       builder
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(NoHostnameVerification::new(verifier)))
@@ -1076,8 +1076,7 @@ impl<'a> Connection<'a> {
         .map_err(|_| error::bad_ssl(format!("Invalid server name: {}", host)))?
         .to_owned(),
     };
-    let client =
-      ClientConnection::new(rc_config, server_name).map_err(|e| error::bad_ssl(e.to_string()))?;
+    let client = ClientConnection::new(rc_config, server_name).map_err(error::bad_ssl)?;
     let mut tls = StreamOwned::new(client, stream);
 
     match self.block_send_expect_continue_parts(&mut tls)? {
@@ -1117,7 +1116,7 @@ impl<'a> Connection<'a> {
     } else if !config.verify_ssl_hostname() {
       let verifier = WebPkiServerVerifier::builder(Arc::new(root_store))
         .build()
-        .map_err(|e| error::bad_ssl(e.to_string()))?;
+        .map_err(error::bad_ssl)?;
       builder
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(NoHostnameVerification::new(verifier)))
@@ -1135,12 +1134,22 @@ impl<'a> Connection<'a> {
         .map_err(|_| error::bad_ssl(format!("Invalid server name: {}", host)))?
         .to_owned(),
     };
-    let client =
-      ClientConnection::new(rc_config, server_name).map_err(|e| error::bad_ssl(e.to_string()))?;
+    let client = ClientConnection::new(rc_config, server_name).map_err(error::bad_ssl)?;
     let mut tls = StreamOwned::new(client, stream);
 
     self.block_write_streaming_request(&mut tls, body)?;
     self.block_read_stream_parts(url, &mut tls)
+  }
+}
+
+#[cfg(all(feature = "tls-native", not(feature = "tls-rustls")))]
+fn native_tls_handshake_error<S>(error: native_tls::HandshakeError<S>) -> error::Error {
+  match error {
+    native_tls::HandshakeError::Failure(error) => error::bad_ssl(error),
+    native_tls::HandshakeError::WouldBlock(_) => error::bad_ssl(io::Error::new(
+      io::ErrorKind::WouldBlock,
+      "native TLS handshake would block",
+    )),
   }
 }
 
