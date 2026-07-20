@@ -1,5 +1,9 @@
 use super::*;
 
+pub use rttp_protocol::access_control_allow_headers::{
+  AccessControlAllowHeaders as HttpAccessControlAllowHeaders,
+  AccessControlAllowHeadersParseError as HttpAccessControlAllowHeadersParseError,
+};
 pub use rttp_protocol::access_control_allow_methods::{
   AccessControlAllowMethods as HttpAccessControlAllowMethods,
   AccessControlAllowMethodsParseError as HttpAccessControlAllowMethodsParseError,
@@ -697,6 +701,25 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Access-Control-Allow-Headers` response metadata
+  /// without applying CORS policy.
+  pub fn with_access_control_allow_headers(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpAccessControlAllowHeadersParseError> {
+    let allow_headers = HttpAccessControlAllowHeaders::parse(value)?;
+    self.headers.retain(|header| {
+      !header
+        .name
+        .eq_ignore_ascii_case("Access-Control-Allow-Headers")
+    });
+    self.headers.push(HttpHeader::new(
+      "Access-Control-Allow-Headers",
+      allow_headers.header_value(),
+    ));
+    Ok(self)
+  }
+
   /// Validates and replaces `Reporting-Endpoints` response metadata.
   pub fn with_reporting_endpoints<I, N, U>(
     mut self,
@@ -1170,6 +1193,27 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpAccessControlAllowMethods::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Access-Control-Allow-Headers` response metadata without
+  /// applying CORS policy.
+  pub fn access_control_allow_headers(
+    &self,
+  ) -> Result<Option<HttpAccessControlAllowHeaders>, HttpAccessControlAllowHeadersParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Access-Control-Allow-Headers")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAccessControlAllowHeaders::parse_values(values).map(Some)
   }
 
   /// Parses bounded `Reporting-Endpoints` response metadata without scheduling reports.

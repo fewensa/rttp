@@ -1,14 +1,15 @@
 use std::time::{Duration, UNIX_EPOCH};
 
 use rttp::server::{
-  HttpAccept, HttpAcceptCh, HttpAcceptRanges, HttpAccessControlAllowMethods, HttpAllowedMethods,
-  HttpAuthorization, HttpByteRange, HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata,
-  HttpContentDisposition, HttpContentLanguages, HttpContentSecurityPolicy, HttpContentType,
-  HttpCriticalCh, HttpEntityTag, HttpExpectations, HttpIfNoneMatch, HttpIfRange,
-  HttpIfRangeRequestOutcome, HttpLinkValues, HttpPermissionsPolicy, HttpReferrerPolicy,
-  HttpReportingEndpoints, HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl,
-  HttpRequestTe, HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings,
-  HttpRetryAfter, HttpServerTiming, HttpVary,
+  HttpAccept, HttpAcceptCh, HttpAcceptRanges, HttpAccessControlAllowHeaders,
+  HttpAccessControlAllowMethods, HttpAllowedMethods, HttpAuthorization, HttpByteRange,
+  HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata, HttpContentDisposition,
+  HttpContentLanguages, HttpContentSecurityPolicy, HttpContentType, HttpCriticalCh, HttpEntityTag,
+  HttpExpectations, HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome, HttpLinkValues,
+  HttpPermissionsPolicy, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
+  HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
+  HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming,
+  HttpVary,
 };
 
 #[test]
@@ -46,6 +47,51 @@ fn response_access_control_allow_methods_helper_validates_and_preserves_raw_head
     HttpResponse::ok("body")
       .access_control_allow_methods()
       .expect("absent Access-Control-Allow-Methods should parse")
+  );
+}
+
+#[test]
+fn response_access_control_allow_headers_helper_validates_and_preserves_raw_headers() {
+  let response = HttpResponse::ok("body")
+    .header("Access-Control-Allow-Headers", "X-Legacy")
+    .header("access-control-allow-headers", "X-Deprecated")
+    .with_access_control_allow_headers("X-Request-Id, ETag")
+    .expect("valid Access-Control-Allow-Headers should be accepted");
+
+  let headers: HttpAccessControlAllowHeaders = response
+    .access_control_allow_headers()
+    .expect("attached Access-Control-Allow-Headers should parse")
+    .expect("Access-Control-Allow-Headers should be present");
+  assert_eq!(["x-request-id", "etag"], headers.field_names());
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert_eq!(
+    1,
+    serialized
+      .matches("\r\nAccess-Control-Allow-Headers: ")
+      .count()
+  );
+  assert!(serialized.contains("\r\nAccess-Control-Allow-Headers: x-request-id, etag\r\n"));
+
+  assert!(HttpResponse::ok("body")
+    .with_access_control_allow_headers("X-Request Id")
+    .is_err());
+  let raw = HttpResponse::ok("body").header("Access-Control-Allow-Headers", "X-Request Id");
+  assert!(raw.access_control_allow_headers().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nAccess-Control-Allow-Headers: X-Request Id\r\n"));
+  assert!(HttpResponse::ok("body")
+    .with_access_control_allow_headers("*")
+    .expect("wildcard Access-Control-Allow-Headers should be accepted")
+    .access_control_allow_headers()
+    .expect("wildcard Access-Control-Allow-Headers should parse")
+    .expect("wildcard Access-Control-Allow-Headers should be present")
+    .is_wildcard());
+  assert_eq!(
+    None,
+    HttpResponse::ok("body")
+      .access_control_allow_headers()
+      .expect("absent Access-Control-Allow-Headers should parse")
   );
 }
 
