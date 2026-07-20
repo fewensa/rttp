@@ -263,6 +263,10 @@ impl Parser {
       let mut decoder = flate2::read::GzDecoder::new(binary.as_slice());
       let mut buffer = Vec::new();
       read_decoded_body_to_end(&mut decoder, &mut buffer, self.max_body_bytes)?;
+      response.headers.retain(|header| {
+        !header.name().eq_ignore_ascii_case("Content-Encoding")
+          && !header.name().eq_ignore_ascii_case("Content-Length")
+      });
       let body = ResponseBody::new(buffer);
       response.body(body);
       return Ok(());

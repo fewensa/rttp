@@ -646,8 +646,7 @@ fn server_response_with_retry_after_coexists_with_cache_metadata_helpers() {
     .expect("Vary should parse")
     .expect("Vary should be present")
     .field_names()
-    .iter()
-    .any(|name| *name == "accept-encoding"));
+    .contains(&"accept-encoding"));
 }
 
 #[test]
@@ -860,8 +859,7 @@ fn server_response_with_allow_coexists_with_cache_and_retry_metadata_helpers() {
     .expect("Vary should parse")
     .expect("Vary should be present")
     .field_names()
-    .iter()
-    .any(|name| *name == "accept-encoding"));
+    .contains(&"accept-encoding"));
   assert_eq!(
     Some(HttpRetryAfter::DeltaSeconds(30)),
     response.retry_after().expect("Retry-After should parse")

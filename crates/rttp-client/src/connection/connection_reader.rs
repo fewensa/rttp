@@ -809,7 +809,7 @@ fn parse_trailer_line(line: &[u8]) -> error::Result<Header> {
     .ok_or_else(|| error::bad_response("Invalid trailer header"))?;
   validate_response_trailer_header(name, value)?;
 
-  Ok(Header::new(name, value))
+  Ok(Header::from_http1(name, value))
 }
 
 fn to_io_error(err: error::Error) -> io::Error {

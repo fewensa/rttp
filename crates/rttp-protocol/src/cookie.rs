@@ -251,13 +251,12 @@ mod tests {
     assert!(HttpCookies::parse(&oversized_value).is_err());
     assert!(HttpSetCookie::parse(&oversized_value).is_err());
 
-    let pairs = std::iter::repeat("name=value")
-      .take(MAX_COOKIE_COUNT + 1)
+    let pairs = std::iter::repeat_n("name=value", MAX_COOKIE_COUNT + 1)
       .collect::<Vec<_>>()
       .join(";");
     assert!(HttpCookies::parse(&pairs).is_err());
 
-    let fields = std::iter::repeat("name=value").take(MAX_COOKIE_COUNT + 1);
+    let fields = std::iter::repeat_n("name=value", MAX_COOKIE_COUNT + 1);
     assert!(HttpSetCookies::parse_values(fields).is_err());
   }
 

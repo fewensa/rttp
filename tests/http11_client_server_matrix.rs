@@ -16,6 +16,9 @@ use rttp_server::server::{
 };
 use rttp_test_support as fixtures;
 
+type ObservedIfRangeHeaders = (Option<String>, Option<String>);
+type ObservedIfRangeHandle = thread::JoinHandle<ObservedIfRangeHeaders>;
+
 fn client() -> HttpClient {
   HttpClient::new()
 }
@@ -338,10 +341,7 @@ fn spawn_range_server() -> (std::net::SocketAddr, thread::JoinHandle<Option<Stri
 
 fn spawn_if_range_server(
   metadata: HttpConditionalMetadata,
-) -> (
-  std::net::SocketAddr,
-  thread::JoinHandle<(Option<String>, Option<String>)>,
-) {
+) -> (std::net::SocketAddr, ObservedIfRangeHandle) {
   let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind if-range server");
   let addr = server.local_addr().expect("if-range server addr");
   let (tx, rx) = mpsc::channel();
@@ -828,7 +828,7 @@ fn assert_observed_range(
 }
 
 fn assert_observed_if_range(
-  handle: thread::JoinHandle<(Option<String>, Option<String>)>,
+  handle: ObservedIfRangeHandle,
   expected_range: &str,
   expected_if_range: &str,
   name: &str,
@@ -1140,6 +1140,12 @@ fn assert_response_content_encoding(
     .into_iter()
     .map(String::as_str)
     .collect();
+  if expected.values == ["gzip"] {
+    assert!(raw_values.is_empty(), "{name}");
+    assert!(response.header("content-length").is_none(), "{name}");
+    assert!(response.content_encoding().unwrap().is_none(), "{name}");
+    return;
+  }
   assert_eq!(expected.values, raw_values.as_slice(), "{name}");
 
   let content_encoding = response
@@ -2439,27 +2445,41 @@ fn sync_client_observes_rttp_server_content_encoding_helpers() {
       .emit()
       .unwrap_or_else(|err| panic!("{} response should parse: {err}", case.name));
 
-    let expected_header_value = case.codings.join(", ");
-    assert_eq!(
-      vec![expected_header_value.as_str()],
-      response
-        .header_values("Content-Encoding")
-        .into_iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>(),
-      "{}",
-      case.name
-    );
-    let content_encoding = response
-      .content_encoding()
-      .unwrap_or_else(|err| panic!("{} Content-Encoding should parse: {err}", case.name))
-      .unwrap_or_else(|| panic!("{} should include Content-Encoding", case.name));
-    assert_eq!(
-      case.codings,
-      content_encoding.codings().as_slice(),
-      "{}",
-      case.name
-    );
+    if case.codings == ["gzip"] {
+      assert!(
+        response.header("Content-Encoding").is_none(),
+        "{}",
+        case.name
+      );
+      assert!(response.header("Content-Length").is_none(), "{}", case.name);
+      assert!(
+        response.content_encoding().unwrap().is_none(),
+        "{}",
+        case.name
+      );
+    } else {
+      let expected_header_value = case.codings.join(", ");
+      assert_eq!(
+        vec![expected_header_value.as_str()],
+        response
+          .header_values("Content-Encoding")
+          .into_iter()
+          .map(String::as_str)
+          .collect::<Vec<_>>(),
+        "{}",
+        case.name
+      );
+      let content_encoding = response
+        .content_encoding()
+        .unwrap_or_else(|err| panic!("{} Content-Encoding should parse: {err}", case.name))
+        .unwrap_or_else(|| panic!("{} should include Content-Encoding", case.name));
+      assert_eq!(
+        case.codings,
+        content_encoding.codings().as_slice(),
+        "{}",
+        case.name
+      );
+    }
     assert_eq!("OK", response.body().string().unwrap(), "{}", case.name);
 
     handle.join().expect("content-encoding server thread");

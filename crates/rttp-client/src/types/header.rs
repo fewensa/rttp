@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use crate::error;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Header {
   name: String,
@@ -14,9 +16,23 @@ pub trait IntoHeader {
 impl Header {
   pub fn new<N: AsRef<str>, V: AsRef<str>>(name: N, value: V) -> Self {
     Self {
-      name: name.as_ref().trim().into(),
-      value: value.as_ref().trim().into(),
+      name: name.as_ref().into(),
+      value: value.as_ref().into(),
     }
+  }
+
+  pub(crate) fn validate_outbound(&self) -> error::Result<()> {
+    if !is_http_token(&self.name) {
+      return Err(error::builder_with_message(
+        "Invalid outbound HTTP header name",
+      ));
+    }
+    if !self.value.bytes().all(is_header_value_byte) {
+      return Err(error::builder_with_message(
+        "Invalid outbound HTTP header value",
+      ));
+    }
+    Ok(())
   }
 
   pub(crate) fn from_http1<N: AsRef<str>, V: AsRef<str>>(name: N, value: V) -> Self {
@@ -51,27 +67,11 @@ impl Header {
 
 impl IntoHeader for &str {
   fn into_headers(&self) -> Vec<Header> {
-    self
-      .split("\n")
-      .collect::<Vec<&str>>()
-      .iter()
-      .map(|part: &&str| {
-        let pvs: Vec<&str> = part.split(":").collect::<Vec<&str>>();
-        let name = pvs.first();
-        let value = pvs
-          .iter()
-          .enumerate()
-          .filter(|(ix, _)| *ix > 0)
-          .map(|(_, v)| v.to_string())
-          .collect::<Vec<String>>()
-          .join(":");
-        Header::new(
-          name.map_or("".to_string(), |v| v.to_string()).trim(),
-          value.trim(),
-        )
-      })
-      .filter(|header: &Header| !header.name.is_empty())
-      .collect::<Vec<Header>>()
+    let header = self.split_once(':').map_or_else(
+      || Header::new(*self, ""),
+      |(name, value)| Header::new(name, value.trim_matches([' ', '\t'])),
+    );
+    vec![header]
   }
 }
 
@@ -185,3 +185,32 @@ tuple_to_header! { a b c d e f g h i j k l m n o p q r s t u v w }
 tuple_to_header! { a b c d e f g h i j k l m n o p q r s t u v w x }
 tuple_to_header! { a b c d e f g h i j k l m n o p q r s t u v w x y }
 tuple_to_header! { a b c d e f g h i j k l m n o p q r s t u v w x y z }
+
+fn is_http_token(value: &str) -> bool {
+  !value.is_empty()
+    && value.bytes().all(|byte| {
+      byte.is_ascii_alphanumeric()
+        || matches!(
+          byte,
+          b'!'
+            | b'#'
+            | b'$'
+            | b'%'
+            | b'&'
+            | b'\''
+            | b'*'
+            | b'+'
+            | b'-'
+            | b'.'
+            | b'^'
+            | b'_'
+            | b'`'
+            | b'|'
+            | b'~'
+        )
+    })
+}
+
+fn is_header_value_byte(byte: u8) -> bool {
+  byte == b'\t' || byte == b' ' || (0x21..=0x7e).contains(&byte) || byte >= 0x80
+}

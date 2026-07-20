@@ -199,6 +199,7 @@ impl GatedResponseBody {
     self.partial_body_sent.recv_timeout(timeout)
   }
 
+  #[allow(clippy::result_unit_err)]
   pub fn release_body(&self) -> Result<(), ()> {
     self
       .control
@@ -206,6 +207,7 @@ impl GatedResponseBody {
       .map_err(|_| ())
   }
 
+  #[allow(clippy::result_unit_err)]
   pub fn cancel_body(&self) -> Result<(), ()> {
     self
       .control
@@ -937,10 +939,7 @@ pub fn spawn_auth_echo_server() -> (SocketAddr, JoinHandle<()>) {
     if let Ok((mut stream, _)) = listener.accept() {
       let mut request = Vec::new();
       let mut buf = [0u8; 1024];
-      loop {
-        let Ok(read) = stream.read(&mut buf) else {
-          break;
-        };
+      while let Ok(read) = stream.read(&mut buf) {
         if read == 0 {
           break;
         }
@@ -1085,5 +1084,44 @@ pub fn spawn_tls_server() -> (SocketAddr, JoinHandle<()>) {
       let _ = tls.flush();
     }
   });
+  (addr, handle)
+}
+
+#[cfg(feature = "tls-rustls")]
+pub fn spawn_tls_redirect_server(location: String) -> (SocketAddr, JoinHandle<()>) {
+  use rcgen::generate_simple_self_signed;
+  use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+  use rustls::{ServerConfig, ServerConnection, StreamOwned};
+  use std::sync::Arc;
+
+  let cert = generate_simple_self_signed(vec!["localhost".to_string()]).expect("generate cert");
+  let cert_der = cert.serialize_der().expect("cert der");
+  let key_der = cert.serialize_private_key_der();
+  let config = ServerConfig::builder()
+    .with_no_client_auth()
+    .with_single_cert(
+      vec![CertificateDer::from(cert_der)],
+      PrivateKeyDer::from(PrivatePkcs8KeyDer::from(key_der)),
+    )
+    .expect("set cert");
+  let config = Arc::new(config);
+
+  let (listener, addr) = bind_local_http_listener("tls redirect server");
+  let handle = thread::spawn(move || {
+    if let Ok((stream, _)) = listener.accept() {
+      let session = ServerConnection::new(config).expect("server connection");
+      let mut tls = StreamOwned::new(session, stream);
+      let _ = read_http_request(&mut tls);
+      let response = format!(
+        "HTTP/1.1 302 Found\r\nLocation: {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        location
+      );
+      let _ = tls.write_all(response.as_bytes());
+      let _ = tls.flush();
+      tls.conn.send_close_notify();
+      let _ = tls.flush();
+    }
+  });
+
   (addr, handle)
 }
