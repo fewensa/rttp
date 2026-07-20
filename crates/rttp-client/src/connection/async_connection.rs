@@ -972,7 +972,7 @@ impl<'a> AsyncConnection<'a> {
     } else if !config.verify_ssl_hostname() {
       let verifier = rustls::client::WebPkiServerVerifier::builder(Arc::new(root_store))
         .build()
-        .map_err(|e| error::bad_ssl(e.to_string()))?;
+        .map_err(error::bad_ssl)?;
       builder
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(NoHostnameVerification::new(verifier)))
@@ -995,7 +995,7 @@ impl<'a> AsyncConnection<'a> {
     let mut tls_stream = connector
       .connect(server_name, stream)
       .await
-      .map_err(|e| error::bad_ssl(e.to_string()))?;
+      .map_err(error::bad_ssl)?;
 
     match self
       .async_send_expect_continue_parts(&mut tls_stream)
@@ -1041,7 +1041,7 @@ impl<'a> AsyncConnection<'a> {
     } else if !config.verify_ssl_hostname() {
       let verifier = rustls::client::WebPkiServerVerifier::builder(Arc::new(root_store))
         .build()
-        .map_err(|e| error::bad_ssl(e.to_string()))?;
+        .map_err(error::bad_ssl)?;
       builder
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(NoHostnameVerification::new(verifier)))
@@ -1064,7 +1064,7 @@ impl<'a> AsyncConnection<'a> {
     let mut tls_stream = connector
       .connect(server_name, stream)
       .await
-      .map_err(|e| error::bad_ssl(e.to_string()))?;
+      .map_err(error::bad_ssl)?;
 
     self
       .async_write_streaming_request(&mut tls_stream, body)
