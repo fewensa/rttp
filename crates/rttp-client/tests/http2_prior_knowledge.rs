@@ -609,7 +609,7 @@ fn prior_knowledge_extended_connect_protocol_is_rejected_before_connecting() {
   assert!(
     err
       .to_string()
-      .contains("HTTP/2 prior-knowledge CONNECT or extended CONNECT is unsupported"),
+      .contains("Invalid outbound HTTP header name"),
     "unexpected error: {err}"
   );
   assert!(
