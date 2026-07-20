@@ -496,6 +496,45 @@ fn spawn_metadata_response_server(
 }
 
 #[test]
+fn sync_client_and_server_exchange_access_control_allow_origin_metadata_without_policy() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind Access-Control-Allow-Origin server");
+  let addr = server
+    .local_addr()
+    .expect("Access-Control-Allow-Origin server addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        HttpResponse::ok("OK")
+          .with_access_control_allow_origin("https://example.test:8443")
+          .expect("Access-Control-Allow-Origin should be accepted")
+      })
+      .expect("serve Access-Control-Allow-Origin response");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/access-control-allow-origin"))
+    .emit()
+    .expect("Access-Control-Allow-Origin response should parse");
+  assert_eq!(
+    "https://example.test:8443",
+    response
+      .access_control_allow_origin()
+      .expect("Access-Control-Allow-Origin should parse")
+      .expect("Access-Control-Allow-Origin should be present")
+      .header_value()
+  );
+  assert_eq!(
+    Some(&"https://example.test:8443".to_string()),
+    response.header_value("Access-Control-Allow-Origin")
+  );
+  handle
+    .join()
+    .expect("Access-Control-Allow-Origin server thread");
+}
+
+#[test]
 fn sync_client_sec_fetch_metadata_is_observed_by_server_helpers() {
   let server =
     rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Sec-Fetch metadata server");

@@ -8,6 +8,10 @@ pub use rttp_protocol::access_control_allow_methods::{
   AccessControlAllowMethods as HttpAccessControlAllowMethods,
   AccessControlAllowMethodsParseError as HttpAccessControlAllowMethodsParseError,
 };
+pub use rttp_protocol::access_control_allow_origin::{
+  AccessControlAllowOrigin as HttpAccessControlAllowOrigin,
+  AccessControlAllowOriginParseError as HttpAccessControlAllowOriginParseError,
+};
 pub use rttp_protocol::alt_svc::{
   AltSvc as HttpAltSvc, AltSvcAlternative as HttpAltSvcAlternative,
   AltSvcParameter as HttpAltSvcParameter, AltSvcParseError as HttpAltSvcParseError,
@@ -701,6 +705,25 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Access-Control-Allow-Origin` response metadata
+  /// without applying CORS policy.
+  pub fn with_access_control_allow_origin(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpAccessControlAllowOriginParseError> {
+    let allow_origin = HttpAccessControlAllowOrigin::parse(value)?;
+    self.headers.retain(|header| {
+      !header
+        .name
+        .eq_ignore_ascii_case("Access-Control-Allow-Origin")
+    });
+    self.headers.push(HttpHeader::new(
+      "Access-Control-Allow-Origin",
+      allow_origin.header_value(),
+    ));
+    Ok(self)
+  }
+
   /// Validates and replaces `Access-Control-Allow-Headers` response metadata
   /// without applying CORS policy.
   pub fn with_access_control_allow_headers(
@@ -1193,6 +1216,27 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpAccessControlAllowMethods::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Access-Control-Allow-Origin` response metadata without
+  /// applying CORS policy.
+  pub fn access_control_allow_origin(
+    &self,
+  ) -> Result<Option<HttpAccessControlAllowOrigin>, HttpAccessControlAllowOriginParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Access-Control-Allow-Origin")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAccessControlAllowOrigin::parse_values(values).map(Some)
   }
 
   /// Parses attached `Access-Control-Allow-Headers` response metadata without

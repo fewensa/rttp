@@ -2,15 +2,48 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use rttp::server::{
   HttpAccept, HttpAcceptCh, HttpAcceptRanges, HttpAccessControlAllowHeaders,
-  HttpAccessControlAllowMethods, HttpAllowedMethods, HttpAuthorization, HttpByteRange,
-  HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata, HttpContentDisposition,
-  HttpContentLanguages, HttpContentSecurityPolicy, HttpContentType, HttpCriticalCh, HttpEntityTag,
-  HttpExpectations, HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome, HttpLinkValues,
-  HttpPermissionsPolicy, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
-  HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
-  HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming,
-  HttpVary,
+  HttpAccessControlAllowMethods, HttpAccessControlAllowOrigin, HttpAllowedMethods,
+  HttpAuthorization, HttpByteRange, HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata,
+  HttpContentDisposition, HttpContentLanguages, HttpContentSecurityPolicy, HttpContentType,
+  HttpCriticalCh, HttpEntityTag, HttpExpectations, HttpIfNoneMatch, HttpIfRange,
+  HttpIfRangeRequestOutcome, HttpLinkValues, HttpPermissionsPolicy, HttpReferrerPolicy,
+  HttpReportingEndpoints, HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl,
+  HttpRequestTe, HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings,
+  HttpRetryAfter, HttpServerTiming, HttpVary,
 };
+
+#[test]
+fn response_access_control_allow_origin_helper_validates_and_preserves_raw_headers() {
+  let response = HttpResponse::ok("body")
+    .header("Access-Control-Allow-Origin", "https://legacy.test")
+    .header("access-control-allow-origin", "https://deprecated.test")
+    .with_access_control_allow_origin("https://example.test:8443")
+    .expect("valid Access-Control-Allow-Origin should be accepted");
+
+  let origin: HttpAccessControlAllowOrigin = response
+    .access_control_allow_origin()
+    .expect("attached Access-Control-Allow-Origin should parse")
+    .expect("Access-Control-Allow-Origin should be present");
+  assert_eq!("https://example.test:8443", origin.header_value());
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert_eq!(
+    1,
+    serialized
+      .matches("\r\nAccess-Control-Allow-Origin: ")
+      .count()
+  );
+  assert!(serialized.contains("\r\nAccess-Control-Allow-Origin: https://example.test:8443\r\n"));
+
+  assert!(HttpResponse::ok("body")
+    .with_access_control_allow_origin("https://example.test/path")
+    .is_err());
+  let raw =
+    HttpResponse::ok("body").header("Access-Control-Allow-Origin", "https://example.test/path");
+  assert!(raw.access_control_allow_origin().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nAccess-Control-Allow-Origin: https://example.test/path\r\n"));
+}
 
 #[test]
 fn response_access_control_allow_methods_helper_validates_and_preserves_raw_headers() {
