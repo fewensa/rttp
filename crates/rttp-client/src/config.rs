@@ -38,10 +38,12 @@ impl H2cClientPolicy {
 
 #[derive(Clone, Debug)]
 pub struct Config {
+  connect_timeout: u64,
   read_timeout: u64,
   write_timeout: u64,
   auto_redirect: bool,
   max_redirect: u32,
+  allow_https_to_http_redirects: bool,
   verify_ssl_hostname: bool,
   verify_ssl_cert: bool,
   http2_max_frame_size: Option<usize>,
@@ -51,10 +53,12 @@ pub struct Config {
 impl Default for Config {
   fn default() -> Self {
     Config::builder()
+      .connect_timeout(10000)
       .read_timeout(10000)
       .write_timeout(10000)
       .auto_redirect(false)
       .max_redirect(0)
+      .allow_https_to_http_redirects(false)
       .build()
   }
 }
@@ -66,6 +70,13 @@ impl Config {
 }
 
 impl Config {
+  /// Return the TCP connect timeout in milliseconds.
+  ///
+  /// Each resolved address receives this timeout independently. The default
+  /// is 10,000 milliseconds.
+  pub fn connect_timeout(&self) -> u64 {
+    self.connect_timeout
+  }
   pub fn read_timeout(&self) -> u64 {
     self.read_timeout
   }
@@ -77,6 +88,9 @@ impl Config {
   }
   pub fn max_redirect(&self) -> u32 {
     self.max_redirect
+  }
+  pub fn allow_https_to_http_redirects(&self) -> bool {
+    self.allow_https_to_http_redirects
   }
   pub fn verify_ssl_cert(&self) -> bool {
     self.verify_ssl_cert
@@ -119,10 +133,12 @@ impl ConfigBuilder {
   pub fn new() -> Self {
     Self {
       config: Config {
+        connect_timeout: 10000,
         read_timeout: 10000,
         write_timeout: 10000,
         auto_redirect: false,
         max_redirect: 0,
+        allow_https_to_http_redirects: false,
         verify_ssl_hostname: true,
         verify_ssl_cert: true,
         http2_max_frame_size: None,
@@ -133,6 +149,16 @@ impl ConfigBuilder {
 
   pub fn build(&self) -> Config {
     self.config.clone()
+  }
+
+  /// Set the TCP connect timeout in milliseconds for each resolved address.
+  ///
+  /// The value must be greater than zero. Addresses are attempted in resolver
+  /// order, so the total connect time is bounded by the number of resolved
+  /// addresses multiplied by this timeout.
+  pub fn connect_timeout(&mut self, connect_timeout: u64) -> &mut Self {
+    self.config.connect_timeout = connect_timeout;
+    self
   }
 
   pub fn read_timeout(&mut self, read_timeout: u64) -> &mut Self {
@@ -152,6 +178,17 @@ impl ConfigBuilder {
   }
   pub fn max_redirect(&mut self, max_redirect: u32) -> &mut Self {
     self.config.max_redirect = max_redirect;
+    self
+  }
+  /// Allow automatic redirects from HTTPS URLs to HTTP URLs.
+  ///
+  /// This is disabled by default because following such a redirect removes
+  /// transport security from the request.
+  pub fn allow_https_to_http_redirects(
+    &mut self,
+    allow_https_to_http_redirects: bool,
+  ) -> &mut Self {
+    self.config.allow_https_to_http_redirects = allow_https_to_http_redirects;
     self
   }
   pub fn verify_ssl_hostname(&mut self, verify_ssl_hostname: bool) -> &mut Self {
@@ -210,20 +247,24 @@ mod tests {
   #[test]
   fn builder_updates_values() {
     let config = Config::builder()
+      .connect_timeout(2468)
       .read_timeout(1234)
       .write_timeout(4321)
       .auto_redirect(true)
       .max_redirect(5)
+      .allow_https_to_http_redirects(true)
       .verify_ssl_hostname(false)
       .verify_ssl_cert(false)
       .http2_max_frame_size(16_384)
       .http2_header_table_size(64)
       .build();
 
+    assert_eq!(config.connect_timeout(), 2468);
     assert_eq!(config.read_timeout(), 1234);
     assert_eq!(config.write_timeout(), 4321);
     assert!(config.auto_redirect());
     assert_eq!(config.max_redirect(), 5);
+    assert!(config.allow_https_to_http_redirects());
     assert!(!config.verify_ssl_hostname());
     assert!(!config.verify_ssl_cert());
     assert_eq!(Some(16_384), config.http2_max_frame_size());
@@ -235,6 +276,11 @@ mod tests {
     let default_config = Config::default();
     let builder_config = Config::builder().build();
 
+    assert_eq!(
+      default_config.connect_timeout(),
+      builder_config.connect_timeout()
+    );
+    assert_eq!(default_config.connect_timeout(), 10_000);
     assert_eq!(default_config.read_timeout(), builder_config.read_timeout());
     assert_eq!(
       default_config.write_timeout(),
@@ -245,6 +291,10 @@ mod tests {
       builder_config.auto_redirect()
     );
     assert_eq!(default_config.max_redirect(), builder_config.max_redirect());
+    assert_eq!(
+      default_config.allow_https_to_http_redirects(),
+      builder_config.allow_https_to_http_redirects()
+    );
     assert_eq!(
       default_config.verify_ssl_hostname(),
       builder_config.verify_ssl_hostname()
