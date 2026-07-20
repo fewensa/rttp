@@ -1,15 +1,53 @@
 use std::time::{Duration, UNIX_EPOCH};
 
 use rttp::server::{
-  HttpAccept, HttpAcceptCh, HttpAcceptRanges, HttpAllowedMethods, HttpAuthorization, HttpByteRange,
-  HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata, HttpContentDisposition,
-  HttpContentLanguages, HttpContentSecurityPolicy, HttpContentType, HttpCriticalCh, HttpEntityTag,
-  HttpExpectations, HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome, HttpLinkValues,
-  HttpPermissionsPolicy, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
-  HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
-  HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming,
-  HttpVary,
+  HttpAccept, HttpAcceptCh, HttpAcceptRanges, HttpAccessControlAllowMethods, HttpAllowedMethods,
+  HttpAuthorization, HttpByteRange, HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata,
+  HttpContentDisposition, HttpContentLanguages, HttpContentSecurityPolicy, HttpContentType,
+  HttpCriticalCh, HttpEntityTag, HttpExpectations, HttpIfNoneMatch, HttpIfRange,
+  HttpIfRangeRequestOutcome, HttpLinkValues, HttpPermissionsPolicy, HttpReferrerPolicy,
+  HttpReportingEndpoints, HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl,
+  HttpRequestTe, HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings,
+  HttpRetryAfter, HttpServerTiming, HttpVary,
 };
+
+#[test]
+fn response_access_control_allow_methods_helper_validates_and_preserves_raw_headers() {
+  let response = HttpResponse::ok("body")
+    .header("Access-Control-Allow-Methods", "DELETE")
+    .header("access-control-allow-methods", "PATCH")
+    .with_access_control_allow_methods("get, POST")
+    .expect("valid Access-Control-Allow-Methods should be accepted");
+
+  let methods: HttpAccessControlAllowMethods = response
+    .access_control_allow_methods()
+    .expect("attached Access-Control-Allow-Methods should parse")
+    .expect("Access-Control-Allow-Methods should be present");
+  assert_eq!(["GET", "POST"], methods.methods());
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert_eq!(
+    1,
+    serialized
+      .matches("\r\nAccess-Control-Allow-Methods: ")
+      .count()
+  );
+  assert!(serialized.contains("\r\nAccess-Control-Allow-Methods: GET, POST\r\n"));
+
+  assert!(HttpResponse::ok("body")
+    .with_access_control_allow_methods("GET POST")
+    .is_err());
+  let raw = HttpResponse::ok("body").header("Access-Control-Allow-Methods", "GET POST");
+  assert!(raw.access_control_allow_methods().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nAccess-Control-Allow-Methods: GET POST\r\n"));
+  assert_eq!(
+    None,
+    HttpResponse::ok("body")
+      .access_control_allow_methods()
+      .expect("absent Access-Control-Allow-Methods should parse")
+  );
+}
 
 #[test]
 fn response_browser_policy_helpers_preserve_metadata_without_enforcing_it() {

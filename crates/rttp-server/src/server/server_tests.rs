@@ -127,6 +127,56 @@ fn request_cache_control_rejects_directive_counts_across_header_fields() {
 }
 
 #[test]
+fn access_control_allow_methods_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Access-Control-Allow-Methods", "DELETE")
+    .header("access-control-allow-methods", "PATCH")
+    .with_access_control_allow_methods("get, POST")
+    .expect("Access-Control-Allow-Methods should be accepted");
+
+  let allow_methods = response
+    .access_control_allow_methods()
+    .expect("Access-Control-Allow-Methods should parse")
+    .expect("Access-Control-Allow-Methods should be present");
+  assert_eq!(["GET", "POST"], allow_methods.methods());
+  assert_eq!(
+    vec![("Access-Control-Allow-Methods", "GET, POST")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn access_control_allow_methods_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let malformed = HttpResponse::ok([]).header("Access-Control-Allow-Methods", "GET POST");
+  assert!(malformed.access_control_allow_methods().is_err());
+  assert_eq!(
+    Some("GET POST"),
+    malformed
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Access-Control-Allow-Methods"))
+      .map(|header| header.value.as_str())
+  );
+  assert!(HttpResponse::ok([])
+    .with_access_control_allow_methods("GET POST")
+    .is_err());
+}
+
+#[test]
+fn access_control_allow_methods_helpers_do_not_apply_cors_policy() {
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .access_control_allow_methods()
+      .expect("absent Access-Control-Allow-Methods should parse")
+  );
+}
+
+#[test]
 fn request_max_forwards_is_optional_bounded_and_preserves_invalid_headers() {
   let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
     .expect("request should parse");

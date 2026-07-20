@@ -1,5 +1,9 @@
 use super::*;
 
+pub use rttp_protocol::access_control_allow_methods::{
+  AccessControlAllowMethods as HttpAccessControlAllowMethods,
+  AccessControlAllowMethodsParseError as HttpAccessControlAllowMethodsParseError,
+};
 pub use rttp_protocol::alt_svc::{
   AltSvc as HttpAltSvc, AltSvcAlternative as HttpAltSvcAlternative,
   AltSvcParameter as HttpAltSvcParameter, AltSvcParseError as HttpAltSvcParseError,
@@ -674,6 +678,25 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Access-Control-Allow-Methods` response metadata
+  /// without applying CORS policy.
+  pub fn with_access_control_allow_methods(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpAccessControlAllowMethodsParseError> {
+    let allow_methods = HttpAccessControlAllowMethods::parse(value)?;
+    self.headers.retain(|header| {
+      !header
+        .name
+        .eq_ignore_ascii_case("Access-Control-Allow-Methods")
+    });
+    self.headers.push(HttpHeader::new(
+      "Access-Control-Allow-Methods",
+      allow_methods.header_value(),
+    ));
+    Ok(self)
+  }
+
   /// Validates and replaces `Reporting-Endpoints` response metadata.
   pub fn with_reporting_endpoints<I, N, U>(
     mut self,
@@ -1126,6 +1149,27 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpContentLanguages::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Access-Control-Allow-Methods` response metadata without
+  /// applying CORS policy.
+  pub fn access_control_allow_methods(
+    &self,
+  ) -> Result<Option<HttpAccessControlAllowMethods>, HttpAccessControlAllowMethodsParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Access-Control-Allow-Methods")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAccessControlAllowMethods::parse_values(values).map(Some)
   }
 
   /// Parses bounded `Reporting-Endpoints` response metadata without scheduling reports.
