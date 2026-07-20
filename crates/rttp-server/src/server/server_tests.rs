@@ -150,6 +150,53 @@ fn access_control_allow_methods_helpers_validate_replace_and_parse_response_meta
 }
 
 #[test]
+fn access_control_allow_headers_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Access-Control-Allow-Headers", "X-Legacy")
+    .header("access-control-allow-headers", "X-Deprecated")
+    .with_access_control_allow_headers("X-Request-Id, ETag")
+    .expect("Access-Control-Allow-Headers should be accepted");
+
+  let allow_headers = response
+    .access_control_allow_headers()
+    .expect("Access-Control-Allow-Headers should parse")
+    .expect("Access-Control-Allow-Headers should be present");
+  assert_eq!(["x-request-id", "etag"], allow_headers.field_names());
+  assert_eq!(
+    vec![("Access-Control-Allow-Headers", "x-request-id, etag")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn access_control_allow_headers_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let malformed = HttpResponse::ok([]).header("Access-Control-Allow-Headers", "X-Request Id");
+  assert!(malformed.access_control_allow_headers().is_err());
+  assert_eq!(
+    Some("X-Request Id"),
+    malformed
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Access-Control-Allow-Headers"))
+      .map(|header| header.value.as_str())
+  );
+  assert!(HttpResponse::ok([])
+    .with_access_control_allow_headers("X-Request Id")
+    .is_err());
+  assert!(HttpResponse::ok([])
+    .with_access_control_allow_headers("*")
+    .expect("wildcard Access-Control-Allow-Headers should be accepted")
+    .access_control_allow_headers()
+    .expect("wildcard Access-Control-Allow-Headers should parse")
+    .expect("wildcard Access-Control-Allow-Headers should be present")
+    .is_wildcard());
+}
+
+#[test]
 fn access_control_allow_methods_helpers_preserve_raw_metadata_and_report_parse_errors() {
   let malformed = HttpResponse::ok([]).header("Access-Control-Allow-Methods", "GET POST");
   assert!(malformed.access_control_allow_methods().is_err());
