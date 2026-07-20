@@ -2334,7 +2334,7 @@ fn prior_knowledge_server_policy_advertises_and_enforces_frame_and_metadata_boun
 
   write_h2_frame(&mut stream, H2_FRAME_SETTINGS, H2_FLAG_ACK, 0, &[]);
   let mut headers = h2_head_headers(b"/policy", addr.to_string().as_bytes());
-  headers.extend(h2_literal_new_name(b"x-policy-limit", &vec![b'x'; 100]));
+  headers.extend(h2_literal_new_name(b"x-policy-limit", &[b'x'; 100]));
   write_h2_frame(
     &mut stream,
     H2_FRAME_HEADERS,

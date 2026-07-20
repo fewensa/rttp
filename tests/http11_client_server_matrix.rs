@@ -16,6 +16,9 @@ use rttp_server::server::{
 };
 use rttp_test_support as fixtures;
 
+type ObservedIfRangeHeaders = (Option<String>, Option<String>);
+type ObservedIfRangeHandle = thread::JoinHandle<ObservedIfRangeHeaders>;
+
 fn client() -> HttpClient {
   HttpClient::new()
 }
@@ -338,10 +341,7 @@ fn spawn_range_server() -> (std::net::SocketAddr, thread::JoinHandle<Option<Stri
 
 fn spawn_if_range_server(
   metadata: HttpConditionalMetadata,
-) -> (
-  std::net::SocketAddr,
-  thread::JoinHandle<(Option<String>, Option<String>)>,
-) {
+) -> (std::net::SocketAddr, ObservedIfRangeHandle) {
   let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind if-range server");
   let addr = server.local_addr().expect("if-range server addr");
   let (tx, rx) = mpsc::channel();
@@ -828,7 +828,7 @@ fn assert_observed_range(
 }
 
 fn assert_observed_if_range(
-  handle: thread::JoinHandle<(Option<String>, Option<String>)>,
+  handle: ObservedIfRangeHandle,
   expected_range: &str,
   expected_if_range: &str,
   name: &str,

@@ -2652,6 +2652,7 @@ fn is_forbidden_response_trailer_name(name: &str) -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
   use super::*;
 

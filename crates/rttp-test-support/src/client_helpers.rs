@@ -199,6 +199,7 @@ impl GatedResponseBody {
     self.partial_body_sent.recv_timeout(timeout)
   }
 
+  #[allow(clippy::result_unit_err)]
   pub fn release_body(&self) -> Result<(), ()> {
     self
       .control
@@ -206,6 +207,7 @@ impl GatedResponseBody {
       .map_err(|_| ())
   }
 
+  #[allow(clippy::result_unit_err)]
   pub fn cancel_body(&self) -> Result<(), ()> {
     self
       .control
@@ -937,10 +939,7 @@ pub fn spawn_auth_echo_server() -> (SocketAddr, JoinHandle<()>) {
     if let Ok((mut stream, _)) = listener.accept() {
       let mut request = Vec::new();
       let mut buf = [0u8; 1024];
-      loop {
-        let Ok(read) = stream.read(&mut buf) else {
-          break;
-        };
+      while let Ok(read) = stream.read(&mut buf) {
         if read == 0 {
           break;
         }
