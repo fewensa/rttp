@@ -2481,6 +2481,51 @@ fn test_access_control_allow_methods_response_helper_preserves_invalid_or_absent
 }
 
 #[test]
+fn test_access_control_max_age_response_helper_parses_valid_and_maximum_values() {
+  for (value, expected_seconds) in [("600", 600), ("18446744073709551615", u64::MAX)] {
+    let raw =
+      format!("HTTP/1.1 200 OK\r\nAccess-Control-Max-Age: {value}\r\nContent-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("parse response with Access-Control-Max-Age metadata");
+
+    assert_eq!(
+      response
+        .access_control_max_age()
+        .expect("Access-Control-Max-Age should parse")
+        .expect("Access-Control-Max-Age should be present")
+        .seconds(),
+      expected_seconds
+    );
+  }
+}
+
+#[test]
+fn test_access_control_max_age_response_helper_handles_absent_duplicate_and_malformed_metadata() {
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("parse response without Access-Control-Max-Age");
+  assert_eq!(
+    absent
+      .access_control_max_age()
+      .expect("absent Access-Control-Max-Age should parse"),
+    None
+  );
+
+  for value in [
+    "Access-Control-Max-Age: 60\r\naccess-control-max-age: 120",
+    "Access-Control-Max-Age: 60 seconds",
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\n{value}\r\nContent-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+
+    assert!(response.access_control_max_age().is_err());
+  }
+}
+
+#[test]
 fn test_cross_origin_resource_policy_response_metadata_preserves_raw_headers() {
   for (value, policy) in [
     ("SAME-ORIGIN", CrossOriginResourcePolicy::SameOrigin),

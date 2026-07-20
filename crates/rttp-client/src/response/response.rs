@@ -17,6 +17,7 @@ use crate::response::WwwAuthenticate;
 use crate::types::{Cookie, Header, RoUrl};
 use rttp_protocol::access_control_allow_methods::AccessControlAllowMethods;
 use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
+use rttp_protocol::access_control_max_age::AccessControlMaxAge;
 use rttp_protocol::clear_site_data::ClearSiteData;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::cookie::HttpSetCookies;
@@ -335,6 +336,17 @@ impl Response {
       return Ok(None);
     }
     AccessControlAllowMethods::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Access-Control-Max-Age` response metadata without applying CORS caching.
+  pub fn access_control_max_age(&self) -> error::Result<Option<AccessControlMaxAge>> {
+    let values = self.header_values("access-control-max-age");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    AccessControlMaxAge::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
