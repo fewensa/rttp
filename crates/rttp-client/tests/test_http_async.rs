@@ -5,6 +5,10 @@ use rttp_test_support as support;
 use std::collections::HashMap;
 
 #[cfg(feature = "async")]
+use flate2::write::GzEncoder;
+#[cfg(feature = "async")]
+use flate2::Compression;
+#[cfg(feature = "async")]
 use futures::channel::oneshot;
 #[cfg(feature = "async")]
 use futures::executor::block_on;
@@ -13,7 +17,10 @@ use futures::io::{AllowStdIo, AsyncRead, AsyncReadExt, Cursor as AsyncCursor};
 #[cfg(feature = "async")]
 use rttp_client::types::Proxy;
 #[cfg(feature = "async")]
-use rttp_client::{async_streaming_response_after_header, Config, HttpClient};
+use rttp_client::{
+  async_streaming_response_after_header, Config, HttpClient,
+  DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES,
+};
 #[cfg(feature = "async")]
 use std::io::{Cursor, Read, Write};
 #[cfg(feature = "async")]
@@ -35,6 +42,19 @@ fn gzip_bytes(bytes: &[u8]) -> Vec<u8> {
 #[cfg(feature = "async")]
 fn client() -> HttpClient {
   HttpClient::new()
+}
+
+#[cfg(feature = "async")]
+fn buffered_response_config(limit: usize) -> Config {
+  Config::builder()
+    .max_buffered_response_body_bytes(limit)
+    .build()
+}
+
+#[cfg(feature = "async")]
+fn assert_body_too_large(error: rttp_client::error::Error, limit: usize) {
+  assert!(error.is_body_too_large(), "unexpected error: {error}");
+  assert_eq!(Some(limit), error.body_limit());
 }
 
 #[cfg(feature = "async")]
@@ -205,6 +225,125 @@ fn test_async_http() {
     let response = response.unwrap();
     assert_eq!("127.0.0.1", response.host());
     println!("{}", response);
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_buffered_content_length_response_enforces_exact_body_limit() {
+  block_on(async {
+    for (body, should_succeed) in [(b"12345".as_slice(), true), (b"123456".as_slice(), false)] {
+      let mut response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+      )
+      .into_bytes();
+      response.extend_from_slice(body);
+      let (addr, _handle) = support::spawn_chunked_response_server(response);
+      let result = client()
+        .url(format!("http://{addr}/fixed"))
+        .config(buffered_response_config(5))
+        .rasync()
+        .await;
+
+      if should_succeed {
+        assert_eq!(b"12345", result.unwrap().body().binary());
+      } else {
+        assert_body_too_large(result.unwrap_err(), 5);
+      }
+    }
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_buffered_chunked_response_enforces_exact_body_limit() {
+  block_on(async {
+    for (chunk, should_succeed) in [("5\r\n12345\r\n", true), ("6\r\n123456\r\n", false)] {
+      let response = format!(
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{chunk}0\r\n\r\n"
+      );
+      let (addr, _handle) = support::spawn_chunked_response_server(response);
+      let result = client()
+        .url(format!("http://{addr}/chunked"))
+        .config(buffered_response_config(5))
+        .rasync()
+        .await;
+
+      if should_succeed {
+        assert_eq!(b"12345", result.unwrap().body().binary());
+      } else {
+        assert_body_too_large(result.unwrap_err(), 5);
+      }
+    }
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_buffered_eof_delimited_response_enforces_exact_body_limit() {
+  block_on(async {
+    for (body, should_succeed) in [("12345", true), ("123456", false)] {
+      let response = format!("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{body}");
+      let (addr, _handle) = support::spawn_chunked_response_server(response);
+      let result = client()
+        .url(format!("http://{addr}/eof"))
+        .config(buffered_response_config(5))
+        .rasync()
+        .await;
+
+      if should_succeed {
+        assert_eq!(b"12345", result.unwrap().body().binary());
+      } else {
+        assert_body_too_large(result.unwrap_err(), 5);
+      }
+    }
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_buffered_gzip_response_limits_decoded_body() {
+  let decoded = vec![b'a'; 256];
+  let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+  encoder.write_all(&decoded).unwrap();
+  let compressed = encoder.finish().unwrap();
+  assert!(compressed.len() <= 64);
+  let mut response = format!(
+    "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+    compressed.len()
+  )
+  .into_bytes();
+  response.extend_from_slice(&compressed);
+  let (addr, _handle) = support::spawn_chunked_response_server(response);
+
+  block_on(async {
+    let error = client()
+      .url(format!("http://{addr}/gzip"))
+      .config(buffered_response_config(64))
+      .rasync()
+      .await
+      .unwrap_err();
+
+    assert_body_too_large(error, 64);
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_streaming_response_can_read_body_larger_than_buffered_limit() {
+  block_on(async {
+    let body_len = DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES + 1;
+    let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {body_len}\r\n\r\n").into_bytes();
+    let mut stream = AllowStdIo::new(Cursor::new(vec![b'x'; body_len]));
+    let mut response = async_streaming_response_after_header(&mut stream, false, head)
+      .await
+      .unwrap();
+    let mut body = Vec::new();
+
+    response.body_mut().read_to_end(&mut body).await.unwrap();
+
+    assert_eq!(body_len, body.len());
   });
 }
 

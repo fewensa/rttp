@@ -157,11 +157,14 @@ impl<'a, S: AsyncRead + Unpin + ?Sized> AsyncStreamingResponse<'a, S> {
     self.trailer(name).map(|header| header.value())
   }
 
-  async fn read_to_parts(mut self) -> error::Result<ResponseParts> {
+  async fn read_to_parts(mut self, max_body_bytes: usize) -> error::Result<ResponseParts> {
     let close_connection = response_connection_should_close(&self.head)?;
     let connection_reusable = response_connection_reusable(&self.head, &self.body.kind)?;
     let mut binary = self.head;
-    self.body.read_to_end(&mut binary).await?;
+    self
+      .body
+      .read_to_end_bounded(&mut binary, max_body_bytes)
+      .await?;
     Ok(ResponseParts {
       binary,
       trailers: self.body.trailers().clone(),
@@ -228,6 +231,28 @@ impl<'a, S: AsyncRead + Unpin + ?Sized> AsyncResponseBodyReader<'a, S> {
         return Ok(body.len() - start);
       }
       body.extend_from_slice(&buf[..read]);
+    }
+  }
+
+  async fn read_to_end_bounded(
+    &mut self,
+    body: &mut Vec<u8>,
+    max_body_bytes: usize,
+  ) -> error::Result<usize> {
+    let start = body.len();
+    let mut buffer = [0u8; 8 * 1024];
+    loop {
+      let body_len = body.len() - start;
+      let remaining = max_body_bytes - body_len;
+      let read_limit = buffer.len().min(remaining.saturating_add(1));
+      let read = self.read(&mut buffer[..read_limit]).await?;
+      if read == 0 {
+        return Ok(body_len);
+      }
+      if read > remaining {
+        return Err(error::body_too_large(max_body_bytes));
+      }
+      body.extend_from_slice(&buffer[..read]);
     }
   }
 
@@ -349,11 +374,12 @@ impl<'a> AsyncConnection<'a> {
       };
 
       let close_connection = parts.close_connection;
-      let response = Response::with_trailers_and_informational(
+      let response = Response::with_trailers_and_informational_and_limit(
         self.conn.rourl().clone(),
         parts.binary,
         parts.trailers,
         parts.informational_responses,
+        self.conn.config().max_buffered_response_body_bytes(),
       )?;
       let config = self.conn.config().clone();
 
@@ -417,11 +443,12 @@ impl<'a> AsyncConnection<'a> {
     let url = self.conn.url().map_err(error::builder)?;
     let parts = self.async_send_streaming_parts(&url, body).await?;
     let close_connection = parts.close_connection;
-    let response = Response::with_trailers_and_informational(
+    let response = Response::with_trailers_and_informational_and_limit(
       self.conn.rourl().clone(),
       parts.binary,
       parts.trailers,
       parts.informational_responses,
+      self.conn.config().max_buffered_response_body_bytes(),
     )?;
     self.conn.closed_set(close_connection);
     Ok(response)
@@ -561,7 +588,7 @@ impl<'a> AsyncConnection<'a> {
     let mut parts =
       async_streaming_response_after_header(stream, self.conn.expect_no_response_body(), binary)
         .await?
-        .read_to_parts()
+        .read_to_parts(self.conn.config().max_buffered_response_body_bytes())
         .await?;
     parts.informational_responses = informational_responses;
     Ok(parts)

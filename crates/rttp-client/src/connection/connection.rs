@@ -12,8 +12,8 @@ use url::Url;
 use crate::connection::connection_reader::{
   is_skippable_informational_status, parse_informational_response, read_response_head,
   read_response_header, read_response_parts_after_header,
-  read_response_parts_after_header_with_informational, response_status_code, ConnectionReader,
-  ResponseParts,
+  read_response_parts_after_header_with_informational_and_limit, response_status_code,
+  ConnectionReader, ResponseParts,
 };
 use crate::request::{RawRequest, RequestBody};
 use crate::response::{InformationalResponse, Response};
@@ -763,7 +763,12 @@ impl<'a> Connection<'a> {
   where
     S: io::Read,
   {
-    let mut reader = ConnectionReader::new(url, stream, self.expect_no_response_body());
+    let mut reader = ConnectionReader::new_with_limit(
+      url,
+      stream,
+      self.expect_no_response_body(),
+      self.config().max_buffered_response_body_bytes(),
+    );
     reader.response_parts()
   }
 
@@ -803,11 +808,12 @@ impl<'a> Connection<'a> {
         informational_responses.push(parse_informational_response(&header)?);
         continue;
       }
-      return read_response_parts_after_header_with_informational(
+      return read_response_parts_after_header_with_informational_and_limit(
         stream,
         self.expect_no_response_body(),
         header,
         informational_responses,
+        self.config().max_buffered_response_body_bytes(),
       )
       .map(ExpectContinueResult::Final);
     }

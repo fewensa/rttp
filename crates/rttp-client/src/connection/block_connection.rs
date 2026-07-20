@@ -59,11 +59,12 @@ impl<'a> BlockConnection<'a> {
       };
 
       let close_connection = parts.close_connection;
-      let response = Response::with_trailers_and_informational(
+      let response = Response::with_trailers_and_informational_and_limit(
         self.conn.rourl().clone(),
         parts.binary,
         parts.trailers,
         parts.informational_responses,
+        self.conn.config().max_buffered_response_body_bytes(),
       )?;
       let config = self.conn.config().clone();
 
@@ -126,11 +127,12 @@ impl<'a> BlockConnection<'a> {
     let url = self.conn.url().map_err(error::builder)?;
     let parts = self.conn.block_send_streaming_parts(&url, body)?;
     let close_connection = parts.close_connection;
-    let response = Response::with_trailers_and_informational(
+    let response = Response::with_trailers_and_informational_and_limit(
       self.conn.rourl().clone(),
       parts.binary,
       parts.trailers,
       parts.informational_responses,
+      self.conn.config().max_buffered_response_body_bytes(),
     )?;
     self.conn.closed_set(close_connection);
     Ok(response)

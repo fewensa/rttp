@@ -1,6 +1,7 @@
 use std::fmt;
 use std::io::Read;
 
+use crate::config::DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES;
 use crate::error;
 use crate::response::ResponseBody;
 use crate::types::{Cookie, Header, RoUrl, ToUrl};
@@ -24,13 +25,19 @@ pub struct RawResponse {
 
 impl RawResponse {
   pub fn new(url: RoUrl, binary: Vec<u8>) -> error::Result<Self> {
-    Self::with_trailers(url, binary, Vec::new())
+    Self::with_trailers_and_limit(
+      url,
+      binary,
+      Vec::new(),
+      DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES,
+    )
   }
 
-  pub(crate) fn with_trailers(
+  pub(crate) fn with_trailers_and_limit(
     url: RoUrl,
     binary: Vec<u8>,
     trailers: Vec<Header>,
+    max_body_bytes: usize,
   ) -> error::Result<Self> {
     let _url = url.to_url().map_err(error::builder)?;
     let mut response = RawResponse {
@@ -44,7 +51,7 @@ impl RawResponse {
       cookies: vec![],
       body: ResponseBody::new(vec![]),
     };
-    Parser::new(binary).parse(&mut response)?;
+    Parser::new(binary, max_body_bytes).parse(&mut response)?;
     Ok(response)
   }
 
@@ -143,11 +150,15 @@ impl fmt::Display for RawResponse {
 
 struct Parser {
   binary: Vec<u8>,
+  max_body_bytes: usize,
 }
 
 impl Parser {
-  pub fn new(binary: Vec<u8>) -> Self {
-    Self { binary }
+  pub fn new(binary: Vec<u8>, max_body_bytes: usize) -> Self {
+    Self {
+      binary,
+      max_body_bytes,
+    }
   }
 
   pub fn parse(self, response: &mut RawResponse) -> error::Result<()> {
@@ -171,6 +182,9 @@ impl Parser {
     }
     let header = &self.binary[..position];
     let body = self.binary[position + 4..].to_owned();
+    if body.len() > self.max_body_bytes {
+      return Err(error::body_too_large(self.max_body_bytes));
+    }
 
     self.parse_header(response, header)?;
     self.parse_body(response, body)?;
@@ -248,7 +262,7 @@ impl Parser {
     if has_single_gzip_content_encoding(response.headers_get()) {
       let mut decoder = flate2::read::GzDecoder::new(binary.as_slice());
       let mut buffer = Vec::new();
-      decoder.read_to_end(&mut buffer).map_err(error::decode)?;
+      read_decoded_body_to_end(&mut decoder, &mut buffer, self.max_body_bytes)?;
       response.headers.retain(|header| {
         !header.name().eq_ignore_ascii_case("Content-Encoding")
           && !header.name().eq_ignore_ascii_case("Content-Length")
@@ -261,6 +275,28 @@ impl Parser {
     let body = ResponseBody::new(binary);
     response.body(body);
     Ok(())
+  }
+}
+
+fn read_decoded_body_to_end<R: Read>(
+  reader: &mut R,
+  body: &mut Vec<u8>,
+  max_body_bytes: usize,
+) -> error::Result<()> {
+  let mut buffer = [0u8; 8 * 1024];
+  loop {
+    let remaining = max_body_bytes - body.len();
+    let read_limit = buffer.len().min(remaining.saturating_add(1));
+    let read = reader
+      .read(&mut buffer[..read_limit])
+      .map_err(error::decode)?;
+    if read == 0 {
+      return Ok(());
+    }
+    if read > remaining {
+      return Err(error::body_too_large(max_body_bytes));
+    }
+    body.extend_from_slice(&buffer[..read]);
   }
 }
 
