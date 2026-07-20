@@ -20,6 +20,13 @@ use std::net::TcpListener;
 use std::thread;
 
 #[cfg(feature = "async")]
+fn gzip_bytes(bytes: &[u8]) -> Vec<u8> {
+  let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+  encoder.write_all(bytes).expect("write gzip fixture");
+  encoder.finish().expect("finish gzip fixture")
+}
+
+#[cfg(feature = "async")]
 fn client() -> HttpClient {
   HttpClient::new()
 }
@@ -108,6 +115,32 @@ fn test_async_http() {
     let response = response.unwrap();
     assert_eq!("127.0.0.1", response.host());
     println!("{}", response);
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_buffered_gzip_response_exposes_decoded_body_headers() {
+  let body = gzip_bytes(b"decoded");
+  let mut raw = format!(
+    "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+    body.len()
+  )
+  .into_bytes();
+  raw.extend_from_slice(&body);
+  let (addr, _handle) = support::spawn_chunked_response_server(raw);
+
+  block_on(async {
+    let response = client()
+      .get()
+      .url(format!("http://{}/gzip", addr))
+      .rasync()
+      .await
+      .expect("async buffered gzip response");
+
+    assert_eq!(b"decoded", response.body().binary());
+    assert!(response.header("Content-Encoding").is_none());
+    assert!(response.header("Content-Length").is_none());
   });
 }
 

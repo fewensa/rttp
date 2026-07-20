@@ -1344,14 +1344,50 @@ fn test_content_encoding_runtime_decodes_only_single_supported_gzip_coding() {
     .expect("single gzip response should decode");
 
   assert_eq!("OK", response.body().string().unwrap());
-  assert_eq!(
-    vec!["gzip"],
-    response
-      .content_encoding()
-      .expect("content-encoding should parse")
-      .expect("content-encoding should be present")
-      .codings()
+  assert!(response.header("Content-Encoding").is_none());
+  assert!(response.header("Content-Length").is_none());
+  assert!(response.content_encoding().unwrap().is_none());
+  assert!(response
+    .binary()
+    .windows(b"Content-Encoding: gzip".len())
+    .any(|window| window == b"Content-Encoding: gzip"));
+}
+
+#[test]
+fn test_content_encoding_runtime_leaves_empty_gzip_body_and_headers_unchanged() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Encoding: gzip\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
   );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("empty gzip response should remain usable");
+
+  assert!(response.body().binary().is_empty());
+  assert_eq!(
+    Some("gzip"),
+    response
+      .header_value("Content-Encoding")
+      .map(String::as_str)
+  );
+  assert_eq!(
+    Some("0"),
+    response.header_value("Content-Length").map(String::as_str)
+  );
+}
+
+#[test]
+fn test_content_encoding_runtime_rejects_malformed_single_gzip_body() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Encoding: gzip\r\n",
+    "Content-Length: 8\r\n",
+    "\r\n",
+    "not-gzip"
+  );
+
+  assert!(Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec()).is_err());
 }
 
 #[test]
@@ -1374,6 +1410,34 @@ fn test_content_encoding_runtime_leaves_stacked_or_unsupported_codings_undecoded
       .expect("content-encoding should parse")
       .expect("content-encoding should be present")
       .codings()
+  );
+}
+
+#[test]
+fn test_content_encoding_runtime_leaves_duplicate_gzip_fields_undecoded() {
+  let body = gzip_bytes(b"OK");
+  let mut raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Encoding: gzip\r\n",
+    "Content-Encoding: gzip\r\n"
+  )
+  .as_bytes()
+  .to_vec();
+  raw.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
+  raw.extend_from_slice(&body);
+
+  let response = Response::new(RoUrl::with("https://example.test"), raw)
+    .expect("duplicate gzip fields should remain usable");
+  let content_length = body.len().to_string();
+
+  assert_eq!(body, response.body().binary());
+  assert_eq!(
+    vec![&"gzip".to_string(), &"gzip".to_string()],
+    response.header_values("Content-Encoding")
+  );
+  assert_eq!(
+    Some(content_length.as_str()),
+    response.header_value("Content-Length").map(String::as_str)
   );
 }
 
