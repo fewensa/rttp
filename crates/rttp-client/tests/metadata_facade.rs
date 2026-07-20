@@ -1,8 +1,9 @@
 use rttp_client::response::{
-  AcceptCh, AccessControlAllowMethods, AccessControlAllowMethodsParseError,
-  AccessControlExposeHeaders, AccessControlMaxAge, AccessControlMaxAgeParseError, AltSvc,
-  CrossOriginResourcePolicy, Digest, HttpClearSiteData, PreferenceApplied, Priority,
-  ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Trailer,
+  AcceptCh, AccessControlAllowHeaders, AccessControlAllowHeadersParseError,
+  AccessControlAllowMethods, AccessControlAllowMethodsParseError, AccessControlExposeHeaders,
+  AccessControlMaxAge, AccessControlMaxAgeParseError, AltSvc, CrossOriginResourcePolicy, Digest,
+  HttpClearSiteData, PreferenceApplied, Priority, ReferrerPolicy, ReferrerPolicyToken,
+  ServerTiming, Trailer,
 };
 use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 
@@ -13,6 +14,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .expect("Access-Control-Allow-Methods should parse");
   let _: AccessControlAllowMethodsParseError = AccessControlAllowMethods::parse("")
     .expect_err("empty Access-Control-Allow-Methods should be rejected");
+  let allow_headers = AccessControlAllowHeaders::parse("X-Request-Id, ETag")
+    .expect("Access-Control-Allow-Headers should parse");
+  let _: AccessControlAllowHeadersParseError = AccessControlAllowHeaders::parse("")
+    .expect_err("empty Access-Control-Allow-Headers should be rejected");
   let max_age = AccessControlMaxAge::parse("60").expect("Access-Control-Max-Age should parse");
   let _: AccessControlMaxAgeParseError =
     AccessControlMaxAge::parse("").expect_err("empty Access-Control-Max-Age should be rejected");
@@ -34,6 +39,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(allow_methods.methods(), ["GET", "POST"]);
+  assert_eq!(allow_headers.field_names(), ["x-request-id", "etag"]);
   assert_eq!(max_age.seconds(), 60);
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
   assert_eq!(clear_site_data.directives().len(), 1);
