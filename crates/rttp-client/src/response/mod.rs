@@ -8,6 +8,9 @@ pub use rttp_protocol::access_control_allow_headers::{
 pub use rttp_protocol::access_control_allow_methods::{
   AccessControlAllowMethods, AccessControlAllowMethodsParseError,
 };
+pub use rttp_protocol::access_control_allow_origin::{
+  AccessControlAllowOrigin, AccessControlAllowOriginParseError,
+};
 pub use rttp_protocol::access_control_expose_headers::{
   AccessControlExposeHeaders, AccessControlExposeHeadersParseError,
 };

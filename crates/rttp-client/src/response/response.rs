@@ -17,6 +17,7 @@ use crate::response::WwwAuthenticate;
 use crate::types::{Cookie, Header, RoUrl};
 use rttp_protocol::access_control_allow_headers::AccessControlAllowHeaders;
 use rttp_protocol::access_control_allow_methods::AccessControlAllowMethods;
+use rttp_protocol::access_control_allow_origin::AccessControlAllowOrigin;
 use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::access_control_max_age::AccessControlMaxAge;
 use rttp_protocol::clear_site_data::ClearSiteData;
@@ -349,6 +350,18 @@ impl Response {
       return Ok(None);
     }
     AccessControlAllowMethods::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Access-Control-Allow-Origin` response metadata without
+  /// applying CORS origin policy.
+  pub fn access_control_allow_origin(&self) -> error::Result<Option<AccessControlAllowOrigin>> {
+    let values = self.header_values("access-control-allow-origin");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    AccessControlAllowOrigin::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

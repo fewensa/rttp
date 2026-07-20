@@ -150,6 +150,64 @@ fn access_control_allow_methods_helpers_validate_replace_and_parse_response_meta
 }
 
 #[test]
+fn access_control_allow_origin_helpers_validate_replace_and_preserve_raw_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Access-Control-Allow-Origin", "https://legacy.test")
+    .header("access-control-allow-origin", "https://deprecated.test")
+    .with_access_control_allow_origin("https://example.test:8443")
+    .expect("Access-Control-Allow-Origin should be accepted");
+
+  assert_eq!(
+    "https://example.test:8443",
+    response
+      .access_control_allow_origin()
+      .expect("Access-Control-Allow-Origin should parse")
+      .expect("Access-Control-Allow-Origin should be present")
+      .header_value()
+  );
+  assert_eq!(
+    vec![("Access-Control-Allow-Origin", "https://example.test:8443")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let malformed = HttpResponse::ok([]).header("Access-Control-Allow-Origin", "https://example.test/path");
+  assert!(malformed.access_control_allow_origin().is_err());
+  assert!(HttpResponse::ok([])
+    .with_access_control_allow_origin("https://example.test/path")
+    .is_err());
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .access_control_allow_origin()
+      .expect("absent Access-Control-Allow-Origin should parse")
+  );
+  for value in ["*", "null"] {
+    assert_eq!(
+      value,
+      HttpResponse::ok([])
+        .with_access_control_allow_origin(value)
+        .expect("valid Access-Control-Allow-Origin should be accepted")
+        .access_control_allow_origin()
+        .expect("Access-Control-Allow-Origin should parse")
+        .expect("Access-Control-Allow-Origin should be present")
+        .header_value()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("Access-Control-Allow-Origin", "https://example.test")
+    .header("access-control-allow-origin", "https://other.test");
+  assert!(duplicate.access_control_allow_origin().is_err());
+  assert!(HttpResponse::ok([])
+    .with_access_control_allow_origin("x".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
 fn access_control_allow_headers_helpers_validate_replace_and_parse_response_metadata() {
   let response = HttpResponse::ok([])
     .header("Access-Control-Allow-Headers", "X-Legacy")

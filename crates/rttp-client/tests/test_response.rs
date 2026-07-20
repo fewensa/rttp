@@ -2481,6 +2481,76 @@ fn test_access_control_allow_methods_response_helper_preserves_invalid_or_absent
 }
 
 #[test]
+fn test_access_control_allow_origin_response_helper_parses_valid_metadata_and_preserves_invalid_raw_headers(
+) {
+  for value in ["*", "null", "https://example.test:8443"] {
+    let raw = format!(
+      "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: {value}\r\nContent-Length: 0\r\n\r\n"
+    );
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert_eq!(
+      value,
+      response
+        .access_control_allow_origin()
+        .expect("Access-Control-Allow-Origin should parse")
+        .expect("Access-Control-Allow-Origin should be present")
+        .header_value()
+    );
+  }
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("raw response without metadata should remain usable");
+  assert_eq!(
+    None,
+    absent
+      .access_control_allow_origin()
+      .expect("absence should parse")
+  );
+
+  for value in [
+    "https://example.test, https://other.test".to_string(),
+    "https://example.test/path".to_string(),
+    "x".repeat(64 * 1024 + 1),
+  ] {
+    let raw = format!(
+      "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: {value}\r\nContent-Length: 0\r\n\r\n"
+    );
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(response.access_control_allow_origin().is_err());
+    assert_eq!(
+      response.header_value("Access-Control-Allow-Origin"),
+      Some(&value)
+    );
+  }
+
+  let duplicate = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Access-Control-Allow-Origin: https://example.test\r\n",
+      "access-control-allow-origin: https://other.test\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response with duplicate metadata should remain usable");
+  assert!(duplicate.access_control_allow_origin().is_err());
+  assert_eq!(
+    duplicate.header_values("Access-Control-Allow-Origin"),
+    [
+      &"https://example.test".to_string(),
+      &"https://other.test".to_string()
+    ]
+  );
+}
+
+#[test]
 fn test_access_control_allow_headers_response_helper_parses_valid_lists_wildcard_and_multiple_fields(
 ) {
   let listed = Response::new(
