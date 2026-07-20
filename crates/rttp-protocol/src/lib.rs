@@ -7,6 +7,7 @@ pub mod accept_patch;
 pub mod accept_post;
 pub mod access_control_allow_methods;
 pub mod access_control_expose_headers;
+pub mod access_control_max_age;
 pub mod alt_svc;
 pub mod cache_control;
 pub mod clear_site_data;
