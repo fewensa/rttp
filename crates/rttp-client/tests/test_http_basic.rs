@@ -7,12 +7,20 @@ use std::net::TcpListener;
 use std::thread;
 use std::time::Duration;
 
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use rttp_client::types::{Auth, Para, Proxy, RoUrl};
 use rttp_client::ConnectionReader;
 use rttp_client::{Config, HttpClient};
 
 fn client() -> HttpClient {
   HttpClient::new()
+}
+
+fn gzip_bytes(bytes: &[u8]) -> Vec<u8> {
+  let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+  encoder.write_all(bytes).expect("write gzip fixture");
+  encoder.finish().expect("finish gzip fixture")
 }
 
 fn spawn_streaming_upload_capture_server() -> (std::net::SocketAddr, thread::JoinHandle<Vec<u8>>) {
@@ -228,6 +236,28 @@ fn test_gzip() {
     .header(("Accept-Encoding", "gzip, deflate"))
     .emit();
   assert!(response.is_ok());
+}
+
+#[test]
+fn test_buffered_gzip_response_exposes_decoded_body_headers() {
+  let body = gzip_bytes(b"decoded");
+  let mut raw = format!(
+    "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+    body.len()
+  )
+  .into_bytes();
+  raw.extend_from_slice(&body);
+  let (addr, _handle) = support::spawn_chunked_response_server(raw);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/gzip", addr))
+    .emit()
+    .expect("buffered gzip response");
+
+  assert_eq!(b"decoded", response.body().binary());
+  assert!(response.header("Content-Encoding").is_none());
+  assert!(response.header("Content-Length").is_none());
 }
 
 #[test]
