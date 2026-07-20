@@ -1976,6 +1976,63 @@ fn test_async_https() {
 }
 
 #[test]
+#[cfg(all(feature = "async", feature = "tls-rustls"))]
+fn test_async_https_to_http_redirect_is_rejected_before_target_connection() {
+  let target = TcpListener::bind("127.0.0.1:0").expect("bind redirect target");
+  let target_addr = target.local_addr().expect("redirect target address");
+  let (addr, _handle) = support::spawn_tls_redirect_server(format!("http://{}/final", target_addr));
+  block_on(async {
+    let error = client()
+      .get()
+      .url(format!("https://{}/", addr))
+      .config(
+        Config::builder()
+          .auto_redirect(true)
+          .verify_ssl_cert(false)
+          .verify_ssl_hostname(false),
+      )
+      .rasync()
+      .await
+      .expect_err("HTTPS to HTTP redirect should be rejected by default");
+
+    assert!(error.is_redirect());
+    assert!(error.to_string().contains("HTTPS to HTTP redirect"));
+    assert_eq!("https", error.url().expect("redirect source URL").scheme());
+  });
+  target
+    .set_nonblocking(true)
+    .expect("set redirect target nonblocking");
+  assert!(matches!(
+    target.accept(),
+    Err(ref error) if error.kind() == std::io::ErrorKind::WouldBlock
+  ));
+}
+
+#[test]
+#[cfg(all(feature = "async", feature = "tls-rustls"))]
+fn test_async_https_to_http_redirect_can_be_enabled_explicitly() {
+  let (target_addr, _target_handle) = support::spawn_http_server();
+  let (addr, _handle) = support::spawn_tls_redirect_server(format!("http://{}/final", target_addr));
+  block_on(async {
+    let response = client()
+      .get()
+      .url(format!("https://{}/", addr))
+      .config(
+        Config::builder()
+          .auto_redirect(true)
+          .allow_https_to_http_redirects(true)
+          .verify_ssl_cert(false)
+          .verify_ssl_hostname(false),
+      )
+      .rasync()
+      .await
+      .expect("explicit HTTPS to HTTP redirect opt-in should succeed");
+
+    assert!(response.ok());
+  });
+}
+
+#[test]
 #[cfg(feature = "async")]
 fn test_async_http_proxy_uses_absolute_form_for_http_requests() {
   let (addr, _handle) = support::spawn_http_proxy_server();

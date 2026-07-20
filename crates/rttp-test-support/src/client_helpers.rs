@@ -1087,3 +1087,42 @@ pub fn spawn_tls_server() -> (SocketAddr, JoinHandle<()>) {
   });
   (addr, handle)
 }
+
+#[cfg(feature = "tls-rustls")]
+pub fn spawn_tls_redirect_server(location: String) -> (SocketAddr, JoinHandle<()>) {
+  use rcgen::generate_simple_self_signed;
+  use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+  use rustls::{ServerConfig, ServerConnection, StreamOwned};
+  use std::sync::Arc;
+
+  let cert = generate_simple_self_signed(vec!["localhost".to_string()]).expect("generate cert");
+  let cert_der = cert.serialize_der().expect("cert der");
+  let key_der = cert.serialize_private_key_der();
+  let config = ServerConfig::builder()
+    .with_no_client_auth()
+    .with_single_cert(
+      vec![CertificateDer::from(cert_der)],
+      PrivateKeyDer::from(PrivatePkcs8KeyDer::from(key_der)),
+    )
+    .expect("set cert");
+  let config = Arc::new(config);
+
+  let (listener, addr) = bind_local_http_listener("tls redirect server");
+  let handle = thread::spawn(move || {
+    if let Ok((stream, _)) = listener.accept() {
+      let session = ServerConnection::new(config).expect("server connection");
+      let mut tls = StreamOwned::new(session, stream);
+      let _ = read_http_request(&mut tls);
+      let response = format!(
+        "HTTP/1.1 302 Found\r\nLocation: {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        location
+      );
+      let _ = tls.write_all(response.as_bytes());
+      let _ = tls.flush();
+      tls.conn.send_close_notify();
+      let _ = tls.flush();
+    }
+  });
+
+  (addr, handle)
+}

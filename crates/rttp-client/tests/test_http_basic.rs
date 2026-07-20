@@ -1194,6 +1194,57 @@ fn test_https() {
 }
 
 #[test]
+#[cfg(feature = "tls-rustls")]
+fn test_https_to_http_redirect_is_rejected_before_target_connection() {
+  let target = TcpListener::bind("127.0.0.1:0").expect("bind redirect target");
+  let target_addr = target.local_addr().expect("redirect target address");
+  let (addr, _handle) = support::spawn_tls_redirect_server(format!("http://{}/final", target_addr));
+  let error = client()
+    .get()
+    .url(format!("https://{}/", addr))
+    .config(
+      Config::builder()
+        .auto_redirect(true)
+        .verify_ssl_cert(false)
+        .verify_ssl_hostname(false),
+    )
+    .emit()
+    .expect_err("HTTPS to HTTP redirect should be rejected by default");
+
+  assert!(error.is_redirect());
+  assert!(error.to_string().contains("HTTPS to HTTP redirect"));
+  assert_eq!("https", error.url().expect("redirect source URL").scheme());
+  target
+    .set_nonblocking(true)
+    .expect("set redirect target nonblocking");
+  assert!(matches!(
+    target.accept(),
+    Err(ref error) if error.kind() == io::ErrorKind::WouldBlock
+  ));
+}
+
+#[test]
+#[cfg(feature = "tls-rustls")]
+fn test_https_to_http_redirect_can_be_enabled_explicitly() {
+  let (target_addr, _target_handle) = support::spawn_http_server();
+  let (addr, _handle) = support::spawn_tls_redirect_server(format!("http://{}/final", target_addr));
+  let response = client()
+    .get()
+    .url(format!("https://{}/", addr))
+    .config(
+      Config::builder()
+        .auto_redirect(true)
+        .allow_https_to_http_redirects(true)
+        .verify_ssl_cert(false)
+        .verify_ssl_hostname(false),
+    )
+    .emit()
+    .expect("explicit HTTPS to HTTP redirect opt-in should succeed");
+
+  assert!(response.ok());
+}
+
+#[test]
 fn test_http_with_url() {
   let (addr, _handle) = support::spawn_http_server();
   client()
