@@ -999,6 +999,34 @@ fn spawn_socks5_proxy_server_with_auth(
   (addr, handle)
 }
 
+pub fn spawn_proxy_connect_response_server(
+  response: impl Into<Vec<u8>>,
+) -> (SocketAddr, JoinHandle<bool>) {
+  let (listener, addr) = bind_local_http_listener("proxy CONNECT response server");
+  let response = response.into();
+  let handle = thread::spawn(move || {
+    let Ok((mut client, _)) = listener.accept() else {
+      return false;
+    };
+    let _ = read_http_request(&mut client);
+    if client.write_all(&response).is_err() || client.flush().is_err() {
+      return true;
+    }
+
+    let _ = client.set_read_timeout(Some(Duration::from_secs(1)));
+    let mut byte = [0u8; 1];
+    match client.read(&mut byte) {
+      Ok(0) => true,
+      Err(error) => matches!(
+        error.kind(),
+        io::ErrorKind::ConnectionReset | io::ErrorKind::BrokenPipe
+      ),
+      Ok(_) => false,
+    }
+  });
+  (addr, handle)
+}
+
 #[cfg(feature = "tls-rustls")]
 pub fn spawn_https_proxy_server_with_credentials(
   username: &'static str,
@@ -1033,7 +1061,7 @@ pub fn spawn_https_proxy_server_with_credentials(
         .to_string();
       let mut server = TcpStream::connect(&target).expect("connect tls target");
 
-      let _ = client.write_all(b"HTTP/1.1 200 Conne");
+      let _ = client.write_all(b"HTTP/1.1 103 Early Hints\r\n\r\nHTTP/1.1 200 Conne");
       let _ = client.flush();
       thread::sleep(Duration::from_millis(20));
       let _ = client.write_all(b"ction Established\r\nProxy-Agent: test\r\n\r\n");

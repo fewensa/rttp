@@ -13,7 +13,7 @@ use crate::connection::connection_reader::{
   is_skippable_informational_status, parse_informational_response, read_response_head,
   read_response_header, read_response_parts_after_header,
   read_response_parts_after_header_with_informational, response_status_code, ConnectionReader,
-  ResponseParts,
+  ResponseParts, MAX_RESPONSE_HEAD_BYTES,
 };
 use crate::request::{RawRequest, RequestBody};
 use crate::response::{InformationalResponse, Response};
@@ -587,9 +587,13 @@ where
   R: io::Read,
 {
   let mut header = Vec::new();
+  let mut informational_responses = 0;
   let mut byte = [0u8; 1];
 
   loop {
+    if header.len() == MAX_RESPONSE_HEAD_BYTES {
+      return Err(error::bad_proxy("Proxy response head is too large"));
+    }
     let read = reader.read(&mut byte).map_err(error::request)?;
     if read == 0 {
       if header.is_empty() {
@@ -602,6 +606,10 @@ where
     if header.ends_with(b"\r\n\r\n") {
       let status_code = proxy_connect_response_status_code(&header)?;
       if is_skippable_informational_status(status_code) {
+        if informational_responses == MAX_PROXY_CONNECT_INFORMATIONAL_RESPONSES {
+          return Err(error::bad_proxy("Too many informational proxy responses"));
+        }
+        informational_responses += 1;
         header.clear();
         continue;
       }
@@ -609,6 +617,8 @@ where
     }
   }
 }
+
+const MAX_PROXY_CONNECT_INFORMATIONAL_RESPONSES: usize = 16;
 
 fn proxy_connect_response_status_code(header: &[u8]) -> error::Result<u16> {
   let header = String::from_utf8(header.to_vec())
@@ -1215,7 +1225,9 @@ mod tests {
   use super::{
     connect_tcp_stream, parse_proxy_connect_response, proxy_authorization_value,
     read_proxy_connect_response, strip_userinfo_for_cross_origin_redirect, write_http_request,
+    MAX_PROXY_CONNECT_INFORMATIONAL_RESPONSES,
   };
+  use crate::connection::connection_reader::MAX_RESPONSE_HEAD_BYTES;
 
   struct PartialWriter {
     max_chunk: usize,
@@ -1299,6 +1311,37 @@ mod tests {
 
     read_proxy_connect_response(&mut reader).unwrap();
     assert_eq!(raw.len() as u64, reader.position());
+  }
+
+  #[test]
+  fn test_read_proxy_connect_response_rejects_oversized_head() {
+    let raw = format!(
+      "HTTP/1.1 200 Connection Established\r\nX-Fill: {}",
+      "a".repeat(MAX_RESPONSE_HEAD_BYTES)
+    );
+    let mut reader = Cursor::new(raw.as_bytes());
+
+    let error = read_proxy_connect_response(&mut reader)
+      .expect_err("oversized proxy response head should be rejected");
+
+    assert!(error
+      .to_string()
+      .contains("Proxy response head is too large"));
+    assert_eq!(MAX_RESPONSE_HEAD_BYTES as u64, reader.position());
+  }
+
+  #[test]
+  fn test_read_proxy_connect_response_rejects_excessive_informational_sequence() {
+    let raw =
+      "HTTP/1.1 103 Early Hints\r\n\r\n".repeat(MAX_PROXY_CONNECT_INFORMATIONAL_RESPONSES + 1);
+    let mut reader = Cursor::new(raw.as_bytes());
+
+    let error = read_proxy_connect_response(&mut reader)
+      .expect_err("excessive informational proxy responses should be rejected");
+
+    assert!(error
+      .to_string()
+      .contains("Too many informational proxy responses"));
   }
 
   #[test]

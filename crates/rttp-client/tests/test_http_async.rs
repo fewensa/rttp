@@ -2101,3 +2101,28 @@ fn test_async_https_proxy_with_auth_uses_connect_tunnel() {
     assert_eq!("OK", response.body().string().unwrap());
   });
 }
+
+#[test]
+#[cfg(all(feature = "async", feature = "tls-rustls"))]
+fn test_async_https_proxy_rejects_excessive_informational_connect_responses() {
+  let response = "HTTP/1.1 103 Early Hints\r\n\r\n".repeat(17);
+  let (proxy_addr, proxy_handle) = support::spawn_proxy_connect_response_server(response);
+
+  block_on(async {
+    let error = client()
+      .get()
+      .url("https://localhost/")
+      .proxy(Proxy::http("127.0.0.1", u32::from(proxy_addr.port())))
+      .rasync()
+      .await
+      .expect_err("excessive informational proxy responses should fail");
+
+    assert!(error
+      .to_string()
+      .contains("Too many informational proxy responses"));
+  });
+  assert!(
+    proxy_handle.join().expect("proxy response server"),
+    "async client should close the rejected proxy connection"
+  );
+}
