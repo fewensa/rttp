@@ -2157,6 +2157,31 @@ fn test_https_proxy_with_auth_uses_connect_tunnel() {
 }
 
 #[test]
+#[cfg(feature = "tls-rustls")]
+fn test_https_proxy_rejects_oversized_connect_response_and_closes_connection() {
+  let response = format!(
+    "HTTP/1.1 200 Connection Established\r\nX-Fill: {}",
+    "a".repeat(support::response::MAX_HEAD_BYTES)
+  );
+  let (proxy_addr, proxy_handle) = support::spawn_proxy_connect_response_server(response);
+
+  let error = client()
+    .get()
+    .url("https://localhost/")
+    .proxy(Proxy::http("127.0.0.1", u32::from(proxy_addr.port())))
+    .emit()
+    .expect_err("oversized proxy CONNECT response should fail");
+
+  assert!(error
+    .to_string()
+    .contains("Proxy response head is too large"));
+  assert!(
+    proxy_handle.join().expect("proxy response server"),
+    "client should close the rejected proxy connection"
+  );
+}
+
+#[test]
 fn test_connection_closed() {
   let (addr, _handle) = support::spawn_http_server_count(5);
   let mut client = client();

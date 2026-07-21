@@ -19,12 +19,13 @@ use std::sync::Arc;
 use crate::connection::connection::{
   connect_tcp_stream, parse_proxy_connect_response, prepend_informational_responses,
   request_expects_continue, Connection, ExpectContinueResult,
+  MAX_PROXY_CONNECT_INFORMATIONAL_RESPONSES,
 };
 use crate::connection::connection_reader::{
   is_skippable_informational_status, parse_informational_response, response_body_kind,
   response_connection_reusable, response_connection_should_close, response_headers,
   response_status_code, validate_response_trailer_header, ResponseBodyKind, ResponseParts,
-  MAX_CHUNKED_RESPONSE_LINE_BYTES,
+  MAX_CHUNKED_RESPONSE_LINE_BYTES, MAX_RESPONSE_HEAD_BYTES,
 };
 use crate::error;
 use crate::request::RawRequest;
@@ -1176,10 +1177,14 @@ async fn async_read_proxy_connect_response<S>(stream: &mut S) -> error::Result<(
 where
   S: AsyncRead + Unpin,
 {
+  let mut informational_responses = 0;
   loop {
     let mut header = Vec::new();
     let mut byte = [0u8; 1];
     loop {
+      if header.len() == MAX_RESPONSE_HEAD_BYTES {
+        return Err(error::bad_proxy("Proxy response head is too large"));
+      }
       let read = stream.read(&mut byte).await.map_err(error::request)?;
       if read == 0 {
         return Err(if header.is_empty() {
@@ -1196,6 +1201,10 @@ where
     let status_code = response_status_code(&header)
       .map_err(|_| error::bad_proxy("parse proxy server response error."))?;
     if is_skippable_informational_status(status_code) {
+      if informational_responses == MAX_PROXY_CONNECT_INFORMATIONAL_RESPONSES {
+        return Err(error::bad_proxy("Too many informational proxy responses"));
+      }
+      informational_responses += 1;
       continue;
     }
     return parse_proxy_connect_response(&header);
