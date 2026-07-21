@@ -33,7 +33,7 @@ impl<'a> RawBuilder<'a> {
 
     for header in self.request.headers() {
       let name = header.name();
-      let value = header.value().replace(DISPOSITION_END, "");
+      let value = header.value();
 
       builder.push_str(&format!("{}: {}{}", name, value, DISPOSITION_END));
     }

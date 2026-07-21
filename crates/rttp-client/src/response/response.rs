@@ -78,14 +78,45 @@ impl Response {
     Self::with_trailers_and_informational(url, binary, trailers, Vec::new())
   }
 
+  pub(crate) fn with_trailers_and_limit(
+    url: RoUrl,
+    binary: Vec<u8>,
+    trailers: Vec<Header>,
+    max_body_bytes: usize,
+  ) -> error::Result<Self> {
+    Self::with_trailers_and_informational_and_limit(
+      url,
+      binary,
+      trailers,
+      Vec::new(),
+      max_body_bytes,
+    )
+  }
+
   pub(crate) fn with_trailers_and_informational(
     url: RoUrl,
     binary: Vec<u8>,
     trailers: Vec<Header>,
     informational_responses: Vec<InformationalResponse>,
   ) -> error::Result<Self> {
+    Self::with_trailers_and_informational_and_limit(
+      url,
+      binary,
+      trailers,
+      informational_responses,
+      crate::config::DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES,
+    )
+  }
+
+  pub(crate) fn with_trailers_and_informational_and_limit(
+    url: RoUrl,
+    binary: Vec<u8>,
+    trailers: Vec<Header>,
+    informational_responses: Vec<InformationalResponse>,
+    max_body_bytes: usize,
+  ) -> error::Result<Self> {
     Ok(Self {
-      raw: RawResponse::with_trailers(url, binary, trailers)?,
+      raw: RawResponse::with_trailers_and_limit(url, binary, trailers, max_body_bytes)?,
       informational_responses,
     })
   }

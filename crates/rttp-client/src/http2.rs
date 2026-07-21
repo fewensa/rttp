@@ -1,11 +1,11 @@
 use std::io::{self, Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::TcpStream;
 use std::time::Duration;
 
 use base64::Engine;
-use socket2::{Domain, Protocol, Socket, Type};
 use url::Url;
 
+use crate::connection::connect_tcp_stream_with_io_timeouts;
 use crate::request::RawRequest;
 use crate::response::Response;
 use crate::types::{Header, RoUrl, ToUrl};
@@ -323,40 +323,13 @@ fn addr(url: &Url) -> error::Result<String> {
   Ok(format!("{}:{}", host, port))
 }
 
-fn connect_tcp_stream<A>(addr: A, config: &Config) -> error::Result<TcpStream>
-where
-  A: ToSocketAddrs,
-{
+fn connect_tcp_stream(
+  addr: impl std::net::ToSocketAddrs,
+  config: &Config,
+) -> error::Result<TcpStream> {
   let timeout_read = timeout_duration("read", config.read_timeout())?;
   let timeout_write = timeout_duration("write", config.write_timeout())?;
-  let mut last_err = None;
-
-  for addr in addr.to_socket_addrs().map_err(error::request)? {
-    let socket = match Socket::new(Domain::for_address(addr), Type::STREAM, Some(Protocol::TCP)) {
-      Ok(socket) => socket,
-      Err(err) => {
-        last_err = Some(err);
-        continue;
-      }
-    };
-    if let Err(err) = socket.set_read_timeout(Some(timeout_read)) {
-      last_err = Some(err);
-      continue;
-    }
-    if let Err(err) = socket.set_write_timeout(Some(timeout_write)) {
-      last_err = Some(err);
-      continue;
-    }
-    if let Err(err) = socket.connect(&addr.into()) {
-      last_err = Some(err);
-      continue;
-    }
-    return Ok(socket.into());
-  }
-
-  Err(error::request(last_err.unwrap_or_else(|| {
-    io::Error::new(io::ErrorKind::NotFound, "no socket address resolved")
-  })))
+  connect_tcp_stream_with_io_timeouts(addr, config, timeout_read, timeout_write)
 }
 
 fn reject_goaway_before_opening_request_stream(
@@ -561,6 +534,7 @@ struct LocalSettings {
   max_frame_size: usize,
   max_frame_size_configured: bool,
   enable_connect_protocol: bool,
+  max_buffered_response_body_bytes: usize,
 }
 
 impl LocalSettings {
@@ -584,6 +558,7 @@ impl LocalSettings {
       max_frame_size,
       max_frame_size_configured: configured_max_frame_size.is_some(),
       enable_connect_protocol,
+      max_buffered_response_body_bytes: config.max_buffered_response_body_bytes(),
     })
   }
 
@@ -1578,6 +1553,15 @@ fn read_single_stream_response_with_first_frame(
         let data = data_payload(&frame)?;
         response_body_started = true;
         if include_data_payload {
+          if data.len()
+            > local_settings
+              .max_buffered_response_body_bytes
+              .saturating_sub(body.len())
+          {
+            return Err(error::body_too_large(
+              local_settings.max_buffered_response_body_bytes,
+            ));
+          }
           body.extend_from_slice(data);
         }
         let stream_update = stream_receive_window.consume(frame.payload.len())?;
@@ -1656,7 +1640,14 @@ fn read_single_stream_response_with_first_frame(
   }
 
   let status = status.ok_or_else(|| error::bad_response("missing HTTP/2 :status header"))?;
-  build_response(url, status, &headers, body, trailers)
+  build_response(
+    url,
+    status,
+    &headers,
+    body,
+    trailers,
+    local_settings.max_buffered_response_body_bytes,
+  )
 }
 
 struct ReceiveWindow {
@@ -1972,6 +1963,7 @@ fn build_response(
   headers: &[(String, String)],
   body: Vec<u8>,
   trailers: Vec<Header>,
+  max_body_bytes: usize,
 ) -> error::Result<Response> {
   let mut binary = format!("HTTP/2 {}\r\n", status).into_bytes();
   for (name, value) in headers {
@@ -1982,7 +1974,7 @@ fn build_response(
   }
   binary.extend_from_slice(b"\r\n");
   binary.extend_from_slice(&body);
-  Response::with_trailers(url, binary, trailers)
+  Response::with_trailers_and_limit(url, binary, trailers, max_body_bytes)
 }
 
 struct Frame {
@@ -2652,6 +2644,7 @@ fn is_forbidden_response_trailer_name(name: &str) -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
   use super::*;
 

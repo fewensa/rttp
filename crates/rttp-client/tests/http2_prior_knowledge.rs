@@ -609,7 +609,7 @@ fn prior_knowledge_extended_connect_protocol_is_rejected_before_connecting() {
   assert!(
     err
       .to_string()
-      .contains("HTTP/2 prior-knowledge CONNECT or extended CONNECT is unsupported"),
+      .contains("Invalid outbound HTTP header name"),
     "unexpected error: {err}"
   );
   assert!(
@@ -4863,6 +4863,32 @@ fn spawn_h2_prior_knowledge_peer_with_response(
   });
 
   (addr, handle)
+}
+
+#[test]
+fn prior_knowledge_buffered_response_enforces_exact_body_limit() {
+  for (body, should_succeed) in [(b"12345".as_slice(), true), (b"123456".as_slice(), false)] {
+    let body: &'static [u8] = Box::leak(body.to_vec().into_boxed_slice());
+    let frames: &'static [&'static [u8]] = Box::leak(vec![body].into_boxed_slice());
+    let (addr, _handle) = spawn_h2_prior_knowledge_peer_with_response(&[0x88], frames);
+    let result = HttpClient::new()
+      .get()
+      .url(format!("http://{addr}/bounded"))
+      .config(
+        Config::builder()
+          .max_buffered_response_body_bytes(5)
+          .build(),
+      )
+      .emit_http2_prior_knowledge();
+
+    if should_succeed {
+      assert_eq!(b"12345", result.unwrap().body().binary());
+    } else {
+      let error = result.unwrap_err();
+      assert!(error.is_body_too_large(), "unexpected error: {error}");
+      assert_eq!(Some(5), error.body_limit());
+    }
+  }
 }
 
 fn spawn_initial_settings_peer(

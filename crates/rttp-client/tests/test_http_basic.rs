@@ -7,12 +7,31 @@ use std::net::TcpListener;
 use std::thread;
 use std::time::Duration;
 
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use rttp_client::types::{Auth, Para, Proxy, RoUrl};
 use rttp_client::ConnectionReader;
-use rttp_client::{Config, HttpClient};
+use rttp_client::{Config, HttpClient, DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES};
 
 fn client() -> HttpClient {
   HttpClient::new()
+}
+
+fn buffered_response_config(limit: usize) -> Config {
+  Config::builder()
+    .max_buffered_response_body_bytes(limit)
+    .build()
+}
+
+fn assert_body_too_large(error: rttp_client::error::Error, limit: usize) {
+  assert!(error.is_body_too_large(), "unexpected error: {error}");
+  assert_eq!(Some(limit), error.body_limit());
+}
+
+fn gzip_bytes(bytes: &[u8]) -> Vec<u8> {
+  let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+  encoder.write_all(bytes).expect("write gzip fixture");
+  encoder.finish().expect("finish gzip fixture")
 }
 
 fn spawn_streaming_upload_capture_server() -> (std::net::SocketAddr, thread::JoinHandle<Vec<u8>>) {
@@ -205,7 +224,7 @@ fn test_multi() {
     .header("User-Agent: Mozilla/5.0")
     .header(("Host", addr.to_string().as_str()))
     .para("name=Chico")
-    .para(&"name=文".to_string())
+    .para("name=文".to_string())
     .para(para_map)
     .form(("debug", "true", "name=Form"))
     .cookie("token=123234")
@@ -228,6 +247,129 @@ fn test_gzip() {
     .header(("Accept-Encoding", "gzip, deflate"))
     .emit();
   assert!(response.is_ok());
+}
+
+#[test]
+fn test_buffered_content_length_response_enforces_exact_body_limit() {
+  for (body, should_succeed) in [(b"12345".as_slice(), true), (b"123456".as_slice(), false)] {
+    let mut response = format!(
+      "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+      body.len()
+    )
+    .into_bytes();
+    response.extend_from_slice(body);
+    let (addr, _handle) = support::spawn_chunked_response_server(response);
+    let result = client()
+      .url(format!("http://{addr}/fixed"))
+      .config(buffered_response_config(5))
+      .emit();
+
+    if should_succeed {
+      assert_eq!(b"12345", result.unwrap().body().binary());
+    } else {
+      assert_body_too_large(result.unwrap_err(), 5);
+    }
+  }
+}
+
+#[test]
+fn test_buffered_chunked_response_enforces_exact_body_limit() {
+  for (chunk, should_succeed) in [("5\r\n12345\r\n", true), ("6\r\n123456\r\n", false)] {
+    let response = format!(
+      "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{chunk}0\r\n\r\n"
+    );
+    let (addr, _handle) = support::spawn_chunked_response_server(response);
+    let result = client()
+      .url(format!("http://{addr}/chunked"))
+      .config(buffered_response_config(5))
+      .emit();
+
+    if should_succeed {
+      assert_eq!(b"12345", result.unwrap().body().binary());
+    } else {
+      assert_body_too_large(result.unwrap_err(), 5);
+    }
+  }
+}
+
+#[test]
+fn test_buffered_eof_delimited_response_enforces_exact_body_limit() {
+  for (body, should_succeed) in [("12345", true), ("123456", false)] {
+    let response = format!("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{body}");
+    let (addr, _handle) = support::spawn_chunked_response_server(response);
+    let result = client()
+      .url(format!("http://{addr}/eof"))
+      .config(buffered_response_config(5))
+      .emit();
+
+    if should_succeed {
+      assert_eq!(b"12345", result.unwrap().body().binary());
+    } else {
+      assert_body_too_large(result.unwrap_err(), 5);
+    }
+  }
+}
+
+#[test]
+fn test_buffered_gzip_response_limits_decoded_body() {
+  let decoded = vec![b'a'; 256];
+  let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+  encoder.write_all(&decoded).unwrap();
+  let compressed = encoder.finish().unwrap();
+  assert!(compressed.len() <= 64);
+  let mut response = format!(
+    "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+    compressed.len()
+  )
+  .into_bytes();
+  response.extend_from_slice(&compressed);
+  let (addr, _handle) = support::spawn_chunked_response_server(response);
+
+  let error = client()
+    .url(format!("http://{addr}/gzip"))
+    .config(buffered_response_config(64))
+    .emit()
+    .unwrap_err();
+
+  assert_body_too_large(error, 64);
+}
+
+#[test]
+fn test_streaming_response_can_read_body_larger_than_buffered_limit() {
+  let body_len = DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES + 1;
+  let mut raw = format!("HTTP/1.1 200 OK\r\nContent-Length: {body_len}\r\n\r\n").into_bytes();
+  raw.resize(raw.len() + body_len, b'x');
+  let mut cursor = Cursor::new(raw);
+  let url = url::Url::parse("http://localhost/stream").unwrap();
+  let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+  let mut response = reader.streaming_response().unwrap();
+  let mut body = Vec::new();
+
+  response.body_mut().read_to_end(&mut body).unwrap();
+
+  assert_eq!(body_len, body.len());
+}
+
+#[test]
+fn test_buffered_gzip_response_exposes_decoded_body_headers() {
+  let body = gzip_bytes(b"decoded");
+  let mut raw = format!(
+    "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+    body.len()
+  )
+  .into_bytes();
+  raw.extend_from_slice(&body);
+  let (addr, _handle) = support::spawn_chunked_response_server(raw);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/gzip", addr))
+    .emit()
+    .expect("buffered gzip response");
+
+  assert_eq!(b"decoded", response.body().binary());
+  assert!(response.header("Content-Encoding").is_none());
+  assert!(response.header("Content-Length").is_none());
 }
 
 #[test]
@@ -1194,6 +1336,57 @@ fn test_https() {
 }
 
 #[test]
+#[cfg(feature = "tls-rustls")]
+fn test_https_to_http_redirect_is_rejected_before_target_connection() {
+  let target = TcpListener::bind("127.0.0.1:0").expect("bind redirect target");
+  let target_addr = target.local_addr().expect("redirect target address");
+  let (addr, _handle) = support::spawn_tls_redirect_server(format!("http://{}/final", target_addr));
+  let error = client()
+    .get()
+    .url(format!("https://{}/", addr))
+    .config(
+      Config::builder()
+        .auto_redirect(true)
+        .verify_ssl_cert(false)
+        .verify_ssl_hostname(false),
+    )
+    .emit()
+    .expect_err("HTTPS to HTTP redirect should be rejected by default");
+
+  assert!(error.is_redirect());
+  assert!(error.to_string().contains("HTTPS to HTTP redirect"));
+  assert_eq!("https", error.url().expect("redirect source URL").scheme());
+  target
+    .set_nonblocking(true)
+    .expect("set redirect target nonblocking");
+  assert!(matches!(
+    target.accept(),
+    Err(ref error) if error.kind() == io::ErrorKind::WouldBlock
+  ));
+}
+
+#[test]
+#[cfg(feature = "tls-rustls")]
+fn test_https_to_http_redirect_can_be_enabled_explicitly() {
+  let (target_addr, _target_handle) = support::spawn_http_server();
+  let (addr, _handle) = support::spawn_tls_redirect_server(format!("http://{}/final", target_addr));
+  let response = client()
+    .get()
+    .url(format!("https://{}/", addr))
+    .config(
+      Config::builder()
+        .auto_redirect(true)
+        .allow_https_to_http_redirects(true)
+        .verify_ssl_cert(false)
+        .verify_ssl_hostname(false),
+    )
+    .emit()
+    .expect("explicit HTTPS to HTTP redirect opt-in should succeed");
+
+  assert!(response.ok());
+}
+
+#[test]
 fn test_http_with_url() {
   let (addr, _handle) = support::spawn_http_server();
   client()
@@ -1338,7 +1531,7 @@ fn captured_request(request: Vec<u8>) -> CapturedRequest {
     .expect("captured request method")
     .to_string();
   let target = request_line_parts
-    .nth(0)
+    .next()
     .expect("captured request target")
     .to_string();
   let headers = lines

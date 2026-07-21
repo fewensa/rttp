@@ -5,23 +5,56 @@ use rttp_test_support as support;
 use std::collections::HashMap;
 
 #[cfg(feature = "async")]
+use flate2::write::GzEncoder;
+#[cfg(feature = "async")]
+use flate2::Compression;
+#[cfg(feature = "async")]
+use futures::channel::oneshot;
+#[cfg(feature = "async")]
 use futures::executor::block_on;
 #[cfg(feature = "async")]
 use futures::io::{AllowStdIo, AsyncRead, AsyncReadExt, Cursor as AsyncCursor};
 #[cfg(feature = "async")]
 use rttp_client::types::Proxy;
 #[cfg(feature = "async")]
-use rttp_client::{async_streaming_response_after_header, Config, HttpClient};
+use rttp_client::{
+  async_streaming_response_after_header, Config, HttpClient,
+  DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES,
+};
 #[cfg(feature = "async")]
 use std::io::{Cursor, Read, Write};
 #[cfg(feature = "async")]
 use std::net::TcpListener;
 #[cfg(feature = "async")]
+use std::sync::mpsc;
+#[cfg(feature = "async")]
 use std::thread;
+#[cfg(feature = "async")]
+use std::time::{Duration, Instant};
+
+#[cfg(feature = "async")]
+fn gzip_bytes(bytes: &[u8]) -> Vec<u8> {
+  let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+  encoder.write_all(bytes).expect("write gzip fixture");
+  encoder.finish().expect("finish gzip fixture")
+}
 
 #[cfg(feature = "async")]
 fn client() -> HttpClient {
   HttpClient::new()
+}
+
+#[cfg(feature = "async")]
+fn buffered_response_config(limit: usize) -> Config {
+  Config::builder()
+    .max_buffered_response_body_bytes(limit)
+    .build()
+}
+
+#[cfg(feature = "async")]
+fn assert_body_too_large(error: rttp_client::error::Error, limit: usize) {
+  assert!(error.is_body_too_large(), "unexpected error: {error}");
+  assert_eq!(Some(limit), error.body_limit());
 }
 
 #[cfg(feature = "async")]
@@ -93,6 +126,90 @@ fn spawn_async_head_metadata_server() -> (std::net::SocketAddr, thread::JoinHand
   (addr, handle)
 }
 
+#[cfg(feature = "async")]
+fn spawn_delayed_socks5_http_server() -> (
+  std::net::SocketAddr,
+  thread::JoinHandle<bool>,
+  oneshot::Receiver<()>,
+  mpsc::Sender<()>,
+) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind delayed SOCKS5 server");
+  let addr = listener.local_addr().expect("delayed SOCKS5 server addr");
+  let (handshake_sender, handshake_receiver) = oneshot::channel();
+  let (release_sender, release_receiver) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept SOCKS5 connection");
+    let mut greeting = [0u8; 3];
+    stream
+      .read_exact(&mut greeting)
+      .expect("read SOCKS5 greeting");
+    assert_eq!([5, 1, 0], greeting);
+
+    handshake_sender
+      .send(())
+      .expect("signal delayed SOCKS5 handshake");
+    let progressed_before_timeout = release_receiver
+      .recv_timeout(Duration::from_millis(500))
+      .is_ok();
+    stream
+      .write_all(&[5, 0])
+      .expect("write SOCKS5 greeting response");
+
+    let mut request = [0u8; 10];
+    stream
+      .read_exact(&mut request)
+      .expect("read SOCKS5 connect request");
+    assert_eq!([5, 1, 0, 1], request[..4]);
+    stream
+      .write_all(&[5, 0, 0, 1, 127, 0, 0, 1, 0, 0])
+      .expect("write SOCKS5 connect response");
+
+    support::read_http_request(&mut stream);
+    stream
+      .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK")
+      .expect("write delayed SOCKS5 response");
+    progressed_before_timeout
+  });
+  (addr, handle, handshake_receiver, release_sender)
+}
+
+#[cfg(feature = "async")]
+fn spawn_socks4_http_server() -> (std::net::SocketAddr, thread::JoinHandle<()>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind SOCKS4 server");
+  let addr = listener.local_addr().expect("SOCKS4 server addr");
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept SOCKS4 connection");
+    let mut request = [0u8; 9];
+    stream
+      .read_exact(&mut request)
+      .expect("read SOCKS4 connect request");
+    assert_eq!([4, 1], request[..2]);
+    assert_eq!([127, 0, 0, 1], request[4..8]);
+    assert_eq!(0, request[8]);
+    stream
+      .write_all(&[0, 90, 0, 0, 127, 0, 0, 1])
+      .expect("write SOCKS4 connect response");
+
+    support::read_http_request(&mut stream);
+    stream
+      .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK")
+      .expect("write SOCKS4 HTTP response");
+  });
+  (addr, handle)
+}
+
+#[cfg(feature = "async")]
+fn spawn_stalled_http_server() -> (std::net::SocketAddr, thread::JoinHandle<()>) {
+  let listener = TcpListener::bind("127.0.0.1:0").expect("bind stalled HTTP server");
+  let addr = listener.local_addr().expect("stalled HTTP server addr");
+  let handle = thread::spawn(move || {
+    let (mut stream, _) = listener.accept().expect("accept stalled HTTP request");
+    support::read_http_request(&mut stream);
+    thread::sleep(Duration::from_millis(250));
+  });
+  (addr, handle)
+}
+
 #[test]
 #[cfg(feature = "async")]
 fn test_async_http() {
@@ -108,6 +225,151 @@ fn test_async_http() {
     let response = response.unwrap();
     assert_eq!("127.0.0.1", response.host());
     println!("{}", response);
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_buffered_content_length_response_enforces_exact_body_limit() {
+  block_on(async {
+    for (body, should_succeed) in [(b"12345".as_slice(), true), (b"123456".as_slice(), false)] {
+      let mut response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+      )
+      .into_bytes();
+      response.extend_from_slice(body);
+      let (addr, _handle) = support::spawn_chunked_response_server(response);
+      let result = client()
+        .url(format!("http://{addr}/fixed"))
+        .config(buffered_response_config(5))
+        .rasync()
+        .await;
+
+      if should_succeed {
+        assert_eq!(b"12345", result.unwrap().body().binary());
+      } else {
+        assert_body_too_large(result.unwrap_err(), 5);
+      }
+    }
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_buffered_chunked_response_enforces_exact_body_limit() {
+  block_on(async {
+    for (chunk, should_succeed) in [("5\r\n12345\r\n", true), ("6\r\n123456\r\n", false)] {
+      let response = format!(
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{chunk}0\r\n\r\n"
+      );
+      let (addr, _handle) = support::spawn_chunked_response_server(response);
+      let result = client()
+        .url(format!("http://{addr}/chunked"))
+        .config(buffered_response_config(5))
+        .rasync()
+        .await;
+
+      if should_succeed {
+        assert_eq!(b"12345", result.unwrap().body().binary());
+      } else {
+        assert_body_too_large(result.unwrap_err(), 5);
+      }
+    }
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_buffered_eof_delimited_response_enforces_exact_body_limit() {
+  block_on(async {
+    for (body, should_succeed) in [("12345", true), ("123456", false)] {
+      let response = format!("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{body}");
+      let (addr, _handle) = support::spawn_chunked_response_server(response);
+      let result = client()
+        .url(format!("http://{addr}/eof"))
+        .config(buffered_response_config(5))
+        .rasync()
+        .await;
+
+      if should_succeed {
+        assert_eq!(b"12345", result.unwrap().body().binary());
+      } else {
+        assert_body_too_large(result.unwrap_err(), 5);
+      }
+    }
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_buffered_gzip_response_limits_decoded_body() {
+  let decoded = vec![b'a'; 256];
+  let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+  encoder.write_all(&decoded).unwrap();
+  let compressed = encoder.finish().unwrap();
+  assert!(compressed.len() <= 64);
+  let mut response = format!(
+    "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+    compressed.len()
+  )
+  .into_bytes();
+  response.extend_from_slice(&compressed);
+  let (addr, _handle) = support::spawn_chunked_response_server(response);
+
+  block_on(async {
+    let error = client()
+      .url(format!("http://{addr}/gzip"))
+      .config(buffered_response_config(64))
+      .rasync()
+      .await
+      .unwrap_err();
+
+    assert_body_too_large(error, 64);
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_streaming_response_can_read_body_larger_than_buffered_limit() {
+  block_on(async {
+    let body_len = DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES + 1;
+    let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {body_len}\r\n\r\n").into_bytes();
+    let mut stream = AllowStdIo::new(Cursor::new(vec![b'x'; body_len]));
+    let mut response = async_streaming_response_after_header(&mut stream, false, head)
+      .await
+      .unwrap();
+    let mut body = Vec::new();
+
+    response.body_mut().read_to_end(&mut body).await.unwrap();
+
+    assert_eq!(body_len, body.len());
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_buffered_gzip_response_exposes_decoded_body_headers() {
+  let body = gzip_bytes(b"decoded");
+  let mut raw = format!(
+    "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+    body.len()
+  )
+  .into_bytes();
+  raw.extend_from_slice(&body);
+  let (addr, _handle) = support::spawn_chunked_response_server(raw);
+
+  block_on(async {
+    let response = client()
+      .get()
+      .url(format!("http://{}/gzip", addr))
+      .rasync()
+      .await
+      .expect("async buffered gzip response");
+
+    assert_eq!(b"decoded", response.body().binary());
+    assert!(response.header("Content-Encoding").is_none());
+    assert!(response.header("Content-Length").is_none());
   });
 }
 
@@ -1002,6 +1264,26 @@ fn test_async_content_length_response_does_not_wait_for_eof() {
     let response = response.unwrap();
     assert_eq!("OK", response.body().string().unwrap());
   });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_read_timeout_remains_enforced() {
+  let (addr, handle) = spawn_stalled_http_server();
+  let start = Instant::now();
+  let error = block_on(async {
+    client()
+      .get()
+      .config(Config::builder().read_timeout(50))
+      .url(format!("http://{}/timeout", addr))
+      .rasync()
+      .await
+      .expect_err("stalled async response should time out")
+  });
+
+  assert!(start.elapsed() < Duration::from_millis(200));
+  assert!(error.to_string().contains("operation timed out"));
+  handle.join().expect("stalled HTTP server thread");
 }
 
 #[test]
@@ -1954,7 +2236,7 @@ fn test_async_auto_redirect_preserves_sensitive_headers_for_same_authority_locat
 }
 
 #[test]
-#[cfg(all(feature = "async", feature = "tls-rustls"))]
+#[cfg(all(feature = "async", any(feature = "tls-native", feature = "tls-rustls")))]
 fn test_async_https() {
   let (addr, _handle) = support::spawn_tls_server();
   block_on(async {
@@ -1972,6 +2254,63 @@ fn test_async_https() {
     let response = response.unwrap();
     assert_eq!("127.0.0.1", response.host());
     println!("{}", response);
+  });
+}
+
+#[test]
+#[cfg(all(feature = "async", feature = "tls-rustls"))]
+fn test_async_https_to_http_redirect_is_rejected_before_target_connection() {
+  let target = TcpListener::bind("127.0.0.1:0").expect("bind redirect target");
+  let target_addr = target.local_addr().expect("redirect target address");
+  let (addr, _handle) = support::spawn_tls_redirect_server(format!("http://{}/final", target_addr));
+  block_on(async {
+    let error = client()
+      .get()
+      .url(format!("https://{}/", addr))
+      .config(
+        Config::builder()
+          .auto_redirect(true)
+          .verify_ssl_cert(false)
+          .verify_ssl_hostname(false),
+      )
+      .rasync()
+      .await
+      .expect_err("HTTPS to HTTP redirect should be rejected by default");
+
+    assert!(error.is_redirect());
+    assert!(error.to_string().contains("HTTPS to HTTP redirect"));
+    assert_eq!("https", error.url().expect("redirect source URL").scheme());
+  });
+  target
+    .set_nonblocking(true)
+    .expect("set redirect target nonblocking");
+  assert!(matches!(
+    target.accept(),
+    Err(ref error) if error.kind() == std::io::ErrorKind::WouldBlock
+  ));
+}
+
+#[test]
+#[cfg(all(feature = "async", feature = "tls-rustls"))]
+fn test_async_https_to_http_redirect_can_be_enabled_explicitly() {
+  let (target_addr, _target_handle) = support::spawn_http_server();
+  let (addr, _handle) = support::spawn_tls_redirect_server(format!("http://{}/final", target_addr));
+  block_on(async {
+    let response = client()
+      .get()
+      .url(format!("https://{}/", addr))
+      .config(
+        Config::builder()
+          .auto_redirect(true)
+          .allow_https_to_http_redirects(true)
+          .verify_ssl_cert(false)
+          .verify_ssl_hostname(false),
+      )
+      .rasync()
+      .await
+      .expect("explicit HTTPS to HTTP redirect opt-in should succeed");
+
+    assert!(response.ok());
   });
 }
 
@@ -2075,7 +2414,77 @@ fn test_async_proxy_socks5() {
 }
 
 #[test]
-#[cfg(all(feature = "async", feature = "tls-rustls"))]
+#[cfg(feature = "async")]
+fn test_async_proxy_socks4() {
+  let (proxy_addr, proxy_handle) = spawn_socks4_http_server();
+  block_on(async {
+    let response = client()
+      .get()
+      .url("http://127.0.0.1:80/socks4")
+      .proxy(Proxy::socks4("127.0.0.1", proxy_addr.port().into()))
+      .rasync()
+      .await
+      .expect("async SOCKS4 response");
+    assert_eq!("OK", response.body().string().unwrap());
+  });
+  proxy_handle.join().expect("SOCKS4 server thread");
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_proxy_socks5_with_authentication() {
+  let (addr, _handle) = support::spawn_http_server();
+  let (proxy_addr, _proxy_handle) =
+    support::spawn_socks5_proxy_server_with_credentials("username", "password");
+  block_on(async {
+    let response = client()
+      .get()
+      .url(format!("http://{}/get", addr))
+      .proxy(Proxy::socks5_with_authorization(
+        "127.0.0.1",
+        proxy_addr.port().into(),
+        "username",
+        "password",
+      ))
+      .rasync()
+      .await
+      .expect("authenticated async SOCKS5 response");
+    assert_eq!("127.0.0.1", response.host());
+  });
+}
+
+#[test]
+#[cfg(feature = "async")]
+fn test_async_socks5_handshake_does_not_block_other_tasks() {
+  let (proxy_addr, proxy_handle, handshake_receiver, release_sender) =
+    spawn_delayed_socks5_http_server();
+
+  block_on(async {
+    let mut client = client();
+    let request = client
+      .get()
+      .url("http://127.0.0.1:80/progress")
+      .proxy(Proxy::socks5("127.0.0.1", proxy_addr.port().into()))
+      .rasync();
+    let progress = async {
+      handshake_receiver
+        .await
+        .expect("delayed SOCKS5 handshake start");
+      release_sender.send(()).expect("release SOCKS5 handshake");
+    };
+
+    let (response, ()) = futures::join!(request, progress);
+    assert_eq!("OK", response.unwrap().body().string().unwrap());
+  });
+
+  assert!(
+    proxy_handle.join().expect("delayed SOCKS5 server thread"),
+    "progress task was blocked by the SOCKS5 handshake"
+  );
+}
+
+#[test]
+#[cfg(all(feature = "async", any(feature = "tls-native", feature = "tls-rustls")))]
 fn test_async_https_proxy_with_auth_uses_connect_tunnel() {
   let (proxy_addr, target_addr, _proxy_handle) =
     support::spawn_https_proxy_server_with_credentials("user", "secret");

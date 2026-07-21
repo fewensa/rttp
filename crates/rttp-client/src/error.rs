@@ -57,9 +57,23 @@ impl Error {
     matches!(self.inner.kind, Kind::Status(_))
   }
 
-  /// Returns true if the error is related to a timeout.
+  /// Returns true if the error is related to a timeout, including a TCP
+  /// connect timeout.
   pub fn is_timeout(&self) -> bool {
-    self.source().map(|e| e.is::<TimedOut>()).unwrap_or(false)
+    self.source().is_some_and(is_timeout_source)
+  }
+
+  /// Returns true if a buffered response body exceeded its configured limit.
+  pub fn is_body_too_large(&self) -> bool {
+    matches!(self.inner.kind, Kind::BodyTooLarge { .. })
+  }
+
+  /// Returns the configured response body limit for a body-too-large error.
+  pub fn body_limit(&self) -> Option<usize> {
+    match self.inner.kind {
+      Kind::BodyTooLarge { limit } => Some(limit),
+      _ => None,
+    }
   }
 
   /// Returns the status code, if the error was generated from a response.
@@ -120,6 +134,7 @@ impl fmt::Display for Error {
       Kind::Response => f.write_str("error receive response")?,
       Kind::Body => f.write_str("request or response body error")?,
       Kind::Decode => f.write_str("error decoding response body")?,
+      Kind::BodyTooLarge { limit } => write!(f, "buffered response body exceeded {} bytes", limit)?,
       Kind::Redirect => f.write_str("error following redirect")?,
       Kind::Status(ref code) => {
         let prefix = if code.is_client_error() {
@@ -172,6 +187,7 @@ pub(crate) enum Kind {
   Status(StatusCode),
   Body,
   Decode,
+  BodyTooLarge { limit: usize },
 }
 
 // constructors
@@ -188,8 +204,23 @@ pub(crate) fn decode<E: Into<BoxError>>(e: E) -> Error {
   Error::new(Kind::Decode, Some(e))
 }
 
+pub(crate) fn body_too_large(limit: usize) -> Error {
+  Error::new(Kind::BodyTooLarge { limit }, None::<Error>)
+}
+
 pub(crate) fn request<E: Into<BoxError>>(e: E) -> Error {
   Error::new(Kind::Request, Some(e))
+}
+
+pub(crate) fn connect(e: io::Error) -> Error {
+  if matches!(
+    e.kind(),
+    io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+  ) {
+    Error::new(Kind::Request, Some(TimedOut(e)))
+  } else {
+    request(e)
+  }
 }
 
 pub(crate) fn response<E: Into<BoxError>>(e: E) -> Error {
@@ -202,6 +233,14 @@ pub(crate) fn loop_detected(url: Url) -> Error {
 
 pub(crate) fn too_many_redirects(url: Url) -> Error {
   Error::new(Kind::Redirect, Some("too many redirects")).with_url(url)
+}
+
+pub(crate) fn https_to_http_redirect(url: Url) -> Error {
+  Error::new(
+    Kind::Redirect,
+    Some("HTTPS to HTTP redirect is not allowed"),
+  )
+  .with_url(url)
 }
 
 #[allow(dead_code)]
@@ -251,8 +290,8 @@ pub(crate) fn connection_closed() -> Error {
 }
 
 #[allow(dead_code)]
-pub(crate) fn bad_ssl(message: impl AsRef<str>) -> Error {
-  Error::new(Kind::Request, Some(message.as_ref()))
+pub(crate) fn bad_ssl<E: Into<BoxError>>(e: E) -> Error {
+  Error::new(Kind::Request, Some(e))
 }
 
 // io::Error helpers
@@ -277,12 +316,93 @@ pub(crate) fn decode_io(e: io::Error) -> Error {
 // internal Error "sources"
 
 #[derive(Debug)]
-pub(crate) struct TimedOut;
+pub(crate) struct TimedOut(io::Error);
 
 impl fmt::Display for TimedOut {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    f.write_str("operation timed out")
+    f.write_str("TCP connect timed out")
   }
 }
 
-impl StdError for TimedOut {}
+impl StdError for TimedOut {
+  fn source(&self) -> Option<&(dyn StdError + 'static)> {
+    Some(&self.0)
+  }
+}
+
+fn is_timeout_source(error: &(dyn StdError + 'static)) -> bool {
+  if error.is::<TimedOut>() {
+    return true;
+  }
+  if let Some(error) = error.downcast_ref::<io::Error>() {
+    if matches!(
+      error.kind(),
+      io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+    ) || error
+      .get_ref()
+      .is_some_and(|error| is_timeout_source(error))
+    {
+      return true;
+    }
+  }
+  error.source().is_some_and(is_timeout_source)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn request_io_timeout_kinds_are_timeouts() {
+    for kind in [io::ErrorKind::TimedOut, io::ErrorKind::WouldBlock] {
+      let error = request(io::Error::new(kind, "socket operation timed out"));
+
+      assert!(error.is_timeout(), "{kind:?} should be a timeout");
+    }
+  }
+
+  #[test]
+  fn nested_io_timeout_source_is_a_timeout() {
+    let timeout = io::Error::new(io::ErrorKind::TimedOut, "socket operation timed out");
+    let wrapped = io::Error::other(timeout);
+
+    assert!(request(wrapped).is_timeout());
+  }
+
+  #[test]
+  fn tls_io_timeout_is_a_timeout() {
+    let error = bad_ssl(io::Error::new(
+      io::ErrorKind::TimedOut,
+      "TLS handshake timed out",
+    ));
+
+    assert!(error.is_timeout());
+  }
+
+  #[test]
+  fn non_timeout_errors_are_not_timeouts() {
+    let errors = [
+      request(io::Error::new(
+        io::ErrorKind::ConnectionRefused,
+        "connection refused",
+      )),
+      request(io::Error::new(
+        io::ErrorKind::UnexpectedEof,
+        "unexpected EOF",
+      )),
+      decode_io(io::Error::new(io::ErrorKind::InvalidData, "decode error")),
+      builder_with_message("builder error"),
+    ];
+
+    for error in errors {
+      assert!(!error.is_timeout(), "{error:?} should not be a timeout");
+    }
+  }
+
+  #[test]
+  fn connect_timeout_is_exposed_as_timeout() {
+    let err = connect(io::Error::new(io::ErrorKind::TimedOut, "connect timed out"));
+
+    assert!(err.is_timeout());
+  }
+}

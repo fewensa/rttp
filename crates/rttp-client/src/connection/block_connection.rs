@@ -59,11 +59,12 @@ impl<'a> BlockConnection<'a> {
       };
 
       let close_connection = parts.close_connection;
-      let response = Response::with_trailers_and_informational(
+      let response = Response::with_trailers_and_informational_and_limit(
         self.conn.rourl().clone(),
         parts.binary,
         parts.trailers,
         parts.informational_responses,
+        self.conn.config().max_buffered_response_body_bytes(),
       )?;
       let config = self.conn.config().clone();
 
@@ -82,6 +83,12 @@ impl<'a> BlockConnection<'a> {
         }
 
         let redirect_url = self.conn.resolve_redirect_url(&url, location)?;
+        if url.scheme() == "https"
+          && redirect_url.url.scheme() == "http"
+          && !config.allow_https_to_http_redirects()
+        {
+          return Err(error::https_to_http_redirect(url));
+        }
         let strip_sensitive_headers = !self.conn.is_same_origin_url(&url, &redirect_url.url);
         if !self.conn.is_same_origin_url(&url, &redirect_url.url)
           || redirect_url.url.scheme() != "http"
@@ -120,11 +127,12 @@ impl<'a> BlockConnection<'a> {
     let url = self.conn.url().map_err(error::builder)?;
     let parts = self.conn.block_send_streaming_parts(&url, body)?;
     let close_connection = parts.close_connection;
-    let response = Response::with_trailers_and_informational(
+    let response = Response::with_trailers_and_informational_and_limit(
       self.conn.rourl().clone(),
       parts.binary,
       parts.trailers,
       parts.informational_responses,
+      self.conn.config().max_buffered_response_body_bytes(),
     )?;
     self.conn.closed_set(close_connection);
     Ok(response)

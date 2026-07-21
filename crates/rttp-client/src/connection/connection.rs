@@ -12,8 +12,8 @@ use url::Url;
 use crate::connection::connection_reader::{
   is_skippable_informational_status, parse_informational_response, read_response_head,
   read_response_header, read_response_parts_after_header,
-  read_response_parts_after_header_with_informational, response_status_code, ConnectionReader,
-  ResponseParts, MAX_RESPONSE_HEAD_BYTES,
+  read_response_parts_after_header_with_informational_and_limit, response_status_code,
+  ConnectionReader, ResponseParts, MAX_RESPONSE_HEAD_BYTES,
 };
 use crate::request::{RawRequest, RequestBody};
 use crate::response::{InformationalResponse, Response};
@@ -618,7 +618,7 @@ where
   }
 }
 
-const MAX_PROXY_CONNECT_INFORMATIONAL_RESPONSES: usize = 16;
+pub(crate) const MAX_PROXY_CONNECT_INFORMATIONAL_RESPONSES: usize = 16;
 
 fn proxy_connect_response_status_code(header: &[u8]) -> error::Result<u16> {
   let header = String::from_utf8(header.to_vec())
@@ -638,6 +638,19 @@ where
 {
   let timeout_read = tcp_timeout_duration("read", config.read_timeout())?;
   let timeout_write = tcp_timeout_duration("write", config.write_timeout())?;
+  connect_tcp_stream_with_io_timeouts(addr, config, timeout_read, timeout_write)
+}
+
+pub(crate) fn connect_tcp_stream_with_io_timeouts<A>(
+  addr: A,
+  config: &Config,
+  timeout_read: time::Duration,
+  timeout_write: time::Duration,
+) -> error::Result<std::net::TcpStream>
+where
+  A: ToSocketAddrs,
+{
+  let timeout_connect = tcp_connect_timeout_duration(config.connect_timeout())?;
   let mut last_err = None;
 
   let addrs = addr.to_socket_addrs().map_err(error::request)?;
@@ -660,7 +673,7 @@ where
       continue;
     }
 
-    if let Err(err) = socket.connect(&addr.into()) {
+    if let Err(err) = socket.connect_timeout(&addr.into(), timeout_connect) {
       last_err = Some(err);
       continue;
     }
@@ -668,9 +681,19 @@ where
     return Ok(std::net::TcpStream::from(socket));
   }
 
-  Err(error::request(
+  Err(error::connect(
     last_err.unwrap_or_else(|| io::Error::other("failed to connect")),
   ))
+}
+
+fn tcp_connect_timeout_duration(millis: u64) -> error::Result<time::Duration> {
+  if millis == 0 {
+    return Err(error::request(io::Error::new(
+      io::ErrorKind::InvalidInput,
+      "connect timeout must be greater than 0",
+    )));
+  }
+  tcp_timeout_duration("connect", millis)
 }
 
 fn tcp_timeout_duration(name: &str, millis: u64) -> error::Result<time::Duration> {
@@ -750,7 +773,12 @@ impl<'a> Connection<'a> {
   where
     S: io::Read,
   {
-    let mut reader = ConnectionReader::new(url, stream, self.expect_no_response_body());
+    let mut reader = ConnectionReader::new_with_limit(
+      url,
+      stream,
+      self.expect_no_response_body(),
+      self.config().max_buffered_response_body_bytes(),
+    );
     reader.response_parts()
   }
 
@@ -790,11 +818,12 @@ impl<'a> Connection<'a> {
         informational_responses.push(parse_informational_response(&header)?);
         continue;
       }
-      return read_response_parts_after_header_with_informational(
+      return read_response_parts_after_header_with_informational_and_limit(
         stream,
         self.expect_no_response_body(),
         header,
         informational_responses,
+        self.config().max_buffered_response_body_bytes(),
       )
       .map(ExpectContinueResult::Final);
     }
@@ -953,7 +982,7 @@ impl<'a> Connection<'a> {
   {
     #[cfg(all(feature = "tls-native", feature = "tls-rustls"))]
     {
-      return self.block_send_https_rustls_parts(url, stream);
+      self.block_send_https_rustls_parts(url, stream)
     }
     #[cfg(all(feature = "tls-native", not(feature = "tls-rustls")))]
     {
@@ -977,7 +1006,7 @@ impl<'a> Connection<'a> {
   {
     #[cfg(all(feature = "tls-native", feature = "tls-rustls"))]
     {
-      return self.block_send_https_rustls_streaming_parts(url, stream, body);
+      self.block_send_https_rustls_streaming_parts(url, stream, body)
     }
     #[cfg(all(feature = "tls-native", not(feature = "tls-rustls")))]
     {
@@ -1006,7 +1035,7 @@ impl<'a> Connection<'a> {
       .map_err(error::request)?;
     let mut ssl_stream = connector
       .connect(&self.host(url)?[..], stream)
-      .map_err(|_| error::bad_ssl("Native tls handshake error"))?;
+      .map_err(native_tls_handshake_error)?;
 
     match self.block_send_expect_continue_parts(&mut ssl_stream)? {
       ExpectContinueResult::NotUsed => self.block_write_stream(&mut ssl_stream)?,
@@ -1038,7 +1067,7 @@ impl<'a> Connection<'a> {
       .map_err(error::request)?;
     let mut ssl_stream = connector
       .connect(&self.host(url)?[..], stream)
-      .map_err(|_| error::bad_ssl("Native tls handshake error"))?;
+      .map_err(native_tls_handshake_error)?;
 
     self.block_write_streaming_request(&mut ssl_stream, body)?;
     self.block_read_stream_parts(url, &mut ssl_stream)
@@ -1068,7 +1097,7 @@ impl<'a> Connection<'a> {
     } else if !config.verify_ssl_hostname() {
       let verifier = WebPkiServerVerifier::builder(Arc::new(root_store))
         .build()
-        .map_err(|e| error::bad_ssl(e.to_string()))?;
+        .map_err(error::bad_ssl)?;
       builder
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(NoHostnameVerification::new(verifier)))
@@ -1086,8 +1115,7 @@ impl<'a> Connection<'a> {
         .map_err(|_| error::bad_ssl(format!("Invalid server name: {}", host)))?
         .to_owned(),
     };
-    let client =
-      ClientConnection::new(rc_config, server_name).map_err(|e| error::bad_ssl(e.to_string()))?;
+    let client = ClientConnection::new(rc_config, server_name).map_err(error::bad_ssl)?;
     let mut tls = StreamOwned::new(client, stream);
 
     match self.block_send_expect_continue_parts(&mut tls)? {
@@ -1127,7 +1155,7 @@ impl<'a> Connection<'a> {
     } else if !config.verify_ssl_hostname() {
       let verifier = WebPkiServerVerifier::builder(Arc::new(root_store))
         .build()
-        .map_err(|e| error::bad_ssl(e.to_string()))?;
+        .map_err(error::bad_ssl)?;
       builder
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(NoHostnameVerification::new(verifier)))
@@ -1145,12 +1173,22 @@ impl<'a> Connection<'a> {
         .map_err(|_| error::bad_ssl(format!("Invalid server name: {}", host)))?
         .to_owned(),
     };
-    let client =
-      ClientConnection::new(rc_config, server_name).map_err(|e| error::bad_ssl(e.to_string()))?;
+    let client = ClientConnection::new(rc_config, server_name).map_err(error::bad_ssl)?;
     let mut tls = StreamOwned::new(client, stream);
 
     self.block_write_streaming_request(&mut tls, body)?;
     self.block_read_stream_parts(url, &mut tls)
+  }
+}
+
+#[cfg(all(feature = "tls-native", not(feature = "tls-rustls")))]
+fn native_tls_handshake_error<S>(error: native_tls::HandshakeError<S>) -> error::Error {
+  match error {
+    native_tls::HandshakeError::Failure(error) => error::bad_ssl(error),
+    native_tls::HandshakeError::WouldBlock(_) => error::bad_ssl(io::Error::new(
+      io::ErrorKind::WouldBlock,
+      "native TLS handshake would block",
+    )),
   }
 }
 
@@ -1216,10 +1254,12 @@ mod tests {
   use std::io::{self, Cursor, Read, Write};
   use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener};
   use std::thread;
+  use std::time::{Duration, Instant};
 
   use crate::request::RequestBody;
   use crate::types::Proxy;
   use crate::Config;
+  use socket2::{Domain, Protocol, Socket, Type};
   use url::Url;
 
   use super::{
@@ -1399,6 +1439,63 @@ mod tests {
     let err = connect_tcp_stream(&[addr][..], &config).unwrap_err();
 
     assert!(err.to_string().contains("too large"));
+  }
+
+  #[test]
+  fn test_connect_tcp_stream_rejects_zero_connect_timeout() {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let addr = listener.local_addr().unwrap();
+    let config = Config::builder().connect_timeout(0).build();
+
+    let err = connect_tcp_stream(&[addr][..], &config).unwrap_err();
+
+    assert!(err
+      .to_string()
+      .contains("connect timeout must be greater than 0"));
+  }
+
+  #[test]
+  fn test_connect_tcp_stream_rejects_too_large_connect_timeout() {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let addr = listener.local_addr().unwrap();
+    let config = Config::builder().connect_timeout(u64::MAX).build();
+
+    let err = connect_tcp_stream(&[addr][..], &config).unwrap_err();
+
+    assert!(err.to_string().contains("connect timeout is too large"));
+  }
+
+  #[test]
+  fn test_connect_tcp_stream_times_out() {
+    let listener = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP)).unwrap();
+    listener
+      .bind(&SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0).into())
+      .unwrap();
+    listener.listen(1).unwrap();
+    let addr = listener.local_addr().unwrap().as_socket().unwrap();
+    let mut queued_connections = Vec::new();
+    loop {
+      let socket = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP)).unwrap();
+      match socket.connect_timeout(&addr.into(), Duration::from_millis(50)) {
+        Ok(()) => queued_connections.push(socket),
+        Err(err)
+          if matches!(
+            err.kind(),
+            io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+          ) =>
+        {
+          break;
+        }
+        Err(err) => panic!("failed to saturate local listen queue: {err}"),
+      }
+    }
+
+    let config = Config::builder().connect_timeout(25).build();
+    let started = Instant::now();
+    let err = connect_tcp_stream(&[addr][..], &config).unwrap_err();
+
+    assert!(err.is_timeout());
+    assert!(started.elapsed() < Duration::from_secs(1));
   }
 
   #[test]

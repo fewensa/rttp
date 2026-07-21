@@ -39,6 +39,7 @@ impl<'a> RawBuilder<'a> {
 
 impl<'a> RawBuilder<'a> {
   pub fn raw_request_block(mut self) -> error::Result<RawRequest<'a>> {
+    self.validate_outbound_headers()?;
     let mut rourl = self.request.url().clone().ok_or(error::none_url())?;
     if rourl.traditional_get().is_none() {
       rourl.traditional(self.request.traditional());
@@ -58,6 +59,7 @@ impl<'a> RawBuilder<'a> {
 
   #[cfg(feature = "async")]
   pub async fn raw_request_async(mut self) -> error::Result<RawRequest<'a>> {
+    self.validate_outbound_headers()?;
     let mut rourl = self.request.url().clone().ok_or(error::none_url())?;
     if rourl.traditional_get().is_none() {
       rourl.traditional(self.request.traditional());
@@ -73,5 +75,12 @@ impl<'a> RawBuilder<'a> {
       header,
       body,
     })
+  }
+
+  fn validate_outbound_headers(&self) -> error::Result<()> {
+    for header in self.request.headers().iter().chain(self.request.trailers()) {
+      header.validate_outbound()?;
+    }
+    Ok(())
   }
 }
