@@ -37,7 +37,7 @@ impl Error {
     }
   }
 
-  /// Returns a possible URL related to this error.
+  /// Returns a possible URL related to this error, with userinfo removed.
   pub fn url(&self) -> Option<&Url> {
     self.inner.url.as_ref()
   }
@@ -86,7 +86,9 @@ impl Error {
 
   // private
 
-  pub(crate) fn with_url(mut self, url: Url) -> Error {
+  pub(crate) fn with_url(mut self, mut url: Url) -> Error {
+    let _ = url.set_username("");
+    let _ = url.set_password(None);
     self.inner.url = Some(url);
     self
   }
@@ -160,6 +162,92 @@ impl fmt::Display for Error {
 impl StdError for Error {
   fn source(&self) -> Option<&(dyn StdError + 'static)> {
     self.inner.source.as_ref().map(|e| &**e as _)
+  }
+}
+
+#[cfg(test)]
+mod url_redaction_tests {
+  use super::*;
+
+  fn assert_url_credentials_redacted(error: Error, secrets: &[&str]) {
+    let display = error.to_string();
+    let debug = format!("{:?}", error);
+    let url = error.url().expect("error url");
+
+    for secret in secrets {
+      assert!(!display.contains(secret));
+      assert!(!debug.contains(secret));
+      assert!(!url.as_str().contains(secret));
+    }
+    assert_eq!("", url.username());
+    assert_eq!(None, url.password());
+    assert_eq!("https", url.scheme());
+    assert_eq!(Some("example.com"), url.host_str());
+    assert_eq!("/private/resource", url.path());
+    assert_eq!(Some("view=full"), url.query());
+  }
+
+  #[test]
+  fn test_error_url_with_username_redacts_userinfo() {
+    let url = Url::parse("https://alice-secret@example.com/private/resource?view=full").unwrap();
+
+    assert_url_credentials_redacted(bad_url(url, "Bad URL"), &["alice-secret"]);
+  }
+
+  #[test]
+  fn test_error_url_with_password_redacts_userinfo() {
+    let url = Url::parse("https://bob-secret:hunter-secret@example.com/private/resource?view=full")
+      .unwrap();
+
+    assert_url_credentials_redacted(
+      status_code(url, StatusCode::BAD_REQUEST),
+      &["bob-secret", "hunter-secret", "bob-secret:hunter-secret"],
+    );
+  }
+
+  #[test]
+  fn test_error_url_with_percent_encoded_credentials_redacts_userinfo() {
+    let url =
+      Url::parse("https://user%40name:pass%2Fword@example.com/private/resource?view=full").unwrap();
+
+    assert_url_credentials_redacted(
+      url_bad_scheme(url),
+      &["user%40name", "pass%2Fword", "user@name", "pass/word"],
+    );
+  }
+
+  #[test]
+  fn test_redirect_error_url_redacts_credentials() {
+    let url =
+      Url::parse("https://redirect-user:redirect-password@example.com/private/resource?view=full")
+        .unwrap();
+
+    let error = too_many_redirects(url);
+
+    assert!(error.is_redirect());
+    assert_url_credentials_redacted(error, &["redirect-user", "redirect-password"]);
+  }
+
+  #[test]
+  fn test_error_with_normal_url_retains_request_context() {
+    let error = bad_url(
+      Url::parse("https://example.com/private/resource?view=full").unwrap(),
+      "Bad URL",
+    );
+
+    assert_eq!(
+      "builder error for url (https://example.com/private/resource?view=full): Bad URL",
+      error.to_string()
+    );
+    let debug = format!("{:?}", error);
+    assert!(debug.contains("https"));
+    assert!(debug.contains("example.com"));
+    assert!(debug.contains("/private/resource"));
+    assert!(debug.contains("view=full"));
+    assert_eq!(
+      "https://example.com/private/resource?view=full",
+      error.url().unwrap().as_str()
+    );
   }
 }
 
