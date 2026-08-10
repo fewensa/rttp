@@ -191,6 +191,20 @@ impl Response {
       .is_some_and(|code| code.is_success())
   }
 
+  pub fn is_client_error(&self) -> bool {
+    u16::try_from(self.code())
+      .ok()
+      .and_then(|code| StatusCode::from_u16(code).ok())
+      .is_some_and(|code| code.is_client_error())
+  }
+
+  pub fn is_server_error(&self) -> bool {
+    u16::try_from(self.code())
+      .ok()
+      .and_then(|code| StatusCode::from_u16(code).ok())
+      .is_some_and(|code| code.is_server_error())
+  }
+
   pub fn is_partial_content(&self) -> bool {
     self.code() == 206
   }

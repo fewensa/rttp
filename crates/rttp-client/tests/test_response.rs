@@ -199,6 +199,37 @@ fn response_success_status_boundaries() {
 }
 
 #[test]
+fn response_error_status_boundaries() {
+  for (code, expected_client_error, expected_server_error) in [
+    (199, false, false),
+    (200, false, false),
+    (300, false, false),
+    (399, false, false),
+    (400, true, false),
+    (404, true, false),
+    (499, true, false),
+    (500, false, true),
+    (599, false, true),
+    (600, false, false),
+  ] {
+    let raw = format!("HTTP/1.1 {code} Test\r\nContent-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("response should parse");
+
+    assert_eq!(
+      expected_client_error,
+      response.is_client_error(),
+      "status {code}"
+    );
+    assert_eq!(
+      expected_server_error,
+      response.is_server_error(),
+      "status {code}"
+    );
+  }
+}
+
+#[test]
 fn test_parse_response_preserves_duplicate_headers_with_case_insensitive_lookup() {
   let s = concat!(
     "HTTP/1.1 200 OK\r\n",
