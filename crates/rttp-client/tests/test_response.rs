@@ -181,6 +181,29 @@ fn test_parse_response() {
 }
 
 #[test]
+fn response_is_no_content_matches_only_204() {
+  for (status, reason, expected) in [
+    (200, "OK", false),
+    (203, "Non-Authoritative Information", false),
+    (204, "No Content", true),
+    (205, "Reset Content", false),
+  ] {
+    let response = Response::new(
+      RoUrl::with("https://example.test"),
+      format!("HTTP/1.1 {status} {reason}\r\nContent-Length: 0\r\n\r\n").into_bytes(),
+    )
+    .expect("response should parse");
+
+    assert_eq!(
+      expected,
+      response.is_no_content(),
+      "status {status} should match expected no-content behavior"
+    );
+    assert_eq!(status == 200, response.ok());
+  }
+}
+
+#[test]
 fn test_parse_response_preserves_duplicate_headers_with_case_insensitive_lookup() {
   let s = concat!(
     "HTTP/1.1 200 OK\r\n",

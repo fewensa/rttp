@@ -184,6 +184,11 @@ impl Response {
     self.code() == 200
   }
 
+  /// Returns `true` when the response status is HTTP 204 No Content.
+  pub fn is_no_content(&self) -> bool {
+    self.code() == 204
+  }
+
   pub fn is_partial_content(&self) -> bool {
     self.code() == 206
   }
