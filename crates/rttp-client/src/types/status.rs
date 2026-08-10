@@ -286,6 +286,9 @@ status_codes! {
     /// 102 Processing
     /// [[RFC2518](https://tools.ietf.org/html/rfc2518)]
     (102, PROCESSING, "Processing");
+    /// 103 Early Hints
+    /// [[RFC8297](https://tools.ietf.org/html/rfc8297)]
+    (103, EARLY_HINTS, "Early Hints");
 
     /// 200 OK
     /// [[RFC7231, Section 6.3.1](https://tools.ietf.org/html/rfc7231#section-6.3.1)]
@@ -531,3 +534,18 @@ status_code_strs!(
   575, 576, 577, 578, 579, 580, 581, 582, 583, 584, 585, 586, 587, 588, 589, 590, 591, 592, 593,
   594, 595, 596, 597, 598, 599,
 );
+
+#[cfg(test)]
+mod tests {
+  use super::StatusCode;
+
+  #[test]
+  fn early_hints_has_canonical_reason_display_and_classification() {
+    let status = StatusCode::from_u16(103).unwrap();
+
+    assert_eq!(status, StatusCode::EARLY_HINTS);
+    assert_eq!(status.canonical_reason(), Some("Early Hints"));
+    assert_eq!(status.to_string(), "103 Early Hints");
+    assert!(status.is_informational());
+  }
+}
