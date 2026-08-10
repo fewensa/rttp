@@ -440,6 +440,28 @@ fn test_response_too_early_status_helper_matches_only_425() {
 }
 
 #[test]
+fn test_response_network_authentication_required_helper_matches_only_511() {
+  for (status, reason, expected) in [
+    (511, "Network Authentication Required", true),
+    (510, "Not Extended", false),
+    (512, "Internal Server Error-ish", false),
+    (200, "OK", false),
+  ] {
+    let response = Response::new(
+      RoUrl::with("https://example.test/asset"),
+      format!("HTTP/1.1 {status} {reason}\r\nContent-Length: 0\r\n\r\n").into_bytes(),
+    )
+    .expect("response should parse");
+
+    assert_eq!(
+      expected,
+      response.is_network_authentication_required(),
+      "{status} {reason}"
+    );
+  }
+}
+
+#[test]
 fn test_parse_content_type_response_helper_normalizes_media_type_and_preserves_parameters() {
   let s = concat!(
     "HTTP/1.1 200 OK\r\n",
