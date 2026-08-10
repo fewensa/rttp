@@ -417,6 +417,9 @@ status_codes! {
     /// 424 Failed Dependency
     /// [[RFC4918](https://tools.ietf.org/html/rfc4918)]
     (424, FAILED_DEPENDENCY, "Failed Dependency");
+    /// 425 Too Early
+    /// [[RFC8470](https://tools.ietf.org/html/rfc8470)]
+    (425, TOO_EARLY, "Too Early");
 
     /// 426 Upgrade Required
     /// [[RFC7231, Section 6.5.15](https://tools.ietf.org/html/rfc7231#section-6.5.15)]
@@ -547,5 +550,15 @@ mod tests {
     assert_eq!(status.canonical_reason(), Some("Early Hints"));
     assert_eq!(status.to_string(), "103 Early Hints");
     assert!(status.is_informational());
+  }
+
+  #[test]
+  fn too_early_has_canonical_reason_display_and_classification() {
+    let status = StatusCode::from_u16(425).unwrap();
+
+    assert_eq!(status, StatusCode::TOO_EARLY);
+    assert_eq!(status.canonical_reason(), Some("Too Early"));
+    assert_eq!(status.to_string(), "425 Too Early");
+    assert!(status.is_client_error());
   }
 }
