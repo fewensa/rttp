@@ -440,6 +440,24 @@ fn test_response_too_early_status_helper_matches_only_425() {
 }
 
 #[test]
+fn test_response_not_extended_status_helper_matches_only_510() {
+  for (status, reason, expected) in [
+    (510, "Not Extended", true),
+    (509, "Bandwidth Limit Exceeded", false),
+    (511, "Network Authentication Required", false),
+    (200, "OK", false),
+  ] {
+    let response = Response::new(
+      RoUrl::with("https://example.test/asset"),
+      format!("HTTP/1.1 {status} {reason}\r\nContent-Length: 0\r\n\r\n").into_bytes(),
+    )
+    .expect("response should parse");
+
+    assert_eq!(expected, response.is_not_extended(), "{status} {reason}");
+  }
+}
+
+#[test]
 fn test_response_network_authentication_required_helper_matches_only_511() {
   for (status, reason, expected) in [
     (511, "Network Authentication Required", true),

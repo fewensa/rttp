@@ -196,6 +196,10 @@ impl Response {
     self.code() == 425
   }
 
+  pub fn is_not_extended(&self) -> bool {
+    self.code() == 510
+  }
+
   pub fn is_network_authentication_required(&self) -> bool {
     self.code() == 511
   }
