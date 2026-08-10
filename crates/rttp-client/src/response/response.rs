@@ -14,7 +14,7 @@ use crate::response::ReprDigest;
 use crate::response::ServerTiming;
 use crate::response::Trailer;
 use crate::response::WwwAuthenticate;
-use crate::types::{Cookie, Header, RoUrl};
+use crate::types::{Cookie, Header, RoUrl, StatusCode};
 use rttp_protocol::access_control_allow_headers::AccessControlAllowHeaders;
 use rttp_protocol::access_control_allow_methods::AccessControlAllowMethods;
 use rttp_protocol::access_control_allow_origin::AccessControlAllowOrigin;
@@ -182,6 +182,13 @@ impl InformationalResponse {
 impl Response {
   pub fn ok(&self) -> bool {
     self.code() == 200
+  }
+
+  pub fn is_success(&self) -> bool {
+    u16::try_from(self.code())
+      .ok()
+      .and_then(|code| StatusCode::from_u16(code).ok())
+      .is_some_and(|code| code.is_success())
   }
 
   pub fn is_partial_content(&self) -> bool {
