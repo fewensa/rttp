@@ -192,6 +192,10 @@ impl Response {
     self.code() == 416
   }
 
+  pub fn is_too_early(&self) -> bool {
+    self.code() == 425
+  }
+
   pub fn is_not_modified(&self) -> bool {
     self.code() == 304
   }
