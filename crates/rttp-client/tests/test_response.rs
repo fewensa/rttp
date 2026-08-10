@@ -422,6 +422,24 @@ fn test_parse_range_not_satisfiable_metadata_preserves_body_and_headers() {
 }
 
 #[test]
+fn test_response_too_early_status_helper_matches_only_425() {
+  for (status, reason, expected) in [
+    (425, "Too Early", true),
+    (424, "Failed Dependency", false),
+    (426, "Upgrade Required", false),
+    (200, "OK", false),
+  ] {
+    let response = Response::new(
+      RoUrl::with("https://example.test/asset"),
+      format!("HTTP/1.1 {status} {reason}\r\nContent-Length: 0\r\n\r\n").into_bytes(),
+    )
+    .expect("response should parse");
+
+    assert_eq!(expected, response.is_too_early(), "{status} {reason}");
+  }
+}
+
+#[test]
 fn test_parse_content_type_response_helper_normalizes_media_type_and_preserves_parameters() {
   let s = concat!(
     "HTTP/1.1 200 OK\r\n",
