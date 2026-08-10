@@ -181,6 +181,24 @@ fn test_parse_response() {
 }
 
 #[test]
+fn response_success_status_boundaries() {
+  for (code, expected_success, expected_ok) in [
+    (199, false, false),
+    (200, true, true),
+    (204, true, false),
+    (299, true, false),
+    (300, false, false),
+  ] {
+    let raw = format!("HTTP/1.1 {code} Test\r\nContent-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("response should parse");
+
+    assert_eq!(expected_success, response.is_success(), "status {code}");
+    assert_eq!(expected_ok, response.ok(), "status {code}");
+  }
+}
+
+#[test]
 fn test_parse_response_preserves_duplicate_headers_with_case_insensitive_lookup() {
   let s = concat!(
     "HTTP/1.1 200 OK\r\n",
