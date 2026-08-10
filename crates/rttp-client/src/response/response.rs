@@ -642,6 +642,14 @@ impl Response {
     &self.informational_responses
   }
 
+  pub fn early_hints(&self) -> Vec<&InformationalResponse> {
+    self
+      .informational_responses()
+      .iter()
+      .filter(|response| response.code() == 103)
+      .collect()
+  }
+
   pub fn headers_of_name<S: AsRef<str>>(&self, name: S) -> Vec<&Header> {
     self
       .headers()
