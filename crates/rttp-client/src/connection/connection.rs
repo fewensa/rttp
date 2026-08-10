@@ -13,7 +13,7 @@ use crate::connection::connection_reader::{
   is_skippable_informational_status, parse_informational_response, read_response_head,
   read_response_header, read_response_parts_after_header,
   read_response_parts_after_header_with_informational_and_limit, response_status_code,
-  ConnectionReader, ResponseParts, MAX_RESPONSE_HEAD_BYTES,
+  record_ordinary_informational_response, ConnectionReader, ResponseParts, MAX_RESPONSE_HEAD_BYTES,
 };
 use crate::request::{RawRequest, RequestBody};
 use crate::response::{InformationalResponse, Response};
@@ -806,15 +806,18 @@ impl<'a> Connection<'a> {
 
     self.block_write_request_header_with(stream, header)?;
     let mut informational_responses = Vec::new();
+    let mut ordinary_informational_responses = 0;
     loop {
       let header = read_response_header(stream)?;
       let status_code = response_status_code(&header)?;
       if status_code == 100 {
+        record_ordinary_informational_response(&mut ordinary_informational_responses)?;
         informational_responses.push(parse_informational_response(&header)?);
         self.block_write_request_body(stream)?;
         return Ok(ExpectContinueResult::BodySent(informational_responses));
       }
       if is_skippable_informational_status(status_code) {
+        record_ordinary_informational_response(&mut ordinary_informational_responses)?;
         informational_responses.push(parse_informational_response(&header)?);
         continue;
       }

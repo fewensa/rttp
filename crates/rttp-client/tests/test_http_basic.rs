@@ -23,6 +23,17 @@ fn buffered_response_config(limit: usize) -> Config {
     .build()
 }
 
+const ORDINARY_INFORMATIONAL_RESPONSE_LIMIT: usize = 16;
+
+fn repeated_informational_response(count: usize) -> Vec<u8> {
+  let mut response = Vec::new();
+  for _ in 0..count {
+    response.extend_from_slice(b"HTTP/1.1 102 Processing\r\nX-Progress: waiting\r\n\r\n");
+  }
+  response.extend_from_slice(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK");
+  response
+}
+
 fn assert_body_too_large(error: rttp_client::error::Error, limit: usize) {
   assert!(error.is_body_too_large(), "unexpected error: {error}");
   assert_eq!(Some(limit), error.body_limit());
@@ -1252,6 +1263,46 @@ fn test_sync_client_skips_103_early_hints_before_final_response() {
       .map(String::as_str)
   );
   assert_eq!("final body", response.body().string().unwrap());
+}
+
+#[test]
+fn test_sync_client_accepts_exact_informational_response_limit() {
+  let (addr, handle) = support::spawn_socket2_owned_raw_response_server(
+    repeated_informational_response(ORDINARY_INFORMATIONAL_RESPONSE_LIMIT),
+  );
+  let response = client()
+    .get()
+    .url(format!("http://{}/informational-limit", addr))
+    .emit()
+    .expect("exact informational response limit should parse");
+
+  assert_eq!(200, response.code());
+  assert_eq!("OK", response.body().string().unwrap());
+  assert_eq!(
+    ORDINARY_INFORMATIONAL_RESPONSE_LIMIT,
+    response.informational_responses().len()
+  );
+
+  handle.join().expect("informational limit server thread");
+}
+
+#[test]
+fn test_sync_client_rejects_one_beyond_informational_response_limit() {
+  let (addr, handle) = support::spawn_socket2_owned_raw_response_server(
+    repeated_informational_response(ORDINARY_INFORMATIONAL_RESPONSE_LIMIT + 1),
+  );
+  let error = client()
+    .get()
+    .url(format!("http://{}/informational-limit", addr))
+    .emit()
+    .expect_err("one beyond informational response limit should fail");
+
+  assert!(
+    error.to_string().contains("Too many informational responses"),
+    "unexpected error: {error}"
+  );
+
+  handle.join().expect("informational limit server thread");
 }
 
 #[test]

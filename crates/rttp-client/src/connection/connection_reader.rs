@@ -15,6 +15,7 @@ use crate::types::{Header, RoUrl};
 const HEADER_END: &[u8] = b"\r\n\r\n";
 const CRLF: &[u8] = b"\r\n";
 pub(crate) const MAX_CHUNKED_RESPONSE_LINE_BYTES: usize = 8 * 1024;
+pub(crate) const MAX_ORDINARY_INFORMATIONAL_RESPONSES: usize = 16;
 pub(crate) const MAX_RESPONSE_HEAD_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Eq, PartialEq)]
@@ -304,10 +305,12 @@ pub(crate) fn read_response_head<R>(reader: &mut R) -> error::Result<Vec<u8>>
 where
   R: Read + ?Sized,
 {
+  let mut ordinary_informational_responses = 0;
   loop {
     let header = read_response_header(reader)?;
     let status_code = response_status_code(&header)?;
     if is_skippable_informational_status(status_code) {
+      record_ordinary_informational_response(&mut ordinary_informational_responses)?;
       continue;
     }
     return Ok(header);
@@ -321,10 +324,12 @@ where
   R: Read + ?Sized,
 {
   let mut informational_responses = Vec::new();
+  let mut ordinary_informational_responses = 0;
   loop {
     let header = read_response_header(reader)?;
     let status_code = response_status_code(&header)?;
     if is_skippable_informational_status(status_code) {
+      record_ordinary_informational_response(&mut ordinary_informational_responses)?;
       informational_responses.push(parse_informational_response(&header)?);
       continue;
     }
@@ -495,6 +500,14 @@ where
 
 pub(crate) fn is_skippable_informational_status(status_code: u16) -> bool {
   status_code == 100 || (102..200).contains(&status_code)
+}
+
+pub(crate) fn record_ordinary_informational_response(count: &mut usize) -> error::Result<()> {
+  if *count == MAX_ORDINARY_INFORMATIONAL_RESPONSES {
+    return Err(error::bad_response("Too many informational responses"));
+  }
+  *count += 1;
+  Ok(())
 }
 
 pub(crate) fn response_status_code(header: &[u8]) -> error::Result<u16> {

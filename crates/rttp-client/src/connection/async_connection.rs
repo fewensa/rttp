@@ -23,6 +23,7 @@ use crate::connection::connection::{
 };
 use crate::connection::connection_reader::{
   is_skippable_informational_status, parse_informational_response, response_body_kind,
+  record_ordinary_informational_response,
   response_connection_reusable, response_connection_should_close, response_headers,
   response_status_code, validate_response_trailer_header, ResponseBodyKind, ResponseParts,
   MAX_CHUNKED_RESPONSE_LINE_BYTES, MAX_RESPONSE_HEAD_BYTES,
@@ -621,15 +622,18 @@ impl<'a> AsyncConnection<'a> {
 
     self.async_write_request_header_with(stream, header).await?;
     let mut informational_responses = Vec::new();
+    let mut ordinary_informational_responses = 0;
     loop {
       let header = async_read_response_header(stream).await?;
       let status_code = response_status_code(&header)?;
       if status_code == 100 {
+        record_ordinary_informational_response(&mut ordinary_informational_responses)?;
         informational_responses.push(parse_informational_response(&header)?);
         self.async_write_request_body(stream).await?;
         return Ok(ExpectContinueResult::BodySent(informational_responses));
       }
       if is_skippable_informational_status(status_code) {
+        record_ordinary_informational_response(&mut ordinary_informational_responses)?;
         informational_responses.push(parse_informational_response(&header)?);
         continue;
       }
@@ -650,10 +654,12 @@ async fn async_read_response_head<S>(stream: &mut S) -> error::Result<Vec<u8>>
 where
   S: AsyncRead + Unpin + ?Sized,
 {
+  let mut ordinary_informational_responses = 0;
   loop {
     let header = async_read_response_header(stream).await?;
     let status_code = response_status_code(&header)?;
     if is_skippable_informational_status(status_code) {
+      record_ordinary_informational_response(&mut ordinary_informational_responses)?;
       continue;
     }
     return Ok(header);
@@ -667,10 +673,12 @@ where
   S: AsyncRead + Unpin + ?Sized,
 {
   let mut informational_responses = Vec::new();
+  let mut ordinary_informational_responses = 0;
   loop {
     let header = async_read_response_header(stream).await?;
     let status_code = response_status_code(&header)?;
     if is_skippable_informational_status(status_code) {
+      record_ordinary_informational_response(&mut ordinary_informational_responses)?;
       informational_responses.push(parse_informational_response(&header)?);
       continue;
     }
