@@ -184,6 +184,10 @@ impl Response {
     self.code() == 200
   }
 
+  pub fn is_processing(&self) -> bool {
+    self.code() == 102
+  }
+
   pub fn is_partial_content(&self) -> bool {
     self.code() == 206
   }

@@ -181,6 +181,27 @@ fn test_parse_response() {
 }
 
 #[test]
+fn response_is_processing_matches_only_102() {
+  for (code, reason, expected) in [
+    (100, "Continue", false),
+    (101, "Switching Protocols", false),
+    (102, "Processing", true),
+    (103, "Early Hints", false),
+    (200, "OK", false),
+  ] {
+    let raw = format!("HTTP/1.1 {code} {reason}\r\nContent-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("response should parse");
+
+    assert_eq!(
+      expected,
+      response.is_processing(),
+      "{code} {reason} should match expected processing status"
+    );
+  }
+}
+
+#[test]
 fn test_parse_response_preserves_duplicate_headers_with_case_insensitive_lookup() {
   let s = concat!(
     "HTTP/1.1 200 OK\r\n",
