@@ -472,7 +472,7 @@ status_codes! {
     /// [[RFC2774](https://tools.ietf.org/html/rfc2774)]
     (510, NOT_EXTENDED, "Not Extended");
     /// 511 Network Authentication Required
-    /// [[RFC6585](https://tools.ietf.org/html/rfc6585)]
+    /// [[RFC6585, Section 6](https://tools.ietf.org/html/rfc6585#section-6)]
     (511, NETWORK_AUTHENTICATION_REQUIRED, "Network Authentication Required");
 }
 
@@ -560,5 +560,18 @@ mod tests {
     assert_eq!(status.canonical_reason(), Some("Too Early"));
     assert_eq!(status.to_string(), "425 Too Early");
     assert!(status.is_client_error());
+  }
+
+  #[test]
+  fn network_authentication_required_has_canonical_reason_display_and_classification() {
+    let status = StatusCode::from_u16(511).unwrap();
+
+    assert_eq!(status, StatusCode::NETWORK_AUTHENTICATION_REQUIRED);
+    assert_eq!(
+      status.canonical_reason(),
+      Some("Network Authentication Required")
+    );
+    assert_eq!(status.to_string(), "511 Network Authentication Required");
+    assert!(status.is_server_error());
   }
 }
