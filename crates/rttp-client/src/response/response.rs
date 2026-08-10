@@ -196,6 +196,10 @@ impl Response {
     self.code() == 425
   }
 
+  pub fn is_network_authentication_required(&self) -> bool {
+    self.code() == 511
+  }
+
   pub fn is_not_modified(&self) -> bool {
     self.code() == 304
   }
