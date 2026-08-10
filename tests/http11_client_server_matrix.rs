@@ -1494,6 +1494,92 @@ fn sync_client_preserves_shared_informational_response_matrix() {
 }
 
 #[test]
+fn sync_client_filters_early_hints_from_mixed_informational_responses() {
+  let raw = concat!(
+    "HTTP/1.1 100 Continue\r\n",
+    "X-Continue: first\r\n",
+    "\r\n",
+    "HTTP/1.1 103 Early Hints\r\n",
+    "Link: </first.css>; rel=preload\r\n",
+    "\r\n",
+    "HTTP/1.1 102 Processing\r\n",
+    "X-Progress: accepted\r\n",
+    "\r\n",
+    "HTTP/1.1 103 Early Hints\r\n",
+    "Link: </second.css>; rel=preload\r\n",
+    "\r\n",
+    "HTTP/1.1 200 OK\r\n",
+    "X-Final: mixed-early-hints\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  )
+  .as_bytes();
+  let (addr, handle) = fixtures::spawn_socket2_raw_response_server(raw);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/early-hints", addr))
+    .emit()
+    .expect("mixed informational response should parse");
+
+  assert_eq!(200, response.code());
+  let informational = response.informational_responses();
+  assert_eq!(4, informational.len());
+  assert_eq!(
+    vec![100, 103, 102, 103],
+    informational
+      .iter()
+      .map(|response| response.code())
+      .collect::<Vec<_>>()
+  );
+
+  let early_hints = response.early_hints();
+  assert_eq!(2, early_hints.len());
+  assert_eq!(103, early_hints[0].code());
+  assert_eq!(
+    Some("</first.css>; rel=preload"),
+    early_hints[0].header_value("Link").map(String::as_str)
+  );
+  assert_eq!(103, early_hints[1].code());
+  assert_eq!(
+    Some("</second.css>; rel=preload"),
+    early_hints[1].header_value("Link").map(String::as_str)
+  );
+
+  handle.join().expect("raw response server thread");
+}
+
+#[test]
+fn sync_client_returns_no_early_hints_without_103_informational_response() {
+  let raw = concat!(
+    "HTTP/1.1 100 Continue\r\n",
+    "\r\n",
+    "HTTP/1.1 102 Processing\r\n",
+    "X-Progress: accepted\r\n",
+    "\r\n",
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  )
+  .as_bytes();
+  let (addr, handle) = fixtures::spawn_socket2_raw_response_server(raw);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/no-early-hints", addr))
+    .emit()
+    .expect("informational response should parse");
+
+  assert_eq!(200, response.code());
+  assert_eq!(2, response.informational_responses().len());
+  assert!(response.early_hints().is_empty());
+
+  handle.join().expect("raw response server thread");
+}
+
+#[test]
 fn sync_client_rejects_shared_malformed_informational_heads() {
   for case in fixtures::response::malformed_informational_response_cases() {
     let (addr, handle) = fixtures::spawn_socket2_raw_response_server(case.raw);
