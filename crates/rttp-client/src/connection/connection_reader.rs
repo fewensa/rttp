@@ -478,6 +478,10 @@ where
   let mut byte = [0u8; 1];
 
   loop {
+    if header.len() == MAX_RESPONSE_HEAD_BYTES {
+      return Err(error::bad_response("HTTP response head is too large"));
+    }
+
     let read = reader.read(&mut byte).map_err(error::request)?;
     if read == 0 {
       if header.is_empty() {
@@ -868,7 +872,18 @@ mod tests {
   use std::error::Error as StdError;
   use std::io::{self, Cursor, Read};
 
-  use super::{ConnectionReader, ResponseBodyKind, MAX_RESPONSE_HEAD_BYTES};
+  use super::{read_response_head, ConnectionReader, ResponseBodyKind, MAX_RESPONSE_HEAD_BYTES};
+
+  fn exact_limit_response_head() -> Vec<u8> {
+    let prefix = b"HTTP/1.1 200 OK\r\nX-Fill: ";
+    let suffix = b"\r\n\r\n";
+    let fill_len = MAX_RESPONSE_HEAD_BYTES - prefix.len() - suffix.len();
+    let mut head = Vec::with_capacity(MAX_RESPONSE_HEAD_BYTES);
+    head.extend_from_slice(prefix);
+    head.resize(prefix.len() + fill_len, b'a');
+    head.extend_from_slice(suffix);
+    head
+  }
 
   #[test]
   fn test_chunked_binary_is_decoded() {
@@ -928,6 +943,34 @@ mod tests {
     assert!(response.trailers().is_empty());
     drop(response);
     assert_eq!((raw.len() - "next".len()) as u64, cursor.position());
+  }
+
+  #[test]
+  fn read_response_head_accepts_exact_limit_terminated_head() {
+    let head = exact_limit_response_head();
+    let mut cursor = Cursor::new(head.as_slice());
+
+    let parsed = read_response_head(&mut cursor).unwrap();
+
+    assert_eq!(MAX_RESPONSE_HEAD_BYTES, parsed.len());
+    assert_eq!(MAX_RESPONSE_HEAD_BYTES as u64, cursor.position());
+  }
+
+  #[test]
+  fn read_response_head_rejects_unterminated_head_at_limit_without_extra_byte() {
+    let mut raw = exact_limit_response_head();
+    raw.truncate(MAX_RESPONSE_HEAD_BYTES);
+    raw[MAX_RESPONSE_HEAD_BYTES - 1] = b'a';
+    raw.push(b'z');
+    let mut cursor = Cursor::new(raw.as_slice());
+
+    let error = read_response_head(&mut cursor)
+      .expect_err("unterminated response head at the limit should be rejected");
+
+    assert!(error
+      .to_string()
+      .contains("HTTP response head is too large"));
+    assert_eq!(MAX_RESPONSE_HEAD_BYTES as u64, cursor.position());
   }
 
   #[test]
@@ -1243,7 +1286,7 @@ mod tests {
     assert!(
       error
         .to_string()
-        .contains("HTTP informational response head is too large"),
+        .contains("HTTP response head is too large"),
       "unexpected error: {error}"
     );
   }
