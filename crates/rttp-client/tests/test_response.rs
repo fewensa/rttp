@@ -181,6 +181,50 @@ fn test_parse_response() {
 }
 
 #[test]
+fn response_status_classification_helpers_use_standard_ranges() {
+  for (code, expected) in [
+    (99, [false, false, false, false, false]),
+    (100, [true, false, false, false, false]),
+    (199, [true, false, false, false, false]),
+    (200, [false, true, false, false, false]),
+    (299, [false, true, false, false, false]),
+    (300, [false, false, true, false, false]),
+    (399, [false, false, true, false, false]),
+    (400, [false, false, false, true, false]),
+    (499, [false, false, false, true, false]),
+    (500, [false, false, false, false, true]),
+    (599, [false, false, false, false, true]),
+    (600, [false, false, false, false, false]),
+  ] {
+    let raw = format!("HTTP/1.1 {code} Test\r\nContent-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("response should parse");
+
+    assert_eq!(expected[0], response.is_informational(), "{code}");
+    assert_eq!(expected[1], response.is_success(), "{code}");
+    assert_eq!(expected[2], response.is_redirection(), "{code}");
+    assert_eq!(expected[3], response.is_client_error(), "{code}");
+    assert_eq!(expected[4], response.is_server_error(), "{code}");
+  }
+
+  let ok = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+  assert!(ok.ok());
+  assert!(ok.is_success());
+
+  let no_content = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+  assert!(!no_content.ok());
+  assert!(no_content.is_success());
+}
+
+#[test]
 fn test_parse_response_preserves_duplicate_headers_with_case_insensitive_lookup() {
   let s = concat!(
     "HTTP/1.1 200 OK\r\n",

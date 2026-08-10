@@ -184,6 +184,33 @@ impl Response {
     self.code() == 200
   }
 
+  /// Returns true for informational HTTP status codes in the 100-199 range.
+  pub fn is_informational(&self) -> bool {
+    matches!(self.code(), 100..=199)
+  }
+
+  /// Returns true for successful HTTP status codes in the 200-299 range.
+  ///
+  /// Use [`Response::ok`] when only an exact 200 response should match.
+  pub fn is_success(&self) -> bool {
+    matches!(self.code(), 200..=299)
+  }
+
+  /// Returns true for redirection HTTP status codes in the 300-399 range.
+  pub fn is_redirection(&self) -> bool {
+    matches!(self.code(), 300..=399)
+  }
+
+  /// Returns true for client error HTTP status codes in the 400-499 range.
+  pub fn is_client_error(&self) -> bool {
+    matches!(self.code(), 400..=499)
+  }
+
+  /// Returns true for server error HTTP status codes in the 500-599 range.
+  pub fn is_server_error(&self) -> bool {
+    matches!(self.code(), 500..=599)
+  }
+
   pub fn is_partial_content(&self) -> bool {
     self.code() == 206
   }
