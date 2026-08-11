@@ -26,8 +26,11 @@ impl Trailer {
       if value.len() > MAX_TRAILER_VALUE_BYTES {
         return Err(TrailerParseError::new("Trailer header value is too large"));
       }
+      if value.bytes().any(is_invalid_control_byte) {
+        return Err(TrailerParseError::new("invalid Trailer control byte"));
+      }
       for field_name in value.split(',') {
-        let field_name = field_name.trim();
+        let field_name = field_name.trim_matches([' ', '\t']);
         if !is_http_token(field_name) {
           return Err(TrailerParseError::new("invalid Trailer field name"));
         }
@@ -117,6 +120,10 @@ pub fn is_forbidden_trailer_field_name(name: &str) -> bool {
 
 fn is_http_token(value: &str) -> bool {
   !value.is_empty() && value.bytes().all(is_http_token_byte)
+}
+
+fn is_invalid_control_byte(byte: u8) -> bool {
+  byte != b'\t' && (byte <= 0x1f || byte == 0x7f)
 }
 
 fn is_http_token_byte(byte: u8) -> bool {
