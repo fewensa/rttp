@@ -543,6 +543,70 @@ mod tests {
   use super::StatusCode;
 
   #[test]
+  fn status_classification_boundaries() {
+    assert!(StatusCode::from_u16(99).is_err());
+
+    let status = StatusCode::from_u16(100).unwrap();
+    assert!(status.is_informational());
+    assert!(!status.is_success());
+    let status = StatusCode::from_u16(199).unwrap();
+    assert!(status.is_informational());
+    assert!(!status.is_success());
+    let status = StatusCode::from_u16(200).unwrap();
+    assert!(!status.is_informational());
+    assert!(status.is_success());
+    assert!(!status.is_redirection());
+    let status = StatusCode::from_u16(299).unwrap();
+    assert!(status.is_success());
+    assert!(!status.is_redirection());
+    let status = StatusCode::from_u16(300).unwrap();
+    assert!(!status.is_success());
+    assert!(status.is_redirection());
+    assert!(!status.is_client_error());
+    let status = StatusCode::from_u16(399).unwrap();
+    assert!(status.is_redirection());
+    assert!(!status.is_client_error());
+    let status = StatusCode::from_u16(400).unwrap();
+    assert!(!status.is_redirection());
+    assert!(status.is_client_error());
+    assert!(!status.is_server_error());
+    let status = StatusCode::from_u16(499).unwrap();
+    assert!(status.is_client_error());
+    assert!(!status.is_server_error());
+    let status = StatusCode::from_u16(500).unwrap();
+    assert!(!status.is_client_error());
+    assert!(status.is_server_error());
+    let status = StatusCode::from_u16(599).unwrap();
+    assert!(status.is_server_error());
+
+    assert!(StatusCode::from_u16(600).is_err());
+    assert!(StatusCode::from_u16(u16::MAX).is_err());
+  }
+
+  #[test]
+  fn every_valid_status_has_exactly_one_classification() {
+    for code in 100..=599 {
+      let status = StatusCode::from_u16(code).unwrap();
+      let classifications = [
+        status.is_informational(),
+        status.is_success(),
+        status.is_redirection(),
+        status.is_client_error(),
+        status.is_server_error(),
+      ];
+
+      assert_eq!(
+        classifications
+          .iter()
+          .filter(|&&classified| classified)
+          .count(),
+        1,
+        "status {code} must have exactly one classification"
+      );
+    }
+  }
+
+  #[test]
   fn early_hints_has_canonical_reason_display_and_classification() {
     let status = StatusCode::from_u16(103).unwrap();
 
