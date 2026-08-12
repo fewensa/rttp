@@ -580,6 +580,7 @@ mod tests {
     assert!(status.is_server_error());
 
     assert!(StatusCode::from_u16(600).is_err());
+    assert!(StatusCode::from_u16(u16::MAX).is_err());
   }
 
   #[test]
