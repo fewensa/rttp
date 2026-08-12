@@ -141,7 +141,7 @@ impl InformationalResponse {
   pub fn code(&self) -> u16 {
     self.code
   }
-
+  /// Returns the status code; panics if the stored code is not a valid HTTP status code.
   pub fn status(&self) -> StatusCode {
     StatusCode::from_u16(self.code()).expect("response code is validated")
   }

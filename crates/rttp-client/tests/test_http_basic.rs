@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use rttp_client::types::{Auth, Para, Proxy, RoUrl};
+use rttp_client::types::{Auth, Para, Proxy, RoUrl, StatusCode};
 use rttp_client::ConnectionReader;
 use rttp_client::{Config, HttpClient, DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES};
 
@@ -1195,7 +1195,7 @@ fn test_sync_client_sends_body_before_observing_100_continue() {
   assert_eq!("accepted", response.body().string().unwrap());
   let informational = response.informational_responses();
   assert_eq!(1, informational.len());
-  assert_eq!(100, informational[0].code());
+  assert_eq!(StatusCode::CONTINUE, informational[0].status());
   assert_eq!("Continue", informational[0].reason());
 
   let request = handle.join().expect("expect continue gate thread");
@@ -1243,7 +1243,7 @@ fn test_sync_client_skips_103_early_hints_before_final_response() {
   assert!(response.header_value("X-Interim").is_none());
   let informational = response.informational_responses();
   assert_eq!(1, informational.len());
-  assert_eq!(103, informational[0].code());
+  assert_eq!(StatusCode::EARLY_HINTS, informational[0].status());
   assert_eq!("Early Hints", informational[0].reason());
   assert_eq!(
     Some("ignored"),
