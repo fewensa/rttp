@@ -142,6 +142,10 @@ impl InformationalResponse {
     self.code
   }
 
+  pub fn status(&self) -> StatusCode {
+    StatusCode::from_u16(self.code()).expect("response code is validated")
+  }
+
   pub fn reason(&self) -> &String {
     &self.reason
   }
