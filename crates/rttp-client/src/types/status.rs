@@ -180,6 +180,21 @@ impl StatusCode {
   pub fn is_server_error(&self) -> bool {
     600 > self.0 && self.0 >= 500
   }
+
+  /// Check if status is within 400-599.
+  ///
+  /// # Example
+  ///
+  /// ```
+  /// use rttp_client::types::StatusCode;
+  ///
+  /// assert!(StatusCode::NOT_FOUND.is_error());
+  /// assert!(!StatusCode::OK.is_error());
+  /// ```
+  #[inline]
+  pub fn is_error(&self) -> bool {
+    self.is_client_error() || self.is_server_error()
+  }
 }
 
 impl fmt::Debug for StatusCode {
@@ -573,5 +588,13 @@ mod tests {
     );
     assert_eq!(status.to_string(), "511 Network Authentication Required");
     assert!(status.is_server_error());
+  }
+
+  #[test]
+  fn is_error_covers_client_and_server_failures() {
+    assert!(StatusCode::BAD_REQUEST.is_error());
+    assert!(StatusCode::INTERNAL_SERVER_ERROR.is_error());
+    assert!(!StatusCode::OK.is_error());
+    assert!(!StatusCode::MOVED_PERMANENTLY.is_error());
   }
 }
