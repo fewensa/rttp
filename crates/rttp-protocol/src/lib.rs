@@ -2,6 +2,10 @@
 //!
 //! This crate is intentionally unpublished. It owns protocol syntax and framing
 //! validation only; client and server application policy remains in its callers.
+//!
+//! Each individual header module owns the parsing and formatting rules for its
+//! specific header type, including bounded value parsing, wire formatting, and
+//! the limits and error types that apply to that header.
 
 pub mod accept_patch;
 pub mod accept_post;
