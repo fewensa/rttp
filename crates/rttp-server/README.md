@@ -3,6 +3,12 @@
 `rttp-server` provides the blocking HTTP server implementation re-exported by
 the `rttp` compatibility facade.
 
+Typed request and response helpers in this crate are metadata-only unless a
+section explicitly says otherwise. They parse, validate, normalize, or expose
+bounded HTTP metadata; handler code remains responsible for cache behavior,
+browser policy, authentication and authorization decisions, retries,
+representation selection, and body transformation.
+
 ## Request Cache-Control metadata
 
 Handlers can call `Request::cache_control()` to obtain typed request cache

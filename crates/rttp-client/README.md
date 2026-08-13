@@ -4,6 +4,11 @@ rttp_client
 `rttp_client` is a small HTTP client crate. Plain HTTP is available by default;
 optional features add async request APIs and TLS implementations.
 
+Typed header helpers in this crate are metadata-only unless a section
+explicitly says otherwise. They validate, emit, or expose bounded HTTP metadata;
+they do not create cache state, browser policy, authentication policy, retries,
+representation selection, or body transformations.
+
 | name | comment |
 |------|---------|
 | async | Async request APIs |

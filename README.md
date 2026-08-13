@@ -7,6 +7,12 @@ A small Rust HTTP workspace with public client (`rttp_client`) and server
 the private, unpublished `rttp_test_support` crate contains shared test fixtures
 and local socket helpers.
 
+Across the client, server, and protocol crates, typed header and wire helpers
+stay metadata-only unless a section explicitly documents runtime behavior. They
+parse, validate, normalize, and expose bounded protocol metadata; they do not
+imply cache engines, browser policy, authentication decisions, retries,
+representation selection, or body transformation.
+
 ## Client
 
 `rttp_client` supports plain HTTP by default. Optional features add async
