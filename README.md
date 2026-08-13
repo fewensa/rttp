@@ -1454,3 +1454,19 @@ running against this repository:
 | `CODEON_DATABASE_URL` | Postgres URL of the CodeOn database | `postgres://codeon:codeon@localhost/codeon` |
 | `CODEON_MCP_BEARER_TOKEN` | Bearer token for the CodeOn MCP HTTP API | `secret-token` |
 | `GITHUB_TOKEN_FEWENSA` | GitHub credential used by the flow | `ghp_...` |
+
+### Full Flow
+
+The complete acceptance loop reviews the pull request, requests or applies a
+revision when the reviewed candidate misses a sealed requirement, runs the
+landing preflight checks, merges the clean pull request, and closes the linked
+issue after landing is confirmed.
+
+### Examples
+
+```sh
+CODEON_DATABASE_URL=postgres://codeon:codeon@localhost/codeon \
+CODEON_MCP_BEARER_TOKEN=secret-token \
+GITHUB_TOKEN_FEWENSA=ghp_... \
+codeon run --repo fewensa/rttp --pr 455 --flow full
+```
