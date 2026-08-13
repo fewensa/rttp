@@ -1,3 +1,20 @@
+//! Response wrappers: raw response capture and typed response helpers.
+//!
+//! The response surface is split into two layers:
+//!
+//! - `raw_response` owns `RawResponse`, the raw capture layer. It parses the
+//!   response wire bytes into the status line, headers, trailers, cookies, and
+//!   body, applying bounded body handling (single gzip decoding and the
+//!   configured body-size limit) and rejecting malformed responses. It retains
+//!   the original binary so the response can be re-rendered through `string()`.
+//! - `response` owns `Response`, the typed helper layer. It wraps `RawResponse`
+//!   and adds typed interpretation: status predicates, header, trailer, and
+//!   cookie lookups, typed header parsers such as `etag()`, `cache_control()`,
+//!   and `set_cookies()`, and informational-response handling.
+//!
+//! `RawResponse` is the single source of parsed wire data and stays internal;
+//! typed helpers read through it and never re-parse the raw response bytes.
+
 #![allow(clippy::module_inception)]
 
 pub use self::response::*;
