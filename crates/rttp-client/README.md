@@ -32,6 +32,24 @@ HTTP/1.x chunked responses are decoded, and response trailers are exposed
 through `Response::trailers`, `Response::trailer`, and
 `Response::trailer_value` for both blocking and async request APIs.
 
+## Response model and wrapper boundaries
+
+Every blocking and async request returns a `Response`. A `Response` wraps the
+raw response capture (the exact wire bytes and the parsed status line, header
+fields, trailers, cookies, and body) plus any skipped informational response
+metadata. The raw capture is exposed directly through `Response::binary()`,
+`code()`, `version()`, `reason()`, `headers()`, `trailers()`, `cookies()`,
+`body()`, `header()`, `header_value()`, and `header_values()`.
+
+Typed response helpers such as `cache_control()`, `allow()`, `vary()`,
+`content_type()`, `content_range()`, and `retry_after()` sit on top of that
+capture. They parse on demand from the captured header fields and never modify
+the raw capture; they are bounded, validation-oriented, and metadata-only. A
+malformed typed value makes the helper return an error while the raw headers
+and body remain available through the ordinary `Response` APIs, and no helper
+implies cache engines, browser policy, authentication decisions, retries,
+representation selection, or body transformation.
+
 ## Bounded Max-Forwards diagnostics
 
 `HttpClient::max_forwards(value)` sets a `Max-Forwards` request header for
