@@ -1,8 +1,11 @@
 rttp
 ====
 
-`rttp` wraps `rttp_client` behind optional client features and provides a small
-blocking HTTP server for local tests and simple embedded use.
+`rttp` is a compatibility facade over the `rttp_client` and `rttp_server`
+crates. It re-exports the blocking server API from `rttp_server` for local
+tests and simple embedded use and, behind optional client features, the client
+API from `rttp_client`. The facade adds no separate runtime, configuration, or
+policy layer: behavior is defined by the underlying client and server crates.
 
 ## Server
 
