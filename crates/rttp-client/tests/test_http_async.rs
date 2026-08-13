@@ -15,7 +15,7 @@ use futures::executor::block_on;
 #[cfg(feature = "async")]
 use futures::io::{AllowStdIo, AsyncRead, AsyncReadExt, Cursor as AsyncCursor};
 #[cfg(feature = "async")]
-use rttp_client::types::Proxy;
+use rttp_client::types::{Proxy, StatusCode};
 #[cfg(feature = "async")]
 use rttp_client::{
   async_streaming_response_after_header, Config, HttpClient,
@@ -428,7 +428,7 @@ fn test_async_client_preserves_informational_response_metadata() {
 
     let informational = response.informational_responses();
     assert_eq!(1, informational.len());
-    assert_eq!(103, informational[0].code());
+    assert_eq!(StatusCode::EARLY_HINTS, informational[0].status());
     assert_eq!("Early Hints", informational[0].reason());
     assert_eq!(
       Some("ignored"),
