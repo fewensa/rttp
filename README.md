@@ -4,8 +4,8 @@ rttp
 A small Rust HTTP workspace with public client (`rttp_client`) and server
 (`rttp-server`) crates, plus shared wire primitives in `rttp-protocol`. The
 `rttp` crate remains a compatibility facade for their established APIs, while
-the private, unpublished `rttp_test_support` crate contains shared test fixtures
-and local socket helpers.
+the private, unpublished `rttp_test_support` crate owns the reusable local HTTP
+and client helpers and shared test fixtures used by the workspace test suites.
 
 Across the client, server, and protocol crates, typed header and wire helpers
 stay metadata-only unless a section explicitly documents runtime behavior. They
