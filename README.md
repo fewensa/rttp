@@ -1,11 +1,30 @@
 rttp
 ====
 
-A small Rust HTTP workspace with public client (`rttp_client`) and server
-(`rttp-server`) crates, plus shared wire primitives in `rttp-protocol`. The
-`rttp` crate remains a compatibility facade for their established APIs, while
-the private, unpublished `rttp_test_support` crate contains shared test fixtures
-and local socket helpers.
+A small Rust HTTP workspace: the `rttp_client` HTTP client crate, the
+`rttp-server` blocking HTTP server crate, the shared `rttp-protocol` wire
+primitives crate, and the `rttp` compatibility facade crate. The private,
+unpublished `rttp_test_support` crate contains shared test fixtures and local
+socket helpers.
+
+## Crate roles
+
+- `rttp_client` is the public HTTP client crate. Plain HTTP is available by
+  default; optional `async`, `http2`, `tls-native`, and `tls-rustls` features
+  add async request APIs, bounded prior-knowledge h2c over direct `socket2`
+  TCP connections, and TLS. Applications can depend on it directly with
+  `rttp_client = "0.2"`.
+- `rttp-server` is the public blocking HTTP server crate. It parses blocking
+  HTTP/1.x requests for local tests and simple embedded use, and the same
+  `socket2` listener detects bounded HTTP/2 prior-knowledge and `Upgrade: h2c`
+  connections. The `rttp` facade re-exports its `server` module.
+- `rttp-protocol` is the internal wire primitives crate shared by the client
+  and server. It owns transport-independent protocol syntax and framing
+  validation only; client and server application policy remains in its
+  callers. It is intentionally unpublished.
+- `rttp` is the compatibility facade crate. It re-exports the server APIs and,
+  behind the `client` feature, the client APIs, and provides the `Http::server`
+  and `Http::client` entry points. Depend on `rttp = "0.2"` to use the facade.
 
 Across the client, server, and protocol crates, typed header and wire helpers
 stay metadata-only unless a section explicitly documents runtime behavior. They
