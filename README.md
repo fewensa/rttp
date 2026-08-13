@@ -1440,3 +1440,17 @@ TLS or async accept loops.
 
 This repository participates in automated end-to-end acceptance runs driven by
 the CodeOn flow (review, revision, landing preflight, merge).
+
+
+## Acceptance Testing
+
+### Environment
+
+The full CodeOn acceptance flow expects the following environment variables when
+running against this repository:
+
+| Name | Purpose | Example |
+| --- | --- | --- |
+| `CODEON_DATABASE_URL` | Postgres URL of the CodeOn database | `postgres://codeon:codeon@localhost/codeon` |
+| `CODEON_MCP_BEARER_TOKEN` | Bearer token for the CodeOn MCP HTTP API | `secret-token` |
+| `GITHUB_TOKEN_FEWENSA` | GitHub credential used by the flow | `ghp_...` |
