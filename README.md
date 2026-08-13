@@ -1,11 +1,25 @@
 rttp
 ====
 
-A small Rust HTTP workspace with public client (`rttp_client`) and server
-(`rttp-server`) crates, plus shared wire primitives in `rttp-protocol`. The
-`rttp` crate remains a compatibility facade for their established APIs, while
-the private, unpublished `rttp_test_support` crate contains shared test fixtures
-and local socket helpers.
+A small Rust HTTP workspace. Four crates provide the library API:
+
+- `rttp_client` is the HTTP client crate. It opens connections, emits requests,
+  parses responses, and exposes bounded HTTP metadata; plain HTTP is available
+  by default, with optional features for async request APIs, bounded h2c, and
+  TLS.
+- `rttp-server` is the HTTP server crate. It provides the blocking listener,
+  request parsing, and response serialization used for local tests and simple
+  embedded use.
+- `rttp-protocol` provides the internal, transport-independent wire primitives
+  shared by the client and server crates. It owns protocol syntax and framing
+  validation only; application-level policy stays in its callers.
+- `rttp` is the compatibility facade over the client and server crates. It
+  re-exports the server API and exposes `Http::server` always and
+  `Http::client` behind the `client` feature, so existing callers keep one
+  dependency.
+
+The private, unpublished `rttp_test_support` crate contains shared test
+fixtures and local socket helpers.
 
 Across the client, server, and protocol crates, typed header and wire helpers
 stay metadata-only unless a section explicitly documents runtime behavior. They
