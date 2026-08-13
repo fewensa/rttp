@@ -1,7 +1,8 @@
 //! Private shared support for the RTTP workspace test suites.
 //!
-//! This crate is intentionally unpublished and is only consumed through
-//! development dependencies by workspace members.
+//! This crate owns the reusable local HTTP and client helpers for workspace
+//! tests, alongside shared protocol fixtures. It is intentionally unpublished
+//! and is only consumed through development dependencies by workspace members.
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener};
