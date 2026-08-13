@@ -35,9 +35,11 @@ through `Response::trailers`, `Response::trailer`, and
 ## Response model and wrapper boundaries
 
 Every blocking and async request returns a `Response`. A `Response` wraps the
-raw response capture (the exact wire bytes and the parsed status line, header
-fields, trailers, cookies, and body) plus any skipped informational response
-metadata. The raw capture is exposed directly through `Response::binary()`,
+raw response capture (the exact wire bytes for HTTP/1.x responses; a
+reconstructed response head for the bounded h2c path; and the parsed status
+line, header fields, trailers, cookies, and body) plus any skipped
+informational response metadata. The raw capture is exposed directly through
+`Response::binary()`,
 `code()`, `version()`, `reason()`, `headers()`, `trailers()`, `cookies()`,
 `body()`, `header()`, `header_value()`, and `header_values()`.
 
