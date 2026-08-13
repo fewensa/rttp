@@ -2,6 +2,9 @@
 //!
 //! This crate is intentionally unpublished. It owns protocol syntax and framing
 //! validation only; client and server application policy remains in its callers.
+//!
+//! Each header module below owns the parsing and formatting rules for its
+//! specific header type.
 
 pub mod accept_patch;
 pub mod accept_post;
