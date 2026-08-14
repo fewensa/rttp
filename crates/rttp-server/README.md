@@ -3,11 +3,30 @@
 `rttp-server` provides the blocking HTTP server implementation re-exported by
 the `rttp` compatibility facade.
 
-Typed request and response helpers in this crate are metadata-only unless a
-section explicitly says otherwise. They parse, validate, normalize, or expose
-bounded HTTP metadata; handler code remains responsible for cache behavior,
-browser policy, authentication and authorization decisions, retries,
-representation selection, and body transformation.
+## Handler policy ownership
+
+Handlers own security, caching, authentication, and browser-policy decisions;
+RTTP only parses or declares bounded metadata. Typed request and response
+helpers in this crate are metadata-only unless a section explicitly says
+otherwise: they parse, validate, normalize, or expose bounded HTTP metadata,
+never applying the policy the metadata describes. Raw request and response
+fields remain available to handler code.
+
+- Caching: helpers expose typed `Cache-Control` request and response
+  directives. RTTP does not store responses, compute freshness, or revalidate.
+- Authentication: helpers expose `Authorization`, `Proxy-Authorization`, and
+  `WWW-Authenticate` metadata. RTTP does not validate credentials, select
+  realms or challenges, or enforce access decisions.
+- Browser policy: helpers expose `Sec-Fetch-*` and Client Hints metadata. RTTP
+  does not block requests, validate origins, or implement browser security
+  policy.
+- Security: helpers only bound the metadata they parse or declare. RTTP does
+  not apply cache behavior, enforce authentication or authorization, or make
+  security decisions on behalf of handler code.
+
+Retries, representation selection, and body transformation are handler
+decisions as well. Each section below documents the exact boundary for its
+helper.
 
 ## Request Cache-Control metadata
 
