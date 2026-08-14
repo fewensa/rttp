@@ -1,8 +1,14 @@
 rttp
 ====
 
-`rttp` wraps `rttp_client` behind optional client features and provides a small
-blocking HTTP server for local tests and simple embedded use.
+`rttp` is a compatibility facade over the `rttp_client` and `rttp-server`
+APIs. It re-exports the blocking server through `rttp::server` and
+`rttp::Http::server` for local tests and simple embedded use, and behind the
+optional `client` feature exposes `rttp::Http::client` plus selected client
+metadata types. It is not a separate runtime or policy layer: the facade owns
+no server loop, event loop, connection pooling, cache, retry, or status-policy
+engine of its own, and all bounded behavior and metadata-only helpers remain in
+the underlying `rttp_client` and `rttp-server` crates.
 
 ## Server
 
