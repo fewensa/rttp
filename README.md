@@ -1,11 +1,36 @@
 rttp
 ====
 
-A small Rust HTTP workspace with public client (`rttp_client`) and server
-(`rttp-server`) crates, plus shared wire primitives in `rttp-protocol`. The
-`rttp` crate remains a compatibility facade for their established APIs, while
-the private, unpublished `rttp_test_support` crate owns the reusable local HTTP
+A small Rust HTTP workspace. Application code typically depends on the `rttp`
+facade crate, which forwards to the public `rttp_client` and `rttp-server`
+crates; those share the wire primitives in the internal `rttp-protocol` crate.
+The private, unpublished `rttp_test_support` crate owns the reusable local HTTP
 and client helpers and shared test fixtures used by the workspace test suites.
+
+## Workspace crates
+
+- **`rttp`** — the compatibility facade. It exposes `rttp::Http::server` and,
+  with the `client` feature enabled, `rttp::Http::client`; it re-exports the
+  `rttp_server::server` module and forwards selected `rttp_client` response
+  types. It wraps the established APIs and does not reimplement client or
+  server behavior.
+- **`rttp_client`** — the public HTTP client crate. Plain HTTP is available by
+  default over direct `socket2` TCP connections; optional `async`, `http2`,
+  `tls-native`, and `tls-rustls` features add async request APIs, bounded
+  prior-knowledge h2c, and TLS. SOCKS proxy handshakes remain delegated to the
+  `socks` crate.
+- **`rttp-server`** — the public blocking HTTP server crate. It serves local
+  tests and simple embedded use from a `socket2` listener, parses HTTP/1.x
+  requests, and detects the bounded h2c paths (the HTTP/2 prior-knowledge
+  preface or a valid `Upgrade: h2c` request). It does not implement server
+  TLS.
+- **`rttp-protocol`** — the internal, transport-independent wire-primitive
+  crate (library name `rttp_protocol`), intentionally unpublished. It owns
+  protocol syntax and framing validation only, split into typed per-header
+  modules shared by the client and server; application policy stays in its
+  callers.
+- **`rttp_test_support`** — the private test-support crate used only by the
+  workspace test suites.
 
 Across the client, server, and protocol crates, typed header and wire helpers
 stay metadata-only unless a section explicitly documents runtime behavior. They
