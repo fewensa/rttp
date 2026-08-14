@@ -5,9 +5,10 @@ the `rttp` compatibility facade.
 
 Typed request and response helpers in this crate are metadata-only unless a
 section explicitly says otherwise. They parse, validate, normalize, or expose
-bounded HTTP metadata; handler code remains responsible for cache behavior,
-browser policy, authentication and authorization decisions, retries,
-representation selection, and body transformation.
+bounded HTTP metadata; RTTP only parses or declares that metadata and never
+applies policy itself. Handler code owns security, caching, authentication and
+authorization, and browser-policy decisions, and remains responsible for
+retries, representation selection, and body transformation.
 
 ## Request Cache-Control metadata
 
