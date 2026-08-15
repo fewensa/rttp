@@ -161,6 +161,30 @@ fn referrer_policy_metadata_is_absent_without_a_header() {
 }
 
 #[test]
+fn referrer_policy_metadata_rejects_cumulative_token_overflow_across_fields() {
+  let first_field = std::iter::repeat_n("origin", 256)
+    .collect::<Vec<_>>()
+    .join(", ");
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!(
+      "HTTP/1.1 200 OK\r\nReferrer-Policy: {first_field}\r\nReferrer-Policy: future-policy\r\nContent-Length: 0\r\n\r\n"
+    )
+    .into_bytes(),
+  )
+  .expect("response should parse");
+
+  assert!(
+    response.referrer_policy().is_err(),
+    "a 257th unknown token in another field must reject"
+  );
+  assert_eq!(
+    response.header_values("Referrer-Policy"),
+    [&first_field.to_string(), &"future-policy".to_string()]
+  );
+}
+
+#[test]
 fn test_parse_response() {
   let s = "HTTP/1.1 200 OK\r\n\
         Content-Length: 18\r\n\

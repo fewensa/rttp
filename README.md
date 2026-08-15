@@ -609,6 +609,29 @@ The helper is metadata-only. RTTP does not store cache entries, match stored
 responses, persist cache keys, replay requests, enforce shared-cache policy, or
 issue automatic conditional requests based on `Vary`.
 
+### Bounded HTTP/1.1 Referrer-Policy metadata
+
+`Response::referrer_policy()` parses one or more response `Referrer-Policy`
+header fields into `ReferrerPolicy` metadata. It returns `Ok(None)` when the
+header is absent. Present values are parsed as comma-separated policy tokens
+across all fields in wire order; recognized tokens are exposed in order by
+`ReferrerPolicy::policies()` with case-insensitive spelling, repeated
+recognized tokens preserved, and valid unknown tokens ignored for
+forward-compatible parsing.
+
+The helper is bounded and validation-oriented. Each header field value is
+limited to 64 KiB, and the combined token count across all fields is limited
+to 256 tokens, counting both recognized and unknown tokens. SP and HTAB are
+allowed only as optional whitespace around comma-delimited tokens; empty
+members, ASCII control characters inside tokens, oversized values, and token
+counts beyond 256 make `Response::referrer_policy()` return an error while
+leaving the original response headers and body available through the ordinary
+response APIs.
+
+The helper is metadata-only. RTTP does not change outbound `Referer` behavior,
+follow redirects, enforce browser referrer policy, or attach referrer
+semantics to requests.
+
 ### Bounded trailer behavior
 
 Trailer support is explicit and bounded by protocol path. On the client,

@@ -2,6 +2,13 @@
 //!
 //! This module validates declared policy tokens only. Callers decide whether
 //! and how to apply referrer behavior.
+//!
+//! Parsing is bounded to [`MAX_REFERRER_POLICY_VALUE_BYTES`] per field and
+//! [`MAX_REFERRER_POLICY_TOKENS`] cumulative across all fields, counting both
+//! recognized and unknown tokens. SP/HTAB is allowed as optional whitespace
+//! around comma-delimited tokens; empty members and ASCII control characters
+//! inside tokens are rejected. Valid unknown tokens are ignored within the
+//! token bound so forward-compatible policies stay parseable.
 
 use std::error::Error;
 use std::fmt;
@@ -26,6 +33,7 @@ impl ReferrerPolicy {
     I: IntoIterator<Item = &'a str>,
   {
     let mut policies = Vec::new();
+    let mut token_count = 0usize;
 
     for value in values {
       if value.len() > MAX_REFERRER_POLICY_VALUE_BYTES {
@@ -39,14 +47,18 @@ impl ReferrerPolicy {
         if token.is_empty() {
           return Err(invalid_value());
         }
-        let Some(policy) = ReferrerPolicyToken::parse(token) else {
-          continue;
-        };
-        if policies.len() >= MAX_REFERRER_POLICY_TOKENS {
+        if token.bytes().any(|byte| byte.is_ascii_control()) {
+          return Err(invalid_value());
+        }
+        if token_count >= MAX_REFERRER_POLICY_TOKENS {
           return Err(ReferrerPolicyParseError::new(
             "too many Referrer-Policy tokens",
           ));
         }
+        token_count += 1;
+        let Some(policy) = ReferrerPolicyToken::parse(token) else {
+          continue;
+        };
         policies.push(policy);
       }
     }
