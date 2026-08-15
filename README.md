@@ -609,6 +609,30 @@ The helper is metadata-only. RTTP does not store cache entries, match stored
 responses, persist cache keys, replay requests, enforce shared-cache policy, or
 issue automatic conditional requests based on `Vary`.
 
+### Bounded HTTP/1.1 Referrer-Policy behavior
+
+`Response::referrer_policy()` parses one or more response `Referrer-Policy`
+fields into bounded `ReferrerPolicy` metadata. It returns `Ok(None)` when the
+header is absent. Present values expose the recognized policies in wire order
+through `ReferrerPolicy::policies()` and `ReferrerPolicy::header_value()`;
+repeated recognized policies stay distinct and token matching is
+case-insensitive.
+
+Parsing is bounded and validation-oriented. Each field value is limited to
+64 KiB, each comma-delimited member must be a valid HTTP token with `SP` and
+`HTAB` allowed only as optional whitespace around members, and the total member
+count across all fields is limited to 256, counting recognized and valid
+unknown tokens together. Valid unknown tokens are validated and counted but
+ignored in the recognized policy list. Malformed members, ASCII control bytes
+inside a member, empty members, oversized values, and more than 256 total
+members make `Response::referrer_policy()` return an error while leaving the
+original response headers and body available through the ordinary response
+APIs.
+
+The helper is metadata-only. RTTP does not apply browser referrer policy,
+rewrite `Referer` request headers, follow redirects, or change request
+behavior from `Referrer-Policy`.
+
 ### Bounded trailer behavior
 
 Trailer support is explicit and bounded by protocol path. On the client,
@@ -691,6 +715,7 @@ gain additional HTTP/2 header-block handling.
 | WWW-Authenticate | Client `Response::www_authenticate` and server `HttpWwwAuthenticate`, `HttpResponse::with_www_authenticate`, and `HttpResponse::www_authenticate` parse or declare bounded response authentication challenges while preserving raw headers on parse failures | No credential storage, authentication policy, retry, automatic `Authorization` generation, Basic/Bearer implementation, redirect behavior, or status-policy behavior |
 | Server-Timing | Client `Response::server_timing` and server `HttpServerTiming`, `HttpResponse::with_server_timing`, and `HttpResponse::server_timing` parse or declare bounded response timing metadata while preserving raw headers on parse failures | No metric collection, measurement, telemetry export, metrics backend integration, retry, redirect behavior, or status-policy behavior |
 | Vary | `Response::vary` parses bounded response `Vary` fields into wildcard or normalized case-insensitive field-name metadata | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
+| Referrer-Policy | `Response::referrer_policy` parses bounded response `Referrer-Policy` fields into recognized policy tokens in wire order, validating and counting valid unknown tokens and preserving raw headers on parse failures | No browser referrer policy, `Referer` rewriting, redirect handling, or request mutation |
 | Trailers | Chunked response trailers are exposed for blocking and async APIs; streaming chunked uploads can send declared request trailers | Application metadata trailers such as `X-Trace` are allowed; pseudo-header, connection-specific, routing, authentication/cookie, and framing trailer fields are rejected |
 | Bounded h2c client | With `http2`, direct `socket2` h2c sends GET, HEAD, bodyless DELETE, OPTIONS, or TRACE, buffered POST, PUT, or PATCH requests, and opt-in RFC 8441 extended CONNECT request HEADERS via `http2_extended_connect`, opens at most one request stream, supports prior-knowledge with `emit_http2_prior_knowledge`, supports explicit HTTP/1.1 `Upgrade: h2c` negotiation with `emit_http2_upgrade`, advertises `SETTINGS_ENABLE_PUSH = 0`, advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1` only for the explicit extended CONNECT path, validates received `SETTINGS_ENABLE_PUSH` values as only `0` or `1`, honors initial peer `SETTINGS_MAX_CONCURRENT_STREAMS` by failing before request HEADERS when the peer allows zero streams, honors peer-advertised `SETTINGS_MAX_HEADER_LIST_SIZE` request metadata limits, accepts only legal `SETTINGS_MAX_FRAME_SIZE` values from 16,384 through 16,777,215 bytes, splits outbound HEADERS, DATA, and trailers to the active peer frame-size limit, rejects oversized inbound frames when a configured local frame-size limit is exceeded, bounds HPACK dynamic table use with `SETTINGS_HEADER_TABLE_SIZE`, strips HTTP/1.x connection-specific request fields before emission, rejects connection-specific peer response fields, suppresses HEAD response bodies, treats `RST_STREAM` on the active stream as a bounded reset/cancellation signal, acknowledges inbound PING without ACK on stream 0 and exactly 8 octets with matching opaque data, ignores inbound PING ACK, rejects malformed PING frames, DATA bodies, trailers, HPACK static Huffman strings, bounded large header blocks, padded incoming frames, `GOAWAY` shutdown boundaries, PRIORITY metadata validation without scheduling, HTTP/2-allowed unknown/extension frame ignoring inside this bounded path, reserved stream-id high-bit normalization, and conservative DATA flow control | Ordinary `CONNECT`, header-configured `:protocol` metadata, non-h2c HTTP/1.1 `Upgrade` handoff requests, and proxies are rejected deterministically, and `PUSH_PROMISE`/server push is rejected instead of managed; bounded direct h2c only, with no keepalive timers, no automatic client/server initiated PING policy, no public cancellation callback API, no dynamic policy API, no extension callback API, no full extension negotiation, TLS ALPN, external h2 integration, proxy tunneling to h2, proxy h2, tunnel handoff, connection pooling, persistent HTTP/2 session management, automatic retry/replay, server push, full session manager, full stream state machine, full multiplex scheduler, unbounded multiplex scheduling, general multiplexing, priority scheduling, request bodies or trailers for extended CONNECT, or request bodies for GET, HEAD, DELETE, OPTIONS, or TRACE |
 

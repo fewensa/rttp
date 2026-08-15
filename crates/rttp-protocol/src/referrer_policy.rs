@@ -1,8 +1,13 @@
 //! Bounded, policy-free `Referrer-Policy` response metadata parsing.
 //!
-//! This module validates declared policy tokens only. Callers decide whether
-//! and how to apply referrer behavior.
+//! Each comma-delimited list member must be a valid HTTP token, so malformed
+//! unknown members reject instead of being skipped. Every valid member is
+//! counted against `MAX_REFERRER_POLICY_TOKENS` across all supplied fields;
+//! recognized tokens are parsed case-insensitively in wire order, while valid
+//! unknown tokens are validated and counted but ignored. Callers decide
+//! whether and how to apply referrer behavior.
 
+use crate::http1::is_token;
 use std::error::Error;
 use std::fmt;
 
@@ -26,6 +31,7 @@ impl ReferrerPolicy {
     I: IntoIterator<Item = &'a str>,
   {
     let mut policies = Vec::new();
+    let mut token_count = 0usize;
 
     for value in values {
       if value.len() > MAX_REFERRER_POLICY_VALUE_BYTES {
@@ -34,20 +40,23 @@ impl ReferrerPolicy {
         ));
       }
 
-      for token in value.split(',') {
-        let token = token.trim_matches([' ', '\t']);
-        if token.is_empty() {
+      for member in value.split(',') {
+        let member = member.trim_matches([' ', '\t']);
+        if member.is_empty() {
           return Err(invalid_value());
         }
-        let Some(policy) = ReferrerPolicyToken::parse(token) else {
-          continue;
-        };
-        if policies.len() >= MAX_REFERRER_POLICY_TOKENS {
+        if !is_token(member) {
+          return Err(invalid_value());
+        }
+        if token_count >= MAX_REFERRER_POLICY_TOKENS {
           return Err(ReferrerPolicyParseError::new(
             "too many Referrer-Policy tokens",
           ));
         }
-        policies.push(policy);
+        token_count += 1;
+        if let Some(policy) = ReferrerPolicyToken::parse(member) {
+          policies.push(policy);
+        }
       }
     }
 

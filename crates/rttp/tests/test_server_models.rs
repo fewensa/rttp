@@ -173,6 +173,60 @@ fn response_browser_policy_helpers_preserve_metadata_without_enforcing_it() {
 }
 
 #[test]
+fn response_referrer_policy_helper_validates_tokens_and_parses_fields_cumulatively() {
+  let normalized = HttpReferrerPolicy::parse("origin, future")
+    .expect("recognized Referrer-Policy token should parse");
+  assert_eq!(normalized.as_str(), "origin");
+  assert_eq!(normalized.header_value(), "origin");
+
+  for value in [
+    "origin, bad\tinside",
+    "origin, bad\u{7f}",
+    "origin, bad\u{01}inside",
+  ] {
+    assert!(
+      HttpReferrerPolicy::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+
+  let response = HttpResponse::ok("body")
+    .header("Referrer-Policy", "origin, future-policy")
+    .header("Referrer-Policy", "no-referrer");
+  assert_eq!(
+    Some("origin, no-referrer"),
+    response
+      .referrer_policy()
+      .expect("Referrer-Policy metadata should parse")
+      .as_ref()
+      .map(HttpReferrerPolicy::as_str)
+  );
+
+  let declared = HttpResponse::ok("body")
+    .with_referrer_policy("origin, future")
+    .expect("Referrer-Policy metadata should be accepted");
+  assert_eq!(
+    Some("origin"),
+    declared
+      .referrer_policy()
+      .expect("Referrer-Policy metadata should parse")
+      .as_ref()
+      .map(HttpReferrerPolicy::as_str)
+  );
+
+  let first_field = std::iter::repeat_n("future-policy", 256)
+    .collect::<Vec<_>>()
+    .join(", ");
+  let response = HttpResponse::ok("body")
+    .header("Referrer-Policy", first_field.clone())
+    .header("Referrer-Policy", "origin");
+  assert!(
+    response.referrer_policy().is_err(),
+    "more than 256 Referrer-Policy tokens across fields must be rejected"
+  );
+}
+
+#[test]
 fn response_client_hints_helpers_declare_and_parse_metadata_without_policy() {
   let response = HttpResponse::ok("body")
     .header("Accept-CH", "DPR")

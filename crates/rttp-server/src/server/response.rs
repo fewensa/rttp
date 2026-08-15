@@ -111,7 +111,39 @@ macro_rules! browser_policy_metadata {
 
 browser_policy_metadata!(HttpContentSecurityPolicy, "Content-Security-Policy");
 browser_policy_metadata!(HttpPermissionsPolicy, "Permissions-Policy");
-browser_policy_metadata!(HttpReferrerPolicy, "Referrer-Policy");
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpReferrerPolicy(String);
+
+impl HttpReferrerPolicy {
+  /// Parses bounded `Referrer-Policy` metadata without applying browser behavior.
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpBrowserPolicyParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  fn parse_values<'a, I>(values: I) -> Result<Self, HttpBrowserPolicyParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let policy = rttp_protocol::referrer_policy::ReferrerPolicy::parse_values(values)
+      .map_err(|error| HttpBrowserPolicyParseError::new(error.to_string()))?;
+    Ok(Self(policy.header_value()))
+  }
+
+  pub fn as_str(&self) -> &str {
+    &self.0
+  }
+
+  pub fn header_value(&self) -> &str {
+    self.as_str()
+  }
+}
+
+impl AsRef<str> for HttpReferrerPolicy {
+  fn as_ref(&self) -> &str {
+    self.as_str()
+  }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HttpBrowserPolicyParseError {
@@ -1296,7 +1328,16 @@ impl HttpResponse {
 
   /// Returns attached `Referrer-Policy` metadata without altering requests.
   pub fn referrer_policy(&self) -> Result<Option<HttpReferrerPolicy>, HttpBrowserPolicyParseError> {
-    self.browser_policy_value("Referrer-Policy", |value| HttpReferrerPolicy::parse(value))
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Referrer-Policy"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpReferrerPolicy::parse_values(values).map(Some)
   }
 
   pub fn content_encoding(

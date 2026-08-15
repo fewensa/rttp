@@ -71,3 +71,24 @@ without changing those raw fields.
 
 These helpers only declare and parse metadata. They do not calculate hashes,
 verify bodies, canonicalize representations, sign values, or enforce integrity.
+
+## Referrer-Policy response metadata
+
+`HttpResponse::with_referrer_policy(value)` validates and replaces attached
+`Referrer-Policy` fields with one normalized declaration of the recognized
+policy tokens, and `HttpResponse::referrer_policy()` parses attached raw fields
+cumulatively into `HttpReferrerPolicy` metadata. Both return `Ok(None)` only
+when no field is present.
+
+Parsing is bounded and validation-oriented. Each field value is limited to
+64 KiB, each comma-delimited member must be a valid HTTP token with `SP` and
+`HTAB` allowed only as optional whitespace around members, and the total member
+count across all fields is limited to 256, counting recognized and valid
+unknown tokens together. Valid unknown tokens are validated and counted but
+ignored in the normalized declaration; malformed members, ASCII control bytes
+inside a member, empty members, oversized values, and too many members return
+an error while the raw response fields remain intact.
+
+These helpers only declare and parse metadata. RTTP does not apply browser
+referrer policy, rewrite `Referer` request headers, follow redirects, or
+change handler response policy from `Referrer-Policy`.

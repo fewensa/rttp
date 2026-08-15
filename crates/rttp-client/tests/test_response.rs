@@ -118,7 +118,7 @@ fn referrer_policy_metadata_preserves_repeated_declarations_and_raw_headers() {
 
 #[test]
 fn referrer_policy_metadata_rejects_malformed_and_oversized_values_without_hiding_headers() {
-  for value in ["", "invalid", "origin,"] {
+  for value in ["", "invalid", "origin,", "origin, bad\tinside"] {
     let response = Response::new(
       RoUrl::with("https://example.test"),
       format!("HTTP/1.1 200 OK\r\nReferrer-Policy: {value}\r\nContent-Length: 0\r\n\r\n")
@@ -146,6 +146,30 @@ fn referrer_policy_metadata_rejects_malformed_and_oversized_values_without_hidin
 
   assert!(response.referrer_policy().is_err());
   assert_eq!(response.header_value("Referrer-Policy"), Some(&oversized));
+}
+
+#[test]
+fn referrer_policy_metadata_rejects_cumulative_multi_field_token_overflow() {
+  let first_field = std::iter::repeat_n("future-policy", 256)
+    .collect::<Vec<_>>()
+    .join(", ");
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!(
+      "HTTP/1.1 200 OK\r\nReferrer-Policy: {first_field}\r\nReferrer-Policy: origin\r\nContent-Length: 0\r\n\r\n"
+    )
+    .into_bytes(),
+  )
+  .expect("response should parse");
+
+  assert!(
+    response.referrer_policy().is_err(),
+    "more than 256 Referrer-Policy tokens across fields must be rejected"
+  );
+  assert_eq!(
+    response.header_values("Referrer-Policy"),
+    [&first_field, &"origin".to_string()]
+  );
 }
 
 #[test]
