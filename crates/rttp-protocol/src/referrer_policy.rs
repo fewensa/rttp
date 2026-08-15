@@ -26,6 +26,7 @@ impl ReferrerPolicy {
     I: IntoIterator<Item = &'a str>,
   {
     let mut policies = Vec::new();
+    let mut token_count = 0usize;
 
     for value in values {
       if value.len() > MAX_REFERRER_POLICY_VALUE_BYTES {
@@ -39,14 +40,18 @@ impl ReferrerPolicy {
         if token.is_empty() {
           return Err(invalid_value());
         }
-        let Some(policy) = ReferrerPolicyToken::parse(token) else {
-          continue;
-        };
-        if policies.len() >= MAX_REFERRER_POLICY_TOKENS {
+        if contains_forbidden_token_byte(token) {
+          return Err(invalid_value());
+        }
+        if token_count >= MAX_REFERRER_POLICY_TOKENS {
           return Err(ReferrerPolicyParseError::new(
             "too many Referrer-Policy tokens",
           ));
         }
+        token_count += 1;
+        let Some(policy) = ReferrerPolicyToken::parse(token) else {
+          continue;
+        };
         policies.push(policy);
       }
     }
@@ -148,4 +153,8 @@ impl Error for ReferrerPolicyParseError {}
 
 fn invalid_value() -> ReferrerPolicyParseError {
   ReferrerPolicyParseError::new("invalid Referrer-Policy header value")
+}
+
+fn contains_forbidden_token_byte(token: &str) -> bool {
+  token.bytes().any(|byte| byte <= 0x1f || byte == 0x7f)
 }
