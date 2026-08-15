@@ -26,11 +26,17 @@ impl ReferrerPolicy {
     I: IntoIterator<Item = &'a str>,
   {
     let mut policies = Vec::new();
+    let mut token_count = 0usize;
 
     for value in values {
       if value.len() > MAX_REFERRER_POLICY_VALUE_BYTES {
         return Err(ReferrerPolicyParseError::new(
           "Referrer-Policy header value is too large",
+        ));
+      }
+      if value.bytes().any(is_invalid_control_byte) {
+        return Err(ReferrerPolicyParseError::new(
+          "invalid Referrer-Policy control byte",
         ));
       }
 
@@ -39,14 +45,18 @@ impl ReferrerPolicy {
         if token.is_empty() {
           return Err(invalid_value());
         }
-        let Some(policy) = ReferrerPolicyToken::parse(token) else {
-          continue;
-        };
-        if policies.len() >= MAX_REFERRER_POLICY_TOKENS {
+        if !is_http_token(token) {
+          return Err(invalid_value());
+        }
+        token_count += 1;
+        if token_count > MAX_REFERRER_POLICY_TOKENS {
           return Err(ReferrerPolicyParseError::new(
             "too many Referrer-Policy tokens",
           ));
         }
+        let Some(policy) = ReferrerPolicyToken::parse(token) else {
+          continue;
+        };
         policies.push(policy);
       }
     }
@@ -148,4 +158,34 @@ impl Error for ReferrerPolicyParseError {}
 
 fn invalid_value() -> ReferrerPolicyParseError {
   ReferrerPolicyParseError::new("invalid Referrer-Policy header value")
+}
+
+fn is_invalid_control_byte(byte: u8) -> bool {
+  byte.is_ascii_control() && byte != b'\t'
+}
+
+fn is_http_token(value: &str) -> bool {
+  !value.is_empty() && value.bytes().all(is_http_token_byte)
+}
+
+fn is_http_token_byte(byte: u8) -> bool {
+  byte.is_ascii_alphanumeric()
+    || matches!(
+      byte,
+      b'!'
+        | b'#'
+        | b'$'
+        | b'%'
+        | b'&'
+        | b'\''
+        | b'*'
+        | b'+'
+        | b'-'
+        | b'.'
+        | b'^'
+        | b'_'
+        | b'`'
+        | b'|'
+        | b'~'
+    )
 }

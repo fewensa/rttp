@@ -1,5 +1,5 @@
 use rttp_protocol::referrer_policy::{
-  ReferrerPolicy, ReferrerPolicyToken, MAX_REFERRER_POLICY_VALUE_BYTES,
+  ReferrerPolicy, ReferrerPolicyToken, MAX_REFERRER_POLICY_TOKENS, MAX_REFERRER_POLICY_VALUE_BYTES,
 };
 
 #[test]
@@ -52,4 +52,62 @@ fn referrer_policy_rejects_invalid_empty_duplicate_and_oversized_fields() {
 
   let oversized = "x".repeat(MAX_REFERRER_POLICY_VALUE_BYTES + 1);
   assert!(ReferrerPolicy::parse(&oversized).is_err());
+}
+
+#[test]
+fn referrer_policy_rejects_recognized_plus_malformed_unknown_members() {
+  for value in [
+    "origin, future\u{0}policy",
+    "origin, future\rpolicy",
+    "origin, future\npolicy",
+    "origin, future\u{7f}policy",
+    "origin, future\tpolicy",
+    "origin, future policy",
+  ] {
+    assert!(
+      ReferrerPolicy::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+
+  let policy = ReferrerPolicy::parse("\tfuture-policy\t, ORIGIN\t")
+    .expect("HTAB-wrapped members should parse");
+  assert_eq!(policy.policies(), &[ReferrerPolicyToken::Origin]);
+}
+
+#[test]
+fn referrer_policy_accepts_exact_maximum_mixed_recognized_and_unknown_tokens() {
+  let mixed: Vec<&str> = (0..MAX_REFERRER_POLICY_TOKENS)
+    .map(|index| {
+      if index % 2 == 0 {
+        "origin"
+      } else {
+        "future-policy"
+      }
+    })
+    .collect();
+  let first = mixed[..128].join(", ");
+  let second = mixed[128..].join(", ");
+
+  let policy = ReferrerPolicy::parse_values([first.as_str(), second.as_str()])
+    .expect("exactly MAX_REFERRER_POLICY_TOKENS mixed tokens should parse");
+  assert_eq!(policy.policies().len(), 128);
+  assert!(policy
+    .policies()
+    .iter()
+    .all(|token| *token == ReferrerPolicyToken::Origin));
+}
+
+#[test]
+fn referrer_policy_rejects_cumulative_overflow_across_fields() {
+  let first = (0..200).map(|_| "origin").collect::<Vec<_>>().join(", ");
+  let second = (0..MAX_REFERRER_POLICY_TOKENS - 199)
+    .map(|_| "future-policy")
+    .collect::<Vec<_>>()
+    .join(", ");
+
+  assert!(
+    ReferrerPolicy::parse_values([first.as_str(), second.as_str()]).is_err(),
+    "one token beyond MAX_REFERRER_POLICY_TOKENS must be rejected across fields"
+  );
 }
