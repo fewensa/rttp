@@ -1,5 +1,5 @@
 use rttp_protocol::referrer_policy::{
-  ReferrerPolicy, ReferrerPolicyToken, MAX_REFERRER_POLICY_VALUE_BYTES,
+  ReferrerPolicy, ReferrerPolicyToken, MAX_REFERRER_POLICY_TOKENS, MAX_REFERRER_POLICY_VALUE_BYTES,
 };
 
 #[test]
@@ -52,4 +52,62 @@ fn referrer_policy_rejects_invalid_empty_duplicate_and_oversized_fields() {
 
   let oversized = "x".repeat(MAX_REFERRER_POLICY_VALUE_BYTES + 1);
   assert!(ReferrerPolicy::parse(&oversized).is_err());
+}
+
+#[test]
+fn referrer_policy_rejects_forbidden_controls_in_unknown_tokens() {
+  for value in [
+    "origin, future\npolicy",
+    "future\tpolicy, origin",
+    "origin, future\r\npolicy",
+    "origin, future-policy\u{7f}",
+  ] {
+    assert!(
+      ReferrerPolicy::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+}
+
+#[test]
+fn referrer_policy_permits_htab_only_around_comma_delimited_tokens() {
+  for value in [
+    "\tfuture-policy\t, ORIGIN",
+    " \t future-policy \t , ORIGIN \t ",
+  ] {
+    let policy =
+      ReferrerPolicy::parse(value).expect("HTAB around comma-delimited tokens should be permitted");
+    assert_eq!(policy.policies(), &[ReferrerPolicyToken::Origin]);
+    assert_eq!(policy.header_value(), "origin");
+  }
+}
+
+#[test]
+fn referrer_policy_accepts_exact_token_boundary_with_unknown_tokens() {
+  const UNKNOWN_IN_FIELD_1: usize = 200;
+
+  let field_1 = unknown_tokens(UNKNOWN_IN_FIELD_1);
+  let field_2 = format!(
+    "{}, ORIGIN",
+    unknown_tokens(MAX_REFERRER_POLICY_TOKENS - 1 - UNKNOWN_IN_FIELD_1)
+  );
+
+  let policy = ReferrerPolicy::parse_values([field_1.as_str(), field_2.as_str()])
+    .expect("exactly MAX_REFERRER_POLICY_TOKENS tokens should parse");
+  assert_eq!(policy.policies(), &[ReferrerPolicyToken::Origin]);
+  assert_eq!(policy.header_value(), "origin");
+}
+
+#[test]
+fn referrer_policy_rejects_one_beyond_token_boundary_across_fields() {
+  let field_1 = unknown_tokens(MAX_REFERRER_POLICY_TOKENS);
+
+  assert!(
+    ReferrerPolicy::parse_values([field_1.as_str(), "ORIGIN"]).is_err(),
+    "the token beyond MAX_REFERRER_POLICY_TOKENS must be rejected"
+  );
+}
+
+fn unknown_tokens(count: usize) -> String {
+  vec!["future-policy"; count].join(",")
 }
