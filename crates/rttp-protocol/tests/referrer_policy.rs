@@ -43,7 +43,7 @@ fn referrer_policy_ignores_unknown_tokens_accepts_repeated_tokens_and_normalizes
 
 #[test]
 fn referrer_policy_rejects_invalid_empty_duplicate_and_oversized_fields() {
-  for value in ["", "origin,", "origin\r\nX: y"] {
+  for value in ["", "origin,", "origin\n", "origin\r\nX: y"] {
     assert!(
       ReferrerPolicy::parse(value).is_err(),
       "{value:?} must be rejected"
