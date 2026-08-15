@@ -7,6 +7,16 @@ crates; those share the wire primitives in the internal `rttp-protocol` crate.
 The private, unpublished `rttp_test_support` crate owns the reusable local HTTP
 and client helpers and shared test fixtures used by the workspace test suites.
 
+## Local verification
+
+Run the same checks as CI before opening a pull request:
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --all-features
+```
+
 ## Workspace crates
 
 - **`rttp`** — the compatibility facade. It exposes `rttp::Http::server` and,
