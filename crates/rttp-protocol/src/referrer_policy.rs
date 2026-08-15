@@ -35,6 +35,8 @@ impl ReferrerPolicy {
         ));
       }
 
+      validate_value(value)?;
+
       for token in value.split(',') {
         let token = token.trim_matches([' ', '\t']);
         if token.is_empty() {
@@ -151,6 +153,16 @@ impl Error for ReferrerPolicyParseError {}
 
 fn invalid_value() -> ReferrerPolicyParseError {
   ReferrerPolicyParseError::new("invalid Referrer-Policy header value")
+}
+
+fn validate_value(value: &str) -> Result<(), ReferrerPolicyParseError> {
+  if value
+    .bytes()
+    .any(|byte| byte <= 0x1f && byte != b'\t' || byte == 0x7f)
+  {
+    return Err(invalid_value());
+  }
+  Ok(())
 }
 
 fn validate_token(value: &str) -> Result<(), ReferrerPolicyParseError> {
