@@ -138,6 +138,18 @@ rate_limit_singleton_value!(
   MAX_RATE_LIMIT_RESET_VALUE_BYTES
 );
 
+impl RateLimitRemaining {
+  pub const fn is_exhausted(self) -> bool {
+    self.0 == 0
+  }
+}
+
+impl RateLimitReset {
+  pub const fn is_immediate(self) -> bool {
+    self.0 == 0
+  }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RateLimitParseError {
   message: String,
