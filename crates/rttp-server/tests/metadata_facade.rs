@@ -1,7 +1,7 @@
 use rttp_server::server::{
   HttpAcceptCh, HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods,
-  HttpConditionalMetadata, HttpEntityTag, HttpPreferenceKind, HttpRequest, HttpResponse,
-  SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
+  HttpConditionalMetadata, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpPreferenceKind,
+  HttpRequest, HttpResponse, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
 };
 
 #[test]
@@ -13,6 +13,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpAccessControlAllowHeaders::parse("X-Request-Id")
       .expect("Access-Control-Allow-Headers should parse");
   let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("revision-42"));
+  let policy: HttpCrossOriginResourcePolicy = HttpCrossOriginResourcePolicy::parse("same-origin")
+    .expect("Cross-Origin-Resource-Policy should parse");
   let response = HttpResponse::ok("")
     .with_accept_ch(["Sec-CH-UA"])
     .expect("Accept-CH should be accepted");
@@ -24,6 +26,7 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA"]);
   assert_eq!(allow_methods.methods(), ["GET"]);
   assert_eq!(allow_headers.field_names(), ["x-request-id"]);
+  assert_eq!(policy.header_value(), "same-origin");
   assert_eq!(
     metadata
       .entity_tag_value()
