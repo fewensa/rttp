@@ -230,6 +230,19 @@ fn response_error_status_boundaries() {
 }
 
 #[test]
+fn response_existing_status_helpers_reject_out_of_range_codes() {
+  for code in [99, 600] {
+    let raw = format!("HTTP/1.1 {code} Test\r\nContent-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("response framing should remain inspectable");
+
+    assert!(!response.is_success(), "status {code}");
+    assert!(!response.is_client_error(), "status {code}");
+    assert!(!response.is_server_error(), "status {code}");
+  }
+}
+
+#[test]
 fn test_parse_response_preserves_duplicate_headers_with_case_insensitive_lookup() {
   let s = concat!(
     "HTTP/1.1 200 OK\r\n",

@@ -184,28 +184,31 @@ impl InformationalResponse {
 }
 
 impl Response {
+  fn classified_status(&self) -> Option<StatusCode> {
+    u16::try_from(self.code())
+      .ok()
+      .and_then(|code| StatusCode::from_u16(code).ok())
+  }
+
   pub fn ok(&self) -> bool {
     self.code() == 200
   }
 
   pub fn is_success(&self) -> bool {
-    u16::try_from(self.code())
-      .ok()
-      .and_then(|code| StatusCode::from_u16(code).ok())
+    self
+      .classified_status()
       .is_some_and(|code| code.is_success())
   }
 
   pub fn is_client_error(&self) -> bool {
-    u16::try_from(self.code())
-      .ok()
-      .and_then(|code| StatusCode::from_u16(code).ok())
+    self
+      .classified_status()
       .is_some_and(|code| code.is_client_error())
   }
 
   pub fn is_server_error(&self) -> bool {
-    u16::try_from(self.code())
-      .ok()
-      .and_then(|code| StatusCode::from_u16(code).ok())
+    self
+      .classified_status()
       .is_some_and(|code| code.is_server_error())
   }
 
