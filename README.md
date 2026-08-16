@@ -38,6 +38,16 @@ parse, validate, normalize, and expose bounded protocol metadata; they do not
 imply cache engines, browser policy, authentication decisions, retries,
 representation selection, or body transformation.
 
+## Local verification
+
+Run the same checks as GitHub CI before opening a pull request:
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --all-features
+```
+
 ## Client
 
 `rttp_client` supports plain HTTP by default. Optional features add async
