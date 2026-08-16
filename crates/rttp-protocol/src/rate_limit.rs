@@ -139,7 +139,10 @@ rate_limit_singleton_value!(
 );
 
 impl RateLimitRemaining {
-  /// Returns `true` when the remaining quota is exactly zero.
+  /// Returns `true` when the stored `RateLimit-Remaining` value is exactly `0`.
+  ///
+  /// Positive values are not exhausted; this helper does not apply any policy
+  /// beyond checking the parsed or constructed zero value.
   ///
   /// ```
   /// use rttp_protocol::rate_limit::RateLimitRemaining;
@@ -153,7 +156,10 @@ impl RateLimitRemaining {
 }
 
 impl RateLimitReset {
-  /// Returns `true` when the reset delay is exactly zero seconds.
+  /// Returns `true` when the stored `RateLimit-Reset` value is exactly `0`.
+  ///
+  /// Positive values are not immediate; this helper does not apply any policy
+  /// beyond checking the parsed or constructed zero value.
   ///
   /// ```
   /// use rttp_protocol::rate_limit::RateLimitReset;
