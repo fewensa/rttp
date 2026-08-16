@@ -139,6 +139,18 @@ rate_limit_singleton_value!(
 );
 
 impl RateLimitRemaining {
+  /// Returns `true` when a positive quota remains available.
+  ///
+  /// ```
+  /// use rttp_protocol::rate_limit::RateLimitRemaining;
+  ///
+  /// assert!(!RateLimitRemaining::new(0).has_quota());
+  /// assert!(RateLimitRemaining::new(1).has_quota());
+  /// ```
+  pub const fn has_quota(self) -> bool {
+    self.0 > 0
+  }
+
   /// Returns `true` when the stored `RateLimit-Remaining` value is exactly `0`.
   ///
   /// Positive values are not exhausted; this helper does not apply any policy
@@ -156,6 +168,18 @@ impl RateLimitRemaining {
 }
 
 impl RateLimitReset {
+  /// Returns `true` when a positive reset delay remains.
+  ///
+  /// ```
+  /// use rttp_protocol::rate_limit::RateLimitReset;
+  ///
+  /// assert!(!RateLimitReset::new(0).is_delayed());
+  /// assert!(RateLimitReset::new(1).is_delayed());
+  /// ```
+  pub const fn is_delayed(self) -> bool {
+    self.0 > 0
+  }
+
   /// Returns `true` when the stored `RateLimit-Reset` value is exactly `0`.
   ///
   /// Positive values are not immediate; this helper does not apply any policy
