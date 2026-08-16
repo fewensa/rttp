@@ -40,7 +40,7 @@ representation selection, or body transformation.
 
 ## Local verification
 
-Run the same checks as GitHub CI before opening a pull request:
+Run the same checks as GitHub CI from the repository root before opening a pull request:
 
 ```sh
 cargo fmt --all -- --check
