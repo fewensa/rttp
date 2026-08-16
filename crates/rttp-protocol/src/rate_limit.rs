@@ -138,6 +138,34 @@ rate_limit_singleton_value!(
   MAX_RATE_LIMIT_RESET_VALUE_BYTES
 );
 
+impl RateLimitRemaining {
+  /// Returns `true` when a positive quota remains available.
+  ///
+  /// ```
+  /// use rttp_protocol::rate_limit::RateLimitRemaining;
+  ///
+  /// assert!(!RateLimitRemaining::new(0).has_quota());
+  /// assert!(RateLimitRemaining::new(1).has_quota());
+  /// ```
+  pub const fn has_quota(self) -> bool {
+    self.0 > 0
+  }
+}
+
+impl RateLimitReset {
+  /// Returns `true` when a positive reset delay remains.
+  ///
+  /// ```
+  /// use rttp_protocol::rate_limit::RateLimitReset;
+  ///
+  /// assert!(!RateLimitReset::new(0).is_delayed());
+  /// assert!(RateLimitReset::new(1).is_delayed());
+  /// ```
+  pub const fn is_delayed(self) -> bool {
+    self.0 > 0
+  }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RateLimitParseError {
   message: String,

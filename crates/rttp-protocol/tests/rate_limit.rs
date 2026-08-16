@@ -109,6 +109,34 @@ fn rate_limit_combines_all_list_fields() {
 }
 
 #[test]
+fn rate_limit_remaining_positive_state_helper() {
+  assert!(!RateLimitRemaining::new(0).has_quota());
+  assert!(!RateLimitRemaining::parse("0")
+    .expect("zero should parse")
+    .has_quota());
+
+  assert!(RateLimitRemaining::new(1).has_quota());
+  assert!(RateLimitRemaining::new(42).has_quota());
+  assert!(RateLimitRemaining::parse("1")
+    .expect("positive should parse")
+    .has_quota());
+}
+
+#[test]
+fn rate_limit_reset_positive_state_helper() {
+  assert!(!RateLimitReset::new(0).is_delayed());
+  assert!(!RateLimitReset::parse("0")
+    .expect("zero should parse")
+    .is_delayed());
+
+  assert!(RateLimitReset::new(1).is_delayed());
+  assert!(RateLimitReset::new(60).is_delayed());
+  assert!(RateLimitReset::parse("1")
+    .expect("positive should parse")
+    .is_delayed());
+}
+
+#[test]
 fn rate_limit_enforces_value_bounds_for_every_field() {
   let oversized = "1".repeat(MAX_RATE_LIMIT_VALUE_BYTES + 1);
 
