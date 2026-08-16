@@ -230,6 +230,53 @@ fn response_error_status_boundaries() {
 }
 
 #[test]
+fn response_status_family_boundaries() {
+  for (code, expected_informational, expected_redirection, expected_error) in [
+    (99, false, false, false),
+    (100, true, false, false),
+    (199, true, false, false),
+    (200, false, false, false),
+    (299, false, false, false),
+    (300, false, true, false),
+    (304, false, true, false),
+    (399, false, true, false),
+    (400, false, false, true),
+    (499, false, false, true),
+    (500, false, false, true),
+    (599, false, false, true),
+    (600, false, false, false),
+  ] {
+    let raw = format!("HTTP/1.1 {code} Test\r\nContent-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("response should parse");
+
+    assert_eq!(
+      expected_informational,
+      response.is_informational(),
+      "status {code}"
+    );
+    assert_eq!(
+      expected_redirection,
+      response.is_redirection(),
+      "status {code}"
+    );
+    assert_eq!(expected_error, response.is_error(), "status {code}");
+  }
+}
+
+#[test]
+fn response_redirection_family_is_broader_than_redirect_following() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 304 Not Modified\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert!(response.is_redirection());
+  assert!(!response.is_redirect());
+}
+
+#[test]
 fn test_parse_response_preserves_duplicate_headers_with_case_insensitive_lookup() {
   let s = concat!(
     "HTTP/1.1 200 OK\r\n",

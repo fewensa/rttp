@@ -209,6 +209,27 @@ impl Response {
       .is_some_and(|code| code.is_server_error())
   }
 
+  pub fn is_informational(&self) -> bool {
+    u16::try_from(self.code())
+      .ok()
+      .and_then(|code| StatusCode::from_u16(code).ok())
+      .is_some_and(|code| code.is_informational())
+  }
+
+  pub fn is_redirection(&self) -> bool {
+    u16::try_from(self.code())
+      .ok()
+      .and_then(|code| StatusCode::from_u16(code).ok())
+      .is_some_and(|code| code.is_redirection())
+  }
+
+  pub fn is_error(&self) -> bool {
+    u16::try_from(self.code())
+      .ok()
+      .and_then(|code| StatusCode::from_u16(code).ok())
+      .is_some_and(|code| code.is_error())
+  }
+
   pub fn is_partial_content(&self) -> bool {
     self.code() == 206
   }
