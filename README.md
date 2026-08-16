@@ -1469,7 +1469,7 @@ TLS or async accept loops.
 
 ## Local verification
 
-Run the same checks as CI before opening a pull request:
+Run CI checks locally before opening a pull request:
 
 ```sh
 cargo fmt --all -- --check
