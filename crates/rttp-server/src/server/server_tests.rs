@@ -208,6 +208,85 @@ fn access_control_allow_origin_helpers_validate_replace_and_preserve_raw_metadat
 }
 
 #[test]
+fn cross_origin_resource_policy_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Cross-Origin-Resource-Policy", "same-site")
+    .header("cross-origin-resource-policy", "cross-origin")
+    .with_cross_origin_resource_policy("SAME-ORIGIN")
+    .expect("Cross-Origin-Resource-Policy should be accepted");
+
+  assert_eq!(
+    "same-origin",
+    response
+      .cross_origin_resource_policy()
+      .expect("Cross-Origin-Resource-Policy should parse")
+      .expect("Cross-Origin-Resource-Policy should be present")
+      .header_value()
+  );
+  assert_eq!(
+    vec![("Cross-Origin-Resource-Policy", "same-origin")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn cross_origin_resource_policy_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::ok([]).header("Cross-Origin-Resource-Policy", "SAME-ORIGIN");
+  assert_eq!(
+    "same-origin",
+    raw
+      .cross_origin_resource_policy()
+      .expect("raw SAME-ORIGIN should parse")
+      .expect("Cross-Origin-Resource-Policy should be present")
+      .header_value()
+  );
+  assert_eq!(
+    Some("SAME-ORIGIN"),
+    raw
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Cross-Origin-Resource-Policy"))
+      .map(|header| header.value.as_str())
+  );
+
+  let malformed = HttpResponse::ok([]).header("Cross-Origin-Resource-Policy", "same origin");
+  assert!(malformed.cross_origin_resource_policy().is_err());
+  assert!(HttpResponse::ok([])
+    .with_cross_origin_resource_policy("same origin")
+    .is_err());
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .cross_origin_resource_policy()
+      .expect("absent Cross-Origin-Resource-Policy should parse")
+  );
+  for value in ["same-origin", "same-site", "cross-origin"] {
+    assert_eq!(
+      value,
+      HttpResponse::ok([])
+        .with_cross_origin_resource_policy(value)
+        .expect("valid Cross-Origin-Resource-Policy should be accepted")
+        .cross_origin_resource_policy()
+        .expect("Cross-Origin-Resource-Policy should parse")
+        .expect("Cross-Origin-Resource-Policy should be present")
+        .header_value()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("Cross-Origin-Resource-Policy", "same-origin")
+    .header("cross-origin-resource-policy", "same-site");
+  assert!(duplicate.cross_origin_resource_policy().is_err());
+  assert!(HttpResponse::ok([])
+    .with_cross_origin_resource_policy("x".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
 fn access_control_allow_headers_helpers_validate_replace_and_parse_response_metadata() {
   let response = HttpResponse::ok([])
     .header("Access-Control-Allow-Headers", "X-Legacy")

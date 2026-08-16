@@ -535,6 +535,84 @@ fn sync_client_and_server_exchange_access_control_allow_origin_metadata_without_
 }
 
 #[test]
+fn sync_client_and_server_exchange_cross_origin_resource_policy_metadata_without_policy() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind Cross-Origin-Resource-Policy server");
+  let addr = server
+    .local_addr()
+    .expect("Cross-Origin-Resource-Policy server addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        HttpResponse::ok("OK")
+          .with_cross_origin_resource_policy("SAME-ORIGIN")
+          .expect("Cross-Origin-Resource-Policy should be accepted")
+      })
+      .expect("serve Cross-Origin-Resource-Policy response");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/cross-origin-resource-policy"))
+    .emit()
+    .expect("Cross-Origin-Resource-Policy response should parse");
+  assert_eq!(
+    "same-origin",
+    response
+      .cross_origin_resource_policy()
+      .expect("Cross-Origin-Resource-Policy should parse")
+      .expect("Cross-Origin-Resource-Policy should be present")
+      .header_value()
+  );
+  assert_eq!(
+    Some(&"same-origin".to_string()),
+    response.header_value("Cross-Origin-Resource-Policy")
+  );
+  handle
+    .join()
+    .expect("Cross-Origin-Resource-Policy server thread");
+}
+
+#[test]
+fn sync_client_preserves_duplicate_cross_origin_resource_policy_fields_without_policy() {
+  const HEADERS: &[(&str, &str)] = &[
+    ("Cross-Origin-Resource-Policy", "same-origin"),
+    ("cross-origin-resource-policy", "same-site"),
+  ];
+  let (addr, handle) = spawn_metadata_response_server(HEADERS);
+
+  let response = client()
+    .get()
+    .url(format!(
+      "http://{}/matrix/cross-origin-resource-policy-duplicate",
+      addr
+    ))
+    .emit()
+    .expect("duplicate Cross-Origin-Resource-Policy fields should not prevent response parsing");
+
+  assert_eq!(200, response.code());
+  assert_eq!("OK", response.body().string().unwrap());
+  assert_eq!(
+    Some(&"same-origin".to_string()),
+    response.header_value("Cross-Origin-Resource-Policy")
+  );
+  assert_eq!(
+    vec!["same-origin", "same-site"],
+    response
+      .header_values("Cross-Origin-Resource-Policy")
+      .iter()
+      .map(|value| value.as_str())
+      .collect::<Vec<_>>()
+  );
+  assert!(
+    response.cross_origin_resource_policy().is_err(),
+    "duplicate singleton fields must produce the typed parse error"
+  );
+
+  handle.join().expect("metadata response server thread");
+}
+
+#[test]
 fn sync_client_sec_fetch_metadata_is_observed_by_server_helpers() {
   let server =
     rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Sec-Fetch metadata server");
