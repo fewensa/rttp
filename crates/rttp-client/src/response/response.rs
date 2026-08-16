@@ -212,6 +212,22 @@ impl Response {
       .is_some_and(|code| code.is_server_error())
   }
 
+  pub fn is_informational(&self) -> bool {
+    self
+      .classified_status()
+      .is_some_and(|code| code.is_informational())
+  }
+
+  pub fn is_redirection(&self) -> bool {
+    self
+      .classified_status()
+      .is_some_and(|code| code.is_redirection())
+  }
+
+  pub fn is_error(&self) -> bool {
+    self.classified_status().is_some_and(|code| code.is_error())
+  }
+
   pub fn is_partial_content(&self) -> bool {
     self.code() == 206
   }
