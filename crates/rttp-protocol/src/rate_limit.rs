@@ -150,6 +150,21 @@ impl RateLimitRemaining {
   pub const fn has_quota(self) -> bool {
     self.0 > 0
   }
+
+  /// Returns `true` when the stored `RateLimit-Remaining` value is exactly `0`.
+  ///
+  /// Positive values are not exhausted; this helper does not apply any policy
+  /// beyond checking the parsed or constructed zero value.
+  ///
+  /// ```
+  /// use rttp_protocol::rate_limit::RateLimitRemaining;
+  ///
+  /// assert!(RateLimitRemaining::new(0).is_exhausted());
+  /// assert!(!RateLimitRemaining::new(1).is_exhausted());
+  /// ```
+  pub const fn is_exhausted(self) -> bool {
+    self.0 == 0
+  }
 }
 
 impl RateLimitReset {
@@ -163,6 +178,21 @@ impl RateLimitReset {
   /// ```
   pub const fn is_delayed(self) -> bool {
     self.0 > 0
+  }
+
+  /// Returns `true` when the stored `RateLimit-Reset` value is exactly `0`.
+  ///
+  /// Positive values are not immediate; this helper does not apply any policy
+  /// beyond checking the parsed or constructed zero value.
+  ///
+  /// ```
+  /// use rttp_protocol::rate_limit::RateLimitReset;
+  ///
+  /// assert!(RateLimitReset::new(0).is_immediate());
+  /// assert!(!RateLimitReset::new(1).is_immediate());
+  /// ```
+  pub const fn is_immediate(self) -> bool {
+    self.0 == 0
   }
 }
 
