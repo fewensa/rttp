@@ -139,12 +139,28 @@ rate_limit_singleton_value!(
 );
 
 impl RateLimitRemaining {
+  /// Returns `true` when the remaining quota is exactly zero.
+  ///
+  /// ```
+  /// use rttp_protocol::rate_limit::RateLimitRemaining;
+  ///
+  /// assert!(RateLimitRemaining::new(0).is_exhausted());
+  /// assert!(!RateLimitRemaining::new(1).is_exhausted());
+  /// ```
   pub const fn is_exhausted(self) -> bool {
     self.0 == 0
   }
 }
 
 impl RateLimitReset {
+  /// Returns `true` when the reset delay is exactly zero seconds.
+  ///
+  /// ```
+  /// use rttp_protocol::rate_limit::RateLimitReset;
+  ///
+  /// assert!(RateLimitReset::new(0).is_immediate());
+  /// assert!(!RateLimitReset::new(1).is_immediate());
+  /// ```
   pub const fn is_immediate(self) -> bool {
     self.0 == 0
   }
