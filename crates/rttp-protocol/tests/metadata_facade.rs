@@ -2,6 +2,7 @@ use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::content_type::ContentType;
 use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
+use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::entity_tag::{EntityTag, IfMatch};
 use rttp_protocol::fetch_metadata::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 use rttp_protocol::origin::Origin;
@@ -30,6 +31,9 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let cross_origin_embedder_policy =
     CrossOriginEmbedderPolicy::parse(r#"require-corp; report-to="coep""#)
       .expect("Cross-Origin-Embedder-Policy should parse");
+  let cross_origin_opener_policy =
+    CrossOriginOpenerPolicy::parse(r#"same-origin-plus-coep; report-to="coop""#)
+      .expect("Cross-Origin-Opener-Policy should parse");
   let content_type =
     ContentType::parse("text/plain; charset=utf-8").expect("Content-Type should parse");
 
@@ -49,6 +53,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(timing_allow_origin.origins(), ["https://example.test"]);
   assert_eq!(x_content_type_options.header_value(), "nosniff");
   assert_eq!(cross_origin_embedder_policy.header_value(), "require-corp");
+  assert_eq!(
+    cross_origin_opener_policy.header_value(),
+    "same-origin-plus-coep"
+  );
   assert_eq!(content_type.header_value(), "text/plain; charset=utf-8");
 }
 
