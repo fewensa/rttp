@@ -2,6 +2,7 @@ use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::content_type::ContentType;
 use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
+use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::entity_tag::{EntityTag, IfMatch};
 use rttp_protocol::fetch_metadata::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 use rttp_protocol::origin::Origin;
@@ -106,5 +107,17 @@ fn protocol_exports_bounded_referrer_policy_metadata() {
   assert_eq!(
     policy.header_value(),
     "strict-origin-when-cross-origin, origin, no-referrer"
+  );
+}
+
+#[test]
+fn protocol_exports_bounded_cross_origin_opener_policy_metadata() {
+  let cross_origin_opener_policy =
+    CrossOriginOpenerPolicy::parse(r#"noopener-allow-popups; report-to="coop""#)
+      .expect("Cross-Origin-Opener-Policy should parse");
+
+  assert_eq!(
+    cross_origin_opener_policy.header_value(),
+    "noopener-allow-popups"
   );
 }

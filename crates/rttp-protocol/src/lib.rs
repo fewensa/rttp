@@ -24,6 +24,7 @@ pub mod client_hints;
 pub mod content_type;
 pub mod cookie;
 pub mod cross_origin_embedder_policy;
+pub mod cross_origin_opener_policy;
 pub mod cross_origin_resource_policy;
 pub mod digest;
 pub mod entity_tag;
