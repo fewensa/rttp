@@ -24,6 +24,20 @@ discarded; this parser does not retain reporting metadata or enforce embedder
 policy. Case variants, lists, quoted values, unknown tokens, empty values, and
 other unparsable input are errors. The parser never fails open to `unsafe-none`.
 
+## Referer
+
+`referer` parses a singleton HTTP `Referer` request field as one RFC 9110 URI
+reference (`absolute-URI` / `partial-URI`). Each field value is bounded to
+64 KiB. A second field is rejected after every supplied field is bound-checked.
+Surrounding SP and HTAB are trimmed as optional whitespace. The parser
+preserves the trimmed reference text and does not canonicalize scheme, host,
+port, path, query, or userinfo. Fragments, ASCII controls, interior
+whitespace, non-URI bytes, broken percent-encoding, empty values, and values
+the structural URL parser cannot accept are errors. This is syntax validation
+only: callers own trust, logging, CSRF, and `Referrer-Policy` decisions. This
+module is distinct from `referrer_policy`, which parses response policy tokens
+rather than URI references.
+
 ## Referrer-Policy
 
 `referrer_policy` parses one or more `Referrer-Policy` field values into
