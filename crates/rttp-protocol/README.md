@@ -30,7 +30,7 @@ other unparsable input are errors. The parser never fails open to `unsafe-none`.
 structured-field item. Each field value is bounded to 64 KiB. A second field is
 rejected after every supplied field is bound-checked. The bare item must be
 exactly one of the tokens `unsafe-none`, `same-origin-allow-popups`,
-`same-origin`, or `same-origin-plus-coep`. Well-formed parameters, including
+`same-origin`, or `noopener-allow-popups`. Well-formed parameters, including
 `report-to`, are accepted as syntax and discarded; this parser does not retain
 reporting metadata or enforce opener policy. Case variants, lists, quoted
 values, unknown tokens, empty values, and other unparsable input are errors.

@@ -18,9 +18,9 @@ fn cross_origin_opener_policy_parses_standard_directives() {
     CrossOriginOpenerPolicy::parse("same-origin").expect("same-origin should parse")
   );
   assert_eq!(
-    CrossOriginOpenerPolicy::SameOriginPlusCoep,
-    CrossOriginOpenerPolicy::parse("same-origin-plus-coep")
-      .expect("same-origin-plus-coep should parse")
+    CrossOriginOpenerPolicy::NoopenerAllowPopups,
+    CrossOriginOpenerPolicy::parse("noopener-allow-popups")
+      .expect("noopener-allow-popups should parse")
   );
   assert_eq!(
     "unsafe-none",
@@ -35,8 +35,8 @@ fn cross_origin_opener_policy_parses_standard_directives() {
     CrossOriginOpenerPolicy::SameOrigin.header_value()
   );
   assert_eq!(
-    "same-origin-plus-coep",
-    CrossOriginOpenerPolicy::SameOriginPlusCoep.header_value()
+    "noopener-allow-popups",
+    CrossOriginOpenerPolicy::NoopenerAllowPopups.header_value()
   );
 }
 
@@ -58,9 +58,9 @@ fn cross_origin_opener_policy_accepts_http_optional_whitespace_padding() {
 #[test]
 fn cross_origin_opener_policy_accepts_well_formed_parameters_as_syntax() {
   assert_eq!(
-    CrossOriginOpenerPolicy::SameOriginPlusCoep,
-    CrossOriginOpenerPolicy::parse(r#"same-origin-plus-coep; report-to="coop""#)
-      .expect("parameterized same-origin-plus-coep should parse")
+    CrossOriginOpenerPolicy::NoopenerAllowPopups,
+    CrossOriginOpenerPolicy::parse(r#"noopener-allow-popups; report-to="coop""#)
+      .expect("parameterized noopener-allow-popups should parse")
   );
   assert_eq!(
     CrossOriginOpenerPolicy::SameOrigin,
@@ -68,9 +68,9 @@ fn cross_origin_opener_policy_accepts_well_formed_parameters_as_syntax() {
       .expect("unknown well-formed parameters should parse as syntax")
   );
   assert_eq!(
-    "same-origin-plus-coep",
-    CrossOriginOpenerPolicy::parse(r#"same-origin-plus-coep; report-to="coop""#)
-      .expect("parameterized same-origin-plus-coep should parse")
+    "noopener-allow-popups",
+    CrossOriginOpenerPolicy::parse(r#"noopener-allow-popups; report-to="coop""#)
+      .expect("parameterized noopener-allow-popups should parse")
       .header_value()
   );
 }
@@ -91,6 +91,7 @@ fn cross_origin_opener_policy_rejects_empty_duplicate_malformed_and_oversized_va
     "",
     "   ",
     "unknown",
+    "same-origin-plus-coep",
     "same-origin, same-origin-allow-popups",
     "\"same-origin\"",
     "same-origin\r\nX: y",

@@ -17,7 +17,7 @@ pub enum CrossOriginOpenerPolicy {
   UnsafeNone,
   SameOriginAllowPopups,
   SameOrigin,
-  SameOriginPlusCoep,
+  NoopenerAllowPopups,
 }
 
 impl CrossOriginOpenerPolicy {
@@ -40,7 +40,7 @@ impl CrossOriginOpenerPolicy {
       "unsafe-none" => Ok(Self::UnsafeNone),
       "same-origin-allow-popups" => Ok(Self::SameOriginAllowPopups),
       "same-origin" => Ok(Self::SameOrigin),
-      "same-origin-plus-coep" => Ok(Self::SameOriginPlusCoep),
+      "noopener-allow-popups" => Ok(Self::NoopenerAllowPopups),
       _ => Err(invalid_value()),
     }
   }
@@ -50,7 +50,7 @@ impl CrossOriginOpenerPolicy {
       Self::UnsafeNone => "unsafe-none",
       Self::SameOriginAllowPopups => "same-origin-allow-popups",
       Self::SameOrigin => "same-origin",
-      Self::SameOriginPlusCoep => "same-origin-plus-coep",
+      Self::NoopenerAllowPopups => "noopener-allow-popups",
     }
   }
 }

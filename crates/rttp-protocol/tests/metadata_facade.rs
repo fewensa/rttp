@@ -32,7 +32,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
     CrossOriginEmbedderPolicy::parse(r#"require-corp; report-to="coep""#)
       .expect("Cross-Origin-Embedder-Policy should parse");
   let cross_origin_opener_policy =
-    CrossOriginOpenerPolicy::parse(r#"same-origin-plus-coep; report-to="coop""#)
+    CrossOriginOpenerPolicy::parse(r#"noopener-allow-popups; report-to="coop""#)
       .expect("Cross-Origin-Opener-Policy should parse");
   let content_type =
     ContentType::parse("text/plain; charset=utf-8").expect("Content-Type should parse");
@@ -55,7 +55,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(cross_origin_embedder_policy.header_value(), "require-corp");
   assert_eq!(
     cross_origin_opener_policy.header_value(),
-    "same-origin-plus-coep"
+    "noopener-allow-popups"
   );
   assert_eq!(content_type.header_value(), "text/plain; charset=utf-8");
 }
