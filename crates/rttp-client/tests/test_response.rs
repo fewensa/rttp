@@ -1,7 +1,8 @@
 use rttp_client::response::{
   AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType,
-  CrossOriginEmbedderPolicy, CrossOriginResourcePolicy, Digest, HttpClearSiteData, HttpSetCookies,
-  LinkValues, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
+  CrossOriginEmbedderPolicy, CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest,
+  HttpClearSiteData, HttpSetCookies, LinkValues, ReferrerPolicy, ReferrerPolicyToken, Response,
+  RetryAfter, ServerTiming,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -3041,6 +3042,95 @@ fn test_cross_origin_embedder_policy_response_metadata_rejects_invalid_and_absen
     absent
       .cross_origin_embedder_policy()
       .expect("absent COEP should parse")
+  );
+}
+
+#[test]
+fn test_cross_origin_opener_policy_response_metadata_preserves_raw_headers() {
+  for (value, policy) in [
+    ("unsafe-none", CrossOriginOpenerPolicy::UnsafeNone),
+    (
+      "same-origin-allow-popups",
+      CrossOriginOpenerPolicy::SameOriginAllowPopups,
+    ),
+    ("same-origin", CrossOriginOpenerPolicy::SameOrigin),
+    (
+      r#"noopener-allow-popups; report-to="coop""#,
+      CrossOriginOpenerPolicy::NoopenerAllowPopups,
+    ),
+  ] {
+    let raw = format!(
+      "HTTP/1.1 200 OK\r\nCross-Origin-Opener-Policy: {value}\r\nContent-Length: 0\r\n\r\n"
+    );
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should parse");
+
+    assert_eq!(
+      policy,
+      response
+        .cross_origin_opener_policy()
+        .expect("COOP should parse")
+        .expect("COOP should be present")
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Cross-Origin-Opener-Policy")
+    );
+  }
+}
+
+#[test]
+fn test_cross_origin_opener_policy_response_metadata_rejects_invalid_and_absent_values() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Cross-Origin-Opener-Policy: same-origin\r\n",
+    "Cross-Origin-Opener-Policy: same-origin-allow-popups\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  assert!(response.cross_origin_opener_policy().is_err());
+  assert_eq!(
+    Some(&"same-origin".to_string()),
+    response.header_value("Cross-Origin-Opener-Policy")
+  );
+
+  let malformed = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nCross-Origin-Opener-Policy: same origin\r\nContent-Length: 0\r\n\r\n"
+      .to_vec(),
+  )
+  .expect("raw response with malformed COOP should parse");
+  assert!(malformed.cross_origin_opener_policy().is_err());
+  assert_eq!(
+    Some(&"same origin".to_string()),
+    malformed.header_value("Cross-Origin-Opener-Policy")
+  );
+
+  let case_variant = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nCross-Origin-Opener-Policy: SAME-ORIGIN\r\nContent-Length: 0\r\n\r\n"
+      .to_vec(),
+  )
+  .expect("raw response with case-variant COOP should parse");
+  assert!(case_variant.cross_origin_opener_policy().is_err());
+  assert_eq!(
+    Some(&"SAME-ORIGIN".to_string()),
+    case_variant.header_value("Cross-Origin-Opener-Policy")
+  );
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response without COOP should parse");
+  assert_eq!(
+    None,
+    absent
+      .cross_origin_opener_policy()
+      .expect("absent COOP should parse")
   );
 }
 

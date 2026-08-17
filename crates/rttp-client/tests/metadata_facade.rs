@@ -2,8 +2,8 @@ use rttp_client::response::{
   AcceptCh, AccessControlAllowHeaders, AccessControlAllowHeadersParseError,
   AccessControlAllowMethods, AccessControlAllowMethodsParseError, AccessControlExposeHeaders,
   AccessControlMaxAge, AccessControlMaxAgeParseError, AltSvc, CrossOriginEmbedderPolicy,
-  CrossOriginResourcePolicy, Digest, HttpClearSiteData, PreferenceApplied, Priority,
-  ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Trailer,
+  CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest, HttpClearSiteData, PreferenceApplied,
+  Priority, ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Trailer,
 };
 use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 
@@ -38,6 +38,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     CrossOriginResourcePolicy::parse("same-origin").expect("CORP should parse");
   let cross_origin_embedder_policy =
     CrossOriginEmbedderPolicy::parse("require-corp").expect("COEP should parse");
+  let cross_origin_opener_policy =
+    CrossOriginOpenerPolicy::parse("noopener-allow-popups").expect("COOP should parse");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(allow_methods.methods(), ["GET", "POST"]);
@@ -56,6 +58,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_user.header_value(), "?1");
   assert_eq!(cross_origin_resource_policy.header_value(), "same-origin");
   assert_eq!(cross_origin_embedder_policy.header_value(), "require-corp");
+  assert_eq!(
+    cross_origin_opener_policy.header_value(),
+    "noopener-allow-popups"
+  );
 }
 
 #[test]
