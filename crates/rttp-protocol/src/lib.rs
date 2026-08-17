@@ -14,6 +14,7 @@ pub mod access_control_allow_methods;
 pub mod access_control_allow_origin;
 pub mod access_control_expose_headers;
 pub mod access_control_max_age;
+pub mod access_control_request_headers;
 pub mod alt_svc;
 pub mod cache_control;
 pub mod clear_site_data;
