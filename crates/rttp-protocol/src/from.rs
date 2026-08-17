@@ -199,6 +199,9 @@ fn normalize_display_name(value: &str) -> Result<String, FromParseError> {
   if value.is_empty() {
     return Err(invalid_value());
   }
+  if value.starts_with('.') {
+    return Err(invalid_value());
+  }
 
   let mut words = Vec::new();
   for word in value.split([' ', '\t']) {

@@ -60,6 +60,8 @@ fn from_rejects_malformed_mailboxes() {
     "ops@[127.0.0.1]",
     "Ops Team<ops@example.test>",
     "Ops Team < ops@example.test>",
+    ". Ops <ops@example.test>",
+    ". <ops@example.test>",
     "Ops Team <ops@example.test",
     "Ops Team ops@example.test>",
     "<ops@example.test>",
