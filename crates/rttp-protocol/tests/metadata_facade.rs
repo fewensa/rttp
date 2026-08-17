@@ -34,9 +34,6 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let cross_origin_embedder_policy =
     CrossOriginEmbedderPolicy::parse(r#"require-corp; report-to="coep""#)
       .expect("Cross-Origin-Embedder-Policy should parse");
-  let cross_origin_opener_policy =
-    CrossOriginOpenerPolicy::parse(r#"noopener-allow-popups; report-to="coop""#)
-      .expect("Cross-Origin-Opener-Policy should parse");
   let strict_transport_security =
     StrictTransportSecurity::parse("max-age=31536000; includeSubDomains; preload")
       .expect("Strict-Transport-Security should parse");
@@ -60,10 +57,6 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(timing_allow_origin.origins(), ["https://example.test"]);
   assert_eq!(x_content_type_options.header_value(), "nosniff");
   assert_eq!(cross_origin_embedder_policy.header_value(), "require-corp");
-  assert_eq!(
-    cross_origin_opener_policy.header_value(),
-    "noopener-allow-popups"
-  );
   assert_eq!(
     strict_transport_security.header_value(),
     "max-age=31536000; includeSubDomains; preload"
@@ -114,5 +107,17 @@ fn protocol_exports_bounded_referrer_policy_metadata() {
   assert_eq!(
     policy.header_value(),
     "strict-origin-when-cross-origin, origin, no-referrer"
+  );
+}
+
+#[test]
+fn protocol_exports_bounded_cross_origin_opener_policy_metadata() {
+  let cross_origin_opener_policy =
+    CrossOriginOpenerPolicy::parse(r#"noopener-allow-popups; report-to="coop""#)
+      .expect("Cross-Origin-Opener-Policy should parse");
+
+  assert_eq!(
+    cross_origin_opener_policy.header_value(),
+    "noopener-allow-popups"
   );
 }
