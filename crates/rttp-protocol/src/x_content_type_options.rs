@@ -89,7 +89,10 @@ fn validate_bounded_value(value: &str) -> Result<(), XContentTypeOptionsParseErr
       "X-Content-Type-Options header value is too large",
     ));
   }
-  if value.bytes().any(|byte| byte.is_ascii_control()) {
+  if value
+    .bytes()
+    .any(|byte| byte.is_ascii_control() && byte != b'\t')
+  {
     return Err(invalid_value());
   }
   Ok(())

@@ -20,6 +20,16 @@ fn x_content_type_options_parses_nosniff_case_insensitively() {
 }
 
 #[test]
+fn x_content_type_options_accepts_http_optional_whitespace_padding() {
+  for value in ["\tnosniff\t", " \tnosniff\t ", "nosniff\t", "\tnosniff"] {
+    assert_eq!(
+      XContentTypeOptions::Nosniff,
+      XContentTypeOptions::parse(value).expect("OWS-padded nosniff should parse")
+    );
+  }
+}
+
+#[test]
 fn x_content_type_options_rejects_empty_duplicate_malformed_and_ambiguous_values() {
   for value in [
     "",
