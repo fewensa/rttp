@@ -37,6 +37,7 @@ pub mod range;
 pub mod rate_limit;
 pub mod referrer_policy;
 pub mod server_timing;
+pub mod strict_transport_security;
 pub mod sunset;
 pub mod timing_allow_origin;
 pub mod trailer;

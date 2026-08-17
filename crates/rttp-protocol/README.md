@@ -37,3 +37,19 @@ including repeated tokens, while valid unknown tokens are ignored so future
 policy names remain forward-compatible within the same validation and count
 bounds. A present header set that yields no recognized token still fails as
 invalid.
+
+## Strict-Transport-Security
+
+`strict_transport_security` parses a singleton `Strict-Transport-Security`
+field. Each field value is bounded to 64 KiB. A second field is rejected after
+every supplied field is bound-checked. The field is a semicolon-separated
+directive list bounded to 256 slots, including empty `;` slots from the RFC
+6797 ABNF. `max-age` is required and, after optional quoted-string unescape,
+must be unsigned `1*DIGIT` delta-seconds that fit in `u64`. `includeSubDomains`
+and `preload` are optional valueless flags. Directive names are
+case-insensitive and must appear at most once. Unknown well-formed directives
+are ignored and not retained. Duplicate fields, duplicate directive names,
+valued flags, malformed tokens or quoted-strings, missing `max-age`, and other
+unparsable input are errors. The parser reports declared metadata only; it does
+not pin TLS, store hosts, consult a preload list, or apply HTTPS-only policy.
+`max-age=0` is returned as data and does not delete stored HSTS hosts.
