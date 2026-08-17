@@ -7,8 +7,11 @@ use crate::types::{Auth, Header, IntoHeader, IntoPara, Proxy, ToFormData, ToRoUr
 use crate::{error, Config, H2cClientPolicy};
 #[cfg(feature = "async")]
 use futures::io::AsyncRead;
+use rttp_protocol::access_control_request_headers::AccessControlRequestHeaders;
+use rttp_protocol::access_control_request_method::AccessControlRequestMethod;
 use rttp_protocol::fetch_metadata::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 use rttp_protocol::forwarded::{Forwarded, MAX_FORWARDED_VALUE_BYTES};
+use rttp_protocol::origin::Origin;
 use rttp_protocol::priority::Priority;
 use rttp_protocol::trailer::Trailer;
 use std::io;
@@ -302,6 +305,57 @@ impl HttpClient {
   /// Set the `Sec-Fetch-User: ?1` request metadata without applying browser policy.
   pub fn sec_fetch_user(&mut self) -> &mut Self {
     self.header(("Sec-Fetch-User", SecFetchUser.header_value()))
+  }
+
+  /// Set bounded `Origin` request metadata for preflight composition.
+  ///
+  /// The value must be `null` or an `http`/`https` tuple origin without a
+  /// path, query, fragment, or userinfo. This declares request metadata only;
+  /// it does not decide whether a preflight is needed or apply CORS policy.
+  pub fn origin<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let origin = Origin::parse(value)
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new("Origin", origin.header_value())))
+  }
+
+  /// Set bounded `Access-Control-Request-Method` request metadata.
+  ///
+  /// The value must be a single HTTP method token; `*` and comma-separated
+  /// lists are rejected. This declares request metadata only; it does not
+  /// decide whether a preflight is needed or apply CORS policy.
+  pub fn access_control_request_method<S: AsRef<str>>(
+    &mut self,
+    value: S,
+  ) -> error::Result<&mut Self> {
+    let method = AccessControlRequestMethod::parse(value)
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Access-Control-Request-Method",
+      method.header_value(),
+    )))
+  }
+
+  /// Set bounded `Access-Control-Request-Headers` request metadata.
+  ///
+  /// Field names are normalized to lowercase and duplicates are rejected
+  /// before the header is emitted. This declares request metadata only; it
+  /// does not decide whether a preflight is needed or apply CORS policy.
+  pub fn access_control_request_headers<I, S>(&mut self, field_names: I) -> error::Result<&mut Self>
+  where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+  {
+    let field_names: Vec<String> = field_names
+      .into_iter()
+      .map(|field_name| field_name.as_ref().to_string())
+      .collect();
+    let request_headers =
+      AccessControlRequestHeaders::parse_values(field_names.iter().map(String::as_str))
+        .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Access-Control-Request-Headers",
+      request_headers.header_value(),
+    )))
   }
 
   /// Append a validated `Accept` media range with its supplied quality value.
