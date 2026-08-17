@@ -1,7 +1,7 @@
 use rttp_client::response::{
   AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType,
-  CrossOriginResourcePolicy, Digest, HttpClearSiteData, HttpSetCookies, LinkValues, ReferrerPolicy,
-  ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
+  CrossOriginEmbedderPolicy, CrossOriginResourcePolicy, Digest, HttpClearSiteData, HttpSetCookies,
+  LinkValues, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -2968,6 +2968,79 @@ fn test_cross_origin_resource_policy_response_metadata_rejects_invalid_and_absen
     absent
       .cross_origin_resource_policy()
       .expect("absent CORP should parse")
+  );
+}
+
+#[test]
+fn test_cross_origin_embedder_policy_response_metadata_preserves_raw_headers() {
+  for (value, policy) in [
+    ("unsafe-none", CrossOriginEmbedderPolicy::UnsafeNone),
+    (
+      r#"require-corp; report-to="coep""#,
+      CrossOriginEmbedderPolicy::RequireCorp,
+    ),
+    ("credentialless", CrossOriginEmbedderPolicy::Credentialless),
+  ] {
+    let raw = format!(
+      "HTTP/1.1 200 OK\r\nCross-Origin-Embedder-Policy: {value}\r\nContent-Length: 0\r\n\r\n"
+    );
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should parse");
+
+    assert_eq!(
+      policy,
+      response
+        .cross_origin_embedder_policy()
+        .expect("COEP should parse")
+        .expect("COEP should be present")
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Cross-Origin-Embedder-Policy")
+    );
+  }
+}
+
+#[test]
+fn test_cross_origin_embedder_policy_response_metadata_rejects_invalid_and_absent_values() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Cross-Origin-Embedder-Policy: require-corp\r\n",
+    "Cross-Origin-Embedder-Policy: credentialless\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  assert!(response.cross_origin_embedder_policy().is_err());
+  assert_eq!(
+    Some(&"require-corp".to_string()),
+    response.header_value("Cross-Origin-Embedder-Policy")
+  );
+
+  let malformed = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nCross-Origin-Embedder-Policy: require corp\r\nContent-Length: 0\r\n\r\n"
+      .to_vec(),
+  )
+  .expect("raw response with malformed COEP should parse");
+  assert!(malformed.cross_origin_embedder_policy().is_err());
+  assert_eq!(
+    Some(&"require corp".to_string()),
+    malformed.header_value("Cross-Origin-Embedder-Policy")
+  );
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response without COEP should parse");
+  assert_eq!(
+    None,
+    absent
+      .cross_origin_embedder_policy()
+      .expect("absent COEP should parse")
   );
 }
 
