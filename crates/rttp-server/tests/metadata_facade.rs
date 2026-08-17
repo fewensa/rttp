@@ -1,5 +1,6 @@
 use rttp_server::server::{
   HttpAcceptCh, HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods,
+  HttpAccessControlRequestHeaders, HttpAccessControlRequestHeadersParseError,
   HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError,
   HttpConditionalMetadata, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpPreferenceKind,
   HttpRequest, HttpResponse, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
@@ -20,6 +21,13 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpAccessControlRequestMethod,
     HttpAccessControlRequestMethodParseError,
   > = HttpAccessControlRequestMethod::parse("GET, POST");
+  let request_headers: HttpAccessControlRequestHeaders =
+    HttpAccessControlRequestHeaders::parse("X-Request-Id, Authorization")
+      .expect("Access-Control-Request-Headers should parse");
+  let request_headers_error: Result<
+    HttpAccessControlRequestHeaders,
+    HttpAccessControlRequestHeadersParseError,
+  > = HttpAccessControlRequestHeaders::parse("X-Request Id");
   let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("revision-42"));
   let policy: HttpCrossOriginResourcePolicy = HttpCrossOriginResourcePolicy::parse("same-origin")
     .expect("Cross-Origin-Resource-Policy should parse");
@@ -36,6 +44,11 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(allow_headers.field_names(), ["x-request-id"]);
   assert_eq!("PATCH", request_method.method());
   assert!(request_method_error.is_err());
+  assert_eq!(
+    request_headers.field_names(),
+    ["x-request-id", "authorization"]
+  );
+  assert!(request_headers_error.is_err());
   assert_eq!(policy.header_value(), "same-origin");
   assert_eq!(
     metadata
