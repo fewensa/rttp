@@ -17,6 +17,7 @@ pub mod access_control_max_age;
 pub mod access_control_request_headers;
 pub mod access_control_request_method;
 pub mod alt_svc;
+pub mod authentication_info;
 pub mod cache_control;
 pub mod clear_site_data;
 pub mod client_hints;
