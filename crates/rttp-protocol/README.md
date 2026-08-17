@@ -13,6 +13,15 @@ Protocol helpers define and bound wire metadata for the client and server
 crates. They do not add higher-level runtime policy such as caching,
 authentication, retries, representation selection, or body transformation.
 
+## Authentication-Info
+
+`authentication_info` parses `#auth-param` lists from `Authentication-Info`
+fields. Each field value is bounded to 64 KiB, the combined parameter count is
+bounded to 256, and each parameter value is bounded to 64 KiB. Parameter names
+are matched case-insensitively and must be unique across the combined field
+set. Empty input, empty members, malformed syntax, and duplicate names are
+rejected. This parser does not implement authentication policy.
+
 ## Cross-Origin-Embedder-Policy
 
 `cross_origin_embedder_policy` parses a singleton `Cross-Origin-Embedder-Policy`
