@@ -597,6 +597,28 @@ These APIs only declare or parse HTTP/1.1 metadata. They do not add transfer
 coding engines, trailer scheduling, proxy routing, automatic retries,
 automatic preference handling, cache policy, or forwarding behavior.
 
+### Bounded preflight request metadata
+
+`HttpClient::origin(value)` emits one validated `Origin` field, accepting
+`null` or an `http`/`https` tuple origin without a path, query, fragment, or
+userinfo. `HttpClient::access_control_request_method(value)` emits one
+`Access-Control-Request-Method` field from a single HTTP method token.
+`HttpClient::access_control_request_headers(field_names)` emits one
+`Access-Control-Request-Headers` field from a bounded field-name list,
+normalized to lowercase with duplicates rejected.
+
+These helpers reject invalid input before a socket is opened: origins with a
+path, query, fragment, userinfo, or non-`http(s)` scheme; methods that are
+`*`, comma-separated, or not HTTP tokens; and field names that are malformed,
+duplicated, or excessive. Values are bounded to 64 KiB and the field-name list
+to 256 entries. Callers that need values outside the helper validation can
+retain raw-header control with `header(("Origin", "..."))` and the other
+`header` forms.
+
+These helpers only declare preflight request metadata. RTTP does not decide
+whether a preflight is needed, read `Access-Control-Allow-*` response fields,
+or apply CORS policy.
+
 ### Bounded HTTP/1.1 Vary behavior
 
 `Response::vary()` parses one or more response `Vary` header fields into
@@ -687,6 +709,7 @@ gain additional HTTP/2 header-block handling.
 | HTTP/1.1 response parsing | `Content-Length`, chunked transfer coding, chunk extensions, informational responses, `Response::is_informational`, `is_redirection`, `is_error`, bodyless `204`/`304`, duplicate `Set-Cookie`, and framing ambiguity rejection | Not a complete RFC conformance suite |
 | HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and explicit `Expect: 100-continue` metadata | Expect metadata does not gate body transmission; SOCKS handshakes are delegated to the `socks` crate |
 | Fetch Metadata | Client `sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, and `sec_fetch_user` emit bounded `Sec-Fetch-*` fields; server `Request` helpers parse typed received values while preserving raw headers on errors | No browser security policy, request blocking, origin validation, navigation policy, or automatic header generation |
+| Preflight request metadata | Client `origin`, `access_control_request_method`, and `access_control_request_headers` emit bounded `Origin`, `Access-Control-Request-Method`, and `Access-Control-Request-Headers` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, or CORS policy |
 | Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata | No digest computation, response body hash validation, retries, or signing |
 | Upgrade and tunnel handoff | `CONNECT` returns the tunnel socket after a successful `200`; `upgrade()` returns the socket after `101 Switching Protocols` and skips interim `1xx` responses | Upgraded protocols are handed to the caller and are not parsed by `rttp_client` |
 | Redirects | Auto-redirect covers 301, 302, 303, 307, and 308 method/body behavior, relative and absolute `Location` resolution, same- and cross-authority header handling, loop detection, and redirect bounds | Redirects are HTTP client behavior, not a browser policy implementation |

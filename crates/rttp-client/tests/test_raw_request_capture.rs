@@ -2223,3 +2223,141 @@ fn connect_method_uses_authority_form_request_target() {
 
   assert_eq!(format!("CONNECT {} HTTP/1.1", host), request_line);
 }
+
+#[test]
+fn preflight_metadata_helpers_emit_validated_request_headers() {
+  let request = capture_request(|base_url| {
+    client()
+      .options()
+      .url(format!("{}/asset", base_url))
+      .origin("https://spa.example.test")
+      .expect("Origin should be accepted")
+      .access_control_request_method("PUT")
+      .expect("preflight method should be accepted")
+      .access_control_request_headers(["X-Request-Id", "Content-Type"])
+      .expect("preflight field names should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("https://spa.example.test"),
+    header_value(&request, "Origin")
+  );
+  assert_eq!(
+    Some("PUT"),
+    header_value(&request, "Access-Control-Request-Method")
+  );
+  assert_eq!(
+    Some("x-request-id, content-type"),
+    header_value(&request, "Access-Control-Request-Headers")
+  );
+}
+
+#[test]
+fn origin_helper_emits_null_and_normalized_tuple_origins() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .origin("null")
+      .expect("null Origin should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(Some("null"), header_value(&request, "Origin"));
+
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .origin("https://example.test:443")
+      .expect("default-port Origin should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("https://example.test"),
+    header_value(&request, "Origin")
+  );
+}
+
+#[test]
+fn preflight_metadata_helpers_reject_invalid_input_before_connecting() {
+  for value in [
+    "https://example.test/path".to_string(),
+    "https://example.test?query".to_string(),
+    "ftp://example.test".to_string(),
+    "a".repeat(64 * 1024 + 1),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .origin(value)
+        .expect_err("invalid Origin should be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid Origin should not open a socket"
+    );
+  }
+
+  for value in ["*", "GET, POST", "GET POST", ""] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .access_control_request_method(value)
+        .expect_err("invalid preflight method should be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid preflight method should not open a socket"
+    );
+  }
+
+  for field_names in [
+    vec!["X-Request-Id", "x-request-id"],
+    vec!["bad field"],
+    vec!["X-Id", "X-Id\rInjected: yes"],
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .access_control_request_headers(field_names)
+        .expect_err("invalid preflight field names should be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid preflight field names should not open a socket"
+    );
+  }
+
+  let too_many = (0..257)
+    .map(|index| format!("x{index}"))
+    .collect::<Vec<_>>();
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .access_control_request_headers(&too_many)
+      .expect_err("too many preflight field names should be rejected");
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "excessive preflight field names should not open a socket"
+  );
+}
