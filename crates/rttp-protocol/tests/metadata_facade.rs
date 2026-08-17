@@ -6,6 +6,7 @@ use rttp_protocol::entity_tag::{EntityTag, IfMatch};
 use rttp_protocol::fetch_metadata::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 use rttp_protocol::origin::Origin;
 use rttp_protocol::prefer::{Prefer, PreferenceApplied, PreferenceKind};
+use rttp_protocol::referer::Referer;
 use rttp_protocol::referrer_policy::{ReferrerPolicy, ReferrerPolicyToken};
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
 use rttp_protocol::x_content_type_options::XContentTypeOptions;
@@ -23,6 +24,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
   let fetch_user = SecFetchUser::parse("?1").expect("Sec-Fetch-User should parse");
   let origin = Origin::parse("https://example.test").expect("Origin should parse");
+  let referer = Referer::parse("https://example.test/path?q=1").expect("Referer should parse");
   let timing_allow_origin =
     TimingAllowOrigin::parse("https://example.test").expect("Timing-Allow-Origin should parse");
   let x_content_type_options =
@@ -46,6 +48,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_dest.header_value(), "document");
   assert_eq!(fetch_user.header_value(), "?1");
   assert_eq!(origin.header_value(), "https://example.test");
+  assert_eq!(referer.header_value(), "https://example.test/path?q=1");
   assert_eq!(timing_allow_origin.origins(), ["https://example.test"]);
   assert_eq!(x_content_type_options.header_value(), "nosniff");
   assert_eq!(cross_origin_embedder_policy.header_value(), "require-corp");
