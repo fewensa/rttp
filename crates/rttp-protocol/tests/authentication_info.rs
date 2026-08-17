@@ -48,6 +48,13 @@ fn authentication_info_unescapes_quoted_string_values() {
 }
 
 #[test]
+fn authentication_info_accepts_obs_text_in_quoted_pair_escapes() {
+  let info = AuthenticationInfo::parse(r#"note="\é""#).expect("escaped obs-text should parse");
+
+  assert_eq!(info.parameter("note"), Some("é"));
+}
+
+#[test]
 fn authentication_info_accepts_bws_around_equals_and_ows_around_commas() {
   let info = AuthenticationInfo::parse("nextnonce\t=\t\"abc\" , qop = auth")
     .expect("BWS and OWS should parse");

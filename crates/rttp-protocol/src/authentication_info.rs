@@ -24,7 +24,7 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::http1::{is_token, is_token_byte};
+use crate::http1::{is_qdtext, is_quoted_pair_char, is_token, is_token_byte};
 
 /// Maximum bytes accepted in an `Authentication-Info` field value.
 pub const MAX_AUTHENTICATION_INFO_VALUE_BYTES: usize = 64 * 1024;
@@ -222,37 +222,35 @@ fn parse_parameter_value(
   let bytes = value.as_bytes();
   if bytes.get(*position) == Some(&b'"') {
     *position += 1;
-    let mut parsed = String::new();
-    let mut unescaped_start = *position;
-    let mut escaped = false;
-    while *position < bytes.len() {
-      let byte = bytes[*position];
-      if escaped {
-        *position += 1;
-        if !(byte == b'\t' || (0x20..=0x7e).contains(&byte)) {
+    let mut parsed = Vec::new();
+    while let Some(&byte) = bytes.get(*position) {
+      *position += 1;
+      match byte {
+        b'"' => {
+          return String::from_utf8(parsed).map_err(|_| {
+            AuthenticationInfoParseError::new("invalid Authentication-Info parameter")
+          });
+        }
+        b'\\' => {
+          let Some(&escaped) = bytes.get(*position) else {
+            return Err(AuthenticationInfoParseError::new(
+              "invalid Authentication-Info parameter",
+            ));
+          };
+          if !is_quoted_pair_char(escaped) {
+            return Err(AuthenticationInfoParseError::new(
+              "invalid Authentication-Info parameter",
+            ));
+          }
+          *position += 1;
+          parsed.push(escaped);
+        }
+        _ if is_qdtext(byte) => parsed.push(byte),
+        _ => {
           return Err(AuthenticationInfoParseError::new(
             "invalid Authentication-Info parameter",
           ));
         }
-        parsed.push(byte as char);
-        escaped = false;
-        unescaped_start = *position;
-      } else if byte == b'\\' {
-        parsed.push_str(&value[unescaped_start..*position]);
-        *position += 1;
-        escaped = true;
-      } else if byte == b'"' {
-        parsed.push_str(&value[unescaped_start..*position]);
-        *position += 1;
-        return Ok(parsed);
-      } else if !(byte == b'\t'
-        || matches!(byte, 0x20..=0x21 | 0x23..=0x5b | 0x5d..=0x7e | 0x80..=0xff))
-      {
-        return Err(AuthenticationInfoParseError::new(
-          "invalid Authentication-Info parameter",
-        ));
-      } else {
-        *position += 1;
       }
     }
     Err(AuthenticationInfoParseError::new(
