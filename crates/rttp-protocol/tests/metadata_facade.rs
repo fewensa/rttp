@@ -8,6 +8,7 @@ use rttp_protocol::origin::Origin;
 use rttp_protocol::prefer::{Prefer, PreferenceApplied, PreferenceKind};
 use rttp_protocol::referer::Referer;
 use rttp_protocol::referrer_policy::{ReferrerPolicy, ReferrerPolicyToken};
+use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
 use rttp_protocol::x_content_type_options::XContentTypeOptions;
 
@@ -32,6 +33,9 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let cross_origin_embedder_policy =
     CrossOriginEmbedderPolicy::parse(r#"require-corp; report-to="coep""#)
       .expect("Cross-Origin-Embedder-Policy should parse");
+  let strict_transport_security =
+    StrictTransportSecurity::parse("max-age=31536000; includeSubDomains; preload")
+      .expect("Strict-Transport-Security should parse");
   let content_type =
     ContentType::parse("text/plain; charset=utf-8").expect("Content-Type should parse");
 
@@ -52,6 +56,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(timing_allow_origin.origins(), ["https://example.test"]);
   assert_eq!(x_content_type_options.header_value(), "nosniff");
   assert_eq!(cross_origin_embedder_policy.header_value(), "require-corp");
+  assert_eq!(
+    strict_transport_security.header_value(),
+    "max-age=31536000; includeSubDomains; preload"
+  );
   assert_eq!(content_type.header_value(), "text/plain; charset=utf-8");
 }
 
