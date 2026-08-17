@@ -20,6 +20,7 @@ pub mod cache_control;
 pub mod clear_site_data;
 pub mod client_hints;
 pub mod cookie;
+pub mod cross_origin_opener_policy;
 pub mod cross_origin_resource_policy;
 pub mod digest;
 pub mod entity_tag;
