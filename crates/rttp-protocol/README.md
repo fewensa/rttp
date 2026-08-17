@@ -13,6 +13,15 @@ Protocol helpers define and bound wire metadata for the client and server
 crates. They do not add higher-level runtime policy such as caching,
 authentication, retries, representation selection, or body transformation.
 
+## Authentication-Info
+
+`authentication_info` parses `#auth-param` lists from `Authentication-Info`
+fields. Each field value is bounded to 64 KiB, the combined parameter count is
+bounded to 256, and each parameter value is bounded to 64 KiB. Parameter names
+are matched case-insensitively and must be unique across the combined field
+set. Empty input, empty members, malformed syntax, and duplicate names are
+rejected. This parser does not implement authentication policy.
+
 ## Cross-Origin-Embedder-Policy
 
 `cross_origin_embedder_policy` parses a singleton `Cross-Origin-Embedder-Policy`
@@ -36,6 +45,20 @@ reporting metadata or enforce opener policy. Case variants, lists, quoted
 values, unknown tokens, empty values, and other unparsable input are errors.
 The parser never fails open to `unsafe-none`.
 
+## Referer
+
+`referer` parses a singleton HTTP `Referer` request field as one RFC 9110 URI
+reference (`absolute-URI` / `partial-URI`). Each field value is bounded to
+64 KiB. A second field is rejected after every supplied field is bound-checked.
+Surrounding SP and HTAB are trimmed as optional whitespace. The parser
+preserves the trimmed reference text and does not canonicalize scheme, host,
+port, path, query, or userinfo. Fragments, ASCII controls, interior
+whitespace, non-URI bytes, broken percent-encoding, empty values, and values
+the structural URL parser cannot accept are errors. This is syntax validation
+only: callers own trust, logging, CSRF, and `Referrer-Policy` decisions. This
+module is distinct from `referrer_policy`, which parses response policy tokens
+rather than URI references.
+
 ## Referrer-Policy
 
 `referrer_policy` parses one or more `Referrer-Policy` field values into
@@ -49,3 +72,19 @@ including repeated tokens, while valid unknown tokens are ignored so future
 policy names remain forward-compatible within the same validation and count
 bounds. A present header set that yields no recognized token still fails as
 invalid.
+
+## Strict-Transport-Security
+
+`strict_transport_security` parses a singleton `Strict-Transport-Security`
+field. Each field value is bounded to 64 KiB. A second field is rejected after
+every supplied field is bound-checked. The field is a semicolon-separated
+directive list bounded to 256 slots, including empty `;` slots from the RFC
+6797 ABNF. `max-age` is required and, after optional quoted-string unescape,
+must be unsigned `1*DIGIT` delta-seconds that fit in `u64`. `includeSubDomains`
+and `preload` are optional valueless flags. Directive names are
+case-insensitive and must appear at most once. Unknown well-formed directives
+are ignored and not retained. Duplicate fields, duplicate directive names,
+valued flags, malformed tokens or quoted-strings, missing `max-age`, and other
+unparsable input are errors. The parser reports declared metadata only; it does
+not pin TLS, store hosts, consult a preload list, or apply HTTPS-only policy.
+`max-age=0` is returned as data and does not delete stored HSTS hosts.

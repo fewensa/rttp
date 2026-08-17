@@ -1,5 +1,9 @@
 use super::*;
 
+pub use rttp_protocol::access_control_request_headers::{
+  AccessControlRequestHeaders as HttpAccessControlRequestHeaders,
+  AccessControlRequestHeadersParseError as HttpAccessControlRequestHeadersParseError,
+};
 pub use rttp_protocol::access_control_request_method::{
   AccessControlRequestMethod as HttpAccessControlRequestMethod,
   AccessControlRequestMethodParseError as HttpAccessControlRequestMethodParseError,
@@ -359,6 +363,21 @@ impl Request {
       return Ok(None);
     }
     HttpAccessControlRequestMethod::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Access-Control-Request-Headers` preflight metadata
+  /// without applying CORS policy.
+  pub fn access_control_request_headers(
+    &self,
+  ) -> Result<Option<HttpAccessControlRequestHeaders>, HttpAccessControlRequestHeadersParseError>
+  {
+    let values: Vec<&str> = self
+      .headers_named("Access-Control-Request-Headers")
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAccessControlRequestHeaders::parse_values(values).map(Some)
   }
 
   /// Parses exactly one bounded `Authorization` field as opaque typed
@@ -2152,6 +2171,28 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpAccessControlRequestMethod::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Access-Control-Request-Headers` preflight metadata
+  /// without applying CORS policy.
+  pub fn access_control_request_headers(
+    &self,
+  ) -> Result<Option<HttpAccessControlRequestHeaders>, HttpAccessControlRequestHeadersParseError>
+  {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Access-Control-Request-Headers")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAccessControlRequestHeaders::parse_values(values).map(Some)
   }
 
   /// Parses received `Accept-Encoding` request metadata without enabling

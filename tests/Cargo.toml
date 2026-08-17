@@ -9,6 +9,7 @@ flate2 = "1.0"
 futures = "0.3"
 httpdate = "1.0"
 rttp_client = { path = "../crates/rttp-client", features = ["http2"] }
+rttp = { path = "../crates/rttp", features = ["client"] }
 rttp_server = { package = "rttp-server", path = "../crates/rttp-server" }
 rttp_test_support = { path = "../crates/rttp-test-support" }
 
