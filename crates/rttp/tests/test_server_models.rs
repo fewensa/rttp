@@ -2,10 +2,10 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use rttp::server::{
   HttpAccept, HttpAcceptCh, HttpAcceptRanges, HttpAccessControlAllowHeaders,
-  HttpAccessControlAllowMethods, HttpAccessControlAllowOrigin, HttpAllowedMethods,
-  HttpAuthorization, HttpByteRange, HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata,
-  HttpContentDisposition, HttpContentLanguages, HttpContentSecurityPolicy, HttpContentType,
-  HttpCriticalCh, HttpEntityTag, HttpExpectations, HttpIfNoneMatch, HttpIfRange,
+  HttpAccessControlAllowMethods, HttpAccessControlAllowOrigin, HttpAccessControlRequestMethod,
+  HttpAllowedMethods, HttpAuthorization, HttpByteRange, HttpByteRangeError, HttpClearSiteData,
+  HttpConditionalMetadata, HttpContentDisposition, HttpContentLanguages, HttpContentSecurityPolicy,
+  HttpContentType, HttpCriticalCh, HttpEntityTag, HttpExpectations, HttpIfNoneMatch, HttpIfRange,
   HttpIfRangeRequestOutcome, HttpLinkValues, HttpPermissionsPolicy, HttpReferrerPolicy,
   HttpReportingEndpoints, HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl,
   HttpRequestTe, HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings,
@@ -80,6 +80,41 @@ fn response_access_control_allow_methods_helper_validates_and_preserves_raw_head
     HttpResponse::ok("body")
       .access_control_allow_methods()
       .expect("absent Access-Control-Allow-Methods should parse")
+  );
+}
+
+#[test]
+fn request_access_control_request_method_preserves_absent_valid_and_malformed_metadata() {
+  let absent = parse_request("OPTIONS /widgets HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .access_control_request_method()
+      .expect("missing Access-Control-Request-Method should be accepted")
+  );
+
+  let request = parse_request(concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Method: patch\r\n",
+    "\r\n"
+  ));
+  let method: HttpAccessControlRequestMethod = request
+    .access_control_request_method()
+    .expect("Access-Control-Request-Method should parse")
+    .expect("Access-Control-Request-Method should be present");
+  assert_eq!("PATCH", method.method());
+
+  let malformed = parse_request(concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Method: GET, POST\r\n",
+    "\r\n"
+  ));
+  assert!(malformed.access_control_request_method().is_err());
+  assert_eq!(
+    Some("GET, POST"),
+    malformed.header("Access-Control-Request-Method")
   );
 }
 
