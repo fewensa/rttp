@@ -19,6 +19,56 @@ fn request_cache_control_combines_case_insensitive_header_fields() {
 }
 
 #[test]
+fn request_access_control_request_method_parses_preflight_metadata_without_policy() {
+  let absent_raw = "OPTIONS /widgets HTTP/1.1\r\nHost: example.test\r\n\r\n";
+  let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
+  let absent = Request::read_next_from(&mut absent_reader)
+    .expect("absent request should parse")
+    .expect("absent request should be present");
+  assert_eq!(
+    None,
+    absent
+      .access_control_request_method()
+      .expect("missing Access-Control-Request-Method should be accepted")
+  );
+
+  let valid_raw = concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Method: patch\r\n",
+    "\r\n"
+  );
+  let mut valid_reader = BufReader::new(Cursor::new(valid_raw.as_bytes()));
+  let valid = Request::read_next_from(&mut valid_reader)
+    .expect("valid request should parse")
+    .expect("valid request should be present");
+  assert_eq!(
+    "PATCH",
+    valid
+      .access_control_request_method()
+      .expect("Access-Control-Request-Method should parse")
+      .expect("Access-Control-Request-Method should be present")
+      .method()
+  );
+
+  let malformed_raw = concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Method: GET, POST\r\n",
+    "\r\n"
+  );
+  let mut malformed_reader = BufReader::new(Cursor::new(malformed_raw.as_bytes()));
+  let malformed = Request::read_next_from(&mut malformed_reader)
+    .expect("malformed metadata should not reject the request frame")
+    .expect("malformed request should be present");
+  assert!(malformed.access_control_request_method().is_err());
+  assert_eq!(
+    Some("GET, POST"),
+    malformed.header("Access-Control-Request-Method")
+  );
+}
+
+#[test]
 fn request_raw_parser_rejects_folded_and_bare_lf_headers() {
   for raw in [
     b"GET / HTTP/1.1\r\nHost: example.test\r\nX-Test: first\r\n second\r\n\r\n".as_slice(),
