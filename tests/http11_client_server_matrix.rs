@@ -23,6 +23,59 @@ fn client() -> HttpClient {
   HttpClient::new()
 }
 
+#[derive(Debug, PartialEq)]
+struct ObservedCorsPreflight {
+  method: String,
+  origin: Option<String>,
+  raw_request_method: Option<String>,
+  raw_request_headers: Option<String>,
+  request_method: Result<Option<String>, String>,
+  request_headers: Result<Option<Vec<String>>, String>,
+}
+
+fn observe_cors_preflight(request: Request) -> ObservedCorsPreflight {
+  ObservedCorsPreflight {
+    method: request.method().to_string(),
+    origin: request.header("Origin").map(str::to_string),
+    raw_request_method: request
+      .header("Access-Control-Request-Method")
+      .map(str::to_string),
+    raw_request_headers: request
+      .header("Access-Control-Request-Headers")
+      .map(str::to_string),
+    request_method: request
+      .access_control_request_method()
+      .map(|method| method.map(|method| method.method().to_string()))
+      .map_err(|error| error.to_string()),
+    request_headers: request
+      .access_control_request_headers()
+      .map(|headers| headers.map(|headers| headers.field_names().to_vec()))
+      .map_err(|error| error.to_string()),
+  }
+}
+
+fn spawn_facade_cors_preflight_observer() -> (
+  std::net::SocketAddr,
+  mpsc::Receiver<ObservedCorsPreflight>,
+  thread::JoinHandle<()>,
+) {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind CORS preflight facade server");
+  let addr = server.local_addr().expect("CORS preflight facade addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send(observe_cors_preflight(request))
+          .expect("send observed CORS preflight metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve CORS preflight facade request");
+  });
+
+  (addr, observed_rx, handle)
+}
+
 fn cache_control_response(values: &[&str]) -> Vec<u8> {
   let mut response = String::from("HTTP/1.1 200 OK\r\n");
   for value in values {
@@ -663,6 +716,141 @@ fn sync_client_sec_fetch_metadata_is_observed_by_server_helpers() {
   assert!(user.expect("Sec-Fetch-User should parse").is_some());
 
   handle.join().expect("Sec-Fetch metadata server thread");
+}
+
+#[test]
+fn facade_client_and_server_exchange_valid_cors_preflight_metadata_without_policy() {
+  let (addr, observed_rx, handle) = spawn_facade_cors_preflight_observer();
+
+  let response = rttp::Http::client()
+    .options()
+    .url(format!("http://{addr}/matrix/cors-preflight"))
+    .origin("https://spa.example.test")
+    .expect("Origin should be accepted")
+    .access_control_request_method("patch")
+    .expect("Access-Control-Request-Method should be accepted")
+    .access_control_request_headers(["X-Request-Id", "Content-Type"])
+    .expect("Access-Control-Request-Headers should be accepted")
+    .emit()
+    .expect("CORS preflight request should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(None, response.header_value("Access-Control-Allow-Origin"));
+  assert_eq!(
+    ObservedCorsPreflight {
+      method: "OPTIONS".to_string(),
+      origin: Some("https://spa.example.test".to_string()),
+      raw_request_method: Some("PATCH".to_string()),
+      raw_request_headers: Some("x-request-id, content-type".to_string()),
+      request_method: Ok(Some("PATCH".to_string())),
+      request_headers: Ok(Some(vec![
+        "x-request-id".to_string(),
+        "content-type".to_string(),
+      ])),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe valid CORS preflight metadata")
+  );
+  handle
+    .join()
+    .expect("valid CORS preflight facade server thread");
+}
+
+#[test]
+fn facade_server_reports_absent_cors_preflight_metadata_without_policy() {
+  let (addr, observed_rx, handle) = spawn_facade_cors_preflight_observer();
+
+  let response = rttp::Http::client()
+    .options()
+    .url(format!("http://{addr}/matrix/cors-preflight-absent"))
+    .emit()
+    .expect("OPTIONS request without preflight metadata should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    ObservedCorsPreflight {
+      method: "OPTIONS".to_string(),
+      origin: None,
+      raw_request_method: None,
+      raw_request_headers: None,
+      request_method: Ok(None),
+      request_headers: Ok(None),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe absent CORS preflight metadata")
+  );
+  handle
+    .join()
+    .expect("absent CORS preflight facade server thread");
+}
+
+#[test]
+fn facade_server_rejects_malformed_cors_preflight_metadata_without_losing_raw_headers() {
+  let (addr, observed_rx, handle) = spawn_facade_cors_preflight_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect malformed CORS preflight request");
+  stream
+    .write_all(
+      b"OPTIONS /matrix/cors-preflight-malformed HTTP/1.1\r\nHost: example.test\r\nOrigin: https://spa.example.test\r\nAccess-Control-Request-Method: GET, POST\r\nAccess-Control-Request-Headers: X Bad\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write malformed CORS preflight request");
+
+  let observed = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe malformed CORS preflight metadata");
+  assert_eq!("OPTIONS", observed.method);
+  assert_eq!(
+    Some("https://spa.example.test".to_string()),
+    observed.origin
+  );
+  assert_eq!(Some("GET, POST".to_string()), observed.raw_request_method);
+  assert_eq!(Some("X Bad".to_string()), observed.raw_request_headers);
+  assert!(observed.request_method.is_err());
+  assert!(observed.request_headers.is_err());
+
+  handle
+    .join()
+    .expect("malformed CORS preflight facade server thread");
+}
+
+#[test]
+fn facade_server_combines_multi_header_cors_preflight_metadata_without_policy() {
+  let (addr, observed_rx, handle) = spawn_facade_cors_preflight_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect multi-header CORS preflight request");
+  stream
+    .write_all(
+      b"OPTIONS /matrix/cors-preflight-multi-header HTTP/1.1\r\nHost: example.test\r\nOrigin: https://spa.example.test\r\nAccess-Control-Request-Method: patch\r\nAccess-Control-Request-Headers: X-Request-Id\r\naccess-control-request-headers: Content-Type\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write multi-header CORS preflight request");
+
+  let observed = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe multi-header CORS preflight metadata");
+  assert_eq!("OPTIONS", observed.method);
+  assert_eq!(
+    Some("https://spa.example.test".to_string()),
+    observed.origin
+  );
+  assert_eq!(Some("patch".to_string()), observed.raw_request_method);
+  assert_eq!(
+    Some("X-Request-Id".to_string()),
+    observed.raw_request_headers
+  );
+  assert_eq!(Ok(Some("PATCH".to_string())), observed.request_method);
+  assert_eq!(
+    Ok(Some(vec![
+      "x-request-id".to_string(),
+      "content-type".to_string(),
+    ])),
+    observed.request_headers
+  );
+
+  handle
+    .join()
+    .expect("multi-header CORS preflight facade server thread");
 }
 
 #[test]
