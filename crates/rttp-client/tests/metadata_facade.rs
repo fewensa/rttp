@@ -4,7 +4,7 @@ use rttp_client::response::{
   AccessControlMaxAge, AccessControlMaxAgeParseError, AltSvc, CrossOriginEmbedderPolicy,
   CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest, HttpClearSiteData, PreferenceApplied,
   Priority, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ReferrerPolicy,
-  ReferrerPolicyToken, ServerTiming, Trailer,
+  ReferrerPolicyToken, ServerTiming, Trailer, WwwAuthenticate, WwwAuthenticateParseError,
 };
 use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 
@@ -46,6 +46,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
       .expect("Proxy-Authentication-Info should parse");
   let _: ProxyAuthenticationInfoParseError = ProxyAuthenticationInfo::parse("")
     .expect_err("empty Proxy-Authentication-Info should be rejected");
+  let www_authenticate =
+    WwwAuthenticate::parse("Basic realm=\"users\"").expect("WWW-Authenticate should parse");
+  let _: WwwAuthenticateParseError = WwwAuthenticate::parse("Basic realm=")
+    .expect_err("malformed WWW-Authenticate should be rejected");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(allow_methods.methods(), ["GET", "POST"]);
@@ -71,6 +75,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(
     proxy_authentication_info.parameter("nextnonce"),
     Some("6629fae49393a05397450978507c4ef1")
+  );
+  assert_eq!(
+    www_authenticate.challenges()[0].parameter("realm"),
+    Some("users")
   );
 }
 

@@ -25,6 +25,12 @@ fn compatibility_facade_exports_client_metadata_types() {
       "noopener-allow-popups; report-to=\"coop\"",
     )
     .expect("Cross-Origin-Opener-Policy should parse");
+  let www_authenticate: rttp::WwwAuthenticate =
+    rttp_client::response::WwwAuthenticate::parse("Basic realm=\"users\"")
+      .expect("WWW-Authenticate should parse");
+  let _: rttp::WwwAuthenticateParseError =
+    rttp_client::response::WwwAuthenticate::parse("Basic realm=")
+      .expect_err("malformed WWW-Authenticate should be rejected");
   let fetch_site: rttp::SecFetchSite =
     rttp_client::SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
 
@@ -34,6 +40,10 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(accept_post.media_types().len(), 1);
   assert_eq!(embedder_policy.header_value(), "require-corp");
   assert_eq!(opener_policy.header_value(), "noopener-allow-popups");
+  assert_eq!(
+    www_authenticate.challenges()[0].parameter("realm"),
+    Some("users")
+  );
   assert_eq!(fetch_site.header_value(), "same-origin");
 }
 
