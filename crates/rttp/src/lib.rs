@@ -8,7 +8,8 @@ pub use rttp_server::server;
 pub use rttp_client::response::{
   AcceptCh, AcceptPatch, AcceptPost, AltSvc, AltSvcAlternative, AltSvcParameter, AltSvcParseError,
   CriticalCh, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyParseError,
-  CrossOriginOpenerPolicy, CrossOriginOpenerPolicyParseError, Upgrade, UpgradeParseError,
+  CrossOriginOpenerPolicy, CrossOriginOpenerPolicyParseError, StrictTransportSecurity,
+  StrictTransportSecurityParseError, Upgrade, UpgradeParseError,
 };
 #[cfg(feature = "client")]
 pub use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
