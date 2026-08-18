@@ -69,6 +69,14 @@ fn proxy_authenticate_unescapes_quoted_parameter_values() {
 }
 
 #[test]
+fn proxy_authenticate_accepts_obs_text_in_quoted_pair_escapes() {
+  let challenges =
+    ProxyAuthenticate::parse(r#"Digest realm="\é""#).expect("escaped obs-text should parse");
+
+  assert_eq!(challenges.challenges()[0].parameter("realm"), Some("é"));
+}
+
+#[test]
 fn proxy_authenticate_accepts_bws_and_case_insensitive_parameter_lookup() {
   let challenges = ProxyAuthenticate::parse(r#"Digest Realm = "apps" , NONCE = abc"#)
     .expect("BWS around equals and OWS around commas should parse");

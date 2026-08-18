@@ -15,6 +15,7 @@ use crate::response::ProxyAuthenticationInfo;
 use crate::response::ReprDigest;
 use crate::response::ServerTiming;
 use crate::response::Trailer;
+use crate::response::TransferEncoding;
 use crate::response::Warning;
 use crate::response::WwwAuthenticate;
 use crate::types::{Cookie, Header, RoUrl, StatusCode};
@@ -581,6 +582,18 @@ impl Response {
       return Ok(None);
     }
     ContentEncoding::parse_values(values.into_iter().map(String::as_str)).map(Some)
+  }
+
+  /// Parses retained `Transfer-Encoding` framing metadata without changing
+  /// HTTP/1 body framing or HTTP/2 decode.
+  pub fn transfer_encoding(&self) -> error::Result<Option<TransferEncoding>> {
+    let values = self.header_values("transfer-encoding");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    TransferEncoding::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   /// Parses all `WWW-Authenticate` fields as bounded authentication challenge metadata.
