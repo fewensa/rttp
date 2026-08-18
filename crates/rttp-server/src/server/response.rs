@@ -24,14 +24,6 @@ pub use rttp_protocol::client_hints::{
   AcceptCh as HttpAcceptCh, AcceptChParseError as HttpAcceptChParseError,
   CriticalCh as HttpCriticalCh, CriticalChParseError as HttpCriticalChParseError,
 };
-pub use rttp_protocol::cross_origin_embedder_policy::{
-  CrossOriginEmbedderPolicy as HttpCrossOriginEmbedderPolicy,
-  CrossOriginEmbedderPolicyParseError as HttpCrossOriginEmbedderPolicyParseError,
-};
-pub use rttp_protocol::cross_origin_opener_policy::{
-  CrossOriginOpenerPolicy as HttpCrossOriginOpenerPolicy,
-  CrossOriginOpenerPolicyParseError as HttpCrossOriginOpenerPolicyParseError,
-};
 pub use rttp_protocol::cross_origin_resource_policy::{
   CrossOriginResourcePolicy as HttpCrossOriginResourcePolicy,
   CrossOriginResourcePolicyParseError as HttpCrossOriginResourcePolicyParseError,
@@ -49,22 +41,11 @@ pub use rttp_protocol::server_timing::{
   ServerTimingParameter as HttpServerTimingParameter,
   ServerTimingParseError as HttpServerTimingParseError,
 };
-pub use rttp_protocol::strict_transport_security::{
-  StrictTransportSecurity as HttpStrictTransportSecurity,
-  StrictTransportSecurityParseError as HttpStrictTransportSecurityParseError,
-};
 pub use rttp_protocol::sunset::SunsetParseError as HttpSunsetParseError;
 pub use rttp_protocol::www_authenticate::{
   WwwAuthenticate as HttpWwwAuthenticate, WwwAuthenticateChallenge as HttpWwwAuthenticateChallenge,
   WwwAuthenticateParameter as HttpWwwAuthenticateParameter,
   WwwAuthenticateParseError as HttpWwwAuthenticateParseError,
-};
-pub use rttp_protocol::x_content_type_options::{
-  XContentTypeOptions as HttpXContentTypeOptions,
-  XContentTypeOptionsParseError as HttpXContentTypeOptionsParseError,
-};
-pub use rttp_protocol::x_frame_options::{
-  XFrameOptions as HttpXFrameOptions, XFrameOptionsParseError as HttpXFrameOptionsParseError,
 };
 
 pub(crate) const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
@@ -785,96 +766,6 @@ impl HttpResponse {
     Ok(self)
   }
 
-  /// Validates and replaces `Cross-Origin-Embedder-Policy` response metadata
-  /// without applying embedder policy.
-  pub fn with_cross_origin_embedder_policy(
-    mut self,
-    value: impl AsRef<str>,
-  ) -> Result<Self, HttpCrossOriginEmbedderPolicyParseError> {
-    let policy = HttpCrossOriginEmbedderPolicy::parse(value)?;
-    self.headers.retain(|header| {
-      !header
-        .name
-        .eq_ignore_ascii_case("Cross-Origin-Embedder-Policy")
-    });
-    self.headers.push(HttpHeader::new(
-      "Cross-Origin-Embedder-Policy",
-      policy.header_value(),
-    ));
-    Ok(self)
-  }
-
-  /// Validates and replaces `Cross-Origin-Opener-Policy` response metadata
-  /// without applying opener policy.
-  pub fn with_cross_origin_opener_policy(
-    mut self,
-    value: impl AsRef<str>,
-  ) -> Result<Self, HttpCrossOriginOpenerPolicyParseError> {
-    let policy = HttpCrossOriginOpenerPolicy::parse(value)?;
-    self.headers.retain(|header| {
-      !header
-        .name
-        .eq_ignore_ascii_case("Cross-Origin-Opener-Policy")
-    });
-    self.headers.push(HttpHeader::new(
-      "Cross-Origin-Opener-Policy",
-      policy.header_value(),
-    ));
-    Ok(self)
-  }
-
-  /// Validates and replaces `Strict-Transport-Security` response metadata
-  /// without applying HTTPS-only policy.
-  pub fn with_strict_transport_security(
-    mut self,
-    value: impl AsRef<str>,
-  ) -> Result<Self, HttpStrictTransportSecurityParseError> {
-    let policy = HttpStrictTransportSecurity::parse(value)?;
-    self.headers.retain(|header| {
-      !header
-        .name
-        .eq_ignore_ascii_case("Strict-Transport-Security")
-    });
-    self.headers.push(HttpHeader::new(
-      "Strict-Transport-Security",
-      policy.header_value(),
-    ));
-    Ok(self)
-  }
-
-  /// Validates and replaces `X-Content-Type-Options` response metadata
-  /// without applying MIME-sniffing protection.
-  pub fn with_x_content_type_options(
-    mut self,
-    value: impl AsRef<str>,
-  ) -> Result<Self, HttpXContentTypeOptionsParseError> {
-    let options = HttpXContentTypeOptions::parse(value)?;
-    self
-      .headers
-      .retain(|header| !header.name.eq_ignore_ascii_case("X-Content-Type-Options"));
-    self.headers.push(HttpHeader::new(
-      "X-Content-Type-Options",
-      options.header_value(),
-    ));
-    Ok(self)
-  }
-
-  /// Validates and replaces `X-Frame-Options` response metadata without
-  /// applying clickjacking protection.
-  pub fn with_x_frame_options(
-    mut self,
-    value: impl AsRef<str>,
-  ) -> Result<Self, HttpXFrameOptionsParseError> {
-    let options = HttpXFrameOptions::parse(value)?;
-    self
-      .headers
-      .retain(|header| !header.name.eq_ignore_ascii_case("X-Frame-Options"));
-    self
-      .headers
-      .push(HttpHeader::new("X-Frame-Options", options.header_value()));
-    Ok(self)
-  }
-
   /// Validates and replaces `Reporting-Endpoints` response metadata.
   pub fn with_reporting_endpoints<I, N, U>(
     mut self,
@@ -1411,101 +1302,6 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpCrossOriginResourcePolicy::parse_values(values).map(Some)
-  }
-
-  /// Parses attached `Cross-Origin-Embedder-Policy` response metadata without
-  /// enforcing embedder policy.
-  pub fn cross_origin_embedder_policy(
-    &self,
-  ) -> Result<Option<HttpCrossOriginEmbedderPolicy>, HttpCrossOriginEmbedderPolicyParseError> {
-    let values: Vec<&str> = self
-      .headers
-      .iter()
-      .filter(|header| {
-        header
-          .name
-          .eq_ignore_ascii_case("Cross-Origin-Embedder-Policy")
-      })
-      .map(|header| header.value.as_str())
-      .collect();
-    if values.is_empty() {
-      return Ok(None);
-    }
-    HttpCrossOriginEmbedderPolicy::parse_values(values).map(Some)
-  }
-
-  /// Parses attached `Cross-Origin-Opener-Policy` response metadata without
-  /// enforcing opener policy.
-  pub fn cross_origin_opener_policy(
-    &self,
-  ) -> Result<Option<HttpCrossOriginOpenerPolicy>, HttpCrossOriginOpenerPolicyParseError> {
-    let values: Vec<&str> = self
-      .headers
-      .iter()
-      .filter(|header| {
-        header
-          .name
-          .eq_ignore_ascii_case("Cross-Origin-Opener-Policy")
-      })
-      .map(|header| header.value.as_str())
-      .collect();
-    if values.is_empty() {
-      return Ok(None);
-    }
-    HttpCrossOriginOpenerPolicy::parse_values(values).map(Some)
-  }
-
-  /// Parses attached `Strict-Transport-Security` response metadata without
-  /// applying HTTPS-only policy.
-  pub fn strict_transport_security(
-    &self,
-  ) -> Result<Option<HttpStrictTransportSecurity>, HttpStrictTransportSecurityParseError> {
-    let values: Vec<&str> = self
-      .headers
-      .iter()
-      .filter(|header| {
-        header
-          .name
-          .eq_ignore_ascii_case("Strict-Transport-Security")
-      })
-      .map(|header| header.value.as_str())
-      .collect();
-    if values.is_empty() {
-      return Ok(None);
-    }
-    HttpStrictTransportSecurity::parse_values(values).map(Some)
-  }
-
-  /// Parses attached `X-Content-Type-Options` response metadata without
-  /// applying MIME-sniffing protection.
-  pub fn x_content_type_options(
-    &self,
-  ) -> Result<Option<HttpXContentTypeOptions>, HttpXContentTypeOptionsParseError> {
-    let values: Vec<&str> = self
-      .headers
-      .iter()
-      .filter(|header| header.name.eq_ignore_ascii_case("X-Content-Type-Options"))
-      .map(|header| header.value.as_str())
-      .collect();
-    if values.is_empty() {
-      return Ok(None);
-    }
-    HttpXContentTypeOptions::parse_values(values).map(Some)
-  }
-
-  /// Parses attached `X-Frame-Options` response metadata without
-  /// applying clickjacking protection.
-  pub fn x_frame_options(&self) -> Result<Option<HttpXFrameOptions>, HttpXFrameOptionsParseError> {
-    let values: Vec<&str> = self
-      .headers
-      .iter()
-      .filter(|header| header.name.eq_ignore_ascii_case("X-Frame-Options"))
-      .map(|header| header.value.as_str())
-      .collect();
-    if values.is_empty() {
-      return Ok(None);
-    }
-    HttpXFrameOptions::parse_values(values).map(Some)
   }
 
   /// Parses bounded `Reporting-Endpoints` response metadata without scheduling reports.
