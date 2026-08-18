@@ -49,6 +49,9 @@ pub use rttp_protocol::cookie::{
 pub use rttp_protocol::cross_origin_embedder_policy::{
   CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyParseError,
 };
+pub use rttp_protocol::cross_origin_embedder_policy_report_only::{
+  CrossOriginEmbedderPolicyReportOnly, CrossOriginEmbedderPolicyReportOnlyParseError,
+};
 pub use rttp_protocol::cross_origin_opener_policy::{
   CrossOriginOpenerPolicy, CrossOriginOpenerPolicyParseError,
 };

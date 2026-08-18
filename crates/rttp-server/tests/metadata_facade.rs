@@ -2,9 +2,9 @@ use rttp_server::server::{
   HttpAcceptCh, HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods,
   HttpAccessControlRequestHeaders, HttpAccessControlRequestHeadersParseError,
   HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError,
-  HttpConditionalMetadata, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpPreferenceKind,
-  HttpRequest, HttpResponse, HttpUpgrade, HttpUpgradeParseError, SecFetchDest, SecFetchMode,
-  SecFetchSite, SecFetchUser,
+  HttpConditionalMetadata, HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy,
+  HttpEntityTag, HttpPreferenceKind, HttpRequest, HttpResponse, HttpUpgrade, HttpUpgradeParseError,
+  SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
 };
 
 #[test]
@@ -34,6 +34,9 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     .expect("Cross-Origin-Resource-Policy should parse");
   let upgrade: HttpUpgrade = HttpUpgrade::parse("websocket").expect("Upgrade should parse");
   let _: HttpUpgradeParseError = HttpUpgrade::parse("").expect_err("empty Upgrade should fail");
+  let report_only_policy: HttpCrossOriginEmbedderPolicyReportOnly =
+    HttpCrossOriginEmbedderPolicyReportOnly::parse("require-corp")
+      .expect("Cross-Origin-Embedder-Policy-Report-Only should parse");
   let response = HttpResponse::ok("")
     .with_accept_ch(["Sec-CH-UA"])
     .expect("Accept-CH should be accepted");
@@ -54,6 +57,7 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert!(request_headers_error.is_err());
   assert_eq!(policy.header_value(), "same-origin");
   assert_eq!(upgrade.protocols(), ["websocket"]);
+  assert_eq!(report_only_policy.header_value(), "require-corp");
   assert_eq!(
     metadata
       .entity_tag_value()
