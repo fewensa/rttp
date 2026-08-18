@@ -124,6 +124,10 @@ impl EntityTag {
       is_valid_entity_tag_opaque_tag(opaque_tag),
       "entity tag opaque value must be valid for an HTTP ETag header"
     );
+    assert!(
+      serialized_entity_tag_len(weak, opaque_tag) <= MAX_ENTITY_TAG_VALUE_BYTES,
+      "entity tag header value must not exceed the maximum ETag header length"
+    );
     Self {
       opaque_tag: opaque_tag.to_string(),
       weak,
@@ -331,6 +335,10 @@ fn is_valid_entity_tag_opaque_tag(opaque_tag: &str) -> bool {
   opaque_tag
     .bytes()
     .all(|byte| matches!(byte, b'\x21' | b'\x23'..=b'\x7e' | b'\x80'..=b'\xff'))
+}
+
+fn serialized_entity_tag_len(weak: bool, opaque_tag: &str) -> usize {
+  opaque_tag.len() + if weak { b"W/\"\"".len() } else { b"\"\"".len() }
 }
 
 fn validate_length(value: &str, maximum_length: usize, name: &str) -> Result<(), String> {

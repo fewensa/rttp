@@ -36,6 +36,30 @@ fn entity_tag_constructor_rejects_invalid_opaque_tag() {
 }
 
 #[test]
+fn entity_tag_constructors_enforce_serialized_header_limit() {
+  let largest_strong = EntityTag::strong("a".repeat(MAX_ENTITY_TAG_VALUE_BYTES - b"\"\"".len()));
+  assert_eq!(
+    MAX_ENTITY_TAG_VALUE_BYTES,
+    largest_strong.header_value().len()
+  );
+  EntityTag::parse(largest_strong.header_value()).expect("largest strong tag should parse");
+
+  let largest_weak = EntityTag::weak("a".repeat(MAX_ENTITY_TAG_VALUE_BYTES - b"W/\"\"".len()));
+  assert_eq!(
+    MAX_ENTITY_TAG_VALUE_BYTES,
+    largest_weak.header_value().len()
+  );
+  EntityTag::parse(largest_weak.header_value()).expect("largest weak tag should parse");
+
+  assert!(
+    std::panic::catch_unwind(|| EntityTag::strong("a".repeat(MAX_ENTITY_TAG_VALUE_BYTES))).is_err()
+  );
+  assert!(
+    std::panic::catch_unwind(|| EntityTag::weak("a".repeat(MAX_ENTITY_TAG_VALUE_BYTES))).is_err()
+  );
+}
+
+#[test]
 fn conditional_entity_tag_lists_parse_values_and_serialize_canonically() {
   let if_match =
     IfMatch::parse_values([" \"one\" , W/\"two\" ", "\"three\""]).expect("If-Match list");
