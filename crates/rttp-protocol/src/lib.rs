@@ -51,6 +51,7 @@ pub mod timing_allow_origin;
 pub mod trailer;
 pub mod upgrade;
 pub mod vary;
+pub mod want_repr_digest;
 pub mod warning;
 pub mod www_authenticate;
 pub mod x_content_type_options;
