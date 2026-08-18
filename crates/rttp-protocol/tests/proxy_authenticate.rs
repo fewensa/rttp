@@ -30,6 +30,34 @@ fn proxy_authenticate_parses_multiple_challenges_across_fields() {
 }
 
 #[test]
+fn proxy_authenticate_combines_repeated_fields_before_parsing() {
+  let challenges = ProxyAuthenticate::parse_values(["Digest realm=corp", "nonce=abc"])
+    .expect("repeated Proxy-Authenticate fields should combine before parsing");
+
+  assert_eq!(challenges.len(), 1);
+  let digest = &challenges.challenges()[0];
+  assert_eq!(digest.scheme(), "Digest");
+  assert_eq!(digest.parameter("realm"), Some("corp"));
+  assert_eq!(digest.parameter("nonce"), Some("abc"));
+}
+
+#[test]
+fn proxy_authenticate_parses_padded_token68_values() {
+  let challenges =
+    ProxyAuthenticate::parse_values(["Bearer abc=", "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ=="])
+      .expect("padded token68 Proxy-Authenticate challenges should parse");
+
+  assert_eq!(challenges.len(), 2);
+  assert_eq!(challenges.challenges()[0].scheme(), "Bearer");
+  assert_eq!(challenges.challenges()[0].token68(), Some("abc="));
+  assert_eq!(challenges.challenges()[1].scheme(), "Basic");
+  assert_eq!(
+    challenges.challenges()[1].token68(),
+    Some("QWxhZGRpbjpvcGVuIHNlc2FtZQ==")
+  );
+}
+
+#[test]
 fn proxy_authenticate_unescapes_quoted_parameter_values() {
   let challenges = ProxyAuthenticate::parse(r#"Digest realm="say \"hi\" and \\""#)
     .expect("quoted-string escapes should parse");
@@ -64,7 +92,6 @@ fn proxy_authenticate_rejects_empty_malformed_and_duplicates() {
     "Basic,",
     "Basic,,Digest",
     "Basic @",
-    "Basic realm=",
     r#"Basic realm="unterminated"#,
     "Basic realm=one, REALM=two",
     "Basic token===more",
@@ -79,6 +106,10 @@ fn proxy_authenticate_rejects_empty_malformed_and_duplicates() {
   assert!(
     ProxyAuthenticate::parse_values([]).is_err(),
     "empty field sets must be rejected"
+  );
+  assert!(
+    ProxyAuthenticate::parse_values(["", "Basic"]).is_err(),
+    "empty repeated fields must not disappear during list combination"
   );
 }
 

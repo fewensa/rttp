@@ -1136,8 +1136,31 @@ fn test_proxy_authenticate_response_helper_parses_bounded_challenges() {
 }
 
 #[test]
+fn test_proxy_authenticate_response_helper_combines_repeated_fields() {
+  let raw = concat!(
+    "HTTP/1.1 407 Proxy Authentication Required\r\n",
+    "Proxy-Authenticate: Digest realm=corp\r\n",
+    "Proxy-Authenticate: nonce=abc\r\n",
+    "Content-Length: 0\r\n\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  let challenges = response
+    .proxy_authenticate()
+    .expect("valid repeated fields should parse")
+    .expect("Proxy-Authenticate should be present");
+
+  assert_eq!(1, challenges.len());
+  let digest = &challenges.challenges()[0];
+  assert_eq!("Digest", digest.scheme());
+  assert_eq!(Some("corp"), digest.parameter("realm"));
+  assert_eq!(Some("abc"), digest.parameter("nonce"));
+}
+
+#[test]
 fn test_proxy_authenticate_rejects_invalid_and_absent_values() {
-  for value in ["", "Basic realm=", "Basic @", "Basic realm=one, REALM=two"] {
+  for value in ["", "Basic @", "Basic realm=one, REALM=two"] {
     let raw = format!(
       "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: {value}\r\nContent-Length: 2\r\n\r\nOK"
     );

@@ -62,14 +62,21 @@ impl ProxyAuthenticate {
     I: IntoIterator<Item = &'a str>,
   {
     let mut challenges = Vec::new();
+    let mut combined = String::new();
+    let mut saw_value = false;
     for value in values {
       if value.len() > MAX_PROXY_AUTHENTICATE_VALUE_BYTES {
         return Err(ProxyAuthenticateParseError::new(
           "Proxy-Authenticate header value is too large",
         ));
       }
-      parse_field(value, &mut challenges)?;
+      if saw_value {
+        combined.push_str(", ");
+      }
+      combined.push_str(value);
+      saw_value = true;
     }
+    parse_field(&combined, &mut challenges)?;
     if challenges.is_empty() {
       return Err(ProxyAuthenticateParseError::new(
         "invalid Proxy-Authenticate challenge",
@@ -350,6 +357,15 @@ fn looks_like_parameter(value: &str, mut position: usize) -> bool {
   let start = position;
   while position < bytes.len() && is_token_byte(bytes[position]) {
     position += 1;
+  }
+  if position > start && bytes.get(position) == Some(&b'=') {
+    let mut end = position;
+    while end < bytes.len() && bytes[end] != b',' && !is_ows(bytes[end]) {
+      end += 1;
+    }
+    if is_token68(&value[start..end]) {
+      return false;
+    }
   }
   position > start && {
     skip_ows(bytes, &mut position);
