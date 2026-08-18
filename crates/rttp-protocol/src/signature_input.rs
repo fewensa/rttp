@@ -215,10 +215,10 @@ impl SignatureParameter {
   }
 
   fn header_value(&self) -> String {
-    self.value.as_ref().map_or_else(
-      || format!(";{}", self.name),
-      |value| format!(";{}={}", self.name, value.header_value()),
-    )
+    match self.value.as_ref() {
+      None | Some(SignatureParameterValue::Boolean(true)) => format!(";{}", self.name),
+      Some(value) => format!(";{}={}", self.name, value.header_value()),
+    }
   }
 }
 
@@ -316,6 +316,7 @@ impl<'a, 'm> Parser<'a, 'm> {
     self.expect_byte(b'=', "Signature-Input member must be an inner list")?;
     let covered_components = self.parse_inner_list()?;
     let parameters = self.parse_parameters(MAX_SIGNATURE_INPUT_PARAMETERS)?;
+    validate_signature_parameters(&parameters)?;
     self.members.push(SignatureInputMember {
       label,
       covered_components,
@@ -358,11 +359,6 @@ impl<'a, 'm> Parser<'a, 'm> {
       }
     }
     self.expect_byte(b')', "invalid Signature-Input inner list")?;
-    if components.is_empty() {
-      return Err(SignatureInputParseError::new(
-        "Signature-Input covered component list is empty",
-      ));
-    }
     Ok(components)
   }
 
@@ -615,6 +611,28 @@ fn format_parameters(parameters: &[SignatureParameter]) -> String {
     .iter()
     .map(SignatureParameter::header_value)
     .collect::<String>()
+}
+
+fn validate_signature_parameters(
+  parameters: &[SignatureParameter],
+) -> Result<(), SignatureInputParseError> {
+  for parameter in parameters {
+    let valid = match parameter.name.as_str() {
+      "created" | "expires" => {
+        matches!(parameter.value, Some(SignatureParameterValue::Integer(_)))
+      }
+      "nonce" | "alg" | "keyid" | "tag" => {
+        matches!(parameter.value, Some(SignatureParameterValue::String(_)))
+      }
+      _ => true,
+    };
+    if !valid {
+      return Err(SignatureInputParseError::new(
+        "invalid Signature-Input signature parameter",
+      ));
+    }
+  }
+  Ok(())
 }
 
 fn escape_string(value: &str) -> String {

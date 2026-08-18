@@ -54,7 +54,7 @@ fn signature_input_parses_rfc_shaped_metadata_without_signature_policy() {
 fn signature_input_combines_fields_and_preserves_ordered_parameter_values() {
   let input = SignatureInput::parse_values([
     r#"sig1=("content-digest";sf;req);created=001;flag=?0"#,
-    r#"sig2=("@status");nonce=:YWJj:;ratio=1.230;tok=*abc/def"#,
+    r#"sig2=("@status");extbin=:YWJj:;ratio=1.230;tok=*abc/def"#,
   ])
   .expect("combined Signature-Input should parse");
 
@@ -62,13 +62,13 @@ fn signature_input_combines_fields_and_preserves_ordered_parameter_values() {
   assert_eq!(input.members()[1].label(), "sig2");
   assert_eq!(
     input.members()[1]
-      .parameter("nonce")
+      .parameter("extbin")
       .and_then(|parameter| parameter.value()),
     Some(&SignatureParameterValue::ByteSequence(b"abc".to_vec()))
   );
   assert_eq!(
     input.header_value(),
-    r#"sig1=("content-digest";sf;req);created=1;flag=?0, sig2=("@status");nonce=:YWJj:;ratio=1.23;tok=*abc/def"#
+    r#"sig1=("content-digest";sf;req);created=1;flag=?0, sig2=("@status");extbin=:YWJj:;ratio=1.23;tok=*abc/def"#
   );
   assert_eq!(
     SignatureInput::parse(input.header_value())
@@ -79,12 +79,60 @@ fn signature_input_combines_fields_and_preserves_ordered_parameter_values() {
 }
 
 #[test]
+fn signature_input_formats_true_parameters_canonically() {
+  let input = SignatureInput::parse(r#"sig1=("@method";flag=?1);created=1700000000;test=?1"#)
+    .expect("Signature-Input should parse true parameters");
+
+  assert_eq!(
+    input.header_value(),
+    r#"sig1=("@method";flag);created=1700000000;test"#
+  );
+}
+
+#[test]
+fn signature_input_accepts_empty_covered_component_list() {
+  let input = SignatureInput::parse(r#"sig1=();created=1700000000"#)
+    .expect("empty covered component list should parse");
+
+  let member = input.member("sig1").expect("sig1 should be retained");
+  assert!(member.covered_components().is_empty());
+  assert_eq!(input.header_value(), r#"sig1=();created=1700000000"#);
+}
+
+#[test]
+fn signature_input_validates_standard_signature_parameter_types() {
+  for value in [
+    r#"sig1=("@method");created="now""#,
+    r#"sig1=("@method");created"#,
+    r#"sig1=("@method");expires=?1"#,
+    r#"sig1=("@method");nonce=123"#,
+    r#"sig1=("@method");alg=ed25519"#,
+    r#"sig1=("@method");keyid=123"#,
+    r#"sig1=("@method");tag=?0"#,
+  ] {
+    assert!(
+      SignatureInput::parse(value).is_err(),
+      "should reject {value:?}"
+    );
+  }
+
+  let input = SignatureInput::parse(
+    r#"sig1=("@method");created=1700000000;expires=1700000100;nonce="abc";alg="ed25519";keyid="test";tag="upload";extension=123"#,
+  )
+  .expect("standard parameter types and extensions should parse");
+
+  assert_eq!(
+    input.header_value(),
+    r#"sig1=("@method");created=1700000000;expires=1700000100;nonce="abc";alg="ed25519";keyid="test";tag="upload";extension=123"#
+  );
+}
+
+#[test]
 fn signature_input_rejects_malformed_or_wrong_shape_values() {
   for value in [
     "",
     "sig1",
     "sig1=abc",
-    "sig1=()",
     "sig1=(content-digest)",
     "sig1=(\"@method\", \"@path\")",
     "sig1=(\"@method\" \"@path\"",
