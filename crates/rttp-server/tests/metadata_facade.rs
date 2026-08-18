@@ -3,8 +3,8 @@ use rttp_server::server::{
   HttpAccessControlRequestHeaders, HttpAccessControlRequestHeadersParseError,
   HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError,
   HttpConditionalMetadata, HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy,
-  HttpEntityTag, HttpPreferenceKind, HttpRequest, HttpResponse, HttpWantReprDigest, SecFetchDest,
-  SecFetchMode, SecFetchSite, SecFetchUser,
+  HttpEntityTag, HttpPreferenceKind, HttpRequest, HttpResponse, HttpWantContentDigest,
+  HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
 };
 
 #[test]
@@ -90,6 +90,26 @@ fn request_facade_parses_structured_prefer_metadata() {
 
   assert_eq!(prefer.preferences()[0].kind(), HttpPreferenceKind::Handling);
   assert_eq!(prefer.preferences()[1].parameters()[0].value(), Some("a b"));
+}
+
+#[test]
+fn request_facade_parses_want_content_digest_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nWant-Content-Digest: sha-256=10, sha-512=3, unixsum=0\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let digest: HttpWantContentDigest = request
+    .want_content_digest()
+    .expect("Want-Content-Digest should parse")
+    .expect("Want-Content-Digest should be present");
+
+  assert_eq!(digest.entries()[0].algorithm(), "sha-256");
+  assert_eq!(digest.entries()[0].preference(), 10);
+  assert_eq!(digest.entries()[1].algorithm(), "sha-512");
+  assert_eq!(digest.entries()[1].preference(), 3);
+  assert_eq!(digest.entries()[2].algorithm(), "unixsum");
+  assert_eq!(digest.entries()[2].preference(), 0);
 }
 
 #[test]

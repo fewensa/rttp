@@ -15,6 +15,7 @@ use rttp_protocol::referer::Referer;
 use rttp_protocol::referrer_policy::{ReferrerPolicy, ReferrerPolicyToken};
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
+use rttp_protocol::want_content_digest::WantContentDigest;
 use rttp_protocol::want_repr_digest::WantReprDigest;
 use rttp_protocol::warning::Warning;
 use rttp_protocol::x_content_type_options::XContentTypeOptions;
@@ -57,6 +58,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let content_type =
     ContentType::parse("text/plain; charset=utf-8").expect("Content-Type should parse");
   let content_encoding = ContentEncoding::parse("gzip, br").expect("Content-Encoding should parse");
+  let want_content_digest =
+    WantContentDigest::parse("sha-256=10, sha-512=0").expect("Want-Content-Digest should parse");
   let want_repr_digest =
     WantReprDigest::parse("sha-256=10, sha-512=0").expect("Want-Repr-Digest should parse");
 
@@ -96,6 +99,9 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(content_type.header_value(), "text/plain; charset=utf-8");
   assert_eq!(content_encoding.codings(), ["gzip", "br"]);
   assert_eq!(content_encoding.header_value(), "gzip, br");
+  assert_eq!(want_content_digest.entries()[0].algorithm(), "sha-256");
+  assert_eq!(want_content_digest.entries()[0].preference(), 10);
+  assert_eq!(want_content_digest.header_value(), "sha-256=10, sha-512=0");
   assert_eq!(want_repr_digest.entries()[0].algorithm(), "sha-256");
   assert_eq!(want_repr_digest.entries()[0].preference(), 10);
   assert_eq!(want_repr_digest.header_value(), "sha-256=10, sha-512=0");

@@ -20,6 +20,19 @@ repeated codings are retained in wire order so callers can inspect the full
 encoding stack. A present header set that yields no coding still fails as
 invalid.
 
+## Want-Content-Digest
+
+`want_content_digest` parses one or more RFC 9530 `Want-Content-Digest` field
+values into an ordered dictionary of algorithm keys and integer preferences.
+Each field value is bounded to 64 KiB, and the combined algorithm count across
+all supplied fields is bounded to 32. Members must be parameter-free Structured
+Fields items whose values are Integers in `0` through `10` inclusive. Unknown
+well-formed algorithm keys are retained as opaque data. Duplicate keys, bare
+Boolean members, parameterized members, inner lists, decimals, negatives,
+out-of-range integers, empty present fields, and other unparsable input are
+errors. This parser never fails open to an empty preference set and does not
+select an algorithm, compute a digest, or attach `Content-Digest`.
+
 ## Want-Repr-Digest
 
 `want_repr_digest` parses one or more RFC 9530 `Want-Repr-Digest` field values
