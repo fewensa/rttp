@@ -2236,6 +2236,8 @@ fn preflight_metadata_helpers_emit_validated_request_headers() {
       .expect("preflight method should be accepted")
       .access_control_request_headers(["X-Request-Id", "Content-Type"])
       .expect("preflight field names should be accepted")
+      .access_control_request_private_network()
+      .expect("private-network preflight metadata should be accepted")
       .emit()
       .expect("request should succeed");
   });
@@ -2252,6 +2254,10 @@ fn preflight_metadata_helpers_emit_validated_request_headers() {
   assert_eq!(
     Some("x-request-id, content-type"),
     header_value(&request, "Access-Control-Request-Headers")
+  );
+  assert_eq!(
+    Some("true"),
+    header_value(&request, "Access-Control-Request-Private-Network")
   );
 }
 

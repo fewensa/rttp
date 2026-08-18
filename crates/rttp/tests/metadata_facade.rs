@@ -1,7 +1,7 @@
 use rttp::server::{
-  HttpAcceptCh, HttpConditionalMetadata, HttpCrossOriginEmbedderPolicy,
-  HttpCrossOriginOpenerPolicy, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpResponse,
-  HttpSunsetParseError,
+  HttpAcceptCh, HttpAccessControlRequestPrivateNetwork, HttpConditionalMetadata,
+  HttpCrossOriginEmbedderPolicy, HttpCrossOriginOpenerPolicy, HttpCrossOriginResourcePolicy,
+  HttpEntityTag, HttpResponse, HttpSunsetParseError,
 };
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -55,6 +55,9 @@ fn compatibility_facade_exports_client_metadata_types() {
 fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let accept_ch: HttpAcceptCh = HttpAcceptCh::parse("Sec-CH-UA").expect("Accept-CH should parse");
   let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("revision-42"));
+  let private_network: HttpAccessControlRequestPrivateNetwork =
+    HttpAccessControlRequestPrivateNetwork::parse("true")
+      .expect("Access-Control-Request-Private-Network should parse");
   let policy: HttpCrossOriginResourcePolicy = HttpCrossOriginResourcePolicy::parse("same-origin")
     .expect("Cross-Origin-Resource-Policy should parse");
   let embedder_policy: HttpCrossOriginEmbedderPolicy =
@@ -65,6 +68,7 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
       .expect("Cross-Origin-Opener-Policy should parse");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA"]);
+  assert_eq!(private_network.header_value(), "true");
   assert_eq!(policy.header_value(), "same-origin");
   assert_eq!(embedder_policy.header_value(), "require-corp");
   assert_eq!(opener_policy.header_value(), "noopener-allow-popups");

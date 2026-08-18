@@ -29,8 +29,10 @@ struct ObservedCorsPreflight {
   origin: Option<String>,
   raw_request_method: Option<String>,
   raw_request_headers: Option<String>,
+  raw_request_private_network: Option<String>,
   request_method: Result<Option<String>, String>,
   request_headers: Result<Option<Vec<String>>, String>,
+  request_private_network: Result<Option<String>, String>,
 }
 
 fn observe_cors_preflight(request: Request) -> ObservedCorsPreflight {
@@ -43,6 +45,9 @@ fn observe_cors_preflight(request: Request) -> ObservedCorsPreflight {
     raw_request_headers: request
       .header("Access-Control-Request-Headers")
       .map(str::to_string),
+    raw_request_private_network: request
+      .header("Access-Control-Request-Private-Network")
+      .map(str::to_string),
     request_method: request
       .access_control_request_method()
       .map(|method| method.map(|method| method.method().to_string()))
@@ -50,6 +55,10 @@ fn observe_cors_preflight(request: Request) -> ObservedCorsPreflight {
     request_headers: request
       .access_control_request_headers()
       .map(|headers| headers.map(|headers| headers.field_names().to_vec()))
+      .map_err(|error| error.to_string()),
+    request_private_network: request
+      .access_control_request_private_network()
+      .map(|metadata| metadata.map(|metadata| metadata.header_value().to_string()))
       .map_err(|error| error.to_string()),
   }
 }
@@ -852,6 +861,8 @@ fn facade_client_and_server_exchange_valid_cors_preflight_metadata_without_polic
     .expect("Access-Control-Request-Method should be accepted")
     .access_control_request_headers(["X-Request-Id", "Content-Type"])
     .expect("Access-Control-Request-Headers should be accepted")
+    .access_control_request_private_network()
+    .expect("Access-Control-Request-Private-Network should be accepted")
     .emit()
     .expect("CORS preflight request should succeed");
 
@@ -863,11 +874,13 @@ fn facade_client_and_server_exchange_valid_cors_preflight_metadata_without_polic
       origin: Some("https://spa.example.test".to_string()),
       raw_request_method: Some("PATCH".to_string()),
       raw_request_headers: Some("x-request-id, content-type".to_string()),
+      raw_request_private_network: Some("true".to_string()),
       request_method: Ok(Some("PATCH".to_string())),
       request_headers: Ok(Some(vec![
         "x-request-id".to_string(),
         "content-type".to_string(),
       ])),
+      request_private_network: Ok(Some("true".to_string())),
     },
     observed_rx
       .recv_timeout(Duration::from_secs(1))
@@ -895,8 +908,10 @@ fn facade_server_reports_absent_cors_preflight_metadata_without_policy() {
       origin: None,
       raw_request_method: None,
       raw_request_headers: None,
+      raw_request_private_network: None,
       request_method: Ok(None),
       request_headers: Ok(None),
+      request_private_network: Ok(None),
     },
     observed_rx
       .recv_timeout(Duration::from_secs(1))
@@ -914,7 +929,7 @@ fn facade_server_rejects_malformed_cors_preflight_metadata_without_losing_raw_he
   let mut stream = TcpStream::connect(addr).expect("connect malformed CORS preflight request");
   stream
     .write_all(
-      b"OPTIONS /matrix/cors-preflight-malformed HTTP/1.1\r\nHost: example.test\r\nOrigin: https://spa.example.test\r\nAccess-Control-Request-Method: GET, POST\r\nAccess-Control-Request-Headers: X Bad\r\nConnection: close\r\n\r\n",
+      b"OPTIONS /matrix/cors-preflight-malformed HTTP/1.1\r\nHost: example.test\r\nOrigin: https://spa.example.test\r\nAccess-Control-Request-Method: GET, POST\r\nAccess-Control-Request-Headers: X Bad\r\nAccess-Control-Request-Private-Network: false\r\nConnection: close\r\n\r\n",
     )
     .expect("write malformed CORS preflight request");
 
@@ -928,8 +943,13 @@ fn facade_server_rejects_malformed_cors_preflight_metadata_without_losing_raw_he
   );
   assert_eq!(Some("GET, POST".to_string()), observed.raw_request_method);
   assert_eq!(Some("X Bad".to_string()), observed.raw_request_headers);
+  assert_eq!(
+    Some("false".to_string()),
+    observed.raw_request_private_network
+  );
   assert!(observed.request_method.is_err());
   assert!(observed.request_headers.is_err());
+  assert!(observed.request_private_network.is_err());
 
   handle
     .join()
@@ -943,7 +963,7 @@ fn facade_server_combines_multi_header_cors_preflight_metadata_without_policy() 
   let mut stream = TcpStream::connect(addr).expect("connect multi-header CORS preflight request");
   stream
     .write_all(
-      b"OPTIONS /matrix/cors-preflight-multi-header HTTP/1.1\r\nHost: example.test\r\nOrigin: https://spa.example.test\r\nAccess-Control-Request-Method: patch\r\nAccess-Control-Request-Headers: X-Request-Id\r\naccess-control-request-headers: Content-Type\r\nConnection: close\r\n\r\n",
+      b"OPTIONS /matrix/cors-preflight-multi-header HTTP/1.1\r\nHost: example.test\r\nOrigin: https://spa.example.test\r\nAccess-Control-Request-Method: patch\r\nAccess-Control-Request-Headers: X-Request-Id\r\naccess-control-request-headers: Content-Type\r\nAccess-Control-Request-Private-Network: true\r\naccess-control-request-private-network: true\r\nConnection: close\r\n\r\n",
     )
     .expect("write multi-header CORS preflight request");
 
@@ -960,6 +980,10 @@ fn facade_server_combines_multi_header_cors_preflight_metadata_without_policy() 
     Some("X-Request-Id".to_string()),
     observed.raw_request_headers
   );
+  assert_eq!(
+    Some("true".to_string()),
+    observed.raw_request_private_network
+  );
   assert_eq!(Ok(Some("PATCH".to_string())), observed.request_method);
   assert_eq!(
     Ok(Some(vec![
@@ -968,6 +992,7 @@ fn facade_server_combines_multi_header_cors_preflight_metadata_without_policy() 
     ])),
     observed.request_headers
   );
+  assert!(observed.request_private_network.is_err());
 
   handle
     .join()
