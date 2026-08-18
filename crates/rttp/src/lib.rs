@@ -6,8 +6,8 @@ pub use rttp_server::server;
 
 #[cfg(feature = "client")]
 pub use rttp_client::response::{
-  AcceptCh, AcceptPatch, AcceptPost, CriticalCh, CrossOriginEmbedderPolicy,
-  CrossOriginEmbedderPolicyParseError,
+  AcceptCh, AcceptPatch, AcceptPost, AuthenticationInfo, AuthenticationInfoParameter,
+  AuthenticationInfoParseError, CriticalCh,
 };
 #[cfg(feature = "client")]
 pub use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
