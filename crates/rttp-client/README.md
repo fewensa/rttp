@@ -462,6 +462,27 @@ engine, change request framing, apply response preferences, schedule async
 work, forward requests, retry, or otherwise infer behavior from `TE` or
 `Prefer`.
 
+## Bounded Transfer-Encoding framing metadata
+
+`Response::transfer_encoding()` parses retained HTTP/1 `Transfer-Encoding`
+fields into `TransferEncoding` metadata. It returns `Ok(None)` when the header
+is absent. Present values combine case-insensitive fields in wire order and
+must yield a sole `chunked` coding, matching existing HTTP/1 framing.
+`TransferEncoding::parse(value)` is available when callers want to validate
+one raw field value directly.
+
+Each field value is limited to 64 KiB. Parsing accepts at most 256 tokens and
+rejects empty members, malformed tokens, stacked or non-final `chunked`
+codings, combined duplicate fields that are no longer sole `chunked`,
+oversized values, and too many tokens. Parse errors do not reject the raw
+response: original headers remain available through
+`Response::header_value()` and `Response::header_values()`. HTTP/2 continues
+to reject `Transfer-Encoding` at decode time.
+
+This helper is framing metadata only. `rttp_client` does not change
+`connection_reader`, decode a chunked body from this accessor, negotiate `TE`,
+or alter Content-Length handling.
+
 ## Bounded preflight request metadata
 
 `HttpClient::origin(value)` emits one validated `Origin` field, accepting
@@ -616,6 +637,7 @@ header-block model.
 | Content-Language | `Response::content_language` parses bounded response `Content-Language` fields into ordered language metadata while preserving raw headers | No automatic language negotiation, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
 | Content-Location | `Response::content_location` and `ContentLocation::parse` parse bounded singleton response `Content-Location` metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |
 | Content-Type and Content-Encoding | `Response::content_type`/`ContentType::parse` parse bounded singleton `Content-Type` metadata, and `Response::content_encoding`/`ContentEncoding::parse` parse bounded ordered `Content-Encoding` codings while preserving raw headers on parse failures | No MIME sniffing, body decoding, charset transcoding, compression/decompression policy, negotiation, cache policy, redirects, retry/replay, or filesystem serving |
+| Transfer-Encoding | `Response::transfer_encoding`/`TransferEncoding::parse` parse bounded HTTP/1 `Transfer-Encoding` fields that must be sole `chunked`, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to HTTP/1 framing decoders, `TE`, Content-Length, chunked body decoding policy, or HTTP/2 decode rejection |
 | Content-Disposition | `Response::content_disposition` and `ContentDisposition::parse` parse bounded singleton response `Content-Disposition` metadata into disposition type plus ordered parameters, including preserved `filename` and `filename*` values, while preserving raw headers on parse failures | No automatic download, filesystem path handling, MIME sniffing, redirect behavior, retry/replay, cache behavior, negotiation behavior, or status-policy behavior |
 | Vary | `Response::vary` parses bounded response `Vary` fields into wildcard or normalized case-insensitive field-name metadata | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | Trailers | Chunked response trailers are exposed for blocking and async APIs; streaming chunked uploads can send declared request trailers | Application metadata trailers such as `X-Trace` are allowed; pseudo-header, connection-specific, routing, authentication/cookie, and framing trailer fields are rejected |

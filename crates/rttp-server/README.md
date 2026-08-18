@@ -53,6 +53,22 @@ expose the original request.
 These helpers parse request metadata only; they do not sniff, decode,
 negotiate, cache, redirect, retry, or select representations.
 
+## Request Transfer-Encoding framing metadata
+
+Handlers can call `Request::transfer_encoding()` and
+`HttpRequest::transfer_encoding()` to observe bounded typed
+`Transfer-Encoding` framing metadata from already-validated HTTP/1 state.
+The helpers combine case-insensitive fields in wire order into
+`HttpTransferEncoding` and require a sole `chunked` coding, matching existing
+HTTP/1 framing. Absent fields return `Ok(None)`. Malformed, stacked,
+duplicate, oversized, or over-limit values return a parser error while
+`Request::header()` and `Request::body()` continue to expose the original
+request. HTTP/2 continues to reject `Transfer-Encoding` at decode time.
+
+These helpers parse framing metadata only. They do not change
+`request_body_kind`, decode a chunked body, negotiate `TE`, or alter
+Content-Length handling.
+
 ## Fetch Metadata request metadata
 
 Handlers can call `Request::sec_fetch_site()`, `sec_fetch_mode()`,

@@ -20,6 +20,21 @@ repeated codings are retained in wire order so callers can inspect the full
 encoding stack. A present header set that yields no coding still fails as
 invalid.
 
+## Transfer-Encoding
+
+`transfer_encoding` parses one or more `Transfer-Encoding` field values into
+an ordered list of transfer-coding tokens. Each field value is bounded to
+64 KiB, and the cumulative coding count across all supplied fields is bounded
+to 256 codings. Codings are split on commas with SP and HTAB accepted only as
+optional whitespace around each coding; empty members and members containing
+forbidden ASCII control bytes are rejected. Each coding must be an RFC 9110
+token. Combined fields are validated in wire order and must yield a sole
+`chunked` coding, matched case-insensitively, as the last and only token so
+the type matches existing HTTP/1 framing. Duplicate fields, stacked codings,
+`chunked` that is not last, and other unparsable input are errors. This
+parser never fails open and does not decode a chunked body, negotiate `TE`,
+or change Content-Length or HTTP/2 decode.
+
 ## Want-Repr-Digest
 
 `want_repr_digest` parses one or more RFC 9530 `Want-Repr-Digest` field values
@@ -44,6 +59,18 @@ IPv6 text, or default ports. Empty values, userinfo, path, query, fragment,
 unbracketed IPv6, empty ports, ASCII controls, and other values outside the
 inbound Host grammar are errors. This is syntax validation only: callers own
 virtual-host routing and scheme defaults.
+
+## Signature
+
+`signature` parses one or more RFC 9421 `Signature` field values into an
+ordered dictionary of labels and byte sequences. Each field value is bounded
+to 64 KiB, the combined entry count is bounded to 256, each entry value is
+bounded to 64 KiB, and each entry may carry at most 256 Structured Fields
+parameters. Members must be dictionary keys mapped to byte sequences.
+Well-formed item parameters are accepted as syntax and discarded. Duplicate
+labels, non-byte-sequence values, empty present fields, and other unparsable
+input are errors. This parser does not sign, verify, look up keys, or parse
+`Signature-Input`.
 
 ## Cross-Origin-Opener-Policy
 
