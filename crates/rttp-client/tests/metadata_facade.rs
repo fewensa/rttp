@@ -1,10 +1,10 @@
 use rttp_client::response::{
   AcceptCh, AccessControlAllowHeaders, AccessControlAllowHeadersParseError,
   AccessControlAllowMethods, AccessControlAllowMethodsParseError, AccessControlExposeHeaders,
-  AccessControlMaxAge, AccessControlMaxAgeParseError, AltSvc, CrossOriginEmbedderPolicy,
-  CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest, HttpClearSiteData, PreferenceApplied,
-  Priority, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ReferrerPolicy,
-  ReferrerPolicyToken, ServerTiming, Trailer,
+  AccessControlMaxAge, AccessControlMaxAgeParseError, Allow, AllowParseError, AltSvc,
+  CrossOriginEmbedderPolicy, CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest,
+  HttpClearSiteData, PreferenceApplied, Priority, ProxyAuthenticationInfo,
+  ProxyAuthenticationInfoParseError, ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Trailer,
 };
 use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 
@@ -13,6 +13,9 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let accept_ch = AcceptCh::parse("Sec-CH-UA, DPR").expect("Accept-CH should parse");
   let allow_methods = AccessControlAllowMethods::parse("GET, POST")
     .expect("Access-Control-Allow-Methods should parse");
+  let allow = Allow::parse("GET, HEAD").expect("Allow should parse");
+  let _: AllowParseError =
+    Allow::parse("GET,,HEAD").expect_err("malformed Allow should be rejected");
   let _: AccessControlAllowMethodsParseError = AccessControlAllowMethods::parse("")
     .expect_err("empty Access-Control-Allow-Methods should be rejected");
   let allow_headers = AccessControlAllowHeaders::parse("X-Request-Id, ETag")
@@ -49,6 +52,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(allow_methods.methods(), ["GET", "POST"]);
+  assert_eq!(allow.methods(), ["GET", "HEAD"]);
+  assert!(allow.contains_method("HEAD"));
   assert_eq!(allow_headers.field_names(), ["x-request-id", "etag"]);
   assert_eq!(max_age.seconds(), 60);
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);

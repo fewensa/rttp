@@ -1,9 +1,10 @@
 use rttp_server::server::{
   HttpAcceptCh, HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods,
   HttpAccessControlRequestHeaders, HttpAccessControlRequestHeadersParseError,
-  HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError,
-  HttpConditionalMetadata, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpPreferenceKind,
-  HttpRequest, HttpResponse, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
+  HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError, HttpAllowParseError,
+  HttpAllowedMethods, HttpConditionalMetadata, HttpCrossOriginResourcePolicy, HttpEntityTag,
+  HttpPreferenceKind, HttpRequest, HttpResponse, SecFetchDest, SecFetchMode, SecFetchSite,
+  SecFetchUser,
 };
 
 #[test]
@@ -11,6 +12,10 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let accept_ch: HttpAcceptCh = HttpAcceptCh::parse("Sec-CH-UA").expect("Accept-CH should parse");
   let allow_methods: HttpAccessControlAllowMethods =
     HttpAccessControlAllowMethods::parse("GET").expect("Access-Control-Allow-Methods should parse");
+  let http_allow: HttpAllowedMethods =
+    HttpAllowedMethods::parse("GET, HEAD").expect("Allow should parse");
+  let _: HttpAllowParseError =
+    HttpAllowedMethods::parse("GET,,HEAD").expect_err("malformed Allow should be rejected");
   let allow_headers: HttpAccessControlAllowHeaders =
     HttpAccessControlAllowHeaders::parse("X-Request-Id")
       .expect("Access-Control-Allow-Headers should parse");
@@ -41,6 +46,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA"]);
   assert_eq!(allow_methods.methods(), ["GET"]);
+  assert_eq!(http_allow.methods(), ["GET", "HEAD"]);
+  assert!(http_allow.contains_method("HEAD"));
   assert_eq!(allow_headers.field_names(), ["x-request-id"]);
   assert_eq!("PATCH", request_method.method());
   assert!(request_method_error.is_err());

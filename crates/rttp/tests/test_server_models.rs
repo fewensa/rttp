@@ -1451,7 +1451,7 @@ fn allow_helpers_reject_malformed_duplicate_oversized_and_excessive_values() {
     "Allow helper should reject oversized values"
   );
 
-  let too_many = (0..33)
+  let too_many = (0..257)
     .map(|index| format!("M{index}"))
     .collect::<Vec<_>>()
     .join(", ");
