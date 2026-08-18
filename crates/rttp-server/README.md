@@ -53,6 +53,22 @@ expose the original request.
 These helpers parse request metadata only; they do not sniff, decode,
 negotiate, cache, redirect, retry, or select representations.
 
+## Request Transfer-Encoding framing metadata
+
+Handlers can call `Request::transfer_encoding()` and
+`HttpRequest::transfer_encoding()` to observe bounded typed
+`Transfer-Encoding` framing metadata from already-validated HTTP/1 state.
+The helpers combine case-insensitive fields in wire order into
+`HttpTransferEncoding` and require a sole `chunked` coding, matching existing
+HTTP/1 framing. Absent fields return `Ok(None)`. Malformed, stacked,
+duplicate, oversized, or over-limit values return a parser error while
+`Request::header()` and `Request::body()` continue to expose the original
+request. HTTP/2 continues to reject `Transfer-Encoding` at decode time.
+
+These helpers parse framing metadata only. They do not change
+`request_body_kind`, decode a chunked body, negotiate `TE`, or alter
+Content-Length handling.
+
 ## Fetch Metadata request metadata
 
 Handlers can call `Request::sec_fetch_site()`, `sec_fetch_mode()`,
@@ -86,3 +102,18 @@ without changing those raw fields.
 
 These helpers only declare and parse metadata. They do not calculate hashes,
 verify bodies, canonicalize representations, sign values, or enforce integrity.
+
+## Want-Repr-Digest request metadata
+
+Handlers can call `Request::want_repr_digest()` and
+`HttpRequest::want_repr_digest()` to observe bounded typed `Want-Repr-Digest`
+algorithm preferences. The helpers combine case-insensitive fields in wire
+order into `HttpWantReprDigest`. Each entry exposes `algorithm()` and
+`preference()` (`0` through `10`). Absent metadata returns `Ok(None)`.
+Malformed, oversized, duplicate, empty, or over-limit values return a parse
+error while `Request::header()` and `Request::body()` continue to expose the
+original request.
+
+These helpers parse request metadata only. They do not select an algorithm,
+compute or verify representation digests, attach `Repr-Digest`, or negotiate a
+representation.
