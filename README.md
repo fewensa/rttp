@@ -379,6 +379,27 @@ requested. It is metadata-only: RTTP does not treat `Content-Location` as
 redirect behavior, cache variant selection, representation replacement,
 retry/replay behavior, route generation, or status-policy behavior.
 
+### Bounded HTTP/1.1 Location response metadata
+
+`Response::location()` remains the raw first-value `Location` accessor used by
+existing client redirect behavior. `Response::location_metadata()` is the
+opt-in typed helper for callers that want bounded validation of response
+metadata without changing redirect policy.
+
+`Response::location_metadata()` parses a response `Location` header into
+protocol `Location` metadata. It returns `Ok(None)` when the header is absent
+and rejects duplicate header fields because `Location` is handled as a
+singleton response metadata field. `Location::parse(value)` is available when
+callers want to validate one raw field value directly; it trims outer HTTP
+optional whitespace and exposes the validated value with `Location::as_str()`
+and `Location::header_value()`.
+
+The helper is metadata-only and bounded to 64 KiB per field value. Malformed
+values, duplicated singleton fields, and oversized values make
+`Response::location_metadata()` return an error while leaving the original
+headers and body available through raw response APIs. RTTP does not follow,
+resolve, rewrite, replay, cache, or apply redirect policy from this helper.
+
 ### Bounded HTTP/1.1 representation metadata behavior
 
 `Response::content_type()` parses a singleton response `Content-Type` header
@@ -718,6 +739,7 @@ gain additional HTTP/2 header-block handling.
 | Informational responses and Early Hints | `Response::informational_responses` exposes skipped bounded HTTP/1.1 `1xx` heads, including `103 Early Hints`, with preserved raw headers; server `HttpResponse::early_hints`/`early_hints_with_headers` construct validated bodyless `103` metadata | `101 Switching Protocols` remains terminal for upgrade handoff; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
 | Cache-Control, Age, Expires, Retry-After, and Allow | `Response::cache_control` parses bounded response directives, numeric freshness fields, quoted field-name lists, and extension directives; `Response::age` parses bounded delta-seconds; `Response::expires` parses bounded HTTP-date metadata; `Response::retry_after` parses bounded delta-seconds or HTTP-date metadata; `Response::allow` parses bounded ordered method metadata | No cache storage, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, automatic conditional requests, automatic sleep, retry, replay, backoff, scheduler integration, fallback method selection, or status-code policy engine |
 | Content-Language | `Response::content_language` parses bounded response `Content-Language` fields into ordered language metadata while preserving raw headers | No automatic language negotiation, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
+| Location | `Response::location_metadata` and `Location::parse` parse bounded singleton response `Location` metadata while preserving raw `Response::location` access | No new redirect policy, automatic redirect behavior, relative resolution, request replay, method rewriting, caching, or route generation |
 | Content-Location | `Response::content_location` and `ContentLocation::parse` parse bounded singleton response `Content-Location` metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |
 | Content-Type and Content-Encoding | `Response::content_type`/`ContentType::parse` parse bounded singleton `Content-Type` metadata, and `Response::content_encoding`/`ContentEncoding::parse` parse bounded ordered `Content-Encoding` codings while preserving raw headers on parse failures | No MIME sniffing, body decoding, charset transcoding, compression/decompression policy, negotiation, cache policy, redirects, retry/replay, or filesystem serving |
 | Content-Disposition | Client `Response::content_disposition` and server `HttpContentDisposition`, `HttpResponse::with_content_disposition`, `with_attachment_filename`, and `content_disposition` parse or declare bounded singleton response `Content-Disposition` metadata, preserve raw headers on parse failures, and preserve parsed `filename` plus `filename*` parameter values as metadata | No automatic download, filesystem path handling, MIME sniffing, cache behavior, redirect behavior, retry/replay, negotiation, or status-policy behavior |

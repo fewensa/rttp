@@ -1,7 +1,7 @@
 use rttp_client::response::{
   AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType,
   CrossOriginEmbedderPolicy, CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest,
-  HttpClearSiteData, HttpSetCookies, LinkValues, ProxyAuthenticationInfo, ReferrerPolicy,
+  HttpClearSiteData, HttpSetCookies, LinkValues, Location, ProxyAuthenticationInfo, ReferrerPolicy,
   ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
 };
 use rttp_client::types::{Cookie, RoUrl};
@@ -1880,6 +1880,131 @@ fn test_parse_content_location_rejects_control_characters_and_crlf_injection() {
     assert!(
       ContentLocation::parse(value).is_err(),
       "content-location parser should reject {value:?}"
+    );
+  }
+}
+
+#[test]
+fn test_location_metadata_parses_valid_references_and_preserves_raw_accessor() {
+  for (raw_value, parsed_value) in [
+    ("https://example.test/new", "https://example.test/new"),
+    ("  /new  ", "/new"),
+    ("../new", "../new"),
+    ("?next=1", "?next=1"),
+    ("//cdn.example/new", "//cdn.example/new"),
+    ("/new#section", "/new#section"),
+  ] {
+    let raw =
+      format!("HTTP/1.1 201 Created\r\nLocation: {raw_value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(
+      RoUrl::with("https://example.test/base/page"),
+      raw.into_bytes(),
+    )
+    .expect("response with Location should parse");
+    let location = response
+      .location_metadata()
+      .expect("valid Location metadata should parse")
+      .expect("Location metadata should be present");
+
+    assert_eq!(parsed_value, location.as_str());
+    assert_eq!(
+      Some(&raw_value.trim().to_string()),
+      response.location(),
+      "raw Location accessor must remain unchanged"
+    );
+  }
+}
+
+#[test]
+fn test_location_metadata_allows_absent_header() {
+  let response = Response::new(
+    RoUrl::with("https://example.test/base/page"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK".to_vec(),
+  )
+  .expect("response without Location should parse");
+
+  assert_eq!(
+    None,
+    response
+      .location_metadata()
+      .expect("absent Location metadata should parse")
+  );
+  assert_eq!(None, response.location());
+}
+
+#[test]
+fn test_location_metadata_rejects_invalid_values_without_rejecting_response() {
+  for value in [
+    "",
+    "https://",
+    "not valid",
+    "/bad path",
+    "https://example.test/%ZZ",
+    "ok\u{7f}",
+  ] {
+    let raw = format!("HTTP/1.1 201 Created\r\nLocation: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(
+      RoUrl::with("https://example.test/base/page"),
+      raw.into_bytes(),
+    )
+    .expect("raw response remains usable");
+
+    assert!(
+      response.location_metadata().is_err(),
+      "Location metadata should reject {value:?}"
+    );
+    assert_eq!(Some(&value.trim().to_string()), response.location());
+    assert_eq!(b"OK", response.body().binary());
+  }
+}
+
+#[test]
+fn test_location_metadata_rejects_duplicate_and_oversized_values() {
+  let raw = concat!(
+    "HTTP/1.1 201 Created\r\n",
+    "Location: /one\r\n",
+    "location: /two\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/base/page"),
+    raw.as_bytes().to_vec(),
+  )
+  .expect("raw response with duplicate Location remains usable");
+
+  assert!(
+    response.location_metadata().is_err(),
+    "Location metadata should reject duplicate singleton headers"
+  );
+  assert_eq!(Some(&"/one".to_string()), response.location());
+  assert_eq!(
+    vec![&"/one".to_string(), &"/two".to_string()],
+    response.header_values("Location")
+  );
+
+  let oversized = format!("/{}", "a".repeat(64 * 1024));
+  let raw = format!("HTTP/1.1 201 Created\r\nLocation: {oversized}\r\nContent-Length: 2\r\n\r\nOK");
+  let response = Response::new(
+    RoUrl::with("https://example.test/base/page"),
+    raw.into_bytes(),
+  )
+  .expect("raw response with oversized Location remains usable");
+
+  assert!(
+    response.location_metadata().is_err(),
+    "Location metadata should reject oversized values"
+  );
+  assert_eq!(Some(&oversized), response.location());
+}
+
+#[test]
+fn test_location_parser_rejects_control_characters_and_crlf_injection() {
+  for value in ["\r\nLocation: /evil", "/ok\r", "/ok\n", "/ok\tinner"] {
+    assert!(
+      Location::parse(value).is_err(),
+      "Location parser should reject {value:?}"
     );
   }
 }

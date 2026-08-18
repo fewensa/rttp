@@ -323,8 +323,30 @@ The helper interoperates with adjacent response metadata helpers such as
 `Response::expires()`, and `Response::accept_ranges()` by preserving raw
 headers and parsing only when requested. It is metadata-only: `rttp_client`
 does not treat `Content-Location` as redirect behavior, cache variant
-selection, representation replacement, retry/replay behavior, route
-generation, or status-policy behavior.
+selection, representation replacement, retry/replay behavior, route generation,
+or status-policy behavior.
+
+## Bounded HTTP/1.1 Location response metadata
+
+`Response::location()` remains the raw first-value `Location` accessor used by
+existing client redirect behavior. `Response::location_metadata()` is the
+opt-in typed helper for callers that want bounded validation of response
+metadata without changing redirect policy.
+
+`Response::location_metadata()` parses a response `Location` header into
+protocol `Location` metadata. It returns `Ok(None)` when the header is absent
+and rejects duplicate header fields because `Location` is handled as a
+singleton response metadata field. `Location::parse(value)` is available when
+callers want to validate one raw field value directly; it trims outer HTTP
+optional whitespace and exposes the validated value with `Location::as_str()`
+and `Location::header_value()`.
+
+The helper is metadata-only and bounded to 64 KiB per field value. Malformed
+values, duplicated singleton fields, and oversized values make
+`Response::location_metadata()` return an error while leaving the original
+headers and body available through raw response APIs. `rttp_client` does not
+follow, resolve, rewrite, replay, cache, or apply redirect policy from this
+helper.
 
 ## Bounded HTTP/1.1 representation metadata behavior
 
@@ -600,6 +622,7 @@ header-block model.
 | Allow | `Response::allow` parses bounded response `Allow` fields into an ordered HTTP method-token list | No fallback method selection, automatic retry/replay, or status-code policy behavior for `405` or `OPTIONS` |
 | Client Hints | `Response::accept_ch` and `Response::critical_ch` parse bounded, ordered Client Hints opt-in metadata while preserving raw headers on parse failures | No browser opt-in state, request-header generation, retry, persistence, or Client Hints policy |
 | Content-Language | `Response::content_language` parses bounded response `Content-Language` fields into ordered language metadata while preserving raw headers | No automatic language negotiation, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
+| Location | `Response::location_metadata` and `Location::parse` parse bounded singleton response `Location` metadata while preserving raw `Response::location` access | No new redirect policy, automatic redirect behavior, relative resolution, request replay, method rewriting, caching, or route generation |
 | Content-Location | `Response::content_location` and `ContentLocation::parse` parse bounded singleton response `Content-Location` metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |
 | Content-Type and Content-Encoding | `Response::content_type`/`ContentType::parse` parse bounded singleton `Content-Type` metadata, and `Response::content_encoding`/`ContentEncoding::parse` parse bounded ordered `Content-Encoding` codings while preserving raw headers on parse failures | No MIME sniffing, body decoding, charset transcoding, compression/decompression policy, negotiation, cache policy, redirects, retry/replay, or filesystem serving |
 | Content-Disposition | `Response::content_disposition` and `ContentDisposition::parse` parse bounded singleton response `Content-Disposition` metadata into disposition type plus ordered parameters, including preserved `filename` and `filename*` values, while preserving raw headers on parse failures | No automatic download, filesystem path handling, MIME sniffing, redirect behavior, retry/replay, cache behavior, negotiation behavior, or status-policy behavior |

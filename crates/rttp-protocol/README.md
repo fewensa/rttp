@@ -92,6 +92,19 @@ only: callers own trust, logging, CSRF, and `Referrer-Policy` decisions. This
 module is distinct from `referrer_policy`, which parses response policy tokens
 rather than URI references.
 
+## Location
+
+`location` parses a singleton HTTP `Location` response field as one RFC 9110
+URI reference (`absolute-URI` / `partial-URI`). Each field value is bounded to
+64 KiB. A second field is rejected after every supplied field is bound-checked.
+Surrounding SP and HTAB are trimmed as optional whitespace. The parser
+preserves the trimmed reference text and does not canonicalize scheme, host,
+port, path, fragment, query, or userinfo. ASCII controls, interior whitespace,
+non-URI bytes, broken percent-encoding, empty values, and values the
+structural URL parser cannot accept are errors. This is syntax validation
+only: callers own redirect policy, relative resolution, request replay, method
+rewriting, caching, and trust decisions.
+
 ## Referrer-Policy
 
 `referrer_policy` parses one or more `Referrer-Policy` field values into

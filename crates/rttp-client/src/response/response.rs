@@ -27,6 +27,7 @@ use rttp_protocol::cookie::HttpSetCookies;
 use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
 use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::cross_origin_resource_policy::CrossOriginResourcePolicy;
+use rttp_protocol::location::Location;
 use rttp_protocol::prefer::PreferenceApplied;
 use rttp_protocol::referrer_policy::ReferrerPolicy;
 use rttp_protocol::sunset::parse_sunset_values;
@@ -514,6 +515,17 @@ impl Response {
         "Duplicate Content-Location header values",
       )),
     }
+  }
+
+  /// Parses bounded `Location` response metadata without applying redirect policy.
+  pub fn location_metadata(&self) -> error::Result<Option<Location>> {
+    let values = self.header_values("location");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Location::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   pub fn content_disposition(&self) -> error::Result<Option<ContentDisposition>> {
