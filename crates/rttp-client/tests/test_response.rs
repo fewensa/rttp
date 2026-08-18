@@ -1,5 +1,5 @@
 use rttp_client::response::{
-  AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType,
+  AltSvc, AuthenticationInfo, ContentDisposition, ContentEncoding, ContentLocation, ContentType,
   CrossOriginEmbedderPolicy, CrossOriginResourcePolicy, Digest, HttpClearSiteData, HttpSetCookies,
   LinkValues, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
 };
@@ -1001,6 +1001,69 @@ fn test_www_authenticate_rejects_malformed_duplicate_and_bounded_values() {
       Some(&value),
       response.header_value("WWW-Authenticate"),
       "raw header should remain available after a parse failure"
+    );
+  }
+}
+
+#[test]
+fn test_authentication_info_response_helper_parses_combined_metadata() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Authentication-Info: nextnonce=\"n-2\", qop=auth\r\n",
+    "Authentication-Info: rspauth=\"abc\", cnonce=\"c-1\", nc=00000001\r\n",
+    "Content-Length: 2\r\n\r\nOK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  let info = response
+    .authentication_info()
+    .expect("valid Authentication-Info should parse")
+    .expect("Authentication-Info should be present");
+
+  assert_eq!(5, info.len());
+  assert_eq!(Some("n-2"), info.parameter("nextnonce"));
+  assert_eq!(Some("auth"), info.parameter("qop"));
+  assert_eq!(Some("abc"), info.parameter("rspauth"));
+  assert_eq!(Some("c-1"), info.parameter("cnonce"));
+  assert_eq!(Some("00000001"), info.parameter("nc"));
+}
+
+#[test]
+fn test_authentication_info_response_helper_returns_none_when_absent() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK".to_vec(),
+  )
+  .expect("response without Authentication-Info should parse");
+
+  let info: Option<AuthenticationInfo> = response
+    .authentication_info()
+    .expect("absent Authentication-Info should not be invalid");
+
+  assert_eq!(None, info);
+}
+
+#[test]
+fn test_authentication_info_rejects_invalid_metadata_without_hiding_headers() {
+  for value in [
+    "nextnonce=",
+    "nextnonce=\"unterminated",
+    "nextnonce=one, NEXTNONCE=two",
+    "token68only",
+  ] {
+    let raw =
+      format!("HTTP/1.1 200 OK\r\nAuthentication-Info: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+
+    assert!(
+      response.authentication_info().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Authentication-Info")
     );
   }
 }

@@ -1,9 +1,10 @@
 use rttp_client::response::{
   AcceptCh, AccessControlAllowHeaders, AccessControlAllowHeadersParseError,
   AccessControlAllowMethods, AccessControlAllowMethodsParseError, AccessControlExposeHeaders,
-  AccessControlMaxAge, AccessControlMaxAgeParseError, AltSvc, CrossOriginEmbedderPolicy,
-  CrossOriginResourcePolicy, Digest, HttpClearSiteData, PreferenceApplied, Priority,
-  ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Trailer,
+  AccessControlMaxAge, AccessControlMaxAgeParseError, AltSvc, AuthenticationInfo,
+  AuthenticationInfoParseError, CrossOriginEmbedderPolicy, CrossOriginResourcePolicy, Digest,
+  HttpClearSiteData, PreferenceApplied, Priority, ReferrerPolicy, ReferrerPolicyToken,
+  ServerTiming, Trailer,
 };
 use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 
@@ -25,6 +26,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .expect("Access-Control-Expose-Headers should parse");
   let clear_site_data =
     HttpClearSiteData::parse("\"cache\"").expect("Clear-Site-Data should parse");
+  let authentication_info =
+    AuthenticationInfo::parse("nextnonce=\"n-2\"").expect("Authentication-Info should parse");
+  let _: AuthenticationInfoParseError = AuthenticationInfo::parse("nextnonce=")
+    .expect_err("invalid Authentication-Info should be rejected");
   let digest = Digest::parse("sha-256=:YWJj:").expect("Digest should parse");
   let priority = Priority::parse("u=1, i").expect("Priority should parse");
   let server_timing = ServerTiming::parse("db;dur=53").expect("Server-Timing should parse");
@@ -45,6 +50,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(max_age.seconds(), 60);
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
   assert_eq!(clear_site_data.directives().len(), 1);
+  assert_eq!(authentication_info.parameter("nextnonce"), Some("n-2"));
   assert_eq!(digest.entries().len(), 1);
   assert_eq!(priority.urgency(), Some(1));
   assert_eq!(server_timing.metrics().len(), 1);
