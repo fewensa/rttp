@@ -86,18 +86,3 @@ without changing those raw fields.
 
 These helpers only declare and parse metadata. They do not calculate hashes,
 verify bodies, canonicalize representations, sign values, or enforce integrity.
-
-## Want-Repr-Digest request metadata
-
-Handlers can call `Request::want_repr_digest()` and
-`HttpRequest::want_repr_digest()` to observe bounded typed `Want-Repr-Digest`
-algorithm preferences. The helpers combine case-insensitive fields in wire
-order into `HttpWantReprDigest`. Each entry exposes `algorithm()` and
-`preference()` (`0` through `10`). Absent metadata returns `Ok(None)`.
-Malformed, oversized, duplicate, empty, or over-limit values return a parse
-error while `Request::header()` and `Request::body()` continue to expose the
-original request.
-
-These helpers parse request metadata only. They do not select an algorithm,
-compute or verify representation digests, attach `Repr-Digest`, or negotiate a
-representation.
