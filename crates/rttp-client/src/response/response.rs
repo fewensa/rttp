@@ -14,6 +14,7 @@ use crate::response::ProxyAuthenticationInfo;
 use crate::response::ReprDigest;
 use crate::response::ServerTiming;
 use crate::response::Trailer;
+use crate::response::Warning;
 use crate::response::WwwAuthenticate;
 use crate::types::{Cookie, Header, RoUrl, StatusCode};
 use rttp_protocol::access_control_allow_headers::AccessControlAllowHeaders;
@@ -21,6 +22,7 @@ use rttp_protocol::access_control_allow_methods::AccessControlAllowMethods;
 use rttp_protocol::access_control_allow_origin::AccessControlAllowOrigin;
 use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::access_control_max_age::AccessControlMaxAge;
+use rttp_protocol::allow as protocol_allow;
 use rttp_protocol::clear_site_data::ClearSiteData;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::cookie::HttpSetCookies;
@@ -34,8 +36,6 @@ use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
 
 const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
-const MAX_ALLOW_VALUE_BYTES: usize = 64 * 1024;
-const MAX_ALLOW_METHODS: usize = 256;
 const MAX_ACCEPT_RANGES_VALUE_BYTES: usize = 64 * 1024;
 const MAX_ACCEPT_RANGE_UNITS: usize = 256;
 const MAX_ACCEPT_MEDIA_TYPES: usize = 256;
@@ -617,6 +617,19 @@ impl Response {
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
+  /// Parses all `Warning` fields as bounded RFC 7234 warning-value metadata.
+  /// This does not change cache freshness, stale-response handling, or
+  /// response-acceptance policy.
+  pub fn warning(&self) -> error::Result<Option<Warning>> {
+    let values = self.header_values("warning");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Warning::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
   /// Parses all `Alt-Svc` fields as bounded alternative-service metadata.
   /// This does not migrate connections or select an alternative endpoint.
   pub fn alt_svc(&self) -> error::Result<Option<AltSvc>> {
@@ -827,7 +840,7 @@ impl fmt::Display for Response {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Allow {
-  methods: Vec<String>,
+  inner: protocol_allow::Allow,
 }
 
 impl Allow {
@@ -839,48 +852,17 @@ impl Allow {
   where
     I: IntoIterator<Item = &'a str>,
   {
-    let mut methods = Vec::new();
-    let mut seen = HashSet::new();
-
-    for value in values {
-      if value.len() > MAX_ALLOW_VALUE_BYTES {
-        return Err(error::bad_response("Allow header value is too large"));
-      }
-
-      for method in value.split(',') {
-        let method = method.trim();
-        if method.is_empty() {
-          return Err(error::bad_response("Invalid Allow method"));
-        }
-        if !is_token(method) {
-          return Err(error::bad_response("Invalid Allow method"));
-        }
-        if methods.len() >= MAX_ALLOW_METHODS {
-          return Err(error::bad_response("Too many Allow methods"));
-        }
-        if !seen.insert(method.to_string()) {
-          return Err(error::bad_response("Duplicate Allow method"));
-        }
-        methods.push(method.to_string());
-      }
-    }
-
-    if methods.is_empty() {
-      return Err(error::bad_response("Invalid Allow method"));
-    }
-
-    Ok(Self { methods })
+    protocol_allow::Allow::parse_values(values)
+      .map(|inner| Self { inner })
+      .map_err(|err| error::bad_response(err.to_string()))
   }
 
   pub fn methods(&self) -> Vec<&str> {
-    self.methods.iter().map(String::as_str).collect()
+    self.inner.methods()
   }
 
   pub fn contains_method(&self, method: impl AsRef<str>) -> bool {
-    self
-      .methods
-      .iter()
-      .any(|candidate| candidate == method.as_ref())
+    self.inner.contains_method(method)
   }
 }
 

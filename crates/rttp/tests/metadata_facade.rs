@@ -17,6 +17,10 @@ fn compatibility_facade_exports_client_metadata_types() {
       .expect("Accept-Patch should parse");
   let accept_post: rttp::AcceptPost =
     rttp_client::response::AcceptPost::parse("application/json").expect("Accept-Post should parse");
+  let alt_svc: rttp::AltSvc =
+    rttp_client::response::AltSvc::parse("h3=\":443\"; ma=60").expect("Alt-Svc should parse");
+  let _: rttp::AltSvcParseError =
+    rttp_client::response::AltSvc::parse("h3=:443").expect_err("invalid Alt-Svc should fail");
   let embedder_policy: rttp::CrossOriginEmbedderPolicy =
     rttp_client::response::CrossOriginEmbedderPolicy::parse("require-corp; report-to=\"coep\"")
       .expect("Cross-Origin-Embedder-Policy should parse");
@@ -38,6 +42,8 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
   assert_eq!(accept_patch.media_types().len(), 1);
   assert_eq!(accept_post.media_types().len(), 1);
+  assert_eq!(alt_svc.alternatives()[0].protocol_id(), "h3");
+  assert_eq!(alt_svc.alternatives()[0].max_age(), Some(60));
   assert_eq!(embedder_policy.header_value(), "require-corp");
   assert_eq!(opener_policy.header_value(), "noopener-allow-popups");
   assert_eq!(
