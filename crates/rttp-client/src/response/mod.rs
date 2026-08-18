@@ -64,7 +64,8 @@ mod response;
 
 pub use rttp_protocol::alt_svc::{AltSvc, AltSvcAlternative, AltSvcParameter, AltSvcParseError};
 pub use rttp_protocol::digest::{
-  Digest, DigestEntry, DigestParseError, ReprDigest, ReprDigestEntry,
+  ContentDigest, ContentDigestEntry, Digest, DigestEntry, DigestParseError, ReprDigest,
+  ReprDigestEntry,
 };
 pub use rttp_protocol::prefer::{
   PreferParseError, Preference, PreferenceApplied, PreferenceAppliedParseError, PreferenceKind,

@@ -8,6 +8,7 @@ use url::Url;
 use crate::error;
 use crate::response::raw_response::RawResponse;
 use crate::response::AltSvc;
+use crate::response::ContentDigest;
 use crate::response::Digest;
 use crate::response::Priority;
 use crate::response::ProxyAuthenticationInfo;
@@ -620,6 +621,12 @@ impl Response {
 
   /// Parses all `Content-Digest` fields as bounded response metadata.
   pub fn digest(&self) -> error::Result<Option<Digest>> {
+    self.digest_field("content-digest")
+  }
+
+  /// Parses all `Content-Digest` fields as bounded response metadata without
+  /// verifying hashes or selecting an algorithm.
+  pub fn content_digest(&self) -> error::Result<Option<ContentDigest>> {
     self.digest_field("content-digest")
   }
 

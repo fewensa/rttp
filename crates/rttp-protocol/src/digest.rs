@@ -24,6 +24,12 @@ pub struct Digest {
 /// `Content-Digest`, but refers to a representation rather than message content.
 pub type ReprDigest = Digest;
 
+/// Parsed `Content-Digest` response metadata.
+///
+/// This is a parse/format view of the RFC 9530 dictionary. It does not verify
+/// hashes, compute digest values, or select an algorithm.
+pub type ContentDigest = Digest;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DigestEntry {
   algorithm: String,
@@ -32,6 +38,9 @@ pub struct DigestEntry {
 
 /// An entry in parsed `Repr-Digest` response metadata.
 pub type ReprDigestEntry = DigestEntry;
+
+/// An entry in parsed `Content-Digest` response metadata.
+pub type ContentDigestEntry = DigestEntry;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DigestParseError {

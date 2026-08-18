@@ -1,4 +1,3 @@
-use rttp_client::response::ReprDigest;
 use rttp_client::response::{
   AcceptCh, AccessControlAllowHeaders, AccessControlAllowHeadersParseError,
   AccessControlAllowMethods, AccessControlAllowMethodsParseError, AccessControlExposeHeaders,
@@ -9,6 +8,7 @@ use rttp_client::response::{
   StrictTransportSecurity, StrictTransportSecurityParseError, Trailer, TransferEncoding,
   TransferEncodingParseError, WantReprDigest, Warning,
 };
+use rttp_client::response::{ContentDigest, ReprDigest};
 use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 
 #[test]
@@ -108,6 +108,16 @@ fn response_facade_exports_repr_digest_metadata() {
   assert_eq!(
     repr_digest.entry("sha-512").map(|entry| entry.value()),
     Some(&b"def"[..])
+  );
+}
+
+#[test]
+fn response_facade_exports_content_digest_metadata() {
+  let content_digest = ContentDigest::parse("sha-256=:YWJj:").expect("Content-Digest should parse");
+
+  assert_eq!(
+    content_digest.entry("sha-256").map(|entry| entry.value()),
+    Some(&b"abc"[..])
   );
 }
 
