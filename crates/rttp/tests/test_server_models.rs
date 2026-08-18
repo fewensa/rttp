@@ -2,14 +2,15 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use rttp::server::{
   HttpAccept, HttpAcceptCh, HttpAcceptRanges, HttpAccessControlAllowHeaders,
-  HttpAccessControlAllowMethods, HttpAccessControlAllowOrigin, HttpAccessControlRequestMethod,
-  HttpAllowedMethods, HttpAuthorization, HttpByteRange, HttpByteRangeError, HttpClearSiteData,
-  HttpConditionalMetadata, HttpContentDisposition, HttpContentLanguages, HttpContentSecurityPolicy,
-  HttpContentType, HttpCriticalCh, HttpEntityTag, HttpExpectations, HttpIfNoneMatch, HttpIfRange,
-  HttpIfRangeRequestOutcome, HttpLinkValues, HttpPermissionsPolicy, HttpReferrerPolicy,
-  HttpReportingEndpoints, HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl,
-  HttpRequestTe, HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings,
-  HttpRetryAfter, HttpServerTiming, HttpVary,
+  HttpAccessControlAllowMethods, HttpAccessControlAllowOrigin, HttpAccessControlRequestHeaders,
+  HttpAccessControlRequestMethod, HttpAllowedMethods, HttpAuthorization, HttpByteRange,
+  HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata, HttpContentDisposition,
+  HttpContentLanguages, HttpContentSecurityPolicy, HttpContentType, HttpCriticalCh, HttpEntityTag,
+  HttpExpectations, HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome, HttpLinkValues,
+  HttpPermissionsPolicy, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
+  HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
+  HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming,
+  HttpVary,
 };
 
 #[test]
@@ -115,6 +116,41 @@ fn request_access_control_request_method_preserves_absent_valid_and_malformed_me
   assert_eq!(
     Some("GET, POST"),
     malformed.header("Access-Control-Request-Method")
+  );
+}
+
+#[test]
+fn request_access_control_request_headers_preserves_absent_valid_and_malformed_metadata() {
+  let absent = parse_request("OPTIONS /widgets HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .access_control_request_headers()
+      .expect("missing Access-Control-Request-Headers should be accepted")
+  );
+
+  let request = parse_request(concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Headers: X-Request-Id, Authorization\r\n",
+    "\r\n"
+  ));
+  let headers: HttpAccessControlRequestHeaders = request
+    .access_control_request_headers()
+    .expect("Access-Control-Request-Headers should parse")
+    .expect("Access-Control-Request-Headers should be present");
+  assert_eq!(["x-request-id", "authorization"], headers.field_names());
+
+  let malformed = parse_request(concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Headers: X-Request Id\r\n",
+    "\r\n"
+  ));
+  assert!(malformed.access_control_request_headers().is_err());
+  assert_eq!(
+    Some("X-Request Id"),
+    malformed.header("Access-Control-Request-Headers")
   );
 }
 
