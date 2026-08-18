@@ -147,3 +147,18 @@ original request.
 These helpers parse request metadata only. They do not select an algorithm,
 compute or verify representation digests, attach `Repr-Digest`, or negotiate a
 representation.
+
+## Host request authority
+
+Handlers can call `Request::host()` and `HttpRequest::host()` to observe the
+effective `Host` authority as bounded `HttpHost` metadata. The helpers parse
+the stored case-insensitive `Host` field as `host[:port]`, including bracketed
+IPv6, using the inbound Host grammar. Absent metadata returns `Ok(None)`.
+Duplicate or malformed values return a parse error while `Request::header()`
+and `Request::body()` continue to expose the original request. HTTP/2
+`:authority` remains mapped onto `header("host")`; `host()` then parses that
+single mapped value.
+
+These helpers parse request metadata only. They do not select a virtual host,
+compare origins, apply scheme defaults, or change HTTP/1 decode or HTTP/2
+request-target handling.
