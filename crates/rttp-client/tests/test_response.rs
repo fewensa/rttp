@@ -1235,7 +1235,7 @@ fn test_digest_response_helpers_parse_bounded_digest_fields() {
   let raw = concat!(
     "HTTP/1.1 200 OK\r\n",
     "Content-Digest: sha-256=:YWJj:, sha-512=:ZGVm:\r\n",
-    "Repr-Digest: sha-256=:Z2hp:\r\n",
+    "Repr-Digest: sha-256=:Z2hp:;foo=bar\r\n",
     "Repr-Digest: sha-512=:amts:\r\n",
     "Content-Length: 0\r\n\r\n"
   );
@@ -1404,6 +1404,7 @@ fn test_digest_response_helpers_recover_from_empty_duplicate_and_oversized_field
     ("Content-Digest", "sha-256=:YWJj:, sha-256=:ZGVm:"),
     ("Repr-Digest", "sha-256=:YWJj:, sha-256=:ZGVm:"),
     ("Repr-Digest", "sha-256=:not-base64!:"),
+    ("Repr-Digest", "sha-256=:YWJj:;foo="),
   ] {
     let raw = format!("HTTP/1.1 200 OK\r\n{header}: {value}\r\nContent-Length: 0\r\n\r\n");
     let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
