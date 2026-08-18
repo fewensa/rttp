@@ -4,7 +4,7 @@ use rttp_client::response::{
   AccessControlMaxAge, AccessControlMaxAgeParseError, AltSvc, CrossOriginEmbedderPolicy,
   CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest, HttpClearSiteData, PreferenceApplied,
   Priority, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ReferrerPolicy,
-  ReferrerPolicyToken, ServerTiming, Trailer,
+  ReferrerPolicyToken, ServerTiming, Trailer, Vary, VaryParseError,
 };
 use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 
@@ -46,6 +46,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
       .expect("Proxy-Authentication-Info should parse");
   let _: ProxyAuthenticationInfoParseError = ProxyAuthenticationInfo::parse("")
     .expect_err("empty Proxy-Authentication-Info should be rejected");
+  let vary = Vary::parse("Accept-Encoding, User-Agent").expect("Vary should parse");
+  let _: VaryParseError = Vary::parse("").expect_err("empty Vary should be rejected");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(allow_methods.methods(), ["GET", "POST"]);
@@ -72,6 +74,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     proxy_authentication_info.parameter("nextnonce"),
     Some("6629fae49393a05397450978507c4ef1")
   );
+  assert_eq!(vary.field_names(), ["accept-encoding", "user-agent"]);
 }
 
 #[test]
