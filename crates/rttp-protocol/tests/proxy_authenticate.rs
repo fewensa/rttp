@@ -144,4 +144,31 @@ fn proxy_authenticate_enforces_value_parameter_and_count_bounds() {
     .collect::<Vec<_>>()
     .join(", ");
   assert!(ProxyAuthenticate::parse(too_many_challenges).is_err());
+
+  let too_many_repeated_challenges = (0..=MAX_PROXY_AUTHENTICATE_CHALLENGES)
+    .map(|index| format!("Scheme{index}"))
+    .collect::<Vec<_>>();
+  assert!(
+    ProxyAuthenticate::parse_values(too_many_repeated_challenges.iter().map(String::as_str))
+      .is_err()
+  );
+}
+
+#[test]
+fn proxy_authenticate_repeated_fields_stop_at_combined_bound() {
+  let mut calls = 0;
+  let result = ProxyAuthenticate::parse_values(std::iter::from_fn(|| {
+    calls += 1;
+    if calls <= MAX_PROXY_AUTHENTICATE_VALUE_BYTES + 1 {
+      Some("B")
+    } else {
+      None
+    }
+  }));
+
+  assert!(result.is_err());
+  assert!(
+    calls < MAX_PROXY_AUTHENTICATE_VALUE_BYTES + 1,
+    "parser must reject before collecting an unbounded repeated-field buffer"
+  );
 }

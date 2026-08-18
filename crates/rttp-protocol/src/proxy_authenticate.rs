@@ -70,6 +70,19 @@ impl ProxyAuthenticate {
           "Proxy-Authenticate header value is too large",
         ));
       }
+      let separator_len = if saw_value { 2 } else { 0 };
+      let combined_len = combined
+        .len()
+        .checked_add(separator_len)
+        .and_then(|length| length.checked_add(value.len()))
+        .ok_or_else(|| {
+          ProxyAuthenticateParseError::new("Proxy-Authenticate header value is too large")
+        })?;
+      if combined_len > MAX_PROXY_AUTHENTICATE_VALUE_BYTES {
+        return Err(ProxyAuthenticateParseError::new(
+          "Proxy-Authenticate header value is too large",
+        ));
+      }
       if saw_value {
         combined.push_str(", ");
       }
