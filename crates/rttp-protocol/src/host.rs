@@ -1,11 +1,12 @@
 //! Bounded, policy-free parsing for the HTTP `Host` request header.
 //!
 //! This module validates one `uri-host` plus optional port using the inbound
-//! Host authority grammar (`host[:port]`, including bracketed IPv6). Callers
-//! retain virtual-host routing, origin comparison, and scheme defaults.
+//! Host authority grammar (`host[:port]`, including bracketed IP-literals).
+//! Callers retain virtual-host routing, origin comparison, and scheme defaults.
 
 use std::error::Error;
 use std::fmt;
+use std::net::Ipv6Addr;
 
 /// Maximum bytes accepted in a `Host` field value.
 pub const MAX_HOST_VALUE_BYTES: usize = 64 * 1024;
@@ -120,7 +121,7 @@ fn parse_authority(value: &str) -> Result<Host, HostParseError> {
     };
     let host = &rest[..end];
     let suffix = &rest[end + 1..];
-    if host.is_empty() || host.bytes().any(|byte| matches!(byte, b'[' | b']')) {
+    if !is_valid_ip_literal(host) {
       return Err(invalid_value());
     }
     let port = if suffix.is_empty() {
@@ -162,11 +163,60 @@ fn parse_authority(value: &str) -> Result<Host, HostParseError> {
   }
 }
 
-fn is_valid_reg_name_or_ipv4(host: &str) -> bool {
+fn is_valid_ip_literal(host: &str) -> bool {
   !host.is_empty()
-    && host
+    && !host.bytes().any(|byte| matches!(byte, b'[' | b']'))
+    && (host.parse::<Ipv6Addr>().is_ok() || is_valid_ipvfuture(host))
+}
+
+fn is_valid_ipvfuture(host: &str) -> bool {
+  let Some(rest) = host.strip_prefix(['v', 'V']) else {
+    return false;
+  };
+  let Some((version, address)) = rest.split_once('.') else {
+    return false;
+  };
+  !version.is_empty()
+    && version.bytes().all(|byte| byte.is_ascii_hexdigit())
+    && !address.is_empty()
+    && address
       .bytes()
-      .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_'))
+      .all(|byte| is_unreserved(byte) || is_sub_delim(byte) || byte == b':')
+}
+
+fn is_valid_reg_name_or_ipv4(host: &str) -> bool {
+  !host.is_empty() && is_valid_reg_name(host.as_bytes())
+}
+
+fn is_valid_reg_name(bytes: &[u8]) -> bool {
+  let mut index = 0;
+  while index < bytes.len() {
+    match bytes[index] {
+      b'%' => {
+        if index + 2 >= bytes.len()
+          || !bytes[index + 1].is_ascii_hexdigit()
+          || !bytes[index + 2].is_ascii_hexdigit()
+        {
+          return false;
+        }
+        index += 3;
+      }
+      byte if is_unreserved(byte) || is_sub_delim(byte) => index += 1,
+      _ => return false,
+    }
+  }
+  true
+}
+
+fn is_unreserved(byte: u8) -> bool {
+  byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~')
+}
+
+fn is_sub_delim(byte: u8) -> bool {
+  matches!(
+    byte,
+    b'!' | b'$' | b'&' | b'\'' | b'(' | b')' | b'*' | b'+' | b',' | b';' | b'='
+  )
 }
 
 fn is_valid_port(port: &str) -> bool {

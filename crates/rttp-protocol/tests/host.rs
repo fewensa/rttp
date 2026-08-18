@@ -7,6 +7,7 @@ fn host_parses_name_port_and_ipv6_authorities() {
   let ipv4 = Host::parse("127.0.0.1:443").expect("IPv4 Host must parse");
   let ipv6 = Host::parse("[::1]").expect("IPv6 Host must parse");
   let ipv6_port = Host::parse("[2001:db8::1]:8443").expect("IPv6 host:port Host must parse");
+  let ipvfuture = Host::parse("[v1.fe80::a]:8080").expect("IPvFuture Host must parse");
 
   assert_eq!("example.test", name.host());
   assert_eq!(None, name.port());
@@ -22,6 +23,9 @@ fn host_parses_name_port_and_ipv6_authorities() {
   assert_eq!("[2001:db8::1]", ipv6_port.host());
   assert_eq!(Some("8443"), ipv6_port.port());
   assert_eq!("[2001:db8::1]:8443", ipv6_port.header_value());
+  assert_eq!("[v1.fe80::a]", ipvfuture.host());
+  assert_eq!(Some("8080"), ipvfuture.port());
+  assert_eq!("[v1.fe80::a]:8080", ipvfuture.header_value());
 }
 
 #[test]
@@ -35,9 +39,10 @@ fn host_trims_http_optional_whitespace() {
 
 #[test]
 fn host_accepts_inbound_reg_name_characters() {
-  let host = Host::parse("foo_bar.example").expect("inbound-legal host must parse");
-
-  assert_eq!("foo_bar.example", host.header_value());
+  for value in ["foo_bar.example", "foo~bar", "foo%2Dbar", "foo!bar"] {
+    let host = Host::parse(value).expect("inbound-legal host must parse");
+    assert_eq!(value, host.header_value());
+  }
 }
 
 #[test]
@@ -57,6 +62,11 @@ fn host_rejects_empty_path_userinfo_and_malformed_values() {
     "[]",
     "[::1",
     "::1]",
+    "[not-an-ip]",
+    "[:::]",
+    "[foo bar]:80",
+    "foo%2",
+    "foo%GG",
     "example.test:80:443",
   ] {
     assert!(Host::parse(value).is_err(), "{value:?} must be rejected");
