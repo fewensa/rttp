@@ -196,6 +196,58 @@ fn request_representation_metadata_parses_without_applying_policy() {
 }
 
 #[test]
+fn request_want_repr_digest_parses_preferences_without_selecting_an_algorithm() {
+  let request = Request::from_raw_frame(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Want-Repr-Digest: sha-256=10, sha-512=3\r\n",
+    "want-repr-digest: unixsum=0\r\n",
+    "Content-Length: 4\r\n",
+    "\r\n",
+    "body"
+  ).as_bytes())
+  .expect("request should parse");
+
+  let digest = request
+    .want_repr_digest()
+    .expect("Want-Repr-Digest should parse")
+    .expect("Want-Repr-Digest should be present");
+  assert_eq!(digest.len(), 3);
+  assert_eq!(digest.entries()[0].algorithm(), "sha-256");
+  assert_eq!(digest.entries()[0].preference(), 10);
+  assert_eq!(digest.entries()[1].algorithm(), "sha-512");
+  assert_eq!(digest.entries()[1].preference(), 3);
+  assert_eq!(digest.entries()[2].algorithm(), "unixsum");
+  assert_eq!(digest.entries()[2].preference(), 0);
+  assert_eq!(b"body", request.body());
+}
+
+#[test]
+fn request_want_repr_digest_preserves_absent_and_malformed_headers() {
+  let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .want_repr_digest()
+      .expect("absent Want-Repr-Digest should be accepted")
+  );
+
+  let malformed = Request::from_raw_frame(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Want-Repr-Digest: sha-256\r\n",
+    "Content-Length: 4\r\n",
+    "\r\n",
+    "body"
+  ).as_bytes())
+  .expect("malformed Want-Repr-Digest should not reject the request frame");
+  assert!(malformed.want_repr_digest().is_err());
+  assert_eq!(Some("sha-256"), malformed.header("Want-Repr-Digest"));
+  assert_eq!(b"body", malformed.body());
+}
+
+#[test]
 fn request_representation_metadata_preserves_invalid_headers_and_body() {
   let duplicate = Request::from_raw_frame(concat!(
     "POST /documents HTTP/1.1\r\n",
