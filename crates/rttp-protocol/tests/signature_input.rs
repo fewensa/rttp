@@ -90,6 +90,36 @@ fn signature_input_formats_true_parameters_canonically() {
 }
 
 #[test]
+fn signature_input_preserves_covered_component_and_member_parameters() {
+  let input = SignatureInput::parse(
+    r#"sig1=("@query-param";name="id";sf "@authority");created=1700000000;nonce="abc""#,
+  )
+  .expect("Signature-Input should parse parameterized metadata");
+  let member = input.member("sig1").expect("sig1 should be retained");
+
+  assert_eq!(
+    member.covered_components()[0]
+      .parameter("name")
+      .and_then(|parameter| parameter.value()),
+    Some(&SignatureParameterValue::String("id".to_string()))
+  );
+  assert!(member.covered_components()[0]
+    .parameter("sf")
+    .expect("sf parameter")
+    .is_valueless());
+  assert_eq!(
+    member
+      .parameter("nonce")
+      .and_then(|parameter| parameter.value()),
+    Some(&SignatureParameterValue::String("abc".to_string()))
+  );
+  assert_eq!(
+    input.header_value(),
+    r#"sig1=("@query-param";name="id";sf "@authority");created=1700000000;nonce="abc""#
+  );
+}
+
+#[test]
 fn signature_input_accepts_empty_covered_component_list() {
   let input = SignatureInput::parse(r#"sig1=();created=1700000000"#)
     .expect("empty covered component list should parse");
