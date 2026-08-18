@@ -437,6 +437,11 @@ impl<'a, 'm> Parser<'a, 'm> {
         "invalid Signature-Input numeric parameter",
       ));
     }
+    if whole_digits > 1 && self.value.as_bytes()[digits_start] == b'0' {
+      return Err(SignatureInputParseError::new(
+        "invalid Signature-Input numeric parameter",
+      ));
+    }
     if self.peek() == Some(b'.') {
       if whole_digits > 12 {
         return Err(SignatureInputParseError::new(

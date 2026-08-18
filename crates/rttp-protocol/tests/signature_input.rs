@@ -53,7 +53,7 @@ fn signature_input_parses_rfc_shaped_metadata_without_signature_policy() {
 #[test]
 fn signature_input_combines_fields_and_preserves_ordered_parameter_values() {
   let input = SignatureInput::parse_values([
-    r#"sig1=("content-digest";sf;req);created=001;flag=?0"#,
+    r#"sig1=("content-digest";sf;req);created=1;flag=?0"#,
     r#"sig2=("@status");extbin=:YWJj:;ratio=1.230;tok=*abc/def"#,
   ])
   .expect("combined Signature-Input should parse");
@@ -168,6 +168,9 @@ fn signature_input_rejects_malformed_or_wrong_shape_values() {
     "sig1=(\"@method\" \"@path\"",
     "sig1=(\"@method\");bad=@1",
     "sig1=(\"@method\");bad=%\"display\"",
+    "sig1=(\"@method\");created=001",
+    "sig1=(\"@method\");created=-01",
+    "sig1=(\"@method\");ratio=01.230",
     "sig1=(\"@method\");p=1, sig1=(\"@path\")",
     "sig1=(\"@method\";p;p)",
     "sig1=(\"@method\");p;p",
