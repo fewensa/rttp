@@ -245,6 +245,25 @@ policy enforcement, or automatic conditional requests. Directives such as
 `max-age`, `s-maxage`, `no-cache`, `must-revalidate`, and extension directives
 are exposed as parsed metadata only.
 
+### Bounded CDN-Cache-Control response metadata
+
+`Response::cdn_cache_control()` parses one or more response
+`CDN-Cache-Control` header fields into `CdnCacheControl`. It preserves
+directives in wire order, including CDN-specific extension directives, and
+exposes each directive token name plus its optional parsed value.
+
+The helper uses the same bounded validation model as response
+`Cache-Control`: each field value is limited to 64 KiB, the parsed header set
+is limited to 256 directives, directive names and unquoted values must be valid
+HTTP tokens, and quoted strings must be well formed. A malformed
+`CDN-Cache-Control` value makes the helper return an error while the raw
+response headers and body remain available through the ordinary response APIs.
+
+CDN cache metadata is exposed for application-owned policy only. RTTP does not
+create a CDN cache, compute freshness, revalidate automatically, implement
+surrogate-key behavior, apply shared-cache policy, retry, replay, redirect, or
+alter response acceptance from `CDN-Cache-Control`.
+
 ### Bounded HTTP/1.1 Date, Age, and Expires behavior
 
 `Response::date()` parses the response `Date` header as singleton HTTP-date
@@ -735,7 +754,7 @@ gain additional HTTP/2 header-block handling.
 | Byte ranges | `range`, `range_from`, `range_suffix`, `if_range_etag`, and `if_range_date` emit bounded HTTP/1.1 range request metadata; `Response::content_range`, `accept_ranges`, `is_partial_content`, and `is_range_not_satisfiable` expose `Content-Range`, `Accept-Ranges`, `206`, and `416` metadata while preserving raw headers | No Range request generation from `Accept-Ranges`, client-side `If-Range` evaluation, partial response engine, byte serving, content slicing, download resume, automatic retry/replay, cache storage, redirect handling, status-policy behavior, multipart range generation, or automatic cache validation policy |
 | Conditional requests | `if_none_match`, `if_match`, `if_modified_since`, and `if_unmodified_since` emit bounded HTTP/1.1 validators; `Response::is_not_modified`, `is_precondition_failed`, `etag`, and `last_modified` expose `304`/`412` metadata | One ETag validator per helper call, `If-Range` is range-scoped, no cache storage, no automatic revalidation, and no cache-control engine |
 | Informational responses and Early Hints | `Response::informational_responses` exposes skipped bounded HTTP/1.1 `1xx` heads, including `103 Early Hints`, with preserved raw headers; server `HttpResponse::early_hints`/`early_hints_with_headers` construct validated bodyless `103` metadata | `101 Switching Protocols` remains terminal for upgrade handoff; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
-| Cache-Control, Date, Age, Expires, Retry-After, and Allow | `Response::cache_control` parses bounded response directives, numeric freshness fields, quoted field-name lists, and extension directives; `Response::date` parses singleton HTTP-date metadata; `Response::age` parses bounded delta-seconds; `Response::expires` parses bounded HTTP-date metadata; `Response::retry_after` parses bounded delta-seconds or HTTP-date metadata; `Response::allow` parses bounded ordered method metadata | No cache storage, automatic revalidation, wall-clock freshness calculation, clock-skew correction, `Vary` matching, shared-cache policy enforcement, automatic conditional requests, automatic sleep, retry, replay, redirect, backoff, scheduler integration, fallback method selection, or status-code policy engine |
+| Cache-Control, CDN-Cache-Control, Date, Age, Expires, Retry-After, and Allow | `Response::cache_control` parses bounded response directives, numeric freshness fields, quoted field-name lists, and extension directives; `Response::cdn_cache_control` parses bounded `CDN-Cache-Control` directives and CDN extension metadata while preserving raw responses on parse errors; `Response::date` parses singleton HTTP-date metadata; `Response::age` parses bounded delta-seconds; `Response::expires` parses bounded HTTP-date metadata; `Response::retry_after` parses bounded delta-seconds or HTTP-date metadata; `Response::allow` parses bounded ordered method metadata | No cache storage, CDN cache, automatic revalidation, wall-clock freshness calculation, clock-skew correction, `Vary` matching, shared-cache policy enforcement, surrogate-key behavior, automatic conditional requests, automatic sleep, retry, replay, redirect, backoff, scheduler integration, fallback method selection, or status-code policy engine |
 | Content-Language | `Response::content_language` parses bounded response `Content-Language` fields into ordered language metadata while preserving raw headers | No automatic language negotiation, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
 | Content-Location | `Response::content_location` and `ContentLocation::parse` parse bounded singleton response `Content-Location` metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |
 | Content-Type and Content-Encoding | `Response::content_type`/`ContentType::parse` parse bounded singleton `Content-Type` metadata, and `Response::content_encoding`/`ContentEncoding::parse` parse bounded ordered `Content-Encoding` codings while preserving raw headers on parse failures | No MIME sniffing, body decoding, charset transcoding, compression/decompression policy, negotiation, cache policy, redirects, retry/replay, or filesystem serving |
@@ -1115,6 +1134,20 @@ calculation against wall-clock time, `Vary` matching, shared-cache policy
 enforcement, or automatic conditional requests. Directives such as `max-age`,
 `s-maxage`, `no-cache`, `only-if-cached`, `must-revalidate`, and extension
 directives are exposed as parsed metadata for application-owned policy.
+
+`HttpResponse::cdn_cache_control()` parses attached `CDN-Cache-Control`
+response fields into `HttpCdnCacheControl` with the same bounded directive
+model as response `Cache-Control`: 64 KiB per field, at most 256 directives,
+valid HTTP tokens for directive names and unquoted values, and well-formed
+quoted strings. CDN-specific extension directives are preserved in order with
+their optional parsed values. Parse errors return
+`HttpCdnCacheControlParseError` and do not remove the original raw response
+headers from the response model.
+
+CDN cache metadata remains metadata-only. The server does not create or manage
+a CDN cache, compute freshness, evaluate surrogate keys, revalidate
+automatically, enforce shared-cache policy, retry, replay, redirect, or choose
+status behavior from `CDN-Cache-Control`.
 
 Server `Age` and `Expires` helpers expose adjacent response metadata without
 adding cache policy. `HttpResponse::with_age(delta_seconds)` adds an `Age`
@@ -1524,7 +1557,7 @@ TLS or async accept loops.
 | Byte ranges | `HttpByteRange` parses one `bytes` range, `Request::evaluate_if_range` gates it with caller-provided strong ETag or exact HTTP-date metadata, `HttpResponse::partial_content`/`range_not_satisfiable` serialize `206`/`416` with `Content-Range`, and `HttpAcceptRanges` plus `HttpResponse::with_accept_ranges`/`with_accept_ranges_none`/`accept_ranges` declare and parse bounded `Accept-Ranges` metadata while preserving raw headers | No Range request generation, multipart range serialization, partial response engine, automatic retry/replay, redirect behavior, cache storage or policy, filesystem serving, MIME detection, automatic cache validation, automatic static-file policy, automatic byte serving, content slicing, download resume, or status-policy behavior |
 | Conditional requests | `Request::evaluate_conditional`, `evaluate_conditional_request`, `HttpConditionalMetadata`, and `HttpEntityTag` evaluate bounded HTTP/1.1 validators; `HttpResponse::not_modified` and `precondition_failed` serialize `304` and `412` outcomes | No cache storage, static-file serving policy, automatic revalidation, or cache-control engine |
 | Informational responses and Early Hints | `HttpResponse::early_hints` and `early_hints_with_headers` construct validated bodyless `103 Early Hints` response metadata with bounded `Link` and safe metadata headers | `101 Switching Protocols` remains a separate terminal handoff response; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
-| Cache-Control | `Request::cache_control`, `HttpRequest::cache_control`, and `HttpResponse::cache_control` parse bounded request/response directives, numeric freshness fields, quoted field-name lists, and extension directives; `HttpResponse::with_age`/`age`, `with_expires`/`expires`, and `with_retry_after_delta`/`with_retry_after_date`/`retry_after` declare and parse response `Age`, `Expires`, and `Retry-After` metadata | No cache storage, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, automatic conditional requests, directive-based validator evaluation, automatic sleep, retry, replay, backoff, scheduler integration, or status-code policy engine |
+| Cache-Control and CDN-Cache-Control | `Request::cache_control`, `HttpRequest::cache_control`, and `HttpResponse::cache_control` parse bounded request/response directives, numeric freshness fields, quoted field-name lists, and extension directives; `HttpResponse::cdn_cache_control` parses bounded response `CDN-Cache-Control` directives and CDN extension metadata while preserving raw response headers on parse errors; `HttpResponse::with_age`/`age`, `with_expires`/`expires`, and `with_retry_after_delta`/`with_retry_after_date`/`retry_after` declare and parse response `Age`, `Expires`, and `Retry-After` metadata | No cache storage, CDN cache, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, surrogate-key behavior, automatic conditional requests, directive-based validator evaluation, automatic sleep, retry, replay, backoff, scheduler integration, or status-code policy engine |
 | Fetch Metadata | `Request::sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, and `sec_fetch_user` parse bounded typed `Sec-Fetch-*` request fields and preserve raw values on errors | No browser security policy, request blocking, origin validation, navigation policy, or automatic header generation |
 | Vary | `HttpVary`, `HttpResponse::with_vary`, `HttpResponse::vary`, `Request::vary_selection`, and `HttpRequest::vary_selection` parse, declare, and select bounded `Vary` metadata with case-insensitive field-name handling | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | Allow | `HttpAllowedMethods`, `HttpResponse::with_allow`, and `HttpResponse::allow` declare and parse bounded `Allow` method-list metadata | No route dispatch, automatic `405` generation, `OPTIONS` policy, fallback method selection, retry/replay, or status-code policy engine |

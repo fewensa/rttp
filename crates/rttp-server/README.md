@@ -18,6 +18,21 @@ fields, preserves the request for handler-defined error policy, and returns an
 error for malformed values, values larger than 64 KiB, or more than 256
 directives. It only parses metadata; it does not apply caching behavior.
 
+## Response CDN-Cache-Control metadata
+
+`HttpResponse::cdn_cache_control()` parses attached `CDN-Cache-Control`
+response fields into `HttpCdnCacheControl`. The helper preserves CDN-specific
+extension directives in order with each directive token name and optional
+parsed value. It applies the shared cache-directive bounds: 64 KiB per field
+value, at most 256 directives, valid HTTP tokens for directive names and
+unquoted values, and well-formed quoted strings.
+
+Malformed CDN metadata returns `HttpCdnCacheControlParseError` while leaving
+the raw response headers in place. The helper only exposes metadata for
+handler-owned policy; it does not create or manage a CDN cache, compute
+freshness, evaluate surrogate keys, revalidate automatically, enforce
+shared-cache policy, retry, replay, redirect, or choose status behavior.
+
 ## Authentication metadata
 
 `Request::authorization()` / `HttpRequest::authorization()` and
