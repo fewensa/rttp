@@ -14,6 +14,7 @@ use rttp_protocol::referer::Referer;
 use rttp_protocol::referrer_policy::{ReferrerPolicy, ReferrerPolicyToken};
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
+use rttp_protocol::warning::Warning;
 use rttp_protocol::x_content_type_options::XContentTypeOptions;
 use rttp_protocol::x_frame_options::XFrameOptions;
 
@@ -38,6 +39,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let referer = Referer::parse("https://example.test/path?q=1").expect("Referer should parse");
   let timing_allow_origin =
     TimingAllowOrigin::parse("https://example.test").expect("Timing-Allow-Origin should parse");
+  let warning = Warning::parse(r#"110 - "Response is Stale""#).expect("Warning should parse");
   let x_content_type_options =
     XContentTypeOptions::parse("nosniff").expect("X-Content-Type-Options should parse");
   let x_frame_options = XFrameOptions::parse("DENY").expect("X-Frame-Options should parse");
@@ -71,6 +73,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   );
   assert_eq!(referer.header_value(), "https://example.test/path?q=1");
   assert_eq!(timing_allow_origin.origins(), ["https://example.test"]);
+  assert_eq!(warning.items()[0].code(), 110);
+  assert_eq!(warning.items()[0].text(), "Response is Stale");
   assert_eq!(x_content_type_options.header_value(), "nosniff");
   assert_eq!(x_frame_options.header_value(), "DENY");
   assert_eq!(cross_origin_embedder_policy.header_value(), "require-corp");

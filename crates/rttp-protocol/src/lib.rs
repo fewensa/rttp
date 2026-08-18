@@ -48,6 +48,7 @@ pub mod sunset;
 pub mod timing_allow_origin;
 pub mod trailer;
 pub mod vary;
+pub mod warning;
 pub mod www_authenticate;
 pub mod x_content_type_options;
 pub mod x_frame_options;
