@@ -187,10 +187,32 @@ fn reject_noncanonical_preference_integers(value: &str) -> Result<(), WantConten
 }
 
 fn top_level_member_count(value: &str) -> usize {
-  value
-    .split(',')
-    .filter(|member| !member.trim_matches([' ', '\t']).is_empty())
-    .count()
+  let mut count = 0;
+  let mut start = 0;
+  let mut quoted = false;
+  let mut escaped = false;
+  for (index, byte) in value.bytes().enumerate() {
+    if quoted {
+      if escaped {
+        escaped = false;
+      } else if byte == b'\\' {
+        escaped = true;
+      } else if byte == b'"' {
+        quoted = false;
+      }
+    } else if byte == b'"' {
+      quoted = true;
+    } else if byte == b',' {
+      if !value[start..index].trim_matches([' ', '\t']).is_empty() {
+        count += 1;
+      }
+      start = index + 1;
+    }
+  }
+  if !value[start..].trim_matches([' ', '\t']).is_empty() {
+    count += 1;
+  }
+  count
 }
 
 fn invalid_member() -> WantContentDigestParseError {

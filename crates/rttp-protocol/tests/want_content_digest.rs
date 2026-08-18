@@ -62,6 +62,15 @@ fn want_content_digest_ignores_unrecognized_parameters() {
 }
 
 #[test]
+fn want_content_digest_ignores_quoted_commas_in_unrecognized_parameters() {
+  let digest = WantContentDigest::parse(r#"sha-256=10;note="a,b""#)
+    .expect("quoted commas in ignored parameters should not count as members");
+  assert_eq!(digest.entries()[0].algorithm(), "sha-256");
+  assert_eq!(digest.entries()[0].preference(), 10);
+  assert_eq!(digest.header_value(), "sha-256=10");
+}
+
+#[test]
 fn want_content_digest_accepts_leading_zero_integers() {
   let digest = WantContentDigest::parse("sha-256=01")
     .expect("leading-zero integers should parse as sf-integer");
