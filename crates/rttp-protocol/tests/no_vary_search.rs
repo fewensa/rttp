@@ -36,6 +36,48 @@ fn parses_params_all_with_exceptions_across_header_fields() {
 }
 
 #[test]
+fn parses_explicit_params_false() {
+  let metadata = NoVarySearch::parse("params=?0").expect("No-Vary-Search should parse");
+
+  assert_eq!(metadata.params(), Some(&NoVarySearchParams::None));
+  assert!(!metadata.ignores_all_query_params());
+  assert_eq!(metadata.ignored_params(), None);
+  assert_eq!(metadata.header_value(), "params=?0");
+}
+
+#[test]
+fn duplicate_members_use_last_value() {
+  let metadata = NoVarySearch::parse_values([
+    r#"key-order=?0, params=("a"), except=("old"), x=first"#,
+    r#"key-order, params, except=("new"), x=last"#,
+  ])
+  .expect("duplicate dictionary keys should use the last value");
+
+  assert_eq!(metadata.key_order(), Some(true));
+  assert_eq!(metadata.params(), Some(&NoVarySearchParams::All));
+  assert_eq!(metadata.except(), ["new"]);
+  assert_eq!(metadata.extensions()[0].value(), Some("last"));
+  assert_eq!(
+    metadata.header_value(),
+    r#"key-order, params, except=("new"), x=last"#
+  );
+}
+
+#[test]
+fn validates_extension_values_as_structured_fields() {
+  for value in ["x", "x=?0", "x=42", r#"x=("a" token ?1)"#, r#"x="quoted""#] {
+    NoVarySearch::parse(value).expect("valid extension value should parse");
+  }
+
+  for value in ["x=", "x=not valid", "x=(?2)", r#"x="unterminated"#] {
+    assert!(
+      NoVarySearch::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+}
+
+#[test]
 fn rejects_invalid_no_vary_search_values() {
   for value in [
     "",
@@ -43,7 +85,6 @@ fn rejects_invalid_no_vary_search_values() {
     "params=utm",
     "params=()",
     r#"params=("a", "b")"#,
-    r#"params=("a"), params=("b")"#,
     r#"params=("a"), except=("b")"#,
     r#"except=("b")"#,
     "key-order=false",

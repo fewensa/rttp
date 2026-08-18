@@ -1,6 +1,8 @@
 use std::error::Error;
 use std::fmt;
 
+use sfv::{Dictionary, Parser};
+
 pub const MAX_NO_VARY_SEARCH_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_NO_VARY_SEARCH_PARAMETERS: usize = 256;
 pub const MAX_NO_VARY_SEARCH_EXTENSIONS: usize = 64;
@@ -20,6 +22,7 @@ pub struct NoVarySearch {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum NoVarySearchParams {
+  None,
   All,
   Names(Vec<String>),
 }
@@ -113,6 +116,7 @@ impl NoVarySearch {
     }
     if let Some(params) = &self.params {
       match params {
+        NoVarySearchParams::None => members.push("params=?0".to_owned()),
         NoVarySearchParams::All => members.push("params".to_owned()),
         NoVarySearchParams::Names(names) => {
           members.push(format!("params={}", format_string_list(names)));
@@ -135,6 +139,7 @@ impl NoVarySearch {
 impl NoVarySearchParams {
   pub fn names(&self) -> Option<&[String]> {
     match self {
+      Self::None => None,
       Self::All => None,
       Self::Names(names) => Some(names),
     }
@@ -197,48 +202,27 @@ fn parse_member(member: &str, metadata: &mut NoVarySearch) -> Result<(), NoVaryS
 
   match key {
     "key-order" => {
-      if metadata.key_order.is_some() {
-        return Err(NoVarySearchParseError::new(
-          "duplicate No-Vary-Search key-order",
-        ));
-      }
       metadata.key_order = Some(parse_boolean(value)?);
     }
     "params" => {
-      if metadata.params.is_some() {
-        return Err(NoVarySearchParseError::new(
-          "duplicate No-Vary-Search params",
-        ));
-      }
       metadata.params = Some(match value {
         None => NoVarySearchParams::All,
         Some("?1") => NoVarySearchParams::All,
+        Some("?0") => NoVarySearchParams::None,
         Some(value) => NoVarySearchParams::Names(parse_string_list(value)?),
       });
     }
     "except" => {
-      if !metadata.except.is_empty() {
-        return Err(NoVarySearchParseError::new(
-          "duplicate No-Vary-Search except",
-        ));
-      }
       let value =
         value.ok_or_else(|| NoVarySearchParseError::new("invalid No-Vary-Search except"))?;
       metadata.except = parse_string_list(value)?;
     }
     _ => {
+      validate_extension_member(key, value)?;
+      metadata.extensions.retain(|extension| extension.key != key);
       if metadata.extensions.len() >= MAX_NO_VARY_SEARCH_EXTENSIONS {
         return Err(NoVarySearchParseError::new(
           "too many No-Vary-Search extensions",
-        ));
-      }
-      if metadata
-        .extensions
-        .iter()
-        .any(|extension| extension.key == key)
-      {
-        return Err(NoVarySearchParseError::new(
-          "duplicate No-Vary-Search extension",
         ));
       }
       metadata.extensions.push(NoVarySearchExtension {
@@ -249,6 +233,14 @@ fn parse_member(member: &str, metadata: &mut NoVarySearch) -> Result<(), NoVaryS
   }
 
   Ok(())
+}
+
+fn validate_extension_member(key: &str, value: Option<&str>) -> Result<(), NoVarySearchParseError> {
+  let member = value.map_or_else(|| key.to_owned(), |value| format!("{key}={value}"));
+  Parser::new(&member)
+    .parse::<Dictionary>()
+    .map(|_| ())
+    .map_err(|_| NoVarySearchParseError::new("invalid No-Vary-Search extension"))
 }
 
 fn parse_boolean(value: Option<&str>) -> Result<bool, NoVarySearchParseError> {
