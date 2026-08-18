@@ -92,6 +92,7 @@ fn proxy_authenticate_rejects_empty_malformed_and_duplicates() {
     "Basic,",
     "Basic,,Digest",
     "Basic @",
+    "Basic realm=",
     r#"Basic realm="unterminated"#,
     "Basic realm=one, REALM=two",
     "Basic token===more",

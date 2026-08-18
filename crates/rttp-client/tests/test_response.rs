@@ -1160,7 +1160,7 @@ fn test_proxy_authenticate_response_helper_combines_repeated_fields() {
 
 #[test]
 fn test_proxy_authenticate_rejects_invalid_and_absent_values() {
-  for value in ["", "Basic @", "Basic realm=one, REALM=two"] {
+  for value in ["", "Basic @", "Basic realm=", "Basic realm=one, REALM=two"] {
     let raw = format!(
       "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: {value}\r\nContent-Length: 2\r\n\r\nOK"
     );

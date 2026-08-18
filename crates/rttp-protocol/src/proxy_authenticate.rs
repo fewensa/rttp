@@ -372,6 +372,9 @@ fn looks_like_parameter(value: &str, mut position: usize) -> bool {
     position += 1;
   }
   if position > start && bytes.get(position) == Some(&b'=') {
+    if value[start..position].eq_ignore_ascii_case("realm") {
+      return true;
+    }
     let mut end = position;
     while end < bytes.len() && bytes[end] != b',' && !is_ows(bytes[end]) {
       end += 1;
