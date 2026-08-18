@@ -1,6 +1,5 @@
 use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
-use rttp_protocol::content_encoding::ContentEncoding;
 use rttp_protocol::content_type::ContentType;
 use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
 use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
@@ -38,7 +37,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
     TimingAllowOrigin::parse("https://example.test").expect("Timing-Allow-Origin should parse");
   let x_content_type_options =
     XContentTypeOptions::parse("nosniff").expect("X-Content-Type-Options should parse");
-  let x_frame_options = XFrameOptions::parse("DENY").expect("X-Frame-Options should parse");
+  let x_frame_options = XFrameOptions::parse("SAMEORIGIN").expect("X-Frame-Options should parse");
   let cross_origin_embedder_policy =
     CrossOriginEmbedderPolicy::parse(r#"require-corp; report-to="coep""#)
       .expect("Cross-Origin-Embedder-Policy should parse");
@@ -47,7 +46,6 @@ fn protocol_exports_representative_bounded_metadata_types() {
       .expect("Strict-Transport-Security should parse");
   let content_type =
     ContentType::parse("text/plain; charset=utf-8").expect("Content-Type should parse");
-  let content_encoding = ContentEncoding::parse("gzip, br").expect("Content-Encoding should parse");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
@@ -69,15 +67,13 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(referer.header_value(), "https://example.test/path?q=1");
   assert_eq!(timing_allow_origin.origins(), ["https://example.test"]);
   assert_eq!(x_content_type_options.header_value(), "nosniff");
-  assert_eq!(x_frame_options.header_value(), "DENY");
+  assert_eq!(x_frame_options.header_value(), "SAMEORIGIN");
   assert_eq!(cross_origin_embedder_policy.header_value(), "require-corp");
   assert_eq!(
     strict_transport_security.header_value(),
     "max-age=31536000; includeSubDomains; preload"
   );
   assert_eq!(content_type.header_value(), "text/plain; charset=utf-8");
-  assert_eq!(content_encoding.codings(), ["gzip", "br"]);
-  assert_eq!(content_encoding.header_value(), "gzip, br");
 }
 
 #[test]

@@ -38,21 +38,6 @@ These helpers only expose metadata. RTTP does not validate credentials, select
 realms, challenge clients automatically, or enforce authentication or
 authorization decisions.
 
-## Request representation metadata
-
-Handlers can call `Request::content_type()`, `content_encoding()`, and
-`content_language()` (and the matching `HttpRequest` helpers) to observe
-bounded typed `Content-Type`, `Content-Encoding`, and `Content-Language`
-request metadata. HTTP/1.1 and HTTP/2 share the same `Request` helpers.
-`content_type()` treats the field as a singleton; `content_encoding()` and
-`content_language()` combine case-insensitive fields in wire order. Absent
-fields return `Ok(None)`. Malformed, oversized, or over-limit values return
-a parser error while `Request::header()` and `Request::body()` continue to
-expose the original request.
-
-These helpers parse request metadata only; they do not sniff, decode,
-negotiate, cache, redirect, retry, or select representations.
-
 ## Fetch Metadata request metadata
 
 Handlers can call `Request::sec_fetch_site()`, `sec_fetch_mode()`,
