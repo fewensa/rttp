@@ -1273,6 +1273,84 @@ fn test_digest_response_helpers_parse_bounded_digest_fields() {
 }
 
 #[test]
+fn test_content_digest_combines_multiple_fields_without_verification() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Digest: sha-256=:YWJj:\r\n",
+    "Content-Digest: sha-512=:ZGVm:\r\n",
+    "Content-Length: 3\r\n\r\nabc"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  let content_digest = response
+    .content_digest()
+    .expect("Content-Digest should parse")
+    .expect("Content-Digest should be present");
+  assert_eq!(2, content_digest.len());
+  assert_eq!(
+    Some(&b"abc"[..]),
+    content_digest.entry("sha-256").map(|entry| entry.value())
+  );
+  assert_eq!(
+    Some(&b"def"[..]),
+    content_digest.entry("sha-512").map(|entry| entry.value())
+  );
+  assert_eq!(
+    "sha-256=:YWJj:, sha-512=:ZGVm:",
+    content_digest.header_value()
+  );
+
+  let digest = response
+    .digest()
+    .expect("digest() should keep parsing Content-Digest")
+    .expect("Content-Digest should be present");
+  assert_eq!(content_digest, digest);
+  assert_eq!(b"abc", response.body().binary());
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("raw response should remain usable");
+  assert_eq!(
+    None,
+    absent
+      .content_digest()
+      .expect("absent Content-Digest should parse")
+  );
+}
+
+#[test]
+fn test_content_digest_rejects_malformed_values_without_hiding_headers() {
+  for value in [
+    "",
+    "sha-256=:YWJj:, sha-256=:ZGVm:",
+    "sha-256=:not-base64!:",
+    "sha-256=:YWJj:;foo=",
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\nContent-Digest: {value}\r\nContent-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(
+      response.content_digest().is_err(),
+      "Content-Digest should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Content-Digest")
+    );
+  }
+
+  let oversized = format!("sha-256=:{}:", "A".repeat(64 * 1024 + 1));
+  let raw = format!("HTTP/1.1 200 OK\r\nContent-Digest: {oversized}\r\nContent-Length: 0\r\n\r\n");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response should remain usable");
+  assert!(response.content_digest().is_err());
+  assert_eq!(Some(&oversized), response.header_value("Content-Digest"));
+}
+
+#[test]
 fn test_priority_response_helper_parses_known_and_extension_metadata() {
   let raw = concat!(
     "HTTP/1.1 200 OK\r\n",
