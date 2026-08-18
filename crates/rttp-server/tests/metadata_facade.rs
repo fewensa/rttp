@@ -32,6 +32,7 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let policy: HttpCrossOriginResourcePolicy = HttpCrossOriginResourcePolicy::parse("same-origin")
     .expect("Cross-Origin-Resource-Policy should parse");
   let response = HttpResponse::ok("")
+    .with_etag(HttpEntityTag::weak("revision-42"))
     .with_accept_ch(["Sec-CH-UA"])
     .expect("Accept-CH should be accepted");
   let fetch_site = SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
@@ -56,6 +57,10 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .expect("entity tag should be retained")
       .opaque_tag(),
     "revision-42"
+  );
+  assert_eq!(
+    response.etag().expect("ETag should parse"),
+    Some(HttpEntityTag::weak("revision-42"))
   );
   assert_eq!(
     response

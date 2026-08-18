@@ -27,6 +27,8 @@ fn compatibility_facade_exports_client_metadata_types() {
     .expect("Cross-Origin-Opener-Policy should parse");
   let fetch_site: rttp::SecFetchSite =
     rttp_client::SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
+  let etag: rttp::EntityTag =
+    rttp_client::response::EntityTag::parse("\"asset-v7\"").expect("ETag should parse");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
@@ -35,12 +37,14 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(embedder_policy.header_value(), "require-corp");
   assert_eq!(opener_policy.header_value(), "noopener-allow-popups");
   assert_eq!(fetch_site.header_value(), "same-origin");
+  assert_eq!(etag, rttp::EntityTag::strong("asset-v7"));
 }
 
 #[test]
 fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let accept_ch: HttpAcceptCh = HttpAcceptCh::parse("Sec-CH-UA").expect("Accept-CH should parse");
   let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("revision-42"));
+  let response = HttpResponse::ok("").with_etag(HttpEntityTag::weak("revision-42"));
   let policy: HttpCrossOriginResourcePolicy = HttpCrossOriginResourcePolicy::parse("same-origin")
     .expect("Cross-Origin-Resource-Policy should parse");
   let embedder_policy: HttpCrossOriginEmbedderPolicy =
@@ -60,6 +64,10 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
       .expect("entity tag should be retained")
       .header_value(),
     "\"revision-42\""
+  );
+  assert_eq!(
+    response.etag().expect("ETag should parse"),
+    Some(HttpEntityTag::weak("revision-42"))
   );
 }
 

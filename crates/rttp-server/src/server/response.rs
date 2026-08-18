@@ -1095,6 +1095,16 @@ impl HttpResponse {
     Ok(self)
   }
 
+  pub fn with_etag(mut self, entity_tag: HttpEntityTag) -> Self {
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("ETag"));
+    self
+      .headers
+      .push(HttpHeader::new("ETag", entity_tag.header_value()));
+    self
+  }
+
   pub fn with_content_disposition<D>(
     mut self,
     disposition: D,
@@ -1772,6 +1782,17 @@ impl HttpResponse {
       return Ok(None);
     };
     parse_http_content_location(value).map(Some)
+  }
+
+  pub fn etag(&self) -> Result<Option<HttpEntityTag>, HttpEntityTagParseError> {
+    let Some(value) = self.single_header_value(
+      "ETag",
+      HttpEntityTagParseError::new("multiple ETag headers"),
+    )?
+    else {
+      return Ok(None);
+    };
+    HttpEntityTag::parse(value).map(Some)
   }
 
   pub fn content_disposition(
