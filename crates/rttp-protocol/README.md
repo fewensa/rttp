@@ -8,6 +8,20 @@ and server crates.
 
 This crate supports rttp's implementation; its public API is not a standalone
 application-level HTTP interface.
+## Connection
+
+`connection` parses one or more RFC 9110 `Connection` field values into an
+ordered list of connection-option tokens. This is header-field metadata, not a
+transport socket type. Each field value is bounded to 64 KiB, and the
+cumulative token count across all supplied fields is bounded to 256 tokens.
+Tokens are split on commas with SP and HTAB accepted only as optional
+whitespace around each token; empty members and members containing forbidden
+ASCII control bytes are rejected. Each token must be an RFC 9110 token, and
+repeated tokens are retained in wire order with their original spelling. A
+present header set that yields no token still fails as invalid. This parser
+never fails open and does not apply keep-alive, hop-by-hop stripping, upgrade,
+or HTTP/2 rejection policy.
+
 ## Content-Encoding
 
 `content_encoding` parses one or more `Content-Encoding` field values into an
