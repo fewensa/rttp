@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
-use sfv::{Dictionary, FieldType, Parser};
+use sfv::{Dictionary, FieldType, ListEntry, Parser};
 
 pub const MAX_NO_VARY_SEARCH_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_NO_VARY_SEARCH_PARAMETERS: usize = 256;
@@ -189,19 +189,37 @@ fn parse_member(member: &str, metadata: &mut NoVarySearch) -> Result<(), NoVaryS
   if member.is_empty() {
     return Err(NoVarySearchParseError::new("invalid No-Vary-Search member"));
   }
-  let (key, value) = match member.split_once('=') {
-    Some((key, value)) => (
-      key.trim_matches([' ', '\t']),
-      Some(value.trim_matches([' ', '\t'])),
-    ),
-    None => (member, None),
-  };
-  if is_structured_key(key) {
-    return parse_keyed_member(key, value, metadata);
+  let dictionary = parse_single_member_dictionary(member)?;
+  let (key, entry) = dictionary
+    .first()
+    .ok_or_else(|| NoVarySearchParseError::new("invalid No-Vary-Search member"))?;
+  let key = key.to_string();
+
+  if !matches!(key.as_str(), "key-order" | "params" | "except") {
+    let extension = parse_extension_member(member)?;
+    return store_extension(extension, metadata);
   }
 
-  let extension = parse_extension_member(member)?;
-  store_extension(extension, metadata)
+  if entry_has_params(entry) {
+    return Err(NoVarySearchParseError::new(
+      "No-Vary-Search reserved member parameters are unsupported",
+    ));
+  }
+
+  let serialized = dictionary
+    .serialize()
+    .ok_or_else(|| NoVarySearchParseError::new("invalid No-Vary-Search member"))?;
+  let suffix = serialized
+    .strip_prefix(&key)
+    .ok_or_else(|| NoVarySearchParseError::new("invalid No-Vary-Search member"))?;
+  let value = match suffix.as_bytes().first() {
+    None => None,
+    Some(b'=') => Some(&suffix[1..]),
+    Some(b';') => None,
+    _ => return Err(NoVarySearchParseError::new("invalid No-Vary-Search member")),
+  };
+
+  parse_keyed_member(&key, value, metadata)
 }
 
 fn parse_keyed_member(
@@ -244,17 +262,10 @@ fn parse_extension_parts(
 }
 
 fn parse_extension_member(member: &str) -> Result<NoVarySearchExtension, NoVarySearchParseError> {
-  let dictionary = Parser::new(member)
-    .parse::<Dictionary>()
-    .map_err(|_| NoVarySearchParseError::new("invalid No-Vary-Search extension"))?;
+  let dictionary = parse_single_member_dictionary(member)?;
   let (key, _) = dictionary
     .first()
     .ok_or_else(|| NoVarySearchParseError::new("invalid No-Vary-Search extension"))?;
-  if dictionary.len() != 1 {
-    return Err(NoVarySearchParseError::new(
-      "invalid No-Vary-Search extension",
-    ));
-  }
   let key = key.to_string();
   let serialized = dictionary
     .serialize()
@@ -275,6 +286,23 @@ fn parse_extension_member(member: &str) -> Result<NoVarySearchExtension, NoVaryS
   };
 
   Ok(NoVarySearchExtension { key, value })
+}
+
+fn parse_single_member_dictionary(member: &str) -> Result<Dictionary, NoVarySearchParseError> {
+  let dictionary = Parser::new(member)
+    .parse::<Dictionary>()
+    .map_err(|_| NoVarySearchParseError::new("invalid No-Vary-Search member"))?;
+  if dictionary.len() != 1 {
+    return Err(NoVarySearchParseError::new("invalid No-Vary-Search member"));
+  }
+  Ok(dictionary)
+}
+
+fn entry_has_params(entry: &ListEntry) -> bool {
+  match entry {
+    ListEntry::Item(item) => !item.params.is_empty(),
+    ListEntry::InnerList(inner_list) => !inner_list.params.is_empty(),
+  }
 }
 
 fn store_extension(
@@ -431,12 +459,6 @@ fn skip_spaces(bytes: &[u8], position: &mut usize) {
   while matches!(bytes.get(*position), Some(b' ' | b'\t')) {
     *position += 1;
   }
-}
-
-fn is_structured_key(value: &str) -> bool {
-  let mut bytes = value.bytes();
-  matches!(bytes.next(), Some(b'a'..=b'z' | b'*'))
-    && bytes.all(|byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-' | b'.' | b'*'))
 }
 
 fn is_invalid_control_byte(byte: u8) -> bool {

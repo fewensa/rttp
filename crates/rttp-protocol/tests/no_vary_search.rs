@@ -101,6 +101,22 @@ fn parameterized_extension_duplicates_use_last_member() {
 }
 
 #[test]
+fn rejects_parameterized_reserved_members() {
+  for value in [
+    "params;flag",
+    "key-order;flag",
+    r#"except;flag=("session")"#,
+    r#"except=("session");flag"#,
+    r#"params=("a"), params;flag"#,
+  ] {
+    assert!(
+      NoVarySearch::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+}
+
+#[test]
 fn rejects_invalid_no_vary_search_values() {
   for value in [
     "",
