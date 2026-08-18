@@ -20,6 +20,7 @@ use rttp_protocol::signature_input::{SignatureInput, SignatureInputParseError};
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
 use rttp_protocol::transfer_encoding::TransferEncoding;
+use rttp_protocol::want_content_digest::WantContentDigest;
 use rttp_protocol::want_repr_digest::WantReprDigest;
 use rttp_protocol::warning::Warning;
 use rttp_protocol::x_content_type_options::XContentTypeOptions;
@@ -66,6 +67,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let content_encoding = ContentEncoding::parse("gzip, br").expect("Content-Encoding should parse");
   let transfer_encoding =
     TransferEncoding::parse("chunked").expect("Transfer-Encoding should parse");
+  let want_content_digest =
+    WantContentDigest::parse("sha-256=10, sha-512=0").expect("Want-Content-Digest should parse");
   let want_repr_digest =
     WantReprDigest::parse("sha-256=10, sha-512=0").expect("Want-Repr-Digest should parse");
   let signature = Signature::parse("sig1=:YWJj:").expect("Signature should parse");
@@ -118,6 +121,9 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(content_encoding.header_value(), "gzip, br");
   assert_eq!(transfer_encoding.codings(), ["chunked"]);
   assert_eq!(transfer_encoding.header_value(), "chunked");
+  assert_eq!(want_content_digest.entries()[0].algorithm(), "sha-256");
+  assert_eq!(want_content_digest.entries()[0].preference(), 10);
+  assert_eq!(want_content_digest.header_value(), "sha-256=10, sha-512=0");
   assert_eq!(want_repr_digest.entries()[0].algorithm(), "sha-256");
   assert_eq!(want_repr_digest.entries()[0].preference(), 10);
   assert_eq!(want_repr_digest.header_value(), "sha-256=10, sha-512=0");

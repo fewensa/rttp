@@ -1139,6 +1139,51 @@ fn request_accept_encoding_rejects_duplicate_invalid_and_oversized_values() {
 }
 
 #[test]
+fn request_want_content_digest_parses_algorithm_preferences() {
+  let request = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Want-Content-Digest: sha-256=10, sha-512=3\r\n",
+    "want-content-digest: unixsum=0\r\n",
+    "\r\n"
+  ));
+
+  let digest = request
+    .want_content_digest()
+    .expect("Want-Content-Digest should parse")
+    .expect("Want-Content-Digest should be present");
+
+  assert_eq!(3, digest.len());
+  assert_eq!("sha-256", digest.entries()[0].algorithm());
+  assert_eq!(10, digest.entries()[0].preference());
+  assert_eq!("sha-512", digest.entries()[1].algorithm());
+  assert_eq!(3, digest.entries()[1].preference());
+  assert_eq!("unixsum", digest.entries()[2].algorithm());
+  assert_eq!(0, digest.entries()[2].preference());
+}
+
+#[test]
+fn request_want_content_digest_rejects_absent_malformed_and_preserves_raw_headers() {
+  assert_eq!(
+    None,
+    parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .want_content_digest()
+      .expect("absent Want-Content-Digest should be accepted")
+  );
+
+  for value in ["", "sha-256", "sha-256=11", "sha-256=10, sha-256=3"] {
+    let request = parse_request(&format!(
+      "GET / HTTP/1.1\r\nHost: example.test\r\nWant-Content-Digest: {value}\r\n\r\n"
+    ));
+    assert!(
+      request.want_content_digest().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(Some(value), request.header("Want-Content-Digest"));
+  }
+}
+
+#[test]
 fn request_host_parses_http11_authority() {
   let request = parse_request(concat!(
     "GET /asset HTTP/1.1\r\n",

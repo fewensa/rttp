@@ -7,7 +7,7 @@ use rttp_client::response::{
   ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ReferrerPolicy, ReferrerPolicyToken,
   ServerTiming, Signature, SignatureInput, SignatureInputParseError, SignatureParseError,
   StrictTransportSecurity, StrictTransportSecurityParseError, Trailer, TransferEncoding,
-  TransferEncodingParseError, WantReprDigest, Warning,
+  TransferEncodingParseError, WantContentDigest, WantReprDigest, Warning,
 };
 use rttp_client::response::{ContentDigest, ReprDigest};
 use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
@@ -31,6 +31,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let clear_site_data =
     HttpClearSiteData::parse("\"cache\"").expect("Clear-Site-Data should parse");
   let digest = Digest::parse("sha-256=:YWJj:").expect("Digest should parse");
+  let want_content_digest =
+    WantContentDigest::parse("sha-256=10").expect("Want-Content-Digest should parse");
   let want_repr_digest =
     WantReprDigest::parse("sha-256=10").expect("Want-Repr-Digest should parse");
   let priority = Priority::parse("u=1, i").expect("Priority should parse");
@@ -85,6 +87,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
   assert_eq!(clear_site_data.directives().len(), 1);
   assert_eq!(digest.entries().len(), 1);
+  assert_eq!(want_content_digest.entries()[0].preference(), 10);
   assert_eq!(want_repr_digest.entries()[0].preference(), 10);
   assert_eq!(priority.urgency(), Some(1));
   assert_eq!(server_timing.metrics().len(), 1);
