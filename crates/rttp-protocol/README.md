@@ -8,6 +8,17 @@ and server crates.
 
 This crate supports rttp's implementation; its public API is not a standalone
 application-level HTTP interface.
+## Content-Encoding
+
+`content_encoding` parses one or more `Content-Encoding` field values into an
+ordered list of content-coding tokens. Each field value is bounded to 64 KiB,
+and the cumulative coding count across all supplied fields is bounded to 256
+codings. Codings are split on commas with SP and HTAB accepted only as optional
+whitespace around each coding; empty members and members containing forbidden
+ASCII control bytes are rejected. Each coding must be an RFC 9110 token, and
+repeated codings are retained in wire order so callers can inspect the full
+encoding stack. A present header set that yields no coding still fails as
+invalid.
 
 ## Cross-Origin-Opener-Policy
 
@@ -24,18 +35,6 @@ The parser never fails open to `unsafe-none`.
 Protocol helpers define and bound wire metadata for the client and server
 crates. They do not add higher-level runtime policy such as caching,
 authentication, retries, representation selection, or body transformation.
-
-## Content-Encoding
-
-`content_encoding` parses one or more `Content-Encoding` field values into an
-ordered list of content-coding tokens. Each field value is bounded to 64 KiB,
-and the cumulative coding count across all supplied fields is bounded to 256
-codings. Codings are split on commas with SP and HTAB accepted only as optional
-whitespace around each coding; empty members and members containing forbidden
-ASCII control bytes are rejected. Each coding must be an RFC 9110 token, and
-repeated codings are retained in wire order so callers can inspect the full
-encoding stack. A present header set that yields no coding still fails as
-invalid.
 
 ## Authentication-Info
 
