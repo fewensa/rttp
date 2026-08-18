@@ -6,6 +6,7 @@ use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
 use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::entity_tag::{EntityTag, IfMatch};
 use rttp_protocol::fetch_metadata::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
+use rttp_protocol::from::From;
 use rttp_protocol::origin::Origin;
 use rttp_protocol::prefer::{Prefer, PreferenceApplied, PreferenceKind};
 use rttp_protocol::proxy_authentication_info::ProxyAuthenticationInfo;
@@ -28,6 +29,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
   let fetch_user = SecFetchUser::parse("?1").expect("Sec-Fetch-User should parse");
+  let from = From::parse("Ops Team <ops@example.test>").expect("From should parse");
   let origin = Origin::parse("https://example.test").expect("Origin should parse");
   let proxy_authentication_info = ProxyAuthenticationInfo::parse(
     "nextnonce=\"xyz789\", qop=auth, rspauth=\"...\", cnonce=\"c\", nc=00000001",
@@ -61,6 +63,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_mode.header_value(), "navigate");
   assert_eq!(fetch_dest.header_value(), "document");
   assert_eq!(fetch_user.header_value(), "?1");
+  assert_eq!(from.header_value(), "Ops Team <ops@example.test>");
   assert_eq!(origin.header_value(), "https://example.test");
   assert_eq!(
     proxy_authentication_info.parameter("nextnonce"),
