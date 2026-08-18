@@ -1380,6 +1380,13 @@ pub mod content_location {
       declaration_value: "http://example.test:99999/representations/current.json",
     },
     ResponseCase {
+      name: "absolute URI with bracketed IPv6 authority",
+      values: &["https://[2001:db8::1]/representations/current.json"],
+      raw_value: "https://[2001:db8::1]/representations/current.json",
+      normalized_value: "https://[2001:db8::1]/representations/current.json",
+      declaration_value: "https://[2001:db8::1]/representations/current.json",
+    },
+    ResponseCase {
       name: "absolute path reference with optional whitespace",
       values: &[" /representations/current.json "],
       raw_value: "/representations/current.json",
@@ -1415,6 +1422,10 @@ pub mod content_location {
     InvalidCase {
       name: "space in URI reference",
       value: "not valid",
+    },
+    InvalidCase {
+      name: "malformed bracketed authority",
+      value: "https://[notanip]/representations/current.json",
     },
   ];
 

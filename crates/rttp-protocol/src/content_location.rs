@@ -7,6 +7,7 @@
 
 use std::error::Error;
 use std::fmt;
+use std::net::Ipv6Addr;
 
 pub const MAX_CONTENT_LOCATION_VALUE_BYTES: usize = 64 * 1024;
 
@@ -223,9 +224,23 @@ fn is_userinfo(value: &str) -> bool {
 }
 
 fn is_ip_literal(value: &str) -> bool {
-  is_uri_component(value, |byte| {
-    byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'.')
-  })
+  value.parse::<Ipv6Addr>().is_ok() || is_ipv_future(value)
+}
+
+fn is_ipv_future(value: &str) -> bool {
+  let Some(rest) = value.strip_prefix(['v', 'V']) else {
+    return false;
+  };
+  let Some((version, address)) = rest.split_once('.') else {
+    return false;
+  };
+
+  !version.is_empty()
+    && version.bytes().all(|byte| byte.is_ascii_hexdigit())
+    && !address.is_empty()
+    && address
+      .bytes()
+      .all(|byte| is_uri_unreserved(byte) || is_uri_sub_delim(byte) || byte == b':')
 }
 
 fn is_reg_name(value: &str) -> bool {
