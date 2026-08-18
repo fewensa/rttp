@@ -500,6 +500,21 @@ The helper is metadata-only. `rttp_client` does not infer automatic download
 policy, filesystem paths, MIME sniffing behavior, redirects, retries, cache
 behavior, negotiation behavior, or status handling from `Content-Disposition`.
 
+## Bounded Content-Security-Policy response metadata
+
+`Response::content_security_policy()` parses a singleton
+`Content-Security-Policy` header into bounded `ContentSecurityPolicy`
+metadata. It returns `Ok(None)` when the header is absent and rejects duplicate,
+empty, oversized, or control-byte-containing field values. Present values retain
+the exact policy text through `ContentSecurityPolicy::as_str()` and
+`ContentSecurityPolicy::header_value()`.
+
+The helper is metadata-only. `rttp_client` does not enforce browser policy,
+block requests, validate origins, alter navigation behavior, or generate policy
+headers from `Content-Security-Policy`. The raw field remains available through
+`Response::header_value()` and `Response::header_values()`, including when
+typed parsing fails.
+
 ## Bounded HTTP/1.1 Vary behavior
 
 `Response::vary()` parses one or more response `Vary` header fields into

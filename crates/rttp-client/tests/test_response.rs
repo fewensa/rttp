@@ -1,5 +1,5 @@
 use rttp_client::response::{
-  AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType,
+  AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentSecurityPolicy, ContentType,
   CrossOriginEmbedderPolicy, CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest,
   HttpClearSiteData, HttpSetCookies, LinkValues, ProxyAuthenticationInfo, ReferrerPolicy,
   ReferrerPolicyToken, Response, RetryAfter, ServerTiming, Warning,
@@ -3181,6 +3181,78 @@ fn test_cross_origin_resource_policy_response_metadata_rejects_invalid_and_absen
     absent
       .cross_origin_resource_policy()
       .expect("absent CORP should parse")
+  );
+}
+
+#[test]
+fn test_content_security_policy_response_metadata_preserves_raw_headers() {
+  let value = "default-src 'self'; img-src https:";
+  let raw =
+    format!("HTTP/1.1 200 OK\r\nContent-Security-Policy: {value}\r\nContent-Length: 0\r\n\r\n");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response should parse");
+
+  let policy = response
+    .content_security_policy()
+    .expect("CSP should parse")
+    .expect("CSP should be present");
+
+  assert_eq!(
+    policy,
+    ContentSecurityPolicy::parse(value).expect("CSP should parse")
+  );
+  assert_eq!(policy.as_str(), value);
+  assert_eq!(policy.header_value(), value);
+  assert_eq!(
+    Some(&value.to_string()),
+    response.header_value("Content-Security-Policy")
+  );
+}
+
+#[test]
+fn test_content_security_policy_response_metadata_rejects_invalid_and_absent_values() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Security-Policy: default-src 'self'\r\n",
+    "Content-Security-Policy: script-src 'none'\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  assert!(response.content_security_policy().is_err());
+  assert_eq!(
+    Some(&"default-src 'self'".to_string()),
+    response.header_value("Content-Security-Policy")
+  );
+
+  for value in ["", "default-src\u{7f}'self'"] {
+    let raw =
+      format!("HTTP/1.1 200 OK\r\nContent-Security-Policy: {value}\r\nContent-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response with malformed CSP should parse");
+
+    assert!(response.content_security_policy().is_err());
+  }
+
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let raw =
+    format!("HTTP/1.1 200 OK\r\nContent-Security-Policy: {oversized}\r\nContent-Length: 0\r\n\r\n");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response with oversized CSP should parse");
+  assert!(response.content_security_policy().is_err());
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response without CSP should parse");
+  assert_eq!(
+    None,
+    absent
+      .content_security_policy()
+      .expect("absent CSP should parse")
   );
 }
 

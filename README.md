@@ -423,6 +423,21 @@ compression or decompression policy, negotiation, cache policy, redirects,
 retry/replay, or filesystem serving from `Content-Type` or
 `Content-Encoding`.
 
+### Bounded Content-Security-Policy response metadata
+
+`Response::content_security_policy()` parses a singleton
+`Content-Security-Policy` header into bounded `ContentSecurityPolicy`
+metadata. It returns `Ok(None)` when the header is absent and rejects duplicate,
+empty, oversized, or control-byte-containing field values. Present values retain
+the exact policy text through `ContentSecurityPolicy::as_str()` and
+`ContentSecurityPolicy::header_value()`.
+
+The helper is metadata-only. RTTP does not enforce browser policy, block
+requests, validate origins, alter navigation behavior, or generate policy
+headers from `Content-Security-Policy`. The raw field remains available through
+`Response::header_value()` and `Response::header_values()`, including when
+typed parsing fails.
+
 ### Bounded Accept-Encoding request metadata
 
 `HttpClient::accept_encoding()` appends a validated request coding, while

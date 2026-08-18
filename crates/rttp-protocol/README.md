@@ -8,6 +8,19 @@ and server crates.
 
 This crate supports rttp's implementation; its public API is not a standalone
 application-level HTTP interface.
+
+## Content-Security-Policy
+
+`content_security_policy` parses a singleton `Content-Security-Policy` response
+field into bounded raw policy metadata. Each field value is bounded to 64 KiB.
+A second field is rejected after every supplied field is bound-checked. Empty
+values and forbidden ASCII control bytes are rejected; HTAB is allowed. The
+parser preserves the exact policy text through `as_str()` and `header_value()`.
+
+This parser does not interpret directives, enforce browser policy, block
+requests, validate origins, alter navigation behavior, or generate policy
+headers.
+
 ## Content-Encoding
 
 `content_encoding` parses one or more `Content-Encoding` field values into an

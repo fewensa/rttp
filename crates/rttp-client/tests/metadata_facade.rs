@@ -1,10 +1,11 @@
 use rttp_client::response::{
   AcceptCh, AccessControlAllowHeaders, AccessControlAllowHeadersParseError,
   AccessControlAllowMethods, AccessControlAllowMethodsParseError, AccessControlExposeHeaders,
-  AccessControlMaxAge, AccessControlMaxAgeParseError, AltSvc, CrossOriginEmbedderPolicy,
-  CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest, HttpClearSiteData, PreferenceApplied,
-  Priority, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ReferrerPolicy,
-  ReferrerPolicyToken, ServerTiming, Trailer, Warning,
+  AccessControlMaxAge, AccessControlMaxAgeParseError, AltSvc, ContentSecurityPolicy,
+  ContentSecurityPolicyParseError, CrossOriginEmbedderPolicy, CrossOriginOpenerPolicy,
+  CrossOriginResourcePolicy, Digest, HttpClearSiteData, PreferenceApplied, Priority,
+  ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ReferrerPolicy, ReferrerPolicyToken,
+  ServerTiming, Trailer, Warning,
 };
 use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 
@@ -42,6 +43,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     CrossOriginEmbedderPolicy::parse("require-corp").expect("COEP should parse");
   let cross_origin_opener_policy =
     CrossOriginOpenerPolicy::parse("noopener-allow-popups").expect("COOP should parse");
+  let content_security_policy =
+    ContentSecurityPolicy::parse("default-src 'self'").expect("CSP should parse");
+  let _: ContentSecurityPolicyParseError =
+    ContentSecurityPolicy::parse("").expect_err("empty CSP should be rejected");
   let proxy_authentication_info =
     ProxyAuthenticationInfo::parse(r#"nextnonce="6629fae49393a05397450978507c4ef1", qop=auth"#)
       .expect("Proxy-Authentication-Info should parse");
@@ -70,6 +75,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     cross_origin_opener_policy.header_value(),
     "noopener-allow-popups"
   );
+  assert_eq!(content_security_policy.header_value(), "default-src 'self'");
   assert_eq!(
     proxy_authentication_info.parameter("nextnonce"),
     Some("6629fae49393a05397450978507c4ef1")

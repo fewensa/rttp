@@ -21,6 +21,12 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp_client::response::AltSvc::parse("h3=\":443\"; ma=60").expect("Alt-Svc should parse");
   let _: rttp::AltSvcParseError =
     rttp_client::response::AltSvc::parse("h3=:443").expect_err("invalid Alt-Svc should fail");
+  let content_security_policy: rttp::ContentSecurityPolicy =
+    rttp_client::response::ContentSecurityPolicy::parse("default-src 'self'")
+      .expect("Content-Security-Policy should parse");
+  let _: rttp::ContentSecurityPolicyParseError =
+    rttp_client::response::ContentSecurityPolicy::parse("")
+      .expect_err("empty Content-Security-Policy should fail");
   let embedder_policy: rttp::CrossOriginEmbedderPolicy =
     rttp_client::response::CrossOriginEmbedderPolicy::parse("require-corp; report-to=\"coep\"")
       .expect("Cross-Origin-Embedder-Policy should parse");
@@ -38,6 +44,7 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(accept_post.media_types().len(), 1);
   assert_eq!(alt_svc.alternatives()[0].protocol_id(), "h3");
   assert_eq!(alt_svc.alternatives()[0].max_age(), Some(60));
+  assert_eq!(content_security_policy.header_value(), "default-src 'self'");
   assert_eq!(embedder_policy.header_value(), "require-corp");
   assert_eq!(opener_policy.header_value(), "noopener-allow-popups");
   assert_eq!(fetch_site.header_value(), "same-origin");

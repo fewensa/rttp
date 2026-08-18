@@ -24,6 +24,7 @@ use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::access_control_max_age::AccessControlMaxAge;
 use rttp_protocol::clear_site_data::ClearSiteData;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
+use rttp_protocol::content_security_policy::ContentSecurityPolicy;
 use rttp_protocol::cookie::HttpSetCookies;
 use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
 use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
@@ -658,6 +659,17 @@ impl Response {
       return Ok(None);
     }
     ClearSiteData::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses `Content-Security-Policy` response metadata without enforcing browser policy.
+  pub fn content_security_policy(&self) -> error::Result<Option<ContentSecurityPolicy>> {
+    let values = self.header_values("content-security-policy");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    ContentSecurityPolicy::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
