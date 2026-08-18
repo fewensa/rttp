@@ -53,6 +53,21 @@ expose the original request.
 These helpers parse request metadata only; they do not sniff, decode,
 negotiate, cache, redirect, retry, or select representations.
 
+## Request and response Connection metadata
+
+Handlers can call `Request::connection()`, `HttpRequest::connection()`, and
+`HttpResponse::connection()` to observe bounded typed `Connection` header
+metadata from already-retained HTTP/1 fields. The helpers combine
+case-insensitive fields in wire order into `HttpConnection` and preserve token
+spelling, including duplicates. Absent fields return `Ok(None)`. Malformed,
+empty, oversized, or over-limit values return a parser error while
+`Request::header()` and `HttpResponse` raw headers continue to expose the
+original fields. HTTP/2 continues to reject inbound `Connection` at decode
+time.
+
+These helpers parse HTTP/1 header metadata only. They do not change
+keep-alive, hop-by-hop stripping, upgrade/h2c handoff, or HTTP/2 rejection.
+
 ## Request Transfer-Encoding framing metadata
 
 Handlers can call `Request::transfer_encoding()` and

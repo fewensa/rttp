@@ -22,6 +22,7 @@ pub mod authentication_info;
 pub mod cache_control;
 pub mod clear_site_data;
 pub mod client_hints;
+pub mod connection;
 pub mod content_encoding;
 pub mod content_type;
 pub mod cookie;

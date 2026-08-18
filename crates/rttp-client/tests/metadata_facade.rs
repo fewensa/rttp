@@ -1,12 +1,12 @@
 use rttp_client::response::{
   AcceptCh, AccessControlAllowHeaders, AccessControlAllowHeadersParseError,
   AccessControlAllowMethods, AccessControlAllowMethodsParseError, AccessControlExposeHeaders,
-  AccessControlMaxAge, AccessControlMaxAgeParseError, AltSvc, CrossOriginEmbedderPolicy,
-  CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest,
-  HttpClearSiteData, PreferenceApplied, Priority, ProxyAuthenticationInfo,
-  ProxyAuthenticationInfoParseError, ReferrerPolicy, ReferrerPolicyToken, ServerTiming,
-  StrictTransportSecurity, StrictTransportSecurityParseError, Trailer, TransferEncoding,
-  TransferEncodingParseError, WantReprDigest, Warning,
+  AccessControlMaxAge, AccessControlMaxAgeParseError, AltSvc, Connection, ConnectionParseError,
+  CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy,
+  CrossOriginResourcePolicy, Digest, HttpClearSiteData, PreferenceApplied, Priority,
+  ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ReferrerPolicy, ReferrerPolicyToken,
+  ServerTiming, StrictTransportSecurity, StrictTransportSecurityParseError, Trailer,
+  TransferEncoding, TransferEncodingParseError, WantReprDigest, Warning,
 };
 use rttp_client::response::{ContentDigest, ReprDigest};
 use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
@@ -41,6 +41,9 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .expect_err("Strict-Transport-Security without max-age should be rejected");
   let warning = Warning::parse(r#"110 - "Response is Stale""#).expect("Warning should parse");
   let trailer = Trailer::parse("X-Trace").expect("Trailer should parse");
+  let connection = Connection::parse("close").expect("Connection should parse");
+  let _: ConnectionParseError =
+    Connection::parse("close; foo").expect_err("parameterized Connection should be rejected");
   let transfer_encoding =
     TransferEncoding::parse("chunked").expect("Transfer-Encoding should parse");
   let _: TransferEncodingParseError = TransferEncoding::parse("gzip, chunked")
@@ -79,6 +82,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert!(strict_transport_security.include_sub_domains());
   assert_eq!(warning.items()[0].code(), 110);
   assert_eq!(trailer.field_names(), ["x-trace"]);
+  assert_eq!(connection.tokens(), ["close"]);
   assert_eq!(transfer_encoding.codings(), ["chunked"]);
   assert_eq!(alt_svc.alternatives().len(), 1);
   assert_eq!(fetch_site.header_value(), "same-origin");
@@ -167,6 +171,41 @@ fn response_facade_parses_referrer_policy_metadata() {
       ReferrerPolicyToken::Origin,
     ]
   );
+}
+
+#[test]
+fn response_facade_parses_connection_from_http1_head() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  let connection: Connection = response
+    .connection()
+    .expect("Connection should parse")
+    .expect("Connection should be present");
+
+  assert_eq!(connection.tokens(), ["close"]);
+  assert_eq!(connection.header_value(), "close");
+  assert_eq!(
+    response.header_value("Connection").map(String::as_str),
+    Some("close")
+  );
+}
+
+#[test]
+fn response_facade_returns_none_when_connection_is_absent() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert!(response
+    .connection()
+    .expect("missing Connection should be accepted")
+    .is_none());
 }
 
 #[test]
