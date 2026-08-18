@@ -2,6 +2,7 @@ use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::connection::Connection;
 use rttp_protocol::content_encoding::ContentEncoding;
+use rttp_protocol::content_security_policy::ContentSecurityPolicy;
 use rttp_protocol::content_type::ContentType;
 use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
 use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedderPolicyReportOnly;
@@ -64,6 +65,9 @@ fn protocol_exports_representative_bounded_metadata_types() {
     ContentType::parse("text/plain; charset=utf-8").expect("Content-Type should parse");
   let connection = Connection::parse("keep-alive, TE").expect("Connection should parse");
   let content_encoding = ContentEncoding::parse("gzip, br").expect("Content-Encoding should parse");
+  let content_security_policy =
+    ContentSecurityPolicy::parse("default-src 'self'; object-src 'none'")
+      .expect("Content-Security-Policy should parse");
   let transfer_encoding =
     TransferEncoding::parse("chunked").expect("Transfer-Encoding should parse");
   let want_repr_digest =
@@ -116,6 +120,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(connection.header_value(), "keep-alive, TE");
   assert_eq!(content_encoding.codings(), ["gzip", "br"]);
   assert_eq!(content_encoding.header_value(), "gzip, br");
+  assert_eq!(
+    content_security_policy.header_value(),
+    "default-src 'self'; object-src 'none'"
+  );
   assert_eq!(transfer_encoding.codings(), ["chunked"]);
   assert_eq!(transfer_encoding.header_value(), "chunked");
   assert_eq!(want_repr_digest.entries()[0].algorithm(), "sha-256");

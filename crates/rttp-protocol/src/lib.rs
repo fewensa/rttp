@@ -24,6 +24,7 @@ pub mod clear_site_data;
 pub mod client_hints;
 pub mod connection;
 pub mod content_encoding;
+pub mod content_security_policy;
 pub mod content_type;
 pub mod cookie;
 pub mod cross_origin_embedder_policy;

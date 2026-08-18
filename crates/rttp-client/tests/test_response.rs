@@ -1,5 +1,5 @@
 use rttp_client::response::{
-  AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType,
+  AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentSecurityPolicy, ContentType,
   CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy,
   CrossOriginResourcePolicy, HttpClearSiteData, HttpSetCookies, LinkValues,
   ProxyAuthenticationInfo, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
@@ -251,6 +251,100 @@ fn strict_transport_security_metadata_is_absent_without_a_header() {
   );
   let _: Option<StrictTransportSecurity> = response
     .strict_transport_security()
+    .expect("header is absent");
+}
+
+#[test]
+fn content_security_policy_metadata_preserves_opaque_value_without_enforcing_policy() {
+  let value = "default-src 'self'; object-src 'none'";
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!("HTTP/1.1 200 OK\r\nContent-Security-Policy: {value}\r\nContent-Length: 0\r\n\r\n")
+      .into_bytes(),
+  )
+  .expect("response should parse");
+
+  let metadata = response
+    .content_security_policy()
+    .expect("Content-Security-Policy should parse")
+    .expect("Content-Security-Policy should be present");
+
+  assert_eq!(metadata.as_str(), value);
+  assert_eq!(metadata.header_value(), value);
+  assert_eq!(
+    response.header_value("Content-Security-Policy"),
+    Some(&value.to_string())
+  );
+}
+
+#[test]
+fn content_security_policy_metadata_rejects_invalid_values_without_hiding_raw_headers() {
+  for value in ["", "default-src 'self'\u{7f}"] {
+    let response = Response::new(
+      RoUrl::with("https://example.test"),
+      format!("HTTP/1.1 200 OK\r\nContent-Security-Policy: {value}\r\nContent-Length: 0\r\n\r\n")
+        .into_bytes(),
+    )
+    .expect("response should parse");
+
+    assert!(
+      response.content_security_policy().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      response.header_value("Content-Security-Policy"),
+      Some(&value.to_string())
+    );
+  }
+
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Content-Security-Policy: default-src 'self'\r\n",
+      "content-security-policy: object-src 'none'\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+  assert!(response.content_security_policy().is_err());
+  assert_eq!(
+    response.header_value("Content-Security-Policy"),
+    Some(&"default-src 'self'".to_string())
+  );
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!("HTTP/1.1 200 OK\r\nContent-Security-Policy: {oversized}\r\nContent-Length: 0\r\n\r\n")
+      .into_bytes(),
+  )
+  .expect("response should parse");
+  assert!(response.content_security_policy().is_err());
+  assert_eq!(
+    response.header_value("Content-Security-Policy"),
+    Some(&oversized)
+  );
+}
+
+#[test]
+fn content_security_policy_metadata_is_absent_without_a_header() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(
+    response
+      .content_security_policy()
+      .expect("header is absent"),
+    None
+  );
+  let _: Option<ContentSecurityPolicy> = response
+    .content_security_policy()
     .expect("header is absent");
 }
 
