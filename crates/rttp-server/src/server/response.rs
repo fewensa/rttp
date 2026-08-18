@@ -12,6 +12,9 @@ pub use rttp_protocol::access_control_allow_origin::{
   AccessControlAllowOrigin as HttpAccessControlAllowOrigin,
   AccessControlAllowOriginParseError as HttpAccessControlAllowOriginParseError,
 };
+pub use rttp_protocol::allow::{
+  Allow as HttpAllowedMethods, AllowParseError as HttpAllowParseError,
+};
 pub use rttp_protocol::alt_svc::{
   AltSvc as HttpAltSvc, AltSvcAlternative as HttpAltSvcAlternative,
   AltSvcParameter as HttpAltSvcParameter, AltSvcParseError as HttpAltSvcParseError,
@@ -79,8 +82,6 @@ pub(crate) const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
 pub(crate) const MAX_VARY_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_VARY_FIELDS: usize = 256;
-pub(crate) const MAX_ALLOW_VALUE_BYTES: usize = 64 * 1024;
-pub(crate) const MAX_ALLOW_METHODS: usize = 32;
 pub(crate) const MAX_CONTENT_LANGUAGE_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_CONTENT_LANGUAGES: usize = 32;
 pub(crate) const MAX_CONTENT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
@@ -2449,99 +2450,6 @@ impl fmt::Display for HttpVaryParseError {
 }
 
 impl Error for HttpVaryParseError {}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpAllowedMethods {
-  pub(crate) methods: Vec<String>,
-}
-
-impl HttpAllowedMethods {
-  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpAllowParseError> {
-    Self::parse_values([value.as_ref()])
-  }
-
-  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpAllowParseError>
-  where
-    I: IntoIterator<Item = &'a str>,
-  {
-    let mut methods = Vec::new();
-
-    for value in values {
-      if value.len() > MAX_ALLOW_VALUE_BYTES {
-        return Err(HttpAllowParseError::new("Allow header value is too large"));
-      }
-
-      for method in value.split(',') {
-        let method = method.trim();
-        if method.is_empty() || !is_http_token(method) {
-          return Err(HttpAllowParseError::new("invalid Allow method"));
-        }
-        if methods.iter().any(|known| known == method) {
-          return Err(HttpAllowParseError::new("duplicate Allow method"));
-        }
-        if methods.len() >= MAX_ALLOW_METHODS {
-          return Err(HttpAllowParseError::new("too many Allow methods"));
-        }
-        methods.push(method.to_string());
-      }
-    }
-
-    if methods.is_empty() {
-      return Err(HttpAllowParseError::new("invalid Allow method"));
-    }
-
-    Ok(Self { methods })
-  }
-
-  pub fn from_methods<I, M>(methods: I) -> Result<Self, HttpAllowParseError>
-  where
-    I: IntoIterator<Item = M>,
-    M: AsRef<str>,
-  {
-    let mut value = String::new();
-
-    for (index, method) in methods.into_iter().enumerate() {
-      if index > 0 {
-        value.push_str(", ");
-      }
-      value.push_str(method.as_ref());
-      if value.len() > MAX_ALLOW_VALUE_BYTES {
-        return Err(HttpAllowParseError::new("Allow header value is too large"));
-      }
-    }
-
-    Self::parse(value)
-  }
-
-  pub fn methods(&self) -> Vec<&str> {
-    self.methods.iter().map(String::as_str).collect()
-  }
-
-  pub fn header_value(&self) -> String {
-    self.methods.join(", ")
-  }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpAllowParseError {
-  pub(crate) message: String,
-}
-
-impl HttpAllowParseError {
-  pub(crate) fn new<S: AsRef<str>>(message: S) -> Self {
-    Self {
-      message: message.as_ref().to_string(),
-    }
-  }
-}
-
-impl fmt::Display for HttpAllowParseError {
-  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    formatter.write_str(&self.message)
-  }
-}
-
-impl Error for HttpAllowParseError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HttpContentLanguages {
