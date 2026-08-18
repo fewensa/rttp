@@ -1235,8 +1235,8 @@ fn test_digest_response_helpers_parse_bounded_digest_fields() {
   let raw = concat!(
     "HTTP/1.1 200 OK\r\n",
     "Content-Digest: sha-256=:YWJj:, sha-512=:ZGVm:\r\n",
-    "Repr-Digest: sha-256=:YWJj:\r\n",
-    "Repr-Digest: sha-512=:ZGVm:\r\n",
+    "Repr-Digest: sha-256=:Z2hp:\r\n",
+    "Repr-Digest: sha-512=:amts:\r\n",
     "Content-Length: 0\r\n\r\n"
   );
   let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
@@ -1262,14 +1262,14 @@ fn test_digest_response_helpers_parse_bounded_digest_fields() {
     .expect("Repr-Digest should be present");
   assert_eq!(2, repr_digest.len());
   assert_eq!(
-    Some(&b"abc"[..]),
+    Some(&b"ghi"[..]),
     repr_digest.entry("sha-256").map(|entry| entry.value())
   );
   assert_eq!(
-    Some(&b"def"[..]),
+    Some(&b"jkl"[..]),
     repr_digest.entry("sha-512").map(|entry| entry.value())
   );
-  assert_eq!("sha-256=:YWJj:, sha-512=:ZGVm:", repr_digest.header_value());
+  assert_eq!("sha-256=:Z2hp:, sha-512=:amts:", repr_digest.header_value());
 }
 
 #[test]
