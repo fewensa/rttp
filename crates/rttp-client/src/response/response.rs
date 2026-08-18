@@ -10,6 +10,7 @@ use crate::response::raw_response::RawResponse;
 use crate::response::AltSvc;
 use crate::response::Digest;
 use crate::response::Priority;
+use crate::response::ProxyAuthenticate;
 use crate::response::ProxyAuthenticationInfo;
 use crate::response::ReprDigest;
 use crate::response::ServerTiming;
@@ -589,6 +590,18 @@ impl Response {
       return Ok(None);
     }
     WwwAuthenticate::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses all `Proxy-Authenticate` fields as bounded proxy authentication
+  /// challenge metadata without selecting a challenge or generating credentials.
+  pub fn proxy_authenticate(&self) -> error::Result<Option<ProxyAuthenticate>> {
+    let values = self.header_values("proxy-authenticate");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    ProxyAuthenticate::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

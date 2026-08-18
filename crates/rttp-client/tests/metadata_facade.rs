@@ -3,9 +3,9 @@ use rttp_client::response::{
   AccessControlAllowMethods, AccessControlAllowMethodsParseError, AccessControlExposeHeaders,
   AccessControlMaxAge, AccessControlMaxAgeParseError, AltSvc, CrossOriginEmbedderPolicy,
   CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest,
-  HttpClearSiteData, PreferenceApplied, Priority, ProxyAuthenticationInfo,
-  ProxyAuthenticationInfoParseError, ReferrerPolicy, ReferrerPolicyToken, ServerTiming,
-  StrictTransportSecurity, StrictTransportSecurityParseError, Trailer, Warning,
+  HttpClearSiteData, PreferenceApplied, Priority, ProxyAuthenticate, ProxyAuthenticateParseError,
+  ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ReferrerPolicy, ReferrerPolicyToken,
+  ServerTiming, StrictTransportSecurity, StrictTransportSecurityParseError, Trailer, Warning,
 };
 use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 
@@ -56,6 +56,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
       .expect("Proxy-Authentication-Info should parse");
   let _: ProxyAuthenticationInfoParseError = ProxyAuthenticationInfo::parse("")
     .expect_err("empty Proxy-Authentication-Info should be rejected");
+  let proxy_authenticate =
+    ProxyAuthenticate::parse(r#"Basic realm="corp""#).expect("Proxy-Authenticate should parse");
+  let _: ProxyAuthenticateParseError =
+    ProxyAuthenticate::parse("").expect_err("empty Proxy-Authenticate should be rejected");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(allow_methods.methods(), ["GET", "POST"]);
@@ -88,6 +92,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(
     proxy_authentication_info.parameter("nextnonce"),
     Some("6629fae49393a05397450978507c4ef1")
+  );
+  assert_eq!(
+    proxy_authenticate.challenges()[0].parameter("realm"),
+    Some("corp")
   );
 }
 

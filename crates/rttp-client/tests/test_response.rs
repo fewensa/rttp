@@ -2,8 +2,8 @@ use rttp_client::response::{
   AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType,
   CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy,
   CrossOriginResourcePolicy, Digest, HttpClearSiteData, HttpSetCookies, LinkValues,
-  ProxyAuthenticationInfo, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
-  StrictTransportSecurity, Warning,
+  ProxyAuthenticate, ProxyAuthenticationInfo, ReferrerPolicy, ReferrerPolicyToken, Response,
+  RetryAfter, ServerTiming, StrictTransportSecurity, Warning,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -1097,6 +1097,88 @@ fn test_www_authenticate_rejects_malformed_duplicate_and_bounded_values() {
       "raw header should remain available after a parse failure"
     );
   }
+}
+
+#[test]
+fn test_proxy_authenticate_response_helper_parses_bounded_challenges() {
+  let raw = concat!(
+    "HTTP/1.1 407 Proxy Authentication Required\r\n",
+    "Proxy-Authenticate: Basic realm=\"corp\"\r\n",
+    "Proxy-Authenticate: Bearer mF_9.B5f-4.1JqM, Digest realm=\"apps\", nonce=\"n-1\"\r\n",
+    "Content-Length: 2\r\n\r\nOK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  let challenges = response
+    .proxy_authenticate()
+    .expect("valid challenges should parse")
+    .expect("Proxy-Authenticate should be present");
+
+  assert_eq!(3, challenges.len());
+  assert_eq!("Basic", challenges.challenges()[0].scheme());
+  assert_eq!(Some("corp"), challenges.challenges()[0].parameter("realm"));
+  assert_eq!("Bearer", challenges.challenges()[1].scheme());
+  assert_eq!(
+    Some("mF_9.B5f-4.1JqM"),
+    challenges.challenges()[1].token68()
+  );
+  assert_eq!("Digest", challenges.challenges()[2].scheme());
+  assert_eq!(Some("apps"), challenges.challenges()[2].parameter("realm"));
+  assert_eq!(Some("n-1"), challenges.challenges()[2].parameter("nonce"));
+  assert_eq!(
+    response.header_values("Proxy-Authenticate"),
+    [
+      &"Basic realm=\"corp\"".to_string(),
+      &"Bearer mF_9.B5f-4.1JqM, Digest realm=\"apps\", nonce=\"n-1\"".to_string()
+    ]
+  );
+}
+
+#[test]
+fn test_proxy_authenticate_rejects_invalid_and_absent_values() {
+  for value in ["", "Basic realm=", "Basic @", "Basic realm=one, REALM=two"] {
+    let raw = format!(
+      "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: {value}\r\nContent-Length: 2\r\n\r\nOK"
+    );
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(
+      response.proxy_authenticate().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Proxy-Authenticate")
+    );
+  }
+
+  let oversized = "Basic realm=".to_string() + &"a".repeat(64 * 1024);
+  let raw = format!(
+    "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: {oversized}\r\nContent-Length: 0\r\n\r\n"
+  );
+  let oversized_response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response should remain usable");
+  assert!(oversized_response.proxy_authenticate().is_err());
+  assert_eq!(
+    Some(&oversized),
+    oversized_response.header_value("Proxy-Authenticate")
+  );
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response without Proxy-Authenticate should parse");
+  assert_eq!(
+    None,
+    absent
+      .proxy_authenticate()
+      .expect("absent Proxy-Authenticate should parse")
+  );
+  let _: Option<ProxyAuthenticate> = absent
+    .proxy_authenticate()
+    .expect("absent Proxy-Authenticate should parse");
 }
 
 #[test]
