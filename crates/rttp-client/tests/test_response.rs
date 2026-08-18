@@ -1998,6 +1998,88 @@ fn test_parse_age_and_expires_response_metadata() {
 }
 
 #[test]
+fn test_parse_date_response_metadata() {
+  let s = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Date: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
+    .expect("parse response with date metadata");
+
+  assert_eq!(
+    Some(UNIX_EPOCH + Duration::from_secs(784111777)),
+    response.date().expect("valid date should parse")
+  );
+  assert_eq!(
+    Some(&"Sun, 06 Nov 1994 08:49:37 GMT".to_string()),
+    response.header_value("Date")
+  );
+  assert_eq!(
+    vec![&"Sun, 06 Nov 1994 08:49:37 GMT".to_string()],
+    response.header_values("Date")
+  );
+
+  let s = concat!("HTTP/1.1 200 OK\r\n", "Content-Length: 2\r\n", "\r\n", "OK");
+  let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
+    .expect("parse response without date");
+  assert_eq!(None, response.date().expect("absent date should parse"));
+}
+
+#[test]
+fn test_parse_date_rejects_invalid_duplicate_and_oversized_metadata_without_hiding_headers() {
+  let invalid_value = "not a date";
+  let raw = format!("HTTP/1.1 200 OK\r\nDate: {invalid_value}\r\nContent-Length: 2\r\n\r\nOK");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response with invalid date remains usable");
+
+  assert!(
+    response.date().is_err(),
+    "Date helper should reject malformed values"
+  );
+  assert_eq!(
+    Some(&invalid_value.to_string()),
+    response.header_value("Date")
+  );
+
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Date: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+    "date: Sun, 06 Nov 1994 08:49:38 GMT\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response with duplicate date remains usable");
+
+  assert!(
+    response.date().is_err(),
+    "Date helper should reject duplicate values"
+  );
+  assert_eq!(
+    vec![
+      &"Sun, 06 Nov 1994 08:49:37 GMT".to_string(),
+      &"Sun, 06 Nov 1994 08:49:38 GMT".to_string()
+    ],
+    response.header_values("Date")
+  );
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let raw = format!("HTTP/1.1 200 OK\r\nDate: {oversized}\r\nContent-Length: 2\r\n\r\nOK");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response with oversized date remains usable");
+
+  assert!(
+    response.date().is_err(),
+    "Date helper should reject oversized invalid values"
+  );
+  assert_eq!(Some(&oversized), response.header_value("Date"));
+}
+
+#[test]
 fn test_parse_sunset_response_metadata_and_preserves_raw_value() {
   let response = Response::new(
     RoUrl::with("https://example.test"),

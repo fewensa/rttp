@@ -216,7 +216,12 @@ policy enforcement, or automatic conditional requests. Directives such as
 `max-age`, `s-maxage`, `no-cache`, `must-revalidate`, and extension directives
 are exposed as parsed metadata only.
 
-## Bounded HTTP/1.1 Age and Expires behavior
+## Bounded HTTP/1.1 Date, Age, and Expires behavior
+
+`Response::date()` parses the response `Date` header as singleton HTTP-date
+metadata. The helper returns `Ok(None)` when the header is absent, returns
+`SystemTime` when the value is present and valid, and returns an error for
+malformed or duplicate values.
 
 `Response::age()` parses the response `Age` header as HTTP/1.1 delta-seconds
 metadata. The helper returns `Ok(None)` when the header is absent, returns the
@@ -231,12 +236,13 @@ the same HTTP-date parser used by the client date helpers. It returns
 values including the standard IMF-fixdate and obsolete HTTP-date forms accepted
 by the parser, and returns an error for malformed or non-date values.
 
-Malformed helper values do not reject the raw response. The original `Age` and
-`Expires` fields remain available through `header_value`, `header_values`, and
-the other raw header accessors. These helpers expose metadata only;
-`rttp_client` does not calculate freshness, validate cache state against
-wall-clock time, store responses, match stored responses, revalidate responses,
-apply shared-cache policy, or issue automatic conditional requests.
+Malformed helper values do not reject the raw response. The original `Date`,
+`Age`, and `Expires` fields remain available through `header_value`,
+`header_values`, and the other raw header accessors. These helpers expose
+metadata only; `rttp_client` does not calculate freshness, correct clock skew,
+validate cache state against wall-clock time, store responses, match stored
+responses, revalidate responses, apply shared-cache policy, issue automatic
+conditional requests, retry, redirect, schedule work, or choose status policy.
 
 ## Bounded HTTP/1.1 Retry-After behavior
 
@@ -596,7 +602,7 @@ header-block model.
 | Byte ranges | `range`, `range_from`, `range_suffix`, `if_range_etag`, and `if_range_date` emit bounded HTTP/1.1 range request metadata; `Response::content_range`, `accept_ranges`, `is_partial_content`, and `is_range_not_satisfiable` expose `Content-Range`, `Accept-Ranges`, `206`, and `416` metadata while preserving raw headers | No Range request generation from `Accept-Ranges`, client-side `If-Range` evaluation, partial response engine, byte serving, content slicing, download resume, automatic retry/replay, cache storage, redirect handling, status-policy behavior, multipart range generation, or automatic cache validation policy |
 | Conditional requests | `if_none_match`, `if_match`, `if_modified_since`, and `if_unmodified_since` emit bounded HTTP/1.1 validators; `Response::is_not_modified`, `is_precondition_failed`, `etag`, and `last_modified` expose `304`/`412` metadata | One ETag validator per helper call, `If-Range` is range-scoped, no cache storage, no automatic revalidation, and no cache-control engine |
 | Informational responses and Early Hints | `Response::informational_responses` exposes skipped bounded HTTP/1.1 `1xx` heads, including `103 Early Hints`, with preserved raw headers | `101 Switching Protocols` remains terminal for upgrade handoff; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
-| Cache-Control, Age, and Expires | `Response::cache_control` parses bounded response directives, numeric freshness fields, quoted field-name lists, and extension directives; `Response::age` parses bounded delta-seconds; `Response::expires` parses bounded HTTP-date metadata | No cache storage, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, or automatic conditional requests |
+| Cache-Control, Date, Age, and Expires | `Response::cache_control` parses bounded response directives, numeric freshness fields, quoted field-name lists, and extension directives; `Response::date` parses singleton HTTP-date metadata; `Response::age` parses bounded delta-seconds; `Response::expires` parses bounded HTTP-date metadata | No cache storage, automatic revalidation, wall-clock freshness calculation, clock-skew correction, `Vary` matching, shared-cache policy enforcement, automatic conditional requests, retry, redirect, scheduling, or status policy |
 | Allow | `Response::allow` parses bounded response `Allow` fields into an ordered HTTP method-token list | No fallback method selection, automatic retry/replay, or status-code policy behavior for `405` or `OPTIONS` |
 | Client Hints | `Response::accept_ch` and `Response::critical_ch` parse bounded, ordered Client Hints opt-in metadata while preserving raw headers on parse failures | No browser opt-in state, request-header generation, retry, persistence, or Client Hints policy |
 | Content-Language | `Response::content_language` parses bounded response `Content-Language` fields into ordered language metadata while preserving raw headers | No automatic language negotiation, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |

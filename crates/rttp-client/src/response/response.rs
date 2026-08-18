@@ -303,6 +303,17 @@ impl Response {
     self.header_value("last-modified")
   }
 
+  pub fn date(&self) -> error::Result<Option<SystemTime>> {
+    let values = self.header_values("date");
+    match values.as_slice() {
+      [] => Ok(None),
+      [value] => parse_http_date(value)
+        .map(Some)
+        .map_err(|_| error::bad_response("Invalid Date HTTP-date")),
+      _ => Err(error::bad_response("Duplicate Date header values")),
+    }
+  }
+
   pub fn age(&self) -> error::Result<Option<u64>> {
     self
       .header_value("age")
