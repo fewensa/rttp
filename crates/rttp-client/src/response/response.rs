@@ -31,6 +31,7 @@ use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::cross_origin_resource_policy::CrossOriginResourcePolicy;
 use rttp_protocol::prefer::PreferenceApplied;
 use rttp_protocol::referrer_policy::ReferrerPolicy;
+use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::sunset::parse_sunset_values;
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
 
@@ -39,6 +40,7 @@ const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
 const MAX_ACCEPT_RANGES_VALUE_BYTES: usize = 64 * 1024;
 const MAX_ACCEPT_RANGE_UNITS: usize = 256;
 const MAX_ACCEPT_MEDIA_TYPES: usize = 256;
+const MAX_DATE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_RETRY_AFTER_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_TYPE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_TYPE_PARAMETERS: usize = 256;
@@ -303,6 +305,22 @@ impl Response {
     self.header_value("last-modified")
   }
 
+  pub fn date(&self) -> error::Result<Option<SystemTime>> {
+    let values = self.header_values("date");
+    match values.as_slice() {
+      [] => Ok(None),
+      [value] => {
+        if value.len() > MAX_DATE_VALUE_BYTES {
+          return Err(error::bad_response("Date header value is too large"));
+        }
+        parse_http_date(value)
+          .map(Some)
+          .map_err(|_| error::bad_response("Invalid Date HTTP-date"))
+      }
+      _ => Err(error::bad_response("Duplicate Date header values")),
+    }
+  }
+
   pub fn age(&self) -> error::Result<Option<u64>> {
     self
       .header_value("age")
@@ -486,6 +504,17 @@ impl Response {
       return Ok(None);
     }
     ReferrerPolicy::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Strict-Transport-Security` response metadata without applying HSTS policy.
+  pub fn strict_transport_security(&self) -> error::Result<Option<StrictTransportSecurity>> {
+    let values = self.header_values("strict-transport-security");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    StrictTransportSecurity::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

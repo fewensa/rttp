@@ -77,6 +77,9 @@ pub use rttp_protocol::referrer_policy::{
 pub use rttp_protocol::server_timing::{
   ServerTiming, ServerTimingMetric, ServerTimingParameter, ServerTimingParseError,
 };
+pub use rttp_protocol::strict_transport_security::{
+  StrictTransportSecurity, StrictTransportSecurityParseError,
+};
 pub use rttp_protocol::timing_allow_origin::{TimingAllowOrigin, TimingAllowOriginParseError};
 pub use rttp_protocol::trailer::{Trailer, TrailerParseError};
 pub use rttp_protocol::warning::{Warning, WarningParseError, WarningValue};
