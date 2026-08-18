@@ -577,6 +577,23 @@ store credentials, select an authentication policy, retry requests, generate
 `Authorization`, implement Basic or Bearer authentication, or change redirect
 behavior.
 
+### Bounded Proxy-Authenticate response metadata
+
+`Response::proxy_authenticate()` parses all received `Proxy-Authenticate`
+fields in wire order into bounded `ProxyAuthenticate` challenge metadata.
+Challenges expose their proxy authentication scheme, optional token68 value,
+and ordered auth-parameters with quoted-string unescaping. Absent metadata
+returns `Ok(None)`; malformed syntax, duplicate parameter names, invalid
+tokens, oversized values, and excessive challenges or parameters return an
+error while the raw response headers remain available.
+
+`ProxyAuthenticate::parse()` validates a single field value, and
+`ProxyAuthenticate::parse_values()` preserves challenges across multiple field
+values. These helpers expose proxy authentication challenges as metadata only.
+RTTP does not store credentials, select a proxy authentication policy, retry
+requests, generate `Proxy-Authorization`, implement Basic or Bearer
+authentication, or change redirect behavior.
+
 ### Bounded Server-Timing response metadata
 
 `Response::server_timing()` parses all received `Server-Timing` fields in wire
@@ -799,6 +816,7 @@ gain additional HTTP/2 header-block handling.
 | Transfer-Encoding | `Response::transfer_encoding`/`TransferEncoding::parse` parse bounded HTTP/1 `Transfer-Encoding` fields that must be sole `chunked`, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to HTTP/1 framing decoders, `TE`, Content-Length, chunked body decoding policy, or HTTP/2 decode rejection |
 | Content-Disposition | Client `Response::content_disposition` and server `HttpContentDisposition`, `HttpResponse::with_content_disposition`, `with_attachment_filename`, and `content_disposition` parse or declare bounded singleton response `Content-Disposition` metadata, preserve raw headers on parse failures, and preserve parsed `filename` plus `filename*` parameter values as metadata | No automatic download, filesystem path handling, MIME sniffing, cache behavior, redirect behavior, retry/replay, negotiation, or status-policy behavior |
 | WWW-Authenticate | Client `Response::www_authenticate` and server `HttpWwwAuthenticate`, `HttpResponse::with_www_authenticate`, and `HttpResponse::www_authenticate` parse or declare bounded response authentication challenges while preserving raw headers on parse failures | No credential storage, authentication policy, retry, automatic `Authorization` generation, Basic/Bearer implementation, redirect behavior, or status-policy behavior |
+| Proxy-Authenticate | Client `Response::proxy_authenticate` and protocol `ProxyAuthenticate::parse`/`parse_values` parse bounded proxy authentication challenges across one or more response fields while preserving raw headers on parse failures | No credential storage, proxy authentication policy, retry, automatic `Proxy-Authorization` generation, Basic/Bearer implementation, redirect behavior, or status-policy behavior |
 | Server-Timing | Client `Response::server_timing` and server `HttpServerTiming`, `HttpResponse::with_server_timing`, and `HttpResponse::server_timing` parse or declare bounded response timing metadata while preserving raw headers on parse failures | No metric collection, measurement, telemetry export, metrics backend integration, retry, redirect behavior, or status-policy behavior |
 | Warning | Client `Response::warning` parses bounded RFC 7234 `Warning` warning-value lists while preserving raw headers on parse failures | No cache storage, freshness calculation, stale-response handling, warn-code policy, retry, redirect behavior, or response-acceptance changes |
 | Vary | `Response::vary` parses bounded response `Vary` fields into wildcard or normalized case-insensitive field-name metadata | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
