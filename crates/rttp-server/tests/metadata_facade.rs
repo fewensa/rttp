@@ -2,8 +2,9 @@ use rttp_server::server::{
   HttpAcceptCh, HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods,
   HttpAccessControlRequestHeaders, HttpAccessControlRequestHeadersParseError,
   HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError,
-  HttpConditionalMetadata, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpPreferenceKind,
-  HttpRequest, HttpResponse, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
+  HttpConditionalMetadata, HttpContentRange, HttpContentRangeParseError,
+  HttpCrossOriginResourcePolicy, HttpEntityTag, HttpPreferenceKind, HttpRequest, HttpResponse,
+  SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
 };
 
 #[test]
@@ -31,6 +32,9 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("revision-42"));
   let policy: HttpCrossOriginResourcePolicy = HttpCrossOriginResourcePolicy::parse("same-origin")
     .expect("Cross-Origin-Resource-Policy should parse");
+  let content_range = HttpContentRange::parse("bytes */10").expect("Content-Range should parse");
+  let content_range_error: Result<HttpContentRange, HttpContentRangeParseError> =
+    HttpContentRange::parse("bytes */*");
   let response = HttpResponse::ok("")
     .with_accept_ch(["Sec-CH-UA"])
     .expect("Accept-CH should be accepted");
@@ -51,6 +55,13 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert!(request_headers_error.is_err());
   assert_eq!(policy.header_value(), "same-origin");
   assert_eq!(
+    HttpContentRange::Unsatisfied {
+      complete_length: 10,
+    },
+    content_range
+  );
+  assert!(content_range_error.is_err());
+  assert_eq!(
     metadata
       .entity_tag_value()
       .expect("entity tag should be retained")
@@ -69,6 +80,35 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_mode.header_value(), "navigate");
   assert_eq!(fetch_dest.header_value(), "document");
   assert_eq!(fetch_user.header_value(), "?1");
+}
+
+#[test]
+fn response_facade_parses_content_range_metadata() {
+  let satisfied = HttpResponse::ok("").header("Content-Range", "bytes 3-6/10");
+  let unsatisfied = HttpResponse::ok("").header("Content-Range", "bytes */10");
+  let duplicate = HttpResponse::ok("")
+    .header("Content-Range", "bytes 0-0/2")
+    .header("Content-Range", "bytes 1-1/2");
+
+  assert_eq!(
+    Some(HttpContentRange::Bytes {
+      start: 3,
+      end: 6,
+      complete_length: Some(10),
+    }),
+    satisfied
+      .content_range()
+      .expect("satisfied Content-Range should parse")
+  );
+  assert_eq!(
+    Some(HttpContentRange::Unsatisfied {
+      complete_length: 10,
+    }),
+    unsatisfied
+      .content_range()
+      .expect("unsatisfied Content-Range should parse")
+  );
+  assert!(duplicate.content_range().is_err());
 }
 
 #[test]

@@ -1,5 +1,5 @@
 use rttp_client::response::{
-  AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType,
+  AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentRange, ContentType,
   CrossOriginEmbedderPolicy, CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest,
   HttpClearSiteData, HttpSetCookies, LinkValues, ProxyAuthenticationInfo, ReferrerPolicy,
   ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
@@ -466,10 +466,19 @@ fn test_parse_partial_content_range_metadata() {
   .expect("parse partial content response");
   let content_range = response
     .content_range()
+    .expect("Content-Range should parse")
     .expect("partial content response should expose content range");
 
   assert!(response.is_partial_content());
   assert!(!response.is_range_not_satisfiable());
+  assert_eq!(
+    ContentRange::Bytes {
+      start: 10,
+      end: 19,
+      complete_length: Some(200),
+    },
+    content_range
+  );
   assert_eq!("bytes", content_range.unit());
   assert_eq!(Some(10), content_range.start());
   assert_eq!(Some(19), content_range.end());
@@ -495,10 +504,17 @@ fn test_parse_range_not_satisfiable_metadata_preserves_body_and_headers() {
   .expect("parse range not satisfiable response");
   let content_range = response
     .content_range()
+    .expect("Content-Range should parse")
     .expect("416 response should expose unsatisfied content range");
 
   assert!(!response.is_partial_content());
   assert!(response.is_range_not_satisfiable());
+  assert_eq!(
+    ContentRange::Unsatisfied {
+      complete_length: 200,
+    },
+    content_range
+  );
   assert_eq!("bytes", content_range.unit());
   assert_eq!(None, content_range.start());
   assert_eq!(None, content_range.end());
@@ -509,6 +525,45 @@ fn test_parse_range_not_satisfiable_metadata_preserves_body_and_headers() {
     response.header_value("Content-Type")
   );
   assert_eq!("range unavailable", response.body().string().unwrap());
+}
+
+#[test]
+fn test_invalid_content_range_metadata_is_checked_without_removing_raw_header() {
+  let s = concat!(
+    "HTTP/1.1 206 Partial Content\r\n",
+    "Content-Range: bytes 10-20/20\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/asset"),
+    s.as_bytes().to_vec(),
+  )
+  .expect("parse response with invalid metadata");
+
+  assert!(response.content_range().is_err());
+  assert_eq!(
+    Some(&"bytes 10-20/20".to_string()),
+    response.header_value("Content-Range")
+  );
+}
+
+#[test]
+fn test_duplicate_content_range_metadata_is_checked() {
+  let s = concat!(
+    "HTTP/1.1 206 Partial Content\r\n",
+    "Content-Range: bytes 0-0/2\r\n",
+    "Content-Range: bytes 1-1/2\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/asset"),
+    s.as_bytes().to_vec(),
+  )
+  .expect("parse response with duplicate metadata");
+
+  assert!(response.content_range().is_err());
 }
 
 #[test]

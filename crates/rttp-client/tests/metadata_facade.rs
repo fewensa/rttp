@@ -1,10 +1,10 @@
 use rttp_client::response::{
   AcceptCh, AccessControlAllowHeaders, AccessControlAllowHeadersParseError,
   AccessControlAllowMethods, AccessControlAllowMethodsParseError, AccessControlExposeHeaders,
-  AccessControlMaxAge, AccessControlMaxAgeParseError, AltSvc, CrossOriginEmbedderPolicy,
-  CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest, HttpClearSiteData, PreferenceApplied,
-  Priority, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ReferrerPolicy,
-  ReferrerPolicyToken, ServerTiming, Trailer,
+  AccessControlMaxAge, AccessControlMaxAgeParseError, AltSvc, ContentRange, ContentRangeParseError,
+  CrossOriginEmbedderPolicy, CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest,
+  HttpClearSiteData, PreferenceApplied, Priority, ProxyAuthenticationInfo,
+  ProxyAuthenticationInfoParseError, ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Trailer,
 };
 use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 
@@ -31,6 +31,9 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let server_timing = ServerTiming::parse("db;dur=53").expect("Server-Timing should parse");
   let trailer = Trailer::parse("X-Trace").expect("Trailer should parse");
   let alt_svc = AltSvc::parse("h3=\":443\"").expect("Alt-Svc should parse");
+  let content_range = ContentRange::parse("bytes 3-6/10").expect("Content-Range should parse");
+  let _: ContentRangeParseError =
+    ContentRange::parse("bytes */*").expect_err("invalid Content-Range should be rejected");
   let fetch_site = SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
@@ -58,6 +61,14 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(server_timing.metrics().len(), 1);
   assert_eq!(trailer.field_names(), ["x-trace"]);
   assert_eq!(alt_svc.alternatives().len(), 1);
+  assert_eq!(
+    ContentRange::Bytes {
+      start: 3,
+      end: 6,
+      complete_length: Some(10),
+    },
+    content_range
+  );
   assert_eq!(fetch_site.header_value(), "same-origin");
   assert_eq!(fetch_mode.header_value(), "navigate");
   assert_eq!(fetch_dest.header_value(), "document");
