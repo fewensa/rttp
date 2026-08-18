@@ -3,7 +3,7 @@ use rttp_client::response::{
   CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy,
   CrossOriginResourcePolicy, HttpClearSiteData, HttpSetCookies, LinkValues,
   ProxyAuthenticationInfo, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
-  StrictTransportSecurity, Warning,
+  StrictTransportSecurity, Warning, XContentTypeOptions, XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -252,6 +252,171 @@ fn strict_transport_security_metadata_is_absent_without_a_header() {
   let _: Option<StrictTransportSecurity> = response
     .strict_transport_security()
     .expect("header is absent");
+}
+
+#[test]
+fn x_content_type_options_metadata_parses_nosniff_without_applying_policy() {
+  for value in ["nosniff", "NoSniff"] {
+    let response = Response::new(
+      RoUrl::with("https://example.test"),
+      format!("HTTP/1.1 200 OK\r\nX-Content-Type-Options: {value}\r\nContent-Length: 0\r\n\r\n")
+        .into_bytes(),
+    )
+    .expect("response should parse");
+
+    let metadata = response
+      .x_content_type_options()
+      .expect("X-Content-Type-Options should parse")
+      .expect("X-Content-Type-Options should be present");
+
+    assert_eq!(metadata, XContentTypeOptions::Nosniff);
+    assert_eq!(metadata.header_value(), "nosniff");
+    assert_eq!(
+      response.header_value("X-Content-Type-Options"),
+      Some(&value.to_string())
+    );
+  }
+}
+
+#[test]
+fn x_content_type_options_metadata_rejects_invalid_values_without_hiding_raw_headers() {
+  for value in ["", "unknown", "nosniff, nosniff"] {
+    let response = Response::new(
+      RoUrl::with("https://example.test"),
+      format!("HTTP/1.1 200 OK\r\nX-Content-Type-Options: {value}\r\nContent-Length: 0\r\n\r\n")
+        .into_bytes(),
+    )
+    .expect("response should parse");
+
+    assert!(
+      response.x_content_type_options().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      response.header_value("X-Content-Type-Options"),
+      Some(&value.to_string())
+    );
+  }
+
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "X-Content-Type-Options: nosniff\r\n",
+      "X-Content-Type-Options: nosniff\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  assert!(response.x_content_type_options().is_err());
+  assert_eq!(
+    response.header_values("X-Content-Type-Options"),
+    [&"nosniff".to_string(), &"nosniff".to_string()]
+  );
+}
+
+#[test]
+fn x_content_type_options_metadata_is_absent_without_a_header() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(
+    response.x_content_type_options().expect("header is absent"),
+    None
+  );
+  let _: Option<XContentTypeOptions> = response.x_content_type_options().expect("header is absent");
+}
+
+#[test]
+fn x_frame_options_metadata_parses_tokens_without_applying_policy() {
+  for (value, expected) in [
+    ("DENY", XFrameOptions::Deny),
+    ("deny", XFrameOptions::Deny),
+    ("SAMEORIGIN", XFrameOptions::SameOrigin),
+    ("SameOrigin", XFrameOptions::SameOrigin),
+  ] {
+    let response = Response::new(
+      RoUrl::with("https://example.test"),
+      format!("HTTP/1.1 200 OK\r\nX-Frame-Options: {value}\r\nContent-Length: 0\r\n\r\n")
+        .into_bytes(),
+    )
+    .expect("response should parse");
+
+    let metadata = response
+      .x_frame_options()
+      .expect("X-Frame-Options should parse")
+      .expect("X-Frame-Options should be present");
+
+    assert_eq!(metadata, expected);
+    assert_eq!(metadata.header_value(), expected.header_value());
+    assert_eq!(
+      response.header_value("X-Frame-Options"),
+      Some(&value.to_string())
+    );
+  }
+}
+
+#[test]
+fn x_frame_options_metadata_rejects_invalid_values_without_hiding_raw_headers() {
+  for value in [
+    "",
+    "unknown",
+    "ALLOW-FROM https://example.test",
+    "DENY, SAMEORIGIN",
+  ] {
+    let response = Response::new(
+      RoUrl::with("https://example.test"),
+      format!("HTTP/1.1 200 OK\r\nX-Frame-Options: {value}\r\nContent-Length: 0\r\n\r\n")
+        .into_bytes(),
+    )
+    .expect("response should parse");
+
+    assert!(
+      response.x_frame_options().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      response.header_value("X-Frame-Options"),
+      Some(&value.to_string())
+    );
+  }
+
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "X-Frame-Options: DENY\r\n",
+      "X-Frame-Options: SAMEORIGIN\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  assert!(response.x_frame_options().is_err());
+  assert_eq!(
+    response.header_values("X-Frame-Options"),
+    [&"DENY".to_string(), &"SAMEORIGIN".to_string()]
+  );
+}
+
+#[test]
+fn x_frame_options_metadata_is_absent_without_a_header() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(response.x_frame_options().expect("header is absent"), None);
+  let _: Option<XFrameOptions> = response.x_frame_options().expect("header is absent");
 }
 
 #[test]

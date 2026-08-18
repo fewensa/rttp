@@ -40,6 +40,8 @@ use rttp_protocol::referrer_policy::ReferrerPolicy;
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::sunset::parse_sunset_values;
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
+use rttp_protocol::x_content_type_options::XContentTypeOptions;
+use rttp_protocol::x_frame_options::XFrameOptions;
 
 const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
@@ -521,6 +523,28 @@ impl Response {
       return Ok(None);
     }
     StrictTransportSecurity::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `X-Content-Type-Options` response metadata without applying MIME-sniffing policy.
+  pub fn x_content_type_options(&self) -> error::Result<Option<XContentTypeOptions>> {
+    let values = self.header_values("x-content-type-options");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    XContentTypeOptions::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `X-Frame-Options` response metadata without applying clickjacking policy.
+  pub fn x_frame_options(&self) -> error::Result<Option<XFrameOptions>> {
+    let values = self.header_values("x-frame-options");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    XFrameOptions::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
