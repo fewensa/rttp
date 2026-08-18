@@ -2,9 +2,13 @@ use rttp_server::server::{
   HttpAcceptCh, HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods,
   HttpAccessControlRequestHeaders, HttpAccessControlRequestHeadersParseError,
   HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError, HttpCdnCacheControl,
-  HttpConditionalMetadata, HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy,
-  HttpEntityTag, HttpPreferenceKind, HttpRequest, HttpResponse, HttpWantReprDigest, SecFetchDest,
-  SecFetchMode, SecFetchSite, SecFetchUser,
+  HttpConditionalMetadata, HttpConnection, HttpConnectionParseError,
+  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpHost,
+  HttpPreferenceKind, HttpRequest, HttpResponse, HttpSignature, HttpSignatureInput,
+  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
+  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
+  HttpTransferEncoding, HttpTransferEncodingParseError, HttpWantContentDigest, HttpWantReprDigest,
+  SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
 };
 
 #[test]
@@ -132,6 +136,41 @@ fn request_facade_parses_structured_prefer_metadata() {
 }
 
 #[test]
+fn request_facade_parses_want_content_digest_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nWant-Content-Digest: sha-256=10, sha-512=3, unixsum=0\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let digest: HttpWantContentDigest = request
+    .want_content_digest()
+    .expect("Want-Content-Digest should parse")
+    .expect("Want-Content-Digest should be present");
+
+  assert_eq!(digest.entries()[0].algorithm(), "sha-256");
+  assert_eq!(digest.entries()[0].preference(), 10);
+  assert_eq!(digest.entries()[1].algorithm(), "sha-512");
+  assert_eq!(digest.entries()[1].preference(), 3);
+  assert_eq!(digest.entries()[2].algorithm(), "unixsum");
+  assert_eq!(digest.entries()[2].preference(), 0);
+}
+
+#[test]
+fn request_facade_parses_host_authority() {
+  let request = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test:8443\r\n\r\n")
+    .expect("request should parse");
+
+  let host: HttpHost = request
+    .host()
+    .expect("Host should parse")
+    .expect("Host should be present");
+
+  assert_eq!("example.test", host.host());
+  assert_eq!(Some("8443"), host.port());
+  assert_eq!("example.test:8443", host.header_value());
+}
+
+#[test]
 fn request_facade_parses_want_repr_digest_metadata() {
   let request = HttpRequest::parse(
     b"GET /asset HTTP/1.1\r\nHost: example.test\r\nWant-Repr-Digest: sha-256=10, sha-512=3, unixsum=0\r\n\r\n",
@@ -149,4 +188,138 @@ fn request_facade_parses_want_repr_digest_metadata() {
   assert_eq!(digest.entries()[1].preference(), 3);
   assert_eq!(digest.entries()[2].algorithm(), "unixsum");
   assert_eq!(digest.entries()[2].preference(), 0);
+}
+
+#[test]
+fn request_facade_parses_signature_metadata_pair() {
+  let request = HttpRequest::parse(
+    concat!(
+      "POST /signed HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      r#"Signature-Input: sig1=("@method" "@authority" "@path");created=1618884473;keyid="test-key""#,
+      "\r\n",
+      "Signature: sig1=:YWJj:\r\n",
+      "\r\n"
+    )
+    .as_bytes(),
+  )
+  .expect("request should parse");
+
+  let signature: HttpSignature = request
+    .signature()
+    .expect("Signature should parse")
+    .expect("Signature should be present");
+  let signature_input: HttpSignatureInput = request
+    .signature_input()
+    .expect("Signature-Input should parse")
+    .expect("Signature-Input should be present");
+  let _: Result<HttpSignature, HttpSignatureParseError> = HttpSignature::parse("not-a-signature");
+  let _: Result<HttpSignatureInput, HttpSignatureInputParseError> =
+    HttpSignatureInput::parse("not-an-input");
+
+  let entry: &HttpSignatureInputEntry = &signature_input.entries()[0];
+  let _: &[HttpSignatureInputComponent] = entry.components();
+  let _: &[HttpSignatureInputParameter] = entry.parameters();
+
+  assert_eq!(signature.header_value(), "sig1=:YWJj:");
+  assert_eq!(
+    signature_input.header_value(),
+    r#"sig1=("@method" "@authority" "@path");created=1618884473;keyid="test-key""#
+  );
+  assert!(matches!(
+    entry
+      .parameter("created")
+      .map(HttpSignatureInputParameter::value),
+    Some(HttpSignatureInputBareItem::Integer(1_618_884_473))
+  ));
+}
+
+#[test]
+fn request_facade_parses_connection_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /download HTTP/1.1\r\nHost: files.example.test\r\nConnection: close\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let connection: HttpConnection = request
+    .connection()
+    .expect("Connection should parse")
+    .expect("Connection should be present");
+
+  assert_eq!(connection.tokens(), ["close"]);
+  assert_eq!(connection.header_value(), "close");
+  assert_eq!(request.header("Connection"), Some("close"));
+}
+
+#[test]
+fn request_facade_returns_none_when_connection_is_absent() {
+  let request = HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+
+  assert!(request
+    .connection()
+    .expect("missing Connection should be accepted")
+    .is_none());
+}
+
+#[test]
+fn request_facade_rejects_malformed_connection_while_preserving_raw_header() {
+  let request =
+    HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\nConnection: close,\r\n\r\n")
+      .expect("malformed Connection should not reject the request frame");
+
+  assert!(request.connection().is_err());
+  assert_eq!(request.header("Connection"), Some("close,"));
+}
+
+#[test]
+fn request_facade_rejects_invalid_connection_values() {
+  let _: HttpConnectionParseError =
+    HttpConnection::parse("close; foo").expect_err("parameterized Connection should be rejected");
+}
+
+#[test]
+fn response_facade_parses_attached_connection_metadata() {
+  let response = HttpResponse::ok("").header("Connection", "keep-alive");
+  let connection = response
+    .connection()
+    .expect("Connection should parse")
+    .expect("Connection should be present");
+
+  assert_eq!(connection.tokens(), ["keep-alive"]);
+  assert_eq!(connection.header_value(), "keep-alive");
+}
+
+#[test]
+fn request_facade_parses_transfer_encoding_from_validated_chunked_framing() {
+  let request = HttpRequest::parse(
+    b"POST /upload HTTP/1.1\r\nHost: example.test\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+  )
+  .expect("chunked request framing should parse");
+
+  let transfer_encoding: HttpTransferEncoding = request
+    .transfer_encoding()
+    .expect("Transfer-Encoding should parse")
+    .expect("Transfer-Encoding should be present");
+
+  assert_eq!(transfer_encoding.codings(), ["chunked"]);
+  assert_eq!(transfer_encoding.header_value(), "chunked");
+  assert_eq!(request.header("Transfer-Encoding"), Some("chunked"));
+}
+
+#[test]
+fn request_facade_returns_none_when_transfer_encoding_is_absent() {
+  let request = HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+
+  assert!(request
+    .transfer_encoding()
+    .expect("missing Transfer-Encoding should be accepted")
+    .is_none());
+}
+
+#[test]
+fn request_facade_rejects_non_sole_chunked_transfer_encoding_values() {
+  let _: HttpTransferEncodingParseError = HttpTransferEncoding::parse("gzip, chunked")
+    .expect_err("non-sole chunked Transfer-Encoding should be rejected");
 }
