@@ -2,7 +2,7 @@ use rttp_client::response::{
   AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType,
   CrossOriginEmbedderPolicy, CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest,
   HttpClearSiteData, HttpSetCookies, LinkValues, ProxyAuthenticationInfo, ReferrerPolicy,
-  ReferrerPolicyToken, Response, RetryAfter, ServerTiming, Warning,
+  ReferrerPolicyToken, Response, RetryAfter, ServerTiming, StrictTransportSecurity, Warning,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -159,6 +159,98 @@ fn referrer_policy_metadata_is_absent_without_a_header() {
 
   assert_eq!(response.referrer_policy().expect("header is absent"), None);
   let _: Option<ReferrerPolicy> = response.referrer_policy().expect("header is absent");
+}
+
+#[test]
+fn strict_transport_security_metadata_parses_flags_without_applying_policy() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Strict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let metadata = response
+    .strict_transport_security()
+    .expect("Strict-Transport-Security should parse")
+    .expect("Strict-Transport-Security should be present");
+
+  assert_eq!(metadata.max_age(), 31_536_000);
+  assert!(metadata.include_sub_domains());
+  assert!(metadata.preload());
+  assert_eq!(
+    response.header_value("Strict-Transport-Security"),
+    Some(&"max-age=31536000; includeSubDomains; preload".to_string())
+  );
+}
+
+#[test]
+fn strict_transport_security_metadata_rejects_invalid_values_without_hiding_raw_headers() {
+  for value in [
+    "",
+    "includeSubDomains",
+    "max-age=abc",
+    "max-age=60; preload=true",
+  ] {
+    let response = Response::new(
+      RoUrl::with("https://example.test"),
+      format!("HTTP/1.1 200 OK\r\nStrict-Transport-Security: {value}\r\nContent-Length: 0\r\n\r\n")
+        .into_bytes(),
+    )
+    .expect("response should parse");
+
+    assert!(
+      response.strict_transport_security().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      response.header_value("Strict-Transport-Security"),
+      Some(&value.to_string())
+    );
+  }
+
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Strict-Transport-Security: max-age=60\r\n",
+      "Strict-Transport-Security: max-age=120\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  assert!(response.strict_transport_security().is_err());
+  assert_eq!(
+    response.header_values("Strict-Transport-Security"),
+    [&"max-age=60".to_string(), &"max-age=120".to_string()]
+  );
+}
+
+#[test]
+fn strict_transport_security_metadata_is_absent_without_a_header() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(
+    response
+      .strict_transport_security()
+      .expect("header is absent"),
+    None
+  );
+  let _: Option<StrictTransportSecurity> = response
+    .strict_transport_security()
+    .expect("header is absent");
 }
 
 #[test]

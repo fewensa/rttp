@@ -29,6 +29,12 @@ fn compatibility_facade_exports_client_metadata_types() {
       "noopener-allow-popups; report-to=\"coop\"",
     )
     .expect("Cross-Origin-Opener-Policy should parse");
+  let strict_transport_security: rttp::StrictTransportSecurity =
+    rttp_client::response::StrictTransportSecurity::parse("max-age=31536000; includeSubDomains")
+      .expect("Strict-Transport-Security should parse");
+  let _: rttp::StrictTransportSecurityParseError =
+    rttp_client::response::StrictTransportSecurity::parse("includeSubDomains")
+      .expect_err("Strict-Transport-Security without max-age should be rejected");
   let fetch_site: rttp::SecFetchSite =
     rttp_client::SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
 
@@ -40,6 +46,8 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(alt_svc.alternatives()[0].max_age(), Some(60));
   assert_eq!(embedder_policy.header_value(), "require-corp");
   assert_eq!(opener_policy.header_value(), "noopener-allow-popups");
+  assert_eq!(strict_transport_security.max_age(), 31_536_000);
+  assert!(strict_transport_security.include_sub_domains());
   assert_eq!(fetch_site.header_value(), "same-origin");
 }
 
