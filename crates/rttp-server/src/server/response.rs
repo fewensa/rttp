@@ -71,6 +71,9 @@ pub use rttp_protocol::x_content_type_options::{
   XContentTypeOptions as HttpXContentTypeOptions,
   XContentTypeOptionsParseError as HttpXContentTypeOptionsParseError,
 };
+pub use rttp_protocol::x_frame_options::{
+  XFrameOptions as HttpXFrameOptions, XFrameOptionsParseError as HttpXFrameOptionsParseError,
+};
 
 pub(crate) const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
@@ -864,6 +867,22 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `X-Frame-Options` response metadata without
+  /// applying clickjacking protection.
+  pub fn with_x_frame_options(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpXFrameOptionsParseError> {
+    let options = HttpXFrameOptions::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("X-Frame-Options"));
+    self
+      .headers
+      .push(HttpHeader::new("X-Frame-Options", options.header_value()));
+    Ok(self)
+  }
+
   /// Validates and replaces `Reporting-Endpoints` response metadata.
   pub fn with_reporting_endpoints<I, N, U>(
     mut self,
@@ -1513,6 +1532,21 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpXContentTypeOptions::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `X-Frame-Options` response metadata without
+  /// applying clickjacking protection.
+  pub fn x_frame_options(&self) -> Result<Option<HttpXFrameOptions>, HttpXFrameOptionsParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("X-Frame-Options"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpXFrameOptions::parse_values(values).map(Some)
   }
 
   /// Parses bounded `Reporting-Endpoints` response metadata without scheduling reports.

@@ -447,6 +447,45 @@ impl Request {
     HttpRequestAcceptEncodings::parse_values(values).map(Some)
   }
 
+  /// Parses received `Content-Type` representation metadata without sniffing
+  /// MIME types or interpreting the body.
+  pub fn content_type(&self) -> Result<Option<HttpContentType>, HttpContentTypeParseError> {
+    let mut values = self.headers_named("Content-Type");
+    let Some(value) = values.next() else {
+      return Ok(None);
+    };
+    if values.next().is_some() {
+      return Err(HttpContentTypeParseError::new(
+        "multiple Content-Type headers",
+      ));
+    }
+    HttpContentType::parse(value).map(Some)
+  }
+
+  /// Parses received `Content-Encoding` representation metadata without
+  /// decoding or negotiating content codings.
+  pub fn content_encoding(
+    &self,
+  ) -> Result<Option<HttpResponseContentEncodings>, HttpContentEncodingParseError> {
+    let values: Vec<&str> = self.headers_named("Content-Encoding").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpResponseContentEncodings::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Content-Language` representation metadata without
+  /// selecting a locale or negotiating a variant.
+  pub fn content_language(
+    &self,
+  ) -> Result<Option<HttpContentLanguages>, HttpContentLanguageParseError> {
+    let values: Vec<&str> = self.headers_named("Content-Language").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpContentLanguages::parse_values(values).map(Some)
+  }
+
   /// Parses received `Expect` request metadata without automatically sending
   /// an interim response or rejecting unsupported expectations.
   pub fn expectations(&self) -> Result<Option<HttpExpectations>, HttpExpectParseError> {
@@ -2210,6 +2249,59 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpRequestAcceptEncodings::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Content-Type` representation metadata without sniffing
+  /// MIME types or interpreting the body.
+  pub fn content_type(&self) -> Result<Option<HttpContentType>, HttpContentTypeParseError> {
+    let mut values = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Content-Type"))
+      .map(|header| header.value.as_str());
+    let Some(value) = values.next() else {
+      return Ok(None);
+    };
+    if values.next().is_some() {
+      return Err(HttpContentTypeParseError::new(
+        "multiple Content-Type headers",
+      ));
+    }
+    HttpContentType::parse(value).map(Some)
+  }
+
+  /// Parses received `Content-Encoding` representation metadata without
+  /// decoding or negotiating content codings.
+  pub fn content_encoding(
+    &self,
+  ) -> Result<Option<HttpResponseContentEncodings>, HttpContentEncodingParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Content-Encoding"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpResponseContentEncodings::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Content-Language` representation metadata without
+  /// selecting a locale or negotiating a variant.
+  pub fn content_language(
+    &self,
+  ) -> Result<Option<HttpContentLanguages>, HttpContentLanguageParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Content-Language"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpContentLanguages::parse_values(values).map(Some)
   }
 
   /// Parses received `Expect` request metadata without automatically sending

@@ -1,7 +1,7 @@
 use rttp_protocol::x_frame_options::{XFrameOptions, MAX_X_FRAME_OPTIONS_VALUE_BYTES};
 
 #[test]
-fn x_frame_options_parses_standard_values_case_insensitively() {
+fn x_frame_options_parses_deny_and_same_origin_case_insensitively() {
   assert_eq!(
     XFrameOptions::Deny,
     XFrameOptions::parse("DENY").expect("DENY should parse")
@@ -16,7 +16,7 @@ fn x_frame_options_parses_standard_values_case_insensitively() {
   );
   assert_eq!(
     XFrameOptions::SameOrigin,
-    XFrameOptions::parse("SameOrigin").expect("SameOrigin should parse")
+    XFrameOptions::parse("sameorigin").expect("sameorigin should parse")
   );
   assert_eq!("DENY", XFrameOptions::Deny.header_value());
   assert_eq!("SAMEORIGIN", XFrameOptions::SameOrigin.header_value());
@@ -24,26 +24,36 @@ fn x_frame_options_parses_standard_values_case_insensitively() {
 
 #[test]
 fn x_frame_options_accepts_http_optional_whitespace_padding() {
-  for value in ["\tDENY\t", " \tSAMEORIGIN\t ", "DENY\t", "\tSAMEORIGIN"] {
-    assert!(
-      XFrameOptions::parse(value).is_ok(),
-      "OWS-padded value should parse: {value:?}"
+  for value in ["\tDENY\t", " \tdeny\t ", "deny\t", "\tdeny"] {
+    assert_eq!(
+      XFrameOptions::Deny,
+      XFrameOptions::parse(value).expect("OWS-padded deny should parse")
+    );
+  }
+  for value in [
+    "\tSAMEORIGIN\t",
+    " \tsameorigin\t ",
+    "SAMEORIGIN\t",
+    "\tsameorigin",
+  ] {
+    assert_eq!(
+      XFrameOptions::SameOrigin,
+      XFrameOptions::parse(value).expect("OWS-padded SAMEORIGIN should parse")
     );
   }
 }
 
 #[test]
-fn x_frame_options_rejects_empty_duplicate_unsupported_and_ambiguous_values() {
+fn x_frame_options_rejects_empty_duplicate_malformed_and_ambiguous_values() {
   for value in [
     "",
     "   ",
     "ALLOW-FROM https://example.test",
-    "DENY, SAMEORIGIN",
-    "DENY; foo",
-    "\"DENY\"",
-    "SAME ORIGIN",
-    "SAMEORIGIN\r\nX: y",
-    "SAMEORIGIN\u{7f}",
+    "deny, sameorigin",
+    "deny; foo",
+    "\"deny\"",
+    "deny\r\nX: y",
+    "deny\u{7f}",
     "same-origin",
     "unknown",
   ] {

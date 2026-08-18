@@ -8,6 +8,29 @@ and server crates.
 
 This crate supports rttp's implementation; its public API is not a standalone
 application-level HTTP interface.
+## Content-Encoding
+
+`content_encoding` parses one or more `Content-Encoding` field values into an
+ordered list of content-coding tokens. Each field value is bounded to 64 KiB,
+and the cumulative coding count across all supplied fields is bounded to 256
+codings. Codings are split on commas with SP and HTAB accepted only as optional
+whitespace around each coding; empty members and members containing forbidden
+ASCII control bytes are rejected. Each coding must be an RFC 9110 token, and
+repeated codings are retained in wire order so callers can inspect the full
+encoding stack. A present header set that yields no coding still fails as
+invalid.
+
+## Cross-Origin-Opener-Policy
+
+`cross_origin_opener_policy` parses a singleton `Cross-Origin-Opener-Policy`
+structured-field item. Each field value is bounded to 64 KiB. A second field is
+rejected after every supplied field is bound-checked. The bare item must be
+exactly one of the tokens `unsafe-none`, `same-origin-allow-popups`,
+`same-origin`, or `noopener-allow-popups`. Well-formed parameters, including
+`report-to`, are accepted as syntax and discarded; this parser does not retain
+reporting metadata or enforce opener policy. Case variants, lists, quoted
+values, unknown tokens, empty values, and other unparsable input are errors.
+The parser never fails open to `unsafe-none`.
 
 ## Cross-Origin-Opener-Policy
 
@@ -101,12 +124,10 @@ not pin TLS, store hosts, consult a preload list, or apply HTTPS-only policy.
 
 ## X-Frame-Options
 
-`x_frame_options` parses a singleton `X-Frame-Options` response field. Each
-field value is bounded to 64 KiB. A second field is rejected after every
-supplied field is bound-checked. Surrounding SP and HTAB are trimmed as
-optional whitespace. The value must be exactly `DENY` or `SAMEORIGIN`, matched
-case-insensitively and formatted canonically in uppercase. Empty values,
-comma-joined values, semicolon parameters, quoted values, `ALLOW-FROM`,
-unsupported tokens, ASCII controls, and other ambiguous input are errors. This
-parser reports declared metadata only; it does not decide whether a response
-may be framed.
+`x_frame_options` parses a singleton `X-Frame-Options` field. Each field value
+is bounded to 64 KiB. A second field is rejected after every supplied field is
+bound-checked. The field value must be exactly one of the tokens `DENY` or
+`SAMEORIGIN`, matched case-insensitively and returned in canonical uppercase
+wire form. The deprecated `ALLOW-FROM` directive, unknown tokens, lists,
+quoted values, empty values, and other unparsable input are errors. This
+parser does not enforce clickjacking protection or frame-embedding policy.
