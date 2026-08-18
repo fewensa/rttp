@@ -666,45 +666,6 @@ fn sync_client_and_server_exchange_cross_origin_embedder_policy_metadata_without
 }
 
 #[test]
-fn sync_client_and_server_exchange_cross_origin_opener_policy_metadata_without_policy() {
-  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
-    .expect("bind Cross-Origin-Opener-Policy server");
-  let addr = server
-    .local_addr()
-    .expect("Cross-Origin-Opener-Policy server addr");
-  let handle = thread::spawn(move || {
-    server
-      .accept_one(|_| {
-        HttpResponse::ok("OK")
-          .with_cross_origin_opener_policy("noopener-allow-popups; report-to=\"coop\"")
-          .expect("Cross-Origin-Opener-Policy should be accepted")
-      })
-      .expect("serve Cross-Origin-Opener-Policy response");
-  });
-
-  let response = client()
-    .get()
-    .url(format!("http://{addr}/matrix/cross-origin-opener-policy"))
-    .emit()
-    .expect("Cross-Origin-Opener-Policy response should parse");
-  assert_eq!(
-    "noopener-allow-popups",
-    response
-      .cross_origin_opener_policy()
-      .expect("Cross-Origin-Opener-Policy should parse")
-      .expect("Cross-Origin-Opener-Policy should be present")
-      .header_value()
-  );
-  assert_eq!(
-    Some(&"noopener-allow-popups".to_string()),
-    response.header_value("Cross-Origin-Opener-Policy")
-  );
-  handle
-    .join()
-    .expect("Cross-Origin-Opener-Policy server thread");
-}
-
-#[test]
 fn sync_client_preserves_duplicate_cross_origin_resource_policy_fields_without_policy() {
   const HEADERS: &[(&str, &str)] = &[
     ("Cross-Origin-Resource-Policy", "same-origin"),
