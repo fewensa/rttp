@@ -3,7 +3,8 @@ use rttp_server::server::{
   HttpAccessControlRequestHeaders, HttpAccessControlRequestHeadersParseError,
   HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError,
   HttpConditionalMetadata, HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy,
-  HttpEntityTag, HttpPreferenceKind, HttpRequest, HttpResponse, HttpWantReprDigest, SecFetchDest,
+  HttpEntityTag, HttpPreferenceKind, HttpRequest, HttpResponse, HttpSignature, HttpSignatureInput,
+  HttpSignatureInputParseError, HttpSignatureParseError, HttpWantReprDigest, SecFetchDest,
   SecFetchMode, SecFetchSite, SecFetchUser,
 };
 
@@ -110,4 +111,38 @@ fn request_facade_parses_want_repr_digest_metadata() {
   assert_eq!(digest.entries()[1].preference(), 3);
   assert_eq!(digest.entries()[2].algorithm(), "unixsum");
   assert_eq!(digest.entries()[2].preference(), 0);
+}
+
+#[test]
+fn request_facade_parses_signature_metadata_pair() {
+  let request = HttpRequest::parse(
+    concat!(
+      "POST /signed HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      r#"Signature-Input: sig1=("@method" "@authority" "@path");created=1618884473;keyid="test-key""#,
+      "\r\n",
+      "Signature: sig1=:YWJj:\r\n",
+      "\r\n"
+    )
+    .as_bytes(),
+  )
+  .expect("request should parse");
+
+  let signature: HttpSignature = request
+    .signature()
+    .expect("Signature should parse")
+    .expect("Signature should be present");
+  let signature_input: HttpSignatureInput = request
+    .signature_input()
+    .expect("Signature-Input should parse")
+    .expect("Signature-Input should be present");
+  let _: Result<HttpSignature, HttpSignatureParseError> = HttpSignature::parse("not-a-signature");
+  let _: Result<HttpSignatureInput, HttpSignatureInputParseError> =
+    HttpSignatureInput::parse("not-an-input");
+
+  assert_eq!(signature.header_value(), "sig1=:YWJj:");
+  assert_eq!(
+    signature_input.header_value(),
+    r#"sig1=("@method" "@authority" "@path");created=1618884473;keyid="test-key""#
+  );
 }

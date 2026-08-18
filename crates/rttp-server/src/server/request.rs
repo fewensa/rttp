@@ -22,6 +22,14 @@ pub use rttp_protocol::prefer::{
   Preference as HttpPreference, PreferenceKind as HttpPreferenceKind,
   PreferenceParameter as HttpPreferenceParameter,
 };
+pub use rttp_protocol::signature::{
+  Signature as HttpSignature, SignatureEntry as HttpSignatureEntry,
+  SignatureParseError as HttpSignatureParseError,
+};
+pub use rttp_protocol::signature_input::{
+  SignatureInput as HttpSignatureInput, SignatureInputEntry as HttpSignatureInputEntry,
+  SignatureInputParseError as HttpSignatureInputParseError,
+};
 pub use rttp_protocol::trailer::{
   Trailer as HttpTrailer, TrailerParseError as HttpTrailerParseError,
 };
@@ -457,6 +465,20 @@ impl Request {
     &self,
   ) -> Result<Option<HttpWantReprDigest>, HttpWantReprDigestParseError> {
     parse_want_repr_digest_values(self.headers_named("Want-Repr-Digest"))
+  }
+
+  /// Parses received RFC 9421 `Signature` request metadata without verifying
+  /// signatures or looking up keys.
+  pub fn signature(&self) -> Result<Option<HttpSignature>, HttpSignatureParseError> {
+    parse_signature_values(self.headers_named("Signature"))
+  }
+
+  /// Parses received RFC 9421 `Signature-Input` request metadata without
+  /// verifying signatures, looking up keys, or applying cryptographic policy.
+  pub fn signature_input(
+    &self,
+  ) -> Result<Option<HttpSignatureInput>, HttpSignatureInputParseError> {
+    parse_signature_input_values(self.headers_named("Signature-Input"))
   }
 
   /// Parses received `Content-Type` representation metadata without sniffing
@@ -1079,6 +1101,26 @@ fn parse_want_repr_digest_values<'a>(
     return Ok(None);
   }
   HttpWantReprDigest::parse_values(values).map(Some)
+}
+
+fn parse_signature_values<'a>(
+  values: impl IntoIterator<Item = &'a str>,
+) -> Result<Option<HttpSignature>, HttpSignatureParseError> {
+  let values: Vec<&str> = values.into_iter().collect();
+  if values.is_empty() {
+    return Ok(None);
+  }
+  HttpSignature::parse_values(values).map(Some)
+}
+
+fn parse_signature_input_values<'a>(
+  values: impl IntoIterator<Item = &'a str>,
+) -> Result<Option<HttpSignatureInput>, HttpSignatureInputParseError> {
+  let values: Vec<&str> = values.into_iter().collect();
+  if values.is_empty() {
+    return Ok(None);
+  }
+  HttpSignatureInput::parse_values(values).map(Some)
 }
 impl HttpMaxForwardsParseError {
   fn new(message: impl Into<String>) -> Self {
@@ -2283,6 +2325,32 @@ impl HttpRequest {
         .headers
         .iter()
         .filter(|header| header.name.eq_ignore_ascii_case("Want-Repr-Digest"))
+        .map(|header| header.value.as_str()),
+    )
+  }
+
+  /// Parses received RFC 9421 `Signature` request metadata without verifying
+  /// signatures or looking up keys.
+  pub fn signature(&self) -> Result<Option<HttpSignature>, HttpSignatureParseError> {
+    parse_signature_values(
+      self
+        .headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("Signature"))
+        .map(|header| header.value.as_str()),
+    )
+  }
+
+  /// Parses received RFC 9421 `Signature-Input` request metadata without
+  /// verifying signatures, looking up keys, or applying cryptographic policy.
+  pub fn signature_input(
+    &self,
+  ) -> Result<Option<HttpSignatureInput>, HttpSignatureInputParseError> {
+    parse_signature_input_values(
+      self
+        .headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("Signature-Input"))
         .map(|header| header.value.as_str()),
     )
   }

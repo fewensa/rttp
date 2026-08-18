@@ -1250,6 +1250,121 @@ fn authentication_info_helpers_preserve_raw_metadata_and_report_parse_errors() {
 }
 
 #[test]
+fn signature_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Signature", "sig1=:YWJj:")
+    .header("signature", "sig-b24=:ZGVm:")
+    .header(
+      "Signature-Input",
+      r#"sig1=("@method")"#,
+    )
+    .header("signature-input", r#"sig-b24=("@status")"#)
+    .with_signature("sig1=:YWJj:")
+    .expect("Signature should be accepted")
+    .with_signature_input(r#"sig1=("@method" "@path");created=1618884473;keyid="test-key""#)
+    .expect("Signature-Input should be accepted");
+
+  let signature = response
+    .signature()
+    .expect("Signature should parse")
+    .expect("Signature should be present");
+  let signature_input = response
+    .signature_input()
+    .expect("Signature-Input should parse")
+    .expect("Signature-Input should be present");
+  assert_eq!(signature.header_value(), "sig1=:YWJj:");
+  assert_eq!(
+    signature_input.header_value(),
+    r#"sig1=("@method" "@path");created=1618884473;keyid="test-key""#
+  );
+  assert_eq!(
+    vec![
+      ("Signature", "sig1=:YWJj:"),
+      (
+        "Signature-Input",
+        r#"sig1=("@method" "@path");created=1618884473;keyid="test-key""#,
+      ),
+    ],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn signature_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::ok([])
+    .header("Signature", "sig1=:YWJj:")
+    .header(
+      "Signature-Input",
+      r#"sig1=("@method");created=1618884473"#,
+    );
+  let signature = raw
+    .signature()
+    .expect("raw Signature should parse")
+    .expect("Signature should be present");
+  let signature_input = raw
+    .signature_input()
+    .expect("raw Signature-Input should parse")
+    .expect("Signature-Input should be present");
+  assert_eq!("sig1=:YWJj:", signature.header_value());
+  assert_eq!(
+    r#"sig1=("@method");created=1618884473"#,
+    signature_input.header_value()
+  );
+  assert_eq!(
+    Some("sig1=:YWJj:"),
+    raw
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Signature"))
+      .map(|header| header.value.as_str())
+  );
+  assert_eq!(
+    Some(r#"sig1=("@method");created=1618884473"#),
+    raw
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Signature-Input"))
+      .map(|header| header.value.as_str())
+  );
+
+  let malformed = HttpResponse::ok([])
+    .header("Signature", "not-a-signature")
+    .header("Signature-Input", "not-an-input");
+  assert!(malformed.signature().is_err());
+  assert!(malformed.signature_input().is_err());
+  assert_eq!(
+    Some("not-a-signature"),
+    malformed
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Signature"))
+      .map(|header| header.value.as_str())
+  );
+  assert!(HttpResponse::ok([])
+    .with_signature("not-a-signature")
+    .is_err());
+  assert!(HttpResponse::ok([])
+    .with_signature_input("not-an-input")
+    .is_err());
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .signature()
+      .expect("absent Signature should parse")
+  );
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .signature_input()
+      .expect("absent Signature-Input should parse")
+  );
+}
+
+#[test]
 fn proxy_authentication_info_helpers_validate_replace_and_parse_response_metadata() {
   let response = HttpResponse::ok([])
     .header("Proxy-Authentication-Info", "qop=auth")
