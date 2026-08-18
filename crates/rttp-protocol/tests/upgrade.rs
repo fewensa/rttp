@@ -19,6 +19,15 @@ fn upgrade_accepts_multiple_fields_in_wire_order() {
 }
 
 #[test]
+fn upgrade_accepts_versioned_protocol_identifiers() {
+  let upgrade =
+    Upgrade::parse("HTTP/2.0, TLS/1.3").expect("versioned Upgrade protocols should parse");
+
+  assert_eq!(upgrade.protocols(), ["HTTP/2.0", "TLS/1.3"]);
+  assert_eq!(upgrade.header_value(), "HTTP/2.0, TLS/1.3");
+}
+
+#[test]
 fn upgrade_accepts_http_optional_whitespace_padding() {
   for value in ["\twebsocket\t", " websocket "] {
     let upgrade = Upgrade::parse(value).expect("OWS-padded Upgrade should parse");
@@ -42,6 +51,9 @@ fn upgrade_rejects_invalid_values() {
     "web socket",
     "websocket; q=1",
     "websocket: h2c",
+    "websocket/",
+    "/2.0",
+    "HTTP/2.0/extra",
     "\u{0d}websocket",
     "websocket\r\nX: y",
     "websocket\u{7f}",

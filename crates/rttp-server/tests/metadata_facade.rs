@@ -78,7 +78,7 @@ fn server_facade_exports_representative_bounded_metadata_types() {
 #[test]
 fn request_facade_parses_upgrade_metadata() {
   let request = HttpRequest::parse(
-    b"GET /chat HTTP/1.1\r\nHost: example.test\r\nUpgrade: websocket\r\nUpgrade: h2c, custom\r\n\r\n",
+    b"GET /chat HTTP/1.1\r\nHost: example.test\r\nUpgrade: websocket\r\nUpgrade: HTTP/2.0, custom\r\n\r\n",
   )
   .expect("request should parse");
 
@@ -87,14 +87,14 @@ fn request_facade_parses_upgrade_metadata() {
     .expect("Upgrade should parse")
     .expect("Upgrade should be present");
 
-  assert_eq!(upgrade.protocols(), ["websocket", "h2c", "custom"]);
+  assert_eq!(upgrade.protocols(), ["websocket", "HTTP/2.0", "custom"]);
 }
 
 #[test]
 fn response_facade_builds_and_parses_upgrade_metadata() {
   let response = HttpResponse::new(101, "Switching Protocols")
     .header("Upgrade", "raw")
-    .with_upgrade(["websocket", "h2c"])
+    .with_upgrade(["websocket", "TLS/1.3"])
     .expect("Upgrade should be accepted");
 
   let upgrade = response
@@ -102,11 +102,11 @@ fn response_facade_builds_and_parses_upgrade_metadata() {
     .expect("Upgrade should parse")
     .expect("Upgrade should be present");
 
-  assert_eq!(upgrade.protocols(), ["websocket", "h2c"]);
+  assert_eq!(upgrade.protocols(), ["websocket", "TLS/1.3"]);
   let mut serialized = Vec::new();
   response.write_to(&mut serialized).expect("response writes");
   let serialized = String::from_utf8(serialized).expect("response is utf8");
-  assert!(serialized.contains("\r\nUpgrade: websocket, h2c\r\n"));
+  assert!(serialized.contains("\r\nUpgrade: websocket, TLS/1.3\r\n"));
   assert!(!serialized.contains("\r\nUpgrade: raw\r\n"));
   assert!(!serialized.contains("\r\nContent-Length:"));
 }

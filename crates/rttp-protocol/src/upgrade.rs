@@ -1,8 +1,9 @@
 //! Bounded, policy-free `Upgrade` metadata parsing.
 //!
 //! This module validates one or more HTTP/1 `Upgrade` field values as an
-//! ordered list of protocol-name tokens. Callers own connection semantics and
-//! any bytes transferred after a successful upgrade.
+//! ordered list of protocol-name tokens with optional protocol-version tokens.
+//! Callers own connection semantics and any bytes transferred after a successful
+//! upgrade.
 
 use std::error::Error;
 use std::fmt;
@@ -36,7 +37,7 @@ impl Upgrade {
       }
       for member in value.split(',') {
         let protocol = member.trim_matches([' ', '\t']);
-        if protocol.is_empty() || !is_http_token(protocol) {
+        if !is_upgrade_protocol(protocol) {
           return Err(UpgradeParseError::new("invalid Upgrade protocol"));
         }
         if protocols.len() >= MAX_UPGRADE_PROTOCOLS {
@@ -93,6 +94,15 @@ impl Error for UpgradeParseError {}
 
 fn is_http_token(value: &str) -> bool {
   !value.is_empty() && value.bytes().all(is_http_token_byte)
+}
+
+fn is_upgrade_protocol(value: &str) -> bool {
+  match value.split_once('/') {
+    Some((name, version)) => {
+      is_http_token(name) && is_http_token(version) && !version.contains('/')
+    }
+    None => is_http_token(value),
+  }
 }
 
 fn is_invalid_control_byte(byte: u8) -> bool {

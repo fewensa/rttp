@@ -86,7 +86,7 @@ fn response_facade_parses_upgrade_metadata() {
     concat!(
       "HTTP/1.1 101 Switching Protocols\r\n",
       "Upgrade: websocket\r\n",
-      "Upgrade: h2c, custom\r\n",
+      "Upgrade: HTTP/2.0, custom\r\n",
       "\r\n"
     )
     .as_bytes()
@@ -99,8 +99,8 @@ fn response_facade_parses_upgrade_metadata() {
     .expect("Upgrade should parse")
     .expect("Upgrade should be present");
 
-  assert_eq!(upgrade.protocols(), ["websocket", "h2c", "custom"]);
-  assert_eq!(upgrade.header_value(), "websocket, h2c, custom");
+  assert_eq!(upgrade.protocols(), ["websocket", "HTTP/2.0", "custom"]);
+  assert_eq!(upgrade.header_value(), "websocket, HTTP/2.0, custom");
 }
 
 #[test]

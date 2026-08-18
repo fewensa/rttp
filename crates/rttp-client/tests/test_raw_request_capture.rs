@@ -168,14 +168,17 @@ fn outbound_upgrade_protocols_emit_validated_upgrade_metadata() {
     client()
       .get()
       .url(format!("{}/upgrade", base_url))
-      .upgrade_protocols(["websocket", "h2c"])
+      .upgrade_protocols(["websocket", "HTTP/2.0"])
       .expect("valid Upgrade protocols should be accepted")
       .emit()
       .expect("request should be sent");
   });
   let request = request_text(&request);
 
-  assert_eq!(header_value(&request, "Upgrade"), Some("websocket, h2c"));
+  assert_eq!(
+    header_value(&request, "Upgrade"),
+    Some("websocket, HTTP/2.0")
+  );
   assert_ne!(header_value(&request, "Connection"), Some("Upgrade"));
 }
 
