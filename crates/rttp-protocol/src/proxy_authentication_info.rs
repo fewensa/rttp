@@ -4,7 +4,7 @@
 //! well-formed parameter name is accepted; Digest names such as `nextnonce`
 //! and `rspauth` are ordinary opaque metadata. Callers own scheme policy,
 //! including `rspauth` verification, nonce bookkeeping, credential storage,
-//! and `Authorization` generation.
+//! and `Proxy-Authorization` generation.
 //!
 //! ```
 //! use rttp_protocol::proxy_authentication_info::ProxyAuthenticationInfo;
