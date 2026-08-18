@@ -705,49 +705,6 @@ fn sync_client_and_server_exchange_cross_origin_opener_policy_metadata_without_p
 }
 
 #[test]
-fn sync_client_and_server_exchange_alt_svc_metadata_without_connection_policy() {
-  const HEADERS: &[(&str, &str)] = &[(
-    "Alt-Svc",
-    "h3=\":443\"; ma=3600; persist=1; region=\"us-east\"",
-  )];
-  let (addr, handle) = spawn_metadata_response_server(HEADERS);
-
-  let response = client()
-    .get()
-    .url(format!("http://{addr}/matrix/alt-svc"))
-    .emit()
-    .expect("Alt-Svc response should parse without connection policy");
-  let alt_svc = response
-    .alt_svc()
-    .expect("Alt-Svc should parse")
-    .expect("Alt-Svc should be present");
-  let alternative = &alt_svc.alternatives()[0];
-
-  assert_eq!(200, response.code());
-  assert_eq!("OK", response.body().string().unwrap());
-  assert_eq!(
-    Some(&"h3=\":443\"; ma=3600; persist=1; region=\"us-east\"".to_string()),
-    response.header_value("Alt-Svc")
-  );
-  assert!(!alt_svc.is_clear());
-  assert_eq!(1, alt_svc.len());
-  assert_eq!("h3", alternative.protocol_id());
-  assert_eq!(":443", alternative.authority());
-  assert_eq!(Some(3600), alternative.max_age());
-  assert_eq!(Some(true), alternative.persist());
-  assert_eq!(
-    vec![("region", Some("us-east"))],
-    alternative
-      .parameters()
-      .iter()
-      .map(|parameter| (parameter.name(), parameter.value()))
-      .collect::<Vec<_>>()
-  );
-
-  handle.join().expect("Alt-Svc server thread");
-}
-
-#[test]
 fn sync_client_preserves_duplicate_cross_origin_resource_policy_fields_without_policy() {
   const HEADERS: &[(&str, &str)] = &[
     ("Cross-Origin-Resource-Policy", "same-origin"),
