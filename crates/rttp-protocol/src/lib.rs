@@ -36,7 +36,6 @@ mod media_type;
 pub mod origin;
 pub mod prefer;
 pub mod priority;
-pub mod proxy_authentication_info;
 pub mod range;
 pub mod rate_limit;
 pub mod referer;

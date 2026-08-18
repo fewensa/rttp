@@ -16,10 +16,6 @@ pub use rttp_protocol::alt_svc::{
   AltSvc as HttpAltSvc, AltSvcAlternative as HttpAltSvcAlternative,
   AltSvcParameter as HttpAltSvcParameter, AltSvcParseError as HttpAltSvcParseError,
 };
-pub use rttp_protocol::authentication_info::{
-  AuthenticationInfo as HttpAuthenticationInfo,
-  AuthenticationInfoParseError as HttpAuthenticationInfoParseError,
-};
 pub use rttp_protocol::clear_site_data::{
   ClearSiteData as HttpClearSiteData, ClearSiteDataDirective as HttpClearSiteDataDirective,
   ClearSiteDataParseError as HttpClearSiteDataParseError,
@@ -47,10 +43,6 @@ pub use rttp_protocol::digest::{
 pub use rttp_protocol::priority::{
   Priority as HttpPriority, PriorityExtension as HttpPriorityExtension,
   PriorityParseError as HttpPriorityParseError,
-};
-pub use rttp_protocol::proxy_authentication_info::{
-  ProxyAuthenticationInfo as HttpProxyAuthenticationInfo,
-  ProxyAuthenticationInfoParseError as HttpProxyAuthenticationInfoParseError,
 };
 pub use rttp_protocol::server_timing::{
   ServerTiming as HttpServerTiming, ServerTimingMetric as HttpServerTimingMetric,
@@ -969,39 +961,6 @@ impl HttpResponse {
     Ok(self)
   }
 
-  /// Validates and replaces `Authentication-Info` response metadata.
-  pub fn with_authentication_info(
-    mut self,
-    value: impl AsRef<str>,
-  ) -> Result<Self, HttpAuthenticationInfoParseError> {
-    let info = HttpAuthenticationInfo::parse(value)?;
-    self
-      .headers
-      .retain(|header| !header.name.eq_ignore_ascii_case("Authentication-Info"));
-    self
-      .headers
-      .push(HttpHeader::new("Authentication-Info", info.header_value()));
-    Ok(self)
-  }
-
-  /// Validates and replaces `Proxy-Authentication-Info` response metadata.
-  pub fn with_proxy_authentication_info(
-    mut self,
-    value: impl AsRef<str>,
-  ) -> Result<Self, HttpProxyAuthenticationInfoParseError> {
-    let info = HttpProxyAuthenticationInfo::parse(value)?;
-    self.headers.retain(|header| {
-      !header
-        .name
-        .eq_ignore_ascii_case("Proxy-Authentication-Info")
-    });
-    self.headers.push(HttpHeader::new(
-      "Proxy-Authentication-Info",
-      info.header_value(),
-    ));
-    Ok(self)
-  }
-
   /// Validates and replaces `Content-Digest` response metadata.
   pub fn with_digest(mut self, value: impl AsRef<str>) -> Result<Self, HttpDigestParseError> {
     let digest = HttpDigest::parse(value)?;
@@ -1617,44 +1576,6 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpWwwAuthenticate::parse_values(values).map(Some)
-  }
-
-  /// Parses attached `Authentication-Info` response metadata without changing
-  /// raw headers.
-  pub fn authentication_info(
-    &self,
-  ) -> Result<Option<HttpAuthenticationInfo>, HttpAuthenticationInfoParseError> {
-    let values: Vec<&str> = self
-      .headers
-      .iter()
-      .filter(|header| header.name.eq_ignore_ascii_case("Authentication-Info"))
-      .map(|header| header.value.as_str())
-      .collect();
-    if values.is_empty() {
-      return Ok(None);
-    }
-    HttpAuthenticationInfo::parse_values(values).map(Some)
-  }
-
-  /// Parses attached `Proxy-Authentication-Info` response metadata without
-  /// changing raw headers.
-  pub fn proxy_authentication_info(
-    &self,
-  ) -> Result<Option<HttpProxyAuthenticationInfo>, HttpProxyAuthenticationInfoParseError> {
-    let values: Vec<&str> = self
-      .headers
-      .iter()
-      .filter(|header| {
-        header
-          .name
-          .eq_ignore_ascii_case("Proxy-Authentication-Info")
-      })
-      .map(|header| header.value.as_str())
-      .collect();
-    if values.is_empty() {
-      return Ok(None);
-    }
-    HttpProxyAuthenticationInfo::parse_values(values).map(Some)
   }
 
   /// Parses attached `Content-Digest` metadata without changing raw headers.
