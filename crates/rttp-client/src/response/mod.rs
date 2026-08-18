@@ -49,6 +49,9 @@ pub use rttp_protocol::cookie::{
 pub use rttp_protocol::cross_origin_embedder_policy::{
   CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyParseError,
 };
+pub use rttp_protocol::cross_origin_opener_policy::{
+  CrossOriginOpenerPolicy, CrossOriginOpenerPolicyParseError,
+};
 pub use rttp_protocol::cross_origin_resource_policy::{
   CrossOriginResourcePolicy, CrossOriginResourcePolicyParseError,
 };
@@ -68,6 +71,9 @@ pub use rttp_protocol::prefer::{
   PreferenceParameter,
 };
 pub use rttp_protocol::priority::{Priority, PriorityExtension, PriorityParseError};
+pub use rttp_protocol::proxy_authentication_info::{
+  ProxyAuthenticationInfo, ProxyAuthenticationInfoParameter, ProxyAuthenticationInfoParseError,
+};
 pub use rttp_protocol::referrer_policy::{
   ReferrerPolicy, ReferrerPolicyParseError, ReferrerPolicyToken,
 };
