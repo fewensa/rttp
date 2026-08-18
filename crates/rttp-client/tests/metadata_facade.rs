@@ -3,7 +3,7 @@ use rttp_client::response::{
   AccessControlAllowMethods, AccessControlAllowMethodsParseError, AccessControlExposeHeaders,
   AccessControlMaxAge, AccessControlMaxAgeParseError, AltSvc, CrossOriginEmbedderPolicy,
   CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest,
-  HttpClearSiteData, PreferenceApplied, Priority, ProxyAuthenticationInfo,
+  HttpClearSiteData, HttpContentLength, PreferenceApplied, Priority, ProxyAuthenticationInfo,
   ProxyAuthenticationInfoParseError, ReferrerPolicy, ReferrerPolicyToken, ServerTiming,
   StrictTransportSecurity, StrictTransportSecurityParseError, Trailer, WantReprDigest, Warning,
 };
@@ -92,6 +92,26 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     proxy_authentication_info.parameter("nextnonce"),
     Some("6629fae49393a05397450978507c4ef1")
   );
+}
+
+#[test]
+fn response_facade_exports_content_length_metadata_type() {
+  let content_length = HttpContentLength::new(2);
+
+  assert_eq!(2, content_length.len());
+  assert!(!content_length.is_zero());
+  assert_eq!("2", content_length.header_value());
+}
+
+#[test]
+fn direct_response_new_does_not_infer_content_length_metadata() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(None, response.content_length());
 }
 
 #[test]

@@ -3,6 +3,7 @@ use std::fmt;
 use std::time::SystemTime;
 
 use httpdate::parse_http_date;
+use rttp_protocol::content_length::HttpContentLength;
 use url::Url;
 
 use crate::error;
@@ -66,6 +67,7 @@ const MAX_REPORTING_ENDPOINTS: usize = 256;
 pub struct Response {
   raw: RawResponse,
   informational_responses: Vec<InformationalResponse>,
+  content_length: Option<HttpContentLength>,
 }
 
 impl Response {
@@ -73,6 +75,7 @@ impl Response {
     Ok(Self {
       raw: RawResponse::new(url, binary)?,
       informational_responses: Vec::new(),
+      content_length: None,
     })
   }
 
@@ -95,6 +98,7 @@ impl Response {
       binary,
       trailers,
       Vec::new(),
+      None,
       max_body_bytes,
     )
   }
@@ -110,6 +114,7 @@ impl Response {
       binary,
       trailers,
       informational_responses,
+      None,
       crate::config::DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES,
     )
   }
@@ -119,11 +124,13 @@ impl Response {
     binary: Vec<u8>,
     trailers: Vec<Header>,
     informational_responses: Vec<InformationalResponse>,
+    content_length: Option<HttpContentLength>,
     max_body_bytes: usize,
   ) -> error::Result<Self> {
     Ok(Self {
       raw: RawResponse::with_trailers_and_limit(url, binary, trailers, max_body_bytes)?,
       informational_responses,
+      content_length,
     })
   }
 }
@@ -288,6 +295,10 @@ impl Response {
 
   pub fn body(&self) -> &ResponseBody {
     self.raw.body_get()
+  }
+
+  pub fn content_length(&self) -> Option<HttpContentLength> {
+    self.content_length
   }
 
   pub fn binary(&self) -> &[u8] {

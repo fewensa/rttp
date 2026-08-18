@@ -64,6 +64,7 @@ impl<'a> BlockConnection<'a> {
         parts.binary,
         parts.trailers,
         parts.informational_responses,
+        parts.content_length,
         self.conn.config().max_buffered_response_body_bytes(),
       )?;
       let config = self.conn.config().clone();
@@ -132,6 +133,7 @@ impl<'a> BlockConnection<'a> {
       parts.binary,
       parts.trailers,
       parts.informational_responses,
+      parts.content_length,
       self.conn.config().max_buffered_response_body_bytes(),
     )?;
     self.conn.closed_set(close_connection);

@@ -1,6 +1,7 @@
 use std::io;
 use std::io::Read;
 
+use rttp_protocol::content_length::HttpContentLength;
 use rttp_protocol::http1::{
   is_header_value_byte, is_reason_phrase_byte, is_token as is_http_token,
   parse_chunk_size as parse_protocol_chunk_size, ChunkSizeError,
@@ -29,6 +30,7 @@ pub(crate) struct ResponseParts {
   pub(crate) binary: Vec<u8>,
   pub(crate) trailers: Vec<Header>,
   pub(crate) informational_responses: Vec<InformationalResponse>,
+  pub(crate) content_length: Option<HttpContentLength>,
   pub(crate) connection_reusable: bool,
   pub(crate) close_connection: bool,
 }
@@ -264,6 +266,7 @@ impl<'a> ConnectionReader<'a> {
       parts.binary,
       parts.trailers,
       parts.informational_responses,
+      parts.content_length,
       self.max_buffered_response_body_bytes,
     )
   }
@@ -362,6 +365,7 @@ where
   let close_connection = response_connection_should_close(&binary)?;
   let mut trailers = Vec::new();
   let body_kind = response_body_kind(&binary, expect_no_body)?;
+  let content_length = content_length_from_response_body_kind(&body_kind);
   let connection_reusable = response_connection_reusable(&binary, &body_kind)?;
   match body_kind {
     ResponseBodyKind::NoBody => {}
@@ -383,9 +387,19 @@ where
     binary,
     trailers,
     informational_responses,
+    content_length,
     connection_reusable,
     close_connection,
   })
+}
+
+pub(crate) fn content_length_from_response_body_kind(
+  kind: &ResponseBodyKind,
+) -> Option<HttpContentLength> {
+  match kind {
+    ResponseBodyKind::ContentLength(length) => Some(HttpContentLength::new(*length)),
+    ResponseBodyKind::NoBody | ResponseBodyKind::Chunked | ResponseBodyKind::UntilEof => None,
+  }
 }
 
 fn read_response_body_to_end<R>(
@@ -1344,6 +1358,7 @@ mod tests {
       let response = reader.response().unwrap();
 
       assert_eq!("", response.body().string().unwrap());
+      assert_eq!(None, response.content_length());
       assert_eq!(
         (raw.len() - "ignored".len()) as u64,
         cursor.position(),
@@ -1368,6 +1383,10 @@ mod tests {
     let response = reader.response().unwrap();
 
     assert_eq!("OK", response.body().string().unwrap());
+    let content_length = response
+      .content_length()
+      .expect("matching fixed length should be retained");
+    assert_eq!(2, content_length.len());
   }
 
   #[test]
