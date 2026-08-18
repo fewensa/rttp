@@ -63,34 +63,14 @@ impl ProxyAuthenticate {
     I: IntoIterator<Item = &'a str>,
   {
     let mut challenges = Vec::new();
-    let mut combined = String::new();
-    let mut saw_value = false;
     for value in values {
       if value.len() > MAX_PROXY_AUTHENTICATE_VALUE_BYTES {
         return Err(ProxyAuthenticateParseError::new(
           "Proxy-Authenticate header value is too large",
         ));
       }
-      let separator_len = if saw_value { 2 } else { 0 };
-      let combined_len = combined
-        .len()
-        .checked_add(separator_len)
-        .and_then(|length| length.checked_add(value.len()))
-        .ok_or_else(|| {
-          ProxyAuthenticateParseError::new("Proxy-Authenticate header value is too large")
-        })?;
-      if combined_len > MAX_PROXY_AUTHENTICATE_VALUE_BYTES {
-        return Err(ProxyAuthenticateParseError::new(
-          "Proxy-Authenticate header value is too large",
-        ));
-      }
-      if saw_value {
-        combined.push_str(", ");
-      }
-      combined.push_str(value);
-      saw_value = true;
+      parse_value(value, &mut challenges)?;
     }
-    parse_field(&combined, &mut challenges)?;
     if challenges.is_empty() {
       return Err(ProxyAuthenticateParseError::new(
         "invalid Proxy-Authenticate challenge",
@@ -176,6 +156,55 @@ impl ProxyAuthenticateParameter {
       )
     }
   }
+}
+
+fn parse_value(
+  value: &str,
+  challenges: &mut Vec<ProxyAuthenticateChallenge>,
+) -> Result<(), ProxyAuthenticateParseError> {
+  let bytes = value.as_bytes();
+  let mut position = 0;
+  skip_ows(bytes, &mut position);
+  if can_continue_parameters(value, position, challenges) {
+    parse_parameters(
+      value,
+      &mut position,
+      &mut challenges
+        .last_mut()
+        .expect("checked continuation challenge")
+        .parameters,
+    )?;
+    skip_ows(bytes, &mut position);
+    if position == bytes.len() {
+      return Ok(());
+    }
+    if bytes[position] != b',' {
+      return Err(ProxyAuthenticateParseError::new(
+        "invalid Proxy-Authenticate challenge",
+      ));
+    }
+    position += 1;
+    skip_ows(bytes, &mut position);
+    if position == bytes.len() {
+      return Err(ProxyAuthenticateParseError::new(
+        "invalid Proxy-Authenticate challenge",
+      ));
+    }
+    return parse_field(&value[position..], challenges);
+  }
+  parse_field(value, challenges)
+}
+
+fn can_continue_parameters(
+  value: &str,
+  position: usize,
+  challenges: &[ProxyAuthenticateChallenge],
+) -> bool {
+  challenges.last().is_some_and(|challenge| {
+    challenge.token68.is_none()
+      && !challenge.parameters.is_empty()
+      && looks_like_parameter(value, position)
+  })
 }
 
 fn parse_field(

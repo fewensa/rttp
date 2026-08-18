@@ -164,7 +164,26 @@ fn proxy_authenticate_enforces_value_parameter_and_count_bounds() {
 }
 
 #[test]
-fn proxy_authenticate_repeated_fields_stop_at_combined_bound() {
+fn proxy_authenticate_allows_repeated_fields_above_single_value_bound_in_total() {
+  let first = format!(
+    "Bearer {}",
+    "a".repeat(MAX_PROXY_AUTHENTICATE_VALUE_BYTES - "Bearer ".len())
+  );
+  let second = format!(
+    "Basic {}",
+    "b".repeat(MAX_PROXY_AUTHENTICATE_VALUE_BYTES - "Basic ".len())
+  );
+
+  let challenges = ProxyAuthenticate::parse_values([first.as_str(), second.as_str()])
+    .expect("individually bounded Proxy-Authenticate fields should parse");
+
+  assert_eq!(2, challenges.len());
+  assert_eq!("Bearer", challenges.challenges()[0].scheme());
+  assert_eq!("Basic", challenges.challenges()[1].scheme());
+}
+
+#[test]
+fn proxy_authenticate_repeated_fields_stop_at_challenge_bound() {
   let mut calls = 0;
   let result = ProxyAuthenticate::parse_values(std::iter::from_fn(|| {
     calls += 1;
@@ -177,7 +196,7 @@ fn proxy_authenticate_repeated_fields_stop_at_combined_bound() {
 
   assert!(result.is_err());
   assert!(
-    calls < MAX_PROXY_AUTHENTICATE_VALUE_BYTES + 1,
-    "parser must reject before collecting an unbounded repeated-field buffer"
+    calls <= MAX_PROXY_AUTHENTICATE_CHALLENGES + 1,
+    "parser must reject by parsed challenge count without collecting an unbounded repeated-field buffer"
   );
 }
