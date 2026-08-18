@@ -3878,6 +3878,74 @@ fn test_parse_vary_rejects_invalid_helper_values_without_rejecting_response() {
 }
 
 #[test]
+fn test_parse_no_vary_search_response_helper() {
+  let s = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "No-Vary-Search: key-order=?0, params\r\n",
+    "NO-VARY-SEARCH: except=(\"session\" \"debug\")\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
+    .expect("parse response with No-Vary-Search headers");
+
+  let no_vary_search = response
+    .no_vary_search()
+    .expect("valid No-Vary-Search should parse")
+    .expect("No-Vary-Search should be present");
+
+  assert_eq!(Some(false), no_vary_search.key_order());
+  assert!(no_vary_search.ignores_all_query_params());
+  assert_eq!(no_vary_search.except(), ["session", "debug"]);
+  assert_eq!(
+    vec![
+      &"key-order=?0, params".to_string(),
+      &"except=(\"session\" \"debug\")".to_string()
+    ],
+    response.header_values("no-vary-search")
+  );
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("parse response without No-Vary-Search");
+  assert_eq!(
+    None,
+    absent
+      .no_vary_search()
+      .expect("absent No-Vary-Search should parse")
+  );
+}
+
+#[test]
+fn test_parse_no_vary_search_rejects_invalid_helper_values_without_rejecting_response() {
+  let invalid_values = [
+    "",
+    "Params",
+    "params=utm",
+    r#"params=("utm"), except=("session")"#,
+    "key-order=false",
+  ];
+
+  for value in invalid_values {
+    let raw = format!("HTTP/1.1 200 OK\r\nNo-Vary-Search: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response remains usable");
+
+    assert!(
+      response.no_vary_search().is_err(),
+      "No-Vary-Search helper should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("No-Vary-Search")
+    );
+  }
+}
+
+#[test]
 fn test_parse_content_language_response_helper_preserves_order_across_header_fields() {
   let s = concat!(
     "HTTP/1.1 200 OK\r\n",

@@ -68,6 +68,9 @@ pub use rttp_protocol::digest::{
   ContentDigest, ContentDigestEntry, Digest, DigestEntry, DigestParseError, ReprDigest,
   ReprDigestEntry,
 };
+pub use rttp_protocol::no_vary_search::{
+  NoVarySearch, NoVarySearchExtension, NoVarySearchParams, NoVarySearchParseError,
+};
 pub use rttp_protocol::prefer::{
   PreferParseError, Preference, PreferenceApplied, PreferenceAppliedParseError, PreferenceKind,
   PreferenceParameter,

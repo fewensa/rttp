@@ -10,6 +10,7 @@ use rttp_protocol::entity_tag::{EntityTag, IfMatch};
 use rttp_protocol::fetch_metadata::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 use rttp_protocol::from::From;
 use rttp_protocol::host::Host;
+use rttp_protocol::no_vary_search::{NoVarySearch, NoVarySearchParams};
 use rttp_protocol::origin::Origin;
 use rttp_protocol::prefer::{Prefer, PreferenceApplied, PreferenceKind};
 use rttp_protocol::proxy_authentication_info::ProxyAuthenticationInfo;
@@ -41,6 +42,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let from = From::parse("Ops Team <ops@example.test>").expect("From should parse");
   let host = Host::parse("example.test:8443").expect("Host should parse");
   let origin = Origin::parse("https://example.test").expect("Origin should parse");
+  let no_vary_search =
+    NoVarySearch::parse(r#"params=("utm_source")"#).expect("No-Vary-Search should parse");
   let proxy_authentication_info = ProxyAuthenticationInfo::parse(
     "nextnonce=\"xyz789\", qop=auth, rspauth=\"...\", cnonce=\"c\", nc=00000001",
   )
@@ -95,6 +98,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(host.host(), "example.test");
   assert_eq!(host.port(), Some("8443"));
   assert_eq!(origin.header_value(), "https://example.test");
+  assert_eq!(
+    no_vary_search.params(),
+    Some(&NoVarySearchParams::Names(vec!["utm_source".to_owned()]))
+  );
   assert_eq!(
     proxy_authentication_info.parameter("nextnonce"),
     Some("xyz789")
