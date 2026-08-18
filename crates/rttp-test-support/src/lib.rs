@@ -1373,6 +1373,13 @@ pub mod content_location {
       declaration_value: "https://example.test/representations/current.json",
     },
     ResponseCase {
+      name: "absolute URI with unbounded port digits",
+      values: &["http://example.test:99999/representations/current.json"],
+      raw_value: "http://example.test:99999/representations/current.json",
+      normalized_value: "http://example.test:99999/representations/current.json",
+      declaration_value: "http://example.test:99999/representations/current.json",
+    },
+    ResponseCase {
       name: "absolute path reference with optional whitespace",
       values: &[" /representations/current.json "],
       raw_value: "/representations/current.json",
