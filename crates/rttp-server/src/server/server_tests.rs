@@ -196,6 +196,42 @@ fn request_representation_metadata_parses_without_applying_policy() {
 }
 
 #[test]
+fn request_transfer_encoding_exposes_validated_chunked_framing() {
+  let absent_raw = "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n";
+  let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
+  let absent = Request::read_next_from(&mut absent_reader)
+    .expect("absent request should parse")
+    .expect("absent request should be present");
+  assert_eq!(
+    None,
+    absent
+      .transfer_encoding()
+      .expect("missing Transfer-Encoding should be accepted")
+  );
+
+  let valid_raw = concat!(
+    "POST /upload HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "\r\n",
+    "5\r\nhello\r\n",
+    "0\r\n\r\n"
+  );
+  let mut valid_reader = BufReader::new(Cursor::new(valid_raw.as_bytes()));
+  let valid = Request::read_next_from(&mut valid_reader)
+    .expect("chunked request framing should parse")
+    .expect("chunked request should be present");
+  let transfer_encoding = valid
+    .transfer_encoding()
+    .expect("Transfer-Encoding should parse")
+    .expect("Transfer-Encoding should be present");
+  assert_eq!(vec!["chunked"], transfer_encoding.codings());
+  assert_eq!("chunked", transfer_encoding.header_value());
+  assert_eq!(Some("chunked"), valid.header("Transfer-Encoding"));
+  assert_eq!(b"hello", valid.body());
+}
+
+#[test]
 fn request_want_repr_digest_parses_preferences_without_selecting_an_algorithm() {
   let request = Request::from_raw_frame(concat!(
     "GET /asset HTTP/1.1\r\n",
