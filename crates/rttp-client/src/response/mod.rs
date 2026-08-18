@@ -63,6 +63,7 @@ pub use rttp_protocol::alt_svc::{AltSvc, AltSvcAlternative, AltSvcParameter, Alt
 pub use rttp_protocol::digest::{
   Digest, DigestEntry, DigestParseError, ReprDigest, ReprDigestEntry,
 };
+pub use rttp_protocol::location::{Location, LocationParseError};
 pub use rttp_protocol::prefer::{
   PreferParseError, Preference, PreferenceApplied, PreferenceAppliedParseError, PreferenceKind,
   PreferenceParameter,

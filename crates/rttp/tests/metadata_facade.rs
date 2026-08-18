@@ -27,6 +27,10 @@ fn compatibility_facade_exports_client_metadata_types() {
     .expect("Cross-Origin-Opener-Policy should parse");
   let fetch_site: rttp::SecFetchSite =
     rttp_client::SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
+  let location: rttp::Location =
+    rttp_client::response::Location::parse("/next").expect("Location should parse");
+  let _: rttp::LocationParseError =
+    rttp_client::response::Location::parse("").expect_err("empty Location should be rejected");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
@@ -35,6 +39,7 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(embedder_policy.header_value(), "require-corp");
   assert_eq!(opener_policy.header_value(), "noopener-allow-popups");
   assert_eq!(fetch_site.header_value(), "same-origin");
+  assert_eq!(location.as_str(), "/next");
 }
 
 #[test]
