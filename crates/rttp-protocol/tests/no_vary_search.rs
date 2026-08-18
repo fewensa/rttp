@@ -1,0 +1,72 @@
+use rttp_protocol::no_vary_search::{
+  NoVarySearch, NoVarySearchParams, MAX_NO_VARY_SEARCH_PARAMETERS, MAX_NO_VARY_SEARCH_VALUE_BYTES,
+};
+
+#[test]
+fn parses_structured_no_vary_search_metadata() {
+  let metadata = NoVarySearch::parse(r#"key-order=?0, params=("utm_source" "q"), x-token=42"#)
+    .expect("valid No-Vary-Search should parse");
+
+  assert_eq!(Some(false), metadata.key_order());
+  assert_eq!(
+    Some(&["utm_source".to_owned(), "q".to_owned()][..]),
+    metadata.ignored_params()
+  );
+  assert_eq!(metadata.except(), Vec::<String>::new().as_slice());
+  assert_eq!(metadata.extensions()[0].key(), "x-token");
+  assert_eq!(metadata.extensions()[0].value(), Some("42"));
+  assert_eq!(
+    metadata.header_value(),
+    r#"key-order=?0, params=("utm_source" "q"), x-token=42"#
+  );
+}
+
+#[test]
+fn parses_params_all_with_exceptions_across_header_fields() {
+  let metadata = NoVarySearch::parse_values([r#"params"#, r#"except=("session" "debug")"#])
+    .expect("multiple No-Vary-Search fields should parse");
+
+  assert!(metadata.ignores_all_query_params());
+  assert_eq!(metadata.params(), Some(&NoVarySearchParams::All));
+  assert_eq!(metadata.except(), ["session", "debug"]);
+  assert_eq!(
+    metadata.header_value(),
+    r#"params, except=("session" "debug")"#
+  );
+}
+
+#[test]
+fn rejects_invalid_no_vary_search_values() {
+  for value in [
+    "",
+    "Params",
+    "params=utm",
+    "params=()",
+    r#"params=("a", "b")"#,
+    r#"params=("a"), params=("b")"#,
+    r#"params=("a"), except=("b")"#,
+    r#"except=("b")"#,
+    "key-order=false",
+    "key-order=?2",
+    "x key",
+  ] {
+    assert!(
+      NoVarySearch::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+}
+
+#[test]
+fn enforces_no_vary_search_bounds() {
+  assert!(NoVarySearch::parse("x".repeat(MAX_NO_VARY_SEARCH_VALUE_BYTES + 1)).is_err());
+
+  let too_many = format!(
+    "params=({})",
+    (0..=MAX_NO_VARY_SEARCH_PARAMETERS)
+      .map(|index| format!("\"p{index}\""))
+      .collect::<Vec<_>>()
+      .join(" ")
+  );
+  assert!(NoVarySearch::parse(too_many).is_err());
+}

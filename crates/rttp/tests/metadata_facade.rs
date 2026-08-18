@@ -19,6 +19,9 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp_client::response::AcceptPost::parse("application/json").expect("Accept-Post should parse");
   let alt_svc: rttp::AltSvc =
     rttp_client::response::AltSvc::parse("h3=\":443\"; ma=60").expect("Alt-Svc should parse");
+  let no_vary_search: rttp::NoVarySearch =
+    rttp_client::response::NoVarySearch::parse(r#"params=("utm_source")"#)
+      .expect("No-Vary-Search should parse");
   let _: rttp::AltSvcParseError =
     rttp_client::response::AltSvc::parse("h3=:443").expect_err("invalid Alt-Svc should fail");
   let embedder_policy: rttp::CrossOriginEmbedderPolicy =
@@ -38,6 +41,12 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(accept_post.media_types().len(), 1);
   assert_eq!(alt_svc.alternatives()[0].protocol_id(), "h3");
   assert_eq!(alt_svc.alternatives()[0].max_age(), Some(60));
+  assert_eq!(
+    no_vary_search.params(),
+    Some(&rttp::NoVarySearchParams::Names(vec![
+      "utm_source".to_owned()
+    ]))
+  );
   assert_eq!(embedder_policy.header_value(), "require-corp");
   assert_eq!(opener_policy.header_value(), "noopener-allow-popups");
   assert_eq!(fetch_site.header_value(), "same-origin");

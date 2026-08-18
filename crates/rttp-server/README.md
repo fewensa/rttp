@@ -86,3 +86,14 @@ without changing those raw fields.
 
 These helpers only declare and parse metadata. They do not calculate hashes,
 verify bodies, canonicalize representations, sign values, or enforce integrity.
+
+## No-Vary-Search response metadata
+
+`HttpResponse::with_no_vary_search(value)` validates and replaces attached
+`No-Vary-Search` fields with one normalized response declaration.
+`HttpResponse::no_vary_search()` parses attached raw fields into
+`HttpNoVarySearch` metadata. The typed value exposes recognized `key-order`,
+`params`, and `except` members while keeping the behavior metadata-only.
+
+These helpers do not store responses, match cache keys, normalize URLs, replay
+requests, apply browser navigation behavior, or enforce shared-cache policy.

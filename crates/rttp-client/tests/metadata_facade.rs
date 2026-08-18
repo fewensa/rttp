@@ -2,9 +2,10 @@ use rttp_client::response::{
   AcceptCh, AccessControlAllowHeaders, AccessControlAllowHeadersParseError,
   AccessControlAllowMethods, AccessControlAllowMethodsParseError, AccessControlExposeHeaders,
   AccessControlMaxAge, AccessControlMaxAgeParseError, AltSvc, CrossOriginEmbedderPolicy,
-  CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest, HttpClearSiteData, PreferenceApplied,
-  Priority, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ReferrerPolicy,
-  ReferrerPolicyToken, ServerTiming, Trailer, Warning,
+  CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest, HttpClearSiteData, NoVarySearch,
+  NoVarySearchParams, NoVarySearchParseError, PreferenceApplied, Priority, ProxyAuthenticationInfo,
+  ProxyAuthenticationInfoParseError, ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Trailer,
+  Warning,
 };
 use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 
@@ -27,6 +28,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let clear_site_data =
     HttpClearSiteData::parse("\"cache\"").expect("Clear-Site-Data should parse");
   let digest = Digest::parse("sha-256=:YWJj:").expect("Digest should parse");
+  let no_vary_search =
+    NoVarySearch::parse(r#"params=("utm_source")"#).expect("No-Vary-Search should parse");
+  let _: NoVarySearchParseError =
+    NoVarySearch::parse("params=utm").expect_err("invalid No-Vary-Search should be rejected");
   let priority = Priority::parse("u=1, i").expect("Priority should parse");
   let server_timing = ServerTiming::parse("db;dur=53").expect("Server-Timing should parse");
   let warning = Warning::parse(r#"110 - "Response is Stale""#).expect("Warning should parse");
@@ -55,6 +60,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
   assert_eq!(clear_site_data.directives().len(), 1);
   assert_eq!(digest.entries().len(), 1);
+  assert_eq!(
+    no_vary_search.params(),
+    Some(&NoVarySearchParams::Names(vec!["utm_source".to_owned()]))
+  );
   assert_eq!(priority.urgency(), Some(1));
   assert_eq!(server_timing.metrics().len(), 1);
   assert_eq!(warning.items()[0].code(), 110);

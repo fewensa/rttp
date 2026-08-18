@@ -98,6 +98,17 @@ fn vary_response(values: &[&str]) -> Vec<u8> {
   response.into_bytes()
 }
 
+fn no_vary_search_response(values: &[&str]) -> Vec<u8> {
+  let mut response = String::from("HTTP/1.1 200 OK\r\n");
+  for value in values {
+    response.push_str("No-Vary-Search: ");
+    response.push_str(value);
+    response.push_str("\r\n");
+  }
+  response.push_str("Content-Length: 2\r\n\r\nOK");
+  response.into_bytes()
+}
+
 fn allow_response(values: &[&str]) -> Vec<u8> {
   let mut response = String::from("HTTP/1.1 405 Method Not Allowed\r\n");
   for value in values {
@@ -2382,6 +2393,30 @@ fn sync_client_parses_allow_with_existing_cache_and_retry_metadata_helpers() {
   assert_eq!("", response.body().string().unwrap());
 
   handle.join().expect("raw response server thread");
+}
+
+#[test]
+fn sync_client_parses_no_vary_search_metadata_without_cache_policy() {
+  let raw_response = no_vary_search_response(&["key-order=?0, params", r#"except=("session")"#]);
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/no-vary-search-metadata", addr))
+    .emit()
+    .expect("No-Vary-Search response should parse");
+
+  let no_vary_search = response
+    .no_vary_search()
+    .expect("No-Vary-Search should parse")
+    .expect("No-Vary-Search should be present");
+
+  assert_eq!(Some(false), no_vary_search.key_order());
+  assert!(no_vary_search.ignores_all_query_params());
+  assert_eq!(no_vary_search.except(), ["session"]);
+  assert_eq!("OK", response.body().string().unwrap());
+
+  handle.join().expect("No-Vary-Search server thread");
 }
 
 #[test]
