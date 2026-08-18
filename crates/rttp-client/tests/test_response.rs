@@ -3,7 +3,7 @@ use rttp_client::response::{
   CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy,
   CrossOriginResourcePolicy, Digest, HttpClearSiteData, HttpSetCookies, LinkValues,
   ProxyAuthenticationInfo, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
-  StrictTransportSecurity, Warning,
+  SignatureInput, StrictTransportSecurity, Warning,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -65,6 +65,63 @@ fn clear_site_data_metadata_parses_quoted_directives_and_wildcard_without_cleari
   assert!(wildcard.clears_cookies());
   assert!(wildcard.clears_storage());
   assert!(wildcard.clears_execution_contexts());
+}
+
+#[test]
+fn signature_input_metadata_parses_without_verifying_signatures() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Signature-Input: sig1=(\"@method\" \"@path\");created=1700000000\r\n",
+      "Signature-Input: sig2=(\"content-digest\";sf);keyid=\"test-key\"\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let metadata = response
+    .signature_input()
+    .expect("Signature-Input should parse")
+    .expect("Signature-Input should be present");
+
+  assert_eq!(metadata.members()[0].label(), "sig1");
+  assert_eq!(
+    metadata.members()[1].covered_components()[0].identifier(),
+    "content-digest"
+  );
+  assert_eq!(
+    response.header_values("Signature-Input").len(),
+    2,
+    "raw headers should remain available"
+  );
+}
+
+#[test]
+fn signature_input_metadata_errors_without_hiding_raw_headers() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nSignature-Input: sig1=(content-digest)\r\nContent-Length: 0\r\n\r\n"
+      .to_vec(),
+  )
+  .expect("response should parse");
+
+  assert!(response.signature_input().is_err());
+  assert_eq!(
+    response.header_value("Signature-Input"),
+    Some(&"sig1=(content-digest)".to_string())
+  );
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+  let _: Option<SignatureInput> = absent
+    .signature_input()
+    .expect("absent Signature-Input should not fail");
 }
 
 #[test]

@@ -5,7 +5,8 @@ use rttp_client::response::{
   CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest,
   HttpClearSiteData, PreferenceApplied, Priority, ProxyAuthenticationInfo,
   ProxyAuthenticationInfoParseError, ReferrerPolicy, ReferrerPolicyToken, ServerTiming,
-  StrictTransportSecurity, StrictTransportSecurityParseError, Trailer, Warning,
+  SignatureInput, SignatureInputParseError, StrictTransportSecurity,
+  StrictTransportSecurityParseError, Trailer, Warning,
 };
 use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 
@@ -29,6 +30,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     HttpClearSiteData::parse("\"cache\"").expect("Clear-Site-Data should parse");
   let digest = Digest::parse("sha-256=:YWJj:").expect("Digest should parse");
   let priority = Priority::parse("u=1, i").expect("Priority should parse");
+  let signature_input = SignatureInput::parse(r#"sig1=("@method");created=1700000000"#)
+    .expect("Signature-Input should parse");
+  let _: SignatureInputParseError =
+    SignatureInput::parse("").expect_err("empty Signature-Input should be rejected");
   let server_timing = ServerTiming::parse("db;dur=53").expect("Server-Timing should parse");
   let strict_transport_security =
     StrictTransportSecurity::parse("max-age=31536000; includeSubDomains")
@@ -65,6 +70,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(clear_site_data.directives().len(), 1);
   assert_eq!(digest.entries().len(), 1);
   assert_eq!(priority.urgency(), Some(1));
+  assert_eq!(signature_input.members()[0].label(), "sig1");
   assert_eq!(server_timing.metrics().len(), 1);
   assert_eq!(strict_transport_security.max_age(), 31_536_000);
   assert!(strict_transport_security.include_sub_domains());

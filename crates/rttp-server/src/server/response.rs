@@ -64,6 +64,9 @@ pub use rttp_protocol::server_timing::{
   ServerTimingParameter as HttpServerTimingParameter,
   ServerTimingParseError as HttpServerTimingParseError,
 };
+pub use rttp_protocol::signature_input::{
+  SignatureInput as HttpSignatureInput, SignatureInputParseError as HttpSignatureInputParseError,
+};
 pub use rttp_protocol::strict_transport_security::{
   StrictTransportSecurity as HttpStrictTransportSecurity,
   StrictTransportSecurityParseError as HttpStrictTransportSecurityParseError,
@@ -1062,6 +1065,23 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Signature-Input` response metadata without
+  /// computing or verifying signatures.
+  pub fn with_signature_input(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpSignatureInputParseError> {
+    let signature_input = HttpSignatureInput::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Signature-Input"));
+    self.headers.push(HttpHeader::new(
+      "Signature-Input",
+      signature_input.header_value(),
+    ));
+    Ok(self)
+  }
+
   /// Validates and replaces `Server-Timing` response metadata.
   pub fn with_server_timing(
     mut self,
@@ -1767,6 +1787,22 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpPriority::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Signature-Input` metadata without computing or verifying signatures.
+  pub fn signature_input(
+    &self,
+  ) -> Result<Option<HttpSignatureInput>, HttpSignatureInputParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Signature-Input"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSignatureInput::parse_values(values).map(Some)
   }
 
   /// Parses attached `Server-Timing` response metadata without changing raw headers.

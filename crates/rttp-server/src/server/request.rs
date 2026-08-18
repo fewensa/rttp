@@ -22,6 +22,14 @@ pub use rttp_protocol::prefer::{
   Preference as HttpPreference, PreferenceKind as HttpPreferenceKind,
   PreferenceParameter as HttpPreferenceParameter,
 };
+pub use rttp_protocol::signature_input::{
+  SignatureCoveredComponent as HttpSignatureCoveredComponent,
+  SignatureDecimal as HttpSignatureDecimal, SignatureInput as HttpSignatureInput,
+  SignatureInputMember as HttpSignatureInputMember,
+  SignatureInputParseError as HttpSignatureInputParseError,
+  SignatureParameter as HttpSignatureParameter,
+  SignatureParameterValue as HttpSignatureParameterValue,
+};
 pub use rttp_protocol::trailer::{
   Trailer as HttpTrailer, TrailerParseError as HttpTrailerParseError,
 };
@@ -541,6 +549,17 @@ impl Request {
       return Ok(None);
     }
     HttpPriority::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Signature-Input` metadata without computing or verifying signatures.
+  pub fn signature_input(
+    &self,
+  ) -> Result<Option<HttpSignatureInput>, HttpSignatureInputParseError> {
+    let values: Vec<&str> = self.headers_named("Signature-Input").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSignatureInput::parse_values(values).map(Some)
   }
 
   /// Parses bounded RFC 7239 `Forwarded` request metadata without applying a
@@ -2189,6 +2208,22 @@ impl HttpRequest {
         .filter(|header| header.name.eq_ignore_ascii_case("Prefer"))
         .map(|header| header.value.as_str()),
     )
+  }
+
+  /// Parses received `Signature-Input` metadata without computing or verifying signatures.
+  pub fn signature_input(
+    &self,
+  ) -> Result<Option<HttpSignatureInput>, HttpSignatureInputParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Signature-Input"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSignatureInput::parse_values(values).map(Some)
   }
 
   /// Parses received `Access-Control-Request-Method` preflight metadata

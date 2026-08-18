@@ -80,6 +80,10 @@ pub use rttp_protocol::referrer_policy::{
 pub use rttp_protocol::server_timing::{
   ServerTiming, ServerTimingMetric, ServerTimingParameter, ServerTimingParseError,
 };
+pub use rttp_protocol::signature_input::{
+  SignatureCoveredComponent, SignatureDecimal, SignatureInput, SignatureInputMember,
+  SignatureInputParseError, SignatureParameter, SignatureParameterValue,
+};
 pub use rttp_protocol::strict_transport_security::{
   StrictTransportSecurity, StrictTransportSecurityParseError,
 };

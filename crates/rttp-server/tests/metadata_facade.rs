@@ -3,8 +3,8 @@ use rttp_server::server::{
   HttpAccessControlRequestHeaders, HttpAccessControlRequestHeadersParseError,
   HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError,
   HttpConditionalMetadata, HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy,
-  HttpEntityTag, HttpPreferenceKind, HttpRequest, HttpResponse, SecFetchDest, SecFetchMode,
-  SecFetchSite, SecFetchUser,
+  HttpEntityTag, HttpPreferenceKind, HttpRequest, HttpResponse, HttpSignatureInput,
+  HttpSignatureInputParseError, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
 };
 
 #[test]
@@ -35,6 +35,11 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let report_only_policy: HttpCrossOriginEmbedderPolicyReportOnly =
     HttpCrossOriginEmbedderPolicyReportOnly::parse("require-corp")
       .expect("Cross-Origin-Embedder-Policy-Report-Only should parse");
+  let signature_input: HttpSignatureInput =
+    HttpSignatureInput::parse(r#"sig1=("@method");created=1700000000"#)
+      .expect("Signature-Input should parse");
+  let signature_input_error: Result<HttpSignatureInput, HttpSignatureInputParseError> =
+    HttpSignatureInput::parse("");
   let response = HttpResponse::ok("")
     .with_accept_ch(["Sec-CH-UA"])
     .expect("Accept-CH should be accepted");
@@ -55,6 +60,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert!(request_headers_error.is_err());
   assert_eq!(policy.header_value(), "same-origin");
   assert_eq!(report_only_policy.header_value(), "require-corp");
+  assert_eq!(signature_input.members()[0].label(), "sig1");
+  assert!(signature_input_error.is_err());
   assert_eq!(
     metadata
       .entity_tag_value()
@@ -74,6 +81,46 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_mode.header_value(), "navigate");
   assert_eq!(fetch_dest.header_value(), "document");
   assert_eq!(fetch_user.header_value(), "?1");
+}
+
+#[test]
+fn server_facade_parses_signature_input_without_signature_policy() {
+  let request = HttpRequest::parse(
+    b"GET / HTTP/1.1\r\nHost: example.test\r\nSignature-Input: sig1=(\"@method\" \"@path\");created=1700000000\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let request_metadata = request
+    .signature_input()
+    .expect("request Signature-Input should parse")
+    .expect("request Signature-Input should be present");
+  assert_eq!(
+    request_metadata.members()[0].covered_components()[1].identifier(),
+    "@path"
+  );
+
+  let response = HttpResponse::ok("")
+    .with_signature_input(r#"sig1=("@status");keyid="test-key""#)
+    .expect("Signature-Input should be accepted");
+  let response_metadata = response
+    .signature_input()
+    .expect("response Signature-Input should parse")
+    .expect("response Signature-Input should be present");
+  assert_eq!(
+    response_metadata.header_value(),
+    r#"sig1=("@status");keyid="test-key""#
+  );
+
+  assert!(HttpResponse::ok("")
+    .with_signature_input("sig1=(@status)")
+    .is_err());
+  assert_eq!(
+    HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .expect("request should parse")
+      .signature_input()
+      .expect("absent Signature-Input should parse"),
+    None
+  );
 }
 
 #[test]
