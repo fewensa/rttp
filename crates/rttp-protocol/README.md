@@ -20,6 +20,19 @@ repeated codings are retained in wire order so callers can inspect the full
 encoding stack. A present header set that yields no coding still fails as
 invalid.
 
+## Want-Repr-Digest
+
+`want_repr_digest` parses one or more RFC 9530 `Want-Repr-Digest` field values
+into an ordered dictionary of algorithm keys and integer preferences. Each
+field value is bounded to 64 KiB, and the combined algorithm count across all
+supplied fields is bounded to 32. Members must be parameter-free Structured
+Fields items whose values are Integers in `0` through `10` inclusive. Unknown
+well-formed algorithm keys are retained as opaque data. Duplicate keys, bare
+Boolean members, parameterized members, inner lists, decimals, negatives,
+out-of-range integers, empty present fields, and other unparsable input are
+errors. This parser never fails open to an empty preference set and does not
+select an algorithm, compute a digest, or attach `Repr-Digest`.
+
 ## Cross-Origin-Opener-Policy
 
 `cross_origin_opener_policy` parses a singleton `Cross-Origin-Opener-Policy`
@@ -91,6 +104,20 @@ Well-formed parameters, including `report-to`, are accepted as syntax and
 discarded; this parser does not retain reporting metadata or enforce embedder
 policy. Case variants, lists, quoted values, unknown tokens, empty values, and
 other unparsable input are errors. The parser never fails open to `unsafe-none`.
+
+## Cross-Origin-Embedder-Policy-Report-Only
+
+`cross_origin_embedder_policy_report_only` parses a singleton
+`Cross-Origin-Embedder-Policy-Report-Only` structured-field item with the same
+directive grammar as `Cross-Origin-Embedder-Policy`. Each field value is
+bounded to 64 KiB. A second field is rejected after every supplied field is
+bound-checked. The bare item must be exactly one of the tokens `unsafe-none`,
+`require-corp`, or `credentialless`. Well-formed parameters, including
+`report-to`, are accepted as syntax and discarded; this parser does not retain
+reporting metadata, enforce embedder policy, deliver reports, or schedule
+report delivery. Case variants, lists, quoted values, unknown tokens, empty
+values, and other unparsable input are errors. The parser never fails open to
+`unsafe-none`.
 
 ## Referer
 

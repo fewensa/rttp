@@ -1,8 +1,9 @@
 use rttp_client::response::{
   AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType,
-  CrossOriginEmbedderPolicy, CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest,
-  HttpClearSiteData, HttpSetCookies, LinkValues, ProxyAuthenticationInfo, ReferrerPolicy,
-  ReferrerPolicyToken, Response, RetryAfter, ServerTiming, StrictTransportSecurity, Warning,
+  CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy,
+  CrossOriginResourcePolicy, Digest, HttpClearSiteData, HttpSetCookies, LinkValues,
+  ProxyAuthenticationInfo, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
+  StrictTransportSecurity, Warning,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -3497,6 +3498,108 @@ fn test_cross_origin_embedder_policy_response_metadata_rejects_invalid_and_absen
     absent
       .cross_origin_embedder_policy()
       .expect("absent COEP should parse")
+  );
+}
+
+#[test]
+fn test_cross_origin_embedder_policy_report_only_response_metadata_preserves_raw_headers() {
+  for (value, policy) in [
+    (
+      "unsafe-none",
+      CrossOriginEmbedderPolicyReportOnly::UnsafeNone,
+    ),
+    (
+      r#"require-corp; report-to="coep""#,
+      CrossOriginEmbedderPolicyReportOnly::RequireCorp,
+    ),
+    (
+      "credentialless",
+      CrossOriginEmbedderPolicyReportOnly::Credentialless,
+    ),
+  ] {
+    let raw = format!(
+      "HTTP/1.1 200 OK\r\nCross-Origin-Embedder-Policy-Report-Only: {value}\r\nContent-Length: 0\r\n\r\n"
+    );
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should parse");
+
+    assert_eq!(
+      policy,
+      response
+        .cross_origin_embedder_policy_report_only()
+        .expect("COEP-Report-Only should parse")
+        .expect("COEP-Report-Only should be present")
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Cross-Origin-Embedder-Policy-Report-Only")
+    );
+  }
+}
+
+#[test]
+fn test_cross_origin_embedder_policy_report_only_response_metadata_rejects_invalid_and_absent_values(
+) {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Cross-Origin-Embedder-Policy-Report-Only: require-corp\r\n",
+    "cross-origin-embedder-policy-report-only: credentialless\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  assert!(response.cross_origin_embedder_policy_report_only().is_err());
+  assert_eq!(
+    Some(&"require-corp".to_string()),
+    response.header_value("Cross-Origin-Embedder-Policy-Report-Only")
+  );
+
+  let malformed = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nCross-Origin-Embedder-Policy-Report-Only: require corp\r\nContent-Length: 0\r\n\r\n"
+      .to_vec(),
+  )
+  .expect("raw response with malformed COEP-Report-Only should parse");
+  assert!(malformed
+    .cross_origin_embedder_policy_report_only()
+    .is_err());
+  assert_eq!(
+    Some(&"require corp".to_string()),
+    malformed.header_value("Cross-Origin-Embedder-Policy-Report-Only")
+  );
+
+  let uppercase = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nCross-Origin-Embedder-Policy-Report-Only: REQUIRE-CORP\r\nContent-Length: 0\r\n\r\n"
+      .to_vec(),
+  )
+  .expect("raw response with uppercase COEP-Report-Only should parse");
+  assert!(uppercase
+    .cross_origin_embedder_policy_report_only()
+    .is_err());
+
+  let oversized = format!(
+    "HTTP/1.1 200 OK\r\nCross-Origin-Embedder-Policy-Report-Only: {}\r\nContent-Length: 0\r\n\r\n",
+    "x".repeat(64 * 1024 + 1)
+  );
+  let oversized = Response::new(RoUrl::with("https://example.test"), oversized.into_bytes())
+    .expect("raw response with oversized COEP-Report-Only should parse");
+  assert!(oversized
+    .cross_origin_embedder_policy_report_only()
+    .is_err());
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response without COEP-Report-Only should parse");
+  assert_eq!(
+    None,
+    absent
+      .cross_origin_embedder_policy_report_only()
+      .expect("absent COEP-Report-Only should parse")
   );
 }
 

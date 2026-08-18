@@ -50,6 +50,9 @@ pub use rttp_protocol::cookie::{
 pub use rttp_protocol::cross_origin_embedder_policy::{
   CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyParseError,
 };
+pub use rttp_protocol::cross_origin_embedder_policy_report_only::{
+  CrossOriginEmbedderPolicyReportOnly, CrossOriginEmbedderPolicyReportOnlyParseError,
+};
 pub use rttp_protocol::cross_origin_opener_policy::{
   CrossOriginOpenerPolicy, CrossOriginOpenerPolicyParseError,
 };
@@ -83,6 +86,9 @@ pub use rttp_protocol::strict_transport_security::{
 };
 pub use rttp_protocol::timing_allow_origin::{TimingAllowOrigin, TimingAllowOriginParseError};
 pub use rttp_protocol::trailer::{Trailer, TrailerParseError};
+pub use rttp_protocol::want_repr_digest::{
+  WantReprDigest, WantReprDigestEntry, WantReprDigestParseError,
+};
 pub use rttp_protocol::warning::{Warning, WarningParseError, WarningValue};
 pub use rttp_protocol::www_authenticate::{
   WwwAuthenticate, WwwAuthenticateChallenge, WwwAuthenticateParameter, WwwAuthenticateParseError,

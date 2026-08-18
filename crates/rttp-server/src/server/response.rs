@@ -39,6 +39,10 @@ pub use rttp_protocol::cross_origin_embedder_policy::{
   CrossOriginEmbedderPolicy as HttpCrossOriginEmbedderPolicy,
   CrossOriginEmbedderPolicyParseError as HttpCrossOriginEmbedderPolicyParseError,
 };
+pub use rttp_protocol::cross_origin_embedder_policy_report_only::{
+  CrossOriginEmbedderPolicyReportOnly as HttpCrossOriginEmbedderPolicyReportOnly,
+  CrossOriginEmbedderPolicyReportOnlyParseError as HttpCrossOriginEmbedderPolicyReportOnlyParseError,
+};
 pub use rttp_protocol::cross_origin_opener_policy::{
   CrossOriginOpenerPolicy as HttpCrossOriginOpenerPolicy,
   CrossOriginOpenerPolicyParseError as HttpCrossOriginOpenerPolicyParseError,
@@ -817,6 +821,25 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Cross-Origin-Embedder-Policy-Report-Only`
+  /// response metadata without applying embedder policy or scheduling reports.
+  pub fn with_cross_origin_embedder_policy_report_only(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpCrossOriginEmbedderPolicyReportOnlyParseError> {
+    let policy = HttpCrossOriginEmbedderPolicyReportOnly::parse(value)?;
+    self.headers.retain(|header| {
+      !header
+        .name
+        .eq_ignore_ascii_case("Cross-Origin-Embedder-Policy-Report-Only")
+    });
+    self.headers.push(HttpHeader::new(
+      "Cross-Origin-Embedder-Policy-Report-Only",
+      policy.header_value(),
+    ));
+    Ok(self)
+  }
+
   /// Validates and replaces `Cross-Origin-Opener-Policy` response metadata
   /// without applying opener policy.
   pub fn with_cross_origin_opener_policy(
@@ -1494,6 +1517,30 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpCrossOriginEmbedderPolicy::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Cross-Origin-Embedder-Policy-Report-Only` response
+  /// metadata without enforcing embedder policy or scheduling reports.
+  pub fn cross_origin_embedder_policy_report_only(
+    &self,
+  ) -> Result<
+    Option<HttpCrossOriginEmbedderPolicyReportOnly>,
+    HttpCrossOriginEmbedderPolicyReportOnlyParseError,
+  > {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Cross-Origin-Embedder-Policy-Report-Only")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpCrossOriginEmbedderPolicyReportOnly::parse_values(values).map(Some)
   }
 
   /// Parses attached `Cross-Origin-Opener-Policy` response metadata without

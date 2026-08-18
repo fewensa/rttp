@@ -196,6 +196,58 @@ fn request_representation_metadata_parses_without_applying_policy() {
 }
 
 #[test]
+fn request_want_repr_digest_parses_preferences_without_selecting_an_algorithm() {
+  let request = Request::from_raw_frame(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Want-Repr-Digest: sha-256=10, sha-512=3\r\n",
+    "want-repr-digest: unixsum=0\r\n",
+    "Content-Length: 4\r\n",
+    "\r\n",
+    "body"
+  ).as_bytes())
+  .expect("request should parse");
+
+  let digest = request
+    .want_repr_digest()
+    .expect("Want-Repr-Digest should parse")
+    .expect("Want-Repr-Digest should be present");
+  assert_eq!(digest.len(), 3);
+  assert_eq!(digest.entries()[0].algorithm(), "sha-256");
+  assert_eq!(digest.entries()[0].preference(), 10);
+  assert_eq!(digest.entries()[1].algorithm(), "sha-512");
+  assert_eq!(digest.entries()[1].preference(), 3);
+  assert_eq!(digest.entries()[2].algorithm(), "unixsum");
+  assert_eq!(digest.entries()[2].preference(), 0);
+  assert_eq!(b"body", request.body());
+}
+
+#[test]
+fn request_want_repr_digest_preserves_absent_and_malformed_headers() {
+  let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .want_repr_digest()
+      .expect("absent Want-Repr-Digest should be accepted")
+  );
+
+  let malformed = Request::from_raw_frame(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Want-Repr-Digest: sha-256\r\n",
+    "Content-Length: 4\r\n",
+    "\r\n",
+    "body"
+  ).as_bytes())
+  .expect("malformed Want-Repr-Digest should not reject the request frame");
+  assert!(malformed.want_repr_digest().is_err());
+  assert_eq!(Some("sha-256"), malformed.header("Want-Repr-Digest"));
+  assert_eq!(b"body", malformed.body());
+}
+
+#[test]
 fn request_representation_metadata_preserves_invalid_headers_and_body() {
   let duplicate = Request::from_raw_frame(concat!(
     "POST /documents HTTP/1.1\r\n",
@@ -683,6 +735,92 @@ fn cross_origin_embedder_policy_helpers_preserve_raw_metadata_and_report_parse_e
   assert!(duplicate.cross_origin_embedder_policy().is_err());
   assert!(HttpResponse::ok([])
     .with_cross_origin_embedder_policy("x".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
+fn cross_origin_embedder_policy_report_only_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Cross-Origin-Embedder-Policy-Report-Only", "unsafe-none")
+    .header("cross-origin-embedder-policy-report-only", "credentialless")
+    .with_cross_origin_embedder_policy_report_only(r#"require-corp; report-to="coep""#)
+    .expect("Cross-Origin-Embedder-Policy-Report-Only should be accepted");
+
+  assert_eq!(
+    "require-corp",
+    response
+      .cross_origin_embedder_policy_report_only()
+      .expect("Cross-Origin-Embedder-Policy-Report-Only should parse")
+      .expect("Cross-Origin-Embedder-Policy-Report-Only should be present")
+      .header_value()
+  );
+  assert_eq!(
+    vec![("Cross-Origin-Embedder-Policy-Report-Only", "require-corp")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn cross_origin_embedder_policy_report_only_helpers_preserve_raw_metadata_and_report_parse_errors()
+{
+  let raw =
+    HttpResponse::ok([]).header("Cross-Origin-Embedder-Policy-Report-Only", "require-corp");
+  assert_eq!(
+    "require-corp",
+    raw
+      .cross_origin_embedder_policy_report_only()
+      .expect("raw require-corp should parse")
+      .expect("Cross-Origin-Embedder-Policy-Report-Only should be present")
+      .header_value()
+  );
+  assert_eq!(
+    Some("require-corp"),
+    raw
+      .headers
+      .iter()
+      .find(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Cross-Origin-Embedder-Policy-Report-Only")
+      })
+      .map(|header| header.value.as_str())
+  );
+
+  let malformed =
+    HttpResponse::ok([]).header("Cross-Origin-Embedder-Policy-Report-Only", "require corp");
+  assert!(malformed.cross_origin_embedder_policy_report_only().is_err());
+  assert!(HttpResponse::ok([])
+    .with_cross_origin_embedder_policy_report_only("require corp")
+    .is_err());
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .cross_origin_embedder_policy_report_only()
+      .expect("absent Cross-Origin-Embedder-Policy-Report-Only should parse")
+  );
+  for value in ["unsafe-none", "require-corp", "credentialless"] {
+    assert_eq!(
+      value,
+      HttpResponse::ok([])
+        .with_cross_origin_embedder_policy_report_only(value)
+        .expect("valid Cross-Origin-Embedder-Policy-Report-Only should be accepted")
+        .cross_origin_embedder_policy_report_only()
+        .expect("Cross-Origin-Embedder-Policy-Report-Only should parse")
+        .expect("Cross-Origin-Embedder-Policy-Report-Only should be present")
+        .header_value()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("Cross-Origin-Embedder-Policy-Report-Only", "require-corp")
+    .header("cross-origin-embedder-policy-report-only", "credentialless");
+  assert!(duplicate.cross_origin_embedder_policy_report_only().is_err());
+  assert!(HttpResponse::ok([])
+    .with_cross_origin_embedder_policy_report_only("x".repeat(64 * 1024 + 1))
     .is_err());
 }
 
