@@ -24,6 +24,14 @@ pub use rttp_protocol::client_hints::{
   AcceptCh as HttpAcceptCh, AcceptChParseError as HttpAcceptChParseError,
   CriticalCh as HttpCriticalCh, CriticalChParseError as HttpCriticalChParseError,
 };
+pub use rttp_protocol::cross_origin_embedder_policy::{
+  CrossOriginEmbedderPolicy as HttpCrossOriginEmbedderPolicy,
+  CrossOriginEmbedderPolicyParseError as HttpCrossOriginEmbedderPolicyParseError,
+};
+pub use rttp_protocol::cross_origin_opener_policy::{
+  CrossOriginOpenerPolicy as HttpCrossOriginOpenerPolicy,
+  CrossOriginOpenerPolicyParseError as HttpCrossOriginOpenerPolicyParseError,
+};
 pub use rttp_protocol::cross_origin_resource_policy::{
   CrossOriginResourcePolicy as HttpCrossOriginResourcePolicy,
   CrossOriginResourcePolicyParseError as HttpCrossOriginResourcePolicyParseError,
@@ -766,6 +774,44 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Cross-Origin-Embedder-Policy` response metadata
+  /// without applying embedder policy.
+  pub fn with_cross_origin_embedder_policy(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpCrossOriginEmbedderPolicyParseError> {
+    let policy = HttpCrossOriginEmbedderPolicy::parse(value)?;
+    self.headers.retain(|header| {
+      !header
+        .name
+        .eq_ignore_ascii_case("Cross-Origin-Embedder-Policy")
+    });
+    self.headers.push(HttpHeader::new(
+      "Cross-Origin-Embedder-Policy",
+      policy.header_value(),
+    ));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Cross-Origin-Opener-Policy` response metadata
+  /// without applying opener policy.
+  pub fn with_cross_origin_opener_policy(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpCrossOriginOpenerPolicyParseError> {
+    let policy = HttpCrossOriginOpenerPolicy::parse(value)?;
+    self.headers.retain(|header| {
+      !header
+        .name
+        .eq_ignore_ascii_case("Cross-Origin-Opener-Policy")
+    });
+    self.headers.push(HttpHeader::new(
+      "Cross-Origin-Opener-Policy",
+      policy.header_value(),
+    ));
+    Ok(self)
+  }
+
   /// Validates and replaces `Reporting-Endpoints` response metadata.
   pub fn with_reporting_endpoints<I, N, U>(
     mut self,
@@ -1302,6 +1348,48 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpCrossOriginResourcePolicy::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Cross-Origin-Embedder-Policy` response metadata without
+  /// enforcing embedder policy.
+  pub fn cross_origin_embedder_policy(
+    &self,
+  ) -> Result<Option<HttpCrossOriginEmbedderPolicy>, HttpCrossOriginEmbedderPolicyParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Cross-Origin-Embedder-Policy")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpCrossOriginEmbedderPolicy::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Cross-Origin-Opener-Policy` response metadata without
+  /// enforcing opener policy.
+  pub fn cross_origin_opener_policy(
+    &self,
+  ) -> Result<Option<HttpCrossOriginOpenerPolicy>, HttpCrossOriginOpenerPolicyParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Cross-Origin-Opener-Policy")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpCrossOriginOpenerPolicy::parse_values(values).map(Some)
   }
 
   /// Parses bounded `Reporting-Endpoints` response metadata without scheduling reports.
