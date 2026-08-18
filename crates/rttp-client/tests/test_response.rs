@@ -2,7 +2,7 @@ use rttp_client::response::{
   AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType,
   CrossOriginEmbedderPolicy, CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest,
   HttpClearSiteData, HttpSetCookies, LinkValues, ProxyAuthenticationInfo, ReferrerPolicy,
-  ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
+  ReferrerPolicyToken, Response, RetryAfter, ServerTiming, Warning,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -1318,6 +1318,87 @@ fn test_digest_response_helpers_recover_from_empty_duplicate_and_oversized_field
 
   let oversized = format!("sha-256=:{}:", "A".repeat(64 * 1024));
   assert!(Digest::parse(oversized).is_err());
+}
+
+#[test]
+fn test_warning_response_helper_parses_multi_field_quoted_text_and_date() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Warning: 110 - \"Response is Stale\"\r\n",
+    "Warning: 299 example.com:80 \"Deprecated \\\"API\\\"\" \"Wed, 21 Oct 2015 07:28:00 GMT\"\r\n",
+    "Content-Length: 2\r\n\r\nOK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+  let warning = response
+    .warning()
+    .expect("valid Warning should parse")
+    .expect("Warning should be present");
+
+  assert_eq!(2, warning.len());
+  assert_eq!(110, warning.items()[0].code());
+  assert_eq!("-", warning.items()[0].agent());
+  assert_eq!("Response is Stale", warning.items()[0].text());
+  assert_eq!(None, warning.items()[0].date());
+  assert_eq!(299, warning.items()[1].code());
+  assert_eq!("example.com:80", warning.items()[1].agent());
+  assert_eq!("Deprecated \"API\"", warning.items()[1].text());
+  assert_eq!(
+    Some(UNIX_EPOCH + Duration::from_secs(1_445_412_480)),
+    warning.items()[1].date()
+  );
+  assert_eq!(
+    response.header_values("Warning"),
+    [
+      &r#"110 - "Response is Stale""#.to_string(),
+      &r#"299 example.com:80 "Deprecated \"API\"" "Wed, 21 Oct 2015 07:28:00 GMT""#.to_string()
+    ]
+  );
+}
+
+#[test]
+fn test_warning_response_helper_returns_none_when_absent() {
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response without Warning should parse");
+  assert_eq!(None, absent.warning().expect("absent Warning should parse"));
+}
+
+#[test]
+fn test_warning_rejects_malformed_invalid_code_and_bounds_without_hiding_headers() {
+  for value in [
+    r#"110 - "unterminated"#,
+    r#"11 - "too short""#,
+    r#"110 - "ok",,"#,
+    "",
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\nWarning: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(response.warning().is_err(), "should reject {value:?}");
+    assert_eq!(Some(&value.to_string()), response.header_value("Warning"));
+    assert_eq!("OK", response.body().string().unwrap());
+  }
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_raw =
+    format!("HTTP/1.1 200 OK\r\nWarning: {oversized}\r\nContent-Length: 0\r\n\r\n");
+  let oversized_response = Response::new(
+    RoUrl::with("https://example.test"),
+    oversized_raw.into_bytes(),
+  )
+  .expect("raw response should remain usable");
+  assert!(oversized_response.warning().is_err());
+  assert_eq!(Some(&oversized), oversized_response.header_value("Warning"));
+  assert!(Warning::parse(
+    (0..257)
+      .map(|index| format!(r#"110 - "item{index}""#))
+      .collect::<Vec<_>>()
+      .join(", ")
+  )
+  .is_err());
 }
 
 #[test]
