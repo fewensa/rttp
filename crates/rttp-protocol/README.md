@@ -88,3 +88,13 @@ valued flags, malformed tokens or quoted-strings, missing `max-age`, and other
 unparsable input are errors. The parser reports declared metadata only; it does
 not pin TLS, store hosts, consult a preload list, or apply HTTPS-only policy.
 `max-age=0` is returned as data and does not delete stored HSTS hosts.
+
+## X-Frame-Options
+
+`x_frame_options` parses a singleton `X-Frame-Options` field. Each field value
+is bounded to 64 KiB. A second field is rejected after every supplied field is
+bound-checked. The field value must be exactly one of the tokens `DENY` or
+`SAMEORIGIN`, matched case-insensitively and returned in canonical uppercase
+wire form. The deprecated `ALLOW-FROM` directive, unknown tokens, lists,
+quoted values, empty values, and other unparsable input are errors. This
+parser does not enforce clickjacking protection or frame-embedding policy.

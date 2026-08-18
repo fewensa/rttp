@@ -12,6 +12,7 @@ use rttp_protocol::referrer_policy::{ReferrerPolicy, ReferrerPolicyToken};
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
 use rttp_protocol::x_content_type_options::XContentTypeOptions;
+use rttp_protocol::x_frame_options::XFrameOptions;
 
 #[test]
 fn protocol_exports_representative_bounded_metadata_types() {
@@ -31,6 +32,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
     TimingAllowOrigin::parse("https://example.test").expect("Timing-Allow-Origin should parse");
   let x_content_type_options =
     XContentTypeOptions::parse("nosniff").expect("X-Content-Type-Options should parse");
+  let x_frame_options = XFrameOptions::parse("DENY").expect("X-Frame-Options should parse");
   let cross_origin_embedder_policy =
     CrossOriginEmbedderPolicy::parse(r#"require-corp; report-to="coep""#)
       .expect("Cross-Origin-Embedder-Policy should parse");
@@ -56,6 +58,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(referer.header_value(), "https://example.test/path?q=1");
   assert_eq!(timing_allow_origin.origins(), ["https://example.test"]);
   assert_eq!(x_content_type_options.header_value(), "nosniff");
+  assert_eq!(x_frame_options.header_value(), "DENY");
   assert_eq!(cross_origin_embedder_policy.header_value(), "require-corp");
   assert_eq!(
     strict_transport_security.header_value(),

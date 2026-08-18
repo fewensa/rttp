@@ -550,6 +550,248 @@ fn cross_origin_opener_policy_helpers_preserve_raw_metadata_and_report_parse_err
 }
 
 #[test]
+fn strict_transport_security_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Strict-Transport-Security", "max-age=60")
+    .header("strict-transport-security", "max-age=120")
+    .with_strict_transport_security("max-age=31536000; includeSubDomains")
+    .expect("Strict-Transport-Security should be accepted");
+
+  let metadata = response
+    .strict_transport_security()
+    .expect("Strict-Transport-Security should parse")
+    .expect("Strict-Transport-Security should be present");
+  assert_eq!(31536000, metadata.max_age());
+  assert!(metadata.include_sub_domains());
+  assert_eq!(
+    "max-age=31536000; includeSubDomains",
+    metadata.header_value()
+  );
+  assert_eq!(
+    vec![("Strict-Transport-Security", "max-age=31536000; includeSubDomains")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn strict_transport_security_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::ok([]).header("Strict-Transport-Security", "max-age=60");
+  let metadata = raw
+    .strict_transport_security()
+    .expect("raw max-age=60 should parse")
+    .expect("Strict-Transport-Security should be present");
+  assert_eq!(60, metadata.max_age());
+  assert_eq!("max-age=60", metadata.header_value());
+  assert_eq!(
+    Some("max-age=60"),
+    raw
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Strict-Transport-Security"))
+      .map(|header| header.value.as_str())
+  );
+
+  let malformed = HttpResponse::ok([]).header("Strict-Transport-Security", "not hsts");
+  assert!(malformed.strict_transport_security().is_err());
+  assert!(HttpResponse::ok([])
+    .with_strict_transport_security("not hsts")
+    .is_err());
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .strict_transport_security()
+      .expect("absent Strict-Transport-Security should parse")
+  );
+  for value in [
+    "max-age=60",
+    "max-age=0",
+    "max-age=31536000; includeSubDomains; preload",
+  ] {
+    assert_eq!(
+      value,
+      HttpResponse::ok([])
+        .with_strict_transport_security(value)
+        .expect("valid Strict-Transport-Security should be accepted")
+        .strict_transport_security()
+        .expect("Strict-Transport-Security should parse")
+        .expect("Strict-Transport-Security should be present")
+        .header_value()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("Strict-Transport-Security", "max-age=60")
+    .header("strict-transport-security", "max-age=120");
+  assert!(duplicate.strict_transport_security().is_err());
+  assert!(HttpResponse::ok([])
+    .with_strict_transport_security("x".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
+fn x_content_type_options_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("X-Content-Type-Options", "nosniff")
+    .header("x-content-type-options", "nosniff")
+    .with_x_content_type_options("NoSniff")
+    .expect("X-Content-Type-Options should be accepted");
+
+  assert_eq!(
+    "nosniff",
+    response
+      .x_content_type_options()
+      .expect("X-Content-Type-Options should parse")
+      .expect("X-Content-Type-Options should be present")
+      .header_value()
+  );
+  assert_eq!(
+    vec![("X-Content-Type-Options", "nosniff")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn x_content_type_options_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::ok([]).header("X-Content-Type-Options", "NoSniff");
+  assert_eq!(
+    "nosniff",
+    raw
+      .x_content_type_options()
+      .expect("raw NoSniff should parse")
+      .expect("X-Content-Type-Options should be present")
+      .header_value()
+  );
+  assert_eq!(
+    Some("NoSniff"),
+    raw
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("X-Content-Type-Options"))
+      .map(|header| header.value.as_str())
+  );
+
+  let malformed = HttpResponse::ok([]).header("X-Content-Type-Options", "same-origin");
+  assert!(malformed.x_content_type_options().is_err());
+  assert!(HttpResponse::ok([])
+    .with_x_content_type_options("same-origin")
+    .is_err());
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .x_content_type_options()
+      .expect("absent X-Content-Type-Options should parse")
+  );
+  for value in ["nosniff", "NoSniff", "NOSNIFF"] {
+    assert_eq!(
+      "nosniff",
+      HttpResponse::ok([])
+        .with_x_content_type_options(value)
+        .expect("valid X-Content-Type-Options should be accepted")
+        .x_content_type_options()
+        .expect("X-Content-Type-Options should parse")
+        .expect("X-Content-Type-Options should be present")
+        .header_value()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("X-Content-Type-Options", "nosniff")
+    .header("x-content-type-options", "nosniff");
+  assert!(duplicate.x_content_type_options().is_err());
+  assert!(HttpResponse::ok([])
+    .with_x_content_type_options("x".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
+fn x_frame_options_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("X-Frame-Options", "deny")
+    .header("x-frame-options", "SAMEORIGIN")
+    .with_x_frame_options("DENY")
+    .expect("X-Frame-Options should be accepted");
+
+  assert_eq!(
+    "DENY",
+    response
+      .x_frame_options()
+      .expect("X-Frame-Options should parse")
+      .expect("X-Frame-Options should be present")
+      .header_value()
+  );
+  assert_eq!(
+    vec![("X-Frame-Options", "DENY")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn x_frame_options_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::ok([]).header("X-Frame-Options", "sameorigin");
+  assert_eq!(
+    "SAMEORIGIN",
+    raw
+      .x_frame_options()
+      .expect("raw sameorigin should parse")
+      .expect("X-Frame-Options should be present")
+      .header_value()
+  );
+  assert_eq!(
+    Some("sameorigin"),
+    raw
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("X-Frame-Options"))
+      .map(|header| header.value.as_str())
+  );
+
+  let malformed =
+    HttpResponse::ok([]).header("X-Frame-Options", "ALLOW-FROM https://example.test");
+  assert!(malformed.x_frame_options().is_err());
+  assert!(HttpResponse::ok([])
+    .with_x_frame_options("ALLOW-FROM https://example.test")
+    .is_err());
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .x_frame_options()
+      .expect("absent X-Frame-Options should parse")
+  );
+  for value in ["DENY", "deny", "SAMEORIGIN", "sameorigin"] {
+    assert_eq!(
+      value.to_ascii_uppercase(),
+      HttpResponse::ok([])
+        .with_x_frame_options(value)
+        .expect("valid X-Frame-Options should be accepted")
+        .x_frame_options()
+        .expect("X-Frame-Options should parse")
+        .expect("X-Frame-Options should be present")
+        .header_value()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("X-Frame-Options", "DENY")
+    .header("x-frame-options", "SAMEORIGIN");
+  assert!(duplicate.x_frame_options().is_err());
+  assert!(HttpResponse::ok([])
+    .with_x_frame_options("x".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
 fn access_control_allow_headers_helpers_validate_replace_and_parse_response_metadata() {
   let response = HttpResponse::ok([])
     .header("Access-Control-Allow-Headers", "X-Legacy")

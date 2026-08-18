@@ -47,3 +47,4 @@ pub mod trailer;
 pub mod vary;
 pub mod www_authenticate;
 pub mod x_content_type_options;
+pub mod x_frame_options;
