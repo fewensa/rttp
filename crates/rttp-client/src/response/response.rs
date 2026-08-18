@@ -23,6 +23,7 @@ use rttp_protocol::access_control_allow_origin::AccessControlAllowOrigin;
 use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::access_control_max_age::AccessControlMaxAge;
 use rttp_protocol::allow as protocol_allow;
+use rttp_protocol::cdn_cache_control::CdnCacheControl;
 use rttp_protocol::clear_site_data::ClearSiteData;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::cookie::HttpSetCookies;
@@ -677,6 +678,17 @@ impl Response {
       return Ok(None);
     }
     CacheControl::parse_values(values.into_iter().map(String::as_str)).map(Some)
+  }
+
+  /// Parses bounded `CDN-Cache-Control` response metadata without applying CDN cache policy.
+  pub fn cdn_cache_control(&self) -> error::Result<Option<CdnCacheControl>> {
+    let values = self.header_values("cdn-cache-control");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    CdnCacheControl::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   /// Parses `Clear-Site-Data` response metadata without clearing any client state.

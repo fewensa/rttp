@@ -1,4 +1,5 @@
 use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
+use rttp_protocol::cdn_cache_control::CdnCacheControl;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::content_encoding::ContentEncoding;
 use rttp_protocol::content_type::ContentType;
@@ -52,6 +53,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let content_type =
     ContentType::parse("text/plain; charset=utf-8").expect("Content-Type should parse");
   let content_encoding = ContentEncoding::parse("gzip, br").expect("Content-Encoding should parse");
+  let cdn_cache_control =
+    CdnCacheControl::parse("max-age=600, cdn-example=\"a, b\"").expect("CDN metadata should parse");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
@@ -85,6 +88,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(content_type.header_value(), "text/plain; charset=utf-8");
   assert_eq!(content_encoding.codings(), ["gzip", "br"]);
   assert_eq!(content_encoding.header_value(), "gzip, br");
+  assert_eq!(cdn_cache_control.directives()[1].name(), "cdn-example");
+  assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
 }
 
 #[test]

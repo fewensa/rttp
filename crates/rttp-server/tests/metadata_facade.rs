@@ -1,7 +1,7 @@
 use rttp_server::server::{
   HttpAcceptCh, HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods,
   HttpAccessControlRequestHeaders, HttpAccessControlRequestHeadersParseError,
-  HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError,
+  HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError, HttpCdnCacheControl,
   HttpConditionalMetadata, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpPreferenceKind,
   HttpRequest, HttpResponse, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
 };
@@ -31,9 +31,13 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("revision-42"));
   let policy: HttpCrossOriginResourcePolicy = HttpCrossOriginResourcePolicy::parse("same-origin")
     .expect("Cross-Origin-Resource-Policy should parse");
+  let cdn_cache_control: HttpCdnCacheControl =
+    HttpCdnCacheControl::parse("max-age=600, cdn-example=\"a, b\"")
+      .expect("CDN-Cache-Control should parse");
   let response = HttpResponse::ok("")
     .with_accept_ch(["Sec-CH-UA"])
-    .expect("Accept-CH should be accepted");
+    .expect("Accept-CH should be accepted")
+    .header("CDN-Cache-Control", "max-age=600, cdn-example=\"a, b\"");
   let fetch_site = SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
@@ -50,6 +54,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   );
   assert!(request_headers_error.is_err());
   assert_eq!(policy.header_value(), "same-origin");
+  assert_eq!(cdn_cache_control.directives()[1].name(), "cdn-example");
+  assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
   assert_eq!(
     metadata
       .entity_tag_value()
@@ -65,10 +71,43 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .client_hints(),
     ["Sec-CH-UA"]
   );
+  assert_eq!(
+    response
+      .cdn_cache_control()
+      .expect("CDN-Cache-Control should parse")
+      .expect("CDN-Cache-Control should be present")
+      .directives()[0]
+      .value(),
+    Some("600")
+  );
   assert_eq!(fetch_site.header_value(), "same-origin");
   assert_eq!(fetch_mode.header_value(), "navigate");
   assert_eq!(fetch_dest.header_value(), "document");
   assert_eq!(fetch_user.header_value(), "?1");
+}
+
+#[test]
+fn response_facade_parses_cdn_cache_control_and_absent_metadata() {
+  let response = HttpResponse::ok("")
+    .header("CDN-Cache-Control", "max-age=600, cdn-example=\"a, b\"")
+    .header("cdn-cache-control", "immutable");
+
+  let metadata = response
+    .cdn_cache_control()
+    .expect("CDN-Cache-Control should parse")
+    .expect("CDN-Cache-Control should be present");
+
+  assert_eq!(metadata.len(), 3);
+  assert_eq!(metadata.directives()[1].name(), "cdn-example");
+  assert_eq!(metadata.directives()[1].value(), Some("a, b"));
+  let malformed = HttpResponse::ok("").header("CDN-Cache-Control", "max-age=");
+  assert!(malformed.cdn_cache_control().is_err());
+
+  let absent = HttpResponse::ok("");
+  assert!(absent
+    .cdn_cache_control()
+    .expect("missing header should be valid")
+    .is_none());
 }
 
 #[test]

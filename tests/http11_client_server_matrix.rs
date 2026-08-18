@@ -87,6 +87,17 @@ fn cache_control_response(values: &[&str]) -> Vec<u8> {
   response.into_bytes()
 }
 
+fn cdn_cache_control_response(values: &[&str]) -> Vec<u8> {
+  let mut response = String::from("HTTP/1.1 200 OK\r\n");
+  for value in values {
+    response.push_str("CDN-Cache-Control: ");
+    response.push_str(value);
+    response.push_str("\r\n");
+  }
+  response.push_str("Content-Length: 2\r\n\r\nOK");
+  response.into_bytes()
+}
+
 fn vary_response(values: &[&str]) -> Vec<u8> {
   let mut response = String::from("HTTP/1.1 200 OK\r\n");
   for value in values {
@@ -1579,6 +1590,27 @@ fn assert_cache_control_helper_rejects_but_preserves_response(name: &str, raw_re
   assert!(
     response.cache_control().is_err(),
     "{name} helper should reject invalid Cache-Control"
+  );
+  assert_eq!("OK", response.body().string().unwrap(), "{name}");
+
+  handle.join().expect("raw response server thread");
+}
+
+fn assert_cdn_cache_control_helper_rejects_but_preserves_response(
+  name: &str,
+  raw_response: Vec<u8>,
+) {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/cdn-cache-control-invalid", addr))
+    .emit()
+    .unwrap_or_else(|err| panic!("{name} response should remain parseable: {err}"));
+
+  assert!(
+    response.cdn_cache_control().is_err(),
+    "{name} helper should reject invalid CDN-Cache-Control"
   );
   assert_eq!("OK", response.body().string().unwrap(), "{name}");
 
@@ -3298,6 +3330,55 @@ fn sync_client_cache_control_matrix_keeps_cache_engine_non_goals_explicit() {
   assert_eq!("OK", response.body().string().unwrap());
 
   handle.join().expect("raw response server thread");
+}
+
+#[test]
+fn sync_client_parses_cdn_cache_control_response_metadata_without_policy() {
+  const HEADERS: &[(&str, &str)] = &[
+    (
+      "CDN-Cache-Control",
+      "max-age=600, stale-while-revalidate=30, cdn-example=\"a, b\"",
+    ),
+    ("cdn-cache-control", "immutable"),
+  ];
+  let (addr, handle) = spawn_metadata_response_server(HEADERS);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/cdn-cache-control", addr))
+    .emit()
+    .expect("CDN-Cache-Control response should parse");
+
+  let metadata = response
+    .cdn_cache_control()
+    .expect("CDN-Cache-Control metadata should parse")
+    .expect("CDN-Cache-Control should be present");
+
+  assert_eq!(metadata.len(), 4);
+  assert_eq!(metadata.directives()[0].name(), "max-age");
+  assert_eq!(metadata.directives()[0].value(), Some("600"));
+  assert_eq!(metadata.directives()[2].name(), "cdn-example");
+  assert_eq!(metadata.directives()[2].value(), Some("a, b"));
+  assert_eq!(metadata.directives()[3].name(), "immutable");
+  assert_eq!("OK", response.body().string().unwrap());
+
+  handle.join().expect("metadata response server thread");
+}
+
+#[test]
+fn sync_client_cdn_cache_control_helper_rejects_invalid_and_bounded_metadata() {
+  assert_cdn_cache_control_helper_rejects_but_preserves_response(
+    "invalid CDN-Cache-Control directive",
+    cdn_cache_control_response(&["max-age="]),
+  );
+  assert_cdn_cache_control_helper_rejects_but_preserves_response(
+    "too many CDN-Cache-Control directives",
+    cdn_cache_control_response(&[&fixtures::cache_control::too_many_directives_value()]),
+  );
+  assert_cdn_cache_control_helper_rejects_but_preserves_response(
+    "oversized CDN-Cache-Control value",
+    cdn_cache_control_response(&[&fixtures::cache_control::oversized_value()]),
+  );
 }
 
 #[test]
