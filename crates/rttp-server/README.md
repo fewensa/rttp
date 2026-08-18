@@ -53,6 +53,37 @@ expose the original request.
 These helpers parse request metadata only; they do not sniff, decode,
 negotiate, cache, redirect, retry, or select representations.
 
+## Request and response Connection metadata
+
+Handlers can call `Request::connection()`, `HttpRequest::connection()`, and
+`HttpResponse::connection()` to observe bounded typed `Connection` header
+metadata from already-retained HTTP/1 fields. The helpers combine
+case-insensitive fields in wire order into `HttpConnection` and preserve token
+spelling, including duplicates. Absent fields return `Ok(None)`. Malformed,
+empty, oversized, or over-limit values return a parser error while
+`Request::header()` and `HttpResponse` raw headers continue to expose the
+original fields. HTTP/2 continues to reject inbound `Connection` at decode
+time.
+
+These helpers parse HTTP/1 header metadata only. They do not change
+keep-alive, hop-by-hop stripping, upgrade/h2c handoff, or HTTP/2 rejection.
+
+## Request Transfer-Encoding framing metadata
+
+Handlers can call `Request::transfer_encoding()` and
+`HttpRequest::transfer_encoding()` to observe bounded typed
+`Transfer-Encoding` framing metadata from already-validated HTTP/1 state.
+The helpers combine case-insensitive fields in wire order into
+`HttpTransferEncoding` and require a sole `chunked` coding, matching existing
+HTTP/1 framing. Absent fields return `Ok(None)`. Malformed, stacked,
+duplicate, oversized, or over-limit values return a parser error while
+`Request::header()` and `Request::body()` continue to expose the original
+request. HTTP/2 continues to reject `Transfer-Encoding` at decode time.
+
+These helpers parse framing metadata only. They do not change
+`request_body_kind`, decode a chunked body, negotiate `TE`, or alter
+Content-Length handling.
+
 ## Fetch Metadata request metadata
 
 Handlers can call `Request::sec_fetch_site()`, `sec_fetch_mode()`,
@@ -86,3 +117,33 @@ without changing those raw fields.
 
 These helpers only declare and parse metadata. They do not calculate hashes,
 verify bodies, canonicalize representations, sign values, or enforce integrity.
+
+## Want-Repr-Digest request metadata
+
+Handlers can call `Request::want_repr_digest()` and
+`HttpRequest::want_repr_digest()` to observe bounded typed `Want-Repr-Digest`
+algorithm preferences. The helpers combine case-insensitive fields in wire
+order into `HttpWantReprDigest`. Each entry exposes `algorithm()` and
+`preference()` (`0` through `10`). Absent metadata returns `Ok(None)`.
+Malformed, oversized, duplicate, empty, or over-limit values return a parse
+error while `Request::header()` and `Request::body()` continue to expose the
+original request.
+
+These helpers parse request metadata only. They do not select an algorithm,
+compute or verify representation digests, attach `Repr-Digest`, or negotiate a
+representation.
+
+## Host request authority
+
+Handlers can call `Request::host()` and `HttpRequest::host()` to observe the
+effective `Host` authority as bounded `HttpHost` metadata. The helpers parse
+the stored case-insensitive `Host` field as `host[:port]`, including bracketed
+IPv6, using the inbound Host grammar. Absent metadata returns `Ok(None)`.
+Duplicate or malformed values return a parse error while `Request::header()`
+and `Request::body()` continue to expose the original request. HTTP/2
+`:authority` remains mapped onto `header("host")`; `host()` then parses that
+single mapped value.
+
+These helpers parse request metadata only. They do not select a virtual host,
+compare origins, apply scheme defaults, or change HTTP/1 decode or HTTP/2
+request-target handling.
