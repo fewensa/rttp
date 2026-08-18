@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
-use sfv::{Dictionary, Parser};
+use sfv::{Dictionary, FieldType, Parser};
 
 pub const MAX_NO_VARY_SEARCH_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_NO_VARY_SEARCH_PARAMETERS: usize = 256;
@@ -196,10 +196,19 @@ fn parse_member(member: &str, metadata: &mut NoVarySearch) -> Result<(), NoVaryS
     ),
     None => (member, None),
   };
-  if !is_structured_key(key) {
-    return Err(NoVarySearchParseError::new("invalid No-Vary-Search key"));
+  if is_structured_key(key) {
+    return parse_keyed_member(key, value, metadata);
   }
 
+  let extension = parse_extension_member(member)?;
+  store_extension(extension, metadata)
+}
+
+fn parse_keyed_member(
+  key: &str,
+  value: Option<&str>,
+  metadata: &mut NoVarySearch,
+) -> Result<(), NoVarySearchParseError> {
   match key {
     "key-order" => {
       metadata.key_order = Some(parse_boolean(value)?);
@@ -218,29 +227,70 @@ fn parse_member(member: &str, metadata: &mut NoVarySearch) -> Result<(), NoVaryS
       metadata.except = parse_string_list(value)?;
     }
     _ => {
-      validate_extension_member(key, value)?;
-      metadata.extensions.retain(|extension| extension.key != key);
-      if metadata.extensions.len() >= MAX_NO_VARY_SEARCH_EXTENSIONS {
-        return Err(NoVarySearchParseError::new(
-          "too many No-Vary-Search extensions",
-        ));
-      }
-      metadata.extensions.push(NoVarySearchExtension {
-        key: key.to_owned(),
-        value: value.map(str::to_owned),
-      });
+      let extension = parse_extension_parts(key, value)?;
+      store_extension(extension, metadata)?;
     }
   }
 
   Ok(())
 }
 
-fn validate_extension_member(key: &str, value: Option<&str>) -> Result<(), NoVarySearchParseError> {
+fn parse_extension_parts(
+  key: &str,
+  value: Option<&str>,
+) -> Result<NoVarySearchExtension, NoVarySearchParseError> {
   let member = value.map_or_else(|| key.to_owned(), |value| format!("{key}={value}"));
-  Parser::new(&member)
+  parse_extension_member(&member)
+}
+
+fn parse_extension_member(member: &str) -> Result<NoVarySearchExtension, NoVarySearchParseError> {
+  let dictionary = Parser::new(member)
     .parse::<Dictionary>()
-    .map(|_| ())
-    .map_err(|_| NoVarySearchParseError::new("invalid No-Vary-Search extension"))
+    .map_err(|_| NoVarySearchParseError::new("invalid No-Vary-Search extension"))?;
+  let (key, _) = dictionary
+    .first()
+    .ok_or_else(|| NoVarySearchParseError::new("invalid No-Vary-Search extension"))?;
+  if dictionary.len() != 1 {
+    return Err(NoVarySearchParseError::new(
+      "invalid No-Vary-Search extension",
+    ));
+  }
+  let key = key.to_string();
+  let serialized = dictionary
+    .serialize()
+    .ok_or_else(|| NoVarySearchParseError::new("invalid No-Vary-Search extension"))?;
+  let suffix = serialized
+    .strip_prefix(&key)
+    .ok_or_else(|| NoVarySearchParseError::new("invalid No-Vary-Search extension"))?;
+
+  let value = match suffix.as_bytes().first() {
+    None => None,
+    Some(b'=') => Some(suffix[1..].to_owned()),
+    Some(b';') => Some(format!("?1{suffix}")),
+    _ => {
+      return Err(NoVarySearchParseError::new(
+        "invalid No-Vary-Search extension",
+      ));
+    }
+  };
+
+  Ok(NoVarySearchExtension { key, value })
+}
+
+fn store_extension(
+  extension: NoVarySearchExtension,
+  metadata: &mut NoVarySearch,
+) -> Result<(), NoVarySearchParseError> {
+  metadata
+    .extensions
+    .retain(|existing| existing.key != extension.key);
+  if metadata.extensions.len() >= MAX_NO_VARY_SEARCH_EXTENSIONS {
+    return Err(NoVarySearchParseError::new(
+      "too many No-Vary-Search extensions",
+    ));
+  }
+  metadata.extensions.push(extension);
+  Ok(())
 }
 
 fn parse_boolean(value: Option<&str>) -> Result<bool, NoVarySearchParseError> {

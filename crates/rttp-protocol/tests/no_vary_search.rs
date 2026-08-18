@@ -78,6 +78,29 @@ fn validates_extension_values_as_structured_fields() {
 }
 
 #[test]
+fn parses_parameterized_implicit_true_extensions() {
+  let metadata = NoVarySearch::parse("x;flag, y;flag=1")
+    .expect("parameterized implicit true extensions should parse");
+
+  assert_eq!(metadata.extensions()[0].key(), "x");
+  assert_eq!(metadata.extensions()[0].value(), Some("?1;flag"));
+  assert_eq!(metadata.extensions()[1].key(), "y");
+  assert_eq!(metadata.extensions()[1].value(), Some("?1;flag=1"));
+  assert_eq!(metadata.header_value(), "x=?1;flag, y=?1;flag=1");
+}
+
+#[test]
+fn parameterized_extension_duplicates_use_last_member() {
+  let metadata = NoVarySearch::parse("x;old, x;flag=1")
+    .expect("duplicate parameterized extension keys should use the last member");
+
+  assert_eq!(1, metadata.extensions().len());
+  assert_eq!(metadata.extensions()[0].key(), "x");
+  assert_eq!(metadata.extensions()[0].value(), Some("?1;flag=1"));
+  assert_eq!(metadata.header_value(), "x=?1;flag=1");
+}
+
+#[test]
 fn rejects_invalid_no_vary_search_values() {
   for value in [
     "",
