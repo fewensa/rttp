@@ -27,6 +27,7 @@ pub mod content_encoding;
 pub mod content_type;
 pub mod cookie;
 pub mod cross_origin_embedder_policy;
+pub mod cross_origin_embedder_policy_report_only;
 pub mod cross_origin_opener_policy;
 pub mod cross_origin_resource_policy;
 pub mod digest;

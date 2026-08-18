@@ -4,6 +4,7 @@ use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::content_encoding::ContentEncoding;
 use rttp_protocol::content_type::ContentType;
 use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
+use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedderPolicyReportOnly;
 use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::entity_tag::{EntityTag, IfMatch};
 use rttp_protocol::fetch_metadata::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
@@ -49,6 +50,9 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let cross_origin_embedder_policy =
     CrossOriginEmbedderPolicy::parse(r#"require-corp; report-to="coep""#)
       .expect("Cross-Origin-Embedder-Policy should parse");
+  let cross_origin_embedder_policy_report_only =
+    CrossOriginEmbedderPolicyReportOnly::parse(r#"require-corp; report-to="coep""#)
+      .expect("Cross-Origin-Embedder-Policy-Report-Only should parse");
   let strict_transport_security =
     StrictTransportSecurity::parse("max-age=31536000; includeSubDomains; preload")
       .expect("Strict-Transport-Security should parse");
@@ -82,6 +86,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(x_content_type_options.header_value(), "nosniff");
   assert_eq!(x_frame_options.header_value(), "DENY");
   assert_eq!(cross_origin_embedder_policy.header_value(), "require-corp");
+  assert_eq!(
+    cross_origin_embedder_policy_report_only.header_value(),
+    "require-corp"
+  );
   assert_eq!(
     strict_transport_security.header_value(),
     "max-age=31536000; includeSubDomains; preload"

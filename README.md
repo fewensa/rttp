@@ -38,6 +38,14 @@ parse, validate, normalize, and expose bounded protocol metadata; they do not
 imply cache engines, browser policy, authentication decisions, retries,
 representation selection, or body transformation.
 
+Typed response metadata includes `Cross-Origin-Embedder-Policy` and
+`Cross-Origin-Embedder-Policy-Report-Only`. Both accept the directives
+`unsafe-none`, `require-corp`, and `credentialless` as singleton bounded
+structured-field items; well-formed parameters such as `report-to` are accepted
+as syntax and normalized away by typed builders. RTTP exposes these values for
+application use only: it does not enforce browser embedder policy, retain
+reporting metadata, deliver reports, or schedule report delivery.
+
 ## Local verification
 
 Run the same checks as GitHub CI from the repository root before opening a pull request:

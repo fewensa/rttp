@@ -3,8 +3,9 @@ use rttp_server::server::{
   HttpAccessControlRequestHeaders, HttpAccessControlRequestHeadersParseError,
   HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError,
   HttpAccessControlRequestPrivateNetwork, HttpAccessControlRequestPrivateNetworkParseError,
-  HttpConditionalMetadata, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpPreferenceKind,
-  HttpRequest, HttpResponse, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
+  HttpConditionalMetadata, HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy,
+  HttpEntityTag, HttpPreferenceKind, HttpRequest, HttpResponse, SecFetchDest, SecFetchMode,
+  SecFetchSite, SecFetchUser,
 };
 
 #[test]
@@ -39,6 +40,9 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("revision-42"));
   let policy: HttpCrossOriginResourcePolicy = HttpCrossOriginResourcePolicy::parse("same-origin")
     .expect("Cross-Origin-Resource-Policy should parse");
+  let report_only_policy: HttpCrossOriginEmbedderPolicyReportOnly =
+    HttpCrossOriginEmbedderPolicyReportOnly::parse("require-corp")
+      .expect("Cross-Origin-Embedder-Policy-Report-Only should parse");
   let response = HttpResponse::ok("")
     .with_accept_ch(["Sec-CH-UA"])
     .expect("Accept-CH should be accepted");
@@ -60,6 +64,7 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(request_private_network.header_value(), "true");
   assert!(request_private_network_error.is_err());
   assert_eq!(policy.header_value(), "same-origin");
+  assert_eq!(report_only_policy.header_value(), "require-corp");
   assert_eq!(
     metadata
       .entity_tag_value()
