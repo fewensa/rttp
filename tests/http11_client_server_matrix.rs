@@ -54,6 +54,62 @@ fn observe_cors_preflight(request: Request) -> ObservedCorsPreflight {
   }
 }
 
+#[derive(Debug, PartialEq)]
+struct ObservedSignatureMetadata {
+  raw_signature: Option<String>,
+  raw_signature_input: Option<String>,
+  signature: Result<Option<String>, String>,
+  signature_input: Result<Option<String>, String>,
+}
+
+fn observe_signature_metadata(request: &Request) -> ObservedSignatureMetadata {
+  ObservedSignatureMetadata {
+    raw_signature: request.header("Signature").map(str::to_string),
+    raw_signature_input: request.header("Signature-Input").map(str::to_string),
+    signature: request
+      .signature()
+      .map(|signature| signature.map(|signature| signature.header_value()))
+      .map_err(|error| error.to_string()),
+    signature_input: request
+      .signature_input()
+      .map(|signature_input| signature_input.map(|signature_input| signature_input.header_value()))
+      .map_err(|error| error.to_string()),
+  }
+}
+
+fn spawn_facade_signature_observer() -> (
+  std::net::SocketAddr,
+  mpsc::Receiver<ObservedSignatureMetadata>,
+  thread::JoinHandle<()>,
+) {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind signature facade server");
+  let addr = server.local_addr().expect("signature facade addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = observe_signature_metadata(&request);
+        let mut response = HttpResponse::ok("OK");
+        if let (Ok(Some(signature_input)), Ok(Some(signature))) =
+          (request.signature_input(), request.signature())
+        {
+          response = response
+            .with_signature_input(signature_input.header_value())
+            .expect("echo Signature-Input")
+            .with_signature(signature.header_value())
+            .expect("echo Signature");
+        }
+        observed_tx
+          .send(observed)
+          .expect("send observed signature metadata");
+        response
+      })
+      .expect("serve signature facade request");
+  });
+
+  (addr, observed_rx, handle)
+}
+
 fn spawn_facade_cors_preflight_observer() -> (
   std::net::SocketAddr,
   mpsc::Receiver<ObservedCorsPreflight>,
@@ -705,6 +761,49 @@ fn sync_client_and_server_exchange_cross_origin_opener_policy_metadata_without_p
 }
 
 #[test]
+fn sync_client_and_server_exchange_alt_svc_metadata_without_connection_policy() {
+  const HEADERS: &[(&str, &str)] = &[(
+    "Alt-Svc",
+    "h3=\":443\"; ma=3600; persist=1; region=\"us-east\"",
+  )];
+  let (addr, handle) = spawn_metadata_response_server(HEADERS);
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/alt-svc"))
+    .emit()
+    .expect("Alt-Svc response should parse without connection policy");
+  let alt_svc = response
+    .alt_svc()
+    .expect("Alt-Svc should parse")
+    .expect("Alt-Svc should be present");
+  let alternative = &alt_svc.alternatives()[0];
+
+  assert_eq!(200, response.code());
+  assert_eq!("OK", response.body().string().unwrap());
+  assert_eq!(
+    Some(&"h3=\":443\"; ma=3600; persist=1; region=\"us-east\"".to_string()),
+    response.header_value("Alt-Svc")
+  );
+  assert!(!alt_svc.is_clear());
+  assert_eq!(1, alt_svc.len());
+  assert_eq!("h3", alternative.protocol_id());
+  assert_eq!(":443", alternative.authority());
+  assert_eq!(Some(3600), alternative.max_age());
+  assert_eq!(Some(true), alternative.persist());
+  assert_eq!(
+    vec![("region", Some("us-east"))],
+    alternative
+      .parameters()
+      .iter()
+      .map(|parameter| (parameter.name(), parameter.value()))
+      .collect::<Vec<_>>()
+  );
+
+  handle.join().expect("Alt-Svc server thread");
+}
+
+#[test]
 fn sync_client_preserves_duplicate_cross_origin_resource_policy_fields_without_policy() {
   const HEADERS: &[(&str, &str)] = &[
     ("Cross-Origin-Resource-Policy", "same-origin"),
@@ -929,6 +1028,215 @@ fn facade_server_combines_multi_header_cors_preflight_metadata_without_policy() 
   handle
     .join()
     .expect("multi-header CORS preflight facade server thread");
+}
+
+#[test]
+fn facade_client_and_server_exchange_valid_signature_metadata_without_policy() {
+  let (addr, observed_rx, handle) = spawn_facade_signature_observer();
+
+  let response = rttp::Http::client()
+    .post()
+    .url(format!("http://{addr}/signed"))
+    .signature_input(r#"sig1=("@method" "@authority" "@path");created=1618884473;keyid="test-key""#)
+    .expect("Signature-Input should be accepted")
+    .signature("sig1=:YWJj:")
+    .expect("Signature should be accepted")
+    .emit()
+    .expect("signed request should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    Some("sig1=:YWJj:"),
+    response
+      .signature()
+      .expect("client Signature should parse")
+      .map(|signature| signature.header_value())
+      .as_deref()
+  );
+  assert_eq!(
+    Some(r#"sig1=("@method" "@authority" "@path");created=1618884473;keyid="test-key""#),
+    response
+      .signature_input()
+      .expect("client Signature-Input should parse")
+      .map(|signature_input| signature_input.header_value())
+      .as_deref()
+  );
+  assert_eq!(
+    ObservedSignatureMetadata {
+      raw_signature: Some("sig1=:YWJj:".to_string()),
+      raw_signature_input: Some(
+        r#"sig1=("@method" "@authority" "@path");created=1618884473;keyid="test-key""#.to_string()
+      ),
+      signature: Ok(Some("sig1=:YWJj:".to_string())),
+      signature_input: Ok(Some(
+        r#"sig1=("@method" "@authority" "@path");created=1618884473;keyid="test-key""#.to_string()
+      )),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe valid signature metadata")
+  );
+  handle.join().expect("valid signature facade server thread");
+}
+
+#[test]
+fn facade_server_reports_absent_signature_metadata_without_policy() {
+  let (addr, observed_rx, handle) = spawn_facade_signature_observer();
+
+  let response = rttp::Http::client()
+    .post()
+    .url(format!("http://{addr}/signed-absent"))
+    .emit()
+    .expect("request without signature metadata should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    None,
+    response
+      .signature()
+      .expect("absent client Signature should parse")
+  );
+  assert_eq!(
+    None,
+    response
+      .signature_input()
+      .expect("absent client Signature-Input should parse")
+  );
+  assert_eq!(
+    ObservedSignatureMetadata {
+      raw_signature: None,
+      raw_signature_input: None,
+      signature: Ok(None),
+      signature_input: Ok(None),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe absent signature metadata")
+  );
+  handle
+    .join()
+    .expect("absent signature facade server thread");
+}
+
+#[test]
+fn facade_server_rejects_malformed_signature_metadata_without_losing_raw_headers() {
+  let (addr, observed_rx, handle) = spawn_facade_signature_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect malformed signature request");
+  stream
+    .write_all(
+      b"POST /signed-malformed HTTP/1.1\r\nHost: 127.0.0.1\r\nSignature: not-a-signature\r\nSignature-Input: not-an-input\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write malformed signature request");
+
+  let observed = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe malformed signature metadata");
+  assert_eq!(Some("not-a-signature".to_string()), observed.raw_signature);
+  assert_eq!(
+    Some("not-an-input".to_string()),
+    observed.raw_signature_input
+  );
+  assert!(observed.signature.is_err());
+  assert!(observed.signature_input.is_err());
+
+  handle
+    .join()
+    .expect("malformed signature facade server thread");
+}
+
+#[test]
+fn facade_server_combines_multi_header_signature_metadata_without_policy() {
+  let (addr, observed_rx, handle) = spawn_facade_signature_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect multi-header signature request");
+  stream
+    .write_all(
+      b"POST /signed-multi-header HTTP/1.1\r\nHost: 127.0.0.1\r\nSignature: sig1=:YWJj:\r\nsignature: sig-b24=:ZGVm:\r\nSignature-Input: sig1=(\"@method\")\r\nsignature-input: sig-b24=(\"@status\")\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write multi-header signature request");
+
+  let observed = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe multi-header signature metadata");
+  assert_eq!(Some("sig1=:YWJj:".to_string()), observed.raw_signature);
+  assert_eq!(
+    Some(r#"sig1=("@method")"#.to_string()),
+    observed.raw_signature_input
+  );
+  assert_eq!(
+    Ok(Some("sig1=:YWJj:, sig-b24=:ZGVm:".to_string())),
+    observed.signature
+  );
+  assert_eq!(
+    Ok(Some(r#"sig1=("@method"), sig-b24=("@status")"#.to_string())),
+    observed.signature_input
+  );
+
+  handle
+    .join()
+    .expect("multi-header signature facade server thread");
+}
+
+#[test]
+fn facade_server_parses_signature_fields_independently_without_policy() {
+  let (addr, observed_rx, handle) = spawn_facade_signature_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect independent signature request");
+  stream
+    .write_all(
+      b"POST /signed-independent HTTP/1.1\r\nHost: 127.0.0.1\r\nSignature-Input: sig1=(\"@method\" \"@authority\" \"@path\");created=1618884473;keyid=\"test-key\"\r\nSignature: not-a-signature\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write independent signature request");
+
+  let observed = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe independent signature metadata");
+  assert_eq!(Some("not-a-signature".to_string()), observed.raw_signature);
+  assert_eq!(
+    Some(
+      r#"sig1=("@method" "@authority" "@path");created=1618884473;keyid="test-key""#.to_string()
+    ),
+    observed.raw_signature_input
+  );
+  assert!(observed.signature.is_err());
+  assert_eq!(
+    Ok(Some(
+      r#"sig1=("@method" "@authority" "@path");created=1618884473;keyid="test-key""#.to_string()
+    )),
+    observed.signature_input
+  );
+
+  handle
+    .join()
+    .expect("independent signature facade server thread");
+}
+
+#[test]
+fn facade_server_parses_signature_input_independently_when_signature_is_valid() {
+  let (addr, observed_rx, handle) = spawn_facade_signature_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect reverse independent signature request");
+  stream
+    .write_all(
+      b"POST /signed-independent-reverse HTTP/1.1\r\nHost: 127.0.0.1\r\nSignature: sig1=:YWJj:\r\nSignature-Input: not-an-input\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write reverse independent signature request");
+
+  let observed = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe reverse independent signature metadata");
+  assert_eq!(Some("sig1=:YWJj:".to_string()), observed.raw_signature);
+  assert_eq!(
+    Some("not-an-input".to_string()),
+    observed.raw_signature_input
+  );
+  assert_eq!(Ok(Some("sig1=:YWJj:".to_string())), observed.signature);
+  assert!(observed.signature_input.is_err());
+
+  handle
+    .join()
+    .expect("reverse independent signature facade server thread");
 }
 
 #[test]
