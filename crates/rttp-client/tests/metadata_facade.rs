@@ -1,3 +1,4 @@
+use rttp_client::response::ReprDigest;
 use rttp_client::response::{
   AcceptCh, AccessControlAllowHeaders, AccessControlAllowHeadersParseError,
   AccessControlAllowMethods, AccessControlAllowMethodsParseError, AccessControlExposeHeaders,
@@ -91,6 +92,16 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(
     proxy_authentication_info.parameter("nextnonce"),
     Some("6629fae49393a05397450978507c4ef1")
+  );
+}
+
+#[test]
+fn response_facade_exports_repr_digest_metadata() {
+  let repr_digest = ReprDigest::parse("sha-512=:ZGVm:").expect("Repr-Digest should parse");
+
+  assert_eq!(
+    repr_digest.entry("sha-512").map(|entry| entry.value()),
+    Some(&b"def"[..])
   );
 }
 

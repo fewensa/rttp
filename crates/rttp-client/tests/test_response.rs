@@ -1,7 +1,7 @@
 use rttp_client::response::{
   AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType,
   CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy,
-  CrossOriginResourcePolicy, Digest, HttpClearSiteData, HttpSetCookies, LinkValues,
+  CrossOriginResourcePolicy, HttpClearSiteData, HttpSetCookies, LinkValues,
   ProxyAuthenticationInfo, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
   StrictTransportSecurity, Warning,
 };
@@ -1235,7 +1235,8 @@ fn test_digest_response_helpers_parse_bounded_digest_fields() {
   let raw = concat!(
     "HTTP/1.1 200 OK\r\n",
     "Content-Digest: sha-256=:YWJj:, sha-512=:ZGVm:\r\n",
-    "Repr-Digest: sha-256=:Z2hp:\r\n",
+    "Repr-Digest: sha-256=:Z2hp:;foo=bar\r\n",
+    "Repr-Digest: sha-512=:amts:\r\n",
     "Content-Length: 0\r\n\r\n"
   );
   let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
@@ -1259,10 +1260,16 @@ fn test_digest_response_helpers_parse_bounded_digest_fields() {
     .repr_digest()
     .expect("Repr-Digest should parse")
     .expect("Repr-Digest should be present");
+  assert_eq!(2, repr_digest.len());
   assert_eq!(
     Some(&b"ghi"[..]),
     repr_digest.entry("sha-256").map(|entry| entry.value())
   );
+  assert_eq!(
+    Some(&b"jkl"[..]),
+    repr_digest.entry("sha-512").map(|entry| entry.value())
+  );
+  assert_eq!("sha-256=:Z2hp:, sha-512=:amts:", repr_digest.header_value());
 }
 
 #[test]
@@ -1396,6 +1403,8 @@ fn test_digest_response_helpers_recover_from_empty_duplicate_and_oversized_field
     ("Content-Digest", ""),
     ("Content-Digest", "sha-256=:YWJj:, sha-256=:ZGVm:"),
     ("Repr-Digest", "sha-256=:YWJj:, sha-256=:ZGVm:"),
+    ("Repr-Digest", "sha-256=:not-base64!:"),
+    ("Repr-Digest", "sha-256=:YWJj:;foo="),
   ] {
     let raw = format!("HTTP/1.1 200 OK\r\n{header}: {value}\r\nContent-Length: 0\r\n\r\n");
     let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
@@ -1409,8 +1418,12 @@ fn test_digest_response_helpers_recover_from_empty_duplicate_and_oversized_field
     assert_eq!(Some(&value.to_string()), response.header_value(header));
   }
 
-  let oversized = format!("sha-256=:{}:", "A".repeat(64 * 1024));
-  assert!(Digest::parse(oversized).is_err());
+  let oversized = format!("sha-256=:{}:", "A".repeat(64 * 1024 + 1));
+  let raw = format!("HTTP/1.1 200 OK\r\nRepr-Digest: {oversized}\r\nContent-Length: 0\r\n\r\n");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response should remain usable");
+  assert!(response.repr_digest().is_err());
+  assert_eq!(Some(&oversized), response.header_value("Repr-Digest"));
 }
 
 #[test]
