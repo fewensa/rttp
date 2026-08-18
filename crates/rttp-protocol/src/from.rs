@@ -287,3 +287,14 @@ fn is_display_word_byte(byte: u8) -> bool {
 fn invalid_value() -> FromParseError {
   FromParseError::new("invalid From header value")
 }
+
+#[cfg(test)]
+mod tests {
+  use super::From;
+
+  #[test]
+  fn rejects_display_names_starting_with_period() {
+    assert!(From::parse(". Ops <ops@example.test>").is_err());
+    assert!(From::parse(". <ops@example.test>").is_err());
+  }
+}
