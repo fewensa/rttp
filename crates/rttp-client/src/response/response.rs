@@ -21,6 +21,7 @@ use rttp_protocol::access_control_allow_methods::AccessControlAllowMethods;
 use rttp_protocol::access_control_allow_origin::AccessControlAllowOrigin;
 use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::access_control_max_age::AccessControlMaxAge;
+use rttp_protocol::age::Age;
 use rttp_protocol::clear_site_data::ClearSiteData;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::cookie::HttpSetCookies;
@@ -303,11 +304,15 @@ impl Response {
     self.header_value("last-modified")
   }
 
+  /// Parses bounded `Age` response metadata without applying freshness or cache policy.
   pub fn age(&self) -> error::Result<Option<u64>> {
-    self
-      .header_value("age")
-      .map(|value| parse_age_delta_seconds(value).map(Some))
-      .unwrap_or(Ok(None))
+    let values = self.header_values("age");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Age::parse_values(values.into_iter().map(String::as_str))
+      .map(|age| Some(age.seconds()))
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   pub fn expires(&self) -> error::Result<Option<SystemTime>> {
@@ -2597,15 +2602,6 @@ fn parse_delta_seconds(
   value
     .parse::<u64>()
     .map_err(|_| error::bad_response(format!("Invalid Cache-Control {name} delta-seconds")))
-}
-
-fn parse_age_delta_seconds(value: &str) -> error::Result<u64> {
-  if value.is_empty() || !value.chars().all(|ch| ch.is_ascii_digit()) {
-    return Err(error::bad_response("Invalid Age delta-seconds"));
-  }
-  value
-    .parse::<u64>()
-    .map_err(|_| error::bad_response("Invalid Age delta-seconds"))
 }
 
 fn split_field_names(value: &str) -> Vec<String> {

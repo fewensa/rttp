@@ -1,10 +1,10 @@
 use rttp_client::response::{
   AcceptCh, AccessControlAllowHeaders, AccessControlAllowHeadersParseError,
   AccessControlAllowMethods, AccessControlAllowMethodsParseError, AccessControlExposeHeaders,
-  AccessControlMaxAge, AccessControlMaxAgeParseError, AltSvc, CrossOriginEmbedderPolicy,
-  CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest, HttpClearSiteData, PreferenceApplied,
-  Priority, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ReferrerPolicy,
-  ReferrerPolicyToken, ServerTiming, Trailer,
+  AccessControlMaxAge, AccessControlMaxAgeParseError, Age, AgeParseError, AltSvc,
+  CrossOriginEmbedderPolicy, CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest,
+  HttpClearSiteData, PreferenceApplied, Priority, ProxyAuthenticationInfo,
+  ProxyAuthenticationInfoParseError, ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Trailer,
 };
 use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 
@@ -22,6 +22,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let max_age = AccessControlMaxAge::parse("60").expect("Access-Control-Max-Age should parse");
   let _: AccessControlMaxAgeParseError =
     AccessControlMaxAge::parse("").expect_err("empty Access-Control-Max-Age should be rejected");
+  let age = Age::parse("60").expect("Age should parse");
+  let _: AgeParseError = Age::parse("").expect_err("empty Age should be rejected");
   let expose_headers = AccessControlExposeHeaders::parse("X-Request-Id")
     .expect("Access-Control-Expose-Headers should parse");
   let clear_site_data =
@@ -51,6 +53,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(allow_methods.methods(), ["GET", "POST"]);
   assert_eq!(allow_headers.field_names(), ["x-request-id", "etag"]);
   assert_eq!(max_age.seconds(), 60);
+  assert_eq!(age.seconds(), 60);
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
   assert_eq!(clear_site_data.directives().len(), 1);
   assert_eq!(digest.entries().len(), 1);

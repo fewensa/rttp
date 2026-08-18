@@ -8,6 +8,18 @@ and server crates.
 
 This crate supports rttp's implementation; its public API is not a standalone
 application-level HTTP interface.
+
+## Age
+
+`age` parses a singleton HTTP `Age` field as non-negative `1*DIGIT`
+delta-seconds that fit in `u64`. Each field value is bounded to 64 KiB. A
+second field is rejected after every supplied field is bound-checked.
+Surrounding SP and HTAB are trimmed as optional whitespace. Empty values,
+signed or plus-prefixed numbers, fractions, comma-lists, non-digits, overflow
+beyond `u64::MAX`, and forbidden ASCII control bytes are errors. This parser
+reports declared metadata only; it does not calculate freshness, adjust age
+over elapsed time, store cache entries, or apply cache policy.
+
 ## Content-Encoding
 
 `content_encoding` parses one or more `Content-Encoding` field values into an

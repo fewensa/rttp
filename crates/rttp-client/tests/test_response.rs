@@ -3292,6 +3292,42 @@ fn test_parse_age_rejects_invalid_helper_values_without_rejecting_response() {
 }
 
 #[test]
+fn test_parse_age_rejects_duplicate_and_oversized_helper_values_without_rejecting_response() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Age: 5\r\n",
+    "age: 12\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response with duplicate Age remains usable");
+
+  assert!(
+    response.age().is_err(),
+    "age helper should reject duplicates"
+  );
+  assert_eq!(Some(&"5".to_string()), response.header_value("Age"));
+  assert_eq!(
+    vec![&"5".to_string(), &"12".to_string()],
+    response.header_values("Age")
+  );
+
+  let oversized = "0".repeat(64 * 1024 + 1);
+  let raw = format!("HTTP/1.1 200 OK\r\nAge: {oversized}\r\nContent-Length: 2\r\n\r\nOK");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response with oversized Age remains usable");
+
+  assert!(
+    response.age().is_err(),
+    "age helper should reject oversized values"
+  );
+  assert_eq!(Some(&oversized), response.header_value("Age"));
+  assert_eq!(vec![&oversized], response.header_values("Age"));
+}
+
+#[test]
 fn test_parse_expires_rejects_invalid_helper_values_without_rejecting_response() {
   let invalid_values = ["", "not a date", "Sun, 06 Nov 1994 08:49:37 PST"];
 
