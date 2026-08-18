@@ -5,9 +5,10 @@ use rttp_client::response::{
   CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest,
   HttpClearSiteData, PreferenceApplied, Priority, ProxyAuthenticationInfo,
   ProxyAuthenticationInfoParseError, ReferrerPolicy, ReferrerPolicyToken, ServerTiming,
-  StrictTransportSecurity, StrictTransportSecurityParseError, Trailer, WantContentDigest,
-  WantReprDigest, Warning,
+  StrictTransportSecurity, StrictTransportSecurityParseError, Trailer, TransferEncoding,
+  TransferEncodingParseError, WantContentDigest, WantReprDigest, Warning,
 };
+use rttp_client::response::{ContentDigest, ReprDigest};
 use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 
 #[test]
@@ -42,6 +43,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .expect_err("Strict-Transport-Security without max-age should be rejected");
   let warning = Warning::parse(r#"110 - "Response is Stale""#).expect("Warning should parse");
   let trailer = Trailer::parse("X-Trace").expect("Trailer should parse");
+  let transfer_encoding =
+    TransferEncoding::parse("chunked").expect("Transfer-Encoding should parse");
+  let _: TransferEncodingParseError = TransferEncoding::parse("gzip, chunked")
+    .expect_err("non-sole chunked Transfer-Encoding should be rejected");
   let alt_svc = AltSvc::parse("h3=\":443\"").expect("Alt-Svc should parse");
   let fetch_site = SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
@@ -77,6 +82,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert!(strict_transport_security.include_sub_domains());
   assert_eq!(warning.items()[0].code(), 110);
   assert_eq!(trailer.field_names(), ["x-trace"]);
+  assert_eq!(transfer_encoding.codings(), ["chunked"]);
   assert_eq!(alt_svc.alternatives().len(), 1);
   assert_eq!(fetch_site.header_value(), "same-origin");
   assert_eq!(fetch_mode.header_value(), "navigate");
@@ -95,6 +101,26 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(
     proxy_authentication_info.parameter("nextnonce"),
     Some("6629fae49393a05397450978507c4ef1")
+  );
+}
+
+#[test]
+fn response_facade_exports_repr_digest_metadata() {
+  let repr_digest = ReprDigest::parse("sha-512=:ZGVm:").expect("Repr-Digest should parse");
+
+  assert_eq!(
+    repr_digest.entry("sha-512").map(|entry| entry.value()),
+    Some(&b"def"[..])
+  );
+}
+
+#[test]
+fn response_facade_exports_content_digest_metadata() {
+  let content_digest = ContentDigest::parse("sha-256=:YWJj:").expect("Content-Digest should parse");
+
+  assert_eq!(
+    content_digest.entry("sha-256").map(|entry| entry.value()),
+    Some(&b"abc"[..])
   );
 }
 
@@ -144,4 +170,53 @@ fn response_facade_parses_referrer_policy_metadata() {
       ReferrerPolicyToken::Origin,
     ]
   );
+}
+
+#[test]
+fn response_facade_parses_transfer_encoding_from_validated_chunked_framing() {
+  use std::io::Cursor;
+
+  use rttp_client::ConnectionReader;
+
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "\r\n",
+    "5\r\nhello\r\n",
+    "0\r\n\r\n"
+  );
+  let url = url::Url::parse("http://example.test/").expect("url should parse");
+  let mut cursor = Cursor::new(raw.as_bytes());
+  let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+  let response = reader
+    .response()
+    .expect("chunked response framing should parse");
+
+  let transfer_encoding: TransferEncoding = response
+    .transfer_encoding()
+    .expect("Transfer-Encoding should parse")
+    .expect("Transfer-Encoding should be present");
+
+  assert_eq!(transfer_encoding.codings(), ["chunked"]);
+  assert_eq!(transfer_encoding.header_value(), "chunked");
+  assert_eq!(
+    response
+      .header_value("Transfer-Encoding")
+      .map(String::as_str),
+    Some("chunked")
+  );
+}
+
+#[test]
+fn response_facade_returns_none_when_transfer_encoding_is_absent() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert!(response
+    .transfer_encoding()
+    .expect("missing Transfer-Encoding should be accepted")
+    .is_none());
 }

@@ -25,6 +25,10 @@ pub use rttp_protocol::prefer::{
 pub use rttp_protocol::trailer::{
   Trailer as HttpTrailer, TrailerParseError as HttpTrailerParseError,
 };
+pub use rttp_protocol::transfer_encoding::{
+  TransferEncoding as HttpTransferEncoding,
+  TransferEncodingParseError as HttpTransferEncodingParseError,
+};
 pub use rttp_protocol::want_content_digest::{
   WantContentDigest as HttpWantContentDigest, WantContentDigestEntry as HttpWantContentDigestEntry,
   WantContentDigestParseError as HttpWantContentDigestParseError,
@@ -528,6 +532,18 @@ impl Request {
       return Ok(None);
     }
     HttpRequestTe::parse_values(values).map(Some)
+  }
+
+  /// Parses retained `Transfer-Encoding` framing metadata without changing
+  /// request body framing or HTTP/2 decode.
+  pub fn transfer_encoding(
+    &self,
+  ) -> Result<Option<HttpTransferEncoding>, HttpTransferEncodingParseError> {
+    let values: Vec<&str> = self.headers_named("Transfer-Encoding").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpTransferEncoding::parse_values(values).map(Some)
   }
 
   /// Parses announced trailer field names without waiting for or exposing a
@@ -2404,6 +2420,23 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpRequestTe::parse_values(values).map(Some)
+  }
+
+  /// Parses retained `Transfer-Encoding` framing metadata without changing
+  /// request body framing or HTTP/2 decode.
+  pub fn transfer_encoding(
+    &self,
+  ) -> Result<Option<HttpTransferEncoding>, HttpTransferEncodingParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Transfer-Encoding"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpTransferEncoding::parse_values(values).map(Some)
   }
 
   /// Parses announced trailer field names without waiting for or exposing a

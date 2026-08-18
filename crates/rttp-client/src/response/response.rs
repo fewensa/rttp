@@ -8,12 +8,14 @@ use url::Url;
 use crate::error;
 use crate::response::raw_response::RawResponse;
 use crate::response::AltSvc;
+use crate::response::ContentDigest;
 use crate::response::Digest;
 use crate::response::Priority;
 use crate::response::ProxyAuthenticationInfo;
 use crate::response::ReprDigest;
 use crate::response::ServerTiming;
 use crate::response::Trailer;
+use crate::response::TransferEncoding;
 use crate::response::Warning;
 use crate::response::WwwAuthenticate;
 use crate::types::{Cookie, Header, RoUrl, StatusCode};
@@ -582,6 +584,18 @@ impl Response {
     ContentEncoding::parse_values(values.into_iter().map(String::as_str)).map(Some)
   }
 
+  /// Parses retained `Transfer-Encoding` framing metadata without changing
+  /// HTTP/1 body framing or HTTP/2 decode.
+  pub fn transfer_encoding(&self) -> error::Result<Option<TransferEncoding>> {
+    let values = self.header_values("transfer-encoding");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    TransferEncoding::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
   /// Parses all `WWW-Authenticate` fields as bounded authentication challenge metadata.
   pub fn www_authenticate(&self) -> error::Result<Option<WwwAuthenticate>> {
     let values = self.header_values("www-authenticate");
@@ -607,6 +621,12 @@ impl Response {
 
   /// Parses all `Content-Digest` fields as bounded response metadata.
   pub fn digest(&self) -> error::Result<Option<Digest>> {
+    self.digest_field("content-digest")
+  }
+
+  /// Parses all `Content-Digest` fields as bounded response metadata without
+  /// verifying hashes or selecting an algorithm.
+  pub fn content_digest(&self) -> error::Result<Option<ContentDigest>> {
     self.digest_field("content-digest")
   }
 
