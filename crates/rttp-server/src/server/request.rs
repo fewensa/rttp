@@ -17,6 +17,7 @@ pub use rttp_protocol::forwarded::{
   Forwarded as HttpForwarded, ForwardedElement as HttpForwardedElement,
   ForwardedParameter as HttpForwardedParameter, ForwardedParseError as HttpForwardedParseError,
 };
+pub use rttp_protocol::host::{Host as HttpHost, HostParseError as HttpHostParseError};
 pub use rttp_protocol::prefer::{
   Prefer as HttpRequestPreferences, PreferParseError as HttpPreferParseError,
   Preference as HttpPreference, PreferenceKind as HttpPreferenceKind,
@@ -382,6 +383,12 @@ impl Request {
       return Ok(None);
     }
     HttpAccessControlRequestHeaders::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Host` request authority without applying virtual-host
+  /// routing or scheme defaults.
+  pub fn host(&self) -> Result<Option<HttpHost>, HttpHostParseError> {
+    parse_host_values(self.headers_named("Host"))
   }
 
   /// Parses exactly one bounded `Authorization` field as opaque typed
@@ -1079,6 +1086,16 @@ fn parse_want_repr_digest_values<'a>(
     return Ok(None);
   }
   HttpWantReprDigest::parse_values(values).map(Some)
+}
+
+fn parse_host_values<'a>(
+  values: impl IntoIterator<Item = &'a str>,
+) -> Result<Option<HttpHost>, HttpHostParseError> {
+  let values: Vec<&str> = values.into_iter().collect();
+  if values.is_empty() {
+    return Ok(None);
+  }
+  HttpHost::parse_values(values).map(Some)
 }
 impl HttpMaxForwardsParseError {
   fn new(message: impl Into<String>) -> Self {
@@ -2130,6 +2147,18 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpRequestCacheControl::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Host` request authority without applying virtual-host
+  /// routing or scheme defaults.
+  pub fn host(&self) -> Result<Option<HttpHost>, HttpHostParseError> {
+    parse_host_values(
+      self
+        .headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("Host"))
+        .map(|header| header.value.as_str()),
+    )
   }
 
   /// Parses exactly one bounded `Authorization` field as opaque typed

@@ -3,8 +3,8 @@ use rttp_server::server::{
   HttpAccessControlRequestHeaders, HttpAccessControlRequestHeadersParseError,
   HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError,
   HttpConditionalMetadata, HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy,
-  HttpEntityTag, HttpPreferenceKind, HttpRequest, HttpResponse, HttpWantReprDigest, SecFetchDest,
-  SecFetchMode, SecFetchSite, SecFetchUser,
+  HttpEntityTag, HttpHost, HttpPreferenceKind, HttpRequest, HttpResponse, HttpWantReprDigest,
+  SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
 };
 
 #[test]
@@ -90,6 +90,21 @@ fn request_facade_parses_structured_prefer_metadata() {
 
   assert_eq!(prefer.preferences()[0].kind(), HttpPreferenceKind::Handling);
   assert_eq!(prefer.preferences()[1].parameters()[0].value(), Some("a b"));
+}
+
+#[test]
+fn request_facade_parses_host_authority() {
+  let request = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test:8443\r\n\r\n")
+    .expect("request should parse");
+
+  let host: HttpHost = request
+    .host()
+    .expect("Host should parse")
+    .expect("Host should be present");
+
+  assert_eq!("example.test", host.host());
+  assert_eq!(Some("8443"), host.port());
+  assert_eq!("example.test:8443", host.header_value());
 }
 
 #[test]

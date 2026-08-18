@@ -34,6 +34,7 @@ pub mod entity_tag;
 pub mod fetch_metadata;
 pub mod forwarded;
 pub mod from;
+pub mod host;
 pub mod http1;
 mod media_type;
 pub mod origin;
