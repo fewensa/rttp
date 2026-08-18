@@ -2072,9 +2072,12 @@ fn test_parse_date_rejects_invalid_duplicate_and_oversized_metadata_without_hidi
   let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
     .expect("raw response with oversized date remains usable");
 
-  assert!(
-    response.date().is_err(),
-    "Date helper should reject oversized invalid values"
+  assert_eq!(
+    "error receive response: Date header value is too large",
+    response
+      .date()
+      .expect_err("Date helper should reject oversized values")
+      .to_string()
   );
   assert_eq!(Some(&oversized), response.header_value("Date"));
 }
