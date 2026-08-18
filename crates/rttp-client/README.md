@@ -306,8 +306,9 @@ cache policy, retry, replay, redirect, or status-policy behavior from
 rejects duplicate header fields because `Content-Location` is handled as a
 singleton response metadata field. `ContentLocation::parse(value)` is available
 when callers want to validate one raw field value directly; it trims outer HTTP
-optional whitespace and exposes the validated value with
-`ContentLocation::as_str()`.
+optional whitespace and exposes the validated unresolved value with
+`ContentLocation::as_str()` and `ContentLocation::header_value()`. This
+typed metadata authority is shared with the server and compatibility facades.
 
 The helper is bounded and validation-oriented. The field value is limited to
 64 KiB and must be a non-empty absolute URI or relative URI reference that can
@@ -324,7 +325,7 @@ The helper interoperates with adjacent response metadata helpers such as
 headers and parsing only when requested. It is metadata-only: `rttp_client`
 does not treat `Content-Location` as redirect behavior, cache variant
 selection, representation replacement, retry/replay behavior, route
-generation, or status-policy behavior.
+generation, URI resolution against the request URL, or status-policy behavior.
 
 ## Bounded HTTP/1.1 representation metadata behavior
 

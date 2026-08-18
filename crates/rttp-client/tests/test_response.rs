@@ -1885,6 +1885,14 @@ fn test_parse_content_location_rejects_control_characters_and_crlf_injection() {
 }
 
 #[test]
+fn test_parse_content_location_values_rejects_duplicates() {
+  assert!(
+    ContentLocation::parse_values(["/one", "/two"]).is_err(),
+    "content-location parser should reject duplicate singleton values"
+  );
+}
+
+#[test]
 fn test_parse_cache_control_response_directives() {
   let s = concat!(
     "HTTP/1.1 200 OK\r\n",

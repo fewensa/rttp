@@ -1,5 +1,5 @@
 use rttp::server::{
-  HttpAcceptCh, HttpConditionalMetadata, HttpCrossOriginEmbedderPolicy,
+  HttpAcceptCh, HttpConditionalMetadata, HttpContentLocation, HttpCrossOriginEmbedderPolicy,
   HttpCrossOriginOpenerPolicy, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpResponse,
   HttpSunsetParseError,
 };
@@ -27,6 +27,9 @@ fn compatibility_facade_exports_client_metadata_types() {
     .expect("Cross-Origin-Opener-Policy should parse");
   let fetch_site: rttp::SecFetchSite =
     rttp_client::SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
+  let content_location: rttp::ContentLocation =
+    rttp_client::response::ContentLocation::parse("../current?variant=full#metadata")
+      .expect("Content-Location should parse");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
@@ -35,6 +38,10 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(embedder_policy.header_value(), "require-corp");
   assert_eq!(opener_policy.header_value(), "noopener-allow-popups");
   assert_eq!(fetch_site.header_value(), "same-origin");
+  assert_eq!(
+    content_location.header_value(),
+    "../current?variant=full#metadata"
+  );
 }
 
 #[test]
@@ -49,11 +56,25 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let opener_policy: HttpCrossOriginOpenerPolicy =
     HttpCrossOriginOpenerPolicy::parse("noopener-allow-popups; report-to=\"coop\"")
       .expect("Cross-Origin-Opener-Policy should parse");
+  let content_location: HttpContentLocation =
+    HttpContentLocation::parse("../current?variant=full#metadata")
+      .expect("Content-Location should parse");
+  let response = HttpResponse::ok("")
+    .with_content_location(content_location.as_str())
+    .expect("Content-Location should be accepted");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA"]);
   assert_eq!(policy.header_value(), "same-origin");
   assert_eq!(embedder_policy.header_value(), "require-corp");
   assert_eq!(opener_policy.header_value(), "noopener-allow-popups");
+  assert_eq!(
+    response
+      .content_location()
+      .expect("Content-Location should parse")
+      .expect("Content-Location should be present")
+      .header_value(),
+    content_location.header_value()
+  );
   assert_eq!(
     metadata
       .entity_tag_value()

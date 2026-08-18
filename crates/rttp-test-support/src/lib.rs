@@ -1405,6 +1405,10 @@ pub mod content_location {
       name: "unit separator control character",
       value: "/safe\u{1f}",
     },
+    InvalidCase {
+      name: "space in URI reference",
+      value: "not valid",
+    },
   ];
 
   pub fn response_cases() -> &'static [ResponseCase] {

@@ -2,8 +2,9 @@ use rttp_server::server::{
   HttpAcceptCh, HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods,
   HttpAccessControlRequestHeaders, HttpAccessControlRequestHeadersParseError,
   HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError,
-  HttpConditionalMetadata, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpPreferenceKind,
-  HttpRequest, HttpResponse, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
+  HttpConditionalMetadata, HttpContentLocation, HttpCrossOriginResourcePolicy, HttpEntityTag,
+  HttpPreferenceKind, HttpRequest, HttpResponse, SecFetchDest, SecFetchMode, SecFetchSite,
+  SecFetchUser,
 };
 
 #[test]
@@ -32,8 +33,13 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let policy: HttpCrossOriginResourcePolicy = HttpCrossOriginResourcePolicy::parse("same-origin")
     .expect("Cross-Origin-Resource-Policy should parse");
   let response = HttpResponse::ok("")
+    .with_content_location("../current?variant=full#metadata")
+    .expect("Content-Location should be accepted")
     .with_accept_ch(["Sec-CH-UA"])
     .expect("Accept-CH should be accepted");
+  let content_location: HttpContentLocation =
+    HttpContentLocation::parse("../current?variant=full#metadata")
+      .expect("Content-Location should parse");
   let fetch_site = SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
@@ -64,6 +70,14 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .expect("Accept-CH should be present")
       .client_hints(),
     ["Sec-CH-UA"]
+  );
+  assert_eq!(
+    response
+      .content_location()
+      .expect("Content-Location should parse")
+      .expect("Content-Location should be present")
+      .header_value(),
+    content_location.header_value()
   );
   assert_eq!(fetch_site.header_value(), "same-origin");
   assert_eq!(fetch_mode.header_value(), "navigate");

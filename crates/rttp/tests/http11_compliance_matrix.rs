@@ -318,7 +318,9 @@ fn assert_response_content_location(
     Some(expected.normalized_value),
     response
       .content_location()
-      .unwrap_or_else(|err| panic!("{name} Content-Location should parse: {err}")),
+      .unwrap_or_else(|err| panic!("{name} Content-Location should parse: {err}"))
+      .as_ref()
+      .map(|content_location| content_location.as_str()),
     "{name}"
   );
 }
@@ -1446,6 +1448,8 @@ fn server_content_location_helpers_coexist_with_adjacent_metadata_helpers() {
     response
       .content_location()
       .expect("Content-Location should parse")
+      .as_ref()
+      .map(|content_location| content_location.as_str())
   );
 }
 

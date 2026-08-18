@@ -1753,6 +1753,8 @@ fn response_content_location_helper_declares_single_header_value() {
     response
       .content_location()
       .expect("Content-Location should parse")
+      .as_ref()
+      .map(|content_location| content_location.as_str())
   );
 }
 
@@ -1765,6 +1767,8 @@ fn response_content_location_helper_parses_attached_singleton_header() {
     response
       .content_location()
       .expect("Content-Location should parse")
+      .as_ref()
+      .map(|content_location| content_location.as_str())
   );
 }
 
@@ -1785,7 +1789,7 @@ fn content_location_helper_rejects_empty_control_duplicate_and_oversized_values(
     );
   }
 
-  for value in ["", " ", "/safe\u{7f}", "/safe\u{1f}"] {
+  for value in ["", " ", "/safe\u{7f}", "/safe\u{1f}", "not valid"] {
     let response = HttpResponse::ok("body").header("Content-Location", value);
     assert!(
       response.content_location().is_err(),
