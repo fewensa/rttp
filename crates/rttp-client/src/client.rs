@@ -624,6 +624,29 @@ impl HttpClient {
     )
   }
 
+  /// Append a validated digest algorithm to `Want-Repr-Digest` with the
+  /// highest preference.
+  ///
+  /// This declares request metadata only; it does not compute or validate
+  /// representation digests.
+  pub fn want_repr_digest<S: AsRef<str>>(&mut self, algorithm: S) -> error::Result<&mut Self> {
+    self.want_digest_member("Want-Repr-Digest", algorithm.as_ref(), None)
+  }
+
+  /// Append a validated digest algorithm with a relative preference from `0`
+  /// through `10` to `Want-Repr-Digest`.
+  pub fn want_repr_digest_with_q<A: AsRef<str>, Q: AsRef<str>>(
+    &mut self,
+    algorithm: A,
+    qvalue: Q,
+  ) -> error::Result<&mut Self> {
+    self.want_digest_member(
+      "Want-Repr-Digest",
+      algorithm.as_ref(),
+      Some(qvalue.as_ref()),
+    )
+  }
+
   /// Append a validated `TE` transfer coding. This declares request metadata
   /// only; it does not enable a transfer-coding engine.
   pub fn te<S: AsRef<str>>(&mut self, coding: S) -> error::Result<&mut Self> {
