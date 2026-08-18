@@ -151,7 +151,7 @@ impl WarningValue {
 
   pub fn header_value(&self) -> String {
     let mut value = format!(
-      "{} {} \"{}\"",
+      "{:03} {} \"{}\"",
       self.code,
       self.agent,
       escape_quoted(&self.text)
@@ -213,13 +213,15 @@ fn parse_warning_value(
   if text.len() > MAX_WARNING_TEXT_BYTES {
     return Err(WarningParseError::new("Warning text is too large"));
   }
-  skip_ows(bytes, position);
-  let date = if bytes.get(*position) == Some(&b'"') {
-    let date = parse_quoted_string(value, position)?;
-    let date = httpdate::parse_http_date(&date)
-      .map_err(|_| WarningParseError::new("invalid Warning HTTP-date"))?;
+  let date = if matches!(bytes.get(*position), Some(b' ' | b'\t')) {
     skip_ows(bytes, position);
-    Some(date)
+    if bytes.get(*position) == Some(&b'"') {
+      let date = parse_quoted_http_date(value, position)?;
+      skip_ows(bytes, position);
+      Some(date)
+    } else {
+      None
+    }
   } else {
     None
   };
@@ -256,6 +258,27 @@ fn parse_agent<'a>(value: &'a str, position: &mut usize) -> Result<&'a str, Warn
     return Err(WarningParseError::new("invalid Warning agent"));
   }
   Ok(&value[start..*position])
+}
+
+fn parse_quoted_http_date(
+  value: &str,
+  position: &mut usize,
+) -> Result<SystemTime, WarningParseError> {
+  let bytes = value.as_bytes();
+  if bytes.get(*position) != Some(&b'"') {
+    return Err(WarningParseError::new("invalid Warning HTTP-date"));
+  }
+  *position += 1;
+  let start = *position;
+  while *position < bytes.len() && bytes[*position] != b'"' {
+    *position += 1;
+  }
+  if *position == bytes.len() {
+    return Err(WarningParseError::new("invalid Warning HTTP-date"));
+  }
+  let date = &value[start..*position];
+  *position += 1;
+  httpdate::parse_http_date(date).map_err(|_| WarningParseError::new("invalid Warning HTTP-date"))
 }
 
 fn parse_quoted_string(value: &str, position: &mut usize) -> Result<String, WarningParseError> {

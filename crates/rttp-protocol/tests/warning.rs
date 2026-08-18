@@ -110,6 +110,8 @@ fn warning_rejects_malformed_quoting_invalid_codes_and_empty_members() {
     r#"110 - "ok" not-a-date"#,
     r#"110 - "ok" "not a date""#,
     r#"110  "missing-agent""#,
+    r#"110 - "test""Sun, 06 Nov 1994 08:49:37 GMT""#,
+    r#"110 - "test" "Sun, 06 Nov 1994 08:49:37 GM\T""#,
   ] {
     assert!(Warning::parse(value).is_err(), "{value:?} must be rejected");
   }
@@ -117,6 +119,19 @@ fn warning_rejects_malformed_quoting_invalid_codes_and_empty_members() {
   assert!(
     Warning::parse_values([]).is_err(),
     "empty field sets must be rejected"
+  );
+}
+
+#[test]
+fn warning_formats_three_digit_codes_with_leading_zeros() {
+  let warning = Warning::parse(r#"099 - "test""#).expect("leading-zero warn-code should parse");
+  assert_eq!(warning.items()[0].code(), 99);
+  assert_eq!(warning.header_value(), r#"099 - "test""#);
+  assert_eq!(
+    Warning::parse(warning.header_value())
+      .expect("formatted leading-zero warn-code should round-trip")
+      .header_value(),
+    r#"099 - "test""#
   );
 }
 
