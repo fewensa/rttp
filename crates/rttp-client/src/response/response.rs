@@ -40,6 +40,7 @@ const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
 const MAX_ACCEPT_RANGES_VALUE_BYTES: usize = 64 * 1024;
 const MAX_ACCEPT_RANGE_UNITS: usize = 256;
 const MAX_ACCEPT_MEDIA_TYPES: usize = 256;
+const MAX_DATE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_RETRY_AFTER_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_TYPE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_TYPE_PARAMETERS: usize = 256;
@@ -302,6 +303,22 @@ impl Response {
 
   pub fn last_modified(&self) -> Option<&String> {
     self.header_value("last-modified")
+  }
+
+  pub fn date(&self) -> error::Result<Option<SystemTime>> {
+    let values = self.header_values("date");
+    match values.as_slice() {
+      [] => Ok(None),
+      [value] => {
+        if value.len() > MAX_DATE_VALUE_BYTES {
+          return Err(error::bad_response("Date header value is too large"));
+        }
+        parse_http_date(value)
+          .map(Some)
+          .map_err(|_| error::bad_response("Invalid Date HTTP-date"))
+      }
+      _ => Err(error::bad_response("Duplicate Date header values")),
+    }
   }
 
   pub fn age(&self) -> error::Result<Option<u64>> {
