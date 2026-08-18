@@ -5,8 +5,9 @@ use rttp_client::response::{
   CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy,
   CrossOriginResourcePolicy, Digest, HttpClearSiteData, PreferenceApplied, Priority,
   ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ReferrerPolicy, ReferrerPolicyToken,
-  ServerTiming, StrictTransportSecurity, StrictTransportSecurityParseError, Trailer,
-  TransferEncoding, TransferEncodingParseError, WantContentDigest, WantReprDigest, Warning,
+  ServerTiming, Signature, SignatureInput, SignatureInputParseError, SignatureParseError,
+  StrictTransportSecurity, StrictTransportSecurityParseError, Trailer, TransferEncoding,
+  TransferEncodingParseError, WantContentDigest, WantReprDigest, Warning,
 };
 use rttp_client::response::{ContentDigest, ReprDigest};
 use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
@@ -69,6 +70,15 @@ fn response_facade_exports_representative_bounded_metadata_types() {
       .expect("Proxy-Authentication-Info should parse");
   let _: ProxyAuthenticationInfoParseError = ProxyAuthenticationInfo::parse("")
     .expect_err("empty Proxy-Authentication-Info should be rejected");
+  let signature = Signature::parse("sig1=:YWJj:").expect("Signature should parse");
+  let _: SignatureParseError =
+    Signature::parse("").expect_err("empty Signature should be rejected");
+  let signature_input = SignatureInput::parse(
+    r#"sig1=("@method" "@authority" "@path");created=1618884473;keyid="test-key""#,
+  )
+  .expect("Signature-Input should parse");
+  let _: SignatureInputParseError =
+    SignatureInput::parse("").expect_err("empty Signature-Input should be rejected");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(allow_methods.methods(), ["GET", "POST"]);
@@ -105,6 +115,43 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(
     proxy_authentication_info.parameter("nextnonce"),
     Some("6629fae49393a05397450978507c4ef1")
+  );
+  assert_eq!(signature.header_value(), "sig1=:YWJj:");
+  assert_eq!(
+    signature_input.header_value(),
+    r#"sig1=("@method" "@authority" "@path");created=1618884473;keyid="test-key""#
+  );
+}
+
+#[test]
+fn response_facade_parses_signature_metadata_pair() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      r#"Signature-Input: sig1=("@method" "@path");created=1618884473;keyid="test-key""#,
+      "\r\n",
+      "Signature: sig1=:YWJj:\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let signature = response
+    .signature()
+    .expect("Signature should parse")
+    .expect("Signature should be present");
+  let signature_input = response
+    .signature_input()
+    .expect("Signature-Input should parse")
+    .expect("Signature-Input should be present");
+
+  assert_eq!(signature.header_value(), "sig1=:YWJj:");
+  assert_eq!(
+    signature_input.header_value(),
+    r#"sig1=("@method" "@path");created=1618884473;keyid="test-key""#
   );
 }
 

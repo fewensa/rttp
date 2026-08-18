@@ -162,3 +162,21 @@ single mapped value.
 These helpers parse request metadata only. They do not select a virtual host,
 compare origins, apply scheme defaults, or change HTTP/1 decode or HTTP/2
 request-target handling.
+
+## HTTP message signature metadata
+
+`Request::signature()` / `signature_input()` and the same methods on
+`HttpRequest` parse received RFC 9421 `Signature` and `Signature-Input`
+fields into `HttpSignature` and `HttpSignatureInput`. Absent field sets
+return `Ok(None)`. Present malformed fields return a parse error while
+`Request::header()` continues to expose the original values. The two
+fields are parsed independently.
+
+`HttpResponse::with_signature()` and `with_signature_input()` validate and
+replace existing same-name fields with one canonical value.
+`HttpResponse::signature()` and `signature_input()` parse attached raw
+fields without changing them.
+
+These helpers only declare and parse metadata. They do not sign, verify,
+look up keys, canonicalize covered components, or apply cryptographic
+policy.

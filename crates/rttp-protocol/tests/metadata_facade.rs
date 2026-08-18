@@ -15,6 +15,8 @@ use rttp_protocol::prefer::{Prefer, PreferenceApplied, PreferenceKind};
 use rttp_protocol::proxy_authentication_info::ProxyAuthenticationInfo;
 use rttp_protocol::referer::Referer;
 use rttp_protocol::referrer_policy::{ReferrerPolicy, ReferrerPolicyToken};
+use rttp_protocol::signature::{Signature, SignatureParseError};
+use rttp_protocol::signature_input::{SignatureInput, SignatureInputParseError};
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
 use rttp_protocol::transfer_encoding::TransferEncoding;
@@ -69,6 +71,13 @@ fn protocol_exports_representative_bounded_metadata_types() {
     WantContentDigest::parse("sha-256=10, sha-512=0").expect("Want-Content-Digest should parse");
   let want_repr_digest =
     WantReprDigest::parse("sha-256=10, sha-512=0").expect("Want-Repr-Digest should parse");
+  let signature = Signature::parse("sig1=:YWJj:").expect("Signature should parse");
+  let _: SignatureParseError =
+    Signature::parse("").expect_err("empty Signature should be rejected");
+  let signature_input = SignatureInput::parse(r#"sig1=("@method" "@path");created=1618884473"#)
+    .expect("Signature-Input should parse");
+  let _: SignatureInputParseError =
+    SignatureInput::parse("").expect_err("empty Signature-Input should be rejected");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
@@ -118,6 +127,11 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(want_repr_digest.entries()[0].algorithm(), "sha-256");
   assert_eq!(want_repr_digest.entries()[0].preference(), 10);
   assert_eq!(want_repr_digest.header_value(), "sha-256=10, sha-512=0");
+  assert_eq!(signature.header_value(), "sig1=:YWJj:");
+  assert_eq!(
+    signature_input.header_value(),
+    r#"sig1=("@method" "@path");created=1618884473"#
+  );
 }
 
 #[test]

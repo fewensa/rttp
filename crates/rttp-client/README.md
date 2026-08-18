@@ -425,6 +425,17 @@ These helpers declare and parse preferences only. They do not select an
 algorithm, compute digests, verify response body hashes, attach
 `Content-Digest` or `Repr-Digest`, retry requests, or sign messages.
 
+## Bounded HTTP message signature request metadata
+
+`HttpClient::signature()` and `signature_input()` validate and replace one
+RFC 9421 `Signature` or `Signature-Input` request field. Malformed present
+input is rejected before a connection is opened. `Response::signature()` and
+`signature_input()` parse received fields independently, returning `Ok(None)`
+when a field set is absent and leaving raw headers in place on parse errors.
+
+These helpers declare and parse metadata only. They do not sign, verify, look
+up keys, canonicalize covered components, or apply cryptographic policy.
+
 ## Bounded Accept request metadata
 
 `HttpClient::accept()` appends one validated media range, and
@@ -647,6 +658,7 @@ header-block model.
 | Fetch Metadata | `sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, and `sec_fetch_user` emit bounded `Sec-Fetch-*` request metadata | No browser security policy, automatic header generation, origin validation, navigation policy, or request blocking |
 | Preflight request metadata | `origin`, `access_control_request_method`, and `access_control_request_headers` emit bounded `Origin`, `Access-Control-Request-Method`, and `Access-Control-Request-Headers` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, or CORS policy |
 | Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_content_digest()`, `HttpRequest::want_content_digest()`, `Request::want_repr_digest()`, and `HttpRequest::want_repr_digest()` parse received preference fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |
+| HTTP message signatures | `signature` and `signature_input` emit bounded RFC 9421 request metadata; `Response::signature()` and `signature_input()` parse received fields | No signing, verification, key lookup, covered-component canonicalization, or cryptographic policy |
 | Upgrade and tunnel handoff | `CONNECT` returns the tunnel socket after a successful `200`; `upgrade()` returns the socket after `101 Switching Protocols` and skips interim `1xx` responses | Upgraded protocols are handed to the caller and are not parsed by `rttp_client` |
 | Redirects | Auto-redirect covers 301, 302, 303, 307, and 308 method/body behavior, relative and absolute `Location` resolution, same- and cross-authority header handling, loop detection, and redirect bounds | Redirects are HTTP client behavior, not a browser policy implementation |
 | Byte ranges | `range`, `range_from`, `range_suffix`, `if_range_etag`, and `if_range_date` emit bounded HTTP/1.1 range request metadata; `Response::content_range`, `accept_ranges`, `is_partial_content`, and `is_range_not_satisfiable` expose `Content-Range`, `Accept-Ranges`, `206`, and `416` metadata while preserving raw headers | No Range request generation from `Accept-Ranges`, client-side `If-Range` evaluation, partial response engine, byte serving, content slicing, download resume, automatic retry/replay, cache storage, redirect handling, status-policy behavior, multipart range generation, or automatic cache validation policy |

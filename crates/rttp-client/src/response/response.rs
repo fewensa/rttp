@@ -15,6 +15,8 @@ use crate::response::Priority;
 use crate::response::ProxyAuthenticationInfo;
 use crate::response::ReprDigest;
 use crate::response::ServerTiming;
+use crate::response::Signature;
+use crate::response::SignatureInput;
 use crate::response::Trailer;
 use crate::response::TransferEncoding;
 use crate::response::Warning;
@@ -646,6 +648,30 @@ impl Response {
   /// Parses all `Repr-Digest` fields as bounded response metadata.
   pub fn repr_digest(&self) -> error::Result<Option<ReprDigest>> {
     self.digest_field("repr-digest")
+  }
+
+  /// Parses all `Signature` fields as bounded RFC 9421 metadata without
+  /// verifying signatures or looking up keys.
+  pub fn signature(&self) -> error::Result<Option<Signature>> {
+    let values = self.header_values("signature");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Signature::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses all `Signature-Input` fields as bounded RFC 9421 metadata without
+  /// verifying signatures or applying cryptographic policy.
+  pub fn signature_input(&self) -> error::Result<Option<SignatureInput>> {
+    let values = self.header_values("signature-input");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    SignatureInput::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   fn digest_field(&self, name: &str) -> error::Result<Option<Digest>> {

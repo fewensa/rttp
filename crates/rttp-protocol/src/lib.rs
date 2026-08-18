@@ -48,6 +48,7 @@ pub mod referer;
 pub mod referrer_policy;
 pub mod server_timing;
 pub mod signature;
+pub mod signature_input;
 pub mod strict_transport_security;
 pub mod sunset;
 pub mod timing_allow_origin;
