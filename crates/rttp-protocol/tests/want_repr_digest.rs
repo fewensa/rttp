@@ -53,6 +53,24 @@ fn want_repr_digest_retains_unknown_algorithms() {
 }
 
 #[test]
+fn want_repr_digest_ignores_unrecognized_parameters() {
+  let digest = WantReprDigest::parse("sha-256=10;foo=bar")
+    .expect("unrecognized Structured Fields parameters should be ignored");
+  assert_eq!(digest.entries()[0].algorithm(), "sha-256");
+  assert_eq!(digest.entries()[0].preference(), 10);
+  assert_eq!(digest.header_value(), "sha-256=10");
+}
+
+#[test]
+fn want_repr_digest_accepts_leading_zero_integers() {
+  let digest =
+    WantReprDigest::parse("sha-256=01").expect("leading-zero integers should parse as sf-integer");
+  assert_eq!(digest.entries()[0].algorithm(), "sha-256");
+  assert_eq!(digest.entries()[0].preference(), 1);
+  assert_eq!(digest.header_value(), "sha-256=1");
+}
+
+#[test]
 fn want_repr_digest_rejects_invalid_members() {
   for value in [
     "",
@@ -62,9 +80,7 @@ fn want_repr_digest_rejects_invalid_members() {
     "sha-256=11",
     "sha-256=-1",
     "sha-256=1.0",
-    "sha-256=01",
     "sha-256=+10",
-    "sha-256=10;q=1",
     "sha-256=(10)",
     "SHA-256=10",
     "sha-256=10, sha-256=3",

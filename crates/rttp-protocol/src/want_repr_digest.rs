@@ -2,8 +2,10 @@
 //!
 //! This module validates RFC 9530 integrity-preference dictionaries. Callers
 //! decide whether and how to attach `Repr-Digest` or select an algorithm.
-//! Unknown well-formed algorithm keys are retained as opaque data. Unparsable
-//! input is an error; this parser never fails open to an empty preference set.
+//! Unknown well-formed algorithm keys are retained as opaque data. Unrecognized
+//! Structured Fields parameters are ignored after the integer preference is
+//! validated. Unparsable input is an error; this parser never fails open to an
+//! empty preference set.
 
 use std::error::Error;
 use std::fmt;
@@ -139,9 +141,6 @@ fn parse_field(
     let ListEntry::Item(item) = member else {
       return Err(invalid_member());
     };
-    if !item.params.is_empty() {
-      return Err(invalid_member());
-    }
     let BareItem::Integer(preference) = item.bare_item else {
       return Err(invalid_member());
     };
@@ -181,14 +180,6 @@ fn reject_noncanonical_preference_integers(value: &str) -> Result<(), WantReprDi
       index += 1;
     }
     if bytes.get(index) == Some(&b'+') {
-      return Err(invalid_member());
-    }
-    let start = index;
-    while matches!(bytes.get(index), Some(b'0'..=b'9')) {
-      index += 1;
-    }
-    let digits = &value[start..index];
-    if digits.starts_with('0') && digits.len() > 1 {
       return Err(invalid_member());
     }
   }
