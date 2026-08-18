@@ -2,14 +2,18 @@ use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::content_type::ContentType;
 use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
+use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::entity_tag::{EntityTag, IfMatch};
 use rttp_protocol::fetch_metadata::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 use rttp_protocol::origin::Origin;
 use rttp_protocol::prefer::{Prefer, PreferenceApplied, PreferenceKind};
+use rttp_protocol::proxy_authentication_info::ProxyAuthenticationInfo;
 use rttp_protocol::referer::Referer;
 use rttp_protocol::referrer_policy::{ReferrerPolicy, ReferrerPolicyToken};
+use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
 use rttp_protocol::x_content_type_options::XContentTypeOptions;
+use rttp_protocol::x_frame_options::XFrameOptions;
 
 #[test]
 fn protocol_exports_representative_bounded_metadata_types() {
@@ -24,14 +28,22 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
   let fetch_user = SecFetchUser::parse("?1").expect("Sec-Fetch-User should parse");
   let origin = Origin::parse("https://example.test").expect("Origin should parse");
+  let proxy_authentication_info = ProxyAuthenticationInfo::parse(
+    "nextnonce=\"xyz789\", qop=auth, rspauth=\"...\", cnonce=\"c\", nc=00000001",
+  )
+  .expect("Proxy-Authentication-Info should parse");
   let referer = Referer::parse("https://example.test/path?q=1").expect("Referer should parse");
   let timing_allow_origin =
     TimingAllowOrigin::parse("https://example.test").expect("Timing-Allow-Origin should parse");
   let x_content_type_options =
     XContentTypeOptions::parse("nosniff").expect("X-Content-Type-Options should parse");
+  let x_frame_options = XFrameOptions::parse("DENY").expect("X-Frame-Options should parse");
   let cross_origin_embedder_policy =
     CrossOriginEmbedderPolicy::parse(r#"require-corp; report-to="coep""#)
       .expect("Cross-Origin-Embedder-Policy should parse");
+  let strict_transport_security =
+    StrictTransportSecurity::parse("max-age=31536000; includeSubDomains; preload")
+      .expect("Strict-Transport-Security should parse");
   let content_type =
     ContentType::parse("text/plain; charset=utf-8").expect("Content-Type should parse");
 
@@ -48,10 +60,19 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_dest.header_value(), "document");
   assert_eq!(fetch_user.header_value(), "?1");
   assert_eq!(origin.header_value(), "https://example.test");
+  assert_eq!(
+    proxy_authentication_info.parameter("nextnonce"),
+    Some("xyz789")
+  );
   assert_eq!(referer.header_value(), "https://example.test/path?q=1");
   assert_eq!(timing_allow_origin.origins(), ["https://example.test"]);
   assert_eq!(x_content_type_options.header_value(), "nosniff");
+  assert_eq!(x_frame_options.header_value(), "DENY");
   assert_eq!(cross_origin_embedder_policy.header_value(), "require-corp");
+  assert_eq!(
+    strict_transport_security.header_value(),
+    "max-age=31536000; includeSubDomains; preload"
+  );
   assert_eq!(content_type.header_value(), "text/plain; charset=utf-8");
 }
 
@@ -98,5 +119,17 @@ fn protocol_exports_bounded_referrer_policy_metadata() {
   assert_eq!(
     policy.header_value(),
     "strict-origin-when-cross-origin, origin, no-referrer"
+  );
+}
+
+#[test]
+fn protocol_exports_bounded_cross_origin_opener_policy_metadata() {
+  let cross_origin_opener_policy =
+    CrossOriginOpenerPolicy::parse(r#"noopener-allow-popups; report-to="coop""#)
+      .expect("Cross-Origin-Opener-Policy should parse");
+
+  assert_eq!(
+    cross_origin_opener_policy.header_value(),
+    "noopener-allow-popups"
   );
 }
