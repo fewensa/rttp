@@ -25,10 +25,6 @@ pub use rttp_protocol::prefer::{
 pub use rttp_protocol::trailer::{
   Trailer as HttpTrailer, TrailerParseError as HttpTrailerParseError,
 };
-pub use rttp_protocol::want_repr_digest::{
-  WantReprDigest as HttpWantReprDigest, WantReprDigestEntry as HttpWantReprDigestEntry,
-  WantReprDigestParseError as HttpWantReprDigestParseError,
-};
 
 pub(crate) const MAX_REQUEST_HEAD_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
@@ -449,14 +445,6 @@ impl Request {
       return Ok(None);
     }
     HttpRequestAcceptEncodings::parse_values(values).map(Some)
-  }
-
-  /// Parses received `Want-Repr-Digest` request metadata without selecting an
-  /// algorithm or computing a representation digest.
-  pub fn want_repr_digest(
-    &self,
-  ) -> Result<Option<HttpWantReprDigest>, HttpWantReprDigestParseError> {
-    parse_want_repr_digest_values(self.headers_named("Want-Repr-Digest"))
   }
 
   /// Parses received `Content-Type` representation metadata without sniffing
@@ -1071,15 +1059,6 @@ fn parse_prefer_values<'a>(
   HttpRequestPreferences::parse_values(values).map(Some)
 }
 
-fn parse_want_repr_digest_values<'a>(
-  values: impl IntoIterator<Item = &'a str>,
-) -> Result<Option<HttpWantReprDigest>, HttpWantReprDigestParseError> {
-  let values: Vec<&str> = values.into_iter().collect();
-  if values.is_empty() {
-    return Ok(None);
-  }
-  HttpWantReprDigest::parse_values(values).map(Some)
-}
 impl HttpMaxForwardsParseError {
   fn new(message: impl Into<String>) -> Self {
     Self {
@@ -2271,20 +2250,6 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpRequestAcceptEncodings::parse_values(values).map(Some)
-  }
-
-  /// Parses received `Want-Repr-Digest` request metadata without selecting an
-  /// algorithm or computing a representation digest.
-  pub fn want_repr_digest(
-    &self,
-  ) -> Result<Option<HttpWantReprDigest>, HttpWantReprDigestParseError> {
-    parse_want_repr_digest_values(
-      self
-        .headers
-        .iter()
-        .filter(|header| header.name.eq_ignore_ascii_case("Want-Repr-Digest"))
-        .map(|header| header.value.as_str()),
-    )
   }
 
   /// Parses received `Content-Type` representation metadata without sniffing
