@@ -4,7 +4,9 @@ use rttp_client::response::{
   AccessControlMaxAge, AccessControlMaxAgeParseError, AltSvc, CrossOriginEmbedderPolicy,
   CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest, HttpClearSiteData, PreferenceApplied,
   Priority, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ReferrerPolicy,
-  ReferrerPolicyToken, ServerTiming, Trailer,
+  ReferrerPolicyToken, ServerTiming, StrictTransportSecurity, StrictTransportSecurityParseError,
+  Trailer, XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions,
+  XFrameOptionsParseError,
 };
 use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 
@@ -46,6 +48,17 @@ fn response_facade_exports_representative_bounded_metadata_types() {
       .expect("Proxy-Authentication-Info should parse");
   let _: ProxyAuthenticationInfoParseError = ProxyAuthenticationInfo::parse("")
     .expect_err("empty Proxy-Authentication-Info should be rejected");
+  let strict_transport_security =
+    StrictTransportSecurity::parse("max-age=31536000; includeSubDomains")
+      .expect("HSTS should parse");
+  let _: StrictTransportSecurityParseError =
+    StrictTransportSecurity::parse("").expect_err("empty HSTS should be rejected");
+  let x_content_type_options = XContentTypeOptions::parse("nosniff").expect("XCTO should parse");
+  let _: XContentTypeOptionsParseError =
+    XContentTypeOptions::parse("").expect_err("empty XCTO should be rejected");
+  let x_frame_options = XFrameOptions::parse("DENY").expect("XFO should parse");
+  let _: XFrameOptionsParseError =
+    XFrameOptions::parse("").expect_err("empty XFO should be rejected");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(allow_methods.methods(), ["GET", "POST"]);
@@ -72,6 +85,12 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     proxy_authentication_info.parameter("nextnonce"),
     Some("6629fae49393a05397450978507c4ef1")
   );
+  assert_eq!(
+    strict_transport_security.header_value(),
+    "max-age=31536000; includeSubDomains"
+  );
+  assert_eq!(x_content_type_options.header_value(), "nosniff");
+  assert_eq!(x_frame_options.header_value(), "DENY");
 }
 
 #[test]

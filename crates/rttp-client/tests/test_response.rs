@@ -2,7 +2,8 @@ use rttp_client::response::{
   AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType,
   CrossOriginEmbedderPolicy, CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest,
   HttpClearSiteData, HttpSetCookies, LinkValues, ProxyAuthenticationInfo, ReferrerPolicy,
-  ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
+  ReferrerPolicyToken, Response, RetryAfter, ServerTiming, StrictTransportSecurity,
+  XContentTypeOptions, XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -3263,6 +3264,274 @@ fn test_cross_origin_opener_policy_response_metadata_rejects_invalid_and_absent_
       .cross_origin_opener_policy()
       .expect("absent COOP should parse")
   );
+}
+
+#[test]
+fn test_strict_transport_security_response_metadata_preserves_raw_headers() {
+  for (value, max_age, include_sub_domains, preload) in [
+    ("max-age=60", 60, false, false),
+    ("max-age=0", 0, false, false),
+    (
+      "max-age=31536000; includeSubDomains; preload",
+      31536000,
+      true,
+      true,
+    ),
+    ("MAX-AGE=10; includesubdomains; PreLoad", 10, true, true),
+  ] {
+    let raw =
+      format!("HTTP/1.1 200 OK\r\nStrict-Transport-Security: {value}\r\nContent-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should parse");
+
+    let metadata = response
+      .strict_transport_security()
+      .expect("HSTS should parse")
+      .expect("HSTS should be present");
+    assert_eq!(max_age, metadata.max_age());
+    assert_eq!(include_sub_domains, metadata.include_sub_domains());
+    assert_eq!(preload, metadata.preload());
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Strict-Transport-Security")
+    );
+  }
+}
+
+#[test]
+fn test_strict_transport_security_response_metadata_rejects_invalid_and_absent_values() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Strict-Transport-Security: max-age=60\r\n",
+    "Strict-Transport-Security: max-age=0\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  assert!(response.strict_transport_security().is_err());
+  assert_eq!(
+    Some(&"max-age=60".to_string()),
+    response.header_value("Strict-Transport-Security")
+  );
+  assert_eq!(
+    response.header_values("Strict-Transport-Security"),
+    [&"max-age=60".to_string(), &"max-age=0".to_string()]
+  );
+
+  for value in ["not hsts", "includeSubDomains"] {
+    let malformed = Response::new(
+      RoUrl::with("https://example.test"),
+      format!("HTTP/1.1 200 OK\r\nStrict-Transport-Security: {value}\r\nContent-Length: 0\r\n\r\n")
+        .into_bytes(),
+    )
+    .expect("raw response with malformed HSTS should parse");
+    assert!(malformed.strict_transport_security().is_err());
+    assert_eq!(
+      Some(&value.to_string()),
+      malformed.header_value("Strict-Transport-Security")
+    );
+  }
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!(
+      "HTTP/1.1 200 OK\r\nStrict-Transport-Security: {oversized}\r\nContent-Length: 0\r\n\r\n"
+    )
+    .into_bytes(),
+  )
+  .expect("raw response should remain usable");
+  assert!(oversized_response.strict_transport_security().is_err());
+  assert_eq!(
+    Some(&oversized),
+    oversized_response.header_value("Strict-Transport-Security")
+  );
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response without HSTS should parse");
+  assert_eq!(
+    None,
+    absent
+      .strict_transport_security()
+      .expect("absent HSTS should parse")
+  );
+  let _: Option<StrictTransportSecurity> = absent
+    .strict_transport_security()
+    .expect("absent HSTS should parse");
+}
+
+#[test]
+fn test_x_content_type_options_response_metadata_preserves_raw_headers() {
+  for value in ["nosniff", "NoSniff", "NOSNIFF"] {
+    let raw =
+      format!("HTTP/1.1 200 OK\r\nX-Content-Type-Options: {value}\r\nContent-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should parse");
+
+    assert_eq!(
+      XContentTypeOptions::Nosniff,
+      response
+        .x_content_type_options()
+        .expect("XCTO should parse")
+        .expect("XCTO should be present")
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("X-Content-Type-Options")
+    );
+  }
+}
+
+#[test]
+fn test_x_content_type_options_response_metadata_rejects_invalid_and_absent_values() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "X-Content-Type-Options: nosniff\r\n",
+    "X-Content-Type-Options: nosniff\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  assert!(response.x_content_type_options().is_err());
+  assert_eq!(
+    Some(&"nosniff".to_string()),
+    response.header_value("X-Content-Type-Options")
+  );
+  assert_eq!(
+    response.header_values("X-Content-Type-Options"),
+    [&"nosniff".to_string(), &"nosniff".to_string()]
+  );
+
+  let malformed = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nX-Content-Type-Options: same-origin\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("raw response with malformed XCTO should parse");
+  assert!(malformed.x_content_type_options().is_err());
+  assert_eq!(
+    Some(&"same-origin".to_string()),
+    malformed.header_value("X-Content-Type-Options")
+  );
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!("HTTP/1.1 200 OK\r\nX-Content-Type-Options: {oversized}\r\nContent-Length: 0\r\n\r\n")
+      .into_bytes(),
+  )
+  .expect("raw response should remain usable");
+  assert!(oversized_response.x_content_type_options().is_err());
+  assert_eq!(
+    Some(&oversized),
+    oversized_response.header_value("X-Content-Type-Options")
+  );
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response without XCTO should parse");
+  assert_eq!(
+    None,
+    absent
+      .x_content_type_options()
+      .expect("absent XCTO should parse")
+  );
+  let _: Option<XContentTypeOptions> = absent
+    .x_content_type_options()
+    .expect("absent XCTO should parse");
+}
+
+#[test]
+fn test_x_frame_options_response_metadata_preserves_raw_headers() {
+  for (value, policy) in [
+    ("DENY", XFrameOptions::Deny),
+    ("deny", XFrameOptions::Deny),
+    ("SAMEORIGIN", XFrameOptions::SameOrigin),
+    ("sameorigin", XFrameOptions::SameOrigin),
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\nX-Frame-Options: {value}\r\nContent-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should parse");
+
+    assert_eq!(
+      policy,
+      response
+        .x_frame_options()
+        .expect("XFO should parse")
+        .expect("XFO should be present")
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("X-Frame-Options")
+    );
+  }
+}
+
+#[test]
+fn test_x_frame_options_response_metadata_rejects_invalid_and_absent_values() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "X-Frame-Options: DENY\r\n",
+    "X-Frame-Options: SAMEORIGIN\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  assert!(response.x_frame_options().is_err());
+  assert_eq!(
+    Some(&"DENY".to_string()),
+    response.header_value("X-Frame-Options")
+  );
+  assert_eq!(
+    response.header_values("X-Frame-Options"),
+    [&"DENY".to_string(), &"SAMEORIGIN".to_string()]
+  );
+
+  let malformed = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nX-Frame-Options: ALLOW-FROM https://example.test\r\nContent-Length: 0\r\n\r\n"
+      .to_vec(),
+  )
+  .expect("raw response with malformed XFO should parse");
+  assert!(malformed.x_frame_options().is_err());
+  assert_eq!(
+    Some(&"ALLOW-FROM https://example.test".to_string()),
+    malformed.header_value("X-Frame-Options")
+  );
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!("HTTP/1.1 200 OK\r\nX-Frame-Options: {oversized}\r\nContent-Length: 0\r\n\r\n")
+      .into_bytes(),
+  )
+  .expect("raw response should remain usable");
+  assert!(oversized_response.x_frame_options().is_err());
+  assert_eq!(
+    Some(&oversized),
+    oversized_response.header_value("X-Frame-Options")
+  );
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response without XFO should parse");
+  assert_eq!(
+    None,
+    absent.x_frame_options().expect("absent XFO should parse")
+  );
+  let _: Option<XFrameOptions> = absent.x_frame_options().expect("absent XFO should parse");
 }
 
 #[test]
