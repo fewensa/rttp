@@ -8,6 +8,9 @@ pub use rttp_protocol::access_control_request_method::{
   AccessControlRequestMethod as HttpAccessControlRequestMethod,
   AccessControlRequestMethodParseError as HttpAccessControlRequestMethodParseError,
 };
+pub use rttp_protocol::connection::{
+  Connection as HttpConnection, ConnectionParseError as HttpConnectionParseError,
+};
 pub use rttp_protocol::cookie::{HttpCookiePair, HttpCookieParseError, HttpCookies};
 pub use rttp_protocol::fetch_metadata::{
   FetchMetadataParseError as HttpFetchMetadataParseError, SecFetchDest, SecFetchMode, SecFetchSite,
@@ -532,6 +535,16 @@ impl Request {
       return Ok(None);
     }
     HttpRequestTe::parse_values(values).map(Some)
+  }
+
+  /// Parses retained HTTP/1 `Connection` header metadata without changing
+  /// keep-alive, hop-by-hop stripping, or HTTP/2 rejection.
+  pub fn connection(&self) -> Result<Option<HttpConnection>, HttpConnectionParseError> {
+    let values: Vec<&str> = self.headers_named("Connection").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpConnection::parse_values(values).map(Some)
   }
 
   /// Parses retained `Transfer-Encoding` framing metadata without changing
@@ -2420,6 +2433,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpRequestTe::parse_values(values).map(Some)
+  }
+
+  /// Parses retained HTTP/1 `Connection` header metadata without changing
+  /// keep-alive, hop-by-hop stripping, or HTTP/2 rejection.
+  pub fn connection(&self) -> Result<Option<HttpConnection>, HttpConnectionParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Connection"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpConnection::parse_values(values).map(Some)
   }
 
   /// Parses retained `Transfer-Encoding` framing metadata without changing

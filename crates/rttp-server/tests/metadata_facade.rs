@@ -2,8 +2,9 @@ use rttp_server::server::{
   HttpAcceptCh, HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods,
   HttpAccessControlRequestHeaders, HttpAccessControlRequestHeadersParseError,
   HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError,
-  HttpConditionalMetadata, HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy,
-  HttpEntityTag, HttpPreferenceKind, HttpRequest, HttpResponse, HttpTransferEncoding,
+  HttpConditionalMetadata, HttpConnection, HttpConnectionParseError,
+  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpEntityTag,
+  HttpPreferenceKind, HttpRequest, HttpResponse, HttpTransferEncoding,
   HttpTransferEncodingParseError, HttpWantContentDigest, HttpWantReprDigest, SecFetchDest,
   SecFetchMode, SecFetchSite, SecFetchUser,
 };
@@ -131,6 +132,62 @@ fn request_facade_parses_want_repr_digest_metadata() {
   assert_eq!(digest.entries()[1].preference(), 3);
   assert_eq!(digest.entries()[2].algorithm(), "unixsum");
   assert_eq!(digest.entries()[2].preference(), 0);
+}
+
+#[test]
+fn request_facade_parses_connection_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /download HTTP/1.1\r\nHost: files.example.test\r\nConnection: close\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let connection: HttpConnection = request
+    .connection()
+    .expect("Connection should parse")
+    .expect("Connection should be present");
+
+  assert_eq!(connection.tokens(), ["close"]);
+  assert_eq!(connection.header_value(), "close");
+  assert_eq!(request.header("Connection"), Some("close"));
+}
+
+#[test]
+fn request_facade_returns_none_when_connection_is_absent() {
+  let request = HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+
+  assert!(request
+    .connection()
+    .expect("missing Connection should be accepted")
+    .is_none());
+}
+
+#[test]
+fn request_facade_rejects_malformed_connection_while_preserving_raw_header() {
+  let request =
+    HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\nConnection: close,\r\n\r\n")
+      .expect("malformed Connection should not reject the request frame");
+
+  assert!(request.connection().is_err());
+  assert_eq!(request.header("Connection"), Some("close,"));
+}
+
+#[test]
+fn request_facade_rejects_invalid_connection_values() {
+  let _: HttpConnectionParseError =
+    HttpConnection::parse("close; foo").expect_err("parameterized Connection should be rejected");
+}
+
+#[test]
+fn response_facade_parses_attached_connection_metadata() {
+  let response = HttpResponse::ok("").header("Connection", "keep-alive");
+  let connection = response
+    .connection()
+    .expect("Connection should parse")
+    .expect("Connection should be present");
+
+  assert_eq!(connection.tokens(), ["keep-alive"]);
+  assert_eq!(connection.header_value(), "keep-alive");
 }
 
 #[test]
