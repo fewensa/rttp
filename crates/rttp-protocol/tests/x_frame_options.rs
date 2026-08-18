@@ -44,6 +44,8 @@ fn x_frame_options_rejects_empty_duplicate_unsupported_and_ambiguous_values() {
     "SAME ORIGIN",
     "SAMEORIGIN\r\nX: y",
     "SAMEORIGIN\u{7f}",
+    "same-origin",
+    "unknown",
   ] {
     assert!(
       XFrameOptions::parse(value).is_err(),

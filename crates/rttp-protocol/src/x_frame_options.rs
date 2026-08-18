@@ -1,7 +1,8 @@
 //! Bounded, policy-free `X-Frame-Options` response metadata parsing.
 //!
 //! This module validates the response field value only. Callers decide whether
-//! and how to enforce frame embedding policy.
+//! and how to enforce frame embedding policy. The deprecated `ALLOW-FROM`
+//! directive is rejected here.
 
 use std::error::Error;
 use std::fmt;
