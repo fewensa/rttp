@@ -26,9 +26,9 @@ impl XFrameOptions {
     I: IntoIterator<Item = &'a str>,
   {
     let value = parse_singleton(values)?;
-    if value.eq_ignore_ascii_case("DENY") {
+    if value.eq_ignore_ascii_case("deny") {
       Ok(Self::Deny)
-    } else if value.eq_ignore_ascii_case("SAMEORIGIN") {
+    } else if value.eq_ignore_ascii_case("sameorigin") {
       Ok(Self::SameOrigin)
     } else {
       Err(invalid_value())

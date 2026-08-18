@@ -1,7 +1,7 @@
 use rttp_protocol::x_frame_options::{XFrameOptions, MAX_X_FRAME_OPTIONS_VALUE_BYTES};
 
 #[test]
-fn x_frame_options_parses_standard_values_case_insensitively() {
+fn x_frame_options_parses_deny_and_same_origin_case_insensitively() {
   assert_eq!(
     XFrameOptions::Deny,
     XFrameOptions::parse("DENY").expect("DENY should parse")
@@ -33,7 +33,7 @@ fn x_frame_options_accepts_http_optional_whitespace_padding() {
 }
 
 #[test]
-fn x_frame_options_rejects_empty_duplicate_unsupported_and_ambiguous_values() {
+fn x_frame_options_rejects_empty_duplicate_malformed_and_ambiguous_values() {
   for value in [
     "",
     "   ",
