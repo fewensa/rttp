@@ -21,8 +21,9 @@ and the cumulative coding count across all supplied fields is bounded to 256
 codings. Codings are split on commas with SP and HTAB accepted only as optional
 whitespace around each coding; empty members and members containing forbidden
 ASCII control bytes are rejected. Each coding must be an RFC 9110 token, and
-case-insensitive duplicate codings are rejected while the first spelling is
-preserved. A present header set that yields no coding still fails as invalid.
+repeated codings are retained in wire order so callers can inspect the full
+encoding stack. A present header set that yields no coding still fails as
+invalid.
 
 ## Cross-Origin-Embedder-Policy
 

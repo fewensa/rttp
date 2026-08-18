@@ -51,11 +51,6 @@ impl ContentEncoding {
             "too many Content-Encoding codings",
           ));
         }
-        if codings.iter().any(|seen| seen.eq_ignore_ascii_case(coding)) {
-          return Err(ContentEncodingParseError::new(
-            "duplicate Content-Encoding coding",
-          ));
-        }
         codings.push(coding.to_owned());
       }
     }

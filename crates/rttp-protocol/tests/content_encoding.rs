@@ -58,23 +58,15 @@ fn content_encoding_rejects_invalid_values() {
 }
 
 #[test]
-fn content_encoding_rejects_case_insensitive_duplicates() {
-  assert!(
-    ContentEncoding::parse("gzip, GZIP").is_err(),
-    "in-field case-insensitive duplicates must be rejected"
-  );
-  assert!(
-    ContentEncoding::parse("br, gzip, br").is_err(),
-    "in-field duplicates must be rejected"
-  );
-  assert!(
-    ContentEncoding::parse_values(["gzip, br", "GZIP"]).is_err(),
-    "cross-field case-insensitive duplicates must be rejected"
-  );
-  assert!(
-    ContentEncoding::parse_values(["br", "gzip, BR"]).is_err(),
-    "cross-field duplicates must be rejected"
-  );
+fn content_encoding_retains_repeated_codings_in_wire_order() {
+  let in_field = ContentEncoding::parse("gzip, GZIP").expect("repeated codings should parse");
+  assert_eq!(in_field.codings(), ["gzip", "GZIP"]);
+  assert_eq!(in_field.header_value(), "gzip, GZIP");
+
+  let cross_field = ContentEncoding::parse_values(["gzip, br", "GZIP"])
+    .expect("repeated codings across fields should parse");
+  assert_eq!(cross_field.codings(), ["gzip", "br", "GZIP"]);
+  assert_eq!(cross_field.header_value(), "gzip, br, GZIP");
 }
 
 #[test]
