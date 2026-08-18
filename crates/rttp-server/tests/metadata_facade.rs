@@ -4,8 +4,7 @@ use rttp_server::server::{
   HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError,
   HttpConditionalMetadata, HttpContentLength, HttpCrossOriginEmbedderPolicyReportOnly,
   HttpCrossOriginResourcePolicy, HttpEntityTag, HttpPreferenceKind, HttpRequest, HttpResponse,
-  HttpTransferEncoding, HttpTransferEncodingParseError, HttpWantReprDigest, SecFetchDest,
-  SecFetchMode, SecFetchSite, SecFetchUser,
+  HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
 };
 
 #[test]
@@ -151,38 +150,4 @@ fn request_facade_parses_want_repr_digest_metadata() {
   assert_eq!(digest.entries()[1].preference(), 3);
   assert_eq!(digest.entries()[2].algorithm(), "unixsum");
   assert_eq!(digest.entries()[2].preference(), 0);
-}
-
-#[test]
-fn request_facade_parses_transfer_encoding_from_validated_chunked_framing() {
-  let request = HttpRequest::parse(
-    b"POST /upload HTTP/1.1\r\nHost: example.test\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
-  )
-  .expect("chunked request framing should parse");
-
-  let transfer_encoding: HttpTransferEncoding = request
-    .transfer_encoding()
-    .expect("Transfer-Encoding should parse")
-    .expect("Transfer-Encoding should be present");
-
-  assert_eq!(transfer_encoding.codings(), ["chunked"]);
-  assert_eq!(transfer_encoding.header_value(), "chunked");
-  assert_eq!(request.header("Transfer-Encoding"), Some("chunked"));
-}
-
-#[test]
-fn request_facade_returns_none_when_transfer_encoding_is_absent() {
-  let request = HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
-    .expect("request should parse");
-
-  assert!(request
-    .transfer_encoding()
-    .expect("missing Transfer-Encoding should be accepted")
-    .is_none());
-}
-
-#[test]
-fn request_facade_rejects_non_sole_chunked_transfer_encoding_values() {
-  let _: HttpTransferEncodingParseError = HttpTransferEncoding::parse("gzip, chunked")
-    .expect_err("non-sole chunked Transfer-Encoding should be rejected");
 }

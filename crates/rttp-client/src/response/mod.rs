@@ -65,8 +65,7 @@ mod response;
 
 pub use rttp_protocol::alt_svc::{AltSvc, AltSvcAlternative, AltSvcParameter, AltSvcParseError};
 pub use rttp_protocol::digest::{
-  ContentDigest, ContentDigestEntry, Digest, DigestEntry, DigestParseError, ReprDigest,
-  ReprDigestEntry,
+  Digest, DigestEntry, DigestParseError, ReprDigest, ReprDigestEntry,
 };
 pub use rttp_protocol::prefer::{
   PreferParseError, Preference, PreferenceApplied, PreferenceAppliedParseError, PreferenceKind,
@@ -87,7 +86,6 @@ pub use rttp_protocol::strict_transport_security::{
 };
 pub use rttp_protocol::timing_allow_origin::{TimingAllowOrigin, TimingAllowOriginParseError};
 pub use rttp_protocol::trailer::{Trailer, TrailerParseError};
-pub use rttp_protocol::transfer_encoding::{TransferEncoding, TransferEncodingParseError};
 pub use rttp_protocol::want_repr_digest::{
   WantReprDigest, WantReprDigestEntry, WantReprDigestParseError,
 };
