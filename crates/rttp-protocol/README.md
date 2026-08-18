@@ -8,6 +8,20 @@ and server crates.
 
 This crate supports rttp's implementation; its public API is not a standalone
 application-level HTTP interface.
+
+## Content-Location
+
+`content_location` parses a singleton response `Content-Location` field as one
+bounded URI reference. Each field value is bounded to 64 KiB. A second field is
+rejected after every supplied field is bound-checked. Surrounding SP and HTAB
+are trimmed as optional whitespace, and the trimmed reference text is preserved
+through `as_str()` and `header_value()` without resolution against any request
+or response URL. Empty values, ASCII controls, interior whitespace, unsafe
+field-value characters, malformed absolute URIs, malformed relative
+references, and broken percent-encoding are errors. This is syntax validation
+only: callers own redirect handling, cache variant selection, representation
+replacement, route generation, retries, and status policy.
+
 ## Connection
 
 `connection` parses one or more RFC 9110 `Connection` field values into an

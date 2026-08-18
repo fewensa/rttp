@@ -31,6 +31,10 @@ pub use rttp_protocol::client_hints::{
   AcceptCh as HttpAcceptCh, AcceptChParseError as HttpAcceptChParseError,
   CriticalCh as HttpCriticalCh, CriticalChParseError as HttpCriticalChParseError,
 };
+pub use rttp_protocol::content_location::{
+  ContentLocation as HttpContentLocation,
+  ContentLocationParseError as HttpContentLocationParseError,
+};
 pub use rttp_protocol::cross_origin_embedder_policy::{
   CrossOriginEmbedderPolicy as HttpCrossOriginEmbedderPolicy,
   CrossOriginEmbedderPolicyParseError as HttpCrossOriginEmbedderPolicyParseError,
@@ -94,7 +98,6 @@ pub(crate) const MAX_ACCEPT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_ACCEPT_ENCODINGS: usize = 32;
 pub(crate) const MAX_TE_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_TE_CODINGS: usize = 32;
-pub(crate) const MAX_CONTENT_LOCATION_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_CONTENT_DISPOSITION_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_CONTENT_DISPOSITION_PARAMETERS: usize = 32;
 pub(crate) const MAX_CONTENT_TYPE_VALUE_BYTES: usize = 64 * 1024;
@@ -1139,13 +1142,14 @@ impl HttpResponse {
     mut self,
     value: V,
   ) -> Result<Self, HttpContentLocationParseError> {
-    let value = parse_http_content_location(value.as_ref())?;
+    let content_location = HttpContentLocation::parse(value.as_ref())?;
     self
       .headers
       .retain(|header| !header.name.eq_ignore_ascii_case("Content-Location"));
-    self
-      .headers
-      .push(HttpHeader::new("Content-Location", value));
+    self.headers.push(HttpHeader::new(
+      "Content-Location",
+      content_location.header_value(),
+    ));
     Ok(self)
   }
 
@@ -1888,15 +1892,19 @@ impl HttpResponse {
     HttpClearSiteData::parse_values(values).map(Some)
   }
 
-  pub fn content_location(&self) -> Result<Option<&str>, HttpContentLocationParseError> {
-    let Some(value) = self.single_header_value(
-      "Content-Location",
-      HttpContentLocationParseError::new("multiple Content-Location headers"),
-    )?
-    else {
+  pub fn content_location(
+    &self,
+  ) -> Result<Option<HttpContentLocation>, HttpContentLocationParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Content-Location"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
       return Ok(None);
-    };
-    parse_http_content_location(value).map(Some)
+    }
+    HttpContentLocation::parse_values(values).map(Some)
   }
 
   pub fn content_disposition(
@@ -3312,51 +3320,6 @@ fn parse_accept_encoding_qvalue(qvalue: &str) -> Result<u16, HttpAcceptEncodingP
   } else {
     fractional * 10_u16.pow(3 - fraction.len() as u32)
   })
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpContentLocationParseError {
-  pub(crate) message: String,
-}
-
-impl HttpContentLocationParseError {
-  pub(crate) fn new<S: AsRef<str>>(message: S) -> Self {
-    Self {
-      message: message.as_ref().to_string(),
-    }
-  }
-}
-
-impl fmt::Display for HttpContentLocationParseError {
-  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    formatter.write_str(&self.message)
-  }
-}
-
-impl Error for HttpContentLocationParseError {}
-
-pub(crate) fn parse_http_content_location(
-  value: &str,
-) -> Result<&str, HttpContentLocationParseError> {
-  if value.len() > MAX_CONTENT_LOCATION_VALUE_BYTES {
-    return Err(HttpContentLocationParseError::new(
-      "Content-Location header value is too large",
-    ));
-  }
-
-  let value = value.trim();
-  if value.is_empty() {
-    return Err(HttpContentLocationParseError::new(
-      "invalid Content-Location value",
-    ));
-  }
-  if value.bytes().any(|byte| byte.is_ascii_control()) {
-    return Err(HttpContentLocationParseError::new(
-      "invalid Content-Location value",
-    ));
-  }
-
-  Ok(value)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

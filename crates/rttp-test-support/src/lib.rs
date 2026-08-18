@@ -1405,6 +1405,18 @@ pub mod content_location {
       name: "unit separator control character",
       value: "/safe\u{1f}",
     },
+    InvalidCase {
+      name: "malformed absolute URI",
+      value: "http://[::1",
+    },
+    InvalidCase {
+      name: "relative reference with space",
+      value: "/bad path",
+    },
+    InvalidCase {
+      name: "reference with embedded space",
+      value: "not valid",
+    },
   ];
 
   pub fn response_cases() -> &'static [ResponseCase] {
