@@ -131,3 +131,14 @@ bound-checked. The field value must be exactly one of the tokens `DENY` or
 wire form. The deprecated `ALLOW-FROM` directive, unknown tokens, lists,
 quoted values, empty values, and other unparsable input are errors. This
 parser does not enforce clickjacking protection or frame-embedding policy.
+
+## Warning
+
+`warning` parses `#warning-value` lists from RFC 7234 `Warning` fields. Each
+field value is bounded to 64 KiB, the combined item count is bounded to 256,
+and each unescaped warn-agent and warn-text is bounded to 64 KiB. Warn-codes
+are any 3 ASCII digits; warn-agent is opaque non-space text; warn-text is a
+quoted-string; an optional quoted HTTP-date is parsed with the same
+`httpdate` helper as Sunset. Empty input, empty members, malformed quoting,
+invalid codes, and bound violations are rejected. This parser does not
+implement cache, freshness, stale-response, or response-acceptance policy.

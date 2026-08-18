@@ -14,6 +14,7 @@ use crate::response::ProxyAuthenticationInfo;
 use crate::response::ReprDigest;
 use crate::response::ServerTiming;
 use crate::response::Trailer;
+use crate::response::Warning;
 use crate::response::WwwAuthenticate;
 use crate::types::{Cookie, Header, RoUrl, StatusCode};
 use rttp_protocol::access_control_allow_headers::AccessControlAllowHeaders;
@@ -623,6 +624,19 @@ impl Response {
       return Ok(None);
     }
     ServerTiming::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses all `Warning` fields as bounded RFC 7234 warning-value metadata.
+  /// This does not change cache freshness, stale-response handling, or
+  /// response-acceptance policy.
+  pub fn warning(&self) -> error::Result<Option<Warning>> {
+    let values = self.header_values("warning");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Warning::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
