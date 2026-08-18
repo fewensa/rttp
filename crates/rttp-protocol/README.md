@@ -33,6 +33,18 @@ out-of-range integers, empty present fields, and other unparsable input are
 errors. This parser never fails open to an empty preference set and does not
 select an algorithm, compute a digest, or attach `Repr-Digest`.
 
+## Signature
+
+`signature` parses one or more RFC 9421 `Signature` field values into an
+ordered dictionary of labels and byte sequences. Each field value is bounded
+to 64 KiB, the combined entry count is bounded to 256, each entry value is
+bounded to 64 KiB, and each entry may carry at most 256 Structured Fields
+parameters. Members must be dictionary keys mapped to byte sequences.
+Well-formed item parameters are accepted as syntax and discarded. Duplicate
+labels, non-byte-sequence values, empty present fields, and other unparsable
+input are errors. This parser does not sign, verify, look up keys, or parse
+`Signature-Input`.
+
 ## Cross-Origin-Opener-Policy
 
 `cross_origin_opener_policy` parses a singleton `Cross-Origin-Opener-Policy`
