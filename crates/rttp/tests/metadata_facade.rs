@@ -2,7 +2,9 @@ use rttp::server::{
   HttpAcceptCh, HttpConditionalMetadata, HttpCrossOriginEmbedderPolicy,
   HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
   HttpCrossOriginResourcePolicy, HttpEntityTag, HttpResponse, HttpSignature, HttpSignatureInput,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpSunsetParseError,
+  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
+  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
+  HttpSunsetParseError,
 };
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -117,11 +119,21 @@ fn compatibility_facade_keeps_signature_metadata_in_the_server_module() {
     .with_signature_input(r#"sig1=("@method")"#)
     .expect("Signature-Input should be accepted");
 
+  let entry: &HttpSignatureInputEntry = &signature_input.entries()[0];
+  let _: &[HttpSignatureInputComponent] = entry.components();
+  let _: &[HttpSignatureInputParameter] = entry.parameters();
+
   assert_eq!(signature.header_value(), "sig1=:YWJj:");
   assert_eq!(
     signature_input.header_value(),
     r#"sig1=("@method" "@path");created=1618884473;keyid="test-key""#
   );
+  assert!(matches!(
+    entry
+      .parameter("created")
+      .map(HttpSignatureInputParameter::value),
+    Some(HttpSignatureInputBareItem::Integer(1_618_884_473))
+  ));
   assert_eq!(
     response
       .signature()

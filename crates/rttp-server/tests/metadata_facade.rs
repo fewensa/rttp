@@ -4,8 +4,9 @@ use rttp_server::server::{
   HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError,
   HttpConditionalMetadata, HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy,
   HttpEntityTag, HttpPreferenceKind, HttpRequest, HttpResponse, HttpSignature, HttpSignatureInput,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpWantReprDigest, SecFetchDest,
-  SecFetchMode, SecFetchSite, SecFetchUser,
+  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
+  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
+  HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
 };
 
 #[test]
@@ -140,9 +141,19 @@ fn request_facade_parses_signature_metadata_pair() {
   let _: Result<HttpSignatureInput, HttpSignatureInputParseError> =
     HttpSignatureInput::parse("not-an-input");
 
+  let entry: &HttpSignatureInputEntry = &signature_input.entries()[0];
+  let _: &[HttpSignatureInputComponent] = entry.components();
+  let _: &[HttpSignatureInputParameter] = entry.parameters();
+
   assert_eq!(signature.header_value(), "sig1=:YWJj:");
   assert_eq!(
     signature_input.header_value(),
     r#"sig1=("@method" "@authority" "@path");created=1618884473;keyid="test-key""#
   );
+  assert!(matches!(
+    entry
+      .parameter("created")
+      .map(HttpSignatureInputParameter::value),
+    Some(HttpSignatureInputBareItem::Integer(1_618_884_473))
+  ));
 }

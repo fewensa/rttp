@@ -106,6 +106,43 @@ fn signature_input_retains_well_formed_member_and_component_parameters() {
 }
 
 #[test]
+fn signature_input_accepts_multi_entry_field_with_colon_bearing_token_parameter() {
+  let value = r#"sig1=("@method");alg=rsa:pss, sig2=("@path")"#;
+  let parsed = SignatureInput::parse(value)
+    .expect("colon-bearing token parameters must not be treated as byte sequences");
+  let from_values = SignatureInput::parse_values([value])
+    .expect("parse_values should accept the same colon-bearing token field");
+
+  assert_eq!(parsed.len(), 2);
+  assert_eq!(
+    parsed
+      .entry("sig1")
+      .and_then(|entry| entry.parameter("alg"))
+      .map(|parameter| parameter.value()),
+    Some(&SignatureInputBareItem::Token("rsa:pss".to_string()))
+  );
+  assert_eq!(parsed.entries()[1].label(), "sig2");
+  assert_eq!(parsed.header_value(), value);
+  assert_eq!(from_values.header_value(), parsed.header_value());
+}
+
+#[test]
+fn signature_input_roundtrips_display_string_parameter_with_non_ascii() {
+  let value = r#"sig1=("@method");note=%"caf%c3%a9""#;
+  let parsed =
+    SignatureInput::parse(value).expect("DisplayString parameters with non-ASCII should parse");
+
+  assert_eq!(
+    parsed
+      .entry("sig1")
+      .and_then(|entry| entry.parameter("note"))
+      .map(|parameter| parameter.value()),
+    Some(&SignatureInputBareItem::DisplayString("café".to_string()))
+  );
+  assert_eq!(parsed.header_value(), value);
+}
+
+#[test]
 fn signature_input_rejects_empty_malformed_duplicate_and_non_inner_list_values() {
   for value in [
     "",
@@ -116,6 +153,7 @@ fn signature_input_rejects_empty_malformed_duplicate_and_non_inner_list_values()
     r#"sig1="@method""#,
     r#"SIG1=("@method")"#,
     r#"sig1=("@method"), sig1=("@path")"#,
+    r#"sig1=("@method, extra"), sig1=("@path")"#,
     r#"sig1=("@method" 1)"#,
     r#"sig1=("@method";Foo=bar)"#,
   ] {

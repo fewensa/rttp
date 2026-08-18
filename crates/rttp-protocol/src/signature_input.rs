@@ -360,15 +360,12 @@ fn escape_sf_string(value: &str) -> String {
 
 fn escape_display_string(value: &str) -> String {
   let mut escaped = String::new();
-  for ch in value.chars() {
-    match ch {
-      '%' | '"' => {
-        escaped.push_str(&format!("%{:02x}", ch as u32));
+  for byte in value.as_bytes() {
+    match byte {
+      0x00..=0x1f | b'%' | b'"' | 0x7f..=0xff => {
+        escaped.push_str(&format!("%{byte:02x}"));
       }
-      ch if (ch as u32) < 0x20 || (ch as u32) == 0x7f => {
-        escaped.push_str(&format!("%{:02x}", ch as u32));
-      }
-      ch => escaped.push(ch),
+      _ => escaped.push(*byte as char),
     }
   }
   escaped
@@ -380,40 +377,53 @@ fn top_level_member_count(value: &str) -> usize {
   let mut count = 0;
   let mut depth = 0usize;
   let mut member_started = false;
+  let mut after_equals = false;
   while index < bytes.len() {
     match bytes[index] {
       b'"' => {
         skip_quoted(bytes, &mut index);
         member_started = true;
+        after_equals = false;
       }
       b'%' if bytes.get(index + 1) == Some(&b'"') => {
         index += 1;
         skip_quoted(bytes, &mut index);
         member_started = true;
+        after_equals = false;
       }
-      b':' => {
+      b':' if after_equals => {
         skip_byte_sequence(bytes, &mut index);
         member_started = true;
+        after_equals = false;
+      }
+      b'=' => {
+        member_started = true;
+        after_equals = true;
+        index += 1;
       }
       b'(' => {
         depth += 1;
         index += 1;
         member_started = true;
+        after_equals = false;
       }
       b')' => {
         depth = depth.saturating_sub(1);
         index += 1;
+        after_equals = false;
       }
       b',' if depth == 0 => {
         if member_started {
           count += 1;
         }
         member_started = false;
+        after_equals = false;
         index += 1;
       }
       b' ' | b'\t' => index += 1,
       _ => {
         member_started = true;
+        after_equals = false;
         index += 1;
       }
     }
