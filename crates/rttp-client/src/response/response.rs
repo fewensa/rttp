@@ -8,12 +8,18 @@ use url::Url;
 use crate::error;
 use crate::response::raw_response::RawResponse;
 use crate::response::AltSvc;
+use crate::response::Connection;
+use crate::response::ContentDigest;
 use crate::response::Digest;
 use crate::response::Priority;
 use crate::response::ProxyAuthenticationInfo;
 use crate::response::ReprDigest;
 use crate::response::ServerTiming;
+use crate::response::Signature;
+use crate::response::SignatureInput;
 use crate::response::Trailer;
+use crate::response::TransferEncoding;
+use crate::response::Warning;
 use crate::response::WwwAuthenticate;
 use crate::types::{Cookie, Header, RoUrl, StatusCode};
 use rttp_protocol::access_control_allow_headers::AccessControlAllowHeaders;
@@ -22,24 +28,26 @@ use rttp_protocol::access_control_allow_origin::AccessControlAllowOrigin;
 use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::access_control_max_age::AccessControlMaxAge;
 use rttp_protocol::age::Age;
+use rttp_protocol::allow as protocol_allow;
 use rttp_protocol::clear_site_data::ClearSiteData;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::cookie::HttpSetCookies;
 use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
+use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedderPolicyReportOnly;
 use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::cross_origin_resource_policy::CrossOriginResourcePolicy;
 use rttp_protocol::prefer::PreferenceApplied;
 use rttp_protocol::referrer_policy::ReferrerPolicy;
+use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::sunset::parse_sunset_values;
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
 
 const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
-const MAX_ALLOW_VALUE_BYTES: usize = 64 * 1024;
-const MAX_ALLOW_METHODS: usize = 256;
 const MAX_ACCEPT_RANGES_VALUE_BYTES: usize = 64 * 1024;
 const MAX_ACCEPT_RANGE_UNITS: usize = 256;
 const MAX_ACCEPT_MEDIA_TYPES: usize = 256;
+const MAX_DATE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_RETRY_AFTER_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_TYPE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_TYPE_PARAMETERS: usize = 256;
@@ -304,6 +312,22 @@ impl Response {
     self.header_value("last-modified")
   }
 
+  pub fn date(&self) -> error::Result<Option<SystemTime>> {
+    let values = self.header_values("date");
+    match values.as_slice() {
+      [] => Ok(None),
+      [value] => {
+        if value.len() > MAX_DATE_VALUE_BYTES {
+          return Err(error::bad_response("Date header value is too large"));
+        }
+        parse_http_date(value)
+          .map(Some)
+          .map_err(|_| error::bad_response("Invalid Date HTTP-date"))
+      }
+      _ => Err(error::bad_response("Duplicate Date header values")),
+    }
+  }
+
   /// Parses bounded `Age` response metadata without applying freshness or cache policy.
   pub fn age(&self) -> error::Result<Option<u64>> {
     let values = self.header_values("age");
@@ -495,6 +519,17 @@ impl Response {
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
+  /// Parses bounded `Strict-Transport-Security` response metadata without applying HSTS policy.
+  pub fn strict_transport_security(&self) -> error::Result<Option<StrictTransportSecurity>> {
+    let values = self.header_values("strict-transport-security");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    StrictTransportSecurity::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
   pub fn content_range(&self) -> Option<ContentRange> {
     self
       .header_value("content-range")
@@ -557,6 +592,30 @@ impl Response {
     ContentEncoding::parse_values(values.into_iter().map(String::as_str)).map(Some)
   }
 
+  /// Parses retained HTTP/1 `Connection` header metadata without changing
+  /// keep-alive, hop-by-hop stripping, or HTTP/2 rejection.
+  pub fn connection(&self) -> error::Result<Option<Connection>> {
+    let values = self.header_values("connection");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Connection::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses retained `Transfer-Encoding` framing metadata without changing
+  /// HTTP/1 body framing or HTTP/2 decode.
+  pub fn transfer_encoding(&self) -> error::Result<Option<TransferEncoding>> {
+    let values = self.header_values("transfer-encoding");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    TransferEncoding::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
   /// Parses all `WWW-Authenticate` fields as bounded authentication challenge metadata.
   pub fn www_authenticate(&self) -> error::Result<Option<WwwAuthenticate>> {
     let values = self.header_values("www-authenticate");
@@ -585,9 +644,39 @@ impl Response {
     self.digest_field("content-digest")
   }
 
+  /// Parses all `Content-Digest` fields as bounded response metadata without
+  /// verifying hashes or selecting an algorithm.
+  pub fn content_digest(&self) -> error::Result<Option<ContentDigest>> {
+    self.digest_field("content-digest")
+  }
+
   /// Parses all `Repr-Digest` fields as bounded response metadata.
   pub fn repr_digest(&self) -> error::Result<Option<ReprDigest>> {
     self.digest_field("repr-digest")
+  }
+
+  /// Parses all `Signature` fields as bounded RFC 9421 metadata without
+  /// verifying signatures or looking up keys.
+  pub fn signature(&self) -> error::Result<Option<Signature>> {
+    let values = self.header_values("signature");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Signature::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses all `Signature-Input` fields as bounded RFC 9421 metadata without
+  /// verifying signatures or applying cryptographic policy.
+  pub fn signature_input(&self) -> error::Result<Option<SignatureInput>> {
+    let values = self.header_values("signature-input");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    SignatureInput::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   fn digest_field(&self, name: &str) -> error::Result<Option<Digest>> {
@@ -618,6 +707,19 @@ impl Response {
       return Ok(None);
     }
     ServerTiming::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses all `Warning` fields as bounded RFC 7234 warning-value metadata.
+  /// This does not change cache freshness, stale-response handling, or
+  /// response-acceptance policy.
+  pub fn warning(&self) -> error::Result<Option<Warning>> {
+    let values = self.header_values("warning");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Warning::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
@@ -671,6 +773,20 @@ impl Response {
       return Ok(None);
     }
     CrossOriginEmbedderPolicy::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses `Cross-Origin-Embedder-Policy-Report-Only` response metadata without
+  /// enforcing embedder policy or scheduling reports.
+  pub fn cross_origin_embedder_policy_report_only(
+    &self,
+  ) -> error::Result<Option<CrossOriginEmbedderPolicyReportOnly>> {
+    let values = self.header_values("cross-origin-embedder-policy-report-only");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    CrossOriginEmbedderPolicyReportOnly::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
@@ -832,7 +948,7 @@ impl fmt::Display for Response {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Allow {
-  methods: Vec<String>,
+  inner: protocol_allow::Allow,
 }
 
 impl Allow {
@@ -844,48 +960,17 @@ impl Allow {
   where
     I: IntoIterator<Item = &'a str>,
   {
-    let mut methods = Vec::new();
-    let mut seen = HashSet::new();
-
-    for value in values {
-      if value.len() > MAX_ALLOW_VALUE_BYTES {
-        return Err(error::bad_response("Allow header value is too large"));
-      }
-
-      for method in value.split(',') {
-        let method = method.trim();
-        if method.is_empty() {
-          return Err(error::bad_response("Invalid Allow method"));
-        }
-        if !is_token(method) {
-          return Err(error::bad_response("Invalid Allow method"));
-        }
-        if methods.len() >= MAX_ALLOW_METHODS {
-          return Err(error::bad_response("Too many Allow methods"));
-        }
-        if !seen.insert(method.to_string()) {
-          return Err(error::bad_response("Duplicate Allow method"));
-        }
-        methods.push(method.to_string());
-      }
-    }
-
-    if methods.is_empty() {
-      return Err(error::bad_response("Invalid Allow method"));
-    }
-
-    Ok(Self { methods })
+    protocol_allow::Allow::parse_values(values)
+      .map(|inner| Self { inner })
+      .map_err(|err| error::bad_response(err.to_string()))
   }
 
   pub fn methods(&self) -> Vec<&str> {
-    self.methods.iter().map(String::as_str).collect()
+    self.inner.methods()
   }
 
   pub fn contains_method(&self, method: impl AsRef<str>) -> bool {
-    self
-      .methods
-      .iter()
-      .any(|candidate| candidate == method.as_ref())
+    self.inner.contains_method(method)
   }
 }
 
