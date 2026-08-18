@@ -11,7 +11,6 @@ use crate::response::AltSvc;
 use crate::response::AuthenticationInfo;
 use crate::response::Digest;
 use crate::response::Priority;
-use crate::response::ProxyAuthenticationInfo;
 use crate::response::ReprDigest;
 use crate::response::ServerTiming;
 use crate::response::Trailer;
@@ -572,18 +571,6 @@ impl Response {
       return Ok(None);
     }
     AuthenticationInfo::parse_values(values.into_iter().map(String::as_str))
-      .map(Some)
-      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
-  }
-
-  /// Parses all `Proxy-Authentication-Info` fields as bounded auth-param
-  /// metadata without verifying `rspauth` or generating `Proxy-Authorization`.
-  pub fn proxy_authentication_info(&self) -> error::Result<Option<ProxyAuthenticationInfo>> {
-    let values = self.header_values("proxy-authentication-info");
-    if values.is_empty() {
-      return Ok(None);
-    }
-    ProxyAuthenticationInfo::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
