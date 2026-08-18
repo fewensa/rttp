@@ -923,6 +923,9 @@ impl Request {
       }
     };
 
+    let content_length =
+      content_length_from_request_body_kind_and_headers(body_kind, &head.headers);
+
     Ok(Self {
       method: head.method,
       target: head.target,
@@ -930,7 +933,7 @@ impl Request {
       headers: head.headers,
       trailers: Vec::new(),
       body,
-      content_length: content_length_from_request_body_kind(body_kind),
+      content_length,
       extended_connect_protocol: None,
     })
   }
@@ -941,6 +944,9 @@ impl Request {
     body_kind: RequestBodyKind,
     trailers: Vec<(String, String)>,
   ) -> Self {
+    let content_length =
+      content_length_from_request_body_kind_and_headers(body_kind, &head.headers);
+
     Self {
       method: head.method,
       target: head.target,
@@ -948,16 +954,26 @@ impl Request {
       headers: head.headers,
       trailers,
       body,
-      content_length: content_length_from_request_body_kind(body_kind),
+      content_length,
       extended_connect_protocol: None,
     }
   }
 }
 
-fn content_length_from_request_body_kind(kind: RequestBodyKind) -> Option<HttpContentLength> {
+fn content_length_from_request_body_kind_and_headers(
+  kind: RequestBodyKind,
+  headers: &[(String, String)],
+) -> Option<HttpContentLength> {
   match kind {
-    RequestBodyKind::ContentLength(length) => Some(HttpContentLength::new(length)),
+    RequestBodyKind::ContentLength(length)
+      if headers
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case("Content-Length")) =>
+    {
+      Some(HttpContentLength::new(length))
+    }
     RequestBodyKind::Chunked => None,
+    RequestBodyKind::ContentLength(_) => None,
   }
 }
 
@@ -2061,7 +2077,8 @@ impl HttpRequest {
     };
 
     let body_kind = request_body_kind(&head.headers).map_err(HttpParseError::from_io_error)?;
-    let content_length = content_length_from_request_body_kind(body_kind);
+    let content_length =
+      content_length_from_request_body_kind_and_headers(body_kind, &head.headers);
     let body = match body_kind {
       RequestBodyKind::ContentLength(content_length) => {
         reject_oversized_request_body(content_length, MAX_REQUEST_BODY_BYTES)

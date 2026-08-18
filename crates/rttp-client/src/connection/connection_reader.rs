@@ -75,12 +75,20 @@ impl<'a, R: Read + ?Sized> StreamingResponse<'a, R> {
 
   pub fn read_to_response(mut self) -> error::Result<Response> {
     let mut binary = self.head.clone();
+    let content_length = content_length_from_response_body_kind(&self.body.kind);
     read_response_body_to_end(
       &mut self.body,
       &mut binary,
       DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES,
     )?;
-    Response::with_trailers(self.url, binary, self.body.trailers().clone())
+    Response::with_trailers_and_informational_and_limit(
+      self.url,
+      binary,
+      self.body.trailers().clone(),
+      Vec::new(),
+      content_length,
+      DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES,
+    )
   }
 }
 
@@ -1386,6 +1394,26 @@ mod tests {
     let content_length = response
       .content_length()
       .expect("matching fixed length should be retained");
+    assert_eq!(2, content_length.len());
+  }
+
+  #[test]
+  fn streaming_response_read_to_response_retains_content_length_metadata() {
+    let raw = concat!("HTTP/1.1 200 OK\r\n", "Content-Length: 2\r\n", "\r\n", "OK");
+    let url = url::Url::parse("http://localhost").unwrap();
+    let mut cursor = Cursor::new(raw.as_bytes());
+    let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+
+    let response = reader
+      .streaming_response()
+      .unwrap()
+      .read_to_response()
+      .unwrap();
+
+    assert_eq!("OK", response.body().string().unwrap());
+    let content_length = response
+      .content_length()
+      .expect("streaming fixed length should be retained");
     assert_eq!(2, content_length.len());
   }
 

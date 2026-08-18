@@ -92,6 +92,14 @@ fn request_facade_exposes_validated_content_length_metadata() {
 }
 
 #[test]
+fn request_facade_omits_content_length_metadata_when_header_is_absent() {
+  let request = HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+
+  assert_eq!(None, request.content_length());
+}
+
+#[test]
 fn request_facade_omits_content_length_metadata_for_chunked_framing() {
   let request = HttpRequest::parse(
     concat!(
