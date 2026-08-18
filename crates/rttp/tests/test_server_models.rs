@@ -6,8 +6,8 @@ use rttp::server::{
   HttpAccessControlRequestMethod, HttpAllowedMethods, HttpAuthorization, HttpByteRange,
   HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata, HttpContentDisposition,
   HttpContentLanguages, HttpContentSecurityPolicy, HttpContentType, HttpCriticalCh, HttpEntityTag,
-  HttpExpectations, HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome, HttpLinkValues,
-  HttpPermissionsPolicy, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
+  HttpExpectations, HttpHost, HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome,
+  HttpLinkValues, HttpPermissionsPolicy, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
   HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
   HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming,
   HttpVary,
@@ -1136,6 +1136,49 @@ fn request_accept_encoding_rejects_duplicate_invalid_and_oversized_values() {
     .collect::<Vec<_>>()
     .join(", ");
   assert!(HttpRequestAcceptEncodings::parse(too_many).is_err());
+}
+
+#[test]
+fn request_host_parses_http11_authority() {
+  let request = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test:8443\r\n",
+    "\r\n"
+  ));
+
+  let host: HttpHost = request
+    .host()
+    .expect("Host should parse")
+    .expect("Host should be present");
+
+  assert_eq!("example.test", host.host());
+  assert_eq!(Some("8443"), host.port());
+  assert_eq!("example.test:8443", host.header_value());
+}
+
+#[test]
+fn request_host_rejects_absent_duplicate_and_malformed_values() {
+  assert_eq!(
+    None,
+    parse_request("GET / HTTP/1.0\r\n\r\n")
+      .host()
+      .expect("absent Host should be accepted")
+  );
+
+  let duplicate = parse_request(concat!(
+    "GET / HTTP/1.0\r\n",
+    "Host: example.test\r\n",
+    "host: other.test\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.host().is_err());
+  assert_eq!(Some("example.test"), duplicate.header("Host"));
+
+  for value in ["", "example.test/path", "user@example.test"] {
+    let request = parse_request(&format!("GET / HTTP/1.0\r\nHost: {value}\r\n\r\n"));
+    assert!(request.host().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Host"));
+  }
 }
 
 #[test]

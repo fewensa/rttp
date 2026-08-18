@@ -196,6 +196,179 @@ fn request_representation_metadata_parses_without_applying_policy() {
 }
 
 #[test]
+fn request_connection_exposes_retained_http1_tokens() {
+  let absent_raw = "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n";
+  let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
+  let absent = Request::read_next_from(&mut absent_reader)
+    .expect("absent request should parse")
+    .expect("absent request should be present");
+  assert_eq!(
+    None,
+    absent
+      .connection()
+      .expect("missing Connection should be accepted")
+  );
+
+  let valid_raw = concat!(
+    "GET /download HTTP/1.1\r\n",
+    "Host: files.example.test\r\n",
+    "Connection: close\r\n",
+    "\r\n"
+  );
+  let mut valid_reader = BufReader::new(Cursor::new(valid_raw.as_bytes()));
+  let valid = Request::read_next_from(&mut valid_reader)
+    .expect("valid request should parse")
+    .expect("valid request should be present");
+  let connection = valid
+    .connection()
+    .expect("Connection should parse")
+    .expect("Connection should be present");
+  assert_eq!(vec!["close"], connection.tokens());
+  assert_eq!("close", connection.header_value());
+  assert_eq!(Some("close"), valid.header("Connection"));
+
+  let malformed_raw = concat!(
+    "GET / HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Connection: close,\r\n",
+    "\r\n"
+  );
+  let mut malformed_reader = BufReader::new(Cursor::new(malformed_raw.as_bytes()));
+  let malformed = Request::read_next_from(&mut malformed_reader)
+    .expect("malformed metadata should not reject the request frame")
+    .expect("malformed request should be present");
+  assert!(malformed.connection().is_err());
+  assert_eq!(Some("close,"), malformed.header("Connection"));
+}
+
+#[test]
+fn request_host_parses_http11_authority_without_routing() {
+  let request = Request::from_raw_frame(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test:8443\r\n",
+    "\r\n"
+  ).as_bytes())
+  .expect("request should parse");
+
+  let host = request
+    .host()
+    .expect("Host should parse")
+    .expect("Host should be present");
+  assert_eq!("example.test", host.host());
+  assert_eq!(Some("8443"), host.port());
+  assert_eq!("example.test:8443", host.header_value());
+}
+
+#[test]
+fn request_host_preserves_absent_duplicate_and_malformed_headers() {
+  let absent = Request::from_raw_frame(b"GET / HTTP/1.0\r\n\r\n").expect("request should parse");
+  assert_eq!(
+    None,
+    absent.host().expect("absent Host should be accepted")
+  );
+
+  let duplicate = Request::from_raw_frame(concat!(
+    "GET / HTTP/1.0\r\n",
+    "Host: example.test\r\n",
+    "host: other.test\r\n",
+    "\r\n"
+  ).as_bytes())
+  .expect("duplicate Host should not reject the HTTP/1.0 request frame");
+  assert!(duplicate.host().is_err());
+  assert_eq!(
+    vec!["example.test", "other.test"],
+    duplicate.headers_named("Host").collect::<Vec<_>>()
+  );
+
+  let malformed = Request::from_raw_frame(concat!(
+    "GET / HTTP/1.0\r\n",
+    "Host: example.test/path\r\n",
+    "\r\n"
+  ).as_bytes())
+  .expect("malformed Host should not reject the HTTP/1.0 request frame");
+  assert!(malformed.host().is_err());
+  assert_eq!(Some("example.test/path"), malformed.header("Host"));
+}
+
+#[test]
+fn request_host_parses_http2_authority_mapped_host() {
+  let request = DecodedHttp2RequestHeaders {
+    method: Some("GET".to_string()),
+    target: Some("/asset".to_string()),
+    scheme: Some("https".to_string()),
+    authority: Some("example.test:8443".to_string()),
+    extended_connect_protocol: None,
+    headers: Vec::new(),
+  }
+  .into_request(Vec::new(), Vec::new())
+  .expect("HTTP/2 request should build");
+
+  assert_eq!(Some("example.test:8443"), request.header("host"));
+  let host = request
+    .host()
+    .expect("mapped Host should parse")
+    .expect("mapped Host should be present");
+  assert_eq!("example.test", host.host());
+  assert_eq!(Some("8443"), host.port());
+}
+
+#[test]
+fn request_host_rejects_duplicate_http2_host_and_authority() {
+  let request = DecodedHttp2RequestHeaders {
+    method: Some("GET".to_string()),
+    target: Some("/asset".to_string()),
+    scheme: Some("https".to_string()),
+    authority: Some("example.test".to_string()),
+    extended_connect_protocol: None,
+    headers: vec![("host".to_string(), "other.test".to_string())],
+  }
+  .into_request(Vec::new(), Vec::new())
+  .expect("HTTP/2 request should build");
+
+  assert_eq!(
+    vec!["other.test", "example.test"],
+    request.headers_named("host").collect::<Vec<_>>()
+  );
+  assert!(request.host().is_err());
+}
+
+#[test]
+fn request_transfer_encoding_exposes_validated_chunked_framing() {
+  let absent_raw = "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n";
+  let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
+  let absent = Request::read_next_from(&mut absent_reader)
+    .expect("absent request should parse")
+    .expect("absent request should be present");
+  assert_eq!(
+    None,
+    absent
+      .transfer_encoding()
+      .expect("missing Transfer-Encoding should be accepted")
+  );
+
+  let valid_raw = concat!(
+    "POST /upload HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "\r\n",
+    "5\r\nhello\r\n",
+    "0\r\n\r\n"
+  );
+  let mut valid_reader = BufReader::new(Cursor::new(valid_raw.as_bytes()));
+  let valid = Request::read_next_from(&mut valid_reader)
+    .expect("chunked request framing should parse")
+    .expect("chunked request should be present");
+  let transfer_encoding = valid
+    .transfer_encoding()
+    .expect("Transfer-Encoding should parse")
+    .expect("Transfer-Encoding should be present");
+  assert_eq!(vec!["chunked"], transfer_encoding.codings());
+  assert_eq!("chunked", transfer_encoding.header_value());
+  assert_eq!(Some("chunked"), valid.header("Transfer-Encoding"));
+  assert_eq!(b"hello", valid.body());
+}
+
+#[test]
 fn request_want_repr_digest_parses_preferences_without_selecting_an_algorithm() {
   let request = Request::from_raw_frame(concat!(
     "GET /asset HTTP/1.1\r\n",

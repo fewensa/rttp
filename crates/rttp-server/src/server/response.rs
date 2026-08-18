@@ -1409,6 +1409,21 @@ impl HttpResponse {
     HttpAllowedMethods::parse_values(values).map(Some)
   }
 
+  /// Parses attached HTTP/1 `Connection` header metadata without changing
+  /// keep-alive, hop-by-hop stripping, or HTTP/2 rejection.
+  pub fn connection(&self) -> Result<Option<HttpConnection>, HttpConnectionParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Connection"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpConnection::parse_values(values).map(Some)
+  }
+
   pub fn content_language(
     &self,
   ) -> Result<Option<HttpContentLanguages>, HttpContentLanguageParseError> {

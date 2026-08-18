@@ -8,6 +8,20 @@ and server crates.
 
 This crate supports rttp's implementation; its public API is not a standalone
 application-level HTTP interface.
+## Connection
+
+`connection` parses one or more RFC 9110 `Connection` field values into an
+ordered list of connection-option tokens. This is header-field metadata, not a
+transport socket type. Each field value is bounded to 64 KiB, and the
+cumulative token count across all supplied fields is bounded to 256 tokens.
+Tokens are split on commas with SP and HTAB accepted only as optional
+whitespace around each token; empty members and members containing forbidden
+ASCII control bytes are rejected. Each token must be an RFC 9110 token, and
+repeated tokens are retained in wire order with their original spelling. A
+present header set that yields no token still fails as invalid. This parser
+never fails open and does not apply keep-alive, hop-by-hop stripping, upgrade,
+or HTTP/2 rejection policy.
+
 ## Content-Encoding
 
 `content_encoding` parses one or more `Content-Encoding` field values into an
@@ -19,6 +33,21 @@ ASCII control bytes are rejected. Each coding must be an RFC 9110 token, and
 repeated codings are retained in wire order so callers can inspect the full
 encoding stack. A present header set that yields no coding still fails as
 invalid.
+
+## Transfer-Encoding
+
+`transfer_encoding` parses one or more `Transfer-Encoding` field values into
+an ordered list of transfer-coding tokens. Each field value is bounded to
+64 KiB, and the cumulative coding count across all supplied fields is bounded
+to 256 codings. Codings are split on commas with SP and HTAB accepted only as
+optional whitespace around each coding; empty members and members containing
+forbidden ASCII control bytes are rejected. Each coding must be an RFC 9110
+token. Combined fields are validated in wire order and must yield a sole
+`chunked` coding, matched case-insensitively, as the last and only token so
+the type matches existing HTTP/1 framing. Duplicate fields, stacked codings,
+`chunked` that is not last, and other unparsable input are errors. This
+parser never fails open and does not decode a chunked body, negotiate `TE`,
+or change Content-Length or HTTP/2 decode.
 
 ## Want-Repr-Digest
 
@@ -32,6 +61,18 @@ Boolean members, parameterized members, inner lists, decimals, negatives,
 out-of-range integers, empty present fields, and other unparsable input are
 errors. This parser never fails open to an empty preference set and does not
 select an algorithm, compute a digest, or attach `Repr-Digest`.
+
+## Host
+
+`host` parses a singleton HTTP `Host` request field as one inbound authority
+(`uri-host` plus optional port). Each field value is bounded to 64 KiB. A
+second field is rejected after every supplied field is bound-checked.
+Surrounding SP and HTAB are trimmed as optional whitespace. The parser
+preserves the trimmed host and port spelling and does not canonicalize names,
+IPv6 text, or default ports. Empty values, userinfo, path, query, fragment,
+unbracketed IPv6, empty ports, ASCII controls, and other values outside the
+inbound Host grammar are errors. This is syntax validation only: callers own
+virtual-host routing and scheme defaults.
 
 ## Signature
 
