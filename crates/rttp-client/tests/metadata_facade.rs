@@ -3,7 +3,8 @@ use rttp_client::response::{
   AccessControlAllowMethods, AccessControlAllowMethodsParseError, AccessControlExposeHeaders,
   AccessControlMaxAge, AccessControlMaxAgeParseError, AltSvc, CrossOriginEmbedderPolicy,
   CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest, HttpClearSiteData, PreferenceApplied,
-  Priority, ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Trailer,
+  Priority, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ReferrerPolicy,
+  ReferrerPolicyToken, ServerTiming, Trailer,
 };
 use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 
@@ -40,6 +41,11 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     CrossOriginEmbedderPolicy::parse("require-corp").expect("COEP should parse");
   let cross_origin_opener_policy =
     CrossOriginOpenerPolicy::parse("noopener-allow-popups").expect("COOP should parse");
+  let proxy_authentication_info =
+    ProxyAuthenticationInfo::parse(r#"nextnonce="6629fae49393a05397450978507c4ef1", qop=auth"#)
+      .expect("Proxy-Authentication-Info should parse");
+  let _: ProxyAuthenticationInfoParseError = ProxyAuthenticationInfo::parse("")
+    .expect_err("empty Proxy-Authentication-Info should be rejected");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(allow_methods.methods(), ["GET", "POST"]);
@@ -61,6 +67,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(
     cross_origin_opener_policy.header_value(),
     "noopener-allow-popups"
+  );
+  assert_eq!(
+    proxy_authentication_info.parameter("nextnonce"),
+    Some("6629fae49393a05397450978507c4ef1")
   );
 }
 
