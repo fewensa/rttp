@@ -1,7 +1,7 @@
 use rttp::server::{
   HttpAcceptCh, HttpConditionalMetadata, HttpCrossOriginEmbedderPolicy,
-  HttpCrossOriginOpenerPolicy, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpResponse,
-  HttpSunsetParseError,
+  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
+  HttpCrossOriginResourcePolicy, HttpEntityTag, HttpResponse, HttpSunsetParseError,
 };
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -24,6 +24,11 @@ fn compatibility_facade_exports_client_metadata_types() {
   let embedder_policy: rttp::CrossOriginEmbedderPolicy =
     rttp_client::response::CrossOriginEmbedderPolicy::parse("require-corp; report-to=\"coep\"")
       .expect("Cross-Origin-Embedder-Policy should parse");
+  let embedder_policy_report_only: rttp::CrossOriginEmbedderPolicyReportOnly =
+    rttp_client::response::CrossOriginEmbedderPolicyReportOnly::parse(
+      "require-corp; report-to=\"coep\"",
+    )
+    .expect("Cross-Origin-Embedder-Policy-Report-Only should parse");
   let opener_policy: rttp::CrossOriginOpenerPolicy =
     rttp_client::response::CrossOriginOpenerPolicy::parse(
       "noopener-allow-popups; report-to=\"coop\"",
@@ -45,6 +50,7 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(alt_svc.alternatives()[0].protocol_id(), "h3");
   assert_eq!(alt_svc.alternatives()[0].max_age(), Some(60));
   assert_eq!(embedder_policy.header_value(), "require-corp");
+  assert_eq!(embedder_policy_report_only.header_value(), "require-corp");
   assert_eq!(opener_policy.header_value(), "noopener-allow-popups");
   assert_eq!(strict_transport_security.max_age(), 31_536_000);
   assert!(strict_transport_security.include_sub_domains());
@@ -60,6 +66,9 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let embedder_policy: HttpCrossOriginEmbedderPolicy =
     HttpCrossOriginEmbedderPolicy::parse("require-corp; report-to=\"coep\"")
       .expect("Cross-Origin-Embedder-Policy should parse");
+  let embedder_policy_report_only: HttpCrossOriginEmbedderPolicyReportOnly =
+    HttpCrossOriginEmbedderPolicyReportOnly::parse("require-corp; report-to=\"coep\"")
+      .expect("Cross-Origin-Embedder-Policy-Report-Only should parse");
   let opener_policy: HttpCrossOriginOpenerPolicy =
     HttpCrossOriginOpenerPolicy::parse("noopener-allow-popups; report-to=\"coop\"")
       .expect("Cross-Origin-Opener-Policy should parse");
@@ -67,6 +76,7 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA"]);
   assert_eq!(policy.header_value(), "same-origin");
   assert_eq!(embedder_policy.header_value(), "require-corp");
+  assert_eq!(embedder_policy_report_only.header_value(), "require-corp");
   assert_eq!(opener_policy.header_value(), "noopener-allow-popups");
   assert_eq!(
     metadata

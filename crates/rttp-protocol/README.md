@@ -78,6 +78,20 @@ discarded; this parser does not retain reporting metadata or enforce embedder
 policy. Case variants, lists, quoted values, unknown tokens, empty values, and
 other unparsable input are errors. The parser never fails open to `unsafe-none`.
 
+## Cross-Origin-Embedder-Policy-Report-Only
+
+`cross_origin_embedder_policy_report_only` parses a singleton
+`Cross-Origin-Embedder-Policy-Report-Only` structured-field item with the same
+directive grammar as `Cross-Origin-Embedder-Policy`. Each field value is
+bounded to 64 KiB. A second field is rejected after every supplied field is
+bound-checked. The bare item must be exactly one of the tokens `unsafe-none`,
+`require-corp`, or `credentialless`. Well-formed parameters, including
+`report-to`, are accepted as syntax and discarded; this parser does not retain
+reporting metadata, enforce embedder policy, deliver reports, or schedule
+report delivery. Case variants, lists, quoted values, unknown tokens, empty
+values, and other unparsable input are errors. The parser never fails open to
+`unsafe-none`.
+
 ## Referer
 
 `referer` parses a singleton HTTP `Referer` request field as one RFC 9110 URI
