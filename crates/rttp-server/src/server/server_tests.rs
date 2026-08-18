@@ -196,6 +196,52 @@ fn request_representation_metadata_parses_without_applying_policy() {
 }
 
 #[test]
+fn request_connection_exposes_retained_http1_tokens() {
+  let absent_raw = "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n";
+  let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
+  let absent = Request::read_next_from(&mut absent_reader)
+    .expect("absent request should parse")
+    .expect("absent request should be present");
+  assert_eq!(
+    None,
+    absent
+      .connection()
+      .expect("missing Connection should be accepted")
+  );
+
+  let valid_raw = concat!(
+    "GET /download HTTP/1.1\r\n",
+    "Host: files.example.test\r\n",
+    "Connection: close\r\n",
+    "\r\n"
+  );
+  let mut valid_reader = BufReader::new(Cursor::new(valid_raw.as_bytes()));
+  let valid = Request::read_next_from(&mut valid_reader)
+    .expect("valid request should parse")
+    .expect("valid request should be present");
+  let connection = valid
+    .connection()
+    .expect("Connection should parse")
+    .expect("Connection should be present");
+  assert_eq!(vec!["close"], connection.tokens());
+  assert_eq!("close", connection.header_value());
+  assert_eq!(Some("close"), valid.header("Connection"));
+
+  let malformed_raw = concat!(
+    "GET / HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Connection: close,\r\n",
+    "\r\n"
+  );
+  let mut malformed_reader = BufReader::new(Cursor::new(malformed_raw.as_bytes()));
+  let malformed = Request::read_next_from(&mut malformed_reader)
+    .expect("malformed metadata should not reject the request frame")
+    .expect("malformed request should be present");
+  assert!(malformed.connection().is_err());
+  assert_eq!(Some("close,"), malformed.header("Connection"));
+}
+
+#[test]
 fn request_transfer_encoding_exposes_validated_chunked_framing() {
   let absent_raw = "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n";
   let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
