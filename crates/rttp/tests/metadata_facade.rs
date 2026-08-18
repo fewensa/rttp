@@ -29,6 +29,10 @@ fn compatibility_facade_exports_client_metadata_types() {
       "noopener-allow-popups; report-to=\"coop\"",
     )
     .expect("Cross-Origin-Opener-Policy should parse");
+  let upgrade: rttp::Upgrade =
+    rttp_client::response::Upgrade::parse("websocket").expect("Upgrade should parse");
+  let _: rttp::UpgradeParseError =
+    rttp_client::response::Upgrade::parse("").expect_err("empty Upgrade should fail");
   let fetch_site: rttp::SecFetchSite =
     rttp_client::SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
 
@@ -40,6 +44,7 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(alt_svc.alternatives()[0].max_age(), Some(60));
   assert_eq!(embedder_policy.header_value(), "require-corp");
   assert_eq!(opener_policy.header_value(), "noopener-allow-popups");
+  assert_eq!(upgrade.protocols(), ["websocket"]);
   assert_eq!(fetch_site.header_value(), "same-origin");
 }
 

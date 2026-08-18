@@ -3,7 +3,8 @@ use rttp_server::server::{
   HttpAccessControlRequestHeaders, HttpAccessControlRequestHeadersParseError,
   HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError,
   HttpConditionalMetadata, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpPreferenceKind,
-  HttpRequest, HttpResponse, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
+  HttpRequest, HttpResponse, HttpUpgrade, HttpUpgradeParseError, SecFetchDest, SecFetchMode,
+  SecFetchSite, SecFetchUser,
 };
 
 #[test]
@@ -31,6 +32,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("revision-42"));
   let policy: HttpCrossOriginResourcePolicy = HttpCrossOriginResourcePolicy::parse("same-origin")
     .expect("Cross-Origin-Resource-Policy should parse");
+  let upgrade: HttpUpgrade = HttpUpgrade::parse("websocket").expect("Upgrade should parse");
+  let _: HttpUpgradeParseError = HttpUpgrade::parse("").expect_err("empty Upgrade should fail");
   let response = HttpResponse::ok("")
     .with_accept_ch(["Sec-CH-UA"])
     .expect("Accept-CH should be accepted");
@@ -50,6 +53,7 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   );
   assert!(request_headers_error.is_err());
   assert_eq!(policy.header_value(), "same-origin");
+  assert_eq!(upgrade.protocols(), ["websocket"]);
   assert_eq!(
     metadata
       .entity_tag_value()
@@ -69,6 +73,42 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_mode.header_value(), "navigate");
   assert_eq!(fetch_dest.header_value(), "document");
   assert_eq!(fetch_user.header_value(), "?1");
+}
+
+#[test]
+fn request_facade_parses_upgrade_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /chat HTTP/1.1\r\nHost: example.test\r\nUpgrade: websocket\r\nUpgrade: h2c, custom\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let upgrade = request
+    .upgrade()
+    .expect("Upgrade should parse")
+    .expect("Upgrade should be present");
+
+  assert_eq!(upgrade.protocols(), ["websocket", "h2c", "custom"]);
+}
+
+#[test]
+fn response_facade_builds_and_parses_upgrade_metadata() {
+  let response = HttpResponse::new(101, "Switching Protocols")
+    .header("Upgrade", "raw")
+    .with_upgrade(["websocket", "h2c"])
+    .expect("Upgrade should be accepted");
+
+  let upgrade = response
+    .upgrade()
+    .expect("Upgrade should parse")
+    .expect("Upgrade should be present");
+
+  assert_eq!(upgrade.protocols(), ["websocket", "h2c"]);
+  let mut serialized = Vec::new();
+  response.write_to(&mut serialized).expect("response writes");
+  let serialized = String::from_utf8(serialized).expect("response is utf8");
+  assert!(serialized.contains("\r\nUpgrade: websocket, h2c\r\n"));
+  assert!(!serialized.contains("\r\nUpgrade: raw\r\n"));
+  assert!(!serialized.contains("\r\nContent-Length:"));
 }
 
 #[test]

@@ -4,7 +4,7 @@ use rttp_client::response::{
   AccessControlMaxAge, AccessControlMaxAgeParseError, AltSvc, CrossOriginEmbedderPolicy,
   CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest, HttpClearSiteData, PreferenceApplied,
   Priority, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ReferrerPolicy,
-  ReferrerPolicyToken, ServerTiming, Trailer, Warning,
+  ReferrerPolicyToken, ServerTiming, Trailer, Upgrade, UpgradeParseError, Warning,
 };
 use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 
@@ -31,6 +31,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let server_timing = ServerTiming::parse("db;dur=53").expect("Server-Timing should parse");
   let warning = Warning::parse(r#"110 - "Response is Stale""#).expect("Warning should parse");
   let trailer = Trailer::parse("X-Trace").expect("Trailer should parse");
+  let upgrade = Upgrade::parse("websocket").expect("Upgrade should parse");
+  let _: UpgradeParseError = Upgrade::parse("").expect_err("empty Upgrade should be rejected");
   let alt_svc = AltSvc::parse("h3=\":443\"").expect("Alt-Svc should parse");
   let fetch_site = SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
@@ -59,6 +61,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(server_timing.metrics().len(), 1);
   assert_eq!(warning.items()[0].code(), 110);
   assert_eq!(trailer.field_names(), ["x-trace"]);
+  assert_eq!(upgrade.protocols(), ["websocket"]);
   assert_eq!(alt_svc.alternatives().len(), 1);
   assert_eq!(fetch_site.header_value(), "same-origin");
   assert_eq!(fetch_mode.header_value(), "navigate");
@@ -73,6 +76,48 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(
     proxy_authentication_info.parameter("nextnonce"),
     Some("6629fae49393a05397450978507c4ef1")
+  );
+}
+
+#[test]
+fn response_facade_parses_upgrade_metadata() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 101 Switching Protocols\r\n",
+      "Upgrade: websocket\r\n",
+      "Upgrade: h2c, custom\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let upgrade = response
+    .upgrade()
+    .expect("Upgrade should parse")
+    .expect("Upgrade should be present");
+
+  assert_eq!(upgrade.protocols(), ["websocket", "h2c", "custom"]);
+  assert_eq!(upgrade.header_value(), "websocket, h2c, custom");
+}
+
+#[test]
+fn response_facade_preserves_raw_upgrade_when_typed_parsing_fails() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: bad protocol\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert!(
+    response.upgrade().is_err(),
+    "invalid typed Upgrade should fail"
+  );
+  assert_eq!(
+    response.header_value("Upgrade"),
+    Some(&"bad protocol".to_string())
   );
 }
 

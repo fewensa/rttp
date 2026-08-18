@@ -25,6 +25,9 @@ pub use rttp_protocol::prefer::{
 pub use rttp_protocol::trailer::{
   Trailer as HttpTrailer, TrailerParseError as HttpTrailerParseError,
 };
+pub use rttp_protocol::upgrade::{
+  Upgrade as HttpUpgrade, UpgradeParseError as HttpUpgradeParseError,
+};
 
 pub(crate) const MAX_REQUEST_HEAD_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
@@ -514,6 +517,16 @@ impl Request {
       return Ok(None);
     }
     HttpTrailer::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Upgrade` protocol metadata without changing handoff
+  /// validation or interpreting the upgraded protocol.
+  pub fn upgrade(&self) -> Result<Option<HttpUpgrade>, HttpUpgradeParseError> {
+    let values: Vec<&str> = self.headers_named("Upgrade").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpUpgrade::parse_values(values).map(Some)
   }
 
   pub fn accept(&self) -> Result<Option<HttpAccept>, HttpAcceptParseError> {
@@ -2347,6 +2360,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpTrailer::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Upgrade` protocol metadata without changing handoff
+  /// validation or interpreting the upgraded protocol.
+  pub fn upgrade(&self) -> Result<Option<HttpUpgrade>, HttpUpgradeParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Upgrade"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpUpgrade::parse_values(values).map(Some)
   }
 
   pub fn accept(&self) -> Result<Option<HttpAccept>, HttpAcceptParseError> {

@@ -162,6 +162,37 @@ fn outbound_trailers_reject_untrimmed_invalid_bytes() {
   }
 }
 
+#[test]
+fn outbound_upgrade_protocols_emit_validated_upgrade_metadata() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/upgrade", base_url))
+      .upgrade_protocols(["websocket", "h2c"])
+      .expect("valid Upgrade protocols should be accepted")
+      .emit()
+      .expect("request should be sent");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(header_value(&request, "Upgrade"), Some("websocket, h2c"));
+  assert_ne!(header_value(&request, "Connection"), Some("Upgrade"));
+}
+
+#[test]
+fn outbound_upgrade_protocols_reject_invalid_values_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let error = client()
+      .get()
+      .url(format!("{}/invalid-upgrade", base_url))
+      .upgrade_protocols(["web socket"])
+      .expect_err("invalid Upgrade protocol must be rejected");
+    assert!(error.is_builder());
+  });
+
+  assert!(request.is_empty(), "invalid Upgrade must not open a socket");
+}
+
 #[cfg(feature = "async")]
 #[test]
 fn async_outbound_headers_are_rejected_before_connecting() {

@@ -47,6 +47,7 @@ pub mod strict_transport_security;
 pub mod sunset;
 pub mod timing_allow_origin;
 pub mod trailer;
+pub mod upgrade;
 pub mod vary;
 pub mod warning;
 pub mod www_authenticate;
