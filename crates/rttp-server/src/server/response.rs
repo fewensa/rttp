@@ -1050,6 +1050,36 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces RFC 9421 `Signature` response metadata without
+  /// signing or verifying.
+  pub fn with_signature(mut self, value: impl AsRef<str>) -> Result<Self, HttpSignatureParseError> {
+    let signature = HttpSignature::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Signature"));
+    self
+      .headers
+      .push(HttpHeader::new("Signature", signature.header_value()));
+    Ok(self)
+  }
+
+  /// Validates and replaces RFC 9421 `Signature-Input` response metadata
+  /// without signing, verifying, or applying cryptographic policy.
+  pub fn with_signature_input(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpSignatureInputParseError> {
+    let signature_input = HttpSignatureInput::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Signature-Input"));
+    self.headers.push(HttpHeader::new(
+      "Signature-Input",
+      signature_input.header_value(),
+    ));
+    Ok(self)
+  }
+
   /// Validates and replaces HTTP `Priority` response metadata.
   pub fn with_priority(mut self, value: impl AsRef<str>) -> Result<Self, HttpPriorityParseError> {
     let priority = HttpPriority::parse(value)?;
@@ -1728,6 +1758,38 @@ impl HttpResponse {
   /// Parses attached `Repr-Digest` metadata without changing raw headers.
   pub fn repr_digest(&self) -> Result<Option<HttpReprDigest>, HttpDigestParseError> {
     self.digest_field("Repr-Digest")
+  }
+
+  /// Parses attached RFC 9421 `Signature` metadata without changing raw
+  /// headers or verifying signatures.
+  pub fn signature(&self) -> Result<Option<HttpSignature>, HttpSignatureParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Signature"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSignature::parse_values(values).map(Some)
+  }
+
+  /// Parses attached RFC 9421 `Signature-Input` metadata without changing raw
+  /// headers or applying cryptographic policy.
+  pub fn signature_input(
+    &self,
+  ) -> Result<Option<HttpSignatureInput>, HttpSignatureInputParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Signature-Input"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSignatureInput::parse_values(values).map(Some)
   }
 
   fn digest_field(&self, name: &str) -> Result<Option<HttpDigest>, HttpDigestParseError> {

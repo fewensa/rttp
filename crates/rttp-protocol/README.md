@@ -86,6 +86,21 @@ labels, non-byte-sequence values, empty present fields, and other unparsable
 input are errors. This parser does not sign, verify, look up keys, or parse
 `Signature-Input`.
 
+## Signature-Input
+
+`signature_input` parses one or more RFC 9421 `Signature-Input` field values
+into an ordered dictionary of labels, covered-component identifiers, and
+opaque parameters. Each field value is bounded to 64 KiB, the combined entry
+count is bounded to 256, each entry may carry at most 256 covered components
+and 256 member parameters, and each component may carry at most 256
+parameters. Members must be dictionary keys mapped to inner lists of strings.
+Well-formed member parameters (`created`, `keyid`, `alg`, `nonce`, `tag`, and
+unknown names) and well-formed component parameters are retained as opaque
+data and are not interpreted. Duplicate labels, non-inner-list members,
+non-string components, empty present fields, and other unparsable input are
+errors. This parser does not sign, verify, look up keys, canonicalize covered
+components, or apply cryptographic policy.
+
 ## Cross-Origin-Opener-Policy
 
 `cross_origin_opener_policy` parses a singleton `Cross-Origin-Opener-Policy`
