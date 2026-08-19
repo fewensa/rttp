@@ -9,19 +9,21 @@ pub use rttp_client::response::{
   AcceptCh, AcceptPatch, AcceptPost, AcceptRanges, AccessControlAllowCredentials,
   AccessControlAllowCredentialsParseError, AltSvc, AltSvcAlternative, AltSvcParameter,
   AltSvcParseError, AuthenticationInfo, AuthenticationInfoParameter, AuthenticationInfoParseError,
-  CdnCacheControl, CdnCacheControlParseError, ContentLocation, ContentLocationParseError,
-  ContentRange, ContentRangeParseError, ContentSecurityPolicy, ContentSecurityPolicyParseError,
-  CriticalCh, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyParseError,
+  CdnCacheControl, CdnCacheControlParseError, ContentDigest, ContentEncoding, ContentLanguage,
+  ContentLocation, ContentLocationParseError, ContentRange, ContentRangeParseError,
+  ContentSecurityPolicy, ContentSecurityPolicyParseError, ContentType, CriticalCh,
+  CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyParseError,
   CrossOriginEmbedderPolicyReportOnly, CrossOriginEmbedderPolicyReportOnlyParseError,
   CrossOriginOpenerPolicy, CrossOriginOpenerPolicyParseError, Deprecation, DeprecationParseError,
   EntityTag, EntityTagParseError, HttpContentLength, Location, LocationParseError, Nel,
   NelParseError, NelUnknownMember, NoVarySearch, NoVarySearchParams, NoVarySearchParseError,
-  StrictTransportSecurity, StrictTransportSecurityParseError, Upgrade, UpgradeParseError,
-  WwwAuthenticate, WwwAuthenticateChallenge, WwwAuthenticateParameter, WwwAuthenticateParseError,
-  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  ReprDigest, StrictTransportSecurity, StrictTransportSecurityParseError, Upgrade,
+  UpgradeParseError, WantContentDigest, WantReprDigest, WwwAuthenticate, WwwAuthenticateChallenge,
+  WwwAuthenticateParameter, WwwAuthenticateParseError, XContentTypeOptions,
+  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 #[cfg(feature = "client")]
-pub use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
+pub use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose};
 
 impl Http {
   #[cfg(feature = "client")]
