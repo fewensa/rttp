@@ -1412,10 +1412,12 @@ preserves the declared spelling and order; the parsed tags are exposed by both
 
 Parsing is bounded and validation-oriented. Each `Content-Language` field value
 is limited to 64 KiB, the parsed language list is limited to 256 entries, and
-each tag must contain non-empty ASCII alphanumeric subtags separated by hyphens
-with an alphabetic primary subtag. Empty members, malformed tags, duplicates
-across one or more helper-parsed header fields, oversized values, and too many
-tags return `HttpContentLanguageParseError` from the helper. Raw
+each tag must match the BCP 47-shaped grammar enforced by the shared protocol
+primitive: language, optional extlang, script, region, variant, extension, and
+private-use subtags, plus registered grandfathered tags. Empty members,
+malformed tags, duplicates across one or more helper-parsed header fields,
+oversized values, and too many tags return `HttpContentLanguageParseError` from
+the helper. Raw
 `Request::header("Content-Language", ...)` and
 `HttpResponse::header("Content-Language", ...)` values remain preserved exactly
 as ordinary headers; helper parse errors do not remove existing headers.
