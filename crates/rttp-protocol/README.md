@@ -46,6 +46,21 @@ errors. `header_value()` formats the accepted instant as IMF-fixdate. This
 parser reports declared metadata only; it does not select an archival
 representation, negotiate `Accept-Datetime`, or implement TimeGate behavior.
 
+## Deprecation
+
+`deprecation` parses a singleton HTTP `Deprecation` field as one Structured
+Fields item that is either a boolean (`?0` / `?1`) or a date (`@` followed by
+a signed integer number of UNIX seconds). Each field value is bounded to
+64 KiB. A second field is rejected after every supplied field is bound-checked.
+Surrounding SP and HTAB are trimmed as optional whitespace. Empty values,
+item parameters, inner lists, comma-joined items, integers without `@`,
+decimals, strings, tokens (including historical `true`), byte sequences,
+display strings, IMF-fixdate values, forbidden ASCII control bytes, and dates
+that cannot be represented as `SystemTime` are errors. This parser reports
+declared metadata only; it does not compare `Sunset`, follow `Link`
+`rel=deprecation`, decide whether a resource is already deprecated, retry
+requests, or select another endpoint.
+
 ## Content-Location
 
 `content_location` parses a singleton response `Content-Location` field as one
@@ -246,6 +261,28 @@ The parser never fails open to `unsafe-none`.
 Protocol helpers define and bound wire metadata for the client and server
 crates. They do not add higher-level runtime policy such as caching,
 authentication, retries, representation selection, or body transformation.
+
+## Cache-Status
+
+`cache_status` parses one or more `Cache-Status` response field values as a
+bounded RFC 9211 / RFC 8941 `sf-list` of cache identifiers and parameters. Each
+identifier is an `sf-token` or `sf-string`. Known parameters (`hit`, `fwd`,
+`fwd-status`, `ttl`, `stored`, `collapsed`, `key`, and `detail`) are typed;
+unknown well-formed parameters are retained as extension metadata. Each field
+value is bounded to 64 KiB, the combined member count is bounded to 256, each
+member is bounded to 256 parameters, and each parameter value is bounded to
+64 KiB.
+
+Repeated `Cache-Status` fields are concatenated in wire order into one list.
+Empty fields, empty list members, inner lists, trailing commas, control bytes
+other than HTAB, invalid Structured Fields grammar, and duplicate parameter
+keys on one member are rejected. A member with neither `hit` nor `fwd`, or
+with both, remains valid metadata. `ttl` is a signed integer and may be
+negative.
+
+The parser only reports bounded wire metadata. It does not store cache
+entries, compute freshness, revalidate, select endpoints, retry, or change
+response acceptance.
 
 ## CDN-Cache-Control
 

@@ -4,6 +4,7 @@ use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::access_control_request_method::AccessControlRequestMethod;
 use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
 use rttp_protocol::age::Age;
+use rttp_protocol::cache_status::CacheStatus;
 use rttp_protocol::cdn_cache_control::CdnCacheControl;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::connection::Connection;
@@ -15,6 +16,7 @@ use rttp_protocol::content_type::ContentType;
 use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
 use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedderPolicyReportOnly;
 use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
+use rttp_protocol::deprecation::Deprecation;
 use rttp_protocol::entity_tag::{EntityTag, IfMatch};
 use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
@@ -103,6 +105,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
     ContentType::parse("text/plain; charset=utf-8").expect("Content-Type should parse");
   let content_location = ContentLocation::parse("../representations/current.json")
     .expect("Content-Location should parse");
+  let deprecation = Deprecation::parse("?1").expect("Deprecation should parse");
   let connection = Connection::parse("keep-alive, TE").expect("Connection should parse");
   let content_encoding = ContentEncoding::parse("gzip, br").expect("Content-Encoding should parse");
   let content_security_policy =
@@ -110,6 +113,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
       .expect("Content-Security-Policy should parse");
   let content_language =
     ContentLanguage::parse("fr-CA, es-419").expect("Content-Language should parse");
+  let cache_status =
+    CacheStatus::parse("OriginCache; hit; ttl=1100").expect("Cache-Status should parse");
   let cdn_cache_control =
     CdnCacheControl::parse("max-age=600, cdn-example=\"a, b\"").expect("CDN metadata should parse");
   let accept_ranges = AcceptRanges::parse("bytes, pages").expect("Accept-Ranges should parse");
@@ -155,6 +160,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(keep_alive.timeout(), Some(5));
   assert_eq!(keep_alive.max(), Some(100));
   assert_eq!(keep_alive.header_value(), "timeout=5, max=100");
+  assert_eq!(deprecation, Deprecation::Boolean(true));
+  assert_eq!(deprecation.header_value(), "?1");
   assert_eq!(location.as_str(), "../login?next=%2Fdashboard");
   assert_eq!(
     memento_datetime.header_value(),
@@ -206,6 +213,11 @@ fn protocol_exports_representative_bounded_metadata_types() {
   );
   assert_eq!(content_language.tags(), ["fr-CA", "es-419"]);
   assert_eq!(content_language.header_value(), "fr-CA, es-419");
+  assert_eq!(
+    cache_status.members()[0].identifier().as_str(),
+    "OriginCache"
+  );
+  assert_eq!(cache_status.members()[0].ttl(), Some(1100));
   assert_eq!(cdn_cache_control.directives()[1].name(), "cdn-example");
   assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
   assert_eq!(accept_ranges.units(), ["bytes", "pages"]);

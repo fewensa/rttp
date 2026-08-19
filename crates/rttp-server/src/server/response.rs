@@ -30,6 +30,11 @@ pub use rttp_protocol::authentication_info::{
   AuthenticationInfo as HttpAuthenticationInfo,
   AuthenticationInfoParseError as HttpAuthenticationInfoParseError,
 };
+pub use rttp_protocol::cache_status::{
+  CacheStatus as HttpCacheStatus, CacheStatusIdentifier as HttpCacheStatusIdentifier,
+  CacheStatusMember as HttpCacheStatusMember, CacheStatusParameter as HttpCacheStatusParameter,
+  CacheStatusParseError as HttpCacheStatusParseError,
+};
 pub use rttp_protocol::cdn_cache_control::{
   CdnCacheControl as HttpCdnCacheControl,
   CdnCacheControlParseError as HttpCdnCacheControlParseError,
@@ -67,6 +72,9 @@ pub use rttp_protocol::cross_origin_opener_policy::{
 pub use rttp_protocol::cross_origin_resource_policy::{
   CrossOriginResourcePolicy as HttpCrossOriginResourcePolicy,
   CrossOriginResourcePolicyParseError as HttpCrossOriginResourcePolicyParseError,
+};
+pub use rttp_protocol::deprecation::{
+  Deprecation as HttpDeprecation, DeprecationParseError as HttpDeprecationParseError,
 };
 pub use rttp_protocol::digest::{
   Digest as HttpDigest, DigestEntry as HttpDigestEntry, DigestParseError as HttpDigestParseError,
@@ -1692,6 +1700,16 @@ impl HttpResponse {
     self
   }
 
+  pub fn with_deprecation(mut self, deprecation: HttpDeprecation) -> Self {
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Deprecation"));
+    self
+      .headers
+      .push(HttpHeader::new("Deprecation", deprecation.header_value()));
+    self
+  }
+
   pub fn with_retry_after_delta(mut self, delta_seconds: u64) -> Self {
     self
       .headers
@@ -1748,6 +1766,20 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpCdnCacheControl::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Cache-Status` response metadata without applying cache policy.
+  pub fn cache_status(&self) -> Result<Option<HttpCacheStatus>, HttpCacheStatusParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Cache-Status"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpCacheStatus::parse_values(values).map(Some)
   }
 
   pub fn vary(&self) -> Result<Option<HttpVary>, HttpVaryParseError> {
@@ -2525,6 +2557,19 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpMementoDatetime::parse_values(values).map(Some)
+  }
+
+  pub fn deprecation(&self) -> Result<Option<HttpDeprecation>, HttpDeprecationParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Deprecation"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDeprecation::parse_values(values).map(Some)
   }
 
   pub fn retry_after(&self) -> Result<Option<HttpRetryAfter>, HttpRetryAfterParseError> {

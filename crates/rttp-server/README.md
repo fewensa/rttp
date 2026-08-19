@@ -18,6 +18,22 @@ fields, preserves the request for handler-defined error policy, and returns an
 error for malformed values, values larger than 64 KiB, or more than 256
 directives. It only parses metadata; it does not apply caching behavior.
 
+## Response Cache-Status metadata
+
+`HttpResponse::cache_status()` parses attached `Cache-Status` response fields
+into `HttpCacheStatus`. The helper combines repeated fields in wire order as
+an RFC 9211 / RFC 8941 list of cache identifiers and parameters, including
+typed `hit`, `fwd`, `fwd-status`, `ttl`, `stored`, `collapsed`, `key`, and
+`detail` values plus well-formed extension parameters. It applies these
+bounds: 64 KiB per field value, at most 256 members, at most 256 parameters
+per member, and 64 KiB per parameter value.
+
+Malformed Cache-Status metadata returns `HttpCacheStatusParseError` while
+leaving the raw response headers in place. An absent header returns
+`Ok(None)`. The helper only exposes metadata for handler-owned policy; it
+does not store cache entries, compute freshness, revalidate, select
+endpoints, retry, or choose status behavior.
+
 ## Response CDN-Cache-Control metadata
 
 `HttpResponse::cdn_cache_control()` parses attached `CDN-Cache-Control`
@@ -227,6 +243,26 @@ These helpers only declare and parse metadata. RTTP does not resolve relative
 references against a response URL, follow redirects, select cache variants,
 replace representations, generate routes, trigger retries, or alter status
 policy from `Content-Location`.
+
+## Deprecation response metadata
+
+`HttpResponse::with_deprecation(value)` replaces any existing raw `Deprecation`
+fields and adds one canonical Structured Fields boolean (`?0` / `?1`) or date
+(`@` followed by signed UNIX seconds) header from `HttpDeprecation`.
+`HttpResponse::deprecation()` parses attached raw fields into
+`HttpDeprecation`, returns `Ok(None)` when absent, and preserves invalid raw
+fields until typed parsing is requested.
+
+The helper is bounded and validation-oriented. The field value is limited to
+64 KiB. Empty values, item parameters, inner lists, comma-joined items,
+integers without `@`, decimals, strings, tokens including historical `true`,
+byte sequences, display strings, IMF-fixdate values, forbidden ASCII control
+bytes, and dates that cannot be represented as `SystemTime` are rejected
+because `Deprecation` is singleton response metadata.
+
+These helpers only declare and parse metadata. RTTP does not compare `Sunset`,
+follow `Link` `rel=deprecation`, decide whether a resource is already
+deprecated, retry requests, or select another endpoint.
 
 ## No-Vary-Search response metadata
 

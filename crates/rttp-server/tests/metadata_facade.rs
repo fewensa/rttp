@@ -3,11 +3,12 @@ use rttp_server::server::{
   HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods, HttpAccessControlRequestHeaders,
   HttpAccessControlRequestHeadersParseError, HttpAccessControlRequestMethod,
   HttpAccessControlRequestMethodParseError, HttpAccessControlRequestPrivateNetwork,
-  HttpAccessControlRequestPrivateNetworkParseError, HttpCdnCacheControl, HttpConditionalMetadata,
-  HttpConnection, HttpConnectionParseError, HttpContentDisposition, HttpContentLength,
-  HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
-  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpHost,
-  HttpKeepAlive, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNoVarySearch,
+  HttpAccessControlRequestPrivateNetworkParseError, HttpCacheStatus, HttpCacheStatusParseError,
+  HttpCdnCacheControl, HttpConditionalMetadata, HttpConnection, HttpConnectionParseError,
+  HttpContentDisposition, HttpContentLength, HttpContentLocation, HttpContentLocationParseError,
+  HttpContentRange, HttpContentRangeParseError, HttpCrossOriginEmbedderPolicyReportOnly,
+  HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpEntityTag,
+  HttpHost, HttpKeepAlive, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNoVarySearch,
   HttpNoVarySearchParams, HttpPreferenceKind, HttpRequest, HttpResponse, HttpSaveData,
   HttpSaveDataParseError, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
   HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
@@ -57,6 +58,10 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpNoVarySearch::parse(r#"params=("utm_source")"#).expect("No-Vary-Search should parse");
   let policy: HttpCrossOriginResourcePolicy = HttpCrossOriginResourcePolicy::parse("same-origin")
     .expect("Cross-Origin-Resource-Policy should parse");
+  let cache_status: HttpCacheStatus =
+    HttpCacheStatus::parse("OriginCache; hit; ttl=1100").expect("Cache-Status should parse");
+  let _: HttpCacheStatusParseError = HttpCacheStatus::parse("OriginCache; hit=yes")
+    .expect_err("invalid Cache-Status should be rejected");
   let cdn_cache_control: HttpCdnCacheControl =
     HttpCdnCacheControl::parse("max-age=600, cdn-example=\"a, b\"")
       .expect("CDN-Cache-Control should parse");
@@ -75,8 +80,12 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     .expect("Content-Location should parse");
   let _: HttpContentLocationParseError = HttpContentLocation::parse("not valid")
     .expect_err("invalid Content-Location should be rejected");
+  let deprecation = HttpDeprecation::parse("?1").expect("Deprecation should parse");
+  let _: HttpDeprecationParseError =
+    HttpDeprecation::parse("true").expect_err("historical Deprecation token should be rejected");
   let response = HttpResponse::ok("")
     .with_etag(HttpEntityTag::weak("revision-42"))
+    .with_deprecation(HttpDeprecation::Boolean(true))
     .with_accept_ch(["Sec-CH-UA"])
     .expect("Accept-CH should be accepted")
     .header("CDN-Cache-Control", "max-age=600, cdn-example=\"a, b\"");
@@ -114,6 +123,11 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(save_data.header_value(), "on");
   assert!(save_data_error.is_err());
   assert_eq!(policy.header_value(), "same-origin");
+  assert_eq!(
+    cache_status.members()[0].identifier().as_str(),
+    "OriginCache"
+  );
+  assert_eq!(cache_status.members()[0].ttl(), Some(1100));
   assert_eq!(cdn_cache_control.directives()[1].name(), "cdn-example");
   assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
   assert_eq!(report_only_policy.header_value(), "require-corp");
@@ -129,6 +143,15 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(
     content_location.header_value(),
     "../representations/current.json"
+  );
+  assert_eq!(deprecation, HttpDeprecation::Boolean(true));
+  assert_eq!(deprecation.header_value(), "?1");
+  assert_eq!(
+    response
+      .deprecation()
+      .expect("Deprecation should parse")
+      .expect("Deprecation should be present"),
+    HttpDeprecation::Boolean(true)
   );
   assert_eq!(
     metadata
@@ -193,6 +216,39 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
   );
+}
+
+#[test]
+fn response_facade_parses_cache_status_and_absent_metadata() {
+  let response = HttpResponse::ok("")
+    .header("Cache-Status", "OriginCache; hit; ttl=1100")
+    .header("cache-status", r#""CDN Company Here"; hit; ttl=545"#);
+
+  let metadata = response
+    .cache_status()
+    .expect("Cache-Status should parse")
+    .expect("Cache-Status should be present");
+
+  assert_eq!(metadata.len(), 2);
+  assert_eq!(metadata.members()[0].identifier().as_str(), "OriginCache");
+  assert_eq!(
+    metadata.members()[1].identifier().as_str(),
+    "CDN Company Here"
+  );
+  let malformed = HttpResponse::ok("").header("Cache-Status", "OriginCache; hit=yes");
+  assert!(malformed.cache_status().is_err());
+  let mut serialized = Vec::new();
+  malformed
+    .write_to(&mut serialized)
+    .expect("malformed Cache-Status response still writes");
+  let serialized = String::from_utf8(serialized).expect("response is utf8");
+  assert!(serialized.contains("\r\nCache-Status: OriginCache; hit=yes\r\n"));
+
+  let absent = HttpResponse::ok("");
+  assert!(absent
+    .cache_status()
+    .expect("missing header should be valid")
+    .is_none());
 }
 
 #[test]

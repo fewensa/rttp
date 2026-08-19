@@ -6,11 +6,12 @@ use rttp::server::{
   HttpAccessControlRequestMethod, HttpAllowedMethods, HttpAuthorization, HttpByteRange,
   HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata, HttpContentDisposition,
   HttpContentLanguages, HttpContentRange, HttpContentSecurityPolicy, HttpContentType,
-  HttpCriticalCh, HttpEntityTag, HttpExpectations, HttpHost, HttpIfNoneMatch, HttpIfRange,
-  HttpIfRangeRequestOutcome, HttpLinkValues, HttpMementoDatetime, HttpNel, HttpPermissionsPolicy,
-  HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest, HttpRequestAcceptEncodings,
-  HttpRequestCacheControl, HttpRequestTe, HttpResponse, HttpResponseCacheControl,
-  HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming, HttpVary,
+  HttpCriticalCh, HttpDeprecation, HttpEntityTag, HttpExpectations, HttpHost, HttpIfNoneMatch,
+  HttpIfRange, HttpIfRangeRequestOutcome, HttpLinkValues, HttpMementoDatetime, HttpNel,
+  HttpPermissionsPolicy, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
+  HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
+  HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming,
+  HttpVary,
 };
 
 #[test]
@@ -2826,6 +2827,28 @@ fn response_memento_datetime_helper_declares_and_parses_metadata() {
 }
 
 #[test]
+fn response_deprecation_helper_declares_boolean_and_date() {
+  let response = HttpResponse::ok("body").with_deprecation(HttpDeprecation::Boolean(true));
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nDeprecation: ?1\r\n"));
+  assert_eq!(
+    Some(HttpDeprecation::Boolean(true)),
+    response.deprecation().expect("Deprecation should parse")
+  );
+
+  let instant = UNIX_EPOCH + Duration::from_secs(1_688_169_599);
+  let response = HttpResponse::ok("body").with_deprecation(HttpDeprecation::Date(instant));
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nDeprecation: @1688169599\r\n"));
+  assert_eq!(
+    Some(HttpDeprecation::Date(instant)),
+    response.deprecation().expect("Deprecation should parse")
+  );
+}
+
+#[test]
 fn response_memento_datetime_helper_replaces_existing_metadata() {
   let initial_datetime = UNIX_EPOCH + Duration::from_secs(784_111_777);
   let datetime = initial_datetime + Duration::from_secs(1);
@@ -2849,6 +2872,22 @@ fn response_memento_datetime_helper_replaces_existing_metadata() {
 }
 
 #[test]
+fn response_deprecation_helper_replaces_existing_fields() {
+  let response = HttpResponse::ok("body")
+    .header("Deprecation", "?0")
+    .header("deprecation", "true")
+    .with_deprecation(HttpDeprecation::Boolean(true));
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert_eq!(1, serialized.matches("\r\nDeprecation: ").count());
+  assert!(serialized.contains("\r\nDeprecation: ?1\r\n"));
+  assert_eq!(
+    Some(HttpDeprecation::Boolean(true)),
+    response.deprecation().expect("Deprecation should parse")
+  );
+}
+
+#[test]
 fn response_memento_datetime_helper_rejects_invalid_and_duplicate_raw_values() {
   for response in [
     HttpResponse::ok("body").header("Memento-Datetime", "not a date"),
@@ -2866,6 +2905,69 @@ fn response_memento_datetime_helper_rejects_invalid_and_duplicate_raw_values() {
       "raw Memento-Datetime headers must remain inspectable after rejection"
     );
   }
+}
+
+#[test]
+fn response_deprecation_helper_parses_raw_fields_and_allows_absent() {
+  assert_eq!(
+    None,
+    HttpResponse::ok("body")
+      .deprecation()
+      .expect("absent Deprecation should parse")
+  );
+
+  let response = HttpResponse::ok("body").header("Deprecation", "\t?0\t");
+  assert_eq!(
+    Some(HttpDeprecation::Boolean(false)),
+    response.deprecation().expect("Deprecation should parse")
+  );
+}
+
+#[test]
+fn response_deprecation_helper_rejects_invalid_duplicate_and_oversized_raw_values() {
+  for value in [
+    "true",
+    "Sun, 06 Nov 1994 08:49:37 GMT",
+    "?1;foo=?1",
+    "1688169599",
+  ] {
+    let response = HttpResponse::ok("body").header("Deprecation", value);
+    let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+    assert!(
+      response.deprecation().is_err(),
+      "Deprecation helper should reject {value:?}"
+    );
+    assert!(
+      serialized.contains(&format!("\r\nDeprecation: {value}\r\n")),
+      "raw Deprecation header should be preserved"
+    );
+  }
+
+  let duplicate = HttpResponse::ok("body")
+    .header("Deprecation", "?1")
+    .header("deprecation", "?0");
+  let serialized = String::from_utf8(duplicate.to_bytes()).expect("response is UTF-8");
+
+  assert!(
+    duplicate.deprecation().is_err(),
+    "Deprecation helper should reject duplicate singleton headers"
+  );
+  assert!(serialized.contains("\r\nDeprecation: ?1\r\n"));
+  assert!(serialized.contains("\r\ndeprecation: ?0\r\n"));
+
+  let oversized = format!("?{}", "1".repeat(64 * 1024));
+  let response = HttpResponse::ok("body").header("Deprecation", &oversized);
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(
+    response.deprecation().is_err(),
+    "Deprecation helper should reject oversized values"
+  );
+  assert!(
+    serialized.contains(&format!("\r\nDeprecation: {oversized}\r\n")),
+    "raw oversized Deprecation header should be preserved"
+  );
 }
 
 #[test]

@@ -38,6 +38,7 @@ use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::access_control_max_age::AccessControlMaxAge;
 use rttp_protocol::age::Age;
 use rttp_protocol::allow as protocol_allow;
+use rttp_protocol::cache_status::CacheStatus;
 use rttp_protocol::cdn_cache_control::CdnCacheControl;
 use rttp_protocol::clear_site_data::ClearSiteData;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
@@ -48,6 +49,7 @@ use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
 use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedderPolicyReportOnly;
 use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::cross_origin_resource_policy::CrossOriginResourcePolicy;
+use rttp_protocol::deprecation::Deprecation;
 use rttp_protocol::entity_tag::{EntityTag, EntityTagParseError};
 use rttp_protocol::link::LinkValues;
 use rttp_protocol::location::Location;
@@ -427,6 +429,18 @@ impl Response {
       return Ok(None);
     }
     MementoDatetime::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Deprecation` response metadata without applying lifecycle
+  /// policy.
+  pub fn deprecation(&self) -> error::Result<Option<Deprecation>> {
+    let values = self.header_values("deprecation");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Deprecation::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
@@ -948,6 +962,17 @@ impl Response {
       return Ok(None);
     }
     CdnCacheControl::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Cache-Status` response metadata without applying cache policy.
+  pub fn cache_status(&self) -> error::Result<Option<CacheStatus>> {
+    let values = self.header_values("cache-status");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    CacheStatus::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

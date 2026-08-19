@@ -41,6 +41,10 @@ pub use rttp_protocol::access_control_max_age::{
   AccessControlMaxAge, AccessControlMaxAgeParseError,
 };
 pub use rttp_protocol::age::{Age, AgeParseError};
+pub use rttp_protocol::cache_status::{
+  CacheStatus, CacheStatusIdentifier, CacheStatusMember, CacheStatusParameter,
+  CacheStatusParseError,
+};
 pub use rttp_protocol::cdn_cache_control::{CdnCacheControl, CdnCacheControlParseError};
 pub use rttp_protocol::clear_site_data::{
   ClearSiteData as HttpClearSiteData, ClearSiteDataDirective as HttpClearSiteDataDirective,
@@ -79,6 +83,7 @@ pub use rttp_protocol::authentication_info::{
 };
 pub use rttp_protocol::connection::{Connection, ConnectionParseError};
 pub use rttp_protocol::content_location::{ContentLocation, ContentLocationParseError};
+pub use rttp_protocol::deprecation::{Deprecation, DeprecationParseError};
 pub use rttp_protocol::digest::{
   ContentDigest, ContentDigestEntry, Digest, DigestEntry, DigestParseError, ReprDigest,
   ReprDigestEntry,
