@@ -155,6 +155,54 @@ fn request_access_control_request_headers_preserves_absent_valid_and_malformed_m
 }
 
 #[test]
+fn request_access_control_request_private_network_preserves_absent_valid_and_malformed_metadata() {
+  let absent = parse_request("OPTIONS /widgets HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .access_control_request_private_network()
+      .expect("missing Access-Control-Request-Private-Network should be accepted")
+  );
+
+  let request = parse_request(concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Private-Network: true\r\n",
+    "\r\n"
+  ));
+  let private_network = request
+    .access_control_request_private_network()
+    .expect("Access-Control-Request-Private-Network should parse")
+    .expect("Access-Control-Request-Private-Network should be present");
+  assert_eq!("true", private_network.header_value());
+
+  let malformed = parse_request(concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Private-Network: false\r\n",
+    "\r\n"
+  ));
+  assert!(malformed.access_control_request_private_network().is_err());
+  assert_eq!(
+    Some("false"),
+    malformed.header("Access-Control-Request-Private-Network")
+  );
+
+  let duplicate = parse_request(concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Private-Network: true\r\n",
+    "access-control-request-private-network: true\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.access_control_request_private_network().is_err());
+  assert_eq!(
+    Some("true"),
+    duplicate.header("Access-Control-Request-Private-Network")
+  );
+}
+
+#[test]
 fn request_representation_metadata_parses_without_applying_policy() {
   let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
   assert_eq!(
@@ -1860,7 +1908,7 @@ fn accept_ranges_helpers_reject_malformed_duplicate_oversized_and_excessive_valu
     "Accept-Ranges helper should reject oversized values"
   );
 
-  let too_many = (0..33)
+  let too_many = (0..257)
     .map(|index| format!("unit{index}"))
     .collect::<Vec<_>>()
     .join(", ");
@@ -1906,10 +1954,12 @@ fn response_content_location_helper_declares_single_header_value() {
   assert!(serialized.contains("\r\nContent-Location: /representations/current\r\n"));
   assert_eq!(1, serialized.matches("\r\nContent-Location: ").count());
   assert_eq!(
-    Some("/representations/current"),
+    "/representations/current",
     response
       .content_location()
       .expect("Content-Location should parse")
+      .expect("Content-Location should be present")
+      .as_str()
   );
 }
 
@@ -1918,10 +1968,12 @@ fn response_content_location_helper_parses_attached_singleton_header() {
   let response = HttpResponse::ok("body").header("Content-Location", "../variant.en");
 
   assert_eq!(
-    Some("../variant.en"),
+    "../variant.en",
     response
       .content_location()
       .expect("Content-Location should parse")
+      .expect("Content-Location should be present")
+      .as_str()
   );
 }
 
