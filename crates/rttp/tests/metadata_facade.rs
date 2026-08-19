@@ -107,6 +107,15 @@ fn compatibility_facade_exports_client_metadata_types() {
 }
 
 #[test]
+#[cfg(feature = "client")]
+fn compatibility_facade_exports_content_length_metadata_type() {
+  let content_length: rttp::HttpContentLength = rttp::HttpContentLength::new(2);
+
+  assert_eq!(2, content_length.len());
+  assert_eq!("2", content_length.header_value());
+}
+
+#[test]
 fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let accept_ch: HttpAcceptCh = HttpAcceptCh::parse("Sec-CH-UA").expect("Accept-CH should parse");
   let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("revision-42"));

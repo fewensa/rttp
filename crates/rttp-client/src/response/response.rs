@@ -3,6 +3,7 @@ use std::fmt;
 use std::time::SystemTime;
 
 use httpdate::parse_http_date;
+use rttp_protocol::content_length::HttpContentLength;
 use url::Url;
 
 use crate::error;
@@ -29,6 +30,7 @@ use rttp_protocol::access_control_allow_methods::AccessControlAllowMethods;
 use rttp_protocol::access_control_allow_origin::AccessControlAllowOrigin;
 use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::access_control_max_age::AccessControlMaxAge;
+use rttp_protocol::age::Age;
 use rttp_protocol::allow as protocol_allow;
 use rttp_protocol::clear_site_data::ClearSiteData;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
@@ -75,6 +77,7 @@ const MAX_REPORTING_ENDPOINTS: usize = 256;
 pub struct Response {
   raw: RawResponse,
   informational_responses: Vec<InformationalResponse>,
+  content_length: Option<HttpContentLength>,
 }
 
 impl Response {
@@ -82,6 +85,7 @@ impl Response {
     Ok(Self {
       raw: RawResponse::new(url, binary)?,
       informational_responses: Vec::new(),
+      content_length: None,
     })
   }
 
@@ -104,6 +108,7 @@ impl Response {
       binary,
       trailers,
       Vec::new(),
+      None,
       max_body_bytes,
     )
   }
@@ -119,6 +124,7 @@ impl Response {
       binary,
       trailers,
       informational_responses,
+      None,
       crate::config::DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES,
     )
   }
@@ -128,11 +134,13 @@ impl Response {
     binary: Vec<u8>,
     trailers: Vec<Header>,
     informational_responses: Vec<InformationalResponse>,
+    content_length: Option<HttpContentLength>,
     max_body_bytes: usize,
   ) -> error::Result<Self> {
     Ok(Self {
       raw: RawResponse::with_trailers_and_limit(url, binary, trailers, max_body_bytes)?,
       informational_responses,
+      content_length,
     })
   }
 }
@@ -299,6 +307,10 @@ impl Response {
     self.raw.body_get()
   }
 
+  pub fn content_length(&self) -> Option<HttpContentLength> {
+    self.content_length
+  }
+
   pub fn binary(&self) -> &[u8] {
     self.raw.binary_get()
   }
@@ -356,11 +368,15 @@ impl Response {
     }
   }
 
+  /// Parses bounded `Age` response metadata without applying freshness or cache policy.
   pub fn age(&self) -> error::Result<Option<u64>> {
-    self
-      .header_value("age")
-      .map(|value| parse_age_delta_seconds(value).map(Some))
-      .unwrap_or(Ok(None))
+    let values = self.header_values("age");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Age::parse_values(values.into_iter().map(String::as_str))
+      .map(|age| Some(age.seconds()))
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   pub fn expires(&self) -> error::Result<Option<SystemTime>> {
@@ -2626,15 +2642,6 @@ fn parse_delta_seconds(
   value
     .parse::<u64>()
     .map_err(|_| error::bad_response(format!("Invalid Cache-Control {name} delta-seconds")))
-}
-
-fn parse_age_delta_seconds(value: &str) -> error::Result<u64> {
-  if value.is_empty() || !value.chars().all(|ch| ch.is_ascii_digit()) {
-    return Err(error::bad_response("Invalid Age delta-seconds"));
-  }
-  value
-    .parse::<u64>()
-    .map_err(|_| error::bad_response("Invalid Age delta-seconds"))
 }
 
 fn split_field_names(value: &str) -> Vec<String> {

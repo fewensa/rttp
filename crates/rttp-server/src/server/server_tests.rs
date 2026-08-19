@@ -599,6 +599,7 @@ fn request_representation_metadata_preserves_invalid_headers_and_body() {
     ],
     trailers: Vec::new(),
     body: b"body".to_vec(),
+    content_length: None,
     extended_connect_protocol: None,
   };
   assert!(oversized.content_type().is_err());
@@ -689,6 +690,7 @@ fn request_cache_control_rejects_oversized_values_without_panicking() {
     )],
     trailers: Vec::new(),
     body: Vec::new(),
+    content_length: None,
     extended_connect_protocol: None,
   };
 
@@ -714,6 +716,7 @@ fn request_cache_control_rejects_directive_counts_across_header_fields() {
     ],
     trailers: Vec::new(),
     body: Vec::new(),
+    content_length: None,
     extended_connect_protocol: None,
   };
 
@@ -2078,6 +2081,24 @@ fn request_exposes_bounded_range_and_conditional_metadata() {
     assert_eq!("POST", request.method());
     assert_eq!("/upload", request.target());
     assert_eq!(b"hello", request.body());
+    let content_length = request
+      .content_length()
+      .expect("matching fixed length should be retained");
+    assert_eq!(5, content_length.len());
+  }
+
+  #[test]
+  fn read_next_from_omits_content_length_metadata_when_header_is_absent() {
+    let raw = "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n";
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+
+    let request = Request::read_next_from(&mut reader)
+      .expect("request should parse")
+      .expect("request should be present");
+
+    assert_eq!("GET", request.method());
+    assert_eq!(b"", request.body());
+    assert_eq!(None, request.content_length());
   }
 
   #[test]
