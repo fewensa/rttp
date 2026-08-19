@@ -2,8 +2,9 @@ use rttp_server::server::{
   HttpAcceptCh, HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods,
   HttpAccessControlRequestHeaders, HttpAccessControlRequestHeadersParseError,
   HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError,
-  HttpConditionalMetadata, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpPreferenceKind,
-  HttpRequest, HttpResponse, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
+  HttpConditionalMetadata, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpKeepAlive,
+  HttpPreferenceKind, HttpRequest, HttpResponse, SecFetchDest, SecFetchMode, SecFetchSite,
+  SecFetchUser,
 };
 
 #[test]
@@ -34,6 +35,10 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let response = HttpResponse::ok("")
     .with_accept_ch(["Sec-CH-UA"])
     .expect("Accept-CH should be accepted");
+  let keep_alive = HttpKeepAlive::parse("timeout=5, max=100").expect("Keep-Alive should parse");
+  let keep_alive_response = HttpResponse::ok("")
+    .with_keep_alive("timeout=5, max=100")
+    .expect("Keep-Alive should be accepted");
   let fetch_site = SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
@@ -64,6 +69,16 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .expect("Accept-CH should be present")
       .client_hints(),
     ["Sec-CH-UA"]
+  );
+  assert_eq!(Some(5), keep_alive.timeout());
+  assert_eq!(Some(100), keep_alive.max());
+  assert_eq!(
+    Some(5),
+    keep_alive_response
+      .keep_alive()
+      .expect("Keep-Alive should parse")
+      .expect("Keep-Alive should be present")
+      .timeout()
   );
   assert_eq!(fetch_site.header_value(), "same-origin");
   assert_eq!(fetch_mode.header_value(), "navigate");
