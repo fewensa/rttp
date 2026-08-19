@@ -1,6 +1,7 @@
 use rttp_protocol::accept_ranges::AcceptRanges;
 use rttp_protocol::access_control_allow_credentials::AccessControlAllowCredentials;
 use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
+use rttp_protocol::access_control_request_method::AccessControlRequestMethod;
 use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
 use rttp_protocol::age::Age;
 use rttp_protocol::cache_status::CacheStatus;
@@ -16,7 +17,9 @@ use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
 use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedderPolicyReportOnly;
 use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::entity_tag::{EntityTag, IfMatch};
-use rttp_protocol::fetch_metadata::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
+use rttp_protocol::fetch_metadata::{
+  SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
+};
 use rttp_protocol::from::From;
 use rttp_protocol::host::Host;
 use rttp_protocol::keep_alive::KeepAlive;
@@ -49,6 +52,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
     .expect("Access-Control-Allow-Credentials should parse");
   let expose_headers = AccessControlExposeHeaders::parse("X-Request-Id")
     .expect("Access-Control-Expose-Headers should parse");
+  let request_method =
+    AccessControlRequestMethod::parse("patch").expect("Access-Control-Request-Method should parse");
   let request_private_network = AccessControlRequestPrivateNetwork::parse("true")
     .expect("Access-Control-Request-Private-Network should parse");
   let critical_ch = CriticalCh::parse("Sec-CH-UA").expect("Critical-CH should parse");
@@ -58,6 +63,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
   let fetch_user = SecFetchUser::parse("?1").expect("Sec-Fetch-User should parse");
+  let sec_purpose = SecPurpose::parse("prefetch, vendor-ext").expect("Sec-Purpose should parse");
   let from = From::parse("Ops Team <ops@example.test>").expect("From should parse");
   let nel =
     Nel::parse(r#"{"report_to":"network-errors","max_age":2592000}"#).expect("NEL should parse");
@@ -125,6 +131,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(allow_credentials.header_value(), "true");
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
+  assert_eq!(request_method.method(), "PATCH");
+  assert_eq!(request_method.header_value(), "PATCH");
   assert_eq!(request_private_network.header_value(), "true");
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
   assert_eq!(entity_tag.opaque_tag(), "revision-42");
@@ -136,6 +144,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_mode.header_value(), "navigate");
   assert_eq!(fetch_dest.header_value(), "document");
   assert_eq!(fetch_user.header_value(), "?1");
+  assert_eq!(sec_purpose.tokens(), ["prefetch", "vendor-ext"]);
+  assert!(sec_purpose.contains_prefetch());
   assert_eq!(from.header_value(), "Ops Team <ops@example.test>");
   assert_eq!(nel.max_age(), 2592000);
   assert_eq!(nel.report_to(), Some("network-errors"));

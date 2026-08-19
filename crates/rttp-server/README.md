@@ -154,11 +154,12 @@ Content-Length handling.
 ## Fetch Metadata request metadata
 
 Handlers can call `Request::sec_fetch_site()`, `sec_fetch_mode()`,
-`sec_fetch_dest()`, and `sec_fetch_user()` to observe bounded typed
-`Sec-Fetch-*` request metadata. Malformed values return a parser error while
-`Request::header()` continues to expose the original raw field. RTTP does not
-enforce browser security policy, block requests, validate origins, or infer
-navigation policy from these fields.
+`sec_fetch_dest()`, `sec_fetch_user()`, and `sec_purpose()` to observe bounded
+typed `Sec-Fetch-*` and `Sec-Purpose` request metadata. Malformed values return
+a parser error while `Request::header()` continues to expose the original raw
+field. RTTP does not enforce browser security policy, block requests, validate
+origins, infer navigation policy, start prefetches, or change cache behavior
+from these fields.
 
 ## Client Hints response metadata
 

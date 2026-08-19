@@ -62,6 +62,18 @@ present header set that yields no token still fails as invalid. This parser
 never fails open and does not apply keep-alive, hop-by-hop stripping, upgrade,
 or HTTP/2 rejection policy.
 
+## Sec-Purpose
+
+`fetch_metadata::SecPurpose` parses a singleton `Sec-Purpose` request field as
+a comma-separated list of HTTP tokens. Each field value is bounded to 64 KiB.
+Tokens are split on commas with optional surrounding SP trimmed; empty members,
+forbidden ASCII control bytes, malformed tokens, duplicate fields, and
+case-insensitive duplicate tokens are rejected. Unknown extension tokens are
+preserved with their original spelling, `contains_prefetch()` detects the
+common `prefetch` token, and `header_value()` serializes the normalized
+comma-space list. This is request metadata only; callers own browser policy,
+prefetch execution, cache behavior, navigation handling, and request blocking.
+
 ## Upgrade
 
 `upgrade` parses one or more HTTP/1 `Upgrade` field values into an ordered
@@ -416,6 +428,18 @@ lowercase wire form. Surrounding SP and HTAB are trimmed as optional
 whitespace. Unknown tokens, lists, quoted values, empty values, control
 bytes, and other unparsable input are errors.
 This parser does not evaluate CORS requests or grant credentials automatically.
+
+## Access-Control-Request-Method
+
+`access_control_request_method` parses a singleton
+`Access-Control-Request-Method` request field. Each field value is bounded to
+64 KiB. A second field is rejected after every supplied field is bound-checked.
+Surrounding SP and HTAB are trimmed as optional whitespace. The value must be
+exactly one HTTP method token and is returned in canonical ASCII-uppercase
+form. The `*` token, comma-separated lists, empty values, control bytes,
+oversized values, and other unparsable input are errors. This parser reports
+declared preflight request metadata only; it does not decide whether a
+preflight is needed or apply CORS policy.
 
 ## NEL
 

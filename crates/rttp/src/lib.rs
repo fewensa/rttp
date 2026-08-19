@@ -10,20 +10,20 @@ pub use rttp_client::response::{
   AccessControlAllowCredentialsParseError, AltSvc, AltSvcAlternative, AltSvcParameter,
   AltSvcParseError, AuthenticationInfo, AuthenticationInfoParameter, AuthenticationInfoParseError,
   CacheStatus, CacheStatusIdentifier, CacheStatusMember, CacheStatusParameter,
-  CacheStatusParseError, CdnCacheControl, CdnCacheControlParseError, ContentLocation,
-  ContentLocationParseError, ContentRange, ContentRangeParseError, ContentSecurityPolicy,
-  ContentSecurityPolicyParseError, CriticalCh, CrossOriginEmbedderPolicy,
-  CrossOriginEmbedderPolicyParseError, CrossOriginEmbedderPolicyReportOnly,
-  CrossOriginEmbedderPolicyReportOnlyParseError, CrossOriginOpenerPolicy,
-  CrossOriginOpenerPolicyParseError, EntityTag, EntityTagParseError, HttpContentLength, Location,
-  LocationParseError, Nel, NelParseError, NelUnknownMember, NoVarySearch, NoVarySearchParams,
-  NoVarySearchParseError, StrictTransportSecurity, StrictTransportSecurityParseError, Upgrade,
-  UpgradeParseError, WwwAuthenticate, WwwAuthenticateChallenge, WwwAuthenticateParameter,
-  WwwAuthenticateParseError, XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions,
-  XFrameOptionsParseError,
+  CacheStatusParseError, CdnCacheControl, CdnCacheControlParseError, ContentDigest,
+  ContentEncoding, ContentLanguage, ContentLocation, ContentLocationParseError, ContentRange,
+  ContentRangeParseError, ContentSecurityPolicy, ContentSecurityPolicyParseError, ContentType,
+  CriticalCh, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyParseError,
+  CrossOriginEmbedderPolicyReportOnly, CrossOriginEmbedderPolicyReportOnlyParseError,
+  CrossOriginOpenerPolicy, CrossOriginOpenerPolicyParseError, EntityTag, EntityTagParseError,
+  HttpContentLength, Location, LocationParseError, Nel, NelParseError, NelUnknownMember,
+  NoVarySearch, NoVarySearchParams, NoVarySearchParseError, ReprDigest, StrictTransportSecurity,
+  StrictTransportSecurityParseError, Upgrade, UpgradeParseError, WantContentDigest, WantReprDigest,
+  WwwAuthenticate, WwwAuthenticateChallenge, WwwAuthenticateParameter, WwwAuthenticateParseError,
+  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 #[cfg(feature = "client")]
-pub use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
+pub use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose};
 
 impl Http {
   #[cfg(feature = "client")]
