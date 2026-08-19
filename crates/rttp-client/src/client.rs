@@ -824,10 +824,25 @@ impl HttpClient {
     coding: &str,
     qvalue: Option<&str>,
   ) -> error::Result<&mut Self> {
+    let coding = coding.trim();
+    if !is_http_token(coding) {
+      return Err(error::builder_with_message(
+        "invalid Accept-Encoding coding",
+      ));
+    }
     let member = qvalue.map_or_else(
       || coding.to_string(),
       |qvalue| format!("{coding};q={qvalue}"),
     );
+    let parsed_member = AcceptEncoding::parse(&member)
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    if parsed_member.len() != 1 {
+      return Err(error::builder_with_message(if qvalue.is_some() {
+        "invalid Accept-Encoding q-value"
+      } else {
+        "invalid Accept-Encoding coding"
+      }));
+    }
     let headers = self.request.headers_mut();
     let candidate = match headers
       .iter()
