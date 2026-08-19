@@ -29,8 +29,8 @@ The server facade aliases this type as `HttpAcceptRanges` and reuses
 `accept_language` parses one or more RFC 9110 `Accept-Language` field values
 into an ordered list of language ranges with optional q-values. Each field
 value is bounded to 64 KiB, and the cumulative range count across all supplied
-fields is bounded to 32 ranges. Items are split on commas with SP and HTAB
-accepted only as optional whitespace; empty members and malformed ranges are
+fields is bounded to 32 ranges. Items are split on commas with surrounding
+whitespace trimmed from each item; empty members and malformed ranges are
 errors. A range is `*` or a primary subtag of 1-8 ASCII letters followed by
 any number of 1-8 character ASCII alphanumeric subtags separated by hyphens.
 Each range may carry one `q` parameter whose value is `0` or `1`, optionally
