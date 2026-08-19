@@ -232,13 +232,15 @@ not pin TLS, store hosts, consult a preload list, or apply HTTPS-only policy.
 
 ## X-Frame-Options
 
-`x_frame_options` parses a singleton `X-Frame-Options` field. Each field value
-is bounded to 64 KiB. A second field is rejected after every supplied field is
-bound-checked. The field value must be exactly one of the tokens `DENY` or
-`SAMEORIGIN`, matched case-insensitively and returned in canonical uppercase
-wire form. The deprecated `ALLOW-FROM` directive, unknown tokens, lists,
-quoted values, empty values, and other unparsable input are errors. This
-parser does not enforce clickjacking protection or frame-embedding policy.
+`x_frame_options` parses a singleton `X-Frame-Options` response field. Each
+field value is bounded to 64 KiB. A second field is rejected after every
+supplied field is bound-checked. Surrounding SP and HTAB are trimmed as
+optional whitespace. The value must be exactly `DENY` or `SAMEORIGIN`, matched
+case-insensitively and formatted canonically in uppercase. Empty values,
+comma-joined values, semicolon parameters, quoted values, `ALLOW-FROM`,
+unsupported tokens, ASCII controls, and other ambiguous input are errors. This
+parser reports declared metadata only; it does not decide whether a response
+may be framed.
 
 ## Warning
 

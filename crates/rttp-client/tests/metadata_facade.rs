@@ -4,11 +4,12 @@ use rttp_client::response::{
   AccessControlMaxAge, AccessControlMaxAgeParseError, AltSvc, Connection, ConnectionParseError,
   ContentRange, ContentRangeParseError, CrossOriginEmbedderPolicy,
   CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest,
-  HttpClearSiteData, NoVarySearch, NoVarySearchParams, NoVarySearchParseError, PreferenceApplied,
-  Priority, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ReferrerPolicy,
-  ReferrerPolicyToken, ServerTiming, Signature, SignatureInput, SignatureInputParseError,
-  SignatureParseError, StrictTransportSecurity, StrictTransportSecurityParseError, Trailer,
-  TransferEncoding, TransferEncodingParseError, WantContentDigest, WantReprDigest, Warning,
+  HttpClearSiteData, Location, LocationParseError, NoVarySearch, NoVarySearchParams,
+  NoVarySearchParseError, PreferenceApplied, Priority, ProxyAuthenticationInfo,
+  ProxyAuthenticationInfoParseError, ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Signature,
+  SignatureInput, SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
+  StrictTransportSecurityParseError, Trailer, TransferEncoding, TransferEncodingParseError,
+  WantContentDigest, WantReprDigest, Warning,
 };
 use rttp_client::response::{ContentDigest, ReprDigest};
 use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
@@ -32,6 +33,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let clear_site_data =
     HttpClearSiteData::parse("\"cache\"").expect("Clear-Site-Data should parse");
   let digest = Digest::parse("sha-256=:YWJj:").expect("Digest should parse");
+  let location = Location::parse("/next").expect("Location should parse");
+  let _: LocationParseError = Location::parse("").expect_err("empty Location should be rejected");
   let no_vary_search =
     NoVarySearch::parse(r#"params=("utm_source")"#).expect("No-Vary-Search should parse");
   let _: NoVarySearchParseError =
@@ -95,6 +98,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
   assert_eq!(clear_site_data.directives().len(), 1);
   assert_eq!(digest.entries().len(), 1);
+  assert_eq!(location.as_str(), "/next");
   assert_eq!(
     no_vary_search.params(),
     Some(&NoVarySearchParams::Names(vec!["utm_source".to_owned()]))
