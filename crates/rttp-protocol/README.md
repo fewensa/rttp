@@ -166,10 +166,10 @@ authentication policy.
 `proxy_authenticate` parses one or more `Proxy-Authenticate` field values into
 bounded proxy authentication challenge metadata. Each field value is bounded to
 64 KiB, the combined challenge count is bounded to 256, each challenge keeps
-its scheme, optional token68 value, and ordered auth-parameters, and the
-combined parameter count is bounded to 256. Parameter values are bounded to 64
-KiB, quoted-string values are unescaped, and duplicate parameter names within a
-challenge are rejected case-insensitively.
+its scheme, optional token68 value, and ordered auth-parameters. Each
+challenge's parameter count is bounded to 256. Parameter values are bounded to
+64 KiB, quoted-string values are unescaped, and duplicate parameter names
+within a challenge are rejected case-insensitively.
 
 `ProxyAuthenticate::parse()` validates a single field value, and
 `ProxyAuthenticate::parse_values()` preserves challenges across multiple field
