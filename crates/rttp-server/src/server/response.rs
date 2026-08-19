@@ -83,6 +83,9 @@ pub use rttp_protocol::server_timing::{
   ServerTimingParameter as HttpServerTimingParameter,
   ServerTimingParseError as HttpServerTimingParseError,
 };
+pub use rttp_protocol::signature_input::{
+  SignatureInput as HttpSignatureInput, SignatureInputParseError as HttpSignatureInputParseError,
+};
 pub use rttp_protocol::strict_transport_security::{
   StrictTransportSecurity as HttpStrictTransportSecurity,
   StrictTransportSecurityParseError as HttpStrictTransportSecurityParseError,

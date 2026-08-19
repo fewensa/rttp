@@ -149,10 +149,11 @@ and 256 member parameters, and each component may carry at most 256
 parameters. Members must be dictionary keys mapped to inner lists of strings.
 Well-formed member parameters (`created`, `keyid`, `alg`, `nonce`, `tag`, and
 unknown names) and well-formed component parameters are retained as opaque
-data and are not interpreted. Duplicate labels, non-inner-list members,
-non-string components, empty present fields, and other unparsable input are
-errors. This parser does not sign, verify, look up keys, canonicalize covered
-components, or apply cryptographic policy.
+data and are not interpreted. Duplicate labels keep the later value.
+Non-inner-list members, non-string components, empty covered-component lists,
+empty present fields, and other unparsable input are errors. This parser does
+not sign, verify, look up keys, canonicalize covered components, or apply
+cryptographic policy.
 
 ## Cross-Origin-Opener-Policy
 
