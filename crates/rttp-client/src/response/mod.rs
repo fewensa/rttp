@@ -109,3 +109,7 @@ pub use rttp_protocol::warning::{Warning, WarningParseError, WarningValue};
 pub use rttp_protocol::www_authenticate::{
   WwwAuthenticate, WwwAuthenticateChallenge, WwwAuthenticateParameter, WwwAuthenticateParseError,
 };
+pub use rttp_protocol::x_content_type_options::{
+  XContentTypeOptions, XContentTypeOptionsParseError,
+};
+pub use rttp_protocol::x_frame_options::{XFrameOptions, XFrameOptionsParseError};

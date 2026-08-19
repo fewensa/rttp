@@ -8,7 +8,8 @@ use rttp_client::response::{
   ProxyAuthenticationInfoParseError, ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Signature,
   SignatureInput, SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
   StrictTransportSecurityParseError, Trailer, TransferEncoding, TransferEncodingParseError, Vary,
-  VaryParseError, WantContentDigest, WantReprDigest, Warning,
+  VaryParseError, WantContentDigest, WantReprDigest, Warning, XContentTypeOptions,
+  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentLocation, ContentLocationParseError, ReprDigest,
@@ -55,6 +56,13 @@ fn response_facade_exports_representative_bounded_metadata_types() {
       .expect("Strict-Transport-Security should parse");
   let _: StrictTransportSecurityParseError = StrictTransportSecurity::parse("includeSubDomains")
     .expect_err("Strict-Transport-Security without max-age should be rejected");
+  let x_content_type_options =
+    XContentTypeOptions::parse("NoSniff").expect("X-Content-Type-Options should parse");
+  let _: XContentTypeOptionsParseError = XContentTypeOptions::parse("unknown")
+    .expect_err("unknown X-Content-Type-Options should be rejected");
+  let x_frame_options = XFrameOptions::parse("deny").expect("X-Frame-Options should parse");
+  let _: XFrameOptionsParseError = XFrameOptions::parse("ALLOW-FROM https://example.test")
+    .expect_err("deprecated X-Frame-Options ALLOW-FROM should be rejected");
   let warning = Warning::parse(r#"110 - "Response is Stale""#).expect("Warning should parse");
   let trailer = Trailer::parse("X-Trace").expect("Trailer should parse");
   let connection = Connection::parse("close").expect("Connection should parse");
@@ -117,6 +125,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(server_timing.metrics().len(), 1);
   assert_eq!(strict_transport_security.max_age(), 31_536_000);
   assert!(strict_transport_security.include_sub_domains());
+  assert_eq!(x_content_type_options, XContentTypeOptions::Nosniff);
+  assert_eq!(x_content_type_options.header_value(), "nosniff");
+  assert_eq!(x_frame_options, XFrameOptions::Deny);
+  assert_eq!(x_frame_options.header_value(), "DENY");
   assert_eq!(warning.items()[0].code(), 110);
   assert_eq!(trailer.field_names(), ["x-trace"]);
   assert_eq!(connection.tokens(), ["close"]);
