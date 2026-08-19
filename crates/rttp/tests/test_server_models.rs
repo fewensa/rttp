@@ -5,13 +5,14 @@ use rttp::server::{
   HttpAccessControlAllowMethods, HttpAccessControlAllowOrigin, HttpAccessControlRequestHeaders,
   HttpAccessControlRequestMethod, HttpAllowedMethods, HttpAuthorization, HttpByteRange,
   HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata, HttpContentDisposition,
-  HttpContentLanguages, HttpContentRange, HttpContentSecurityPolicy, HttpContentType,
-  HttpCriticalCh, HttpDeprecation, HttpEntityTag, HttpExpectations, HttpHost, HttpIfNoneMatch,
-  HttpIfRange, HttpIfRangeRequestOutcome, HttpLinkValues, HttpMementoDatetime, HttpNel,
-  HttpPermissionsPolicy, HttpProxyStatus, HttpProxyStatusBareItem, HttpReferrerPolicy,
-  HttpReportingEndpoints, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
-  HttpRequestCacheControl, HttpRequestTe, HttpResponse, HttpResponseCacheControl,
-  HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming, HttpVary,
+  HttpContentLanguages, HttpContentRange, HttpContentSecurityPolicy,
+  HttpContentSecurityPolicyReportOnly, HttpContentType, HttpCriticalCh, HttpDeprecation,
+  HttpEntityTag, HttpExpectations, HttpHost, HttpIfNoneMatch, HttpIfRange,
+  HttpIfRangeRequestOutcome, HttpLinkValues, HttpMementoDatetime, HttpNel, HttpPermissionsPolicy,
+  HttpProxyStatus, HttpProxyStatusBareItem, HttpReferrerPolicy, HttpReportingEndpoints,
+  HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpRequestCacheControl,
+  HttpRequestTe, HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings,
+  HttpRetryAfter, HttpServerTiming, HttpVary,
 };
 
 #[test]
@@ -557,6 +558,54 @@ fn response_browser_policy_helpers_preserve_metadata_without_enforcing_it() {
   assert!(HttpContentSecurityPolicy::parse("default-src\r\nblocked").is_err());
   assert!(HttpPermissionsPolicy::parse("").is_err());
   assert!(HttpReferrerPolicy::parse("origin\0").is_err());
+}
+
+#[test]
+fn response_content_security_policy_report_only_helpers_preserve_order_and_raw_headers() {
+  let response = HttpResponse::ok("body")
+    .header("Content-Security-Policy-Report-Only", "default-src 'self'")
+    .header("content-security-policy-report-only", "object-src 'none'");
+
+  let metadata = response
+    .content_security_policy_report_only()
+    .expect("Content-Security-Policy-Report-Only metadata should parse")
+    .expect("Content-Security-Policy-Report-Only metadata should be present");
+
+  assert_eq!(metadata.as_str(), "default-src 'self'");
+  assert_eq!(
+    metadata.header_values(),
+    ["default-src 'self'", "object-src 'none'"]
+  );
+
+  let replaced = response
+    .with_content_security_policy_report_only("script-src 'none'")
+    .expect("Content-Security-Policy-Report-Only metadata should be accepted");
+
+  let metadata = replaced
+    .content_security_policy_report_only()
+    .expect("Content-Security-Policy-Report-Only metadata should parse")
+    .expect("Content-Security-Policy-Report-Only metadata should be present");
+  assert_eq!(metadata.header_values(), ["script-src 'none'"]);
+  assert!(String::from_utf8(replaced.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nContent-Security-Policy-Report-Only: script-src 'none'\r\n"));
+
+  let invalid = HttpResponse::ok("body").header(
+    "Content-Security-Policy-Report-Only",
+    "default-src 'self'\u{7f}",
+  );
+  assert!(invalid.content_security_policy_report_only().is_err());
+  assert!(String::from_utf8(invalid.to_bytes())
+    .expect("response should serialize")
+    .contains("Content-Security-Policy-Report-Only: default-src 'self'"));
+
+  let mut too_many = HttpResponse::ok("body");
+  for _ in 0..=256 {
+    too_many = too_many.header("Content-Security-Policy-Report-Only", "default-src 'self'");
+  }
+  assert!(too_many.content_security_policy_report_only().is_err());
+
+  assert!(HttpContentSecurityPolicyReportOnly::parse("default-src\r\nblocked").is_err());
 }
 
 #[test]

@@ -1841,6 +1841,81 @@ fn cross_origin_embedder_policy_report_only_helpers_preserve_raw_metadata_and_re
 }
 
 #[test]
+fn content_security_policy_report_only_helpers_preserve_order_and_raw_headers() {
+  let raw = HttpResponse::ok([])
+    .header("Content-Security-Policy-Report-Only", "default-src 'self'")
+    .header("content-security-policy-report-only", "object-src 'none'");
+
+  let metadata = raw
+    .content_security_policy_report_only()
+    .expect("Content-Security-Policy-Report-Only should parse")
+    .expect("Content-Security-Policy-Report-Only should be present");
+
+  assert_eq!(metadata.as_str(), "default-src 'self'");
+  assert_eq!(
+    metadata.header_values(),
+    ["default-src 'self'", "object-src 'none'"]
+  );
+  assert_eq!(
+    Some("default-src 'self'"),
+    raw
+      .headers
+      .iter()
+      .find(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Content-Security-Policy-Report-Only")
+      })
+      .map(|header| header.value.as_str())
+  );
+
+  let replaced = raw
+    .with_content_security_policy_report_only("script-src 'none'")
+    .expect("Content-Security-Policy-Report-Only should be accepted");
+  assert_eq!(
+    ["script-src 'none'"],
+    replaced
+      .content_security_policy_report_only()
+      .expect("Content-Security-Policy-Report-Only should parse")
+      .expect("Content-Security-Policy-Report-Only should be present")
+      .header_values()
+  );
+  assert_eq!(
+    vec![("Content-Security-Policy-Report-Only", "script-src 'none'")],
+    replaced
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let malformed =
+    HttpResponse::ok([]).header("Content-Security-Policy-Report-Only", "default-src 'self'\u{7f}");
+  assert!(malformed.content_security_policy_report_only().is_err());
+  assert_eq!(
+    Some("default-src 'self'\u{7f}"),
+    malformed
+      .headers
+      .iter()
+      .find(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Content-Security-Policy-Report-Only")
+      })
+      .map(|header| header.value.as_str())
+  );
+  assert!(HttpResponse::ok([])
+    .with_content_security_policy_report_only("default-src\r\nblocked")
+    .is_err());
+
+  let mut too_many = HttpResponse::ok([]);
+  for _ in 0..=rttp_protocol::content_security_policy_report_only::MAX_CONTENT_SECURITY_POLICY_REPORT_ONLY_FIELDS {
+    too_many = too_many.header("Content-Security-Policy-Report-Only", "default-src 'self'");
+  }
+  assert!(too_many.content_security_policy_report_only().is_err());
+}
+
+#[test]
 fn cross_origin_opener_policy_helpers_validate_replace_and_parse_response_metadata() {
   let response = HttpResponse::ok([])
     .header("Cross-Origin-Opener-Policy", "unsafe-none")
@@ -1921,6 +1996,109 @@ fn cross_origin_opener_policy_helpers_preserve_raw_metadata_and_report_parse_err
   assert!(duplicate.cross_origin_opener_policy().is_err());
   assert!(HttpResponse::ok([])
     .with_cross_origin_opener_policy("x".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
+fn cross_origin_opener_policy_report_only_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Cross-Origin-Opener-Policy-Report-Only", "unsafe-none")
+    .header("cross-origin-opener-policy-report-only", "same-origin")
+    .with_cross_origin_opener_policy_report_only(r#"same-origin; report-to="coop""#)
+    .expect("Cross-Origin-Opener-Policy-Report-Only should be accepted");
+
+  let policy = response
+    .cross_origin_opener_policy_report_only()
+    .expect("Cross-Origin-Opener-Policy-Report-Only should parse")
+    .expect("Cross-Origin-Opener-Policy-Report-Only should be present");
+  assert_eq!(HttpCrossOriginOpenerPolicy::SameOrigin, policy.policy());
+  assert_eq!(Some("coop"), policy.report_to());
+  assert_eq!(r#"same-origin; report-to="coop""#, policy.header_value());
+  assert_eq!(
+    vec![(
+      "Cross-Origin-Opener-Policy-Report-Only",
+      r#"same-origin; report-to="coop""#
+    )],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn cross_origin_opener_policy_report_only_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::ok([]).header(
+    "Cross-Origin-Opener-Policy-Report-Only",
+    r#"noopener-allow-popups; report-to="coop""#,
+  );
+  let policy = raw
+    .cross_origin_opener_policy_report_only()
+    .expect("raw report-only COOP should parse")
+    .expect("Cross-Origin-Opener-Policy-Report-Only should be present");
+  assert_eq!(
+    HttpCrossOriginOpenerPolicy::NoopenerAllowPopups,
+    policy.policy()
+  );
+  assert_eq!(Some("coop"), policy.report_to());
+  assert_eq!(
+    Some(r#"noopener-allow-popups; report-to="coop""#),
+    raw
+      .headers
+      .iter()
+      .find(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Cross-Origin-Opener-Policy-Report-Only")
+      })
+      .map(|header| header.value.as_str())
+  );
+
+  let malformed =
+    HttpResponse::ok([]).header("Cross-Origin-Opener-Policy-Report-Only", "same origin");
+  assert!(malformed
+    .cross_origin_opener_policy_report_only()
+    .is_err());
+  assert!(HttpResponse::ok([])
+    .with_cross_origin_opener_policy_report_only("same origin")
+    .is_err());
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .cross_origin_opener_policy_report_only()
+      .expect("absent Cross-Origin-Opener-Policy-Report-Only should parse")
+  );
+  for value in [
+    "unsafe-none",
+    "same-origin-allow-popups",
+    "same-origin",
+    "noopener-allow-popups",
+  ] {
+    let metadata = HttpResponse::ok([])
+      .with_cross_origin_opener_policy_report_only(value)
+      .expect("valid Cross-Origin-Opener-Policy-Report-Only should be accepted")
+      .cross_origin_opener_policy_report_only()
+      .expect("Cross-Origin-Opener-Policy-Report-Only should parse")
+      .expect("Cross-Origin-Opener-Policy-Report-Only should be present");
+    assert_eq!(value, metadata.header_value());
+    assert_eq!(
+      HttpCrossOriginOpenerPolicy::parse(value).expect("canonical COOP should parse"),
+      metadata.policy()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("Cross-Origin-Opener-Policy-Report-Only", "same-origin")
+    .header(
+      "cross-origin-opener-policy-report-only",
+      "noopener-allow-popups",
+    );
+  assert!(duplicate
+    .cross_origin_opener_policy_report_only()
+    .is_err());
+  assert!(HttpResponse::ok([])
+    .with_cross_origin_opener_policy_report_only("x".repeat(64 * 1024 + 1))
     .is_err());
 }
 

@@ -36,13 +36,7 @@ impl CrossOriginOpenerPolicy {
     let BareItem::Token(token) = item.bare_item else {
       return Err(invalid_value());
     };
-    match token.as_str() {
-      "unsafe-none" => Ok(Self::UnsafeNone),
-      "same-origin-allow-popups" => Ok(Self::SameOriginAllowPopups),
-      "same-origin" => Ok(Self::SameOrigin),
-      "noopener-allow-popups" => Ok(Self::NoopenerAllowPopups),
-      _ => Err(invalid_value()),
-    }
+    Self::from_directive_token(token.as_str()).ok_or_else(invalid_value)
   }
 
   pub const fn header_value(self) -> &'static str {
@@ -51,6 +45,16 @@ impl CrossOriginOpenerPolicy {
       Self::SameOriginAllowPopups => "same-origin-allow-popups",
       Self::SameOrigin => "same-origin",
       Self::NoopenerAllowPopups => "noopener-allow-popups",
+    }
+  }
+
+  pub(crate) fn from_directive_token(token: &str) -> Option<Self> {
+    match token {
+      "unsafe-none" => Some(Self::UnsafeNone),
+      "same-origin-allow-popups" => Some(Self::SameOriginAllowPopups),
+      "same-origin" => Some(Self::SameOrigin),
+      "noopener-allow-popups" => Some(Self::NoopenerAllowPopups),
+      _ => None,
     }
   }
 }

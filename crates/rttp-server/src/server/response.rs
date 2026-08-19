@@ -60,6 +60,10 @@ pub use rttp_protocol::content_location::{
   ContentLocation as HttpContentLocation,
   ContentLocationParseError as HttpContentLocationParseError,
 };
+pub use rttp_protocol::content_security_policy_report_only::{
+  ContentSecurityPolicyReportOnly as HttpContentSecurityPolicyReportOnly,
+  ContentSecurityPolicyReportOnlyParseError as HttpContentSecurityPolicyReportOnlyParseError,
+};
 pub use rttp_protocol::content_type::ContentTypeParseError as HttpContentTypeParseError;
 pub use rttp_protocol::cross_origin_embedder_policy::{
   CrossOriginEmbedderPolicy as HttpCrossOriginEmbedderPolicy,
@@ -72,6 +76,12 @@ pub use rttp_protocol::cross_origin_embedder_policy_report_only::{
 pub use rttp_protocol::cross_origin_opener_policy::{
   CrossOriginOpenerPolicy as HttpCrossOriginOpenerPolicy,
   CrossOriginOpenerPolicyParseError as HttpCrossOriginOpenerPolicyParseError,
+};
+pub use rttp_protocol::cross_origin_opener_policy_report_only::{
+  CrossOriginOpenerPolicyReportOnly as HttpCrossOriginOpenerPolicyReportOnly,
+  CrossOriginOpenerPolicyReportOnlyBareItem as HttpCrossOriginOpenerPolicyReportOnlyBareItem,
+  CrossOriginOpenerPolicyReportOnlyParameter as HttpCrossOriginOpenerPolicyReportOnlyParameter,
+  CrossOriginOpenerPolicyReportOnlyParseError as HttpCrossOriginOpenerPolicyReportOnlyParseError,
 };
 pub use rttp_protocol::cross_origin_resource_policy::{
   CrossOriginResourcePolicy as HttpCrossOriginResourcePolicy,
@@ -1216,6 +1226,25 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Cross-Origin-Opener-Policy-Report-Only`
+  /// response metadata without applying opener policy or sending reports.
+  pub fn with_cross_origin_opener_policy_report_only(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpCrossOriginOpenerPolicyReportOnlyParseError> {
+    let policy = HttpCrossOriginOpenerPolicyReportOnly::parse(value)?;
+    self.headers.retain(|header| {
+      !header
+        .name
+        .eq_ignore_ascii_case("Cross-Origin-Opener-Policy-Report-Only")
+    });
+    self.headers.push(HttpHeader::new(
+      "Cross-Origin-Opener-Policy-Report-Only",
+      policy.header_value(),
+    ));
+    Ok(self)
+  }
+
   /// Validates and replaces `Strict-Transport-Security` response metadata
   /// without applying HTTPS-only policy.
   pub fn with_strict_transport_security(
@@ -1296,6 +1325,17 @@ impl HttpResponse {
   ) -> Result<Self, HttpBrowserPolicyParseError> {
     let policy = HttpContentSecurityPolicy::parse(value)?;
     self.set_browser_policy_header("Content-Security-Policy", policy.header_value());
+    Ok(self)
+  }
+
+  /// Validates and replaces `Content-Security-Policy-Report-Only` metadata without
+  /// enforcing CSP or sending reports.
+  pub fn with_content_security_policy_report_only(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpContentSecurityPolicyReportOnlyParseError> {
+    let policy = HttpContentSecurityPolicyReportOnly::parse(value)?;
+    self.set_browser_policy_header("Content-Security-Policy-Report-Only", policy.header_value());
     Ok(self)
   }
 
@@ -2154,6 +2194,30 @@ impl HttpResponse {
     HttpCrossOriginOpenerPolicy::parse_values(values).map(Some)
   }
 
+  /// Parses attached `Cross-Origin-Opener-Policy-Report-Only` response
+  /// metadata without enforcing opener policy or sending reports.
+  pub fn cross_origin_opener_policy_report_only(
+    &self,
+  ) -> Result<
+    Option<HttpCrossOriginOpenerPolicyReportOnly>,
+    HttpCrossOriginOpenerPolicyReportOnlyParseError,
+  > {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Cross-Origin-Opener-Policy-Report-Only")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpCrossOriginOpenerPolicyReportOnly::parse_values(values).map(Some)
+  }
+
   /// Parses attached `Strict-Transport-Security` response metadata without
   /// applying HTTPS-only policy.
   pub fn strict_transport_security(
@@ -2230,6 +2294,30 @@ impl HttpResponse {
     self.browser_policy_value("Content-Security-Policy", |value| {
       HttpContentSecurityPolicy::parse(value)
     })
+  }
+
+  /// Returns attached `Content-Security-Policy-Report-Only` metadata without
+  /// enforcing CSP or sending reports.
+  pub fn content_security_policy_report_only(
+    &self,
+  ) -> Result<
+    Option<HttpContentSecurityPolicyReportOnly>,
+    HttpContentSecurityPolicyReportOnlyParseError,
+  > {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Content-Security-Policy-Report-Only")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpContentSecurityPolicyReportOnly::parse_values(values).map(Some)
   }
 
   /// Returns attached `Permissions-Policy` metadata without enforcing browser

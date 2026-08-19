@@ -67,6 +67,9 @@ pub use rttp_protocol::content_length::HttpContentLength;
 pub use rttp_protocol::content_security_policy::{
   ContentSecurityPolicy, ContentSecurityPolicyParseError,
 };
+pub use rttp_protocol::content_security_policy_report_only::{
+  ContentSecurityPolicyReportOnly, ContentSecurityPolicyReportOnlyParseError,
+};
 pub use rttp_protocol::cookie::{
   HttpCookieParseError, HttpSetCookie, HttpSetCookieAttribute, HttpSetCookies,
 };
@@ -78,6 +81,10 @@ pub use rttp_protocol::cross_origin_embedder_policy_report_only::{
 };
 pub use rttp_protocol::cross_origin_opener_policy::{
   CrossOriginOpenerPolicy, CrossOriginOpenerPolicyParseError,
+};
+pub use rttp_protocol::cross_origin_opener_policy_report_only::{
+  CrossOriginOpenerPolicyReportOnly, CrossOriginOpenerPolicyReportOnlyBareItem,
+  CrossOriginOpenerPolicyReportOnlyParameter, CrossOriginOpenerPolicyReportOnlyParseError,
 };
 pub use rttp_protocol::cross_origin_resource_policy::{
   CrossOriginResourcePolicy, CrossOriginResourcePolicyParseError,
