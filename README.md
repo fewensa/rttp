@@ -623,6 +623,23 @@ RTTP does not store credentials, select a proxy authentication policy, retry
 requests, generate `Proxy-Authorization`, implement Basic or Bearer
 authentication, or change redirect behavior.
 
+### Bounded Proxy-Status response metadata
+
+`Response::proxy_status()` parses all received RFC 9209 `Proxy-Status` fields
+in wire order into bounded Token or String proxy identifiers with opaque
+parameters. Absent metadata returns `Ok(None)`; empty lists, inner-lists,
+malformed syntax, control bytes, oversized values, and duplicate parameters
+return an error while the raw response headers remain available.
+
+On the server, `HttpProxyStatus::parse()` validates the same syntax and
+`HttpResponse::with_proxy_status()` replaces raw `Proxy-Status` fields with
+one validated value. `HttpResponse::proxy_status()` parses raw response fields
+on demand without changing them.
+
+These helpers expose Proxy-Status as metadata only. RTTP does not interpret
+proxy health, retry requests, promote trailers, or generate origin
+`Proxy-Status` values.
+
 ### Bounded Server-Timing response metadata
 
 `Response::server_timing()` parses all received `Server-Timing` fields in wire
@@ -942,6 +959,7 @@ gain additional HTTP/2 header-block handling.
 | Content-Disposition | Client `Response::content_disposition` and server `HttpContentDisposition`, `HttpResponse::with_content_disposition`, `with_attachment_filename`, and `content_disposition` parse or declare bounded singleton response `Content-Disposition` metadata, preserve raw headers on parse failures, and preserve parsed `filename` plus `filename*` parameter values as metadata | No automatic download, filesystem path handling, MIME sniffing, cache behavior, redirect behavior, retry/replay, negotiation, or status-policy behavior |
 | WWW-Authenticate | Client `Response::www_authenticate` and server `HttpWwwAuthenticate`, `HttpResponse::with_www_authenticate`, and `HttpResponse::www_authenticate` parse or declare bounded response authentication challenges while preserving raw headers on parse failures | No credential storage, authentication policy, retry, automatic `Authorization` generation, Basic/Bearer implementation, redirect behavior, or status-policy behavior |
 | Proxy-Authenticate | Client `Response::proxy_authenticate` and protocol `ProxyAuthenticate::parse`/`parse_values` parse bounded proxy authentication challenges across one or more response fields while preserving raw headers on parse failures | No credential storage, proxy authentication policy, retry, automatic `Proxy-Authorization` generation, Basic/Bearer implementation, redirect behavior, or status-policy behavior |
+| Proxy-Status | Client `Response::proxy_status` and server `HttpProxyStatus`, `HttpResponse::with_proxy_status`, and `HttpResponse::proxy_status` parse or declare bounded RFC 9209 Token/String proxy identifiers with opaque parameters while preserving raw headers on parse failures | No proxy health checks, retries, trailer promotion, or origin-generation policy |
 | Server-Timing | Client `Response::server_timing` and server `HttpServerTiming`, `HttpResponse::with_server_timing`, and `HttpResponse::server_timing` parse or declare bounded response timing metadata while preserving raw headers on parse failures | No metric collection, measurement, telemetry export, metrics backend integration, retry, redirect behavior, or status-policy behavior |
 | Warning | Client `Response::warning` parses bounded RFC 7234 `Warning` warning-value lists while preserving raw headers on parse failures | No cache storage, freshness calculation, stale-response handling, warn-code policy, retry, redirect behavior, or response-acceptance changes |
 | NEL | Client `Response::nel` and server `HttpNel`, `HttpResponse::with_nel`, and `HttpResponse::nel` parse or declare bounded W3C Network Error Logging policy JSON while preserving raw headers on parse failures | No network error report sending, policy persistence, Reporting endpoint group configuration, retry, redirect behavior, or status-policy behavior |
@@ -1782,6 +1800,7 @@ TLS or async accept loops.
 | Upgrade metadata | `Upgrade`, `HttpUpgrade`, `HttpClient::upgrade_protocols`, `Response::upgrade`, `Request::upgrade`, `HttpRequest::upgrade`, `HttpResponse::with_upgrade`, and `HttpResponse::upgrade` validate, declare, or parse bounded HTTP/1 `Upgrade` protocol metadata while preserving raw headers on parse failures | No automatic `Connection: Upgrade`, h2c selection, client/server socket handoff, ALPN negotiation, or upgraded protocol implementation |
 | Content-Disposition | `HttpContentDisposition`, `HttpResponse::with_content_disposition`, `with_attachment_filename`, and `content_disposition` declare and parse bounded singleton `Content-Disposition` response metadata, preserve parsed `filename` and `filename*` parameter values, preserve raw headers on parse failures, and replace raw duplicates on typed declaration | No automatic download, filesystem path handling, MIME sniffing, cache behavior, redirect behavior, retry/replay, negotiation, or status-policy behavior |
 | WWW-Authenticate | `HttpWwwAuthenticate`, `HttpResponse::with_www_authenticate`, and `HttpResponse::www_authenticate` declare or parse bounded response authentication challenge metadata while preserving raw headers on parse failures | No credential storage, authentication policy, retry, automatic `Authorization` generation, Basic/Bearer implementation, redirect behavior, or status-policy behavior |
+| Proxy-Status | `HttpProxyStatus`, `HttpResponse::with_proxy_status`, and `HttpResponse::proxy_status` declare or parse bounded RFC 9209 Token/String proxy identifiers with opaque parameters while preserving raw headers on parse failures | No proxy health checks, retries, trailer promotion, or origin-generation policy |
 | Server-Timing | `HttpServerTiming`, `HttpResponse::with_server_timing`, and `HttpResponse::server_timing` declare or parse bounded response timing metadata while preserving raw headers on parse failures | No metric collection, measurement, telemetry export, metrics backend integration, retry, redirect behavior, or status-policy behavior |
 | Upgrade and tunnel targets | `CONNECT` authority-form requests are accepted as HTTP requests; `HttpHandoff::upgrade` can hand an upgraded socket to caller code after a matching request | The server does not implement the upgraded protocol after handoff |
 | Trailers | Chunked request trailers are preserved on `Request`; malformed, oversized, forbidden, and pseudo-header trailers are rejected; response trailers can be serialized for chunked responses | Application metadata trailers are allowed; trailer names that affect connection state, routing, authentication/cookies, framing, or payload processing are rejected |

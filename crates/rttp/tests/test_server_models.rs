@@ -7,10 +7,11 @@ use rttp::server::{
   HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata, HttpContentDisposition,
   HttpContentLanguages, HttpContentRange, HttpContentSecurityPolicy, HttpContentType,
   HttpCriticalCh, HttpEntityTag, HttpExpectations, HttpHost, HttpIfNoneMatch, HttpIfRange,
-  HttpIfRangeRequestOutcome, HttpLinkValues, HttpNel, HttpPermissionsPolicy, HttpReferrerPolicy,
-  HttpReportingEndpoints, HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl,
-  HttpRequestTe, HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings,
-  HttpRetryAfter, HttpServerTiming, HttpVary,
+  HttpIfRangeRequestOutcome, HttpLinkValues, HttpNel, HttpPermissionsPolicy, HttpProxyStatus,
+  HttpProxyStatusBareItem, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
+  HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
+  HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming,
+  HttpVary,
 };
 
 #[test]
@@ -686,6 +687,51 @@ fn response_server_timing_helper_validates_formats_and_preserves_raw_headers() {
     .contains("\r\nServer-Timing: db;dur=not-a-number\r\n"));
 
   assert!(HttpServerTiming::parse(format!("db;desc=\"{}\"", "a".repeat(64 * 1024))).is_err());
+}
+
+#[test]
+fn response_proxy_status_helper_validates_replaces_and_preserves_raw_headers() {
+  let response = HttpResponse::ok("body")
+    .header("Proxy-Status", "OldProxy")
+    .header("proxy-status", "LegacyProxy")
+    .with_proxy_status("ExampleCDN; error=connection_timeout")
+    .expect("valid Proxy-Status should be accepted");
+  let status = response
+    .proxy_status()
+    .expect("attached Proxy-Status should parse")
+    .expect("Proxy-Status should be present");
+  assert_eq!(1, status.len());
+  assert_eq!("ExampleCDN", status.members()[0].identifier().as_str());
+  assert_eq!(
+    Some(&HttpProxyStatusBareItem::Token(
+      "connection_timeout".to_string()
+    )),
+    status.members()[0]
+      .parameter("error")
+      .map(|parameter| parameter.value())
+  );
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert_eq!(1, serialized.matches("\r\nProxy-Status: ").count());
+  assert!(serialized.contains("\r\nProxy-Status: ExampleCDN;error=connection_timeout\r\n"));
+
+  assert!(HttpResponse::ok("body")
+    .with_proxy_status("ExampleCDN; error=timeout; error=reset")
+    .is_err());
+  assert!(HttpResponse::ok("body")
+    .with_proxy_status("(ExampleCDN)")
+    .is_err());
+  let raw = HttpResponse::ok("body").header("Proxy-Status", "(ExampleCDN)");
+  assert!(raw.proxy_status().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nProxy-Status: (ExampleCDN)\r\n"));
+  assert_eq!(
+    None,
+    HttpResponse::ok("body")
+      .proxy_status()
+      .expect("absent Proxy-Status should parse")
+  );
+  assert!(HttpProxyStatus::parse("x".repeat(64 * 1024 + 1)).is_err());
 }
 
 #[test]

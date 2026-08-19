@@ -10,8 +10,8 @@ use rttp_client::response::{
   LinkValues, Location, LocationParseError, Nel, NoVarySearch, NoVarySearchParams,
   NoVarySearchParseError, PreferenceApplied, Priority, ProxyAuthenticate,
   ProxyAuthenticateParseError, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError,
-  ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Signature, SignatureInput,
-  SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
+  ProxyStatus, ProxyStatusParseError, ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Signature,
+  SignatureInput, SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
   StrictTransportSecurityParseError, Trailer, TransferEncoding, TransferEncodingParseError,
   Upgrade, UpgradeParseError, Vary, VaryParseError, WantContentDigest, WantReprDigest, Warning,
   WwwAuthenticate, WwwAuthenticateParseError, XContentTypeOptions, XContentTypeOptionsParseError,
@@ -136,6 +136,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     ProxyAuthenticate::parse(r#"Basic realm="corp""#).expect("Proxy-Authenticate should parse");
   let _: ProxyAuthenticateParseError =
     ProxyAuthenticate::parse("").expect_err("empty Proxy-Authenticate should be rejected");
+  let proxy_status =
+    ProxyStatus::parse("ExampleCDN; error=connection_timeout").expect("Proxy-Status should parse");
+  let _: ProxyStatusParseError =
+    ProxyStatus::parse("").expect_err("empty Proxy-Status should be rejected");
   let vary = Vary::parse("Accept-Encoding, User-Agent").expect("Vary should parse");
   let _: VaryParseError = Vary::parse("").expect_err("empty Vary should be rejected");
   let signature = Signature::parse("sig1=:YWJj:").expect("Signature should parse");
@@ -232,6 +236,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(
     proxy_authenticate.challenges()[0].parameter("realm"),
     Some("corp")
+  );
+  assert_eq!(
+    proxy_status.members()[0].identifier().as_str(),
+    "ExampleCDN"
   );
   assert_eq!(vary.field_names(), ["accept-encoding", "user-agent"]);
   assert_eq!(signature.header_value(), "sig1=:YWJj:");

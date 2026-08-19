@@ -2,10 +2,11 @@ use rttp::server::{
   HttpAcceptCh, HttpAccessControlRequestPrivateNetwork, HttpConditionalMetadata,
   HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
   HttpCrossOriginEmbedderPolicy, HttpCrossOriginEmbedderPolicyReportOnly,
-  HttpCrossOriginOpenerPolicy, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpNel, HttpResponse,
-  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpSunsetParseError, HttpUpgrade, HttpUpgradeParseError,
+  HttpCrossOriginOpenerPolicy, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpNel,
+  HttpProxyStatus, HttpProxyStatusParseError, HttpResponse, HttpSignature, HttpSignatureInput,
+  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
+  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
+  HttpSunsetParseError, HttpUpgrade, HttpUpgradeParseError,
 };
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -68,6 +69,12 @@ fn compatibility_facade_exports_client_metadata_types() {
   let nel: rttp::Nel =
     rttp_client::response::Nel::parse(r#"{"report_to":"network-errors","max_age":2592000}"#)
       .expect("NEL should parse");
+  let proxy_status =
+    rttp_client::response::ProxyStatus::parse("ExampleCDN; error=connection_timeout")
+      .expect("Proxy-Status should parse");
+  let _: rttp_client::response::ProxyStatusParseError =
+    rttp_client::response::ProxyStatus::parse("")
+      .expect_err("empty Proxy-Status should be rejected");
   let embedder_policy: rttp::CrossOriginEmbedderPolicy =
     rttp_client::response::CrossOriginEmbedderPolicy::parse("require-corp; report-to=\"coep\"")
       .expect("Cross-Origin-Embedder-Policy should parse");
@@ -146,6 +153,10 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(nel.max_age(), 2592000);
   assert_eq!(nel.report_to(), Some("network-errors"));
   assert_eq!(
+    proxy_status.members()[0].identifier().as_str(),
+    "ExampleCDN"
+  );
+  assert_eq!(
     no_vary_search.params(),
     Some(&rttp::NoVarySearchParams::Names(vec![
       "utm_source".to_owned()
@@ -203,6 +214,11 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let _: HttpUpgradeParseError = HttpUpgrade::parse("").expect_err("empty Upgrade should fail");
   let nel: HttpNel = HttpNel::parse(r#"{"report_to":"network-errors","max_age":2592000}"#)
     .expect("NEL should parse");
+  let proxy_status: HttpProxyStatus =
+    HttpProxyStatus::parse("ExampleCDN; error=connection_timeout")
+      .expect("Proxy-Status should parse");
+  let _: HttpProxyStatusParseError =
+    HttpProxyStatus::parse("").expect_err("empty Proxy-Status should be rejected");
   let content_location: HttpContentLocation =
     HttpContentLocation::parse("../representations/current.json")
       .expect("Content-Location should parse");
@@ -227,6 +243,10 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(upgrade.protocols(), ["websocket"]);
   assert_eq!(nel.max_age(), 2592000);
   assert_eq!(nel.report_to(), Some("network-errors"));
+  assert_eq!(
+    proxy_status.members()[0].identifier().as_str(),
+    "ExampleCDN"
+  );
   assert_eq!(
     metadata
       .entity_tag_value()
