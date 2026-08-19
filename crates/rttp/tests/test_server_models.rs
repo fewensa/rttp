@@ -6,10 +6,10 @@ use rttp::server::{
   HttpAccessControlRequestMethod, HttpAllowedMethods, HttpAuthorization, HttpByteRange,
   HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata, HttpContentDisposition,
   HttpContentLanguages, HttpContentRange, HttpContentSecurityPolicy, HttpContentType,
-  HttpCriticalCh, HttpEntityTag, HttpExpectations, HttpHost, HttpIfNoneMatch, HttpIfRange,
-  HttpIfRangeRequestOutcome, HttpLinkValues, HttpNel, HttpPermissionsPolicy, HttpProxyStatus,
-  HttpProxyStatusBareItem, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
-  HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
+  HttpCriticalCh, HttpDeprecation, HttpEntityTag, HttpExpectations, HttpHost, HttpIfNoneMatch,
+  HttpIfRange, HttpIfRangeRequestOutcome, HttpLinkValues, HttpNel, HttpPermissionsPolicy,
+  HttpProxyStatus, HttpProxyStatusBareItem, HttpReferrerPolicy, HttpReportingEndpoints,
+  HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
   HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming,
   HttpVary,
 };
@@ -201,6 +201,49 @@ fn request_access_control_request_private_network_preserves_absent_valid_and_mal
     Some("true"),
     duplicate.header("Access-Control-Request-Private-Network")
   );
+}
+
+#[test]
+fn request_save_data_preserves_absent_valid_and_malformed_metadata() {
+  let absent = parse_request("GET /catalog HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .save_data()
+      .expect("missing Save-Data should be accepted")
+  );
+  assert_eq!(None, absent.header("Save-Data"));
+
+  let request = parse_request(concat!(
+    "GET /catalog HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Save-Data: on\r\n",
+    "\r\n"
+  ));
+  let save_data = request
+    .save_data()
+    .expect("Save-Data should parse")
+    .expect("Save-Data should be present");
+  assert_eq!("on", save_data.header_value());
+
+  let malformed = parse_request(concat!(
+    "GET /catalog HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Save-Data: ?1\r\n",
+    "\r\n"
+  ));
+  assert!(malformed.save_data().is_err());
+  assert_eq!(Some("?1"), malformed.header("Save-Data"));
+
+  let duplicate = parse_request(concat!(
+    "GET /catalog HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Save-Data: on\r\n",
+    "save-data: on\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.save_data().is_err());
+  assert_eq!(Some("on"), duplicate.header("Save-Data"));
 }
 
 #[test]
@@ -2809,6 +2852,107 @@ fn response_sunset_helper_replaces_existing_metadata() {
   assert_eq!(
     Some(sunset),
     response.sunset().expect("Sunset should parse")
+  );
+}
+
+#[test]
+fn response_deprecation_helper_declares_boolean_and_date() {
+  let response = HttpResponse::ok("body").with_deprecation(HttpDeprecation::Boolean(true));
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nDeprecation: ?1\r\n"));
+  assert_eq!(
+    Some(HttpDeprecation::Boolean(true)),
+    response.deprecation().expect("Deprecation should parse")
+  );
+
+  let instant = UNIX_EPOCH + Duration::from_secs(1_688_169_599);
+  let response = HttpResponse::ok("body").with_deprecation(HttpDeprecation::Date(instant));
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nDeprecation: @1688169599\r\n"));
+  assert_eq!(
+    Some(HttpDeprecation::Date(instant)),
+    response.deprecation().expect("Deprecation should parse")
+  );
+}
+
+#[test]
+fn response_deprecation_helper_replaces_existing_fields() {
+  let response = HttpResponse::ok("body")
+    .header("Deprecation", "?0")
+    .header("deprecation", "true")
+    .with_deprecation(HttpDeprecation::Boolean(true));
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert_eq!(1, serialized.matches("\r\nDeprecation: ").count());
+  assert!(serialized.contains("\r\nDeprecation: ?1\r\n"));
+  assert_eq!(
+    Some(HttpDeprecation::Boolean(true)),
+    response.deprecation().expect("Deprecation should parse")
+  );
+}
+
+#[test]
+fn response_deprecation_helper_parses_raw_fields_and_allows_absent() {
+  assert_eq!(
+    None,
+    HttpResponse::ok("body")
+      .deprecation()
+      .expect("absent Deprecation should parse")
+  );
+
+  let response = HttpResponse::ok("body").header("Deprecation", "\t?0\t");
+  assert_eq!(
+    Some(HttpDeprecation::Boolean(false)),
+    response.deprecation().expect("Deprecation should parse")
+  );
+}
+
+#[test]
+fn response_deprecation_helper_rejects_invalid_duplicate_and_oversized_raw_values() {
+  for value in [
+    "true",
+    "Sun, 06 Nov 1994 08:49:37 GMT",
+    "?1;foo=?1",
+    "1688169599",
+  ] {
+    let response = HttpResponse::ok("body").header("Deprecation", value);
+    let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+    assert!(
+      response.deprecation().is_err(),
+      "Deprecation helper should reject {value:?}"
+    );
+    assert!(
+      serialized.contains(&format!("\r\nDeprecation: {value}\r\n")),
+      "raw Deprecation header should be preserved"
+    );
+  }
+
+  let duplicate = HttpResponse::ok("body")
+    .header("Deprecation", "?1")
+    .header("deprecation", "?0");
+  let serialized = String::from_utf8(duplicate.to_bytes()).expect("response is UTF-8");
+
+  assert!(
+    duplicate.deprecation().is_err(),
+    "Deprecation helper should reject duplicate singleton headers"
+  );
+  assert!(serialized.contains("\r\nDeprecation: ?1\r\n"));
+  assert!(serialized.contains("\r\ndeprecation: ?0\r\n"));
+
+  let oversized = format!("?{}", "1".repeat(64 * 1024));
+  let response = HttpResponse::ok("body").header("Deprecation", &oversized);
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(
+    response.deprecation().is_err(),
+    "Deprecation helper should reject oversized values"
+  );
+  assert!(
+    serialized.contains(&format!("\r\nDeprecation: {oversized}\r\n")),
+    "raw oversized Deprecation header should be preserved"
   );
 }
 

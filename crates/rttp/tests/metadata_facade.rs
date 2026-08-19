@@ -3,11 +3,11 @@ use rttp::server::{
   HttpConditionalMetadata, HttpContentLocation, HttpContentLocationParseError, HttpContentRange,
   HttpContentRangeParseError, HttpCrossOriginEmbedderPolicy,
   HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
-  HttpCrossOriginResourcePolicy, HttpEntityTag, HttpNel, HttpProxyStatus,
-  HttpProxyStatusParseError, HttpResponse, HttpSignature, HttpSignatureInput,
-  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
-  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
-  HttpSunsetParseError, HttpUpgrade, HttpUpgradeParseError,
+  HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpEntityTag,
+  HttpNel, HttpProxyStatus, HttpProxyStatusParseError, HttpResponse, HttpSaveData, HttpSignature,
+  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpSunsetParseError, HttpUpgrade, HttpUpgradeParseError,
 };
 use std::io::Write;
 use std::net::SocketAddr;
@@ -84,6 +84,10 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::ContentLocationParseError =
     rttp_client::response::ContentLocation::parse("not valid")
       .expect_err("invalid Content-Location should be rejected");
+  let deprecation: rttp::Deprecation =
+    rttp_client::response::Deprecation::parse("?1").expect("Deprecation should parse");
+  let _: rttp::DeprecationParseError = rttp_client::response::Deprecation::parse("true")
+    .expect_err("historical Deprecation token should be rejected");
   let content_security_policy: rttp::ContentSecurityPolicy =
     rttp_client::response::ContentSecurityPolicy::parse("default-src 'self'; object-src 'none'")
       .expect("Content-Security-Policy should parse");
@@ -178,6 +182,8 @@ fn compatibility_facade_exports_client_metadata_types() {
     content_location.header_value(),
     "../representations/current.json"
   );
+  assert_eq!(deprecation, rttp::Deprecation::Boolean(true));
+  assert_eq!(deprecation.header_value(), "?1");
   assert_eq!(
     content_security_policy.header_value(),
     "default-src 'self'; object-src 'none'"
@@ -495,6 +501,7 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let private_network: HttpAccessControlRequestPrivateNetwork =
     HttpAccessControlRequestPrivateNetwork::parse("true")
       .expect("Access-Control-Request-Private-Network should parse");
+  let save_data: HttpSaveData = HttpSaveData::parse("on").expect("Save-Data should parse");
   let policy: HttpCrossOriginResourcePolicy = HttpCrossOriginResourcePolicy::parse("same-origin")
     .expect("Cross-Origin-Resource-Policy should parse");
   let embedder_policy: HttpCrossOriginEmbedderPolicy =
@@ -520,6 +527,10 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
       .expect("Content-Location should parse");
   let _: HttpContentLocationParseError = HttpContentLocation::parse("not valid")
     .expect_err("invalid Content-Location should be rejected");
+  let deprecation: HttpDeprecation =
+    HttpDeprecation::parse("?1").expect("Deprecation should parse");
+  let _: HttpDeprecationParseError =
+    HttpDeprecation::parse("true").expect_err("historical Deprecation token should be rejected");
   let content_range: HttpContentRange =
     HttpContentRange::parse("bytes */10").expect("Content-Range should parse");
   let _: HttpContentRangeParseError =
@@ -529,10 +540,13 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(request_method.method(), "PATCH");
   assert_eq!(request_method.header_value(), "PATCH");
   assert_eq!(private_network.header_value(), "true");
+  assert_eq!(save_data.header_value(), "on");
   assert_eq!(
     content_location.header_value(),
     "../representations/current.json"
   );
+  assert_eq!(deprecation, HttpDeprecation::Boolean(true));
+  assert_eq!(deprecation.header_value(), "?1");
   assert_eq!(content_range.header_value(), "bytes */10");
   assert_eq!(policy.header_value(), "same-origin");
   assert_eq!(embedder_policy.header_value(), "require-corp");
@@ -555,6 +569,17 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(
     response.etag().expect("ETag should parse"),
     Some(HttpEntityTag::weak("revision-42"))
+  );
+}
+
+#[test]
+fn compatibility_facade_exposes_deprecation_response_metadata() {
+  let response = HttpResponse::ok("").with_deprecation(HttpDeprecation::Boolean(true));
+  let _: Result<Option<HttpDeprecation>, HttpDeprecationParseError> = response.deprecation();
+
+  assert_eq!(
+    Some(HttpDeprecation::Boolean(true)),
+    response.deprecation().expect("Deprecation should parse")
   );
 }
 

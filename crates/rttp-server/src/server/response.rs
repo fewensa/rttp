@@ -68,6 +68,9 @@ pub use rttp_protocol::cross_origin_resource_policy::{
   CrossOriginResourcePolicy as HttpCrossOriginResourcePolicy,
   CrossOriginResourcePolicyParseError as HttpCrossOriginResourcePolicyParseError,
 };
+pub use rttp_protocol::deprecation::{
+  Deprecation as HttpDeprecation, DeprecationParseError as HttpDeprecationParseError,
+};
 pub use rttp_protocol::digest::{
   Digest as HttpDigest, DigestEntry as HttpDigestEntry, DigestParseError as HttpDigestParseError,
   ReprDigest as HttpReprDigest, ReprDigestEntry as HttpReprDigestEntry,
@@ -1699,6 +1702,16 @@ impl HttpResponse {
     self
   }
 
+  pub fn with_deprecation(mut self, deprecation: HttpDeprecation) -> Self {
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Deprecation"));
+    self
+      .headers
+      .push(HttpHeader::new("Deprecation", deprecation.header_value()));
+    self
+  }
+
   pub fn with_retry_after_delta(mut self, delta_seconds: u64) -> Self {
     self
       .headers
@@ -2532,6 +2545,19 @@ impl HttpResponse {
         .filter(|header| header.name.eq_ignore_ascii_case("Sunset"))
         .map(|header| header.value.as_str()),
     )
+  }
+
+  pub fn deprecation(&self) -> Result<Option<HttpDeprecation>, HttpDeprecationParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Deprecation"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDeprecation::parse_values(values).map(Some)
   }
 
   pub fn retry_after(&self) -> Result<Option<HttpRetryAfter>, HttpRetryAfterParseError> {

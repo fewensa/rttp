@@ -34,6 +34,9 @@ pub use rttp_protocol::prefer::{
   Preference as HttpPreference, PreferenceKind as HttpPreferenceKind,
   PreferenceParameter as HttpPreferenceParameter,
 };
+pub use rttp_protocol::save_data::{
+  SaveData as HttpSaveData, SaveDataParseError as HttpSaveDataParseError,
+};
 pub use rttp_protocol::signature::{
   Signature as HttpSignature, SignatureEntry as HttpSignatureEntry,
   SignatureParseError as HttpSignatureParseError,
@@ -454,6 +457,16 @@ impl Request {
       return Ok(None);
     }
     HttpAccessControlRequestPrivateNetwork::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Save-Data` request metadata without applying
+  /// reduced-data serving or content-adaptation policy.
+  pub fn save_data(&self) -> Result<Option<HttpSaveData>, HttpSaveDataParseError> {
+    let values: Vec<&str> = self.headers_named("Save-Data").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSaveData::parse_values(values).map(Some)
   }
 
   /// Parses received `Host` request authority without applying virtual-host
@@ -2455,6 +2468,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpAccessControlRequestPrivateNetwork::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Save-Data` request metadata without applying
+  /// reduced-data serving or content-adaptation policy.
+  pub fn save_data(&self) -> Result<Option<HttpSaveData>, HttpSaveDataParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Save-Data"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSaveData::parse_values(values).map(Some)
   }
 
   /// Parses received `Accept-Encoding` request metadata without enabling

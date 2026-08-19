@@ -15,6 +15,7 @@ use rttp_protocol::content_type::ContentType;
 use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
 use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedderPolicyReportOnly;
 use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
+use rttp_protocol::deprecation::Deprecation;
 use rttp_protocol::entity_tag::{EntityTag, IfMatch};
 use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
@@ -32,6 +33,7 @@ use rttp_protocol::proxy_authentication_info::ProxyAuthenticationInfo;
 use rttp_protocol::proxy_status::{ProxyStatus, ProxyStatusParseError};
 use rttp_protocol::referer::Referer;
 use rttp_protocol::referrer_policy::{ReferrerPolicy, ReferrerPolicyToken};
+use rttp_protocol::save_data::SaveData;
 use rttp_protocol::signature::{Signature, SignatureParseError};
 use rttp_protocol::signature_input::{SignatureInput, SignatureInputParseError};
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
@@ -56,6 +58,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
     AccessControlRequestMethod::parse("patch").expect("Access-Control-Request-Method should parse");
   let request_private_network = AccessControlRequestPrivateNetwork::parse("true")
     .expect("Access-Control-Request-Private-Network should parse");
+  let save_data = SaveData::parse("on").expect("Save-Data should parse");
   let critical_ch = CriticalCh::parse("Sec-CH-UA").expect("Critical-CH should parse");
   let entity_tag = EntityTag::parse("\"revision-42\"").expect("entity tag should parse");
   let if_match = IfMatch::parse("\"revision-42\"").expect("If-Match should parse");
@@ -103,6 +106,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
     ContentType::parse("text/plain; charset=utf-8").expect("Content-Type should parse");
   let content_location = ContentLocation::parse("../representations/current.json")
     .expect("Content-Location should parse");
+  let deprecation = Deprecation::parse("?1").expect("Deprecation should parse");
   let connection = Connection::parse("keep-alive, TE").expect("Connection should parse");
   let content_encoding = ContentEncoding::parse("gzip, br").expect("Content-Encoding should parse");
   let content_security_policy =
@@ -136,6 +140,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(request_method.method(), "PATCH");
   assert_eq!(request_method.header_value(), "PATCH");
   assert_eq!(request_private_network.header_value(), "true");
+  assert_eq!(save_data.header_value(), "on");
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
   assert_eq!(entity_tag.opaque_tag(), "revision-42");
   assert_eq!(
@@ -154,6 +159,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(keep_alive.timeout(), Some(5));
   assert_eq!(keep_alive.max(), Some(100));
   assert_eq!(keep_alive.header_value(), "timeout=5, max=100");
+  assert_eq!(deprecation, Deprecation::Boolean(true));
+  assert_eq!(deprecation.header_value(), "?1");
   assert_eq!(location.as_str(), "../login?next=%2Fdashboard");
   assert_eq!(host.host(), "example.test");
   assert_eq!(host.port(), Some("8443"));

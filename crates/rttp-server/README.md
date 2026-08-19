@@ -244,6 +244,26 @@ references against a response URL, follow redirects, select cache variants,
 replace representations, generate routes, trigger retries, or alter status
 policy from `Content-Location`.
 
+## Deprecation response metadata
+
+`HttpResponse::with_deprecation(value)` replaces any existing raw `Deprecation`
+fields and adds one canonical Structured Fields boolean (`?0` / `?1`) or date
+(`@` followed by signed UNIX seconds) header from `HttpDeprecation`.
+`HttpResponse::deprecation()` parses attached raw fields into
+`HttpDeprecation`, returns `Ok(None)` when absent, and preserves invalid raw
+fields until typed parsing is requested.
+
+The helper is bounded and validation-oriented. The field value is limited to
+64 KiB. Empty values, item parameters, inner lists, comma-joined items,
+integers without `@`, decimals, strings, tokens including historical `true`,
+byte sequences, display strings, IMF-fixdate values, forbidden ASCII control
+bytes, and dates that cannot be represented as `SystemTime` are rejected
+because `Deprecation` is singleton response metadata.
+
+These helpers only declare and parse metadata. RTTP does not compare `Sunset`,
+follow `Link` `rel=deprecation`, decide whether a resource is already
+deprecated, retry requests, or select another endpoint.
+
 ## No-Vary-Search response metadata
 
 `HttpResponse::with_no_vary_search(value)` validates and replaces attached
@@ -299,6 +319,19 @@ single mapped value.
 These helpers parse request metadata only. They do not select a virtual host,
 compare origins, apply scheme defaults, or change HTTP/1 decode or HTTP/2
 request-target handling.
+
+## Save-Data request metadata
+
+Handlers can call `Request::save_data()` and `HttpRequest::save_data()` to
+observe bounded typed `Save-Data` request metadata. Absent fields return
+`Ok(None)`. The recognized value is the case-sensitive `on` token with
+optional surrounding SP or HTAB. Malformed, oversized, duplicate, or
+control-byte values return a parser error while `Request::header()` and
+`HttpRequest::header()` continue to expose the original raw field.
+
+These helpers parse request metadata only. They do not select a
+representation, compress a body, advertise Client Hints, or apply browser
+data-saver policy.
 
 ## HTTP message signature metadata
 
