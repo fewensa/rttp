@@ -6,8 +6,12 @@
 use std::error::Error;
 use std::fmt;
 
-pub const MAX_CONTENT_SECURITY_POLICY_VALUE_BYTES: usize = 64 * 1024;
-pub const MAX_CONTENT_SECURITY_POLICY_FIELDS: usize = 256;
+use crate::csp_policy::{
+  parse_csp_policy_values, MAX_CSP_POLICY_FIELDS, MAX_CSP_POLICY_VALUE_BYTES,
+};
+
+pub const MAX_CONTENT_SECURITY_POLICY_VALUE_BYTES: usize = MAX_CSP_POLICY_VALUE_BYTES;
+pub const MAX_CONTENT_SECURITY_POLICY_FIELDS: usize = MAX_CSP_POLICY_FIELDS;
 
 /// The opaque policies declared by `Content-Security-Policy`.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -15,29 +19,19 @@ pub struct ContentSecurityPolicy(Vec<String>);
 
 impl ContentSecurityPolicy {
   pub fn parse(value: impl AsRef<str>) -> Result<Self, ContentSecurityPolicyParseError> {
-    let value = value.as_ref();
-    validate_bounded_value(value)?;
-    Ok(Self(vec![value.to_owned()]))
+    Self::parse_values([value.as_ref()])
   }
 
   pub fn parse_values<'a, I>(values: I) -> Result<Self, ContentSecurityPolicyParseError>
   where
     I: IntoIterator<Item = &'a str>,
   {
-    let mut policies = Vec::new();
-    for value in values {
-      if policies.len() == MAX_CONTENT_SECURITY_POLICY_FIELDS {
-        return Err(ContentSecurityPolicyParseError::new(
-          "too many Content-Security-Policy header values",
-        ));
-      }
-      validate_bounded_value(value)?;
-      policies.push(value.to_owned());
-    }
-    if policies.is_empty() {
-      return Err(invalid_value());
-    }
-    Ok(Self(policies))
+    parse_csp_policy_values(
+      values,
+      "Content-Security-Policy",
+      ContentSecurityPolicyParseError::new,
+    )
+    .map(Self)
   }
 
   pub fn as_str(&self) -> &str {
@@ -79,27 +73,3 @@ impl fmt::Display for ContentSecurityPolicyParseError {
 }
 
 impl Error for ContentSecurityPolicyParseError {}
-
-fn validate_bounded_value(value: &str) -> Result<(), ContentSecurityPolicyParseError> {
-  if value.is_empty() {
-    return Err(invalid_value());
-  }
-  if value.len() > MAX_CONTENT_SECURITY_POLICY_VALUE_BYTES {
-    return Err(ContentSecurityPolicyParseError::new(
-      "Content-Security-Policy header value is too large",
-    ));
-  }
-  if value
-    .bytes()
-    .any(|byte| byte != b'\t' && (byte <= 0x1f || byte == 0x7f))
-  {
-    return Err(ContentSecurityPolicyParseError::new(
-      "invalid Content-Security-Policy control byte",
-    ));
-  }
-  Ok(())
-}
-
-fn invalid_value() -> ContentSecurityPolicyParseError {
-  ContentSecurityPolicyParseError::new("invalid Content-Security-Policy header value")
-}

@@ -1,11 +1,12 @@
 use rttp_client::response::{
   AltSvc, AltUsed, AuthenticationInfo, ContentDisposition, ContentDpr, ContentEncoding,
-  ContentLocation, ContentRange, ContentSecurityPolicy, ContentType, CrossOriginEmbedderPolicy,
-  CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginResourcePolicy,
-  Deprecation, EntityTag, HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues, Location,
-  MementoDatetime, PermissionsPolicy, ProxyAuthenticate, ProxyAuthenticationInfo, ProxyStatus,
-  ProxyStatusBareItem, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
-  SignatureInput, StrictTransportSecurity, Warning, XContentTypeOptions, XFrameOptions,
+  ContentLocation, ContentRange, ContentSecurityPolicy, ContentSecurityPolicyReportOnly,
+  ContentType, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly,
+  CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Deprecation, EntityTag, HttpClearSiteData,
+  HttpSetCookies, KeepAlive, LinkValues, Location, MementoDatetime, PermissionsPolicy,
+  ProxyAuthenticate, ProxyAuthenticationInfo, ProxyStatus, ProxyStatusBareItem, ReferrerPolicy,
+  ReferrerPolicyToken, Response, RetryAfter, ServerTiming, SignatureInput, StrictTransportSecurity,
+  Warning, XContentTypeOptions, XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -461,6 +462,108 @@ fn content_security_policy_metadata_is_absent_without_a_header() {
   let _: Option<ContentSecurityPolicy> = response
     .content_security_policy()
     .expect("header is absent");
+}
+
+#[test]
+fn content_security_policy_report_only_metadata_preserves_layered_policy_fields() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Content-Security-Policy-Report-Only: default-src 'self'\r\n",
+      "content-security-policy-report-only: object-src 'none'\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let metadata = response
+    .content_security_policy_report_only()
+    .expect("Content-Security-Policy-Report-Only should parse")
+    .expect("Content-Security-Policy-Report-Only should be present");
+
+  assert_eq!(metadata.as_str(), "default-src 'self'");
+  assert_eq!(
+    metadata.header_values(),
+    ["default-src 'self'", "object-src 'none'"]
+  );
+  assert_eq!(
+    response.header_value("Content-Security-Policy-Report-Only"),
+    Some(&"default-src 'self'".to_string())
+  );
+}
+
+#[test]
+fn content_security_policy_report_only_metadata_rejects_invalid_values_without_hiding_raw_headers()
+{
+  for value in ["", "default-src 'self'\u{7f}"] {
+    let response = Response::new(
+      RoUrl::with("https://example.test"),
+      format!(
+        "HTTP/1.1 200 OK\r\nContent-Security-Policy-Report-Only: {value}\r\nContent-Length: 0\r\n\r\n"
+      )
+      .into_bytes(),
+    )
+    .expect("response should parse");
+
+    assert!(
+      response.content_security_policy_report_only().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      response.header_value("Content-Security-Policy-Report-Only"),
+      Some(&value.to_string())
+    );
+  }
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!(
+      "HTTP/1.1 200 OK\r\nContent-Security-Policy-Report-Only: {oversized}\r\nContent-Length: 0\r\n\r\n"
+    )
+    .into_bytes(),
+  )
+  .expect("response should parse");
+  assert!(response.content_security_policy_report_only().is_err());
+  assert_eq!(
+    response.header_value("Content-Security-Policy-Report-Only"),
+    Some(&oversized)
+  );
+}
+
+#[test]
+fn content_security_policy_report_only_metadata_rejects_too_many_repeated_fields() {
+  let mut bytes = String::from("HTTP/1.1 200 OK\r\n");
+  for _ in 0..=rttp_protocol::content_security_policy_report_only::MAX_CONTENT_SECURITY_POLICY_REPORT_ONLY_FIELDS {
+    bytes.push_str("Content-Security-Policy-Report-Only: default-src 'self'\r\n");
+  }
+  bytes.push_str("Content-Length: 0\r\n\r\n");
+
+  let response = Response::new(RoUrl::with("https://example.test"), bytes.into_bytes())
+    .expect("response should parse");
+
+  assert!(response.content_security_policy_report_only().is_err());
+  assert_eq!(
+    response.header_values("Content-Security-Policy-Report-Only").len(),
+    rttp_protocol::content_security_policy_report_only::MAX_CONTENT_SECURITY_POLICY_REPORT_ONLY_FIELDS
+      + 1
+  );
+}
+
+#[test]
+fn content_security_policy_report_only_metadata_is_absent_without_a_header() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  let _: Option<ContentSecurityPolicyReportOnly> = response
+    .content_security_policy_report_only()
+    .expect("Content-Security-Policy-Report-Only helper should parse absent header");
 }
 
 #[test]
@@ -5807,6 +5910,108 @@ fn test_cross_origin_opener_policy_response_metadata_rejects_invalid_and_absent_
     absent
       .cross_origin_opener_policy()
       .expect("absent COOP should parse")
+  );
+}
+
+#[test]
+fn test_cross_origin_opener_policy_report_only_response_metadata_preserves_raw_headers() {
+  for (value, policy, report_to) in [
+    ("unsafe-none", CrossOriginOpenerPolicy::UnsafeNone, None),
+    (
+      "same-origin-allow-popups",
+      CrossOriginOpenerPolicy::SameOriginAllowPopups,
+      None,
+    ),
+    ("same-origin", CrossOriginOpenerPolicy::SameOrigin, None),
+    (
+      r#"noopener-allow-popups; report-to="coop""#,
+      CrossOriginOpenerPolicy::NoopenerAllowPopups,
+      Some("coop"),
+    ),
+  ] {
+    let raw = format!(
+      "HTTP/1.1 200 OK\r\nCross-Origin-Opener-Policy-Report-Only: {value}\r\nContent-Length: 0\r\n\r\n"
+    );
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should parse");
+    let metadata = response
+      .cross_origin_opener_policy_report_only()
+      .expect("COOP-Report-Only should parse")
+      .expect("COOP-Report-Only should be present");
+
+    assert_eq!(policy, metadata.policy());
+    assert_eq!(report_to, metadata.report_to());
+    assert_eq!(value, metadata.header_value());
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Cross-Origin-Opener-Policy-Report-Only")
+    );
+  }
+}
+
+#[test]
+fn test_cross_origin_opener_policy_report_only_response_metadata_rejects_invalid_and_absent_values()
+{
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Cross-Origin-Opener-Policy-Report-Only: same-origin\r\n",
+    "Cross-Origin-Opener-Policy-Report-Only: same-origin-allow-popups\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  assert!(response.cross_origin_opener_policy_report_only().is_err());
+  assert_eq!(
+    Some(&"same-origin".to_string()),
+    response.header_value("Cross-Origin-Opener-Policy-Report-Only")
+  );
+
+  let malformed = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nCross-Origin-Opener-Policy-Report-Only: same origin\r\nContent-Length: 0\r\n\r\n"
+      .to_vec(),
+  )
+  .expect("raw response with malformed COOP-Report-Only should parse");
+  assert!(malformed.cross_origin_opener_policy_report_only().is_err());
+  assert_eq!(
+    Some(&"same origin".to_string()),
+    malformed.header_value("Cross-Origin-Opener-Policy-Report-Only")
+  );
+
+  let case_variant = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nCross-Origin-Opener-Policy-Report-Only: SAME-ORIGIN\r\nContent-Length: 0\r\n\r\n"
+      .to_vec(),
+  )
+  .expect("raw response with case-variant COOP-Report-Only should parse");
+  assert!(case_variant
+    .cross_origin_opener_policy_report_only()
+    .is_err());
+  assert_eq!(
+    Some(&"SAME-ORIGIN".to_string()),
+    case_variant.header_value("Cross-Origin-Opener-Policy-Report-Only")
+  );
+
+  let oversized = format!(
+    "HTTP/1.1 200 OK\r\nCross-Origin-Opener-Policy-Report-Only: {}\r\nContent-Length: 0\r\n\r\n",
+    "x".repeat(64 * 1024 + 1)
+  );
+  let oversized = Response::new(RoUrl::with("https://example.test"), oversized.into_bytes())
+    .expect("raw response with oversized COOP-Report-Only should parse");
+  assert!(oversized.cross_origin_opener_policy_report_only().is_err());
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response without COOP-Report-Only should parse");
+  assert_eq!(
+    None,
+    absent
+      .cross_origin_opener_policy_report_only()
+      .expect("absent COOP-Report-Only should parse")
   );
 }
 
