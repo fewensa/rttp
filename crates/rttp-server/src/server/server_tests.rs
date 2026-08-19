@@ -2040,7 +2040,7 @@ fn request_max_forwards_is_optional_bounded_and_preserves_invalid_headers() {
     .expect("request should parse");
   assert_eq!(None, absent.max_forwards().expect("missing value should be valid"));
 
-  for value in ["255", "256", "999999999999999999999"] {
+  for value in ["0", "255", "256", "4294967295"] {
     let valid = Request::from_raw_frame(
       format!(
         "OPTIONS / HTTP/1.1\r\nHost: example.test\r\nMax-Forwards: {value}\r\n\r\n"
@@ -2048,13 +2048,15 @@ fn request_max_forwards_is_optional_bounded_and_preserves_invalid_headers() {
       .as_bytes(),
     )
     .expect("request should parse");
-    assert_eq!(
-      Some(value.to_owned()),
-      valid.max_forwards().expect("value should parse")
-    );
+    let parsed = valid
+      .max_forwards()
+      .expect("value should parse")
+      .expect("Max-Forwards should be present");
+    assert_eq!(value.parse::<u32>().expect("fixture is a u32"), parsed.value());
+    assert_eq!(value, parsed.header_value());
   }
 
-  for value in ["", "-1", "+1", "1.0"] {
+  for value in ["", "-1", "+1", "1.0", "4294967296", "999999999999999999999"] {
     let request = Request::from_raw_frame(
       format!(
         "OPTIONS / HTTP/1.1\r\nHost: example.test\r\nMax-Forwards: {value}\r\n\r\n"
@@ -2065,6 +2067,23 @@ fn request_max_forwards_is_optional_bounded_and_preserves_invalid_headers() {
     assert!(request.max_forwards().is_err(), "should reject {value:?}");
     assert_eq!(Some(value), request.header("Max-Forwards"));
   }
+
+  let oversized = "0".repeat(64 * 1024 + 1);
+  let oversized_request = Request {
+    method: "OPTIONS".to_string(),
+    target: "/".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("Max-Forwards".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.max_forwards().is_err());
+  assert_eq!(Some(oversized.as_str()), oversized_request.header("Max-Forwards"));
 
   let duplicate = Request::from_raw_frame(
     b"OPTIONS / HTTP/1.1\r\nHost: example.test\r\nMax-Forwards: 1\r\nmax-forwards: 2\r\n\r\n",

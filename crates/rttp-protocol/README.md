@@ -35,6 +35,19 @@ beyond `u64::MAX`, and forbidden ASCII control bytes are errors. This parser
 reports declared metadata only; it does not calculate freshness, adjust age
 over elapsed time, store cache entries, or apply cache policy.
 
+## Max-Forwards
+
+`max_forwards` parses a singleton HTTP `Max-Forwards` request field as
+non-negative `1*DIGIT` hop counts that fit in `u32`. Each field value is
+bounded to 64 KiB. A second field is rejected after every supplied field is
+bound-checked. Surrounding SP and HTAB are trimmed as optional whitespace.
+Empty values, signed or plus-prefixed numbers, fractions, comma-lists,
+non-digits, overflow beyond `u32::MAX`, oversized values, and forbidden ASCII
+control bytes are errors. `header_value()` emits the accepted count in
+canonical decimal form. This parser reports declared metadata only; it does
+not decrement the hop count, route through proxies, select TRACE or OPTIONS,
+or apply forwarding policy.
+
 ## Content-DPR
 
 `content_dpr` parses a singleton HTTP `Content-DPR` field as a finite positive

@@ -27,6 +27,7 @@ use rttp_protocol::host::Host;
 use rttp_protocol::keep_alive::KeepAlive;
 use rttp_protocol::link::LinkValues;
 use rttp_protocol::location::Location;
+use rttp_protocol::max_forwards::MaxForwards;
 use rttp_protocol::memento_datetime::MementoDatetime;
 use rttp_protocol::nel::Nel;
 use rttp_protocol::no_vary_search::{NoVarySearch, NoVarySearchParams};
@@ -75,6 +76,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
     Nel::parse(r#"{"report_to":"network-errors","max_age":2592000}"#).expect("NEL should parse");
   let keep_alive = KeepAlive::parse("timeout=5, max=100").expect("Keep-Alive should parse");
   let location = Location::parse("../login?next=%2Fdashboard").expect("Location should parse");
+  let max_forwards = MaxForwards::parse("0").expect("Max-Forwards should parse");
   let memento_datetime =
     MementoDatetime::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Memento-Datetime should parse");
   let host = Host::parse("example.test:8443").expect("Host should parse");
@@ -170,6 +172,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(deprecation, Deprecation::Boolean(true));
   assert_eq!(deprecation.header_value(), "?1");
   assert_eq!(location.as_str(), "../login?next=%2Fdashboard");
+  assert_eq!(max_forwards.value(), 0);
+  assert_eq!(max_forwards.header_value(), "0");
   assert_eq!(
     memento_datetime.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
