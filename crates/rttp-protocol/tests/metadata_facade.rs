@@ -21,6 +21,7 @@ use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
 use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedderPolicyReportOnly;
 use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::deprecation::Deprecation;
+use rttp_protocol::dnt::Dnt;
 use rttp_protocol::entity_tag::{EntityTag, IfMatch};
 use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
@@ -71,6 +72,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let request_private_network = AccessControlRequestPrivateNetwork::parse("true")
     .expect("Access-Control-Request-Private-Network should parse");
   let save_data = SaveData::parse("on").expect("Save-Data should parse");
+  let dnt = Dnt::parse("1").expect("DNT should parse");
   let critical_ch = CriticalCh::parse("Sec-CH-UA").expect("Critical-CH should parse");
   let entity_tag = EntityTag::parse("\"revision-42\"").expect("entity tag should parse");
   let if_match = IfMatch::parse("\"revision-42\"").expect("If-Match should parse");
@@ -175,6 +177,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(request_method.header_value(), "PATCH");
   assert_eq!(request_private_network.header_value(), "true");
   assert_eq!(save_data.header_value(), "on");
+  assert_eq!(dnt.header_value(), "1");
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
   assert_eq!(entity_tag.opaque_tag(), "revision-42");
   assert_eq!(

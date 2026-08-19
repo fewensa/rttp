@@ -2615,6 +2615,54 @@ fn save_data_helper_emits_on_request_token() {
 }
 
 #[test]
+fn dnt_helper_emits_defined_preference_tokens() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/catalog", base_url))
+      .dnt("1")
+      .expect("DNT should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("1"), header_value(&request, "DNT"));
+
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/catalog", base_url))
+      .dnt("0")
+      .expect("DNT should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("0"), header_value(&request, "DNT"));
+}
+
+#[test]
+fn dnt_helper_rejects_malformed_and_oversized_values_before_connecting() {
+  let oversized = "0".repeat(64 * 1024 + 1);
+  for value in ["on", "true", "1abc", "1, 0", oversized.as_str()] {
+    let request = capture_optional_request(|base_url| {
+      let error = client()
+        .get()
+        .url(format!("{}/catalog", base_url))
+        .dnt(value)
+        .expect_err("invalid DNT input must be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid DNT input must not open a socket"
+    );
+  }
+}
+
+#[test]
 fn origin_helper_emits_null_and_normalized_tuple_origins() {
   let request = capture_request(|base_url| {
     client()

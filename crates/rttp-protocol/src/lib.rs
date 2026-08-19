@@ -46,6 +46,7 @@ pub mod cross_origin_opener_policy;
 pub mod cross_origin_resource_policy;
 pub mod deprecation;
 pub mod digest;
+pub mod dnt;
 pub mod entity_tag;
 pub mod fetch_metadata;
 pub mod forwarded;

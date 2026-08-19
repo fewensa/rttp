@@ -12,6 +12,7 @@ use rttp_protocol::accept_language::{AcceptLanguage, MAX_ACCEPT_LANGUAGE_VALUE_B
 use rttp_protocol::access_control_request_headers::AccessControlRequestHeaders;
 use rttp_protocol::access_control_request_method::AccessControlRequestMethod;
 use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
+use rttp_protocol::dnt::Dnt;
 use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
@@ -438,6 +439,18 @@ impl HttpClient {
     let save_data =
       SaveData::parse("on").map_err(|error| error::builder_with_message(error.to_string()))?;
     Ok(self.header(Header::new("Save-Data", save_data.header_value())))
+  }
+
+  /// Set `DNT` request metadata from the declared tracking preference.
+  ///
+  /// The value must be the W3C Tracking Preference Expression token `0`
+  /// (allow tracking) or `1` (do not track). This declares request metadata
+  /// only; it does not disable cookies, strip `Referer`, change analytics, or
+  /// apply tracking policy.
+  pub fn dnt<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let dnt = Dnt::parse(value)
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new("DNT", dnt.header_value())))
   }
 
   /// Append a validated `Accept` media range with its supplied quality value.

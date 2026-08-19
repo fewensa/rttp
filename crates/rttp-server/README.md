@@ -425,6 +425,21 @@ These helpers parse request metadata only. They do not select a
 representation, compress a body, advertise Client Hints, or apply browser
 data-saver policy.
 
+## DNT request metadata
+
+Handlers can call `Request::dnt()` and `HttpRequest::dnt()` to observe bounded
+typed `DNT` tracking-preference request metadata as `HttpDnt` (the server
+alias for the shared protocol `Dnt` type). Absent fields return `Ok(None)`.
+The recognized values are the W3C Tracking Preference Expression preference
+tokens `0` (allow tracking) and `1` (do not track), matched case-sensitively
+with optional surrounding SP or HTAB. Malformed, oversized, duplicate, or
+control-byte values return a parser error while `Request::header()` and
+`HttpRequest::header()` continue to expose the original raw field.
+
+These helpers parse request metadata only. They do not disable cookies, strip
+`Referer`, change analytics or advertising behavior, synthesize a `Tk`
+response field, or enforce tracking policy.
+
 ## Max-Forwards request metadata
 
 Handlers can call `Request::max_forwards()` and `HttpRequest::max_forwards()`

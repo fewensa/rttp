@@ -618,6 +618,22 @@ unparsable input are errors.
 This parser does not apply reduced-data serving, content adaptation, or
 browser data-saver policy.
 
+## DNT
+
+`dnt` parses a singleton `DNT` request field as the first shared
+privacy-preference primitive. Each field value is bounded to 64 KiB. A second
+field is rejected after every supplied field is bound-checked. The field value
+must be exactly one of the W3C Tracking Preference Expression preference
+tokens `0` (allow tracking) or `1` (do not track), matched case-sensitively
+and returned in canonical wire form. Surrounding SP and HTAB are trimmed as
+optional whitespace. Unknown tokens, aliases (`on`, `off`, `true`, `false`,
+`?1`), lists, parameterized values, `DNT-extension` suffixes, quoted values,
+empty values, control bytes, and other unparsable input are errors.
+This parser exposes declared metadata only: it does not disable cookies, strip
+`Referer`, change analytics or advertising behavior, or enforce tracking
+policy. Related privacy-preference headers should reuse this same bounded
+singleton contract rather than inventing policy behavior.
+
 ## NEL
 
 `nel` parses one `NEL` response field as a bounded JSON object exposing the W3C

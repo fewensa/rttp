@@ -4,13 +4,13 @@ use rttp::server::{
   HttpContentDprParseError, HttpContentLocation, HttpContentLocationParseError, HttpContentRange,
   HttpContentRangeParseError, HttpCrossOriginEmbedderPolicy,
   HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
-  HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpEntityTag,
-  HttpIfModifiedSince, HttpIfUnmodifiedSince, HttpMaxForwards, HttpMementoDatetime,
-  HttpMementoDatetimeParseError, HttpNel, HttpProxyStatus, HttpProxyStatusParseError, HttpResponse,
-  HttpSaveData, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
-  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpSunsetParseError, HttpUpgrade,
-  HttpUpgradeParseError,
+  HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpDnt,
+  HttpDntParseError, HttpEntityTag, HttpIfModifiedSince, HttpIfUnmodifiedSince, HttpMaxForwards,
+  HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNel, HttpProxyStatus,
+  HttpProxyStatusParseError, HttpResponse, HttpSaveData, HttpSignature, HttpSignatureInput,
+  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
+  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
+  HttpSunsetParseError, HttpUpgrade, HttpUpgradeParseError,
 };
 use std::io::Write;
 use std::net::SocketAddr;
@@ -609,6 +609,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpAccessControlRequestPrivateNetwork::parse("true")
       .expect("Access-Control-Request-Private-Network should parse");
   let save_data: HttpSaveData = HttpSaveData::parse("on").expect("Save-Data should parse");
+  let dnt: HttpDnt = HttpDnt::parse("1").expect("DNT should parse");
+  let dnt_error: Result<HttpDnt, HttpDntParseError> = HttpDnt::parse("on");
   let max_forwards: HttpMaxForwards =
     HttpMaxForwards::parse("0").expect("Max-Forwards should parse");
   let if_modified_since: HttpIfModifiedSince =
@@ -662,6 +664,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(request_method.header_value(), "PATCH");
   assert_eq!(private_network.header_value(), "true");
   assert_eq!(save_data.header_value(), "on");
+  assert_eq!(dnt.header_value(), "1");
+  assert!(dnt_error.is_err());
   assert_eq!(max_forwards.value(), 0);
   assert_eq!(max_forwards.header_value(), "0");
   assert_eq!(

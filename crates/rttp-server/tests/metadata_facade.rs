@@ -9,13 +9,13 @@ use rttp_server::server::{
   HttpContentDisposition, HttpContentDispositionParseError, HttpContentDpr,
   HttpContentDprParseError, HttpContentLength, HttpContentLocation, HttpContentLocationParseError,
   HttpContentRange, HttpContentRangeParseError, HttpCrossOriginEmbedderPolicyReportOnly,
-  HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpEntityTag,
-  HttpHost, HttpIfModifiedSince, HttpIfModifiedSinceParseError, HttpIfUnmodifiedSince,
-  HttpIfUnmodifiedSinceParseError, HttpKeepAlive, HttpMaxForwards, HttpMaxForwardsParseError,
-  HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNoVarySearch, HttpNoVarySearchParams,
-  HttpPreferenceKind, HttpProxyStatus, HttpProxyStatusParseError, HttpRequest,
-  HttpRequestAcceptEncodings, HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSignature,
-  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpDnt,
+  HttpDntParseError, HttpEntityTag, HttpHost, HttpIfModifiedSince, HttpIfModifiedSinceParseError,
+  HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError, HttpKeepAlive, HttpMaxForwards,
+  HttpMaxForwardsParseError, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNoVarySearch,
+  HttpNoVarySearchParams, HttpPreferenceKind, HttpProxyStatus, HttpProxyStatusParseError,
+  HttpRequest, HttpRequestAcceptEncodings, HttpResponse, HttpSaveData, HttpSaveDataParseError,
+  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
   HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
   HttpSignatureParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
   HttpUpgradeParseError, HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode,
@@ -62,6 +62,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   > = HttpAccessControlRequestPrivateNetwork::parse("false");
   let save_data: HttpSaveData = HttpSaveData::parse("on").expect("Save-Data should parse");
   let save_data_error: Result<HttpSaveData, HttpSaveDataParseError> = HttpSaveData::parse("?1");
+  let dnt: HttpDnt = HttpDnt::parse("1").expect("DNT should parse");
+  let dnt_error: Result<HttpDnt, HttpDntParseError> = HttpDnt::parse("on");
   let max_forwards: HttpMaxForwards =
     HttpMaxForwards::parse("0").expect("Max-Forwards should parse");
   let max_forwards_error: Result<HttpMaxForwards, HttpMaxForwardsParseError> =
@@ -165,6 +167,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert!(request_private_network_error.is_err());
   assert_eq!(save_data.header_value(), "on");
   assert!(save_data_error.is_err());
+  assert_eq!(dnt.header_value(), "1");
+  assert!(dnt_error.is_err());
   assert_eq!(max_forwards.value(), 0);
   assert_eq!(max_forwards.header_value(), "0");
   assert!(max_forwards_error.is_err());
