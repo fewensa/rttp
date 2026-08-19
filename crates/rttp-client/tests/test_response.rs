@@ -1250,7 +1250,7 @@ fn test_www_authenticate_response_helper_parses_bounded_challenges() {
   let raw = concat!(
     "HTTP/1.1 401 Unauthorized\r\n",
     "WWW-Authenticate: Basic realm=\"users\"\r\n",
-    "WWW-Authenticate: Bearer mF_9.B5f-4.1JqM, Digest realm=\"apps\", nonce=\"a\\\\b\"\r\n",
+    "WWW-Authenticate: Bearer mF_9.B5f-4.1JqM=, Digest realm=\"apps\", nonce=\"a\\\\b\"\r\n",
     "Content-Length: 2\r\n\r\nOK"
   );
   let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
@@ -1266,7 +1266,7 @@ fn test_www_authenticate_response_helper_parses_bounded_challenges() {
   assert_eq!(Some("users"), challenges.challenges()[0].parameter("realm"));
   assert_eq!("Bearer", challenges.challenges()[1].scheme());
   assert_eq!(
-    Some("mF_9.B5f-4.1JqM"),
+    Some("mF_9.B5f-4.1JqM="),
     challenges.challenges()[1].token68()
   );
   assert_eq!("Digest", challenges.challenges()[2].scheme());
@@ -1297,7 +1297,6 @@ fn test_www_authenticate_preserves_quoted_parameter_wire_bytes() {
 #[test]
 fn test_www_authenticate_rejects_malformed_duplicate_and_bounded_values() {
   for value in [
-    "Basic realm=",
     "Basic realm=\"unterminated",
     "Basic realm=one, REALM=two",
     "Basic @",

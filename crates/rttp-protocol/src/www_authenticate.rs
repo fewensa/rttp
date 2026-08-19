@@ -183,7 +183,12 @@ fn parse_field(
           "invalid WWW-Authenticate challenge",
         ));
       }
-      if looks_like_parameter(value, position) {
+      if let Some(token68_end) = token68_end(value, position) {
+        let token68 = &value[position..token68_end];
+        challenge.token68 = Some(token68.to_string());
+        position = token68_end;
+        skip_ows(bytes, &mut position);
+      } else if looks_like_parameter(value, position) {
         parse_parameters(value, &mut position, &mut challenge.parameters)?;
       } else {
         let start = position;
@@ -281,6 +286,15 @@ fn parse_parameters(
       return Ok(());
     }
   }
+}
+
+fn token68_end(value: &str, mut position: usize) -> Option<usize> {
+  let bytes = value.as_bytes();
+  let start = position;
+  while position < bytes.len() && bytes[position] != b',' && !is_ows(bytes[position]) {
+    position += 1;
+  }
+  is_token68(&value[start..position]).then_some(position)
 }
 
 fn parse_parameter_value(

@@ -58,7 +58,7 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp_client::response::WwwAuthenticate::parse("Basic realm=\"users\"")
       .expect("WWW-Authenticate should parse");
   let _: rttp::WwwAuthenticateParseError =
-    rttp_client::response::WwwAuthenticate::parse("Basic realm=")
+    rttp_client::response::WwwAuthenticate::parse("Basic realm=\"")
       .expect_err("malformed WWW-Authenticate should be rejected");
   let x_content_type_options: rttp::XContentTypeOptions =
     rttp_client::response::XContentTypeOptions::parse("NoSniff")

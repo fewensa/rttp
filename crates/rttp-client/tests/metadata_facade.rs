@@ -99,7 +99,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .expect_err("empty Proxy-Authentication-Info should be rejected");
   let www_authenticate =
     WwwAuthenticate::parse("Basic realm=\"users\"").expect("WWW-Authenticate should parse");
-  let _: WwwAuthenticateParseError = WwwAuthenticate::parse("Basic realm=")
+  let _: WwwAuthenticateParseError = WwwAuthenticate::parse("Basic realm=\"")
     .expect_err("malformed WWW-Authenticate should be rejected");
   let vary = Vary::parse("Accept-Encoding, User-Agent").expect("Vary should parse");
   let _: VaryParseError = Vary::parse("").expect_err("empty Vary should be rejected");
