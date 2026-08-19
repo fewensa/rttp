@@ -4,14 +4,15 @@ use rttp_server::server::{
   HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError,
   HttpAccessControlRequestPrivateNetwork, HttpAccessControlRequestPrivateNetworkParseError,
   HttpConditionalMetadata, HttpConnection, HttpConnectionParseError, HttpContentDisposition,
-  HttpContentLength, HttpContentLocation, HttpContentLocationParseError,
-  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpHost,
-  HttpKeepAlive, HttpNoVarySearch, HttpNoVarySearchParams, HttpPreferenceKind, HttpRequest,
-  HttpResponse, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
-  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpTransferEncoding,
-  HttpTransferEncodingParseError, HttpWantContentDigest, HttpWantReprDigest, SecFetchDest,
-  SecFetchMode, SecFetchSite, SecFetchUser,
+  HttpContentLength, HttpContentLocation, HttpContentLocationParseError, HttpContentRange,
+  HttpContentRangeParseError, HttpCrossOriginEmbedderPolicyReportOnly,
+  HttpCrossOriginResourcePolicy, HttpEntityTag, HttpHost, HttpKeepAlive, HttpNoVarySearch,
+  HttpNoVarySearchParams, HttpPreferenceKind, HttpRequest, HttpResponse, HttpSignature,
+  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpTransferEncoding, HttpTransferEncodingParseError,
+  HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite,
+  SecFetchUser,
 };
 
 #[test]
@@ -48,6 +49,9 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpNoVarySearch::parse(r#"params=("utm_source")"#).expect("No-Vary-Search should parse");
   let policy: HttpCrossOriginResourcePolicy = HttpCrossOriginResourcePolicy::parse("same-origin")
     .expect("Cross-Origin-Resource-Policy should parse");
+  let content_range = HttpContentRange::parse("bytes */10").expect("Content-Range should parse");
+  let content_range_error: Result<HttpContentRange, HttpContentRangeParseError> =
+    HttpContentRange::parse("bytes */*");
   let report_only_policy: HttpCrossOriginEmbedderPolicyReportOnly =
     HttpCrossOriginEmbedderPolicyReportOnly::parse("require-corp")
       .expect("Cross-Origin-Embedder-Policy-Report-Only should parse");
@@ -81,6 +85,13 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert!(request_private_network_error.is_err());
   assert_eq!(policy.header_value(), "same-origin");
   assert_eq!(report_only_policy.header_value(), "require-corp");
+  assert_eq!(
+    HttpContentRange::Unsatisfied {
+      complete_length: 10,
+    },
+    content_range
+  );
+  assert!(content_range_error.is_err());
   assert_eq!(
     content_location.header_value(),
     "../representations/current.json"
@@ -120,6 +131,35 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_mode.header_value(), "navigate");
   assert_eq!(fetch_dest.header_value(), "document");
   assert_eq!(fetch_user.header_value(), "?1");
+}
+
+#[test]
+fn response_facade_parses_content_range_metadata() {
+  let satisfied = HttpResponse::ok("").header("Content-Range", "bytes 3-6/10");
+  let unsatisfied = HttpResponse::ok("").header("Content-Range", "bytes */10");
+  let duplicate = HttpResponse::ok("")
+    .header("Content-Range", "bytes 0-0/2")
+    .header("Content-Range", "bytes 1-1/2");
+
+  assert_eq!(
+    Some(HttpContentRange::Bytes {
+      start: 3,
+      end: 6,
+      complete_length: Some(10),
+    }),
+    satisfied
+      .content_range()
+      .expect("satisfied Content-Range should parse")
+  );
+  assert_eq!(
+    Some(HttpContentRange::Unsatisfied {
+      complete_length: 10,
+    }),
+    unsatisfied
+      .content_range()
+      .expect("unsatisfied Content-Range should parse")
+  );
+  assert!(duplicate.content_range().is_err());
 }
 
 #[test]

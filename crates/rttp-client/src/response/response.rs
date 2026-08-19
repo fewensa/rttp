@@ -45,6 +45,7 @@ use rttp_protocol::cross_origin_resource_policy::CrossOriginResourcePolicy;
 use rttp_protocol::link::LinkValues;
 use rttp_protocol::location::Location;
 use rttp_protocol::prefer::PreferenceApplied;
+use rttp_protocol::range::ContentRange;
 use rttp_protocol::referrer_policy::ReferrerPolicy;
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::sunset::parse_sunset_values;
@@ -570,6 +571,16 @@ impl Response {
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
+  pub fn content_range(&self) -> error::Result<Option<ContentRange>> {
+    let values = self.header_values("content-range");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    ContentRange::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
   /// Parses bounded `X-Content-Type-Options` response metadata without applying MIME-sniffing policy.
   pub fn x_content_type_options(&self) -> error::Result<Option<XContentTypeOptions>> {
     let values = self.header_values("x-content-type-options");
@@ -590,12 +601,6 @@ impl Response {
     XFrameOptions::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
-  }
-
-  pub fn content_range(&self) -> Option<ContentRange> {
-    self
-      .header_value("content-range")
-      .and_then(ContentRange::parse)
   }
 
   pub fn content_type(&self) -> error::Result<Option<ContentType>> {
@@ -1192,76 +1197,6 @@ impl RetryAfter {
       Self::HttpDate(http_date) => Some(*http_date),
     }
   }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ContentRange {
-  unit: String,
-  start: Option<u64>,
-  end: Option<u64>,
-  complete_length: Option<u64>,
-}
-
-impl ContentRange {
-  pub fn parse(value: impl AsRef<str>) -> Option<Self> {
-    let value = value.as_ref().trim();
-    let (unit, range_and_length) = value.split_once(' ')?;
-    if unit.is_empty() {
-      return None;
-    }
-
-    let (range, complete_length) = range_and_length.split_once('/')?;
-    let complete_length = parse_complete_length(complete_length)?;
-    if range == "*" {
-      return Some(Self {
-        unit: unit.to_string(),
-        start: None,
-        end: None,
-        complete_length,
-      });
-    }
-
-    let (start, end) = range.split_once('-')?;
-    let start = start.parse::<u64>().ok()?;
-    let end = end.parse::<u64>().ok()?;
-    if start > end {
-      return None;
-    }
-
-    Some(Self {
-      unit: unit.to_string(),
-      start: Some(start),
-      end: Some(end),
-      complete_length,
-    })
-  }
-
-  pub fn unit(&self) -> &str {
-    &self.unit
-  }
-
-  pub fn start(&self) -> Option<u64> {
-    self.start
-  }
-
-  pub fn end(&self) -> Option<u64> {
-    self.end
-  }
-
-  pub fn complete_length(&self) -> Option<u64> {
-    self.complete_length
-  }
-
-  pub fn is_unsatisfied(&self) -> bool {
-    self.start.is_none() && self.end.is_none()
-  }
-}
-
-fn parse_complete_length(value: &str) -> Option<Option<u64>> {
-  if value == "*" {
-    return Some(None);
-  }
-  value.parse::<u64>().ok().map(Some)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

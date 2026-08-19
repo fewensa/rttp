@@ -1,11 +1,11 @@
 use rttp::server::{
   HttpAcceptCh, HttpAccessControlRequestPrivateNetwork, HttpConditionalMetadata,
-  HttpContentLocation, HttpContentLocationParseError, HttpCrossOriginEmbedderPolicy,
-  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
-  HttpCrossOriginResourcePolicy, HttpEntityTag, HttpResponse, HttpSignature, HttpSignatureInput,
-  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
-  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
-  HttpSunsetParseError,
+  HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
+  HttpCrossOriginEmbedderPolicy, HttpCrossOriginEmbedderPolicyReportOnly,
+  HttpCrossOriginOpenerPolicy, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpResponse,
+  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpSunsetParseError,
 };
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -21,6 +21,10 @@ fn compatibility_facade_exports_client_metadata_types() {
       .expect("Accept-Patch should parse");
   let accept_post: rttp::AcceptPost =
     rttp_client::response::AcceptPost::parse("application/json").expect("Accept-Post should parse");
+  let content_range: rttp::ContentRange =
+    rttp_client::response::ContentRange::parse("bytes 3-6/10").expect("Content-Range should parse");
+  let _: rttp::ContentRangeParseError = rttp_client::response::ContentRange::parse("bytes */*")
+    .expect_err("invalid Content-Range should be rejected");
   let accept_ranges: rttp::AcceptRanges =
     rttp_client::response::AcceptRanges::parse("bytes, pages").expect("Accept-Ranges should parse");
   let content_location: rttp::ContentLocation =
@@ -77,6 +81,7 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
   assert_eq!(accept_patch.media_types().len(), 1);
   assert_eq!(accept_post.media_types().len(), 1);
+  assert_eq!(content_range.header_value(), "bytes 3-6/10");
   assert_eq!(accept_ranges.units(), ["bytes", "pages"]);
   assert_eq!(accept_ranges.header_value(), "bytes, pages");
   assert_eq!(
@@ -136,6 +141,10 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
       .expect("Content-Location should parse");
   let _: HttpContentLocationParseError = HttpContentLocation::parse("not valid")
     .expect_err("invalid Content-Location should be rejected");
+  let content_range: HttpContentRange =
+    HttpContentRange::parse("bytes */10").expect("Content-Range should parse");
+  let _: HttpContentRangeParseError =
+    HttpContentRange::parse("bytes */*").expect_err("invalid Content-Range should be rejected");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA"]);
   assert_eq!(private_network.header_value(), "true");
@@ -143,6 +152,7 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     content_location.header_value(),
     "../representations/current.json"
   );
+  assert_eq!(content_range.header_value(), "bytes */10");
   assert_eq!(policy.header_value(), "same-origin");
   assert_eq!(embedder_policy.header_value(), "require-corp");
   assert_eq!(embedder_policy_report_only.header_value(), "require-corp");
