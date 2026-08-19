@@ -498,6 +498,23 @@ fn request_pragma_parses_request_metadata_without_policy() {
   };
   assert!(oversized.pragma().is_err());
   assert!(oversized.header("Pragma").is_some());
+
+  let first = "a".repeat(rttp_protocol::pragma::MAX_PRAGMA_VALUE_BYTES / 2);
+  let second = "b".repeat(rttp_protocol::pragma::MAX_PRAGMA_VALUE_BYTES / 2);
+  let combined = HttpRequest {
+    method: "GET".to_string(),
+    path: "/asset".to_string(),
+    query: None,
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      HttpHeader::new("Pragma", first),
+      HttpHeader::new("Pragma", second),
+    ],
+    body: Vec::new(),
+    content_length: None,
+  };
+  assert!(combined.pragma().is_err());
+  assert!(combined.header("Pragma").is_some());
 }
 
 #[test]

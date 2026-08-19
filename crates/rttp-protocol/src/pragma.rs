@@ -11,6 +11,8 @@ use std::fmt;
 
 use crate::http1::is_token;
 
+/// Maximum bytes accepted in one `Pragma` field value and in the combined
+/// field set, including `", "` separator overhead between fields.
 pub const MAX_PRAGMA_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_PRAGMA_DIRECTIVES: usize = 256;
 pub const MAX_PRAGMA_DIRECTIVE_VALUE_BYTES: usize = 64 * 1024;
@@ -59,8 +61,16 @@ impl Pragma {
     I: IntoIterator<Item = &'a str>,
   {
     let mut directives = Vec::new();
+    let mut total_bytes = 0usize;
     for value in values {
       if value.len() > MAX_PRAGMA_VALUE_BYTES {
+        return Err(PragmaParseError::new("Pragma header value is too large"));
+      }
+      let separator = if total_bytes > 0 { 2 } else { 0 };
+      total_bytes = total_bytes
+        .saturating_add(separator)
+        .saturating_add(value.len());
+      if total_bytes > MAX_PRAGMA_VALUE_BYTES {
         return Err(PragmaParseError::new("Pragma header value is too large"));
       }
       if value.bytes().any(is_invalid_control_byte) {

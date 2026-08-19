@@ -1074,6 +1074,15 @@ fn request_facade_parses_pragma_metadata_without_policy() {
     HttpPragma::parse(oversized_value.as_str());
   assert!(oversized_error.is_err());
   assert!(!format!("{:?}", oversized_error.as_ref().unwrap_err()).contains(&oversized_value[..16]));
+
+  let first = "a".repeat(32 * 1024);
+  let second = "b".repeat(32 * 1024);
+  let combined_error = HttpPragma::parse_values([first.as_str(), second.as_str()]);
+  assert!(combined_error.is_err());
+  assert!(combined_error
+    .unwrap_err()
+    .to_string()
+    .contains("too large"));
 }
 
 #[test]
@@ -1114,4 +1123,16 @@ fn response_facade_builds_and_parses_pragma_metadata() {
     .pragma()
     .expect("missing Pragma should be valid")
     .is_none());
+
+  let first = "a".repeat(32 * 1024);
+  let second = "b".repeat(32 * 1024);
+  let combined = HttpResponse::ok("")
+    .header("Pragma", first.as_str())
+    .header("Pragma", second.as_str());
+  assert!(combined.pragma().is_err());
+  let mut serialized = Vec::new();
+  combined.write_to(&mut serialized).expect("response writes");
+  let serialized = String::from_utf8(serialized).expect("response is utf8");
+  assert!(serialized.contains(&format!("\r\nPragma: {first}\r\n")));
+  assert!(serialized.contains(&format!("\r\nPragma: {second}\r\n")));
 }

@@ -181,3 +181,21 @@ fn rejects_duplicate_member_count_and_oversized_forms_across_fields() {
   let oversized_field = Pragma::parse_values(["x".repeat(MAX_PRAGMA_VALUE_BYTES + 1).as_str()]);
   assert!(oversized_field.is_err());
 }
+
+#[test]
+fn rejects_combined_fields_that_exceed_total_size() {
+  let first = "a".repeat(MAX_PRAGMA_VALUE_BYTES / 2);
+  let second = "b".repeat(MAX_PRAGMA_VALUE_BYTES / 2);
+  assert!(first.len() <= MAX_PRAGMA_VALUE_BYTES);
+  assert!(second.len() <= MAX_PRAGMA_VALUE_BYTES);
+
+  let error = Pragma::parse_values([first.as_str(), second.as_str()])
+    .expect_err("combined fields over the total size should be rejected");
+  assert!(error.to_string().contains("too large"));
+
+  let at_limit_first = "a".repeat(MAX_PRAGMA_VALUE_BYTES / 2 - 1);
+  let at_limit_second = "b".repeat(MAX_PRAGMA_VALUE_BYTES / 2 - 1);
+  let pragma = Pragma::parse_values([at_limit_first.as_str(), at_limit_second.as_str()])
+    .expect("combined fields at the total size should parse");
+  assert_eq!(pragma.len(), 2);
+}

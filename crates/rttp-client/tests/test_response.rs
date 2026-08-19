@@ -2709,6 +2709,18 @@ fn test_pragma_rejects_malformed_duplicate_and_bounds_without_hiding_headers() {
   assert!(oversized_response.pragma().is_err());
   assert_eq!(Some(&oversized), oversized_response.header_value("Pragma"));
 
+  let first = "a".repeat(32 * 1024);
+  let second = "b".repeat(32 * 1024);
+  let combined_oversized =
+    format!("HTTP/1.1 200 OK\r\nPragma: {first}\r\nPragma: {second}\r\nContent-Length: 0\r\n\r\n");
+  let combined_response = Response::new(
+    RoUrl::with("https://example.test"),
+    combined_oversized.into_bytes(),
+  )
+  .expect("raw response should remain usable");
+  assert!(combined_response.pragma().is_err());
+  assert_eq!(2, combined_response.header_values("Pragma").len());
+
   let duplicate = Response::new(
     RoUrl::with("https://example.test"),
     b"HTTP/1.1 200 OK\r\nPragma: no-cache\r\npragma: no-cache\r\nContent-Length: 0\r\n\r\n"

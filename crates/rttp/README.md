@@ -492,7 +492,8 @@ parse the same representation into `HttpPragma`, and
 replaces attached same-name fields. Absent fields return `Ok(None)`. Multiple
 fields are combined in wire order, directive names are matched
 case-insensitively, duplicate names are rejected, each field value is bounded
-to 64 KiB, each directive value is bounded to 64 KiB, and the combined
+to 64 KiB, combined field values are bounded to 64 KiB including `", "`
+separator overhead, each directive value is bounded to 64 KiB, and the combined
 directive count is bounded to 256. Malformed tokens or quoted-strings, valued
 `no-cache` forms, empty members, and bound violations return a parser error
 while raw request headers remain available.

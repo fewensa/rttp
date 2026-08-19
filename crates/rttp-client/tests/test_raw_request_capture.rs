@@ -2120,6 +2120,26 @@ fn pragma_helper_rejects_oversized_values_before_connecting() {
 }
 
 #[test]
+fn pragma_helper_rejects_combined_fields_that_exceed_total_size() {
+  let first = "a".repeat(32 * 1024);
+  let second = "b".repeat(32 * 1024);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Pragma", first.as_str()))
+      .pragma(second.as_str())
+      .expect_err("combined oversized Pragma should be rejected");
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "combined oversized Pragma must not open a socket"
+  );
+}
+
+#[test]
 fn raw_pragma_header_remains_available_as_escape_hatch() {
   let request = capture_request(|base_url| {
     client()

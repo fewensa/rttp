@@ -768,7 +768,8 @@ Callers that need values outside the helper can retain raw-header control with
 through the shared protocol `Pragma` type and emits one normalized `Pragma`
 field. Already-attached `Pragma` fields are combined in wire order and
 replaced by that single field, so duplicate directive names, empty members,
-malformed tokens, and bound violations fail before a socket opens.
+malformed tokens, and per-field or combined-size bound violations fail before
+a socket opens.
 `HttpClient::pragma_no_cache()` is a convenience for the defined valueless
 `no-cache` directive.
 

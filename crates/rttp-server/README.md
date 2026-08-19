@@ -493,7 +493,8 @@ fields return `Ok(None)`. The helpers parse RFC 9111 `pragma-directive`
 members: the defined valueless `no-cache` token or an `extension-pragma`
 token with an optional token or quoted-string value. Multiple `Pragma` fields
 are combined in wire order, directive names are matched case-insensitively,
-duplicate names are rejected, each field value is bounded to 64 KiB, each
+duplicate names are rejected, each field value is bounded to 64 KiB, combined
+field values are bounded to 64 KiB including `", "` separator overhead, each
 directive value is bounded to 64 KiB, and the combined directive count is
 bounded to 256. Empty members, malformed tokens or quoted-strings, valued
 `no-cache` forms, forbidden ASCII control bytes, and bound violations return a

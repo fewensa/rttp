@@ -716,10 +716,11 @@ normalization, navigation behavior, request replay, or shared-cache policy.
 `pragma` parses RFC 9111 `Pragma` fields as a comma-separated list of
 `pragma-directive` members: the defined valueless `no-cache` token or an
 `extension-pragma` token with an optional token or quoted-string value. Each
-field value is bounded to 64 KiB and the combined directive count is bounded
-to 256; each directive value is bounded to 64 KiB. Directive names are matched
-case-insensitively, duplicate names across combined fields are rejected, and
-multiple `Pragma` fields are combined in wire order, matching the RFC 9111
+field value is bounded to 64 KiB, combined field values are bounded to 64 KiB
+including `", "` separator overhead, and the combined directive count is
+bounded to 256; each directive value is bounded to 64 KiB. Directive names are
+matched case-insensitively, duplicate names across combined fields are rejected,
+and multiple `Pragma` fields are combined in wire order, matching the RFC 9111
 list rule. Surrounding SP and HTAB are trimmed as optional whitespace.
 Quoted-string values are unescaped on parse and re-escaped on emit, while
 unquoted values must be tokens. Empty or whitespace-only fields, empty list
