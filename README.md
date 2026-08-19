@@ -324,6 +324,22 @@ cache state against wall-clock time, store responses, match stored responses,
 revalidate responses, apply shared-cache policy, issue automatic conditional
 requests, retry, redirect, schedule work, or choose status policy.
 
+### Bounded Memento-Datetime behavior
+
+`Response::memento_datetime()` parses the response `Memento-Datetime` header
+through the protocol `MementoDatetime` type as one singleton IMF-fixdate.
+The helper returns `Ok(None)` when the header is absent, returns
+`MementoDatetime` when the value is present and valid, and returns an error
+for empty, malformed, control-byte, duplicate, or oversize values. Each field
+value is bounded to 64 KiB. Surrounding SP and HTAB are trimmed as optional
+whitespace.
+
+Malformed helper values do not reject the raw response. The original
+`Memento-Datetime` field remains available through `header_value` and
+`header_values`. This helper exposes metadata only; RTTP does not select an
+archival representation, negotiate `Accept-Datetime`, implement TimeGate
+behavior, retry, or change transport handling.
+
 ### Bounded HTTP/1.1 Retry-After behavior
 
 `Response::retry_after()` parses a single response `Retry-After` header as
@@ -1005,6 +1021,7 @@ gain additional HTTP/2 header-block handling.
 | Conditional requests | `if_none_match`, `if_match`, `if_modified_since`, and `if_unmodified_since` emit bounded HTTP/1.1 validators; `Response::is_not_modified`, `is_precondition_failed`, typed bounded `etag`, and `last_modified` expose `304`/`412` metadata while preserving raw headers | One ETag validator per helper call, `If-Range` is range-scoped, no cache storage, no automatic revalidation, and no cache-control engine |
 | Informational responses and Early Hints | `Response::informational_responses` exposes skipped bounded HTTP/1.1 `1xx` heads, including `103 Early Hints`, with preserved raw headers; server `HttpResponse::early_hints`/`early_hints_with_headers` construct validated bodyless `103` metadata | `101 Switching Protocols` remains terminal for upgrade handoff; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
 | Cache-Control, CDN-Cache-Control, Cache-Status, Date, Age, Expires, Retry-After, and Allow | `Response::cache_control` parses bounded response directives, numeric freshness fields, quoted field-name lists, and extension directives; `Response::cdn_cache_control` parses bounded `CDN-Cache-Control` directives and CDN extension metadata while preserving raw responses on parse errors; `Response::cache_status` parses bounded RFC 9211 `Cache-Status` list members and parameters while preserving raw responses on parse errors; `Response::date` parses singleton HTTP-date metadata; `Response::age` parses bounded singleton `Age` metadata through the protocol `Age` type, rejecting duplicate fields, values larger than 64 KiB, and overflowing `u64` delta-seconds; `Response::expires` parses bounded HTTP-date metadata; `Response::retry_after` parses bounded delta-seconds or HTTP-date metadata; `Response::allow` parses bounded ordered method metadata | No cache storage, CDN cache, Cache-Status forwarding or freshness policy, automatic revalidation, wall-clock freshness calculation, clock-skew correction, `Vary` matching, shared-cache policy enforcement, surrogate-key behavior, automatic conditional requests, automatic sleep, retry, replay, redirect, backoff, scheduler integration, fallback method selection, or status-code policy engine |
+| Memento-Datetime | `Response::memento_datetime` parses bounded singleton `Memento-Datetime` IMF-fixdate metadata through the protocol `MementoDatetime` type while preserving raw headers on parse errors | No archival selection, `Accept-Datetime` negotiation, TimeGate behavior, retry, or transport changes |
 | Content-Language | `Response::content_language` parses bounded response `Content-Language` fields into ordered language metadata while preserving raw headers | No automatic language negotiation, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
 | Content-Location | `Response::content_location` and `ContentLocation::parse` parse bounded singleton response `Content-Location` metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |
 | Content-DPR | `Response::content_dpr` and `ContentDpr::parse` parse bounded singleton response `Content-DPR` decimal-ratio metadata while preserving raw headers | No image rescaling, request DPR emission, Client Hints policy, retry, or transport changes |
@@ -1454,6 +1471,17 @@ revalidate responses, enforce shared-cache policy, attach behavior to status
 codes, sleep, retry, replay requests, apply backoff, integrate with a scheduler,
 or issue automatic conditional requests.
 
+Server `Memento-Datetime` helpers expose archival datetime metadata without
+adding time negotiation. `HttpResponse::with_memento_datetime(time)` replaces
+one `Memento-Datetime` header from `SystemTime`, and
+`HttpResponse::memento_datetime()` parses an attached singleton field into
+`HttpMementoDatetime`. Empty, malformed, control-byte, duplicate, and oversize
+values return `HttpMementoDatetimeParseError`. Raw
+`HttpResponse::header("Memento-Datetime", ...)` values remain preserved.
+These helpers do not select an archival representation, negotiate
+`Accept-Datetime`, implement TimeGate behavior, retry, or change transport
+handling.
+
 ### Bounded HTTP/1.1 Allow behavior
 
 Server-side `Allow` helpers expose response declaration and method-list parsing
@@ -1877,6 +1905,7 @@ TLS or async accept loops.
 | Conditional requests | `Request::evaluate_conditional`, `evaluate_conditional_request`, `HttpConditionalMetadata`, and `HttpEntityTag` evaluate bounded HTTP/1.1 validators; `HttpResponse::not_modified`, `precondition_failed`, `with_etag`, and typed bounded `etag` serialize or expose `304`/`412` metadata while preserving raw headers | No cache storage, static-file serving policy, automatic revalidation, or cache-control engine |
 | Informational responses and Early Hints | `HttpResponse::early_hints` and `early_hints_with_headers` construct validated bodyless `103 Early Hints` response metadata with bounded `Link` and safe metadata headers | `101 Switching Protocols` remains a separate terminal handoff response; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
 | Cache-Control, CDN-Cache-Control, and Cache-Status | `Request::cache_control`, `HttpRequest::cache_control`, and `HttpResponse::cache_control` parse bounded request/response directives, numeric freshness fields, quoted field-name lists, and extension directives; `HttpResponse::cdn_cache_control` parses bounded response `CDN-Cache-Control` directives and CDN extension metadata while preserving raw response headers on parse errors; `HttpResponse::cache_status` parses bounded RFC 9211 `Cache-Status` list members and parameters while preserving raw response headers on parse errors; `HttpResponse::with_age`/`age`, `with_expires`/`expires`, and `with_retry_after_delta`/`with_retry_after_date`/`retry_after` declare and parse response `Age`, `Expires`, and `Retry-After` metadata | No cache storage, CDN cache, Cache-Status forwarding or freshness policy, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, surrogate-key behavior, automatic conditional requests, directive-based validator evaluation, automatic sleep, retry, replay, backoff, scheduler integration, or status-code policy engine |
+| Memento-Datetime | `HttpResponse::with_memento_datetime`/`memento_datetime` declare and parse bounded singleton `Memento-Datetime` IMF-fixdate metadata while preserving raw headers on parse errors | No archival selection, `Accept-Datetime` negotiation, TimeGate behavior, retry, or transport changes |
 | Fetch Metadata | `Request::sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, `sec_fetch_user`, and `sec_purpose` parse bounded typed `Sec-Fetch-*`/`Sec-Purpose` request fields and preserve raw values on errors | No browser security policy, request blocking, origin validation, navigation policy, automatic header generation, prefetch execution, or cache behavior |
 | Save-Data | `Request::save_data` and `HttpRequest::save_data` parse bounded singleton `Save-Data` `on`-token metadata and preserve raw values on errors | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |
 | Vary | `HttpVary`, `HttpResponse::with_vary`, `HttpResponse::vary`, `Request::vary_selection`, and `HttpRequest::vary_selection` parse, declare, and select bounded `Vary` metadata with case-insensitive field-name handling | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |

@@ -7,11 +7,11 @@ use rttp::server::{
   HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata, HttpContentDisposition,
   HttpContentLanguages, HttpContentRange, HttpContentSecurityPolicy, HttpContentType,
   HttpCriticalCh, HttpDeprecation, HttpEntityTag, HttpExpectations, HttpHost, HttpIfNoneMatch,
-  HttpIfRange, HttpIfRangeRequestOutcome, HttpLinkValues, HttpNel, HttpPermissionsPolicy,
-  HttpProxyStatus, HttpProxyStatusBareItem, HttpReferrerPolicy, HttpReportingEndpoints,
-  HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
-  HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming,
-  HttpVary,
+  HttpIfRange, HttpIfRangeRequestOutcome, HttpLinkValues, HttpMementoDatetime, HttpNel,
+  HttpPermissionsPolicy, HttpProxyStatus, HttpProxyStatusBareItem, HttpReferrerPolicy,
+  HttpReportingEndpoints, HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl,
+  HttpRequestTe, HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings,
+  HttpRetryAfter, HttpServerTiming, HttpVary,
 };
 
 #[test]
@@ -2856,6 +2856,22 @@ fn response_sunset_helper_replaces_existing_metadata() {
 }
 
 #[test]
+fn response_memento_datetime_helper_declares_and_parses_metadata() {
+  let datetime = UNIX_EPOCH + Duration::from_secs(784_111_777);
+  let response = HttpResponse::ok("body").with_memento_datetime(datetime);
+
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nMemento-Datetime: Sun, 06 Nov 1994 08:49:37 GMT\r\n"));
+  assert_eq!(
+    Some(HttpMementoDatetime::new(datetime)),
+    response
+      .memento_datetime()
+      .expect("Memento-Datetime should parse")
+  );
+}
+
+#[test]
 fn response_deprecation_helper_declares_boolean_and_date() {
   let response = HttpResponse::ok("body").with_deprecation(HttpDeprecation::Boolean(true));
   let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
@@ -2878,6 +2894,29 @@ fn response_deprecation_helper_declares_boolean_and_date() {
 }
 
 #[test]
+fn response_memento_datetime_helper_replaces_existing_metadata() {
+  let initial_datetime = UNIX_EPOCH + Duration::from_secs(784_111_777);
+  let datetime = initial_datetime + Duration::from_secs(1);
+  let response = HttpResponse::ok("body")
+    .header(
+      "Memento-Datetime",
+      httpdate::fmt_http_date(initial_datetime),
+    )
+    .with_memento_datetime(initial_datetime)
+    .with_memento_datetime(datetime);
+
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert_eq!(1, serialized.matches("\r\nMemento-Datetime: ").count());
+  assert_eq!(
+    Some(HttpMementoDatetime::new(datetime)),
+    response
+      .memento_datetime()
+      .expect("Memento-Datetime should parse")
+  );
+}
+
+#[test]
 fn response_deprecation_helper_replaces_existing_fields() {
   let response = HttpResponse::ok("body")
     .header("Deprecation", "?0")
@@ -2891,6 +2930,26 @@ fn response_deprecation_helper_replaces_existing_fields() {
     Some(HttpDeprecation::Boolean(true)),
     response.deprecation().expect("Deprecation should parse")
   );
+}
+
+#[test]
+fn response_memento_datetime_helper_rejects_invalid_and_duplicate_raw_values() {
+  for response in [
+    HttpResponse::ok("body").header("Memento-Datetime", "not a date"),
+    HttpResponse::ok("body")
+      .header("Memento-Datetime", "Sun, 06 Nov 1994 08:49:37 GMT")
+      .header("Memento-Datetime", "Sun, 06 Nov 1994 08:49:38 GMT"),
+  ] {
+    let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+    assert!(
+      response.memento_datetime().is_err(),
+      "Memento-Datetime helper should reject invalid metadata"
+    );
+    assert!(
+      serialized.contains("\r\nMemento-Datetime: "),
+      "raw Memento-Datetime headers must remain inspectable after rejection"
+    );
+  }
 }
 
 #[test]

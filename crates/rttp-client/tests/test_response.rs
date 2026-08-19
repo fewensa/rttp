@@ -3,9 +3,9 @@ use rttp_client::response::{
   ContentRange, ContentSecurityPolicy, ContentType, CrossOriginEmbedderPolicy,
   CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginResourcePolicy,
   Deprecation, EntityTag, HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues, Location,
-  ProxyAuthenticate, ProxyAuthenticationInfo, ProxyStatus, ProxyStatusBareItem, ReferrerPolicy,
-  ReferrerPolicyToken, Response, RetryAfter, ServerTiming, SignatureInput, StrictTransportSecurity,
-  Warning, XContentTypeOptions, XFrameOptions,
+  MementoDatetime, ProxyAuthenticate, ProxyAuthenticationInfo, ProxyStatus, ProxyStatusBareItem,
+  ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ServerTiming, SignatureInput,
+  StrictTransportSecurity, Warning, XContentTypeOptions, XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -3932,6 +3932,83 @@ fn test_parse_sunset_rejects_invalid_and_duplicate_values_without_rejecting_resp
       "raw Sunset headers must remain inspectable after rejection"
     );
   }
+}
+
+#[test]
+fn test_parse_memento_datetime_response_metadata_and_preserves_raw_value() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Memento-Datetime: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(
+    Some(MementoDatetime::new(
+      UNIX_EPOCH + Duration::from_secs(784_111_777)
+    )),
+    response
+      .memento_datetime()
+      .expect("Memento-Datetime should parse")
+  );
+  assert_eq!(
+    Some(&"Sun, 06 Nov 1994 08:49:37 GMT".to_string()),
+    response.header_value("Memento-Datetime")
+  );
+}
+
+#[test]
+fn test_parse_memento_datetime_rejects_invalid_and_duplicate_values_without_rejecting_response() {
+  for (header, expected_values) in [
+    ("Memento-Datetime: not a date\r\n", vec!["not a date"]),
+    ("memento-datetime: not a date\r\n", vec!["not a date"]),
+    (
+      "Memento-Datetime: Sun, 06 Nov 1994 08:49:37 GMT\r\nmemento-datetime: Sun, 06 Nov 1994 08:49:38 GMT\r\n",
+      vec![
+        "Sun, 06 Nov 1994 08:49:37 GMT",
+        "Sun, 06 Nov 1994 08:49:38 GMT",
+      ],
+    ),
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\n{header}Content-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("response should remain usable");
+
+    assert!(
+      response.memento_datetime().is_err(),
+      "Memento-Datetime helper should reject {header:?}"
+    );
+    assert_eq!(
+      expected_values,
+      response
+        .header_values("Memento-Datetime")
+        .into_iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>(),
+      "raw Memento-Datetime headers must remain inspectable after rejection"
+    );
+  }
+}
+
+#[test]
+fn test_parse_memento_datetime_returns_none_when_header_is_absent() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(
+    None,
+    response
+      .memento_datetime()
+      .expect("absent Memento-Datetime should parse")
+  );
 }
 
 #[test]

@@ -283,6 +283,17 @@ revalidate responses, enforce shared-cache policy, attach behavior to status
 codes, throttle requests, sleep, retry, replay requests, apply backoff,
 integrate with a scheduler, or issue automatic conditional requests.
 
+Server `Memento-Datetime` helpers expose archival datetime metadata without
+adding time negotiation. `HttpResponse::with_memento_datetime(time)` replaces
+one `Memento-Datetime` header from `SystemTime`, and
+`HttpResponse::memento_datetime()` parses an attached singleton field into
+`HttpMementoDatetime`. Empty, malformed, control-byte, duplicate, and oversize
+values return `HttpMementoDatetimeParseError`. Raw
+`HttpResponse::header("Memento-Datetime", ...)` values remain preserved.
+These helpers do not select an archival representation, negotiate
+`Accept-Datetime`, implement TimeGate behavior, retry, or change transport
+handling.
+
 ## Bounded HTTP/1.1 Vary behavior
 
 Server-side `Vary` helpers expose response declaration and request-selection
@@ -852,6 +863,7 @@ scheduling, or async accept loops.
 | Conditional requests | `Request::evaluate_conditional`, `evaluate_conditional_request`, `HttpConditionalMetadata`, and `HttpEntityTag` evaluate bounded HTTP/1.1 validators; `HttpResponse::not_modified`, `precondition_failed`, `with_etag`, and typed bounded `etag` serialize or expose `304`/`412` metadata while preserving raw headers | No cache storage, static-file serving policy, automatic revalidation, or cache-control engine |
 | Informational responses and Early Hints | `HttpResponse::early_hints` and `early_hints_with_headers` construct validated bodyless `103 Early Hints` response metadata with bounded `Link` and safe metadata headers | `101 Switching Protocols` remains a separate terminal handoff response; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
 | Cache-Control, CDN-Cache-Control, and Cache-Status | `Request::cache_control`, `HttpRequest::cache_control`, and `HttpResponse::cache_control` parse bounded request/response directives, numeric freshness fields, quoted field-name lists, and extension directives; `HttpResponse::cdn_cache_control` parses bounded response `CDN-Cache-Control` directives and CDN extension metadata while preserving raw response headers on parse errors; `HttpResponse::cache_status` parses bounded RFC 9211 `Cache-Status` list members and parameters while preserving raw response headers on parse errors; `HttpResponse::with_age`/`age`, `with_expires`/`expires`, and `with_retry_after_delta`/`with_retry_after_date`/`retry_after` declare and parse response `Age`, `Expires`, and `Retry-After` metadata | No cache storage, CDN cache, Cache-Status forwarding or freshness policy, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, surrogate-key behavior, automatic conditional requests, directive-based validator evaluation, automatic sleep, retry, replay, backoff, scheduler integration, or status-code policy engine |
+| Memento-Datetime | `HttpResponse::with_memento_datetime`/`memento_datetime` declare and parse bounded singleton `Memento-Datetime` IMF-fixdate metadata while preserving raw headers on parse errors | No archival selection, `Accept-Datetime` negotiation, TimeGate behavior, retry, or transport changes |
 | Vary | `HttpVary`, `HttpResponse::with_vary`, `HttpResponse::vary`, `Request::vary_selection`, and `HttpRequest::vary_selection` parse, declare, and select bounded `Vary` metadata with case-insensitive field-name handling | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | Authentication metadata | `Request::authorization`/`proxy_authorization` and `HttpRequest::authorization`/`proxy_authorization` expose one bounded opaque credential field, `Response::www_authenticate` parses bounded client response challenges, and `HttpResponse::with_www_authenticate`/`www_authenticate` declare and parse bounded `WWW-Authenticate` challenges | No credential validation, realm selection, automatic client challenge, retry, or authentication/authorization enforcement |
 | No-Vary-Search | `NoVarySearch`, `HttpNoVarySearch`, `Response::no_vary_search`, `HttpResponse::with_no_vary_search`, and `HttpResponse::no_vary_search` parse and declare bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |

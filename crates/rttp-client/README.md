@@ -311,6 +311,22 @@ validate cache state against wall-clock time, store responses, match stored
 responses, revalidate responses, apply shared-cache policy, issue automatic
 conditional requests, retry, redirect, schedule work, or choose status policy.
 
+## Bounded Memento-Datetime behavior
+
+`Response::memento_datetime()` parses the response `Memento-Datetime` header
+through the protocol `MementoDatetime` type as one singleton IMF-fixdate.
+The helper returns `Ok(None)` when the header is absent, returns
+`MementoDatetime` when the value is present and valid, and returns an error
+for empty, malformed, control-byte, duplicate, or oversize values. Each field
+value is bounded to 64 KiB. Surrounding SP and HTAB are trimmed as optional
+whitespace.
+
+Malformed helper values do not reject the raw response. The original
+`Memento-Datetime` field remains available through `header_value` and
+`header_values`. This helper exposes metadata only; `rttp_client` does not
+select an archival representation, negotiate `Accept-Datetime`, implement
+TimeGate behavior, retry, or change transport handling.
+
 ## Bounded HTTP/1.1 Retry-After behavior
 
 `Response::retry_after()` parses a single response `Retry-After` header as
@@ -879,6 +895,7 @@ header-block model.
 | Conditional requests | `if_none_match`, `if_match`, `if_modified_since`, and `if_unmodified_since` emit bounded HTTP/1.1 validators; `Response::is_not_modified`, `is_precondition_failed`, typed bounded `etag`, `last_modified`, and `last_modified_date` expose `304`/`412` metadata while preserving raw headers | One ETag validator per helper call, `If-Range` is range-scoped, no cache storage, no automatic revalidation, and no cache-control engine |
 | Informational responses and Early Hints | `Response::informational_responses` exposes skipped bounded HTTP/1.1 `1xx` heads, including `103 Early Hints`, with preserved raw headers | `101 Switching Protocols` remains terminal for upgrade handoff; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
 | Cache-Control, CDN-Cache-Control, Cache-Status, Date, Age, and Expires | `Response::cache_control` parses bounded response directives, numeric freshness fields, quoted field-name lists, and extension directives; `Response::cdn_cache_control` parses bounded `CDN-Cache-Control` directives and CDN extension metadata while preserving raw responses on parse errors; `Response::cache_status` parses bounded RFC 9211 `Cache-Status` list members and parameters while preserving raw responses on parse errors; `Response::date` parses singleton HTTP-date metadata; `Response::age` parses bounded singleton `Age` metadata through the protocol `Age` type, rejecting duplicate fields, values larger than 64 KiB, and overflowing `u64` delta-seconds; `Response::expires` parses bounded HTTP-date metadata | No cache storage, CDN cache, Cache-Status forwarding or freshness policy, automatic revalidation, wall-clock freshness calculation, clock-skew correction, `Vary` matching, shared-cache policy enforcement, surrogate-key behavior, automatic conditional requests, retry, redirect, scheduling, or status policy |
+| Memento-Datetime | `Response::memento_datetime` parses bounded singleton `Memento-Datetime` IMF-fixdate metadata through the protocol `MementoDatetime` type while preserving raw headers on parse errors | No archival selection, `Accept-Datetime` negotiation, TimeGate behavior, retry, or transport changes |
 | Allow | `Response::allow` parses bounded response `Allow` fields into an ordered HTTP method-token list | No fallback method selection, automatic retry/replay, or status-code policy behavior for `405` or `OPTIONS` |
 | Client Hints | `Response::accept_ch` and `Response::critical_ch` parse bounded, ordered Client Hints opt-in metadata while preserving raw headers on parse failures | No browser opt-in state, request-header generation, retry, persistence, or Client Hints policy |
 | Content-Language | `Response::content_language` parses bounded response `Content-Language` fields into ordered language metadata while preserving raw headers | No automatic language negotiation, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |

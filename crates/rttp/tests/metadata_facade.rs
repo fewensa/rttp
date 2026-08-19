@@ -4,11 +4,11 @@ use rttp::server::{
   HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
   HttpCrossOriginEmbedderPolicy, HttpCrossOriginEmbedderPolicyReportOnly,
   HttpCrossOriginOpenerPolicy, HttpCrossOriginResourcePolicy, HttpDeprecation,
-  HttpDeprecationParseError, HttpEntityTag, HttpNel, HttpProxyStatus, HttpProxyStatusParseError,
-  HttpResponse, HttpSaveData, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
-  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpSunsetParseError, HttpUpgrade,
-  HttpUpgradeParseError,
+  HttpDeprecationParseError, HttpEntityTag, HttpMementoDatetime, HttpMementoDatetimeParseError,
+  HttpNel, HttpProxyStatus, HttpProxyStatusParseError, HttpResponse, HttpSaveData, HttpSignature,
+  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpSunsetParseError, HttpUpgrade, HttpUpgradeParseError,
 };
 use std::io::Write;
 use std::net::SocketAddr;
@@ -99,6 +99,11 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp_client::response::Deprecation::parse("?1").expect("Deprecation should parse");
   let _: rttp::DeprecationParseError = rttp_client::response::Deprecation::parse("true")
     .expect_err("historical Deprecation token should be rejected");
+  let memento_datetime: rttp::MementoDatetime =
+    rttp_client::response::MementoDatetime::parse("Sun, 06 Nov 1994 08:49:37 GMT")
+      .expect("Memento-Datetime should parse");
+  let _: rttp::MementoDatetimeParseError = rttp_client::response::MementoDatetime::parse("")
+    .expect_err("empty Memento-Datetime should be rejected");
   let content_security_policy: rttp::ContentSecurityPolicy =
     rttp_client::response::ContentSecurityPolicy::parse("default-src 'self'; object-src 'none'")
       .expect("Content-Security-Policy should parse");
@@ -202,6 +207,10 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(content_dpr.header_value(), "1.5");
   assert_eq!(deprecation, rttp::Deprecation::Boolean(true));
   assert_eq!(deprecation.header_value(), "?1");
+  assert_eq!(
+    memento_datetime.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
   assert_eq!(
     content_security_policy.header_value(),
     "default-src 'self'; object-src 'none'"
@@ -592,6 +601,21 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(
     response.etag().expect("ETag should parse"),
     Some(HttpEntityTag::weak("revision-42"))
+  );
+}
+
+#[test]
+fn compatibility_facade_exposes_memento_datetime_response_metadata() {
+  let datetime = UNIX_EPOCH + Duration::from_secs(784_111_777);
+  let response = HttpResponse::ok("").with_memento_datetime(datetime);
+  let _: Result<Option<HttpMementoDatetime>, HttpMementoDatetimeParseError> =
+    response.memento_datetime();
+
+  assert_eq!(
+    Some(HttpMementoDatetime::new(datetime)),
+    response
+      .memento_datetime()
+      .expect("Memento-Datetime should parse")
   );
 }
 
