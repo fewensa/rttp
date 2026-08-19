@@ -26,6 +26,9 @@ pub use rttp_protocol::alt_svc::{
   AltSvc as HttpAltSvc, AltSvcAlternative as HttpAltSvcAlternative,
   AltSvcParameter as HttpAltSvcParameter, AltSvcParseError as HttpAltSvcParseError,
 };
+pub use rttp_protocol::alt_used::{
+  AltUsed as HttpAltUsed, AltUsedParseError as HttpAltUsedParseError,
+};
 pub use rttp_protocol::authentication_info::{
   AuthenticationInfo as HttpAuthenticationInfo,
   AuthenticationInfoParseError as HttpAuthenticationInfoParseError,
@@ -1483,6 +1486,19 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Alt-Used` response metadata without selecting an
+  /// alternative service or changing connection policy.
+  pub fn with_alt_used(mut self, value: impl AsRef<str>) -> Result<Self, HttpAltUsedParseError> {
+    let alt_used = HttpAltUsed::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Alt-Used"));
+    self
+      .headers
+      .push(HttpHeader::new("Alt-Used", alt_used.header_value()));
+    Ok(self)
+  }
+
   /// Validates and replaces `Keep-Alive` response metadata without changing
   /// connection lifetime.
   pub fn with_keep_alive(
@@ -2395,6 +2411,21 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpAltSvc::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Alt-Used` metadata without changing raw headers,
+  /// alternative service selection, origins, or connections.
+  pub fn alt_used(&self) -> Result<Option<HttpAltUsed>, HttpAltUsedParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Alt-Used"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAltUsed::parse_values(values).map(Some)
   }
 
   /// Parses attached `NEL` metadata without sending reports or persisting policy.

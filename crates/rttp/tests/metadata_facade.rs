@@ -1,18 +1,18 @@
 use rttp::server::{
   HttpAcceptCh, HttpAcceptLanguageParseError, HttpAcceptLanguages, HttpAccessControlRequestMethod,
-  HttpAccessControlRequestPrivateNetwork, HttpAuthorization, HttpConditionalMetadata,
-  HttpContentDpr, HttpContentDprParseError, HttpContentLocation, HttpContentLocationParseError,
-  HttpContentRange, HttpContentRangeParseError, HttpCrossOriginEmbedderPolicy,
-  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
-  HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpEntityTag,
-  HttpExpectations, HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince,
-  HttpIfUnmodifiedSince, HttpMaxForwards, HttpMementoDatetime, HttpMementoDatetimeParseError,
-  HttpNel, HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError, HttpResponse,
-  HttpSaveData, HttpSecGpc, HttpSecGpcParseError, HttpSignature, HttpSignatureInput,
-  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
-  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
-  HttpSunsetParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
-  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
+  HttpAccessControlRequestPrivateNetwork, HttpAltUsed, HttpAltUsedParseError, HttpAuthorization,
+  HttpConditionalMetadata, HttpContentDpr, HttpContentDprParseError, HttpContentLocation,
+  HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
+  HttpCrossOriginEmbedderPolicy, HttpCrossOriginEmbedderPolicyReportOnly,
+  HttpCrossOriginOpenerPolicy, HttpCrossOriginResourcePolicy, HttpDeprecation,
+  HttpDeprecationParseError, HttpEntityTag, HttpExpectations, HttpIdempotencyKey,
+  HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfUnmodifiedSince, HttpMaxForwards,
+  HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNel, HttpProxyAuthorization,
+  HttpProxyStatus, HttpProxyStatusParseError, HttpResponse, HttpSaveData, HttpSecGpc,
+  HttpSecGpcParseError, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
+  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
+  HttpSignatureInputParseError, HttpSignatureParseError, HttpSunsetParseError, HttpUpgrade,
+  HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
 };
 use std::io::Write;
 use std::net::SocketAddr;
@@ -121,6 +121,10 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp_client::response::ContentRange::parse("bytes 0-4/10").expect("Content-Range should parse");
   let alt_svc: rttp::AltSvc =
     rttp_client::response::AltSvc::parse("h3=\":443\"; ma=60").expect("Alt-Svc should parse");
+  let alt_used: rttp::AltUsed =
+    rttp_client::response::AltUsed::parse("alt.example:8443").expect("Alt-Used should parse");
+  let _: rttp::AltUsedParseError = rttp_client::response::AltUsed::parse("https://alt.example")
+    .expect_err("invalid Alt-Used should be rejected");
   let authentication_info: rttp::AuthenticationInfo =
     rttp_client::response::AuthenticationInfo::parse("nextnonce=\"n-2\"")
       .expect("Authentication-Info should parse");
@@ -233,6 +237,8 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert!(!content_range.is_unsatisfied());
   assert_eq!(alt_svc.alternatives()[0].protocol_id(), "h3");
   assert_eq!(alt_svc.alternatives()[0].max_age(), Some(60));
+  assert_eq!(alt_used.host(), "alt.example");
+  assert_eq!(alt_used.port(), Some("8443"));
   assert_eq!(authentication_info.parameter("nextnonce"), Some("n-2"));
   assert_eq!(nel.max_age(), 2592000);
   assert_eq!(nel.report_to(), Some("network-errors"));
@@ -690,6 +696,10 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
       .expect("Proxy-Status should parse");
   let _: HttpProxyStatusParseError =
     HttpProxyStatus::parse("").expect_err("empty Proxy-Status should be rejected");
+  let alt_used: HttpAltUsed =
+    HttpAltUsed::parse("[2001:db8::1]:8443").expect("Alt-Used should parse");
+  let _: HttpAltUsedParseError =
+    HttpAltUsed::parse("https://alt.example").expect_err("invalid Alt-Used should be rejected");
   let content_location: HttpContentLocation =
     HttpContentLocation::parse("../representations/current.json")
       .expect("Content-Location should parse");
@@ -755,6 +765,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     proxy_status.members()[0].identifier().as_str(),
     "ExampleCDN"
   );
+  assert_eq!(alt_used.host(), "[2001:db8::1]");
+  assert_eq!(alt_used.port(), Some("8443"));
   assert_eq!(
     metadata
       .entity_tag_value()

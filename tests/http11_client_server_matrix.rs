@@ -1013,6 +1013,34 @@ fn sync_client_and_server_exchange_alt_svc_metadata_without_connection_policy() 
 }
 
 #[test]
+fn sync_client_and_server_exchange_alt_used_metadata_without_connection_policy() {
+  const HEADERS: &[(&str, &str)] = &[("Alt-Used", "alt.example:8443")];
+  let (addr, handle) = spawn_metadata_response_server(HEADERS);
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/alt-used"))
+    .emit()
+    .expect("Alt-Used response should parse without connection policy");
+  let alt_used = response
+    .alt_used()
+    .expect("Alt-Used should parse")
+    .expect("Alt-Used should be present");
+
+  assert_eq!(200, response.code());
+  assert_eq!("OK", response.body().string().unwrap());
+  assert_eq!(
+    Some(&"alt.example:8443".to_string()),
+    response.header_value("Alt-Used")
+  );
+  assert_eq!("alt.example", alt_used.host());
+  assert_eq!(Some("8443"), alt_used.port());
+  assert_eq!("alt.example:8443", alt_used.header_value());
+
+  handle.join().expect("Alt-Used server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_nel_metadata_without_report_policy() {
   let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind NEL server");
   let addr = server.local_addr().expect("NEL server addr");

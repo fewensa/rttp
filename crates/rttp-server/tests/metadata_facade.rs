@@ -4,23 +4,23 @@ use rttp_server::server::{
   HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods, HttpAccessControlRequestHeaders,
   HttpAccessControlRequestHeadersParseError, HttpAccessControlRequestMethod,
   HttpAccessControlRequestMethodParseError, HttpAccessControlRequestPrivateNetwork,
-  HttpAccessControlRequestPrivateNetworkParseError, HttpAuthorization, HttpAuthorizationParseError,
-  HttpCacheStatus, HttpCacheStatusParseError, HttpCdnCacheControl, HttpConditionalMetadata,
-  HttpConnection, HttpConnectionParseError, HttpContentDisposition,
-  HttpContentDispositionParseError, HttpContentDpr, HttpContentDprParseError, HttpContentLength,
-  HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
-  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeprecation,
-  HttpDeprecationParseError, HttpEntityTag, HttpExpectParseError, HttpExpectations, HttpHost,
-  HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince,
-  HttpIfModifiedSinceParseError, HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError,
-  HttpKeepAlive, HttpMaxForwards, HttpMaxForwardsParseError, HttpMementoDatetime,
-  HttpMementoDatetimeParseError, HttpNoVarySearch, HttpNoVarySearchParams, HttpPreferenceKind,
-  HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError, HttpRequest,
-  HttpRequestAcceptEncodings, HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSecGpc,
-  HttpSecGpcParseError, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
-  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpTransferEncoding,
-  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpAccessControlRequestPrivateNetworkParseError, HttpAltUsed, HttpAltUsedParseError,
+  HttpAuthorization, HttpAuthorizationParseError, HttpCacheStatus, HttpCacheStatusParseError,
+  HttpCdnCacheControl, HttpConditionalMetadata, HttpConnection, HttpConnectionParseError,
+  HttpContentDisposition, HttpContentDispositionParseError, HttpContentDpr,
+  HttpContentDprParseError, HttpContentLength, HttpContentLocation, HttpContentLocationParseError,
+  HttpContentRange, HttpContentRangeParseError, HttpCrossOriginEmbedderPolicyReportOnly,
+  HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpEntityTag,
+  HttpExpectParseError, HttpExpectations, HttpHost, HttpIdempotencyKey,
+  HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfModifiedSinceParseError,
+  HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError, HttpKeepAlive, HttpMaxForwards,
+  HttpMaxForwardsParseError, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNoVarySearch,
+  HttpNoVarySearchParams, HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus,
+  HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptEncodings, HttpResponse, HttpSaveData,
+  HttpSaveDataParseError, HttpSecGpc, HttpSecGpcParseError, HttpSignature, HttpSignatureInput,
+  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
+  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
+  HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
   HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpWantContentDigest,
   HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
@@ -42,6 +42,10 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let allow_headers: HttpAccessControlAllowHeaders =
     HttpAccessControlAllowHeaders::parse("X-Request-Id")
       .expect("Access-Control-Allow-Headers should parse");
+  let alt_used: HttpAltUsed =
+    HttpAltUsed::parse("[2001:db8::1]:8443").expect("Alt-Used should parse");
+  let _: HttpAltUsedParseError =
+    HttpAltUsed::parse("https://alt.example").expect_err("invalid Alt-Used should be rejected");
   let request_method: HttpAccessControlRequestMethod =
     HttpAccessControlRequestMethod::parse("patch")
       .expect("Access-Control-Request-Method should parse");
@@ -176,6 +180,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(allow_credentials.header_value(), "true");
   assert_eq!(allow_methods.methods(), ["GET"]);
   assert_eq!(allow_headers.field_names(), ["x-request-id"]);
+  assert_eq!(alt_used.host(), "[2001:db8::1]");
+  assert_eq!(alt_used.port(), Some("8443"));
   assert_eq!("PATCH", request_method.method());
   assert!(request_method_error.is_err());
   assert_eq!(
