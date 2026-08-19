@@ -52,6 +52,7 @@ pub mod http1;
 pub mod keep_alive;
 pub mod link;
 pub mod location;
+pub mod max_forwards;
 mod media_type;
 pub mod memento_datetime;
 pub mod nel;
