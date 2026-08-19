@@ -748,6 +748,48 @@ fn sync_client_and_server_exchange_alt_svc_metadata_without_connection_policy() 
 }
 
 #[test]
+fn sync_client_and_server_exchange_nel_metadata_without_report_policy() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind NEL server");
+  let addr = server.local_addr().expect("NEL server addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        HttpResponse::ok("OK")
+          .with_nel(
+            r#"{"report_to":"network-errors","max_age":2592000,"include_subdomains":true,"success_fraction":0.1,"failure_fraction":1.0}"#,
+          )
+          .expect("NEL policy should be accepted")
+      })
+      .expect("serve NEL response");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/nel"))
+    .emit()
+    .expect("NEL response should parse without report policy");
+  let nel = response
+    .nel()
+    .expect("NEL should parse")
+    .expect("NEL should be present");
+
+  assert_eq!(200, response.code());
+  assert_eq!("OK", response.body().string().unwrap());
+  assert_eq!(2592000, nel.max_age());
+  assert_eq!(Some("network-errors"), nel.report_to());
+  assert_eq!(Some(true), nel.include_subdomains());
+  assert_eq!(Some(0.1), nel.success_fraction());
+  assert_eq!(Some(1.0), nel.failure_fraction());
+  assert_eq!(
+    Some(
+      &"{\"max_age\":2592000,\"report_to\":\"network-errors\",\"include_subdomains\":true,\"success_fraction\":0.1,\"failure_fraction\":1}".to_string()
+    ),
+    response.header_value("NEL")
+  );
+  handle.join().expect("NEL server thread");
+}
+
+#[test]
 fn sync_client_preserves_duplicate_cross_origin_resource_policy_fields_without_policy() {
   const HEADERS: &[(&str, &str)] = &[
     ("Cross-Origin-Resource-Policy", "same-origin"),

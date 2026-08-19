@@ -34,6 +34,7 @@ pub mod forwarded;
 pub mod from;
 pub mod http1;
 mod media_type;
+pub mod nel;
 pub mod origin;
 pub mod prefer;
 pub mod priority;

@@ -3761,3 +3761,89 @@ fn test_no_body_status_responses_expose_empty_body_with_illegal_framing_bytes() 
     assert_eq!("", response.body().string().unwrap());
   }
 }
+
+#[test]
+fn test_nel_response_helper_parses_typed_policy_metadata() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "NEL: {\"report_to\":\"network-errors\",\"max_age\":2592000,\"include_subdomains\":true,\"success_fraction\":0.1,\"failure_fraction\":1.0}\r\n",
+    "Content-Length: 2\r\n\r\nOK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+  let nel = response
+    .nel()
+    .expect("valid NEL should parse")
+    .expect("NEL should be present");
+
+  assert_eq!(2592000, nel.max_age());
+  assert_eq!(Some("network-errors"), nel.report_to());
+  assert_eq!(Some(true), nel.include_subdomains());
+  assert_eq!(Some(0.1), nel.success_fraction());
+  assert_eq!(Some(1.0), nel.failure_fraction());
+  assert_eq!(
+    Some(&"{\"report_to\":\"network-errors\",\"max_age\":2592000,\"include_subdomains\":true,\"success_fraction\":0.1,\"failure_fraction\":1.0}".to_string()),
+    response.header_value("NEL")
+  );
+}
+
+#[test]
+fn test_nel_response_helper_returns_none_when_absent() {
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response without NEL should parse");
+  assert_eq!(None, absent.nel().expect("absent NEL should parse"));
+}
+
+#[test]
+fn test_nel_rejects_malformed_duplicate_and_oversized_values_without_hiding_headers() {
+  for value in [
+    r#"{bad"#,
+    r#"{"max_age":"1"}"#,
+    r#"{"max_age":1,"max_age":2}"#,
+    r#"{"success_fraction":1.5,"max_age":1}"#,
+    r#"{"max_age":18446744073709551616}"#,
+    r#"{"max_age":1} trailing"#,
+    "",
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\nNEL: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(response.nel().is_err(), "should reject {value:?}");
+    assert_eq!(Some(&value.to_string()), response.header_value("NEL"));
+    assert_eq!("OK", response.body().string().unwrap());
+  }
+
+  let duplicate = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "NEL: {\"max_age\":1}\r\n",
+    "NEL: {\"max_age\":2}\r\n",
+    "Content-Length: 0\r\n\r\n"
+  );
+  let duplicate_response = Response::new(
+    RoUrl::with("https://example.test"),
+    duplicate.as_bytes().to_vec(),
+  )
+  .expect("raw response should remain usable");
+  assert!(
+    duplicate_response.nel().is_err(),
+    "duplicate NEL header fields must be rejected"
+  );
+  assert_eq!(
+    2,
+    duplicate_response.header_values("NEL").len(),
+    "raw duplicate NEL headers must remain available"
+  );
+
+  let oversized = format!("{{\"max_age\":1{}}}", " ".repeat(64 * 1024));
+  let oversized_raw = format!("HTTP/1.1 200 OK\r\nNEL: {oversized}\r\nContent-Length: 0\r\n\r\n");
+  let oversized_response = Response::new(
+    RoUrl::with("https://example.test"),
+    oversized_raw.into_bytes(),
+  )
+  .expect("raw response should remain usable");
+  assert!(oversized_response.nel().is_err());
+  assert_eq!(Some(&oversized), oversized_response.header_value("NEL"));
+}

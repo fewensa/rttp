@@ -86,3 +86,19 @@ without changing those raw fields.
 
 These helpers only declare and parse metadata. They do not calculate hashes,
 verify bodies, canonicalize representations, sign values, or enforce integrity.
+
+## NEL response metadata
+
+`HttpResponse::with_nel(value)` validates one `NEL` field as bounded W3C
+Network Error Logging policy JSON and replaces any existing `NEL` fields with
+one normalized value. `HttpResponse::nel()` parses attached raw fields into
+`HttpNel` metadata, returning parser errors without changing those raw fields.
+The policy exposes its required non-negative `max_age` as `u64`, optional
+`report_to` name, `include_subdomains` flag, and `success_fraction`/
+`failure_fraction` values as checked members; unknown JSON members are
+preserved verbatim without policy semantics. Field values are bounded to
+64 KiB, member counts to 256 per object, nesting depth to 64, and each decoded
+string to 64 KiB.
+
+These helpers only declare and parse metadata. The server does not send
+network error reports, persist policy, or configure Reporting endpoint groups.

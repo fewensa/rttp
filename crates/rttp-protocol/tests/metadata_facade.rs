@@ -7,6 +7,7 @@ use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::entity_tag::{EntityTag, IfMatch};
 use rttp_protocol::fetch_metadata::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 use rttp_protocol::from::From;
+use rttp_protocol::nel::Nel;
 use rttp_protocol::origin::Origin;
 use rttp_protocol::prefer::{Prefer, PreferenceApplied, PreferenceKind};
 use rttp_protocol::proxy_authentication_info::ProxyAuthenticationInfo;
@@ -31,6 +32,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
   let fetch_user = SecFetchUser::parse("?1").expect("Sec-Fetch-User should parse");
   let from = From::parse("Ops Team <ops@example.test>").expect("From should parse");
+  let nel =
+    Nel::parse(r#"{"report_to":"network-errors","max_age":2592000}"#).expect("NEL should parse");
   let origin = Origin::parse("https://example.test").expect("Origin should parse");
   let proxy_authentication_info = ProxyAuthenticationInfo::parse(
     "nextnonce=\"xyz789\", qop=auth, rspauth=\"...\", cnonce=\"c\", nc=00000001",
@@ -66,6 +69,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_dest.header_value(), "document");
   assert_eq!(fetch_user.header_value(), "?1");
   assert_eq!(from.header_value(), "Ops Team <ops@example.test>");
+  assert_eq!(nel.max_age(), 2592000);
+  assert_eq!(nel.report_to(), Some("network-errors"));
   assert_eq!(origin.header_value(), "https://example.test");
   assert_eq!(
     proxy_authentication_info.parameter("nextnonce"),

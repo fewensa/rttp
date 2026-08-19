@@ -44,6 +44,9 @@ pub use rttp_protocol::digest::{
   Digest as HttpDigest, DigestEntry as HttpDigestEntry, DigestParseError as HttpDigestParseError,
   ReprDigest as HttpReprDigest, ReprDigestEntry as HttpReprDigestEntry,
 };
+pub use rttp_protocol::nel::{
+  Nel as HttpNel, NelParseError as HttpNelParseError, NelUnknownMember as HttpNelUnknownMember,
+};
 pub use rttp_protocol::priority::{
   Priority as HttpPriority, PriorityExtension as HttpPriorityExtension,
   PriorityParseError as HttpPriorityParseError,
@@ -790,6 +793,19 @@ impl HttpResponse {
       "Cross-Origin-Resource-Policy",
       policy.header_value(),
     ));
+    Ok(self)
+  }
+
+  /// Validates and replaces `NEL` response metadata without sending reports
+  /// or persisting policy.
+  pub fn with_nel(mut self, value: impl AsRef<str>) -> Result<Self, HttpNelParseError> {
+    let nel = HttpNel::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("NEL"));
+    self
+      .headers
+      .push(HttpHeader::new("NEL", nel.header_value()));
     Ok(self)
   }
 
@@ -1747,6 +1763,20 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpAltSvc::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `NEL` metadata without sending reports or persisting policy.
+  pub fn nel(&self) -> Result<Option<HttpNel>, HttpNelParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("NEL"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpNel::parse_values(values).map(Some)
   }
 
   /// Parses attached `Clear-Site-Data` metadata without changing server state.

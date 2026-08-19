@@ -2,9 +2,9 @@ use rttp_client::response::{
   AcceptCh, AccessControlAllowHeaders, AccessControlAllowHeadersParseError,
   AccessControlAllowMethods, AccessControlAllowMethodsParseError, AccessControlExposeHeaders,
   AccessControlMaxAge, AccessControlMaxAgeParseError, AltSvc, CrossOriginEmbedderPolicy,
-  CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest, HttpClearSiteData, PreferenceApplied,
-  Priority, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ReferrerPolicy,
-  ReferrerPolicyToken, ServerTiming, Trailer, Warning,
+  CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest, HttpClearSiteData, Nel,
+  PreferenceApplied, Priority, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError,
+  ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Trailer, Warning,
 };
 use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 
@@ -30,6 +30,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let priority = Priority::parse("u=1, i").expect("Priority should parse");
   let server_timing = ServerTiming::parse("db;dur=53").expect("Server-Timing should parse");
   let warning = Warning::parse(r#"110 - "Response is Stale""#).expect("Warning should parse");
+  let nel =
+    Nel::parse(r#"{"report_to":"network-errors","max_age":2592000}"#).expect("NEL should parse");
   let trailer = Trailer::parse("X-Trace").expect("Trailer should parse");
   let alt_svc = AltSvc::parse("h3=\":443\"").expect("Alt-Svc should parse");
   let fetch_site = SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
@@ -58,6 +60,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(priority.urgency(), Some(1));
   assert_eq!(server_timing.metrics().len(), 1);
   assert_eq!(warning.items()[0].code(), 110);
+  assert_eq!(nel.max_age(), 2592000);
+  assert_eq!(nel.report_to(), Some("network-errors"));
   assert_eq!(trailer.field_names(), ["x-trace"]);
   assert_eq!(alt_svc.alternatives().len(), 1);
   assert_eq!(fetch_site.header_value(), "same-origin");
