@@ -1171,6 +1171,77 @@ fn sync_client_and_server_exchange_alt_svc_metadata_without_connection_policy() 
 }
 
 #[test]
+fn sync_client_and_server_exchange_alt_used_metadata_without_connection_policy() {
+  const HEADERS: &[(&str, &str)] = &[("Alt-Used", "alt.example:8443")];
+  let (addr, handle) = spawn_metadata_response_server(HEADERS);
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/alt-used"))
+    .emit()
+    .expect("Alt-Used response should parse without connection policy");
+  let alt_used = response
+    .alt_used()
+    .expect("Alt-Used should parse")
+    .expect("Alt-Used should be present");
+
+  assert_eq!(200, response.code());
+  assert_eq!("OK", response.body().string().unwrap());
+  assert_eq!(
+    Some(&"alt.example:8443".to_string()),
+    response.header_value("Alt-Used")
+  );
+  assert_eq!("alt.example", alt_used.host());
+  assert_eq!(Some("8443"), alt_used.port());
+  assert_eq!("alt.example:8443", alt_used.header_value());
+
+  handle.join().expect("Alt-Used server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_origin_trial_metadata_without_activation() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Origin-Trial server");
+  let addr = server.local_addr().expect("Origin-Trial server addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        HttpResponse::ok("OK")
+          .with_origin_trials(["token-one", "token-one", "token-two"])
+          .expect("Origin-Trial should be accepted")
+      })
+      .expect("serve Origin-Trial response");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/origin-trial"))
+    .emit()
+    .expect("Origin-Trial response should parse without activating trials");
+  let origin_trials = response
+    .origin_trials()
+    .expect("Origin-Trial should parse")
+    .expect("Origin-Trial should be present");
+
+  assert_eq!(200, response.code());
+  assert_eq!("OK", response.body().string().unwrap());
+  assert_eq!(
+    origin_trials.tokens(),
+    ["token-one", "token-one", "token-two"]
+  );
+  assert_eq!(
+    vec![
+      &"token-one".to_string(),
+      &"token-one".to_string(),
+      &"token-two".to_string()
+    ],
+    response.header_values("Origin-Trial")
+  );
+
+  handle.join().expect("Origin-Trial server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_reporting_endpoints_metadata_without_scheduling_reports() {
   let server =
     rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Reporting-Endpoints server");

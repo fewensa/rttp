@@ -1,22 +1,22 @@
 use rttp::server::{
   HttpAcceptCh, HttpAcceptCharsetParseError, HttpAcceptLanguageParseError, HttpAcceptLanguages,
-  HttpAccessControlRequestMethod, HttpAccessControlRequestPrivateNetwork, HttpAuthorization,
-  HttpBaggage, HttpBaggageMember, HttpBaggageParseError, HttpBaggageProperty,
-  HttpConditionalMetadata, HttpContentDpr, HttpContentDprParseError, HttpContentLocation,
-  HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
+  HttpAccessControlRequestMethod, HttpAccessControlRequestPrivateNetwork, HttpAltUsed,
+  HttpAltUsedParseError, HttpAuthorization, HttpBaggage, HttpBaggageMember, HttpBaggageParseError,
+  HttpBaggageProperty, HttpConditionalMetadata, HttpContentDpr, HttpContentDprParseError,
+  HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
   HttpCrossOriginEmbedderPolicy, HttpCrossOriginEmbedderPolicyReportOnly,
   HttpCrossOriginOpenerPolicy, HttpCrossOriginOpenerPolicyReportOnly,
   HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpEntityTag,
   HttpExpectations, HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince,
   HttpIfUnmodifiedSince, HttpMaxForwards, HttpMementoDatetime, HttpMementoDatetimeParseError,
-  HttpNel, HttpPermissionsPolicy, HttpPermissionsPolicyParseError, HttpPragma,
-  HttpPragmaParseError, HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError,
-  HttpRequestAcceptCharsets, HttpResponse, HttpSaveData, HttpSecGpc, HttpSecGpcParseError,
-  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpSunsetParseError, HttpSupportsLoadingMode,
-  HttpSupportsLoadingModeParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
-  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
+  HttpNel, HttpOriginTrialParseError, HttpOriginTrials, HttpPermissionsPolicy,
+  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization,
+  HttpProxyStatus, HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse,
+  HttpSaveData, HttpSecGpc, HttpSecGpcParseError, HttpSignature, HttpSignatureInput,
+  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
+  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
+  HttpSunsetParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpUpgrade,
+  HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
 };
 use std::io::Write;
 use std::net::SocketAddr;
@@ -136,6 +136,16 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp_client::response::ContentRange::parse("bytes 0-4/10").expect("Content-Range should parse");
   let alt_svc: rttp::AltSvc =
     rttp_client::response::AltSvc::parse("h3=\":443\"; ma=60").expect("Alt-Svc should parse");
+  let alt_used: rttp::AltUsed =
+    rttp_client::response::AltUsed::parse("alt.example:8443").expect("Alt-Used should parse");
+  let _: rttp::AltUsedParseError = rttp_client::response::AltUsed::parse("https://alt.example")
+    .expect_err("invalid Alt-Used should be rejected");
+  let origin_trials: rttp::OriginTrials =
+    rttp_client::response::OriginTrials::parse_values(["token-one", "token-two"])
+      .expect("Origin-Trial should parse");
+  let _: rttp::OriginTrialParseError =
+    rttp_client::response::OriginTrials::parse("token\r\nX-Injected: 1")
+      .expect_err("injected Origin-Trial should be rejected");
   let authentication_info: rttp::AuthenticationInfo =
     rttp_client::response::AuthenticationInfo::parse("nextnonce=\"n-2\"")
       .expect("Authentication-Info should parse");
@@ -288,6 +298,10 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert!(!content_range.is_unsatisfied());
   assert_eq!(alt_svc.alternatives()[0].protocol_id(), "h3");
   assert_eq!(alt_svc.alternatives()[0].max_age(), Some(60));
+  assert_eq!(alt_used.host(), "alt.example");
+  assert_eq!(alt_used.port(), Some("8443"));
+  assert_eq!(origin_trials.tokens(), ["token-one", "token-two"]);
+  assert!(!format!("{origin_trials:?}").contains("token-one"));
   assert_eq!(authentication_info.parameter("nextnonce"), Some("n-2"));
   assert_eq!(nel.max_age(), 2592000);
   assert_eq!(nel.report_to(), Some("network-errors"));
@@ -866,6 +880,14 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
       .expect("Proxy-Status should parse");
   let _: HttpProxyStatusParseError =
     HttpProxyStatus::parse("").expect_err("empty Proxy-Status should be rejected");
+  let alt_used: HttpAltUsed =
+    HttpAltUsed::parse("[2001:db8::1]:8443").expect("Alt-Used should parse");
+  let _: HttpAltUsedParseError =
+    HttpAltUsed::parse("https://alt.example").expect_err("invalid Alt-Used should be rejected");
+  let origin_trials: HttpOriginTrials =
+    HttpOriginTrials::parse_values(["token-one", "token-two"]).expect("Origin-Trial should parse");
+  let _: HttpOriginTrialParseError = HttpOriginTrials::parse("token\r\nX-Injected: 1")
+    .expect_err("injected Origin-Trial should be rejected");
   let permissions_policy: HttpPermissionsPolicy =
     HttpPermissionsPolicy::parse(r#"geolocation=(self "https://maps.example.test"), camera=()"#)
       .expect("Permissions-Policy should parse");
@@ -958,6 +980,10 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     proxy_status.members()[0].identifier().as_str(),
     "ExampleCDN"
   );
+  assert_eq!(alt_used.host(), "[2001:db8::1]");
+  assert_eq!(alt_used.port(), Some("8443"));
+  assert_eq!(origin_trials.tokens(), ["token-one", "token-two"]);
+  assert!(!format!("{origin_trials:?}").contains("token-one"));
   assert_eq!(
     permissions_policy.header_value(),
     r#"geolocation=(self "https://maps.example.test"), camera=()"#

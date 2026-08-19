@@ -3994,6 +3994,44 @@ hello\r\n\
   }
 
   #[test]
+  fn origin_trial_helpers_declare_parse_and_redact_response_metadata() {
+    let response = HttpResponse::ok([])
+      .header("Origin-Trial", "stale-token")
+      .with_origin_trials(["secret-token-one", "secret-token-two"])
+      .expect("Origin-Trial should be accepted");
+    let origin_trials = response
+      .origin_trials()
+      .expect("response Origin-Trial should parse")
+      .expect("response Origin-Trial should be present");
+
+    assert_eq!(
+      origin_trials.tokens(),
+      ["secret-token-one", "secret-token-two"]
+    );
+    let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+    assert_eq!(2, serialized.matches("\r\nOrigin-Trial: ").count());
+    assert!(serialized.contains("\r\nOrigin-Trial: secret-token-one\r\n"));
+    assert!(!serialized.contains("stale-token"));
+
+    let response_debug = format!("{response:?}");
+    assert!(response_debug.contains("Origin-Trial"));
+    assert!(response_debug.contains("[REDACTED]"));
+    assert!(!response_debug.contains("secret-token-one"));
+    assert!(!format!("{origin_trials:?}").contains("secret-token-one"));
+
+    let header_debug = format!("{:?}", HttpHeader::new("Origin-Trial", "secret-token-one"));
+    assert!(header_debug.contains("Origin-Trial"));
+    assert!(header_debug.contains("[REDACTED]"));
+    assert!(!header_debug.contains("secret-token-one"));
+
+    let malformed = HttpResponse::ok([]).header("Origin-Trial", "token\twith-tab");
+    assert!(malformed.origin_trials().is_err());
+    assert!(String::from_utf8(malformed.to_bytes())
+      .expect("response should serialize")
+      .contains("\r\nOrigin-Trial: token\twith-tab\r\n"));
+  }
+
+  #[test]
   fn nel_helpers_reject_raw_crlf_and_serialize_a_single_header_line() {
     assert!(
       HttpResponse::ok([])

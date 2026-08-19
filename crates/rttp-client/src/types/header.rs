@@ -121,6 +121,7 @@ fn is_sensitive_debug_header(name: &str) -> bool {
   name.eq_ignore_ascii_case("authorization")
     || name.eq_ignore_ascii_case("cookie")
     || name.eq_ignore_ascii_case("idempotency-key")
+    || name.eq_ignore_ascii_case("origin-trial")
     || name.eq_ignore_ascii_case("proxy-authorization")
     || name.eq_ignore_ascii_case("set-cookie")
     || name.eq_ignore_ascii_case("traceparent")
@@ -290,6 +291,7 @@ mod tests {
       ("Cookie", "session=private"),
       ("Set-Cookie", "session=private"),
       ("Idempotency-Key", "charge-2026-08-19-9f3c"),
+      ("Origin-Trial", "secret-origin-trial-token"),
     ] {
       let debug = format!("{:?}", Header::new(name, secret));
       assert!(debug.contains(name));
