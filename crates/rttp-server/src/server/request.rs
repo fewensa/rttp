@@ -1,5 +1,8 @@
 use super::*;
 
+pub use rttp_protocol::accept_language::{
+  AcceptLanguage as HttpAcceptLanguages, AcceptLanguageParseError as HttpAcceptLanguageParseError,
+};
 pub use rttp_protocol::access_control_request_headers::{
   AccessControlRequestHeaders as HttpAccessControlRequestHeaders,
   AccessControlRequestHeadersParseError as HttpAccessControlRequestHeadersParseError,
@@ -65,6 +68,9 @@ pub use rttp_protocol::signature_input::{
   SignatureInputComponent as HttpSignatureInputComponent,
   SignatureInputEntry as HttpSignatureInputEntry,
   SignatureInputParameter as HttpSignatureInputParameter,
+};
+pub use rttp_protocol::te::{
+  Te as HttpRequestTe, TeCoding as HttpTe, TeParseError as HttpTeParseError,
 };
 pub use rttp_protocol::trailer::{
   Trailer as HttpTrailer, TrailerParseError as HttpTrailerParseError,
@@ -1910,174 +1916,6 @@ impl IntoIterator for EntityTagValidatorList {
   }
 }
 
-const MAX_ACCEPT_LANGUAGE_VALUE_BYTES: usize = 64 * 1024;
-const MAX_ACCEPT_LANGUAGE_RANGES: usize = 32;
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpAcceptLanguages {
-  ranges: Vec<String>,
-  qualities: Vec<Option<String>>,
-}
-
-impl HttpAcceptLanguages {
-  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpAcceptLanguageParseError> {
-    Self::parse_values([value.as_ref()])
-  }
-
-  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpAcceptLanguageParseError>
-  where
-    I: IntoIterator<Item = &'a str>,
-  {
-    let parsed = Self::parse_values_inner(values)?;
-    if parsed.ranges.is_empty() {
-      return Err(HttpAcceptLanguageParseError::new(
-        "invalid Accept-Language range",
-      ));
-    }
-    Ok(parsed)
-  }
-
-  fn parse_optional_values<'a, I>(values: I) -> Result<Option<Self>, HttpAcceptLanguageParseError>
-  where
-    I: IntoIterator<Item = &'a str>,
-  {
-    let parsed = Self::parse_values_inner(values)?;
-    if parsed.ranges.is_empty() {
-      Ok(None)
-    } else {
-      Ok(Some(parsed))
-    }
-  }
-
-  fn parse_values_inner<'a, I>(values: I) -> Result<Self, HttpAcceptLanguageParseError>
-  where
-    I: IntoIterator<Item = &'a str>,
-  {
-    let mut ranges = Vec::new();
-    let mut qualities = Vec::new();
-
-    for value in values {
-      if value.len() > MAX_ACCEPT_LANGUAGE_VALUE_BYTES {
-        return Err(HttpAcceptLanguageParseError::new(
-          "Accept-Language header value is too large",
-        ));
-      }
-      for item in value.split(',') {
-        let (range, quality) = parse_accept_language_item(item.trim())?;
-        if ranges.len() >= MAX_ACCEPT_LANGUAGE_RANGES {
-          return Err(HttpAcceptLanguageParseError::new(
-            "too many Accept-Language ranges",
-          ));
-        }
-        if ranges
-          .iter()
-          .any(|known: &String| known.eq_ignore_ascii_case(range))
-        {
-          return Err(HttpAcceptLanguageParseError::new(
-            "duplicate Accept-Language range",
-          ));
-        }
-        ranges.push(range.to_string());
-        qualities.push(quality.map(ToString::to_string));
-      }
-    }
-
-    Ok(Self { ranges, qualities })
-  }
-
-  pub fn ranges(&self) -> Vec<&str> {
-    self.ranges.iter().map(String::as_str).collect()
-  }
-
-  pub fn qualities(&self) -> Vec<Option<&str>> {
-    self
-      .qualities
-      .iter()
-      .map(|quality| quality.as_deref())
-      .collect()
-  }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpAcceptLanguageParseError {
-  message: String,
-}
-
-impl HttpAcceptLanguageParseError {
-  fn new(message: impl AsRef<str>) -> Self {
-    Self {
-      message: message.as_ref().to_string(),
-    }
-  }
-}
-
-impl fmt::Display for HttpAcceptLanguageParseError {
-  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    formatter.write_str(&self.message)
-  }
-}
-
-impl Error for HttpAcceptLanguageParseError {}
-
-fn parse_accept_language_item(
-  value: &str,
-) -> Result<(&str, Option<&str>), HttpAcceptLanguageParseError> {
-  let mut parts = value.split(';');
-  let range = parts.next().unwrap_or_default().trim();
-  if !is_valid_accept_language_range(range) {
-    return Err(HttpAcceptLanguageParseError::new(
-      "invalid Accept-Language range",
-    ));
-  }
-  let Some(parameter) = parts.next() else {
-    return Ok((range, None));
-  };
-  if parts.next().is_some() {
-    return Err(HttpAcceptLanguageParseError::new(
-      "invalid Accept-Language q-value",
-    ));
-  }
-  let Some((name, quality)) = parameter.trim().split_once('=') else {
-    return Err(HttpAcceptLanguageParseError::new(
-      "invalid Accept-Language q-value",
-    ));
-  };
-  let quality = quality.trim();
-  if !name.trim().eq_ignore_ascii_case("q") || !is_valid_qvalue(quality) {
-    return Err(HttpAcceptLanguageParseError::new(
-      "invalid Accept-Language q-value",
-    ));
-  }
-  Ok((range, Some(quality)))
-}
-
-fn is_valid_accept_language_range(value: &str) -> bool {
-  if value == "*" {
-    return true;
-  }
-  let mut subtags = value.split('-');
-  let Some(primary) = subtags.next() else {
-    return false;
-  };
-  (1..=8).contains(&primary.len())
-    && primary.bytes().all(|byte| byte.is_ascii_alphabetic())
-    && subtags.all(|subtag| {
-      (1..=8).contains(&subtag.len()) && subtag.bytes().all(|byte| byte.is_ascii_alphanumeric())
-    })
-}
-
-fn is_valid_qvalue(value: &str) -> bool {
-  match value.split_once('.') {
-    Some((whole, fraction)) => {
-      (whole == "0" || whole == "1")
-        && fraction.len() <= 3
-        && fraction.bytes().all(|byte| byte.is_ascii_digit())
-        && (whole == "0" || fraction.bytes().all(|byte| byte == b'0'))
-    }
-    None => value == "0" || value == "1",
-  }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HttpRequest {
   pub(crate) method: String,
@@ -2680,12 +2518,16 @@ impl HttpRequest {
   pub fn accept_language(
     &self,
   ) -> Result<Option<HttpAcceptLanguages>, HttpAcceptLanguageParseError> {
-    let values = self
+    let values: Vec<&str> = self
       .headers
       .iter()
       .filter(|header| header.name.eq_ignore_ascii_case("Accept-Language"))
-      .map(|header| header.value.as_str());
-    HttpAcceptLanguages::parse_optional_values(values)
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAcceptLanguages::parse_values(values).map(Some)
   }
 
   /// Parses bounded RFC 7239 `Forwarded` request metadata without applying a

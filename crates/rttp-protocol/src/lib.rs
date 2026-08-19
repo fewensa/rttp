@@ -7,6 +7,7 @@
 //! specific header type, including bounded value parsing, wire formatting, and
 //! the limits and error types that apply to that header.
 
+pub mod accept_language;
 pub mod accept_patch;
 pub mod accept_post;
 pub mod accept_ranges;
@@ -76,6 +77,7 @@ pub mod signature;
 pub mod signature_input;
 pub mod strict_transport_security;
 pub mod sunset;
+pub mod te;
 pub mod timing_allow_origin;
 pub mod trailer;
 pub mod transfer_encoding;
