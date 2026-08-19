@@ -133,9 +133,14 @@ client
 Conditional responses are exposed through response metadata helpers.
 `Response::is_not_modified()` identifies `304 Not Modified`,
 `Response::is_precondition_failed()` identifies `412 Precondition Failed`,
-`Response::etag()` returns the response `ETag` field when present, and
-`Response::last_modified()` returns the response `Last-Modified` field when
-present. `Response::last_modified_date()` parses that field as an HTTP-date
+`Response::etag()` parses one bounded response `ETag` field into the protocol
+`EntityTag` type, `Response::etag_value()` returns the raw response `ETag` field
+when present, and `Response::last_modified()` returns the response
+`Last-Modified` field when present. Malformed, oversized, or duplicate `ETag`
+fields make the typed helper return an error while raw values remain available
+through `Response::etag_value()`, `Response::header_value()`, and
+`Response::header_values()`. `Response::last_modified_date()` parses
+`Last-Modified` as an HTTP-date
 using the same parser used by the client date helpers: it returns `Ok(None)`
 when the header is absent, returns `SystemTime` for a valid HTTP-date
 singleton, and returns an error for malformed or duplicate values. The raw
@@ -177,6 +182,22 @@ handoff response and upgraded protocol bytes are caller-owned. Early Hints
 metadata does not trigger automatic preload execution, cache policy, redirect,
 retry, replay, route generation, streaming early-write behavior, TLS/ALPN
 behavior, or status-policy behavior.
+
+## Bounded HTTP/1.1 Link response metadata
+
+`Response::links()` parses one or more final-response `Link` fields into
+ordered `LinkValues` and `LinkValue` metadata. It returns `Ok(None)` when the
+header is absent. Each value retains its target URI/reference and ordered
+parameters, including unknown parameters such as extensions alongside `rel`.
+Parsing is on demand, so malformed or oversized metadata returns an error
+without discarding raw response headers. Fields and parameter values are
+limited to 64 KiB, with at most 256 link-values and 256 parameters per value;
+the original `Link` fields remain available through `Response::header_value()`
+and `Response::header_values()`.
+
+The helper is metadata-only and shares Early Hints' bounded metadata posture:
+it does not preload, resolve, schedule fetches, redirect, apply cache policy,
+or generate routes from `Link`.
 
 ## Bounded Cache-Control request metadata
 
@@ -744,7 +765,7 @@ header-block model.
 | Upgrade and tunnel handoff | `CONNECT` returns the tunnel socket after a successful `200`; `upgrade()` returns the socket after `101 Switching Protocols` and skips interim `1xx` responses | Upgraded protocols are handed to the caller and are not parsed by `rttp_client` |
 | Redirects | Auto-redirect covers 301, 302, 303, 307, and 308 method/body behavior, relative and absolute `Location` resolution, same- and cross-authority header handling, loop detection, and redirect bounds | Redirects are HTTP client behavior, not a browser policy implementation |
 | Byte ranges | `range`, `range_from`, `range_suffix`, `if_range_etag`, and `if_range_date` emit bounded HTTP/1.1 range request metadata; checked `Response::content_range`, `accept_ranges`, `is_partial_content`, and `is_range_not_satisfiable` expose `Content-Range`, `Accept-Ranges`, `206`, and `416` metadata while preserving raw headers | No Range request generation from `Accept-Ranges`, client-side `If-Range` evaluation, partial response engine, byte serving, content slicing, download resume, automatic retry/replay, cache storage, redirect handling, status-policy behavior, multipart range generation, or automatic cache validation policy |
-| Conditional requests | `if_none_match`, `if_match`, `if_modified_since`, and `if_unmodified_since` emit bounded HTTP/1.1 validators; `Response::is_not_modified`, `is_precondition_failed`, `etag`, `last_modified`, and `last_modified_date` expose `304`/`412` metadata | One ETag validator per helper call, `If-Range` is range-scoped, no cache storage, no automatic revalidation, and no cache-control engine |
+| Conditional requests | `if_none_match`, `if_match`, `if_modified_since`, and `if_unmodified_since` emit bounded HTTP/1.1 validators; `Response::is_not_modified`, `is_precondition_failed`, typed bounded `etag`, `last_modified`, and `last_modified_date` expose `304`/`412` metadata while preserving raw headers | One ETag validator per helper call, `If-Range` is range-scoped, no cache storage, no automatic revalidation, and no cache-control engine |
 | Informational responses and Early Hints | `Response::informational_responses` exposes skipped bounded HTTP/1.1 `1xx` heads, including `103 Early Hints`, with preserved raw headers | `101 Switching Protocols` remains terminal for upgrade handoff; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
 | Cache-Control, CDN-Cache-Control, Date, Age, and Expires | `Response::cache_control` parses bounded response directives, numeric freshness fields, quoted field-name lists, and extension directives; `Response::cdn_cache_control` parses bounded `CDN-Cache-Control` directives and CDN extension metadata while preserving raw responses on parse errors; `Response::date` parses singleton HTTP-date metadata; `Response::age` parses bounded singleton `Age` metadata through the protocol `Age` type, rejecting duplicate fields, values larger than 64 KiB, and overflowing `u64` delta-seconds; `Response::expires` parses bounded HTTP-date metadata | No cache storage, CDN cache, automatic revalidation, wall-clock freshness calculation, clock-skew correction, `Vary` matching, shared-cache policy enforcement, surrogate-key behavior, automatic conditional requests, retry, redirect, scheduling, or status policy |
 | Allow | `Response::allow` parses bounded response `Allow` fields into an ordered HTTP method-token list | No fallback method selection, automatic retry/replay, or status-code policy behavior for `405` or `OPTIONS` |

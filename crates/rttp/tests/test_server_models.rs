@@ -2019,6 +2019,73 @@ fn response_content_location_helper_parses_attached_singleton_header() {
 }
 
 #[test]
+fn response_etag_helper_declares_and_parses_singleton_metadata() {
+  let absent = HttpResponse::ok("body");
+  assert_eq!(None, absent.etag().expect("absent ETag should parse"));
+
+  let response = HttpResponse::ok("body")
+    .header("ETag", "\"old\"")
+    .with_etag(HttpEntityTag::weak("asset-v7"));
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nETag: W/\"asset-v7\"\r\n"));
+  assert_eq!(1, serialized.matches("\r\nETag: ").count());
+  assert_eq!(
+    Some(HttpEntityTag::weak("asset-v7")),
+    response.etag().expect("ETag should parse")
+  );
+
+  let response = HttpResponse::ok("body").header("ETag", "\"asset-v7\"");
+  assert_eq!(
+    Some(HttpEntityTag::strong("asset-v7")),
+    response.etag().expect("ETag should parse")
+  );
+}
+
+#[test]
+fn response_etag_helper_rejects_malformed_duplicate_and_oversized_values_without_losing_raw_headers(
+) {
+  for value in ["abc", "W/abc", "\"bad space\""] {
+    let response = HttpResponse::ok("body").header("ETag", value);
+    let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+    assert!(
+      response.etag().is_err(),
+      "ETag helper should reject {value:?}"
+    );
+    assert!(
+      serialized.contains(&format!("\r\nETag: {value}\r\n")),
+      "raw ETag header should be preserved"
+    );
+  }
+
+  let duplicate = HttpResponse::ok("body")
+    .header("ETag", "\"one\"")
+    .header("etag", "W/\"two\"");
+  let serialized = String::from_utf8(duplicate.to_bytes()).expect("response is UTF-8");
+
+  assert!(
+    duplicate.etag().is_err(),
+    "ETag helper should reject duplicate singleton headers"
+  );
+  assert!(serialized.contains("\r\nETag: \"one\"\r\n"));
+  assert!(serialized.contains("\r\netag: W/\"two\"\r\n"));
+
+  let oversized = format!("\"{}\"", "a".repeat(64 * 1024));
+  let response = HttpResponse::ok("body").header("ETag", &oversized);
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(
+    response.etag().is_err(),
+    "ETag helper should reject oversized values"
+  );
+  assert!(
+    serialized.contains(&format!("\r\nETag: {oversized}\r\n")),
+    "raw oversized ETag header should be preserved"
+  );
+}
+
+#[test]
 fn content_location_helper_rejects_empty_control_duplicate_and_oversized_values() {
   for value in [
     "",
@@ -2150,6 +2217,18 @@ fn response_link_metadata_preserves_valueless_extensions_and_empty_quoted_values
 }
 
 #[test]
+fn response_link_metadata_accepts_obs_text_in_quoted_parameter_values() {
+  let response = HttpResponse::ok("body").header("Link", r#"</style.css>; title="\é""#);
+
+  let links = response
+    .links()
+    .expect("Link metadata should parse")
+    .expect("Link metadata should be present");
+
+  assert_eq!(Some("é"), links.values()[0].parameter("title"));
+}
+
+#[test]
 fn response_link_metadata_rejects_invalid_and_bounded_values_without_losing_headers() {
   for value in [
     "style.css; rel=preload",
@@ -2158,6 +2237,21 @@ fn response_link_metadata_rejects_invalid_and_bounded_values_without_losing_head
     "</style.css>; =preload",
     "</style.css>; bad name=value",
     "</style.css>; rel=\"unterminated",
+    "<foo bar>",
+    "<foo\tbar>",
+    r"<foo\bar>",
+    "<a%zz>",
+    "<a%2>",
+    "<a%>",
+    "<foo\"bar>",
+    "<foo^bar>",
+    "<foo`bar>",
+    "<foo|bar>",
+    "<caf\u{e9}>",
+    "</style.css>; rel=",
+    "</style.css>; rel= ",
+    "</style.css>; rel =",
+    "</style.css>; rel = ",
   ] {
     let response = HttpResponse::ok("body").header("Link", value);
     assert!(
@@ -3653,4 +3747,35 @@ fn early_hints_rejects_invalid_injected_forbidden_and_oversized_headers() {
     [("X-Trace", "x".repeat(64 * 1024 + 1))]
   )
   .is_err());
+}
+
+#[test]
+fn early_hints_rejects_links_that_links_parser_rejects() {
+  for value in [
+    "style.css; rel=preload",
+    "<foo bar>",
+    "<foo\tbar>",
+    "<a%zz>",
+    "<a%2>",
+    "<a%>",
+    "<foo\"bar>",
+    "<caf\u{e9}>",
+    "</style.css>; rel=",
+    "</style.css>; rel= ",
+  ] {
+    assert!(
+      HttpResponse::early_hints([value]).is_err(),
+      "early_hints should reject {value:?}"
+    );
+  }
+
+  let response = HttpResponse::early_hints([r#"</style.css>; rel=preload; as=style"#])
+    .expect("valid RFC 8288 link should build");
+  let links = response
+    .links()
+    .expect("early-hints Link should parse")
+    .expect("Link metadata should be present");
+  assert_eq!(1, links.len());
+  assert_eq!("/style.css", links.values()[0].target());
+  assert_eq!(Some("preload"), links.values()[0].parameter("rel"));
 }

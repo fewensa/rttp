@@ -16,6 +16,50 @@ fn entity_tags_parse_strong_and_weak_forms_and_serialize_canonically() {
 }
 
 #[test]
+fn entity_tag_constructors_validate_and_compare_strong_and_weak_forms() {
+  let strong = EntityTag::strong("abc");
+  let weak = EntityTag::weak("abc");
+  let other = EntityTag::strong("other");
+
+  assert_eq!("\"abc\"", strong.header_value());
+  assert_eq!("W/\"abc\"", weak.header_value());
+  assert!(strong.strong_matches(&EntityTag::strong("abc")));
+  assert!(!strong.strong_matches(&weak));
+  assert!(strong.weak_matches(&weak));
+  assert!(!strong.weak_matches(&other));
+}
+
+#[test]
+#[should_panic(expected = "entity tag opaque value must be valid")]
+fn entity_tag_constructor_rejects_invalid_opaque_tag() {
+  let _ = EntityTag::strong("bad space");
+}
+
+#[test]
+fn entity_tag_constructors_enforce_serialized_header_limit() {
+  let largest_strong = EntityTag::strong("a".repeat(MAX_ENTITY_TAG_VALUE_BYTES - b"\"\"".len()));
+  assert_eq!(
+    MAX_ENTITY_TAG_VALUE_BYTES,
+    largest_strong.header_value().len()
+  );
+  EntityTag::parse(largest_strong.header_value()).expect("largest strong tag should parse");
+
+  let largest_weak = EntityTag::weak("a".repeat(MAX_ENTITY_TAG_VALUE_BYTES - b"W/\"\"".len()));
+  assert_eq!(
+    MAX_ENTITY_TAG_VALUE_BYTES,
+    largest_weak.header_value().len()
+  );
+  EntityTag::parse(largest_weak.header_value()).expect("largest weak tag should parse");
+
+  assert!(
+    std::panic::catch_unwind(|| EntityTag::strong("a".repeat(MAX_ENTITY_TAG_VALUE_BYTES))).is_err()
+  );
+  assert!(
+    std::panic::catch_unwind(|| EntityTag::weak("a".repeat(MAX_ENTITY_TAG_VALUE_BYTES))).is_err()
+  );
+}
+
+#[test]
 fn conditional_entity_tag_lists_parse_values_and_serialize_canonically() {
   let if_match =
     IfMatch::parse_values([" \"one\" , W/\"two\" ", "\"three\""]).expect("If-Match list");
