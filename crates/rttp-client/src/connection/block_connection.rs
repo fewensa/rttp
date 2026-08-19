@@ -78,7 +78,7 @@ impl<'a> BlockConnection<'a> {
           return Ok(response);
         }
         let location = response
-          .location()?
+          .header_value("location")
           .expect("Location header presence checked before redirect");
         let count = self.conn.count();
         if count > config.max_redirect() {

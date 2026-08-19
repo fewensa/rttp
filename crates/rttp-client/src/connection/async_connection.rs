@@ -391,7 +391,7 @@ impl<'a> AsyncConnection<'a> {
         }
         if config.auto_redirect() {
           let location = response
-            .location()?
+            .header_value("location")
             .expect("Location header presence checked before redirect");
           let count = self.conn.count();
           if count > config.max_redirect() {
