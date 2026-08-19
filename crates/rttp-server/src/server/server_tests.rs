@@ -119,6 +119,73 @@ fn request_access_control_request_headers_parses_preflight_metadata_without_poli
 }
 
 #[test]
+fn request_access_control_request_private_network_parses_preflight_metadata_without_policy() {
+  let absent_raw = "OPTIONS /widgets HTTP/1.1\r\nHost: example.test\r\n\r\n";
+  let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
+  let absent = Request::read_next_from(&mut absent_reader)
+    .expect("absent request should parse")
+    .expect("absent request should be present");
+  assert_eq!(
+    None,
+    absent
+      .access_control_request_private_network()
+      .expect("missing Access-Control-Request-Private-Network should be accepted")
+  );
+
+  let valid_raw = concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Private-Network: true\r\n",
+    "\r\n"
+  );
+  let mut valid_reader = BufReader::new(Cursor::new(valid_raw.as_bytes()));
+  let valid = Request::read_next_from(&mut valid_reader)
+    .expect("valid request should parse")
+    .expect("valid request should be present");
+  assert_eq!(
+    "true",
+    valid
+      .access_control_request_private_network()
+      .expect("Access-Control-Request-Private-Network should parse")
+      .expect("Access-Control-Request-Private-Network should be present")
+      .header_value()
+  );
+
+  let malformed_raw = concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Private-Network: false\r\n",
+    "\r\n"
+  );
+  let mut malformed_reader = BufReader::new(Cursor::new(malformed_raw.as_bytes()));
+  let malformed = Request::read_next_from(&mut malformed_reader)
+    .expect("malformed metadata should not reject the request frame")
+    .expect("malformed request should be present");
+  assert!(malformed.access_control_request_private_network().is_err());
+  assert_eq!(
+    Some("false"),
+    malformed.header("Access-Control-Request-Private-Network")
+  );
+
+  let duplicate_raw = concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Private-Network: true\r\n",
+    "access-control-request-private-network: true\r\n",
+    "\r\n"
+  );
+  let mut duplicate_reader = BufReader::new(Cursor::new(duplicate_raw.as_bytes()));
+  let duplicate = Request::read_next_from(&mut duplicate_reader)
+    .expect("duplicate metadata should not reject the request frame")
+    .expect("duplicate request should be present");
+  assert!(duplicate.access_control_request_private_network().is_err());
+  assert_eq!(
+    Some("true"),
+    duplicate.header("Access-Control-Request-Private-Network")
+  );
+}
+
+#[test]
 fn request_representation_metadata_parses_without_applying_policy() {
   let absent_raw = "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n";
   let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));

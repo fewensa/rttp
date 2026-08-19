@@ -5,12 +5,12 @@ use rttp::server::{
   HttpAccessControlAllowMethods, HttpAccessControlAllowOrigin, HttpAccessControlRequestHeaders,
   HttpAccessControlRequestMethod, HttpAllowedMethods, HttpAuthorization, HttpByteRange,
   HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata, HttpContentDisposition,
-  HttpContentLanguages, HttpContentSecurityPolicy, HttpContentType, HttpCriticalCh, HttpEntityTag,
-  HttpExpectations, HttpHost, HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome,
-  HttpLinkValues, HttpNel, HttpPermissionsPolicy, HttpReferrerPolicy, HttpReportingEndpoints,
-  HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
-  HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming,
-  HttpVary,
+  HttpContentLanguages, HttpContentRange, HttpContentSecurityPolicy, HttpContentType,
+  HttpCriticalCh, HttpEntityTag, HttpExpectations, HttpHost, HttpIfNoneMatch, HttpIfRange,
+  HttpIfRangeRequestOutcome, HttpLinkValues, HttpNel, HttpPermissionsPolicy, HttpReferrerPolicy,
+  HttpReportingEndpoints, HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl,
+  HttpRequestTe, HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings,
+  HttpRetryAfter, HttpServerTiming, HttpVary,
 };
 
 #[test]
@@ -151,6 +151,54 @@ fn request_access_control_request_headers_preserves_absent_valid_and_malformed_m
   assert_eq!(
     Some("X-Request Id"),
     malformed.header("Access-Control-Request-Headers")
+  );
+}
+
+#[test]
+fn request_access_control_request_private_network_preserves_absent_valid_and_malformed_metadata() {
+  let absent = parse_request("OPTIONS /widgets HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .access_control_request_private_network()
+      .expect("missing Access-Control-Request-Private-Network should be accepted")
+  );
+
+  let request = parse_request(concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Private-Network: true\r\n",
+    "\r\n"
+  ));
+  let private_network = request
+    .access_control_request_private_network()
+    .expect("Access-Control-Request-Private-Network should parse")
+    .expect("Access-Control-Request-Private-Network should be present");
+  assert_eq!("true", private_network.header_value());
+
+  let malformed = parse_request(concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Private-Network: false\r\n",
+    "\r\n"
+  ));
+  assert!(malformed.access_control_request_private_network().is_err());
+  assert_eq!(
+    Some("false"),
+    malformed.header("Access-Control-Request-Private-Network")
+  );
+
+  let duplicate = parse_request(concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Private-Network: true\r\n",
+    "access-control-request-private-network: true\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.access_control_request_private_network().is_err());
+  assert_eq!(
+    Some("true"),
+    duplicate.header("Access-Control-Request-Private-Network")
   );
 }
 
@@ -3192,6 +3240,16 @@ fn serializes_partial_content_response_for_parsed_byte_range() {
   let response = HttpResponse::partial_content(body, range);
 
   assert_eq!(
+    Some(HttpContentRange::Bytes {
+      start: 3,
+      end: 6,
+      complete_length: Some(10),
+    }),
+    response
+      .content_range()
+      .expect("Content-Range should parse")
+  );
+  assert_eq!(
     concat!(
       "HTTP/1.1 206 Partial Content\r\n",
       "Content-Range: bytes 3-6/10\r\n",
@@ -3208,6 +3266,14 @@ fn serializes_partial_content_response_for_parsed_byte_range() {
 fn serializes_range_not_satisfiable_response() {
   let response = HttpResponse::range_not_satisfiable(10);
 
+  assert_eq!(
+    Some(HttpContentRange::Unsatisfied {
+      complete_length: 10,
+    }),
+    response
+      .content_range()
+      .expect("Content-Range should parse")
+  );
   assert_eq!(
     concat!(
       "HTTP/1.1 416 Range Not Satisfiable\r\n",
