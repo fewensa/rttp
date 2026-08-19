@@ -2,16 +2,16 @@ use rttp_client::response::{
   AcceptCh, AccessControlAllowHeaders, AccessControlAllowHeadersParseError,
   AccessControlAllowMethods, AccessControlAllowMethodsParseError, AccessControlExposeHeaders,
   AccessControlMaxAge, AccessControlMaxAgeParseError, Age, AgeParseError, AltSvc, Connection,
-  ConnectionParseError, ContentRange, ContentRangeParseError, ContentSecurityPolicy,
-  ContentSecurityPolicyParseError, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly,
-  CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest, HttpClearSiteData, KeepAlive,
-  Location, LocationParseError, NoVarySearch, NoVarySearchParams, NoVarySearchParseError,
-  PreferenceApplied, Priority, ProxyAuthenticate, ProxyAuthenticateParseError,
-  ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ReferrerPolicy, ReferrerPolicyToken,
-  ServerTiming, Signature, SignatureInput, SignatureInputParseError, SignatureParseError,
-  StrictTransportSecurity, StrictTransportSecurityParseError, Trailer, TransferEncoding,
-  TransferEncodingParseError, Vary, VaryParseError, WantContentDigest, WantReprDigest, Warning,
-  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  ConnectionParseError, ContentSecurityPolicy, ContentSecurityPolicyParseError,
+  CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy,
+  CrossOriginResourcePolicy, Digest, HttpClearSiteData, KeepAlive, Location, LocationParseError,
+  NoVarySearch, NoVarySearchParams, NoVarySearchParseError, PreferenceApplied, Priority,
+  ProxyAuthenticate, ProxyAuthenticateParseError, ProxyAuthenticationInfo,
+  ProxyAuthenticationInfoParseError, ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Signature,
+  SignatureInput, SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
+  StrictTransportSecurityParseError, Trailer, TransferEncoding, TransferEncodingParseError, Vary,
+  VaryParseError, WantContentDigest, WantReprDigest, Warning, XContentTypeOptions,
+  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentLocation, ContentLocationParseError, HttpContentLength, ReprDigest,
@@ -48,9 +48,6 @@ fn response_facade_exports_representative_bounded_metadata_types() {
       .expect("Content-Security-Policy should parse");
   let _: ContentSecurityPolicyParseError =
     ContentSecurityPolicy::parse("").expect_err("empty Content-Security-Policy should be rejected");
-  let content_range = ContentRange::parse("bytes 0-4/10").expect("Content-Range should parse");
-  let _: ContentRangeParseError =
-    ContentRange::parse("").expect_err("empty Content-Range should be rejected");
   let digest = Digest::parse("sha-256=:YWJj:").expect("Digest should parse");
   let location = Location::parse("/next").expect("Location should parse");
   let _: LocationParseError = Location::parse("").expect_err("empty Location should be rejected");
@@ -136,7 +133,6 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     content_security_policy.header_value(),
     "default-src 'self'; object-src 'none'"
   );
-  assert_eq!(content_range.header_value(), "bytes 0-4/10");
   assert_eq!(digest.entries().len(), 1);
   assert_eq!(location.as_str(), "/next");
   assert_eq!(

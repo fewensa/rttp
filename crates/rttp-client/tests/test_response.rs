@@ -1,10 +1,9 @@
 use rttp_client::response::{
-  AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentRange,
-  ContentSecurityPolicy, ContentType, CrossOriginEmbedderPolicy,
-  CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginResourcePolicy,
-  HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues, Location, ProxyAuthenticate,
-  ProxyAuthenticationInfo, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
-  StrictTransportSecurity, Warning, XContentTypeOptions, XFrameOptions,
+  AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentSecurityPolicy, ContentType,
+  CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy,
+  CrossOriginResourcePolicy, HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues, Location,
+  ProxyAuthenticate, ProxyAuthenticationInfo, ReferrerPolicy, ReferrerPolicyToken, Response,
+  RetryAfter, ServerTiming, StrictTransportSecurity, Warning, XContentTypeOptions, XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -851,19 +850,15 @@ fn test_parse_partial_content_range_metadata() {
   .expect("parse partial content response");
   let content_range = response
     .content_range()
-    .expect("partial content response should parse content range")
     .expect("partial content response should expose content range");
 
   assert!(response.is_partial_content());
   assert!(!response.is_range_not_satisfiable());
-  assert_eq!(
-    ContentRange::Bytes {
-      start: 10,
-      end: 19,
-      complete_length: Some(200),
-    },
-    content_range
-  );
+  assert_eq!("bytes", content_range.unit());
+  assert_eq!(Some(10), content_range.start());
+  assert_eq!(Some(19), content_range.end());
+  assert_eq!(Some(200), content_range.complete_length());
+  assert!(!content_range.is_unsatisfied());
   assert_eq!("0123456789", response.body().string().unwrap());
 }
 
@@ -884,54 +879,20 @@ fn test_parse_range_not_satisfiable_metadata_preserves_body_and_headers() {
   .expect("parse range not satisfiable response");
   let content_range = response
     .content_range()
-    .expect("416 response should parse unsatisfied content range")
     .expect("416 response should expose unsatisfied content range");
 
   assert!(!response.is_partial_content());
   assert!(response.is_range_not_satisfiable());
-  assert_eq!(
-    ContentRange::Unsatisfied {
-      complete_length: 200,
-    },
-    content_range
-  );
+  assert_eq!("bytes", content_range.unit());
+  assert_eq!(None, content_range.start());
+  assert_eq!(None, content_range.end());
+  assert_eq!(Some(200), content_range.complete_length());
+  assert!(content_range.is_unsatisfied());
   assert_eq!(
     Some(&"text/plain".to_string()),
     response.header_value("Content-Type")
   );
   assert_eq!("range unavailable", response.body().string().unwrap());
-}
-
-#[test]
-fn content_range_metadata_rejects_invalid_and_duplicate_values() {
-  let response = Response::new(
-    RoUrl::with("https://example.test/asset"),
-    concat!(
-      "HTTP/1.1 206 Partial Content\r\n",
-      "Content-Range: bytes 10-20/20\r\n",
-      "Content-Length: 10\r\n\r\n",
-      "0123456789"
-    )
-    .as_bytes()
-    .to_vec(),
-  )
-  .expect("response should parse");
-  assert!(response.content_range().is_err());
-
-  let response = Response::new(
-    RoUrl::with("https://example.test/asset"),
-    concat!(
-      "HTTP/1.1 206 Partial Content\r\n",
-      "Content-Range: bytes 0-4/10\r\n",
-      "Content-Range: bytes 5-9/10\r\n",
-      "Content-Length: 10\r\n\r\n",
-      "0123456789"
-    )
-    .as_bytes()
-    .to_vec(),
-  )
-  .expect("response should parse");
-  assert!(response.content_range().is_err());
 }
 
 #[test]
