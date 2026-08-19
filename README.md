@@ -1105,6 +1105,20 @@ This helper does not create cache storage, match cache keys, normalize URLs,
 replay requests, apply browser navigation behavior, or enforce shared-cache
 policy.
 
+### Bounded Permissions-Policy metadata
+
+`Response::permissions_policy()` parses one or more `Permissions-Policy`
+response fields through the shared protocol parser as bounded W3C Permissions
+Policy dictionary metadata. The typed value exposes ordered feature directives
+with their allowlists: the `*` token as the whole allowlist, the `self` token,
+quoted serialized HTTP(S) origins, and inner lists including the empty `()`
+form. Parse errors are returned by the typed helper while raw headers remain
+available.
+
+The helper is metadata-only. RTTP does not grant or deny browser permissions,
+compare origins, resolve `self`, enable or disable APIs, or enforce origin
+policy, and it does not send reports.
+
 ### Bounded trailer behavior
 
 Trailer support is explicit and bounded by protocol path. On the client,
@@ -1211,6 +1225,7 @@ gain additional HTTP/2 header-block handling.
 | Keep-Alive | Client `Response::keep_alive` and server `HttpKeepAlive`, `HttpResponse::with_keep_alive`, and `HttpResponse::keep_alive` parse or declare bounded RFC 2068 `Keep-Alive` `timeout` and `max` parameters as checked unsigned integers while preserving raw headers on parse failures | No connection lifetime management, connection pooling, keep-alive timers, or HTTP/2 behavior changes |
 | Vary | `Response::vary` parses bounded response `Vary` fields into wildcard or normalized case-insensitive field-name metadata | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | No-Vary-Search | `Response::no_vary_search` parses bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
+| Permissions-Policy | `Response::permissions_policy` parses bounded W3C Permissions Policy dictionary metadata through the shared protocol type, combining fields in wire order and preserving raw headers on parse failures | No browser permission grants or denials, origin comparison, `self` resolution, API enablement, origin-policy enforcement, or report sending |
 | Trailers | Chunked response trailers are exposed for blocking and async APIs; streaming chunked uploads can send declared request trailers | Application metadata trailers such as `X-Trace` are allowed; pseudo-header, connection-specific, routing, authentication/cookie, and framing trailer fields are rejected |
 | Bounded h2c client | With `http2`, direct `socket2` h2c sends GET, HEAD, bodyless DELETE, OPTIONS, or TRACE, buffered POST, PUT, or PATCH requests, and opt-in RFC 8441 extended CONNECT request HEADERS via `http2_extended_connect`, opens at most one request stream, supports prior-knowledge with `emit_http2_prior_knowledge`, supports explicit HTTP/1.1 `Upgrade: h2c` negotiation with `emit_http2_upgrade`, advertises `SETTINGS_ENABLE_PUSH = 0`, advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1` only for the explicit extended CONNECT path, validates received `SETTINGS_ENABLE_PUSH` values as only `0` or `1`, honors initial peer `SETTINGS_MAX_CONCURRENT_STREAMS` by failing before request HEADERS when the peer allows zero streams, honors peer-advertised `SETTINGS_MAX_HEADER_LIST_SIZE` request metadata limits, accepts only legal `SETTINGS_MAX_FRAME_SIZE` values from 16,384 through 16,777,215 bytes, splits outbound HEADERS, DATA, and trailers to the active peer frame-size limit, rejects oversized inbound frames when a configured local frame-size limit is exceeded, bounds HPACK dynamic table use with `SETTINGS_HEADER_TABLE_SIZE`, strips HTTP/1.x connection-specific request fields before emission, rejects connection-specific peer response fields, suppresses HEAD response bodies, treats `RST_STREAM` on the active stream as a bounded reset/cancellation signal, acknowledges inbound PING without ACK on stream 0 and exactly 8 octets with matching opaque data, ignores inbound PING ACK, rejects malformed PING frames, DATA bodies, trailers, HPACK static Huffman strings, bounded large header blocks, padded incoming frames, `GOAWAY` shutdown boundaries, PRIORITY metadata validation without scheduling, HTTP/2-allowed unknown/extension frame ignoring inside this bounded path, reserved stream-id high-bit normalization, and conservative DATA flow control | Ordinary `CONNECT`, header-configured `:protocol` metadata, non-h2c HTTP/1.1 `Upgrade` handoff requests, and proxies are rejected deterministically, and `PUSH_PROMISE`/server push is rejected instead of managed; bounded direct h2c only, with no keepalive timers, no automatic client/server initiated PING policy, no public cancellation callback API, no dynamic policy API, no extension callback API, no full extension negotiation, TLS ALPN, external h2 integration, proxy tunneling to h2, proxy h2, tunnel handoff, connection pooling, persistent HTTP/2 session management, automatic retry/replay, server push, full session manager, full stream state machine, full multiplex scheduler, unbounded multiplex scheduling, general multiplexing, priority scheduling, request bodies or trailers for extended CONNECT, or request bodies for GET, HEAD, DELETE, OPTIONS, or TRACE |
 
@@ -2000,6 +2015,24 @@ keep extension dictionary members as metadata. They do not create cache
 storage, match cache keys, normalize URLs, replay requests, apply browser
 navigation behavior, or enforce shared-cache policy.
 
+### Bounded Permissions-Policy metadata
+
+Server-side `Permissions-Policy` helpers expose response declaration metadata
+without enforcing browser permissions or origin policy.
+`HttpResponse::with_permissions_policy(value)` parses a W3C Permissions Policy
+Structured Fields dictionary through the shared protocol parser and replaces
+any existing `Permissions-Policy` response fields with one canonical value,
+while `HttpResponse::permissions_policy()` parses attached raw fields into
+`HttpPermissionsPolicy` metadata. The typed value exposes ordered feature
+directives with their allowlists: the `*` token as the whole allowlist, the
+`self` token, quoted serialized HTTP(S) origins, and inner lists including the
+empty `()` form.
+
+The helpers are bounded and metadata-only. Field values are limited to 64 KiB,
+directives to 256 per header set, and allowlist members to 256 per directive.
+They do not grant or deny browser permissions, compare origins, resolve
+`self`, enable or disable APIs, enforce origin policy, or send reports.
+
 The server is intentionally small: it handles blocking HTTP/1.x request parsing
 for local tests and simple embedded use. It accepts fixed `Content-Length` and
 chunked request bodies, exposes chunked request trailers, applies bounded
@@ -2174,6 +2207,7 @@ TLS or async accept loops.
 | Accept-Language | `HttpAcceptLanguages`, `Request::accept_language`, and `HttpRequest::accept_language` parse bounded ordered `Accept-Language` ranges and q-values through the protocol `AcceptLanguage` type and preserve raw values on errors | No locale matching, fallback selection, translation lookup, routing, or automatic response choice |
 | Vary | `HttpVary`, `HttpResponse::with_vary`, `HttpResponse::vary`, `Request::vary_selection`, and `HttpRequest::vary_selection` parse, declare, and select bounded `Vary` metadata with case-insensitive field-name handling | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | No-Vary-Search | `HttpNoVarySearch`, `HttpResponse::with_no_vary_search`, and `HttpResponse::no_vary_search` parse and declare bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
+| Permissions-Policy | `HttpPermissionsPolicy`, `HttpResponse::with_permissions_policy`, and `HttpResponse::permissions_policy` parse and declare bounded W3C Permissions Policy dictionary response metadata through the shared protocol type, replacing raw duplicates on declaration and preserving raw headers on parse failures | No browser permission grants or denials, origin comparison, `self` resolution, API enablement, origin-policy enforcement, or report sending |
 | Allow | `HttpAllowedMethods`, `HttpResponse::with_allow`, and `HttpResponse::allow` declare and parse bounded `Allow` method-list metadata | No route dispatch, automatic `405` generation, `OPTIONS` policy, fallback method selection, retry/replay, or status-code policy engine |
 | Content-Language | `HttpContentLanguages`, `Request::content_language`, `HttpRequest::content_language`, `HttpResponse::with_content_language`, and `HttpResponse::content_language` parse or declare bounded `Content-Language` metadata | No automatic language negotiation, route selection, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
 | Accept-Encoding | `HttpRequestAcceptEncodings`, `Request::accept_encoding`, and `HttpRequest::accept_encoding` parse bounded `Accept-Encoding` request metadata through the shared `rttp-protocol` type | No compression, decompression, content negotiation, retries, or transport changes |

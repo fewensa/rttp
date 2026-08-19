@@ -58,6 +58,7 @@ use rttp_protocol::entity_tag::{EntityTag, EntityTagParseError};
 use rttp_protocol::link::LinkValues;
 use rttp_protocol::location::Location;
 use rttp_protocol::memento_datetime::MementoDatetime;
+use rttp_protocol::permissions_policy::PermissionsPolicy;
 use rttp_protocol::prefer::PreferenceApplied;
 use rttp_protocol::range::ContentRange;
 use rttp_protocol::referrer_policy::ReferrerPolicy;
@@ -638,6 +639,18 @@ impl Response {
       return Ok(None);
     }
     ContentSecurityPolicy::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Permissions-Policy` response metadata without enforcing
+  /// browser permissions or origin policy.
+  pub fn permissions_policy(&self) -> error::Result<Option<PermissionsPolicy>> {
+    let values = self.header_values("permissions-policy");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    PermissionsPolicy::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

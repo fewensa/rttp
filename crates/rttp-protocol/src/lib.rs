@@ -68,6 +68,7 @@ pub mod memento_datetime;
 pub mod nel;
 pub mod no_vary_search;
 pub mod origin;
+pub mod permissions_policy;
 pub mod pragma;
 pub mod prefer;
 pub mod priority;

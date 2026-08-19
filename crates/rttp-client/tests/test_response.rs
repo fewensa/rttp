@@ -3,9 +3,9 @@ use rttp_client::response::{
   ContentRange, ContentSecurityPolicy, ContentType, CrossOriginEmbedderPolicy,
   CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginResourcePolicy,
   Deprecation, EntityTag, HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues, Location,
-  MementoDatetime, ProxyAuthenticate, ProxyAuthenticationInfo, ProxyStatus, ProxyStatusBareItem,
-  ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ServerTiming, SignatureInput,
-  StrictTransportSecurity, Warning, XContentTypeOptions, XFrameOptions,
+  MementoDatetime, PermissionsPolicy, ProxyAuthenticate, ProxyAuthenticationInfo, ProxyStatus,
+  ProxyStatusBareItem, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
+  SignatureInput, StrictTransportSecurity, Warning, XContentTypeOptions, XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -602,6 +602,130 @@ fn x_frame_options_metadata_is_absent_without_a_header() {
 
   assert_eq!(response.x_frame_options().expect("header is absent"), None);
   let _: Option<XFrameOptions> = response.x_frame_options().expect("header is absent");
+}
+
+#[test]
+fn permissions_policy_metadata_parses_dictionary_without_enforcing_policy() {
+  let value = r#"geolocation=(self "https://maps.example.test"), camera=()"#;
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!("HTTP/1.1 200 OK\r\nPermissions-Policy: {value}\r\nContent-Length: 0\r\n\r\n")
+      .into_bytes(),
+  )
+  .expect("response should parse");
+
+  let metadata = response
+    .permissions_policy()
+    .expect("Permissions-Policy should parse")
+    .expect("Permissions-Policy should be present");
+
+  assert_eq!(metadata.directives().len(), 2);
+  let geolocation = metadata
+    .directive("geolocation")
+    .expect("geolocation present");
+  assert_eq!(geolocation.feature(), "geolocation");
+  assert!(!geolocation.allowlist().is_all_origins());
+  assert_eq!(geolocation.allowlist().members().len(), 2);
+  assert!(geolocation.allowlist().members()[0].is_self());
+  assert_eq!(
+    geolocation.allowlist().members()[1].origin(),
+    Some("https://maps.example.test")
+  );
+  let camera = metadata.directive("camera").expect("camera present");
+  assert!(camera.allowlist().is_empty());
+  assert_eq!(metadata.header_value(), value);
+  assert_eq!(
+    response.header_value("Permissions-Policy"),
+    Some(&value.to_string())
+  );
+}
+
+#[test]
+fn permissions_policy_metadata_rejects_invalid_values_without_hiding_raw_headers() {
+  for value in [
+    "",
+    "geolocation=src",
+    "geolocation=('none')",
+    "geolocation=*;unknown=1",
+    "geolocation=(* \"https://example.test\")",
+    "geolocation=\"https://example.test/path\"",
+    "geolocation=5",
+    "geolocation=(\"https://example.test\" \"https://example.test\")",
+    "geolocation=(self), geolocation=(self)",
+  ] {
+    let response = Response::new(
+      RoUrl::with("https://example.test"),
+      format!("HTTP/1.1 200 OK\r\nPermissions-Policy: {value}\r\nContent-Length: 0\r\n\r\n")
+        .into_bytes(),
+    )
+    .expect("response should parse");
+
+    assert!(
+      response.permissions_policy().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      response.header_value("Permissions-Policy"),
+      Some(&value.to_string())
+    );
+  }
+
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Permissions-Policy: geolocation=(self)\r\n",
+      "Permissions-Policy: geolocation=(self)\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  assert!(response.permissions_policy().is_err());
+  assert_eq!(
+    response.header_values("Permissions-Policy"),
+    [
+      &"geolocation=(self)".to_string(),
+      &"geolocation=(self)".to_string()
+    ]
+  );
+}
+
+#[test]
+fn permissions_policy_metadata_rejects_oversized_values_without_hiding_raw_headers() {
+  let oversized = format!(
+    "geolocation=(\"{}\")",
+    "https://example.test/".repeat(64 * 1024)
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!("HTTP/1.1 200 OK\r\nPermissions-Policy: {oversized}\r\nContent-Length: 0\r\n\r\n")
+      .into_bytes(),
+  )
+  .expect("response should parse");
+
+  assert!(response.permissions_policy().is_err());
+  assert_eq!(
+    response.header_value("Permissions-Policy"),
+    Some(&oversized)
+  );
+}
+
+#[test]
+fn permissions_policy_metadata_is_absent_without_a_header() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(
+    response.permissions_policy().expect("header is absent"),
+    None
+  );
+  let _: Option<PermissionsPolicy> = response.permissions_policy().expect("header is absent");
 }
 
 #[test]

@@ -405,6 +405,25 @@ deprecated, retry requests, or select another endpoint.
 These helpers do not store responses, match cache keys, normalize URLs, replay
 requests, apply browser navigation behavior, or enforce shared-cache policy.
 
+## Permissions-Policy response metadata
+
+`HttpResponse::with_permissions_policy(value)` validates one W3C Permissions
+Policy Structured Fields dictionary and replaces any existing raw
+`Permissions-Policy` fields with one canonical value from the shared protocol
+parser. `HttpResponse::permissions_policy()` parses attached raw fields into
+`HttpPermissionsPolicy` metadata, returning `Ok(None)` when absent and parser
+errors without changing raw fields. Directives expose the feature token and
+allowlist: `*` as the whole allowlist, the `self` token, quoted serialized
+HTTP(S) origins, and inner lists including the empty `()`. Field values are
+bounded to 64 KiB, directives to 256 per header set, and allowlist members to
+256 per directive. Duplicate feature keys, duplicate allowlist members, the
+HTML-attribute tokens `src` and `'none'`, and unparsable input are rejected; a
+well-formed `report-to` parameter is accepted and dropped.
+
+These helpers only declare and parse metadata. RTTP does not grant or deny
+browser permissions, compare origins, resolve `self`, or enforce origin
+policy, and it does not send reports.
+
 ## Want-Content-Digest request metadata
 
 Handlers can call `Request::want_content_digest()` and

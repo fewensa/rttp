@@ -8,9 +8,10 @@ use rttp::server::{
   HttpCrossOriginOpenerPolicy, HttpCrossOriginResourcePolicy, HttpDeprecation,
   HttpDeprecationParseError, HttpEntityTag, HttpExpectations, HttpIdempotencyKey,
   HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfUnmodifiedSince, HttpMaxForwards,
-  HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNel, HttpPragma, HttpPragmaParseError,
-  HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError, HttpRequestAcceptCharsets,
-  HttpResponse, HttpSaveData, HttpSecGpc, HttpSecGpcParseError, HttpSignature, HttpSignatureInput,
+  HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNel, HttpPermissionsPolicy,
+  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization,
+  HttpProxyStatus, HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse,
+  HttpSaveData, HttpSecGpc, HttpSecGpcParseError, HttpSignature, HttpSignatureInput,
   HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
   HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
   HttpSunsetParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
@@ -189,6 +190,14 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::XFrameOptionsParseError =
     rttp_client::response::XFrameOptions::parse("ALLOW-FROM https://example.test")
       .expect_err("deprecated X-Frame-Options ALLOW-FROM should be rejected");
+  let permissions_policy: rttp::PermissionsPolicy =
+    rttp_client::response::PermissionsPolicy::parse(
+      r#"geolocation=(self "https://maps.example.test"), camera=()"#,
+    )
+    .expect("Permissions-Policy should parse");
+  let _: rttp::PermissionsPolicyParseError =
+    rttp_client::response::PermissionsPolicy::parse("geolocation=src")
+      .expect_err("src should be rejected");
   let fetch_site: rttp::SecFetchSite =
     rttp_client::SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let sec_purpose: rttp::SecPurpose =
@@ -283,6 +292,16 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(x_content_type_options.header_value(), "nosniff");
   assert_eq!(x_frame_options, rttp::XFrameOptions::Deny);
   assert_eq!(x_frame_options.header_value(), "DENY");
+  assert_eq!(
+    permissions_policy.header_value(),
+    r#"geolocation=(self "https://maps.example.test"), camera=()"#
+  );
+  assert_eq!(permissions_policy.directives().len(), 2);
+  assert!(permissions_policy
+    .directive("camera")
+    .unwrap()
+    .allowlist()
+    .is_empty());
   assert_eq!("tenant", baggage_member.key());
   assert_eq!("source", baggage_property.key());
   assert_eq!(fetch_site.header_value(), "same-origin");
@@ -798,6 +817,11 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
       .expect("Proxy-Status should parse");
   let _: HttpProxyStatusParseError =
     HttpProxyStatus::parse("").expect_err("empty Proxy-Status should be rejected");
+  let permissions_policy: HttpPermissionsPolicy =
+    HttpPermissionsPolicy::parse(r#"geolocation=(self "https://maps.example.test"), camera=()"#)
+      .expect("Permissions-Policy should parse");
+  let _: HttpPermissionsPolicyParseError =
+    HttpPermissionsPolicy::parse("geolocation=src").expect_err("src should be rejected");
   let content_location: HttpContentLocation =
     HttpContentLocation::parse("../representations/current.json")
       .expect("Content-Location should parse");
@@ -871,6 +895,15 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     proxy_status.members()[0].identifier().as_str(),
     "ExampleCDN"
   );
+  assert_eq!(
+    permissions_policy.header_value(),
+    r#"geolocation=(self "https://maps.example.test"), camera=()"#
+  );
+  assert!(permissions_policy
+    .directive("camera")
+    .unwrap()
+    .allowlist()
+    .is_empty());
   assert_eq!(
     metadata
       .entity_tag_value()
