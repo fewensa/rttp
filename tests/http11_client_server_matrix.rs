@@ -29,8 +29,10 @@ struct ObservedCorsPreflight {
   origin: Option<String>,
   raw_request_method: Option<String>,
   raw_request_headers: Option<String>,
+  raw_request_private_network: Option<String>,
   request_method: Result<Option<String>, String>,
   request_headers: Result<Option<Vec<String>>, String>,
+  request_private_network: Result<Option<String>, String>,
 }
 
 fn observe_cors_preflight(request: Request) -> ObservedCorsPreflight {
@@ -43,6 +45,9 @@ fn observe_cors_preflight(request: Request) -> ObservedCorsPreflight {
     raw_request_headers: request
       .header("Access-Control-Request-Headers")
       .map(str::to_string),
+    raw_request_private_network: request
+      .header("Access-Control-Request-Private-Network")
+      .map(str::to_string),
     request_method: request
       .access_control_request_method()
       .map(|method| method.map(|method| method.method().to_string()))
@@ -50,6 +55,10 @@ fn observe_cors_preflight(request: Request) -> ObservedCorsPreflight {
     request_headers: request
       .access_control_request_headers()
       .map(|headers| headers.map(|headers| headers.field_names().to_vec()))
+      .map_err(|error| error.to_string()),
+    request_private_network: request
+      .access_control_request_private_network()
+      .map(|metadata| metadata.map(|metadata| metadata.header_value().to_string()))
       .map_err(|error| error.to_string()),
   }
 }
@@ -192,6 +201,17 @@ fn cache_control_response(values: &[&str]) -> Vec<u8> {
   let mut response = String::from("HTTP/1.1 200 OK\r\n");
   for value in values {
     response.push_str("Cache-Control: ");
+    response.push_str(value);
+    response.push_str("\r\n");
+  }
+  response.push_str("Content-Length: 2\r\n\r\nOK");
+  response.into_bytes()
+}
+
+fn cdn_cache_control_response(values: &[&str]) -> Vec<u8> {
+  let mut response = String::from("HTTP/1.1 200 OK\r\n");
+  for value in values {
+    response.push_str("CDN-Cache-Control: ");
     response.push_str(value);
     response.push_str("\r\n");
   }
@@ -871,6 +891,94 @@ fn sync_client_and_server_exchange_alt_svc_metadata_without_connection_policy() 
 }
 
 #[test]
+fn sync_client_and_server_exchange_nel_metadata_without_report_policy() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind NEL server");
+  let addr = server.local_addr().expect("NEL server addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        HttpResponse::ok("OK")
+          .with_nel(
+            r#"{"report_to":"network-errors","max_age":2592000,"include_subdomains":true,"success_fraction":0.1,"failure_fraction":1.0}"#,
+          )
+          .expect("NEL policy should be accepted")
+      })
+      .expect("serve NEL response");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/nel"))
+    .emit()
+    .expect("NEL response should parse without report policy");
+  let nel = response
+    .nel()
+    .expect("NEL should parse")
+    .expect("NEL should be present");
+
+  assert_eq!(200, response.code());
+  assert_eq!("OK", response.body().string().unwrap());
+  assert_eq!(2592000, nel.max_age());
+  assert_eq!(Some("network-errors"), nel.report_to());
+  assert_eq!(Some(true), nel.include_subdomains());
+  assert_eq!(Some(0.1), nel.success_fraction());
+  assert_eq!(Some(1.0), nel.failure_fraction());
+  assert_eq!(
+    Some(
+      &"{\"max_age\":2592000,\"report_to\":\"network-errors\",\"include_subdomains\":true,\"success_fraction\":0.1,\"failure_fraction\":1}".to_string()
+    ),
+    response.header_value("NEL")
+  );
+  handle.join().expect("NEL server thread");
+}
+
+#[test]
+fn facade_client_and_server_exchange_strict_transport_security_metadata_without_policy() {
+  let server =
+    rttp::Http::server("127.0.0.1:0").expect("bind Strict-Transport-Security facade server");
+  let addr = server
+    .local_addr()
+    .expect("Strict-Transport-Security facade addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        rttp::server::HttpResponse::ok("OK")
+          .with_strict_transport_security("max-age=31536000; includeSubDomains; preload")
+          .expect("Strict-Transport-Security should be accepted")
+      })
+      .expect("serve Strict-Transport-Security facade response");
+  });
+
+  let response = rttp::Http::client()
+    .get()
+    .url(format!("http://{addr}/matrix/strict-transport-security"))
+    .emit()
+    .expect("Strict-Transport-Security facade response should parse");
+  let strict_transport_security = response
+    .strict_transport_security()
+    .expect("Strict-Transport-Security should parse")
+    .expect("Strict-Transport-Security should be present");
+
+  assert_eq!(200, response.code());
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    Some(&"max-age=31536000; includeSubDomains; preload".to_string()),
+    response.header_value("Strict-Transport-Security")
+  );
+  assert_eq!(31_536_000, strict_transport_security.max_age());
+  assert!(strict_transport_security.include_sub_domains());
+  assert!(strict_transport_security.preload());
+  assert_eq!(
+    "max-age=31536000; includeSubDomains; preload",
+    strict_transport_security.header_value()
+  );
+
+  handle
+    .join()
+    .expect("Strict-Transport-Security facade server thread");
+}
+
+#[test]
 fn sync_client_preserves_duplicate_cross_origin_resource_policy_fields_without_policy() {
   const HEADERS: &[(&str, &str)] = &[
     ("Cross-Origin-Resource-Policy", "same-origin"),
@@ -975,6 +1083,8 @@ fn facade_client_and_server_exchange_valid_cors_preflight_metadata_without_polic
     .expect("Access-Control-Request-Method should be accepted")
     .access_control_request_headers(["X-Request-Id", "Content-Type"])
     .expect("Access-Control-Request-Headers should be accepted")
+    .access_control_request_private_network()
+    .expect("Access-Control-Request-Private-Network should be accepted")
     .emit()
     .expect("CORS preflight request should succeed");
 
@@ -986,11 +1096,13 @@ fn facade_client_and_server_exchange_valid_cors_preflight_metadata_without_polic
       origin: Some("https://spa.example.test".to_string()),
       raw_request_method: Some("PATCH".to_string()),
       raw_request_headers: Some("x-request-id, content-type".to_string()),
+      raw_request_private_network: Some("true".to_string()),
       request_method: Ok(Some("PATCH".to_string())),
       request_headers: Ok(Some(vec![
         "x-request-id".to_string(),
         "content-type".to_string(),
       ])),
+      request_private_network: Ok(Some("true".to_string())),
     },
     observed_rx
       .recv_timeout(Duration::from_secs(1))
@@ -1018,8 +1130,10 @@ fn facade_server_reports_absent_cors_preflight_metadata_without_policy() {
       origin: None,
       raw_request_method: None,
       raw_request_headers: None,
+      raw_request_private_network: None,
       request_method: Ok(None),
       request_headers: Ok(None),
+      request_private_network: Ok(None),
     },
     observed_rx
       .recv_timeout(Duration::from_secs(1))
@@ -1037,7 +1151,7 @@ fn facade_server_rejects_malformed_cors_preflight_metadata_without_losing_raw_he
   let mut stream = TcpStream::connect(addr).expect("connect malformed CORS preflight request");
   stream
     .write_all(
-      b"OPTIONS /matrix/cors-preflight-malformed HTTP/1.1\r\nHost: example.test\r\nOrigin: https://spa.example.test\r\nAccess-Control-Request-Method: GET, POST\r\nAccess-Control-Request-Headers: X Bad\r\nConnection: close\r\n\r\n",
+      b"OPTIONS /matrix/cors-preflight-malformed HTTP/1.1\r\nHost: example.test\r\nOrigin: https://spa.example.test\r\nAccess-Control-Request-Method: GET, POST\r\nAccess-Control-Request-Headers: X Bad\r\nAccess-Control-Request-Private-Network: false\r\nConnection: close\r\n\r\n",
     )
     .expect("write malformed CORS preflight request");
 
@@ -1051,8 +1165,13 @@ fn facade_server_rejects_malformed_cors_preflight_metadata_without_losing_raw_he
   );
   assert_eq!(Some("GET, POST".to_string()), observed.raw_request_method);
   assert_eq!(Some("X Bad".to_string()), observed.raw_request_headers);
+  assert_eq!(
+    Some("false".to_string()),
+    observed.raw_request_private_network
+  );
   assert!(observed.request_method.is_err());
   assert!(observed.request_headers.is_err());
+  assert!(observed.request_private_network.is_err());
 
   handle
     .join()
@@ -1066,7 +1185,7 @@ fn facade_server_combines_multi_header_cors_preflight_metadata_without_policy() 
   let mut stream = TcpStream::connect(addr).expect("connect multi-header CORS preflight request");
   stream
     .write_all(
-      b"OPTIONS /matrix/cors-preflight-multi-header HTTP/1.1\r\nHost: example.test\r\nOrigin: https://spa.example.test\r\nAccess-Control-Request-Method: patch\r\nAccess-Control-Request-Headers: X-Request-Id\r\naccess-control-request-headers: Content-Type\r\nConnection: close\r\n\r\n",
+      b"OPTIONS /matrix/cors-preflight-multi-header HTTP/1.1\r\nHost: example.test\r\nOrigin: https://spa.example.test\r\nAccess-Control-Request-Method: patch\r\nAccess-Control-Request-Headers: X-Request-Id\r\naccess-control-request-headers: Content-Type\r\nAccess-Control-Request-Private-Network: true\r\naccess-control-request-private-network: true\r\nConnection: close\r\n\r\n",
     )
     .expect("write multi-header CORS preflight request");
 
@@ -1083,6 +1202,10 @@ fn facade_server_combines_multi_header_cors_preflight_metadata_without_policy() 
     Some("X-Request-Id".to_string()),
     observed.raw_request_headers
   );
+  assert_eq!(
+    Some("true".to_string()),
+    observed.raw_request_private_network
+  );
   assert_eq!(Ok(Some("PATCH".to_string())), observed.request_method);
   assert_eq!(
     Ok(Some(vec![
@@ -1091,6 +1214,7 @@ fn facade_server_combines_multi_header_cors_preflight_metadata_without_policy() 
     ])),
     observed.request_headers
   );
+  assert!(observed.request_private_network.is_err());
 
   handle
     .join()
@@ -2138,6 +2262,27 @@ fn assert_cache_control_helper_rejects_but_preserves_response(name: &str, raw_re
   assert!(
     response.cache_control().is_err(),
     "{name} helper should reject invalid Cache-Control"
+  );
+  assert_eq!("OK", response.body().string().unwrap(), "{name}");
+
+  handle.join().expect("raw response server thread");
+}
+
+fn assert_cdn_cache_control_helper_rejects_but_preserves_response(
+  name: &str,
+  raw_response: Vec<u8>,
+) {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/cdn-cache-control-invalid", addr))
+    .emit()
+    .unwrap_or_else(|err| panic!("{name} response should remain parseable: {err}"));
+
+  assert!(
+    response.cdn_cache_control().is_err(),
+    "{name} helper should reject invalid CDN-Cache-Control"
   );
   assert_eq!("OK", response.body().string().unwrap(), "{name}");
 
@@ -3881,6 +4026,55 @@ fn sync_client_cache_control_matrix_keeps_cache_engine_non_goals_explicit() {
   assert_eq!("OK", response.body().string().unwrap());
 
   handle.join().expect("raw response server thread");
+}
+
+#[test]
+fn sync_client_parses_cdn_cache_control_response_metadata_without_policy() {
+  const HEADERS: &[(&str, &str)] = &[
+    (
+      "CDN-Cache-Control",
+      "max-age=600, stale-while-revalidate=30, cdn-example=\"a, b\"",
+    ),
+    ("cdn-cache-control", "immutable"),
+  ];
+  let (addr, handle) = spawn_metadata_response_server(HEADERS);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/cdn-cache-control", addr))
+    .emit()
+    .expect("CDN-Cache-Control response should parse");
+
+  let metadata = response
+    .cdn_cache_control()
+    .expect("CDN-Cache-Control metadata should parse")
+    .expect("CDN-Cache-Control should be present");
+
+  assert_eq!(metadata.len(), 4);
+  assert_eq!(metadata.directives()[0].name(), "max-age");
+  assert_eq!(metadata.directives()[0].value(), Some("600"));
+  assert_eq!(metadata.directives()[2].name(), "cdn-example");
+  assert_eq!(metadata.directives()[2].value(), Some("a, b"));
+  assert_eq!(metadata.directives()[3].name(), "immutable");
+  assert_eq!("OK", response.body().string().unwrap());
+
+  handle.join().expect("metadata response server thread");
+}
+
+#[test]
+fn sync_client_cdn_cache_control_helper_rejects_invalid_and_bounded_metadata() {
+  assert_cdn_cache_control_helper_rejects_but_preserves_response(
+    "invalid CDN-Cache-Control directive",
+    cdn_cache_control_response(&["max-age="]),
+  );
+  assert_cdn_cache_control_helper_rejects_but_preserves_response(
+    "too many CDN-Cache-Control directives",
+    cdn_cache_control_response(&[&fixtures::cache_control::too_many_directives_value()]),
+  );
+  assert_cdn_cache_control_helper_rejects_but_preserves_response(
+    "oversized CDN-Cache-Control value",
+    cdn_cache_control_response(&[&fixtures::cache_control::oversized_value()]),
+  );
 }
 
 #[test]

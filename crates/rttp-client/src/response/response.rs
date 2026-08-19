@@ -9,12 +9,15 @@ use url::Url;
 use crate::error;
 use crate::response::raw_response::RawResponse;
 use crate::response::AltSvc;
+use crate::response::AuthenticationInfo;
 use crate::response::Connection;
 use crate::response::ContentDigest;
 use crate::response::Digest;
 use crate::response::KeepAlive;
+use crate::response::Nel;
 use crate::response::NoVarySearch;
 use crate::response::Priority;
+use crate::response::ProxyAuthenticate;
 use crate::response::ProxyAuthenticationInfo;
 use crate::response::ReprDigest;
 use crate::response::ServerTiming;
@@ -33,6 +36,7 @@ use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::access_control_max_age::AccessControlMaxAge;
 use rttp_protocol::age::Age;
 use rttp_protocol::allow as protocol_allow;
+use rttp_protocol::cdn_cache_control::CdnCacheControl;
 use rttp_protocol::clear_site_data::ClearSiteData;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::content_location::ContentLocation;
@@ -43,6 +47,7 @@ use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::cross_origin_resource_policy::CrossOriginResourcePolicy;
 use rttp_protocol::location::Location;
 use rttp_protocol::prefer::PreferenceApplied;
+use rttp_protocol::range::ContentRange;
 use rttp_protocol::referrer_policy::ReferrerPolicy;
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::sunset::parse_sunset_values;
@@ -571,6 +576,16 @@ impl Response {
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
+  pub fn content_range(&self) -> error::Result<Option<ContentRange>> {
+    let values = self.header_values("content-range");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    ContentRange::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
   /// Parses bounded `X-Content-Type-Options` response metadata without applying MIME-sniffing policy.
   pub fn x_content_type_options(&self) -> error::Result<Option<XContentTypeOptions>> {
     let values = self.header_values("x-content-type-options");
@@ -591,12 +606,6 @@ impl Response {
     XFrameOptions::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
-  }
-
-  pub fn content_range(&self) -> Option<ContentRange> {
-    self
-      .header_value("content-range")
-      .and_then(ContentRange::parse)
   }
 
   pub fn content_type(&self) -> error::Result<Option<ContentType>> {
@@ -646,6 +655,18 @@ impl Response {
     ReportingEndpoints::parse_values(values.into_iter().map(String::as_str)).map(Some)
   }
 
+  /// Parses the `NEL` response field as bounded W3C Network Error Logging
+  /// policy metadata. This does not send reports or persist policy.
+  pub fn nel(&self) -> error::Result<Option<Nel>> {
+    let values = self.header_values("nel");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Nel::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
   pub fn content_encoding(&self) -> error::Result<Option<ContentEncoding>> {
     let values = self.header_values("content-encoding");
     if values.is_empty() {
@@ -685,6 +706,30 @@ impl Response {
       return Ok(None);
     }
     WwwAuthenticate::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses all `Authentication-Info` fields as bounded auth-param metadata
+  /// without verifying `rspauth` or updating credentials.
+  pub fn authentication_info(&self) -> error::Result<Option<AuthenticationInfo>> {
+    let values = self.header_values("authentication-info");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    AuthenticationInfo::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses all `Proxy-Authenticate` fields as bounded proxy authentication
+  /// challenge metadata without selecting a challenge or generating credentials.
+  pub fn proxy_authenticate(&self) -> error::Result<Option<ProxyAuthenticate>> {
+    let values = self.header_values("proxy-authenticate");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    ProxyAuthenticate::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
@@ -829,6 +874,17 @@ impl Response {
       return Ok(None);
     }
     CacheControl::parse_values(values.into_iter().map(String::as_str)).map(Some)
+  }
+
+  /// Parses bounded `CDN-Cache-Control` response metadata without applying CDN cache policy.
+  pub fn cdn_cache_control(&self) -> error::Result<Option<CdnCacheControl>> {
+    let values = self.header_values("cdn-cache-control");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    CdnCacheControl::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   /// Parses `Clear-Site-Data` response metadata without clearing any client state.
@@ -1179,76 +1235,6 @@ impl RetryAfter {
       Self::HttpDate(http_date) => Some(*http_date),
     }
   }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ContentRange {
-  unit: String,
-  start: Option<u64>,
-  end: Option<u64>,
-  complete_length: Option<u64>,
-}
-
-impl ContentRange {
-  pub fn parse(value: impl AsRef<str>) -> Option<Self> {
-    let value = value.as_ref().trim();
-    let (unit, range_and_length) = value.split_once(' ')?;
-    if unit.is_empty() {
-      return None;
-    }
-
-    let (range, complete_length) = range_and_length.split_once('/')?;
-    let complete_length = parse_complete_length(complete_length)?;
-    if range == "*" {
-      return Some(Self {
-        unit: unit.to_string(),
-        start: None,
-        end: None,
-        complete_length,
-      });
-    }
-
-    let (start, end) = range.split_once('-')?;
-    let start = start.parse::<u64>().ok()?;
-    let end = end.parse::<u64>().ok()?;
-    if start > end {
-      return None;
-    }
-
-    Some(Self {
-      unit: unit.to_string(),
-      start: Some(start),
-      end: Some(end),
-      complete_length,
-    })
-  }
-
-  pub fn unit(&self) -> &str {
-    &self.unit
-  }
-
-  pub fn start(&self) -> Option<u64> {
-    self.start
-  }
-
-  pub fn end(&self) -> Option<u64> {
-    self.end
-  }
-
-  pub fn complete_length(&self) -> Option<u64> {
-    self.complete_length
-  }
-
-  pub fn is_unsatisfied(&self) -> bool {
-    self.start.is_none() && self.end.is_none()
-  }
-}
-
-fn parse_complete_length(value: &str) -> Option<Option<u64>> {
-  if value == "*" {
-    return Some(None);
-  }
-  value.parse::<u64>().ok().map(Some)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

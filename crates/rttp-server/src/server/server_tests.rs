@@ -119,6 +119,73 @@ fn request_access_control_request_headers_parses_preflight_metadata_without_poli
 }
 
 #[test]
+fn request_access_control_request_private_network_parses_preflight_metadata_without_policy() {
+  let absent_raw = "OPTIONS /widgets HTTP/1.1\r\nHost: example.test\r\n\r\n";
+  let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
+  let absent = Request::read_next_from(&mut absent_reader)
+    .expect("absent request should parse")
+    .expect("absent request should be present");
+  assert_eq!(
+    None,
+    absent
+      .access_control_request_private_network()
+      .expect("missing Access-Control-Request-Private-Network should be accepted")
+  );
+
+  let valid_raw = concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Private-Network: true\r\n",
+    "\r\n"
+  );
+  let mut valid_reader = BufReader::new(Cursor::new(valid_raw.as_bytes()));
+  let valid = Request::read_next_from(&mut valid_reader)
+    .expect("valid request should parse")
+    .expect("valid request should be present");
+  assert_eq!(
+    "true",
+    valid
+      .access_control_request_private_network()
+      .expect("Access-Control-Request-Private-Network should parse")
+      .expect("Access-Control-Request-Private-Network should be present")
+      .header_value()
+  );
+
+  let malformed_raw = concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Private-Network: false\r\n",
+    "\r\n"
+  );
+  let mut malformed_reader = BufReader::new(Cursor::new(malformed_raw.as_bytes()));
+  let malformed = Request::read_next_from(&mut malformed_reader)
+    .expect("malformed metadata should not reject the request frame")
+    .expect("malformed request should be present");
+  assert!(malformed.access_control_request_private_network().is_err());
+  assert_eq!(
+    Some("false"),
+    malformed.header("Access-Control-Request-Private-Network")
+  );
+
+  let duplicate_raw = concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Private-Network: true\r\n",
+    "access-control-request-private-network: true\r\n",
+    "\r\n"
+  );
+  let mut duplicate_reader = BufReader::new(Cursor::new(duplicate_raw.as_bytes()));
+  let duplicate = Request::read_next_from(&mut duplicate_reader)
+    .expect("duplicate metadata should not reject the request frame")
+    .expect("duplicate request should be present");
+  assert!(duplicate.access_control_request_private_network().is_err());
+  assert_eq!(
+    Some("true"),
+    duplicate.header("Access-Control-Request-Private-Network")
+  );
+}
+
+#[test]
 fn request_representation_metadata_parses_without_applying_policy() {
   let absent_raw = "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n";
   let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
@@ -2503,6 +2570,75 @@ hello\r\n\
       .expect("clear should parse")
       .expect("clear should be present")
       .is_clear());
+  }
+
+  #[test]
+  fn nel_helpers_reject_raw_crlf_and_serialize_a_single_header_line() {
+    assert!(
+      HttpResponse::ok([])
+        .with_nel("{\"max_age\":1,\"x\":{ \"a\":\r\n1 }}")
+        .is_err(),
+      "raw CR/LF in a NEL field value must be rejected"
+    );
+
+    let response = HttpResponse::ok([])
+      .with_nel(r#"{"report_to":"errors","max_age":60,"x":{"a":[1,2]}}"#)
+      .expect("valid NEL policy should be accepted");
+    let bytes = response.to_bytes();
+    let head = std::str::from_utf8(&bytes).expect("serialized head should be UTF-8");
+    let nel_start = head
+      .find("NEL:")
+      .expect("serialized head should contain a NEL header");
+    let nel_line_end = head[nel_start..]
+      .find("\r\n")
+      .expect("NEL header line should end with CRLF");
+    let nel_line = &head[nel_start..nel_start + nel_line_end];
+    assert!(
+      !nel_line.contains('\r') && !nel_line.contains('\n'),
+      "serialized NEL header line must not contain raw CR or LF: {nel_line:?}"
+    );
+    assert_eq!(
+      "NEL: {\"max_age\":60,\"report_to\":\"errors\",\"x\":{\"a\":[1,2]}}",
+      nel_line
+    );
+
+    let parsed = response
+      .nel()
+      .expect("response NEL should parse")
+      .expect("response NEL should be present");
+    assert_eq!(60, parsed.max_age());
+    assert_eq!(Some("errors"), parsed.report_to());
+  }
+
+  #[test]
+  fn nel_helper_escapes_del_so_the_wire_header_has_no_raw_0x7f() {
+    let response = HttpResponse::ok([])
+      .with_nel(r#"{"report_to":"a\u007fb","max_age":1}"#)
+      .expect("valid NEL policy with a \\u007f escape should be accepted");
+    let bytes = response.to_bytes();
+    assert!(
+      !bytes.contains(&0x7f),
+      "serialized response must not contain a raw DEL byte"
+    );
+
+    let head = std::str::from_utf8(&bytes).expect("serialized head should be UTF-8");
+    let nel_start = head
+      .find("NEL:")
+      .expect("serialized head should contain a NEL header");
+    let nel_line_end = head[nel_start..]
+      .find("\r\n")
+      .expect("NEL header line should end with CRLF");
+    let nel_line = &head[nel_start..nel_start + nel_line_end];
+    assert_eq!(
+      r#"NEL: {"max_age":1,"report_to":"a\u007fb"}"#,
+      nel_line
+    );
+
+    let parsed = response
+      .nel()
+      .expect("response NEL should parse")
+      .expect("response NEL should be present");
+    assert_eq!(Some("a\u{7f}b"), parsed.report_to());
   }
 
   #[test]

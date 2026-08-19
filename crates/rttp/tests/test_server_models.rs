@@ -5,12 +5,12 @@ use rttp::server::{
   HttpAccessControlAllowMethods, HttpAccessControlAllowOrigin, HttpAccessControlRequestHeaders,
   HttpAccessControlRequestMethod, HttpAllowedMethods, HttpAuthorization, HttpByteRange,
   HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata, HttpContentDisposition,
-  HttpContentLanguages, HttpContentSecurityPolicy, HttpContentType, HttpCriticalCh, HttpEntityTag,
-  HttpExpectations, HttpHost, HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome,
-  HttpLinkValues, HttpPermissionsPolicy, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
-  HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
-  HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming,
-  HttpVary,
+  HttpContentLanguages, HttpContentRange, HttpContentSecurityPolicy, HttpContentType,
+  HttpCriticalCh, HttpEntityTag, HttpExpectations, HttpHost, HttpIfNoneMatch, HttpIfRange,
+  HttpIfRangeRequestOutcome, HttpLinkValues, HttpNel, HttpPermissionsPolicy, HttpReferrerPolicy,
+  HttpReportingEndpoints, HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl,
+  HttpRequestTe, HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings,
+  HttpRetryAfter, HttpServerTiming, HttpVary,
 };
 
 #[test]
@@ -151,6 +151,54 @@ fn request_access_control_request_headers_preserves_absent_valid_and_malformed_m
   assert_eq!(
     Some("X-Request Id"),
     malformed.header("Access-Control-Request-Headers")
+  );
+}
+
+#[test]
+fn request_access_control_request_private_network_preserves_absent_valid_and_malformed_metadata() {
+  let absent = parse_request("OPTIONS /widgets HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .access_control_request_private_network()
+      .expect("missing Access-Control-Request-Private-Network should be accepted")
+  );
+
+  let request = parse_request(concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Private-Network: true\r\n",
+    "\r\n"
+  ));
+  let private_network = request
+    .access_control_request_private_network()
+    .expect("Access-Control-Request-Private-Network should parse")
+    .expect("Access-Control-Request-Private-Network should be present");
+  assert_eq!("true", private_network.header_value());
+
+  let malformed = parse_request(concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Private-Network: false\r\n",
+    "\r\n"
+  ));
+  assert!(malformed.access_control_request_private_network().is_err());
+  assert_eq!(
+    Some("false"),
+    malformed.header("Access-Control-Request-Private-Network")
+  );
+
+  let duplicate = parse_request(concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Private-Network: true\r\n",
+    "access-control-request-private-network: true\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.access_control_request_private_network().is_err());
+  assert_eq!(
+    Some("true"),
+    duplicate.header("Access-Control-Request-Private-Network")
   );
 }
 
@@ -612,6 +660,47 @@ fn response_server_timing_helper_validates_formats_and_preserves_raw_headers() {
     .contains("\r\nServer-Timing: db;dur=not-a-number\r\n"));
 
   assert!(HttpServerTiming::parse(format!("db;desc=\"{}\"", "a".repeat(64 * 1024))).is_err());
+}
+
+#[test]
+fn response_nel_helper_validates_replaces_and_preserves_raw_headers() {
+  let response = HttpResponse::ok("body")
+    .header("NEL", r#"{"max_age":1}"#)
+    .header("nel", r#"{"max_age":2}"#)
+    .with_nel(
+      r#"{"report_to":"network-errors","max_age":2592000,"include_subdomains":true,"success_fraction":0.1}"#,
+    )
+    .expect("valid NEL policy should be accepted");
+
+  let nel: HttpNel = response
+    .nel()
+    .expect("attached NEL should parse")
+    .expect("NEL should be present");
+  assert_eq!(2592000, nel.max_age());
+  assert_eq!(Some("network-errors"), nel.report_to());
+  assert_eq!(Some(true), nel.include_subdomains());
+  assert_eq!(Some(0.1), nel.success_fraction());
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert_eq!(1, serialized.matches("\r\nNEL: ").count());
+  assert!(serialized.contains(
+    "\r\nNEL: {\"max_age\":2592000,\"report_to\":\"network-errors\",\"include_subdomains\":true,\"success_fraction\":0.1}\r\n"
+  ));
+
+  assert!(HttpResponse::ok("body").with_nel("{bad").is_err());
+  assert!(HttpResponse::ok("body")
+    .with_nel(r#"{"max_age":"1"}"#)
+    .is_err());
+  let raw = HttpResponse::ok("body").header("NEL", r#"{"max_age":"1"}"#);
+  assert!(raw.nel().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nNEL: {\"max_age\":\"1\"}\r\n"));
+  assert_eq!(
+    None,
+    HttpResponse::ok("body")
+      .nel()
+      .expect("absent NEL should parse")
+  );
 }
 
 fn parse_request(raw: &str) -> HttpRequest {
@@ -3151,6 +3240,16 @@ fn serializes_partial_content_response_for_parsed_byte_range() {
   let response = HttpResponse::partial_content(body, range);
 
   assert_eq!(
+    Some(HttpContentRange::Bytes {
+      start: 3,
+      end: 6,
+      complete_length: Some(10),
+    }),
+    response
+      .content_range()
+      .expect("Content-Range should parse")
+  );
+  assert_eq!(
     concat!(
       "HTTP/1.1 206 Partial Content\r\n",
       "Content-Range: bytes 3-6/10\r\n",
@@ -3167,6 +3266,14 @@ fn serializes_partial_content_response_for_parsed_byte_range() {
 fn serializes_range_not_satisfiable_response() {
   let response = HttpResponse::range_not_satisfiable(10);
 
+  assert_eq!(
+    Some(HttpContentRange::Unsatisfied {
+      complete_length: 10,
+    }),
+    response
+      .content_range()
+      .expect("Content-Range should parse")
+  );
   assert_eq!(
     concat!(
       "HTTP/1.1 416 Range Not Satisfiable\r\n",

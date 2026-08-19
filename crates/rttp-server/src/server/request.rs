@@ -8,6 +8,10 @@ pub use rttp_protocol::access_control_request_method::{
   AccessControlRequestMethod as HttpAccessControlRequestMethod,
   AccessControlRequestMethodParseError as HttpAccessControlRequestMethodParseError,
 };
+pub use rttp_protocol::access_control_request_private_network::{
+  AccessControlRequestPrivateNetwork as HttpAccessControlRequestPrivateNetwork,
+  AccessControlRequestPrivateNetworkParseError as HttpAccessControlRequestPrivateNetworkParseError,
+};
 pub use rttp_protocol::connection::{
   Connection as HttpConnection, ConnectionParseError as HttpConnectionParseError,
 };
@@ -32,11 +36,18 @@ pub use rttp_protocol::signature::{
   SignatureParseError as HttpSignatureParseError,
 };
 pub use rttp_protocol::signature_input::{
-  SignatureInput as HttpSignatureInput, SignatureInputBareItem as HttpSignatureInputBareItem,
+  SignatureCoveredComponent as HttpSignatureCoveredComponent,
+  SignatureDecimal as HttpSignatureDecimal, SignatureInput as HttpSignatureInput,
+  SignatureInputMember as HttpSignatureInputMember,
+  SignatureInputParseError as HttpSignatureInputParseError,
+  SignatureParameter as HttpSignatureParameter,
+  SignatureParameterValue as HttpSignatureParameterValue,
+};
+pub use rttp_protocol::signature_input::{
+  SignatureInputBareItem as HttpSignatureInputBareItem,
   SignatureInputComponent as HttpSignatureInputComponent,
   SignatureInputEntry as HttpSignatureInputEntry,
   SignatureInputParameter as HttpSignatureInputParameter,
-  SignatureInputParseError as HttpSignatureInputParseError,
 };
 pub use rttp_protocol::trailer::{
   Trailer as HttpTrailer, TrailerParseError as HttpTrailerParseError,
@@ -411,6 +422,23 @@ impl Request {
       return Ok(None);
     }
     HttpAccessControlRequestHeaders::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Access-Control-Request-Private-Network` preflight
+  /// metadata without applying Private Network Access or CORS policy.
+  pub fn access_control_request_private_network(
+    &self,
+  ) -> Result<
+    Option<HttpAccessControlRequestPrivateNetwork>,
+    HttpAccessControlRequestPrivateNetworkParseError,
+  > {
+    let values: Vec<&str> = self
+      .headers_named("Access-Control-Request-Private-Network")
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAccessControlRequestPrivateNetwork::parse_values(values).map(Some)
   }
 
   /// Parses received `Host` request authority without applying virtual-host
@@ -2459,6 +2487,30 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpAccessControlRequestHeaders::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Access-Control-Request-Private-Network` preflight
+  /// metadata without applying Private Network Access or CORS policy.
+  pub fn access_control_request_private_network(
+    &self,
+  ) -> Result<
+    Option<HttpAccessControlRequestPrivateNetwork>,
+    HttpAccessControlRequestPrivateNetworkParseError,
+  > {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Access-Control-Request-Private-Network")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAccessControlRequestPrivateNetwork::parse_values(values).map(Some)
   }
 
   /// Parses received `Accept-Encoding` request metadata without enabling
