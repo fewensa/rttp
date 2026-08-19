@@ -8,14 +8,15 @@ pub use rttp_server::server;
 pub use rttp_client::response::{
   AcceptCh, AcceptPatch, AcceptPost, AcceptRanges, AccessControlAllowCredentials,
   AccessControlAllowCredentialsParseError, AltSvc, AltSvcAlternative, AltSvcParameter,
-  AltSvcParseError, ContentLocation, ContentLocationParseError, ContentRange,
-  ContentRangeParseError, CriticalCh, CrossOriginEmbedderPolicy,
+  AltSvcParseError, AuthenticationInfo, AuthenticationInfoParameter, AuthenticationInfoParseError,
+  CdnCacheControl, CdnCacheControlParseError, ContentLocation, ContentLocationParseError,
+  ContentRange, ContentRangeParseError, CriticalCh, CrossOriginEmbedderPolicy,
   CrossOriginEmbedderPolicyParseError, CrossOriginEmbedderPolicyReportOnly,
   CrossOriginEmbedderPolicyReportOnlyParseError, CrossOriginOpenerPolicy,
-  CrossOriginOpenerPolicyParseError, HttpContentLength, Location, LocationParseError, Nel,
-  NelParseError, NelUnknownMember, NoVarySearch, NoVarySearchParams, NoVarySearchParseError,
-  StrictTransportSecurity, StrictTransportSecurityParseError, XContentTypeOptions,
-  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  CrossOriginOpenerPolicyParseError, EntityTag, EntityTagParseError, HttpContentLength, Location,
+  LocationParseError, Nel, NelParseError, NelUnknownMember, NoVarySearch, NoVarySearchParams,
+  NoVarySearchParseError, StrictTransportSecurity, StrictTransportSecurityParseError,
+  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 #[cfg(feature = "client")]
 pub use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};

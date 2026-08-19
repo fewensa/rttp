@@ -9,6 +9,7 @@ use url::Url;
 use crate::error;
 use crate::response::raw_response::RawResponse;
 use crate::response::AltSvc;
+use crate::response::AuthenticationInfo;
 use crate::response::Connection;
 use crate::response::ContentDigest;
 use crate::response::Digest;
@@ -36,6 +37,7 @@ use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::access_control_max_age::AccessControlMaxAge;
 use rttp_protocol::age::Age;
 use rttp_protocol::allow as protocol_allow;
+use rttp_protocol::cdn_cache_control::CdnCacheControl;
 use rttp_protocol::clear_site_data::ClearSiteData;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::content_location::ContentLocation;
@@ -44,6 +46,7 @@ use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
 use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedderPolicyReportOnly;
 use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::cross_origin_resource_policy::CrossOriginResourcePolicy;
+use rttp_protocol::entity_tag::{EntityTag, EntityTagParseError};
 use rttp_protocol::location::Location;
 use rttp_protocol::prefer::PreferenceApplied;
 use rttp_protocol::range::ContentRange;
@@ -329,8 +332,17 @@ impl Response {
     }
   }
 
-  pub fn etag(&self) -> Option<&String> {
+  pub fn etag_value(&self) -> Option<&String> {
     self.header_value("etag")
+  }
+
+  pub fn etag(&self) -> Result<Option<EntityTag>, EntityTagParseError> {
+    let values = self.header_values("etag");
+    match values.as_slice() {
+      [] => Ok(None),
+      [value] => EntityTag::parse(value).map(Some),
+      _ => Err(EntityTagParseError::new("Duplicate ETag header values")),
+    }
   }
 
   pub fn last_modified(&self) -> Option<&String> {
@@ -723,6 +735,18 @@ impl Response {
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
+  /// Parses all `Authentication-Info` fields as bounded auth-param metadata
+  /// without verifying `rspauth` or updating credentials.
+  pub fn authentication_info(&self) -> error::Result<Option<AuthenticationInfo>> {
+    let values = self.header_values("authentication-info");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    AuthenticationInfo::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
   /// Parses all `Proxy-Authenticate` fields as bounded proxy authentication
   /// challenge metadata without selecting a challenge or generating credentials.
   pub fn proxy_authenticate(&self) -> error::Result<Option<ProxyAuthenticate>> {
@@ -875,6 +899,17 @@ impl Response {
       return Ok(None);
     }
     CacheControl::parse_values(values.into_iter().map(String::as_str)).map(Some)
+  }
+
+  /// Parses bounded `CDN-Cache-Control` response metadata without applying CDN cache policy.
+  pub fn cdn_cache_control(&self) -> error::Result<Option<CdnCacheControl>> {
+    let values = self.header_values("cdn-cache-control");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    CdnCacheControl::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   /// Parses `Clear-Site-Data` response metadata without clearing any client state.

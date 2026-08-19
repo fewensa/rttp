@@ -795,6 +795,80 @@ fn request_cache_control_rejects_directive_counts_across_header_fields() {
 }
 
 #[test]
+fn etag_response_helpers_validate_replace_and_parse_singleton_metadata() {
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .etag()
+      .expect("absent ETag should parse")
+  );
+
+  let response = HttpResponse::ok([])
+    .header("ETag", "\"old\"")
+    .header("etag", "W/\"older\"")
+    .with_etag(HttpEntityTag::weak("asset-v7"));
+  assert_eq!(
+    Some(HttpEntityTag::weak("asset-v7")),
+    response.etag().expect("ETag should parse")
+  );
+  assert_eq!(
+    vec![("ETag", "W/\"asset-v7\"")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let strong = HttpResponse::ok([]).header("ETag", "\"asset-v7\"");
+  assert_eq!(
+    Some(HttpEntityTag::strong("asset-v7")),
+    strong.etag().expect("strong ETag should parse")
+  );
+}
+
+#[test]
+fn etag_response_helper_rejects_malformed_duplicate_and_oversized_raw_headers() {
+  for value in ["abc", "W/abc", "\"bad space\"", "\"bad\"value\""] {
+    let response = HttpResponse::ok([]).header("ETag", value);
+    assert!(response.etag().is_err(), "ETag should reject {value:?}");
+    assert_eq!(
+      vec![("ETag", value)],
+      response
+        .headers
+        .iter()
+        .map(|header| (header.name.as_str(), header.value.as_str()))
+        .collect::<Vec<_>>()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("ETag", "\"one\"")
+    .header("etag", "W/\"two\"");
+  assert!(duplicate.etag().is_err());
+  assert_eq!(
+    vec![("ETag", "\"one\""), ("etag", "W/\"two\"")],
+    duplicate
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let oversized = format!("\"{}\"", "a".repeat(64 * 1024));
+  let response = HttpResponse::ok([]).header("ETag", &oversized);
+  assert!(response.etag().is_err());
+  assert_eq!(
+    vec![("ETag", oversized.as_str())],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
 fn access_control_allow_methods_helpers_validate_replace_and_parse_response_metadata() {
   let response = HttpResponse::ok([])
     .header("Access-Control-Allow-Methods", "DELETE")

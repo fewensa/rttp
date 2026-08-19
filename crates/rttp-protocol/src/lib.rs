@@ -24,6 +24,7 @@ pub mod allow;
 pub mod alt_svc;
 pub mod authentication_info;
 pub mod cache_control;
+pub mod cdn_cache_control;
 pub mod clear_site_data;
 pub mod client_hints;
 pub mod connection;
