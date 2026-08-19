@@ -16,7 +16,8 @@ use rttp::server::{
   HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
   HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
   HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
-  HttpSunsetParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpUpgrade,
+  HttpSpeculationRules, HttpSpeculationRulesParseError, HttpSunsetParseError,
+  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpUpgrade,
   HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
 };
 use std::io::Write;
@@ -153,6 +154,13 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::OriginTrialParseError =
     rttp_client::response::OriginTrials::parse("token\r\nX-Injected: 1")
       .expect_err("injected Origin-Trial should be rejected");
+  let speculation_rules: rttp::SpeculationRules =
+    rttp_client::response::SpeculationRules::parse("https://example.test/speculation-rules.json")
+      .expect("Speculation-Rules should parse");
+  let _: rttp::SpeculationRulesParseError = rttp_client::response::SpeculationRules::parse(
+    "https://example.test/rules.json\r\nX-Injected: 1",
+  )
+  .expect_err("injected Speculation-Rules should be rejected");
   let authentication_info: rttp::AuthenticationInfo =
     rttp_client::response::AuthenticationInfo::parse("nextnonce=\"n-2\"")
       .expect("Authentication-Info should parse");
@@ -311,6 +319,11 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(alt_used.port(), Some("8443"));
   assert_eq!(origin_trials.tokens(), ["token-one", "token-two"]);
   assert!(!format!("{origin_trials:?}").contains("token-one"));
+  assert_eq!(
+    speculation_rules.header_value(),
+    "https://example.test/speculation-rules.json"
+  );
+  assert!(!format!("{speculation_rules:?}").contains("speculation-rules.json"));
   assert_eq!(authentication_info.parameter("nextnonce"), Some("n-2"));
   assert_eq!(nel.max_age(), 2592000);
   assert_eq!(nel.report_to(), Some("network-errors"));
@@ -919,6 +932,12 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpOriginTrials::parse_values(["token-one", "token-two"]).expect("Origin-Trial should parse");
   let _: HttpOriginTrialParseError = HttpOriginTrials::parse("token\r\nX-Injected: 1")
     .expect_err("injected Origin-Trial should be rejected");
+  let speculation_rules: HttpSpeculationRules =
+    HttpSpeculationRules::parse("https://example.test/speculation-rules.json")
+      .expect("Speculation-Rules should parse");
+  let _: HttpSpeculationRulesParseError =
+    HttpSpeculationRules::parse("https://example.test/rules.json\r\nX-Injected: 1")
+      .expect_err("injected Speculation-Rules should be rejected");
   let permissions_policy: HttpPermissionsPolicy =
     HttpPermissionsPolicy::parse(r#"geolocation=(self "https://maps.example.test"), camera=()"#)
       .expect("Permissions-Policy should parse");
@@ -1022,6 +1041,11 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(alt_used.port(), Some("8443"));
   assert_eq!(origin_trials.tokens(), ["token-one", "token-two"]);
   assert!(!format!("{origin_trials:?}").contains("token-one"));
+  assert_eq!(
+    speculation_rules.header_value(),
+    "https://example.test/speculation-rules.json"
+  );
+  assert!(!format!("{speculation_rules:?}").contains("speculation-rules.json"));
   assert_eq!(
     permissions_policy.header_value(),
     r#"geolocation=(self "https://maps.example.test"), camera=()"#

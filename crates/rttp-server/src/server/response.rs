@@ -157,6 +157,10 @@ pub use rttp_protocol::service_worker_allowed::{
 pub use rttp_protocol::signature_input::{
   SignatureInput as HttpSignatureInput, SignatureInputParseError as HttpSignatureInputParseError,
 };
+pub use rttp_protocol::speculation_rules::{
+  SpeculationRules as HttpSpeculationRules,
+  SpeculationRulesParseError as HttpSpeculationRulesParseError,
+};
 pub use rttp_protocol::strict_transport_security::{
   StrictTransportSecurity as HttpStrictTransportSecurity,
   StrictTransportSecurityParseError as HttpStrictTransportSecurityParseError,
@@ -1176,6 +1180,22 @@ impl HttpResponse {
       .headers
       .retain(|header| !header.name.eq_ignore_ascii_case("NEL"));
     self.headers.push(HttpHeader::new("NEL", header_value));
+    Ok(self)
+  }
+
+  /// Validates and replaces opaque `Speculation-Rules` response metadata
+  /// without fetching, parsing, or executing speculation rule resources.
+  pub fn with_speculation_rules(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpSpeculationRulesParseError> {
+    let rules = HttpSpeculationRules::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Speculation-Rules"));
+    self
+      .headers
+      .push(HttpHeader::new("Speculation-Rules", rules.header_value()));
     Ok(self)
   }
 
@@ -2671,6 +2691,23 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpNel::parse_values(values).map(Some)
+  }
+
+  /// Parses attached opaque `Speculation-Rules` metadata without fetching,
+  /// parsing, or executing speculation rule resources.
+  pub fn speculation_rules(
+    &self,
+  ) -> Result<Option<HttpSpeculationRules>, HttpSpeculationRulesParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Speculation-Rules"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSpeculationRules::parse_values(values).map(Some)
   }
 
   /// Parses attached `Keep-Alive` metadata without changing connection lifetime.
@@ -4511,6 +4548,7 @@ fn is_sensitive_debug_header(name: &str) -> bool {
     || name.eq_ignore_ascii_case("origin-trial")
     || name.eq_ignore_ascii_case("proxy-authorization")
     || name.eq_ignore_ascii_case("set-cookie")
+    || name.eq_ignore_ascii_case("speculation-rules")
     || name.eq_ignore_ascii_case("traceparent")
     || name.eq_ignore_ascii_case("tracestate")
     || name.eq_ignore_ascii_case("baggage")

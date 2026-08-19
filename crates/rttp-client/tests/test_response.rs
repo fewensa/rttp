@@ -6,8 +6,8 @@ use rttp_client::response::{
   HttpSetCookies, KeepAlive, LinkValues, Location, MementoDatetime, OriginTrials,
   PermissionsPolicy, ProxyAuthenticate, ProxyAuthenticationInfo, ProxyStatus, ProxyStatusBareItem,
   ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ServerTiming, ServiceWorkerAllowed,
-  SignatureInput, StrictTransportSecurity, SupportsLoadingMode, Warning, XContentTypeOptions,
-  XFrameOptions,
+  SignatureInput, SpeculationRules, StrictTransportSecurity, SupportsLoadingMode, Warning,
+  XContentTypeOptions, XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -1317,6 +1317,73 @@ fn test_parse_reporting_endpoints_escaped_duplicate_and_bounded_metadata() {
   assert_eq!(
     Some(&excessive_value),
     excessive.header_value("Reporting-Endpoints")
+  );
+}
+
+#[test]
+fn test_parse_speculation_rules_response_metadata_preserves_singleton_value() {
+  let value = "https://example.test/speculation-rules.json";
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!("HTTP/1.1 200 OK\r\nSpeculation-Rules: {value}\r\nContent-Length: 0\r\n\r\n")
+      .into_bytes(),
+  )
+  .expect("response should parse");
+  let rules = response
+    .speculation_rules()
+    .expect("Speculation-Rules metadata should parse")
+    .expect("Speculation-Rules should be present");
+
+  assert_eq!(rules.as_str(), value);
+  assert_eq!(
+    rules,
+    SpeculationRules::parse(value).expect("canonical Speculation-Rules should parse")
+  );
+  assert_eq!(
+    Some(&value.to_string()),
+    response.header_value("Speculation-Rules")
+  );
+  assert!(!format!("{rules:?}").contains(value));
+}
+
+#[test]
+fn test_parse_speculation_rules_rejects_duplicate_and_unsafe_values_without_hiding_headers() {
+  let duplicate = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Speculation-Rules: https://example.test/one.json\r\n",
+      "speculation-rules: https://example.test/two.json\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("raw response should remain inspectable");
+  assert!(duplicate.speculation_rules().is_err());
+  assert_eq!(
+    vec![
+      "https://example.test/one.json",
+      "https://example.test/two.json"
+    ],
+    duplicate
+      .header_values("Speculation-Rules")
+      .iter()
+      .map(|value| value.as_str())
+      .collect::<Vec<_>>()
+  );
+
+  let oversized_value = "x".repeat(64 * 1024 + 1);
+  let oversized = Response::new(
+    RoUrl::with("https://example.test"),
+    format!("HTTP/1.1 200 OK\r\nSpeculation-Rules: {oversized_value}\r\nContent-Length: 0\r\n\r\n")
+      .into_bytes(),
+  )
+  .expect("raw response should remain inspectable");
+  assert!(oversized.speculation_rules().is_err());
+  assert_eq!(
+    Some(&oversized_value),
+    oversized.header_value("Speculation-Rules")
   );
 }
 
