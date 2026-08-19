@@ -23,6 +23,171 @@ fn client() -> HttpClient {
   HttpClient::new()
 }
 
+#[derive(Debug, PartialEq)]
+struct ObservedCorsPreflight {
+  method: String,
+  origin: Option<String>,
+  raw_request_method: Option<String>,
+  raw_request_headers: Option<String>,
+  request_method: Result<Option<String>, String>,
+  request_headers: Result<Option<Vec<String>>, String>,
+}
+
+fn observe_cors_preflight(request: Request) -> ObservedCorsPreflight {
+  ObservedCorsPreflight {
+    method: request.method().to_string(),
+    origin: request.header("Origin").map(str::to_string),
+    raw_request_method: request
+      .header("Access-Control-Request-Method")
+      .map(str::to_string),
+    raw_request_headers: request
+      .header("Access-Control-Request-Headers")
+      .map(str::to_string),
+    request_method: request
+      .access_control_request_method()
+      .map(|method| method.map(|method| method.method().to_string()))
+      .map_err(|error| error.to_string()),
+    request_headers: request
+      .access_control_request_headers()
+      .map(|headers| headers.map(|headers| headers.field_names().to_vec()))
+      .map_err(|error| error.to_string()),
+  }
+}
+
+#[derive(Debug, PartialEq)]
+struct ObservedSignatureMetadata {
+  raw_signature: Option<String>,
+  raw_signature_input: Option<String>,
+  signature: Result<Option<String>, String>,
+  signature_input: Result<Option<String>, String>,
+}
+
+fn observe_signature_metadata(request: &Request) -> ObservedSignatureMetadata {
+  ObservedSignatureMetadata {
+    raw_signature: request.header("Signature").map(str::to_string),
+    raw_signature_input: request.header("Signature-Input").map(str::to_string),
+    signature: request
+      .signature()
+      .map(|signature| signature.map(|signature| signature.header_value()))
+      .map_err(|error| error.to_string()),
+    signature_input: request
+      .signature_input()
+      .map(|signature_input| signature_input.map(|signature_input| signature_input.header_value()))
+      .map_err(|error| error.to_string()),
+  }
+}
+
+fn spawn_facade_signature_observer() -> (
+  std::net::SocketAddr,
+  mpsc::Receiver<ObservedSignatureMetadata>,
+  thread::JoinHandle<()>,
+) {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind signature facade server");
+  let addr = server.local_addr().expect("signature facade addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = observe_signature_metadata(&request);
+        let mut response = HttpResponse::ok("OK");
+        if let (Ok(Some(signature_input)), Ok(Some(signature))) =
+          (request.signature_input(), request.signature())
+        {
+          response = response
+            .with_signature_input(signature_input.header_value())
+            .expect("echo Signature-Input")
+            .with_signature(signature.header_value())
+            .expect("echo Signature");
+        }
+        observed_tx
+          .send(observed)
+          .expect("send observed signature metadata");
+        response
+      })
+      .expect("serve signature facade request");
+  });
+
+  (addr, observed_rx, handle)
+}
+
+#[derive(Debug, PartialEq)]
+struct ObservedDigestMetadata {
+  raw_want_content_digest: Option<String>,
+  raw_want_repr_digest: Option<String>,
+  want_content_digest: Result<Option<String>, String>,
+  want_repr_digest: Result<Option<String>, String>,
+}
+
+fn observe_digest_metadata(request: &Request) -> ObservedDigestMetadata {
+  ObservedDigestMetadata {
+    raw_want_content_digest: request.header("Want-Content-Digest").map(str::to_string),
+    raw_want_repr_digest: request.header("Want-Repr-Digest").map(str::to_string),
+    want_content_digest: request
+      .want_content_digest()
+      .map(|digest| digest.map(|digest| digest.header_value()))
+      .map_err(|error| error.to_string()),
+    want_repr_digest: request
+      .want_repr_digest()
+      .map(|digest| digest.map(|digest| digest.header_value()))
+      .map_err(|error| error.to_string()),
+  }
+}
+
+fn spawn_facade_digest_observer() -> (
+  std::net::SocketAddr,
+  mpsc::Receiver<ObservedDigestMetadata>,
+  thread::JoinHandle<()>,
+) {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind digest facade server");
+  let addr = server.local_addr().expect("digest facade addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = observe_digest_metadata(&request);
+        let mut response = HttpResponse::ok("OK");
+        if let (Ok(Some(_)), Ok(Some(_))) =
+          (request.want_content_digest(), request.want_repr_digest())
+        {
+          response = response
+            .with_digest("sha-256=:YWJj:, sha-512=:ZGVm:")
+            .expect("attach Content-Digest")
+            .with_repr_digest("sha-256=:Z2hp:")
+            .expect("attach Repr-Digest");
+        }
+        observed_tx
+          .send(observed)
+          .expect("send observed digest metadata");
+        response
+      })
+      .expect("serve digest facade request");
+  });
+
+  (addr, observed_rx, handle)
+}
+
+fn spawn_facade_cors_preflight_observer() -> (
+  std::net::SocketAddr,
+  mpsc::Receiver<ObservedCorsPreflight>,
+  thread::JoinHandle<()>,
+) {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind CORS preflight facade server");
+  let addr = server.local_addr().expect("CORS preflight facade addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send(observe_cors_preflight(request))
+          .expect("send observed CORS preflight metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve CORS preflight facade request");
+  });
+
+  (addr, observed_rx, handle)
+}
+
 fn cache_control_response(values: &[&str]) -> Vec<u8> {
   let mut response = String::from("HTTP/1.1 200 OK\r\n");
   for value in values {
@@ -38,6 +203,17 @@ fn vary_response(values: &[&str]) -> Vec<u8> {
   let mut response = String::from("HTTP/1.1 200 OK\r\n");
   for value in values {
     response.push_str("Vary: ");
+    response.push_str(value);
+    response.push_str("\r\n");
+  }
+  response.push_str("Content-Length: 2\r\n\r\nOK");
+  response.into_bytes()
+}
+
+fn no_vary_search_response(values: &[&str]) -> Vec<u8> {
+  let mut response = String::from("HTTP/1.1 200 OK\r\n");
+  for value in values {
+    response.push_str("No-Vary-Search: ");
     response.push_str(value);
     response.push_str("\r\n");
   }
@@ -535,6 +711,205 @@ fn sync_client_and_server_exchange_access_control_allow_origin_metadata_without_
 }
 
 #[test]
+fn sync_client_and_server_exchange_cross_origin_resource_policy_metadata_without_policy() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind Cross-Origin-Resource-Policy server");
+  let addr = server
+    .local_addr()
+    .expect("Cross-Origin-Resource-Policy server addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        HttpResponse::ok("OK")
+          .with_cross_origin_resource_policy("SAME-ORIGIN")
+          .expect("Cross-Origin-Resource-Policy should be accepted")
+      })
+      .expect("serve Cross-Origin-Resource-Policy response");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/cross-origin-resource-policy"))
+    .emit()
+    .expect("Cross-Origin-Resource-Policy response should parse");
+  assert_eq!(
+    "same-origin",
+    response
+      .cross_origin_resource_policy()
+      .expect("Cross-Origin-Resource-Policy should parse")
+      .expect("Cross-Origin-Resource-Policy should be present")
+      .header_value()
+  );
+  assert_eq!(
+    Some(&"same-origin".to_string()),
+    response.header_value("Cross-Origin-Resource-Policy")
+  );
+  handle
+    .join()
+    .expect("Cross-Origin-Resource-Policy server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_cross_origin_embedder_policy_metadata_without_policy() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind Cross-Origin-Embedder-Policy server");
+  let addr = server
+    .local_addr()
+    .expect("Cross-Origin-Embedder-Policy server addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        HttpResponse::ok("OK")
+          .with_cross_origin_embedder_policy("require-corp; report-to=\"coep\"")
+          .expect("Cross-Origin-Embedder-Policy should be accepted")
+      })
+      .expect("serve Cross-Origin-Embedder-Policy response");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/cross-origin-embedder-policy"))
+    .emit()
+    .expect("Cross-Origin-Embedder-Policy response should parse");
+  assert_eq!(
+    "require-corp",
+    response
+      .cross_origin_embedder_policy()
+      .expect("Cross-Origin-Embedder-Policy should parse")
+      .expect("Cross-Origin-Embedder-Policy should be present")
+      .header_value()
+  );
+  assert_eq!(
+    Some(&"require-corp".to_string()),
+    response.header_value("Cross-Origin-Embedder-Policy")
+  );
+  handle
+    .join()
+    .expect("Cross-Origin-Embedder-Policy server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_cross_origin_opener_policy_metadata_without_policy() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind Cross-Origin-Opener-Policy server");
+  let addr = server
+    .local_addr()
+    .expect("Cross-Origin-Opener-Policy server addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        HttpResponse::ok("OK")
+          .with_cross_origin_opener_policy("noopener-allow-popups; report-to=\"coop\"")
+          .expect("Cross-Origin-Opener-Policy should be accepted")
+      })
+      .expect("serve Cross-Origin-Opener-Policy response");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/cross-origin-opener-policy"))
+    .emit()
+    .expect("Cross-Origin-Opener-Policy response should parse");
+  assert_eq!(
+    "noopener-allow-popups",
+    response
+      .cross_origin_opener_policy()
+      .expect("Cross-Origin-Opener-Policy should parse")
+      .expect("Cross-Origin-Opener-Policy should be present")
+      .header_value()
+  );
+  assert_eq!(
+    Some(&"noopener-allow-popups".to_string()),
+    response.header_value("Cross-Origin-Opener-Policy")
+  );
+  handle
+    .join()
+    .expect("Cross-Origin-Opener-Policy server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_alt_svc_metadata_without_connection_policy() {
+  const HEADERS: &[(&str, &str)] = &[(
+    "Alt-Svc",
+    "h3=\":443\"; ma=3600; persist=1; region=\"us-east\"",
+  )];
+  let (addr, handle) = spawn_metadata_response_server(HEADERS);
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/alt-svc"))
+    .emit()
+    .expect("Alt-Svc response should parse without connection policy");
+  let alt_svc = response
+    .alt_svc()
+    .expect("Alt-Svc should parse")
+    .expect("Alt-Svc should be present");
+  let alternative = &alt_svc.alternatives()[0];
+
+  assert_eq!(200, response.code());
+  assert_eq!("OK", response.body().string().unwrap());
+  assert_eq!(
+    Some(&"h3=\":443\"; ma=3600; persist=1; region=\"us-east\"".to_string()),
+    response.header_value("Alt-Svc")
+  );
+  assert!(!alt_svc.is_clear());
+  assert_eq!(1, alt_svc.len());
+  assert_eq!("h3", alternative.protocol_id());
+  assert_eq!(":443", alternative.authority());
+  assert_eq!(Some(3600), alternative.max_age());
+  assert_eq!(Some(true), alternative.persist());
+  assert_eq!(
+    vec![("region", Some("us-east"))],
+    alternative
+      .parameters()
+      .iter()
+      .map(|parameter| (parameter.name(), parameter.value()))
+      .collect::<Vec<_>>()
+  );
+
+  handle.join().expect("Alt-Svc server thread");
+}
+
+#[test]
+fn sync_client_preserves_duplicate_cross_origin_resource_policy_fields_without_policy() {
+  const HEADERS: &[(&str, &str)] = &[
+    ("Cross-Origin-Resource-Policy", "same-origin"),
+    ("cross-origin-resource-policy", "same-site"),
+  ];
+  let (addr, handle) = spawn_metadata_response_server(HEADERS);
+
+  let response = client()
+    .get()
+    .url(format!(
+      "http://{}/matrix/cross-origin-resource-policy-duplicate",
+      addr
+    ))
+    .emit()
+    .expect("duplicate Cross-Origin-Resource-Policy fields should not prevent response parsing");
+
+  assert_eq!(200, response.code());
+  assert_eq!("OK", response.body().string().unwrap());
+  assert_eq!(
+    Some(&"same-origin".to_string()),
+    response.header_value("Cross-Origin-Resource-Policy")
+  );
+  assert_eq!(
+    vec!["same-origin", "same-site"],
+    response
+      .header_values("Cross-Origin-Resource-Policy")
+      .iter()
+      .map(|value| value.as_str())
+      .collect::<Vec<_>>()
+  );
+  assert!(
+    response.cross_origin_resource_policy().is_err(),
+    "duplicate singleton fields must produce the typed parse error"
+  );
+
+  handle.join().expect("metadata response server thread");
+}
+
+#[test]
 fn sync_client_sec_fetch_metadata_is_observed_by_server_helpers() {
   let server =
     rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Sec-Fetch metadata server");
@@ -585,6 +960,577 @@ fn sync_client_sec_fetch_metadata_is_observed_by_server_helpers() {
   assert!(user.expect("Sec-Fetch-User should parse").is_some());
 
   handle.join().expect("Sec-Fetch metadata server thread");
+}
+
+#[test]
+fn facade_client_and_server_exchange_valid_cors_preflight_metadata_without_policy() {
+  let (addr, observed_rx, handle) = spawn_facade_cors_preflight_observer();
+
+  let response = rttp::Http::client()
+    .options()
+    .url(format!("http://{addr}/matrix/cors-preflight"))
+    .origin("https://spa.example.test")
+    .expect("Origin should be accepted")
+    .access_control_request_method("patch")
+    .expect("Access-Control-Request-Method should be accepted")
+    .access_control_request_headers(["X-Request-Id", "Content-Type"])
+    .expect("Access-Control-Request-Headers should be accepted")
+    .emit()
+    .expect("CORS preflight request should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(None, response.header_value("Access-Control-Allow-Origin"));
+  assert_eq!(
+    ObservedCorsPreflight {
+      method: "OPTIONS".to_string(),
+      origin: Some("https://spa.example.test".to_string()),
+      raw_request_method: Some("PATCH".to_string()),
+      raw_request_headers: Some("x-request-id, content-type".to_string()),
+      request_method: Ok(Some("PATCH".to_string())),
+      request_headers: Ok(Some(vec![
+        "x-request-id".to_string(),
+        "content-type".to_string(),
+      ])),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe valid CORS preflight metadata")
+  );
+  handle
+    .join()
+    .expect("valid CORS preflight facade server thread");
+}
+
+#[test]
+fn facade_server_reports_absent_cors_preflight_metadata_without_policy() {
+  let (addr, observed_rx, handle) = spawn_facade_cors_preflight_observer();
+
+  let response = rttp::Http::client()
+    .options()
+    .url(format!("http://{addr}/matrix/cors-preflight-absent"))
+    .emit()
+    .expect("OPTIONS request without preflight metadata should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    ObservedCorsPreflight {
+      method: "OPTIONS".to_string(),
+      origin: None,
+      raw_request_method: None,
+      raw_request_headers: None,
+      request_method: Ok(None),
+      request_headers: Ok(None),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe absent CORS preflight metadata")
+  );
+  handle
+    .join()
+    .expect("absent CORS preflight facade server thread");
+}
+
+#[test]
+fn facade_server_rejects_malformed_cors_preflight_metadata_without_losing_raw_headers() {
+  let (addr, observed_rx, handle) = spawn_facade_cors_preflight_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect malformed CORS preflight request");
+  stream
+    .write_all(
+      b"OPTIONS /matrix/cors-preflight-malformed HTTP/1.1\r\nHost: example.test\r\nOrigin: https://spa.example.test\r\nAccess-Control-Request-Method: GET, POST\r\nAccess-Control-Request-Headers: X Bad\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write malformed CORS preflight request");
+
+  let observed = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe malformed CORS preflight metadata");
+  assert_eq!("OPTIONS", observed.method);
+  assert_eq!(
+    Some("https://spa.example.test".to_string()),
+    observed.origin
+  );
+  assert_eq!(Some("GET, POST".to_string()), observed.raw_request_method);
+  assert_eq!(Some("X Bad".to_string()), observed.raw_request_headers);
+  assert!(observed.request_method.is_err());
+  assert!(observed.request_headers.is_err());
+
+  handle
+    .join()
+    .expect("malformed CORS preflight facade server thread");
+}
+
+#[test]
+fn facade_server_combines_multi_header_cors_preflight_metadata_without_policy() {
+  let (addr, observed_rx, handle) = spawn_facade_cors_preflight_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect multi-header CORS preflight request");
+  stream
+    .write_all(
+      b"OPTIONS /matrix/cors-preflight-multi-header HTTP/1.1\r\nHost: example.test\r\nOrigin: https://spa.example.test\r\nAccess-Control-Request-Method: patch\r\nAccess-Control-Request-Headers: X-Request-Id\r\naccess-control-request-headers: Content-Type\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write multi-header CORS preflight request");
+
+  let observed = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe multi-header CORS preflight metadata");
+  assert_eq!("OPTIONS", observed.method);
+  assert_eq!(
+    Some("https://spa.example.test".to_string()),
+    observed.origin
+  );
+  assert_eq!(Some("patch".to_string()), observed.raw_request_method);
+  assert_eq!(
+    Some("X-Request-Id".to_string()),
+    observed.raw_request_headers
+  );
+  assert_eq!(Ok(Some("PATCH".to_string())), observed.request_method);
+  assert_eq!(
+    Ok(Some(vec![
+      "x-request-id".to_string(),
+      "content-type".to_string(),
+    ])),
+    observed.request_headers
+  );
+
+  handle
+    .join()
+    .expect("multi-header CORS preflight facade server thread");
+}
+
+#[test]
+fn facade_client_and_server_exchange_valid_signature_metadata_without_policy() {
+  let (addr, observed_rx, handle) = spawn_facade_signature_observer();
+
+  let response = rttp::Http::client()
+    .post()
+    .url(format!("http://{addr}/signed"))
+    .signature_input(r#"sig1=("@method" "@authority" "@path");created=1618884473;keyid="test-key""#)
+    .expect("Signature-Input should be accepted")
+    .signature("sig1=:YWJj:")
+    .expect("Signature should be accepted")
+    .emit()
+    .expect("signed request should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    Some("sig1=:YWJj:"),
+    response
+      .signature()
+      .expect("client Signature should parse")
+      .map(|signature| signature.header_value())
+      .as_deref()
+  );
+  assert_eq!(
+    Some(r#"sig1=("@method" "@authority" "@path");created=1618884473;keyid="test-key""#),
+    response
+      .signature_input()
+      .expect("client Signature-Input should parse")
+      .map(|signature_input| signature_input.header_value())
+      .as_deref()
+  );
+  assert_eq!(
+    ObservedSignatureMetadata {
+      raw_signature: Some("sig1=:YWJj:".to_string()),
+      raw_signature_input: Some(
+        r#"sig1=("@method" "@authority" "@path");created=1618884473;keyid="test-key""#.to_string()
+      ),
+      signature: Ok(Some("sig1=:YWJj:".to_string())),
+      signature_input: Ok(Some(
+        r#"sig1=("@method" "@authority" "@path");created=1618884473;keyid="test-key""#.to_string()
+      )),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe valid signature metadata")
+  );
+  handle.join().expect("valid signature facade server thread");
+}
+
+#[test]
+fn facade_server_reports_absent_signature_metadata_without_policy() {
+  let (addr, observed_rx, handle) = spawn_facade_signature_observer();
+
+  let response = rttp::Http::client()
+    .post()
+    .url(format!("http://{addr}/signed-absent"))
+    .emit()
+    .expect("request without signature metadata should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    None,
+    response
+      .signature()
+      .expect("absent client Signature should parse")
+  );
+  assert_eq!(
+    None,
+    response
+      .signature_input()
+      .expect("absent client Signature-Input should parse")
+  );
+  assert_eq!(
+    ObservedSignatureMetadata {
+      raw_signature: None,
+      raw_signature_input: None,
+      signature: Ok(None),
+      signature_input: Ok(None),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe absent signature metadata")
+  );
+  handle
+    .join()
+    .expect("absent signature facade server thread");
+}
+
+#[test]
+fn facade_server_rejects_malformed_signature_metadata_without_losing_raw_headers() {
+  let (addr, observed_rx, handle) = spawn_facade_signature_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect malformed signature request");
+  stream
+    .write_all(
+      b"POST /signed-malformed HTTP/1.1\r\nHost: 127.0.0.1\r\nSignature: not-a-signature\r\nSignature-Input: not-an-input\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write malformed signature request");
+
+  let observed = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe malformed signature metadata");
+  assert_eq!(Some("not-a-signature".to_string()), observed.raw_signature);
+  assert_eq!(
+    Some("not-an-input".to_string()),
+    observed.raw_signature_input
+  );
+  assert!(observed.signature.is_err());
+  assert!(observed.signature_input.is_err());
+
+  handle
+    .join()
+    .expect("malformed signature facade server thread");
+}
+
+#[test]
+fn facade_server_combines_multi_header_signature_metadata_without_policy() {
+  let (addr, observed_rx, handle) = spawn_facade_signature_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect multi-header signature request");
+  stream
+    .write_all(
+      b"POST /signed-multi-header HTTP/1.1\r\nHost: 127.0.0.1\r\nSignature: sig1=:YWJj:\r\nsignature: sig-b24=:ZGVm:\r\nSignature-Input: sig1=(\"@method\")\r\nsignature-input: sig-b24=(\"@status\")\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write multi-header signature request");
+
+  let observed = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe multi-header signature metadata");
+  assert_eq!(Some("sig1=:YWJj:".to_string()), observed.raw_signature);
+  assert_eq!(
+    Some(r#"sig1=("@method")"#.to_string()),
+    observed.raw_signature_input
+  );
+  assert_eq!(
+    Ok(Some("sig1=:YWJj:, sig-b24=:ZGVm:".to_string())),
+    observed.signature
+  );
+  assert_eq!(
+    Ok(Some(r#"sig1=("@method"), sig-b24=("@status")"#.to_string())),
+    observed.signature_input
+  );
+
+  handle
+    .join()
+    .expect("multi-header signature facade server thread");
+}
+
+#[test]
+fn facade_server_parses_signature_fields_independently_without_policy() {
+  let (addr, observed_rx, handle) = spawn_facade_signature_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect independent signature request");
+  stream
+    .write_all(
+      b"POST /signed-independent HTTP/1.1\r\nHost: 127.0.0.1\r\nSignature-Input: sig1=(\"@method\" \"@authority\" \"@path\");created=1618884473;keyid=\"test-key\"\r\nSignature: not-a-signature\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write independent signature request");
+
+  let observed = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe independent signature metadata");
+  assert_eq!(Some("not-a-signature".to_string()), observed.raw_signature);
+  assert_eq!(
+    Some(
+      r#"sig1=("@method" "@authority" "@path");created=1618884473;keyid="test-key""#.to_string()
+    ),
+    observed.raw_signature_input
+  );
+  assert!(observed.signature.is_err());
+  assert_eq!(
+    Ok(Some(
+      r#"sig1=("@method" "@authority" "@path");created=1618884473;keyid="test-key""#.to_string()
+    )),
+    observed.signature_input
+  );
+
+  handle
+    .join()
+    .expect("independent signature facade server thread");
+}
+
+#[test]
+fn facade_server_parses_signature_input_independently_when_signature_is_valid() {
+  let (addr, observed_rx, handle) = spawn_facade_signature_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect reverse independent signature request");
+  stream
+    .write_all(
+      b"POST /signed-independent-reverse HTTP/1.1\r\nHost: 127.0.0.1\r\nSignature: sig1=:YWJj:\r\nSignature-Input: not-an-input\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write reverse independent signature request");
+
+  let observed = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe reverse independent signature metadata");
+  assert_eq!(Some("sig1=:YWJj:".to_string()), observed.raw_signature);
+  assert_eq!(
+    Some("not-an-input".to_string()),
+    observed.raw_signature_input
+  );
+  assert_eq!(Ok(Some("sig1=:YWJj:".to_string())), observed.signature);
+  assert!(observed.signature_input.is_err());
+
+  handle
+    .join()
+    .expect("reverse independent signature facade server thread");
+}
+
+#[test]
+fn facade_client_and_server_exchange_valid_digest_metadata_without_policy() {
+  let (addr, observed_rx, handle) = spawn_facade_digest_observer();
+
+  let response = rttp::Http::client()
+    .get()
+    .url(format!("http://{addr}/digest"))
+    .want_content_digest("sha-256")
+    .expect("Want-Content-Digest algorithm should be accepted")
+    .want_content_digest_with_q("sha-512", "8")
+    .expect("Want-Content-Digest preference should be accepted")
+    .want_repr_digest("sha-256")
+    .expect("Want-Repr-Digest algorithm should be accepted")
+    .want_repr_digest_with_q("sha-512", "0")
+    .expect("Want-Repr-Digest preference should be accepted")
+    .emit()
+    .expect("digest preference request should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  let content_digest = response
+    .content_digest()
+    .expect("client Content-Digest should parse")
+    .expect("client Content-Digest should be present");
+  assert_eq!(
+    Some(&b"abc"[..]),
+    content_digest.entry("sha-256").map(|entry| entry.value())
+  );
+  assert_eq!(
+    Some(&b"def"[..]),
+    content_digest.entry("sha-512").map(|entry| entry.value())
+  );
+  assert_eq!(
+    "sha-256=:YWJj:, sha-512=:ZGVm:",
+    content_digest.header_value()
+  );
+  let repr_digest = response
+    .repr_digest()
+    .expect("client Repr-Digest should parse")
+    .expect("client Repr-Digest should be present");
+  assert_eq!(
+    Some(&b"ghi"[..]),
+    repr_digest.entry("sha-256").map(|entry| entry.value())
+  );
+  assert_eq!("sha-256=:Z2hp:", repr_digest.header_value());
+  assert_eq!(
+    ObservedDigestMetadata {
+      raw_want_content_digest: Some("sha-256=10, sha-512=8".to_string()),
+      raw_want_repr_digest: Some("sha-256=10, sha-512=0".to_string()),
+      want_content_digest: Ok(Some("sha-256=10, sha-512=8".to_string())),
+      want_repr_digest: Ok(Some("sha-256=10, sha-512=0".to_string())),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe valid digest metadata")
+  );
+  handle.join().expect("valid digest facade server thread");
+}
+
+#[test]
+fn facade_server_reports_absent_digest_metadata_without_policy() {
+  let (addr, observed_rx, handle) = spawn_facade_digest_observer();
+
+  let response = rttp::Http::client()
+    .get()
+    .url(format!("http://{addr}/digest-absent"))
+    .emit()
+    .expect("request without digest metadata should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    None,
+    response
+      .content_digest()
+      .expect("absent client Content-Digest should parse")
+  );
+  assert_eq!(
+    None,
+    response
+      .repr_digest()
+      .expect("absent client Repr-Digest should parse")
+  );
+  assert_eq!(
+    ObservedDigestMetadata {
+      raw_want_content_digest: None,
+      raw_want_repr_digest: None,
+      want_content_digest: Ok(None),
+      want_repr_digest: Ok(None),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe absent digest metadata")
+  );
+  handle.join().expect("absent digest facade server thread");
+}
+
+#[test]
+fn facade_server_rejects_malformed_want_digest_metadata_without_losing_raw_headers() {
+  let (addr, observed_rx, handle) = spawn_facade_digest_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect malformed digest request");
+  stream
+    .write_all(
+      b"GET /digest-malformed HTTP/1.1\r\nHost: 127.0.0.1\r\nWant-Content-Digest: sha-256\r\nWant-Repr-Digest: sha-256=11\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write malformed digest request");
+
+  let observed = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe malformed digest metadata");
+  assert_eq!(
+    Some("sha-256".to_string()),
+    observed.raw_want_content_digest
+  );
+  assert_eq!(
+    Some("sha-256=11".to_string()),
+    observed.raw_want_repr_digest
+  );
+  assert!(observed.want_content_digest.is_err());
+  assert!(observed.want_repr_digest.is_err());
+
+  handle
+    .join()
+    .expect("malformed digest facade server thread");
+}
+
+#[test]
+fn facade_server_combines_multi_header_want_digest_metadata_without_policy() {
+  let (addr, observed_rx, handle) = spawn_facade_digest_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect multi-header digest request");
+  stream
+    .write_all(
+      b"GET /digest-multi-header HTTP/1.1\r\nHost: 127.0.0.1\r\nWant-Content-Digest: sha-256=10\r\nwant-content-digest: sha-512=8\r\nWant-Repr-Digest: sha-256=10\r\nwant-repr-digest: sha-512=0\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write multi-header digest request");
+
+  let observed = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe multi-header digest metadata");
+  assert_eq!(
+    Some("sha-256=10".to_string()),
+    observed.raw_want_content_digest
+  );
+  assert_eq!(
+    Some("sha-256=10".to_string()),
+    observed.raw_want_repr_digest
+  );
+  assert_eq!(
+    Ok(Some("sha-256=10, sha-512=8".to_string())),
+    observed.want_content_digest
+  );
+  assert_eq!(
+    Ok(Some("sha-256=10, sha-512=0".to_string())),
+    observed.want_repr_digest
+  );
+
+  handle
+    .join()
+    .expect("multi-header digest facade server thread");
+}
+
+#[test]
+fn facade_server_parses_want_digest_fields_independently_without_policy() {
+  let (addr, observed_rx, handle) = spawn_facade_digest_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect independent digest request");
+  stream
+    .write_all(
+      b"GET /digest-independent HTTP/1.1\r\nHost: 127.0.0.1\r\nWant-Content-Digest: sha-256=10\r\nWant-Repr-Digest: not-a-digest-preference\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write independent digest request");
+
+  let observed = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe independent digest metadata");
+  assert_eq!(
+    Some("sha-256=10".to_string()),
+    observed.raw_want_content_digest
+  );
+  assert_eq!(
+    Some("not-a-digest-preference".to_string()),
+    observed.raw_want_repr_digest
+  );
+  assert_eq!(
+    Ok(Some("sha-256=10".to_string())),
+    observed.want_content_digest
+  );
+  assert!(observed.want_repr_digest.is_err());
+
+  handle
+    .join()
+    .expect("independent digest facade server thread");
+}
+
+#[test]
+fn facade_server_parses_want_repr_digest_independently_when_want_content_digest_is_malformed() {
+  let (addr, observed_rx, handle) = spawn_facade_digest_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect reverse independent digest request");
+  stream
+    .write_all(
+      b"GET /digest-independent-reverse HTTP/1.1\r\nHost: 127.0.0.1\r\nWant-Content-Digest: not-a-digest-preference\r\nWant-Repr-Digest: sha-256=10\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write reverse independent digest request");
+
+  let observed = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe reverse independent digest metadata");
+  assert_eq!(
+    Some("not-a-digest-preference".to_string()),
+    observed.raw_want_content_digest
+  );
+  assert_eq!(
+    Some("sha-256=10".to_string()),
+    observed.raw_want_repr_digest
+  );
+  assert!(observed.want_content_digest.is_err());
+  assert_eq!(
+    Ok(Some("sha-256=10".to_string())),
+    observed.want_repr_digest
+  );
+
+  handle
+    .join()
+    .expect("reverse independent digest facade server thread");
 }
 
 #[test]
@@ -1995,6 +2941,30 @@ fn sync_client_parses_allow_with_existing_cache_and_retry_metadata_helpers() {
   assert_eq!("", response.body().string().unwrap());
 
   handle.join().expect("raw response server thread");
+}
+
+#[test]
+fn sync_client_parses_no_vary_search_metadata_without_cache_policy() {
+  let raw_response = no_vary_search_response(&["key-order=?0, params", r#"except=("session")"#]);
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/no-vary-search-metadata", addr))
+    .emit()
+    .expect("No-Vary-Search response should parse");
+
+  let no_vary_search = response
+    .no_vary_search()
+    .expect("No-Vary-Search should parse")
+    .expect("No-Vary-Search should be present");
+
+  assert_eq!(Some(false), no_vary_search.key_order());
+  assert!(no_vary_search.ignores_all_query_params());
+  assert_eq!(no_vary_search.except(), ["session"]);
+  assert_eq!("OK", response.body().string().unwrap());
+
+  handle.join().expect("No-Vary-Search server thread");
 }
 
 #[test]

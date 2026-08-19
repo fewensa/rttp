@@ -19,6 +19,605 @@ fn request_cache_control_combines_case_insensitive_header_fields() {
 }
 
 #[test]
+fn request_access_control_request_method_parses_preflight_metadata_without_policy() {
+  let absent_raw = "OPTIONS /widgets HTTP/1.1\r\nHost: example.test\r\n\r\n";
+  let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
+  let absent = Request::read_next_from(&mut absent_reader)
+    .expect("absent request should parse")
+    .expect("absent request should be present");
+  assert_eq!(
+    None,
+    absent
+      .access_control_request_method()
+      .expect("missing Access-Control-Request-Method should be accepted")
+  );
+
+  let valid_raw = concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Method: patch\r\n",
+    "\r\n"
+  );
+  let mut valid_reader = BufReader::new(Cursor::new(valid_raw.as_bytes()));
+  let valid = Request::read_next_from(&mut valid_reader)
+    .expect("valid request should parse")
+    .expect("valid request should be present");
+  assert_eq!(
+    "PATCH",
+    valid
+      .access_control_request_method()
+      .expect("Access-Control-Request-Method should parse")
+      .expect("Access-Control-Request-Method should be present")
+      .method()
+  );
+
+  let malformed_raw = concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Method: GET, POST\r\n",
+    "\r\n"
+  );
+  let mut malformed_reader = BufReader::new(Cursor::new(malformed_raw.as_bytes()));
+  let malformed = Request::read_next_from(&mut malformed_reader)
+    .expect("malformed metadata should not reject the request frame")
+    .expect("malformed request should be present");
+  assert!(malformed.access_control_request_method().is_err());
+  assert_eq!(
+    Some("GET, POST"),
+    malformed.header("Access-Control-Request-Method")
+  );
+}
+
+#[test]
+fn request_access_control_request_headers_parses_preflight_metadata_without_policy() {
+  let absent_raw = "OPTIONS /widgets HTTP/1.1\r\nHost: example.test\r\n\r\n";
+  let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
+  let absent = Request::read_next_from(&mut absent_reader)
+    .expect("absent request should parse")
+    .expect("absent request should be present");
+  assert_eq!(
+    None,
+    absent
+      .access_control_request_headers()
+      .expect("missing Access-Control-Request-Headers should be accepted")
+  );
+
+  let valid_raw = concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Headers: X-Request-Id, Authorization\r\n",
+    "\r\n"
+  );
+  let mut valid_reader = BufReader::new(Cursor::new(valid_raw.as_bytes()));
+  let valid = Request::read_next_from(&mut valid_reader)
+    .expect("valid request should parse")
+    .expect("valid request should be present");
+  assert_eq!(
+    ["x-request-id", "authorization"],
+    valid
+      .access_control_request_headers()
+      .expect("Access-Control-Request-Headers should parse")
+      .expect("Access-Control-Request-Headers should be present")
+      .field_names()
+  );
+
+  let malformed_raw = concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Headers: X-Request Id\r\n",
+    "\r\n"
+  );
+  let mut malformed_reader = BufReader::new(Cursor::new(malformed_raw.as_bytes()));
+  let malformed = Request::read_next_from(&mut malformed_reader)
+    .expect("malformed metadata should not reject the request frame")
+    .expect("malformed request should be present");
+  assert!(malformed.access_control_request_headers().is_err());
+  assert_eq!(
+    Some("X-Request Id"),
+    malformed.header("Access-Control-Request-Headers")
+  );
+}
+
+#[test]
+fn request_representation_metadata_parses_without_applying_policy() {
+  let absent_raw = "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n";
+  let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
+  let absent = Request::read_next_from(&mut absent_reader)
+    .expect("absent request should parse")
+    .expect("absent request should be present");
+  assert_eq!(
+    None,
+    absent
+      .content_type()
+      .expect("missing Content-Type should be accepted")
+  );
+  assert_eq!(
+    None,
+    absent
+      .content_encoding()
+      .expect("missing Content-Encoding should be accepted")
+  );
+  assert_eq!(
+    None,
+    absent
+      .content_language()
+      .expect("missing Content-Language should be accepted")
+  );
+
+  let valid_raw = concat!(
+    "POST /documents HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Content-Type: application/json; charset=utf-8\r\n",
+    "Content-Encoding: gzip, br\r\n",
+    "content-encoding: zstd\r\n",
+    "Content-Language: fr-CA, es-419\r\n",
+    "content-language: en\r\n",
+    "Accept-Encoding: gzip\r\n",
+    "Accept-Language: en\r\n",
+    "Content-Length: 4\r\n",
+    "\r\n",
+    "body"
+  );
+  let mut valid_reader = BufReader::new(Cursor::new(valid_raw.as_bytes()));
+  let valid = Request::read_next_from(&mut valid_reader)
+    .expect("valid request should parse")
+    .expect("valid request should be present");
+
+  let content_type = valid
+    .content_type()
+    .expect("Content-Type should parse")
+    .expect("Content-Type should be present");
+  assert_eq!("application/json", content_type.media_type());
+  assert_eq!(Some("utf-8"), content_type.parameter("charset"));
+
+  let encodings = valid
+    .content_encoding()
+    .expect("Content-Encoding should parse")
+    .expect("Content-Encoding should be present");
+  assert_eq!(vec!["gzip", "br", "zstd"], encodings.codings());
+
+  let languages = valid
+    .content_language()
+    .expect("Content-Language should parse")
+    .expect("Content-Language should be present");
+  assert_eq!(vec!["fr-CA", "es-419", "en"], languages.languages());
+
+  let accept_encoding = valid
+    .accept_encoding()
+    .expect("Accept-Encoding should parse")
+    .expect("Accept-Encoding should be present");
+  assert_eq!("gzip", accept_encoding.codings()[0].coding());
+  let accept_language = valid
+    .accept_language()
+    .expect("Accept-Language should parse")
+    .expect("Accept-Language should be present");
+  assert_eq!(vec!["en"], accept_language.ranges());
+  assert_eq!(b"body", valid.body());
+}
+
+#[test]
+fn request_want_content_digest_parses_preferences_without_selecting_an_algorithm() {
+  let request = Request::from_raw_frame(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Want-Content-Digest: sha-256=10, sha-512=3\r\n",
+    "want-content-digest: unixsum=0\r\n",
+    "Content-Length: 4\r\n",
+    "\r\n",
+    "body"
+  ).as_bytes())
+  .expect("request should parse");
+
+  let digest = request
+    .want_content_digest()
+    .expect("Want-Content-Digest should parse")
+    .expect("Want-Content-Digest should be present");
+  assert_eq!(digest.len(), 3);
+  assert_eq!(digest.entries()[0].algorithm(), "sha-256");
+  assert_eq!(digest.entries()[0].preference(), 10);
+  assert_eq!(digest.entries()[1].algorithm(), "sha-512");
+  assert_eq!(digest.entries()[1].preference(), 3);
+  assert_eq!(digest.entries()[2].algorithm(), "unixsum");
+  assert_eq!(digest.entries()[2].preference(), 0);
+  assert_eq!(b"body", request.body());
+}
+
+#[test]
+fn request_want_content_digest_preserves_absent_and_malformed_headers() {
+  let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .want_content_digest()
+      .expect("absent Want-Content-Digest should be accepted")
+  );
+
+  let malformed = Request::from_raw_frame(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Want-Content-Digest: sha-256\r\n",
+    "Content-Length: 4\r\n",
+    "\r\n",
+    "body"
+  ).as_bytes())
+  .expect("malformed Want-Content-Digest should not reject the request frame");
+  assert!(malformed.want_content_digest().is_err());
+  assert_eq!(Some("sha-256"), malformed.header("Want-Content-Digest"));
+  assert_eq!(b"body", malformed.body());
+}
+
+#[test]
+fn request_connection_exposes_retained_http1_tokens() {
+  let absent_raw = "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n";
+  let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
+  let absent = Request::read_next_from(&mut absent_reader)
+    .expect("absent request should parse")
+    .expect("absent request should be present");
+  assert_eq!(
+    None,
+    absent
+      .connection()
+      .expect("missing Connection should be accepted")
+  );
+
+  let valid_raw = concat!(
+    "GET /download HTTP/1.1\r\n",
+    "Host: files.example.test\r\n",
+    "Connection: close\r\n",
+    "\r\n"
+  );
+  let mut valid_reader = BufReader::new(Cursor::new(valid_raw.as_bytes()));
+  let valid = Request::read_next_from(&mut valid_reader)
+    .expect("valid request should parse")
+    .expect("valid request should be present");
+  let connection = valid
+    .connection()
+    .expect("Connection should parse")
+    .expect("Connection should be present");
+  assert_eq!(vec!["close"], connection.tokens());
+  assert_eq!("close", connection.header_value());
+  assert_eq!(Some("close"), valid.header("Connection"));
+
+  let malformed_raw = concat!(
+    "GET / HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Connection: close,\r\n",
+    "\r\n"
+  );
+  let mut malformed_reader = BufReader::new(Cursor::new(malformed_raw.as_bytes()));
+  let malformed = Request::read_next_from(&mut malformed_reader)
+    .expect("malformed metadata should not reject the request frame")
+    .expect("malformed request should be present");
+  assert!(malformed.connection().is_err());
+  assert_eq!(Some("close,"), malformed.header("Connection"));
+}
+
+#[test]
+fn request_host_parses_http11_authority_without_routing() {
+  let request = Request::from_raw_frame(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test:8443\r\n",
+    "\r\n"
+  ).as_bytes())
+  .expect("request should parse");
+
+  let host = request
+    .host()
+    .expect("Host should parse")
+    .expect("Host should be present");
+  assert_eq!("example.test", host.host());
+  assert_eq!(Some("8443"), host.port());
+  assert_eq!("example.test:8443", host.header_value());
+}
+
+#[test]
+fn request_host_preserves_absent_duplicate_and_malformed_headers() {
+  let absent = Request::from_raw_frame(b"GET / HTTP/1.0\r\n\r\n").expect("request should parse");
+  assert_eq!(
+    None,
+    absent.host().expect("absent Host should be accepted")
+  );
+
+  let duplicate = Request::from_raw_frame(concat!(
+    "GET / HTTP/1.0\r\n",
+    "Host: example.test\r\n",
+    "host: other.test\r\n",
+    "\r\n"
+  ).as_bytes())
+  .expect("duplicate Host should not reject the HTTP/1.0 request frame");
+  assert!(duplicate.host().is_err());
+  assert_eq!(
+    vec!["example.test", "other.test"],
+    duplicate.headers_named("Host").collect::<Vec<_>>()
+  );
+
+  let malformed = Request::from_raw_frame(concat!(
+    "GET / HTTP/1.0\r\n",
+    "Host: example.test/path\r\n",
+    "\r\n"
+  ).as_bytes())
+  .expect("malformed Host should not reject the HTTP/1.0 request frame");
+  assert!(malformed.host().is_err());
+  assert_eq!(Some("example.test/path"), malformed.header("Host"));
+}
+
+#[test]
+fn request_host_parses_http2_authority_mapped_host() {
+  let request = DecodedHttp2RequestHeaders {
+    method: Some("GET".to_string()),
+    target: Some("/asset".to_string()),
+    scheme: Some("https".to_string()),
+    authority: Some("example.test:8443".to_string()),
+    extended_connect_protocol: None,
+    headers: Vec::new(),
+  }
+  .into_request(Vec::new(), Vec::new())
+  .expect("HTTP/2 request should build");
+
+  assert_eq!(Some("example.test:8443"), request.header("host"));
+  let host = request
+    .host()
+    .expect("mapped Host should parse")
+    .expect("mapped Host should be present");
+  assert_eq!("example.test", host.host());
+  assert_eq!(Some("8443"), host.port());
+}
+
+#[test]
+fn request_host_rejects_duplicate_http2_host_and_authority() {
+  let request = DecodedHttp2RequestHeaders {
+    method: Some("GET".to_string()),
+    target: Some("/asset".to_string()),
+    scheme: Some("https".to_string()),
+    authority: Some("example.test".to_string()),
+    extended_connect_protocol: None,
+    headers: vec![("host".to_string(), "other.test".to_string())],
+  }
+  .into_request(Vec::new(), Vec::new())
+  .expect("HTTP/2 request should build");
+
+  assert_eq!(
+    vec!["other.test", "example.test"],
+    request.headers_named("host").collect::<Vec<_>>()
+  );
+  assert!(request.host().is_err());
+}
+
+#[test]
+fn request_transfer_encoding_exposes_validated_chunked_framing() {
+  let absent_raw = "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n";
+  let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
+  let absent = Request::read_next_from(&mut absent_reader)
+    .expect("absent request should parse")
+    .expect("absent request should be present");
+  assert_eq!(
+    None,
+    absent
+      .transfer_encoding()
+      .expect("missing Transfer-Encoding should be accepted")
+  );
+
+  let valid_raw = concat!(
+    "POST /upload HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "\r\n",
+    "5\r\nhello\r\n",
+    "0\r\n\r\n"
+  );
+  let mut valid_reader = BufReader::new(Cursor::new(valid_raw.as_bytes()));
+  let valid = Request::read_next_from(&mut valid_reader)
+    .expect("chunked request framing should parse")
+    .expect("chunked request should be present");
+  let transfer_encoding = valid
+    .transfer_encoding()
+    .expect("Transfer-Encoding should parse")
+    .expect("Transfer-Encoding should be present");
+  assert_eq!(vec!["chunked"], transfer_encoding.codings());
+  assert_eq!("chunked", transfer_encoding.header_value());
+  assert_eq!(Some("chunked"), valid.header("Transfer-Encoding"));
+  assert_eq!(b"hello", valid.body());
+}
+
+#[test]
+fn request_want_repr_digest_parses_preferences_without_selecting_an_algorithm() {
+  let request = Request::from_raw_frame(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Want-Repr-Digest: sha-256=10, sha-512=3\r\n",
+    "want-repr-digest: unixsum=0\r\n",
+    "Content-Length: 4\r\n",
+    "\r\n",
+    "body"
+  ).as_bytes())
+  .expect("request should parse");
+
+  let digest = request
+    .want_repr_digest()
+    .expect("Want-Repr-Digest should parse")
+    .expect("Want-Repr-Digest should be present");
+  assert_eq!(digest.len(), 3);
+  assert_eq!(digest.entries()[0].algorithm(), "sha-256");
+  assert_eq!(digest.entries()[0].preference(), 10);
+  assert_eq!(digest.entries()[1].algorithm(), "sha-512");
+  assert_eq!(digest.entries()[1].preference(), 3);
+  assert_eq!(digest.entries()[2].algorithm(), "unixsum");
+  assert_eq!(digest.entries()[2].preference(), 0);
+  assert_eq!(b"body", request.body());
+}
+
+#[test]
+fn request_want_repr_digest_preserves_absent_and_malformed_headers() {
+  let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .want_repr_digest()
+      .expect("absent Want-Repr-Digest should be accepted")
+  );
+
+  let malformed = Request::from_raw_frame(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Want-Repr-Digest: sha-256\r\n",
+    "Content-Length: 4\r\n",
+    "\r\n",
+    "body"
+  ).as_bytes())
+  .expect("malformed Want-Repr-Digest should not reject the request frame");
+  assert!(malformed.want_repr_digest().is_err());
+  assert_eq!(Some("sha-256"), malformed.header("Want-Repr-Digest"));
+  assert_eq!(b"body", malformed.body());
+}
+
+#[test]
+fn request_representation_metadata_preserves_invalid_headers_and_body() {
+  let duplicate = Request::from_raw_frame(concat!(
+    "POST /documents HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Content-Type: application/json\r\n",
+    "content-type: text/plain\r\n",
+    "Content-Length: 4\r\n",
+    "\r\n",
+    "body"
+  ).as_bytes())
+  .expect("duplicate Content-Type should not reject the request frame");
+  assert!(duplicate.content_type().is_err());
+  assert_eq!(
+    vec!["application/json", "text/plain"],
+    duplicate.headers_named("Content-Type").collect::<Vec<_>>()
+  );
+  assert_eq!(b"body", duplicate.body());
+
+  let malformed = Request::from_raw_frame(concat!(
+    "POST /documents HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Content-Type: text/plain;\r\n",
+    "Content-Encoding: gzip,\r\n",
+    "Content-Language: en,\r\n",
+    "Content-Length: 4\r\n",
+    "\r\n",
+    "body"
+  ).as_bytes())
+  .expect("malformed metadata should not reject the request frame");
+  assert!(malformed.content_type().is_err());
+  assert!(malformed.content_encoding().is_err());
+  assert!(malformed.content_language().is_err());
+  assert_eq!(Some("text/plain;"), malformed.header("Content-Type"));
+  assert_eq!(Some("gzip,"), malformed.header("Content-Encoding"));
+  assert_eq!(Some("en,"), malformed.header("Content-Language"));
+  assert_eq!(b"body", malformed.body());
+
+  let duplicate_members = Request::from_raw_frame(concat!(
+    "POST /documents HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Content-Type: text/plain; charset=utf-8; CHARSET=us-ascii\r\n",
+    "Content-Encoding: gzip\r\n",
+    "content-encoding: GZIP\r\n",
+    "Content-Language: en\r\n",
+    "content-language: EN\r\n",
+    "Content-Length: 4\r\n",
+    "\r\n",
+    "body"
+  ).as_bytes())
+  .expect("duplicate members should not reject the request frame");
+  assert!(duplicate_members.content_type().is_err());
+  assert!(duplicate_members.content_encoding().is_err());
+  assert!(duplicate_members.content_language().is_err());
+  assert_eq!(
+    Some("text/plain; charset=utf-8; CHARSET=us-ascii"),
+    duplicate_members.header("Content-Type")
+  );
+  assert_eq!(
+    vec!["gzip", "GZIP"],
+    duplicate_members
+      .headers_named("Content-Encoding")
+      .collect::<Vec<_>>()
+  );
+  assert_eq!(
+    vec!["en", "EN"],
+    duplicate_members
+      .headers_named("Content-Language")
+      .collect::<Vec<_>>()
+  );
+  assert_eq!(b"body", duplicate_members.body());
+
+  let too_many_parameters = format!(
+    "text/plain{}",
+    (0..33)
+      .map(|index| format!("; p{index}=v"))
+      .collect::<String>()
+  );
+  let too_many_codings = (0..33)
+    .map(|index| format!("x-{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let too_many_languages = (0..33)
+    .map(|index| format!("x-{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let too_many = Request::from_raw_frame(
+    format!(
+      concat!(
+        "POST /documents HTTP/1.1\r\n",
+        "Host: example.test\r\n",
+        "Content-Type: {type}\r\n",
+        "Content-Encoding: {encoding}\r\n",
+        "Content-Language: {language}\r\n",
+        "Content-Length: 4\r\n",
+        "\r\n",
+        "body"
+      ),
+      type = too_many_parameters,
+      encoding = too_many_codings,
+      language = too_many_languages
+    )
+    .as_bytes(),
+  )
+  .expect("over-limit metadata should not reject the request frame");
+  assert!(too_many.content_type().is_err());
+  assert!(too_many.content_encoding().is_err());
+  assert!(too_many.content_language().is_err());
+  assert_eq!(Some(too_many_parameters.as_str()), too_many.header("Content-Type"));
+  assert_eq!(Some(too_many_codings.as_str()), too_many.header("Content-Encoding"));
+  assert_eq!(Some(too_many_languages.as_str()), too_many.header("Content-Language"));
+  assert_eq!(b"body", too_many.body());
+
+  let oversized_type = format!("text/plain; p={}", "a".repeat(64 * 1024));
+  let oversized_encoding = format!("x-{}", "a".repeat(64 * 1024));
+  let oversized_language = format!("x-{}", "a".repeat(64 * 1024));
+  let oversized = Request {
+    method: "POST".to_string(),
+    target: "/documents".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Content-Type".to_string(), oversized_type.clone()),
+      ("Content-Encoding".to_string(), oversized_encoding.clone()),
+      ("Content-Language".to_string(), oversized_language.clone()),
+    ],
+    trailers: Vec::new(),
+    body: b"body".to_vec(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized.content_type().is_err());
+  assert!(oversized.content_encoding().is_err());
+  assert!(oversized.content_language().is_err());
+  assert_eq!(Some(oversized_type.as_str()), oversized.header("Content-Type"));
+  assert_eq!(
+    Some(oversized_encoding.as_str()),
+    oversized.header("Content-Encoding")
+  );
+  assert_eq!(
+    Some(oversized_language.as_str()),
+    oversized.header("Content-Language")
+  );
+  assert_eq!(b"body", oversized.body());
+}
+
+#[test]
 fn request_raw_parser_rejects_folded_and_bare_lf_headers() {
   for raw in [
     b"GET / HTTP/1.1\r\nHost: example.test\r\nX-Test: first\r\n second\r\n\r\n".as_slice(),
@@ -91,6 +690,7 @@ fn request_cache_control_rejects_oversized_values_without_panicking() {
     )],
     trailers: Vec::new(),
     body: Vec::new(),
+    content_length: None,
     extended_connect_protocol: None,
   };
 
@@ -116,6 +716,7 @@ fn request_cache_control_rejects_directive_counts_across_header_fields() {
     ],
     trailers: Vec::new(),
     body: Vec::new(),
+    content_length: None,
     extended_connect_protocol: None,
   };
 
@@ -204,6 +805,890 @@ fn access_control_allow_origin_helpers_validate_replace_and_preserve_raw_metadat
   assert!(duplicate.access_control_allow_origin().is_err());
   assert!(HttpResponse::ok([])
     .with_access_control_allow_origin("x".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
+fn cross_origin_resource_policy_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Cross-Origin-Resource-Policy", "same-site")
+    .header("cross-origin-resource-policy", "cross-origin")
+    .with_cross_origin_resource_policy("SAME-ORIGIN")
+    .expect("Cross-Origin-Resource-Policy should be accepted");
+
+  assert_eq!(
+    "same-origin",
+    response
+      .cross_origin_resource_policy()
+      .expect("Cross-Origin-Resource-Policy should parse")
+      .expect("Cross-Origin-Resource-Policy should be present")
+      .header_value()
+  );
+  assert_eq!(
+    vec![("Cross-Origin-Resource-Policy", "same-origin")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn cross_origin_resource_policy_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::ok([]).header("Cross-Origin-Resource-Policy", "SAME-ORIGIN");
+  assert_eq!(
+    "same-origin",
+    raw
+      .cross_origin_resource_policy()
+      .expect("raw SAME-ORIGIN should parse")
+      .expect("Cross-Origin-Resource-Policy should be present")
+      .header_value()
+  );
+  assert_eq!(
+    Some("SAME-ORIGIN"),
+    raw
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Cross-Origin-Resource-Policy"))
+      .map(|header| header.value.as_str())
+  );
+
+  let malformed = HttpResponse::ok([]).header("Cross-Origin-Resource-Policy", "same origin");
+  assert!(malformed.cross_origin_resource_policy().is_err());
+  assert!(HttpResponse::ok([])
+    .with_cross_origin_resource_policy("same origin")
+    .is_err());
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .cross_origin_resource_policy()
+      .expect("absent Cross-Origin-Resource-Policy should parse")
+  );
+  for value in ["same-origin", "same-site", "cross-origin"] {
+    assert_eq!(
+      value,
+      HttpResponse::ok([])
+        .with_cross_origin_resource_policy(value)
+        .expect("valid Cross-Origin-Resource-Policy should be accepted")
+        .cross_origin_resource_policy()
+        .expect("Cross-Origin-Resource-Policy should parse")
+        .expect("Cross-Origin-Resource-Policy should be present")
+        .header_value()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("Cross-Origin-Resource-Policy", "same-origin")
+    .header("cross-origin-resource-policy", "same-site");
+  assert!(duplicate.cross_origin_resource_policy().is_err());
+  assert!(HttpResponse::ok([])
+    .with_cross_origin_resource_policy("x".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
+fn cross_origin_embedder_policy_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Cross-Origin-Embedder-Policy", "unsafe-none")
+    .header("cross-origin-embedder-policy", "credentialless")
+    .with_cross_origin_embedder_policy(r#"require-corp; report-to="coep""#)
+    .expect("Cross-Origin-Embedder-Policy should be accepted");
+
+  assert_eq!(
+    "require-corp",
+    response
+      .cross_origin_embedder_policy()
+      .expect("Cross-Origin-Embedder-Policy should parse")
+      .expect("Cross-Origin-Embedder-Policy should be present")
+      .header_value()
+  );
+  assert_eq!(
+    vec![("Cross-Origin-Embedder-Policy", "require-corp")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn cross_origin_embedder_policy_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::ok([]).header("Cross-Origin-Embedder-Policy", "require-corp");
+  assert_eq!(
+    "require-corp",
+    raw
+      .cross_origin_embedder_policy()
+      .expect("raw require-corp should parse")
+      .expect("Cross-Origin-Embedder-Policy should be present")
+      .header_value()
+  );
+  assert_eq!(
+    Some("require-corp"),
+    raw
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Cross-Origin-Embedder-Policy"))
+      .map(|header| header.value.as_str())
+  );
+
+  let malformed = HttpResponse::ok([]).header("Cross-Origin-Embedder-Policy", "require corp");
+  assert!(malformed.cross_origin_embedder_policy().is_err());
+  assert!(HttpResponse::ok([])
+    .with_cross_origin_embedder_policy("require corp")
+    .is_err());
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .cross_origin_embedder_policy()
+      .expect("absent Cross-Origin-Embedder-Policy should parse")
+  );
+  for value in ["unsafe-none", "require-corp", "credentialless"] {
+    assert_eq!(
+      value,
+      HttpResponse::ok([])
+        .with_cross_origin_embedder_policy(value)
+        .expect("valid Cross-Origin-Embedder-Policy should be accepted")
+        .cross_origin_embedder_policy()
+        .expect("Cross-Origin-Embedder-Policy should parse")
+        .expect("Cross-Origin-Embedder-Policy should be present")
+        .header_value()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("Cross-Origin-Embedder-Policy", "require-corp")
+    .header("cross-origin-embedder-policy", "credentialless");
+  assert!(duplicate.cross_origin_embedder_policy().is_err());
+  assert!(HttpResponse::ok([])
+    .with_cross_origin_embedder_policy("x".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
+fn cross_origin_embedder_policy_report_only_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Cross-Origin-Embedder-Policy-Report-Only", "unsafe-none")
+    .header("cross-origin-embedder-policy-report-only", "credentialless")
+    .with_cross_origin_embedder_policy_report_only(r#"require-corp; report-to="coep""#)
+    .expect("Cross-Origin-Embedder-Policy-Report-Only should be accepted");
+
+  assert_eq!(
+    "require-corp",
+    response
+      .cross_origin_embedder_policy_report_only()
+      .expect("Cross-Origin-Embedder-Policy-Report-Only should parse")
+      .expect("Cross-Origin-Embedder-Policy-Report-Only should be present")
+      .header_value()
+  );
+  assert_eq!(
+    vec![("Cross-Origin-Embedder-Policy-Report-Only", "require-corp")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn cross_origin_embedder_policy_report_only_helpers_preserve_raw_metadata_and_report_parse_errors()
+{
+  let raw =
+    HttpResponse::ok([]).header("Cross-Origin-Embedder-Policy-Report-Only", "require-corp");
+  assert_eq!(
+    "require-corp",
+    raw
+      .cross_origin_embedder_policy_report_only()
+      .expect("raw require-corp should parse")
+      .expect("Cross-Origin-Embedder-Policy-Report-Only should be present")
+      .header_value()
+  );
+  assert_eq!(
+    Some("require-corp"),
+    raw
+      .headers
+      .iter()
+      .find(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Cross-Origin-Embedder-Policy-Report-Only")
+      })
+      .map(|header| header.value.as_str())
+  );
+
+  let malformed =
+    HttpResponse::ok([]).header("Cross-Origin-Embedder-Policy-Report-Only", "require corp");
+  assert!(malformed.cross_origin_embedder_policy_report_only().is_err());
+  assert!(HttpResponse::ok([])
+    .with_cross_origin_embedder_policy_report_only("require corp")
+    .is_err());
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .cross_origin_embedder_policy_report_only()
+      .expect("absent Cross-Origin-Embedder-Policy-Report-Only should parse")
+  );
+  for value in ["unsafe-none", "require-corp", "credentialless"] {
+    assert_eq!(
+      value,
+      HttpResponse::ok([])
+        .with_cross_origin_embedder_policy_report_only(value)
+        .expect("valid Cross-Origin-Embedder-Policy-Report-Only should be accepted")
+        .cross_origin_embedder_policy_report_only()
+        .expect("Cross-Origin-Embedder-Policy-Report-Only should parse")
+        .expect("Cross-Origin-Embedder-Policy-Report-Only should be present")
+        .header_value()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("Cross-Origin-Embedder-Policy-Report-Only", "require-corp")
+    .header("cross-origin-embedder-policy-report-only", "credentialless");
+  assert!(duplicate.cross_origin_embedder_policy_report_only().is_err());
+  assert!(HttpResponse::ok([])
+    .with_cross_origin_embedder_policy_report_only("x".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
+fn cross_origin_opener_policy_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Cross-Origin-Opener-Policy", "unsafe-none")
+    .header("cross-origin-opener-policy", "same-origin")
+    .with_cross_origin_opener_policy(r#"noopener-allow-popups; report-to="coop""#)
+    .expect("Cross-Origin-Opener-Policy should be accepted");
+
+  assert_eq!(
+    "noopener-allow-popups",
+    response
+      .cross_origin_opener_policy()
+      .expect("Cross-Origin-Opener-Policy should parse")
+      .expect("Cross-Origin-Opener-Policy should be present")
+      .header_value()
+  );
+  assert_eq!(
+    vec![("Cross-Origin-Opener-Policy", "noopener-allow-popups")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn cross_origin_opener_policy_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::ok([]).header("Cross-Origin-Opener-Policy", "same-origin");
+  assert_eq!(
+    "same-origin",
+    raw
+      .cross_origin_opener_policy()
+      .expect("raw same-origin should parse")
+      .expect("Cross-Origin-Opener-Policy should be present")
+      .header_value()
+  );
+  assert_eq!(
+    Some("same-origin"),
+    raw
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Cross-Origin-Opener-Policy"))
+      .map(|header| header.value.as_str())
+  );
+
+  let malformed = HttpResponse::ok([]).header("Cross-Origin-Opener-Policy", "same origin");
+  assert!(malformed.cross_origin_opener_policy().is_err());
+  assert!(HttpResponse::ok([])
+    .with_cross_origin_opener_policy("same origin")
+    .is_err());
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .cross_origin_opener_policy()
+      .expect("absent Cross-Origin-Opener-Policy should parse")
+  );
+  for value in [
+    "unsafe-none",
+    "same-origin-allow-popups",
+    "same-origin",
+    "noopener-allow-popups",
+  ] {
+    assert_eq!(
+      value,
+      HttpResponse::ok([])
+        .with_cross_origin_opener_policy(value)
+        .expect("valid Cross-Origin-Opener-Policy should be accepted")
+        .cross_origin_opener_policy()
+        .expect("Cross-Origin-Opener-Policy should parse")
+        .expect("Cross-Origin-Opener-Policy should be present")
+        .header_value()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("Cross-Origin-Opener-Policy", "same-origin")
+    .header("cross-origin-opener-policy", "noopener-allow-popups");
+  assert!(duplicate.cross_origin_opener_policy().is_err());
+  assert!(HttpResponse::ok([])
+    .with_cross_origin_opener_policy("x".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
+fn strict_transport_security_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Strict-Transport-Security", "max-age=60")
+    .header("strict-transport-security", "max-age=120")
+    .with_strict_transport_security("max-age=31536000; includeSubDomains")
+    .expect("Strict-Transport-Security should be accepted");
+
+  let metadata = response
+    .strict_transport_security()
+    .expect("Strict-Transport-Security should parse")
+    .expect("Strict-Transport-Security should be present");
+  assert_eq!(31536000, metadata.max_age());
+  assert!(metadata.include_sub_domains());
+  assert_eq!(
+    "max-age=31536000; includeSubDomains",
+    metadata.header_value()
+  );
+  assert_eq!(
+    vec![("Strict-Transport-Security", "max-age=31536000; includeSubDomains")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn strict_transport_security_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::ok([]).header("Strict-Transport-Security", "max-age=60");
+  let metadata = raw
+    .strict_transport_security()
+    .expect("raw max-age=60 should parse")
+    .expect("Strict-Transport-Security should be present");
+  assert_eq!(60, metadata.max_age());
+  assert_eq!("max-age=60", metadata.header_value());
+  assert_eq!(
+    Some("max-age=60"),
+    raw
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Strict-Transport-Security"))
+      .map(|header| header.value.as_str())
+  );
+
+  let malformed = HttpResponse::ok([]).header("Strict-Transport-Security", "not hsts");
+  assert!(malformed.strict_transport_security().is_err());
+  assert!(HttpResponse::ok([])
+    .with_strict_transport_security("not hsts")
+    .is_err());
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .strict_transport_security()
+      .expect("absent Strict-Transport-Security should parse")
+  );
+  for value in [
+    "max-age=60",
+    "max-age=0",
+    "max-age=31536000; includeSubDomains; preload",
+  ] {
+    assert_eq!(
+      value,
+      HttpResponse::ok([])
+        .with_strict_transport_security(value)
+        .expect("valid Strict-Transport-Security should be accepted")
+        .strict_transport_security()
+        .expect("Strict-Transport-Security should parse")
+        .expect("Strict-Transport-Security should be present")
+        .header_value()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("Strict-Transport-Security", "max-age=60")
+    .header("strict-transport-security", "max-age=120");
+  assert!(duplicate.strict_transport_security().is_err());
+  assert!(HttpResponse::ok([])
+    .with_strict_transport_security("x".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
+fn x_content_type_options_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("X-Content-Type-Options", "nosniff")
+    .header("x-content-type-options", "nosniff")
+    .with_x_content_type_options("NoSniff")
+    .expect("X-Content-Type-Options should be accepted");
+
+  assert_eq!(
+    "nosniff",
+    response
+      .x_content_type_options()
+      .expect("X-Content-Type-Options should parse")
+      .expect("X-Content-Type-Options should be present")
+      .header_value()
+  );
+  assert_eq!(
+    vec![("X-Content-Type-Options", "nosniff")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn x_content_type_options_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::ok([]).header("X-Content-Type-Options", "NoSniff");
+  assert_eq!(
+    "nosniff",
+    raw
+      .x_content_type_options()
+      .expect("raw NoSniff should parse")
+      .expect("X-Content-Type-Options should be present")
+      .header_value()
+  );
+  assert_eq!(
+    Some("NoSniff"),
+    raw
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("X-Content-Type-Options"))
+      .map(|header| header.value.as_str())
+  );
+
+  let malformed = HttpResponse::ok([]).header("X-Content-Type-Options", "same-origin");
+  assert!(malformed.x_content_type_options().is_err());
+  assert!(HttpResponse::ok([])
+    .with_x_content_type_options("same-origin")
+    .is_err());
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .x_content_type_options()
+      .expect("absent X-Content-Type-Options should parse")
+  );
+  for value in ["nosniff", "NoSniff", "NOSNIFF"] {
+    assert_eq!(
+      "nosniff",
+      HttpResponse::ok([])
+        .with_x_content_type_options(value)
+        .expect("valid X-Content-Type-Options should be accepted")
+        .x_content_type_options()
+        .expect("X-Content-Type-Options should parse")
+        .expect("X-Content-Type-Options should be present")
+        .header_value()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("X-Content-Type-Options", "nosniff")
+    .header("x-content-type-options", "nosniff");
+  assert!(duplicate.x_content_type_options().is_err());
+  assert!(HttpResponse::ok([])
+    .with_x_content_type_options("x".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
+fn x_frame_options_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("X-Frame-Options", "deny")
+    .header("x-frame-options", "SAMEORIGIN")
+    .with_x_frame_options("DENY")
+    .expect("X-Frame-Options should be accepted");
+
+  assert_eq!(
+    "DENY",
+    response
+      .x_frame_options()
+      .expect("X-Frame-Options should parse")
+      .expect("X-Frame-Options should be present")
+      .header_value()
+  );
+  assert_eq!(
+    vec![("X-Frame-Options", "DENY")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn x_frame_options_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::ok([]).header("X-Frame-Options", "sameorigin");
+  assert_eq!(
+    "SAMEORIGIN",
+    raw
+      .x_frame_options()
+      .expect("raw sameorigin should parse")
+      .expect("X-Frame-Options should be present")
+      .header_value()
+  );
+  assert_eq!(
+    Some("sameorigin"),
+    raw
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("X-Frame-Options"))
+      .map(|header| header.value.as_str())
+  );
+
+  let malformed =
+    HttpResponse::ok([]).header("X-Frame-Options", "ALLOW-FROM https://example.test");
+  assert!(malformed.x_frame_options().is_err());
+  assert!(HttpResponse::ok([])
+    .with_x_frame_options("ALLOW-FROM https://example.test")
+    .is_err());
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .x_frame_options()
+      .expect("absent X-Frame-Options should parse")
+  );
+  for value in ["DENY", "deny", "SAMEORIGIN", "sameorigin"] {
+    assert_eq!(
+      value.to_ascii_uppercase(),
+      HttpResponse::ok([])
+        .with_x_frame_options(value)
+        .expect("valid X-Frame-Options should be accepted")
+        .x_frame_options()
+        .expect("X-Frame-Options should parse")
+        .expect("X-Frame-Options should be present")
+        .header_value()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("X-Frame-Options", "DENY")
+    .header("x-frame-options", "SAMEORIGIN");
+  assert!(duplicate.x_frame_options().is_err());
+  assert!(HttpResponse::ok([])
+    .with_x_frame_options("x".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
+fn authentication_info_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Authentication-Info", "qop=auth")
+    .header("authentication-info", r#"rspauth="abc""#)
+    .with_authentication_info(
+      r#"nextnonce="6629fae49393a05397450978507c4ef1", qop=auth, rspauth="6629fae49393a05397450978507c4ef1", cnonce="0a4f113b", nc=00000001"#,
+    )
+    .expect("Authentication-Info should be accepted");
+
+  let metadata = response
+    .authentication_info()
+    .expect("Authentication-Info should parse")
+    .expect("Authentication-Info should be present");
+  assert_eq!(
+    Some("6629fae49393a05397450978507c4ef1"),
+    metadata.parameter("nextnonce")
+  );
+  assert_eq!(Some("auth"), metadata.parameter("qop"));
+  assert_eq!(
+    Some("6629fae49393a05397450978507c4ef1"),
+    metadata.parameter("rspauth")
+  );
+  assert_eq!(Some("00000001"), metadata.parameter("nc"));
+  assert_eq!(
+    "nextnonce=6629fae49393a05397450978507c4ef1, qop=auth, rspauth=6629fae49393a05397450978507c4ef1, cnonce=0a4f113b, nc=00000001",
+    metadata.header_value()
+  );
+  assert_eq!(
+    vec![(
+      "Authentication-Info",
+      "nextnonce=6629fae49393a05397450978507c4ef1, qop=auth, rspauth=6629fae49393a05397450978507c4ef1, cnonce=0a4f113b, nc=00000001",
+    )],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn authentication_info_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::ok([]).header("Authentication-Info", r#"nextnonce="abc""#);
+  let metadata = raw
+    .authentication_info()
+    .expect("raw nextnonce should parse")
+    .expect("Authentication-Info should be present");
+  assert_eq!(Some("abc"), metadata.parameter("nextnonce"));
+  assert_eq!("nextnonce=abc", metadata.header_value());
+  assert_eq!(
+    Some(r#"nextnonce="abc""#),
+    raw
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Authentication-Info"))
+      .map(|header| header.value.as_str())
+  );
+
+  let malformed = HttpResponse::ok([]).header("Authentication-Info", "nextnonce");
+  assert!(malformed.authentication_info().is_err());
+  assert!(HttpResponse::ok([])
+    .with_authentication_info("nextnonce")
+    .is_err());
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .authentication_info()
+      .expect("absent Authentication-Info should parse")
+  );
+  for (input, canonical) in [
+    ("qop=auth", "qop=auth"),
+    (
+      r#"nextnonce="6629fae49393a05397450978507c4ef1", qop=auth"#,
+      "nextnonce=6629fae49393a05397450978507c4ef1, qop=auth",
+    ),
+    (r#"msg="say \"hi\"""#, r#"msg="say \"hi\"""#),
+  ] {
+    assert_eq!(
+      canonical,
+      HttpResponse::ok([])
+        .with_authentication_info(input)
+        .expect("valid Authentication-Info should be accepted")
+        .authentication_info()
+        .expect("Authentication-Info should parse")
+        .expect("Authentication-Info should be present")
+        .header_value()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("Authentication-Info", "qop=auth")
+    .header("authentication-info", "QOP=auth");
+  assert!(duplicate.authentication_info().is_err());
+  assert!(HttpResponse::ok([])
+    .with_authentication_info("x".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
+fn signature_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Signature", "sig1=:YWJj:")
+    .header("signature", "sig-b24=:ZGVm:")
+    .header(
+      "Signature-Input",
+      r#"sig1=("@method")"#,
+    )
+    .header("signature-input", r#"sig-b24=("@status")"#)
+    .with_signature("sig1=:YWJj:")
+    .expect("Signature should be accepted")
+    .with_signature_input(r#"sig1=("@method" "@path");created=1618884473;keyid="test-key""#)
+    .expect("Signature-Input should be accepted");
+
+  let signature = response
+    .signature()
+    .expect("Signature should parse")
+    .expect("Signature should be present");
+  let signature_input = response
+    .signature_input()
+    .expect("Signature-Input should parse")
+    .expect("Signature-Input should be present");
+  assert_eq!(signature.header_value(), "sig1=:YWJj:");
+  assert_eq!(
+    signature_input.header_value(),
+    r#"sig1=("@method" "@path");created=1618884473;keyid="test-key""#
+  );
+  assert_eq!(
+    vec![
+      ("Signature", "sig1=:YWJj:"),
+      (
+        "Signature-Input",
+        r#"sig1=("@method" "@path");created=1618884473;keyid="test-key""#,
+      ),
+    ],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn signature_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::ok([])
+    .header("Signature", "sig1=:YWJj:")
+    .header(
+      "Signature-Input",
+      r#"sig1=("@method");created=1618884473"#,
+    );
+  let signature = raw
+    .signature()
+    .expect("raw Signature should parse")
+    .expect("Signature should be present");
+  let signature_input = raw
+    .signature_input()
+    .expect("raw Signature-Input should parse")
+    .expect("Signature-Input should be present");
+  assert_eq!("sig1=:YWJj:", signature.header_value());
+  assert_eq!(
+    r#"sig1=("@method");created=1618884473"#,
+    signature_input.header_value()
+  );
+  assert_eq!(
+    Some("sig1=:YWJj:"),
+    raw
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Signature"))
+      .map(|header| header.value.as_str())
+  );
+  assert_eq!(
+    Some(r#"sig1=("@method");created=1618884473"#),
+    raw
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Signature-Input"))
+      .map(|header| header.value.as_str())
+  );
+
+  let malformed = HttpResponse::ok([])
+    .header("Signature", "not-a-signature")
+    .header("Signature-Input", "not-an-input");
+  assert!(malformed.signature().is_err());
+  assert!(malformed.signature_input().is_err());
+  assert_eq!(
+    Some("not-a-signature"),
+    malformed
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Signature"))
+      .map(|header| header.value.as_str())
+  );
+  assert!(HttpResponse::ok([])
+    .with_signature("not-a-signature")
+    .is_err());
+  assert!(HttpResponse::ok([])
+    .with_signature_input("not-an-input")
+    .is_err());
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .signature()
+      .expect("absent Signature should parse")
+  );
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .signature_input()
+      .expect("absent Signature-Input should parse")
+  );
+}
+
+#[test]
+fn proxy_authentication_info_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Proxy-Authentication-Info", "qop=auth")
+    .header("proxy-authentication-info", r#"rspauth="abc""#)
+    .with_proxy_authentication_info(
+      r#"nextnonce="6629fae49393a05397450978507c4ef1", qop=auth, rspauth="6629fae49393a05397450978507c4ef1", cnonce="0a4f113b", nc=00000001"#,
+    )
+    .expect("Proxy-Authentication-Info should be accepted");
+
+  let metadata = response
+    .proxy_authentication_info()
+    .expect("Proxy-Authentication-Info should parse")
+    .expect("Proxy-Authentication-Info should be present");
+  assert_eq!(
+    Some("6629fae49393a05397450978507c4ef1"),
+    metadata.parameter("nextnonce")
+  );
+  assert_eq!(Some("auth"), metadata.parameter("qop"));
+  assert_eq!(
+    Some("6629fae49393a05397450978507c4ef1"),
+    metadata.parameter("rspauth")
+  );
+  assert_eq!(Some("00000001"), metadata.parameter("nc"));
+  assert_eq!(
+    "nextnonce=6629fae49393a05397450978507c4ef1, qop=auth, rspauth=6629fae49393a05397450978507c4ef1, cnonce=0a4f113b, nc=00000001",
+    metadata.header_value()
+  );
+  assert_eq!(
+    vec![(
+      "Proxy-Authentication-Info",
+      "nextnonce=6629fae49393a05397450978507c4ef1, qop=auth, rspauth=6629fae49393a05397450978507c4ef1, cnonce=0a4f113b, nc=00000001",
+    )],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn proxy_authentication_info_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw =
+    HttpResponse::ok([]).header("Proxy-Authentication-Info", r#"nextnonce="abc""#);
+  let metadata = raw
+    .proxy_authentication_info()
+    .expect("raw nextnonce should parse")
+    .expect("Proxy-Authentication-Info should be present");
+  assert_eq!(Some("abc"), metadata.parameter("nextnonce"));
+  assert_eq!("nextnonce=abc", metadata.header_value());
+  assert_eq!(
+    Some(r#"nextnonce="abc""#),
+    raw
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Proxy-Authentication-Info"))
+      .map(|header| header.value.as_str())
+  );
+
+  let malformed = HttpResponse::ok([]).header("Proxy-Authentication-Info", "nextnonce");
+  assert!(malformed.proxy_authentication_info().is_err());
+  assert!(HttpResponse::ok([])
+    .with_proxy_authentication_info("nextnonce")
+    .is_err());
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .proxy_authentication_info()
+      .expect("absent Proxy-Authentication-Info should parse")
+  );
+  for (input, canonical) in [
+    ("qop=auth", "qop=auth"),
+    (
+      r#"nextnonce="6629fae49393a05397450978507c4ef1", qop=auth"#,
+      "nextnonce=6629fae49393a05397450978507c4ef1, qop=auth",
+    ),
+    (r#"msg="say \"hi\"""#, r#"msg="say \"hi\"""#),
+  ] {
+    assert_eq!(
+      canonical,
+      HttpResponse::ok([])
+        .with_proxy_authentication_info(input)
+        .expect("valid Proxy-Authentication-Info should be accepted")
+        .proxy_authentication_info()
+        .expect("Proxy-Authentication-Info should parse")
+        .expect("Proxy-Authentication-Info should be present")
+        .header_value()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("Proxy-Authentication-Info", "qop=auth")
+    .header("proxy-authentication-info", "QOP=auth");
+  assert!(duplicate.proxy_authentication_info().is_err());
+  assert!(HttpResponse::ok([])
+    .with_proxy_authentication_info("x".repeat(64 * 1024 + 1))
     .is_err());
 }
 
@@ -535,6 +2020,24 @@ fn request_exposes_bounded_range_and_conditional_metadata() {
     assert_eq!("POST", request.method());
     assert_eq!("/upload", request.target());
     assert_eq!(b"hello", request.body());
+    let content_length = request
+      .content_length()
+      .expect("matching fixed length should be retained");
+    assert_eq!(5, content_length.len());
+  }
+
+  #[test]
+  fn read_next_from_omits_content_length_metadata_when_header_is_absent() {
+    let raw = "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n";
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+
+    let request = Request::read_next_from(&mut reader)
+      .expect("request should parse")
+      .expect("request should be present");
+
+    assert_eq!("GET", request.method());
+    assert_eq!(b"", request.body());
+    assert_eq!(None, request.content_length());
   }
 
   #[test]
@@ -1000,4 +2503,128 @@ hello\r\n\
       .expect("clear should parse")
       .expect("clear should be present")
       .is_clear());
+  }
+
+  #[test]
+  fn keep_alive_helpers_combine_fields_preserve_extensions_and_build_responses() {
+    let combined = HttpResponse::ok([])
+      .header("Keep-Alive", "timeout=5")
+      .header("Keep-Alive", "max=100, vendor=1");
+    let keep_alive = combined
+      .keep_alive()
+      .expect("Keep-Alive should parse")
+      .expect("Keep-Alive should be present");
+
+    assert_eq!(Some(5), keep_alive.timeout());
+    assert_eq!(Some(100), keep_alive.max());
+    assert_eq!(1, keep_alive.extensions().len());
+    assert_eq!("vendor", keep_alive.extensions()[0].name());
+    assert_eq!("1", keep_alive.extensions()[0].value());
+    assert_eq!(
+      "timeout=5, max=100, vendor=1",
+      keep_alive.header_value(),
+      "recognized parameters are emitted before preserved extensions"
+    );
+
+    let built = HttpResponse::ok([])
+      .with_keep_alive("timeout=5, max=100, vendor=1")
+      .expect("Keep-Alive should be accepted");
+    assert_eq!(
+      vec![("Keep-Alive", "timeout=5, max=100, vendor=1")],
+      built
+        .headers
+        .iter()
+        .map(|header| (header.name.as_str(), header.value.as_str()))
+        .collect::<Vec<_>>()
+    );
+    let parsed = built
+      .keep_alive()
+      .expect("built Keep-Alive should parse")
+      .expect("built Keep-Alive should be present");
+    assert_eq!(Some(5), parsed.timeout());
+    assert_eq!(Some(100), parsed.max());
+    assert_eq!("vendor", parsed.extensions()[0].name());
+
+    let replaced = HttpResponse::ok([])
+      .header("Keep-Alive", "timeout=1")
+      .with_keep_alive("max=2")
+      .expect("replacement should be accepted");
+    assert_eq!(
+      vec![("Keep-Alive", "max=2")],
+      replaced
+        .headers
+        .iter()
+        .map(|header| (header.name.as_str(), header.value.as_str()))
+        .collect::<Vec<_>>()
+    );
+    let replaced_parsed = replaced
+      .keep_alive()
+      .expect("replaced Keep-Alive should parse")
+      .expect("replaced Keep-Alive should be present");
+    assert_eq!(None, replaced_parsed.timeout());
+    assert_eq!(Some(2), replaced_parsed.max());
+    assert_eq!(
+      "max=2",
+      HttpKeepAlive::parse("max=2")
+        .expect("max-only should parse")
+        .header_value()
+    );
+  }
+
+  #[test]
+  fn keep_alive_helpers_return_none_when_absent() {
+    assert_eq!(
+      None,
+      HttpResponse::ok([])
+        .keep_alive()
+        .expect("absent Keep-Alive should parse")
+    );
+  }
+
+  #[test]
+  fn keep_alive_rejects_malformed_duplicate_and_bounds_without_hiding_headers() {
+    for value in [
+      "timeout=abc",
+      "timeout=5, timeout=6",
+      "timeout=5, max=100, max=200",
+      "timeout=18446744073709551616",
+      "",
+    ] {
+      let response = HttpResponse::ok([]).header("Keep-Alive", value);
+      assert!(response.keep_alive().is_err(), "should reject {value:?}");
+      assert_eq!(
+        Some(value),
+        response
+          .headers
+          .iter()
+          .find(|header| header.name.eq_ignore_ascii_case("Keep-Alive"))
+          .map(|header| header.value.as_str())
+      );
+    }
+
+    let oversized = "x".repeat(64 * 1024 + 1);
+    let oversized_response = HttpResponse::ok([]).header("Keep-Alive", oversized.as_str());
+    assert!(oversized_response.keep_alive().is_err());
+    assert_eq!(
+      Some(oversized.as_str()),
+      oversized_response
+        .headers
+        .iter()
+        .find(|header| header.name.eq_ignore_ascii_case("Keep-Alive"))
+        .map(|header| header.value.as_str())
+    );
+    assert!(HttpKeepAlive::parse(
+      (0..257)
+        .map(|index| {
+          if index % 2 == 0 {
+            "timeout=1".to_string()
+          } else {
+            "max=2".to_string()
+          }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+    )
+    .is_err());
+    assert!(HttpResponse::ok([]).with_keep_alive("timeout=abc").is_err());
   }

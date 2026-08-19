@@ -22,9 +22,10 @@ use crate::connection::connection::{
   MAX_PROXY_CONNECT_INFORMATIONAL_RESPONSES,
 };
 use crate::connection::connection_reader::{
-  is_skippable_informational_status, parse_informational_response, response_body_kind,
-  response_connection_reusable, response_connection_should_close, response_headers,
-  response_status_code, validate_response_trailer_header, ResponseBodyKind, ResponseParts,
+  content_length_from_response_body_kind, is_skippable_informational_status,
+  parse_informational_response, response_body_kind, response_connection_reusable,
+  response_connection_should_close, response_headers, response_status_code,
+  validate_response_trailer_header, ResponseBodyKind, ResponseParts,
   MAX_CHUNKED_RESPONSE_LINE_BYTES, MAX_RESPONSE_HEAD_BYTES,
 };
 use crate::error;
@@ -170,6 +171,7 @@ impl<'a, S: AsyncRead + Unpin + ?Sized> AsyncStreamingResponse<'a, S> {
       binary,
       trailers: self.body.trailers().clone(),
       informational_responses: Vec::new(),
+      content_length: content_length_from_response_body_kind(&self.body.kind),
       connection_reusable,
       close_connection,
     })
@@ -380,22 +382,26 @@ impl<'a> AsyncConnection<'a> {
         parts.binary,
         parts.trailers,
         parts.informational_responses,
+        parts.content_length,
         self.conn.config().max_buffered_response_body_bytes(),
       )?;
       let config = self.conn.config().clone();
 
       if response.is_redirect() {
-        let Some(location) = response.location() else {
+        if response.header_value("location").is_none() {
           self.conn.closed_set(close_connection);
           return Ok(response);
-        };
+        }
         if config.auto_redirect() {
+          let location = response
+            .header_value("location")
+            .expect("Location header presence checked before redirect");
           let count = self.conn.count();
           if count > config.max_redirect() {
             return Err(error::too_many_redirects(url));
           }
 
-          let redirect_url = self.conn.resolve_redirect_url(&url, location)?;
+          let redirect_url = self.conn.resolve_redirect_url(&url, location.as_str())?;
           if url.scheme() == "https"
             && redirect_url.url.scheme() == "http"
             && !config.allow_https_to_http_redirects()
@@ -449,6 +455,7 @@ impl<'a> AsyncConnection<'a> {
       parts.binary,
       parts.trailers,
       parts.informational_responses,
+      parts.content_length,
       self.conn.config().max_buffered_response_body_bytes(),
     )?;
     self.conn.closed_set(close_connection);

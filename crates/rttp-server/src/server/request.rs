@@ -1,5 +1,17 @@
 use super::*;
 
+pub use rttp_protocol::access_control_request_headers::{
+  AccessControlRequestHeaders as HttpAccessControlRequestHeaders,
+  AccessControlRequestHeadersParseError as HttpAccessControlRequestHeadersParseError,
+};
+pub use rttp_protocol::access_control_request_method::{
+  AccessControlRequestMethod as HttpAccessControlRequestMethod,
+  AccessControlRequestMethodParseError as HttpAccessControlRequestMethodParseError,
+};
+pub use rttp_protocol::connection::{
+  Connection as HttpConnection, ConnectionParseError as HttpConnectionParseError,
+};
+pub use rttp_protocol::content_length::HttpContentLength;
 pub use rttp_protocol::cookie::{HttpCookiePair, HttpCookieParseError, HttpCookies};
 pub use rttp_protocol::fetch_metadata::{
   FetchMetadataParseError as HttpFetchMetadataParseError, SecFetchDest, SecFetchMode, SecFetchSite,
@@ -9,13 +21,37 @@ pub use rttp_protocol::forwarded::{
   Forwarded as HttpForwarded, ForwardedElement as HttpForwardedElement,
   ForwardedParameter as HttpForwardedParameter, ForwardedParseError as HttpForwardedParseError,
 };
+pub use rttp_protocol::host::{Host as HttpHost, HostParseError as HttpHostParseError};
 pub use rttp_protocol::prefer::{
   Prefer as HttpRequestPreferences, PreferParseError as HttpPreferParseError,
   Preference as HttpPreference, PreferenceKind as HttpPreferenceKind,
   PreferenceParameter as HttpPreferenceParameter,
 };
+pub use rttp_protocol::signature::{
+  Signature as HttpSignature, SignatureEntry as HttpSignatureEntry,
+  SignatureParseError as HttpSignatureParseError,
+};
+pub use rttp_protocol::signature_input::{
+  SignatureInput as HttpSignatureInput, SignatureInputBareItem as HttpSignatureInputBareItem,
+  SignatureInputComponent as HttpSignatureInputComponent,
+  SignatureInputEntry as HttpSignatureInputEntry,
+  SignatureInputParameter as HttpSignatureInputParameter,
+  SignatureInputParseError as HttpSignatureInputParseError,
+};
 pub use rttp_protocol::trailer::{
   Trailer as HttpTrailer, TrailerParseError as HttpTrailerParseError,
+};
+pub use rttp_protocol::transfer_encoding::{
+  TransferEncoding as HttpTransferEncoding,
+  TransferEncodingParseError as HttpTransferEncodingParseError,
+};
+pub use rttp_protocol::want_content_digest::{
+  WantContentDigest as HttpWantContentDigest, WantContentDigestEntry as HttpWantContentDigestEntry,
+  WantContentDigestParseError as HttpWantContentDigestParseError,
+};
+pub use rttp_protocol::want_repr_digest::{
+  WantReprDigest as HttpWantReprDigest, WantReprDigestEntry as HttpWantReprDigestEntry,
+  WantReprDigestParseError as HttpWantReprDigestParseError,
 };
 
 pub(crate) const MAX_REQUEST_HEAD_BYTES: usize = 64 * 1024;
@@ -213,6 +249,7 @@ pub struct Request {
   pub(crate) headers: Vec<(String, String)>,
   pub(crate) trailers: Vec<(String, String)>,
   pub(crate) body: Vec<u8>,
+  pub(crate) content_length: Option<HttpContentLength>,
   pub(crate) extended_connect_protocol: Option<String>,
 }
 
@@ -255,6 +292,10 @@ impl Request {
 
   pub fn body(&self) -> &[u8] {
     &self.body
+  }
+
+  pub fn content_length(&self) -> Option<HttpContentLength> {
+    self.content_length
   }
 
   pub fn closes_connection(&self) -> bool {
@@ -343,6 +384,41 @@ impl Request {
     )
   }
 
+  /// Parses received `Access-Control-Request-Method` preflight metadata
+  /// without applying CORS policy.
+  pub fn access_control_request_method(
+    &self,
+  ) -> Result<Option<HttpAccessControlRequestMethod>, HttpAccessControlRequestMethodParseError> {
+    let values: Vec<&str> = self
+      .headers_named("Access-Control-Request-Method")
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAccessControlRequestMethod::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Access-Control-Request-Headers` preflight metadata
+  /// without applying CORS policy.
+  pub fn access_control_request_headers(
+    &self,
+  ) -> Result<Option<HttpAccessControlRequestHeaders>, HttpAccessControlRequestHeadersParseError>
+  {
+    let values: Vec<&str> = self
+      .headers_named("Access-Control-Request-Headers")
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAccessControlRequestHeaders::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Host` request authority without applying virtual-host
+  /// routing or scheme defaults.
+  pub fn host(&self) -> Result<Option<HttpHost>, HttpHostParseError> {
+    parse_host_values(self.headers_named("Host"))
+  }
+
   /// Parses exactly one bounded `Authorization` field as opaque typed
   /// metadata. Duplicate fields are rejected to avoid ambiguous credentials.
   pub fn authorization(&self) -> Result<Option<HttpAuthorization>, HttpAuthorizationParseError> {
@@ -410,6 +486,75 @@ impl Request {
     HttpRequestAcceptEncodings::parse_values(values).map(Some)
   }
 
+  /// Parses received `Want-Content-Digest` request metadata without selecting
+  /// an algorithm or computing a content digest.
+  pub fn want_content_digest(
+    &self,
+  ) -> Result<Option<HttpWantContentDigest>, HttpWantContentDigestParseError> {
+    parse_want_content_digest_values(self.headers_named("Want-Content-Digest"))
+  }
+
+  /// Parses received `Want-Repr-Digest` request metadata without selecting an
+  /// algorithm or computing a representation digest.
+  pub fn want_repr_digest(
+    &self,
+  ) -> Result<Option<HttpWantReprDigest>, HttpWantReprDigestParseError> {
+    parse_want_repr_digest_values(self.headers_named("Want-Repr-Digest"))
+  }
+
+  /// Parses received RFC 9421 `Signature` request metadata without verifying
+  /// signatures or looking up keys.
+  pub fn signature(&self) -> Result<Option<HttpSignature>, HttpSignatureParseError> {
+    parse_signature_values(self.headers_named("Signature"))
+  }
+
+  /// Parses received RFC 9421 `Signature-Input` request metadata without
+  /// verifying signatures, looking up keys, or applying cryptographic policy.
+  pub fn signature_input(
+    &self,
+  ) -> Result<Option<HttpSignatureInput>, HttpSignatureInputParseError> {
+    parse_signature_input_values(self.headers_named("Signature-Input"))
+  }
+
+  /// Parses received `Content-Type` representation metadata without sniffing
+  /// MIME types or interpreting the body.
+  pub fn content_type(&self) -> Result<Option<HttpContentType>, HttpContentTypeParseError> {
+    let mut values = self.headers_named("Content-Type");
+    let Some(value) = values.next() else {
+      return Ok(None);
+    };
+    if values.next().is_some() {
+      return Err(HttpContentTypeParseError::new(
+        "multiple Content-Type headers",
+      ));
+    }
+    HttpContentType::parse(value).map(Some)
+  }
+
+  /// Parses received `Content-Encoding` representation metadata without
+  /// decoding or negotiating content codings.
+  pub fn content_encoding(
+    &self,
+  ) -> Result<Option<HttpResponseContentEncodings>, HttpContentEncodingParseError> {
+    let values: Vec<&str> = self.headers_named("Content-Encoding").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpResponseContentEncodings::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Content-Language` representation metadata without
+  /// selecting a locale or negotiating a variant.
+  pub fn content_language(
+    &self,
+  ) -> Result<Option<HttpContentLanguages>, HttpContentLanguageParseError> {
+    let values: Vec<&str> = self.headers_named("Content-Language").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpContentLanguages::parse_values(values).map(Some)
+  }
+
   /// Parses received `Expect` request metadata without automatically sending
   /// an interim response or rejecting unsupported expectations.
   pub fn expectations(&self) -> Result<Option<HttpExpectations>, HttpExpectParseError> {
@@ -428,6 +573,28 @@ impl Request {
       return Ok(None);
     }
     HttpRequestTe::parse_values(values).map(Some)
+  }
+
+  /// Parses retained HTTP/1 `Connection` header metadata without changing
+  /// keep-alive, hop-by-hop stripping, or HTTP/2 rejection.
+  pub fn connection(&self) -> Result<Option<HttpConnection>, HttpConnectionParseError> {
+    let values: Vec<&str> = self.headers_named("Connection").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpConnection::parse_values(values).map(Some)
+  }
+
+  /// Parses retained `Transfer-Encoding` framing metadata without changing
+  /// request body framing or HTTP/2 decode.
+  pub fn transfer_encoding(
+    &self,
+  ) -> Result<Option<HttpTransferEncoding>, HttpTransferEncodingParseError> {
+    let values: Vec<&str> = self.headers_named("Transfer-Encoding").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpTransferEncoding::parse_values(values).map(Some)
   }
 
   /// Parses announced trailer field names without waiting for or exposing a
@@ -533,7 +700,10 @@ impl Request {
       {
         let message_len = checked_request_message_len(header_end, content_length)?;
         if raw.len() == message_len {
-          return Ok(Some(Self::from_raw_frame(&raw)?));
+          return Ok(Some(Self::from_raw_frame_with_body_kind(
+            &raw,
+            RequestBodyKind::ContentLength(content_length),
+          )?));
         }
       }
 
@@ -582,7 +752,12 @@ impl Request {
           let parsed_body_kind = request_body_kind(&head.headers)?;
           match parsed_body_kind {
             RequestBodyKind::ContentLength(0) => {
-              return Ok(Some(Self::from_head_and_body(head, Vec::new())));
+              return Ok(Some(Self::from_head_body_kind_and_trailers(
+                head,
+                Vec::new(),
+                parsed_body_kind,
+                Vec::new(),
+              )));
             }
             RequestBodyKind::ContentLength(content_length) => {
               reject_oversized_request_body(content_length, max_request_body_bytes)?;
@@ -590,9 +765,10 @@ impl Request {
             }
             RequestBodyKind::Chunked => {
               let chunked = read_chunked_request_body(reader, max_request_body_bytes)?;
-              return Ok(Some(Self::from_head_body_and_trailers(
+              return Ok(Some(Self::from_head_body_kind_and_trailers(
                 head,
                 chunked.body,
+                parsed_body_kind,
                 chunked.trailers,
               )));
             }
@@ -615,10 +791,15 @@ impl Request {
   where
     S: Read + Write,
   {
-    Self::read_next_head_and_body_kind_from_with_continue(reader, max_request_body_bytes)?
-      .map_or(Ok(None), |(head, kind)| {
-        Ok(Some((Self::from_head_and_body(head, Vec::new()), kind)))
-      })
+    Self::read_next_head_and_body_kind_from_with_continue(reader, max_request_body_bytes)?.map_or(
+      Ok(None),
+      |(head, kind)| {
+        Ok(Some((
+          Self::from_head_body_kind_and_trailers(head, Vec::new(), kind, Vec::new()),
+          kind,
+        )))
+      },
+    )
   }
 
   pub(crate) fn read_next_head_and_body_kind_from_with_continue<S>(
@@ -684,7 +865,10 @@ impl Request {
       {
         let message_len = checked_request_message_len(header_end, content_length)?;
         if raw.len() == message_len {
-          return Ok(Some(Self::from_raw_frame(&raw)?));
+          return Ok(Some(Self::from_raw_frame_with_body_kind(
+            &raw,
+            RequestBodyKind::ContentLength(content_length),
+          )?));
         }
       }
 
@@ -730,9 +914,15 @@ impl Request {
           raw.extend_from_slice(&available[..take]);
           reader.consume(take);
           let head = parse_request_head(&raw[..header_end])?;
-          match request_body_kind(&head.headers)? {
+          let parsed_body_kind = request_body_kind(&head.headers)?;
+          match parsed_body_kind {
             RequestBodyKind::ContentLength(0) => {
-              return Ok(Some(Self::from_head_and_body(head, Vec::new())));
+              return Ok(Some(Self::from_head_body_kind_and_trailers(
+                head,
+                Vec::new(),
+                parsed_body_kind,
+                Vec::new(),
+              )));
             }
             RequestBodyKind::ContentLength(content_length) => {
               reject_oversized_request_body(content_length, MAX_REQUEST_BODY_BYTES)?;
@@ -740,9 +930,10 @@ impl Request {
             }
             RequestBodyKind::Chunked => {
               let chunked = read_chunked_request_body(reader, MAX_REQUEST_BODY_BYTES)?;
-              return Ok(Some(Self::from_head_body_and_trailers(
+              return Ok(Some(Self::from_head_body_kind_and_trailers(
                 head,
                 chunked.body,
+                parsed_body_kind,
                 chunked.trailers,
               )));
             }
@@ -758,13 +949,32 @@ impl Request {
     }
   }
 
+  #[cfg(test)]
   pub(crate) fn from_raw_frame(raw: &[u8]) -> io::Result<Self> {
     let header_end = find_header_end(raw)
       .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))?;
     reject_oversized_request_head(header_end + 4)?;
     let head = parse_request_head(&raw[..header_end])?;
+    let body_kind = request_body_kind(&head.headers)?;
+    Self::from_raw_frame_with_head_and_body_kind(raw, header_end, head, body_kind)
+  }
+
+  fn from_raw_frame_with_body_kind(raw: &[u8], body_kind: RequestBodyKind) -> io::Result<Self> {
+    let header_end = find_header_end(raw)
+      .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP request"))?;
+    reject_oversized_request_head(header_end + 4)?;
+    let head = parse_request_head(&raw[..header_end])?;
+    Self::from_raw_frame_with_head_and_body_kind(raw, header_end, head, body_kind)
+  }
+
+  fn from_raw_frame_with_head_and_body_kind(
+    raw: &[u8],
+    header_end: usize,
+    head: RequestHead,
+    body_kind: RequestBodyKind,
+  ) -> io::Result<Self> {
     let body_start = header_end + 4;
-    let body = match request_body_kind(&head.headers)? {
+    let body = match body_kind {
       RequestBodyKind::ContentLength(content_length) => {
         reject_oversized_request_body(content_length, MAX_REQUEST_BODY_BYTES)?;
         let body_end = checked_request_message_len(header_end, content_length)?;
@@ -786,6 +996,9 @@ impl Request {
       }
     };
 
+    let content_length =
+      content_length_from_request_body_kind_and_headers(body_kind, &head.headers);
+
     Ok(Self {
       method: head.method,
       target: head.target,
@@ -793,19 +1006,20 @@ impl Request {
       headers: head.headers,
       trailers: Vec::new(),
       body,
+      content_length,
       extended_connect_protocol: None,
     })
   }
 
-  pub(crate) fn from_head_and_body(head: RequestHead, body: Vec<u8>) -> Self {
-    Self::from_head_body_and_trailers(head, body, Vec::new())
-  }
-
-  pub(crate) fn from_head_body_and_trailers(
+  pub(crate) fn from_head_body_kind_and_trailers(
     head: RequestHead,
     body: Vec<u8>,
+    body_kind: RequestBodyKind,
     trailers: Vec<(String, String)>,
   ) -> Self {
+    let content_length =
+      content_length_from_request_body_kind_and_headers(body_kind, &head.headers);
+
     Self {
       method: head.method,
       target: head.target,
@@ -813,8 +1027,26 @@ impl Request {
       headers: head.headers,
       trailers,
       body,
+      content_length,
       extended_connect_protocol: None,
     }
+  }
+}
+
+fn content_length_from_request_body_kind_and_headers(
+  kind: RequestBodyKind,
+  headers: &[(String, String)],
+) -> Option<HttpContentLength> {
+  match kind {
+    RequestBodyKind::ContentLength(length)
+      if headers
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case("Content-Length")) =>
+    {
+      Some(HttpContentLength::new(length))
+    }
+    RequestBodyKind::Chunked => None,
+    RequestBodyKind::ContentLength(_) => None,
   }
 }
 
@@ -981,6 +1213,56 @@ fn parse_prefer_values<'a>(
     return Ok(None);
   }
   HttpRequestPreferences::parse_values(values).map(Some)
+}
+
+fn parse_want_content_digest_values<'a>(
+  values: impl IntoIterator<Item = &'a str>,
+) -> Result<Option<HttpWantContentDigest>, HttpWantContentDigestParseError> {
+  let values: Vec<&str> = values.into_iter().collect();
+  if values.is_empty() {
+    return Ok(None);
+  }
+  HttpWantContentDigest::parse_values(values).map(Some)
+}
+
+fn parse_want_repr_digest_values<'a>(
+  values: impl IntoIterator<Item = &'a str>,
+) -> Result<Option<HttpWantReprDigest>, HttpWantReprDigestParseError> {
+  let values: Vec<&str> = values.into_iter().collect();
+  if values.is_empty() {
+    return Ok(None);
+  }
+  HttpWantReprDigest::parse_values(values).map(Some)
+}
+
+fn parse_signature_values<'a>(
+  values: impl IntoIterator<Item = &'a str>,
+) -> Result<Option<HttpSignature>, HttpSignatureParseError> {
+  let values: Vec<&str> = values.into_iter().collect();
+  if values.is_empty() {
+    return Ok(None);
+  }
+  HttpSignature::parse_values(values).map(Some)
+}
+
+fn parse_signature_input_values<'a>(
+  values: impl IntoIterator<Item = &'a str>,
+) -> Result<Option<HttpSignatureInput>, HttpSignatureInputParseError> {
+  let values: Vec<&str> = values.into_iter().collect();
+  if values.is_empty() {
+    return Ok(None);
+  }
+  HttpSignatureInput::parse_values(values).map(Some)
+}
+
+fn parse_host_values<'a>(
+  values: impl IntoIterator<Item = &'a str>,
+) -> Result<Option<HttpHost>, HttpHostParseError> {
+  let values: Vec<&str> = values.into_iter().collect();
+  if values.is_empty() {
+    return Ok(None);
+  }
+  HttpHost::parse_values(values).map(Some)
 }
 impl HttpMaxForwardsParseError {
   fn new(message: impl Into<String>) -> Self {
@@ -1891,6 +2173,7 @@ pub struct HttpRequest {
   pub(crate) version: String,
   pub(crate) headers: Vec<HttpHeader>,
   pub(crate) body: Vec<u8>,
+  pub(crate) content_length: Option<HttpContentLength>,
 }
 
 impl HttpRequest {
@@ -1906,7 +2189,10 @@ impl HttpRequest {
       None => (head.target.clone(), None),
     };
 
-    let body = match request_body_kind(&head.headers).map_err(HttpParseError::from_io_error)? {
+    let body_kind = request_body_kind(&head.headers).map_err(HttpParseError::from_io_error)?;
+    let content_length =
+      content_length_from_request_body_kind_and_headers(body_kind, &head.headers);
+    let body = match body_kind {
       RequestBodyKind::ContentLength(content_length) => {
         reject_oversized_request_body(content_length, MAX_REQUEST_BODY_BYTES)
           .map_err(HttpParseError::from_io_error)?;
@@ -1942,6 +2228,7 @@ impl HttpRequest {
       version: head.version,
       headers,
       body,
+      content_length,
     })
   }
 
@@ -1971,6 +2258,10 @@ impl HttpRequest {
       .iter()
       .find(|header| header.name.eq_ignore_ascii_case(name.as_ref()))
       .map(|header| header.value.as_str())
+  }
+
+  pub fn content_length(&self) -> Option<HttpContentLength> {
+    self.content_length
   }
 
   /// Parses one bounded `Range` field against an entity length without
@@ -2032,6 +2323,18 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpRequestCacheControl::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Host` request authority without applying virtual-host
+  /// routing or scheme defaults.
+  pub fn host(&self) -> Result<Option<HttpHost>, HttpHostParseError> {
+    parse_host_values(
+      self
+        .headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("Host"))
+        .map(|header| header.value.as_str()),
+    )
   }
 
   /// Parses exactly one bounded `Authorization` field as opaque typed
@@ -2114,6 +2417,50 @@ impl HttpRequest {
         .map(|header| header.value.as_str()),
     )
   }
+
+  /// Parses received `Access-Control-Request-Method` preflight metadata
+  /// without applying CORS policy.
+  pub fn access_control_request_method(
+    &self,
+  ) -> Result<Option<HttpAccessControlRequestMethod>, HttpAccessControlRequestMethodParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Access-Control-Request-Method")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAccessControlRequestMethod::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Access-Control-Request-Headers` preflight metadata
+  /// without applying CORS policy.
+  pub fn access_control_request_headers(
+    &self,
+  ) -> Result<Option<HttpAccessControlRequestHeaders>, HttpAccessControlRequestHeadersParseError>
+  {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Access-Control-Request-Headers")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAccessControlRequestHeaders::parse_values(values).map(Some)
+  }
+
   /// Parses received `Accept-Encoding` request metadata without enabling
   /// automatic compression, decompression, or content negotiation.
   pub fn accept_encoding(
@@ -2129,6 +2476,113 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpRequestAcceptEncodings::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Want-Content-Digest` request metadata without selecting
+  /// an algorithm or computing a content digest.
+  pub fn want_content_digest(
+    &self,
+  ) -> Result<Option<HttpWantContentDigest>, HttpWantContentDigestParseError> {
+    parse_want_content_digest_values(
+      self
+        .headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("Want-Content-Digest"))
+        .map(|header| header.value.as_str()),
+    )
+  }
+
+  /// Parses received `Want-Repr-Digest` request metadata without selecting an
+  /// algorithm or computing a representation digest.
+  pub fn want_repr_digest(
+    &self,
+  ) -> Result<Option<HttpWantReprDigest>, HttpWantReprDigestParseError> {
+    parse_want_repr_digest_values(
+      self
+        .headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("Want-Repr-Digest"))
+        .map(|header| header.value.as_str()),
+    )
+  }
+
+  /// Parses received RFC 9421 `Signature` request metadata without verifying
+  /// signatures or looking up keys.
+  pub fn signature(&self) -> Result<Option<HttpSignature>, HttpSignatureParseError> {
+    parse_signature_values(
+      self
+        .headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("Signature"))
+        .map(|header| header.value.as_str()),
+    )
+  }
+
+  /// Parses received RFC 9421 `Signature-Input` request metadata without
+  /// verifying signatures, looking up keys, or applying cryptographic policy.
+  pub fn signature_input(
+    &self,
+  ) -> Result<Option<HttpSignatureInput>, HttpSignatureInputParseError> {
+    parse_signature_input_values(
+      self
+        .headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("Signature-Input"))
+        .map(|header| header.value.as_str()),
+    )
+  }
+
+  /// Parses received `Content-Type` representation metadata without sniffing
+  /// MIME types or interpreting the body.
+  pub fn content_type(&self) -> Result<Option<HttpContentType>, HttpContentTypeParseError> {
+    let mut values = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Content-Type"))
+      .map(|header| header.value.as_str());
+    let Some(value) = values.next() else {
+      return Ok(None);
+    };
+    if values.next().is_some() {
+      return Err(HttpContentTypeParseError::new(
+        "multiple Content-Type headers",
+      ));
+    }
+    HttpContentType::parse(value).map(Some)
+  }
+
+  /// Parses received `Content-Encoding` representation metadata without
+  /// decoding or negotiating content codings.
+  pub fn content_encoding(
+    &self,
+  ) -> Result<Option<HttpResponseContentEncodings>, HttpContentEncodingParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Content-Encoding"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpResponseContentEncodings::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Content-Language` representation metadata without
+  /// selecting a locale or negotiating a variant.
+  pub fn content_language(
+    &self,
+  ) -> Result<Option<HttpContentLanguages>, HttpContentLanguageParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Content-Language"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpContentLanguages::parse_values(values).map(Some)
   }
 
   /// Parses received `Expect` request metadata without automatically sending
@@ -2159,6 +2613,38 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpRequestTe::parse_values(values).map(Some)
+  }
+
+  /// Parses retained HTTP/1 `Connection` header metadata without changing
+  /// keep-alive, hop-by-hop stripping, or HTTP/2 rejection.
+  pub fn connection(&self) -> Result<Option<HttpConnection>, HttpConnectionParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Connection"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpConnection::parse_values(values).map(Some)
+  }
+
+  /// Parses retained `Transfer-Encoding` framing metadata without changing
+  /// request body framing or HTTP/2 decode.
+  pub fn transfer_encoding(
+    &self,
+  ) -> Result<Option<HttpTransferEncoding>, HttpTransferEncodingParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Transfer-Encoding"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpTransferEncoding::parse_values(values).map(Some)
   }
 
   /// Parses announced trailer field names without waiting for or exposing a

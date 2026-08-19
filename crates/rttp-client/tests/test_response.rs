@@ -1,7 +1,9 @@
 use rttp_client::response::{
   AltSvc, AuthenticationInfo, ContentDisposition, ContentEncoding, ContentLocation, ContentType,
-  CrossOriginResourcePolicy, Digest, HttpClearSiteData, HttpSetCookies, LinkValues, ReferrerPolicy,
-  ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
+  CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy,
+  CrossOriginResourcePolicy, HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues, Location,
+  ProxyAuthenticationInfo, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
+  StrictTransportSecurity, Warning, XContentTypeOptions, XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -161,6 +163,263 @@ fn referrer_policy_metadata_is_absent_without_a_header() {
 }
 
 #[test]
+fn strict_transport_security_metadata_parses_flags_without_applying_policy() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Strict-Transport-Security: max-age=31536000; includeSubDomains; preload\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let metadata = response
+    .strict_transport_security()
+    .expect("Strict-Transport-Security should parse")
+    .expect("Strict-Transport-Security should be present");
+
+  assert_eq!(metadata.max_age(), 31_536_000);
+  assert!(metadata.include_sub_domains());
+  assert!(metadata.preload());
+  assert_eq!(
+    response.header_value("Strict-Transport-Security"),
+    Some(&"max-age=31536000; includeSubDomains; preload".to_string())
+  );
+}
+
+#[test]
+fn strict_transport_security_metadata_rejects_invalid_values_without_hiding_raw_headers() {
+  for value in [
+    "",
+    "includeSubDomains",
+    "max-age=abc",
+    "max-age=60; preload=true",
+  ] {
+    let response = Response::new(
+      RoUrl::with("https://example.test"),
+      format!("HTTP/1.1 200 OK\r\nStrict-Transport-Security: {value}\r\nContent-Length: 0\r\n\r\n")
+        .into_bytes(),
+    )
+    .expect("response should parse");
+
+    assert!(
+      response.strict_transport_security().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      response.header_value("Strict-Transport-Security"),
+      Some(&value.to_string())
+    );
+  }
+
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Strict-Transport-Security: max-age=60\r\n",
+      "Strict-Transport-Security: max-age=120\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  assert!(response.strict_transport_security().is_err());
+  assert_eq!(
+    response.header_values("Strict-Transport-Security"),
+    [&"max-age=60".to_string(), &"max-age=120".to_string()]
+  );
+}
+
+#[test]
+fn strict_transport_security_metadata_is_absent_without_a_header() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(
+    response
+      .strict_transport_security()
+      .expect("header is absent"),
+    None
+  );
+  let _: Option<StrictTransportSecurity> = response
+    .strict_transport_security()
+    .expect("header is absent");
+}
+
+#[test]
+fn x_content_type_options_metadata_parses_nosniff_without_applying_policy() {
+  for value in ["nosniff", "NoSniff"] {
+    let response = Response::new(
+      RoUrl::with("https://example.test"),
+      format!("HTTP/1.1 200 OK\r\nX-Content-Type-Options: {value}\r\nContent-Length: 0\r\n\r\n")
+        .into_bytes(),
+    )
+    .expect("response should parse");
+
+    let metadata = response
+      .x_content_type_options()
+      .expect("X-Content-Type-Options should parse")
+      .expect("X-Content-Type-Options should be present");
+
+    assert_eq!(metadata, XContentTypeOptions::Nosniff);
+    assert_eq!(metadata.header_value(), "nosniff");
+    assert_eq!(
+      response.header_value("X-Content-Type-Options"),
+      Some(&value.to_string())
+    );
+  }
+}
+
+#[test]
+fn x_content_type_options_metadata_rejects_invalid_values_without_hiding_raw_headers() {
+  for value in ["", "unknown", "nosniff, nosniff"] {
+    let response = Response::new(
+      RoUrl::with("https://example.test"),
+      format!("HTTP/1.1 200 OK\r\nX-Content-Type-Options: {value}\r\nContent-Length: 0\r\n\r\n")
+        .into_bytes(),
+    )
+    .expect("response should parse");
+
+    assert!(
+      response.x_content_type_options().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      response.header_value("X-Content-Type-Options"),
+      Some(&value.to_string())
+    );
+  }
+
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "X-Content-Type-Options: nosniff\r\n",
+      "X-Content-Type-Options: nosniff\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  assert!(response.x_content_type_options().is_err());
+  assert_eq!(
+    response.header_values("X-Content-Type-Options"),
+    [&"nosniff".to_string(), &"nosniff".to_string()]
+  );
+}
+
+#[test]
+fn x_content_type_options_metadata_is_absent_without_a_header() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(
+    response.x_content_type_options().expect("header is absent"),
+    None
+  );
+  let _: Option<XContentTypeOptions> = response.x_content_type_options().expect("header is absent");
+}
+
+#[test]
+fn x_frame_options_metadata_parses_tokens_without_applying_policy() {
+  for (value, expected) in [
+    ("DENY", XFrameOptions::Deny),
+    ("deny", XFrameOptions::Deny),
+    ("SAMEORIGIN", XFrameOptions::SameOrigin),
+    ("SameOrigin", XFrameOptions::SameOrigin),
+  ] {
+    let response = Response::new(
+      RoUrl::with("https://example.test"),
+      format!("HTTP/1.1 200 OK\r\nX-Frame-Options: {value}\r\nContent-Length: 0\r\n\r\n")
+        .into_bytes(),
+    )
+    .expect("response should parse");
+
+    let metadata = response
+      .x_frame_options()
+      .expect("X-Frame-Options should parse")
+      .expect("X-Frame-Options should be present");
+
+    assert_eq!(metadata, expected);
+    assert_eq!(metadata.header_value(), expected.header_value());
+    assert_eq!(
+      response.header_value("X-Frame-Options"),
+      Some(&value.to_string())
+    );
+  }
+}
+
+#[test]
+fn x_frame_options_metadata_rejects_invalid_values_without_hiding_raw_headers() {
+  for value in [
+    "",
+    "unknown",
+    "ALLOW-FROM https://example.test",
+    "DENY, SAMEORIGIN",
+  ] {
+    let response = Response::new(
+      RoUrl::with("https://example.test"),
+      format!("HTTP/1.1 200 OK\r\nX-Frame-Options: {value}\r\nContent-Length: 0\r\n\r\n")
+        .into_bytes(),
+    )
+    .expect("response should parse");
+
+    assert!(
+      response.x_frame_options().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      response.header_value("X-Frame-Options"),
+      Some(&value.to_string())
+    );
+  }
+
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "X-Frame-Options: DENY\r\n",
+      "X-Frame-Options: SAMEORIGIN\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  assert!(response.x_frame_options().is_err());
+  assert_eq!(
+    response.header_values("X-Frame-Options"),
+    [&"DENY".to_string(), &"SAMEORIGIN".to_string()]
+  );
+}
+
+#[test]
+fn x_frame_options_metadata_is_absent_without_a_header() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(response.x_frame_options().expect("header is absent"), None);
+  let _: Option<XFrameOptions> = response.x_frame_options().expect("header is absent");
+}
+
+#[test]
 fn test_parse_response() {
   let s = "HTTP/1.1 200 OK\r\n\
         Content-Length: 18\r\n\
@@ -230,16 +489,43 @@ fn response_error_status_boundaries() {
 }
 
 #[test]
+#[rustfmt::skip]
+fn response_status_family_boundaries() {
+  for (code, expected_informational, expected_redirection, expected_error) in [(99, false, false, false), (100, true, false, false), (199, true, false, false), (200, false, false, false), (299, false, false, false), (300, false, true, false), (304, false, true, false), (399, false, true, false), (400, false, false, true), (499, false, false, true), (500, false, false, true), (599, false, false, true), (600, false, false, false)] {
+    let raw = format!("HTTP/1.1 {code} Test\r\nContent-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes()).expect("response should parse");
+    assert_eq!((expected_informational, expected_redirection, expected_error), (response.is_informational(), response.is_redirection(), response.is_error()), "status {code}");
+  }
+}
+
+#[test]
 fn response_existing_status_helpers_reject_out_of_range_codes() {
   for code in [99, 600] {
     let raw = format!("HTTP/1.1 {code} Test\r\nContent-Length: 0\r\n\r\n");
     let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
       .expect("response framing should remain inspectable");
 
-    assert!(!response.is_success(), "status {code}");
-    assert!(!response.is_client_error(), "status {code}");
-    assert!(!response.is_server_error(), "status {code}");
+    assert_eq!(
+      (false, false, false),
+      (
+        response.is_success(),
+        response.is_client_error(),
+        response.is_server_error()
+      ),
+      "status {code}"
+    );
   }
+}
+
+#[test]
+fn response_redirection_family_is_broader_than_redirect_following() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 304 Not Modified\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert!(response.is_redirection() && !response.is_redirect());
 }
 
 #[test]
@@ -768,6 +1054,98 @@ fn test_parse_conditional_response_metadata() {
 }
 
 #[test]
+fn last_modified_date_parses_valid_singleton_and_absent_values() {
+  let response = Response::new(
+    RoUrl::with("https://example.test/asset"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Last-Modified: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(
+    Some(UNIX_EPOCH + Duration::from_secs(784111777)),
+    response
+      .last_modified_date()
+      .expect("valid Last-Modified should parse")
+  );
+  assert_eq!(
+    Some(&"Sun, 06 Nov 1994 08:49:37 GMT".to_string()),
+    response.last_modified()
+  );
+  assert_eq!(
+    Some(&"Sun, 06 Nov 1994 08:49:37 GMT".to_string()),
+    response.header_value("Last-Modified")
+  );
+
+  let response = Response::new(
+    RoUrl::with("https://example.test/asset"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(
+    None,
+    response
+      .last_modified_date()
+      .expect("absent Last-Modified should parse")
+  );
+  assert_eq!(None, response.last_modified());
+}
+
+#[test]
+fn last_modified_date_rejects_malformed_and_duplicate_values_without_hiding_headers() {
+  for value in ["", "not a date", "Sun, 06 Nov 1994 08:49:37 PST"] {
+    let raw = format!("HTTP/1.1 200 OK\r\nLast-Modified: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response remains usable");
+
+    assert!(
+      response.last_modified_date().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Last-Modified")
+    );
+    assert_eq!("OK", response.body().string().unwrap());
+  }
+
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Last-Modified: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+      "last-modified: Mon, 07 Nov 1994 08:49:37 GMT\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("raw response with duplicate Last-Modified remains usable");
+
+  assert!(
+    response.last_modified_date().is_err(),
+    "should reject duplicate singleton fields"
+  );
+  assert_eq!(
+    vec![
+      &"Sun, 06 Nov 1994 08:49:37 GMT".to_string(),
+      &"Mon, 07 Nov 1994 08:49:37 GMT".to_string()
+    ],
+    response.header_values("Last-Modified")
+  );
+  assert_eq!(
+    Some(&"Sun, 06 Nov 1994 08:49:37 GMT".to_string()),
+    response.last_modified()
+  );
+}
+
+#[test]
 fn test_parse_content_location_response_helper_accepts_uri_references() {
   let cases = [
     (
@@ -979,14 +1357,18 @@ fn test_www_authenticate_rejects_malformed_duplicate_and_bounded_values() {
 }
 
 #[test]
-fn test_authentication_info_response_helper_parses_combined_metadata() {
-  let raw = concat!(
-    "HTTP/1.1 200 OK\r\n",
-    "Authentication-Info: nextnonce=\"n-2\", qop=auth\r\n",
-    "Authentication-Info: rspauth=\"abc\", cnonce=\"c-1\", nc=00000001\r\n",
-    "Content-Length: 2\r\n\r\nOK"
+fn test_authentication_info_response_helper_parses_bounded_auth_params() {
+  let digest_field = concat!(
+    r#"nextnonce="6629fae49393a05397450978507c4ef1", "#,
+    r#"qop=auth, "#,
+    r#"rspauth="6629fae49393a05397450978507c4ef1", "#,
+    r#"cnonce="0a4f113b", "#,
+    "nc=00000001"
   );
-  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+  let raw = format!(
+    "HTTP/1.1 200 OK\r\nAuthentication-Info: {digest_field}\r\nContent-Length: 2\r\n\r\nOK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
     .expect("raw response should remain usable");
 
   let info = response
@@ -994,42 +1376,53 @@ fn test_authentication_info_response_helper_parses_combined_metadata() {
     .expect("valid Authentication-Info should parse")
     .expect("Authentication-Info should be present");
 
-  assert_eq!(5, info.len());
-  assert_eq!(Some("n-2"), info.parameter("nextnonce"));
-  assert_eq!(Some("auth"), info.parameter("qop"));
-  assert_eq!(Some("abc"), info.parameter("rspauth"));
-  assert_eq!(Some("c-1"), info.parameter("cnonce"));
-  assert_eq!(Some("00000001"), info.parameter("nc"));
-}
+  assert_eq!(
+    info.parameter("nextnonce"),
+    Some("6629fae49393a05397450978507c4ef1")
+  );
+  assert_eq!(info.parameter("qop"), Some("auth"));
+  assert_eq!(
+    info.parameter("rspauth"),
+    Some("6629fae49393a05397450978507c4ef1")
+  );
+  assert_eq!(info.parameter("cnonce"), Some("0a4f113b"));
+  assert_eq!(info.parameter("nc"), Some("00000001"));
+  assert_eq!(
+    Some(&digest_field.to_string()),
+    response.header_value("Authentication-Info")
+  );
 
-#[test]
-fn test_authentication_info_response_helper_returns_none_when_absent() {
-  let response = Response::new(
+  let combined = Response::new(
     RoUrl::with("https://example.test"),
-    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK".to_vec(),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Authentication-Info: nextnonce=abc\r\n",
+      "Authentication-Info: qop=auth\r\n",
+      "Content-Length: 2\r\n\r\nOK"
+    )
+    .as_bytes()
+    .to_vec(),
   )
-  .expect("response without Authentication-Info should parse");
-
-  let info: Option<AuthenticationInfo> = response
+  .expect("raw response should remain usable");
+  let combined_info = combined
     .authentication_info()
-    .expect("absent Authentication-Info should not be invalid");
-
-  assert_eq!(None, info);
+    .expect("combined fields should parse")
+    .expect("Authentication-Info should be present");
+  assert_eq!(combined_info.parameter("nextnonce"), Some("abc"));
+  assert_eq!(combined_info.parameter("qop"), Some("auth"));
+  assert_eq!(
+    combined.header_values("Authentication-Info"),
+    [&"nextnonce=abc".to_string(), &"qop=auth".to_string()]
+  );
 }
 
 #[test]
-fn test_authentication_info_rejects_invalid_metadata_without_hiding_headers() {
-  for value in [
-    "nextnonce=",
-    "nextnonce=\"unterminated",
-    "nextnonce=one, NEXTNONCE=two",
-    "token68only",
-  ] {
+fn test_authentication_info_rejects_invalid_and_absent_values() {
+  for value in ["", "nextnonce=", "Bearer mF_9.B5f-4.1JqM"] {
     let raw =
       format!("HTTP/1.1 200 OK\r\nAuthentication-Info: {value}\r\nContent-Length: 2\r\n\r\nOK");
     let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
       .expect("raw response should remain usable");
-
     assert!(
       response.authentication_info().is_err(),
       "should reject {value:?}"
@@ -1039,6 +1432,188 @@ fn test_authentication_info_rejects_invalid_metadata_without_hiding_headers() {
       response.header_value("Authentication-Info")
     );
   }
+
+  let duplicate = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Authentication-Info: qop=auth\r\n",
+      "Authentication-Info: QOP=auth\r\n",
+      "Content-Length: 2\r\n\r\nOK"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("raw response should remain usable");
+  assert!(duplicate.authentication_info().is_err());
+  assert_eq!(
+    Some(&"qop=auth".to_string()),
+    duplicate.header_value("Authentication-Info")
+  );
+  assert_eq!(
+    duplicate.header_values("Authentication-Info"),
+    [&"qop=auth".to_string(), &"QOP=auth".to_string()]
+  );
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_raw =
+    format!("HTTP/1.1 200 OK\r\nAuthentication-Info: {oversized}\r\nContent-Length: 0\r\n\r\n");
+  let oversized_response = Response::new(
+    RoUrl::with("https://example.test"),
+    oversized_raw.into_bytes(),
+  )
+  .expect("raw response should remain usable");
+  assert!(oversized_response.authentication_info().is_err());
+  assert_eq!(
+    Some(&oversized),
+    oversized_response.header_value("Authentication-Info")
+  );
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response without Authentication-Info should parse");
+  assert_eq!(
+    None,
+    absent
+      .authentication_info()
+      .expect("absent Authentication-Info should parse")
+  );
+  let _: Option<AuthenticationInfo> = absent
+    .authentication_info()
+    .expect("absent Authentication-Info should parse");
+}
+
+#[test]
+fn test_proxy_authentication_info_response_helper_parses_bounded_auth_params() {
+  let digest_field = concat!(
+    r#"nextnonce="6629fae49393a05397450978507c4ef1", "#,
+    r#"qop=auth, "#,
+    r#"rspauth="6629fae49393a05397450978507c4ef1", "#,
+    r#"cnonce="0a4f113b", "#,
+    "nc=00000001"
+  );
+  let raw = format!(
+    "HTTP/1.1 200 OK\r\nProxy-Authentication-Info: {digest_field}\r\nContent-Length: 2\r\n\r\nOK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response should remain usable");
+
+  let info = response
+    .proxy_authentication_info()
+    .expect("valid Proxy-Authentication-Info should parse")
+    .expect("Proxy-Authentication-Info should be present");
+
+  assert_eq!(
+    info.parameter("nextnonce"),
+    Some("6629fae49393a05397450978507c4ef1")
+  );
+  assert_eq!(info.parameter("qop"), Some("auth"));
+  assert_eq!(
+    info.parameter("rspauth"),
+    Some("6629fae49393a05397450978507c4ef1")
+  );
+  assert_eq!(info.parameter("cnonce"), Some("0a4f113b"));
+  assert_eq!(info.parameter("nc"), Some("00000001"));
+  assert_eq!(
+    Some(&digest_field.to_string()),
+    response.header_value("Proxy-Authentication-Info")
+  );
+
+  let combined = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Proxy-Authentication-Info: nextnonce=abc\r\n",
+      "Proxy-Authentication-Info: qop=auth\r\n",
+      "Content-Length: 2\r\n\r\nOK"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("raw response should remain usable");
+  let combined_info = combined
+    .proxy_authentication_info()
+    .expect("combined fields should parse")
+    .expect("Proxy-Authentication-Info should be present");
+  assert_eq!(combined_info.parameter("nextnonce"), Some("abc"));
+  assert_eq!(combined_info.parameter("qop"), Some("auth"));
+  assert_eq!(
+    combined.header_values("Proxy-Authentication-Info"),
+    [&"nextnonce=abc".to_string(), &"qop=auth".to_string()]
+  );
+}
+
+#[test]
+fn test_proxy_authentication_info_rejects_invalid_and_absent_values() {
+  for value in ["", "nextnonce=", "Bearer mF_9.B5f-4.1JqM"] {
+    let raw = format!(
+      "HTTP/1.1 200 OK\r\nProxy-Authentication-Info: {value}\r\nContent-Length: 2\r\n\r\nOK"
+    );
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(
+      response.proxy_authentication_info().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Proxy-Authentication-Info")
+    );
+  }
+
+  let duplicate = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Proxy-Authentication-Info: qop=auth\r\n",
+      "Proxy-Authentication-Info: QOP=auth\r\n",
+      "Content-Length: 2\r\n\r\nOK"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("raw response should remain usable");
+  assert!(duplicate.proxy_authentication_info().is_err());
+  assert_eq!(
+    Some(&"qop=auth".to_string()),
+    duplicate.header_value("Proxy-Authentication-Info")
+  );
+  assert_eq!(
+    duplicate.header_values("Proxy-Authentication-Info"),
+    [&"qop=auth".to_string(), &"QOP=auth".to_string()]
+  );
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_raw = format!(
+    "HTTP/1.1 200 OK\r\nProxy-Authentication-Info: {oversized}\r\nContent-Length: 0\r\n\r\n"
+  );
+  let oversized_response = Response::new(
+    RoUrl::with("https://example.test"),
+    oversized_raw.into_bytes(),
+  )
+  .expect("raw response should remain usable");
+  assert!(oversized_response.proxy_authentication_info().is_err());
+  assert_eq!(
+    Some(&oversized),
+    oversized_response.header_value("Proxy-Authentication-Info")
+  );
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response without Proxy-Authentication-Info should parse");
+  assert_eq!(
+    None,
+    absent
+      .proxy_authentication_info()
+      .expect("absent Proxy-Authentication-Info should parse")
+  );
+  let _: Option<ProxyAuthenticationInfo> = absent
+    .proxy_authentication_info()
+    .expect("absent Proxy-Authentication-Info should parse");
 }
 
 #[test]
@@ -1046,7 +1621,8 @@ fn test_digest_response_helpers_parse_bounded_digest_fields() {
   let raw = concat!(
     "HTTP/1.1 200 OK\r\n",
     "Content-Digest: sha-256=:YWJj:, sha-512=:ZGVm:\r\n",
-    "Repr-Digest: sha-256=:Z2hp:\r\n",
+    "Repr-Digest: sha-256=:Z2hp:;foo=bar\r\n",
+    "Repr-Digest: sha-512=:amts:\r\n",
     "Content-Length: 0\r\n\r\n"
   );
   let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
@@ -1070,10 +1646,94 @@ fn test_digest_response_helpers_parse_bounded_digest_fields() {
     .repr_digest()
     .expect("Repr-Digest should parse")
     .expect("Repr-Digest should be present");
+  assert_eq!(2, repr_digest.len());
   assert_eq!(
     Some(&b"ghi"[..]),
     repr_digest.entry("sha-256").map(|entry| entry.value())
   );
+  assert_eq!(
+    Some(&b"jkl"[..]),
+    repr_digest.entry("sha-512").map(|entry| entry.value())
+  );
+  assert_eq!("sha-256=:Z2hp:, sha-512=:amts:", repr_digest.header_value());
+}
+
+#[test]
+fn test_content_digest_combines_multiple_fields_without_verification() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Content-Digest: sha-256=:YWJj:\r\n",
+    "Content-Digest: sha-512=:ZGVm:\r\n",
+    "Content-Length: 3\r\n\r\nabc"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  let content_digest = response
+    .content_digest()
+    .expect("Content-Digest should parse")
+    .expect("Content-Digest should be present");
+  assert_eq!(2, content_digest.len());
+  assert_eq!(
+    Some(&b"abc"[..]),
+    content_digest.entry("sha-256").map(|entry| entry.value())
+  );
+  assert_eq!(
+    Some(&b"def"[..]),
+    content_digest.entry("sha-512").map(|entry| entry.value())
+  );
+  assert_eq!(
+    "sha-256=:YWJj:, sha-512=:ZGVm:",
+    content_digest.header_value()
+  );
+
+  let digest = response
+    .digest()
+    .expect("digest() should keep parsing Content-Digest")
+    .expect("Content-Digest should be present");
+  assert_eq!(content_digest, digest);
+  assert_eq!(b"abc", response.body().binary());
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("raw response should remain usable");
+  assert_eq!(
+    None,
+    absent
+      .content_digest()
+      .expect("absent Content-Digest should parse")
+  );
+}
+
+#[test]
+fn test_content_digest_rejects_malformed_values_without_hiding_headers() {
+  for value in [
+    "",
+    "sha-256=:YWJj:, sha-256=:ZGVm:",
+    "sha-256=:not-base64!:",
+    "sha-256=:YWJj:;foo=",
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\nContent-Digest: {value}\r\nContent-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(
+      response.content_digest().is_err(),
+      "Content-Digest should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Content-Digest")
+    );
+  }
+
+  let oversized = format!("sha-256=:{}:", "A".repeat(64 * 1024 + 1));
+  let raw = format!("HTTP/1.1 200 OK\r\nContent-Digest: {oversized}\r\nContent-Length: 0\r\n\r\n");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response should remain usable");
+  assert!(response.content_digest().is_err());
+  assert_eq!(Some(&oversized), response.header_value("Content-Digest"));
 }
 
 #[test]
@@ -1207,6 +1867,8 @@ fn test_digest_response_helpers_recover_from_empty_duplicate_and_oversized_field
     ("Content-Digest", ""),
     ("Content-Digest", "sha-256=:YWJj:, sha-256=:ZGVm:"),
     ("Repr-Digest", "sha-256=:YWJj:, sha-256=:ZGVm:"),
+    ("Repr-Digest", "sha-256=:not-base64!:"),
+    ("Repr-Digest", "sha-256=:YWJj:;foo="),
   ] {
     let raw = format!("HTTP/1.1 200 OK\r\n{header}: {value}\r\nContent-Length: 0\r\n\r\n");
     let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
@@ -1220,8 +1882,177 @@ fn test_digest_response_helpers_recover_from_empty_duplicate_and_oversized_field
     assert_eq!(Some(&value.to_string()), response.header_value(header));
   }
 
-  let oversized = format!("sha-256=:{}:", "A".repeat(64 * 1024));
-  assert!(Digest::parse(oversized).is_err());
+  let oversized = format!("sha-256=:{}:", "A".repeat(64 * 1024 + 1));
+  let raw = format!("HTTP/1.1 200 OK\r\nRepr-Digest: {oversized}\r\nContent-Length: 0\r\n\r\n");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response should remain usable");
+  assert!(response.repr_digest().is_err());
+  assert_eq!(Some(&oversized), response.header_value("Repr-Digest"));
+}
+
+#[test]
+fn test_warning_response_helper_parses_multi_field_quoted_text_and_date() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Warning: 110 - \"Response is Stale\"\r\n",
+    "Warning: 299 example.com:80 \"Deprecated \\\"API\\\"\" \"Wed, 21 Oct 2015 07:28:00 GMT\"\r\n",
+    "Content-Length: 2\r\n\r\nOK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+  let warning = response
+    .warning()
+    .expect("valid Warning should parse")
+    .expect("Warning should be present");
+
+  assert_eq!(2, warning.len());
+  assert_eq!(110, warning.items()[0].code());
+  assert_eq!("-", warning.items()[0].agent());
+  assert_eq!("Response is Stale", warning.items()[0].text());
+  assert_eq!(None, warning.items()[0].date());
+  assert_eq!(299, warning.items()[1].code());
+  assert_eq!("example.com:80", warning.items()[1].agent());
+  assert_eq!("Deprecated \"API\"", warning.items()[1].text());
+  assert_eq!(
+    Some(UNIX_EPOCH + Duration::from_secs(1_445_412_480)),
+    warning.items()[1].date()
+  );
+  assert_eq!(
+    response.header_values("Warning"),
+    [
+      &r#"110 - "Response is Stale""#.to_string(),
+      &r#"299 example.com:80 "Deprecated \"API\"" "Wed, 21 Oct 2015 07:28:00 GMT""#.to_string()
+    ]
+  );
+}
+
+#[test]
+fn test_warning_response_helper_returns_none_when_absent() {
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response without Warning should parse");
+  assert_eq!(None, absent.warning().expect("absent Warning should parse"));
+}
+
+#[test]
+fn test_warning_rejects_malformed_invalid_code_and_bounds_without_hiding_headers() {
+  for value in [
+    r#"110 - "unterminated"#,
+    r#"11 - "too short""#,
+    r#"110 - "ok",,"#,
+    "",
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\nWarning: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(response.warning().is_err(), "should reject {value:?}");
+    assert_eq!(Some(&value.to_string()), response.header_value("Warning"));
+    assert_eq!("OK", response.body().string().unwrap());
+  }
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_raw =
+    format!("HTTP/1.1 200 OK\r\nWarning: {oversized}\r\nContent-Length: 0\r\n\r\n");
+  let oversized_response = Response::new(
+    RoUrl::with("https://example.test"),
+    oversized_raw.into_bytes(),
+  )
+  .expect("raw response should remain usable");
+  assert!(oversized_response.warning().is_err());
+  assert_eq!(Some(&oversized), oversized_response.header_value("Warning"));
+  assert!(Warning::parse(
+    (0..257)
+      .map(|index| format!(r#"110 - "item{index}""#))
+      .collect::<Vec<_>>()
+      .join(", ")
+  )
+  .is_err());
+}
+
+#[test]
+fn test_keep_alive_response_helper_parses_combined_fields_and_retains_raw_headers() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Keep-Alive: timeout=5\r\n",
+    "Keep-Alive: max=100\r\n",
+    "Content-Length: 2\r\n\r\nOK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+  let keep_alive = response
+    .keep_alive()
+    .expect("valid Keep-Alive should parse")
+    .expect("Keep-Alive should be present");
+
+  assert_eq!(Some(5), keep_alive.timeout());
+  assert_eq!(Some(100), keep_alive.max());
+  assert_eq!(
+    response.header_values("Keep-Alive"),
+    [&"timeout=5".to_string(), &"max=100".to_string()]
+  );
+}
+
+#[test]
+fn test_keep_alive_response_helper_returns_none_when_absent() {
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response without Keep-Alive should parse");
+  assert_eq!(
+    None,
+    absent.keep_alive().expect("absent Keep-Alive should parse")
+  );
+}
+
+#[test]
+fn test_keep_alive_rejects_malformed_duplicate_and_bounds_without_hiding_headers() {
+  for value in [
+    "timeout=abc",
+    "timeout=5, timeout=6",
+    "timeout=5, max=100, max=200",
+    "timeout=18446744073709551616",
+    "",
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\nKeep-Alive: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(response.keep_alive().is_err(), "should reject {value:?}");
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Keep-Alive")
+    );
+    assert_eq!("OK", response.body().string().unwrap());
+  }
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_raw =
+    format!("HTTP/1.1 200 OK\r\nKeep-Alive: {oversized}\r\nContent-Length: 0\r\n\r\n");
+  let oversized_response = Response::new(
+    RoUrl::with("https://example.test"),
+    oversized_raw.into_bytes(),
+  )
+  .expect("raw response should remain usable");
+  assert!(oversized_response.keep_alive().is_err());
+  assert_eq!(
+    Some(&oversized),
+    oversized_response.header_value("Keep-Alive")
+  );
+  assert!(KeepAlive::parse(
+    (0..257)
+      .map(|index| {
+        if index % 2 == 0 {
+          "timeout=1".to_string()
+        } else {
+          "max=2".to_string()
+        }
+      })
+      .collect::<Vec<_>>()
+      .join(", ")
+  )
+  .is_err());
 }
 
 #[test]
@@ -1789,6 +2620,143 @@ fn test_parse_content_location_rejects_control_characters_and_crlf_injection() {
 }
 
 #[test]
+fn test_parse_location_response_helper_allows_absent_absolute_and_relative_targets() {
+  for value in [
+    "https://example.test/path?q=1#section",
+    "/next",
+    "../login?next=%2Fdashboard",
+    "?page=2",
+    "//cdn.example.test/asset.js",
+  ] {
+    let raw = format!("HTTP/1.1 302 Found\r\nLocation: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(
+      RoUrl::with("https://example.test/base/page"),
+      raw.into_bytes(),
+    )
+    .expect("raw response remains usable");
+    let location = response
+      .location()
+      .expect("Location should parse")
+      .expect("Location should be present");
+
+    assert_eq!(value, location.as_str());
+    assert_eq!(Some(&value.to_string()), response.header_value("Location"));
+  }
+
+  let raw = concat!("HTTP/1.1 200 OK\r\n", "Content-Length: 2\r\n", "\r\n", "OK");
+  let response = Response::new(
+    RoUrl::with("https://example.test/base/page"),
+    raw.as_bytes().to_vec(),
+  )
+  .expect("parse response without location");
+  assert_eq!(
+    None,
+    response.location().expect("absent Location should parse")
+  );
+}
+
+#[test]
+fn test_parse_location_response_helper_trims_outer_whitespace() {
+  let raw = concat!(
+    "HTTP/1.1 302 Found\r\n",
+    "Location:   /representations/current.json   \r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/base/page"),
+    raw.as_bytes().to_vec(),
+  )
+  .expect("parse response with location");
+  let location = response
+    .location()
+    .expect("Location should parse")
+    .expect("Location header should be present");
+
+  assert_eq!("/representations/current.json", location.as_str());
+  assert_eq!(
+    Some(&"/representations/current.json".to_string()),
+    response.header_value("Location")
+  );
+}
+
+#[test]
+fn test_parse_location_rejects_invalid_values_without_rejecting_response() {
+  let invalid_values = ["", "http://[::1", "/bad path", "/bad%zz", "ok\u{7f}"];
+
+  for value in invalid_values {
+    let raw = format!("HTTP/1.1 302 Found\r\nLocation: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(
+      RoUrl::with("https://example.test/base/page"),
+      raw.into_bytes(),
+    )
+    .expect("raw response remains usable");
+
+    assert!(
+      response.location().is_err(),
+      "Location helper should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.trim().to_string()),
+      response.header_value("Location")
+    );
+  }
+}
+
+#[test]
+fn test_parse_location_rejects_duplicate_and_oversized_values() {
+  let raw = concat!(
+    "HTTP/1.1 302 Found\r\n",
+    "Location: /one\r\n",
+    "location: /two\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/base/page"),
+    raw.as_bytes().to_vec(),
+  )
+  .expect("raw response with duplicate Location remains usable");
+
+  assert!(
+    response.location().is_err(),
+    "Location helper should reject duplicate singleton headers"
+  );
+  assert_eq!(
+    vec![&"/one".to_string(), &"/two".to_string()],
+    response.header_values("Location")
+  );
+
+  let oversized = format!("/{}", "a".repeat(64 * 1024));
+  let raw = format!("HTTP/1.1 302 Found\r\nLocation: {oversized}\r\nContent-Length: 2\r\n\r\nOK");
+  let response = Response::new(
+    RoUrl::with("https://example.test/base/page"),
+    raw.into_bytes(),
+  )
+  .expect("raw response with oversized Location remains usable");
+
+  assert!(
+    response.location().is_err(),
+    "Location helper should reject oversized values"
+  );
+  assert_eq!(Some(&oversized), response.header_value("Location"));
+}
+
+#[test]
+fn test_parse_location_rejects_control_characters_and_crlf_injection() {
+  let invalid_values = ["\r\nX-Evil: true", "/ok\r", "/ok\n", "/ok\tinner"];
+
+  for value in invalid_values {
+    assert!(
+      Location::parse(value).is_err(),
+      "Location parser should reject {value:?}"
+    );
+  }
+}
+
+#[test]
 fn test_parse_cache_control_response_directives() {
   let s = concat!(
     "HTTP/1.1 200 OK\r\n",
@@ -1902,6 +2870,91 @@ fn test_parse_age_and_expires_response_metadata() {
 }
 
 #[test]
+fn test_parse_date_response_metadata() {
+  let s = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Date: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
+    .expect("parse response with date metadata");
+
+  assert_eq!(
+    Some(UNIX_EPOCH + Duration::from_secs(784111777)),
+    response.date().expect("valid date should parse")
+  );
+  assert_eq!(
+    Some(&"Sun, 06 Nov 1994 08:49:37 GMT".to_string()),
+    response.header_value("Date")
+  );
+  assert_eq!(
+    vec![&"Sun, 06 Nov 1994 08:49:37 GMT".to_string()],
+    response.header_values("Date")
+  );
+
+  let s = concat!("HTTP/1.1 200 OK\r\n", "Content-Length: 2\r\n", "\r\n", "OK");
+  let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
+    .expect("parse response without date");
+  assert_eq!(None, response.date().expect("absent date should parse"));
+}
+
+#[test]
+fn test_parse_date_rejects_invalid_duplicate_and_oversized_metadata_without_hiding_headers() {
+  let invalid_value = "not a date";
+  let raw = format!("HTTP/1.1 200 OK\r\nDate: {invalid_value}\r\nContent-Length: 2\r\n\r\nOK");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response with invalid date remains usable");
+
+  assert!(
+    response.date().is_err(),
+    "Date helper should reject malformed values"
+  );
+  assert_eq!(
+    Some(&invalid_value.to_string()),
+    response.header_value("Date")
+  );
+
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Date: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+    "date: Sun, 06 Nov 1994 08:49:38 GMT\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response with duplicate date remains usable");
+
+  assert!(
+    response.date().is_err(),
+    "Date helper should reject duplicate values"
+  );
+  assert_eq!(
+    vec![
+      &"Sun, 06 Nov 1994 08:49:37 GMT".to_string(),
+      &"Sun, 06 Nov 1994 08:49:38 GMT".to_string()
+    ],
+    response.header_values("Date")
+  );
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let raw = format!("HTTP/1.1 200 OK\r\nDate: {oversized}\r\nContent-Length: 2\r\n\r\nOK");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response with oversized date remains usable");
+
+  assert_eq!(
+    "error receive response: Date header value is too large",
+    response
+      .date()
+      .expect_err("Date helper should reject oversized values")
+      .to_string()
+  );
+  assert_eq!(Some(&oversized), response.header_value("Date"));
+}
+
+#[test]
 fn test_parse_sunset_response_metadata_and_preserves_raw_value() {
   let response = Response::new(
     RoUrl::with("https://example.test"),
@@ -1927,9 +2980,16 @@ fn test_parse_sunset_response_metadata_and_preserves_raw_value() {
 
 #[test]
 fn test_parse_sunset_rejects_invalid_and_duplicate_values_without_rejecting_response() {
-  for header in [
-    "Sunset: not a date\r\n",
-    "Sunset: Sun, 06 Nov 1994 08:49:37 GMT\r\nSunset: Sun, 06 Nov 1994 08:49:38 GMT\r\n",
+  for (header, expected_values) in [
+    ("Sunset: not a date\r\n", vec!["not a date"]),
+    ("sunset: not a date\r\n", vec!["not a date"]),
+    (
+      "Sunset: Sun, 06 Nov 1994 08:49:37 GMT\r\nsunset: Sun, 06 Nov 1994 08:49:38 GMT\r\n",
+      vec![
+        "Sun, 06 Nov 1994 08:49:37 GMT",
+        "Sun, 06 Nov 1994 08:49:38 GMT",
+      ],
+    ),
   ] {
     let raw = format!("HTTP/1.1 200 OK\r\n{header}Content-Length: 0\r\n\r\n");
     let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
@@ -1939,7 +2999,28 @@ fn test_parse_sunset_rejects_invalid_and_duplicate_values_without_rejecting_resp
       response.sunset().is_err(),
       "Sunset helper should reject {header:?}"
     );
+    assert_eq!(
+      expected_values,
+      response
+        .header_values("Sunset")
+        .into_iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>(),
+      "raw Sunset headers must remain inspectable after rejection"
+    );
   }
+}
+
+#[test]
+fn test_parse_sunset_returns_none_when_header_is_absent() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(None, response.sunset().expect("absent Sunset should parse"));
+  assert_eq!(None, response.sunset_value());
 }
 
 #[test]
@@ -2250,7 +3331,7 @@ fn test_parse_accept_ranges_response_helper_supports_none_and_absent_header() {
 
   assert!(accept_ranges.is_none());
   assert!(!accept_ranges.accepts_bytes());
-  assert_eq!(vec!["none"], accept_ranges.units());
+  assert!(accept_ranges.units().is_empty());
 
   let s = concat!("HTTP/1.1 200 OK\r\n", "Content-Length: 2\r\n", "\r\n", "OK");
   let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
@@ -3008,6 +4089,270 @@ fn test_cross_origin_resource_policy_response_metadata_rejects_invalid_and_absen
 }
 
 #[test]
+fn test_cross_origin_embedder_policy_response_metadata_preserves_raw_headers() {
+  for (value, policy) in [
+    ("unsafe-none", CrossOriginEmbedderPolicy::UnsafeNone),
+    (
+      r#"require-corp; report-to="coep""#,
+      CrossOriginEmbedderPolicy::RequireCorp,
+    ),
+    ("credentialless", CrossOriginEmbedderPolicy::Credentialless),
+  ] {
+    let raw = format!(
+      "HTTP/1.1 200 OK\r\nCross-Origin-Embedder-Policy: {value}\r\nContent-Length: 0\r\n\r\n"
+    );
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should parse");
+
+    assert_eq!(
+      policy,
+      response
+        .cross_origin_embedder_policy()
+        .expect("COEP should parse")
+        .expect("COEP should be present")
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Cross-Origin-Embedder-Policy")
+    );
+  }
+}
+
+#[test]
+fn test_cross_origin_embedder_policy_response_metadata_rejects_invalid_and_absent_values() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Cross-Origin-Embedder-Policy: require-corp\r\n",
+    "Cross-Origin-Embedder-Policy: credentialless\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  assert!(response.cross_origin_embedder_policy().is_err());
+  assert_eq!(
+    Some(&"require-corp".to_string()),
+    response.header_value("Cross-Origin-Embedder-Policy")
+  );
+
+  let malformed = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nCross-Origin-Embedder-Policy: require corp\r\nContent-Length: 0\r\n\r\n"
+      .to_vec(),
+  )
+  .expect("raw response with malformed COEP should parse");
+  assert!(malformed.cross_origin_embedder_policy().is_err());
+  assert_eq!(
+    Some(&"require corp".to_string()),
+    malformed.header_value("Cross-Origin-Embedder-Policy")
+  );
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response without COEP should parse");
+  assert_eq!(
+    None,
+    absent
+      .cross_origin_embedder_policy()
+      .expect("absent COEP should parse")
+  );
+}
+
+#[test]
+fn test_cross_origin_embedder_policy_report_only_response_metadata_preserves_raw_headers() {
+  for (value, policy) in [
+    (
+      "unsafe-none",
+      CrossOriginEmbedderPolicyReportOnly::UnsafeNone,
+    ),
+    (
+      r#"require-corp; report-to="coep""#,
+      CrossOriginEmbedderPolicyReportOnly::RequireCorp,
+    ),
+    (
+      "credentialless",
+      CrossOriginEmbedderPolicyReportOnly::Credentialless,
+    ),
+  ] {
+    let raw = format!(
+      "HTTP/1.1 200 OK\r\nCross-Origin-Embedder-Policy-Report-Only: {value}\r\nContent-Length: 0\r\n\r\n"
+    );
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should parse");
+
+    assert_eq!(
+      policy,
+      response
+        .cross_origin_embedder_policy_report_only()
+        .expect("COEP-Report-Only should parse")
+        .expect("COEP-Report-Only should be present")
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Cross-Origin-Embedder-Policy-Report-Only")
+    );
+  }
+}
+
+#[test]
+fn test_cross_origin_embedder_policy_report_only_response_metadata_rejects_invalid_and_absent_values(
+) {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Cross-Origin-Embedder-Policy-Report-Only: require-corp\r\n",
+    "cross-origin-embedder-policy-report-only: credentialless\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  assert!(response.cross_origin_embedder_policy_report_only().is_err());
+  assert_eq!(
+    Some(&"require-corp".to_string()),
+    response.header_value("Cross-Origin-Embedder-Policy-Report-Only")
+  );
+
+  let malformed = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nCross-Origin-Embedder-Policy-Report-Only: require corp\r\nContent-Length: 0\r\n\r\n"
+      .to_vec(),
+  )
+  .expect("raw response with malformed COEP-Report-Only should parse");
+  assert!(malformed
+    .cross_origin_embedder_policy_report_only()
+    .is_err());
+  assert_eq!(
+    Some(&"require corp".to_string()),
+    malformed.header_value("Cross-Origin-Embedder-Policy-Report-Only")
+  );
+
+  let uppercase = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nCross-Origin-Embedder-Policy-Report-Only: REQUIRE-CORP\r\nContent-Length: 0\r\n\r\n"
+      .to_vec(),
+  )
+  .expect("raw response with uppercase COEP-Report-Only should parse");
+  assert!(uppercase
+    .cross_origin_embedder_policy_report_only()
+    .is_err());
+
+  let oversized = format!(
+    "HTTP/1.1 200 OK\r\nCross-Origin-Embedder-Policy-Report-Only: {}\r\nContent-Length: 0\r\n\r\n",
+    "x".repeat(64 * 1024 + 1)
+  );
+  let oversized = Response::new(RoUrl::with("https://example.test"), oversized.into_bytes())
+    .expect("raw response with oversized COEP-Report-Only should parse");
+  assert!(oversized
+    .cross_origin_embedder_policy_report_only()
+    .is_err());
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response without COEP-Report-Only should parse");
+  assert_eq!(
+    None,
+    absent
+      .cross_origin_embedder_policy_report_only()
+      .expect("absent COEP-Report-Only should parse")
+  );
+}
+
+#[test]
+fn test_cross_origin_opener_policy_response_metadata_preserves_raw_headers() {
+  for (value, policy) in [
+    ("unsafe-none", CrossOriginOpenerPolicy::UnsafeNone),
+    (
+      "same-origin-allow-popups",
+      CrossOriginOpenerPolicy::SameOriginAllowPopups,
+    ),
+    ("same-origin", CrossOriginOpenerPolicy::SameOrigin),
+    (
+      r#"noopener-allow-popups; report-to="coop""#,
+      CrossOriginOpenerPolicy::NoopenerAllowPopups,
+    ),
+  ] {
+    let raw = format!(
+      "HTTP/1.1 200 OK\r\nCross-Origin-Opener-Policy: {value}\r\nContent-Length: 0\r\n\r\n"
+    );
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should parse");
+
+    assert_eq!(
+      policy,
+      response
+        .cross_origin_opener_policy()
+        .expect("COOP should parse")
+        .expect("COOP should be present")
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Cross-Origin-Opener-Policy")
+    );
+  }
+}
+
+#[test]
+fn test_cross_origin_opener_policy_response_metadata_rejects_invalid_and_absent_values() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Cross-Origin-Opener-Policy: same-origin\r\n",
+    "Cross-Origin-Opener-Policy: same-origin-allow-popups\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  assert!(response.cross_origin_opener_policy().is_err());
+  assert_eq!(
+    Some(&"same-origin".to_string()),
+    response.header_value("Cross-Origin-Opener-Policy")
+  );
+
+  let malformed = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nCross-Origin-Opener-Policy: same origin\r\nContent-Length: 0\r\n\r\n"
+      .to_vec(),
+  )
+  .expect("raw response with malformed COOP should parse");
+  assert!(malformed.cross_origin_opener_policy().is_err());
+  assert_eq!(
+    Some(&"same origin".to_string()),
+    malformed.header_value("Cross-Origin-Opener-Policy")
+  );
+
+  let case_variant = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nCross-Origin-Opener-Policy: SAME-ORIGIN\r\nContent-Length: 0\r\n\r\n"
+      .to_vec(),
+  )
+  .expect("raw response with case-variant COOP should parse");
+  assert!(case_variant.cross_origin_opener_policy().is_err());
+  assert_eq!(
+    Some(&"SAME-ORIGIN".to_string()),
+    case_variant.header_value("Cross-Origin-Opener-Policy")
+  );
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response without COOP should parse");
+  assert_eq!(
+    None,
+    absent
+      .cross_origin_opener_policy()
+      .expect("absent COOP should parse")
+  );
+}
+
+#[test]
 fn test_parse_age_rejects_invalid_helper_values_without_rejecting_response() {
   let invalid_values = [
     "",
@@ -3031,6 +4376,42 @@ fn test_parse_age_rejects_invalid_helper_values_without_rejecting_response() {
     );
     assert_eq!(Some(&value.to_string()), response.header_value("Age"));
   }
+}
+
+#[test]
+fn test_parse_age_rejects_duplicate_and_oversized_helper_values_without_rejecting_response() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Age: 5\r\n",
+    "age: 12\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response with duplicate Age remains usable");
+
+  assert!(
+    response.age().is_err(),
+    "age helper should reject duplicates"
+  );
+  assert_eq!(Some(&"5".to_string()), response.header_value("Age"));
+  assert_eq!(
+    vec![&"5".to_string(), &"12".to_string()],
+    response.header_values("Age")
+  );
+
+  let oversized = "0".repeat(64 * 1024 + 1);
+  let raw = format!("HTTP/1.1 200 OK\r\nAge: {oversized}\r\nContent-Length: 2\r\n\r\nOK");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response with oversized Age remains usable");
+
+  assert!(
+    response.age().is_err(),
+    "age helper should reject oversized values"
+  );
+  assert_eq!(Some(&oversized), response.header_value("Age"));
+  assert_eq!(vec![&oversized], response.header_values("Age"));
 }
 
 #[test]
@@ -3164,6 +4545,106 @@ fn test_parse_vary_rejects_invalid_helper_values_without_rejecting_response() {
       "vary helper should reject {value:?}"
     );
     assert_eq!(Some(&value.to_string()), response.header_value("Vary"));
+    assert_eq!("OK", response.body().string().unwrap());
+  }
+}
+
+#[test]
+fn test_parse_vary_rejects_oversized_and_too_many_field_names() {
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let raw = format!("HTTP/1.1 200 OK\r\nVary: {oversized}\r\nContent-Length: 2\r\n\r\nOK");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response with oversized vary remains usable");
+
+  assert!(
+    response.vary().is_err(),
+    "vary helper should reject oversized values"
+  );
+  assert_eq!(Some(&oversized), response.header_value("Vary"));
+  assert_eq!(vec![&oversized], response.header_values("vary"));
+  assert_eq!("OK", response.body().string().unwrap());
+
+  let too_many = std::iter::repeat_n("Accept-Encoding", 257)
+    .collect::<Vec<_>>()
+    .join(",");
+  let raw = format!("HTTP/1.1 200 OK\r\nVary: {too_many}\r\nContent-Length: 2\r\n\r\nOK");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response with too many vary field names remains usable");
+
+  assert!(
+    response.vary().is_err(),
+    "vary helper should reject too many field names"
+  );
+  assert_eq!(Some(&too_many), response.header_value("Vary"));
+  assert_eq!(vec![&too_many], response.header_values("vary"));
+  assert_eq!("OK", response.body().string().unwrap());
+}
+
+#[test]
+fn test_parse_no_vary_search_response_helper() {
+  let s = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "No-Vary-Search: key-order=?0, params\r\n",
+    "NO-VARY-SEARCH: except=(\"session\" \"debug\")\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
+    .expect("parse response with No-Vary-Search headers");
+
+  let no_vary_search = response
+    .no_vary_search()
+    .expect("valid No-Vary-Search should parse")
+    .expect("No-Vary-Search should be present");
+
+  assert_eq!(Some(false), no_vary_search.key_order());
+  assert!(no_vary_search.ignores_all_query_params());
+  assert_eq!(no_vary_search.except(), ["session", "debug"]);
+  assert_eq!(
+    vec![
+      &"key-order=?0, params".to_string(),
+      &"except=(\"session\" \"debug\")".to_string()
+    ],
+    response.header_values("no-vary-search")
+  );
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("parse response without No-Vary-Search");
+  assert_eq!(
+    None,
+    absent
+      .no_vary_search()
+      .expect("absent No-Vary-Search should parse")
+  );
+}
+
+#[test]
+fn test_parse_no_vary_search_rejects_invalid_helper_values_without_rejecting_response() {
+  let invalid_values = [
+    "",
+    "Params",
+    "params=utm",
+    r#"params=("utm"), except=("session")"#,
+    "key-order=false",
+  ];
+
+  for value in invalid_values {
+    let raw = format!("HTTP/1.1 200 OK\r\nNo-Vary-Search: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response remains usable");
+
+    assert!(
+      response.no_vary_search().is_err(),
+      "No-Vary-Search helper should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("No-Vary-Search")
+    );
   }
 }
 

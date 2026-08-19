@@ -887,6 +887,7 @@ impl DecodedHttp2RequestHeaders {
       headers,
       trailers,
       body,
+      content_length: None,
       extended_connect_protocol: self.extended_connect_protocol,
     })
   }
