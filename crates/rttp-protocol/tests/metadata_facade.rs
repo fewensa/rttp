@@ -17,6 +17,7 @@ use rttp_protocol::fetch_metadata::{SecFetchDest, SecFetchMode, SecFetchSite, Se
 use rttp_protocol::from::From;
 use rttp_protocol::host::Host;
 use rttp_protocol::keep_alive::KeepAlive;
+use rttp_protocol::link::LinkValues;
 use rttp_protocol::location::Location;
 use rttp_protocol::nel::Nel;
 use rttp_protocol::no_vary_search::{NoVarySearch, NoVarySearchParams};
@@ -30,6 +31,7 @@ use rttp_protocol::signature_input::{SignatureInput, SignatureInputParseError};
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
 use rttp_protocol::transfer_encoding::TransferEncoding;
+use rttp_protocol::upgrade::{Upgrade, UpgradeParseError};
 use rttp_protocol::want_content_digest::WantContentDigest;
 use rttp_protocol::want_repr_digest::WantReprDigest;
 use rttp_protocol::warning::Warning;
@@ -96,6 +98,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let accept_ranges = AcceptRanges::parse("bytes, pages").expect("Accept-Ranges should parse");
   let transfer_encoding =
     TransferEncoding::parse("chunked").expect("Transfer-Encoding should parse");
+  let upgrade = Upgrade::parse("websocket").expect("Upgrade should parse");
+  let _: UpgradeParseError = Upgrade::parse("").expect_err("empty Upgrade should be rejected");
   let want_content_digest =
     WantContentDigest::parse("sha-256=10, sha-512=0").expect("Want-Content-Digest should parse");
   let want_repr_digest =
@@ -179,6 +183,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(accept_ranges.header_value(), "bytes, pages");
   assert_eq!(transfer_encoding.codings(), ["chunked"]);
   assert_eq!(transfer_encoding.header_value(), "chunked");
+  assert_eq!(upgrade.protocols(), ["websocket"]);
+  assert_eq!(upgrade.header_value(), "websocket");
   assert_eq!(want_content_digest.entries()[0].algorithm(), "sha-256");
   assert_eq!(want_content_digest.entries()[0].preference(), 10);
   assert_eq!(want_content_digest.header_value(), "sha-256=10, sha-512=0");
@@ -248,4 +254,22 @@ fn protocol_exports_bounded_cross_origin_opener_policy_metadata() {
     cross_origin_opener_policy.header_value(),
     "noopener-allow-popups"
   );
+}
+
+#[test]
+fn protocol_exports_bounded_link_metadata() {
+  let links = LinkValues::parse(
+    "</style.css>; rel=preload; as=style, <https://cdn.example.test/app.js>; rel=modulepreload",
+  )
+  .expect("Link should parse");
+
+  assert_eq!(2, links.len());
+  assert_eq!("/style.css", links.values()[0].target());
+  assert_eq!(Some("preload"), links.values()[0].parameter("rel"));
+  assert_eq!(Some("style"), links.values()[0].parameter("as"));
+  assert_eq!(
+    "https://cdn.example.test/app.js",
+    links.values()[1].target()
+  );
+  assert_eq!(Some("modulepreload"), links.values()[1].parameter("rel"));
 }

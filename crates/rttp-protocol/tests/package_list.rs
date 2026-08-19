@@ -19,10 +19,12 @@ fn package_includes_protocol_metadata_facade_test() {
   let package_files = String::from_utf8(output.stdout).expect("package list is utf-8");
   for expected in [
     "README.md",
+    "tests/link.rs",
     "tests/location.rs",
     "tests/package_list.rs",
     "tests/metadata_facade.rs",
     "tests/no_vary_search.rs",
+    "tests/upgrade.rs",
   ] {
     assert!(
       package_files.lines().any(|path| path == expected),
