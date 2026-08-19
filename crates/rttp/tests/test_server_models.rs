@@ -2619,6 +2619,95 @@ fn response_etag_helper_rejects_malformed_duplicate_and_oversized_values_without
 }
 
 #[test]
+fn response_service_worker_allowed_helper_declares_single_header_value() {
+  let response = HttpResponse::ok("body")
+    .header("Service-Worker-Allowed", "/old")
+    .with_service_worker_allowed(" / ")
+    .expect("valid Service-Worker-Allowed should be accepted");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nService-Worker-Allowed: /\r\n"));
+  assert_eq!(
+    1,
+    serialized.matches("\r\nService-Worker-Allowed: ").count()
+  );
+  assert_eq!(
+    "/",
+    response
+      .service_worker_allowed()
+      .expect("Service-Worker-Allowed should parse")
+      .expect("Service-Worker-Allowed should be present")
+      .as_str()
+  );
+}
+
+#[test]
+fn response_service_worker_allowed_helper_parses_attached_singleton_header() {
+  let response = HttpResponse::ok("body").header("Service-Worker-Allowed", "../scope");
+
+  assert_eq!(
+    "../scope",
+    response
+      .service_worker_allowed()
+      .expect("Service-Worker-Allowed should parse")
+      .expect("Service-Worker-Allowed should be present")
+      .as_str()
+  );
+}
+
+#[test]
+fn service_worker_allowed_helper_rejects_empty_control_duplicate_and_oversized_values() {
+  for value in [
+    "",
+    " ",
+    "/bad path",
+    "/bad%zz",
+    "http://example.test/scope",
+    "//example.test/scope",
+    "/safe\u{7f}",
+    "/safe\u{1f}",
+    "/safe\r\nX-Evil: true",
+  ] {
+    assert!(
+      HttpResponse::ok("body")
+        .with_service_worker_allowed(value)
+        .is_err(),
+      "Service-Worker-Allowed helper should reject {value:?}"
+    );
+  }
+
+  for value in ["", " ", "/safe\u{7f}", "/safe\u{1f}", "/bad path"] {
+    let response = HttpResponse::ok("body").header("Service-Worker-Allowed", value);
+    assert!(
+      response.service_worker_allowed().is_err(),
+      "Service-Worker-Allowed parser should reject {value:?}"
+    );
+  }
+
+  let response = HttpResponse::ok("body")
+    .header("Service-Worker-Allowed", "/")
+    .header("Service-Worker-Allowed", "/app/");
+  assert!(
+    response.service_worker_allowed().is_err(),
+    "Service-Worker-Allowed parser should reject duplicate header fields"
+  );
+
+  let oversized = format!("/{}", "a".repeat(64 * 1024 + 1));
+  assert!(
+    HttpResponse::ok("body")
+      .with_service_worker_allowed(&oversized)
+      .is_err(),
+    "Service-Worker-Allowed helper should reject oversized values"
+  );
+
+  let response = HttpResponse::ok("body").header("Service-Worker-Allowed", oversized);
+  assert!(
+    response.service_worker_allowed().is_err(),
+    "Service-Worker-Allowed parser should reject oversized raw values"
+  );
+}
+
+#[test]
 fn content_location_helper_rejects_empty_control_duplicate_and_oversized_values() {
   for value in [
     "",

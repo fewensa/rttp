@@ -5,7 +5,8 @@ use rttp_client::response::{
   Deprecation, EntityTag, HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues, Location,
   MementoDatetime, PermissionsPolicy, ProxyAuthenticate, ProxyAuthenticationInfo, ProxyStatus,
   ProxyStatusBareItem, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
-  SignatureInput, StrictTransportSecurity, Warning, XContentTypeOptions, XFrameOptions,
+  ServiceWorkerAllowed, SignatureInput, StrictTransportSecurity, Warning, XContentTypeOptions,
+  XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -3707,6 +3708,167 @@ fn test_parse_content_location_rejects_control_characters_and_crlf_injection() {
     assert!(
       ContentLocation::parse(value).is_err(),
       "content-location parser should reject {value:?}"
+    );
+  }
+}
+
+#[test]
+fn test_parse_service_worker_allowed_response_helper_accepts_paths() {
+  let cases = [
+    ("/", "absolute path root"),
+    ("/app/", "absolute path prefix"),
+    ("/static/sw/", "absolute nested path"),
+    ("/scope?feature=1", "absolute path with query"),
+    ("/scope#section", "absolute path with fragment"),
+    ("./", "relative dot segment"),
+    ("../scope", "relative parent path"),
+    ("scope/nested", "origin-relative path"),
+  ];
+
+  for (value, name) in cases {
+    let raw =
+      format!("HTTP/1.1 200 OK\r\nService-Worker-Allowed: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(
+      RoUrl::with("https://example.test/static/sw.js"),
+      raw.into_bytes(),
+    )
+    .unwrap_or_else(|err| panic!("{name} response should parse: {err}"));
+    let allowed = response
+      .service_worker_allowed()
+      .unwrap_or_else(|err| panic!("{name} service-worker-allowed should parse: {err}"))
+      .unwrap_or_else(|| panic!("{name} service-worker-allowed should be present"));
+
+    assert_eq!(value, allowed.as_str());
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Service-Worker-Allowed")
+    );
+  }
+}
+
+#[test]
+fn test_parse_service_worker_allowed_response_helper_trims_outer_whitespace_and_allows_absent() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Service-Worker-Allowed:   /   \r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/static/sw.js"),
+    raw.as_bytes().to_vec(),
+  )
+  .expect("parse response with service-worker-allowed");
+  let allowed = response
+    .service_worker_allowed()
+    .expect("valid service-worker-allowed should parse")
+    .expect("service-worker-allowed header should be present");
+
+  assert_eq!("/", allowed.as_str());
+  assert_eq!(
+    Some(&"/".to_string()),
+    response.header_value("Service-Worker-Allowed")
+  );
+
+  let raw = concat!("HTTP/1.1 200 OK\r\n", "Content-Length: 2\r\n", "\r\n", "OK");
+  let response = Response::new(
+    RoUrl::with("https://example.test/static/sw.js"),
+    raw.as_bytes().to_vec(),
+  )
+  .expect("parse response without service-worker-allowed");
+  assert_eq!(
+    None,
+    response
+      .service_worker_allowed()
+      .expect("absent service-worker-allowed should parse")
+  );
+}
+
+#[test]
+fn test_parse_service_worker_allowed_rejects_invalid_helper_values_without_rejecting_response() {
+  let invalid_values = [
+    "",
+    " ",
+    "/bad path",
+    "/bad%zz",
+    "http://example.test/scope",
+    "//example.test/scope",
+  ];
+
+  for value in invalid_values {
+    let raw =
+      format!("HTTP/1.1 200 OK\r\nService-Worker-Allowed: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(
+      RoUrl::with("https://example.test/static/sw.js"),
+      raw.into_bytes(),
+    )
+    .expect("raw response remains usable");
+
+    assert!(
+      response.service_worker_allowed().is_err(),
+      "service-worker-allowed helper should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.trim().to_string()),
+      response.header_value("Service-Worker-Allowed")
+    );
+  }
+}
+
+#[test]
+fn test_parse_service_worker_allowed_rejects_duplicate_and_oversized_values() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Service-Worker-Allowed: /\r\n",
+    "service-worker-allowed: /app/\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/static/sw.js"),
+    raw.as_bytes().to_vec(),
+  )
+  .expect("raw response with duplicate service-worker-allowed remains usable");
+
+  assert!(
+    response.service_worker_allowed().is_err(),
+    "service-worker-allowed helper should reject duplicate singleton headers"
+  );
+  assert_eq!(
+    vec![&"/".to_string(), &"/app/".to_string()],
+    response.header_values("Service-Worker-Allowed")
+  );
+
+  let oversized = format!("/{}", "a".repeat(64 * 1024));
+  let raw = format!(
+    "HTTP/1.1 200 OK\r\nService-Worker-Allowed: {oversized}\r\nContent-Length: 2\r\n\r\nOK"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/static/sw.js"),
+    raw.into_bytes(),
+  )
+  .expect("raw response with oversized service-worker-allowed remains usable");
+
+  assert!(
+    response.service_worker_allowed().is_err(),
+    "service-worker-allowed helper should reject oversized values"
+  );
+  assert_eq!(
+    Some(&oversized),
+    response.header_value("Service-Worker-Allowed")
+  );
+}
+
+#[test]
+fn test_parse_service_worker_allowed_rejects_control_characters_and_crlf_injection() {
+  let invalid_values = ["\r\nLocation: /evil", "/ok\r", "/ok\n", "/ok\tinner"];
+
+  for value in invalid_values {
+    assert!(
+      ServiceWorkerAllowed::parse(value).is_err(),
+      "service-worker-allowed parser should reject {value:?}"
     );
   }
 }

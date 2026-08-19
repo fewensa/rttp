@@ -134,6 +134,10 @@ pub use rttp_protocol::server_timing::{
   ServerTimingParameter as HttpServerTimingParameter,
   ServerTimingParseError as HttpServerTimingParseError,
 };
+pub use rttp_protocol::service_worker_allowed::{
+  ServiceWorkerAllowed as HttpServiceWorkerAllowed,
+  ServiceWorkerAllowedParseError as HttpServiceWorkerAllowedParseError,
+};
 pub use rttp_protocol::signature_input::{
   SignatureInput as HttpSignatureInput, SignatureInputParseError as HttpSignatureInputParseError,
 };
@@ -1553,6 +1557,21 @@ impl HttpResponse {
     Ok(self)
   }
 
+  pub fn with_service_worker_allowed<V: AsRef<str>>(
+    mut self,
+    value: V,
+  ) -> Result<Self, HttpServiceWorkerAllowedParseError> {
+    let service_worker_allowed = HttpServiceWorkerAllowed::parse(value.as_ref())?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Service-Worker-Allowed"));
+    self.headers.push(HttpHeader::new(
+      "Service-Worker-Allowed",
+      service_worker_allowed.header_value(),
+    ));
+    Ok(self)
+  }
+
   pub fn with_content_dpr<V: AsRef<str>>(
     mut self,
     value: V,
@@ -2498,6 +2517,21 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpContentLocation::parse_values(values).map(Some)
+  }
+
+  pub fn service_worker_allowed(
+    &self,
+  ) -> Result<Option<HttpServiceWorkerAllowed>, HttpServiceWorkerAllowedParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Service-Worker-Allowed"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpServiceWorkerAllowed::parse_values(values).map(Some)
   }
 
   pub fn content_dpr(&self) -> Result<Option<HttpContentDpr>, HttpContentDprParseError> {

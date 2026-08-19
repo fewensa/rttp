@@ -1345,6 +1345,116 @@ fn etag_response_helper_rejects_malformed_duplicate_and_oversized_raw_headers() 
 }
 
 #[test]
+fn service_worker_allowed_response_helpers_validate_replace_and_parse_singleton_metadata() {
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .service_worker_allowed()
+      .expect("absent Service-Worker-Allowed should parse")
+  );
+
+  let response = HttpResponse::ok([])
+    .header("Service-Worker-Allowed", "/old")
+    .header("service-worker-allowed", "/older")
+    .with_service_worker_allowed(" / ")
+    .expect("valid Service-Worker-Allowed should be accepted");
+  assert_eq!(
+    "/",
+    response
+      .service_worker_allowed()
+      .expect("Service-Worker-Allowed should parse")
+      .expect("Service-Worker-Allowed should be present")
+      .as_str()
+  );
+  assert_eq!(
+    vec![("Service-Worker-Allowed", "/")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let attached = HttpResponse::ok([]).header("Service-Worker-Allowed", "../scope");
+  assert_eq!(
+    "../scope",
+    attached
+      .service_worker_allowed()
+      .expect("Service-Worker-Allowed should parse")
+      .expect("Service-Worker-Allowed should be present")
+      .as_str()
+  );
+}
+
+#[test]
+fn service_worker_allowed_response_helper_rejects_malformed_duplicate_and_oversized_raw_headers() {
+  for value in [
+    "",
+    " ",
+    "/bad path",
+    "/bad%zz",
+    "http://example.test/scope",
+    "//example.test/scope",
+    "/safe\u{7f}",
+  ] {
+    assert!(
+      HttpResponse::ok([])
+        .with_service_worker_allowed(value)
+        .is_err(),
+      "Service-Worker-Allowed helper should reject {value:?}"
+    );
+
+    let response = HttpResponse::ok([]).header("Service-Worker-Allowed", value);
+    assert!(
+      response.service_worker_allowed().is_err(),
+      "Service-Worker-Allowed parser should reject {value:?}"
+    );
+    assert_eq!(
+      vec![("Service-Worker-Allowed", value)],
+      response
+        .headers
+        .iter()
+        .map(|header| (header.name.as_str(), header.value.as_str()))
+        .collect::<Vec<_>>()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("Service-Worker-Allowed", "/")
+    .header("service-worker-allowed", "/app/");
+  assert!(duplicate.service_worker_allowed().is_err());
+  assert_eq!(
+    vec![
+      ("Service-Worker-Allowed", "/"),
+      ("service-worker-allowed", "/app/")
+    ],
+    duplicate
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let oversized = format!("/{}", "a".repeat(64 * 1024));
+  assert!(
+    HttpResponse::ok([])
+      .with_service_worker_allowed(&oversized)
+      .is_err(),
+    "Service-Worker-Allowed helper should reject oversized values"
+  );
+  let response = HttpResponse::ok([]).header("Service-Worker-Allowed", &oversized);
+  assert!(response.service_worker_allowed().is_err());
+  assert_eq!(
+    vec![("Service-Worker-Allowed", oversized.as_str())],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
 fn access_control_allow_methods_helpers_validate_replace_and_parse_response_metadata() {
   let response = HttpResponse::ok([])
     .header("Access-Control-Allow-Methods", "DELETE")

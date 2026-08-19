@@ -83,6 +83,7 @@ pub mod reporting_endpoints;
 pub mod save_data;
 pub mod sec_gpc;
 pub mod server_timing;
+pub mod service_worker_allowed;
 pub mod signature;
 pub mod signature_input;
 pub mod strict_transport_security;
