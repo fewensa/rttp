@@ -525,6 +525,30 @@ compression or decompression policy, negotiation, cache policy, redirects,
 retry/replay, or filesystem serving from `Content-Type` or
 `Content-Encoding`.
 
+### Bounded Accept-Charset request metadata
+
+`rttp-protocol` owns the shared `Accept-Charset` primitive. Client helpers
+format through that type, and server `Request` / `HttpRequest` helpers parse
+with the same rules.
+
+`HttpClient::accept_charset()` appends a validated request charset range,
+while `accept_charset_with_q()` accepts an HTTP q-value from `0` through `1`
+with at most three fractional digits. The helpers emit one comma-separated
+`Accept-Charset` field and reject invalid charset tokens, q-values,
+duplicates, oversized values, and more than 32 ranges before a connection is
+opened.
+
+On the server, `Request::accept_charset()` and
+`HttpRequest::accept_charset()` parse all received `Accept-Charset` fields in
+wire order into `HttpRequestAcceptCharsets`, an alias of the shared protocol
+type. Each entry provides its `charset()` and q-value `quality()` in
+thousandths (`1000` is the default quality of `1`). Absent metadata returns
+`Ok(None)`; malformed, duplicate, empty, oversized, or excessive entries
+return a parse error without changing the request itself.
+
+These helpers declare and parse metadata only. They do not negotiate, transcode,
+decode bodies, sniff MIME types, or select a response charset.
+
 ### Bounded Accept-Encoding request metadata
 
 `rttp-protocol` owns the shared `Accept-Encoding` primitive. Client helpers
@@ -1076,6 +1100,7 @@ gain additional HTTP/2 header-block handling.
 | HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and explicit `Expect: 100-continue` metadata through the shared protocol type | Expect metadata does not gate body transmission; raw `header(("Expect", value))` remains an escape hatch; SOCKS handshakes are delegated to the `socks` crate |
 | Fetch Metadata | Client `sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, `sec_fetch_user`, and `sec_purpose` emit bounded `Sec-Fetch-*`/`Sec-Purpose` fields; server `Request` helpers parse typed received values while preserving raw headers on errors | No browser security policy, request blocking, origin validation, navigation policy, automatic header generation, prefetch execution, or cache behavior |
 | Save-Data | Client `save_data` emits bounded `Save-Data: on` request metadata; server `Request::save_data()` and `HttpRequest::save_data()` parse typed received values while preserving raw headers on errors | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |
+| Accept-Charset | Client `accept_charset` and `accept_charset_with_q` format bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type; server `Request::accept_charset()` and `HttpRequest::accept_charset()` parse received fields into `HttpRequestAcceptCharsets` | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |
 | Sec-GPC | Client `sec_gpc` emits bounded `Sec-GPC: 1` request metadata; server `Request::sec_gpc()` and `HttpRequest::sec_gpc()` parse typed received values while preserving raw headers on errors | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
 | Upgrade-Insecure-Requests | Client `upgrade_insecure_requests` emits bounded singleton `Upgrade-Insecure-Requests: 1` request metadata; server `Request::upgrade_insecure_requests()` and `HttpRequest::upgrade_insecure_requests()` parse typed received values while preserving raw headers on errors | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Idempotency-Key | Client `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field; server `Request::idempotency_key()` and `HttpRequest::idempotency_key()` parse typed received values while preserving raw headers on errors, and the key is redacted from typed debug output | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
@@ -1618,6 +1643,30 @@ helpers such as `Request::accept_language()`, `HttpResponse::cache_control()`,
 and parsing only when requested. They do not sniff, decode, negotiate, cache,
 redirect, retry, or select representations from `Content-Language`.
 
+### Bounded Accept-Charset request metadata
+
+Server-side `Accept-Charset` helpers expose request metadata through the
+shared `rttp-protocol` primitive. `Request::accept_charset()` and
+`HttpRequest::accept_charset()` parse all received `Accept-Charset` fields
+in wire order into `HttpRequestAcceptCharsets` and return `Ok(None)` when
+the header is absent. HTTP/1.1 and HTTP/2 share the same `Request` helpers.
+Each entry provides its `charset()` and q-value `quality()` in thousandths
+(`1000` is the default quality of `1`). The shared protocol type is the
+authority for charset-range, wildcard, q-value, duplicate, member-count, and
+size validation.
+
+Parsing is bounded and validation-oriented. Each `Accept-Charset` field value
+is limited to 64 KiB, the combined list is limited to 32 members, and each
+range must be an RFC 9110 token, including `*`. Empty members, malformed
+tokens or q-values, duplicates across one or more helper-parsed header
+fields, oversized values, and too many members return
+`HttpAcceptCharsetParseError` from the helper. Raw
+`Request::header("Accept-Charset", ...)` values remain preserved exactly as
+ordinary headers; helper parse errors do not remove existing headers.
+
+These helpers parse request metadata only. They do not negotiate, transcode,
+decode bodies, sniff MIME types, or select a response charset.
+
 ### Bounded Accept-Encoding request metadata
 
 Server-side `Accept-Encoding` helpers expose request metadata through the
@@ -2013,6 +2062,7 @@ TLS or async accept loops.
 | Memento-Datetime | `HttpResponse::with_memento_datetime`/`memento_datetime` declare and parse bounded singleton `Memento-Datetime` IMF-fixdate metadata while preserving raw headers on parse errors | No archival selection, `Accept-Datetime` negotiation, TimeGate behavior, retry, or transport changes |
 | Fetch Metadata | `Request::sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, `sec_fetch_user`, and `sec_purpose` parse bounded typed `Sec-Fetch-*`/`Sec-Purpose` request fields and preserve raw values on errors | No browser security policy, request blocking, origin validation, navigation policy, automatic header generation, prefetch execution, or cache behavior |
 | Save-Data | `Request::save_data` and `HttpRequest::save_data` parse bounded singleton `Save-Data` `on`-token metadata and preserve raw values on errors | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |
+| Accept-Charset | `HttpRequestAcceptCharsets`, `Request::accept_charset`, and `HttpRequest::accept_charset` parse bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |
 | Sec-GPC | `Request::sec_gpc` and `HttpRequest::sec_gpc` parse bounded singleton `Sec-GPC` `1`-signal metadata and preserve raw values on errors | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
 | Upgrade-Insecure-Requests | `Request::upgrade_insecure_requests` and `HttpRequest::upgrade_insecure_requests` parse bounded singleton `Upgrade-Insecure-Requests` `1`-token metadata and preserve raw values on errors | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Idempotency-Key | `Request::idempotency_key` and `HttpRequest::idempotency_key` parse bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, preserve raw values on errors, and redact the key from typed debug output | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |

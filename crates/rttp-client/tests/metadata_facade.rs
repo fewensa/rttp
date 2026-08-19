@@ -1,6 +1,7 @@
 use rttp_client::response::{
-  AcceptCh, AcceptEncoding, AccessControlAllowCredentials, AccessControlAllowCredentialsParseError,
-  AccessControlAllowHeaders, AccessControlAllowHeadersParseError, AccessControlAllowMethods,
+  AcceptCh, AcceptCharset, AcceptEncoding, AccessControlAllowCredentials,
+  AccessControlAllowCredentialsParseError, AccessControlAllowHeaders,
+  AccessControlAllowHeadersParseError, AccessControlAllowMethods,
   AccessControlAllowMethodsParseError, AccessControlExposeHeaders, AccessControlMaxAge,
   AccessControlMaxAgeParseError, Age, AgeParseError, AltSvc, AuthenticationInfo,
   AuthenticationInfoParseError, CacheStatus, CacheStatusParseError, Connection,
@@ -92,6 +93,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     NoVarySearch::parse("params=utm").expect_err("invalid No-Vary-Search should be rejected");
   let want_content_digest =
     WantContentDigest::parse("sha-256=10").expect("Want-Content-Digest should parse");
+  let accept_charset =
+    AcceptCharset::parse("utf-8, iso-8859-1;q=0.5, *;q=0").expect("Accept-Charset should parse");
   let accept_encoding =
     AcceptEncoding::parse("gzip, br;q=0.8").expect("Accept-Encoding should parse");
   let want_repr_digest =
@@ -230,6 +233,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     Some(&NoVarySearchParams::Names(vec!["utm_source".to_owned()]))
   );
   assert_eq!(want_content_digest.entries()[0].preference(), 10);
+  assert_eq!(accept_charset.charsets()[0].charset(), "utf-8");
+  assert_eq!(accept_charset.charsets()[1].quality(), 500);
   assert_eq!(accept_encoding.codings()[0].coding(), "gzip");
   assert_eq!(accept_encoding.codings()[1].quality(), 800);
   assert_eq!(want_repr_digest.entries()[0].preference(), 10);

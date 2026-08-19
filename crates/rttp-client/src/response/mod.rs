@@ -21,6 +21,9 @@
 
 pub use self::response::*;
 
+pub use rttp_protocol::accept_charset::{
+  AcceptCharset, AcceptCharsetParseError, AcceptCharsetRange,
+};
 pub use rttp_protocol::accept_encoding::{
   AcceptEncoding, AcceptEncodingCoding, AcceptEncodingParseError,
 };
