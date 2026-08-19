@@ -9,7 +9,8 @@ pub use rttp_client::response::{
   AcceptCh, AcceptPatch, AcceptPost, AltSvc, AltSvcAlternative, AltSvcParameter, AltSvcParseError,
   CriticalCh, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyParseError,
   CrossOriginEmbedderPolicyReportOnly, CrossOriginEmbedderPolicyReportOnlyParseError,
-  CrossOriginOpenerPolicy, CrossOriginOpenerPolicyParseError, HttpContentLength,
+  CrossOriginOpenerPolicy, CrossOriginOpenerPolicyParseError, HttpContentLength, Location,
+  LocationParseError, NoVarySearch, NoVarySearchParams, NoVarySearchParseError,
   StrictTransportSecurity, StrictTransportSecurityParseError,
 };
 #[cfg(feature = "client")]

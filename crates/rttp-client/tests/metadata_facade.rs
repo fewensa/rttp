@@ -3,7 +3,8 @@ use rttp_client::response::{
   AccessControlAllowMethods, AccessControlAllowMethodsParseError, AccessControlExposeHeaders,
   AccessControlMaxAge, AccessControlMaxAgeParseError, AltSvc, Connection, ConnectionParseError,
   CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy,
-  CrossOriginResourcePolicy, Digest, HttpClearSiteData, HttpContentLength, PreferenceApplied,
+  CrossOriginResourcePolicy, Digest, HttpClearSiteData, HttpContentLength, Location,
+  LocationParseError, NoVarySearch, NoVarySearchParams, NoVarySearchParseError, PreferenceApplied,
   Priority, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ReferrerPolicy,
   ReferrerPolicyToken, ServerTiming, Signature, SignatureInput, SignatureInputParseError,
   SignatureParseError, StrictTransportSecurity, StrictTransportSecurityParseError, Trailer,
@@ -32,6 +33,12 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let clear_site_data =
     HttpClearSiteData::parse("\"cache\"").expect("Clear-Site-Data should parse");
   let digest = Digest::parse("sha-256=:YWJj:").expect("Digest should parse");
+  let location = Location::parse("/next").expect("Location should parse");
+  let _: LocationParseError = Location::parse("").expect_err("empty Location should be rejected");
+  let no_vary_search =
+    NoVarySearch::parse(r#"params=("utm_source")"#).expect("No-Vary-Search should parse");
+  let _: NoVarySearchParseError =
+    NoVarySearch::parse("params=utm").expect_err("invalid No-Vary-Search should be rejected");
   let want_content_digest =
     WantContentDigest::parse("sha-256=10").expect("Want-Content-Digest should parse");
   let want_repr_digest =
@@ -88,6 +95,11 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
   assert_eq!(clear_site_data.directives().len(), 1);
   assert_eq!(digest.entries().len(), 1);
+  assert_eq!(location.as_str(), "/next");
+  assert_eq!(
+    no_vary_search.params(),
+    Some(&NoVarySearchParams::Names(vec!["utm_source".to_owned()]))
+  );
   assert_eq!(want_content_digest.entries()[0].preference(), 10);
   assert_eq!(want_repr_digest.entries()[0].preference(), 10);
   assert_eq!(priority.urgency(), Some(1));

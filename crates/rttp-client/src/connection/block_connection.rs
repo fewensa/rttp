@@ -70,20 +70,23 @@ impl<'a> BlockConnection<'a> {
       let config = self.conn.config().clone();
 
       if response.is_redirect() {
-        let Some(location) = response.location() else {
+        if response.header_value("location").is_none() {
           self.conn.closed_set(close_connection);
           return Ok(response);
-        };
+        }
         if !config.auto_redirect() {
           self.conn.closed_set(close_connection);
           return Ok(response);
         }
+        let location = response
+          .header_value("location")
+          .expect("Location header presence checked before redirect");
         let count = self.conn.count();
         if count > config.max_redirect() {
           return Err(error::too_many_redirects(url));
         }
 
-        let redirect_url = self.conn.resolve_redirect_url(&url, location)?;
+        let redirect_url = self.conn.resolve_redirect_url(&url, location.as_str())?;
         if url.scheme() == "https"
           && redirect_url.url.scheme() == "http"
           && !config.allow_https_to_http_redirects()
