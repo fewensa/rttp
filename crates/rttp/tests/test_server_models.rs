@@ -155,6 +155,54 @@ fn request_access_control_request_headers_preserves_absent_valid_and_malformed_m
 }
 
 #[test]
+fn request_access_control_request_private_network_preserves_absent_valid_and_malformed_metadata() {
+  let absent = parse_request("OPTIONS /widgets HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .access_control_request_private_network()
+      .expect("missing Access-Control-Request-Private-Network should be accepted")
+  );
+
+  let request = parse_request(concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Private-Network: true\r\n",
+    "\r\n"
+  ));
+  let private_network = request
+    .access_control_request_private_network()
+    .expect("Access-Control-Request-Private-Network should parse")
+    .expect("Access-Control-Request-Private-Network should be present");
+  assert_eq!("true", private_network.header_value());
+
+  let malformed = parse_request(concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Private-Network: false\r\n",
+    "\r\n"
+  ));
+  assert!(malformed.access_control_request_private_network().is_err());
+  assert_eq!(
+    Some("false"),
+    malformed.header("Access-Control-Request-Private-Network")
+  );
+
+  let duplicate = parse_request(concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Private-Network: true\r\n",
+    "access-control-request-private-network: true\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.access_control_request_private_network().is_err());
+  assert_eq!(
+    Some("true"),
+    duplicate.header("Access-Control-Request-Private-Network")
+  );
+}
+
+#[test]
 fn request_representation_metadata_parses_without_applying_policy() {
   let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
   assert_eq!(
@@ -1139,6 +1187,51 @@ fn request_accept_encoding_rejects_duplicate_invalid_and_oversized_values() {
 }
 
 #[test]
+fn request_want_content_digest_parses_algorithm_preferences() {
+  let request = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Want-Content-Digest: sha-256=10, sha-512=3\r\n",
+    "want-content-digest: unixsum=0\r\n",
+    "\r\n"
+  ));
+
+  let digest = request
+    .want_content_digest()
+    .expect("Want-Content-Digest should parse")
+    .expect("Want-Content-Digest should be present");
+
+  assert_eq!(3, digest.len());
+  assert_eq!("sha-256", digest.entries()[0].algorithm());
+  assert_eq!(10, digest.entries()[0].preference());
+  assert_eq!("sha-512", digest.entries()[1].algorithm());
+  assert_eq!(3, digest.entries()[1].preference());
+  assert_eq!("unixsum", digest.entries()[2].algorithm());
+  assert_eq!(0, digest.entries()[2].preference());
+}
+
+#[test]
+fn request_want_content_digest_rejects_absent_malformed_and_preserves_raw_headers() {
+  assert_eq!(
+    None,
+    parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .want_content_digest()
+      .expect("absent Want-Content-Digest should be accepted")
+  );
+
+  for value in ["", "sha-256", "sha-256=11", "sha-256=10, sha-256=3"] {
+    let request = parse_request(&format!(
+      "GET / HTTP/1.1\r\nHost: example.test\r\nWant-Content-Digest: {value}\r\n\r\n"
+    ));
+    assert!(
+      request.want_content_digest().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(Some(value), request.header("Want-Content-Digest"));
+  }
+}
+
+#[test]
 fn request_host_parses_http11_authority() {
   let request = parse_request(concat!(
     "GET /asset HTTP/1.1\r\n",
@@ -1482,6 +1575,30 @@ fn response_vary_helper_declares_normalized_vary_header() {
 }
 
 #[test]
+fn response_no_vary_search_helper_parses_and_declares_metadata() {
+  let response = HttpResponse::ok("body")
+    .header("No-Vary-Search", "params")
+    .header("no-vary-search", r#"except=("session")"#);
+
+  let no_vary_search = response
+    .no_vary_search()
+    .expect("attached No-Vary-Search headers should parse")
+    .expect("No-Vary-Search should be present");
+
+  assert!(no_vary_search.ignores_all_query_params());
+  assert_eq!(no_vary_search.except(), ["session"]);
+
+  let response = HttpResponse::ok("body")
+    .header("No-Vary-Search", "params")
+    .with_no_vary_search(r#"key-order=?0, params=("utm_source")"#)
+    .expect("valid No-Vary-Search should be accepted");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(!serialized.contains("\r\nNo-Vary-Search: params\r\n"));
+  assert!(serialized.contains("\r\nNo-Vary-Search: key-order=?0, params=(\"utm_source\")\r\n"));
+}
+
+#[test]
 fn parses_allow_methods_and_serializes_single_header_value() {
   let allow =
     HttpAllowedMethods::parse("GET, HEAD, POST").expect("valid Allow header should parse");
@@ -1791,7 +1908,7 @@ fn accept_ranges_helpers_reject_malformed_duplicate_oversized_and_excessive_valu
     "Accept-Ranges helper should reject oversized values"
   );
 
-  let too_many = (0..33)
+  let too_many = (0..257)
     .map(|index| format!("unit{index}"))
     .collect::<Vec<_>>()
     .join(", ");
@@ -1837,10 +1954,12 @@ fn response_content_location_helper_declares_single_header_value() {
   assert!(serialized.contains("\r\nContent-Location: /representations/current\r\n"));
   assert_eq!(1, serialized.matches("\r\nContent-Location: ").count());
   assert_eq!(
-    Some("/representations/current"),
+    "/representations/current",
     response
       .content_location()
       .expect("Content-Location should parse")
+      .expect("Content-Location should be present")
+      .as_str()
   );
 }
 
@@ -1849,10 +1968,12 @@ fn response_content_location_helper_parses_attached_singleton_header() {
   let response = HttpResponse::ok("body").header("Content-Location", "../variant.en");
 
   assert_eq!(
-    Some("../variant.en"),
+    "../variant.en",
     response
       .content_location()
       .expect("Content-Location should parse")
+      .expect("Content-Location should be present")
+      .as_str()
   );
 }
 

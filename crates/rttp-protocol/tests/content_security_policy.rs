@@ -1,5 +1,6 @@
 use rttp_protocol::content_security_policy::{
-  ContentSecurityPolicy, MAX_CONTENT_SECURITY_POLICY_VALUE_BYTES,
+  ContentSecurityPolicy, MAX_CONTENT_SECURITY_POLICY_FIELDS,
+  MAX_CONTENT_SECURITY_POLICY_VALUE_BYTES,
 };
 
 #[test]
@@ -57,5 +58,24 @@ fn content_security_policy_checks_duplicate_values_against_its_bound() {
   assert!(
     ContentSecurityPolicy::parse_values(["default-src 'self'", oversized.as_str()]).is_err(),
     "oversized duplicate fields must not bypass validation"
+  );
+}
+
+#[test]
+fn content_security_policy_rejects_too_many_repeated_fields() {
+  let fields = vec!["default-src 'self'"; MAX_CONTENT_SECURITY_POLICY_FIELDS];
+  let policy = ContentSecurityPolicy::parse_values(fields.iter().copied())
+    .expect("bounded fields should parse");
+
+  assert_eq!(
+    policy.header_values().len(),
+    MAX_CONTENT_SECURITY_POLICY_FIELDS
+  );
+
+  let too_many = vec!["default-src 'self'"; MAX_CONTENT_SECURITY_POLICY_FIELDS + 1];
+
+  assert!(
+    ContentSecurityPolicy::parse_values(too_many.iter().copied()).is_err(),
+    "too many repeated fields must be rejected"
   );
 }

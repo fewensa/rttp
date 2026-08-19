@@ -68,6 +68,23 @@ time.
 These helpers parse HTTP/1 header metadata only. They do not change
 keep-alive, hop-by-hop stripping, upgrade/h2c handoff, or HTTP/2 rejection.
 
+## Response Keep-Alive metadata
+
+Handlers can call `HttpResponse::keep_alive()` to observe bounded typed
+`Keep-Alive` response metadata and `HttpResponse::with_keep_alive(value)` to
+validate and replace the `Keep-Alive` response field. The helpers parse
+RFC 2068 `Keep-Alive` fields in wire order into `HttpKeepAlive`; the optional
+`timeout` delta-seconds and optional `max` `1*DIGIT` values are parsed as
+checked unsigned integers, and unrecognized `name=token` parameters are
+preserved as bounded `HttpKeepAliveExtension` metadata. Absent fields return
+`Ok(None)`. Duplicate recognized parameters, malformed values, overflow,
+oversized values, or over-limit values return a parser error while
+`HttpResponse` raw headers continue to expose the original fields.
+
+These helpers expose Keep-Alive as metadata only. They do not change
+connection lifetime, connection pooling, keep-alive timers, or HTTP/2
+behavior.
+
 ## Request Transfer-Encoding framing metadata
 
 Handlers can call `Request::transfer_encoding()` and
@@ -117,6 +134,74 @@ without changing those raw fields.
 
 These helpers only declare and parse metadata. They do not calculate hashes,
 verify bodies, canonicalize representations, sign values, or enforce integrity.
+
+## Accept-Ranges response metadata
+
+`HttpResponse::with_accept_ranges(units)` declares supported range units with
+one bounded comma-separated `Accept-Ranges` response header, while
+`HttpResponse::with_accept_ranges_none()` declares the `Accept-Ranges: none`
+sentinel. `HttpResponse::accept_ranges()` parses attached raw fields into
+`HttpAcceptRanges`, the shared protocol parser also used by the client facade.
+Present values expose `units()`, `is_none()`, and `header_value()`; the `none`
+sentinel is represented as an empty unit list. Each field value is bounded to
+64 KiB and the parsed header set to 256 range units; malformed or empty values,
+case-insensitive duplicate units, `none` combined with any unit, and `none`
+through the unit declaration helper are rejected. The declaration helper
+replaces existing raw `Accept-Ranges` fields, while manually attached fields
+remain preserved until the typed parser is requested.
+
+These helpers only declare and inspect metadata. RTTP does not parse request
+`Range` fields, generate `Range` requests, create a partial response engine,
+serve bytes, slice content, resume downloads, or choose redirect, retry, or
+status-policy behavior.
+
+## Content-Location response metadata
+
+`HttpResponse::with_content_location(value)` validates one
+`Content-Location` URI-reference field value with the shared protocol-owned
+`HttpContentLocation` type, trims outer whitespace, removes any existing raw
+`Content-Location` fields, and adds a single validated `Content-Location`
+header. `HttpResponse::content_location()` parses attached raw fields into
+`HttpContentLocation`, returns `Ok(None)` when absent, and preserves invalid
+raw fields until typed parsing is requested.
+
+The helper is bounded and validation-oriented. The field value is limited to
+64 KiB and must be a non-empty absolute URI or relative URI reference without
+control characters, interior whitespace, unsafe field-value characters,
+malformed URI syntax, or broken percent-encoding. Duplicate fields are rejected
+because `Content-Location` is singleton response metadata. The preserved
+trimmed reference is available through `as_str()` and `header_value()`.
+
+These helpers only declare and parse metadata. RTTP does not resolve relative
+references against a response URL, follow redirects, select cache variants,
+replace representations, generate routes, trigger retries, or alter status
+policy from `Content-Location`.
+
+## No-Vary-Search response metadata
+
+`HttpResponse::with_no_vary_search(value)` validates and replaces attached
+`No-Vary-Search` fields with one normalized response declaration.
+`HttpResponse::no_vary_search()` parses attached raw fields into
+`HttpNoVarySearch` metadata. The typed value exposes recognized `key-order`,
+`params`, and `except` members while keeping the behavior metadata-only.
+
+These helpers do not store responses, match cache keys, normalize URLs, replay
+requests, apply browser navigation behavior, or enforce shared-cache policy.
+
+## Want-Content-Digest request metadata
+
+Handlers can call `Request::want_content_digest()` and
+`HttpRequest::want_content_digest()` to observe bounded typed
+`Want-Content-Digest` algorithm preferences. The helpers combine
+case-insensitive fields in wire order into `HttpWantContentDigest`. Each entry
+exposes `algorithm()` and `preference()` (`0` through `10`). Absent metadata
+returns `Ok(None)`. Malformed, oversized, duplicate, empty, or over-limit
+values return a parse error while `Request::header()` and `Request::body()`
+continue to expose the original request.
+
+These helpers parse request metadata only. They do not select an algorithm,
+compute or verify content digests, attach `Content-Digest`, or negotiate
+content.
 
 ## Want-Repr-Digest request metadata
 

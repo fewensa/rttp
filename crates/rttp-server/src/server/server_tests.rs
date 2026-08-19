@@ -119,6 +119,73 @@ fn request_access_control_request_headers_parses_preflight_metadata_without_poli
 }
 
 #[test]
+fn request_access_control_request_private_network_parses_preflight_metadata_without_policy() {
+  let absent_raw = "OPTIONS /widgets HTTP/1.1\r\nHost: example.test\r\n\r\n";
+  let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
+  let absent = Request::read_next_from(&mut absent_reader)
+    .expect("absent request should parse")
+    .expect("absent request should be present");
+  assert_eq!(
+    None,
+    absent
+      .access_control_request_private_network()
+      .expect("missing Access-Control-Request-Private-Network should be accepted")
+  );
+
+  let valid_raw = concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Private-Network: true\r\n",
+    "\r\n"
+  );
+  let mut valid_reader = BufReader::new(Cursor::new(valid_raw.as_bytes()));
+  let valid = Request::read_next_from(&mut valid_reader)
+    .expect("valid request should parse")
+    .expect("valid request should be present");
+  assert_eq!(
+    "true",
+    valid
+      .access_control_request_private_network()
+      .expect("Access-Control-Request-Private-Network should parse")
+      .expect("Access-Control-Request-Private-Network should be present")
+      .header_value()
+  );
+
+  let malformed_raw = concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Private-Network: false\r\n",
+    "\r\n"
+  );
+  let mut malformed_reader = BufReader::new(Cursor::new(malformed_raw.as_bytes()));
+  let malformed = Request::read_next_from(&mut malformed_reader)
+    .expect("malformed metadata should not reject the request frame")
+    .expect("malformed request should be present");
+  assert!(malformed.access_control_request_private_network().is_err());
+  assert_eq!(
+    Some("false"),
+    malformed.header("Access-Control-Request-Private-Network")
+  );
+
+  let duplicate_raw = concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Private-Network: true\r\n",
+    "access-control-request-private-network: true\r\n",
+    "\r\n"
+  );
+  let mut duplicate_reader = BufReader::new(Cursor::new(duplicate_raw.as_bytes()));
+  let duplicate = Request::read_next_from(&mut duplicate_reader)
+    .expect("duplicate metadata should not reject the request frame")
+    .expect("duplicate request should be present");
+  assert!(duplicate.access_control_request_private_network().is_err());
+  assert_eq!(
+    Some("true"),
+    duplicate.header("Access-Control-Request-Private-Network")
+  );
+}
+
+#[test]
 fn request_representation_metadata_parses_without_applying_policy() {
   let absent_raw = "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n";
   let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
@@ -193,6 +260,58 @@ fn request_representation_metadata_parses_without_applying_policy() {
     .expect("Accept-Language should be present");
   assert_eq!(vec!["en"], accept_language.ranges());
   assert_eq!(b"body", valid.body());
+}
+
+#[test]
+fn request_want_content_digest_parses_preferences_without_selecting_an_algorithm() {
+  let request = Request::from_raw_frame(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Want-Content-Digest: sha-256=10, sha-512=3\r\n",
+    "want-content-digest: unixsum=0\r\n",
+    "Content-Length: 4\r\n",
+    "\r\n",
+    "body"
+  ).as_bytes())
+  .expect("request should parse");
+
+  let digest = request
+    .want_content_digest()
+    .expect("Want-Content-Digest should parse")
+    .expect("Want-Content-Digest should be present");
+  assert_eq!(digest.len(), 3);
+  assert_eq!(digest.entries()[0].algorithm(), "sha-256");
+  assert_eq!(digest.entries()[0].preference(), 10);
+  assert_eq!(digest.entries()[1].algorithm(), "sha-512");
+  assert_eq!(digest.entries()[1].preference(), 3);
+  assert_eq!(digest.entries()[2].algorithm(), "unixsum");
+  assert_eq!(digest.entries()[2].preference(), 0);
+  assert_eq!(b"body", request.body());
+}
+
+#[test]
+fn request_want_content_digest_preserves_absent_and_malformed_headers() {
+  let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .want_content_digest()
+      .expect("absent Want-Content-Digest should be accepted")
+  );
+
+  let malformed = Request::from_raw_frame(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Want-Content-Digest: sha-256\r\n",
+    "Content-Length: 4\r\n",
+    "\r\n",
+    "body"
+  ).as_bytes())
+  .expect("malformed Want-Content-Digest should not reject the request frame");
+  assert!(malformed.want_content_digest().is_err());
+  assert_eq!(Some("sha-256"), malformed.header("Want-Content-Digest"));
+  assert_eq!(b"body", malformed.body());
 }
 
 #[test]
@@ -547,6 +666,7 @@ fn request_representation_metadata_preserves_invalid_headers_and_body() {
     ],
     trailers: Vec::new(),
     body: b"body".to_vec(),
+    content_length: None,
     extended_connect_protocol: None,
   };
   assert!(oversized.content_type().is_err());
@@ -637,6 +757,7 @@ fn request_cache_control_rejects_oversized_values_without_panicking() {
     )],
     trailers: Vec::new(),
     body: Vec::new(),
+    content_length: None,
     extended_connect_protocol: None,
   };
 
@@ -662,6 +783,7 @@ fn request_cache_control_rejects_directive_counts_across_header_fields() {
     ],
     trailers: Vec::new(),
     body: Vec::new(),
+    content_length: None,
     extended_connect_protocol: None,
   };
 
@@ -1965,6 +2087,24 @@ fn request_exposes_bounded_range_and_conditional_metadata() {
     assert_eq!("POST", request.method());
     assert_eq!("/upload", request.target());
     assert_eq!(b"hello", request.body());
+    let content_length = request
+      .content_length()
+      .expect("matching fixed length should be retained");
+    assert_eq!(5, content_length.len());
+  }
+
+  #[test]
+  fn read_next_from_omits_content_length_metadata_when_header_is_absent() {
+    let raw = "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n";
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+
+    let request = Request::read_next_from(&mut reader)
+      .expect("request should parse")
+      .expect("request should be present");
+
+    assert_eq!("GET", request.method());
+    assert_eq!(b"", request.body());
+    assert_eq!(None, request.content_length());
   }
 
   #[test]
@@ -2430,4 +2570,128 @@ hello\r\n\
       .expect("clear should parse")
       .expect("clear should be present")
       .is_clear());
+  }
+
+  #[test]
+  fn keep_alive_helpers_combine_fields_preserve_extensions_and_build_responses() {
+    let combined = HttpResponse::ok([])
+      .header("Keep-Alive", "timeout=5")
+      .header("Keep-Alive", "max=100, vendor=1");
+    let keep_alive = combined
+      .keep_alive()
+      .expect("Keep-Alive should parse")
+      .expect("Keep-Alive should be present");
+
+    assert_eq!(Some(5), keep_alive.timeout());
+    assert_eq!(Some(100), keep_alive.max());
+    assert_eq!(1, keep_alive.extensions().len());
+    assert_eq!("vendor", keep_alive.extensions()[0].name());
+    assert_eq!("1", keep_alive.extensions()[0].value());
+    assert_eq!(
+      "timeout=5, max=100, vendor=1",
+      keep_alive.header_value(),
+      "recognized parameters are emitted before preserved extensions"
+    );
+
+    let built = HttpResponse::ok([])
+      .with_keep_alive("timeout=5, max=100, vendor=1")
+      .expect("Keep-Alive should be accepted");
+    assert_eq!(
+      vec![("Keep-Alive", "timeout=5, max=100, vendor=1")],
+      built
+        .headers
+        .iter()
+        .map(|header| (header.name.as_str(), header.value.as_str()))
+        .collect::<Vec<_>>()
+    );
+    let parsed = built
+      .keep_alive()
+      .expect("built Keep-Alive should parse")
+      .expect("built Keep-Alive should be present");
+    assert_eq!(Some(5), parsed.timeout());
+    assert_eq!(Some(100), parsed.max());
+    assert_eq!("vendor", parsed.extensions()[0].name());
+
+    let replaced = HttpResponse::ok([])
+      .header("Keep-Alive", "timeout=1")
+      .with_keep_alive("max=2")
+      .expect("replacement should be accepted");
+    assert_eq!(
+      vec![("Keep-Alive", "max=2")],
+      replaced
+        .headers
+        .iter()
+        .map(|header| (header.name.as_str(), header.value.as_str()))
+        .collect::<Vec<_>>()
+    );
+    let replaced_parsed = replaced
+      .keep_alive()
+      .expect("replaced Keep-Alive should parse")
+      .expect("replaced Keep-Alive should be present");
+    assert_eq!(None, replaced_parsed.timeout());
+    assert_eq!(Some(2), replaced_parsed.max());
+    assert_eq!(
+      "max=2",
+      HttpKeepAlive::parse("max=2")
+        .expect("max-only should parse")
+        .header_value()
+    );
+  }
+
+  #[test]
+  fn keep_alive_helpers_return_none_when_absent() {
+    assert_eq!(
+      None,
+      HttpResponse::ok([])
+        .keep_alive()
+        .expect("absent Keep-Alive should parse")
+    );
+  }
+
+  #[test]
+  fn keep_alive_rejects_malformed_duplicate_and_bounds_without_hiding_headers() {
+    for value in [
+      "timeout=abc",
+      "timeout=5, timeout=6",
+      "timeout=5, max=100, max=200",
+      "timeout=18446744073709551616",
+      "",
+    ] {
+      let response = HttpResponse::ok([]).header("Keep-Alive", value);
+      assert!(response.keep_alive().is_err(), "should reject {value:?}");
+      assert_eq!(
+        Some(value),
+        response
+          .headers
+          .iter()
+          .find(|header| header.name.eq_ignore_ascii_case("Keep-Alive"))
+          .map(|header| header.value.as_str())
+      );
+    }
+
+    let oversized = "x".repeat(64 * 1024 + 1);
+    let oversized_response = HttpResponse::ok([]).header("Keep-Alive", oversized.as_str());
+    assert!(oversized_response.keep_alive().is_err());
+    assert_eq!(
+      Some(oversized.as_str()),
+      oversized_response
+        .headers
+        .iter()
+        .find(|header| header.name.eq_ignore_ascii_case("Keep-Alive"))
+        .map(|header| header.value.as_str())
+    );
+    assert!(HttpKeepAlive::parse(
+      (0..257)
+        .map(|index| {
+          if index % 2 == 0 {
+            "timeout=1".to_string()
+          } else {
+            "max=2".to_string()
+          }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+    )
+    .is_err());
+    assert!(HttpResponse::ok([]).with_keep_alive("timeout=abc").is_err());
   }

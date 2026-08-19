@@ -7,6 +7,7 @@ use std::error::Error;
 use std::fmt;
 
 pub const MAX_CONTENT_SECURITY_POLICY_VALUE_BYTES: usize = 64 * 1024;
+pub const MAX_CONTENT_SECURITY_POLICY_FIELDS: usize = 256;
 
 /// The opaque policies declared by `Content-Security-Policy`.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -25,6 +26,11 @@ impl ContentSecurityPolicy {
   {
     let mut policies = Vec::new();
     for value in values {
+      if policies.len() == MAX_CONTENT_SECURITY_POLICY_FIELDS {
+        return Err(ContentSecurityPolicyParseError::new(
+          "too many Content-Security-Policy header values",
+        ));
+      }
       validate_bounded_value(value)?;
       policies.push(value.to_owned());
     }

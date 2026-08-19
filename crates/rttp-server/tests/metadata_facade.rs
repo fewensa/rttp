@@ -2,13 +2,16 @@ use rttp_server::server::{
   HttpAcceptCh, HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods,
   HttpAccessControlRequestHeaders, HttpAccessControlRequestHeadersParseError,
   HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError,
-  HttpConditionalMetadata, HttpConnection, HttpConnectionParseError,
-  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpHost,
-  HttpPreferenceKind, HttpRequest, HttpResponse, HttpSignature, HttpSignatureInput,
-  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
-  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
-  HttpTransferEncoding, HttpTransferEncodingParseError, HttpWantReprDigest, SecFetchDest,
-  SecFetchMode, SecFetchSite, SecFetchUser,
+  HttpAccessControlRequestPrivateNetwork, HttpAccessControlRequestPrivateNetworkParseError,
+  HttpConditionalMetadata, HttpConnection, HttpConnectionParseError, HttpContentLength,
+  HttpContentLocation, HttpContentLocationParseError, HttpCrossOriginEmbedderPolicyReportOnly,
+  HttpCrossOriginResourcePolicy, HttpEntityTag, HttpHost, HttpKeepAlive, HttpNoVarySearch,
+  HttpNoVarySearchParams, HttpPreferenceKind, HttpRequest, HttpResponse, HttpSignature,
+  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpTransferEncoding, HttpTransferEncodingParseError,
+  HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite,
+  SecFetchUser,
 };
 
 #[test]
@@ -33,15 +36,32 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpAccessControlRequestHeaders,
     HttpAccessControlRequestHeadersParseError,
   > = HttpAccessControlRequestHeaders::parse("X-Request Id");
+  let request_private_network: HttpAccessControlRequestPrivateNetwork =
+    HttpAccessControlRequestPrivateNetwork::parse("true")
+      .expect("Access-Control-Request-Private-Network should parse");
+  let request_private_network_error: Result<
+    HttpAccessControlRequestPrivateNetwork,
+    HttpAccessControlRequestPrivateNetworkParseError,
+  > = HttpAccessControlRequestPrivateNetwork::parse("false");
   let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("revision-42"));
+  let no_vary_search: HttpNoVarySearch =
+    HttpNoVarySearch::parse(r#"params=("utm_source")"#).expect("No-Vary-Search should parse");
   let policy: HttpCrossOriginResourcePolicy = HttpCrossOriginResourcePolicy::parse("same-origin")
     .expect("Cross-Origin-Resource-Policy should parse");
   let report_only_policy: HttpCrossOriginEmbedderPolicyReportOnly =
     HttpCrossOriginEmbedderPolicyReportOnly::parse("require-corp")
       .expect("Cross-Origin-Embedder-Policy-Report-Only should parse");
+  let content_location = HttpContentLocation::parse("../representations/current.json")
+    .expect("Content-Location should parse");
+  let _: HttpContentLocationParseError = HttpContentLocation::parse("not valid")
+    .expect_err("invalid Content-Location should be rejected");
   let response = HttpResponse::ok("")
     .with_accept_ch(["Sec-CH-UA"])
     .expect("Accept-CH should be accepted");
+  let keep_alive = HttpKeepAlive::parse("timeout=5, max=100").expect("Keep-Alive should parse");
+  let keep_alive_response = HttpResponse::ok("")
+    .with_keep_alive("timeout=5, max=100")
+    .expect("Keep-Alive should be accepted");
   let fetch_site = SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
@@ -57,14 +77,26 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     ["x-request-id", "authorization"]
   );
   assert!(request_headers_error.is_err());
+  assert_eq!(request_private_network.header_value(), "true");
+  assert!(request_private_network_error.is_err());
   assert_eq!(policy.header_value(), "same-origin");
   assert_eq!(report_only_policy.header_value(), "require-corp");
+  assert_eq!(
+    content_location.header_value(),
+    "../representations/current.json"
+  );
   assert_eq!(
     metadata
       .entity_tag_value()
       .expect("entity tag should be retained")
       .opaque_tag(),
     "revision-42"
+  );
+  assert_eq!(
+    no_vary_search.params(),
+    Some(&HttpNoVarySearchParams::Names(
+      vec!["utm_source".to_owned()]
+    ))
   );
   assert_eq!(
     response
@@ -74,10 +106,60 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .client_hints(),
     ["Sec-CH-UA"]
   );
+  assert_eq!(Some(5), keep_alive.timeout());
+  assert_eq!(Some(100), keep_alive.max());
+  assert_eq!(
+    Some(5),
+    keep_alive_response
+      .keep_alive()
+      .expect("Keep-Alive should parse")
+      .expect("Keep-Alive should be present")
+      .timeout()
+  );
   assert_eq!(fetch_site.header_value(), "same-origin");
   assert_eq!(fetch_mode.header_value(), "navigate");
   assert_eq!(fetch_dest.header_value(), "document");
   assert_eq!(fetch_user.header_value(), "?1");
+}
+
+#[test]
+fn request_facade_exposes_validated_content_length_metadata() {
+  let request = HttpRequest::parse(
+    b"POST /upload HTTP/1.1\r\nHost: example.test\r\nContent-Length: 5\r\n\r\nhello",
+  )
+  .expect("request should parse");
+  let content_length: HttpContentLength = request
+    .content_length()
+    .expect("validated fixed length should be present");
+
+  assert_eq!(5, content_length.len());
+  assert!(!content_length.is_zero());
+  assert_eq!("5", content_length.header_value());
+}
+
+#[test]
+fn request_facade_omits_content_length_metadata_when_header_is_absent() {
+  let request = HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+
+  assert_eq!(None, request.content_length());
+}
+
+#[test]
+fn request_facade_omits_content_length_metadata_for_chunked_framing() {
+  let request = HttpRequest::parse(
+    concat!(
+      "POST /upload HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "\r\n",
+      "5\r\nhello\r\n0\r\n\r\n"
+    )
+    .as_bytes(),
+  )
+  .expect("chunked request should parse");
+
+  assert_eq!(None, request.content_length());
 }
 
 #[test]
@@ -94,6 +176,26 @@ fn request_facade_parses_structured_prefer_metadata() {
 
   assert_eq!(prefer.preferences()[0].kind(), HttpPreferenceKind::Handling);
   assert_eq!(prefer.preferences()[1].parameters()[0].value(), Some("a b"));
+}
+
+#[test]
+fn request_facade_parses_want_content_digest_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nWant-Content-Digest: sha-256=10, sha-512=3, unixsum=0\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let digest: HttpWantContentDigest = request
+    .want_content_digest()
+    .expect("Want-Content-Digest should parse")
+    .expect("Want-Content-Digest should be present");
+
+  assert_eq!(digest.entries()[0].algorithm(), "sha-256");
+  assert_eq!(digest.entries()[0].preference(), 10);
+  assert_eq!(digest.entries()[1].algorithm(), "sha-512");
+  assert_eq!(digest.entries()[1].preference(), 3);
+  assert_eq!(digest.entries()[2].algorithm(), "unixsum");
+  assert_eq!(digest.entries()[2].preference(), 0);
 }
 
 #[test]
