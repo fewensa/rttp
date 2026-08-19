@@ -938,6 +938,71 @@ fn sync_client_and_server_exchange_cross_origin_resource_policy_metadata_without
 }
 
 #[test]
+fn sync_client_and_server_exchange_content_security_policy_report_only_metadata_without_policy() {
+  let (addr, handle) = spawn_metadata_response_server(&[
+    ("Content-Security-Policy-Report-Only", "default-src 'self'"),
+    (
+      "content-security-policy-report-only",
+      "object-src 'none'; report-to csp-endpoint",
+    ),
+  ]);
+
+  let response = client()
+    .get()
+    .url(format!(
+      "http://{addr}/matrix/content-security-policy-report-only"
+    ))
+    .emit()
+    .expect("Content-Security-Policy-Report-Only response should parse");
+
+  let metadata = response
+    .content_security_policy_report_only()
+    .expect("Content-Security-Policy-Report-Only should parse")
+    .expect("Content-Security-Policy-Report-Only should be present");
+  assert_eq!(metadata.as_str(), "default-src 'self'");
+  assert_eq!(
+    metadata.header_values(),
+    [
+      "default-src 'self'",
+      "object-src 'none'; report-to csp-endpoint"
+    ]
+  );
+  assert_eq!(
+    response
+      .header_values("Content-Security-Policy-Report-Only")
+      .into_iter()
+      .map(String::as_str)
+      .collect::<Vec<_>>(),
+    [
+      "default-src 'self'",
+      "object-src 'none'; report-to csp-endpoint"
+    ]
+  );
+
+  handle
+    .join()
+    .expect("Content-Security-Policy-Report-Only server thread");
+
+  let raw_response = b"HTTP/1.1 200 OK\r\nContent-Security-Policy-Report-Only: default-src 'self'\x7f\r\nContent-Length: 2\r\n\r\nOK";
+  let (addr, handle) = fixtures::spawn_socket2_raw_response_server(raw_response);
+  let response = client()
+    .get()
+    .url(format!(
+      "http://{addr}/matrix/content-security-policy-report-only-invalid"
+    ))
+    .emit()
+    .expect("malformed Content-Security-Policy-Report-Only response should remain parseable");
+  assert!(response.content_security_policy_report_only().is_err());
+  assert_eq!(
+    Some(&"default-src 'self'\u{7f}".to_string()),
+    response.header_value("Content-Security-Policy-Report-Only")
+  );
+  handle
+    .join()
+    .expect("raw Content-Security-Policy-Report-Only server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_cross_origin_embedder_policy_metadata_without_policy() {
   let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
     .expect("bind Cross-Origin-Embedder-Policy server");

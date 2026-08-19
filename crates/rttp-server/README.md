@@ -49,6 +49,21 @@ handler-owned policy; it does not create or manage a CDN cache, compute
 freshness, evaluate surrogate keys, revalidate automatically, enforce
 shared-cache policy, retry, replay, redirect, or choose status behavior.
 
+## Response Content-Security-Policy-Report-Only metadata
+
+`HttpResponse::with_content_security_policy_report_only(value)` validates and
+replaces attached `Content-Security-Policy-Report-Only` response metadata with
+one bounded field. `HttpResponse::content_security_policy_report_only()` parses
+attached raw fields into `HttpContentSecurityPolicyReportOnly`, preserving
+repeated fields in wire order and returning parser errors without removing raw
+headers.
+
+The helper shares CSP policy field bounds with `Content-Security-Policy`: 64
+KiB per field value and at most 256 fields. The report-only type and parse
+error remain distinct. These helpers only declare and parse metadata; RTTP does
+not evaluate directives, enforce CSP, send reports, or create browser policy
+state.
+
 ## Authentication metadata
 
 `Request::authorization()` / `HttpRequest::authorization()` and

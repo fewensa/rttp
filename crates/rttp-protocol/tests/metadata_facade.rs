@@ -19,6 +19,7 @@ use rttp_protocol::content_encoding::ContentEncoding;
 use rttp_protocol::content_language::ContentLanguage;
 use rttp_protocol::content_location::ContentLocation;
 use rttp_protocol::content_security_policy::ContentSecurityPolicy;
+use rttp_protocol::content_security_policy_report_only::ContentSecurityPolicyReportOnly;
 use rttp_protocol::content_type::ContentType;
 use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
 use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedderPolicyReportOnly;
@@ -163,6 +164,9 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let content_security_policy =
     ContentSecurityPolicy::parse("default-src 'self'; object-src 'none'")
       .expect("Content-Security-Policy should parse");
+  let content_security_policy_report_only =
+    ContentSecurityPolicyReportOnly::parse("default-src 'self'; report-to csp-endpoint")
+      .expect("Content-Security-Policy-Report-Only should parse");
   let content_language =
     ContentLanguage::parse("fr-CA, es-419").expect("Content-Language should parse");
   let cache_status =
@@ -338,6 +342,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(
     content_security_policy.header_value(),
     "default-src 'self'; object-src 'none'"
+  );
+  assert_eq!(
+    content_security_policy_report_only.header_value(),
+    "default-src 'self'; report-to csp-endpoint"
   );
   assert_eq!(content_language.tags(), ["fr-CA", "es-419"]);
   assert_eq!(content_language.header_value(), "fr-CA, es-419");

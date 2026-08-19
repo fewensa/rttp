@@ -123,6 +123,14 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::ContentSecurityPolicyParseError =
     rttp_client::response::ContentSecurityPolicy::parse("")
       .expect_err("empty Content-Security-Policy should be rejected");
+  let content_security_policy_report_only: rttp::ContentSecurityPolicyReportOnly =
+    rttp_client::response::ContentSecurityPolicyReportOnly::parse(
+      "default-src 'self'; report-to csp-endpoint",
+    )
+    .expect("Content-Security-Policy-Report-Only should parse");
+  let _: rttp::ContentSecurityPolicyReportOnlyParseError =
+    rttp_client::response::ContentSecurityPolicyReportOnly::parse("")
+      .expect_err("empty Content-Security-Policy-Report-Only should be rejected");
   let content_range: rttp::ContentRange =
     rttp_client::response::ContentRange::parse("bytes 0-4/10").expect("Content-Range should parse");
   let alt_svc: rttp::AltSvc =
@@ -253,6 +261,10 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(
     content_security_policy.header_value(),
     "default-src 'self'; object-src 'none'"
+  );
+  assert_eq!(
+    content_security_policy_report_only.header_value(),
+    "default-src 'self'; report-to csp-endpoint"
   );
   assert_eq!("bytes", content_range.unit());
   assert_eq!(Some(0), content_range.start());
