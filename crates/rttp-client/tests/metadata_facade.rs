@@ -18,7 +18,8 @@ use rttp_client::response::{
   XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
-  ContentDigest, ContentLocation, ContentLocationParseError, ReprDigest,
+  ContentDigest, ContentLocation, ContentLocationParseError, Deprecation, DeprecationParseError,
+  ReprDigest,
 };
 use rttp_client::{HttpClient, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose};
 use rttp_test_support as support;
@@ -55,6 +56,9 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let content_dpr = ContentDpr::parse("1.5").expect("Content-DPR should parse");
   let _: ContentDprParseError =
     ContentDpr::parse("0").expect_err("zero Content-DPR should be rejected");
+  let deprecation = Deprecation::parse("?1").expect("Deprecation should parse");
+  let _: DeprecationParseError =
+    Deprecation::parse("true").expect_err("historical Deprecation token should be rejected");
   let content_security_policy =
     ContentSecurityPolicy::parse("default-src 'self'; object-src 'none'")
       .expect("Content-Security-Policy should parse");
@@ -167,6 +171,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   );
   assert_eq!(content_dpr.ratio(), 1.5);
   assert_eq!(content_dpr.header_value(), "1.5");
+  assert_eq!(deprecation, Deprecation::Boolean(true));
+  assert_eq!(deprecation.header_value(), "?1");
   assert_eq!(
     content_security_policy.header_value(),
     "default-src 'self'; object-src 'none'"

@@ -47,6 +47,21 @@ notation, leftover characters, and forbidden ASCII control bytes are errors.
 This parser reports declared metadata only; it does not rescale images, send
 request DPR, apply Client Hints policy, retry, or change transport.
 
+## Deprecation
+
+`deprecation` parses a singleton HTTP `Deprecation` field as one Structured
+Fields item that is either a boolean (`?0` / `?1`) or a date (`@` followed by
+a signed integer number of UNIX seconds). Each field value is bounded to
+64 KiB. A second field is rejected after every supplied field is bound-checked.
+Surrounding SP and HTAB are trimmed as optional whitespace. Empty values,
+item parameters, inner lists, comma-joined items, integers without `@`,
+decimals, strings, tokens (including historical `true`), byte sequences,
+display strings, IMF-fixdate values, forbidden ASCII control bytes, and dates
+that cannot be represented as `SystemTime` are errors. This parser reports
+declared metadata only; it does not compare `Sunset`, follow `Link`
+`rel=deprecation`, decide whether a resource is already deprecated, retry
+requests, or select another endpoint.
+
 ## Content-Location
 
 `content_location` parses a singleton response `Content-Location` field as one
@@ -430,6 +445,18 @@ form. The `*` token, comma-separated lists, empty values, control bytes,
 oversized values, and other unparsable input are errors. This parser reports
 declared preflight request metadata only; it does not decide whether a
 preflight is needed or apply CORS policy.
+
+## Save-Data
+
+`save_data` parses a singleton `Save-Data` request field. Each field value is
+bounded to 64 KiB. A second field is rejected after every supplied field is
+bound-checked. The field value must be exactly the standards-defined `on`
+token, matched case-sensitively and returned in canonical lowercase wire form.
+Surrounding SP and HTAB are trimmed as optional whitespace. Unknown tokens,
+lists, parameterized values, empty values, control bytes, and other
+unparsable input are errors.
+This parser does not apply reduced-data serving, content adaptation, or
+browser data-saver policy.
 
 ## NEL
 

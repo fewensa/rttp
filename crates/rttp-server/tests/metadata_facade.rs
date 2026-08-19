@@ -7,8 +7,9 @@ use rttp_server::server::{
   HttpConnection, HttpConnectionParseError, HttpContentDisposition, HttpContentDpr,
   HttpContentDprParseError, HttpContentLength, HttpContentLocation, HttpContentLocationParseError,
   HttpContentRange, HttpContentRangeParseError, HttpCrossOriginEmbedderPolicyReportOnly,
-  HttpCrossOriginResourcePolicy, HttpEntityTag, HttpHost, HttpKeepAlive, HttpNoVarySearch,
-  HttpNoVarySearchParams, HttpPreferenceKind, HttpRequest, HttpResponse, HttpSignature,
+  HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpEntityTag,
+  HttpHost, HttpKeepAlive, HttpNoVarySearch, HttpNoVarySearchParams, HttpPreferenceKind,
+  HttpRequest, HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSignature,
   HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
   HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
   HttpSignatureParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
@@ -50,6 +51,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpAccessControlRequestPrivateNetwork,
     HttpAccessControlRequestPrivateNetworkParseError,
   > = HttpAccessControlRequestPrivateNetwork::parse("false");
+  let save_data: HttpSaveData = HttpSaveData::parse("on").expect("Save-Data should parse");
+  let save_data_error: Result<HttpSaveData, HttpSaveDataParseError> = HttpSaveData::parse("?1");
   let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("revision-42"));
   let no_vary_search: HttpNoVarySearch =
     HttpNoVarySearch::parse(r#"params=("utm_source")"#).expect("No-Vary-Search should parse");
@@ -76,8 +79,12 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let content_dpr = HttpContentDpr::parse("1.5").expect("Content-DPR should parse");
   let _: HttpContentDprParseError =
     HttpContentDpr::parse("0").expect_err("zero Content-DPR should be rejected");
+  let deprecation = HttpDeprecation::parse("?1").expect("Deprecation should parse");
+  let _: HttpDeprecationParseError =
+    HttpDeprecation::parse("true").expect_err("historical Deprecation token should be rejected");
   let response = HttpResponse::ok("")
     .with_etag(HttpEntityTag::weak("revision-42"))
+    .with_deprecation(HttpDeprecation::Boolean(true))
     .with_accept_ch(["Sec-CH-UA"])
     .expect("Accept-CH should be accepted")
     .header("CDN-Cache-Control", "max-age=600, cdn-example=\"a, b\"");
@@ -106,6 +113,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert!(request_headers_error.is_err());
   assert_eq!(request_private_network.header_value(), "true");
   assert!(request_private_network_error.is_err());
+  assert_eq!(save_data.header_value(), "on");
+  assert!(save_data_error.is_err());
   assert_eq!(policy.header_value(), "same-origin");
   assert_eq!(cdn_cache_control.directives()[1].name(), "cdn-example");
   assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
@@ -125,6 +134,15 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   );
   assert_eq!(content_dpr.ratio(), 1.5);
   assert_eq!(content_dpr.header_value(), "1.5");
+  assert_eq!(deprecation, HttpDeprecation::Boolean(true));
+  assert_eq!(deprecation.header_value(), "?1");
+  assert_eq!(
+    response
+      .deprecation()
+      .expect("Deprecation should parse")
+      .expect("Deprecation should be present"),
+    HttpDeprecation::Boolean(true)
+  );
   assert_eq!(
     metadata
       .entity_tag_value()
