@@ -10,18 +10,18 @@ use rttp_server::server::{
   HttpContentDispositionParseError, HttpContentDpr, HttpContentDprParseError, HttpContentLength,
   HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
   HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeprecation,
-  HttpDeprecationParseError, HttpEntityTag, HttpHost, HttpIfModifiedSince,
-  HttpIfModifiedSinceParseError, HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError,
-  HttpKeepAlive, HttpMaxForwards, HttpMaxForwardsParseError, HttpMementoDatetime,
-  HttpMementoDatetimeParseError, HttpNoVarySearch, HttpNoVarySearchParams, HttpPreferenceKind,
-  HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError, HttpRequest,
-  HttpRequestAcceptEncodings, HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSignature,
-  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
-  HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
-  HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite,
-  SecFetchUser, SecPurpose,
+  HttpDeprecationParseError, HttpEntityTag, HttpHost, HttpIdempotencyKey,
+  HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfModifiedSinceParseError,
+  HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError, HttpKeepAlive, HttpMaxForwards,
+  HttpMaxForwardsParseError, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNoVarySearch,
+  HttpNoVarySearchParams, HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus,
+  HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptEncodings, HttpResponse, HttpSaveData,
+  HttpSaveDataParseError, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
+  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
+  HttpSignatureInputParseError, HttpSignatureParseError, HttpTransferEncoding,
+  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpWantContentDigest,
+  HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
 
 #[test]
@@ -632,6 +632,52 @@ fn request_facade_parses_max_forwards_metadata() {
 
   assert_eq!(0, max_forwards.value());
   assert_eq!("0", max_forwards.header_value());
+}
+
+#[test]
+fn request_facade_parses_idempotency_key_metadata_without_policy() {
+  let request = HttpRequest::parse(
+    b"POST /charges HTTP/1.1\r\nHost: example.test\r\nIdempotency-Key: charge-2026-08-19-9f3c\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let idempotency_key: HttpIdempotencyKey = request
+    .idempotency_key()
+    .expect("Idempotency-Key should parse")
+    .expect("Idempotency-Key should be present");
+
+  assert_eq!("charge-2026-08-19-9f3c", idempotency_key.as_str());
+  assert_eq!("charge-2026-08-19-9f3c", idempotency_key.header_value());
+  assert!(!format!("{idempotency_key:?}").contains("charge-2026-08-19-9f3c"));
+
+  let absent = HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .idempotency_key()
+      .expect("missing Idempotency-Key should be accepted")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"POST /charges HTTP/1.1\r\nHost: example.test\r\nIdempotency-Key: key with space\r\n\r\n",
+  )
+  .expect("malformed metadata should not reject raw request parsing");
+  assert!(malformed.idempotency_key().is_err());
+  assert_eq!(Some("key with space"), malformed.header("Idempotency-Key"));
+
+  let duplicate = HttpRequest::parse(
+    b"POST /charges HTTP/1.1\r\nHost: example.test\r\nIdempotency-Key: first\r\nidempotency-key: second\r\n\r\n",
+  )
+  .expect("request should retain duplicate metadata");
+  assert!(duplicate.idempotency_key().is_err());
+  assert_eq!(Some("first"), duplicate.header("Idempotency-Key"));
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_error: Result<HttpIdempotencyKey, HttpIdempotencyKeyParseError> =
+    HttpIdempotencyKey::parse(oversized.as_str());
+  assert!(oversized_error.is_err());
+  assert!(!format!("{:?}", oversized_error.as_ref().unwrap_err()).contains(&oversized[..16]));
 }
 
 #[test]

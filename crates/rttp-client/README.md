@@ -46,6 +46,19 @@ diagnostic policy, route through proxies, decrement the value, or retry the
 request. Callers needing an unusual value can retain full raw-header control
 with `header(("Max-Forwards", "..."))`.
 
+## Bounded Idempotency-Key metadata
+
+`HttpClient::idempotency_key(value)` sets an `Idempotency-Key` request header
+for application-generated idempotency keys through the shared protocol
+`IdempotencyKey` type. The helper accepts a singleton opaque visible-ASCII key
+up to 64 KiB, trims HTTP OWS, and rejects empty, space-containing,
+control-byte (including CR/LF/NUL and obs-text), duplicate, and oversized
+values before a socket is opened. It validates and emits the trimmed key
+unchanged: RTTP does not retry requests, store or compare keys across
+requests, or apply application idempotency policy. The key is redacted from
+typed `Debug` and builder error text. Callers needing an unusual value can
+retain full raw-header control with `header(("Idempotency-Key", "..."))`.
+
 ## Bounded HTTP/1.1 byte ranges
 
 `HttpClient` includes helpers for the single-range `bytes` forms RTTP keeps
@@ -909,6 +922,7 @@ header-block model.
 | Save-Data | `save_data` emits bounded `Save-Data: on` request metadata | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |
 | Upgrade-Insecure-Requests | `upgrade_insecure_requests` emits bounded singleton `Upgrade-Insecure-Requests: 1` request metadata | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Max-Forwards | `max_forwards` emits bounded singleton `Max-Forwards` request metadata through the shared protocol type | No hop decrement, proxy routing, TRACE/OPTIONS selection, retry, or forwarding policy |
+| Idempotency-Key | `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | Preflight request metadata | `origin`, `access_control_request_method`, `access_control_request_headers`, and `access_control_request_private_network` emit bounded `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`, and `Access-Control-Request-Private-Network` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, CORS policy, or Private Network Access policy |
 | Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_content_digest()`, `HttpRequest::want_content_digest()`, `Request::want_repr_digest()`, and `HttpRequest::want_repr_digest()` parse received preference fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |
 | Accept-Encoding | `accept_encoding`, `accept_encoding_with_q`, and gzip/deflate/br/identity helpers format bounded `Accept-Encoding` request metadata through the shared `rttp-protocol` type | No compression, decompression, content negotiation, retries, or transport changes |

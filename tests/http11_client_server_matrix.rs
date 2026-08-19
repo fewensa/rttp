@@ -2389,6 +2389,47 @@ fn sync_client_and_server_exchange_bounded_authentication_metadata() {
 }
 
 #[test]
+fn sync_client_and_server_exchange_bounded_idempotency_key_metadata_without_policy() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind idempotency server");
+  let addr = server.local_addr().expect("idempotency server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request
+            .idempotency_key()
+            .expect("Idempotency-Key should parse")
+            .map(|key| key.as_str().to_string()),
+          request.header("Idempotency-Key").map(str::to_string),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed idempotency metadata");
+        HttpResponse::new(201, "Created")
+      })
+      .expect("serve idempotency request");
+  });
+
+  let response = client()
+    .post()
+    .url(format!("http://{addr}/matrix/charges"))
+    .idempotency_key("charge-2026-08-19-9f3c")
+    .expect("Idempotency-Key should be accepted")
+    .emit()
+    .expect("idempotency response should parse");
+
+  let (typed, raw) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe idempotency metadata");
+  assert_eq!(Some("charge-2026-08-19-9f3c".to_string()), typed);
+  assert_eq!(Some("charge-2026-08-19-9f3c".to_string()), raw);
+  assert_eq!(201, response.code());
+  handle.join().expect("idempotency server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_authentication_info_response_metadata_without_policy() {
   const AUTHENTICATION_INFO: &str =
     r#"nextnonce="n-2", qop=auth, rspauth="origin-rsp", cnonce="c-1", nc=00000001"#;

@@ -84,6 +84,21 @@ canonical decimal form. This parser reports declared metadata only; it does
 not decrement the hop count, route through proxies, select TRACE or OPTIONS,
 or apply forwarding policy.
 
+## Idempotency-Key
+
+`idempotency_key` parses a singleton HTTP `Idempotency-Key` request field as
+an opaque, bounded key. Each field value is bounded to 64 KiB, and a second
+field is rejected after every supplied field is bound-checked. Surrounding SP
+and HTAB are trimmed as optional whitespace. The stored value is the
+OWS-trimmed key; quotes, backslashes, and punctuation remain part of the
+opaque key when they are visible ASCII. Empty values, embedded spaces,
+forbidden ASCII control bytes (including CR, LF, NUL, and obs-text), and
+oversized values are errors. The key is redacted from typed `Debug`, and
+parse errors describe only the header and validation category. `as_str()`
+returns the stored key and `header_value()` emits it unchanged. This parser
+reports declared request metadata only; it does not retry requests, store
+keys, compare keys across requests, or apply application idempotency policy.
+
 ## If-Modified-Since
 
 `if_modified_since` parses a singleton HTTP `If-Modified-Since` request field

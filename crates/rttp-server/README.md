@@ -453,6 +453,22 @@ expose the original raw field.
 These helpers parse request metadata only. They do not decrement the hop
 count, route a request, select TRACE or OPTIONS, or apply forwarding policy.
 
+## Idempotency-Key request metadata
+
+Handlers can call `Request::idempotency_key()` and
+`HttpRequest::idempotency_key()` to observe bounded typed `Idempotency-Key`
+request metadata through the shared protocol `HttpIdempotencyKey` type.
+Absent fields return `Ok(None)`. A recognized value is a singleton opaque key
+of one or more visible ASCII characters with optional surrounding SP or HTAB,
+bounded to 64 KiB. `as_str()` returns the stored key and `header_value()`
+emits it unchanged. Malformed, oversized, duplicate, or control-byte values
+return a parser error while `Request::header()` and `HttpRequest::header()`
+continue to expose the original raw field. The key is redacted from typed
+`Debug`.
+
+These helpers parse request metadata only. They do not retry requests, store
+keys, compare keys across requests, or apply application idempotency policy.
+
 ## Conditional HTTP-date request metadata
 
 Handlers can call `Request::if_modified_since()`,

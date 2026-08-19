@@ -563,16 +563,23 @@ fn facade_debug_redacts_sensitive_header_values() {
     .auth(Auth::bearer("origin-token"))
     .header(("Proxy-Authorization", "Basic cHJveHk6c2VjcmV0"))
     .header(("Cookie", "session=private"))
+    .header(("Idempotency-Key", "charge-2026-08-19-9f3c"))
     .header(("Accept", "application/json"));
 
   let debug = format!("{client:?}");
   assert!(debug.contains("Authorization"));
   assert!(debug.contains("Proxy-Authorization"));
   assert!(debug.contains("Cookie"));
+  assert!(debug.contains("Idempotency-Key"));
   assert!(debug.contains("Accept"));
   assert!(debug.contains("application/json"));
   assert!(debug.contains("[REDACTED]"));
-  for secret in ["origin-token", "cHJveHk6c2VjcmV0", "session=private"] {
+  for secret in [
+    "origin-token",
+    "cHJveHk6c2VjcmV0",
+    "session=private",
+    "charge-2026-08-19-9f3c",
+  ] {
     assert!(!debug.contains(secret));
   }
 }
@@ -1837,6 +1844,120 @@ fn manual_max_forwards_header_remains_available_as_escape_hatch() {
   assert_eq!(
     Some("unusual-value"),
     header_value(&request, "Max-Forwards")
+  );
+}
+
+#[test]
+fn idempotency_key_helper_emits_canonical_metadata() {
+  for (value, expected) in [
+    ("charge-2026-08-19-9f3c", "charge-2026-08-19-9f3c"),
+    (
+      "urn:uuid:6e7bc004-2445-45a3-8d16-392b33764f00",
+      "urn:uuid:6e7bc004-2445-45a3-8d16-392b33764f00",
+    ),
+    (" \tcharge-2026-08-19-9f3c\t ", "charge-2026-08-19-9f3c"),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .post()
+        .url(format!("{}/charges", base_url))
+        .idempotency_key(value)
+        .expect("idempotency key should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+    assert_eq!(Some(expected), header_value(&request, "Idempotency-Key"));
+  }
+}
+
+#[test]
+fn idempotency_key_helper_replaces_existing_fields() {
+  let request = capture_request(|base_url| {
+    client()
+      .post()
+      .url(format!("{}/charges", base_url))
+      .header(("Idempotency-Key", "legacy-key"))
+      .idempotency_key("charge-2026-08-19-9f3c")
+      .expect("idempotency key should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("charge-2026-08-19-9f3c"),
+    header_value(&request, "Idempotency-Key")
+  );
+  assert!(
+    !request.contains("legacy-key"),
+    "the typed helper must replace an existing same-name field"
+  );
+}
+
+#[test]
+fn idempotency_key_helper_rejects_invalid_values_before_connecting() {
+  for value in [
+    "",
+    " ",
+    "key with space",
+    "key\r\nX-Injected: 1",
+    "key\rX: y",
+    "key\nX: y",
+    "key\0value",
+    "key\u{7f}value",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .post()
+        .url(format!("{}/charges", base_url))
+        .idempotency_key(value)
+        .expect_err("invalid idempotency key should be rejected");
+      assert!(error.is_builder());
+      if !value.trim().is_empty() {
+        assert!(!error.to_string().contains(value));
+      }
+    });
+    assert!(
+      request.is_empty(),
+      "invalid idempotency key must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn idempotency_key_helper_rejects_oversized_values_before_connecting() {
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .post()
+      .url(format!("{}/charges", base_url))
+      .idempotency_key(oversized.as_str())
+      .expect_err("oversized idempotency key should be rejected");
+    assert!(error.is_builder());
+    assert!(!error.to_string().contains(&oversized[..64]));
+  });
+  assert!(
+    request.is_empty(),
+    "oversized idempotency key must not open a socket"
+  );
+}
+
+#[test]
+fn raw_idempotency_key_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .post()
+      .url(format!("{}/charges", base_url))
+      .header(("Idempotency-Key", "opaque custom value"))
+      .emit()
+      .expect("manual Idempotency-Key header should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("opaque custom value"),
+    header_value(&request, "Idempotency-Key")
   );
 }
 
