@@ -3,10 +3,10 @@ use rttp_client::response::{
   ContentLocation, ContentRange, ContentSecurityPolicy, ContentSecurityPolicyReportOnly,
   ContentType, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly,
   CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Deprecation, EntityTag, HttpClearSiteData,
-  HttpSetCookies, KeepAlive, LinkValues, Location, MementoDatetime, PermissionsPolicy,
-  ProxyAuthenticate, ProxyAuthenticationInfo, ProxyStatus, ProxyStatusBareItem, ReferrerPolicy,
-  ReferrerPolicyToken, Response, RetryAfter, ServerTiming, SignatureInput, StrictTransportSecurity,
-  Warning, XContentTypeOptions, XFrameOptions,
+  HttpSetCookies, KeepAlive, LinkValues, Location, MementoDatetime, OriginTrials,
+  PermissionsPolicy, ProxyAuthenticate, ProxyAuthenticationInfo, ProxyStatus, ProxyStatusBareItem,
+  ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ServerTiming, SignatureInput,
+  StrictTransportSecurity, Warning, XContentTypeOptions, XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -2801,6 +2801,100 @@ fn test_alt_used_response_helper_reports_absent_metadata() {
   assert_eq!(
     None,
     response.alt_used().expect("absent Alt-Used should parse")
+  );
+}
+
+#[test]
+fn test_origin_trial_response_helper_parses_multiple_and_duplicate_tokens() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Origin-Trial: token-one\r\n",
+    "origin-trial: token-one\r\n",
+    "Origin-Trial: token-two\r\n",
+    "Content-Length: 0\r\n\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+  let origin_trials = response
+    .origin_trials()
+    .expect("Origin-Trial should parse")
+    .expect("Origin-Trial should be present");
+
+  assert_eq!(
+    origin_trials.tokens(),
+    ["token-one", "token-one", "token-two"]
+  );
+  assert_eq!(
+    vec![
+      &"token-one".to_string(),
+      &"token-one".to_string(),
+      &"token-two".to_string()
+    ],
+    response.header_values("Origin-Trial")
+  );
+  assert_eq!(
+    origin_trials,
+    OriginTrials::parse_values(origin_trials.header_values().iter().map(String::as_str))
+      .expect("round-tripped Origin-Trial should parse")
+  );
+  let debug = format!("{origin_trials:?}");
+  assert!(debug.contains("OriginTrials"));
+  assert!(!debug.contains("token-one"));
+  assert!(!debug.contains("token-two"));
+}
+
+#[test]
+fn test_origin_trial_rejects_malformed_and_oversized_metadata_without_hiding_headers() {
+  let injected = "token\twith-tab";
+  let raw = format!("HTTP/1.1 200 OK\r\nOrigin-Trial: {injected}\r\nContent-Length: 0\r\n\r\n");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response should remain usable");
+  assert!(
+    response.origin_trials().is_err(),
+    "should reject {injected:?}"
+  );
+  assert_eq!(
+    Some(&injected.to_string()),
+    response.header_value("Origin-Trial")
+  );
+
+  let mut obs_text = b"HTTP/1.1 200 OK\r\nOrigin-Trial: token".to_vec();
+  obs_text.push(0x80);
+  obs_text.extend_from_slice(b"value\r\nContent-Length: 0\r\n\r\n");
+  let response = Response::new(RoUrl::with("https://example.test"), obs_text)
+    .expect("raw response with obs-text Origin-Trial remains usable");
+  assert!(response.origin_trials().is_err());
+  assert!(response.header_value("Origin-Trial").is_some());
+
+  let oversized = "x".repeat(8 * 1024 + 1);
+  let raw = format!("HTTP/1.1 200 OK\r\nOrigin-Trial: {oversized}\r\nContent-Length: 0\r\n\r\n");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response with oversized Origin-Trial remains usable");
+  assert!(response.origin_trials().is_err());
+  assert_eq!(Some(&oversized), response.header_value("Origin-Trial"));
+
+  let header_debug = format!(
+    "{:?}",
+    rttp_client::types::Header::new("Origin-Trial", "secret-origin-trial-token")
+  );
+  assert!(header_debug.contains("Origin-Trial"));
+  assert!(header_debug.contains("[REDACTED]"));
+  assert!(!header_debug.contains("secret-origin-trial-token"));
+}
+
+#[test]
+fn test_origin_trial_response_helper_reports_absent_metadata() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("raw response should parse");
+
+  assert_eq!(
+    None,
+    response
+      .origin_trials()
+      .expect("absent Origin-Trial should parse")
   );
 }
 

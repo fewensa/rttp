@@ -113,6 +113,9 @@ pub use rttp_protocol::no_vary_search::{
   NoVarySearchParams as HttpNoVarySearchParams,
   NoVarySearchParseError as HttpNoVarySearchParseError,
 };
+pub use rttp_protocol::origin_trial::{
+  OriginTrialParseError as HttpOriginTrialParseError, OriginTrials as HttpOriginTrials,
+};
 pub use rttp_protocol::permissions_policy::{
   PermissionsPolicy as HttpPermissionsPolicy,
   PermissionsPolicyAllowlist as HttpPermissionsPolicyAllowlist,
@@ -1549,6 +1552,24 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Origin-Trial` response metadata without
+  /// validating token signatures or activating browser trials.
+  pub fn with_origin_trials<I, V>(mut self, values: I) -> Result<Self, HttpOriginTrialParseError>
+  where
+    I: IntoIterator<Item = V>,
+    V: AsRef<str>,
+  {
+    let collected: Vec<V> = values.into_iter().collect();
+    let origin_trials = HttpOriginTrials::parse_values(collected.iter().map(AsRef::as_ref))?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Origin-Trial"));
+    for value in origin_trials.header_values() {
+      self.headers.push(HttpHeader::new("Origin-Trial", value));
+    }
+    Ok(self)
+  }
+
   /// Validates and replaces `Keep-Alive` response metadata without changing
   /// connection lifetime.
   pub fn with_keep_alive(
@@ -2560,6 +2581,21 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpAltUsed::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Origin-Trial` metadata without validating tokens or
+  /// activating browser trials.
+  pub fn origin_trials(&self) -> Result<Option<HttpOriginTrials>, HttpOriginTrialParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Origin-Trial"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpOriginTrials::parse_values(values).map(Some)
   }
 
   /// Parses attached `NEL` metadata without sending reports or persisting policy.
@@ -4396,6 +4432,7 @@ fn is_sensitive_debug_header(name: &str) -> bool {
   name.eq_ignore_ascii_case("authorization")
     || name.eq_ignore_ascii_case("cookie")
     || name.eq_ignore_ascii_case("idempotency-key")
+    || name.eq_ignore_ascii_case("origin-trial")
     || name.eq_ignore_ascii_case("proxy-authorization")
     || name.eq_ignore_ascii_case("set-cookie")
     || name.eq_ignore_ascii_case("traceparent")

@@ -284,6 +284,23 @@ These helpers only declare and parse metadata. The server does not select
 alternative services, rewrite origins, migrate sockets, retry, or change
 connection policy from `Alt-Used`.
 
+## Origin-Trial response metadata
+
+`HttpResponse::with_origin_trials(values)` validates a bounded collection of
+opaque `Origin-Trial` tokens through the shared protocol `HttpOriginTrials`
+type, replaces any existing `Origin-Trial` fields, and emits one
+`Origin-Trial` header per token. `HttpResponse::origin_trials()` parses
+attached raw fields into the same type, returning `Ok(None)` when the header
+is absent and returning parser errors without changing raw fields. Each token
+is limited to 8 KiB after OWS trim, the collection is limited to 64 tokens,
+and the combined token bytes are limited to 64 KiB. Duplicate token strings
+are preserved. Token material is redacted from typed debug output and generic
+`HttpHeader` debug output.
+
+These helpers only declare and parse metadata. The server does not validate
+token signatures, expiration, origin applicability, or activate browser
+trials.
+
 ## Reporting-Endpoints response metadata
 
 `HttpResponse::with_reporting_endpoints(endpoints)` validates a bounded

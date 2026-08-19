@@ -941,6 +941,22 @@ The helper is metadata-only. `rttp_client` does not select an alternative
 service, rewrite origins, migrate sockets, retry, or change connection policy
 based on `Alt-Used`.
 
+## Bounded Origin-Trial response metadata
+
+`Response::origin_trials()` parses retained `Origin-Trial` fields as an
+ordered collection of opaque tokens through the shared protocol `OriginTrials`
+type. It returns `Ok(None)` when the header is absent. Valid metadata
+preserves multiple tokens and duplicates in wire order. Each token is limited
+to 8 KiB, the collection is limited to 64 tokens, and the combined token
+bytes are limited to 64 KiB. Injected controls, obs-text, empty values,
+oversized tokens, and oversized collections return an error while the raw
+response headers remain available through `Response::header_value()` and
+`Response::header_values()`. Token material is redacted from typed `Debug`
+output and generic `Header` debug output.
+
+The helper is metadata-only. `rttp_client` does not validate token
+signatures, expiration, origin applicability, or activate browser trials.
+
 ## Bounded Reporting-Endpoints response metadata
 
 `Response::reporting_endpoints()` parses retained `Reporting-Endpoints`
@@ -1088,6 +1104,7 @@ header-block model.
 | Informational responses and Early Hints | `Response::informational_responses` exposes skipped bounded HTTP/1.1 `1xx` heads, including `103 Early Hints`, with preserved raw headers | `101 Switching Protocols` remains terminal for upgrade handoff; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
 | Cache-Control, CDN-Cache-Control, Cache-Status, Date, Age, and Expires | `Response::cache_control` parses bounded response directives, numeric freshness fields, quoted field-name lists, and extension directives; `Response::cdn_cache_control` parses bounded `CDN-Cache-Control` directives and CDN extension metadata while preserving raw responses on parse errors; `Response::cache_status` parses bounded RFC 9211 `Cache-Status` list members and parameters while preserving raw responses on parse errors; `Response::date` parses singleton HTTP-date metadata; `Response::age` parses bounded singleton `Age` metadata through the protocol `Age` type, rejecting duplicate fields, values larger than 64 KiB, and overflowing `u64` delta-seconds; `Response::expires` parses bounded HTTP-date metadata | No cache storage, CDN cache, Cache-Status forwarding or freshness policy, automatic revalidation, wall-clock freshness calculation, clock-skew correction, `Vary` matching, shared-cache policy enforcement, surrogate-key behavior, automatic conditional requests, retry, redirect, scheduling, or status policy |
 | Alt-Used | `Response::alt_used` parses bounded singleton response authority metadata through the shared protocol `AltUsed` type while preserving raw headers on parse failures | No alternative service selection, origin rewriting, socket migration, retry, or connection-policy behavior |
+| Origin-Trial | `Response::origin_trials` parses bounded opaque `Origin-Trial` tokens in wire order through the shared protocol `OriginTrials` type, preserves duplicates, redacts token material from debug output, and preserves raw headers on parse failures | No token signature validation, expiration checks, origin applicability, feature activation, or browser trial policy |
 | Memento-Datetime | `Response::memento_datetime` parses bounded singleton `Memento-Datetime` IMF-fixdate metadata through the protocol `MementoDatetime` type while preserving raw headers on parse errors | No archival selection, `Accept-Datetime` negotiation, TimeGate behavior, retry, or transport changes |
 | Allow | `Response::allow` parses bounded response `Allow` fields into an ordered HTTP method-token list | No fallback method selection, automatic retry/replay, or status-code policy behavior for `405` or `OPTIONS` |
 | Client Hints | `Response::accept_ch` and `Response::critical_ch` parse bounded, ordered Client Hints opt-in metadata while preserving raw headers on parse failures | No browser opt-in state, request-header generation, retry, persistence, or Client Hints policy |

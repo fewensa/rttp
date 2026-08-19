@@ -45,6 +45,7 @@ use rttp_protocol::memento_datetime::MementoDatetime;
 use rttp_protocol::nel::Nel;
 use rttp_protocol::no_vary_search::{NoVarySearch, NoVarySearchParams};
 use rttp_protocol::origin::Origin;
+use rttp_protocol::origin_trial::OriginTrials;
 use rttp_protocol::permissions_policy::PermissionsPolicy;
 use rttp_protocol::pragma::{Pragma, PragmaParseError};
 use rttp_protocol::prefer::{Prefer, PreferenceApplied, PreferenceKind};
@@ -114,6 +115,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let host = Host::parse("example.test:8443").expect("Host should parse");
   let alt_used = AltUsed::parse("[2001:db8::1]:8443").expect("Alt-Used should parse");
   let origin = Origin::parse("https://example.test").expect("Origin should parse");
+  let origin_trials = OriginTrials::parse_values(["token-one", "token-two"])
+    .expect("Origin-Trial response metadata should parse");
   let no_vary_search =
     NoVarySearch::parse(r#"params=("utm_source")"#).expect("No-Vary-Search should parse");
   let permissions_policy =
@@ -277,6 +280,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(alt_used.host(), "[2001:db8::1]");
   assert_eq!(alt_used.port(), Some("8443"));
   assert_eq!(alt_used.header_value(), "[2001:db8::1]:8443");
+  assert_eq!(origin_trials.tokens(), ["token-one", "token-two"]);
+  assert!(!format!("{origin_trials:?}").contains("token-one"));
   assert_eq!(origin.header_value(), "https://example.test");
   assert_eq!(
     permissions_policy.header_value(),
