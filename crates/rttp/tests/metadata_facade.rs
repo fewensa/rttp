@@ -48,6 +48,10 @@ fn compatibility_facade_exports_client_metadata_types() {
       .expect_err("Strict-Transport-Security without max-age should be rejected");
   let fetch_site: rttp::SecFetchSite =
     rttp_client::SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
+  let location: rttp::Location =
+    rttp_client::response::Location::parse("/next").expect("Location should parse");
+  let _: rttp::LocationParseError =
+    rttp_client::response::Location::parse("").expect_err("empty Location should be rejected");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
@@ -67,6 +71,7 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(strict_transport_security.max_age(), 31_536_000);
   assert!(strict_transport_security.include_sub_domains());
   assert_eq!(fetch_site.header_value(), "same-origin");
+  assert_eq!(location.as_str(), "/next");
 }
 
 #[test]

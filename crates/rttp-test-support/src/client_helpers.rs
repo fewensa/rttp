@@ -359,6 +359,41 @@ where
   (addr, handle)
 }
 
+pub fn spawn_duplicate_location_redirect_target_echo_server() -> (SocketAddr, JoinHandle<()>) {
+  let (listener, addr) = bind_local_http_listener("duplicate location redirect target echo server");
+  let handle = thread::spawn(move || {
+    if let Ok((mut stream, _)) = listener.accept() {
+      let _ = read_http_request(&mut stream);
+      let response = concat!(
+        "HTTP/1.1 302 Found\r\n",
+        "Location: /final\r\n",
+        "Location: /ignored\r\n",
+        "Content-Length: 0\r\n",
+        "Connection: close\r\n",
+        "\r\n"
+      );
+      let _ = stream.write_all(response.as_bytes());
+    }
+
+    if let Ok((mut stream, _)) = listener.accept() {
+      let request = read_http_request(&mut stream);
+      let target = String::from_utf8_lossy(&request)
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .unwrap_or("")
+        .to_string();
+      let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        target.len(),
+        target
+      );
+      let _ = stream.write_all(response.as_bytes());
+    }
+  });
+  (addr, handle)
+}
+
 pub fn spawn_redirect_chain_server(
   redirects: Vec<(&'static str, &'static str)>,
   max_requests: usize,
