@@ -404,9 +404,10 @@ policy, retry, replay, redirect, or status-policy behavior from
 ### Bounded HTTP/1.1 Accept-Language behavior
 
 `HttpClient::accept_language(ranges)` validates and emits one
-`Accept-Language` request header from ordered language ranges. Each range may
-include an optional `q` weight, for example `fr-CA; q=0.8`; `*` is also
-accepted. The helper limits each supplied value to 64 KiB and the parsed range
+`Accept-Language` request header from ordered language ranges through the
+shared protocol-owned `AcceptLanguage` type. Each range may include an
+optional `q` weight, for example `fr-CA; q=0.8`; `*` is also accepted. The
+shared primitive limits each supplied value to 64 KiB and the parsed range
 list to 32 entries, rejects malformed ranges or q-values and case-insensitive
 duplicates, and returns a builder error before opening a connection. Raw
 `header(("Accept-Language", value))` remains available when callers need to
@@ -414,7 +415,8 @@ preserve unvalidated metadata.
 
 On the server, `Request::accept_language()` and
 `HttpRequest::accept_language()` parse received fields in wire order into
-`HttpAcceptLanguages`, returning `Ok(None)` when the header is absent.
+`HttpAcceptLanguages` (the server alias for the shared protocol `AcceptLanguage`
+type), returning `Ok(None)` when the header is absent.
 `HttpAcceptLanguages::ranges()` and `HttpAcceptLanguages::qualities()` expose
 the validated ranges and optional q-values. Each received field is bounded to
 64 KiB and the combined range list to 32 entries; malformed values, invalid
@@ -634,18 +636,22 @@ challenges, retry requests, or forward credentials across redirects.
 
 `HttpClient::te()` appends a validated transfer coding, `te_with_q()` accepts
 an HTTP q-value from `0` through `1` with at most three fractional digits, and
-`te_trailers()` declares support for trailers. The helpers emit one
-comma-separated `TE` field and reject invalid tokens, q-values, duplicates,
+`te_trailers()` declares support for trailers. The helpers validate each
+member and the combined field through the shared protocol-owned `rttp-protocol`
+`Te` type, which owns coding tokens, the `chunked` rejection, the
+`trailers`-without-q-value rule, q-value thousandths, case-insensitive
+duplicates, the 32-coding member bound, and the 64 KiB value bound. They emit
+one comma-separated `TE` field and reject invalid tokens, q-values, duplicates,
 oversized values, and more than 32 codings before a connection is opened.
 `trailers` cannot carry a q-value.
 
 On the server, `Request::te()` and `HttpRequest::te()` parse received fields in
-wire order into `HttpRequestTe`; each `HttpTe` exposes `coding()`, optional
-thousandths `quality()`, and `is_trailers()`. This is metadata parsing only:
-it does not implement transfer coding, trailer negotiation, compression, or
-proxy behavior. Bounded h2c remains conservative: it emits only an exact
-`TE: trailers` field and strips every other `TE` value with HTTP/1.x
-connection-specific request metadata.
+wire order through the same protocol type into `HttpRequestTe`; each `HttpTe`
+exposes `coding()`, optional thousandths `quality()`, and `is_trailers()`. This
+is metadata parsing only: it does not implement transfer coding, trailer
+negotiation, compression, or proxy behavior. Bounded h2c remains conservative:
+it emits only an exact `TE: trailers` field and strips every other `TE` value
+with HTTP/1.x connection-specific request metadata.
 
 ### Bounded WWW-Authenticate response metadata
 
@@ -800,7 +806,8 @@ decrement the value, route the request, select TRACE or OPTIONS, or infer
 forwarding behavior.
 
 `HttpClient::te()`, `te_with_q()`, and `te_trailers()` build a single bounded
-`TE` field. `HttpClient::prefer()` and `prefer_with_value()` build a single
+`TE` field validated through the shared protocol-owned `rttp-protocol` `Te`
+type. `HttpClient::prefer()` and `prefer_with_value()` build a single
 bounded `Prefer` field. `Prefer` values are limited to 8 KiB and `wait` accepts
 only unsigned decimal integers. Both client helpers reject malformed tokens,
 invalid q-values, duplicates, oversized field values, and more than 32 members
@@ -1021,6 +1028,7 @@ gain additional HTTP/2 header-block handling.
 | HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and explicit `Expect: 100-continue` metadata | Expect metadata does not gate body transmission; SOCKS handshakes are delegated to the `socks` crate |
 | Fetch Metadata | Client `sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, `sec_fetch_user`, and `sec_purpose` emit bounded `Sec-Fetch-*`/`Sec-Purpose` fields; server `Request` helpers parse typed received values while preserving raw headers on errors | No browser security policy, request blocking, origin validation, navigation policy, automatic header generation, prefetch execution, or cache behavior |
 | Save-Data | Client `save_data` emits bounded `Save-Data: on` request metadata; server `Request::save_data()` and `HttpRequest::save_data()` parse typed received values while preserving raw headers on errors | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |
+| Accept-Language | Client `accept_language` emits bounded `Accept-Language` request metadata through the protocol `AcceptLanguage` type; server `Request::accept_language()` and `HttpRequest::accept_language()` parse typed received values as `HttpAcceptLanguages` while preserving raw headers on errors | No locale matching, fallback selection, translation lookup, routing, or automatic response choice |
 | Preflight request metadata | Client `origin`, `access_control_request_method`, `access_control_request_headers`, and `access_control_request_private_network` emit bounded `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`, and `Access-Control-Request-Private-Network` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, CORS policy, or Private Network Access policy |
 | Access-Control-Allow-Credentials | Client `Response::access_control_allow_credentials` and server `HttpAccessControlAllowCredentials`, `HttpResponse::with_access_control_allow_credentials`, and `HttpResponse::access_control_allow_credentials` parse or declare bounded singleton `Access-Control-Allow-Credentials` `true`-token metadata while preserving raw headers on parse failures | No CORS request evaluation, automatic credential attachment, or automatic credentials granting |
 | Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_content_digest()`, `HttpRequest::want_content_digest()`, `Request::want_repr_digest()`, and `HttpRequest::want_repr_digest()` parse received preference fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |
@@ -1944,6 +1952,7 @@ TLS or async accept loops.
 | Memento-Datetime | `HttpResponse::with_memento_datetime`/`memento_datetime` declare and parse bounded singleton `Memento-Datetime` IMF-fixdate metadata while preserving raw headers on parse errors | No archival selection, `Accept-Datetime` negotiation, TimeGate behavior, retry, or transport changes |
 | Fetch Metadata | `Request::sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, `sec_fetch_user`, and `sec_purpose` parse bounded typed `Sec-Fetch-*`/`Sec-Purpose` request fields and preserve raw values on errors | No browser security policy, request blocking, origin validation, navigation policy, automatic header generation, prefetch execution, or cache behavior |
 | Save-Data | `Request::save_data` and `HttpRequest::save_data` parse bounded singleton `Save-Data` `on`-token metadata and preserve raw values on errors | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |
+| Accept-Language | `HttpAcceptLanguages`, `Request::accept_language`, and `HttpRequest::accept_language` parse bounded ordered `Accept-Language` ranges and q-values through the protocol `AcceptLanguage` type and preserve raw values on errors | No locale matching, fallback selection, translation lookup, routing, or automatic response choice |
 | Vary | `HttpVary`, `HttpResponse::with_vary`, `HttpResponse::vary`, `Request::vary_selection`, and `HttpRequest::vary_selection` parse, declare, and select bounded `Vary` metadata with case-insensitive field-name handling | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | No-Vary-Search | `HttpNoVarySearch`, `HttpResponse::with_no_vary_search`, and `HttpResponse::no_vary_search` parse and declare bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
 | Allow | `HttpAllowedMethods`, `HttpResponse::with_allow`, and `HttpResponse::allow` declare and parse bounded `Allow` method-list metadata | No route dispatch, automatic `405` generation, `OPTIONS` policy, fallback method selection, retry/replay, or status-code policy engine |

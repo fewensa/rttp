@@ -1052,6 +1052,48 @@ fn te_helpers_emit_validated_codings_and_trailers() {
 }
 
 #[test]
+fn te_helpers_accept_multiple_codings_and_inline_qvalues_in_one_call() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .te("gzip;q=0.5")
+      .expect("inline q-value should be accepted")
+      .te("deflate, br")
+      .expect("comma-separated codings should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("gzip;q=0.5, deflate, br"),
+    header_value(&request, "TE")
+  );
+  assert_eq!(Some("Close, TE"), header_value(&request, "Connection"));
+}
+
+#[test]
+fn te_helpers_reject_duplicate_codings_within_one_call_before_connecting() {
+  for value in ["gzip, GZIP", "gzip, gzip;q=0.5"] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .te(value)
+        .expect_err("duplicate codings in one call should be rejected");
+
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "duplicate TE input should not open a socket"
+    );
+  }
+}
+
+#[test]
 fn te_helpers_reject_invalid_members_before_connecting() {
   let request = capture_optional_request(|base_url| {
     let mut client = client();
@@ -1337,6 +1379,108 @@ fn te_and_prefer_helpers_reject_invalid_values_before_connecting() {
   assert!(
     request.is_empty(),
     "invalid Prefer input should not open a socket"
+  );
+}
+
+#[test]
+fn te_helpers_reject_duplicate_overflow_and_oversized_values_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    client
+      .get()
+      .url(format!("{}/metadata", base_url))
+      .te("gzip")
+      .expect("first TE coding should be accepted");
+    assert!(client
+      .te("GZIP")
+      .expect_err("duplicate TE coding should be rejected")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "duplicate TE input should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    client.get().url(format!("{}/metadata", base_url));
+    for index in 0..32 {
+      client
+        .te(format!("coding-{index}"))
+        .expect("TE coding within the limit should be accepted");
+    }
+    assert!(client
+      .te("coding-33")
+      .expect_err("the 33rd TE coding should be rejected")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "33rd TE member should not open a socket"
+  );
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    assert!(client
+      .get()
+      .url(format!("{}/metadata", base_url))
+      .te(oversized)
+      .expect_err("oversized TE coding should be rejected")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "oversized TE input should not open a socket"
+  );
+}
+
+#[test]
+fn te_helpers_reject_cross_call_duplicates_across_inline_and_multi_coding_forms() {
+  for values in [
+    ["gzip", "gzip;q=0.5"],
+    ["gzip;q=0.5", "GZIP"],
+    ["gzip, deflate", "gzip"],
+    ["gzip, deflate", "deflate;q=0.5"],
+    ["gzip, deflate", "gzip, deflate"],
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      client
+        .get()
+        .url(format!("{}/metadata", base_url))
+        .te(values[0])
+        .expect("first TE call should be accepted");
+      assert!(client
+        .te(values[1])
+        .expect_err("cross-call duplicate TE coding should be rejected")
+        .is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "cross-call duplicate TE input should not open a socket"
+    );
+  }
+}
+
+#[test]
+fn te_helpers_reject_multi_coding_overflow_beyond_the_member_bound() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    client.get().url(format!("{}/metadata", base_url));
+    for index in 0..31 {
+      client
+        .te(format!("coding-{index}"))
+        .expect("TE coding within the limit should be accepted");
+    }
+    assert!(client
+      .te("final-a, final-b")
+      .expect_err("31 codings plus two more must exceed the 32-member bound")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "TE member overflow input should not open a socket"
   );
 }
 

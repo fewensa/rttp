@@ -168,6 +168,22 @@ These helpers parse framing metadata only. They do not change
 `request_body_kind`, decode a chunked body, negotiate `TE`, or alter
 Content-Length handling.
 
+## TE request metadata
+
+Handlers can call `Request::te()` and `HttpRequest::te()` to observe bounded
+typed `TE` request metadata through the shared protocol-owned
+`rttp-protocol` `Te` type. The helpers combine case-insensitive fields in wire
+order into `HttpRequestTe`; each `HttpTe` exposes `coding()`, optional
+thousandths `quality()`, and `is_trailers()`. Absent fields return `Ok(None)`.
+Malformed codings, `chunked`, q-valued `trailers`, invalid q-values,
+case-insensitive duplicates, oversized values, or more than 32 codings return a
+parser error while `Request::header()` continues to expose the original raw
+field. HTTP/2 continues to reject every `TE` value other than an exact
+`TE: trailers` at decode time.
+
+These helpers parse metadata only. They do not enable a transfer-coding
+engine, negotiate trailers, apply compression, or alter request framing.
+
 ## Fetch Metadata request metadata
 
 Handlers can call `Request::sec_fetch_site()`, `sec_fetch_mode()`,
