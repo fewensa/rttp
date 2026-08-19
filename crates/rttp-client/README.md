@@ -857,6 +857,21 @@ The helper is metadata-only. `rttp_client` does not send network error
 reports, persist policy, configure Reporting endpoint groups, or attach
 status-code policy from `NEL`.
 
+## Bounded Reporting-Endpoints response metadata
+
+`Response::reporting_endpoints()` parses retained `Reporting-Endpoints`
+dictionary fields through the shared protocol type. It returns `Ok(None)`
+when the header is absent. Present values combine all fields in wire order
+into at most 32 endpoint-name to quoted-URL members. Each field value is
+limited to 64 KiB, and the combined raw field-value bytes are limited to
+64 KiB. Invalid names, unquoted URLs, malformed quoted strings, duplicate
+names, oversized input, and too many members return an error while the raw
+response headers remain available through `Response::header_value()` and
+`Response::header_values()`.
+
+The helper is metadata-only. `rttp_client` does not schedule, send, persist,
+retry, or route reports.
+
 ## Bounded Proxy-Status response metadata
 
 `Response::proxy_status()` parses retained RFC 9209 `Proxy-Status` fields into
@@ -981,6 +996,7 @@ header-block model.
 | Content-Disposition | `Response::content_disposition` and the protocol-owned `ContentDisposition::parse` parse bounded singleton response `Content-Disposition` metadata into disposition type plus ordered parameters, including preserved `filename` and `filename*` values, while preserving raw headers on parse failures | No automatic download, filesystem path handling, MIME sniffing, redirect behavior, retry/replay, cache behavior, negotiation behavior, or status-policy behavior |
 | Vary | `Response::vary` parses bounded response `Vary` fields into wildcard or normalized case-insensitive field-name metadata | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | NEL | `Response::nel` parses the bounded singleton `NEL` field as W3C Network Error Logging policy metadata while preserving raw headers | No network error report sending, policy persistence, Reporting endpoint group configuration, or status-policy behavior |
+| Reporting-Endpoints | `Response::reporting_endpoints` parses bounded endpoint-name to quoted-URL dictionaries through the shared protocol type while preserving raw headers | No report scheduling, sending, persistence, retry, routing, or endpoint policy behavior |
 | Proxy-Status | `Response::proxy_status` parses bounded RFC 9209 Token/String proxy identifiers with opaque parameters while preserving raw headers on parse failures | No proxy health checks, retries, trailer promotion, or origin-generation policy |
 | No-Vary-Search | `Response::no_vary_search` parses bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
 | Trailers | Chunked response trailers are exposed for blocking and async APIs; streaming chunked uploads can send declared request trailers | Application metadata trailers such as `X-Trace` are allowed; pseudo-header, connection-specific, routing, authentication/cookie, and framing trailer fields are rejected |

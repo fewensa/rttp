@@ -254,6 +254,25 @@ string to 64 KiB.
 These helpers only declare and parse metadata. The server does not send
 network error reports, persist policy, or configure Reporting endpoint groups.
 
+## Reporting-Endpoints response metadata
+
+`HttpResponse::with_reporting_endpoints(endpoints)` validates a bounded
+`Reporting-Endpoints` dictionary through the shared protocol
+`HttpReportingEndpoints` type and replaces any existing
+`Reporting-Endpoints` fields with one normalized value.
+`HttpResponse::reporting_endpoints()` parses attached raw fields into the
+same type, returning parser errors without changing those raw fields.
+Each field value is bounded to 64 KiB, the combined raw field-value bytes
+are bounded to 64 KiB, and the member count is bounded to 32. Endpoint names
+are lowercase tokens that may start with `*`; URLs must be quoted and
+unescape only `\\` and `\"`. Invalid names, unquoted URLs, malformed quoted
+strings, duplicate names, oversized input, and too many members return a
+parser error while `HttpResponse` raw headers continue to expose the
+original fields.
+
+These helpers only declare and parse metadata. The server does not schedule,
+send, persist, retry, or route reports.
+
 ## Proxy-Status response metadata
 
 `HttpResponse::with_proxy_status(value)` validates RFC 9209 `Proxy-Status` as
