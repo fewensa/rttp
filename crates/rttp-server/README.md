@@ -18,6 +18,22 @@ fields, preserves the request for handler-defined error policy, and returns an
 error for malformed values, values larger than 64 KiB, or more than 256
 directives. It only parses metadata; it does not apply caching behavior.
 
+## Response Cache-Status metadata
+
+`HttpResponse::cache_status()` parses attached `Cache-Status` response fields
+into `HttpCacheStatus`. The helper combines repeated fields in wire order as
+an RFC 9211 / RFC 8941 list of cache identifiers and parameters, including
+typed `hit`, `fwd`, `fwd-status`, `ttl`, `stored`, `collapsed`, `key`, and
+`detail` values plus well-formed extension parameters. It applies these
+bounds: 64 KiB per field value, at most 256 members, at most 256 parameters
+per member, and 64 KiB per parameter value.
+
+Malformed Cache-Status metadata returns `HttpCacheStatusParseError` while
+leaving the raw response headers in place. An absent header returns
+`Ok(None)`. The helper only exposes metadata for handler-owned policy; it
+does not store cache entries, compute freshness, revalidate, select
+endpoints, retry, or choose status behavior.
+
 ## Response CDN-Cache-Control metadata
 
 `HttpResponse::cdn_cache_control()` parses attached `CDN-Cache-Control`

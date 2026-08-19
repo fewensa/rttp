@@ -4,6 +4,7 @@ use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::access_control_request_method::AccessControlRequestMethod;
 use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
 use rttp_protocol::age::Age;
+use rttp_protocol::cache_status::CacheStatus;
 use rttp_protocol::cdn_cache_control::CdnCacheControl;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::connection::Connection;
@@ -109,6 +110,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
       .expect("Content-Security-Policy should parse");
   let content_language =
     ContentLanguage::parse("fr-CA, es-419").expect("Content-Language should parse");
+  let cache_status =
+    CacheStatus::parse("OriginCache; hit; ttl=1100").expect("Cache-Status should parse");
   let cdn_cache_control =
     CdnCacheControl::parse("max-age=600, cdn-example=\"a, b\"").expect("CDN metadata should parse");
   let accept_ranges = AcceptRanges::parse("bytes, pages").expect("Accept-Ranges should parse");
@@ -203,6 +206,11 @@ fn protocol_exports_representative_bounded_metadata_types() {
   );
   assert_eq!(content_language.tags(), ["fr-CA", "es-419"]);
   assert_eq!(content_language.header_value(), "fr-CA, es-419");
+  assert_eq!(
+    cache_status.members()[0].identifier().as_str(),
+    "OriginCache"
+  );
+  assert_eq!(cache_status.members()[0].ttl(), Some(1100));
   assert_eq!(cdn_cache_control.directives()[1].name(), "cdn-example");
   assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
   assert_eq!(accept_ranges.units(), ["bytes", "pages"]);

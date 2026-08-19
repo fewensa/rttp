@@ -30,6 +30,11 @@ pub use rttp_protocol::authentication_info::{
   AuthenticationInfo as HttpAuthenticationInfo,
   AuthenticationInfoParseError as HttpAuthenticationInfoParseError,
 };
+pub use rttp_protocol::cache_status::{
+  CacheStatus as HttpCacheStatus, CacheStatusIdentifier as HttpCacheStatusIdentifier,
+  CacheStatusMember as HttpCacheStatusMember, CacheStatusParameter as HttpCacheStatusParameter,
+  CacheStatusParseError as HttpCacheStatusParseError,
+};
 pub use rttp_protocol::cdn_cache_control::{
   CdnCacheControl as HttpCdnCacheControl,
   CdnCacheControlParseError as HttpCdnCacheControlParseError,
@@ -1746,6 +1751,20 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpCdnCacheControl::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Cache-Status` response metadata without applying cache policy.
+  pub fn cache_status(&self) -> Result<Option<HttpCacheStatus>, HttpCacheStatusParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Cache-Status"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpCacheStatus::parse_values(values).map(Some)
   }
 
   pub fn vary(&self) -> Result<Option<HttpVary>, HttpVaryParseError> {
