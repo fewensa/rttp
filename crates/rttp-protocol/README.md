@@ -264,3 +264,13 @@ quoted-string; an optional quoted HTTP-date is parsed with the same
 `httpdate` helper as Sunset. Empty input, empty members, malformed quoting,
 invalid codes, and bound violations are rejected. This parser does not
 implement cache, freshness, stale-response, or response-acceptance policy.
+
+## No-Vary-Search
+
+`no_vary_search` parses bounded Structured Fields dictionary metadata for the
+`No-Vary-Search` response field. It exposes recognized `key-order`, `params`,
+and `except` members, keeps extension dictionary members as metadata, and
+formats a normalized header value. Each field value is limited to 64 KiB,
+parameter lists are limited to 256 strings, and extension members are limited
+to 64. The parser does not implement cache storage, cache-key matching, URL
+normalization, navigation behavior, request replay, or shared-cache policy.

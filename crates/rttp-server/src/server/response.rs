@@ -55,6 +55,11 @@ pub use rttp_protocol::digest::{
   Digest as HttpDigest, DigestEntry as HttpDigestEntry, DigestParseError as HttpDigestParseError,
   ReprDigest as HttpReprDigest, ReprDigestEntry as HttpReprDigestEntry,
 };
+pub use rttp_protocol::no_vary_search::{
+  NoVarySearch as HttpNoVarySearch, NoVarySearchExtension as HttpNoVarySearchExtension,
+  NoVarySearchParams as HttpNoVarySearchParams,
+  NoVarySearchParseError as HttpNoVarySearchParseError,
+};
 pub use rttp_protocol::priority::{
   Priority as HttpPriority, PriorityExtension as HttpPriorityExtension,
   PriorityParseError as HttpPriorityParseError,
@@ -695,6 +700,23 @@ impl HttpResponse {
     self
       .headers
       .push(HttpHeader::new("Vary", vary.header_value()));
+    Ok(self)
+  }
+
+  /// Validates and replaces `No-Vary-Search` response metadata without applying
+  /// cache-key or URL-normalization policy.
+  pub fn with_no_vary_search<V: AsRef<str>>(
+    mut self,
+    value: V,
+  ) -> Result<Self, HttpNoVarySearchParseError> {
+    let no_vary_search = HttpNoVarySearch::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("No-Vary-Search"));
+    self.headers.push(HttpHeader::new(
+      "No-Vary-Search",
+      no_vary_search.header_value(),
+    ));
     Ok(self)
   }
 
@@ -1399,6 +1421,21 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpVary::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `No-Vary-Search` metadata without changing raw headers,
+  /// cache keys, URLs, or response selection policy.
+  pub fn no_vary_search(&self) -> Result<Option<HttpNoVarySearch>, HttpNoVarySearchParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("No-Vary-Search"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpNoVarySearch::parse_values(values).map(Some)
   }
 
   /// Parses `Link` response metadata without enabling preload, redirects,

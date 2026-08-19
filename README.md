@@ -500,16 +500,6 @@ and more than 32 algorithms before opening a connection. Raw
 `header(("Want-Repr-Digest", value))` remain available for syntax outside the
 bounded helper API.
 
-On the server, `Request::want_repr_digest()` and
-`HttpRequest::want_repr_digest()` parse received `Want-Repr-Digest` fields in
-wire order into `HttpWantReprDigest`. Each entry exposes `algorithm()` and
-`preference()` (`0` through `10`). Absent metadata returns `Ok(None)`;
-malformed, duplicate, empty, oversized, or excessive entries return a parse
-error without changing the request itself.
-
-These helpers declare and parse preferences only. They do not select an
-algorithm, compute digests, verify response body hashes, attach `Repr-Digest`,
-retry requests, or sign messages.
 On the server, `Request::want_content_digest()` and
 `HttpRequest::want_content_digest()` parse received `Want-Content-Digest`
 fields in wire order into `HttpWantContentDigest`. `Request::want_repr_digest()`
@@ -747,6 +737,18 @@ The helper is metadata-only. RTTP does not store cache entries, match stored
 responses, persist cache keys, replay requests, enforce shared-cache policy, or
 issue automatic conditional requests based on `Vary`.
 
+### Bounded No-Vary-Search metadata
+
+`Response::no_vary_search()` parses one or more `No-Vary-Search` response
+fields as bounded Structured Fields dictionary metadata. The typed value
+exposes recognized `key-order`, `params`, and `except` members and keeps
+extension dictionary members as metadata. Parse errors are returned by the
+typed helper while raw headers remain available.
+
+This helper does not create cache storage, match cache keys, normalize URLs,
+replay requests, apply browser navigation behavior, or enforce shared-cache
+policy.
+
 ### Bounded trailer behavior
 
 Trailer support is explicit and bounded by protocol path. On the client,
@@ -816,7 +818,6 @@ gain additional HTTP/2 header-block handling.
 | HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and explicit `Expect: 100-continue` metadata | Expect metadata does not gate body transmission; SOCKS handshakes are delegated to the `socks` crate |
 | Fetch Metadata | Client `sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, and `sec_fetch_user` emit bounded `Sec-Fetch-*` fields; server `Request` helpers parse typed received values while preserving raw headers on errors | No browser security policy, request blocking, origin validation, navigation policy, or automatic header generation |
 | Preflight request metadata | Client `origin`, `access_control_request_method`, and `access_control_request_headers` emit bounded `Origin`, `Access-Control-Request-Method`, and `Access-Control-Request-Headers` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, or CORS policy |
-| Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_repr_digest()` and `HttpRequest::want_repr_digest()` parse received `Want-Repr-Digest` fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |
 | Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_content_digest()`, `HttpRequest::want_content_digest()`, `Request::want_repr_digest()`, and `HttpRequest::want_repr_digest()` parse received preference fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |
 | Upgrade and tunnel handoff | `CONNECT` returns the tunnel socket after a successful `200`; `upgrade()` returns the socket after `101 Switching Protocols` and skips interim `1xx` responses | Upgraded protocols are handed to the caller and are not parsed by `rttp_client` |
 | Redirects | Auto-redirect covers 301, 302, 303, 307, and 308 method/body behavior, relative and absolute `Location` resolution, same- and cross-authority header handling, loop detection, and redirect bounds | Redirects are HTTP client behavior, not a browser policy implementation |
@@ -834,6 +835,7 @@ gain additional HTTP/2 header-block handling.
 | Server-Timing | Client `Response::server_timing` and server `HttpServerTiming`, `HttpResponse::with_server_timing`, and `HttpResponse::server_timing` parse or declare bounded response timing metadata while preserving raw headers on parse failures | No metric collection, measurement, telemetry export, metrics backend integration, retry, redirect behavior, or status-policy behavior |
 | Warning | Client `Response::warning` parses bounded RFC 7234 `Warning` warning-value lists while preserving raw headers on parse failures | No cache storage, freshness calculation, stale-response handling, warn-code policy, retry, redirect behavior, or response-acceptance changes |
 | Vary | `Response::vary` parses bounded response `Vary` fields into wildcard or normalized case-insensitive field-name metadata | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
+| No-Vary-Search | `Response::no_vary_search` parses bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
 | Trailers | Chunked response trailers are exposed for blocking and async APIs; streaming chunked uploads can send declared request trailers | Application metadata trailers such as `X-Trace` are allowed; pseudo-header, connection-specific, routing, authentication/cookie, and framing trailer fields are rejected |
 | Bounded h2c client | With `http2`, direct `socket2` h2c sends GET, HEAD, bodyless DELETE, OPTIONS, or TRACE, buffered POST, PUT, or PATCH requests, and opt-in RFC 8441 extended CONNECT request HEADERS via `http2_extended_connect`, opens at most one request stream, supports prior-knowledge with `emit_http2_prior_knowledge`, supports explicit HTTP/1.1 `Upgrade: h2c` negotiation with `emit_http2_upgrade`, advertises `SETTINGS_ENABLE_PUSH = 0`, advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1` only for the explicit extended CONNECT path, validates received `SETTINGS_ENABLE_PUSH` values as only `0` or `1`, honors initial peer `SETTINGS_MAX_CONCURRENT_STREAMS` by failing before request HEADERS when the peer allows zero streams, honors peer-advertised `SETTINGS_MAX_HEADER_LIST_SIZE` request metadata limits, accepts only legal `SETTINGS_MAX_FRAME_SIZE` values from 16,384 through 16,777,215 bytes, splits outbound HEADERS, DATA, and trailers to the active peer frame-size limit, rejects oversized inbound frames when a configured local frame-size limit is exceeded, bounds HPACK dynamic table use with `SETTINGS_HEADER_TABLE_SIZE`, strips HTTP/1.x connection-specific request fields before emission, rejects connection-specific peer response fields, suppresses HEAD response bodies, treats `RST_STREAM` on the active stream as a bounded reset/cancellation signal, acknowledges inbound PING without ACK on stream 0 and exactly 8 octets with matching opaque data, ignores inbound PING ACK, rejects malformed PING frames, DATA bodies, trailers, HPACK static Huffman strings, bounded large header blocks, padded incoming frames, `GOAWAY` shutdown boundaries, PRIORITY metadata validation without scheduling, HTTP/2-allowed unknown/extension frame ignoring inside this bounded path, reserved stream-id high-bit normalization, and conservative DATA flow control | Ordinary `CONNECT`, header-configured `:protocol` metadata, non-h2c HTTP/1.1 `Upgrade` handoff requests, and proxies are rejected deterministically, and `PUSH_PROMISE`/server push is rejected instead of managed; bounded direct h2c only, with no keepalive timers, no automatic client/server initiated PING policy, no public cancellation callback API, no dynamic policy API, no extension callback API, no full extension negotiation, TLS ALPN, external h2 integration, proxy tunneling to h2, proxy h2, tunnel handoff, connection pooling, persistent HTTP/2 session management, automatic retry/replay, server push, full session manager, full stream state machine, full multiplex scheduler, unbounded multiplex scheduling, general multiplexing, priority scheduling, request bodies or trailers for extended CONNECT, or request bodies for GET, HEAD, DELETE, OPTIONS, or TRACE |
 
@@ -1468,6 +1470,19 @@ enforcement, or automatic conditional requests. Applications that build a
 cache must persist any selected request metadata and enforce their own cache
 policy around these helpers.
 
+### Bounded No-Vary-Search metadata
+
+Server-side `No-Vary-Search` helpers expose response declaration metadata
+without implementing a cache. `HttpResponse::with_no_vary_search(value)`
+parses and normalizes a declaration before replacing any existing
+`No-Vary-Search` response fields, while `HttpResponse::no_vary_search()`
+parses attached raw fields into `HttpNoVarySearch` metadata.
+
+The helpers expose recognized `key-order`, `params`, and `except` members and
+keep extension dictionary members as metadata. They do not create cache
+storage, match cache keys, normalize URLs, replay requests, apply browser
+navigation behavior, or enforce shared-cache policy.
+
 The server is intentionally small: it handles blocking HTTP/1.x request parsing
 for local tests and simple embedded use. It accepts fixed `Content-Length` and
 chunked request bodies, exposes chunked request trailers, applies bounded
@@ -1631,6 +1646,7 @@ TLS or async accept loops.
 | Cache-Control and CDN-Cache-Control | `Request::cache_control`, `HttpRequest::cache_control`, and `HttpResponse::cache_control` parse bounded request/response directives, numeric freshness fields, quoted field-name lists, and extension directives; `HttpResponse::cdn_cache_control` parses bounded response `CDN-Cache-Control` directives and CDN extension metadata while preserving raw response headers on parse errors; `HttpResponse::with_age`/`age`, `with_expires`/`expires`, and `with_retry_after_delta`/`with_retry_after_date`/`retry_after` declare and parse response `Age`, `Expires`, and `Retry-After` metadata | No cache storage, CDN cache, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, surrogate-key behavior, automatic conditional requests, directive-based validator evaluation, automatic sleep, retry, replay, backoff, scheduler integration, or status-code policy engine |
 | Fetch Metadata | `Request::sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, and `sec_fetch_user` parse bounded typed `Sec-Fetch-*` request fields and preserve raw values on errors | No browser security policy, request blocking, origin validation, navigation policy, or automatic header generation |
 | Vary | `HttpVary`, `HttpResponse::with_vary`, `HttpResponse::vary`, `Request::vary_selection`, and `HttpRequest::vary_selection` parse, declare, and select bounded `Vary` metadata with case-insensitive field-name handling | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
+| No-Vary-Search | `HttpNoVarySearch`, `HttpResponse::with_no_vary_search`, and `HttpResponse::no_vary_search` parse and declare bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
 | Allow | `HttpAllowedMethods`, `HttpResponse::with_allow`, and `HttpResponse::allow` declare and parse bounded `Allow` method-list metadata | No route dispatch, automatic `405` generation, `OPTIONS` policy, fallback method selection, retry/replay, or status-code policy engine |
 | Content-Language | `HttpContentLanguages`, `Request::content_language`, `HttpRequest::content_language`, `HttpResponse::with_content_language`, and `HttpResponse::content_language` parse or declare bounded `Content-Language` metadata | No automatic language negotiation, route selection, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
 | Content-Location | `HttpResponse::with_content_location` declares one bounded singleton `Content-Location` header, and `HttpResponse::content_location` parses attached singleton response metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |
