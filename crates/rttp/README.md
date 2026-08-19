@@ -85,12 +85,13 @@ attached `HttpResponse::header("Accept-Ranges", ...)` fields remain preserved
 until the typed parser is requested.
 
 The helper is bounded and validation-oriented. Each header field value is
-limited to 64 KiB, the parsed header set is limited to 32 range units, range
+limited to 64 KiB, the parsed header set is limited to 256 range units, range
 units must be valid HTTP tokens, malformed or empty values are rejected,
 duplicates are rejected case-insensitively across all parsed header fields, and
-`none` is accepted only as the exclusive sentinel through
-`with_accept_ranges_none()` or a parsed raw `Accept-Ranges: none` field. These
-helpers interoperate with adjacent response metadata helpers such as
+the `none` sentinel is represented as an empty unit list through
+`with_accept_ranges_none()` or a parsed raw `Accept-Ranges: none` field. The
+underlying parser is shared with the client facade through `rttp-protocol`.
+These helpers interoperate with adjacent response metadata helpers such as
 `HttpResponse::cache_control()`, `HttpResponse::vary()`,
 `HttpResponse::allow()`, and `HttpResponse::content_language()` by preserving
 raw headers and parsing only when requested.
