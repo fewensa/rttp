@@ -787,10 +787,15 @@ connection lifetime, connection pooling, keep-alive timers, or HTTP/2 behavior.
 
 ### Bounded HTTP/1.1 request control metadata
 
-`Request::max_forwards()` and `HttpRequest::max_forwards()` expose one bounded
-`Max-Forwards` value as a `u8`. They return `Ok(None)` when the field is absent
-and reject duplicate, empty, signed, non-decimal, or out-of-range values. RTTP
-does not decrement the value, route the request, or infer forwarding behavior.
+`Request::max_forwards()` and `HttpRequest::max_forwards()` reuse the shared
+protocol `Max-Forwards` type. They return `Ok(None)` when the field is absent
+and otherwise expose one singleton `1*DIGIT` hop count that fits in `u32`
+(`0` through `4294967295`). Duplicate, empty, signed, non-decimal, overflowing,
+oversized (over 64 KiB), or control-byte values return a parse error while
+`header("Max-Forwards")` continues to expose the raw field. The client helper
+`HttpClient::max_forwards()` validates and emits the same type. RTTP does not
+decrement the value, route the request, select TRACE or OPTIONS, or infer
+forwarding behavior.
 
 `HttpClient::te()`, `te_with_q()`, and `te_trailers()` build a single bounded
 `TE` field. `HttpClient::prefer()` and `prefer_with_value()` build a single
