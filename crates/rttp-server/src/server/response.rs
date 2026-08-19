@@ -1,5 +1,9 @@
 use super::*;
 
+pub use rttp_protocol::access_control_allow_credentials::{
+  AccessControlAllowCredentials as HttpAccessControlAllowCredentials,
+  AccessControlAllowCredentialsParseError as HttpAccessControlAllowCredentialsParseError,
+};
 pub use rttp_protocol::access_control_allow_headers::{
   AccessControlAllowHeaders as HttpAccessControlAllowHeaders,
   AccessControlAllowHeadersParseError as HttpAccessControlAllowHeadersParseError,
@@ -755,6 +759,25 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Access-Control-Allow-Credentials` response metadata
+  /// without granting credentials automatically.
+  pub fn with_access_control_allow_credentials(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpAccessControlAllowCredentialsParseError> {
+    let allow_credentials = HttpAccessControlAllowCredentials::parse(value)?;
+    self.headers.retain(|header| {
+      !header
+        .name
+        .eq_ignore_ascii_case("Access-Control-Allow-Credentials")
+    });
+    self.headers.push(HttpHeader::new(
+      "Access-Control-Allow-Credentials",
+      allow_credentials.header_value(),
+    ));
+    Ok(self)
+  }
+
   /// Validates and replaces `Access-Control-Allow-Headers` response metadata
   /// without applying CORS policy.
   pub fn with_access_control_allow_headers(
@@ -1410,6 +1433,28 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpAccessControlAllowOrigin::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Access-Control-Allow-Credentials` response metadata without
+  /// granting credentials automatically.
+  pub fn access_control_allow_credentials(
+    &self,
+  ) -> Result<Option<HttpAccessControlAllowCredentials>, HttpAccessControlAllowCredentialsParseError>
+  {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Access-Control-Allow-Credentials")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAccessControlAllowCredentials::parse_values(values).map(Some)
   }
 
   /// Parses attached `Access-Control-Allow-Headers` response metadata without

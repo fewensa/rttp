@@ -529,6 +529,64 @@ fn access_control_allow_origin_helpers_validate_replace_and_preserve_raw_metadat
 }
 
 #[test]
+fn access_control_allow_credentials_helpers_validate_replace_and_preserve_raw_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Access-Control-Allow-Credentials", "false")
+    .header("access-control-allow-credentials", "false")
+    .with_access_control_allow_credentials("TRUE")
+    .expect("Access-Control-Allow-Credentials should be accepted");
+
+  assert_eq!(
+    "true",
+    response
+      .access_control_allow_credentials()
+      .expect("Access-Control-Allow-Credentials should parse")
+      .expect("Access-Control-Allow-Credentials should be present")
+      .header_value()
+  );
+  assert_eq!(
+    vec![("Access-Control-Allow-Credentials", "true")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let malformed = HttpResponse::ok([]).header("Access-Control-Allow-Credentials", "false");
+  assert!(malformed.access_control_allow_credentials().is_err());
+  assert!(HttpResponse::ok([])
+    .with_access_control_allow_credentials("false")
+    .is_err());
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .access_control_allow_credentials()
+      .expect("absent Access-Control-Allow-Credentials should parse")
+  );
+  for value in ["true", "TRUE", " true "] {
+    assert_eq!(
+      "true",
+      HttpResponse::ok([])
+        .with_access_control_allow_credentials(value)
+        .expect("valid Access-Control-Allow-Credentials should be accepted")
+        .access_control_allow_credentials()
+        .expect("Access-Control-Allow-Credentials should parse")
+        .expect("Access-Control-Allow-Credentials should be present")
+        .header_value()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("Access-Control-Allow-Credentials", "true")
+    .header("access-control-allow-credentials", "true");
+  assert!(duplicate.access_control_allow_credentials().is_err());
+  assert!(HttpResponse::ok([])
+    .with_access_control_allow_credentials("x".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
 fn cross_origin_resource_policy_helpers_validate_replace_and_parse_response_metadata() {
   let response = HttpResponse::ok([])
     .header("Cross-Origin-Resource-Policy", "same-site")

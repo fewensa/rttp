@@ -9,6 +9,7 @@
 
 pub mod accept_patch;
 pub mod accept_post;
+pub mod access_control_allow_credentials;
 pub mod access_control_allow_headers;
 pub mod access_control_allow_methods;
 pub mod access_control_allow_origin;

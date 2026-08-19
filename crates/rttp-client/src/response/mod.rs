@@ -21,6 +21,9 @@
 
 pub use self::response::*;
 
+pub use rttp_protocol::access_control_allow_credentials::{
+  AccessControlAllowCredentials, AccessControlAllowCredentialsParseError,
+};
 pub use rttp_protocol::access_control_allow_headers::{
   AccessControlAllowHeaders, AccessControlAllowHeadersParseError,
 };

@@ -585,6 +585,27 @@ These helpers expose Warning as metadata only. RTTP does not use warn-codes as
 cache policy, calculate freshness, treat responses as stale, or change
 response acceptance.
 
+### Bounded Access-Control-Allow-Credentials response metadata
+
+`Response::access_control_allow_credentials()` parses a singleton
+`Access-Control-Allow-Credentials` response field into
+`AccessControlAllowCredentials` metadata. Absent metadata returns `Ok(None)`.
+The field value must be exactly the standards-defined `true` token, matched
+case-insensitively and exposed in canonical lowercase form; surrounding SP and
+HTAB are trimmed. Unknown tokens, empty values, duplicate fields, oversized
+values, and control bytes return an error while the raw response headers
+remain available through `Response::header_value()` and
+`Response::header_values()`.
+
+On the server, `HttpAccessControlAllowCredentials::parse()` validates the same
+syntax and `HttpResponse::with_access_control_allow_credentials()` replaces raw
+`Access-Control-Allow-Credentials` fields with one validated value.
+`HttpResponse::access_control_allow_credentials()` parses raw response fields
+on demand without changing them.
+
+These helpers expose credentials metadata only. RTTP does not evaluate CORS
+requests, attach credentials to requests, or grant credentials automatically.
+
 ### Bounded HTTP/1.1 request control metadata
 
 `Request::max_forwards()` and `HttpRequest::max_forwards()` expose one bounded
@@ -723,6 +744,7 @@ gain additional HTTP/2 header-block handling.
 | HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and explicit `Expect: 100-continue` metadata | Expect metadata does not gate body transmission; SOCKS handshakes are delegated to the `socks` crate |
 | Fetch Metadata | Client `sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, and `sec_fetch_user` emit bounded `Sec-Fetch-*` fields; server `Request` helpers parse typed received values while preserving raw headers on errors | No browser security policy, request blocking, origin validation, navigation policy, or automatic header generation |
 | Preflight request metadata | Client `origin`, `access_control_request_method`, and `access_control_request_headers` emit bounded `Origin`, `Access-Control-Request-Method`, and `Access-Control-Request-Headers` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, or CORS policy |
+| Access-Control-Allow-Credentials | Client `Response::access_control_allow_credentials` and server `HttpAccessControlAllowCredentials`, `HttpResponse::with_access_control_allow_credentials`, and `HttpResponse::access_control_allow_credentials` parse or declare bounded singleton `Access-Control-Allow-Credentials` `true`-token metadata while preserving raw headers on parse failures | No CORS request evaluation, automatic credential attachment, or automatic credentials granting |
 | Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata | No digest computation, response body hash validation, retries, or signing |
 | Upgrade and tunnel handoff | `CONNECT` returns the tunnel socket after a successful `200`; `upgrade()` returns the socket after `101 Switching Protocols` and skips interim `1xx` responses | Upgraded protocols are handed to the caller and are not parsed by `rttp_client` |
 | Redirects | Auto-redirect covers 301, 302, 303, 307, and 308 method/body behavior, relative and absolute `Location` resolution, same- and cross-authority header handling, loop detection, and redirect bounds | Redirects are HTTP client behavior, not a browser policy implementation |
