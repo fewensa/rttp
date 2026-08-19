@@ -871,6 +871,52 @@ fn sync_client_and_server_exchange_alt_svc_metadata_without_connection_policy() 
 }
 
 #[test]
+fn facade_client_and_server_exchange_strict_transport_security_metadata_without_policy() {
+  let server =
+    rttp::Http::server("127.0.0.1:0").expect("bind Strict-Transport-Security facade server");
+  let addr = server
+    .local_addr()
+    .expect("Strict-Transport-Security facade addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        rttp::server::HttpResponse::ok("OK")
+          .with_strict_transport_security("max-age=31536000; includeSubDomains; preload")
+          .expect("Strict-Transport-Security should be accepted")
+      })
+      .expect("serve Strict-Transport-Security facade response");
+  });
+
+  let response = rttp::Http::client()
+    .get()
+    .url(format!("http://{addr}/matrix/strict-transport-security"))
+    .emit()
+    .expect("Strict-Transport-Security facade response should parse");
+  let strict_transport_security = response
+    .strict_transport_security()
+    .expect("Strict-Transport-Security should parse")
+    .expect("Strict-Transport-Security should be present");
+
+  assert_eq!(200, response.code());
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    Some(&"max-age=31536000; includeSubDomains; preload".to_string()),
+    response.header_value("Strict-Transport-Security")
+  );
+  assert_eq!(31_536_000, strict_transport_security.max_age());
+  assert!(strict_transport_security.include_sub_domains());
+  assert!(strict_transport_security.preload());
+  assert_eq!(
+    "max-age=31536000; includeSubDomains; preload",
+    strict_transport_security.header_value()
+  );
+
+  handle
+    .join()
+    .expect("Strict-Transport-Security facade server thread");
+}
+
+#[test]
 fn sync_client_preserves_duplicate_cross_origin_resource_policy_fields_without_policy() {
   const HEADERS: &[(&str, &str)] = &[
     ("Cross-Origin-Resource-Policy", "same-origin"),
