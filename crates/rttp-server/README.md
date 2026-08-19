@@ -385,6 +385,19 @@ These helpers parse request metadata only. They do not select a
 representation, compress a body, advertise Client Hints, or apply browser
 data-saver policy.
 
+## Max-Forwards request metadata
+
+Handlers can call `Request::max_forwards()` and `HttpRequest::max_forwards()`
+to observe bounded typed `Max-Forwards` request metadata. Absent fields return
+`Ok(None)`. The recognized value is a singleton `1*DIGIT` hop count that fits
+in `u32` (`0` through `4294967295`) with optional surrounding SP or HTAB.
+Malformed, overflowing, oversized, duplicate, or control-byte values return a
+parser error while `Request::header()` and `HttpRequest::header()` continue to
+expose the original raw field.
+
+These helpers parse request metadata only. They do not decrement the hop
+count, route a request, select TRACE or OPTIONS, or apply forwarding policy.
+
 ## HTTP message signature metadata
 
 `Request::signature()` / `signature_input()` and the same methods on
