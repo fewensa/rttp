@@ -12,7 +12,7 @@ use rttp_client::HttpClient;
 use rttp_server::server::{
   HttpByteRange, HttpByteRangeError, HttpConditionalMetadata, HttpConditionalRequestOutcome,
   HttpContentDisposition, HttpContentType, HttpEntityTag, HttpIfRangeRequestOutcome, HttpResponse,
-  Request, SecFetchDest, SecFetchMode, SecFetchSite,
+  Request, SecFetchDest, SecFetchMode, SecFetchSite, SecPurpose,
 };
 use rttp_test_support as fixtures;
 
@@ -1092,6 +1092,7 @@ fn sync_client_sec_fetch_metadata_is_observed_by_server_helpers() {
             request.sec_fetch_mode(),
             request.sec_fetch_dest(),
             request.sec_fetch_user(),
+            request.sec_purpose(),
           ))
           .expect("send observed Sec-Fetch metadata");
         HttpResponse::ok("OK")
@@ -1106,11 +1107,14 @@ fn sync_client_sec_fetch_metadata_is_observed_by_server_helpers() {
     .sec_fetch_mode(SecFetchMode::Navigate)
     .sec_fetch_dest(SecFetchDest::Document)
     .sec_fetch_user()
+    .sec_purpose(
+      &SecPurpose::from_tokens(["prefetch", "vendor-ext"]).expect("valid Sec-Purpose should parse"),
+    )
     .emit()
     .expect("Sec-Fetch metadata request should succeed");
 
   assert_eq!("OK", response.body().string().expect("response body"));
-  let (site, mode, dest, user) = observed_rx
+  let (site, mode, dest, user, purpose) = observed_rx
     .recv_timeout(Duration::from_secs(1))
     .expect("server should observe Sec-Fetch metadata");
   assert_eq!(
@@ -1126,6 +1130,11 @@ fn sync_client_sec_fetch_metadata_is_observed_by_server_helpers() {
     dest.expect("Sec-Fetch-Dest should parse")
   );
   assert!(user.expect("Sec-Fetch-User should parse").is_some());
+  let purpose = purpose
+    .expect("Sec-Purpose should parse")
+    .expect("Sec-Purpose should be present");
+  assert_eq!(purpose.tokens(), ["prefetch", "vendor-ext"]);
+  assert!(purpose.contains_prefetch());
 
   handle.join().expect("Sec-Fetch metadata server thread");
 }
@@ -2070,6 +2079,46 @@ fn server_sec_fetch_helpers_reject_malformed_values_without_losing_raw_headers()
   handle
     .join()
     .expect("malformed Sec-Fetch metadata server thread");
+}
+
+#[test]
+fn server_sec_purpose_helper_rejects_malformed_value_without_losing_raw_header() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind malformed Sec-Purpose metadata server");
+  let addr = server
+    .local_addr()
+    .expect("malformed Sec-Purpose metadata server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send((
+            request.header("Sec-Purpose").map(str::to_string),
+            request.sec_purpose().is_err(),
+          ))
+          .expect("send malformed Sec-Purpose observation");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve malformed Sec-Purpose request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect malformed Sec-Purpose request");
+  stream
+    .write_all(
+      b"GET /matrix/malformed-sec-purpose HTTP/1.1\r\nHost: example.test\r\nSec-Purpose: prefetch,\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write malformed Sec-Purpose request");
+
+  assert_eq!(
+    (Some("prefetch,".to_string()), true),
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe malformed Sec-Purpose metadata"),
+  );
+  handle
+    .join()
+    .expect("malformed Sec-Purpose metadata server thread");
 }
 
 fn assert_partial_response(

@@ -22,7 +22,7 @@ pub use rttp_protocol::entity_tag::{
 };
 pub use rttp_protocol::fetch_metadata::{
   FetchMetadataParseError as HttpFetchMetadataParseError, SecFetchDest, SecFetchMode, SecFetchSite,
-  SecFetchUser,
+  SecFetchUser, SecPurpose,
 };
 pub use rttp_protocol::forwarded::{
   Forwarded as HttpForwarded, ForwardedElement as HttpForwardedElement,
@@ -401,6 +401,15 @@ impl Request {
     rttp_protocol::fetch_metadata::parse_optional_value(
       self.headers_named("Sec-Fetch-User"),
       "Sec-Fetch-User",
+    )
+  }
+
+  /// Parses received `Sec-Purpose` metadata without enforcing browser policy,
+  /// starting prefetches, or changing cache behavior.
+  pub fn sec_purpose(&self) -> Result<Option<SecPurpose>, HttpFetchMetadataParseError> {
+    rttp_protocol::fetch_metadata::parse_optional_value(
+      self.headers_named("Sec-Purpose"),
+      "Sec-Purpose",
     )
   }
 
@@ -2286,6 +2295,19 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpRequestCacheControl::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Sec-Purpose` metadata without enforcing browser policy,
+  /// starting prefetches, or changing cache behavior.
+  pub fn sec_purpose(&self) -> Result<Option<SecPurpose>, HttpFetchMetadataParseError> {
+    rttp_protocol::fetch_metadata::parse_optional_value(
+      self
+        .headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("Sec-Purpose"))
+        .map(|header| header.value.as_str()),
+      "Sec-Purpose",
+    )
   }
 
   /// Parses received `Host` request authority without applying virtual-host

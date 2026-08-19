@@ -10,7 +10,9 @@ use futures::io::AsyncRead;
 use rttp_protocol::access_control_request_headers::AccessControlRequestHeaders;
 use rttp_protocol::access_control_request_method::AccessControlRequestMethod;
 use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
-use rttp_protocol::fetch_metadata::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
+use rttp_protocol::fetch_metadata::{
+  SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
+};
 use rttp_protocol::forwarded::{Forwarded, MAX_FORWARDED_VALUE_BYTES};
 use rttp_protocol::origin::Origin;
 use rttp_protocol::priority::Priority;
@@ -326,6 +328,12 @@ impl HttpClient {
   /// Set the `Sec-Fetch-User: ?1` request metadata without applying browser policy.
   pub fn sec_fetch_user(&mut self) -> &mut Self {
     self.header(("Sec-Fetch-User", SecFetchUser.header_value()))
+  }
+
+  /// Set bounded `Sec-Purpose` request metadata without applying browser policy,
+  /// starting prefetches, or changing cache behavior.
+  pub fn sec_purpose(&mut self, purpose: &SecPurpose) -> &mut Self {
+    self.header(Header::new("Sec-Purpose", purpose.header_value()))
   }
 
   /// Set bounded `Origin` request metadata for preflight composition.

@@ -1,6 +1,7 @@
 use rttp_protocol::fetch_metadata::{
-  SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, MAX_SEC_FETCH_DEST_VALUE_BYTES,
-  MAX_SEC_FETCH_MODE_VALUE_BYTES, MAX_SEC_FETCH_SITE_VALUE_BYTES, MAX_SEC_FETCH_USER_VALUE_BYTES,
+  SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
+  MAX_SEC_FETCH_DEST_VALUE_BYTES, MAX_SEC_FETCH_MODE_VALUE_BYTES, MAX_SEC_FETCH_SITE_VALUE_BYTES,
+  MAX_SEC_FETCH_USER_VALUE_BYTES, MAX_SEC_PURPOSE_VALUE_BYTES,
 };
 
 #[test]
@@ -21,6 +22,12 @@ fn fetch_metadata_parses_standard_browser_values() {
     SecFetchUser,
     SecFetchUser::parse("?1").expect("valid Sec-Fetch-User")
   );
+  assert_eq!(
+    ["prefetch".to_string(), "vendor-ext".to_string()],
+    SecPurpose::parse("prefetch, vendor-ext")
+      .expect("valid Sec-Purpose")
+      .tokens()
+  );
 }
 
 #[test]
@@ -29,6 +36,23 @@ fn fetch_metadata_serializes_standard_browser_values() {
   assert_eq!("no-cors", SecFetchMode::NoCors.header_value());
   assert_eq!("empty", SecFetchDest::Empty.header_value());
   assert_eq!("?1", SecFetchUser.header_value());
+  assert_eq!(
+    "prefetch, vendor-ext",
+    SecPurpose::from_tokens(["prefetch", "vendor-ext"])
+      .expect("valid Sec-Purpose tokens")
+      .header_value()
+  );
+}
+
+#[test]
+fn sec_purpose_preserves_extension_tokens_and_detects_prefetch() {
+  let purpose =
+    SecPurpose::parse("Prefetch, vendor-ext").expect("Sec-Purpose extensions should parse");
+
+  assert_eq!(purpose.tokens(), ["Prefetch", "vendor-ext"]);
+  assert!(purpose.contains_prefetch());
+  assert_eq!("Prefetch, vendor-ext", purpose.header_value());
+  assert_eq!("prefetch", SecPurpose::prefetch().header_value());
 }
 
 #[test]
@@ -63,6 +87,27 @@ fn fetch_metadata_rejects_empty_unknown_and_list_like_values() {
       "{value:?} must be rejected"
     );
   }
+  for value in [
+    "",
+    "prefetch,",
+    ", prefetch",
+    "prefetch,, vendor-ext",
+    "pre fetch",
+    "\"prefetch\"",
+    "prefetch;param",
+    "prefetch\r\nX: y",
+  ] {
+    assert!(
+      SecPurpose::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+}
+
+#[test]
+fn sec_purpose_rejects_duplicate_tokens_case_insensitively() {
+  assert!(SecPurpose::parse("prefetch, Prefetch").is_err());
+  assert!(SecPurpose::from_tokens(["vendor-ext", "Vendor-Ext"]).is_err());
 }
 
 #[test]
@@ -71,6 +116,7 @@ fn fetch_metadata_enforces_value_bounds() {
   assert!(SecFetchMode::parse("a".repeat(MAX_SEC_FETCH_MODE_VALUE_BYTES + 1)).is_err());
   assert!(SecFetchDest::parse("a".repeat(MAX_SEC_FETCH_DEST_VALUE_BYTES + 1)).is_err());
   assert!(SecFetchUser::parse("a".repeat(MAX_SEC_FETCH_USER_VALUE_BYTES + 1)).is_err());
+  assert!(SecPurpose::parse("a".repeat(MAX_SEC_PURPOSE_VALUE_BYTES + 1)).is_err());
 }
 
 #[test]
@@ -79,6 +125,7 @@ fn fetch_metadata_rejects_duplicate_singleton_fields() {
   assert!(SecFetchMode::parse_values(["cors", "navigate"]).is_err());
   assert!(SecFetchDest::parse_values(["image", "script"]).is_err());
   assert!(SecFetchUser::parse_values(["?1", "?1"]).is_err());
+  assert!(SecPurpose::parse_values(["prefetch", "vendor-ext"]).is_err());
 }
 
 #[test]
