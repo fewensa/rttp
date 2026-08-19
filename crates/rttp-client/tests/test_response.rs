@@ -1,11 +1,11 @@
 use rttp_client::response::{
   AltSvc, AuthenticationInfo, ContentDisposition, ContentDpr, ContentEncoding, ContentLocation,
-  ContentRange, ContentSecurityPolicy, ContentType, CrossOriginEmbedderPolicy,
-  CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginResourcePolicy,
-  Deprecation, EntityTag, HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues, Location,
-  MementoDatetime, ProxyAuthenticate, ProxyAuthenticationInfo, ProxyStatus, ProxyStatusBareItem,
-  ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ServerTiming, SignatureInput,
-  StrictTransportSecurity, Warning, XContentTypeOptions, XFrameOptions,
+  ContentRange, ContentSecurityPolicy, ContentSecurityPolicyReportOnly, ContentType,
+  CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy,
+  CrossOriginResourcePolicy, Deprecation, EntityTag, HttpClearSiteData, HttpSetCookies, KeepAlive,
+  LinkValues, Location, MementoDatetime, ProxyAuthenticate, ProxyAuthenticationInfo, ProxyStatus,
+  ProxyStatusBareItem, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
+  SignatureInput, StrictTransportSecurity, Warning, XContentTypeOptions, XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -461,6 +461,108 @@ fn content_security_policy_metadata_is_absent_without_a_header() {
   let _: Option<ContentSecurityPolicy> = response
     .content_security_policy()
     .expect("header is absent");
+}
+
+#[test]
+fn content_security_policy_report_only_metadata_preserves_layered_policy_fields() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Content-Security-Policy-Report-Only: default-src 'self'\r\n",
+      "content-security-policy-report-only: object-src 'none'\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let metadata = response
+    .content_security_policy_report_only()
+    .expect("Content-Security-Policy-Report-Only should parse")
+    .expect("Content-Security-Policy-Report-Only should be present");
+
+  assert_eq!(metadata.as_str(), "default-src 'self'");
+  assert_eq!(
+    metadata.header_values(),
+    ["default-src 'self'", "object-src 'none'"]
+  );
+  assert_eq!(
+    response.header_value("Content-Security-Policy-Report-Only"),
+    Some(&"default-src 'self'".to_string())
+  );
+}
+
+#[test]
+fn content_security_policy_report_only_metadata_rejects_invalid_values_without_hiding_raw_headers()
+{
+  for value in ["", "default-src 'self'\u{7f}"] {
+    let response = Response::new(
+      RoUrl::with("https://example.test"),
+      format!(
+        "HTTP/1.1 200 OK\r\nContent-Security-Policy-Report-Only: {value}\r\nContent-Length: 0\r\n\r\n"
+      )
+      .into_bytes(),
+    )
+    .expect("response should parse");
+
+    assert!(
+      response.content_security_policy_report_only().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      response.header_value("Content-Security-Policy-Report-Only"),
+      Some(&value.to_string())
+    );
+  }
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!(
+      "HTTP/1.1 200 OK\r\nContent-Security-Policy-Report-Only: {oversized}\r\nContent-Length: 0\r\n\r\n"
+    )
+    .into_bytes(),
+  )
+  .expect("response should parse");
+  assert!(response.content_security_policy_report_only().is_err());
+  assert_eq!(
+    response.header_value("Content-Security-Policy-Report-Only"),
+    Some(&oversized)
+  );
+}
+
+#[test]
+fn content_security_policy_report_only_metadata_rejects_too_many_repeated_fields() {
+  let mut bytes = String::from("HTTP/1.1 200 OK\r\n");
+  for _ in 0..=rttp_protocol::content_security_policy_report_only::MAX_CONTENT_SECURITY_POLICY_REPORT_ONLY_FIELDS {
+    bytes.push_str("Content-Security-Policy-Report-Only: default-src 'self'\r\n");
+  }
+  bytes.push_str("Content-Length: 0\r\n\r\n");
+
+  let response = Response::new(RoUrl::with("https://example.test"), bytes.into_bytes())
+    .expect("response should parse");
+
+  assert!(response.content_security_policy_report_only().is_err());
+  assert_eq!(
+    response.header_values("Content-Security-Policy-Report-Only").len(),
+    rttp_protocol::content_security_policy_report_only::MAX_CONTENT_SECURITY_POLICY_REPORT_ONLY_FIELDS
+      + 1
+  );
+}
+
+#[test]
+fn content_security_policy_report_only_metadata_is_absent_without_a_header() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  let _: Option<ContentSecurityPolicyReportOnly> = response
+    .content_security_policy_report_only()
+    .expect("Content-Security-Policy-Report-Only helper should parse absent header");
 }
 
 #[test]

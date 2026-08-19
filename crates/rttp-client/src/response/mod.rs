@@ -67,6 +67,9 @@ pub use rttp_protocol::content_length::HttpContentLength;
 pub use rttp_protocol::content_security_policy::{
   ContentSecurityPolicy, ContentSecurityPolicyParseError,
 };
+pub use rttp_protocol::content_security_policy_report_only::{
+  ContentSecurityPolicyReportOnly, ContentSecurityPolicyReportOnlyParseError,
+};
 pub use rttp_protocol::cookie::{
   HttpCookieParseError, HttpSetCookie, HttpSetCookieAttribute, HttpSetCookies,
 };

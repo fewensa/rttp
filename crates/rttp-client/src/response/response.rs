@@ -48,6 +48,7 @@ use rttp_protocol::content_disposition::ContentDisposition;
 use rttp_protocol::content_dpr::ContentDpr;
 use rttp_protocol::content_location::ContentLocation;
 use rttp_protocol::content_security_policy::ContentSecurityPolicy;
+use rttp_protocol::content_security_policy_report_only::ContentSecurityPolicyReportOnly;
 use rttp_protocol::cookie::HttpSetCookies;
 use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
 use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedderPolicyReportOnly;
@@ -638,6 +639,20 @@ impl Response {
       return Ok(None);
     }
     ContentSecurityPolicy::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Content-Security-Policy-Report-Only` response metadata without
+  /// enforcing CSP or sending reports.
+  pub fn content_security_policy_report_only(
+    &self,
+  ) -> error::Result<Option<ContentSecurityPolicyReportOnly>> {
+    let values = self.header_values("content-security-policy-report-only");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    ContentSecurityPolicyReportOnly::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

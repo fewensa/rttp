@@ -310,6 +310,20 @@ values are errors. Valid values are preserved exactly in wire order for
 policy value. This parser does not evaluate directives, enforce browser
 security policy, deliver violation reports, or change raw header availability.
 
+## Content-Security-Policy-Report-Only
+
+`content_security_policy_report_only` parses one or more
+`Content-Security-Policy-Report-Only` field values as opaque response metadata
+using the same bounded CSP field validation: each field value is bounded to 64
+KiB, and at most 256 fields are accepted. Empty values, ASCII control bytes
+other than HTAB, and oversized values are errors. Valid values are preserved in
+wire order for `header_values()`, while `as_str()` and `header_value()` return
+the first policy value.
+
+The report-only metadata type, constants, and parse error are distinct from
+`Content-Security-Policy`. This parser does not evaluate directives, enforce
+CSP, send reports, or change raw header availability.
+
 ## Content-Language
 
 `content_language` parses one or more `Content-Language` field values into an
