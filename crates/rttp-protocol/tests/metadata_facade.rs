@@ -25,6 +25,7 @@ use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
 use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedderPolicyReportOnly;
 use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::deprecation::Deprecation;
+use rttp_protocol::document_policy::{DocumentPolicy, DocumentPolicyParseError};
 use rttp_protocol::entity_tag::{EntityTag, IfMatch};
 use rttp_protocol::expect::Expect;
 use rttp_protocol::fetch_metadata::{
@@ -159,6 +160,11 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let content_location = ContentLocation::parse("../representations/current.json")
     .expect("Content-Location should parse");
   let deprecation = Deprecation::parse("?1").expect("Deprecation should parse");
+  let document_policy =
+    DocumentPolicy::parse("oversized-images=2.0, unsized-media=?0, *;report-to=default")
+      .expect("Document-Policy should parse");
+  let _: DocumentPolicyParseError = DocumentPolicy::parse("unsized-media=src;foo=bar")
+    .expect_err("Document-Policy with an unknown parameter should be rejected");
   let connection = Connection::parse("keep-alive, TE").expect("Connection should parse");
   let content_encoding = ContentEncoding::parse("gzip, br").expect("Content-Encoding should parse");
   let content_security_policy =
@@ -251,6 +257,15 @@ fn protocol_exports_representative_bounded_metadata_types() {
   );
   assert_eq!(deprecation, Deprecation::Boolean(true));
   assert_eq!(deprecation.header_value(), "?1");
+  assert_eq!(document_policy.directives().len(), 3);
+  assert_eq!(
+    document_policy.header_value(),
+    "oversized-images=2.0, unsized-media=?0, *;report-to=default"
+  );
+  assert_eq!(
+    document_policy.directive("*").unwrap().report_to(),
+    Some("default")
+  );
   assert_eq!(location.as_str(), "../login?next=%2Fdashboard");
   assert_eq!(max_forwards.value(), 0);
   assert_eq!(max_forwards.header_value(), "0");

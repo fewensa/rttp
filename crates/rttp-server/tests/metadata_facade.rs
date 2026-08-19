@@ -13,12 +13,13 @@ use rttp_server::server::{
   HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
   HttpContentSecurityPolicyReportOnly, HttpContentSecurityPolicyReportOnlyParseError,
   HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeprecation,
-  HttpDeprecationParseError, HttpEntityTag, HttpExpectParseError, HttpExpectations, HttpHost,
-  HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince,
-  HttpIfModifiedSinceParseError, HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError,
-  HttpKeepAlive, HttpMaxForwards, HttpMaxForwardsParseError, HttpMementoDatetime,
-  HttpMementoDatetimeParseError, HttpNoVarySearch, HttpNoVarySearchParams, HttpPermissionsPolicy,
-  HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
+  HttpDeprecationParseError, HttpDocumentPolicy, HttpDocumentPolicyDirective,
+  HttpDocumentPolicyParseError, HttpDocumentPolicyValue, HttpEntityTag, HttpExpectParseError,
+  HttpExpectations, HttpHost, HttpIdempotencyKey, HttpIdempotencyKeyParseError,
+  HttpIfModifiedSince, HttpIfModifiedSinceParseError, HttpIfUnmodifiedSince,
+  HttpIfUnmodifiedSinceParseError, HttpKeepAlive, HttpMaxForwards, HttpMaxForwardsParseError,
+  HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNoVarySearch, HttpNoVarySearchParams,
+  HttpPermissionsPolicy, HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
   HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective,
   HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus,
   HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
@@ -187,6 +188,14 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let permissions_policy_response = HttpResponse::ok("")
     .with_permissions_policy(r#"geolocation=(self "https://maps.example.test"), camera=()"#)
     .expect("Permissions-Policy should be accepted");
+  let document_policy: HttpDocumentPolicy =
+    HttpDocumentPolicy::parse("oversized-images=2.0, unsized-media=?0, *;report-to=default")
+      .expect("Document-Policy should parse");
+  let _: HttpDocumentPolicyParseError = HttpDocumentPolicy::parse("unsized-media=src;foo=bar")
+    .expect_err("unknown Document-Policy parameter should be rejected");
+  let document_policy_response = HttpResponse::ok("")
+    .with_document_policy("oversized-images=2.0, unsized-media=?0, *;report-to=default")
+    .expect("Document-Policy should be accepted");
   let fetch_site = SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
@@ -369,6 +378,22 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .permissions_policy()
       .expect("Permissions-Policy should parse")
       .expect("Permissions-Policy should be present")
+      .header_value()
+  );
+  assert_eq!(document_policy.directives().len(), 3);
+  assert_eq!(
+    document_policy.header_value(),
+    "oversized-images=2.0, unsized-media=?0, *;report-to=default"
+  );
+  let star_directive: &HttpDocumentPolicyDirective = document_policy.directive("*").unwrap();
+  assert_eq!(Some("default"), star_directive.report_to());
+  let _: &HttpDocumentPolicyValue = star_directive.value();
+  assert_eq!(
+    "oversized-images=2.0, unsized-media=?0, *;report-to=default",
+    document_policy_response
+      .document_policy()
+      .expect("Document-Policy should parse")
+      .expect("Document-Policy should be present")
       .header_value()
   );
   assert_eq!(fetch_site.header_value(), "same-origin");

@@ -825,6 +825,23 @@ dropped. The parser reports declared metadata only: it does not compare
 origins, resolve `self`, grant or deny browser permissions, or enforce origin
 policy.
 
+## Document-Policy
+
+`document_policy` parses bounded WICG Document Policy response metadata as a
+Structured Fields dictionary. Each field value is bounded to 64 KiB, the
+cumulative raw bytes across all supplied fields are bounded to 64 KiB, and
+the combined directive count is bounded to 256. Directive names are opaque
+lowercase tokens or `*` and are not looked up against a browser
+configuration-point list. A member value is one Structured Fields item of
+boolean (including a bare `?1`), integer, decimal, or token; inner lists,
+strings, byte sequences, dates, and display strings are rejected. A
+well-formed `report-to` parameter is accepted as a token or a quoted string
+and retained on the directive; any other parameter name is rejected. Empty
+dictionaries, duplicate directive names including across fields, and bound
+violations are errors. The parser reports declared metadata only: it does not
+execute configuration points, block document loads, compare required
+policies, echo `Sec-Required-Document-Policy`, or send reports.
+
 ## Pragma
 
 `pragma` parses RFC 9111 `Pragma` fields as a comma-separated list of

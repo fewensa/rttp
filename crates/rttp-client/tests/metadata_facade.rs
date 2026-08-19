@@ -9,17 +9,17 @@ use rttp_client::response::{
   ContentSecurityPolicy, ContentSecurityPolicyParseError, ContentSecurityPolicyReportOnly,
   ContentSecurityPolicyReportOnlyParseError, CrossOriginEmbedderPolicy,
   CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest,
-  EntityTag, HttpClearSiteData, HttpContentLength, KeepAlive, LinkValues, Location,
-  LocationParseError, MementoDatetime, MementoDatetimeParseError, Nel, NoVarySearch,
-  NoVarySearchParams, NoVarySearchParseError, PermissionsPolicy, PermissionsPolicyParseError,
-  Pragma, PragmaParseError, PreferenceApplied, Priority, ProxyAuthenticate,
-  ProxyAuthenticateParseError, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError,
-  ProxyStatus, ProxyStatusParseError, ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Signature,
-  SignatureInput, SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
-  StrictTransportSecurityParseError, Trailer, TransferEncoding, TransferEncodingParseError,
-  Upgrade, UpgradeParseError, Vary, VaryParseError, WantContentDigest, WantReprDigest, Warning,
-  WwwAuthenticate, WwwAuthenticateParseError, XContentTypeOptions, XContentTypeOptionsParseError,
-  XFrameOptions, XFrameOptionsParseError,
+  DocumentPolicy, DocumentPolicyParseError, DocumentPolicyValue, EntityTag, HttpClearSiteData,
+  HttpContentLength, KeepAlive, LinkValues, Location, LocationParseError, MementoDatetime,
+  MementoDatetimeParseError, Nel, NoVarySearch, NoVarySearchParams, NoVarySearchParseError,
+  PermissionsPolicy, PermissionsPolicyParseError, Pragma, PragmaParseError, PreferenceApplied,
+  Priority, ProxyAuthenticate, ProxyAuthenticateParseError, ProxyAuthenticationInfo,
+  ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError, ReferrerPolicy,
+  ReferrerPolicyToken, ServerTiming, Signature, SignatureInput, SignatureInputParseError,
+  SignatureParseError, StrictTransportSecurity, StrictTransportSecurityParseError, Trailer,
+  TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError,
+  WantContentDigest, WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError,
+  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentDisposition, ContentDispositionParseError, ContentLocation,
@@ -132,6 +132,11 @@ fn response_facade_exports_representative_bounded_metadata_types() {
       .expect("Permissions-Policy should parse");
   let _: PermissionsPolicyParseError =
     PermissionsPolicy::parse("geolocation=src").expect_err("src should be rejected");
+  let document_policy =
+    DocumentPolicy::parse("oversized-images=2.0, unsized-media=?0, *;report-to=default")
+      .expect("Document-Policy should parse");
+  let _: DocumentPolicyParseError = DocumentPolicy::parse("unsized-media=src;foo=bar")
+    .expect_err("unknown Document-Policy parameter should be rejected");
   let warning = Warning::parse(r#"110 - "Response is Stale""#).expect("Warning should parse");
   let nel =
     Nel::parse(r#"{"report_to":"network-errors","max_age":2592000}"#).expect("NEL should parse");
@@ -291,6 +296,15 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .unwrap()
     .allowlist()
     .is_empty());
+  assert_eq!(document_policy.directives().len(), 3);
+  assert_eq!(
+    document_policy.header_value(),
+    "oversized-images=2.0, unsized-media=?0, *;report-to=default"
+  );
+  assert_eq!(
+    Some("default"),
+    document_policy.directive("*").unwrap().report_to()
+  );
   assert_eq!(warning.items()[0].code(), 110);
   assert_eq!(nel.max_age(), 2592000);
   assert_eq!(nel.report_to(), Some("network-errors"));
@@ -558,6 +572,45 @@ fn response_facade_parses_permissions_policy_metadata() {
     [
       &"geolocation=(self \"https://maps.example.test\");report-to=\"rp\"".to_string(),
       &"camera=()".to_string()
+    ]
+  );
+}
+
+#[test]
+fn response_facade_parses_document_policy_metadata() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Document-Policy: oversized-images=2.0, unsized-media=?0\r\n",
+      "Document-Policy: *;report-to=default\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let policy: DocumentPolicy = response
+    .document_policy()
+    .expect("Document-Policy should parse")
+    .expect("Document-Policy should be present");
+
+  assert_eq!(policy.directives().len(), 3);
+  assert_eq!(
+    policy.directive("oversized-images").unwrap().value(),
+    &DocumentPolicyValue::Decimal("2.0".to_string())
+  );
+  assert_eq!(policy.directive("*").unwrap().report_to(), Some("default"));
+  assert_eq!(
+    policy.header_value(),
+    "oversized-images=2.0, unsized-media=?0, *;report-to=default"
+  );
+  assert_eq!(
+    response.header_values("Document-Policy"),
+    [
+      &"oversized-images=2.0, unsized-media=?0".to_string(),
+      &"*;report-to=default".to_string()
     ]
   );
 }
