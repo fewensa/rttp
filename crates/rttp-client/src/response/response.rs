@@ -37,6 +37,7 @@ use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
 use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedderPolicyReportOnly;
 use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::cross_origin_resource_policy::CrossOriginResourcePolicy;
+use rttp_protocol::location::Location;
 use rttp_protocol::prefer::PreferenceApplied;
 use rttp_protocol::referrer_policy::ReferrerPolicy;
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
@@ -301,8 +302,15 @@ impl Response {
     self.raw.binary_get()
   }
 
-  pub fn location(&self) -> Option<&String> {
-    self.header_value("location")
+  pub fn location(&self) -> error::Result<Option<Location>> {
+    let values = self.header_values("location");
+    match values.as_slice() {
+      [] => Ok(None),
+      [value] => Location::parse(value)
+        .map(Some)
+        .map_err(|parse_error| error::bad_response(parse_error.to_string())),
+      _ => Err(error::bad_response("Duplicate Location header values")),
+    }
   }
 
   pub fn etag(&self) -> Option<&String> {
