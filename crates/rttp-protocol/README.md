@@ -36,13 +36,13 @@ invalid.
 
 ## Content-Security-Policy
 
-`content_security_policy` parses a singleton `Content-Security-Policy` field
-as opaque response metadata. Each field value is bounded to 64 KiB. A second
-field is rejected after every supplied field is bound-checked. Empty values,
-ASCII control bytes other than HTAB, and oversized values are errors. Valid
-values are preserved exactly for `as_str()` and `header_value()`. This parser
-does not evaluate directives, enforce browser security policy, deliver
-violation reports, or change raw header availability.
+`content_security_policy` parses one or more `Content-Security-Policy` field
+values as opaque response metadata. Each field value is bounded to 64 KiB.
+Absent fields, empty values, ASCII control bytes other than HTAB, and oversized
+values are errors. Valid values are preserved exactly in wire order for
+`header_values()`, with `as_str()` and `header_value()` returning the first
+policy value. This parser does not evaluate directives, enforce browser
+security policy, deliver violation reports, or change raw header availability.
 
 ## Transfer-Encoding
 
