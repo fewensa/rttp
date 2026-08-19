@@ -116,7 +116,8 @@ cases outside the helper validation.
 present values expose `units()`, `is_none()`, and `accepts_bytes()`. Parsing is
 bounded to 64 KiB per header field and 256 range units, rejects malformed or
 empty values, rejects duplicate units case-insensitively across all parsed
-fields, and treats `none` as an exclusive sentinel. Raw `Accept-Ranges` fields
+fields while preserving each unit's spelling and order, and represents the
+`none` sentinel as an empty unit list. Raw `Accept-Ranges` fields
 remain available through the ordinary response header accessors even when the
 typed parser rejects a malformed value.
 
@@ -621,10 +622,9 @@ response acceptance.
 The field value must be exactly the standards-defined `true` token, matched
 case-sensitively per the Fetch `%s"true"` grammar and exposed in canonical
 lowercase form; surrounding SP and HTAB are trimmed. Unknown tokens, empty
-values, duplicate fields, oversized
-values, and control bytes return an error while the raw response headers
-remain available through `Response::header_value()` and
-`Response::header_values()`.
+values, duplicate fields, oversized values, and control bytes return an error
+while the raw response headers remain available through
+`Response::header_value()` and `Response::header_values()`.
 
 On the server, `HttpAccessControlAllowCredentials::parse()` validates the same
 syntax and `HttpResponse::with_access_control_allow_credentials()` replaces raw
@@ -634,6 +634,21 @@ on demand without changing them.
 
 These helpers expose credentials metadata only. RTTP does not evaluate CORS
 requests, attach credentials to requests, or grant credentials automatically.
+
+### Bounded Keep-Alive response metadata
+
+Client `Response::keep_alive()` and server `HttpResponse::keep_alive()` parse
+all received `Keep-Alive` fields in wire order into bounded RFC 2068
+`HttpKeepAlive` metadata; `HttpResponse::with_keep_alive` validates and
+replaces the `Keep-Alive` response field. The optional `timeout` delta-seconds
+and optional `max` `1*DIGIT` values are parsed as checked unsigned integers;
+unrecognized `name=token` parameters are preserved as bounded extension
+metadata. Duplicate recognized parameters, malformed values, overflow,
+oversized values, and excessive elements return an error while the raw response
+headers remain available.
+
+These helpers expose Keep-Alive as metadata only. RTTP does not change
+connection lifetime, connection pooling, keep-alive timers, or HTTP/2 behavior.
 
 ### Bounded HTTP/1.1 request control metadata
 
@@ -842,6 +857,7 @@ gain additional HTTP/2 header-block handling.
 | WWW-Authenticate | Client `Response::www_authenticate` and server `HttpWwwAuthenticate`, `HttpResponse::with_www_authenticate`, and `HttpResponse::www_authenticate` parse or declare bounded response authentication challenges while preserving raw headers on parse failures | No credential storage, authentication policy, retry, automatic `Authorization` generation, Basic/Bearer implementation, redirect behavior, or status-policy behavior |
 | Server-Timing | Client `Response::server_timing` and server `HttpServerTiming`, `HttpResponse::with_server_timing`, and `HttpResponse::server_timing` parse or declare bounded response timing metadata while preserving raw headers on parse failures | No metric collection, measurement, telemetry export, metrics backend integration, retry, redirect behavior, or status-policy behavior |
 | Warning | Client `Response::warning` parses bounded RFC 7234 `Warning` warning-value lists while preserving raw headers on parse failures | No cache storage, freshness calculation, stale-response handling, warn-code policy, retry, redirect behavior, or response-acceptance changes |
+| Keep-Alive | Client `Response::keep_alive` and server `HttpKeepAlive`, `HttpResponse::with_keep_alive`, and `HttpResponse::keep_alive` parse or declare bounded RFC 2068 `Keep-Alive` `timeout` and `max` parameters as checked unsigned integers while preserving raw headers on parse failures | No connection lifetime management, connection pooling, keep-alive timers, or HTTP/2 behavior changes |
 | Vary | `Response::vary` parses bounded response `Vary` fields into wildcard or normalized case-insensitive field-name metadata | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | No-Vary-Search | `Response::no_vary_search` parses bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
 | Trailers | Chunked response trailers are exposed for blocking and async APIs; streaming chunked uploads can send declared request trailers | Application metadata trailers such as `X-Trace` are allowed; pseudo-header, connection-specific, routing, authentication/cookie, and framing trailer fields are rejected |
@@ -1088,7 +1104,8 @@ caller-owned policy before choosing `200`, `206`, or `416`.
 one bounded comma-separated `Accept-Ranges` response header, while
 `HttpResponse::with_accept_ranges_none()` declares the exclusive
 `Accept-Ranges: none` sentinel. `HttpResponse::accept_ranges()` parses attached
-fields into `HttpAcceptRanges`, bounded to 64 KiB per field and 32 range units.
+fields into `HttpAcceptRanges`, the shared protocol parser used by both the
+client and server facades, bounded to 64 KiB per field and 256 range units.
 Malformed or empty values, duplicate units across parsed fields, combining
 `none` with any unit, and passing `none` through the unit declaration helper
 are rejected. Manual raw `Accept-Ranges` headers remain preserved until a

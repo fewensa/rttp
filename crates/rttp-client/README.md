@@ -84,8 +84,9 @@ when callers need values outside the helper validation.
 `Response::accept_ranges()` parses one or more response `Accept-Ranges` header
 fields into `AcceptRanges` metadata. It returns `Ok(None)` when the header is
 absent. Present values expose `units()`, `is_none()`, and `accepts_bytes()`;
-`none` is accepted only as the exclusive sentinel, while range units are
-normalized to lowercase token values in received order.
+the `none` sentinel is represented as an empty unit list, while range units
+preserve their spelling and wire order. The parser is shared with the server
+facade through `rttp-protocol`.
 
 The helper is bounded and validation-oriented. Each header field value is
 limited to 64 KiB, the parsed header set is limited to 256 range units,
@@ -504,6 +505,27 @@ This helper is HTTP/1 header metadata only. `rttp_client` does not change
 keep-alive, `auto_add_connection`, hop-by-hop stripping, or HTTP/2 rejection
 from this accessor.
 
+## Bounded Keep-Alive metadata
+
+`Response::keep_alive()` parses retained HTTP/1 `Keep-Alive` fields into
+`KeepAlive` metadata. It returns `Ok(None)` when the header is absent.
+Present values combine all `Keep-Alive` fields in wire order into bounded
+RFC 2068 metadata. The optional `timeout` delta-seconds and optional `max`
+`1*DIGIT` values are parsed as checked unsigned integers; unrecognized
+`name=token` parameters are preserved as bounded `KeepAliveExtension`
+metadata. `KeepAlive::parse(value)` is available when callers want to
+validate one raw field value directly.
+
+Each field value is limited to 64 KiB. Parsing accepts at most 256 parameters
+and rejects duplicate recognized parameters, malformed values, overflow,
+oversized values, and too many parameters. Parse errors do not reject the raw
+response: original headers remain available through
+`Response::header_value()` and `Response::header_values()`.
+
+This helper is HTTP/1 header metadata only. `rttp_client` does not change
+connection lifetime, connection pooling, keep-alive timers, or HTTP/2
+behavior from this accessor.
+
 ## Bounded Transfer-Encoding framing metadata
 
 `Response::transfer_encoding()` parses retained HTTP/1 `Transfer-Encoding`
@@ -690,6 +712,7 @@ header-block model.
 | Content-Location | `Response::content_location` and `ContentLocation::parse` parse bounded singleton response `Content-Location` metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |
 | Content-Type and Content-Encoding | `Response::content_type`/`ContentType::parse` parse bounded singleton `Content-Type` metadata, and `Response::content_encoding`/`ContentEncoding::parse` parse bounded ordered `Content-Encoding` codings while preserving raw headers on parse failures | No MIME sniffing, body decoding, charset transcoding, compression/decompression policy, negotiation, cache policy, redirects, retry/replay, or filesystem serving |
 | Connection | `Response::connection`/`Connection::parse` parse bounded HTTP/1 `Connection` tokens, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to keep-alive, `auto_add_connection`, hop-by-hop stripping, or HTTP/2 rejection |
+| Keep-Alive | `Response::keep_alive` parses bounded RFC 2068 `Keep-Alive` fields in wire order with `timeout` delta-seconds and `max` `1*DIGIT` values as checked unsigned integers, preserving unrecognized `name=token` parameters as bounded extension metadata and raw headers on parse failures | No connection lifetime management, connection pooling, keep-alive timers, or HTTP/2 behavior changes |
 | Transfer-Encoding | `Response::transfer_encoding`/`TransferEncoding::parse` parse bounded HTTP/1 `Transfer-Encoding` fields that must be sole `chunked`, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to HTTP/1 framing decoders, `TE`, Content-Length, chunked body decoding policy, or HTTP/2 decode rejection |
 | Content-Disposition | `Response::content_disposition` and `ContentDisposition::parse` parse bounded singleton response `Content-Disposition` metadata into disposition type plus ordered parameters, including preserved `filename` and `filename*` values, while preserving raw headers on parse failures | No automatic download, filesystem path handling, MIME sniffing, redirect behavior, retry/replay, cache behavior, negotiation behavior, or status-policy behavior |
 | Vary | `Response::vary` parses bounded response `Vary` fields into wildcard or normalized case-insensitive field-name metadata | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |

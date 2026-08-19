@@ -21,6 +21,7 @@
 
 pub use self::response::*;
 
+pub use rttp_protocol::accept_ranges::{AcceptRanges, AcceptRangesParseError};
 pub use rttp_protocol::access_control_allow_credentials::{
   AccessControlAllowCredentials, AccessControlAllowCredentialsParseError,
 };
@@ -74,6 +75,7 @@ pub use rttp_protocol::digest::{
   ContentDigest, ContentDigestEntry, Digest, DigestEntry, DigestParseError, ReprDigest,
   ReprDigestEntry,
 };
+pub use rttp_protocol::keep_alive::{KeepAlive, KeepAliveExtension, KeepAliveParseError};
 pub use rttp_protocol::location::{Location, LocationParseError};
 pub use rttp_protocol::no_vary_search::{
   NoVarySearch, NoVarySearchExtension, NoVarySearchParams, NoVarySearchParseError,
