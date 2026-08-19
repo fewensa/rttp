@@ -4131,7 +4131,39 @@ fn test_parse_vary_rejects_invalid_helper_values_without_rejecting_response() {
       "vary helper should reject {value:?}"
     );
     assert_eq!(Some(&value.to_string()), response.header_value("Vary"));
+    assert_eq!("OK", response.body().string().unwrap());
   }
+}
+
+#[test]
+fn test_parse_vary_rejects_oversized_and_too_many_field_names() {
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let raw = format!("HTTP/1.1 200 OK\r\nVary: {oversized}\r\nContent-Length: 2\r\n\r\nOK");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response with oversized vary remains usable");
+
+  assert!(
+    response.vary().is_err(),
+    "vary helper should reject oversized values"
+  );
+  assert_eq!(Some(&oversized), response.header_value("Vary"));
+  assert_eq!(vec![&oversized], response.header_values("vary"));
+  assert_eq!("OK", response.body().string().unwrap());
+
+  let too_many = std::iter::repeat_n("Accept-Encoding", 257)
+    .collect::<Vec<_>>()
+    .join(",");
+  let raw = format!("HTTP/1.1 200 OK\r\nVary: {too_many}\r\nContent-Length: 2\r\n\r\nOK");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response with too many vary field names remains usable");
+
+  assert!(
+    response.vary().is_err(),
+    "vary helper should reject too many field names"
+  );
+  assert_eq!(Some(&too_many), response.header_value("Vary"));
+  assert_eq!(vec![&too_many], response.header_values("vary"));
+  assert_eq!("OK", response.body().string().unwrap());
 }
 
 #[test]

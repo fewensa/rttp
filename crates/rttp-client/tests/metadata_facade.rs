@@ -7,8 +7,8 @@ use rttp_client::response::{
   NoVarySearchParams, NoVarySearchParseError, PreferenceApplied, Priority, ProxyAuthenticationInfo,
   ProxyAuthenticationInfoParseError, ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Signature,
   SignatureInput, SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
-  StrictTransportSecurityParseError, Trailer, TransferEncoding, TransferEncodingParseError,
-  WantContentDigest, WantReprDigest, Warning,
+  StrictTransportSecurityParseError, Trailer, TransferEncoding, TransferEncodingParseError, Vary,
+  VaryParseError, WantContentDigest, WantReprDigest, Warning,
 };
 use rttp_client::response::{
   ContentDigest, ContentLocation, ContentLocationParseError, ReprDigest,
@@ -83,6 +83,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
       .expect("Proxy-Authentication-Info should parse");
   let _: ProxyAuthenticationInfoParseError = ProxyAuthenticationInfo::parse("")
     .expect_err("empty Proxy-Authentication-Info should be rejected");
+  let vary = Vary::parse("Accept-Encoding, User-Agent").expect("Vary should parse");
+  let _: VaryParseError = Vary::parse("").expect_err("empty Vary should be rejected");
   let signature = Signature::parse("sig1=:YWJj:").expect("Signature should parse");
   let _: SignatureParseError =
     Signature::parse("").expect_err("empty Signature should be rejected");
@@ -138,6 +140,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     proxy_authentication_info.parameter("nextnonce"),
     Some("6629fae49393a05397450978507c4ef1")
   );
+  assert_eq!(vary.field_names(), ["accept-encoding", "user-agent"]);
   assert_eq!(signature.header_value(), "sig1=:YWJj:");
   assert_eq!(
     signature_input.header_value(),
