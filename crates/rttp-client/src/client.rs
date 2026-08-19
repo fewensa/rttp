@@ -7,6 +7,7 @@ use crate::types::{Auth, Header, IntoHeader, IntoPara, Proxy, ToFormData, ToRoUr
 use crate::{error, Config, H2cClientPolicy};
 #[cfg(feature = "async")]
 use futures::io::AsyncRead;
+use rttp_protocol::accept_encoding::AcceptEncoding;
 use rttp_protocol::accept_language::{AcceptLanguage, MAX_ACCEPT_LANGUAGE_VALUE_BYTES};
 use rttp_protocol::access_control_request_headers::AccessControlRequestHeaders;
 use rttp_protocol::access_control_request_method::AccessControlRequestMethod;
@@ -836,45 +837,37 @@ impl HttpClient {
         "invalid Accept-Encoding coding",
       ));
     }
-    let qvalue = qvalue.map(validate_accept_encoding_qvalue).transpose()?;
     let member = qvalue.map_or_else(
       || coding.to_string(),
       |qvalue| format!("{coding};q={qvalue}"),
     );
-    if member.len() > MAX_ACCEPT_ENCODING_VALUE_BYTES {
-      return Err(error::builder_with_message(
-        "Accept-Encoding header value is too large",
-      ));
+    let parsed_member = AcceptEncoding::parse(&member)
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    if parsed_member.len() != 1 {
+      return Err(error::builder_with_message(if qvalue.is_some() {
+        "invalid Accept-Encoding q-value"
+      } else {
+        "invalid Accept-Encoding coding"
+      }));
     }
-
     let headers = self.request.headers_mut();
-    let existing = headers
+    let candidate = match headers
+      .iter()
+      .find(|header| header.name().eq_ignore_ascii_case("Accept-Encoding"))
+    {
+      Some(header) => format!("{}, {member}", header.value()),
+      None => member,
+    };
+    let encodings = AcceptEncoding::parse(&candidate)
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    let value = encodings.header_value();
+    if let Some(header) = headers
       .iter_mut()
-      .find(|header| header.name().eq_ignore_ascii_case("Accept-Encoding"));
-    if let Some(header) = existing {
-      let existing_codings = parse_accept_encoding_codings(header.value())?;
-      if existing_codings
-        .iter()
-        .any(|known| known.eq_ignore_ascii_case(coding))
-      {
-        return Err(error::builder_with_message(
-          "duplicate Accept-Encoding coding",
-        ));
-      }
-      if existing_codings.len() >= MAX_ACCEPT_ENCODINGS {
-        return Err(error::builder_with_message(
-          "too many Accept-Encoding codings",
-        ));
-      }
-      let value = format!("{}, {member}", header.value());
-      if value.len() > MAX_ACCEPT_ENCODING_VALUE_BYTES {
-        return Err(error::builder_with_message(
-          "Accept-Encoding header value is too large",
-        ));
-      }
+      .find(|header| header.name().eq_ignore_ascii_case("Accept-Encoding"))
+    {
       header.replace(Header::new("Accept-Encoding", value));
     } else {
-      headers.push(Header::new("Accept-Encoding", member));
+      headers.push(Header::new("Accept-Encoding", value));
     }
     Ok(self)
   }
@@ -1364,8 +1357,6 @@ fn bounded_forwarded_header_value(forwarded: Forwarded) -> error::Result<String>
   Ok(value)
 }
 
-const MAX_ACCEPT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
-const MAX_ACCEPT_ENCODINGS: usize = 32;
 const MAX_AUTHORIZATION_VALUE_BYTES: usize = 64 * 1024;
 const MAX_REQUEST_METADATA_VALUE_BYTES: usize = 64 * 1024;
 const MAX_REQUEST_METADATA_MEMBERS: usize = 32;
@@ -1675,83 +1666,6 @@ fn is_accept_quoted_string(value: &str) -> bool {
     }
   }
   !escaped
-}
-
-fn parse_accept_encoding_codings(value: &str) -> error::Result<Vec<&str>> {
-  if value.len() > MAX_ACCEPT_ENCODING_VALUE_BYTES {
-    return Err(error::builder_with_message(
-      "Accept-Encoding header value is too large",
-    ));
-  }
-
-  let mut codings = Vec::new();
-  for member in value.split(',') {
-    let (coding, _) = split_accept_encoding_member(member)?;
-    if codings
-      .iter()
-      .any(|known: &&str| known.eq_ignore_ascii_case(coding))
-    {
-      return Err(error::builder_with_message(
-        "duplicate Accept-Encoding coding",
-      ));
-    }
-    if codings.len() >= MAX_ACCEPT_ENCODINGS {
-      return Err(error::builder_with_message(
-        "too many Accept-Encoding codings",
-      ));
-    }
-    codings.push(coding);
-  }
-  Ok(codings)
-}
-
-fn split_accept_encoding_member(member: &str) -> error::Result<(&str, Option<&str>)> {
-  let mut parts = member.split(';');
-  let coding = parts.next().unwrap_or_default().trim();
-  if !is_http_token(coding) {
-    return Err(error::builder_with_message(
-      "invalid Accept-Encoding coding",
-    ));
-  }
-  let Some(parameter) = parts.next() else {
-    return Ok((coding, None));
-  };
-  if parts.next().is_some() {
-    return Err(error::builder_with_message(
-      "invalid Accept-Encoding q-value",
-    ));
-  }
-  let Some((name, qvalue)) = parameter.trim().split_once('=') else {
-    return Err(error::builder_with_message(
-      "invalid Accept-Encoding q-value",
-    ));
-  };
-  if !name.trim().eq_ignore_ascii_case("q") {
-    return Err(error::builder_with_message(
-      "invalid Accept-Encoding q-value",
-    ));
-  }
-  let qvalue = validate_accept_encoding_qvalue(qvalue.trim())?;
-  Ok((coding, Some(qvalue)))
-}
-
-fn validate_accept_encoding_qvalue(qvalue: &str) -> error::Result<&str> {
-  let valid = match qvalue.split_once('.') {
-    Some((whole, fraction)) => {
-      fraction.len() <= 3
-        && fraction.bytes().all(|byte| byte.is_ascii_digit())
-        && matches!(whole, "0" | "1")
-        && (whole == "0" || fraction.bytes().all(|byte| byte == b'0'))
-    }
-    None => matches!(qvalue, "0" | "1"),
-  };
-  if valid {
-    Ok(qvalue)
-  } else {
-    Err(error::builder_with_message(
-      "invalid Accept-Encoding q-value",
-    ))
-  }
 }
 
 fn validate_request_trailer_header(name: &str, value: &str) -> error::Result<()> {

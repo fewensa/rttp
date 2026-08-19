@@ -1,3 +1,4 @@
+use rttp_protocol::accept_encoding::AcceptEncoding;
 use rttp_protocol::accept_language::AcceptLanguage;
 use rttp_protocol::accept_ranges::AcceptRanges;
 use rttp_protocol::access_control_allow_credentials::AccessControlAllowCredentials;
@@ -134,6 +135,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
     CacheStatus::parse("OriginCache; hit; ttl=1100").expect("Cache-Status should parse");
   let cdn_cache_control =
     CdnCacheControl::parse("max-age=600, cdn-example=\"a, b\"").expect("CDN metadata should parse");
+  let accept_encoding =
+    AcceptEncoding::parse("gzip, br;q=0.8, identity;q=0").expect("Accept-Encoding should parse");
   let accept_ranges = AcceptRanges::parse("bytes, pages").expect("Accept-Ranges should parse");
   let transfer_encoding =
     TransferEncoding::parse("chunked").expect("Transfer-Encoding should parse");
@@ -262,6 +265,16 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(cache_status.members()[0].ttl(), Some(1100));
   assert_eq!(cdn_cache_control.directives()[1].name(), "cdn-example");
   assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
+  assert_eq!(accept_encoding.codings()[0].coding(), "gzip");
+  assert_eq!(accept_encoding.codings()[0].quality(), 1000);
+  assert_eq!(accept_encoding.codings()[1].coding(), "br");
+  assert_eq!(accept_encoding.codings()[1].quality(), 800);
+  assert_eq!(accept_encoding.codings()[2].coding(), "identity");
+  assert_eq!(accept_encoding.codings()[2].quality(), 0);
+  assert_eq!(
+    accept_encoding.header_value(),
+    "gzip, br;q=0.8, identity;q=0"
+  );
   assert_eq!(accept_ranges.units(), ["bytes", "pages"]);
   assert_eq!(accept_ranges.header_value(), "bytes, pages");
   assert_eq!(transfer_encoding.codings(), ["chunked"]);

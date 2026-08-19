@@ -12,12 +12,13 @@ use rttp_server::server::{
   HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpEntityTag,
   HttpHost, HttpKeepAlive, HttpMaxForwards, HttpMaxForwardsParseError, HttpMementoDatetime,
   HttpMementoDatetimeParseError, HttpNoVarySearch, HttpNoVarySearchParams, HttpPreferenceKind,
-  HttpProxyStatus, HttpProxyStatusParseError, HttpRequest, HttpResponse, HttpSaveData,
-  HttpSaveDataParseError, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
-  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpTransferEncoding,
-  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeParseError, HttpWantContentDigest,
-  HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
+  HttpProxyStatus, HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptEncodings,
+  HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSignature, HttpSignatureInput,
+  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
+  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
+  HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeParseError,
+  HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite,
+  SecFetchUser, SecPurpose,
 };
 
 #[test]
@@ -500,6 +501,27 @@ fn request_facade_parses_want_content_digest_metadata() {
   assert_eq!(digest.entries()[1].preference(), 3);
   assert_eq!(digest.entries()[2].algorithm(), "unixsum");
   assert_eq!(digest.entries()[2].preference(), 0);
+}
+
+#[test]
+fn request_facade_parses_accept_encoding_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nAccept-Encoding: gzip, br;q=0.8, identity;q=0\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let encodings: HttpRequestAcceptEncodings = request
+    .accept_encoding()
+    .expect("Accept-Encoding should parse")
+    .expect("Accept-Encoding should be present");
+
+  assert_eq!(encodings.codings()[0].coding(), "gzip");
+  assert_eq!(encodings.codings()[0].quality(), 1000);
+  assert_eq!(encodings.codings()[1].coding(), "br");
+  assert_eq!(encodings.codings()[1].quality(), 800);
+  assert_eq!(encodings.codings()[2].coding(), "identity");
+  assert_eq!(encodings.codings()[2].quality(), 0);
+  assert_eq!(encodings.header_value(), "gzip, br;q=0.8, identity;q=0");
 }
 
 #[test]
