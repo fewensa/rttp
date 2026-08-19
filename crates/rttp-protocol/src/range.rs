@@ -50,7 +50,7 @@ impl RangeParseError {
 }
 
 impl ContentRangeParseError {
-  fn new(message: impl Into<String>) -> Self {
+  pub fn new(message: impl Into<String>) -> Self {
     Self {
       message: message.into(),
     }
@@ -137,7 +137,25 @@ impl ByteRangeSpec {
 
 impl ContentRange {
   pub fn parse(value: impl AsRef<str>) -> Result<Self, ContentRangeParseError> {
-    let value = value.as_ref();
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, ContentRangeParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let mut values = values.into_iter();
+    let Some(value) = values.next() else {
+      return Err(ContentRangeParseError::new(
+        "invalid Content-Range header value",
+      ));
+    };
+    if values.next().is_some() {
+      return Err(ContentRangeParseError::new(
+        "multiple Content-Range header values",
+      ));
+    }
+
     validate_value(value, MAX_CONTENT_RANGE_VALUE_BYTES, "Content-Range")
       .map_err(ContentRangeParseError::new)?;
     let value = value.trim();
@@ -197,6 +215,37 @@ impl ContentRange {
       ),
       Self::Unsatisfied { complete_length } => format!("bytes */{complete_length}"),
     }
+  }
+
+  pub fn unit(&self) -> &str {
+    "bytes"
+  }
+
+  pub fn start(&self) -> Option<u64> {
+    match self {
+      Self::Bytes { start, .. } => Some(*start),
+      Self::Unsatisfied { .. } => None,
+    }
+  }
+
+  pub fn end(&self) -> Option<u64> {
+    match self {
+      Self::Bytes { end, .. } => Some(*end),
+      Self::Unsatisfied { .. } => None,
+    }
+  }
+
+  pub fn complete_length(&self) -> Option<u64> {
+    match self {
+      Self::Bytes {
+        complete_length, ..
+      } => *complete_length,
+      Self::Unsatisfied { complete_length } => Some(*complete_length),
+    }
+  }
+
+  pub fn is_unsatisfied(&self) -> bool {
+    matches!(self, Self::Unsatisfied { .. })
   }
 }
 

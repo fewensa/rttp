@@ -584,6 +584,23 @@ store credentials, select an authentication policy, retry requests, generate
 `Authorization`, implement Basic or Bearer authentication, or change redirect
 behavior.
 
+### Bounded Proxy-Authenticate response metadata
+
+`Response::proxy_authenticate()` parses all received `Proxy-Authenticate`
+fields in wire order into bounded `ProxyAuthenticate` challenge metadata.
+Challenges expose their proxy authentication scheme, optional token68 value,
+and ordered auth-parameters with quoted-string unescaping. Absent metadata
+returns `Ok(None)`; malformed syntax, duplicate parameter names, invalid
+tokens, oversized values, and excessive challenges or parameters return an
+error while the raw response headers remain available.
+
+`ProxyAuthenticate::parse()` validates a single field value, and
+`ProxyAuthenticate::parse_values()` preserves challenges across multiple field
+values. These helpers expose proxy authentication challenges as metadata only.
+RTTP does not store credentials, select a proxy authentication policy, retry
+requests, generate `Proxy-Authorization`, implement Basic or Bearer
+authentication, or change redirect behavior.
+
 ### Bounded Server-Timing response metadata
 
 `Response::server_timing()` parses all received `Server-Timing` fields in wire
@@ -724,6 +741,8 @@ userinfo. `HttpClient::access_control_request_method(value)` emits one
 `HttpClient::access_control_request_headers(field_names)` emits one
 `Access-Control-Request-Headers` field from a bounded field-name list,
 normalized to lowercase with duplicates rejected.
+`HttpClient::access_control_request_private_network()` emits
+`Access-Control-Request-Private-Network: true`.
 
 These helpers reject invalid input before a socket is opened: origins with a
 path, query, fragment, userinfo, or non-`http(s)` scheme; methods that are
@@ -735,7 +754,7 @@ retain raw-header control with `header(("Origin", "..."))` and the other
 
 These helpers only declare preflight request metadata. RTTP does not decide
 whether a preflight is needed, read `Access-Control-Allow-*` response fields,
-or apply CORS policy.
+apply CORS policy, or apply Private Network Access policy.
 
 ### Bounded HTTP/1.1 Vary behavior
 
@@ -839,7 +858,7 @@ gain additional HTTP/2 header-block handling.
 | HTTP/1.1 response parsing | `Content-Length`, chunked transfer coding, chunk extensions, informational responses, `Response::is_informational`, `is_redirection`, `is_error`, bodyless `204`/`304`, duplicate `Set-Cookie`, and framing ambiguity rejection | Not a complete RFC conformance suite |
 | HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and explicit `Expect: 100-continue` metadata | Expect metadata does not gate body transmission; SOCKS handshakes are delegated to the `socks` crate |
 | Fetch Metadata | Client `sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, and `sec_fetch_user` emit bounded `Sec-Fetch-*` fields; server `Request` helpers parse typed received values while preserving raw headers on errors | No browser security policy, request blocking, origin validation, navigation policy, or automatic header generation |
-| Preflight request metadata | Client `origin`, `access_control_request_method`, and `access_control_request_headers` emit bounded `Origin`, `Access-Control-Request-Method`, and `Access-Control-Request-Headers` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, or CORS policy |
+| Preflight request metadata | Client `origin`, `access_control_request_method`, `access_control_request_headers`, and `access_control_request_private_network` emit bounded `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`, and `Access-Control-Request-Private-Network` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, CORS policy, or Private Network Access policy |
 | Access-Control-Allow-Credentials | Client `Response::access_control_allow_credentials` and server `HttpAccessControlAllowCredentials`, `HttpResponse::with_access_control_allow_credentials`, and `HttpResponse::access_control_allow_credentials` parse or declare bounded singleton `Access-Control-Allow-Credentials` `true`-token metadata while preserving raw headers on parse failures | No CORS request evaluation, automatic credential attachment, or automatic credentials granting |
 | Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_content_digest()`, `HttpRequest::want_content_digest()`, `Request::want_repr_digest()`, and `HttpRequest::want_repr_digest()` parse received preference fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |
 | Upgrade and tunnel handoff | `CONNECT` returns the tunnel socket after a successful `200`; `upgrade()` returns the socket after `101 Switching Protocols` and skips interim `1xx` responses | Upgraded protocols are handed to the caller and are not parsed by `rttp_client` |
@@ -855,6 +874,7 @@ gain additional HTTP/2 header-block handling.
 | Transfer-Encoding | `Response::transfer_encoding`/`TransferEncoding::parse` parse bounded HTTP/1 `Transfer-Encoding` fields that must be sole `chunked`, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to HTTP/1 framing decoders, `TE`, Content-Length, chunked body decoding policy, or HTTP/2 decode rejection |
 | Content-Disposition | Client `Response::content_disposition` and server `HttpContentDisposition`, `HttpResponse::with_content_disposition`, `with_attachment_filename`, and `content_disposition` parse or declare bounded singleton response `Content-Disposition` metadata, preserve raw headers on parse failures, and preserve parsed `filename` plus `filename*` parameter values as metadata | No automatic download, filesystem path handling, MIME sniffing, cache behavior, redirect behavior, retry/replay, negotiation, or status-policy behavior |
 | WWW-Authenticate | Client `Response::www_authenticate` and server `HttpWwwAuthenticate`, `HttpResponse::with_www_authenticate`, and `HttpResponse::www_authenticate` parse or declare bounded response authentication challenges while preserving raw headers on parse failures | No credential storage, authentication policy, retry, automatic `Authorization` generation, Basic/Bearer implementation, redirect behavior, or status-policy behavior |
+| Proxy-Authenticate | Client `Response::proxy_authenticate` and protocol `ProxyAuthenticate::parse`/`parse_values` parse bounded proxy authentication challenges across one or more response fields while preserving raw headers on parse failures | No credential storage, proxy authentication policy, retry, automatic `Proxy-Authorization` generation, Basic/Bearer implementation, redirect behavior, or status-policy behavior |
 | Server-Timing | Client `Response::server_timing` and server `HttpServerTiming`, `HttpResponse::with_server_timing`, and `HttpResponse::server_timing` parse or declare bounded response timing metadata while preserving raw headers on parse failures | No metric collection, measurement, telemetry export, metrics backend integration, retry, redirect behavior, or status-policy behavior |
 | Warning | Client `Response::warning` parses bounded RFC 7234 `Warning` warning-value lists while preserving raw headers on parse failures | No cache storage, freshness calculation, stale-response handling, warn-code policy, retry, redirect behavior, or response-acceptance changes |
 | Keep-Alive | Client `Response::keep_alive` and server `HttpKeepAlive`, `HttpResponse::with_keep_alive`, and `HttpResponse::keep_alive` parse or declare bounded RFC 2068 `Keep-Alive` `timeout` and `max` parameters as checked unsigned integers while preserving raw headers on parse failures | No connection lifetime management, connection pooling, keep-alive timers, or HTTP/2 behavior changes |

@@ -65,9 +65,11 @@ client
 
 Partial-content responses are exposed through the normal `Response` API.
 `Response::is_partial_content()` identifies `206 Partial Content`, and
-`Response::content_range()` parses a `Content-Range` field such as
-`bytes 10-19/200` into a `ContentRange` with `unit`, `start`, `end`, and
-`complete_length` accessors. `Response::is_range_not_satisfiable()` identifies
+`Response::content_range()` parses a single `Content-Range` field such as
+`bytes 10-19/200` into the shared checked protocol `ContentRange` with `unit`,
+`start`, `end`, and `complete_length` accessors. Invalid or duplicate
+`Content-Range` metadata returns a response error from the typed helper while
+raw headers remain preserved. `Response::is_range_not_satisfiable()` identifies
 `416 Range Not Satisfiable`; an unsatisfied `Content-Range` such as
 `bytes */200` is exposed with no `start` or `end` and
 `ContentRange::is_unsatisfied() == true`. Response bodies and headers are still
@@ -556,6 +558,8 @@ userinfo. `HttpClient::access_control_request_method(value)` emits one
 `HttpClient::access_control_request_headers(field_names)` emits one
 `Access-Control-Request-Headers` field from a bounded field-name list,
 normalized to lowercase with duplicates rejected.
+`HttpClient::access_control_request_private_network()` emits
+`Access-Control-Request-Private-Network: true`.
 
 These helpers reject invalid input before a socket is opened: origins with a
 path, query, fragment, userinfo, or non-`http(s)` scheme; methods that are
@@ -566,8 +570,8 @@ retain raw-header control with `header(("Origin", "..."))` and the other
 `header` forms.
 
 These are declaration helpers only. RTTP does not decide whether a preflight
-is needed, read `Access-Control-Allow-*` response fields, or apply CORS
-policy.
+is needed, read `Access-Control-Allow-*` response fields, apply CORS policy, or
+apply Private Network Access policy.
 
 ## Bounded HTTP/1.1 Content-Disposition behavior
 
@@ -697,12 +701,12 @@ header-block model.
 | HTTP/1.1 response parsing | `Content-Length`, chunked transfer coding, chunk extensions, informational responses, bodyless `204`/`304`, duplicate `Set-Cookie`, and framing ambiguity rejection | Not a complete RFC conformance suite |
 | HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and `Expect: 100-continue` | SOCKS handshakes are delegated to the `socks` crate |
 | Fetch Metadata | `sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, and `sec_fetch_user` emit bounded `Sec-Fetch-*` request metadata | No browser security policy, automatic header generation, origin validation, navigation policy, or request blocking |
-| Preflight request metadata | `origin`, `access_control_request_method`, and `access_control_request_headers` emit bounded `Origin`, `Access-Control-Request-Method`, and `Access-Control-Request-Headers` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, or CORS policy |
+| Preflight request metadata | `origin`, `access_control_request_method`, `access_control_request_headers`, and `access_control_request_private_network` emit bounded `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`, and `Access-Control-Request-Private-Network` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, CORS policy, or Private Network Access policy |
 | Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_content_digest()`, `HttpRequest::want_content_digest()`, `Request::want_repr_digest()`, and `HttpRequest::want_repr_digest()` parse received preference fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |
 | HTTP message signatures | `signature` and `signature_input` emit bounded RFC 9421 request metadata; `Response::signature()` and `signature_input()` parse received fields | No signing, verification, key lookup, covered-component canonicalization, or cryptographic policy |
 | Upgrade and tunnel handoff | `CONNECT` returns the tunnel socket after a successful `200`; `upgrade()` returns the socket after `101 Switching Protocols` and skips interim `1xx` responses | Upgraded protocols are handed to the caller and are not parsed by `rttp_client` |
 | Redirects | Auto-redirect covers 301, 302, 303, 307, and 308 method/body behavior, relative and absolute `Location` resolution, same- and cross-authority header handling, loop detection, and redirect bounds | Redirects are HTTP client behavior, not a browser policy implementation |
-| Byte ranges | `range`, `range_from`, `range_suffix`, `if_range_etag`, and `if_range_date` emit bounded HTTP/1.1 range request metadata; `Response::content_range`, `accept_ranges`, `is_partial_content`, and `is_range_not_satisfiable` expose `Content-Range`, `Accept-Ranges`, `206`, and `416` metadata while preserving raw headers | No Range request generation from `Accept-Ranges`, client-side `If-Range` evaluation, partial response engine, byte serving, content slicing, download resume, automatic retry/replay, cache storage, redirect handling, status-policy behavior, multipart range generation, or automatic cache validation policy |
+| Byte ranges | `range`, `range_from`, `range_suffix`, `if_range_etag`, and `if_range_date` emit bounded HTTP/1.1 range request metadata; checked `Response::content_range`, `accept_ranges`, `is_partial_content`, and `is_range_not_satisfiable` expose `Content-Range`, `Accept-Ranges`, `206`, and `416` metadata while preserving raw headers | No Range request generation from `Accept-Ranges`, client-side `If-Range` evaluation, partial response engine, byte serving, content slicing, download resume, automatic retry/replay, cache storage, redirect handling, status-policy behavior, multipart range generation, or automatic cache validation policy |
 | Conditional requests | `if_none_match`, `if_match`, `if_modified_since`, and `if_unmodified_since` emit bounded HTTP/1.1 validators; `Response::is_not_modified`, `is_precondition_failed`, `etag`, `last_modified`, and `last_modified_date` expose `304`/`412` metadata | One ETag validator per helper call, `If-Range` is range-scoped, no cache storage, no automatic revalidation, and no cache-control engine |
 | Informational responses and Early Hints | `Response::informational_responses` exposes skipped bounded HTTP/1.1 `1xx` heads, including `103 Early Hints`, with preserved raw headers | `101 Switching Protocols` remains terminal for upgrade handoff; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
 | Cache-Control, Date, Age, and Expires | `Response::cache_control` parses bounded response directives, numeric freshness fields, quoted field-name lists, and extension directives; `Response::date` parses singleton HTTP-date metadata; `Response::age` parses bounded singleton `Age` metadata through the protocol `Age` type, rejecting duplicate fields, values larger than 64 KiB, and overflowing `u64` delta-seconds; `Response::expires` parses bounded HTTP-date metadata | No cache storage, automatic revalidation, wall-clock freshness calculation, clock-skew correction, `Vary` matching, shared-cache policy enforcement, automatic conditional requests, retry, redirect, scheduling, or status policy |

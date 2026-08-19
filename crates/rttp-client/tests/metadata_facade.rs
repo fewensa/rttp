@@ -3,14 +3,16 @@ use rttp_client::response::{
   AccessControlAllowHeaders, AccessControlAllowHeadersParseError, AccessControlAllowMethods,
   AccessControlAllowMethodsParseError, AccessControlExposeHeaders, AccessControlMaxAge,
   AccessControlMaxAgeParseError, Age, AgeParseError, AltSvc, Connection, ConnectionParseError,
-  CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy,
-  CrossOriginResourcePolicy, Digest, HttpClearSiteData, KeepAlive, Location, LocationParseError,
-  NoVarySearch, NoVarySearchParams, NoVarySearchParseError, PreferenceApplied, Priority,
-  ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ReferrerPolicy, ReferrerPolicyToken,
-  ServerTiming, Signature, SignatureInput, SignatureInputParseError, SignatureParseError,
-  StrictTransportSecurity, StrictTransportSecurityParseError, Trailer, TransferEncoding,
-  TransferEncodingParseError, Vary, VaryParseError, WantContentDigest, WantReprDigest, Warning,
-  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  ContentRange, ContentRangeParseError, CrossOriginEmbedderPolicy,
+  CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest,
+  HttpClearSiteData, KeepAlive, Location, LocationParseError, NoVarySearch, NoVarySearchParams,
+  NoVarySearchParseError, PreferenceApplied, Priority, ProxyAuthenticate,
+  ProxyAuthenticateParseError, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError,
+  ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Signature, SignatureInput,
+  SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
+  StrictTransportSecurityParseError, Trailer, TransferEncoding, TransferEncodingParseError, Vary,
+  VaryParseError, WantContentDigest, WantReprDigest, Warning, XContentTypeOptions,
+  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentLocation, ContentLocationParseError, HttpContentLength, ReprDigest,
@@ -82,6 +84,9 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let _: TransferEncodingParseError = TransferEncoding::parse("gzip, chunked")
     .expect_err("non-sole chunked Transfer-Encoding should be rejected");
   let alt_svc = AltSvc::parse("h3=\":443\"").expect("Alt-Svc should parse");
+  let content_range = ContentRange::parse("bytes 3-6/10").expect("Content-Range should parse");
+  let _: ContentRangeParseError =
+    ContentRange::parse("bytes */*").expect_err("invalid Content-Range should be rejected");
   let fetch_site = SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
@@ -100,6 +105,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
       .expect("Proxy-Authentication-Info should parse");
   let _: ProxyAuthenticationInfoParseError = ProxyAuthenticationInfo::parse("")
     .expect_err("empty Proxy-Authentication-Info should be rejected");
+  let proxy_authenticate =
+    ProxyAuthenticate::parse(r#"Basic realm="corp""#).expect("Proxy-Authenticate should parse");
+  let _: ProxyAuthenticateParseError =
+    ProxyAuthenticate::parse("").expect_err("empty Proxy-Authenticate should be rejected");
   let vary = Vary::parse("Accept-Encoding, User-Agent").expect("Vary should parse");
   let _: VaryParseError = Vary::parse("").expect_err("empty Vary should be rejected");
   let signature = Signature::parse("sig1=:YWJj:").expect("Signature should parse");
@@ -147,6 +156,14 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(connection.tokens(), ["close"]);
   assert_eq!(transfer_encoding.codings(), ["chunked"]);
   assert_eq!(alt_svc.alternatives().len(), 1);
+  assert_eq!(
+    ContentRange::Bytes {
+      start: 3,
+      end: 6,
+      complete_length: Some(10),
+    },
+    content_range
+  );
   assert_eq!(fetch_site.header_value(), "same-origin");
   assert_eq!(fetch_mode.header_value(), "navigate");
   assert_eq!(fetch_dest.header_value(), "document");
@@ -164,6 +181,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(
     proxy_authentication_info.parameter("nextnonce"),
     Some("6629fae49393a05397450978507c4ef1")
+  );
+  assert_eq!(
+    proxy_authenticate.challenges()[0].parameter("realm"),
+    Some("corp")
   );
   assert_eq!(vary.field_names(), ["accept-encoding", "user-agent"]);
   assert_eq!(signature.header_value(), "sig1=:YWJj:");
