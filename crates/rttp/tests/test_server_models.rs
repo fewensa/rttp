@@ -2061,6 +2061,18 @@ fn response_link_metadata_preserves_valueless_extensions_and_empty_quoted_values
 }
 
 #[test]
+fn response_link_metadata_accepts_obs_text_in_quoted_parameter_values() {
+  let response = HttpResponse::ok("body").header("Link", r#"</style.css>; title="\é""#);
+
+  let links = response
+    .links()
+    .expect("Link metadata should parse")
+    .expect("Link metadata should be present");
+
+  assert_eq!(Some("é"), links.values()[0].parameter("title"));
+}
+
+#[test]
 fn response_link_metadata_rejects_invalid_and_bounded_values_without_losing_headers() {
   for value in [
     "style.css; rel=preload",

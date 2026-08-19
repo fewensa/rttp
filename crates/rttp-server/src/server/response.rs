@@ -614,19 +614,19 @@ fn parse_http_link_quoted_string(value: &str) -> Result<String, HttpLinkParseErr
   let inner = &value[1..value.len() - 1];
   let mut parsed = String::new();
   let mut escaped = false;
-  for byte in inner.bytes() {
+  for ch in inner.chars() {
     if escaped {
-      if !is_content_disposition_quoted_pair_byte(byte) {
+      if !is_content_disposition_quoted_pair_char(ch) {
         return Err(HttpLinkParseError::new("invalid Link quoted-string"));
       }
-      parsed.push(byte as char);
+      parsed.push(ch);
       escaped = false;
-    } else if byte == b'\\' {
+    } else if ch == '\\' {
       escaped = true;
-    } else if byte == b'"' || !is_content_disposition_quoted_text_byte(byte) {
+    } else if ch == '"' || !is_content_disposition_quoted_text_char(ch) {
       return Err(HttpLinkParseError::new("invalid Link quoted-string"));
     } else {
-      parsed.push(byte as char);
+      parsed.push(ch);
     }
   }
 
@@ -3689,9 +3689,9 @@ pub(crate) fn split_content_disposition_parts(
   let mut escaped = false;
   let mut start = 0usize;
 
-  for (index, byte) in value.bytes().enumerate() {
+  for (index, ch) in value.char_indices() {
     if escaped {
-      if !is_content_disposition_quoted_pair_byte(byte) {
+      if !is_content_disposition_quoted_pair_char(ch) {
         return Err(HttpContentDispositionParseError::new(
           "invalid Content-Disposition quoted-string",
         ));
@@ -3700,10 +3700,10 @@ pub(crate) fn split_content_disposition_parts(
       continue;
     }
 
-    match byte {
-      b'\\' if quoted => escaped = true,
-      b'"' => quoted = !quoted,
-      b';' if !quoted => {
+    match ch {
+      '\\' if quoted => escaped = true,
+      '"' => quoted = !quoted,
+      ';' if !quoted => {
         parts.push(&value[start..index]);
         start = index + 1;
       }
@@ -3752,23 +3752,23 @@ pub(crate) fn parse_content_disposition_quoted_string(
   let inner = &value[1..value.len() - 1];
   let mut parsed = String::new();
   let mut escaped = false;
-  for byte in inner.bytes() {
+  for ch in inner.chars() {
     if escaped {
-      if !is_content_disposition_quoted_pair_byte(byte) {
+      if !is_content_disposition_quoted_pair_char(ch) {
         return Err(HttpContentDispositionParseError::new(
           "invalid Content-Disposition quoted-string",
         ));
       }
-      parsed.push(byte as char);
+      parsed.push(ch);
       escaped = false;
-    } else if byte == b'\\' {
+    } else if ch == '\\' {
       escaped = true;
-    } else if byte == b'"' || !is_content_disposition_quoted_text_byte(byte) {
+    } else if ch == '"' || !is_content_disposition_quoted_text_char(ch) {
       return Err(HttpContentDispositionParseError::new(
         "invalid Content-Disposition quoted-string",
       ));
     } else {
-      parsed.push(byte as char);
+      parsed.push(ch);
     }
   }
 
@@ -3781,12 +3781,12 @@ pub(crate) fn parse_content_disposition_quoted_string(
   Ok(parsed)
 }
 
-pub(crate) fn is_content_disposition_quoted_text_byte(byte: u8) -> bool {
-  byte == b'\t' || matches!(byte, 0x20..=0x21 | 0x23..=0x5b | 0x5d..=0x7e)
+pub(crate) fn is_content_disposition_quoted_text_char(ch: char) -> bool {
+  matches!(ch, '\t' | ' ' | '!' | '#'..='[' | ']'..='~') || ('\u{80}'..='\u{ff}').contains(&ch)
 }
 
-pub(crate) fn is_content_disposition_quoted_pair_byte(byte: u8) -> bool {
-  byte == b'\t' || matches!(byte, 0x20..=0x7e)
+pub(crate) fn is_content_disposition_quoted_pair_char(ch: char) -> bool {
+  matches!(ch, '\t' | ' '..='~') || ('\u{80}'..='\u{ff}').contains(&ch)
 }
 
 pub(crate) fn serialize_content_disposition_parameter_value(value: &str) -> String {
