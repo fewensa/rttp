@@ -3,6 +3,7 @@ use std::fmt;
 use std::time::SystemTime;
 
 use httpdate::parse_http_date;
+use rttp_protocol::content_length::HttpContentLength;
 use url::Url;
 
 use crate::error;
@@ -45,6 +46,8 @@ use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::sunset::parse_sunset_values;
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
 use rttp_protocol::vary::Vary;
+use rttp_protocol::x_content_type_options::XContentTypeOptions;
+use rttp_protocol::x_frame_options::XFrameOptions;
 
 const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
@@ -73,6 +76,7 @@ const MAX_REPORTING_ENDPOINTS: usize = 256;
 pub struct Response {
   raw: RawResponse,
   informational_responses: Vec<InformationalResponse>,
+  content_length: Option<HttpContentLength>,
 }
 
 impl Response {
@@ -80,6 +84,7 @@ impl Response {
     Ok(Self {
       raw: RawResponse::new(url, binary)?,
       informational_responses: Vec::new(),
+      content_length: None,
     })
   }
 
@@ -102,6 +107,7 @@ impl Response {
       binary,
       trailers,
       Vec::new(),
+      None,
       max_body_bytes,
     )
   }
@@ -117,6 +123,7 @@ impl Response {
       binary,
       trailers,
       informational_responses,
+      None,
       crate::config::DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES,
     )
   }
@@ -126,11 +133,13 @@ impl Response {
     binary: Vec<u8>,
     trailers: Vec<Header>,
     informational_responses: Vec<InformationalResponse>,
+    content_length: Option<HttpContentLength>,
     max_body_bytes: usize,
   ) -> error::Result<Self> {
     Ok(Self {
       raw: RawResponse::with_trailers_and_limit(url, binary, trailers, max_body_bytes)?,
       informational_responses,
+      content_length,
     })
   }
 }
@@ -295,6 +304,10 @@ impl Response {
 
   pub fn body(&self) -> &ResponseBody {
     self.raw.body_get()
+  }
+
+  pub fn content_length(&self) -> Option<HttpContentLength> {
+    self.content_length
   }
 
   pub fn binary(&self) -> &[u8] {
@@ -552,6 +565,28 @@ impl Response {
       return Ok(None);
     }
     StrictTransportSecurity::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `X-Content-Type-Options` response metadata without applying MIME-sniffing policy.
+  pub fn x_content_type_options(&self) -> error::Result<Option<XContentTypeOptions>> {
+    let values = self.header_values("x-content-type-options");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    XContentTypeOptions::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `X-Frame-Options` response metadata without applying clickjacking policy.
+  pub fn x_frame_options(&self) -> error::Result<Option<XFrameOptions>> {
+    let values = self.header_values("x-frame-options");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    XFrameOptions::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

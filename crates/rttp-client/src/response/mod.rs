@@ -44,6 +44,7 @@ pub use rttp_protocol::clear_site_data::{
 pub use rttp_protocol::client_hints::{
   AcceptCh, AcceptChParseError, CriticalCh, CriticalChParseError,
 };
+pub use rttp_protocol::content_length::HttpContentLength;
 pub use rttp_protocol::cookie::{
   HttpCookieParseError, HttpSetCookie, HttpSetCookieAttribute, HttpSetCookies,
 };
@@ -110,3 +111,7 @@ pub use rttp_protocol::warning::{Warning, WarningParseError, WarningValue};
 pub use rttp_protocol::www_authenticate::{
   WwwAuthenticate, WwwAuthenticateChallenge, WwwAuthenticateParameter, WwwAuthenticateParseError,
 };
+pub use rttp_protocol::x_content_type_options::{
+  XContentTypeOptions, XContentTypeOptionsParseError,
+};
+pub use rttp_protocol::x_frame_options::{XFrameOptions, XFrameOptionsParseError};
