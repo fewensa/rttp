@@ -2,6 +2,7 @@ use rttp_server::server::{
   HttpAcceptCh, HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods,
   HttpAccessControlRequestHeaders, HttpAccessControlRequestHeadersParseError,
   HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError,
+  HttpAccessControlRequestPrivateNetwork, HttpAccessControlRequestPrivateNetworkParseError,
   HttpConditionalMetadata, HttpConnection, HttpConnectionParseError, HttpContentLength,
   HttpContentLocation, HttpContentLocationParseError, HttpCrossOriginEmbedderPolicyReportOnly,
   HttpCrossOriginResourcePolicy, HttpEntityTag, HttpHost, HttpKeepAlive, HttpNoVarySearch,
@@ -35,6 +36,13 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpAccessControlRequestHeaders,
     HttpAccessControlRequestHeadersParseError,
   > = HttpAccessControlRequestHeaders::parse("X-Request Id");
+  let request_private_network: HttpAccessControlRequestPrivateNetwork =
+    HttpAccessControlRequestPrivateNetwork::parse("true")
+      .expect("Access-Control-Request-Private-Network should parse");
+  let request_private_network_error: Result<
+    HttpAccessControlRequestPrivateNetwork,
+    HttpAccessControlRequestPrivateNetworkParseError,
+  > = HttpAccessControlRequestPrivateNetwork::parse("false");
   let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("revision-42"));
   let no_vary_search: HttpNoVarySearch =
     HttpNoVarySearch::parse(r#"params=("utm_source")"#).expect("No-Vary-Search should parse");
@@ -69,6 +77,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     ["x-request-id", "authorization"]
   );
   assert!(request_headers_error.is_err());
+  assert_eq!(request_private_network.header_value(), "true");
+  assert!(request_private_network_error.is_err());
   assert_eq!(policy.header_value(), "same-origin");
   assert_eq!(report_only_policy.header_value(), "require-corp");
   assert_eq!(

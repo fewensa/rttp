@@ -556,6 +556,8 @@ userinfo. `HttpClient::access_control_request_method(value)` emits one
 `HttpClient::access_control_request_headers(field_names)` emits one
 `Access-Control-Request-Headers` field from a bounded field-name list,
 normalized to lowercase with duplicates rejected.
+`HttpClient::access_control_request_private_network()` emits
+`Access-Control-Request-Private-Network: true`.
 
 These helpers reject invalid input before a socket is opened: origins with a
 path, query, fragment, userinfo, or non-`http(s)` scheme; methods that are
@@ -566,8 +568,8 @@ retain raw-header control with `header(("Origin", "..."))` and the other
 `header` forms.
 
 These are declaration helpers only. RTTP does not decide whether a preflight
-is needed, read `Access-Control-Allow-*` response fields, or apply CORS
-policy.
+is needed, read `Access-Control-Allow-*` response fields, apply CORS policy, or
+apply Private Network Access policy.
 
 ## Bounded HTTP/1.1 Content-Disposition behavior
 
@@ -697,7 +699,7 @@ header-block model.
 | HTTP/1.1 response parsing | `Content-Length`, chunked transfer coding, chunk extensions, informational responses, bodyless `204`/`304`, duplicate `Set-Cookie`, and framing ambiguity rejection | Not a complete RFC conformance suite |
 | HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and `Expect: 100-continue` | SOCKS handshakes are delegated to the `socks` crate |
 | Fetch Metadata | `sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, and `sec_fetch_user` emit bounded `Sec-Fetch-*` request metadata | No browser security policy, automatic header generation, origin validation, navigation policy, or request blocking |
-| Preflight request metadata | `origin`, `access_control_request_method`, and `access_control_request_headers` emit bounded `Origin`, `Access-Control-Request-Method`, and `Access-Control-Request-Headers` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, or CORS policy |
+| Preflight request metadata | `origin`, `access_control_request_method`, `access_control_request_headers`, and `access_control_request_private_network` emit bounded `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`, and `Access-Control-Request-Private-Network` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, CORS policy, or Private Network Access policy |
 | Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_content_digest()`, `HttpRequest::want_content_digest()`, `Request::want_repr_digest()`, and `HttpRequest::want_repr_digest()` parse received preference fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |
 | HTTP message signatures | `signature` and `signature_input` emit bounded RFC 9421 request metadata; `Response::signature()` and `signature_input()` parse received fields | No signing, verification, key lookup, covered-component canonicalization, or cryptographic policy |
 | Upgrade and tunnel handoff | `CONNECT` returns the tunnel socket after a successful `200`; `upgrade()` returns the socket after `101 Switching Protocols` and skips interim `1xx` responses | Upgraded protocols are handed to the caller and are not parsed by `rttp_client` |
