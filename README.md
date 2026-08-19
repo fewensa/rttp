@@ -614,6 +614,21 @@ These helpers expose Warning as metadata only. RTTP does not use warn-codes as
 cache policy, calculate freshness, treat responses as stale, or change
 response acceptance.
 
+### Bounded Keep-Alive response metadata
+
+Client `Response::keep_alive()` and server `HttpResponse::keep_alive()` parse
+all received `Keep-Alive` fields in wire order into bounded RFC 2068
+`HttpKeepAlive` metadata; `HttpResponse::with_keep_alive` validates and
+replaces the `Keep-Alive` response field. The optional `timeout` delta-seconds
+and optional `max` `1*DIGIT` values are parsed as checked unsigned integers;
+unrecognized `name=token` parameters are preserved as bounded extension
+metadata. Duplicate recognized parameters, malformed values, overflow,
+oversized values, and excessive elements return an error while the raw response
+headers remain available.
+
+These helpers expose Keep-Alive as metadata only. RTTP does not change
+connection lifetime, connection pooling, keep-alive timers, or HTTP/2 behavior.
+
 ### Bounded HTTP/1.1 request control metadata
 
 `Request::max_forwards()` and `HttpRequest::max_forwards()` expose one bounded
@@ -820,6 +835,7 @@ gain additional HTTP/2 header-block handling.
 | WWW-Authenticate | Client `Response::www_authenticate` and server `HttpWwwAuthenticate`, `HttpResponse::with_www_authenticate`, and `HttpResponse::www_authenticate` parse or declare bounded response authentication challenges while preserving raw headers on parse failures | No credential storage, authentication policy, retry, automatic `Authorization` generation, Basic/Bearer implementation, redirect behavior, or status-policy behavior |
 | Server-Timing | Client `Response::server_timing` and server `HttpServerTiming`, `HttpResponse::with_server_timing`, and `HttpResponse::server_timing` parse or declare bounded response timing metadata while preserving raw headers on parse failures | No metric collection, measurement, telemetry export, metrics backend integration, retry, redirect behavior, or status-policy behavior |
 | Warning | Client `Response::warning` parses bounded RFC 7234 `Warning` warning-value lists while preserving raw headers on parse failures | No cache storage, freshness calculation, stale-response handling, warn-code policy, retry, redirect behavior, or response-acceptance changes |
+| Keep-Alive | Client `Response::keep_alive` and server `HttpKeepAlive`, `HttpResponse::with_keep_alive`, and `HttpResponse::keep_alive` parse or declare bounded RFC 2068 `Keep-Alive` `timeout` and `max` parameters as checked unsigned integers while preserving raw headers on parse failures | No connection lifetime management, connection pooling, keep-alive timers, or HTTP/2 behavior changes |
 | Vary | `Response::vary` parses bounded response `Vary` fields into wildcard or normalized case-insensitive field-name metadata | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | No-Vary-Search | `Response::no_vary_search` parses bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
 | Trailers | Chunked response trailers are exposed for blocking and async APIs; streaming chunked uploads can send declared request trailers | Application metadata trailers such as `X-Trace` are allowed; pseudo-header, connection-specific, routing, authentication/cookie, and framing trailer fields are rejected |

@@ -12,6 +12,7 @@ use crate::response::AltSvc;
 use crate::response::Connection;
 use crate::response::ContentDigest;
 use crate::response::Digest;
+use crate::response::KeepAlive;
 use crate::response::NoVarySearch;
 use crate::response::Priority;
 use crate::response::ProxyAuthenticationInfo;
@@ -793,6 +794,19 @@ impl Response {
       return Ok(None);
     }
     Warning::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses all `Keep-Alive` fields as bounded RFC 2068 response metadata.
+  /// This does not change connection lifetime, connection pooling, or
+  /// HTTP/2 behavior.
+  pub fn keep_alive(&self) -> error::Result<Option<KeepAlive>> {
+    let values = self.header_values("keep-alive");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    KeepAlive::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

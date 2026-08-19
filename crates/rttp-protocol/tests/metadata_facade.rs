@@ -13,6 +13,7 @@ use rttp_protocol::entity_tag::{EntityTag, IfMatch};
 use rttp_protocol::fetch_metadata::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 use rttp_protocol::from::From;
 use rttp_protocol::host::Host;
+use rttp_protocol::keep_alive::KeepAlive;
 use rttp_protocol::location::Location;
 use rttp_protocol::no_vary_search::{NoVarySearch, NoVarySearchParams};
 use rttp_protocol::origin::Origin;
@@ -45,6 +46,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
   let fetch_user = SecFetchUser::parse("?1").expect("Sec-Fetch-User should parse");
   let from = From::parse("Ops Team <ops@example.test>").expect("From should parse");
+  let keep_alive = KeepAlive::parse("timeout=5, max=100").expect("Keep-Alive should parse");
   let location = Location::parse("../login?next=%2Fdashboard").expect("Location should parse");
   let host = Host::parse("example.test:8443").expect("Host should parse");
   let origin = Origin::parse("https://example.test").expect("Origin should parse");
@@ -105,6 +107,9 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_dest.header_value(), "document");
   assert_eq!(fetch_user.header_value(), "?1");
   assert_eq!(from.header_value(), "Ops Team <ops@example.test>");
+  assert_eq!(keep_alive.timeout(), Some(5));
+  assert_eq!(keep_alive.max(), Some(100));
+  assert_eq!(keep_alive.header_value(), "timeout=5, max=100");
   assert_eq!(location.as_str(), "../login?next=%2Fdashboard");
   assert_eq!(host.host(), "example.test");
   assert_eq!(host.port(), Some("8443"));

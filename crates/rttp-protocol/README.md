@@ -293,6 +293,18 @@ quoted-string; an optional quoted HTTP-date is parsed with the same
 invalid codes, and bound violations are rejected. This parser does not
 implement cache, freshness, stale-response, or response-acceptance policy.
 
+## Keep-Alive
+
+`keep_alive` parses RFC 2068 `Keep-Alive` fields as a comma-separated list of
+`timeout=delta-seconds` and `max=1*DIGIT` parameters (both optional) with
+case-insensitive parameter names and optional whitespace around separators.
+Each field value is bounded to 64 KiB and the combined parameter count is
+bounded to 256. Values are parsed as checked unsigned 64-bit integers;
+unrecognized `name=token` parameters are preserved as bounded extension
+metadata. Empty input, missing `=`, duplicate recognized parameters, malformed
+tokens, overflow, and bound violations are rejected. This parser does not
+change connection lifetime, connection pooling, or HTTP/2 behavior.
+
 ## No-Vary-Search
 
 `no_vary_search` parses bounded Structured Fields dictionary metadata for the

@@ -72,6 +72,7 @@ pub use rttp_protocol::digest::{
   ContentDigest, ContentDigestEntry, Digest, DigestEntry, DigestParseError, ReprDigest,
   ReprDigestEntry,
 };
+pub use rttp_protocol::keep_alive::{KeepAlive, KeepAliveExtension, KeepAliveParseError};
 pub use rttp_protocol::location::{Location, LocationParseError};
 pub use rttp_protocol::no_vary_search::{
   NoVarySearch, NoVarySearchExtension, NoVarySearchParams, NoVarySearchParseError,

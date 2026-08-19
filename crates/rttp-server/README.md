@@ -68,6 +68,23 @@ time.
 These helpers parse HTTP/1 header metadata only. They do not change
 keep-alive, hop-by-hop stripping, upgrade/h2c handoff, or HTTP/2 rejection.
 
+## Response Keep-Alive metadata
+
+Handlers can call `HttpResponse::keep_alive()` to observe bounded typed
+`Keep-Alive` response metadata and `HttpResponse::with_keep_alive(value)` to
+validate and replace the `Keep-Alive` response field. The helpers parse
+RFC 2068 `Keep-Alive` fields in wire order into `HttpKeepAlive`; the optional
+`timeout` delta-seconds and optional `max` `1*DIGIT` values are parsed as
+checked unsigned integers, and unrecognized `name=token` parameters are
+preserved as bounded `HttpKeepAliveExtension` metadata. Absent fields return
+`Ok(None)`. Duplicate recognized parameters, malformed values, overflow,
+oversized values, or over-limit values return a parser error while
+`HttpResponse` raw headers continue to expose the original fields.
+
+These helpers expose Keep-Alive as metadata only. They do not change
+connection lifetime, connection pooling, keep-alive timers, or HTTP/2
+behavior.
+
 ## Request Transfer-Encoding framing metadata
 
 Handlers can call `Request::transfer_encoding()` and

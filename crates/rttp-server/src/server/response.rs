@@ -58,6 +58,10 @@ pub use rttp_protocol::digest::{
   Digest as HttpDigest, DigestEntry as HttpDigestEntry, DigestParseError as HttpDigestParseError,
   ReprDigest as HttpReprDigest, ReprDigestEntry as HttpReprDigestEntry,
 };
+pub use rttp_protocol::keep_alive::{
+  KeepAlive as HttpKeepAlive, KeepAliveExtension as HttpKeepAliveExtension,
+  KeepAliveParseError as HttpKeepAliveParseError,
+};
 pub use rttp_protocol::no_vary_search::{
   NoVarySearch as HttpNoVarySearch, NoVarySearchExtension as HttpNoVarySearchExtension,
   NoVarySearchParams as HttpNoVarySearchParams,
@@ -1145,6 +1149,22 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Keep-Alive` response metadata without changing
+  /// connection lifetime.
+  pub fn with_keep_alive(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpKeepAliveParseError> {
+    let keep_alive = HttpKeepAlive::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Keep-Alive"));
+    self
+      .headers
+      .push(HttpHeader::new("Keep-Alive", keep_alive.header_value()));
+    Ok(self)
+  }
+
   /// Validates and replaces `Clear-Site-Data` metadata without clearing server state.
   pub fn with_clear_site_data(
     mut self,
@@ -1914,6 +1934,20 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpAltSvc::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Keep-Alive` metadata without changing connection lifetime.
+  pub fn keep_alive(&self) -> Result<Option<HttpKeepAlive>, HttpKeepAliveParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Keep-Alive"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpKeepAlive::parse_values(values).map(Some)
   }
 
   /// Parses attached `Clear-Site-Data` metadata without changing server state.

@@ -41,6 +41,7 @@ pub mod forwarded;
 pub mod from;
 pub mod host;
 pub mod http1;
+pub mod keep_alive;
 pub mod location;
 mod media_type;
 pub mod no_vary_search;
