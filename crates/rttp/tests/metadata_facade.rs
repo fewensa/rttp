@@ -94,6 +94,11 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp_client::response::Deprecation::parse("?1").expect("Deprecation should parse");
   let _: rttp::DeprecationParseError = rttp_client::response::Deprecation::parse("true")
     .expect_err("historical Deprecation token should be rejected");
+  let memento_datetime: rttp::MementoDatetime =
+    rttp_client::response::MementoDatetime::parse("Sun, 06 Nov 1994 08:49:37 GMT")
+      .expect("Memento-Datetime should parse");
+  let _: rttp::MementoDatetimeParseError = rttp_client::response::MementoDatetime::parse("")
+    .expect_err("empty Memento-Datetime should be rejected");
   let content_security_policy: rttp::ContentSecurityPolicy =
     rttp_client::response::ContentSecurityPolicy::parse("default-src 'self'; object-src 'none'")
       .expect("Content-Security-Policy should parse");
@@ -189,6 +194,10 @@ fn compatibility_facade_exports_client_metadata_types() {
   );
   assert_eq!(deprecation, rttp::Deprecation::Boolean(true));
   assert_eq!(deprecation.header_value(), "?1");
+  assert_eq!(
+    memento_datetime.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
   assert_eq!(
     content_security_policy.header_value(),
     "default-src 'self'; object-src 'none'"
