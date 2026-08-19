@@ -497,6 +497,26 @@ unparsable input are errors. The parser reports declared metadata only; it does
 not pin TLS, store hosts, consult a preload list, or apply HTTPS-only policy.
 `max-age=0` is returned as data and does not delete stored HSTS hosts.
 
+## TE
+
+`te` parses one or more RFC 9110 `TE` field values into an ordered list of
+transfer codings with optional q-values. Each field value is bounded to
+64 KiB, and the cumulative coding count across all supplied fields is bounded
+to 32 codings.
+
+Codings are split on commas with SP and HTAB accepted only as optional
+whitespace around each coding. Each coding must be an RFC 9110 token;
+`chunked` is rejected because request framing remains owned by the HTTP/1
+implementation. `trailers` is accepted only without a parameter and carries no
+q-value. Other codings accept one optional `q` parameter whose value is a
+weight from `0` through `1` with at most three fractional digits, stored as
+thousandths. Empty members, forbidden ASCII control bytes, malformed tokens,
+multiple parameters, non-`q` parameter names, invalid q-values,
+case-insensitive duplicate codings across all supplied fields, over-limit
+coding lists, and empty present field sets are errors. This parser never fails
+open and does not enable a transfer-coding engine, negotiate trailers, or
+apply compression or proxy behavior.
+
 ## X-Frame-Options
 
 `x_frame_options` parses a singleton `X-Frame-Options` response field. Each

@@ -61,6 +61,9 @@ pub use rttp_protocol::signature_input::{
   SignatureInputEntry as HttpSignatureInputEntry,
   SignatureInputParameter as HttpSignatureInputParameter,
 };
+pub use rttp_protocol::te::{
+  Te as HttpRequestTe, TeCoding as HttpTe, TeParseError as HttpTeParseError,
+};
 pub use rttp_protocol::trailer::{
   Trailer as HttpTrailer, TrailerParseError as HttpTrailerParseError,
 };

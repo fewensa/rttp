@@ -75,6 +75,7 @@ pub mod signature;
 pub mod signature_input;
 pub mod strict_transport_security;
 pub mod sunset;
+pub mod te;
 pub mod timing_allow_origin;
 pub mod trailer;
 pub mod transfer_encoding;
