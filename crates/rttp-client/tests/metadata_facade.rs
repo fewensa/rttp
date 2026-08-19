@@ -9,9 +9,10 @@ use rttp_client::response::{
   ContentSecurityPolicy, ContentSecurityPolicyParseError, ContentSecurityPolicyReportOnly,
   ContentSecurityPolicyReportOnlyParseError, CrossOriginEmbedderPolicy,
   CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginOpenerPolicyReportOnly,
-  CrossOriginResourcePolicy, Digest, EntityTag, HttpClearSiteData, HttpContentLength, KeepAlive,
-  LinkValues, Location, LocationParseError, MementoDatetime, MementoDatetimeParseError, Nel,
-  NoVarySearch, NoVarySearchParams, NoVarySearchParseError, OriginTrialParseError, OriginTrials,
+  CrossOriginResourcePolicy, Digest, DocumentPolicy, DocumentPolicyParseError, DocumentPolicyValue,
+  EntityTag, HttpClearSiteData, HttpContentLength, KeepAlive, LinkValues, Location,
+  LocationParseError, MementoDatetime, MementoDatetimeParseError, Nel, NoVarySearch,
+  NoVarySearchParams, NoVarySearchParseError, OriginTrialParseError, OriginTrials,
   PermissionsPolicy, PermissionsPolicyParseError, Pragma, PragmaParseError, PreferenceApplied,
   Priority, ProxyAuthenticate, ProxyAuthenticateParseError, ProxyAuthenticationInfo,
   ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError, ReferrerPolicy,
@@ -24,7 +25,8 @@ use rttp_client::response::{
 };
 use rttp_client::response::{
   ContentDigest, ContentDisposition, ContentDispositionParseError, ContentLocation,
-  ContentLocationParseError, Deprecation, DeprecationParseError, ReprDigest,
+  ContentLocationParseError, Deprecation, DeprecationParseError, ReprDigest, ServiceWorkerAllowed,
+  ServiceWorkerAllowedParseError,
 };
 use rttp_client::{
   Baggage, BaggageMember, BaggageParseError, BaggageProperty, HttpClient, SecFetchDest,
@@ -68,6 +70,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .expect("Content-Location should parse");
   let _: ContentLocationParseError =
     ContentLocation::parse("not valid").expect_err("invalid Content-Location should be rejected");
+  let service_worker_allowed =
+    ServiceWorkerAllowed::parse("/").expect("Service-Worker-Allowed should parse");
+  let _: ServiceWorkerAllowedParseError = ServiceWorkerAllowed::parse("http://example.test/scope")
+    .expect_err("absolute URI Service-Worker-Allowed should be rejected");
   let content_disposition =
     ContentDisposition::parse("attachment; filename=\"report.txt\"; filename*=UTF-8''report.txt")
       .expect("Content-Disposition should parse");
@@ -133,6 +139,11 @@ fn response_facade_exports_representative_bounded_metadata_types() {
       .expect("Permissions-Policy should parse");
   let _: PermissionsPolicyParseError =
     PermissionsPolicy::parse("geolocation=src").expect_err("src should be rejected");
+  let document_policy =
+    DocumentPolicy::parse("oversized-images=2.0, unsized-media=?0, *;report-to=default")
+      .expect("Document-Policy should parse");
+  let _: DocumentPolicyParseError = DocumentPolicy::parse("unsized-media=src;foo=bar")
+    .expect_err("unknown Document-Policy parameter should be rejected");
   let supports_loading_mode = SupportsLoadingMode::parse("fenced-frame, credentialed-prerender")
     .expect("Supports-Loading-Mode should parse");
   let _: SupportsLoadingModeParseError =
@@ -252,6 +263,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     content_location.header_value(),
     "../representations/current.json"
   );
+  assert_eq!(service_worker_allowed.header_value(), "/");
+  assert_eq!(service_worker_allowed.as_str(), "/");
   assert_eq!(content_disposition.disposition_type(), "attachment");
   assert_eq!(content_disposition.filename(), Some("report.txt"));
   assert_eq!(
@@ -306,6 +319,15 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .unwrap()
     .allowlist()
     .is_empty());
+  assert_eq!(document_policy.directives().len(), 3);
+  assert_eq!(
+    document_policy.header_value(),
+    "oversized-images=2.0, unsized-media=?0, *;report-to=default"
+  );
+  assert_eq!(
+    Some("default"),
+    document_policy.directive("*").unwrap().report_to()
+  );
   assert_eq!(
     supports_loading_mode.tokens(),
     ["fenced-frame", "credentialed-prerender"]
@@ -599,6 +621,45 @@ fn response_facade_parses_permissions_policy_metadata() {
     [
       &"geolocation=(self \"https://maps.example.test\");report-to=\"rp\"".to_string(),
       &"camera=()".to_string()
+    ]
+  );
+}
+
+#[test]
+fn response_facade_parses_document_policy_metadata() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Document-Policy: oversized-images=2.0, unsized-media=?0\r\n",
+      "Document-Policy: *;report-to=default\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let policy: DocumentPolicy = response
+    .document_policy()
+    .expect("Document-Policy should parse")
+    .expect("Document-Policy should be present");
+
+  assert_eq!(policy.directives().len(), 3);
+  assert_eq!(
+    policy.directive("oversized-images").unwrap().value(),
+    &DocumentPolicyValue::Decimal("2.0".to_string())
+  );
+  assert_eq!(policy.directive("*").unwrap().report_to(), Some("default"));
+  assert_eq!(
+    policy.header_value(),
+    "oversized-images=2.0, unsized-media=?0, *;report-to=default"
+  );
+  assert_eq!(
+    response.header_values("Document-Policy"),
+    [
+      &"oversized-images=2.0, unsized-media=?0".to_string(),
+      &"*;report-to=default".to_string()
     ]
   );
 }

@@ -13,11 +13,12 @@ use rttp::server::{
   HttpOriginTrials, HttpPermissionsPolicy, HttpPermissionsPolicyParseError, HttpPragma,
   HttpPragmaParseError, HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError,
   HttpRequestAcceptCharsets, HttpResponse, HttpSaveData, HttpSecGpc, HttpSecGpcParseError,
-  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpSunsetParseError, HttpSupportsLoadingMode,
-  HttpSupportsLoadingModeParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
-  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
+  HttpSecWebSocketKey, HttpSecWebSocketKeyParseError, HttpServiceWorkerAllowed,
+  HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
+  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
+  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
+  HttpSunsetParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpUpgrade,
+  HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
 };
 use std::io::Write;
 use std::net::SocketAddr;
@@ -106,6 +107,12 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::ContentLocationParseError =
     rttp_client::response::ContentLocation::parse("not valid")
       .expect_err("invalid Content-Location should be rejected");
+  let service_worker_allowed: rttp::ServiceWorkerAllowed =
+    rttp_client::response::ServiceWorkerAllowed::parse("/")
+      .expect("Service-Worker-Allowed should parse");
+  let _: rttp::ServiceWorkerAllowedParseError =
+    rttp_client::response::ServiceWorkerAllowed::parse("http://example.test/scope")
+      .expect_err("absolute URI Service-Worker-Allowed should be rejected");
   let content_dpr: rttp::ContentDpr =
     rttp_client::response::ContentDpr::parse("1.5").expect("Content-DPR should parse");
   let _: rttp::ContentDprParseError =
@@ -226,6 +233,12 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::PermissionsPolicyParseError =
     rttp_client::response::PermissionsPolicy::parse("geolocation=src")
       .expect_err("src should be rejected");
+  let document_policy: rttp::DocumentPolicy =
+    rttp_client::response::DocumentPolicy::parse("oversized-images=2.0, unsized-media=?0")
+      .expect("Document-Policy should parse");
+  let _: rttp::DocumentPolicyParseError =
+    rttp_client::response::DocumentPolicy::parse("unsized-media=src;foo=bar")
+      .expect_err("unknown Document-Policy parameter should be rejected");
   let supports_loading_mode: rttp::SupportsLoadingMode =
     rttp_client::response::SupportsLoadingMode::parse("fenced-frame, credentialed-prerender")
       .expect("Supports-Loading-Mode should parse");
@@ -276,6 +289,8 @@ fn compatibility_facade_exports_client_metadata_types() {
     content_location.header_value(),
     "../representations/current.json"
   );
+  assert_eq!(service_worker_allowed.header_value(), "/");
+  assert_eq!(service_worker_allowed.as_str(), "/");
   assert_eq!(content_dpr.ratio(), 1.5);
   assert_eq!(content_dpr.header_value(), "1.5");
   assert_eq!(deprecation, rttp::Deprecation::Boolean(true));
@@ -353,6 +368,18 @@ fn compatibility_facade_exports_client_metadata_types() {
     .unwrap()
     .allowlist()
     .is_empty());
+  assert_eq!(document_policy.directives().len(), 2);
+  assert_eq!(
+    document_policy.header_value(),
+    "oversized-images=2.0, unsized-media=?0"
+  );
+  assert_eq!(
+    document_policy
+      .directive("oversized-images")
+      .unwrap()
+      .value(),
+    &rttp::DocumentPolicyValue::Decimal("2.0".to_string())
+  );
   assert_eq!(
     supports_loading_mode.tokens(),
     ["fenced-frame", "credentialed-prerender"]
@@ -398,6 +425,8 @@ fn compatibility_facade_roundtrips_representation_metadata_matrix() {
     .expect("Content-Language should be accepted")
     .with_content_location("/representations/asset.json")
     .expect("Content-Location should be accepted")
+    .with_service_worker_allowed("/")
+    .expect("Service-Worker-Allowed should be accepted")
     .with_digest("sha-256=:YWJj:")
     .expect("Content-Digest should be accepted")
     .with_repr_digest("sha-512=:ZGVm:")
@@ -435,6 +464,14 @@ fn compatibility_facade_roundtrips_representation_metadata_matrix() {
       .expect("server Content-Location should be present")
       .header_value(),
     "/representations/asset.json"
+  );
+  assert_eq!(
+    server_response
+      .service_worker_allowed()
+      .expect("server Service-Worker-Allowed should parse")
+      .expect("server Service-Worker-Allowed should be present")
+      .header_value(),
+    "/"
   );
   assert_eq!(
     server_response
@@ -486,6 +523,10 @@ fn compatibility_facade_roundtrips_representation_metadata_matrix() {
   assert_eq!(
     Some("/representations/asset.json"),
     header_value(&response_text, "Content-Location")
+  );
+  assert_eq!(
+    Some("/"),
+    header_value(&response_text, "Service-Worker-Allowed")
   );
   assert_eq!(
     Some("sha-256=:YWJj:"),
@@ -623,6 +664,14 @@ fn compatibility_facade_roundtrips_representation_metadata_matrix() {
       .expect("client Content-Location should be present")
       .header_value(),
     "/representations/asset.json"
+  );
+  assert_eq!(
+    client_response
+      .service_worker_allowed()
+      .expect("client Service-Worker-Allowed should parse")
+      .expect("client Service-Worker-Allowed should be present")
+      .header_value(),
+    "/"
   );
   assert_eq!(
     content_digest.entry("sha-256").map(|entry| entry.value()),
@@ -840,6 +889,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpExpectations::parse("100-continue, preview").expect("Expect should parse");
   let idempotency_key: HttpIdempotencyKey =
     HttpIdempotencyKey::parse("charge-2026-08-19-9f3c").expect("Idempotency-Key should parse");
+  let sec_websocket_key: HttpSecWebSocketKey =
+    HttpSecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==").expect("Sec-WebSocket-Key should parse");
   let baggage: HttpBaggage =
     HttpBaggage::parse("tenant=acme;source=gateway").expect("baggage should parse");
   let _: HttpBaggageParseError =
@@ -853,6 +904,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpCdnLoop::parse("cdn; trace").expect_err("valueless CDN-Loop parameter should be rejected");
   let _: Result<HttpIdempotencyKey, HttpIdempotencyKeyParseError> =
     HttpIdempotencyKey::parse("key with space");
+  let _: Result<HttpSecWebSocketKey, HttpSecWebSocketKeyParseError> =
+    HttpSecWebSocketKey::parse("the sample nonce");
   let if_modified_since: HttpIfModifiedSince =
     HttpIfModifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
       .expect("If-Modified-Since should parse");
@@ -909,6 +962,11 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
       .expect("Content-Location should parse");
   let _: HttpContentLocationParseError = HttpContentLocation::parse("not valid")
     .expect_err("invalid Content-Location should be rejected");
+  let service_worker_allowed: HttpServiceWorkerAllowed =
+    HttpServiceWorkerAllowed::parse("/").expect("Service-Worker-Allowed should parse");
+  let _: HttpServiceWorkerAllowedParseError =
+    HttpServiceWorkerAllowed::parse("http://example.test/scope")
+      .expect_err("absolute URI Service-Worker-Allowed should be rejected");
   let content_dpr: HttpContentDpr = HttpContentDpr::parse("2.0").expect("Content-DPR should parse");
   let _: HttpContentDprParseError =
     HttpContentDpr::parse("0").expect_err("zero Content-DPR should be rejected");
@@ -944,6 +1002,9 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!("charge-2026-08-19-9f3c", idempotency_key.as_str());
   assert_eq!("charge-2026-08-19-9f3c", idempotency_key.header_value());
   assert!(!format!("{idempotency_key:?}").contains("charge-2026-08-19-9f3c"));
+  assert_eq!("dGhlIHNhbXBsZSBub25jZQ==", sec_websocket_key.as_str());
+  assert_eq!("dGhlIHNhbXBsZSBub25jZQ==", sec_websocket_key.header_value());
+  assert!(!format!("{sec_websocket_key:?}").contains("dGhlIHNhbXBsZSBub25jZQ=="));
   assert_eq!("tenant", baggage_member.key());
   assert_eq!("source", baggage_property.key());
   assert!(!format!("{baggage:?}").contains("acme"));
@@ -961,6 +1022,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     content_location.header_value(),
     "../representations/current.json"
   );
+  assert_eq!(service_worker_allowed.header_value(), "/");
+  assert_eq!(service_worker_allowed.as_str(), "/");
   assert_eq!(content_dpr.ratio(), 2.0);
   assert_eq!(content_dpr.header_value(), "2.0");
   assert_eq!(deprecation, HttpDeprecation::Boolean(true));

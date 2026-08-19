@@ -418,6 +418,17 @@ fn content_language_response(values: &[&str], include_adjacent_metadata: bool) -
   response.into_bytes()
 }
 
+fn service_worker_allowed_response(values: &[&str]) -> Vec<u8> {
+  let mut response = String::from("HTTP/1.1 200 OK\r\n");
+  for value in values {
+    response.push_str("Service-Worker-Allowed: ");
+    response.push_str(value);
+    response.push_str("\r\n");
+  }
+  response.push_str("Content-Length: 2\r\n\r\nOK");
+  response.into_bytes()
+}
+
 fn content_location_response(values: &[&str], include_adjacent_metadata: bool) -> Vec<u8> {
   let mut response = String::from("HTTP/1.1 200 OK\r\n");
   for value in values {
@@ -2973,6 +2984,52 @@ fn sync_client_and_server_exchange_bounded_idempotency_key_metadata_without_poli
 }
 
 #[test]
+fn sync_client_and_server_exchange_bounded_sec_websocket_key_metadata_without_handshake() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind sec websocket key server");
+  let addr = server.local_addr().expect("sec websocket key server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request
+            .sec_websocket_key()
+            .expect("Sec-WebSocket-Key should parse")
+            .map(|key| key.as_str().to_string()),
+          request.header("Sec-WebSocket-Key").map(str::to_string),
+          request.header("Upgrade").map(str::to_string),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed sec websocket key metadata");
+        HttpResponse::new(200, "OK")
+      })
+      .expect("serve sec websocket key request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/chat"))
+    .sec_websocket_key("dGhlIHNhbXBsZSBub25jZQ==")
+    .expect("Sec-WebSocket-Key should be accepted")
+    .emit()
+    .expect("sec websocket key response should parse");
+
+  let (typed, raw, upgrade) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe sec websocket key metadata");
+  assert_eq!(Some("dGhlIHNhbXBsZSBub25jZQ==".to_string()), typed);
+  assert_eq!(Some("dGhlIHNhbXBsZSBub25jZQ==".to_string()), raw);
+  assert_eq!(
+    None, upgrade,
+    "typed Sec-WebSocket-Key metadata must not set Connection: Upgrade or an Upgrade field"
+  );
+  assert_eq!(200, response.code());
+  handle.join().expect("sec websocket key server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_bounded_pragma_metadata_without_policy() {
   const PRAGMA_REQUEST: &str = "no-cache, community=private";
   const PRAGMA_RESPONSE: &str = "no-cache, vendor=private";
@@ -4036,6 +4093,37 @@ fn assert_content_language_helper_rejects_but_preserves_response(
   handle.join().expect("raw response server thread");
 }
 
+fn assert_service_worker_allowed_helper_rejects_but_preserves_response(
+  name: &str,
+  raw_response: Vec<u8>,
+  expected_values: &[&str],
+) {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!(
+      "http://{}/matrix/service-worker-allowed-invalid",
+      addr
+    ))
+    .emit()
+    .unwrap_or_else(|err| panic!("{name} response should remain parseable: {err}"));
+
+  assert!(
+    response.service_worker_allowed().is_err(),
+    "{name} helper should reject invalid Service-Worker-Allowed"
+  );
+  let raw_values: Vec<&str> = response
+    .header_values("Service-Worker-Allowed")
+    .into_iter()
+    .map(String::as_str)
+    .collect();
+  assert_eq!(expected_values, raw_values.as_slice(), "{name}");
+  assert_eq!("OK", response.body().string().unwrap(), "{name}");
+
+  handle.join().expect("raw response server thread");
+}
+
 fn assert_content_location_helper_rejects_but_preserves_response(
   name: &str,
   raw_response: Vec<u8>,
@@ -4404,6 +4492,66 @@ fn sync_client_parses_shared_content_language_response_matrix() {
     assert_eq!("OK", response.body().string().unwrap(), "{}", case.name);
     handle.join().expect("raw response server thread");
   }
+}
+
+#[test]
+fn sync_client_parses_service_worker_allowed_from_server_declaration() {
+  let server_response = HttpResponse::ok("OK")
+    .with_service_worker_allowed("/")
+    .expect("Service-Worker-Allowed declaration should parse");
+  let raw_response = server_response.to_bytes();
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/service-worker-allowed", addr))
+    .emit()
+    .expect("Service-Worker-Allowed response should parse");
+
+  assert_eq!(
+    "/",
+    response
+      .service_worker_allowed()
+      .expect("Service-Worker-Allowed should parse")
+      .expect("Service-Worker-Allowed should be present")
+      .as_str()
+  );
+  assert_eq!(
+    Some(&"/".to_string()),
+    response.header_value("Service-Worker-Allowed")
+  );
+  assert_eq!("OK", response.body().string().unwrap());
+  handle.join().expect("raw response server thread");
+}
+
+#[test]
+fn sync_client_service_worker_allowed_helper_rejects_malformed_duplicate_and_oversized_values() {
+  for value in [
+    "",
+    "/bad path",
+    "/bad%zz",
+    "http://example.test/scope",
+    "//example.test/scope",
+  ] {
+    assert_service_worker_allowed_helper_rejects_but_preserves_response(
+      "malformed Service-Worker-Allowed value",
+      service_worker_allowed_response(&[value]),
+      &[value.trim()],
+    );
+  }
+
+  assert_service_worker_allowed_helper_rejects_but_preserves_response(
+    "duplicate Service-Worker-Allowed header fields",
+    service_worker_allowed_response(&["/", "/app/"]),
+    &["/", "/app/"],
+  );
+
+  let oversized = format!("/{}", "a".repeat(64 * 1024));
+  assert_service_worker_allowed_helper_rejects_but_preserves_response(
+    "oversized Service-Worker-Allowed value",
+    service_worker_allowed_response(&[&oversized]),
+    &[&oversized],
+  );
 }
 
 #[test]

@@ -259,6 +259,19 @@ references, and broken percent-encoding are errors. This is syntax validation
 only: callers own redirect handling, cache variant selection, representation
 replacement, route generation, retries, and status policy.
 
+## Service-Worker-Allowed
+
+`service_worker_allowed` parses a singleton response `Service-Worker-Allowed`
+field as one bounded origin-relative or absolute path value. Each field value
+is bounded to 64 KiB. A second field is rejected after every supplied field is
+bound-checked. Surrounding SP and HTAB are trimmed as optional whitespace, and
+the trimmed path text is preserved through `as_str()` and `header_value()`
+without resolving scope against a script URL. Empty values, ASCII controls,
+interior whitespace, unsafe field-value characters, broken percent-encoding,
+absolute URIs, and network-path authority forms are errors. This is syntax
+validation only: callers own service-worker registration, scope evaluation,
+and application routing policy.
+
 ## Connection
 
 `connection` parses one or more RFC 9110 `Connection` field values into an
@@ -533,7 +546,8 @@ behavior.
 ordered `cdn-info` members, each with an opaque CDN identifier and optional
 HTTP parameters. An identifier is a `uri-host` with optional port (including
 bracketed IP-literals) or an RFC 7230 token pseudonym, and its accepted wire
-spelling is preserved. Each field value is bounded to 64 KiB, the combined
+spelling is preserved. Each field value is bounded to 64 KiB, combined field
+values are bounded to 64 KiB including `", "` separator overhead, the combined
 serialized value is bounded to 64 KiB, the combined member count is bounded to
 256, and each member is bounded to 32 parameters. Parameter names are stored
 lowercase and matched case-insensitively; duplicate parameter names on one
@@ -791,6 +805,24 @@ trimmed as optional whitespace. Unknown tokens, lists, parameterized values,
 empty values, control bytes, and other unparsable input are errors.
 This parser does not infer consent, tracking, legal, or serving policy.
 
+## Sec-WebSocket-Key
+
+`sec_websocket_key` parses a singleton HTTP `Sec-WebSocket-Key` request field
+as a base64-encoded handshake nonce. Each field value is bounded to 64 KiB,
+and a second field is rejected after every supplied field is bound-checked.
+Surrounding SP and HTAB are trimmed as optional whitespace. The stored value
+is the OWS-trimmed RFC 4648 section 4 base64 text, returned by `as_str()` and
+`header_value()`; the RFC 6455 example
+`dGhlIHNhbXBsZSBub25jZQ==` decodes to the 16-byte sample nonce. Empty values,
+interior whitespace, non-base64 input, URL-safe or unpadded encodings,
+decoded nonces whose length is not exactly 16 bytes, duplicate fields,
+forbidden ASCII control bytes (including CR, LF, NUL, and obs-text), and
+oversized values are errors. The nonce is redacted from typed `Debug`, and
+parse errors describe only the header and validation category. This parser
+reports declared request metadata only; it does not perform an HTTP upgrade,
+compute `Sec-WebSocket-Accept`, generate a random nonce, or implement
+WebSocket frames.
+
 ## Upgrade-Insecure-Requests
 
 `upgrade_insecure_requests` parses a singleton `Upgrade-Insecure-Requests`
@@ -878,6 +910,23 @@ are rejected, and a well-formed `report-to` string parameter is accepted and
 dropped. The parser reports declared metadata only: it does not compare
 origins, resolve `self`, grant or deny browser permissions, or enforce origin
 policy.
+
+## Document-Policy
+
+`document_policy` parses bounded WICG Document Policy response metadata as a
+Structured Fields dictionary. Each field value is bounded to 64 KiB, the
+cumulative raw bytes across all supplied fields are bounded to 64 KiB, and
+the combined directive count is bounded to 256. Directive names are opaque
+lowercase tokens or `*` and are not looked up against a browser
+configuration-point list. A member value is one Structured Fields item of
+boolean (including a bare `?1`), integer, decimal, or token; inner lists,
+strings, byte sequences, dates, and display strings are rejected. A
+well-formed `report-to` parameter is accepted as a token or a quoted string
+and retained on the directive; any other parameter name is rejected. Empty
+dictionaries, duplicate directive names including across fields, duplicate
+parameters, and bound violations are errors. The parser reports declared metadata only: it does not
+execute configuration points, block document loads, compare required
+policies, echo `Sec-Required-Document-Policy`, or send reports.
 
 ## Supports-Loading-Mode
 

@@ -46,6 +46,8 @@ fn package_includes_protocol_metadata_facade_test() {
     "tests/alt_used.rs",
     "tests/origin_trial.rs",
     "tests/sec_gpc.rs",
+    "tests/sec_websocket_key.rs",
+    "tests/service_worker_allowed.rs",
   ] {
     assert!(
       package_files.lines().any(|path| path == expected),

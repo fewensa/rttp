@@ -2,10 +2,11 @@ use rttp_client::response::{
   AltSvc, AltUsed, AuthenticationInfo, ContentDisposition, ContentDpr, ContentEncoding,
   ContentLocation, ContentRange, ContentSecurityPolicy, ContentSecurityPolicyReportOnly,
   ContentType, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly,
-  CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Deprecation, EntityTag, HttpClearSiteData,
-  HttpSetCookies, KeepAlive, LinkValues, Location, MementoDatetime, OriginTrials,
-  PermissionsPolicy, ProxyAuthenticate, ProxyAuthenticationInfo, ProxyStatus, ProxyStatusBareItem,
-  ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ServerTiming, SignatureInput,
+  CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Deprecation, DocumentPolicy,
+  DocumentPolicyValue, EntityTag, HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues,
+  Location, MementoDatetime, OriginTrials, PermissionsPolicy, ProxyAuthenticate,
+  ProxyAuthenticationInfo, ProxyStatus, ProxyStatusBareItem, ReferrerPolicy, ReferrerPolicyToken,
+  Response, RetryAfter, ServerTiming, ServiceWorkerAllowed, SignatureInput,
   StrictTransportSecurity, SupportsLoadingMode, Warning, XContentTypeOptions, XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
@@ -829,6 +830,130 @@ fn permissions_policy_metadata_is_absent_without_a_header() {
     None
   );
   let _: Option<PermissionsPolicy> = response.permissions_policy().expect("header is absent");
+}
+
+#[test]
+fn document_policy_metadata_parses_dictionary_without_enforcing_policy() {
+  let value = "oversized-images=2.0, unsized-media=?0, *;report-to=default";
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!("HTTP/1.1 200 OK\r\nDocument-Policy: {value}\r\nContent-Length: 0\r\n\r\n")
+      .into_bytes(),
+  )
+  .expect("response should parse");
+
+  let metadata = response
+    .document_policy()
+    .expect("Document-Policy should parse")
+    .expect("Document-Policy should be present");
+
+  assert_eq!(metadata.directives().len(), 3);
+  assert_eq!(
+    metadata.directive("oversized-images").unwrap().value(),
+    &DocumentPolicyValue::Decimal("2.0".to_string())
+  );
+  assert_eq!(
+    metadata.directive("unsized-media").unwrap().value(),
+    &DocumentPolicyValue::Boolean(false)
+  );
+  assert_eq!(
+    metadata.directive("*").unwrap().report_to(),
+    Some("default")
+  );
+  assert_eq!(metadata.header_value(), value);
+  assert_eq!(
+    response.header_value("Document-Policy"),
+    Some(&value.to_string())
+  );
+}
+
+#[test]
+fn document_policy_metadata_rejects_invalid_values_without_hiding_raw_headers() {
+  for value in [
+    "",
+    "=()",
+    "=(1 2)",
+    "=\"2.0\"",
+    "=:MjA=:",
+    "=@123",
+    "=%\"2.0\"",
+    "=+2.0",
+    "=1.2345",
+    "unsized-media=src;foo=bar",
+    "oversized-images=1;report-to=first;report-to=second",
+    "oversized-images=1.0, oversized-images=2.0",
+    "UnSized-Media=?0",
+  ] {
+    let response = Response::new(
+      RoUrl::with("https://example.test"),
+      format!("HTTP/1.1 200 OK\r\nDocument-Policy: {value}\r\nContent-Length: 0\r\n\r\n")
+        .into_bytes(),
+    )
+    .expect("response should parse");
+
+    assert_eq!(response.code(), 200);
+    assert!(response.body().binary().is_empty());
+    assert!(
+      response.document_policy().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      response.header_value("Document-Policy"),
+      Some(&value.to_string())
+    );
+  }
+
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Document-Policy: oversized-images=1.0\r\n",
+      "Document-Policy: oversized-images=2.0\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(response.code(), 200);
+  assert!(response.body().binary().is_empty());
+  assert!(response.document_policy().is_err());
+  assert_eq!(
+    response.header_values("Document-Policy"),
+    [
+      &"oversized-images=1.0".to_string(),
+      &"oversized-images=2.0".to_string()
+    ]
+  );
+}
+
+#[test]
+fn document_policy_metadata_rejects_oversized_values_without_hiding_raw_headers() {
+  let oversized = format!("x={}", "a".repeat(64 * 1024));
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!("HTTP/1.1 200 OK\r\nDocument-Policy: {oversized}\r\nContent-Length: 0\r\n\r\n")
+      .into_bytes(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(response.code(), 200);
+  assert!(response.body().binary().is_empty());
+  assert!(response.document_policy().is_err());
+  assert_eq!(response.header_value("Document-Policy"), Some(&oversized));
+}
+
+#[test]
+fn document_policy_metadata_is_absent_without_a_header() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(response.document_policy().expect("header is absent"), None);
+  let _: Option<DocumentPolicy> = response.document_policy().expect("header is absent");
 }
 
 #[test]
@@ -4137,6 +4262,167 @@ fn test_parse_content_location_rejects_control_characters_and_crlf_injection() {
     assert!(
       ContentLocation::parse(value).is_err(),
       "content-location parser should reject {value:?}"
+    );
+  }
+}
+
+#[test]
+fn test_parse_service_worker_allowed_response_helper_accepts_paths() {
+  let cases = [
+    ("/", "absolute path root"),
+    ("/app/", "absolute path prefix"),
+    ("/static/sw/", "absolute nested path"),
+    ("/scope?feature=1", "absolute path with query"),
+    ("/scope#section", "absolute path with fragment"),
+    ("./", "relative dot segment"),
+    ("../scope", "relative parent path"),
+    ("scope/nested", "origin-relative path"),
+  ];
+
+  for (value, name) in cases {
+    let raw =
+      format!("HTTP/1.1 200 OK\r\nService-Worker-Allowed: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(
+      RoUrl::with("https://example.test/static/sw.js"),
+      raw.into_bytes(),
+    )
+    .unwrap_or_else(|err| panic!("{name} response should parse: {err}"));
+    let allowed = response
+      .service_worker_allowed()
+      .unwrap_or_else(|err| panic!("{name} service-worker-allowed should parse: {err}"))
+      .unwrap_or_else(|| panic!("{name} service-worker-allowed should be present"));
+
+    assert_eq!(value, allowed.as_str());
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Service-Worker-Allowed")
+    );
+  }
+}
+
+#[test]
+fn test_parse_service_worker_allowed_response_helper_trims_outer_whitespace_and_allows_absent() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Service-Worker-Allowed:   /   \r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/static/sw.js"),
+    raw.as_bytes().to_vec(),
+  )
+  .expect("parse response with service-worker-allowed");
+  let allowed = response
+    .service_worker_allowed()
+    .expect("valid service-worker-allowed should parse")
+    .expect("service-worker-allowed header should be present");
+
+  assert_eq!("/", allowed.as_str());
+  assert_eq!(
+    Some(&"/".to_string()),
+    response.header_value("Service-Worker-Allowed")
+  );
+
+  let raw = concat!("HTTP/1.1 200 OK\r\n", "Content-Length: 2\r\n", "\r\n", "OK");
+  let response = Response::new(
+    RoUrl::with("https://example.test/static/sw.js"),
+    raw.as_bytes().to_vec(),
+  )
+  .expect("parse response without service-worker-allowed");
+  assert_eq!(
+    None,
+    response
+      .service_worker_allowed()
+      .expect("absent service-worker-allowed should parse")
+  );
+}
+
+#[test]
+fn test_parse_service_worker_allowed_rejects_invalid_helper_values_without_rejecting_response() {
+  let invalid_values = [
+    "",
+    " ",
+    "/bad path",
+    "/bad%zz",
+    "http://example.test/scope",
+    "//example.test/scope",
+  ];
+
+  for value in invalid_values {
+    let raw =
+      format!("HTTP/1.1 200 OK\r\nService-Worker-Allowed: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(
+      RoUrl::with("https://example.test/static/sw.js"),
+      raw.into_bytes(),
+    )
+    .expect("raw response remains usable");
+
+    assert!(
+      response.service_worker_allowed().is_err(),
+      "service-worker-allowed helper should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.trim().to_string()),
+      response.header_value("Service-Worker-Allowed")
+    );
+  }
+}
+
+#[test]
+fn test_parse_service_worker_allowed_rejects_duplicate_and_oversized_values() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Service-Worker-Allowed: /\r\n",
+    "service-worker-allowed: /app/\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/static/sw.js"),
+    raw.as_bytes().to_vec(),
+  )
+  .expect("raw response with duplicate service-worker-allowed remains usable");
+
+  assert!(
+    response.service_worker_allowed().is_err(),
+    "service-worker-allowed helper should reject duplicate singleton headers"
+  );
+  assert_eq!(
+    vec![&"/".to_string(), &"/app/".to_string()],
+    response.header_values("Service-Worker-Allowed")
+  );
+
+  let oversized = format!("/{}", "a".repeat(64 * 1024));
+  let raw = format!(
+    "HTTP/1.1 200 OK\r\nService-Worker-Allowed: {oversized}\r\nContent-Length: 2\r\n\r\nOK"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/static/sw.js"),
+    raw.into_bytes(),
+  )
+  .expect("raw response with oversized service-worker-allowed remains usable");
+
+  assert!(
+    response.service_worker_allowed().is_err(),
+    "service-worker-allowed helper should reject oversized values"
+  );
+  assert_eq!(
+    Some(&oversized),
+    response.header_value("Service-Worker-Allowed")
+  );
+}
+
+#[test]
+fn test_parse_service_worker_allowed_rejects_control_characters_and_crlf_injection() {
+  let invalid_values = ["\r\nLocation: /evil", "/ok\r", "/ok\n", "/ok\tinner"];
+
+  for value in invalid_values {
+    assert!(
+      ServiceWorkerAllowed::parse(value).is_err(),
+      "service-worker-allowed parser should reject {value:?}"
     );
   }
 }

@@ -10,7 +10,8 @@ use std::fmt;
 use crate::host::Host;
 use crate::http1::{is_token, is_token_byte};
 
-/// Maximum bytes accepted in one `CDN-Loop` field value and in the combined
+/// Maximum bytes accepted in one `CDN-Loop` field value, in the combined raw
+/// field set including `", "` separator overhead, and in the combined
 /// serialized field value.
 pub const MAX_CDN_LOOP_VALUE_BYTES: usize = 64 * 1024;
 /// Maximum `CDN-Loop` list-members accepted across all fields.
@@ -70,8 +71,16 @@ impl CdnLoop {
     I: IntoIterator<Item = &'a str>,
   {
     let mut members = Vec::new();
+    let mut total_bytes = 0usize;
     for value in values {
       if value.len() > MAX_CDN_LOOP_VALUE_BYTES {
+        return Err(CdnLoopParseError::new("CDN-Loop header value is too large"));
+      }
+      let separator = if total_bytes > 0 { 2 } else { 0 };
+      total_bytes = total_bytes
+        .saturating_add(separator)
+        .saturating_add(value.len());
+      if total_bytes > MAX_CDN_LOOP_VALUE_BYTES {
         return Err(CdnLoopParseError::new("CDN-Loop header value is too large"));
       }
       if value

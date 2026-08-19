@@ -106,6 +106,9 @@ pub use rttp_protocol::digest::{
   ContentDigest, ContentDigestEntry, Digest, DigestEntry, DigestParseError, ReprDigest,
   ReprDigestEntry,
 };
+pub use rttp_protocol::document_policy::{
+  DocumentPolicy, DocumentPolicyDirective, DocumentPolicyParseError, DocumentPolicyValue,
+};
 pub use rttp_protocol::entity_tag::{EntityTag, EntityTagParseError};
 pub use rttp_protocol::keep_alive::{KeepAlive, KeepAliveExtension, KeepAliveParseError};
 pub use rttp_protocol::link::{LinkParameter, LinkParseError, LinkValue, LinkValues};
@@ -143,6 +146,9 @@ pub use rttp_protocol::referrer_policy::{
 pub use rttp_protocol::reporting_endpoints::{ReportingEndpoints, ReportingEndpointsParseError};
 pub use rttp_protocol::server_timing::{
   ServerTiming, ServerTimingMetric, ServerTimingParameter, ServerTimingParseError,
+};
+pub use rttp_protocol::service_worker_allowed::{
+  ServiceWorkerAllowed, ServiceWorkerAllowedParseError,
 };
 pub use rttp_protocol::signature::{Signature, SignatureEntry, SignatureParseError};
 pub use rttp_protocol::signature_input::{

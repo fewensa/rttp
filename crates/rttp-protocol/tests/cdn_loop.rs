@@ -153,4 +153,15 @@ fn cdn_loop_enforces_member_parameter_and_size_bounds() {
     combined.is_err(),
     "combined CDN-Loop fields over the value bound should be rejected"
   );
+
+  let padded = format!("cdn{}", " ".repeat(MAX_CDN_LOOP_VALUE_BYTES - 3));
+  assert_eq!(padded.len(), MAX_CDN_LOOP_VALUE_BYTES);
+  assert!(
+    CdnLoop::parse(padded.as_str()).is_ok(),
+    "one OWS-padded field at the value bound should parse"
+  );
+  assert!(
+    CdnLoop::parse_values([padded.as_str(), padded.as_str()]).is_err(),
+    "repeated OWS-padded CDN-Loop fields over the raw aggregate bound should be rejected"
+  );
 }

@@ -1345,6 +1345,116 @@ fn etag_response_helper_rejects_malformed_duplicate_and_oversized_raw_headers() 
 }
 
 #[test]
+fn service_worker_allowed_response_helpers_validate_replace_and_parse_singleton_metadata() {
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .service_worker_allowed()
+      .expect("absent Service-Worker-Allowed should parse")
+  );
+
+  let response = HttpResponse::ok([])
+    .header("Service-Worker-Allowed", "/old")
+    .header("service-worker-allowed", "/older")
+    .with_service_worker_allowed(" / ")
+    .expect("valid Service-Worker-Allowed should be accepted");
+  assert_eq!(
+    "/",
+    response
+      .service_worker_allowed()
+      .expect("Service-Worker-Allowed should parse")
+      .expect("Service-Worker-Allowed should be present")
+      .as_str()
+  );
+  assert_eq!(
+    vec![("Service-Worker-Allowed", "/")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let attached = HttpResponse::ok([]).header("Service-Worker-Allowed", "../scope");
+  assert_eq!(
+    "../scope",
+    attached
+      .service_worker_allowed()
+      .expect("Service-Worker-Allowed should parse")
+      .expect("Service-Worker-Allowed should be present")
+      .as_str()
+  );
+}
+
+#[test]
+fn service_worker_allowed_response_helper_rejects_malformed_duplicate_and_oversized_raw_headers() {
+  for value in [
+    "",
+    " ",
+    "/bad path",
+    "/bad%zz",
+    "http://example.test/scope",
+    "//example.test/scope",
+    "/safe\u{7f}",
+  ] {
+    assert!(
+      HttpResponse::ok([])
+        .with_service_worker_allowed(value)
+        .is_err(),
+      "Service-Worker-Allowed helper should reject {value:?}"
+    );
+
+    let response = HttpResponse::ok([]).header("Service-Worker-Allowed", value);
+    assert!(
+      response.service_worker_allowed().is_err(),
+      "Service-Worker-Allowed parser should reject {value:?}"
+    );
+    assert_eq!(
+      vec![("Service-Worker-Allowed", value)],
+      response
+        .headers
+        .iter()
+        .map(|header| (header.name.as_str(), header.value.as_str()))
+        .collect::<Vec<_>>()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("Service-Worker-Allowed", "/")
+    .header("service-worker-allowed", "/app/");
+  assert!(duplicate.service_worker_allowed().is_err());
+  assert_eq!(
+    vec![
+      ("Service-Worker-Allowed", "/"),
+      ("service-worker-allowed", "/app/")
+    ],
+    duplicate
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let oversized = format!("/{}", "a".repeat(64 * 1024));
+  assert!(
+    HttpResponse::ok([])
+      .with_service_worker_allowed(&oversized)
+      .is_err(),
+    "Service-Worker-Allowed helper should reject oversized values"
+  );
+  let response = HttpResponse::ok([]).header("Service-Worker-Allowed", &oversized);
+  assert!(response.service_worker_allowed().is_err());
+  assert_eq!(
+    vec![("Service-Worker-Allowed", oversized.as_str())],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
 fn access_control_allow_methods_helpers_validate_replace_and_parse_response_metadata() {
   let response = HttpResponse::ok([])
     .header("Access-Control-Allow-Methods", "DELETE")
@@ -2322,6 +2432,97 @@ fn permissions_policy_helpers_preserve_raw_metadata_and_report_parse_errors() {
 }
 
 #[test]
+fn document_policy_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Document-Policy", "oversized-images=1.0")
+    .header("document-policy", "unsized-media=?0")
+    .with_document_policy("oversized-images=2.0, unsized-media=?0, *;report-to=default")
+    .expect("Document-Policy should be accepted");
+
+  let policy = response
+    .document_policy()
+    .expect("Document-Policy should parse")
+    .expect("Document-Policy should be present");
+  assert_eq!(
+    "oversized-images=2.0, unsized-media=?0, *;report-to=default",
+    policy.header_value()
+  );
+  assert_eq!(3, policy.directives().len());
+  assert_eq!(
+    Some("default"),
+    policy.directive("*").unwrap().report_to()
+  );
+  assert_eq!(
+    vec![("Document-Policy", "oversized-images=2.0, unsized-media=?0, *;report-to=default")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn document_policy_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::ok([]).header("Document-Policy", "oversized-images=2.0");
+  let policy = raw
+    .document_policy()
+    .expect("raw Document-Policy should parse")
+    .expect("Document-Policy should be present");
+  assert_eq!("oversized-images=2.0", policy.header_value());
+  assert_eq!(
+    Some("oversized-images=2.0"),
+    raw
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Document-Policy"))
+      .map(|header| header.value.as_str())
+  );
+
+  for value in [
+    "",
+    "=()",
+    "=1.2345",
+    "unsized-media=src;foo=bar",
+    "oversized-images=1;report-to=first;report-to=second",
+    "oversized-images=1.0, oversized-images=2.0",
+  ] {
+    let malformed = HttpResponse::ok([]).header("Document-Policy", value);
+    assert!(malformed.document_policy().is_err(), "should reject {value:?}");
+    assert!(malformed.status_code == 200 && malformed.body.is_empty());
+    assert_eq!(
+      Some(value),
+      malformed
+        .headers
+        .iter()
+        .find(|header| header.name.eq_ignore_ascii_case("Document-Policy"))
+        .map(|header| header.value.as_str())
+    );
+    assert!(
+      HttpResponse::ok([])
+        .with_document_policy(value)
+        .is_err(),
+      "should reject {value:?}"
+    );
+  }
+
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .document_policy()
+      .expect("absent Document-Policy should parse")
+  );
+
+  let duplicate = HttpResponse::ok([])
+    .header("Document-Policy", "oversized-images=1.0")
+    .header("document-policy", "oversized-images=2.0");
+  assert!(duplicate.document_policy().is_err());
+  assert!(HttpResponse::ok([])
+    .with_document_policy("x".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
 fn supports_loading_mode_helpers_validate_replace_and_parse_response_metadata() {
   let response = HttpResponse::ok([])
     .header("Supports-Loading-Mode", "fenced-frame")
@@ -2987,6 +3188,117 @@ fn request_idempotency_key_is_optional_bounded_and_preserves_invalid_headers() {
   .expect("request should retain duplicate metadata");
   assert!(duplicate.idempotency_key().is_err());
   assert_eq!(Some("first"), duplicate.header("Idempotency-Key"));
+}
+
+#[test]
+fn request_sec_websocket_key_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .sec_websocket_key()
+      .expect("missing value should be valid")
+  );
+
+  for value in [
+    "dGhlIHNhbXBsZSBub25jZQ==",
+    "AAAAAAAAAAAAAAAAAAAAAA==",
+    " \t+/z9/v8AAQIDBAUGBwgJCg==\t ",
+  ] {
+    let valid = Request::from_raw_frame(
+      format!(
+        "GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Key: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should parse");
+    let parsed = valid
+      .sec_websocket_key()
+      .expect("value should parse")
+      .expect("Sec-WebSocket-Key should be present");
+    assert_eq!(value.trim_matches([' ', '\t']), parsed.as_str());
+    assert_eq!(value.trim_matches([' ', '\t']), parsed.header_value());
+  }
+  let redacted = Request::from_raw_frame(
+    b"GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+  )
+  .expect("request should parse")
+  .sec_websocket_key()
+  .expect("value should parse")
+  .expect("Sec-WebSocket-Key should be present");
+  assert!(!format!("{redacted:?}").contains("dGhlIHNhbXBsZSBub25jZQ=="));
+
+  for value in ["", "the sample nonce", "dGhlIHNhbXBsZSBub25jZQ"] {
+    let request = Request::from_raw_frame(
+      format!(
+        "GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Key: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should retain malformed metadata");
+    assert!(request.sec_websocket_key().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Sec-WebSocket-Key"));
+  }
+
+  let obs_text = Request::from_raw_frame(
+    b"GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\xC3\xA9\r\n\r\n",
+  )
+  .expect("request should retain obs-text metadata");
+  assert!(obs_text.sec_websocket_key().is_err());
+  assert!(obs_text.header("Sec-WebSocket-Key").is_some());
+
+  let oversized = "A".repeat(64 * 1024 + 1);
+  let oversized_request = Request {
+    method: "GET".to_string(),
+    target: "/chat".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("Sec-WebSocket-Key".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.sec_websocket_key().is_err());
+  assert_eq!(
+    Some(oversized.as_str()),
+    oversized_request.header("Sec-WebSocket-Key")
+  );
+
+  let injected_request = Request {
+    method: "GET".to_string(),
+    target: "/chat".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      (
+        "Sec-WebSocket-Key".to_string(),
+        "dGhlIHNhbXBsZSBub25jZQ==\r\nX-Injected: 1".to_string(),
+      ),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(injected_request.sec_websocket_key().is_err());
+  assert_eq!(
+    Some("dGhlIHNhbXBsZSBub25jZQ==\r\nX-Injected: 1"),
+    injected_request.header("Sec-WebSocket-Key")
+  );
+
+  let duplicate = Request::from_raw_frame(
+    b"GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nsec-websocket-key: AAAAAAAAAAAAAAAAAAAAAA==\r\n\r\n",
+  )
+  .expect("request should retain duplicate metadata");
+  assert!(duplicate.sec_websocket_key().is_err());
+  assert_eq!(
+    Some("dGhlIHNhbXBsZSBub25jZQ=="),
+    duplicate.header("Sec-WebSocket-Key")
+  );
 }
 
 #[test]
@@ -3962,6 +4274,48 @@ hello\r\n\
     assert!(header_debug.contains("Idempotency-Key"));
     assert!(header_debug.contains("[REDACTED]"));
     assert!(!header_debug.contains("charge-2026-08-19-9f3c"));
+  }
+
+  #[test]
+  fn sec_websocket_key_debug_redacts_values_in_request_and_http_request() {
+    let raw = concat!(
+      "GET /chat HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n",
+      "\r\n"
+    );
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+    let request = Request::read_next_from(&mut reader)
+      .expect("request should parse")
+      .expect("request should be present");
+
+    let sec_websocket_key = request
+      .sec_websocket_key()
+      .expect("Sec-WebSocket-Key should parse")
+      .expect("Sec-WebSocket-Key should be present");
+    assert_eq!(
+      "dGhlIHNhbXBsZSBub25jZQ==",
+      sec_websocket_key.as_str()
+    );
+    assert!(!format!("{sec_websocket_key:?}").contains("dGhlIHNhbXBsZSBub25jZQ=="));
+    let request_debug = format!("{request:?}");
+    assert!(request_debug.contains("Sec-WebSocket-Key"));
+    assert!(request_debug.contains("[REDACTED]"));
+    assert!(!request_debug.contains("dGhlIHNhbXBsZSBub25jZQ=="));
+
+    let http_request = HttpRequest::parse(raw.as_bytes()).expect("request should parse");
+    let http_request_debug = format!("{http_request:?}");
+    assert!(http_request_debug.contains("Sec-WebSocket-Key"));
+    assert!(http_request_debug.contains("[REDACTED]"));
+    assert!(!http_request_debug.contains("dGhlIHNhbXBsZSBub25jZQ=="));
+
+    let header_debug = format!(
+      "{:?}",
+      HttpHeader::new("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+    );
+    assert!(header_debug.contains("Sec-WebSocket-Key"));
+    assert!(header_debug.contains("[REDACTED]"));
+    assert!(!header_debug.contains("dGhlIHNhbXBsZSBub25jZQ=="));
   }
 
   #[test]

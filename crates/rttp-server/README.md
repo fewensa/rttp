@@ -422,6 +422,29 @@ references against a response URL, follow redirects, select cache variants,
 replace representations, generate routes, trigger retries, or alter status
 policy from `Content-Location`.
 
+## Service-Worker-Allowed response metadata
+
+`HttpResponse::with_service_worker_allowed(value)` validates one
+`Service-Worker-Allowed` origin-relative or absolute path field value with the
+shared protocol-owned `HttpServiceWorkerAllowed` type, trims outer whitespace,
+removes any existing raw `Service-Worker-Allowed` fields, and adds a single
+validated `Service-Worker-Allowed` header.
+`HttpResponse::service_worker_allowed()` parses attached raw fields into
+`HttpServiceWorkerAllowed`, returns `Ok(None)` when absent, and preserves
+invalid raw fields until typed parsing is requested.
+
+The helper is bounded and validation-oriented. The field value is limited to
+64 KiB and must be a non-empty origin-relative or absolute path without
+control or non-ASCII characters, interior whitespace, unsafe field-value characters, broken
+percent-encoding, absolute URIs, or network-path authority forms. Duplicate
+fields are rejected because `Service-Worker-Allowed` is singleton response
+metadata. The preserved trimmed path is available through `as_str()` and
+`header_value()`.
+
+These helpers only declare and parse metadata. RTTP does not register service
+workers, evaluate service-worker scope, resolve the value against a script
+URL, or apply application routing policy from `Service-Worker-Allowed`.
+
 ## Content-DPR response metadata
 
 `HttpResponse::with_content_dpr(value)` validates one `Content-DPR` field value
@@ -490,6 +513,26 @@ well-formed `report-to` parameter is accepted and dropped.
 These helpers only declare and parse metadata. RTTP does not grant or deny
 browser permissions, compare origins, resolve `self`, or enforce origin
 policy, and it does not send reports.
+
+## Document-Policy response metadata
+
+`HttpResponse::with_document_policy(value)` validates one WICG Document Policy
+Structured Fields dictionary and replaces any existing raw `Document-Policy`
+fields with one canonical value from the shared protocol parser.
+`HttpResponse::document_policy()` parses attached raw fields into
+`HttpDocumentPolicy` metadata, returning `Ok(None)` when absent and parser
+errors without changing raw fields. Directives expose the configuration-point
+name, typed value (boolean, integer, decimal, or token), and the retained
+`report-to` endpoint name. Directive names are opaque lowercase tokens or `*`
+and are not looked up against a browser configuration-point list. Field
+values are bounded to 64 KiB, the cumulative raw bytes across all supplied
+fields to 64 KiB, and directives to 256 per header set. Empty dictionaries,
+duplicate directive names, duplicate parameters, unknown parameters, and
+unparsable input are rejected.
+
+These helpers only declare and parse metadata. RTTP does not execute
+configuration points, block document loads, compare required policies, echo
+`Sec-Required-Document-Policy`, or send reports.
 
 ## Supports-Loading-Mode response metadata
 
@@ -639,6 +682,24 @@ continue to expose the original raw field. The key is redacted from typed
 These helpers parse request metadata only. They do not retry requests, store
 keys, compare keys across requests, or apply application idempotency policy.
 
+## Sec-WebSocket-Key request metadata
+
+Handlers can call `Request::sec_websocket_key()` and
+`HttpRequest::sec_websocket_key()` to observe bounded typed
+`Sec-WebSocket-Key` request metadata through the shared protocol
+`HttpSecWebSocketKey` type. Absent fields return `Ok(None)`. A recognized
+value is a singleton RFC 4648 section 4 base64 encoding of exactly 16 nonce
+bytes with optional surrounding SP or HTAB, bounded to 64 KiB. `as_str()`
+returns the stored encoded nonce and `header_value()` emits it unchanged.
+Malformed, URL-safe or unpadded, wrong-decoded-length, oversized, duplicate,
+or control-byte values return a parser error while `Request::header()` and
+`HttpRequest::header()` continue to expose the original raw field. The nonce
+is redacted from typed `Debug`.
+
+These helpers parse request metadata only. They do not perform an HTTP
+upgrade, compute `Sec-WebSocket-Accept`, generate a random nonce, or
+implement WebSocket frames.
+
 ## Pragma request and response metadata
 
 Handlers can call `Request::pragma()` and `HttpRequest::pragma()` to observe
@@ -704,8 +765,9 @@ original raw fields.
 
 `HttpCdnLoop` preserves ordered members with an opaque CDN identifier
 (`uri-host` with optional port or an RFC 7230 token pseudonym) and optional
-HTTP parameter accessors. Each field value and the combined serialized value
-are bounded to 64 KiB, the combined member count is bounded to 256, and each
+HTTP parameter accessors. Each field value, the combined raw field set
+including `", "` separator overhead, and the combined serialized value are
+bounded to 64 KiB, the combined member count is bounded to 256, and each
 member is bounded to 32 parameters. Repeated `CDN-Loop` fields are combined in
 wire order, and repeated CDN identifiers are valid loop-visible metadata.
 These helpers expose loop metadata only; they do not detect or break loops,

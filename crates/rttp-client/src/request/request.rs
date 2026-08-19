@@ -88,7 +88,9 @@ fn raw_request_has_sensitive_header(raw: &str) -> bool {
     let Some((name, _)) = line.split_once(':') else {
       return false;
     };
-    is_sensitive_redirect_header(name.trim()) || name.trim().eq_ignore_ascii_case("set-cookie")
+    is_sensitive_redirect_header(name.trim())
+      || name.trim().eq_ignore_ascii_case("set-cookie")
+      || name.trim().eq_ignore_ascii_case("sec-websocket-key")
   })
 }
 
@@ -440,8 +442,9 @@ mod tests {
     request
       .trailers_mut()
       .push(Header::new("Proxy-Authorization", "Basic cHJveHk6c2VjcmV0"));
-    request
-      .raw_set("GET / HTTP/1.1\r\nAuthorization: Bearer raw-token\r\nHost: example.test\r\n\r\n");
+    request.raw_set(
+      "GET / HTTP/1.1\r\nAuthorization: Bearer raw-token\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nHost: example.test\r\n\r\n",
+    );
 
     let debug = format!("{request:?}");
     assert!(debug.contains("[REDACTED]"));
@@ -451,6 +454,7 @@ mod tests {
       "cHJveHk6c2VjcmV0",
       "raw-token",
       "charge-2026-08-19-9f3c",
+      "dGhlIHNhbXBsZSBub25jZQ==",
     ] {
       assert!(!debug.contains(secret));
     }

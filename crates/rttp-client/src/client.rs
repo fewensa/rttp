@@ -30,6 +30,7 @@ use rttp_protocol::pragma::Pragma;
 use rttp_protocol::priority::Priority;
 use rttp_protocol::save_data::SaveData;
 use rttp_protocol::sec_gpc::SecGpc;
+use rttp_protocol::sec_websocket_key::SecWebSocketKey;
 use rttp_protocol::signature::Signature;
 use rttp_protocol::signature_input::SignatureInput;
 use rttp_protocol::te::{Te, MAX_TE_CODINGS, MAX_TE_VALUE_BYTES};
@@ -738,6 +739,23 @@ impl HttpClient {
     Ok(self.header(Header::new(
       "Idempotency-Key",
       idempotency_key.header_value(),
+    )))
+  }
+
+  /// Set a bounded `Sec-WebSocket-Key` request header as typed nonce metadata.
+  ///
+  /// The value must be one RFC 4648 section 4 base64 encoding of exactly 16
+  /// nonce bytes, and is limited to 64 KiB. CR, LF, NUL, other control bytes,
+  /// and obs-text are rejected before a socket is opened. This only validates
+  /// and emits the header; it does not perform an HTTP upgrade, compute
+  /// `Sec-WebSocket-Accept`, generate a random nonce, or implement WebSocket
+  /// frames. Use `header` directly for unusual values.
+  pub fn sec_websocket_key<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let sec_websocket_key = SecWebSocketKey::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Sec-WebSocket-Key",
+      sec_websocket_key.header_value(),
     )))
   }
 

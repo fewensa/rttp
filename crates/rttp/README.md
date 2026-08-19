@@ -396,6 +396,25 @@ These helpers declare and observe request metadata only. RTTP does not retry
 requests, store or compare keys across requests, deduplicate requests, or
 apply application idempotency policy.
 
+## Bounded Sec-WebSocket-Key request metadata
+
+`HttpClient::sec_websocket_key(value)` validates and emits one
+`Sec-WebSocket-Key` request field through the shared `rttp_protocol`
+`SecWebSocketKey` type, replacing any existing same-name field before a socket
+is opened. `Request::sec_websocket_key()` and `HttpRequest::sec_websocket_key()`
+parse received fields into the same `HttpSecWebSocketKey` representation,
+returning `Ok(None)` when absent. A recognized value is a singleton RFC 4648
+section 4 base64 encoding of exactly 16 nonce bytes bounded to 64 KiB with
+optional surrounding SP or HTAB; empty, interior-whitespace, non-base64,
+URL-safe or unpadded, wrong-decoded-length, control-byte (including CR/LF/NUL
+and obs-text), duplicate, and oversized values are rejected. The nonce is
+redacted from typed `Debug`, and raw request headers remain available when the
+typed parser reports an error.
+
+These helpers declare and observe request metadata only. RTTP does not perform
+an HTTP upgrade, compute `Sec-WebSocket-Accept`, generate a random nonce, or
+implement WebSocket frames.
+
 ## Bounded W3C Trace Context request metadata
 
 `HttpClient::traceparent()` and `HttpClient::tracestate()` validate and emit
@@ -440,7 +459,8 @@ preserving raw headers on parse errors.
 
 `CdnLoop` validates opaque CDN identifiers (`uri-host` with optional port or
 an RFC 7230 token pseudonym), optional HTTP parameters, and bounds: 64 KiB per
-field value and per combined serialized value, 256 combined members, and 32
+field value, per combined raw field set including `", "` separator overhead,
+and per combined serialized value, 256 combined members, and 32
 parameters per member. Duplicate parameter names are rejected; repeated CDN
 identifiers are valid loop-visible metadata. These helpers expose loop
 metadata only: RTTP does not detect or break loops, reject requests because an
@@ -617,6 +637,35 @@ raw headers and parsing only when requested. They are metadata-only: RTTP does
 not treat `Content-Location` as redirect behavior, cache variant selection,
 representation replacement, retry/replay behavior, route generation, or
 status-policy behavior.
+
+## Bounded HTTP/1.1 Service-Worker-Allowed behavior
+
+Server-side `Service-Worker-Allowed` helpers expose response metadata
+declaration and parsing through the shared protocol-owned
+`HttpServiceWorkerAllowed` type without registering service workers or
+resolving application routing policy.
+`HttpResponse::with_service_worker_allowed(value)` validates one
+`Service-Worker-Allowed` origin-relative or absolute path field value, trims
+outer whitespace, removes any existing raw `Service-Worker-Allowed` fields,
+and adds a single validated `Service-Worker-Allowed` header.
+`HttpResponse::service_worker_allowed()` parses any attached
+`Service-Worker-Allowed` header into `HttpServiceWorkerAllowed` and returns
+`Ok(None)` when the header is absent.
+
+Parsing is bounded and validation-oriented. The field value is limited to
+64 KiB and must be a non-empty origin-relative or absolute path without
+control or non-ASCII characters, interior whitespace, unsafe field-value characters, broken
+percent-encoding, absolute URIs, or network-path authority forms. Duplicate
+`Service-Worker-Allowed` fields are rejected because the helper treats the
+header as singleton response metadata. Malformed values, duplicated singleton
+fields, and oversized values return `HttpServiceWorkerAllowedParseError` from
+the helper. Raw `HttpResponse::header("Service-Worker-Allowed", ...)` values
+remain preserved exactly as ordinary response headers until a typed
+declaration helper replaces them or the typed parser is requested.
+
+These helpers are metadata-only: RTTP does not register service workers,
+evaluate service-worker scope, resolve the value against a script URL, or
+apply application routing policy from `Service-Worker-Allowed`.
 
 ## Bounded HTTP/1.1 Content-DPR behavior
 
@@ -1111,6 +1160,7 @@ scheduling, or async accept loops.
 | Vary | `HttpVary`, `HttpResponse::with_vary`, `HttpResponse::vary`, `Request::vary_selection`, and `HttpRequest::vary_selection` parse, declare, and select bounded `Vary` metadata with case-insensitive field-name handling | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | Authentication metadata | `Request::authorization`/`proxy_authorization` and `HttpRequest::authorization`/`proxy_authorization` expose one bounded opaque credential field, `Response::www_authenticate` parses bounded client response challenges, and `HttpResponse::with_www_authenticate`/`www_authenticate` declare and parse bounded `WWW-Authenticate` challenges | No credential validation, realm selection, automatic client challenge, retry, or authentication/authorization enforcement |
 | Idempotency-Key | `HttpClient::idempotency_key` validates and emits one bounded opaque `Idempotency-Key` request field through the shared protocol type, and `Request::idempotency_key`/`HttpRequest::idempotency_key` parse received fields into the same representation while preserving raw headers on errors and redacting the key from typed debug output | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
+| Sec-WebSocket-Key | `HttpClient::sec_websocket_key` validates and emits one bounded `Sec-WebSocket-Key` request field through the shared protocol type, and `Request::sec_websocket_key`/`HttpRequest::sec_websocket_key` parse received fields into the same representation while preserving raw headers on errors and redacting the nonce from typed debug output | No HTTP upgrade, `Sec-WebSocket-Accept` computation, random nonce generation, WebSocket frames, or handshake policy |
 | W3C Trace Context | `HttpClient::traceparent`/`tracestate` validate and emit bounded W3C Trace Context request metadata, and `Request::traceparent`/`tracestate` plus `HttpRequest` helpers parse received fields while preserving raw headers on errors and redacting propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |
 | W3C Baggage | `HttpClient::baggage` validates and emits bounded W3C Baggage request metadata, and `Request::baggage` plus `HttpRequest` helpers parse received fields while preserving raw headers on errors and redacting member and property values from typed debug output | No application-data interpretation, request-context storage, tracing backend, span model, or automatic propagation |
 | CDN-Loop | `HttpClient::cdn_loop` validates and emits bounded RFC 8586 `CDN-Loop` request metadata, combining an existing same-name field with the new member in wire order, and `Request::cdn_loop` plus `HttpRequest` helpers parse received fields into `HttpCdnLoop` while preserving raw headers on errors | No CDN identifier insertion, loop detection or rejection, automatic forwarding, or hop-by-hop handling |
@@ -1123,6 +1173,7 @@ scheduling, or async accept loops.
 | Sec-GPC | `HttpClient::sec_gpc`, `Request::sec_gpc`, and `HttpRequest::sec_gpc` share the bounded protocol `Sec-GPC` `1`-signal representation and preserve raw values on errors | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
 | Pragma | `HttpClient::pragma`/`pragma_no_cache`, `Request::pragma`, `HttpRequest::pragma`, `HttpResponse::with_pragma`, and `HttpResponse::pragma` share the bounded protocol `Pragma` representation across client construction, server access, server response declaration, and client response access, combining fields in wire order and preserving raw headers on errors | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |
 | Content-Location | `HttpResponse::with_content_location` declares one bounded singleton `Content-Location` header, and `HttpResponse::content_location` parses attached singleton response metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |
+| Service-Worker-Allowed | `HttpResponse::with_service_worker_allowed` declares one bounded singleton `Service-Worker-Allowed` header, and `HttpResponse::service_worker_allowed` plus client `Response::service_worker_allowed` parse attached singleton path metadata while preserving raw headers | No service-worker registration, scope evaluation, script-URL resolution, or application routing policy |
 | Content-DPR | `HttpResponse::with_content_dpr` declares one bounded singleton `Content-DPR` header, and `HttpResponse::content_dpr` plus client `Response::content_dpr` parse attached singleton decimal-ratio metadata while preserving raw headers | No image rescaling, request DPR emission, Client Hints policy, retry, or transport changes |
 | Content-Type and Content-Encoding | `HttpContentType`, `Request::content_type`, `HttpRequest::content_type`, `HttpResponse::with_content_type`, `content_type`, `HttpResponseContentEncodings`, `Request::content_encoding`, `HttpRequest::content_encoding`, `HttpResponse::with_content_encoding`, and `content_encoding` parse or declare bounded representation metadata while preserving raw headers on parse failures and replacing raw response duplicates on typed declaration | No MIME sniffing, body decoding, charset transcoding, compression/decompression, negotiation, cache policy, redirects, retry/replay, or filesystem serving |
 | Connection | `HttpConnection`, `Request::connection`, `HttpRequest::connection`, and `HttpResponse::connection` parse bounded HTTP/1 `Connection` tokens, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to hop-by-hop stripping, keep-alive/close, upgrade/h2c, or HTTP/2 rejection |
