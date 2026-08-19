@@ -6,14 +6,14 @@ use rttp::server::{
   HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
   HttpCrossOriginEmbedderPolicy, HttpCrossOriginEmbedderPolicyReportOnly,
   HttpCrossOriginOpenerPolicy, HttpCrossOriginOpenerPolicyReportOnly,
-  HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpEntityTag,
-  HttpExpectations, HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince,
-  HttpIfUnmodifiedSince, HttpMaxForwards, HttpMementoDatetime, HttpMementoDatetimeParseError,
-  HttpNel, HttpOriginTrialParseError, HttpOriginTrials, HttpPermissionsPolicy,
-  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization,
-  HttpProxyStatus, HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse,
-  HttpSaveData, HttpSecGpc, HttpSecGpcParseError, HttpServiceWorkerAllowed,
-  HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
+  HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpDepth,
+  HttpDepthParseError, HttpEntityTag, HttpExpectations, HttpIdempotencyKey,
+  HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfUnmodifiedSince, HttpMaxForwards,
+  HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNel, HttpOriginTrialParseError,
+  HttpOriginTrials, HttpPermissionsPolicy, HttpPermissionsPolicyParseError, HttpPragma,
+  HttpPragmaParseError, HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError,
+  HttpRequestAcceptCharsets, HttpResponse, HttpSaveData, HttpSecGpc, HttpSecGpcParseError,
+  HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
   HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
   HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
   HttpSunsetParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpUpgrade,
@@ -120,6 +120,9 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp_client::response::Deprecation::parse("?1").expect("Deprecation should parse");
   let _: rttp::DeprecationParseError = rttp_client::response::Deprecation::parse("true")
     .expect_err("historical Deprecation token should be rejected");
+  let depth: rttp::Depth = rttp::Depth::parse("infinity").expect("Depth should parse");
+  let _: rttp::DepthParseError =
+    rttp::Depth::parse("2").expect_err("malformed Depth should be rejected");
   let memento_datetime: rttp::MementoDatetime =
     rttp_client::response::MementoDatetime::parse("Sun, 06 Nov 1994 08:49:37 GMT")
       .expect("Memento-Datetime should parse");
@@ -294,6 +297,8 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(content_dpr.header_value(), "1.5");
   assert_eq!(deprecation, rttp::Deprecation::Boolean(true));
   assert_eq!(deprecation.header_value(), "?1");
+  assert_eq!(rttp::Depth::Infinity, depth);
+  assert_eq!("infinity", depth.header_value());
   assert_eq!(
     memento_datetime.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
@@ -784,6 +789,59 @@ fn compatibility_facade_rejects_invalid_sec_gpc_request_metadata() {
 
 #[test]
 #[cfg(feature = "client")]
+fn compatibility_facade_roundtrips_depth_request_metadata_without_policy() {
+  let (addr, handle) = spawn_representation_metadata_response_server(
+    b"HTTP/1.1 207 Multi-Status\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  );
+  let response = rttp::Http::client()
+    .method("PROPFIND")
+    .url(format!("http://{addr}/collection"))
+    .depth("INFINITY")
+    .expect("Depth should be accepted")
+    .emit()
+    .expect("client request should complete");
+  let captured_request = handle.join().expect("Depth capture server should join");
+  let captured_request_text =
+    String::from_utf8(captured_request.clone()).expect("request should be utf-8");
+
+  assert_eq!(
+    Some("infinity"),
+    header_value(&captured_request_text, "Depth")
+  );
+  assert_eq!(207, response.code());
+
+  let server_request =
+    rttp::server::HttpRequest::parse(&captured_request).expect("server request should parse");
+  let depth: HttpDepth = server_request
+    .depth()
+    .expect("server Depth should parse")
+    .expect("server Depth should be present");
+
+  assert_eq!(HttpDepth::Infinity, depth);
+  assert_eq!("infinity", depth.header_value());
+
+  let malformed = rttp::server::HttpRequest::parse(
+    b"PROPFIND /collection HTTP/1.1\r\nHost: example.test\r\nDepth: 2\r\n\r\n",
+  )
+  .expect("malformed Depth request should still parse");
+  assert!(malformed.depth().is_err());
+  assert_eq!(Some("2"), malformed.header("Depth"));
+
+  let duplicate = rttp::server::HttpRequest::parse(
+    b"PROPFIND /collection HTTP/1.1\r\nHost: example.test\r\nDepth: 0\r\ndepth: 1\r\n\r\n",
+  )
+  .expect("duplicate Depth request should still parse");
+  assert!(duplicate.depth().is_err());
+  assert_eq!(Some("0"), duplicate.header("Depth"));
+
+  assert!(
+    rttp::Depth::parse("0".repeat(64 * 1024 + 1)).is_err(),
+    "oversized Depth values must fail closed"
+  );
+}
+
+#[test]
+#[cfg(feature = "client")]
 fn client_accept_encoding_helpers_parse_through_shared_server_type() {
   let (addr, handle) = spawn_representation_metadata_response_server(
     b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
@@ -884,6 +942,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
       .expect("Proxy-Authorization should parse");
   let max_forwards: HttpMaxForwards =
     HttpMaxForwards::parse("0").expect("Max-Forwards should parse");
+  let depth: HttpDepth = HttpDepth::parse("infinity").expect("Depth should parse");
+  let depth_error: Result<HttpDepth, HttpDepthParseError> = HttpDepth::parse("2");
   let expectations: HttpExpectations =
     HttpExpectations::parse("100-continue, preview").expect("Expect should parse");
   let idempotency_key: HttpIdempotencyKey =
@@ -986,6 +1046,9 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(proxy_authorization.header_value(), "Basic cHJveHk6c2VjcmV0");
   assert_eq!(max_forwards.value(), 0);
   assert_eq!(max_forwards.header_value(), "0");
+  assert_eq!(HttpDepth::Infinity, depth);
+  assert_eq!("infinity", depth.header_value());
+  assert!(depth_error.is_err());
   assert!(expectations.expects_continue());
   assert_eq!(["preview"], expectations.unsupported());
   assert_eq!(expectations.header_value(), "100-continue, preview");

@@ -27,6 +27,7 @@ use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedder
 use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::cross_origin_opener_policy_report_only::CrossOriginOpenerPolicyReportOnly;
 use rttp_protocol::deprecation::Deprecation;
+use rttp_protocol::depth::Depth;
 use rttp_protocol::document_policy::{DocumentPolicy, DocumentPolicyParseError};
 use rttp_protocol::entity_tag::{EntityTag, IfMatch};
 use rttp_protocol::expect::Expect;
@@ -107,6 +108,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let keep_alive = KeepAlive::parse("timeout=5, max=100").expect("Keep-Alive should parse");
   let location = Location::parse("../login?next=%2Fdashboard").expect("Location should parse");
   let max_forwards = MaxForwards::parse("0").expect("Max-Forwards should parse");
+  let depth = Depth::parse("infinity").expect("Depth should parse");
   let idempotency_key = IdempotencyKey::parse("charge-2026-08-19-9f3c")
     .expect("Idempotency-Key request metadata should parse");
   let if_modified_since = IfModifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
@@ -281,6 +283,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(location.as_str(), "../login?next=%2Fdashboard");
   assert_eq!(max_forwards.value(), 0);
   assert_eq!(max_forwards.header_value(), "0");
+  assert_eq!(Depth::Infinity, depth);
+  assert_eq!("infinity", depth.header_value());
   assert_eq!(idempotency_key.as_str(), "charge-2026-08-19-9f3c");
   assert_eq!(idempotency_key.header_value(), "charge-2026-08-19-9f3c");
   assert!(!format!("{idempotency_key:?}").contains("charge-2026-08-19-9f3c"));

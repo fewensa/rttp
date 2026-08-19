@@ -2047,6 +2047,83 @@ fn manual_max_forwards_header_remains_available_as_escape_hatch() {
 }
 
 #[test]
+fn depth_helper_emits_canonical_webdav_metadata() {
+  for (value, expected) in [
+    ("0", "0"),
+    ("1", "1"),
+    ("infinity", "infinity"),
+    ("INFINITY", "infinity"),
+    (" \t1\t ", "1"),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .method("PROPFIND")
+        .url(format!("{}/collection", base_url))
+        .depth(value)
+        .expect("Depth should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+    assert_eq!(Some(expected), header_value(&request, "Depth"));
+  }
+}
+
+#[test]
+fn depth_helper_replaces_existing_fields() {
+  let request = capture_request(|base_url| {
+    client()
+      .method("PROPFIND")
+      .url(format!("{}/collection", base_url))
+      .header(("Depth", "0"))
+      .depth("infinity")
+      .expect("Depth should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(Some("infinity"), header_value(&request, "Depth"));
+}
+
+#[test]
+fn depth_helper_rejects_invalid_values_before_connecting() {
+  for value in ["", "2", "-1", "1.0", "0, 1", "infinite", "1\r\nX: y"] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .method("PROPFIND")
+        .url(format!("{}/collection", base_url))
+        .depth(value)
+        .expect_err("invalid Depth should be rejected");
+
+      assert!(error.is_builder());
+    });
+
+    assert!(
+      request.is_empty(),
+      "invalid Depth helper input should not open a socket"
+    );
+  }
+
+  let oversized = "0".repeat(64 * 1024 + 1);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .method("PROPFIND")
+      .url(format!("{}/collection", base_url))
+      .depth(oversized.as_str())
+      .expect_err("oversized Depth should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized Depth helper input should not open a socket"
+  );
+}
+
+#[test]
 fn idempotency_key_helper_emits_canonical_metadata() {
   for (value, expected) in [
     ("charge-2026-08-19-9f3c", "charge-2026-08-19-9f3c"),

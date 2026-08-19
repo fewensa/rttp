@@ -948,6 +948,17 @@ oversized (over 64 KiB), or control-byte values return a parse error while
 decrement the value, route the request, select TRACE or OPTIONS, or infer
 forwarding behavior.
 
+`HttpClient::depth()` validates and emits one WebDAV `Depth` request field
+through the shared protocol `Depth` type, replacing any existing same-name
+field before a socket is opened. `Request::depth()` and
+`HttpRequest::depth()` parse received fields into the same `HttpDepth`
+representation, returning `Ok(None)` when absent. Recognized values are the
+singleton depth values `0`, `1`, and `infinity`, bounded to 64 KiB with
+optional surrounding SP or HTAB; malformed, duplicate, oversized, and
+control-byte values are rejected while raw request headers remain available
+when the typed parser reports an error. RTTP does not traverse resources,
+select WebDAV methods, or enforce method policy.
+
 `HttpClient::idempotency_key()` validates and emits one opaque `Idempotency-Key`
 request field through the shared protocol `IdempotencyKey` type, replacing any
 existing same-name field before a socket is opened. `Request::idempotency_key()`
@@ -1312,6 +1323,7 @@ gain additional HTTP/2 header-block handling.
 | Accept-Charset | Client `accept_charset` and `accept_charset_with_q` format bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type; server `Request::accept_charset()` and `HttpRequest::accept_charset()` parse received fields into `HttpRequestAcceptCharsets` | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |
 | Sec-GPC | Client `sec_gpc` emits bounded `Sec-GPC: 1` request metadata; server `Request::sec_gpc()` and `HttpRequest::sec_gpc()` parse typed received values while preserving raw headers on errors | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
 | Upgrade-Insecure-Requests | Client `upgrade_insecure_requests` emits bounded singleton `Upgrade-Insecure-Requests: 1` request metadata; server `Request::upgrade_insecure_requests()` and `HttpRequest::upgrade_insecure_requests()` parse typed received values while preserving raw headers on errors | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
+| Depth | Client `depth` emits bounded singleton WebDAV `Depth` request metadata through the shared protocol type, replacing an existing same-name field; server `Request::depth()` and `HttpRequest::depth()` parse typed received values while preserving raw headers on errors | No resource traversal, WebDAV method selection, method-policy enforcement, retry, or forwarding policy |
 | Idempotency-Key | Client `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field; server `Request::idempotency_key()` and `HttpRequest::idempotency_key()` parse typed received values while preserving raw headers on errors, and the key is redacted from typed debug output | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | Pragma | Client `pragma`/`pragma_no_cache` and `Response::pragma` share the bounded protocol `Pragma` representation with server `Request::pragma`, `HttpRequest::pragma`, `HttpResponse::with_pragma`, and `HttpResponse::pragma` across client construction, server request access, server response construction, and client response access, combining fields in wire order and preserving raw headers on errors | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |
 | W3C Trace Context | Client `traceparent`/`tracestate` validate and emit bounded W3C Trace Context request metadata through shared protocol types; server `Request`/`HttpRequest` helpers parse received fields, preserve raw headers on errors, preserve tracestate ordering, and redact propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |
@@ -2400,6 +2412,7 @@ TLS or async accept loops.
 | Accept-Charset | `HttpRequestAcceptCharsets`, `Request::accept_charset`, and `HttpRequest::accept_charset` parse bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |
 | Sec-GPC | `Request::sec_gpc` and `HttpRequest::sec_gpc` parse bounded singleton `Sec-GPC` `1`-signal metadata and preserve raw values on errors | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
 | Upgrade-Insecure-Requests | `Request::upgrade_insecure_requests` and `HttpRequest::upgrade_insecure_requests` parse bounded singleton `Upgrade-Insecure-Requests` `1`-token metadata and preserve raw values on errors | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
+| Depth | `Request::depth` and `HttpRequest::depth` parse bounded singleton WebDAV `Depth` request metadata through the shared protocol type and preserve raw values on errors | No resource traversal, WebDAV method selection, method-policy enforcement, retry, or forwarding policy |
 | Idempotency-Key | `Request::idempotency_key` and `HttpRequest::idempotency_key` parse bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, preserve raw values on errors, and redact the key from typed debug output | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | Pragma | `HttpPragma`, `Request::pragma`, `HttpRequest::pragma`, `HttpResponse::with_pragma`, and `HttpResponse::pragma` share the bounded protocol `Pragma` representation for server request access and server response construction, combining fields in wire order and preserving raw headers on errors | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |
 | W3C Trace Context | `Request::traceparent`/`tracestate` and `HttpRequest` helpers parse bounded W3C Trace Context request metadata, preserve raw values on errors, preserve tracestate ordering, and redact propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |
