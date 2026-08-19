@@ -47,6 +47,9 @@ pub use rttp_protocol::client_hints::{
   AcceptCh as HttpAcceptCh, AcceptChParseError as HttpAcceptChParseError,
   CriticalCh as HttpCriticalCh, CriticalChParseError as HttpCriticalChParseError,
 };
+pub use rttp_protocol::content_dpr::{
+  ContentDpr as HttpContentDpr, ContentDprParseError as HttpContentDprParseError,
+};
 pub use rttp_protocol::content_encoding::{
   ContentEncoding as HttpResponseContentEncodings,
   ContentEncodingParseError as HttpContentEncodingParseError,
@@ -1502,6 +1505,20 @@ impl HttpResponse {
     Ok(self)
   }
 
+  pub fn with_content_dpr<V: AsRef<str>>(
+    mut self,
+    value: V,
+  ) -> Result<Self, HttpContentDprParseError> {
+    let content_dpr = HttpContentDpr::parse(value.as_ref())?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Content-DPR"));
+    self
+      .headers
+      .push(HttpHeader::new("Content-DPR", content_dpr.header_value()));
+    Ok(self)
+  }
+
   pub fn with_etag(mut self, entity_tag: HttpEntityTag) -> Self {
     self
       .headers
@@ -2395,6 +2412,19 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpContentLocation::parse_values(values).map(Some)
+  }
+
+  pub fn content_dpr(&self) -> Result<Option<HttpContentDpr>, HttpContentDprParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Content-DPR"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpContentDpr::parse_values(values).map(Some)
   }
 
   pub fn etag(&self) -> Result<Option<HttpEntityTag>, HttpEntityTagParseError> {

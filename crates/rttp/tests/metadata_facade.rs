@@ -1,13 +1,14 @@
 use rttp::server::{
   HttpAcceptCh, HttpAccessControlRequestMethod, HttpAccessControlRequestPrivateNetwork,
-  HttpConditionalMetadata, HttpContentLocation, HttpContentLocationParseError, HttpContentRange,
-  HttpContentRangeParseError, HttpCrossOriginEmbedderPolicy,
-  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
-  HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpEntityTag,
-  HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNel, HttpResponse, HttpSaveData,
-  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpSunsetParseError, HttpUpgrade, HttpUpgradeParseError,
+  HttpConditionalMetadata, HttpContentDpr, HttpContentDprParseError, HttpContentLocation,
+  HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
+  HttpCrossOriginEmbedderPolicy, HttpCrossOriginEmbedderPolicyReportOnly,
+  HttpCrossOriginOpenerPolicy, HttpCrossOriginResourcePolicy, HttpDeprecation,
+  HttpDeprecationParseError, HttpEntityTag, HttpMementoDatetime, HttpMementoDatetimeParseError,
+  HttpNel, HttpResponse, HttpSaveData, HttpSignature, HttpSignatureInput,
+  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
+  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
+  HttpSunsetParseError, HttpUpgrade, HttpUpgradeParseError,
 };
 use std::io::Write;
 use std::net::SocketAddr;
@@ -90,6 +91,10 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::ContentLocationParseError =
     rttp_client::response::ContentLocation::parse("not valid")
       .expect_err("invalid Content-Location should be rejected");
+  let content_dpr: rttp::ContentDpr =
+    rttp_client::response::ContentDpr::parse("1.5").expect("Content-DPR should parse");
+  let _: rttp::ContentDprParseError =
+    rttp_client::response::ContentDpr::parse("0").expect_err("zero Content-DPR should be rejected");
   let deprecation: rttp::Deprecation =
     rttp_client::response::Deprecation::parse("?1").expect("Deprecation should parse");
   let _: rttp::DeprecationParseError = rttp_client::response::Deprecation::parse("true")
@@ -192,6 +197,8 @@ fn compatibility_facade_exports_client_metadata_types() {
     content_location.header_value(),
     "../representations/current.json"
   );
+  assert_eq!(content_dpr.ratio(), 1.5);
+  assert_eq!(content_dpr.header_value(), "1.5");
   assert_eq!(deprecation, rttp::Deprecation::Boolean(true));
   assert_eq!(deprecation.header_value(), "?1");
   assert_eq!(
@@ -532,6 +539,9 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
       .expect("Content-Location should parse");
   let _: HttpContentLocationParseError = HttpContentLocation::parse("not valid")
     .expect_err("invalid Content-Location should be rejected");
+  let content_dpr: HttpContentDpr = HttpContentDpr::parse("2.0").expect("Content-DPR should parse");
+  let _: HttpContentDprParseError =
+    HttpContentDpr::parse("0").expect_err("zero Content-DPR should be rejected");
   let deprecation: HttpDeprecation =
     HttpDeprecation::parse("?1").expect("Deprecation should parse");
   let _: HttpDeprecationParseError =
@@ -550,6 +560,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     content_location.header_value(),
     "../representations/current.json"
   );
+  assert_eq!(content_dpr.ratio(), 2.0);
+  assert_eq!(content_dpr.header_value(), "2.0");
   assert_eq!(deprecation, HttpDeprecation::Boolean(true));
   assert_eq!(deprecation.header_value(), "?1");
   assert_eq!(content_range.header_value(), "bytes */10");
@@ -651,4 +663,27 @@ fn compatibility_facade_keeps_signature_metadata_in_the_server_module() {
       .header_value(),
     "sig1=:YWJj:"
   );
+}
+
+#[test]
+fn compatibility_facade_exposes_content_dpr_response_metadata() {
+  let response = HttpResponse::ok("")
+    .header("Content-DPR", "3")
+    .with_content_dpr("1.5")
+    .expect("valid Content-DPR should be accepted");
+
+  assert_eq!(
+    "1.5",
+    response
+      .content_dpr()
+      .expect("Content-DPR should parse")
+      .expect("Content-DPR should be present")
+      .header_value()
+  );
+  assert!(HttpResponse::ok("").with_content_dpr("0").is_err());
+  assert!(HttpResponse::ok("")
+    .header("Content-DPR", "1")
+    .header("Content-DPR", "2")
+    .content_dpr()
+    .is_err());
 }

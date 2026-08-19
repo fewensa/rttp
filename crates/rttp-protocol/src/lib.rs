@@ -29,6 +29,7 @@ pub mod cdn_cache_control;
 pub mod clear_site_data;
 pub mod client_hints;
 pub mod connection;
+pub mod content_dpr;
 pub mod content_encoding;
 pub mod content_language;
 pub mod content_length;
