@@ -764,6 +764,9 @@ pub(crate) fn validate_early_hints_link_value(value: &str) -> Result<&str, HttpE
       "Early Hints Link header must not be empty",
     ));
   }
+  HttpLinkValues::parse(value).map_err(|_| {
+    HttpEarlyHintsError::new("Early Hints Link header must be a valid RFC 8288 link")
+  })?;
   Ok(value)
 }
 

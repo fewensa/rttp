@@ -6,14 +6,14 @@ use rttp_client::response::{
   AuthenticationInfoParseError, Connection, ConnectionParseError, ContentRange,
   ContentRangeParseError, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly,
   CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest, EntityTag, HttpClearSiteData,
-  HttpContentLength, KeepAlive, Location, LocationParseError, Nel, NoVarySearch,
+  HttpContentLength, KeepAlive, LinkValues, Location, LocationParseError, Nel, NoVarySearch,
   NoVarySearchParams, NoVarySearchParseError, PreferenceApplied, Priority, ProxyAuthenticate,
   ProxyAuthenticateParseError, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError,
   ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Signature, SignatureInput,
   SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
-  StrictTransportSecurityParseError, Trailer, TransferEncoding, TransferEncodingParseError, Vary,
-  VaryParseError, WantContentDigest, WantReprDigest, Warning, XContentTypeOptions,
-  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  StrictTransportSecurityParseError, Trailer, TransferEncoding, TransferEncodingParseError,
+  Upgrade, UpgradeParseError, Vary, VaryParseError, WantContentDigest, WantReprDigest, Warning,
+  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentLocation, ContentLocationParseError, ReprDigest,
@@ -92,6 +92,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     TransferEncoding::parse("chunked").expect("Transfer-Encoding should parse");
   let _: TransferEncodingParseError = TransferEncoding::parse("gzip, chunked")
     .expect_err("non-sole chunked Transfer-Encoding should be rejected");
+  let upgrade = Upgrade::parse("websocket").expect("Upgrade should parse");
+  let _: UpgradeParseError = Upgrade::parse("").expect_err("empty Upgrade should be rejected");
   let alt_svc = AltSvc::parse("h3=\":443\"").expect("Alt-Svc should parse");
   let content_range = ContentRange::parse("bytes 3-6/10").expect("Content-Range should parse");
   let _: ContentRangeParseError =
@@ -174,6 +176,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(trailer.field_names(), ["x-trace"]);
   assert_eq!(connection.tokens(), ["close"]);
   assert_eq!(transfer_encoding.codings(), ["chunked"]);
+  assert_eq!(upgrade.protocols(), ["websocket"]);
   assert_eq!(alt_svc.alternatives().len(), 1);
   assert_eq!(
     ContentRange::Bytes {
@@ -262,6 +265,29 @@ fn response_facade_exports_repr_digest_metadata() {
 }
 
 #[test]
+fn response_facade_parses_upgrade_metadata() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 101 Switching Protocols\r\n",
+      "Upgrade: websocket\r\n",
+      "Upgrade: HTTP/2.0, custom\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let upgrade = response
+    .upgrade()
+    .expect("Upgrade should parse")
+    .expect("Upgrade should be present");
+
+  assert_eq!(upgrade.protocols(), ["websocket", "HTTP/2.0", "custom"]);
+}
+
+#[test]
 fn response_facade_exports_content_digest_metadata() {
   let content_digest = ContentDigest::parse("sha-256=:YWJj:").expect("Content-Digest should parse");
 
@@ -347,6 +373,37 @@ fn response_facade_parses_preference_applied_metadata() {
   assert_eq!(applied.preferences()[0].name(), "return");
   assert_eq!(applied.preferences()[0].value(), Some("minimal"));
   assert_eq!(applied.preferences()[0].parameters()[0].name(), "source");
+}
+
+#[test]
+fn response_facade_parses_link_metadata() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Link: </style.css>; rel=preload; as=style\r\n",
+      "Link: <https://cdn.example.test/app.js>; rel=modulepreload\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let links: LinkValues = response
+    .links()
+    .expect("Link should parse")
+    .expect("Link should be present");
+
+  assert_eq!(2, links.len());
+  assert_eq!("/style.css", links.values()[0].target());
+  assert_eq!(Some("preload"), links.values()[0].parameter("rel"));
+  assert_eq!(Some("style"), links.values()[0].parameter("as"));
+  assert_eq!(
+    "https://cdn.example.test/app.js",
+    links.values()[1].target()
+  );
+  assert_eq!(Some("modulepreload"), links.values()[1].parameter("rel"));
 }
 
 #[test]
