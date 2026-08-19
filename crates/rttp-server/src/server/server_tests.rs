@@ -351,6 +351,88 @@ fn request_save_data_parses_request_metadata_without_policy() {
 }
 
 #[test]
+fn request_upgrade_insecure_requests_parses_request_metadata_without_policy() {
+  let absent_raw = "GET /page HTTP/1.1\r\nHost: example.test\r\n\r\n";
+  let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
+  let absent = Request::read_next_from(&mut absent_reader)
+    .expect("absent request should parse")
+    .expect("absent request should be present");
+  assert_eq!(
+    None,
+    absent
+      .upgrade_insecure_requests()
+      .expect("missing Upgrade-Insecure-Requests should be accepted")
+  );
+  assert_eq!(None, absent.header("Upgrade-Insecure-Requests"));
+
+  let valid_raw = concat!(
+    "GET /page HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Upgrade-Insecure-Requests: 1\r\n",
+    "\r\n"
+  );
+  let mut valid_reader = BufReader::new(Cursor::new(valid_raw.as_bytes()));
+  let valid = Request::read_next_from(&mut valid_reader)
+    .expect("valid request should parse")
+    .expect("valid request should be present");
+  assert_eq!(
+    "1",
+    valid
+      .upgrade_insecure_requests()
+      .expect("Upgrade-Insecure-Requests should parse")
+      .expect("Upgrade-Insecure-Requests should be present")
+      .header_value()
+  );
+
+  let malformed_raw = concat!(
+    "GET /page HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Upgrade-Insecure-Requests: 0\r\n",
+    "\r\n"
+  );
+  let mut malformed_reader = BufReader::new(Cursor::new(malformed_raw.as_bytes()));
+  let malformed = Request::read_next_from(&mut malformed_reader)
+    .expect("malformed metadata should not reject the request frame")
+    .expect("malformed request should be present");
+  assert!(malformed.upgrade_insecure_requests().is_err());
+  assert_eq!(Some("0"), malformed.header("Upgrade-Insecure-Requests"));
+
+  let duplicate_raw = concat!(
+    "GET /page HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Upgrade-Insecure-Requests: 1\r\n",
+    "upgrade-insecure-requests: 1\r\n",
+    "\r\n"
+  );
+  let mut duplicate_reader = BufReader::new(Cursor::new(duplicate_raw.as_bytes()));
+  let duplicate = Request::read_next_from(&mut duplicate_reader)
+    .expect("duplicate metadata should not reject the request frame")
+    .expect("duplicate request should be present");
+  assert!(duplicate.upgrade_insecure_requests().is_err());
+  assert_eq!(Some("1"), duplicate.header("Upgrade-Insecure-Requests"));
+
+  let oversized = "1".repeat(64 * 1024 + 1);
+  let oversized_request = Request {
+    method: "GET".to_string(),
+    target: "/page".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("Upgrade-Insecure-Requests".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.upgrade_insecure_requests().is_err());
+  assert_eq!(
+    Some(oversized.as_str()),
+    oversized_request.header("Upgrade-Insecure-Requests")
+  );
+}
+
+#[test]
 fn request_representation_metadata_parses_without_applying_policy() {
   let absent_raw = "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n";
   let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));

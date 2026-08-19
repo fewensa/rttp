@@ -90,6 +90,10 @@ pub use rttp_protocol::transfer_encoding::{
 pub use rttp_protocol::upgrade::{
   Upgrade as HttpUpgrade, UpgradeParseError as HttpUpgradeParseError,
 };
+pub use rttp_protocol::upgrade_insecure_requests::{
+  UpgradeInsecureRequests as HttpUpgradeInsecureRequests,
+  UpgradeInsecureRequestsParseError as HttpUpgradeInsecureRequestsParseError,
+};
 pub use rttp_protocol::want_content_digest::{
   WantContentDigest as HttpWantContentDigest, WantContentDigestEntry as HttpWantContentDigestEntry,
   WantContentDigestParseError as HttpWantContentDigestParseError,
@@ -498,6 +502,18 @@ impl Request {
       return Ok(None);
     }
     HttpSaveData::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Upgrade-Insecure-Requests` request metadata without
+  /// rewriting URLs, redirecting, or enforcing Content-Security-Policy.
+  pub fn upgrade_insecure_requests(
+    &self,
+  ) -> Result<Option<HttpUpgradeInsecureRequests>, HttpUpgradeInsecureRequestsParseError> {
+    let values: Vec<&str> = self.headers_named("Upgrade-Insecure-Requests").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpUpgradeInsecureRequests::parse_values(values).map(Some)
   }
 
   /// Parses received `Host` request authority without applying virtual-host
@@ -2277,6 +2293,27 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpSaveData::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Upgrade-Insecure-Requests` request metadata without
+  /// rewriting URLs, redirecting, or enforcing Content-Security-Policy.
+  pub fn upgrade_insecure_requests(
+    &self,
+  ) -> Result<Option<HttpUpgradeInsecureRequests>, HttpUpgradeInsecureRequestsParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Upgrade-Insecure-Requests")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpUpgradeInsecureRequests::parse_values(values).map(Some)
   }
 
   /// Parses received `Accept-Encoding` request metadata without enabling
