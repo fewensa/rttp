@@ -8,6 +8,9 @@ pub use rttp_protocol::access_control_request_method::{
   AccessControlRequestMethod as HttpAccessControlRequestMethod,
   AccessControlRequestMethodParseError as HttpAccessControlRequestMethodParseError,
 };
+pub use rttp_protocol::connection::{
+  Connection as HttpConnection, ConnectionParseError as HttpConnectionParseError,
+};
 pub use rttp_protocol::cookie::{HttpCookiePair, HttpCookieParseError, HttpCookies};
 pub use rttp_protocol::fetch_metadata::{
   FetchMetadataParseError as HttpFetchMetadataParseError, SecFetchDest, SecFetchMode, SecFetchSite,
@@ -17,16 +20,36 @@ pub use rttp_protocol::forwarded::{
   Forwarded as HttpForwarded, ForwardedElement as HttpForwardedElement,
   ForwardedParameter as HttpForwardedParameter, ForwardedParseError as HttpForwardedParseError,
 };
+pub use rttp_protocol::host::{Host as HttpHost, HostParseError as HttpHostParseError};
 pub use rttp_protocol::prefer::{
   Prefer as HttpRequestPreferences, PreferParseError as HttpPreferParseError,
   Preference as HttpPreference, PreferenceKind as HttpPreferenceKind,
   PreferenceParameter as HttpPreferenceParameter,
 };
+pub use rttp_protocol::signature::{
+  Signature as HttpSignature, SignatureEntry as HttpSignatureEntry,
+  SignatureParseError as HttpSignatureParseError,
+};
+pub use rttp_protocol::signature_input::{
+  SignatureInput as HttpSignatureInput, SignatureInputBareItem as HttpSignatureInputBareItem,
+  SignatureInputComponent as HttpSignatureInputComponent,
+  SignatureInputEntry as HttpSignatureInputEntry,
+  SignatureInputParameter as HttpSignatureInputParameter,
+  SignatureInputParseError as HttpSignatureInputParseError,
+};
 pub use rttp_protocol::trailer::{
   Trailer as HttpTrailer, TrailerParseError as HttpTrailerParseError,
 };
+pub use rttp_protocol::transfer_encoding::{
+  TransferEncoding as HttpTransferEncoding,
+  TransferEncodingParseError as HttpTransferEncodingParseError,
+};
 pub use rttp_protocol::upgrade::{
   Upgrade as HttpUpgrade, UpgradeParseError as HttpUpgradeParseError,
+};
+pub use rttp_protocol::want_content_digest::{
+  WantContentDigest as HttpWantContentDigest, WantContentDigestEntry as HttpWantContentDigestEntry,
+  WantContentDigestParseError as HttpWantContentDigestParseError,
 };
 pub use rttp_protocol::want_repr_digest::{
   WantReprDigest as HttpWantReprDigest, WantReprDigestEntry as HttpWantReprDigestEntry,
@@ -387,6 +410,12 @@ impl Request {
     HttpAccessControlRequestHeaders::parse_values(values).map(Some)
   }
 
+  /// Parses received `Host` request authority without applying virtual-host
+  /// routing or scheme defaults.
+  pub fn host(&self) -> Result<Option<HttpHost>, HttpHostParseError> {
+    parse_host_values(self.headers_named("Host"))
+  }
+
   /// Parses exactly one bounded `Authorization` field as opaque typed
   /// metadata. Duplicate fields are rejected to avoid ambiguous credentials.
   pub fn authorization(&self) -> Result<Option<HttpAuthorization>, HttpAuthorizationParseError> {
@@ -454,12 +483,44 @@ impl Request {
     HttpRequestAcceptEncodings::parse_values(values).map(Some)
   }
 
+  /// Parses received `Want-Content-Digest` request metadata without selecting
+  /// an algorithm or computing a content digest.
+  pub fn want_content_digest(
+    &self,
+  ) -> Result<Option<HttpWantContentDigest>, HttpWantContentDigestParseError> {
+    parse_want_content_digest_values(self.headers_named("Want-Content-Digest"))
+  }
+
   /// Parses received `Want-Repr-Digest` request metadata without selecting an
   /// algorithm or computing a representation digest.
   pub fn want_repr_digest(
     &self,
   ) -> Result<Option<HttpWantReprDigest>, HttpWantReprDigestParseError> {
     parse_want_repr_digest_values(self.headers_named("Want-Repr-Digest"))
+  }
+
+  /// Parses received RFC 9421 `Signature` request metadata without verifying
+  /// signatures or looking up keys.
+  pub fn signature(&self) -> Result<Option<HttpSignature>, HttpSignatureParseError> {
+    parse_signature_values(self.headers_named("Signature"))
+  }
+
+  /// Parses received RFC 9421 `Signature-Input` request metadata without
+  /// verifying signatures, looking up keys, or applying cryptographic policy.
+  pub fn signature_input(
+    &self,
+  ) -> Result<Option<HttpSignatureInput>, HttpSignatureInputParseError> {
+    parse_signature_input_values(self.headers_named("Signature-Input"))
+  }
+
+  /// Parses received `Upgrade` protocol metadata without changing handoff
+  /// validation or interpreting the upgraded protocol.
+  pub fn upgrade(&self) -> Result<Option<HttpUpgrade>, HttpUpgradeParseError> {
+    let values: Vec<&str> = self.headers_named("Upgrade").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpUpgrade::parse_values(values).map(Some)
   }
 
   /// Parses received `Content-Type` representation metadata without sniffing
@@ -521,6 +582,28 @@ impl Request {
     HttpRequestTe::parse_values(values).map(Some)
   }
 
+  /// Parses retained HTTP/1 `Connection` header metadata without changing
+  /// keep-alive, hop-by-hop stripping, or HTTP/2 rejection.
+  pub fn connection(&self) -> Result<Option<HttpConnection>, HttpConnectionParseError> {
+    let values: Vec<&str> = self.headers_named("Connection").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpConnection::parse_values(values).map(Some)
+  }
+
+  /// Parses retained `Transfer-Encoding` framing metadata without changing
+  /// request body framing or HTTP/2 decode.
+  pub fn transfer_encoding(
+    &self,
+  ) -> Result<Option<HttpTransferEncoding>, HttpTransferEncodingParseError> {
+    let values: Vec<&str> = self.headers_named("Transfer-Encoding").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpTransferEncoding::parse_values(values).map(Some)
+  }
+
   /// Parses announced trailer field names without waiting for or exposing a
   /// trailer block.
   pub fn trailer_header(&self) -> Result<Option<HttpTrailer>, HttpTrailerParseError> {
@@ -529,16 +612,6 @@ impl Request {
       return Ok(None);
     }
     HttpTrailer::parse_values(values).map(Some)
-  }
-
-  /// Parses received `Upgrade` protocol metadata without changing handoff
-  /// validation or interpreting the upgraded protocol.
-  pub fn upgrade(&self) -> Result<Option<HttpUpgrade>, HttpUpgradeParseError> {
-    let values: Vec<&str> = self.headers_named("Upgrade").collect();
-    if values.is_empty() {
-      return Ok(None);
-    }
-    HttpUpgrade::parse_values(values).map(Some)
   }
 
   pub fn accept(&self) -> Result<Option<HttpAccept>, HttpAcceptParseError> {
@@ -1084,6 +1157,16 @@ fn parse_prefer_values<'a>(
   HttpRequestPreferences::parse_values(values).map(Some)
 }
 
+fn parse_want_content_digest_values<'a>(
+  values: impl IntoIterator<Item = &'a str>,
+) -> Result<Option<HttpWantContentDigest>, HttpWantContentDigestParseError> {
+  let values: Vec<&str> = values.into_iter().collect();
+  if values.is_empty() {
+    return Ok(None);
+  }
+  HttpWantContentDigest::parse_values(values).map(Some)
+}
+
 fn parse_want_repr_digest_values<'a>(
   values: impl IntoIterator<Item = &'a str>,
 ) -> Result<Option<HttpWantReprDigest>, HttpWantReprDigestParseError> {
@@ -1092,6 +1175,36 @@ fn parse_want_repr_digest_values<'a>(
     return Ok(None);
   }
   HttpWantReprDigest::parse_values(values).map(Some)
+}
+
+fn parse_signature_values<'a>(
+  values: impl IntoIterator<Item = &'a str>,
+) -> Result<Option<HttpSignature>, HttpSignatureParseError> {
+  let values: Vec<&str> = values.into_iter().collect();
+  if values.is_empty() {
+    return Ok(None);
+  }
+  HttpSignature::parse_values(values).map(Some)
+}
+
+fn parse_signature_input_values<'a>(
+  values: impl IntoIterator<Item = &'a str>,
+) -> Result<Option<HttpSignatureInput>, HttpSignatureInputParseError> {
+  let values: Vec<&str> = values.into_iter().collect();
+  if values.is_empty() {
+    return Ok(None);
+  }
+  HttpSignatureInput::parse_values(values).map(Some)
+}
+
+fn parse_host_values<'a>(
+  values: impl IntoIterator<Item = &'a str>,
+) -> Result<Option<HttpHost>, HttpHostParseError> {
+  let values: Vec<&str> = values.into_iter().collect();
+  if values.is_empty() {
+    return Ok(None);
+  }
+  HttpHost::parse_values(values).map(Some)
 }
 impl HttpMaxForwardsParseError {
   fn new(message: impl Into<String>) -> Self {
@@ -2145,6 +2258,18 @@ impl HttpRequest {
     HttpRequestCacheControl::parse_values(values).map(Some)
   }
 
+  /// Parses received `Host` request authority without applying virtual-host
+  /// routing or scheme defaults.
+  pub fn host(&self) -> Result<Option<HttpHost>, HttpHostParseError> {
+    parse_host_values(
+      self
+        .headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("Host"))
+        .map(|header| header.value.as_str()),
+    )
+  }
+
   /// Parses exactly one bounded `Authorization` field as opaque typed
   /// metadata. Duplicate fields are rejected to avoid ambiguous credentials.
   pub fn authorization(&self) -> Result<Option<HttpAuthorization>, HttpAuthorizationParseError> {
@@ -2286,6 +2411,20 @@ impl HttpRequest {
     HttpRequestAcceptEncodings::parse_values(values).map(Some)
   }
 
+  /// Parses received `Want-Content-Digest` request metadata without selecting
+  /// an algorithm or computing a content digest.
+  pub fn want_content_digest(
+    &self,
+  ) -> Result<Option<HttpWantContentDigest>, HttpWantContentDigestParseError> {
+    parse_want_content_digest_values(
+      self
+        .headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("Want-Content-Digest"))
+        .map(|header| header.value.as_str()),
+    )
+  }
+
   /// Parses received `Want-Repr-Digest` request metadata without selecting an
   /// algorithm or computing a representation digest.
   pub fn want_repr_digest(
@@ -2298,6 +2437,47 @@ impl HttpRequest {
         .filter(|header| header.name.eq_ignore_ascii_case("Want-Repr-Digest"))
         .map(|header| header.value.as_str()),
     )
+  }
+
+  /// Parses received RFC 9421 `Signature` request metadata without verifying
+  /// signatures or looking up keys.
+  pub fn signature(&self) -> Result<Option<HttpSignature>, HttpSignatureParseError> {
+    parse_signature_values(
+      self
+        .headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("Signature"))
+        .map(|header| header.value.as_str()),
+    )
+  }
+
+  /// Parses received RFC 9421 `Signature-Input` request metadata without
+  /// verifying signatures, looking up keys, or applying cryptographic policy.
+  pub fn signature_input(
+    &self,
+  ) -> Result<Option<HttpSignatureInput>, HttpSignatureInputParseError> {
+    parse_signature_input_values(
+      self
+        .headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("Signature-Input"))
+        .map(|header| header.value.as_str()),
+    )
+  }
+
+  /// Parses received `Upgrade` protocol metadata without changing handoff
+  /// validation or interpreting the upgraded protocol.
+  pub fn upgrade(&self) -> Result<Option<HttpUpgrade>, HttpUpgradeParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Upgrade"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpUpgrade::parse_values(values).map(Some)
   }
 
   /// Parses received `Content-Type` representation metadata without sniffing
@@ -2383,6 +2563,38 @@ impl HttpRequest {
     HttpRequestTe::parse_values(values).map(Some)
   }
 
+  /// Parses retained HTTP/1 `Connection` header metadata without changing
+  /// keep-alive, hop-by-hop stripping, or HTTP/2 rejection.
+  pub fn connection(&self) -> Result<Option<HttpConnection>, HttpConnectionParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Connection"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpConnection::parse_values(values).map(Some)
+  }
+
+  /// Parses retained `Transfer-Encoding` framing metadata without changing
+  /// request body framing or HTTP/2 decode.
+  pub fn transfer_encoding(
+    &self,
+  ) -> Result<Option<HttpTransferEncoding>, HttpTransferEncodingParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Transfer-Encoding"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpTransferEncoding::parse_values(values).map(Some)
+  }
+
   /// Parses announced trailer field names without waiting for or exposing a
   /// trailer block.
   pub fn trailer_header(&self) -> Result<Option<HttpTrailer>, HttpTrailerParseError> {
@@ -2396,21 +2608,6 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpTrailer::parse_values(values).map(Some)
-  }
-
-  /// Parses received `Upgrade` protocol metadata without changing handoff
-  /// validation or interpreting the upgraded protocol.
-  pub fn upgrade(&self) -> Result<Option<HttpUpgrade>, HttpUpgradeParseError> {
-    let values: Vec<&str> = self
-      .headers
-      .iter()
-      .filter(|header| header.name.eq_ignore_ascii_case("Upgrade"))
-      .map(|header| header.value.as_str())
-      .collect();
-    if values.is_empty() {
-      return Ok(None);
-    }
-    HttpUpgrade::parse_values(values).map(Some)
   }
 
   pub fn accept(&self) -> Result<Option<HttpAccept>, HttpAcceptParseError> {

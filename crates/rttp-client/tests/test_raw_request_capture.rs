@@ -162,40 +162,6 @@ fn outbound_trailers_reject_untrimmed_invalid_bytes() {
   }
 }
 
-#[test]
-fn outbound_upgrade_protocols_emit_validated_upgrade_metadata() {
-  let request = capture_request(|base_url| {
-    client()
-      .get()
-      .url(format!("{}/upgrade", base_url))
-      .upgrade_protocols(["websocket", "HTTP/2.0"])
-      .expect("valid Upgrade protocols should be accepted")
-      .emit()
-      .expect("request should be sent");
-  });
-  let request = request_text(&request);
-
-  assert_eq!(
-    header_value(&request, "Upgrade"),
-    Some("websocket, HTTP/2.0")
-  );
-  assert_ne!(header_value(&request, "Connection"), Some("Upgrade"));
-}
-
-#[test]
-fn outbound_upgrade_protocols_reject_invalid_values_before_connecting() {
-  let request = capture_optional_request(|base_url| {
-    let error = client()
-      .get()
-      .url(format!("{}/invalid-upgrade", base_url))
-      .upgrade_protocols(["web socket"])
-      .expect_err("invalid Upgrade protocol must be rejected");
-    assert!(error.is_builder());
-  });
-
-  assert!(request.is_empty(), "invalid Upgrade must not open a socket");
-}
-
 #[cfg(feature = "async")]
 #[test]
 fn async_outbound_headers_are_rejected_before_connecting() {
@@ -667,6 +633,58 @@ fn want_digest_helpers_reject_invalid_or_excessive_values_before_connecting() {
   assert!(
     request.is_empty(),
     "excessive digest preference helper input should not open a socket"
+  );
+}
+
+#[test]
+fn signature_helpers_emit_canonical_fields_and_reject_malformed_input_before_connecting() {
+  let request = capture_request(|base_url| {
+    client()
+      .post()
+      .url(format!("{}/signed", base_url))
+      .signature_input(
+        r#"sig1=("@method" "@authority" "@path");created=1618884473;keyid="test-key""#,
+      )
+      .expect("Signature-Input should be accepted")
+      .signature("sig1=:YWJj:")
+      .expect("Signature should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some(r#"sig1=("@method" "@authority" "@path");created=1618884473;keyid="test-key""#),
+    header_value(&request, "Signature-Input")
+  );
+  assert_eq!(Some("sig1=:YWJj:"), header_value(&request, "Signature"));
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    assert!(client
+      .post()
+      .url(format!("{}/signed", base_url))
+      .signature("not-a-signature")
+      .expect_err("malformed Signature should be rejected")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "malformed Signature helper input should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    assert!(client
+      .post()
+      .url(format!("{}/signed", base_url))
+      .signature_input("not-an-input")
+      .expect_err("malformed Signature-Input should be rejected")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "malformed Signature-Input helper input should not open a socket"
   );
 }
 

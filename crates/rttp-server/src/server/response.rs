@@ -51,6 +51,11 @@ pub use rttp_protocol::digest::{
   Digest as HttpDigest, DigestEntry as HttpDigestEntry, DigestParseError as HttpDigestParseError,
   ReprDigest as HttpReprDigest, ReprDigestEntry as HttpReprDigestEntry,
 };
+pub use rttp_protocol::no_vary_search::{
+  NoVarySearch as HttpNoVarySearch, NoVarySearchExtension as HttpNoVarySearchExtension,
+  NoVarySearchParams as HttpNoVarySearchParams,
+  NoVarySearchParseError as HttpNoVarySearchParseError,
+};
 pub use rttp_protocol::priority::{
   Priority as HttpPriority, PriorityExtension as HttpPriorityExtension,
   PriorityParseError as HttpPriorityParseError,
@@ -697,6 +702,44 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `No-Vary-Search` response metadata without applying
+  /// cache-key or URL-normalization policy.
+  pub fn with_no_vary_search<V: AsRef<str>>(
+    mut self,
+    value: V,
+  ) -> Result<Self, HttpNoVarySearchParseError> {
+    let no_vary_search = HttpNoVarySearch::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("No-Vary-Search"));
+    self.headers.push(HttpHeader::new(
+      "No-Vary-Search",
+      no_vary_search.header_value(),
+    ));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Upgrade` response metadata without changing
+  /// handoff behavior or adding `Connection: Upgrade`.
+  pub fn with_upgrade<I, P>(mut self, protocols: I) -> Result<Self, HttpUpgradeParseError>
+  where
+    I: IntoIterator<Item = P>,
+    P: AsRef<str>,
+  {
+    let protocols: Vec<String> = protocols
+      .into_iter()
+      .map(|protocol| protocol.as_ref().to_string())
+      .collect();
+    let upgrade = HttpUpgrade::parse_values(protocols.iter().map(String::as_str))?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Upgrade"));
+    self
+      .headers
+      .push(HttpHeader::new("Upgrade", upgrade.header_value()));
+    Ok(self)
+  }
+
   pub fn with_allow<I, M>(mut self, methods: I) -> Result<Self, HttpAllowParseError>
   where
     I: IntoIterator<Item = M>,
@@ -722,27 +765,6 @@ impl HttpResponse {
       "Content-Language",
       content_languages.header_value(),
     ));
-    Ok(self)
-  }
-
-  /// Validates and replaces `Upgrade` response metadata without changing
-  /// handoff behavior or adding `Connection: Upgrade`.
-  pub fn with_upgrade<I, P>(mut self, protocols: I) -> Result<Self, HttpUpgradeParseError>
-  where
-    I: IntoIterator<Item = P>,
-    P: AsRef<str>,
-  {
-    let protocols: Vec<String> = protocols
-      .into_iter()
-      .map(|protocol| protocol.as_ref().to_string())
-      .collect();
-    let upgrade = HttpUpgrade::parse_values(protocols.iter().map(String::as_str))?;
-    self
-      .headers
-      .retain(|header| !header.name.eq_ignore_ascii_case("Upgrade"));
-    self
-      .headers
-      .push(HttpHeader::new("Upgrade", upgrade.header_value()));
     Ok(self)
   }
 
@@ -1074,6 +1096,36 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces RFC 9421 `Signature` response metadata without
+  /// signing or verifying.
+  pub fn with_signature(mut self, value: impl AsRef<str>) -> Result<Self, HttpSignatureParseError> {
+    let signature = HttpSignature::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Signature"));
+    self
+      .headers
+      .push(HttpHeader::new("Signature", signature.header_value()));
+    Ok(self)
+  }
+
+  /// Validates and replaces RFC 9421 `Signature-Input` response metadata
+  /// without signing, verifying, or applying cryptographic policy.
+  pub fn with_signature_input(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpSignatureInputParseError> {
+    let signature_input = HttpSignatureInput::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Signature-Input"));
+    self.headers.push(HttpHeader::new(
+      "Signature-Input",
+      signature_input.header_value(),
+    ));
+    Ok(self)
+  }
+
   /// Validates and replaces HTTP `Priority` response metadata.
   pub fn with_priority(mut self, value: impl AsRef<str>) -> Result<Self, HttpPriorityParseError> {
     let priority = HttpPriority::parse(value)?;
@@ -1347,21 +1399,6 @@ impl HttpResponse {
       .map(|trailer| trailer.value.as_str())
   }
 
-  /// Parses `Upgrade` response metadata without changing socket handoff
-  /// behavior or interpreting the upgraded protocol.
-  pub fn upgrade(&self) -> Result<Option<HttpUpgrade>, HttpUpgradeParseError> {
-    let values: Vec<&str> = self
-      .headers
-      .iter()
-      .filter(|header| header.name.eq_ignore_ascii_case("Upgrade"))
-      .map(|header| header.value.as_str())
-      .collect();
-    if values.is_empty() {
-      return Ok(None);
-    }
-    HttpUpgrade::parse_values(values).map(Some)
-  }
-
   pub fn cache_control(
     &self,
   ) -> Result<Option<HttpResponseCacheControl>, HttpCacheControlParseError> {
@@ -1390,6 +1427,36 @@ impl HttpResponse {
     HttpVary::parse_values(values).map(Some)
   }
 
+  /// Parses attached `No-Vary-Search` metadata without changing raw headers,
+  /// cache keys, URLs, or response selection policy.
+  pub fn no_vary_search(&self) -> Result<Option<HttpNoVarySearch>, HttpNoVarySearchParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("No-Vary-Search"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpNoVarySearch::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Upgrade` response metadata without changing socket
+  /// handoff behavior or interpreting the upgraded protocol.
+  pub fn upgrade(&self) -> Result<Option<HttpUpgrade>, HttpUpgradeParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Upgrade"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpUpgrade::parse_values(values).map(Some)
+  }
+
   /// Parses `Link` response metadata without enabling preload, redirects,
   /// caching, or fetch scheduling.
   pub fn links(&self) -> Result<Option<HttpLinkValues>, HttpLinkParseError> {
@@ -1416,6 +1483,21 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpAllowedMethods::parse_values(values).map(Some)
+  }
+
+  /// Parses attached HTTP/1 `Connection` header metadata without changing
+  /// keep-alive, hop-by-hop stripping, or HTTP/2 rejection.
+  pub fn connection(&self) -> Result<Option<HttpConnection>, HttpConnectionParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Connection"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpConnection::parse_values(values).map(Some)
   }
 
   pub fn content_language(
@@ -1752,6 +1834,38 @@ impl HttpResponse {
   /// Parses attached `Repr-Digest` metadata without changing raw headers.
   pub fn repr_digest(&self) -> Result<Option<HttpReprDigest>, HttpDigestParseError> {
     self.digest_field("Repr-Digest")
+  }
+
+  /// Parses attached RFC 9421 `Signature` metadata without changing raw
+  /// headers or verifying signatures.
+  pub fn signature(&self) -> Result<Option<HttpSignature>, HttpSignatureParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Signature"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSignature::parse_values(values).map(Some)
+  }
+
+  /// Parses attached RFC 9421 `Signature-Input` metadata without changing raw
+  /// headers or applying cryptographic policy.
+  pub fn signature_input(
+    &self,
+  ) -> Result<Option<HttpSignatureInput>, HttpSignatureInputParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Signature-Input"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSignatureInput::parse_values(values).map(Some)
   }
 
   fn digest_field(&self, name: &str) -> Result<Option<HttpDigest>, HttpDigestParseError> {

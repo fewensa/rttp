@@ -8,12 +8,18 @@ use url::Url;
 use crate::error;
 use crate::response::raw_response::RawResponse;
 use crate::response::AltSvc;
+use crate::response::Connection;
+use crate::response::ContentDigest;
 use crate::response::Digest;
+use crate::response::NoVarySearch;
 use crate::response::Priority;
 use crate::response::ProxyAuthenticationInfo;
 use crate::response::ReprDigest;
 use crate::response::ServerTiming;
+use crate::response::Signature;
+use crate::response::SignatureInput;
 use crate::response::Trailer;
+use crate::response::TransferEncoding;
 use crate::response::Upgrade;
 use crate::response::Warning;
 use crate::response::WwwAuthenticate;
@@ -583,6 +589,30 @@ impl Response {
     ContentEncoding::parse_values(values.into_iter().map(String::as_str)).map(Some)
   }
 
+  /// Parses retained HTTP/1 `Connection` header metadata without changing
+  /// keep-alive, hop-by-hop stripping, or HTTP/2 rejection.
+  pub fn connection(&self) -> error::Result<Option<Connection>> {
+    let values = self.header_values("connection");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Connection::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses retained `Transfer-Encoding` framing metadata without changing
+  /// HTTP/1 body framing or HTTP/2 decode.
+  pub fn transfer_encoding(&self) -> error::Result<Option<TransferEncoding>> {
+    let values = self.header_values("transfer-encoding");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    TransferEncoding::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
   /// Parses all `WWW-Authenticate` fields as bounded authentication challenge metadata.
   pub fn www_authenticate(&self) -> error::Result<Option<WwwAuthenticate>> {
     let values = self.header_values("www-authenticate");
@@ -611,9 +641,39 @@ impl Response {
     self.digest_field("content-digest")
   }
 
+  /// Parses all `Content-Digest` fields as bounded response metadata without
+  /// verifying hashes or selecting an algorithm.
+  pub fn content_digest(&self) -> error::Result<Option<ContentDigest>> {
+    self.digest_field("content-digest")
+  }
+
   /// Parses all `Repr-Digest` fields as bounded response metadata.
   pub fn repr_digest(&self) -> error::Result<Option<ReprDigest>> {
     self.digest_field("repr-digest")
+  }
+
+  /// Parses all `Signature` fields as bounded RFC 9421 metadata without
+  /// verifying signatures or looking up keys.
+  pub fn signature(&self) -> error::Result<Option<Signature>> {
+    let values = self.header_values("signature");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Signature::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses all `Signature-Input` fields as bounded RFC 9421 metadata without
+  /// verifying signatures or applying cryptographic policy.
+  pub fn signature_input(&self) -> error::Result<Option<SignatureInput>> {
+    let values = self.header_values("signature-input");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    SignatureInput::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   fn digest_field(&self, name: &str) -> error::Result<Option<Digest>> {
@@ -648,6 +708,18 @@ impl Response {
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
+  /// Parses `No-Vary-Search` response metadata without changing cache keys,
+  /// normalizing URLs, or applying navigation/cache policy.
+  pub fn no_vary_search(&self) -> error::Result<Option<NoVarySearch>> {
+    let values = self.header_values("no-vary-search");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    NoVarySearch::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
   /// Parses all `Warning` fields as bounded RFC 7234 warning-value metadata.
   /// This does not change cache freshness, stale-response handling, or
   /// response-acceptance policy.
@@ -669,6 +741,18 @@ impl Response {
       return Ok(None);
     }
     AltSvc::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Upgrade` response metadata without changing socket
+  /// handoff behavior or interpreting the upgraded protocol.
+  pub fn upgrade(&self) -> error::Result<Option<Upgrade>> {
+    let values = self.header_values("upgrade");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Upgrade::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
@@ -755,18 +839,6 @@ impl Response {
       return Ok(None);
     }
     Trailer::parse_values(values.into_iter().map(String::as_str))
-      .map(Some)
-      .map_err(|error| error::bad_response(error.to_string()))
-  }
-
-  /// Parses bounded `Upgrade` response metadata without changing socket
-  /// handoff behavior or interpreting the upgraded protocol.
-  pub fn upgrade(&self) -> error::Result<Option<Upgrade>> {
-    let values = self.header_values("upgrade");
-    if values.is_empty() {
-      return Ok(None);
-    }
-    Upgrade::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|error| error::bad_response(error.to_string()))
   }

@@ -13,8 +13,9 @@ use rttp_protocol::fetch_metadata::{SecFetchDest, SecFetchMode, SecFetchSite, Se
 use rttp_protocol::forwarded::{Forwarded, MAX_FORWARDED_VALUE_BYTES};
 use rttp_protocol::origin::Origin;
 use rttp_protocol::priority::Priority;
+use rttp_protocol::signature::Signature;
+use rttp_protocol::signature_input::SignatureInput;
 use rttp_protocol::trailer::Trailer;
-use rttp_protocol::upgrade::Upgrade;
 use std::io;
 
 #[derive(Debug)]
@@ -261,22 +262,6 @@ impl HttpClient {
     Ok(self.header(Header::new("Trailer", trailer.header_value())))
   }
 
-  /// Set bounded `Upgrade` protocol metadata without changing connection
-  /// handoff behavior or adding `Connection: Upgrade`.
-  pub fn upgrade_protocols<I, S>(&mut self, protocols: I) -> error::Result<&mut Self>
-  where
-    I: IntoIterator<Item = S>,
-    S: AsRef<str>,
-  {
-    let protocols: Vec<String> = protocols
-      .into_iter()
-      .map(|protocol| protocol.as_ref().to_string())
-      .collect();
-    let upgrade = Upgrade::parse_values(protocols.iter().map(String::as_str))
-      .map_err(|error| error::builder_with_message(error.to_string()))?;
-    Ok(self.header(Header::new("Upgrade", upgrade.header_value())))
-  }
-
   /// Add request cookie
   pub fn cookie<S: AsRef<str>>(&mut self, cookie: S) -> &mut Self {
     self.header(("Cookie", cookie.as_ref()))
@@ -349,6 +334,29 @@ impl HttpClient {
     Ok(self.header(Header::new(
       "Access-Control-Request-Method",
       method.header_value(),
+    )))
+  }
+
+  /// Set bounded RFC 9421 `Signature` request metadata.
+  ///
+  /// This validates and replaces one `Signature` field. It does not sign,
+  /// verify, or look up keys.
+  pub fn signature<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let signature = Signature::parse(value)
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new("Signature", signature.header_value())))
+  }
+
+  /// Set bounded RFC 9421 `Signature-Input` request metadata.
+  ///
+  /// This validates and replaces one `Signature-Input` field. It does not
+  /// sign, verify, look up keys, or apply cryptographic policy.
+  pub fn signature_input<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let signature_input = SignatureInput::parse(value)
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Signature-Input",
+      signature_input.header_value(),
     )))
   }
 

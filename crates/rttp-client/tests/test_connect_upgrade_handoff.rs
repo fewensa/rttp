@@ -85,15 +85,6 @@ fn upgrade_returns_socket_after_101_and_does_not_parse_upgraded_bytes() {
     Some(&"websocket".to_string()),
     upgraded.response().header_value("Upgrade")
   );
-  assert_eq!(
-    upgraded
-      .response()
-      .upgrade()
-      .expect("Upgrade should parse")
-      .expect("Upgrade should be present")
-      .protocols(),
-    ["websocket"]
-  );
   let mut server_bytes = [0u8; 12];
   upgraded
     .stream_mut()
