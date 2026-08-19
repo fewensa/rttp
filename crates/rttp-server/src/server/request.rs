@@ -17,6 +17,9 @@ pub use rttp_protocol::connection::{
 };
 pub use rttp_protocol::content_length::HttpContentLength;
 pub use rttp_protocol::cookie::{HttpCookiePair, HttpCookieParseError, HttpCookies};
+pub use rttp_protocol::entity_tag::{
+  EntityTag as HttpEntityTag, EntityTagParseError as HttpEntityTagParseError,
+};
 pub use rttp_protocol::fetch_metadata::{
   FetchMetadataParseError as HttpFetchMetadataParseError, SecFetchDest, SecFetchMode, SecFetchSite,
   SecFetchUser,
@@ -1692,73 +1695,6 @@ impl HttpConditionalMetadata {
   }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HttpEntityTag {
-  pub(crate) weak: bool,
-  pub(crate) opaque_tag: String,
-}
-
-impl HttpEntityTag {
-  pub fn strong<S: AsRef<str>>(opaque_tag: S) -> Self {
-    Self::new(false, opaque_tag)
-  }
-
-  pub fn weak<S: AsRef<str>>(opaque_tag: S) -> Self {
-    Self::new(true, opaque_tag)
-  }
-
-  pub fn parse<S: AsRef<str>>(value: S) -> Result<Self, HttpEntityTagParseError> {
-    parse_entity_tag(value.as_ref().trim()).ok_or(HttpEntityTagParseError)
-  }
-
-  pub fn is_weak(&self) -> bool {
-    self.weak
-  }
-
-  pub fn opaque_tag(&self) -> &str {
-    &self.opaque_tag
-  }
-
-  pub fn header_value(&self) -> String {
-    let mut value = String::new();
-    if self.weak {
-      value.push_str("W/");
-    }
-    value.push('"');
-    value.push_str(&self.opaque_tag);
-    value.push('"');
-    value
-  }
-
-  pub(crate) fn new<S: AsRef<str>>(weak: bool, opaque_tag: S) -> Self {
-    let opaque_tag = opaque_tag.as_ref();
-    assert_valid_entity_tag_opaque_tag(opaque_tag);
-    Self {
-      weak,
-      opaque_tag: opaque_tag.to_string(),
-    }
-  }
-
-  pub(crate) fn strong_matches(&self, other: &Self) -> bool {
-    !self.weak && !other.weak && self.opaque_tag == other.opaque_tag
-  }
-
-  pub(crate) fn weak_matches(&self, other: &Self) -> bool {
-    self.opaque_tag == other.opaque_tag
-  }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct HttpEntityTagParseError;
-
-impl fmt::Display for HttpEntityTagParseError {
-  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    formatter.write_str("invalid entity tag")
-  }
-}
-
-impl Error for HttpEntityTagParseError {}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HttpConditionalRequestOutcome {
   Proceed,
@@ -1977,7 +1913,9 @@ impl EntityTagValidatorList {
 
     let mut validators = Vec::new();
     for part in value.split(',') {
-      validators.push(EntityTagValidator::Tag(parse_entity_tag(part.trim())?));
+      validators.push(EntityTagValidator::Tag(
+        HttpEntityTag::parse(part.trim()).ok()?,
+      ));
     }
     if validators.is_empty() {
       None
@@ -1994,35 +1932,6 @@ impl IntoIterator for EntityTagValidatorList {
   fn into_iter(self) -> Self::IntoIter {
     self.validators.into_iter()
   }
-}
-
-pub(crate) fn parse_entity_tag(value: &str) -> Option<HttpEntityTag> {
-  let (weak, value) = if let Some(rest) = value.strip_prefix("W/") {
-    (true, rest)
-  } else {
-    (false, value)
-  };
-  let opaque_tag = value.strip_prefix('"')?.strip_suffix('"')?;
-  if !is_valid_entity_tag_opaque_tag(opaque_tag) {
-    return None;
-  }
-  Some(HttpEntityTag {
-    weak,
-    opaque_tag: opaque_tag.to_string(),
-  })
-}
-
-pub(crate) fn assert_valid_entity_tag_opaque_tag(opaque_tag: &str) {
-  assert!(
-    is_valid_entity_tag_opaque_tag(opaque_tag),
-    "entity tag opaque value must be valid for an HTTP ETag header"
-  );
-}
-
-pub(crate) fn is_valid_entity_tag_opaque_tag(opaque_tag: &str) -> bool {
-  opaque_tag
-    .bytes()
-    .all(|byte| matches!(byte, b'\x21' | b'\x23'..=b'\x7e' | b'\x80'..=b'\xff'))
 }
 
 const MAX_ACCEPT_LANGUAGE_VALUE_BYTES: usize = 64 * 1024;

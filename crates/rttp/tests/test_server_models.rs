@@ -2041,6 +2041,73 @@ fn response_content_location_helper_parses_attached_singleton_header() {
 }
 
 #[test]
+fn response_etag_helper_declares_and_parses_singleton_metadata() {
+  let absent = HttpResponse::ok("body");
+  assert_eq!(None, absent.etag().expect("absent ETag should parse"));
+
+  let response = HttpResponse::ok("body")
+    .header("ETag", "\"old\"")
+    .with_etag(HttpEntityTag::weak("asset-v7"));
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nETag: W/\"asset-v7\"\r\n"));
+  assert_eq!(1, serialized.matches("\r\nETag: ").count());
+  assert_eq!(
+    Some(HttpEntityTag::weak("asset-v7")),
+    response.etag().expect("ETag should parse")
+  );
+
+  let response = HttpResponse::ok("body").header("ETag", "\"asset-v7\"");
+  assert_eq!(
+    Some(HttpEntityTag::strong("asset-v7")),
+    response.etag().expect("ETag should parse")
+  );
+}
+
+#[test]
+fn response_etag_helper_rejects_malformed_duplicate_and_oversized_values_without_losing_raw_headers(
+) {
+  for value in ["abc", "W/abc", "\"bad space\""] {
+    let response = HttpResponse::ok("body").header("ETag", value);
+    let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+    assert!(
+      response.etag().is_err(),
+      "ETag helper should reject {value:?}"
+    );
+    assert!(
+      serialized.contains(&format!("\r\nETag: {value}\r\n")),
+      "raw ETag header should be preserved"
+    );
+  }
+
+  let duplicate = HttpResponse::ok("body")
+    .header("ETag", "\"one\"")
+    .header("etag", "W/\"two\"");
+  let serialized = String::from_utf8(duplicate.to_bytes()).expect("response is UTF-8");
+
+  assert!(
+    duplicate.etag().is_err(),
+    "ETag helper should reject duplicate singleton headers"
+  );
+  assert!(serialized.contains("\r\nETag: \"one\"\r\n"));
+  assert!(serialized.contains("\r\netag: W/\"two\"\r\n"));
+
+  let oversized = format!("\"{}\"", "a".repeat(64 * 1024));
+  let response = HttpResponse::ok("body").header("ETag", &oversized);
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(
+    response.etag().is_err(),
+    "ETag helper should reject oversized values"
+  );
+  assert!(
+    serialized.contains(&format!("\r\nETag: {oversized}\r\n")),
+    "raw oversized ETag header should be preserved"
+  );
+}
+
+#[test]
 fn content_location_helper_rejects_empty_control_duplicate_and_oversized_values() {
   for value in [
     "",

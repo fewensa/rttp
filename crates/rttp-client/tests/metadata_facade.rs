@@ -5,17 +5,17 @@ use rttp_client::response::{
   AuthenticationInfo, AuthenticationInfoParseError, Connection, ConnectionParseError, ContentRange,
   ContentRangeParseError, ContentSecurityPolicy, ContentSecurityPolicyParseError,
   CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy,
-  CrossOriginResourcePolicy, Digest, HttpClearSiteData, KeepAlive, Location, LocationParseError,
-  Nel, NoVarySearch, NoVarySearchParams, NoVarySearchParseError, PreferenceApplied, Priority,
-  ProxyAuthenticate, ProxyAuthenticateParseError, ProxyAuthenticationInfo,
-  ProxyAuthenticationInfoParseError, ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Signature,
-  SignatureInput, SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
-  StrictTransportSecurityParseError, Trailer, TransferEncoding, TransferEncodingParseError, Vary,
-  VaryParseError, WantContentDigest, WantReprDigest, Warning, XContentTypeOptions,
-  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  CrossOriginResourcePolicy, Digest, EntityTag, HttpClearSiteData, HttpContentLength, KeepAlive,
+  Location, LocationParseError, Nel, NoVarySearch, NoVarySearchParams, NoVarySearchParseError,
+  PreferenceApplied, Priority, ProxyAuthenticate, ProxyAuthenticateParseError,
+  ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ReferrerPolicy, ReferrerPolicyToken,
+  ServerTiming, Signature, SignatureInput, SignatureInputParseError, SignatureParseError,
+  StrictTransportSecurity, StrictTransportSecurityParseError, Trailer, TransferEncoding,
+  TransferEncodingParseError, Vary, VaryParseError, WantContentDigest, WantReprDigest, Warning,
+  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
-  ContentDigest, ContentLocation, ContentLocationParseError, HttpContentLength, ReprDigest,
+  ContentDigest, ContentLocation, ContentLocationParseError, ReprDigest,
 };
 use rttp_client::{HttpClient, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 use rttp_test_support as support;
@@ -40,6 +40,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .expect("Access-Control-Expose-Headers should parse");
   let clear_site_data =
     HttpClearSiteData::parse("\"cache\"").expect("Clear-Site-Data should parse");
+  let content_length = HttpContentLength::new(123);
   let content_location = ContentLocation::parse("../representations/current.json")
     .expect("Content-Location should parse");
   let _: ContentLocationParseError =
@@ -50,6 +51,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let _: ContentSecurityPolicyParseError =
     ContentSecurityPolicy::parse("").expect_err("empty Content-Security-Policy should be rejected");
   let digest = Digest::parse("sha-256=:YWJj:").expect("Digest should parse");
+  let etag = EntityTag::parse("\"asset-v7\"").expect("ETag should parse");
   let location = Location::parse("/next").expect("Location should parse");
   let _: LocationParseError = Location::parse("").expect_err("empty Location should be rejected");
   let no_vary_search =
@@ -139,6 +141,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(max_age.seconds(), 60);
   assert_eq!(age.seconds(), 60);
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
+  assert_eq!(content_length.len(), 123);
   assert_eq!(clear_site_data.directives().len(), 1);
   assert_eq!(
     content_location.header_value(),
@@ -149,6 +152,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     "default-src 'self'; object-src 'none'"
   );
   assert_eq!(digest.entries().len(), 1);
+  assert_eq!(etag, EntityTag::strong("asset-v7"));
   assert_eq!(location.as_str(), "/next");
   assert_eq!(
     no_vary_search.params(),
@@ -196,6 +200,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     cross_origin_opener_policy.header_value(),
     "noopener-allow-popups"
   );
+  assert_eq!(x_content_type_options.header_value(), "nosniff");
+  assert_eq!(x_frame_options.header_value(), "DENY");
   assert_eq!(
     authentication_info.parameter("nextnonce"),
     Some("6629fae49393a05397450978507c4ef1")

@@ -2,7 +2,7 @@ use rttp_client::response::{
   AltSvc, AuthenticationInfo, ContentDisposition, ContentEncoding, ContentLocation, ContentRange,
   ContentSecurityPolicy, ContentType, CrossOriginEmbedderPolicy,
   CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginResourcePolicy,
-  HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues, Location, ProxyAuthenticate,
+  EntityTag, HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues, Location, ProxyAuthenticate,
   ProxyAuthenticationInfo, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
   SignatureInput, StrictTransportSecurity, Warning, XContentTypeOptions, XFrameOptions,
 };
@@ -1267,7 +1267,11 @@ fn test_parse_conditional_response_metadata() {
 
   assert!(response.is_not_modified());
   assert!(!response.is_precondition_failed());
-  assert_eq!(Some(&"\"abc123\"".to_string()), response.etag());
+  assert_eq!(Some(&"\"abc123\"".to_string()), response.etag_value());
+  assert_eq!(
+    Some(EntityTag::strong("abc123")),
+    response.etag().expect("ETag should parse")
+  );
   assert_eq!(
     Some(&"Sun, 06 Nov 1994 08:49:37 GMT".to_string()),
     response.last_modified()
@@ -1288,8 +1292,85 @@ fn test_parse_conditional_response_metadata() {
 
   assert!(!response.is_not_modified());
   assert!(response.is_precondition_failed());
-  assert_eq!(Some(&"W/\"stale\"".to_string()), response.etag());
+  assert_eq!(Some(&"W/\"stale\"".to_string()), response.etag_value());
+  assert_eq!(
+    Some(EntityTag::weak("stale")),
+    response.etag().expect("ETag should parse")
+  );
   assert_eq!(None, response.last_modified());
+}
+
+#[test]
+fn test_parse_etag_response_helper_handles_singleton_metadata() {
+  let absent = Response::new(
+    RoUrl::with("https://example.test/asset"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK".to_vec(),
+  )
+  .expect("response without ETag should parse");
+  assert_eq!(None, absent.etag().expect("absent ETag should parse"));
+
+  for (value, expected) in [
+    ("\"asset-v7\"", EntityTag::strong("asset-v7")),
+    ("W/\"asset-v7\"", EntityTag::weak("asset-v7")),
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\nETag: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test/asset"), raw.into_bytes())
+      .expect("response with ETag should parse");
+
+    assert_eq!(Some(expected), response.etag().expect("ETag should parse"));
+    assert_eq!(Some(&value.to_string()), response.etag_value());
+    assert_eq!(vec![&value.to_string()], response.header_values("ETag"));
+  }
+}
+
+#[test]
+fn test_parse_etag_rejects_malformed_duplicate_and_oversized_values_without_losing_raw_headers() {
+  for value in ["abc", "W/abc", "\"bad space\"", "\"bad\"value\""] {
+    let raw = format!("HTTP/1.1 200 OK\r\nETag: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test/asset"), raw.into_bytes())
+      .expect("raw response remains usable");
+
+    assert!(
+      response.etag().is_err(),
+      "ETag helper should reject {value:?}"
+    );
+    assert_eq!(Some(&value.to_string()), response.header_value("ETag"));
+  }
+
+  let duplicate = Response::new(
+    RoUrl::with("https://example.test/asset"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "ETag: \"one\"\r\n",
+      "etag: W/\"two\"\r\n",
+      "Content-Length: 2\r\n",
+      "\r\n",
+      "OK"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("raw response with duplicate ETags remains usable");
+
+  assert!(
+    duplicate.etag().is_err(),
+    "ETag helper should reject duplicate singleton headers"
+  );
+  assert_eq!(
+    vec![&"\"one\"".to_string(), &"W/\"two\"".to_string()],
+    duplicate.header_values("ETag")
+  );
+
+  let oversized = format!("\"{}\"", "a".repeat(64 * 1024));
+  let raw = format!("HTTP/1.1 200 OK\r\nETag: {oversized}\r\nContent-Length: 2\r\n\r\nOK");
+  let response = Response::new(RoUrl::with("https://example.test/asset"), raw.into_bytes())
+    .expect("raw response with oversized ETag remains usable");
+
+  assert!(
+    response.etag().is_err(),
+    "ETag helper should reject oversized values"
+  );
+  assert_eq!(Some(&oversized), response.header_value("ETag"));
 }
 
 #[test]

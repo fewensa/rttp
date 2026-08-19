@@ -46,6 +46,7 @@ use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
 use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedderPolicyReportOnly;
 use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::cross_origin_resource_policy::CrossOriginResourcePolicy;
+use rttp_protocol::entity_tag::{EntityTag, EntityTagParseError};
 use rttp_protocol::location::Location;
 use rttp_protocol::prefer::PreferenceApplied;
 use rttp_protocol::range::ContentRange;
@@ -331,8 +332,17 @@ impl Response {
     }
   }
 
-  pub fn etag(&self) -> Option<&String> {
+  pub fn etag_value(&self) -> Option<&String> {
     self.header_value("etag")
+  }
+
+  pub fn etag(&self) -> Result<Option<EntityTag>, EntityTagParseError> {
+    let values = self.header_values("etag");
+    match values.as_slice() {
+      [] => Ok(None),
+      [value] => EntityTag::parse(value).map(Some),
+      _ => Err(EntityTagParseError::new("Duplicate ETag header values")),
+    }
   }
 
   pub fn last_modified(&self) -> Option<&String> {

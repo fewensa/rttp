@@ -94,10 +94,13 @@ fn compatibility_facade_exports_client_metadata_types() {
       .expect_err("deprecated X-Frame-Options ALLOW-FROM should be rejected");
   let fetch_site: rttp::SecFetchSite =
     rttp_client::SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
+  let etag: rttp::EntityTag =
+    rttp_client::response::EntityTag::parse("\"asset-v7\"").expect("ETag should parse");
   let location: rttp::Location =
     rttp_client::response::Location::parse("/next").expect("Location should parse");
   let _: rttp::LocationParseError =
     rttp_client::response::Location::parse("").expect_err("empty Location should be rejected");
+  let content_length = rttp::HttpContentLength::new(123);
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
@@ -141,7 +144,9 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(x_frame_options, rttp::XFrameOptions::Deny);
   assert_eq!(x_frame_options.header_value(), "DENY");
   assert_eq!(fetch_site.header_value(), "same-origin");
+  assert_eq!(etag, rttp::EntityTag::strong("asset-v7"));
   assert_eq!(location.as_str(), "/next");
+  assert_eq!(content_length.len(), 123);
 }
 
 #[test]
@@ -157,6 +162,7 @@ fn compatibility_facade_exports_content_length_metadata_type() {
 fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let accept_ch: HttpAcceptCh = HttpAcceptCh::parse("Sec-CH-UA").expect("Accept-CH should parse");
   let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("revision-42"));
+  let response = HttpResponse::ok("").with_etag(HttpEntityTag::weak("revision-42"));
   let private_network: HttpAccessControlRequestPrivateNetwork =
     HttpAccessControlRequestPrivateNetwork::parse("true")
       .expect("Access-Control-Request-Private-Network should parse");
@@ -202,6 +208,10 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
       .expect("entity tag should be retained")
       .header_value(),
     "\"revision-42\""
+  );
+  assert_eq!(
+    response.etag().expect("ETag should parse"),
+    Some(HttpEntityTag::weak("revision-42"))
   );
 }
 
