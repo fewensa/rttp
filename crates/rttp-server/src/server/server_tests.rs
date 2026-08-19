@@ -2542,3 +2542,127 @@ hello\r\n\
     assert_eq!(60, parsed.max_age());
     assert_eq!(Some("errors"), parsed.report_to());
   }
+
+  #[test]
+  fn keep_alive_helpers_combine_fields_preserve_extensions_and_build_responses() {
+    let combined = HttpResponse::ok([])
+      .header("Keep-Alive", "timeout=5")
+      .header("Keep-Alive", "max=100, vendor=1");
+    let keep_alive = combined
+      .keep_alive()
+      .expect("Keep-Alive should parse")
+      .expect("Keep-Alive should be present");
+
+    assert_eq!(Some(5), keep_alive.timeout());
+    assert_eq!(Some(100), keep_alive.max());
+    assert_eq!(1, keep_alive.extensions().len());
+    assert_eq!("vendor", keep_alive.extensions()[0].name());
+    assert_eq!("1", keep_alive.extensions()[0].value());
+    assert_eq!(
+      "timeout=5, max=100, vendor=1",
+      keep_alive.header_value(),
+      "recognized parameters are emitted before preserved extensions"
+    );
+
+    let built = HttpResponse::ok([])
+      .with_keep_alive("timeout=5, max=100, vendor=1")
+      .expect("Keep-Alive should be accepted");
+    assert_eq!(
+      vec![("Keep-Alive", "timeout=5, max=100, vendor=1")],
+      built
+        .headers
+        .iter()
+        .map(|header| (header.name.as_str(), header.value.as_str()))
+        .collect::<Vec<_>>()
+    );
+    let parsed = built
+      .keep_alive()
+      .expect("built Keep-Alive should parse")
+      .expect("built Keep-Alive should be present");
+    assert_eq!(Some(5), parsed.timeout());
+    assert_eq!(Some(100), parsed.max());
+    assert_eq!("vendor", parsed.extensions()[0].name());
+
+    let replaced = HttpResponse::ok([])
+      .header("Keep-Alive", "timeout=1")
+      .with_keep_alive("max=2")
+      .expect("replacement should be accepted");
+    assert_eq!(
+      vec![("Keep-Alive", "max=2")],
+      replaced
+        .headers
+        .iter()
+        .map(|header| (header.name.as_str(), header.value.as_str()))
+        .collect::<Vec<_>>()
+    );
+    let replaced_parsed = replaced
+      .keep_alive()
+      .expect("replaced Keep-Alive should parse")
+      .expect("replaced Keep-Alive should be present");
+    assert_eq!(None, replaced_parsed.timeout());
+    assert_eq!(Some(2), replaced_parsed.max());
+    assert_eq!(
+      "max=2",
+      HttpKeepAlive::parse("max=2")
+        .expect("max-only should parse")
+        .header_value()
+    );
+  }
+
+  #[test]
+  fn keep_alive_helpers_return_none_when_absent() {
+    assert_eq!(
+      None,
+      HttpResponse::ok([])
+        .keep_alive()
+        .expect("absent Keep-Alive should parse")
+    );
+  }
+
+  #[test]
+  fn keep_alive_rejects_malformed_duplicate_and_bounds_without_hiding_headers() {
+    for value in [
+      "timeout=abc",
+      "timeout=5, timeout=6",
+      "timeout=5, max=100, max=200",
+      "timeout=18446744073709551616",
+      "",
+    ] {
+      let response = HttpResponse::ok([]).header("Keep-Alive", value);
+      assert!(response.keep_alive().is_err(), "should reject {value:?}");
+      assert_eq!(
+        Some(value),
+        response
+          .headers
+          .iter()
+          .find(|header| header.name.eq_ignore_ascii_case("Keep-Alive"))
+          .map(|header| header.value.as_str())
+      );
+    }
+
+    let oversized = "x".repeat(64 * 1024 + 1);
+    let oversized_response = HttpResponse::ok([]).header("Keep-Alive", oversized.as_str());
+    assert!(oversized_response.keep_alive().is_err());
+    assert_eq!(
+      Some(oversized.as_str()),
+      oversized_response
+        .headers
+        .iter()
+        .find(|header| header.name.eq_ignore_ascii_case("Keep-Alive"))
+        .map(|header| header.value.as_str())
+    );
+    assert!(HttpKeepAlive::parse(
+      (0..257)
+        .map(|index| {
+          if index % 2 == 0 {
+            "timeout=1".to_string()
+          } else {
+            "max=2".to_string()
+          }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+    )
+    .is_err());
+    assert!(HttpResponse::ok([]).with_keep_alive("timeout=abc").is_err());
+  }

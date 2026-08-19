@@ -3,8 +3,8 @@ use rttp_client::response::{
   AccessControlAllowMethods, AccessControlAllowMethodsParseError, AccessControlExposeHeaders,
   AccessControlMaxAge, AccessControlMaxAgeParseError, Age, AgeParseError, AltSvc, Connection,
   ConnectionParseError, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly,
-  CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest, HttpClearSiteData, Location,
-  LocationParseError, Nel, NoVarySearch, NoVarySearchParams, NoVarySearchParseError,
+  CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest, HttpClearSiteData, KeepAlive,
+  Location, LocationParseError, Nel, NoVarySearch, NoVarySearchParams, NoVarySearchParseError,
   PreferenceApplied, Priority, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError,
   ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Signature, SignatureInput,
   SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
@@ -55,6 +55,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     WantReprDigest::parse("sha-256=10").expect("Want-Repr-Digest should parse");
   let priority = Priority::parse("u=1, i").expect("Priority should parse");
   let server_timing = ServerTiming::parse("db;dur=53").expect("Server-Timing should parse");
+  let keep_alive = KeepAlive::parse("timeout=5, max=100").expect("Keep-Alive should parse");
   let strict_transport_security =
     StrictTransportSecurity::parse("max-age=31536000; includeSubDomains")
       .expect("Strict-Transport-Security should parse");
@@ -139,6 +140,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(warning.items()[0].code(), 110);
   assert_eq!(nel.max_age(), 2592000);
   assert_eq!(nel.report_to(), Some("network-errors"));
+  assert_eq!(keep_alive.timeout(), Some(5));
+  assert_eq!(keep_alive.max(), Some(100));
   assert_eq!(trailer.field_names(), ["x-trace"]);
   assert_eq!(connection.tokens(), ["close"]);
   assert_eq!(transfer_encoding.codings(), ["chunked"]);

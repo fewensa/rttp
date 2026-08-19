@@ -1,7 +1,7 @@
 use rttp_client::response::{
   AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType,
   CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy,
-  CrossOriginResourcePolicy, HttpClearSiteData, HttpSetCookies, LinkValues, Location,
+  CrossOriginResourcePolicy, HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues, Location,
   ProxyAuthenticationInfo, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
   StrictTransportSecurity, Warning, XContentTypeOptions, XFrameOptions,
 };
@@ -1843,6 +1843,90 @@ fn test_warning_rejects_malformed_invalid_code_and_bounds_without_hiding_headers
 }
 
 #[test]
+fn test_keep_alive_response_helper_parses_combined_fields_and_retains_raw_headers() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Keep-Alive: timeout=5\r\n",
+    "Keep-Alive: max=100\r\n",
+    "Content-Length: 2\r\n\r\nOK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+  let keep_alive = response
+    .keep_alive()
+    .expect("valid Keep-Alive should parse")
+    .expect("Keep-Alive should be present");
+
+  assert_eq!(Some(5), keep_alive.timeout());
+  assert_eq!(Some(100), keep_alive.max());
+  assert_eq!(
+    response.header_values("Keep-Alive"),
+    [&"timeout=5".to_string(), &"max=100".to_string()]
+  );
+}
+
+#[test]
+fn test_keep_alive_response_helper_returns_none_when_absent() {
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response without Keep-Alive should parse");
+  assert_eq!(
+    None,
+    absent.keep_alive().expect("absent Keep-Alive should parse")
+  );
+}
+
+#[test]
+fn test_keep_alive_rejects_malformed_duplicate_and_bounds_without_hiding_headers() {
+  for value in [
+    "timeout=abc",
+    "timeout=5, timeout=6",
+    "timeout=5, max=100, max=200",
+    "timeout=18446744073709551616",
+    "",
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\nKeep-Alive: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(response.keep_alive().is_err(), "should reject {value:?}");
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Keep-Alive")
+    );
+    assert_eq!("OK", response.body().string().unwrap());
+  }
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_raw =
+    format!("HTTP/1.1 200 OK\r\nKeep-Alive: {oversized}\r\nContent-Length: 0\r\n\r\n");
+  let oversized_response = Response::new(
+    RoUrl::with("https://example.test"),
+    oversized_raw.into_bytes(),
+  )
+  .expect("raw response should remain usable");
+  assert!(oversized_response.keep_alive().is_err());
+  assert_eq!(
+    Some(&oversized),
+    oversized_response.header_value("Keep-Alive")
+  );
+  assert!(KeepAlive::parse(
+    (0..257)
+      .map(|index| {
+        if index % 2 == 0 {
+          "timeout=1".to_string()
+        } else {
+          "max=2".to_string()
+        }
+      })
+      .collect::<Vec<_>>()
+      .join(", ")
+  )
+  .is_err());
+}
+
+#[test]
 fn test_server_timing_rejects_malformed_and_oversized_values_without_hiding_headers() {
   for value in [
     "db;dur=not-a-number",
@@ -3118,7 +3202,7 @@ fn test_parse_accept_ranges_response_helper_supports_none_and_absent_header() {
 
   assert!(accept_ranges.is_none());
   assert!(!accept_ranges.accepts_bytes());
-  assert_eq!(vec!["none"], accept_ranges.units());
+  assert!(accept_ranges.units().is_empty());
 
   let s = concat!("HTTP/1.1 200 OK\r\n", "Content-Length: 2\r\n", "\r\n", "OK");
   let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())

@@ -68,6 +68,23 @@ time.
 These helpers parse HTTP/1 header metadata only. They do not change
 keep-alive, hop-by-hop stripping, upgrade/h2c handoff, or HTTP/2 rejection.
 
+## Response Keep-Alive metadata
+
+Handlers can call `HttpResponse::keep_alive()` to observe bounded typed
+`Keep-Alive` response metadata and `HttpResponse::with_keep_alive(value)` to
+validate and replace the `Keep-Alive` response field. The helpers parse
+RFC 2068 `Keep-Alive` fields in wire order into `HttpKeepAlive`; the optional
+`timeout` delta-seconds and optional `max` `1*DIGIT` values are parsed as
+checked unsigned integers, and unrecognized `name=token` parameters are
+preserved as bounded `HttpKeepAliveExtension` metadata. Absent fields return
+`Ok(None)`. Duplicate recognized parameters, malformed values, overflow,
+oversized values, or over-limit values return a parser error while
+`HttpResponse` raw headers continue to expose the original fields.
+
+These helpers expose Keep-Alive as metadata only. They do not change
+connection lifetime, connection pooling, keep-alive timers, or HTTP/2
+behavior.
+
 ## Request Transfer-Encoding framing metadata
 
 Handlers can call `Request::transfer_encoding()` and
@@ -133,6 +150,26 @@ string to 64 KiB.
 
 These helpers only declare and parse metadata. The server does not send
 network error reports, persist policy, or configure Reporting endpoint groups.
+
+## Accept-Ranges response metadata
+
+`HttpResponse::with_accept_ranges(units)` declares supported range units with
+one bounded comma-separated `Accept-Ranges` response header, while
+`HttpResponse::with_accept_ranges_none()` declares the `Accept-Ranges: none`
+sentinel. `HttpResponse::accept_ranges()` parses attached raw fields into
+`HttpAcceptRanges`, the shared protocol parser also used by the client facade.
+Present values expose `units()`, `is_none()`, and `header_value()`; the `none`
+sentinel is represented as an empty unit list. Each field value is bounded to
+64 KiB and the parsed header set to 256 range units; malformed or empty values,
+case-insensitive duplicate units, `none` combined with any unit, and `none`
+through the unit declaration helper are rejected. The declaration helper
+replaces existing raw `Accept-Ranges` fields, while manually attached fields
+remain preserved until the typed parser is requested.
+
+These helpers only declare and inspect metadata. RTTP does not parse request
+`Range` fields, generate `Range` requests, create a partial response engine,
+serve bytes, slice content, resume downloads, or choose redirect, retry, or
+status-policy behavior.
 
 ## Content-Location response metadata
 

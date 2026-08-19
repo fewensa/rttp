@@ -12,6 +12,7 @@ use crate::response::AltSvc;
 use crate::response::Connection;
 use crate::response::ContentDigest;
 use crate::response::Digest;
+use crate::response::KeepAlive;
 use crate::response::Nel;
 use crate::response::NoVarySearch;
 use crate::response::Priority;
@@ -25,6 +26,7 @@ use crate::response::TransferEncoding;
 use crate::response::Warning;
 use crate::response::WwwAuthenticate;
 use crate::types::{Cookie, Header, RoUrl, StatusCode};
+use rttp_protocol::accept_ranges::AcceptRanges;
 use rttp_protocol::access_control_allow_headers::AccessControlAllowHeaders;
 use rttp_protocol::access_control_allow_methods::AccessControlAllowMethods;
 use rttp_protocol::access_control_allow_origin::AccessControlAllowOrigin;
@@ -52,8 +54,6 @@ use rttp_protocol::x_frame_options::XFrameOptions;
 
 const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
-const MAX_ACCEPT_RANGES_VALUE_BYTES: usize = 64 * 1024;
-const MAX_ACCEPT_RANGE_UNITS: usize = 256;
 const MAX_ACCEPT_MEDIA_TYPES: usize = 256;
 const MAX_DATE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_RETRY_AFTER_VALUE_BYTES: usize = 64 * 1024;
@@ -421,7 +421,9 @@ impl Response {
     if values.is_empty() {
       return Ok(None);
     }
-    AcceptRanges::parse_values(values.into_iter().map(String::as_str)).map(Some)
+    AcceptRanges::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   /// Parses `Accept-Patch` media-type metadata without selecting a request
@@ -809,6 +811,19 @@ impl Response {
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
+  /// Parses all `Keep-Alive` fields as bounded RFC 2068 response metadata.
+  /// This does not change connection lifetime, connection pooling, or
+  /// HTTP/2 behavior.
+  pub fn keep_alive(&self) -> error::Result<Option<KeepAlive>> {
+    let values = self.header_values("keep-alive");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    KeepAlive::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
   /// Parses all `Alt-Svc` fields as bounded alternative-service metadata.
   /// This does not migrate connections or select an alternative endpoint.
   pub fn alt_svc(&self) -> error::Result<Option<AltSvc>> {
@@ -1062,11 +1077,6 @@ impl Allow {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AcceptRanges {
-  units: Vec<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AcceptPatch {
   media_types: Vec<ContentType>,
 }
@@ -1140,67 +1150,6 @@ where
     return Err(error::bad_response(format!("Invalid {header} media type")));
   }
   Ok(media_types)
-}
-
-impl AcceptRanges {
-  pub fn parse(value: impl AsRef<str>) -> error::Result<Self> {
-    Self::parse_values([value.as_ref()])
-  }
-
-  fn parse_values<'a, I>(values: I) -> error::Result<Self>
-  where
-    I: IntoIterator<Item = &'a str>,
-  {
-    let mut units = Vec::new();
-    let mut seen = HashSet::new();
-
-    for value in values {
-      if value.len() > MAX_ACCEPT_RANGES_VALUE_BYTES {
-        return Err(error::bad_response(
-          "Accept-Ranges header value is too large",
-        ));
-      }
-
-      for unit in value.split(',') {
-        let unit = unit.trim();
-        if unit.is_empty() || !is_token(unit) {
-          return Err(error::bad_response("Invalid Accept-Ranges range-unit"));
-        }
-        if units.len() >= MAX_ACCEPT_RANGE_UNITS {
-          return Err(error::bad_response("Too many Accept-Ranges range-units"));
-        }
-
-        let normalized = unit.to_ascii_lowercase();
-        if !seen.insert(normalized.clone()) {
-          return Err(error::bad_response("Duplicate Accept-Ranges range-unit"));
-        }
-        units.push(normalized);
-      }
-    }
-
-    if units.is_empty() {
-      return Err(error::bad_response("Invalid Accept-Ranges range-unit"));
-    }
-    if units.iter().any(|unit| unit == "none") && units.len() != 1 {
-      return Err(error::bad_response(
-        "Accept-Ranges none cannot be combined with range-units",
-      ));
-    }
-
-    Ok(Self { units })
-  }
-
-  pub fn units(&self) -> Vec<&str> {
-    self.units.iter().map(String::as_str).collect()
-  }
-
-  pub fn is_none(&self) -> bool {
-    self.units.as_slice() == ["none"]
-  }
-
-  pub fn accepts_bytes(&self) -> bool {
-    self.units.iter().any(|unit| unit == "bytes")
-  }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

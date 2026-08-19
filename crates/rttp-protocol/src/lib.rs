@@ -9,6 +9,7 @@
 
 pub mod accept_patch;
 pub mod accept_post;
+pub mod accept_ranges;
 pub mod access_control_allow_headers;
 pub mod access_control_allow_methods;
 pub mod access_control_allow_origin;
@@ -40,6 +41,7 @@ pub mod forwarded;
 pub mod from;
 pub mod host;
 pub mod http1;
+pub mod keep_alive;
 pub mod location;
 mod media_type;
 pub mod nel;
