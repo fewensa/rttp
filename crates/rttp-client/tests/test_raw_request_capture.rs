@@ -557,6 +557,27 @@ fn proxy_debug_redacts_credentials() {
 }
 
 #[test]
+fn facade_debug_redacts_sensitive_header_values() {
+  let mut client = HttpClient::new();
+  client
+    .auth(Auth::bearer("origin-token"))
+    .header(("Proxy-Authorization", "Basic cHJveHk6c2VjcmV0"))
+    .header(("Cookie", "session=private"))
+    .header(("Accept", "application/json"));
+
+  let debug = format!("{client:?}");
+  assert!(debug.contains("Authorization"));
+  assert!(debug.contains("Proxy-Authorization"));
+  assert!(debug.contains("Cookie"));
+  assert!(debug.contains("Accept"));
+  assert!(debug.contains("application/json"));
+  assert!(debug.contains("[REDACTED]"));
+  for secret in ["origin-token", "cHJveHk6c2VjcmV0", "session=private"] {
+    assert!(!debug.contains(secret));
+  }
+}
+
+#[test]
 fn accept_encoding_helpers_emit_validated_codings_and_quality_values() {
   let request = capture_request(|base_url| {
     client()

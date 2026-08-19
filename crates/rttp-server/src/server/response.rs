@@ -4952,7 +4952,7 @@ pub(crate) fn split_cache_control_field_names(value: &str) -> Vec<String> {
     .collect()
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct HttpHeader {
   pub(crate) name: String,
   pub(crate) value: String,
@@ -4973,6 +4973,45 @@ impl HttpHeader {
   pub fn value(&self) -> &str {
     &self.value
   }
+}
+
+impl fmt::Debug for HttpHeader {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter
+      .debug_struct("HttpHeader")
+      .field("name", &self.name)
+      .field("value", &debug_header_value(&self.name, &self.value))
+      .finish()
+  }
+}
+
+fn debug_header_value<'a>(name: &str, value: &'a str) -> DebugHeaderValue<'a> {
+  if is_sensitive_debug_header(name) {
+    DebugHeaderValue::Redacted
+  } else {
+    DebugHeaderValue::Visible(value)
+  }
+}
+
+enum DebugHeaderValue<'a> {
+  Redacted,
+  Visible(&'a str),
+}
+
+impl fmt::Debug for DebugHeaderValue<'_> {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      Self::Redacted => formatter.write_str("\"[REDACTED]\""),
+      Self::Visible(value) => fmt::Debug::fmt(value, formatter),
+    }
+  }
+}
+
+fn is_sensitive_debug_header(name: &str) -> bool {
+  name.eq_ignore_ascii_case("authorization")
+    || name.eq_ignore_ascii_case("cookie")
+    || name.eq_ignore_ascii_case("proxy-authorization")
+    || name.eq_ignore_ascii_case("set-cookie")
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

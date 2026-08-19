@@ -180,7 +180,7 @@ impl fmt::Display for HttpExpectParseError {
 
 impl Error for HttpExpectParseError {}
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Request {
   pub(crate) method: String,
   pub(crate) target: String,
@@ -190,6 +190,80 @@ pub struct Request {
   pub(crate) body: Vec<u8>,
   pub(crate) content_length: Option<HttpContentLength>,
   pub(crate) extended_connect_protocol: Option<String>,
+}
+
+impl fmt::Debug for Request {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter
+      .debug_struct("Request")
+      .field("method", &self.method)
+      .field("target", &self.target)
+      .field("version", &self.version)
+      .field("headers", &DebugHeaderPairs(&self.headers))
+      .field("trailers", &DebugHeaderPairs(&self.trailers))
+      .field("body", &self.body)
+      .field("content_length", &self.content_length)
+      .field("extended_connect_protocol", &self.extended_connect_protocol)
+      .finish()
+  }
+}
+
+struct DebugHeaderPairs<'a>(&'a [(String, String)]);
+
+impl fmt::Debug for DebugHeaderPairs<'_> {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter
+      .debug_list()
+      .entries(self.0.iter().map(|(name, value)| DebugHeaderPair {
+        name: name.as_str(),
+        value: value.as_str(),
+      }))
+      .finish()
+  }
+}
+
+struct DebugHeaderPair<'a> {
+  name: &'a str,
+  value: &'a str,
+}
+
+impl fmt::Debug for DebugHeaderPair<'_> {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter
+      .debug_tuple("")
+      .field(&self.name)
+      .field(&debug_header_value(self.name, self.value))
+      .finish()
+  }
+}
+
+fn debug_header_value<'a>(name: &str, value: &'a str) -> DebugHeaderValue<'a> {
+  if is_sensitive_debug_header(name) {
+    DebugHeaderValue::Redacted
+  } else {
+    DebugHeaderValue::Visible(value)
+  }
+}
+
+enum DebugHeaderValue<'a> {
+  Redacted,
+  Visible(&'a str),
+}
+
+impl fmt::Debug for DebugHeaderValue<'_> {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      Self::Redacted => formatter.write_str("\"[REDACTED]\""),
+      Self::Visible(value) => fmt::Debug::fmt(value, formatter),
+    }
+  }
+}
+
+fn is_sensitive_debug_header(name: &str) -> bool {
+  name.eq_ignore_ascii_case("authorization")
+    || name.eq_ignore_ascii_case("cookie")
+    || name.eq_ignore_ascii_case("proxy-authorization")
+    || name.eq_ignore_ascii_case("set-cookie")
 }
 
 impl Request {
@@ -2046,7 +2120,7 @@ fn is_valid_qvalue(value: &str) -> bool {
   }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct HttpRequest {
   pub(crate) method: String,
   pub(crate) path: String,
@@ -2055,6 +2129,21 @@ pub struct HttpRequest {
   pub(crate) headers: Vec<HttpHeader>,
   pub(crate) body: Vec<u8>,
   pub(crate) content_length: Option<HttpContentLength>,
+}
+
+impl fmt::Debug for HttpRequest {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter
+      .debug_struct("HttpRequest")
+      .field("method", &self.method)
+      .field("path", &self.path)
+      .field("query", &self.query)
+      .field("version", &self.version)
+      .field("headers", &self.headers)
+      .field("body", &self.body)
+      .field("content_length", &self.content_length)
+      .finish()
+  }
 }
 
 impl HttpRequest {
