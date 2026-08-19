@@ -116,6 +116,90 @@ fn content_type_enforces_value_and_parameter_bounds() {
 }
 
 #[test]
+fn content_type_builds_media_types_and_parameters() {
+  let content_type = ContentType::new("Application", "JSON")
+    .expect("media type should build")
+    .with_parameter("Charset", "UTF-8")
+    .expect("parameter should build")
+    .with_parameter("profile", "https://example.test/a;b")
+    .expect("quoted parameter should build");
+
+  assert_eq!(content_type.type_(), "application");
+  assert_eq!(content_type.subtype(), "json");
+  assert_eq!(content_type.parameter("charset"), Some("UTF-8"));
+  assert_eq!(
+    content_type.parameter("profile"),
+    Some("https://example.test/a;b")
+  );
+  assert_eq!(
+    content_type.header_value(),
+    r#"application/json; charset=UTF-8; profile="https://example.test/a;b""#
+  );
+}
+
+#[test]
+fn content_type_builder_rejects_invalid_media_types_and_parameters() {
+  assert!(
+    ContentType::new("bad type", "plain").is_err(),
+    "invalid type tokens must be rejected"
+  );
+  assert!(
+    ContentType::new("text", "pl ain").is_err(),
+    "invalid subtype tokens must be rejected"
+  );
+  assert!(
+    ContentType::new("", "plain").is_err(),
+    "empty tokens must be rejected"
+  );
+
+  let content_type = ContentType::new("text", "plain").expect("media type should build");
+  assert!(
+    content_type
+      .clone()
+      .with_parameter("bad name", "value")
+      .is_err(),
+    "invalid parameter names must be rejected"
+  );
+  assert!(
+    content_type.clone().with_parameter("charset", "").is_err(),
+    "empty parameter values must be rejected"
+  );
+  assert!(
+    content_type
+      .clone()
+      .with_parameter("charset", "caf\u{e9}")
+      .is_err(),
+    "non-ASCII parameter values must be rejected"
+  );
+  assert!(
+    content_type
+      .clone()
+      .with_parameter("charset", "bad\r\nX-Evil: yes")
+      .is_err(),
+    "control bytes in parameter values must be rejected"
+  );
+  assert!(
+    content_type
+      .clone()
+      .with_parameter("charset", "utf-8")
+      .expect("parameter should build")
+      .with_parameter("CHARSET", "us-ascii")
+      .is_err(),
+    "case-insensitive duplicate parameters must be rejected"
+  );
+
+  let at_limit = (0..MAX_CONTENT_TYPE_PARAMETERS).fold(content_type, |content_type, index| {
+    content_type
+      .with_parameter(format!("p{index}"), "v")
+      .expect("parameter should build")
+  });
+  assert!(
+    at_limit.with_parameter("overflow", "v").is_err(),
+    "more than 256 parameters must be rejected"
+  );
+}
+
+#[test]
 fn content_type_rejects_duplicate_parameter_names() {
   assert!(
     ContentType::parse("text/plain; charset=utf-8; CHARSET=iso-8859-1").is_err(),

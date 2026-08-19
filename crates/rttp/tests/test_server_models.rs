@@ -317,7 +317,11 @@ fn request_representation_metadata_preserves_invalid_headers_and_body() {
     "body"
   ));
   assert!(duplicate_members.content_type().is_err());
-  assert!(duplicate_members.content_encoding().is_err());
+  let duplicate_encodings = duplicate_members
+    .content_encoding()
+    .expect("repeated Content-Encoding should parse")
+    .expect("Content-Encoding should be present");
+  assert_eq!(vec!["gzip", "GZIP"], duplicate_encodings.codings());
   assert!(duplicate_members.content_language().is_err());
   assert_eq!(
     Some("text/plain; charset=utf-8; CHARSET=us-ascii"),
@@ -1810,7 +1814,7 @@ fn content_language_helpers_reject_malformed_duplicate_oversized_and_excessive_v
     "Content-Language helper should reject oversized values"
   );
 
-  let too_many = (0..33)
+  let too_many = (0..257)
     .map(|index| format!("x-{index}"))
     .collect::<Vec<_>>()
     .join(", ");
@@ -2488,6 +2492,37 @@ fn parses_content_type_and_serializes_single_header_value() {
 }
 
 #[test]
+fn server_representation_metadata_keeps_compat_and_typed_accessors_in_sync() {
+  let content_type = HttpContentType::parse("Text/HTML; Charset=\"utf-8\"; boundary=abc-123")
+    .expect("valid Content-Type should parse");
+
+  assert_eq!("text/html", content_type.media_type());
+  assert_eq!("text", content_type.type_());
+  assert_eq!("html", content_type.subtype());
+  assert_eq!(
+    vec![("charset", "utf-8"), ("boundary", "abc-123")],
+    content_type.parameters()
+  );
+  assert_eq!(
+    "text/html; charset=utf-8; boundary=abc-123",
+    content_type.header_value()
+  );
+
+  let constructed = HttpContentType::new("Application", "JSON")
+    .expect("valid media type should construct")
+    .with_parameter("Charset", "utf-8")
+    .expect("valid parameter should append");
+  assert_eq!("application/json", constructed.media_type());
+  assert_eq!(vec![("charset", "utf-8")], constructed.parameters());
+
+  let languages =
+    HttpContentLanguages::parse("fr-CA, en").expect("valid Content-Language should parse");
+  assert_eq!(vec!["fr-CA", "en"], languages.languages());
+  assert_eq!(languages.languages(), languages.tags());
+  assert_eq!(vec!["fr-CA", "en"], languages.tags());
+}
+
+#[test]
 fn response_content_encoding_helper_parses_attached_header_fields_in_order() {
   let response = HttpResponse::ok("body")
     .header("Content-Encoding", "gzip, br")
@@ -2518,10 +2553,9 @@ fn content_encoding_helpers_reject_malformed_duplicate_oversized_and_excessive_v
     );
   }
 
-  assert!(
-    HttpResponseContentEncodings::parse("gzip, br, GZIP").is_err(),
-    "Content-Encoding helper should reject duplicate codings"
-  );
+  let duplicate_codings = HttpResponseContentEncodings::parse("gzip, br, GZIP")
+    .expect("Content-Encoding helper should retain repeated codings");
+  assert_eq!(vec!["gzip", "br", "GZIP"], duplicate_codings.codings());
 
   let oversized = "gzip".repeat(64 * 1024);
   assert!(
@@ -2529,7 +2563,7 @@ fn content_encoding_helpers_reject_malformed_duplicate_oversized_and_excessive_v
     "Content-Encoding helper should reject oversized values"
   );
 
-  let too_many = (0..33)
+  let too_many = (0..257)
     .map(|index| format!("coding{index}"))
     .collect::<Vec<_>>()
     .join(", ");
@@ -2612,7 +2646,7 @@ fn content_type_helpers_reject_malformed_duplicate_oversized_and_excessive_value
 
   let too_many = format!(
     "text/plain{}",
-    (0..33)
+    (0..257)
       .map(|index| format!("; p{index}=v"))
       .collect::<String>()
   );

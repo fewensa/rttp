@@ -24,7 +24,7 @@ pub struct ContentTypeParseError {
 }
 
 impl ContentTypeParseError {
-  fn new(message: impl Into<String>) -> Self {
+  pub fn new(message: impl Into<String>) -> Self {
     Self {
       message: message.into(),
     }
@@ -61,6 +61,75 @@ impl ContentType {
 
   pub fn media_type(&self) -> &MediaType {
     &self.media_type
+  }
+
+  pub fn new<T, S>(type_name: T, subtype: S) -> Result<Self, ContentTypeParseError>
+  where
+    T: AsRef<str>,
+    S: AsRef<str>,
+  {
+    let type_name = type_name.as_ref().trim().to_ascii_lowercase();
+    let subtype = subtype.as_ref().trim().to_ascii_lowercase();
+    if !crate::media_type::is_token(&type_name) || !crate::media_type::is_token(&subtype) {
+      return Err(ContentTypeParseError::new(
+        "invalid Content-Type media type",
+      ));
+    }
+    let media_type = crate::media_type::MediaType::from_parts(type_name, subtype);
+    if media_type.header_value().len() > MAX_CONTENT_TYPE_VALUE_BYTES {
+      return Err(ContentTypeParseError::new(
+        "Content-Type header value is too large",
+      ));
+    }
+    Ok(Self { media_type })
+  }
+
+  pub fn with_parameter<N, V>(mut self, name: N, value: V) -> Result<Self, ContentTypeParseError>
+  where
+    N: AsRef<str>,
+    V: AsRef<str>,
+  {
+    let name = name.as_ref().trim().to_ascii_lowercase();
+    let value = value.as_ref();
+    if !crate::media_type::is_token(&name) {
+      return Err(ContentTypeParseError::new(
+        "invalid Content-Type parameter name",
+      ));
+    }
+    if value.is_empty() || !value.is_ascii() || value.bytes().any(|byte| byte.is_ascii_control()) {
+      return Err(ContentTypeParseError::new(
+        "invalid Content-Type parameter value",
+      ));
+    }
+    if self
+      .media_type
+      .parameters()
+      .iter()
+      .any(|parameter| parameter.name().eq_ignore_ascii_case(&name))
+    {
+      return Err(ContentTypeParseError::new(
+        "duplicate Content-Type parameter",
+      ));
+    }
+    if self.media_type.parameters().len() >= MAX_CONTENT_TYPE_PARAMETERS {
+      return Err(ContentTypeParseError::new(
+        "too many Content-Type parameters",
+      ));
+    }
+
+    let mut candidate = self.media_type.header_value();
+    candidate.push_str("; ");
+    candidate.push_str(&name);
+    candidate.push('=');
+    candidate.push_str(&crate::media_type::serialize_parameter_value(value));
+    if candidate.len() > MAX_CONTENT_TYPE_VALUE_BYTES {
+      return Err(ContentTypeParseError::new(
+        "Content-Type header value is too large",
+      ));
+    }
+
+    self.media_type.push_parameter(name, value.to_string());
+    Ok(self)
   }
 
   pub fn type_(&self) -> &str {

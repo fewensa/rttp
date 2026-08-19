@@ -42,10 +42,16 @@ pub use rttp_protocol::client_hints::{
   AcceptCh as HttpAcceptCh, AcceptChParseError as HttpAcceptChParseError,
   CriticalCh as HttpCriticalCh, CriticalChParseError as HttpCriticalChParseError,
 };
+pub use rttp_protocol::content_encoding::{
+  ContentEncoding as HttpResponseContentEncodings,
+  ContentEncodingParseError as HttpContentEncodingParseError,
+};
+pub use rttp_protocol::content_language::ContentLanguageParseError as HttpContentLanguageParseError;
 pub use rttp_protocol::content_location::{
   ContentLocation as HttpContentLocation,
   ContentLocationParseError as HttpContentLocationParseError,
 };
+pub use rttp_protocol::content_type::ContentTypeParseError as HttpContentTypeParseError;
 pub use rttp_protocol::cross_origin_embedder_policy::{
   CrossOriginEmbedderPolicy as HttpCrossOriginEmbedderPolicy,
   CrossOriginEmbedderPolicyParseError as HttpCrossOriginEmbedderPolicyParseError,
@@ -118,22 +124,167 @@ pub use rttp_protocol::x_frame_options::{
   XFrameOptions as HttpXFrameOptions, XFrameOptionsParseError as HttpXFrameOptionsParseError,
 };
 
+/// Server `Content-Type` representation metadata backed by the shared protocol
+/// parser, preserving the server facade accessor surface and normalized
+/// output.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpContentType {
+  inner: rttp_protocol::content_type::ContentType,
+  essence: String,
+}
+
+impl HttpContentType {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpContentTypeParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpContentTypeParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let parsed = rttp_protocol::content_type::ContentType::parse_values(values)?;
+    Self::normalize(parsed)
+  }
+
+  pub fn new<T, S>(type_name: T, subtype: S) -> Result<Self, HttpContentTypeParseError>
+  where
+    T: AsRef<str>,
+    S: AsRef<str>,
+  {
+    Ok(Self::from_protocol(
+      rttp_protocol::content_type::ContentType::new(type_name, subtype)?,
+    ))
+  }
+
+  pub fn with_parameter<N, V>(
+    mut self,
+    name: N,
+    value: V,
+  ) -> Result<Self, HttpContentTypeParseError>
+  where
+    N: AsRef<str>,
+    V: AsRef<str>,
+  {
+    self.inner = self.inner.with_parameter(name, value)?;
+    Ok(self)
+  }
+
+  /// Returns the normalized `type/subtype` media type string.
+  pub fn media_type(&self) -> &str {
+    &self.essence
+  }
+
+  pub fn type_(&self) -> &str {
+    self.inner.type_()
+  }
+
+  pub fn subtype(&self) -> &str {
+    self.inner.subtype()
+  }
+
+  pub fn parameter(&self, name: impl AsRef<str>) -> Option<&str> {
+    self.inner.parameter(name)
+  }
+
+  pub fn parameters(&self) -> Vec<(&str, &str)> {
+    self
+      .inner
+      .parameters()
+      .iter()
+      .map(|parameter| (parameter.name(), parameter.value()))
+      .collect()
+  }
+
+  pub fn header_value(&self) -> String {
+    self.inner.header_value()
+  }
+
+  fn normalize(
+    parsed: rttp_protocol::content_type::ContentType,
+  ) -> Result<Self, HttpContentTypeParseError> {
+    let mut normalized = rttp_protocol::content_type::ContentType::new(
+      parsed.type_().to_ascii_lowercase(),
+      parsed.subtype().to_ascii_lowercase(),
+    )?;
+    for parameter in parsed.parameters() {
+      normalized =
+        normalized.with_parameter(parameter.name().to_ascii_lowercase(), parameter.value())?;
+    }
+    Ok(Self::from_protocol(normalized))
+  }
+
+  fn from_protocol(inner: rttp_protocol::content_type::ContentType) -> Self {
+    let essence = format!("{}/{}", inner.type_(), inner.subtype());
+    Self { inner, essence }
+  }
+}
+
+/// Server `Content-Language` representation metadata backed by the shared
+/// protocol parser, preserving the server facade accessor surface.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpContentLanguages {
+  inner: rttp_protocol::content_language::ContentLanguage,
+}
+
+impl HttpContentLanguages {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpContentLanguageParseError> {
+    Ok(Self {
+      inner: rttp_protocol::content_language::ContentLanguage::parse(value)?,
+    })
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpContentLanguageParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    Ok(Self {
+      inner: rttp_protocol::content_language::ContentLanguage::parse_values(values)?,
+    })
+  }
+
+  pub fn from_languages<I, L>(languages: I) -> Result<Self, HttpContentLanguageParseError>
+  where
+    I: IntoIterator<Item = L>,
+    L: AsRef<str>,
+  {
+    Ok(Self {
+      inner: rttp_protocol::content_language::ContentLanguage::from_languages(languages)?,
+    })
+  }
+
+  /// Returns the parsed language tags in wire order.
+  pub fn languages(&self) -> Vec<&str> {
+    self.inner.tags()
+  }
+
+  /// Returns the parsed language tags in wire order.
+  pub fn tags(&self) -> Vec<&str> {
+    self.inner.tags()
+  }
+
+  pub fn len(&self) -> usize {
+    self.inner.len()
+  }
+
+  pub fn is_empty(&self) -> bool {
+    self.inner.is_empty()
+  }
+
+  pub fn header_value(&self) -> String {
+    self.inner.header_value()
+  }
+}
+
 pub(crate) const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
 pub(crate) const MAX_VARY_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_VARY_FIELDS: usize = 256;
-pub(crate) const MAX_CONTENT_LANGUAGE_VALUE_BYTES: usize = 64 * 1024;
-pub(crate) const MAX_CONTENT_LANGUAGES: usize = 32;
-pub(crate) const MAX_CONTENT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
-pub(crate) const MAX_CONTENT_ENCODINGS: usize = 32;
 pub(crate) const MAX_ACCEPT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_ACCEPT_ENCODINGS: usize = 32;
 pub(crate) const MAX_TE_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_TE_CODINGS: usize = 32;
 pub(crate) const MAX_CONTENT_DISPOSITION_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_CONTENT_DISPOSITION_PARAMETERS: usize = 32;
-pub(crate) const MAX_CONTENT_TYPE_VALUE_BYTES: usize = 64 * 1024;
-pub(crate) const MAX_CONTENT_TYPE_PARAMETERS: usize = 32;
 pub(crate) const MAX_ACCEPT_PATCH_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_ACCEPT_PATCH_MEDIA_TYPES: usize = 32;
 pub(crate) const MAX_ACCEPT_POST_VALUE_BYTES: usize = 64 * 1024;
@@ -2900,114 +3051,6 @@ impl fmt::Display for HttpVaryParseError {
 impl Error for HttpVaryParseError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpContentLanguages {
-  pub(crate) languages: Vec<String>,
-}
-
-impl HttpContentLanguages {
-  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpContentLanguageParseError> {
-    Self::parse_values([value.as_ref()])
-  }
-
-  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpContentLanguageParseError>
-  where
-    I: IntoIterator<Item = &'a str>,
-  {
-    let mut languages = Vec::new();
-
-    for value in values {
-      if value.len() > MAX_CONTENT_LANGUAGE_VALUE_BYTES {
-        return Err(HttpContentLanguageParseError::new(
-          "Content-Language header value is too large",
-        ));
-      }
-
-      for language in value.split(',') {
-        let language = language.trim();
-        if !is_valid_content_language_tag(language) {
-          return Err(HttpContentLanguageParseError::new(
-            "invalid Content-Language tag",
-          ));
-        }
-        if languages
-          .iter()
-          .any(|known: &String| known.eq_ignore_ascii_case(language))
-        {
-          return Err(HttpContentLanguageParseError::new(
-            "duplicate Content-Language tag",
-          ));
-        }
-        if languages.len() >= MAX_CONTENT_LANGUAGES {
-          return Err(HttpContentLanguageParseError::new(
-            "too many Content-Language tags",
-          ));
-        }
-        languages.push(language.to_string());
-      }
-    }
-
-    if languages.is_empty() {
-      return Err(HttpContentLanguageParseError::new(
-        "invalid Content-Language tag",
-      ));
-    }
-
-    Ok(Self { languages })
-  }
-
-  pub fn from_languages<I, L>(languages: I) -> Result<Self, HttpContentLanguageParseError>
-  where
-    I: IntoIterator<Item = L>,
-    L: AsRef<str>,
-  {
-    let mut value = String::new();
-
-    for (index, language) in languages.into_iter().enumerate() {
-      if index > 0 {
-        value.push_str(", ");
-      }
-      value.push_str(language.as_ref());
-      if value.len() > MAX_CONTENT_LANGUAGE_VALUE_BYTES {
-        return Err(HttpContentLanguageParseError::new(
-          "Content-Language header value is too large",
-        ));
-      }
-    }
-
-    Self::parse(value)
-  }
-
-  pub fn languages(&self) -> Vec<&str> {
-    self.languages.iter().map(String::as_str).collect()
-  }
-
-  pub fn header_value(&self) -> String {
-    self.languages.join(", ")
-  }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpContentLanguageParseError {
-  pub(crate) message: String,
-}
-
-impl HttpContentLanguageParseError {
-  pub(crate) fn new<S: AsRef<str>>(message: S) -> Self {
-    Self {
-      message: message.as_ref().to_string(),
-    }
-  }
-}
-
-impl fmt::Display for HttpContentLanguageParseError {
-  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    formatter.write_str(&self.message)
-  }
-}
-
-impl Error for HttpContentLanguageParseError {}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HttpReportingEndpoints {
   endpoints: Vec<(String, String)>,
 }
@@ -3211,114 +3254,6 @@ impl fmt::Display for HttpReportingEndpointsParseError {
   }
 }
 impl Error for HttpReportingEndpointsParseError {}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpResponseContentEncodings {
-  pub(crate) codings: Vec<String>,
-}
-
-impl HttpResponseContentEncodings {
-  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpContentEncodingParseError> {
-    Self::parse_values([value.as_ref()])
-  }
-
-  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpContentEncodingParseError>
-  where
-    I: IntoIterator<Item = &'a str>,
-  {
-    let mut codings = Vec::new();
-
-    for value in values {
-      if value.len() > MAX_CONTENT_ENCODING_VALUE_BYTES {
-        return Err(HttpContentEncodingParseError::new(
-          "Content-Encoding header value is too large",
-        ));
-      }
-
-      for coding in value.split(',') {
-        let coding = coding.trim();
-        if coding.is_empty() || !is_http_token(coding) {
-          return Err(HttpContentEncodingParseError::new(
-            "invalid Content-Encoding coding",
-          ));
-        }
-        if codings
-          .iter()
-          .any(|known: &String| known.eq_ignore_ascii_case(coding))
-        {
-          return Err(HttpContentEncodingParseError::new(
-            "duplicate Content-Encoding coding",
-          ));
-        }
-        if codings.len() >= MAX_CONTENT_ENCODINGS {
-          return Err(HttpContentEncodingParseError::new(
-            "too many Content-Encoding codings",
-          ));
-        }
-        codings.push(coding.to_string());
-      }
-    }
-
-    if codings.is_empty() {
-      return Err(HttpContentEncodingParseError::new(
-        "invalid Content-Encoding coding",
-      ));
-    }
-
-    Ok(Self { codings })
-  }
-
-  pub fn from_codings<I, C>(codings: I) -> Result<Self, HttpContentEncodingParseError>
-  where
-    I: IntoIterator<Item = C>,
-    C: AsRef<str>,
-  {
-    let mut value = String::new();
-
-    for (index, coding) in codings.into_iter().enumerate() {
-      if index > 0 {
-        value.push_str(", ");
-      }
-      value.push_str(coding.as_ref());
-      if value.len() > MAX_CONTENT_ENCODING_VALUE_BYTES {
-        return Err(HttpContentEncodingParseError::new(
-          "Content-Encoding header value is too large",
-        ));
-      }
-    }
-
-    Self::parse(value)
-  }
-
-  pub fn codings(&self) -> Vec<&str> {
-    self.codings.iter().map(String::as_str).collect()
-  }
-
-  pub fn header_value(&self) -> String {
-    self.codings.join(", ")
-  }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpContentEncodingParseError {
-  pub(crate) message: String,
-}
-
-impl HttpContentEncodingParseError {
-  pub(crate) fn new<S: AsRef<str>>(message: S) -> Self {
-    Self {
-      message: message.as_ref().to_string(),
-    }
-  }
-}
-
-impl fmt::Display for HttpContentEncodingParseError {
-  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    formatter.write_str(&self.message)
-  }
-}
-
-impl Error for HttpContentEncodingParseError {}
 
 /// A validated `Accept-Encoding` coding received on an HTTP request.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -4024,183 +3959,6 @@ pub(crate) fn serialize_content_disposition_parameter_value(value: &str) -> Stri
   quoted
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpContentType {
-  pub(crate) media_type: String,
-  pub(crate) parameters: Vec<(String, String)>,
-}
-
-impl HttpContentType {
-  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpContentTypeParseError> {
-    let value = value.as_ref();
-    if value.len() > MAX_CONTENT_TYPE_VALUE_BYTES {
-      return Err(HttpContentTypeParseError::new(
-        "Content-Type header value is too large",
-      ));
-    }
-    if value.bytes().any(|byte| byte.is_ascii_control()) {
-      return Err(HttpContentTypeParseError::new("invalid Content-Type value"));
-    }
-
-    let mut parts = split_content_type_parts(value)?;
-    if parts.is_empty() {
-      return Err(HttpContentTypeParseError::new(
-        "invalid Content-Type media type",
-      ));
-    }
-
-    let media_type = parse_content_type_media_type(parts.remove(0).trim())?;
-    let mut parameters = Vec::new();
-    for part in parts {
-      let part = part.trim();
-      if part.is_empty() {
-        return Err(HttpContentTypeParseError::new(
-          "invalid Content-Type parameter",
-        ));
-      }
-      let Some((name, value)) = part.split_once('=') else {
-        return Err(HttpContentTypeParseError::new(
-          "invalid Content-Type parameter",
-        ));
-      };
-      let name = name.trim().to_ascii_lowercase();
-      let value = value.trim();
-      if !is_http_token(&name) {
-        return Err(HttpContentTypeParseError::new(
-          "invalid Content-Type parameter name",
-        ));
-      }
-      if parameters
-        .iter()
-        .any(|(known, _): &(String, String)| known.eq_ignore_ascii_case(&name))
-      {
-        return Err(HttpContentTypeParseError::new(
-          "duplicate Content-Type parameter",
-        ));
-      }
-      if parameters.len() >= MAX_CONTENT_TYPE_PARAMETERS {
-        return Err(HttpContentTypeParseError::new(
-          "too many Content-Type parameters",
-        ));
-      }
-
-      let value = parse_content_type_parameter_value(value)?;
-      parameters.push((name, value));
-    }
-
-    Ok(Self {
-      media_type,
-      parameters,
-    })
-  }
-
-  pub fn new<T, S>(type_name: T, subtype: S) -> Result<Self, HttpContentTypeParseError>
-  where
-    T: AsRef<str>,
-    S: AsRef<str>,
-  {
-    let type_name = type_name.as_ref().trim().to_ascii_lowercase();
-    let subtype = subtype.as_ref().trim().to_ascii_lowercase();
-    if !is_http_token(&type_name) || !is_http_token(&subtype) {
-      return Err(HttpContentTypeParseError::new(
-        "invalid Content-Type media type",
-      ));
-    }
-    let media_type = format!("{type_name}/{subtype}");
-    if media_type.len() > MAX_CONTENT_TYPE_VALUE_BYTES {
-      return Err(HttpContentTypeParseError::new(
-        "Content-Type header value is too large",
-      ));
-    }
-    Ok(Self {
-      media_type,
-      parameters: Vec::new(),
-    })
-  }
-
-  pub fn with_parameter<N, V>(
-    mut self,
-    name: N,
-    value: V,
-  ) -> Result<Self, HttpContentTypeParseError>
-  where
-    N: AsRef<str>,
-    V: AsRef<str>,
-  {
-    let name = name.as_ref().trim().to_ascii_lowercase();
-    let value = value.as_ref();
-    if !is_http_token(&name) {
-      return Err(HttpContentTypeParseError::new(
-        "invalid Content-Type parameter name",
-      ));
-    }
-    if value.is_empty() || !value.is_ascii() || value.bytes().any(|byte| byte.is_ascii_control()) {
-      return Err(HttpContentTypeParseError::new(
-        "invalid Content-Type parameter value",
-      ));
-    }
-    if self
-      .parameters
-      .iter()
-      .any(|(known, _)| known.eq_ignore_ascii_case(&name))
-    {
-      return Err(HttpContentTypeParseError::new(
-        "duplicate Content-Type parameter",
-      ));
-    }
-    if self.parameters.len() >= MAX_CONTENT_TYPE_PARAMETERS {
-      return Err(HttpContentTypeParseError::new(
-        "too many Content-Type parameters",
-      ));
-    }
-
-    let mut candidate = self.header_value();
-    candidate.push_str("; ");
-    candidate.push_str(&name);
-    candidate.push('=');
-    candidate.push_str(&serialize_content_type_parameter_value(value));
-    if candidate.len() > MAX_CONTENT_TYPE_VALUE_BYTES {
-      return Err(HttpContentTypeParseError::new(
-        "Content-Type header value is too large",
-      ));
-    }
-
-    self.parameters.push((name, value.to_string()));
-    Ok(self)
-  }
-
-  pub fn media_type(&self) -> &str {
-    &self.media_type
-  }
-
-  pub fn parameter<S: AsRef<str>>(&self, name: S) -> Option<&str> {
-    self
-      .parameters
-      .iter()
-      .find(|(key, _)| key.eq_ignore_ascii_case(name.as_ref()))
-      .map(|(_, value)| value.as_str())
-  }
-
-  pub fn parameters(&self) -> Vec<(&str, &str)> {
-    self
-      .parameters
-      .iter()
-      .map(|(name, value)| (name.as_str(), value.as_str()))
-      .collect()
-  }
-
-  pub fn header_value(&self) -> String {
-    let mut value = self.media_type.clone();
-    for (name, parameter_value) in &self.parameters {
-      value.push_str("; ");
-      value.push_str(name);
-      value.push('=');
-      value.push_str(&serialize_content_type_parameter_value(parameter_value));
-    }
-    value
-  }
-}
-
 pub trait IntoHttpContentType {
   fn into_content_type(self) -> Result<HttpContentType, HttpContentTypeParseError>;
 }
@@ -4234,27 +3992,6 @@ impl IntoHttpContentType for &String {
     HttpContentType::parse(self)
   }
 }
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpContentTypeParseError {
-  pub(crate) message: String,
-}
-
-impl HttpContentTypeParseError {
-  pub(crate) fn new<S: AsRef<str>>(message: S) -> Self {
-    Self {
-      message: message.as_ref().to_string(),
-    }
-  }
-}
-
-impl fmt::Display for HttpContentTypeParseError {
-  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    formatter.write_str(&self.message)
-  }
-}
-
-impl Error for HttpContentTypeParseError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct HttpAcceptedMediaTypes {
@@ -4499,64 +4236,6 @@ impl fmt::Display for HttpAcceptPostParseError {
 
 impl Error for HttpAcceptPostParseError {}
 
-pub(crate) fn parse_content_type_media_type(
-  value: &str,
-) -> Result<String, HttpContentTypeParseError> {
-  let Some((type_name, subtype)) = value.split_once('/') else {
-    return Err(HttpContentTypeParseError::new(
-      "invalid Content-Type media type",
-    ));
-  };
-  let type_name = type_name.to_ascii_lowercase();
-  let subtype = subtype.to_ascii_lowercase();
-  if !is_http_token(&type_name) || !is_http_token(&subtype) {
-    return Err(HttpContentTypeParseError::new(
-      "invalid Content-Type media type",
-    ));
-  }
-  Ok(format!("{type_name}/{subtype}"))
-}
-
-pub(crate) fn split_content_type_parts(
-  value: &str,
-) -> Result<Vec<&str>, HttpContentTypeParseError> {
-  let mut parts = Vec::new();
-  let mut quoted = false;
-  let mut escaped = false;
-  let mut start = 0usize;
-
-  for (index, byte) in value.bytes().enumerate() {
-    if escaped {
-      if !is_content_type_quoted_pair_byte(byte) {
-        return Err(HttpContentTypeParseError::new(
-          "invalid Content-Type quoted-string",
-        ));
-      }
-      escaped = false;
-      continue;
-    }
-
-    match byte {
-      b'\\' if quoted => escaped = true,
-      b'"' => quoted = !quoted,
-      b';' if !quoted => {
-        parts.push(&value[start..index]);
-        start = index + 1;
-      }
-      _ => {}
-    }
-  }
-
-  if quoted || escaped {
-    return Err(HttpContentTypeParseError::new(
-      "invalid Content-Type quoted-string",
-    ));
-  }
-
-  parts.push(&value[start..]);
-  Ok(parts)
-}
-
 pub(crate) fn parse_content_type_parameter_value(
   value: &str,
 ) -> Result<String, HttpContentTypeParseError> {
@@ -4623,42 +4302,6 @@ pub(crate) fn is_content_type_quoted_text_byte(byte: u8) -> bool {
 
 pub(crate) fn is_content_type_quoted_pair_byte(byte: u8) -> bool {
   byte == b'\t' || matches!(byte, 0x20..=0x7e)
-}
-
-pub(crate) fn serialize_content_type_parameter_value(value: &str) -> String {
-  if is_http_token(value) {
-    return value.to_string();
-  }
-
-  let mut quoted = String::from("\"");
-  for byte in value.bytes() {
-    if matches!(byte, b'\\' | b'"') {
-      quoted.push('\\');
-    }
-    quoted.push(byte as char);
-  }
-  quoted.push('"');
-  quoted
-}
-
-pub(crate) fn is_valid_content_language_tag(value: &str) -> bool {
-  let mut subtags = value.split('-');
-  let Some(primary) = subtags.next() else {
-    return false;
-  };
-
-  if primary.is_empty()
-    || primary.len() > 8
-    || !primary.bytes().all(|byte| byte.is_ascii_alphabetic())
-  {
-    return false;
-  }
-
-  subtags.all(|subtag| {
-    !subtag.is_empty()
-      && subtag.len() <= 8
-      && subtag.bytes().all(|byte| byte.is_ascii_alphanumeric())
-  })
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

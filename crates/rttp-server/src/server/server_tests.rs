@@ -591,7 +591,11 @@ fn request_representation_metadata_preserves_invalid_headers_and_body() {
   ).as_bytes())
   .expect("duplicate members should not reject the request frame");
   assert!(duplicate_members.content_type().is_err());
-  assert!(duplicate_members.content_encoding().is_err());
+  let duplicate_encodings = duplicate_members
+    .content_encoding()
+    .expect("repeated Content-Encoding should parse")
+    .expect("Content-Encoding should be present");
+  assert_eq!(vec!["gzip", "GZIP"], duplicate_encodings.codings());
   assert!(duplicate_members.content_language().is_err());
   assert_eq!(
     Some("text/plain; charset=utf-8; CHARSET=us-ascii"),
@@ -613,15 +617,15 @@ fn request_representation_metadata_preserves_invalid_headers_and_body() {
 
   let too_many_parameters = format!(
     "text/plain{}",
-    (0..33)
+    (0..257)
       .map(|index| format!("; p{index}=v"))
       .collect::<String>()
   );
-  let too_many_codings = (0..33)
+  let too_many_codings = (0..257)
     .map(|index| format!("x-{index}"))
     .collect::<Vec<_>>()
     .join(", ");
-  let too_many_languages = (0..33)
+  let too_many_languages = (0..257)
     .map(|index| format!("x-{index}"))
     .collect::<Vec<_>>()
     .join(", ");

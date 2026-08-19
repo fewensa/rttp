@@ -72,6 +72,28 @@ impl ContentLanguage {
     Ok(Self { tags })
   }
 
+  pub fn from_languages<I, L>(languages: I) -> Result<Self, ContentLanguageParseError>
+  where
+    I: IntoIterator<Item = L>,
+    L: AsRef<str>,
+  {
+    let mut value = String::new();
+
+    for (index, language) in languages.into_iter().enumerate() {
+      if index > 0 {
+        value.push_str(", ");
+      }
+      value.push_str(language.as_ref());
+      if value.len() > MAX_CONTENT_LANGUAGE_VALUE_BYTES {
+        return Err(ContentLanguageParseError::new(
+          "Content-Language header value is too large",
+        ));
+      }
+    }
+
+    Self::parse(value)
+  }
+
   pub fn tags(&self) -> Vec<&str> {
     self.tags.iter().map(String::as_str).collect()
   }

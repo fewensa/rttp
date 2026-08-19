@@ -70,6 +70,37 @@ fn content_encoding_retains_repeated_codings_in_wire_order() {
 }
 
 #[test]
+fn content_encoding_builds_values_from_codings() {
+  let content_encoding =
+    ContentEncoding::from_codings(["gzip", "br", "zstd"]).expect("Content-Encoding should build");
+
+  assert_eq!(content_encoding.codings(), ["gzip", "br", "zstd"]);
+  assert_eq!(content_encoding.header_value(), "gzip, br, zstd");
+  assert_eq!(content_encoding.len(), 3);
+
+  assert!(
+    ContentEncoding::from_codings(["bad coding"]).is_err(),
+    "invalid codings must be rejected"
+  );
+  assert!(
+    ContentEncoding::from_codings(
+      (0..=MAX_CONTENT_ENCODING_CODINGS).map(|index| format!("c{index}"))
+    )
+    .is_err(),
+    "too many codings must be rejected"
+  );
+}
+
+#[test]
+fn content_encoding_from_codings_retains_repeated_codings_in_wire_order() {
+  let content_encoding =
+    ContentEncoding::from_codings(["gzip", "GZIP"]).expect("repeated codings should build");
+
+  assert_eq!(content_encoding.codings(), ["gzip", "GZIP"]);
+  assert_eq!(content_encoding.header_value(), "gzip, GZIP");
+}
+
+#[test]
 fn content_encoding_rejects_empty_field_sets() {
   assert!(
     ContentEncoding::parse_values([]).is_err(),

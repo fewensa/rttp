@@ -1557,7 +1557,7 @@ pub mod content_disposition {
 
 pub mod content_language {
   pub const MAX_VALUE_BYTES: usize = 64 * 1024;
-  pub const SERVER_MAX_LANGUAGES: usize = 32;
+  pub const SERVER_MAX_LANGUAGES: usize = 256;
   pub const CLIENT_MAX_LANGUAGES: usize = 256;
 
   pub struct ResponseCase {
@@ -1683,7 +1683,7 @@ pub mod content_language {
 
 pub mod content_type {
   pub const MAX_VALUE_BYTES: usize = 64 * 1024;
-  pub const SERVER_MAX_PARAMETERS: usize = 32;
+  pub const SERVER_MAX_PARAMETERS: usize = 256;
   pub const CLIENT_MAX_PARAMETERS: usize = 256;
 
   pub struct ResponseCase {
@@ -1806,7 +1806,7 @@ pub mod content_type {
 
 pub mod content_encoding {
   pub const MAX_VALUE_BYTES: usize = 64 * 1024;
-  pub const SERVER_MAX_ENCODINGS: usize = 32;
+  pub const SERVER_MAX_ENCODINGS: usize = 256;
   pub const CLIENT_MAX_ENCODINGS: usize = 256;
 
   pub struct ResponseCase {

@@ -1407,14 +1407,17 @@ tag list and adds one comma-separated `Content-Language` header, while
 `HttpResponse::content_language()` parses any `Content-Language` headers
 already attached to a response into `HttpContentLanguages`.
 `HttpContentLanguages::parse(value)` accepts comma-separated language tags and
-preserves the declared spelling and order.
+preserves the declared spelling and order; the parsed tags are exposed by both
+`HttpContentLanguages::languages()` and `HttpContentLanguages::tags()`.
 
 Parsing is bounded and validation-oriented. Each `Content-Language` field value
-is limited to 64 KiB, the parsed language list is limited to 32 entries, and
-each tag must contain non-empty ASCII alphanumeric subtags separated by hyphens
-with an alphabetic primary subtag. Empty members, malformed tags, duplicates
-across one or more helper-parsed header fields, oversized values, and too many
-tags return `HttpContentLanguageParseError` from the helper. Raw
+is limited to 64 KiB, the parsed language list is limited to 256 entries, and
+each tag must match the BCP 47-shaped grammar enforced by the shared protocol
+primitive: language, optional extlang, script, region, variant, extension, and
+private-use subtags, plus registered grandfathered tags. Empty members,
+malformed tags, duplicates across one or more helper-parsed header fields,
+oversized values, and too many tags return `HttpContentLanguageParseError` from
+the helper. Raw
 `Request::header("Content-Language", ...)` and
 `HttpResponse::header("Content-Language", ...)` values remain preserved exactly
 as ordinary headers; helper parse errors do not remove existing headers.
@@ -1506,9 +1509,11 @@ received `Content-Encoding` fields in wire order into
 helpers. `HttpContentType::parse(value)`
 validates a `Content-Type` field, normalizes the media type and parameter
 names to lowercase, preserves parameter values, and exposes
-`media_type()`, `parameter(name)`, `parameters()`, and `header_value()`.
+`media_type()`, `type_()`, `subtype()`, `parameter(name)`, `parameters()`,
+and `header_value()`.
 `HttpContentType::new(type_name, subtype)` constructs a normalized media type,
-and `with_parameter(name, value)` appends safely serialized parameters.
+and `with_parameter(name, value)` appends safely serialized parameters with
+normalized names and preserved values.
 `HttpResponse::with_content_type(value)` accepts any `IntoHttpContentType`,
 removes existing raw `Content-Type` fields, and adds one validated
 `Content-Type` header. `HttpResponse::content_type()` parses an attached
@@ -1521,17 +1526,17 @@ coding list for declarations. `HttpResponse::with_content_encoding(codings)`
 removes existing raw `Content-Encoding` fields and adds one validated
 comma-separated header. `HttpResponse::content_encoding()` parses all attached
 `Content-Encoding` fields in wire order and returns `Ok(None)` when absent.
-Coding spelling and order are preserved, and duplicate detection is
-case-insensitive.
+Coding spelling and order are preserved, including repeated codings across
+one or more header fields.
 
 Parsing and declaration are bounded. Each `Content-Type` and
 `Content-Encoding` field value is limited to 64 KiB. Server `Content-Type`
-helpers accept at most 32 parameters and reject malformed media types,
+helpers accept at most 256 parameters and reject malformed media types,
 malformed parameter syntax, malformed quoted strings, duplicate parameters,
 duplicate singleton fields, CR/LF or other control bytes, oversized values,
-and too many parameters. Server `Content-Encoding` helpers accept at most 32
-codings and reject empty members, malformed tokens, duplicate codings,
-oversized values, and too many codings. Raw `Request::header(...)` and
+and too many parameters. Server `Content-Encoding` helpers accept at most 256
+codings and reject empty members, malformed tokens, oversized values, and too
+many codings. Raw `Request::header(...)` and
 `HttpResponse::header(...)` values remain preserved exactly as ordinary
 headers until a typed declaration helper replaces them or the typed parser is
 requested; parser errors do not remove existing headers or change the request

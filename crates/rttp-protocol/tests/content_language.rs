@@ -58,6 +58,31 @@ fn content_language_accepts_http_optional_whitespace_padding() {
 }
 
 #[test]
+fn content_language_builds_values_from_language_tags() {
+  let content_language = ContentLanguage::from_languages(["en", "fr-CA", "x-private"])
+    .expect("Content-Language should build");
+
+  assert_eq!(content_language.tags(), ["en", "fr-CA", "x-private"]);
+  assert_eq!(content_language.header_value(), "en, fr-CA, x-private");
+
+  assert!(
+    ContentLanguage::from_languages(["en", "en"]).is_err(),
+    "duplicate tags must be rejected"
+  );
+  assert!(
+    ContentLanguage::from_languages(["bad tag"]).is_err(),
+    "invalid tags must be rejected"
+  );
+  assert!(
+    ContentLanguage::from_languages(
+      (0..=MAX_CONTENT_LANGUAGE_TAGS).map(|index| format!("x-{index}"))
+    )
+    .is_err(),
+    "too many tags must be rejected"
+  );
+}
+
+#[test]
 fn content_language_rejects_invalid_values() {
   for value in [
     "",

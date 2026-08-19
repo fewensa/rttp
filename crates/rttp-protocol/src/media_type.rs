@@ -30,19 +30,25 @@ impl MediaType {
     &self.parameters
   }
 
+  pub(crate) fn from_parts(type_: String, subtype: String) -> Self {
+    Self {
+      type_,
+      subtype,
+      parameters: Vec::new(),
+    }
+  }
+
+  pub(crate) fn push_parameter(&mut self, name: String, value: String) {
+    self.parameters.push(MediaTypeParameter { name, value });
+  }
+
   pub(crate) fn header_value(&self) -> String {
     let mut value = format!("{}/{}", self.type_, self.subtype);
     for parameter in &self.parameters {
       value.push_str("; ");
       value.push_str(parameter.name());
       value.push('=');
-      if is_token(parameter.value()) {
-        value.push_str(parameter.value());
-      } else {
-        value.push('"');
-        value.push_str(&escape_quoted(parameter.value()));
-        value.push('"');
-      }
+      value.push_str(&serialize_parameter_value(parameter.value()));
     }
     value
   }
@@ -228,8 +234,19 @@ fn is_invalid_control_byte(byte: u8) -> bool {
   byte != b'\t' && (byte <= 0x1f || byte == 0x7f)
 }
 
-fn is_token(value: &str) -> bool {
+pub(crate) fn is_token(value: &str) -> bool {
   !value.is_empty() && value.bytes().all(is_token_byte)
+}
+
+pub(crate) fn serialize_parameter_value(value: &str) -> String {
+  if is_token(value) {
+    return value.to_string();
+  }
+
+  let mut serialized = String::from("\"");
+  serialized.push_str(&escape_quoted(value));
+  serialized.push('"');
+  serialized
 }
 
 fn is_token_byte(byte: u8) -> bool {
