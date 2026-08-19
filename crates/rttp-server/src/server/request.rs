@@ -31,6 +31,10 @@ pub use rttp_protocol::baggage::{
   Baggage as HttpBaggage, BaggageMember as HttpBaggageMember,
   BaggageParseError as HttpBaggageParseError, BaggageProperty as HttpBaggageProperty,
 };
+pub use rttp_protocol::cdn_loop::{
+  CdnLoop as HttpCdnLoop, CdnLoopMember as HttpCdnLoopMember,
+  CdnLoopParameter as HttpCdnLoopParameter, CdnLoopParseError as HttpCdnLoopParseError,
+};
 pub use rttp_protocol::connection::{
   Connection as HttpConnection, ConnectionParseError as HttpConnectionParseError,
 };
@@ -774,6 +778,16 @@ impl Request {
       return Ok(None);
     }
     HttpForwarded::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded RFC 8586 `CDN-Loop` request metadata without detecting
+  /// loops, rejecting the request, or inserting a local CDN identifier.
+  pub fn cdn_loop(&self) -> Result<Option<HttpCdnLoop>, HttpCdnLoopParseError> {
+    let values: Vec<&str> = self.headers_named("CDN-Loop").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpCdnLoop::parse_values(values).map(Some)
   }
 
   pub fn vary_selection(&self, vary: &HttpVary) -> HttpVarySelection {
@@ -2732,6 +2746,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpForwarded::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded RFC 8586 `CDN-Loop` request metadata without detecting
+  /// loops, rejecting the request, or inserting a local CDN identifier.
+  pub fn cdn_loop(&self) -> Result<Option<HttpCdnLoop>, HttpCdnLoopParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("CDN-Loop"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpCdnLoop::parse_values(values).map(Some)
   }
 
   pub fn vary_selection(&self, vary: &HttpVary) -> HttpVarySelection {
