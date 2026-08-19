@@ -16,6 +16,10 @@ fn x_frame_options_parses_deny_and_same_origin_case_insensitively() {
   );
   assert_eq!(
     XFrameOptions::SameOrigin,
+    XFrameOptions::parse("SameOrigin").expect("SameOrigin should parse")
+  );
+  assert_eq!(
+    XFrameOptions::SameOrigin,
     XFrameOptions::parse("sameorigin").expect("sameorigin should parse")
   );
   assert_eq!("DENY", XFrameOptions::Deny.header_value());
@@ -49,6 +53,12 @@ fn x_frame_options_rejects_empty_duplicate_malformed_and_ambiguous_values() {
     "",
     "   ",
     "ALLOW-FROM https://example.test",
+    "DENY, SAMEORIGIN",
+    "DENY; foo",
+    "\"DENY\"",
+    "SAME ORIGIN",
+    "SAMEORIGIN\r\nX: y",
+    "SAMEORIGIN\u{7f}",
     "deny, sameorigin",
     "deny; foo",
     "\"deny\"",
