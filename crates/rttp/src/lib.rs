@@ -10,7 +10,9 @@ pub use rttp_client::response::{
   ContentLocation, ContentLocationParseError, CriticalCh, CrossOriginEmbedderPolicy,
   CrossOriginEmbedderPolicyParseError, CrossOriginEmbedderPolicyReportOnly,
   CrossOriginEmbedderPolicyReportOnlyParseError, CrossOriginOpenerPolicy,
-  CrossOriginOpenerPolicyParseError, StrictTransportSecurity, StrictTransportSecurityParseError,
+  CrossOriginOpenerPolicyParseError, Location, LocationParseError, NoVarySearch,
+  NoVarySearchParams, NoVarySearchParseError, StrictTransportSecurity,
+  StrictTransportSecurityParseError,
 };
 #[cfg(feature = "client")]
 pub use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};

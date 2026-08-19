@@ -4,12 +4,12 @@ use rttp_server::server::{
   HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError,
   HttpConditionalMetadata, HttpConnection, HttpConnectionParseError, HttpContentLocation,
   HttpContentLocationParseError, HttpCrossOriginEmbedderPolicyReportOnly,
-  HttpCrossOriginResourcePolicy, HttpEntityTag, HttpHost, HttpPreferenceKind, HttpRequest,
-  HttpResponse, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
-  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpTransferEncoding,
-  HttpTransferEncodingParseError, HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite,
-  SecFetchUser,
+  HttpCrossOriginResourcePolicy, HttpEntityTag, HttpHost, HttpNoVarySearch, HttpNoVarySearchParams,
+  HttpPreferenceKind, HttpRequest, HttpResponse, HttpSignature, HttpSignatureInput,
+  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
+  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
+  HttpTransferEncoding, HttpTransferEncodingParseError, HttpWantContentDigest, HttpWantReprDigest,
+  SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
 };
 
 #[test]
@@ -35,6 +35,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpAccessControlRequestHeadersParseError,
   > = HttpAccessControlRequestHeaders::parse("X-Request Id");
   let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("revision-42"));
+  let no_vary_search: HttpNoVarySearch =
+    HttpNoVarySearch::parse(r#"params=("utm_source")"#).expect("No-Vary-Search should parse");
   let policy: HttpCrossOriginResourcePolicy = HttpCrossOriginResourcePolicy::parse("same-origin")
     .expect("Cross-Origin-Resource-Policy should parse");
   let report_only_policy: HttpCrossOriginEmbedderPolicyReportOnly =
@@ -76,6 +78,12 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     "revision-42"
   );
   assert_eq!(
+    no_vary_search.params(),
+    Some(&HttpNoVarySearchParams::Names(
+      vec!["utm_source".to_owned()]
+    ))
+  );
+  assert_eq!(
     response
       .accept_ch()
       .expect("Accept-CH should parse")
@@ -103,6 +111,26 @@ fn request_facade_parses_structured_prefer_metadata() {
 
   assert_eq!(prefer.preferences()[0].kind(), HttpPreferenceKind::Handling);
   assert_eq!(prefer.preferences()[1].parameters()[0].value(), Some("a b"));
+}
+
+#[test]
+fn request_facade_parses_want_content_digest_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nWant-Content-Digest: sha-256=10, sha-512=3, unixsum=0\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let digest: HttpWantContentDigest = request
+    .want_content_digest()
+    .expect("Want-Content-Digest should parse")
+    .expect("Want-Content-Digest should be present");
+
+  assert_eq!(digest.entries()[0].algorithm(), "sha-256");
+  assert_eq!(digest.entries()[0].preference(), 10);
+  assert_eq!(digest.entries()[1].algorithm(), "sha-512");
+  assert_eq!(digest.entries()[1].preference(), 3);
+  assert_eq!(digest.entries()[2].algorithm(), "unixsum");
+  assert_eq!(digest.entries()[2].preference(), 0);
 }
 
 #[test]

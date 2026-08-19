@@ -44,6 +44,10 @@ pub use rttp_protocol::transfer_encoding::{
   TransferEncoding as HttpTransferEncoding,
   TransferEncodingParseError as HttpTransferEncodingParseError,
 };
+pub use rttp_protocol::want_content_digest::{
+  WantContentDigest as HttpWantContentDigest, WantContentDigestEntry as HttpWantContentDigestEntry,
+  WantContentDigestParseError as HttpWantContentDigestParseError,
+};
 pub use rttp_protocol::want_repr_digest::{
   WantReprDigest as HttpWantReprDigest, WantReprDigestEntry as HttpWantReprDigestEntry,
   WantReprDigestParseError as HttpWantReprDigestParseError,
@@ -474,6 +478,14 @@ impl Request {
       return Ok(None);
     }
     HttpRequestAcceptEncodings::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Want-Content-Digest` request metadata without selecting
+  /// an algorithm or computing a content digest.
+  pub fn want_content_digest(
+    &self,
+  ) -> Result<Option<HttpWantContentDigest>, HttpWantContentDigestParseError> {
+    parse_want_content_digest_values(self.headers_named("Want-Content-Digest"))
   }
 
   /// Parses received `Want-Repr-Digest` request metadata without selecting an
@@ -1130,6 +1142,16 @@ fn parse_prefer_values<'a>(
     return Ok(None);
   }
   HttpRequestPreferences::parse_values(values).map(Some)
+}
+
+fn parse_want_content_digest_values<'a>(
+  values: impl IntoIterator<Item = &'a str>,
+) -> Result<Option<HttpWantContentDigest>, HttpWantContentDigestParseError> {
+  let values: Vec<&str> = values.into_iter().collect();
+  if values.is_empty() {
+    return Ok(None);
+  }
+  HttpWantContentDigest::parse_values(values).map(Some)
 }
 
 fn parse_want_repr_digest_values<'a>(
@@ -2374,6 +2396,20 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpRequestAcceptEncodings::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Want-Content-Digest` request metadata without selecting
+  /// an algorithm or computing a content digest.
+  pub fn want_content_digest(
+    &self,
+  ) -> Result<Option<HttpWantContentDigest>, HttpWantContentDigestParseError> {
+    parse_want_content_digest_values(
+      self
+        .headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("Want-Content-Digest"))
+        .map(|header| header.value.as_str()),
+    )
   }
 
   /// Parses received `Want-Repr-Digest` request metadata without selecting an
