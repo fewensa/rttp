@@ -202,6 +202,22 @@ string to 64 KiB.
 These helpers only declare and parse metadata. The server does not send
 network error reports, persist policy, or configure Reporting endpoint groups.
 
+## Proxy-Status response metadata
+
+`HttpResponse::with_proxy_status(value)` validates RFC 9209 `Proxy-Status` as
+a bounded Structured Fields list of Token or String proxy identifiers with
+opaque parameters and replaces any existing `Proxy-Status` fields with one
+normalized value. `HttpResponse::proxy_status()` parses attached raw fields
+into `HttpProxyStatus` metadata, returning parser errors without changing
+those raw fields. Absent fields return `Ok(None)`. Empty lists, inner-lists,
+malformed syntax, control bytes, oversized values, and duplicate parameters
+return a parser error while `HttpResponse` raw headers continue to expose the
+original fields.
+
+These helpers expose Proxy-Status as metadata only. They do not interpret
+proxy health, retry requests, promote trailers, or generate origin
+`Proxy-Status` values.
+
 ## Accept-Ranges response metadata
 
 `HttpResponse::with_accept_ranges(units)` declares supported range units with

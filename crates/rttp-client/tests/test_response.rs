@@ -3,9 +3,9 @@ use rttp_client::response::{
   ContentRange, ContentSecurityPolicy, ContentType, CrossOriginEmbedderPolicy,
   CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginResourcePolicy,
   Deprecation, EntityTag, HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues, Location,
-  MementoDatetime, ProxyAuthenticate, ProxyAuthenticationInfo, ReferrerPolicy, ReferrerPolicyToken,
-  Response, RetryAfter, ServerTiming, SignatureInput, StrictTransportSecurity, Warning,
-  XContentTypeOptions, XFrameOptions,
+  MementoDatetime, ProxyAuthenticate, ProxyAuthenticationInfo, ProxyStatus, ProxyStatusBareItem,
+  ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ServerTiming, SignatureInput,
+  StrictTransportSecurity, Warning, XContentTypeOptions, XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -1991,6 +1991,104 @@ fn test_proxy_authentication_info_response_helper_parses_bounded_auth_params() {
     combined.header_values("Proxy-Authentication-Info"),
     [&"nextnonce=abc".to_string(), &"qop=auth".to_string()]
   );
+}
+
+#[test]
+fn test_proxy_status_response_helper_parses_rfc9209_and_combined_fields() {
+  let raw = concat!(
+    "HTTP/1.1 504 Gateway Timeout\r\n",
+    "Proxy-Status: ExampleCDN; error=connection_timeout\r\n",
+    "Proxy-Status: OtherProxy; extra-param\r\n",
+    "Content-Length: 7\r\n\r\ntimeout"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+  let status = response
+    .proxy_status()
+    .expect("valid Proxy-Status should parse")
+    .expect("Proxy-Status should be present");
+
+  assert_eq!(2, status.len());
+  assert_eq!("ExampleCDN", status.members()[0].identifier().as_str());
+  assert_eq!(
+    Some(&ProxyStatusBareItem::Token(
+      "connection_timeout".to_string()
+    )),
+    status.members()[0]
+      .parameter("error")
+      .map(|parameter| parameter.value())
+  );
+  assert_eq!(
+    Some(&ProxyStatusBareItem::Boolean(true)),
+    status.members()[1]
+      .parameter("extra-param")
+      .map(|parameter| parameter.value())
+  );
+  assert_eq!(
+    response.header_values("Proxy-Status"),
+    [
+      &"ExampleCDN; error=connection_timeout".to_string(),
+      &"OtherProxy; extra-param".to_string()
+    ]
+  );
+}
+
+#[test]
+fn test_proxy_status_response_helper_returns_none_when_absent() {
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response without Proxy-Status should parse");
+  assert_eq!(
+    None,
+    absent
+      .proxy_status()
+      .expect("absent Proxy-Status should parse")
+  );
+}
+
+#[test]
+fn test_proxy_status_rejects_malformed_and_oversized_values_without_hiding_headers() {
+  for value in [
+    "",
+    "(ExampleCDN)",
+    "ExampleCDN; error=timeout; error=reset",
+    "ExampleCDN;\x01bad",
+  ] {
+    let raw = format!(
+      "HTTP/1.1 504 Gateway Timeout\r\nProxy-Status: {value}\r\nContent-Length: 7\r\n\r\ntimeout"
+    );
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(response.proxy_status().is_err(), "should reject {value:?}");
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Proxy-Status")
+    );
+    assert_eq!("timeout", response.body().string().unwrap());
+  }
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_raw =
+    format!("HTTP/1.1 200 OK\r\nProxy-Status: {oversized}\r\nContent-Length: 0\r\n\r\n");
+  let oversized_response = Response::new(
+    RoUrl::with("https://example.test"),
+    oversized_raw.into_bytes(),
+  )
+  .expect("raw response should remain usable");
+  assert!(oversized_response.proxy_status().is_err());
+  assert_eq!(
+    Some(&oversized),
+    oversized_response.header_value("Proxy-Status")
+  );
+  assert!(ProxyStatus::parse(
+    (0..257)
+      .map(|index| format!("Proxy{index}"))
+      .collect::<Vec<_>>()
+      .join(", ")
+  )
+  .is_err());
 }
 
 #[test]
