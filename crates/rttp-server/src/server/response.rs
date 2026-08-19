@@ -12,9 +12,16 @@ pub use rttp_protocol::access_control_allow_origin::{
   AccessControlAllowOrigin as HttpAccessControlAllowOrigin,
   AccessControlAllowOriginParseError as HttpAccessControlAllowOriginParseError,
 };
+pub use rttp_protocol::allow::{
+  Allow as HttpAllowedMethods, AllowParseError as HttpAllowParseError,
+};
 pub use rttp_protocol::alt_svc::{
   AltSvc as HttpAltSvc, AltSvcAlternative as HttpAltSvcAlternative,
   AltSvcParameter as HttpAltSvcParameter, AltSvcParseError as HttpAltSvcParseError,
+};
+pub use rttp_protocol::authentication_info::{
+  AuthenticationInfo as HttpAuthenticationInfo,
+  AuthenticationInfoParseError as HttpAuthenticationInfoParseError,
 };
 pub use rttp_protocol::clear_site_data::{
   ClearSiteData as HttpClearSiteData, ClearSiteDataDirective as HttpClearSiteDataDirective,
@@ -24,6 +31,18 @@ pub use rttp_protocol::client_hints::{
   AcceptCh as HttpAcceptCh, AcceptChParseError as HttpAcceptChParseError,
   CriticalCh as HttpCriticalCh, CriticalChParseError as HttpCriticalChParseError,
 };
+pub use rttp_protocol::cross_origin_embedder_policy::{
+  CrossOriginEmbedderPolicy as HttpCrossOriginEmbedderPolicy,
+  CrossOriginEmbedderPolicyParseError as HttpCrossOriginEmbedderPolicyParseError,
+};
+pub use rttp_protocol::cross_origin_embedder_policy_report_only::{
+  CrossOriginEmbedderPolicyReportOnly as HttpCrossOriginEmbedderPolicyReportOnly,
+  CrossOriginEmbedderPolicyReportOnlyParseError as HttpCrossOriginEmbedderPolicyReportOnlyParseError,
+};
+pub use rttp_protocol::cross_origin_opener_policy::{
+  CrossOriginOpenerPolicy as HttpCrossOriginOpenerPolicy,
+  CrossOriginOpenerPolicyParseError as HttpCrossOriginOpenerPolicyParseError,
+};
 pub use rttp_protocol::cross_origin_resource_policy::{
   CrossOriginResourcePolicy as HttpCrossOriginResourcePolicy,
   CrossOriginResourcePolicyParseError as HttpCrossOriginResourcePolicyParseError,
@@ -32,14 +51,27 @@ pub use rttp_protocol::digest::{
   Digest as HttpDigest, DigestEntry as HttpDigestEntry, DigestParseError as HttpDigestParseError,
   ReprDigest as HttpReprDigest, ReprDigestEntry as HttpReprDigestEntry,
 };
+pub use rttp_protocol::no_vary_search::{
+  NoVarySearch as HttpNoVarySearch, NoVarySearchExtension as HttpNoVarySearchExtension,
+  NoVarySearchParams as HttpNoVarySearchParams,
+  NoVarySearchParseError as HttpNoVarySearchParseError,
+};
 pub use rttp_protocol::priority::{
   Priority as HttpPriority, PriorityExtension as HttpPriorityExtension,
   PriorityParseError as HttpPriorityParseError,
+};
+pub use rttp_protocol::proxy_authentication_info::{
+  ProxyAuthenticationInfo as HttpProxyAuthenticationInfo,
+  ProxyAuthenticationInfoParseError as HttpProxyAuthenticationInfoParseError,
 };
 pub use rttp_protocol::server_timing::{
   ServerTiming as HttpServerTiming, ServerTimingMetric as HttpServerTimingMetric,
   ServerTimingParameter as HttpServerTimingParameter,
   ServerTimingParseError as HttpServerTimingParseError,
+};
+pub use rttp_protocol::strict_transport_security::{
+  StrictTransportSecurity as HttpStrictTransportSecurity,
+  StrictTransportSecurityParseError as HttpStrictTransportSecurityParseError,
 };
 pub use rttp_protocol::sunset::SunsetParseError as HttpSunsetParseError;
 pub use rttp_protocol::www_authenticate::{
@@ -47,13 +79,18 @@ pub use rttp_protocol::www_authenticate::{
   WwwAuthenticateParameter as HttpWwwAuthenticateParameter,
   WwwAuthenticateParseError as HttpWwwAuthenticateParseError,
 };
+pub use rttp_protocol::x_content_type_options::{
+  XContentTypeOptions as HttpXContentTypeOptions,
+  XContentTypeOptionsParseError as HttpXContentTypeOptionsParseError,
+};
+pub use rttp_protocol::x_frame_options::{
+  XFrameOptions as HttpXFrameOptions, XFrameOptionsParseError as HttpXFrameOptionsParseError,
+};
 
 pub(crate) const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
 pub(crate) const MAX_VARY_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_VARY_FIELDS: usize = 256;
-pub(crate) const MAX_ALLOW_VALUE_BYTES: usize = 64 * 1024;
-pub(crate) const MAX_ALLOW_METHODS: usize = 32;
 pub(crate) const MAX_CONTENT_LANGUAGE_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_CONTENT_LANGUAGES: usize = 32;
 pub(crate) const MAX_CONTENT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
@@ -662,6 +699,23 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `No-Vary-Search` response metadata without applying
+  /// cache-key or URL-normalization policy.
+  pub fn with_no_vary_search<V: AsRef<str>>(
+    mut self,
+    value: V,
+  ) -> Result<Self, HttpNoVarySearchParseError> {
+    let no_vary_search = HttpNoVarySearch::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("No-Vary-Search"));
+    self.headers.push(HttpHeader::new(
+      "No-Vary-Search",
+      no_vary_search.header_value(),
+    ));
+    Ok(self)
+  }
+
   pub fn with_allow<I, M>(mut self, methods: I) -> Result<Self, HttpAllowParseError>
   where
     I: IntoIterator<Item = M>,
@@ -766,6 +820,115 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Cross-Origin-Embedder-Policy` response metadata
+  /// without applying embedder policy.
+  pub fn with_cross_origin_embedder_policy(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpCrossOriginEmbedderPolicyParseError> {
+    let policy = HttpCrossOriginEmbedderPolicy::parse(value)?;
+    self.headers.retain(|header| {
+      !header
+        .name
+        .eq_ignore_ascii_case("Cross-Origin-Embedder-Policy")
+    });
+    self.headers.push(HttpHeader::new(
+      "Cross-Origin-Embedder-Policy",
+      policy.header_value(),
+    ));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Cross-Origin-Embedder-Policy-Report-Only`
+  /// response metadata without applying embedder policy or scheduling reports.
+  pub fn with_cross_origin_embedder_policy_report_only(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpCrossOriginEmbedderPolicyReportOnlyParseError> {
+    let policy = HttpCrossOriginEmbedderPolicyReportOnly::parse(value)?;
+    self.headers.retain(|header| {
+      !header
+        .name
+        .eq_ignore_ascii_case("Cross-Origin-Embedder-Policy-Report-Only")
+    });
+    self.headers.push(HttpHeader::new(
+      "Cross-Origin-Embedder-Policy-Report-Only",
+      policy.header_value(),
+    ));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Cross-Origin-Opener-Policy` response metadata
+  /// without applying opener policy.
+  pub fn with_cross_origin_opener_policy(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpCrossOriginOpenerPolicyParseError> {
+    let policy = HttpCrossOriginOpenerPolicy::parse(value)?;
+    self.headers.retain(|header| {
+      !header
+        .name
+        .eq_ignore_ascii_case("Cross-Origin-Opener-Policy")
+    });
+    self.headers.push(HttpHeader::new(
+      "Cross-Origin-Opener-Policy",
+      policy.header_value(),
+    ));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Strict-Transport-Security` response metadata
+  /// without applying HTTPS-only policy.
+  pub fn with_strict_transport_security(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpStrictTransportSecurityParseError> {
+    let policy = HttpStrictTransportSecurity::parse(value)?;
+    self.headers.retain(|header| {
+      !header
+        .name
+        .eq_ignore_ascii_case("Strict-Transport-Security")
+    });
+    self.headers.push(HttpHeader::new(
+      "Strict-Transport-Security",
+      policy.header_value(),
+    ));
+    Ok(self)
+  }
+
+  /// Validates and replaces `X-Content-Type-Options` response metadata
+  /// without applying MIME-sniffing protection.
+  pub fn with_x_content_type_options(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpXContentTypeOptionsParseError> {
+    let options = HttpXContentTypeOptions::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("X-Content-Type-Options"));
+    self.headers.push(HttpHeader::new(
+      "X-Content-Type-Options",
+      options.header_value(),
+    ));
+    Ok(self)
+  }
+
+  /// Validates and replaces `X-Frame-Options` response metadata without
+  /// applying clickjacking protection.
+  pub fn with_x_frame_options(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpXFrameOptionsParseError> {
+    let options = HttpXFrameOptions::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("X-Frame-Options"));
+    self
+      .headers
+      .push(HttpHeader::new("X-Frame-Options", options.header_value()));
+    Ok(self)
+  }
+
   /// Validates and replaces `Reporting-Endpoints` response metadata.
   pub fn with_reporting_endpoints<I, N, U>(
     mut self,
@@ -852,6 +1015,39 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Authentication-Info` response metadata.
+  pub fn with_authentication_info(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpAuthenticationInfoParseError> {
+    let info = HttpAuthenticationInfo::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Authentication-Info"));
+    self
+      .headers
+      .push(HttpHeader::new("Authentication-Info", info.header_value()));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Proxy-Authentication-Info` response metadata.
+  pub fn with_proxy_authentication_info(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpProxyAuthenticationInfoParseError> {
+    let info = HttpProxyAuthenticationInfo::parse(value)?;
+    self.headers.retain(|header| {
+      !header
+        .name
+        .eq_ignore_ascii_case("Proxy-Authentication-Info")
+    });
+    self.headers.push(HttpHeader::new(
+      "Proxy-Authentication-Info",
+      info.header_value(),
+    ));
+    Ok(self)
+  }
+
   /// Validates and replaces `Content-Digest` response metadata.
   pub fn with_digest(mut self, value: impl AsRef<str>) -> Result<Self, HttpDigestParseError> {
     let digest = HttpDigest::parse(value)?;
@@ -873,6 +1069,36 @@ impl HttpResponse {
     self
       .headers
       .push(HttpHeader::new("Repr-Digest", digest.header_value()));
+    Ok(self)
+  }
+
+  /// Validates and replaces RFC 9421 `Signature` response metadata without
+  /// signing or verifying.
+  pub fn with_signature(mut self, value: impl AsRef<str>) -> Result<Self, HttpSignatureParseError> {
+    let signature = HttpSignature::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Signature"));
+    self
+      .headers
+      .push(HttpHeader::new("Signature", signature.header_value()));
+    Ok(self)
+  }
+
+  /// Validates and replaces RFC 9421 `Signature-Input` response metadata
+  /// without signing, verifying, or applying cryptographic policy.
+  pub fn with_signature_input(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpSignatureInputParseError> {
+    let signature_input = HttpSignatureInput::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Signature-Input"));
+    self.headers.push(HttpHeader::new(
+      "Signature-Input",
+      signature_input.header_value(),
+    ));
     Ok(self)
   }
 
@@ -1177,6 +1403,21 @@ impl HttpResponse {
     HttpVary::parse_values(values).map(Some)
   }
 
+  /// Parses attached `No-Vary-Search` metadata without changing raw headers,
+  /// cache keys, URLs, or response selection policy.
+  pub fn no_vary_search(&self) -> Result<Option<HttpNoVarySearch>, HttpNoVarySearchParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("No-Vary-Search"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpNoVarySearch::parse_values(values).map(Some)
+  }
+
   /// Parses `Link` response metadata without enabling preload, redirects,
   /// caching, or fetch scheduling.
   pub fn links(&self) -> Result<Option<HttpLinkValues>, HttpLinkParseError> {
@@ -1203,6 +1444,21 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpAllowedMethods::parse_values(values).map(Some)
+  }
+
+  /// Parses attached HTTP/1 `Connection` header metadata without changing
+  /// keep-alive, hop-by-hop stripping, or HTTP/2 rejection.
+  pub fn connection(&self) -> Result<Option<HttpConnection>, HttpConnectionParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Connection"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpConnection::parse_values(values).map(Some)
   }
 
   pub fn content_language(
@@ -1304,6 +1560,125 @@ impl HttpResponse {
     HttpCrossOriginResourcePolicy::parse_values(values).map(Some)
   }
 
+  /// Parses attached `Cross-Origin-Embedder-Policy` response metadata without
+  /// enforcing embedder policy.
+  pub fn cross_origin_embedder_policy(
+    &self,
+  ) -> Result<Option<HttpCrossOriginEmbedderPolicy>, HttpCrossOriginEmbedderPolicyParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Cross-Origin-Embedder-Policy")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpCrossOriginEmbedderPolicy::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Cross-Origin-Embedder-Policy-Report-Only` response
+  /// metadata without enforcing embedder policy or scheduling reports.
+  pub fn cross_origin_embedder_policy_report_only(
+    &self,
+  ) -> Result<
+    Option<HttpCrossOriginEmbedderPolicyReportOnly>,
+    HttpCrossOriginEmbedderPolicyReportOnlyParseError,
+  > {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Cross-Origin-Embedder-Policy-Report-Only")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpCrossOriginEmbedderPolicyReportOnly::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Cross-Origin-Opener-Policy` response metadata without
+  /// enforcing opener policy.
+  pub fn cross_origin_opener_policy(
+    &self,
+  ) -> Result<Option<HttpCrossOriginOpenerPolicy>, HttpCrossOriginOpenerPolicyParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Cross-Origin-Opener-Policy")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpCrossOriginOpenerPolicy::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Strict-Transport-Security` response metadata without
+  /// applying HTTPS-only policy.
+  pub fn strict_transport_security(
+    &self,
+  ) -> Result<Option<HttpStrictTransportSecurity>, HttpStrictTransportSecurityParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Strict-Transport-Security")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpStrictTransportSecurity::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `X-Content-Type-Options` response metadata without
+  /// applying MIME-sniffing protection.
+  pub fn x_content_type_options(
+    &self,
+  ) -> Result<Option<HttpXContentTypeOptions>, HttpXContentTypeOptionsParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("X-Content-Type-Options"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpXContentTypeOptions::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `X-Frame-Options` response metadata without
+  /// applying clickjacking protection.
+  pub fn x_frame_options(&self) -> Result<Option<HttpXFrameOptions>, HttpXFrameOptionsParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("X-Frame-Options"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpXFrameOptions::parse_values(values).map(Some)
+  }
+
   /// Parses bounded `Reporting-Endpoints` response metadata without scheduling reports.
   pub fn reporting_endpoints(
     &self,
@@ -1374,6 +1749,44 @@ impl HttpResponse {
     HttpWwwAuthenticate::parse_values(values).map(Some)
   }
 
+  /// Parses attached `Authentication-Info` response metadata without changing
+  /// raw headers.
+  pub fn authentication_info(
+    &self,
+  ) -> Result<Option<HttpAuthenticationInfo>, HttpAuthenticationInfoParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Authentication-Info"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAuthenticationInfo::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Proxy-Authentication-Info` response metadata without
+  /// changing raw headers.
+  pub fn proxy_authentication_info(
+    &self,
+  ) -> Result<Option<HttpProxyAuthenticationInfo>, HttpProxyAuthenticationInfoParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Proxy-Authentication-Info")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpProxyAuthenticationInfo::parse_values(values).map(Some)
+  }
+
   /// Parses attached `Content-Digest` metadata without changing raw headers.
   pub fn digest(&self) -> Result<Option<HttpDigest>, HttpDigestParseError> {
     self.digest_field("Content-Digest")
@@ -1382,6 +1795,38 @@ impl HttpResponse {
   /// Parses attached `Repr-Digest` metadata without changing raw headers.
   pub fn repr_digest(&self) -> Result<Option<HttpReprDigest>, HttpDigestParseError> {
     self.digest_field("Repr-Digest")
+  }
+
+  /// Parses attached RFC 9421 `Signature` metadata without changing raw
+  /// headers or verifying signatures.
+  pub fn signature(&self) -> Result<Option<HttpSignature>, HttpSignatureParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Signature"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSignature::parse_values(values).map(Some)
+  }
+
+  /// Parses attached RFC 9421 `Signature-Input` metadata without changing raw
+  /// headers or applying cryptographic policy.
+  pub fn signature_input(
+    &self,
+  ) -> Result<Option<HttpSignatureInput>, HttpSignatureInputParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Signature-Input"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSignatureInput::parse_values(values).map(Some)
   }
 
   fn digest_field(&self, name: &str) -> Result<Option<HttpDigest>, HttpDigestParseError> {
@@ -2166,99 +2611,6 @@ impl fmt::Display for HttpVaryParseError {
 }
 
 impl Error for HttpVaryParseError {}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpAllowedMethods {
-  pub(crate) methods: Vec<String>,
-}
-
-impl HttpAllowedMethods {
-  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpAllowParseError> {
-    Self::parse_values([value.as_ref()])
-  }
-
-  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpAllowParseError>
-  where
-    I: IntoIterator<Item = &'a str>,
-  {
-    let mut methods = Vec::new();
-
-    for value in values {
-      if value.len() > MAX_ALLOW_VALUE_BYTES {
-        return Err(HttpAllowParseError::new("Allow header value is too large"));
-      }
-
-      for method in value.split(',') {
-        let method = method.trim();
-        if method.is_empty() || !is_http_token(method) {
-          return Err(HttpAllowParseError::new("invalid Allow method"));
-        }
-        if methods.iter().any(|known| known == method) {
-          return Err(HttpAllowParseError::new("duplicate Allow method"));
-        }
-        if methods.len() >= MAX_ALLOW_METHODS {
-          return Err(HttpAllowParseError::new("too many Allow methods"));
-        }
-        methods.push(method.to_string());
-      }
-    }
-
-    if methods.is_empty() {
-      return Err(HttpAllowParseError::new("invalid Allow method"));
-    }
-
-    Ok(Self { methods })
-  }
-
-  pub fn from_methods<I, M>(methods: I) -> Result<Self, HttpAllowParseError>
-  where
-    I: IntoIterator<Item = M>,
-    M: AsRef<str>,
-  {
-    let mut value = String::new();
-
-    for (index, method) in methods.into_iter().enumerate() {
-      if index > 0 {
-        value.push_str(", ");
-      }
-      value.push_str(method.as_ref());
-      if value.len() > MAX_ALLOW_VALUE_BYTES {
-        return Err(HttpAllowParseError::new("Allow header value is too large"));
-      }
-    }
-
-    Self::parse(value)
-  }
-
-  pub fn methods(&self) -> Vec<&str> {
-    self.methods.iter().map(String::as_str).collect()
-  }
-
-  pub fn header_value(&self) -> String {
-    self.methods.join(", ")
-  }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpAllowParseError {
-  pub(crate) message: String,
-}
-
-impl HttpAllowParseError {
-  pub(crate) fn new<S: AsRef<str>>(message: S) -> Self {
-    Self {
-      message: message.as_ref().to_string(),
-    }
-  }
-}
-
-impl fmt::Display for HttpAllowParseError {
-  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    formatter.write_str(&self.message)
-  }
-}
-
-impl Error for HttpAllowParseError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HttpContentLanguages {

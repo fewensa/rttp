@@ -6,8 +6,8 @@ use rttp::server::{
   HttpAccessControlRequestMethod, HttpAllowedMethods, HttpAuthorization, HttpByteRange,
   HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata, HttpContentDisposition,
   HttpContentLanguages, HttpContentSecurityPolicy, HttpContentType, HttpCriticalCh, HttpEntityTag,
-  HttpExpectations, HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome, HttpLinkValues,
-  HttpPermissionsPolicy, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
+  HttpExpectations, HttpHost, HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome,
+  HttpLinkValues, HttpPermissionsPolicy, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
   HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
   HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming,
   HttpVary,
@@ -151,6 +151,176 @@ fn request_access_control_request_headers_preserves_absent_valid_and_malformed_m
   assert_eq!(
     Some("X-Request Id"),
     malformed.header("Access-Control-Request-Headers")
+  );
+}
+
+#[test]
+fn request_representation_metadata_parses_without_applying_policy() {
+  let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .content_type()
+      .expect("missing Content-Type should be accepted")
+  );
+  assert_eq!(
+    None,
+    absent
+      .content_encoding()
+      .expect("missing Content-Encoding should be accepted")
+  );
+  assert_eq!(
+    None,
+    absent
+      .content_language()
+      .expect("missing Content-Language should be accepted")
+  );
+
+  let request = parse_request(concat!(
+    "POST /documents HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Content-Type: application/json; charset=utf-8\r\n",
+    "Content-Encoding: gzip, br\r\n",
+    "content-encoding: zstd\r\n",
+    "Content-Language: fr-CA, es-419\r\n",
+    "content-language: en\r\n",
+    "Accept-Encoding: gzip\r\n",
+    "Accept-Language: en\r\n",
+    "Content-Length: 4\r\n",
+    "\r\n",
+    "body"
+  ));
+
+  let content_type = request
+    .content_type()
+    .expect("Content-Type should parse")
+    .expect("Content-Type should be present");
+  assert_eq!("application/json", content_type.media_type());
+  assert_eq!(Some("utf-8"), content_type.parameter("charset"));
+
+  let encodings = request
+    .content_encoding()
+    .expect("Content-Encoding should parse")
+    .expect("Content-Encoding should be present");
+  assert_eq!(vec!["gzip", "br", "zstd"], encodings.codings());
+
+  let languages = request
+    .content_language()
+    .expect("Content-Language should parse")
+    .expect("Content-Language should be present");
+  assert_eq!(vec!["fr-CA", "es-419", "en"], languages.languages());
+
+  let accept_encoding = request
+    .accept_encoding()
+    .expect("Accept-Encoding should parse")
+    .expect("Accept-Encoding should be present");
+  assert_eq!("gzip", accept_encoding.codings()[0].coding());
+  let accept_language = request
+    .accept_language()
+    .expect("Accept-Language should parse")
+    .expect("Accept-Language should be present");
+  assert_eq!(vec!["en"], accept_language.ranges());
+  assert_eq!(b"body", request.body());
+}
+
+#[test]
+fn request_representation_metadata_preserves_invalid_headers_and_body() {
+  let duplicate = parse_request(concat!(
+    "POST /documents HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Content-Type: application/json\r\n",
+    "content-type: text/plain\r\n",
+    "Content-Length: 4\r\n",
+    "\r\n",
+    "body"
+  ));
+  assert!(duplicate.content_type().is_err());
+  assert_eq!(Some("application/json"), duplicate.header("Content-Type"));
+  assert_eq!(b"body", duplicate.body());
+
+  let malformed = parse_request(concat!(
+    "POST /documents HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Content-Type: text/plain;\r\n",
+    "Content-Encoding: gzip,\r\n",
+    "Content-Language: en,\r\n",
+    "Content-Length: 4\r\n",
+    "\r\n",
+    "body"
+  ));
+  assert!(malformed.content_type().is_err());
+  assert!(malformed.content_encoding().is_err());
+  assert!(malformed.content_language().is_err());
+  assert_eq!(Some("text/plain;"), malformed.header("Content-Type"));
+  assert_eq!(Some("gzip,"), malformed.header("Content-Encoding"));
+  assert_eq!(Some("en,"), malformed.header("Content-Language"));
+  assert_eq!(b"body", malformed.body());
+
+  let duplicate_members = parse_request(concat!(
+    "POST /documents HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Content-Type: text/plain; charset=utf-8; CHARSET=us-ascii\r\n",
+    "Content-Encoding: gzip\r\n",
+    "content-encoding: GZIP\r\n",
+    "Content-Language: en\r\n",
+    "content-language: EN\r\n",
+    "Content-Length: 4\r\n",
+    "\r\n",
+    "body"
+  ));
+  assert!(duplicate_members.content_type().is_err());
+  assert!(duplicate_members.content_encoding().is_err());
+  assert!(duplicate_members.content_language().is_err());
+  assert_eq!(
+    Some("text/plain; charset=utf-8; CHARSET=us-ascii"),
+    duplicate_members.header("Content-Type")
+  );
+  assert_eq!(Some("gzip"), duplicate_members.header("Content-Encoding"));
+  assert_eq!(Some("en"), duplicate_members.header("Content-Language"));
+  assert_eq!(b"body", duplicate_members.body());
+
+  let too_many_parameters = rttp_test_support::content_type::too_many_server_parameters_value();
+  let too_many_codings = rttp_test_support::content_encoding::too_many_server_codings_value();
+  let too_many_languages = rttp_test_support::content_language::too_many_server_languages_value();
+  let too_many = parse_request(&format!(
+    concat!(
+      "POST /documents HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Content-Type: {type}\r\n",
+      "Content-Encoding: {encoding}\r\n",
+      "Content-Language: {language}\r\n",
+      "Content-Length: 4\r\n",
+      "\r\n",
+      "body"
+    ),
+    type = too_many_parameters,
+    encoding = too_many_codings,
+    language = too_many_languages
+  ));
+  assert!(too_many.content_type().is_err());
+  assert!(too_many.content_encoding().is_err());
+  assert!(too_many.content_language().is_err());
+  assert_eq!(
+    Some(too_many_parameters.as_str()),
+    too_many.header("Content-Type")
+  );
+  assert_eq!(
+    Some(too_many_codings.as_str()),
+    too_many.header("Content-Encoding")
+  );
+  assert_eq!(
+    Some(too_many_languages.as_str()),
+    too_many.header("Content-Language")
+  );
+  assert_eq!(b"body", too_many.body());
+
+  assert!(HttpContentType::parse(rttp_test_support::content_type::oversized_value()).is_err());
+  assert!(HttpResponseContentEncodings::parse(
+    rttp_test_support::content_encoding::oversized_value()
+  )
+  .is_err());
+  assert!(
+    HttpContentLanguages::parse(rttp_test_support::content_language::oversized_value()).is_err()
   );
 }
 
@@ -969,6 +1139,139 @@ fn request_accept_encoding_rejects_duplicate_invalid_and_oversized_values() {
 }
 
 #[test]
+fn request_want_content_digest_parses_algorithm_preferences() {
+  let request = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Want-Content-Digest: sha-256=10, sha-512=3\r\n",
+    "want-content-digest: unixsum=0\r\n",
+    "\r\n"
+  ));
+
+  let digest = request
+    .want_content_digest()
+    .expect("Want-Content-Digest should parse")
+    .expect("Want-Content-Digest should be present");
+
+  assert_eq!(3, digest.len());
+  assert_eq!("sha-256", digest.entries()[0].algorithm());
+  assert_eq!(10, digest.entries()[0].preference());
+  assert_eq!("sha-512", digest.entries()[1].algorithm());
+  assert_eq!(3, digest.entries()[1].preference());
+  assert_eq!("unixsum", digest.entries()[2].algorithm());
+  assert_eq!(0, digest.entries()[2].preference());
+}
+
+#[test]
+fn request_want_content_digest_rejects_absent_malformed_and_preserves_raw_headers() {
+  assert_eq!(
+    None,
+    parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .want_content_digest()
+      .expect("absent Want-Content-Digest should be accepted")
+  );
+
+  for value in ["", "sha-256", "sha-256=11", "sha-256=10, sha-256=3"] {
+    let request = parse_request(&format!(
+      "GET / HTTP/1.1\r\nHost: example.test\r\nWant-Content-Digest: {value}\r\n\r\n"
+    ));
+    assert!(
+      request.want_content_digest().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(Some(value), request.header("Want-Content-Digest"));
+  }
+}
+
+#[test]
+fn request_host_parses_http11_authority() {
+  let request = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test:8443\r\n",
+    "\r\n"
+  ));
+
+  let host: HttpHost = request
+    .host()
+    .expect("Host should parse")
+    .expect("Host should be present");
+
+  assert_eq!("example.test", host.host());
+  assert_eq!(Some("8443"), host.port());
+  assert_eq!("example.test:8443", host.header_value());
+}
+
+#[test]
+fn request_host_rejects_absent_duplicate_and_malformed_values() {
+  assert_eq!(
+    None,
+    parse_request("GET / HTTP/1.0\r\n\r\n")
+      .host()
+      .expect("absent Host should be accepted")
+  );
+
+  let duplicate = parse_request(concat!(
+    "GET / HTTP/1.0\r\n",
+    "Host: example.test\r\n",
+    "host: other.test\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.host().is_err());
+  assert_eq!(Some("example.test"), duplicate.header("Host"));
+
+  for value in ["", "example.test/path", "user@example.test"] {
+    let request = parse_request(&format!("GET / HTTP/1.0\r\nHost: {value}\r\n\r\n"));
+    assert!(request.host().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Host"));
+  }
+}
+
+#[test]
+fn request_want_repr_digest_parses_algorithm_preferences() {
+  let request = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Want-Repr-Digest: sha-256=10, sha-512=3\r\n",
+    "want-repr-digest: unixsum=0\r\n",
+    "\r\n"
+  ));
+
+  let digest = request
+    .want_repr_digest()
+    .expect("Want-Repr-Digest should parse")
+    .expect("Want-Repr-Digest should be present");
+
+  assert_eq!(3, digest.len());
+  assert_eq!("sha-256", digest.entries()[0].algorithm());
+  assert_eq!(10, digest.entries()[0].preference());
+  assert_eq!("sha-512", digest.entries()[1].algorithm());
+  assert_eq!(3, digest.entries()[1].preference());
+  assert_eq!("unixsum", digest.entries()[2].algorithm());
+  assert_eq!(0, digest.entries()[2].preference());
+}
+
+#[test]
+fn request_want_repr_digest_rejects_absent_malformed_and_preserves_raw_headers() {
+  assert_eq!(
+    None,
+    parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .want_repr_digest()
+      .expect("absent Want-Repr-Digest should be accepted")
+  );
+
+  for value in ["", "sha-256", "sha-256=11", "sha-256=10, sha-256=3"] {
+    let request = parse_request(&format!(
+      "GET / HTTP/1.1\r\nHost: example.test\r\nWant-Repr-Digest: {value}\r\n\r\n"
+    ));
+    assert!(
+      request.want_repr_digest().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(Some(value), request.header("Want-Repr-Digest"));
+  }
+}
+
+#[test]
 fn request_expectations_distinguish_continue_from_unsupported_extensions() {
   assert_eq!(
     None,
@@ -1224,6 +1527,30 @@ fn response_vary_helper_declares_normalized_vary_header() {
 }
 
 #[test]
+fn response_no_vary_search_helper_parses_and_declares_metadata() {
+  let response = HttpResponse::ok("body")
+    .header("No-Vary-Search", "params")
+    .header("no-vary-search", r#"except=("session")"#);
+
+  let no_vary_search = response
+    .no_vary_search()
+    .expect("attached No-Vary-Search headers should parse")
+    .expect("No-Vary-Search should be present");
+
+  assert!(no_vary_search.ignores_all_query_params());
+  assert_eq!(no_vary_search.except(), ["session"]);
+
+  let response = HttpResponse::ok("body")
+    .header("No-Vary-Search", "params")
+    .with_no_vary_search(r#"key-order=?0, params=("utm_source")"#)
+    .expect("valid No-Vary-Search should be accepted");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(!serialized.contains("\r\nNo-Vary-Search: params\r\n"));
+  assert!(serialized.contains("\r\nNo-Vary-Search: key-order=?0, params=(\"utm_source\")\r\n"));
+}
+
+#[test]
 fn parses_allow_methods_and_serializes_single_header_value() {
   let allow =
     HttpAllowedMethods::parse("GET, HEAD, POST").expect("valid Allow header should parse");
@@ -1281,7 +1608,7 @@ fn allow_helpers_reject_malformed_duplicate_oversized_and_excessive_values() {
     "Allow helper should reject oversized values"
   );
 
-  let too_many = (0..33)
+  let too_many = (0..=256)
     .map(|index| format!("M{index}"))
     .collect::<Vec<_>>()
     .join(", ");

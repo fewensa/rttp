@@ -5,7 +5,13 @@ pub struct Http {}
 pub use rttp_server::server;
 
 #[cfg(feature = "client")]
-pub use rttp_client::response::{AcceptCh, AcceptPatch, AcceptPost, CriticalCh};
+pub use rttp_client::response::{
+  AcceptCh, AcceptPatch, AcceptPost, AltSvc, AltSvcAlternative, AltSvcParameter, AltSvcParseError,
+  CriticalCh, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyParseError,
+  CrossOriginEmbedderPolicyReportOnly, CrossOriginEmbedderPolicyReportOnlyParseError,
+  CrossOriginOpenerPolicy, CrossOriginOpenerPolicyParseError, NoVarySearch, NoVarySearchParams,
+  NoVarySearchParseError, StrictTransportSecurity, StrictTransportSecurityParseError,
+};
 #[cfg(feature = "client")]
 pub use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 

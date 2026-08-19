@@ -18,16 +18,31 @@ fn x_frame_options_parses_deny_and_same_origin_case_insensitively() {
     XFrameOptions::SameOrigin,
     XFrameOptions::parse("SameOrigin").expect("SameOrigin should parse")
   );
+  assert_eq!(
+    XFrameOptions::SameOrigin,
+    XFrameOptions::parse("sameorigin").expect("sameorigin should parse")
+  );
   assert_eq!("DENY", XFrameOptions::Deny.header_value());
   assert_eq!("SAMEORIGIN", XFrameOptions::SameOrigin.header_value());
 }
 
 #[test]
 fn x_frame_options_accepts_http_optional_whitespace_padding() {
-  for value in ["\tDENY\t", " \tSAMEORIGIN\t ", "DENY\t", "\tSAMEORIGIN"] {
-    assert!(
-      XFrameOptions::parse(value).is_ok(),
-      "OWS-padded value should parse: {value:?}"
+  for value in ["\tDENY\t", " \tdeny\t ", "deny\t", "\tdeny"] {
+    assert_eq!(
+      XFrameOptions::Deny,
+      XFrameOptions::parse(value).expect("OWS-padded deny should parse")
+    );
+  }
+  for value in [
+    "\tSAMEORIGIN\t",
+    " \tsameorigin\t ",
+    "SAMEORIGIN\t",
+    "\tsameorigin",
+  ] {
+    assert_eq!(
+      XFrameOptions::SameOrigin,
+      XFrameOptions::parse(value).expect("OWS-padded SAMEORIGIN should parse")
     );
   }
 }
@@ -44,6 +59,11 @@ fn x_frame_options_rejects_empty_duplicate_malformed_and_ambiguous_values() {
     "SAME ORIGIN",
     "SAMEORIGIN\r\nX: y",
     "SAMEORIGIN\u{7f}",
+    "deny, sameorigin",
+    "deny; foo",
+    "\"deny\"",
+    "deny\r\nX: y",
+    "deny\u{7f}",
     "same-origin",
     "unknown",
   ] {
