@@ -2746,6 +2746,40 @@ fn save_data_helper_emits_on_request_token() {
 }
 
 #[test]
+fn upgrade_insecure_requests_helper_emits_signal_value_without_rewriting_target() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/page", base_url))
+      .upgrade_insecure_requests()
+      .expect("Upgrade-Insecure-Requests should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  let request_line = request.lines().next().expect("request line");
+
+  assert!(
+    request_line.starts_with("GET /page HTTP/1.1"),
+    "helper must keep the original origin-form target: {request_line}"
+  );
+  assert_eq!(
+    Some("1"),
+    header_value(&request, "Upgrade-Insecure-Requests")
+  );
+  assert!(header_value(&request, "Host").is_some());
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| line
+        .to_ascii_lowercase()
+        .starts_with("upgrade-insecure-requests:"))
+      .count()
+  );
+}
+
+#[test]
 fn origin_helper_emits_null_and_normalized_tuple_origins() {
   let request = capture_request(|base_url| {
     client()

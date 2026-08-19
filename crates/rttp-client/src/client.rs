@@ -28,6 +28,7 @@ use rttp_protocol::signature_input::SignatureInput;
 use rttp_protocol::te::{Te, MAX_TE_CODINGS, MAX_TE_VALUE_BYTES};
 use rttp_protocol::trailer::Trailer;
 use rttp_protocol::upgrade::Upgrade;
+use rttp_protocol::upgrade_insecure_requests::UpgradeInsecureRequests;
 use std::io;
 
 #[derive(Debug)]
@@ -420,6 +421,19 @@ impl HttpClient {
     let save_data =
       SaveData::parse("on").map_err(|error| error::builder_with_message(error.to_string()))?;
     Ok(self.header(Header::new("Save-Data", save_data.header_value())))
+  }
+
+  /// Set `Upgrade-Insecure-Requests: 1` request metadata.
+  ///
+  /// This declares the valid upgrade-insecure-requests form only; it does not
+  /// rewrite URLs, redirect requests, or enforce Content-Security-Policy.
+  pub fn upgrade_insecure_requests(&mut self) -> error::Result<&mut Self> {
+    let metadata = UpgradeInsecureRequests::parse("1")
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Upgrade-Insecure-Requests",
+      metadata.header_value(),
+    )))
   }
 
   /// Append a validated `Accept` media range with its supplied quality value.

@@ -10,7 +10,8 @@ use rttp::server::{
   HttpProxyStatusParseError, HttpResponse, HttpSaveData, HttpSignature, HttpSignatureInput,
   HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
   HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
-  HttpSunsetParseError, HttpUpgrade, HttpUpgradeParseError,
+  HttpSunsetParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
 };
 use std::io::Write;
 use std::net::SocketAddr;
@@ -609,6 +610,10 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpAccessControlRequestPrivateNetwork::parse("true")
       .expect("Access-Control-Request-Private-Network should parse");
   let save_data: HttpSaveData = HttpSaveData::parse("on").expect("Save-Data should parse");
+  let upgrade_insecure_requests: HttpUpgradeInsecureRequests =
+    HttpUpgradeInsecureRequests::parse("1").expect("Upgrade-Insecure-Requests should parse");
+  let _: Result<HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError> =
+    HttpUpgradeInsecureRequests::parse("0");
   let authorization: HttpAuthorization =
     HttpAuthorization::parse("Bearer origin-token").expect("Authorization should parse");
   let proxy_authorization: HttpProxyAuthorization =
@@ -667,6 +672,7 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(request_method.header_value(), "PATCH");
   assert_eq!(private_network.header_value(), "true");
   assert_eq!(save_data.header_value(), "on");
+  assert_eq!(upgrade_insecure_requests.header_value(), "1");
   assert_eq!(authorization.header_value(), "Bearer origin-token");
   assert_eq!(proxy_authorization.header_value(), "Basic cHJveHk6c2VjcmV0");
   assert_eq!(max_forwards.value(), 0);

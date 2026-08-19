@@ -247,6 +247,49 @@ fn request_save_data_preserves_absent_valid_and_malformed_metadata() {
 }
 
 #[test]
+fn request_upgrade_insecure_requests_preserves_absent_valid_and_malformed_metadata() {
+  let absent = parse_request("GET /page HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .upgrade_insecure_requests()
+      .expect("missing Upgrade-Insecure-Requests should be accepted")
+  );
+  assert_eq!(None, absent.header("Upgrade-Insecure-Requests"));
+
+  let request = parse_request(concat!(
+    "GET /page HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Upgrade-Insecure-Requests: 1\r\n",
+    "\r\n"
+  ));
+  let metadata = request
+    .upgrade_insecure_requests()
+    .expect("Upgrade-Insecure-Requests should parse")
+    .expect("Upgrade-Insecure-Requests should be present");
+  assert_eq!("1", metadata.header_value());
+
+  let malformed = parse_request(concat!(
+    "GET /page HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Upgrade-Insecure-Requests: 0\r\n",
+    "\r\n"
+  ));
+  assert!(malformed.upgrade_insecure_requests().is_err());
+  assert_eq!(Some("0"), malformed.header("Upgrade-Insecure-Requests"));
+
+  let duplicate = parse_request(concat!(
+    "GET /page HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Upgrade-Insecure-Requests: 1\r\n",
+    "upgrade-insecure-requests: 1\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.upgrade_insecure_requests().is_err());
+  assert_eq!(Some("1"), duplicate.header("Upgrade-Insecure-Requests"));
+}
+
+#[test]
 fn request_representation_metadata_parses_without_applying_policy() {
   let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
   assert_eq!(

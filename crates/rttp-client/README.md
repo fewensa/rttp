@@ -731,6 +731,15 @@ representation, compress a body, advertise Client Hints, or apply browser
 data-saver policy. Callers that need values outside the helper can retain
 raw-header control with `header(("Save-Data", "..."))`.
 
+## Bounded Upgrade-Insecure-Requests request metadata
+
+`HttpClient::upgrade_insecure_requests()` emits `Upgrade-Insecure-Requests: 1`.
+
+This helper only declares request metadata. RTTP does not rewrite `http://`
+URLs to `https://`, redirect requests, or enforce Content-Security-Policy.
+Callers that need values outside the helper can retain raw-header control with
+`header(("Upgrade-Insecure-Requests", "..."))`.
+
 ## Bounded HTTP/1.1 Content-Disposition behavior
 
 `Response::content_disposition()` parses a singleton response
@@ -898,6 +907,7 @@ header-block model.
 | HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and `Expect: 100-continue` | SOCKS handshakes are delegated to the `socks` crate |
 | Fetch Metadata | `sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, `sec_fetch_user`, and `sec_purpose` emit bounded `Sec-Fetch-*`/`Sec-Purpose` request metadata | No browser security policy, automatic header generation, origin validation, navigation policy, request blocking, prefetch execution, or cache behavior |
 | Save-Data | `save_data` emits bounded `Save-Data: on` request metadata | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |
+| Upgrade-Insecure-Requests | `upgrade_insecure_requests` emits bounded singleton `Upgrade-Insecure-Requests: 1` request metadata | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Max-Forwards | `max_forwards` emits bounded singleton `Max-Forwards` request metadata through the shared protocol type | No hop decrement, proxy routing, TRACE/OPTIONS selection, retry, or forwarding policy |
 | Preflight request metadata | `origin`, `access_control_request_method`, `access_control_request_headers`, and `access_control_request_private_network` emit bounded `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`, and `Access-Control-Request-Private-Network` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, CORS policy, or Private Network Access policy |
 | Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_content_digest()`, `HttpRequest::want_content_digest()`, `Request::want_repr_digest()`, and `HttpRequest::want_repr_digest()` parse received preference fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |

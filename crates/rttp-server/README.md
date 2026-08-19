@@ -427,6 +427,19 @@ These helpers parse request metadata only. They do not select a
 representation, compress a body, advertise Client Hints, or apply browser
 data-saver policy.
 
+## Upgrade-Insecure-Requests request metadata
+
+Handlers can call `Request::upgrade_insecure_requests()` and
+`HttpRequest::upgrade_insecure_requests()` to observe bounded typed
+`Upgrade-Insecure-Requests` request metadata. Absent fields return `Ok(None)`.
+The recognized value is the case-sensitive `1` token with optional surrounding
+SP or HTAB. Malformed, oversized, duplicate, or control-byte values return a
+parser error while `Request::header()` and `HttpRequest::header()` continue to
+expose the original raw field.
+
+These helpers parse request metadata only. They do not rewrite `http://` URLs
+to `https://`, redirect requests, or enforce Content-Security-Policy.
+
 ## Max-Forwards request metadata
 
 Handlers can call `Request::max_forwards()` and `HttpRequest::max_forwards()`

@@ -19,8 +19,9 @@ use rttp_server::server::{
   HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
   HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
   HttpSignatureParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
-  HttpUpgradeParseError, HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode,
-  SecFetchSite, SecFetchUser, SecPurpose,
+  HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
+  HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite,
+  SecFetchUser, SecPurpose,
 };
 
 #[test]
@@ -63,6 +64,12 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   > = HttpAccessControlRequestPrivateNetwork::parse("false");
   let save_data: HttpSaveData = HttpSaveData::parse("on").expect("Save-Data should parse");
   let save_data_error: Result<HttpSaveData, HttpSaveDataParseError> = HttpSaveData::parse("?1");
+  let upgrade_insecure_requests: HttpUpgradeInsecureRequests =
+    HttpUpgradeInsecureRequests::parse("1").expect("Upgrade-Insecure-Requests should parse");
+  let upgrade_insecure_requests_error: Result<
+    HttpUpgradeInsecureRequests,
+    HttpUpgradeInsecureRequestsParseError,
+  > = HttpUpgradeInsecureRequests::parse("0");
   let authorization: HttpAuthorization =
     HttpAuthorization::parse("Bearer origin-token").expect("Authorization should parse");
   let authorization_error: Result<HttpAuthorization, HttpAuthorizationParseError> =
@@ -173,6 +180,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert!(request_private_network_error.is_err());
   assert_eq!(save_data.header_value(), "on");
   assert!(save_data_error.is_err());
+  assert_eq!(upgrade_insecure_requests.header_value(), "1");
+  assert!(upgrade_insecure_requests_error.is_err());
   assert_eq!(authorization.scheme(), "Bearer");
   assert_eq!(authorization.header_value(), "Bearer origin-token");
   assert!(authorization_error.is_err());
