@@ -46,6 +46,19 @@ diagnostic policy, route through proxies, decrement the value, or retry the
 request. Callers needing an unusual value can retain full raw-header control
 with `header(("Max-Forwards", "..."))`.
 
+## Bounded Idempotency-Key metadata
+
+`HttpClient::idempotency_key(value)` sets an `Idempotency-Key` request header
+for application-generated idempotency keys through the shared protocol
+`IdempotencyKey` type. The helper accepts a singleton opaque visible-ASCII key
+up to 64 KiB, trims HTTP OWS, and rejects empty, space-containing,
+control-byte (including CR/LF/NUL and obs-text), duplicate, and oversized
+values before a socket is opened. It validates and emits the trimmed key
+unchanged: RTTP does not retry requests, store or compare keys across
+requests, or apply application idempotency policy. The key is redacted from
+typed `Debug` and builder error text. Callers needing an unusual value can
+retain full raw-header control with `header(("Idempotency-Key", "..."))`.
+
 ## Bounded HTTP/1.1 byte ranges
 
 `HttpClient` includes helpers for the single-range `bytes` forms RTTP keeps
@@ -591,10 +604,12 @@ media ranges or extensions outside this bounded helper API.
 
 `HttpClient::authorization(scheme, credentials)` emits one `Authorization`
 field after validating its HTTP-token scheme and non-empty credential value,
-with a 64 KiB bound. Use `header(("Authorization", value))` as the raw escape
-hatch for custom scheme syntax. Credential interpretation remains
-application-owned: RTTP does not validate individual schemes, store or refresh
-credentials, process challenges, retry, or forward credentials on redirects.
+with the shared `rttp-protocol` request authorization primitive and a 64 KiB
+bound. Credentials reject CR, LF, NUL, and other control-byte injection. Use
+`header(("Authorization", value))` as the raw escape hatch for custom scheme
+syntax. Credential interpretation remains application-owned: RTTP does not
+validate individual schemes, store or refresh credentials, process challenges,
+retry, or forward credentials on redirects.
 
 ## Bounded HTTP request control metadata
 
@@ -741,6 +756,15 @@ This helper only declares request metadata. RTTP does not disable cookies,
 strip `Referer`, change analytics or advertising behavior, or enforce tracking
 policy. Callers that need values outside the helper can retain raw-header
 control with `header(("DNT", "..."))`.
+
+## Bounded Upgrade-Insecure-Requests request metadata
+
+`HttpClient::upgrade_insecure_requests()` emits `Upgrade-Insecure-Requests: 1`.
+
+This helper only declares request metadata. RTTP does not rewrite `http://`
+URLs to `https://`, redirect requests, or enforce Content-Security-Policy.
+Callers that need values outside the helper can retain raw-header control with
+`header(("Upgrade-Insecure-Requests", "..."))`.
 
 ## Bounded HTTP/1.1 Content-Disposition behavior
 
@@ -910,7 +934,9 @@ header-block model.
 | Fetch Metadata | `sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, `sec_fetch_user`, and `sec_purpose` emit bounded `Sec-Fetch-*`/`Sec-Purpose` request metadata | No browser security policy, automatic header generation, origin validation, navigation policy, request blocking, prefetch execution, or cache behavior |
 | Save-Data | `save_data` emits bounded `Save-Data: on` request metadata | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |
 | DNT | `dnt` emits bounded `DNT: 0`/`DNT: 1` request metadata through the shared protocol `Dnt` type and rejects malformed or oversized input before connecting | No tracking enforcement, cookie changes, `Referer` stripping, analytics or advertising behavior, `Tk` emission, retries, or privacy-preference policy |
+| Upgrade-Insecure-Requests | `upgrade_insecure_requests` emits bounded singleton `Upgrade-Insecure-Requests: 1` request metadata | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Max-Forwards | `max_forwards` emits bounded singleton `Max-Forwards` request metadata through the shared protocol type | No hop decrement, proxy routing, TRACE/OPTIONS selection, retry, or forwarding policy |
+| Idempotency-Key | `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | Preflight request metadata | `origin`, `access_control_request_method`, `access_control_request_headers`, and `access_control_request_private_network` emit bounded `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`, and `Access-Control-Request-Private-Network` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, CORS policy, or Private Network Access policy |
 | Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_content_digest()`, `HttpRequest::want_content_digest()`, `Request::want_repr_digest()`, and `HttpRequest::want_repr_digest()` parse received preference fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |
 | Accept-Encoding | `accept_encoding`, `accept_encoding_with_q`, and gzip/deflate/br/identity helpers format bounded `Accept-Encoding` request metadata through the shared `rttp-protocol` type | No compression, decompression, content negotiation, retries, or transport changes |
