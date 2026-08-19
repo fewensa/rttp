@@ -1,7 +1,8 @@
 use rttp_server::server::{
-  HttpAcceptCh, HttpAcceptLanguageParseError, HttpAcceptLanguages,
-  HttpAccessControlAllowCredentials, HttpAccessControlAllowCredentialsParseError,
-  HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods, HttpAccessControlRequestHeaders,
+  HttpAcceptCh, HttpAcceptCharset, HttpAcceptCharsetParseError, HttpAcceptLanguageParseError,
+  HttpAcceptLanguages, HttpAccessControlAllowCredentials,
+  HttpAccessControlAllowCredentialsParseError, HttpAccessControlAllowHeaders,
+  HttpAccessControlAllowMethods, HttpAccessControlRequestHeaders,
   HttpAccessControlRequestHeadersParseError, HttpAccessControlRequestMethod,
   HttpAccessControlRequestMethodParseError, HttpAccessControlRequestPrivateNetwork,
   HttpAccessControlRequestPrivateNetworkParseError, HttpAuthorization, HttpAuthorizationParseError,
@@ -16,18 +17,25 @@ use rttp_server::server::{
   HttpIfUnmodifiedSinceParseError, HttpKeepAlive, HttpMaxForwards, HttpMaxForwardsParseError,
   HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNoVarySearch, HttpNoVarySearchParams,
   HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError,
-  HttpRequest, HttpRequestAcceptEncodings, HttpResponse, HttpSaveData, HttpSaveDataParseError,
-  HttpSecGpc, HttpSecGpcParseError, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
-  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpTransferEncoding,
-  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
-  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpWantContentDigest,
-  HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
+  HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpResponse, HttpSaveData,
+  HttpSaveDataParseError, HttpSecGpc, HttpSecGpcParseError, HttpSignature, HttpSignatureInput,
+  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
+  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
+  HttpTraceParent, HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember,
+  HttpTraceStateParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
+  HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
+  HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite,
+  SecFetchUser, SecPurpose,
 };
 
 #[test]
 fn server_facade_exports_representative_bounded_metadata_types() {
   let accept_ch: HttpAcceptCh = HttpAcceptCh::parse("Sec-CH-UA").expect("Accept-CH should parse");
+  let accept_charsets: HttpRequestAcceptCharsets =
+    HttpRequestAcceptCharsets::parse("utf-8, iso-8859-1;q=0.5, *;q=0")
+      .expect("Accept-Charset should parse");
+  let _: HttpAcceptCharsetParseError = HttpRequestAcceptCharsets::parse("utf-8, UTF-8")
+    .expect_err("duplicate Accept-Charset should be rejected");
   let accept_languages: HttpAcceptLanguages =
     HttpAcceptLanguages::parse("en-US, fr-CA; q=0.8").expect("Accept-Language should parse");
   let _: HttpAcceptLanguageParseError = HttpAcceptLanguages::parse("en; q=1.001")
@@ -172,6 +180,15 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let _: HttpUpgradeParseError = HttpUpgrade::parse("").expect_err("empty Upgrade should fail");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA"]);
+  let first_charset: &HttpAcceptCharset = &accept_charsets.charsets()[0];
+  assert_eq!(first_charset.charset(), "utf-8");
+  assert_eq!(first_charset.quality(), 1000);
+  assert_eq!(accept_charsets.charsets()[1].charset(), "iso-8859-1");
+  assert_eq!(accept_charsets.charsets()[1].quality(), 500);
+  assert_eq!(
+    accept_charsets.header_value(),
+    "utf-8, iso-8859-1;q=0.5, *;q=0"
+  );
   assert_eq!(accept_languages.ranges(), ["en-US", "fr-CA"]);
   assert_eq!(accept_languages.qualities(), [None, Some("0.8")]);
   assert_eq!(accept_languages.header_value(), "en-US, fr-CA; q=0.8");
@@ -564,6 +581,45 @@ fn request_facade_parses_want_content_digest_metadata() {
 }
 
 #[test]
+fn request_facade_parses_accept_charset_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nAccept-Charset: utf-8, iso-8859-1;q=0.5, *;q=0\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let charsets: HttpRequestAcceptCharsets = request
+    .accept_charset()
+    .expect("Accept-Charset should parse")
+    .expect("Accept-Charset should be present");
+
+  assert_eq!(charsets.charsets()[0].charset(), "utf-8");
+  assert_eq!(charsets.charsets()[0].quality(), 1000);
+  assert_eq!(charsets.charsets()[1].charset(), "iso-8859-1");
+  assert_eq!(charsets.charsets()[1].quality(), 500);
+  assert_eq!(charsets.charsets()[2].charset(), "*");
+  assert_eq!(charsets.charsets()[2].quality(), 0);
+  assert_eq!(charsets.header_value(), "utf-8, iso-8859-1;q=0.5, *;q=0");
+
+  let absent = HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert!(absent
+    .accept_charset()
+    .expect("missing Accept-Charset should be accepted")
+    .is_none());
+}
+
+#[test]
+fn request_facade_rejects_malformed_accept_charset_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nAccept-Charset: utf-8, UTF-8\r\n\r\n",
+  )
+  .expect("malformed metadata should not reject raw request parsing");
+
+  assert_eq!(request.header("Accept-Charset"), Some("utf-8, UTF-8"));
+  assert!(request.accept_charset().is_err());
+}
+
+#[test]
 fn request_facade_parses_accept_encoding_metadata() {
   let request = HttpRequest::parse(
     b"GET /asset HTTP/1.1\r\nHost: example.test\r\nAccept-Encoding: gzip, br;q=0.8, identity;q=0\r\n\r\n",
@@ -745,6 +801,50 @@ fn request_facade_parses_idempotency_key_metadata_without_policy() {
     HttpIdempotencyKey::parse(oversized.as_str());
   assert!(oversized_error.is_err());
   assert!(!format!("{:?}", oversized_error.as_ref().unwrap_err()).contains(&oversized[..16]));
+}
+
+#[test]
+fn request_facade_parses_trace_context_metadata_without_policy() {
+  let request = HttpRequest::parse(
+    b"GET /trace HTTP/1.1\r\nHost: example.test\r\ntraceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\r\ntracestate: rojo=00f067aa0ba902b7\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let traceparent: HttpTraceParent = request
+    .traceparent()
+    .expect("traceparent should parse")
+    .expect("traceparent should be present");
+  let tracestate: HttpTraceState = request
+    .tracestate()
+    .expect("tracestate should parse")
+    .expect("tracestate should be present");
+  let member: &HttpTraceStateMember = &tracestate.members()[0];
+
+  assert_eq!("00", traceparent.version());
+  assert_eq!("4bf92f3577b34da6a3ce929d0e0e4736", traceparent.trace_id());
+  assert_eq!("rojo", member.key());
+  assert_eq!("00f067aa0ba902b7", member.value());
+
+  let absent = HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(None, absent.traceparent().expect("missing traceparent"));
+  assert_eq!(None, absent.tracestate().expect("missing tracestate"));
+
+  let malformed = HttpRequest::parse(
+    b"GET /trace HTTP/1.1\r\nHost: example.test\r\ntraceparent: invalid\r\ntracestate: rojo=1,rojo=2\r\n\r\n",
+  )
+  .expect("malformed metadata should not reject raw request parsing");
+  assert!(malformed.traceparent().is_err());
+  assert!(malformed.tracestate().is_err());
+  assert_eq!(Some("invalid"), malformed.header("traceparent"));
+  assert_eq!(Some("rojo=1,rojo=2"), malformed.header("tracestate"));
+
+  let traceparent_error: Result<HttpTraceParent, HttpTraceParentParseError> =
+    HttpTraceParent::parse("invalid");
+  let tracestate_error: Result<HttpTraceState, HttpTraceStateParseError> =
+    HttpTraceState::parse("rojo=1,rojo=2");
+  assert!(traceparent_error.is_err());
+  assert!(tracestate_error.is_err());
 }
 
 #[test]

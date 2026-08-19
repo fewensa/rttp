@@ -129,10 +129,14 @@ pub use self::connection::{
   async_streaming_response_after_header, AsyncResponseBodyReader, AsyncStreamingResponse,
 };
 pub use self::connection::{ConnectionReader, ResponseBodyReader, StreamingResponse};
+pub use rttp_protocol::dnt::{Dnt, DntParseError};
 pub use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
 pub use rttp_protocol::sec_gpc::{SecGpc, SecGpcParseError};
+pub use rttp_protocol::trace_context::{
+  TraceParent, TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError,
+};
 pub use rttp_protocol::upgrade_insecure_requests::{
   UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
 };

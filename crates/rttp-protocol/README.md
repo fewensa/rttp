@@ -9,6 +9,24 @@ and server crates.
 This crate supports rttp's implementation; its public API is not a standalone
 application-level HTTP interface.
 
+## Accept-Charset
+
+`accept_charset` parses one or more RFC 9110 `Accept-Charset` field values
+into an ordered list of charset-range tokens with optional quality weights.
+Each field value is bounded to 64 KiB, and the combined member count across
+all supplied fields is bounded to 32. Ranges are RFC 9110 tokens, including
+the `*` wildcard. Duplicate ranges are rejected case-insensitively while the
+first-seen spelling is retained. Each member may carry a single `q`
+parameter; the default quality is `1000` thousandths. Empty members, invalid
+tokens, invalid q-values, extra parameters, forbidden ASCII control bytes
+other than HTAB, oversized values, too many members, and a present header set
+that yields no member are errors. `header_value()` joins members with `", "`,
+omits quality when no `q` parameter was present, and otherwise emits the
+original q-text. This type is the shared authority for charset-range,
+wildcard, q-value, duplicate, member-count, and size validation. It reports
+declared request metadata only; it does not negotiate, transcode, decode
+bodies, sniff MIME types, or select a response charset.
+
 ## Accept-Encoding
 
 `accept_encoding` parses one or more RFC 9110 `Accept-Encoding` field values
@@ -117,6 +135,22 @@ parse errors describe only the header and validation category. `as_str()`
 returns the stored key and `header_value()` emits it unchanged. This parser
 reports declared request metadata only; it does not retry requests, store
 keys, compare keys across requests, or apply application idempotency policy.
+
+## W3C Trace Context
+
+`trace_context` parses bounded W3C `traceparent` and `tracestate` request
+metadata. `TraceParent` accepts only version `00`, lowercase fixed-width
+trace-id, parent-id, and flags fields, rejects version `ff`, unsupported
+versions, malformed flags, duplicate fields, and all-zero trace or parent
+identifiers, and exposes `version()`, `trace_id()`, `parent_id()`, `flags()`,
+`sampled()`, and `header_value()`.
+
+`TraceState` preserves wire order while validating list-member grammar,
+duplicate keys, at most 32 members, at most 512 combined bytes, and 256-byte
+per-key/per-value bounds. Typed `Debug` redacts propagation values and parse
+errors describe validation categories without echoing supplied values. These
+parsers report declared request metadata only; they do not create identifiers,
+decide sampling, select a tracing backend, or propagate context automatically.
 
 ## If-Modified-Since
 

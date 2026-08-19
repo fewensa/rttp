@@ -1,3 +1,4 @@
+use rttp_protocol::accept_charset::AcceptCharset;
 use rttp_protocol::accept_encoding::AcceptEncoding;
 use rttp_protocol::accept_language::AcceptLanguage;
 use rttp_protocol::accept_ranges::AcceptRanges;
@@ -53,6 +54,7 @@ use rttp_protocol::signature_input::{SignatureInput, SignatureInputParseError};
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::te::Te;
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
+use rttp_protocol::trace_context::{TraceParent, TraceState};
 use rttp_protocol::transfer_encoding::TransferEncoding;
 use rttp_protocol::upgrade::{Upgrade, UpgradeParseError};
 use rttp_protocol::upgrade_insecure_requests::UpgradeInsecureRequests;
@@ -158,12 +160,18 @@ fn protocol_exports_representative_bounded_metadata_types() {
     CacheStatus::parse("OriginCache; hit; ttl=1100").expect("Cache-Status should parse");
   let cdn_cache_control =
     CdnCacheControl::parse("max-age=600, cdn-example=\"a, b\"").expect("CDN metadata should parse");
+  let accept_charset =
+    AcceptCharset::parse("utf-8, iso-8859-1;q=0.5, *;q=0").expect("Accept-Charset should parse");
   let accept_encoding =
     AcceptEncoding::parse("gzip, br;q=0.8, identity;q=0").expect("Accept-Encoding should parse");
   let accept_ranges = AcceptRanges::parse("bytes, pages").expect("Accept-Ranges should parse");
   let transfer_encoding =
     TransferEncoding::parse("chunked").expect("Transfer-Encoding should parse");
   let te = Te::parse("gzip;q=0.5, trailers").expect("TE should parse");
+  let traceparent = TraceParent::parse("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+    .expect("traceparent should parse");
+  let tracestate =
+    TraceState::parse("rojo=00f067aa0ba902b7,congo=t61rcWkgMzE").expect("tracestate should parse");
   let upgrade = Upgrade::parse("websocket").expect("Upgrade should parse");
   let _: UpgradeParseError = Upgrade::parse("").expect_err("empty Upgrade should be rejected");
   let want_content_digest =
@@ -310,6 +318,17 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(cache_status.members()[0].ttl(), Some(1100));
   assert_eq!(cdn_cache_control.directives()[1].name(), "cdn-example");
   assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
+  assert_eq!(accept_charset.charsets()[0].charset(), "utf-8");
+  assert_eq!(accept_charset.charsets()[0].quality(), 1000);
+  assert_eq!(accept_charset.charsets()[1].charset(), "iso-8859-1");
+  assert_eq!(accept_charset.charsets()[1].quality(), 500);
+  assert_eq!(accept_charset.charsets()[2].charset(), "*");
+  assert_eq!(accept_charset.charsets()[2].quality(), 0);
+  assert!(accept_charset.charsets()[2].is_wildcard());
+  assert_eq!(
+    accept_charset.header_value(),
+    "utf-8, iso-8859-1;q=0.5, *;q=0"
+  );
   assert_eq!(accept_encoding.codings()[0].coding(), "gzip");
   assert_eq!(accept_encoding.codings()[0].quality(), 1000);
   assert_eq!(accept_encoding.codings()[1].coding(), "br");
@@ -328,6 +347,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(te.codings()[0].quality(), Some(500));
   assert_eq!(te.codings()[1].coding(), "trailers");
   assert!(te.codings()[1].is_trailers());
+  assert_eq!("00", traceparent.version());
+  assert_eq!("4bf92f3577b34da6a3ce929d0e0e4736", traceparent.trace_id());
+  assert_eq!(2, tracestate.members().len());
+  assert_eq!("rojo", tracestate.members()[0].key());
   assert_eq!(upgrade.protocols(), ["websocket"]);
   assert_eq!(upgrade.header_value(), "websocket");
   assert_eq!(want_content_digest.entries()[0].algorithm(), "sha-256");

@@ -503,6 +503,48 @@ fn raw_headers_remain_an_escape_hatch_for_custom_authorization_schemes() {
 }
 
 #[test]
+fn accept_charset_helpers_emit_validated_ranges_and_quality_values() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/localized", base_url))
+      .accept_charset("utf-8")
+      .expect("utf-8 should be accepted")
+      .accept_charset_with_q("iso-8859-1", "0.5")
+      .expect("iso-8859-1 quality should be accepted")
+      .accept_charset_with_q("*", "0")
+      .expect("wildcard quality should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("utf-8, iso-8859-1;q=0.5, *;q=0"),
+    header_value(&request, "Accept-Charset")
+  );
+}
+
+#[test]
+fn auth_facade_rejects_oversized_bearer_before_connecting_without_exposing_token() {
+  let token = "x".repeat(MAX_AUTHORIZATION_VALUE_BYTES);
+  let request = capture_optional_request(|base_url| {
+    let error = client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .authorization("Bearer", &token)
+      .expect_err("oversized Authorization metadata should be rejected");
+    assert!(error.is_builder());
+    assert!(!error.to_string().contains(&token));
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized Authorization metadata should not open a socket"
+  );
+}
+
+#[test]
 fn proxy_auth_rejects_oversized_basic_before_connecting_without_exposing_credentials() {
   let username = "proxy-user";
   let password = "x".repeat(MAX_AUTHORIZATION_VALUE_BYTES);
@@ -608,6 +650,162 @@ fn expect_continue_helper_emits_metadata_without_gating_the_request_body() {
 
   assert_eq!(Some("100-continue"), header_value(&request, "Expect"));
   assert!(request.ends_with("request body"));
+}
+
+#[test]
+fn accept_charset_helpers_reject_invalid_members_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/localized", base_url))
+      .accept_charset_with_q("utf 8", "1.1")
+      .expect_err("invalid charset should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "invalid Accept-Charset helper input should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/localized", base_url))
+      .accept_charset_with_q("utf-8", "1.1")
+      .expect_err("invalid q-value should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "invalid Accept-Charset q-value should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/localized", base_url))
+      .accept_charset("utf-8")
+      .expect("first charset should be accepted")
+      .accept_charset("UTF-8")
+      .expect_err("duplicate charset should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "duplicate Accept-Charset helper input should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/localized", base_url))
+      .accept_charset("*")
+      .expect("first wildcard should be accepted")
+      .accept_charset_with_q("*", "0")
+      .expect_err("duplicate wildcard should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "duplicate Accept-Charset wildcard should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let oversized_charset = "a".repeat(64 * 1024 + 1);
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/localized", base_url))
+      .accept_charset(&oversized_charset)
+      .expect_err("oversized first charset should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized first Accept-Charset range should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/localized", base_url))
+      .accept_charset("utf-8, iso-8859-1")
+      .expect_err("comma-bearing charset should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "comma-bearing Accept-Charset range should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/localized", base_url))
+      .accept_charset("utf-8;q=0")
+      .expect_err("parameterized charset should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "parameterized Accept-Charset range should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/localized", base_url))
+      .accept_charset_with_q("utf-8", "0.5, iso-8859-1")
+      .expect_err("comma-bearing q-value should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "comma-bearing Accept-Charset q-value should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let builder = client.get().url(format!("{}/localized", base_url));
+    for index in 0..32 {
+      builder
+        .accept_charset(format!("c{index}"))
+        .expect("charset at the bound should be accepted");
+    }
+    let error = builder
+      .accept_charset("c32")
+      .expect_err("too many charsets should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "too many Accept-Charset members should not open a socket"
+  );
 }
 
 #[test]
@@ -1965,6 +2163,109 @@ fn raw_idempotency_key_header_remains_available_as_escape_hatch() {
     Some("opaque custom value"),
     header_value(&request, "Idempotency-Key")
   );
+}
+
+#[test]
+fn trace_context_helpers_emit_and_replace_bounded_metadata() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/trace", base_url))
+      .header((
+        "traceparent",
+        "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-00",
+      ))
+      .header(("tracestate", "old=value"))
+      .traceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+      .expect("traceparent should be accepted")
+      .tracestate("rojo=00f067aa0ba902b7,congo=t61rcWkgMzE")
+      .expect("tracestate should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"),
+    header_value(&request, "traceparent")
+  );
+  assert_eq!(
+    Some("rojo=00f067aa0ba902b7,congo=t61rcWkgMzE"),
+    header_value(&request, "tracestate")
+  );
+  assert!(!request.contains("old=value"));
+}
+
+#[test]
+fn trace_context_helpers_reject_invalid_values_before_connecting_without_echoing_values() {
+  for (name, value) in [
+    (
+      "traceparent",
+      "00-00000000000000000000000000000000-00f067aa0ba902b7-01",
+    ),
+    ("tracestate", "rojo=1,rojo=2"),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = if name == "traceparent" {
+        client
+          .get()
+          .url(format!("{}/trace", base_url))
+          .traceparent(value)
+          .expect_err("invalid traceparent should be rejected")
+      } else {
+        client
+          .get()
+          .url(format!("{}/trace", base_url))
+          .tracestate(value)
+          .expect_err("invalid tracestate should be rejected")
+      };
+      assert!(error.is_builder());
+      assert!(!error.to_string().contains(value));
+    });
+    assert!(request.is_empty(), "invalid {name} must not open a socket");
+  }
+}
+
+#[test]
+fn raw_trace_context_headers_are_validated_and_redacted() {
+  let traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+  let tracestate = "rojo=00f067aa0ba902b7";
+
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/trace", base_url))
+      .header(("traceparent", traceparent))
+      .header(("tracestate", tracestate))
+      .emit()
+      .expect("manual valid trace context headers should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(Some(traceparent), header_value(&request, "traceparent"));
+  assert_eq!(Some(tracestate), header_value(&request, "tracestate"));
+
+  let debug = format!(
+    "{:?}",
+    client()
+      .get()
+      .url("http://127.0.0.1/trace")
+      .header(("traceparent", traceparent))
+      .header(("tracestate", tracestate))
+  );
+  assert!(!debug.contains(traceparent));
+  assert!(!debug.contains(tracestate));
+
+  let rejected = capture_optional_request(|base_url| {
+    let error = client()
+      .get()
+      .url(format!("{}/trace", base_url))
+      .header(("traceparent", "invalid"))
+      .emit()
+      .expect_err("invalid raw traceparent should be rejected before connect");
+    assert!(error.is_builder());
+  });
+  assert!(rejected.is_empty());
 }
 
 #[test]

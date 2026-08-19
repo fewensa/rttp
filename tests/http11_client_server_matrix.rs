@@ -115,6 +115,52 @@ fn observe_accept_language_metadata(request: &Request) -> ObservedAcceptLanguage
   }
 }
 
+#[derive(Debug, PartialEq)]
+struct ObservedAcceptCharsetMetadata {
+  ranges: Result<Option<Vec<(String, u16)>>, String>,
+  raw: Option<String>,
+}
+
+fn observe_accept_charset_metadata(request: &Request) -> ObservedAcceptCharsetMetadata {
+  ObservedAcceptCharsetMetadata {
+    ranges: request
+      .accept_charset()
+      .map(|charsets| {
+        charsets.map(|charsets| {
+          charsets
+            .charsets()
+            .iter()
+            .map(|range| (range.charset().to_owned(), range.quality()))
+            .collect()
+        })
+      })
+      .map_err(|error| error.to_string()),
+    raw: request.header("Accept-Charset").map(str::to_owned),
+  }
+}
+
+fn spawn_facade_accept_charset_observer() -> (
+  std::net::SocketAddr,
+  mpsc::Receiver<ObservedAcceptCharsetMetadata>,
+  thread::JoinHandle<()>,
+) {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind Accept-Charset facade server");
+  let addr = server.local_addr().expect("Accept-Charset facade addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send(observe_accept_charset_metadata(&request))
+          .expect("send observed Accept-Charset metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve Accept-Charset facade request");
+  });
+
+  (addr, observed_rx, handle)
+}
+
 fn spawn_facade_accept_language_observer() -> (
   std::net::SocketAddr,
   mpsc::Receiver<ObservedAcceptLanguageMetadata>,
@@ -1809,6 +1855,88 @@ fn facade_server_reports_absent_signature_metadata_without_policy() {
 }
 
 #[test]
+fn facade_client_and_server_exchange_accept_charset_request_metadata() {
+  let (addr, observed_rx, handle) = spawn_facade_accept_charset_observer();
+
+  let response = rttp::Http::client()
+    .get()
+    .url(format!("http://{addr}/localized"))
+    .accept_charset("utf-8")
+    .expect("utf-8 should be accepted")
+    .accept_charset_with_q("iso-8859-1", "0.5")
+    .expect("iso-8859-1 quality should be accepted")
+    .accept_charset_with_q("*", "0")
+    .expect("wildcard quality should be accepted")
+    .emit()
+    .expect("Accept-Charset request should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    ObservedAcceptCharsetMetadata {
+      ranges: Ok(Some(vec![
+        ("utf-8".to_owned(), 1000),
+        ("iso-8859-1".to_owned(), 500),
+        ("*".to_owned(), 0),
+      ])),
+      raw: Some("utf-8, iso-8859-1;q=0.5, *;q=0".to_owned()),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe valid Accept-Charset metadata")
+  );
+  handle
+    .join()
+    .expect("valid Accept-Charset facade server thread");
+}
+
+#[test]
+fn facade_server_rejects_malformed_accept_charset_metadata_without_losing_raw_headers() {
+  let (addr, observed_rx, handle) = spawn_facade_accept_charset_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect malformed Accept-Charset request");
+  stream
+    .write_all(
+      b"GET /localized HTTP/1.1\r\nHost: 127.0.0.1\r\nAccept-Charset: utf-8, UTF-8\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write malformed Accept-Charset request");
+
+  let observed = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe malformed Accept-Charset metadata");
+  assert!(observed.ranges.is_err());
+  assert_eq!(observed.raw.as_deref(), Some("utf-8, UTF-8"));
+
+  handle
+    .join()
+    .expect("malformed Accept-Charset facade server thread");
+}
+
+#[test]
+fn facade_server_reports_absent_accept_charset_metadata() {
+  let (addr, observed_rx, handle) = spawn_facade_accept_charset_observer();
+
+  let response = rttp::Http::client()
+    .get()
+    .url(format!("http://{addr}/plain"))
+    .emit()
+    .expect("request without Accept-Charset metadata should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    ObservedAcceptCharsetMetadata {
+      ranges: Ok(None),
+      raw: None,
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe absent Accept-Charset metadata")
+  );
+  handle
+    .join()
+    .expect("absent Accept-Charset facade server thread");
+}
+
+#[test]
 fn facade_client_and_server_exchange_accept_language_request_metadata() {
   let (addr, observed_rx, handle) = spawn_facade_accept_language_observer();
 
@@ -2592,6 +2720,81 @@ fn sync_client_and_server_exchange_bounded_idempotency_key_metadata_without_poli
   assert_eq!(Some("charge-2026-08-19-9f3c".to_string()), raw);
   assert_eq!(201, response.code());
   handle.join().expect("idempotency server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_w3c_trace_context_metadata_without_policy() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind trace context server");
+  let addr = server.local_addr().expect("trace context server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let traceparent = request
+          .traceparent()
+          .expect("traceparent should parse")
+          .expect("traceparent should be present");
+        let tracestate = request
+          .tracestate()
+          .expect("tracestate should parse")
+          .expect("tracestate should be present");
+        let observed = (
+          traceparent.version().to_string(),
+          traceparent.trace_id().to_string(),
+          traceparent.parent_id().to_string(),
+          traceparent.sampled(),
+          tracestate
+            .members()
+            .iter()
+            .map(|member| (member.key().to_string(), member.value().to_string()))
+            .collect::<Vec<_>>(),
+          request.header("traceparent").map(str::to_string),
+          request.header("tracestate").map(str::to_string),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed trace context metadata");
+        HttpResponse::new(204, "No Content")
+      })
+      .expect("serve trace context request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/trace"))
+    .traceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+    .expect("traceparent should be accepted")
+    .tracestate("rojo=00f067aa0ba902b7,congo=t61rcWkgMzE")
+    .expect("tracestate should be accepted")
+    .emit()
+    .expect("trace context response should parse");
+
+  let (version, trace_id, parent_id, sampled, members, raw_traceparent, raw_tracestate) =
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe trace context metadata");
+  assert_eq!("00", version);
+  assert_eq!("4bf92f3577b34da6a3ce929d0e0e4736", trace_id);
+  assert_eq!("00f067aa0ba902b7", parent_id);
+  assert!(sampled);
+  assert_eq!(
+    vec![
+      ("rojo".to_string(), "00f067aa0ba902b7".to_string()),
+      ("congo".to_string(), "t61rcWkgMzE".to_string())
+    ],
+    members
+  );
+  assert_eq!(
+    Some("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01".to_string()),
+    raw_traceparent
+  );
+  assert_eq!(
+    Some("rojo=00f067aa0ba902b7,congo=t61rcWkgMzE".to_string()),
+    raw_tracestate
+  );
+  assert_eq!(204, response.code());
+  handle.join().expect("trace context server thread");
 }
 
 #[test]

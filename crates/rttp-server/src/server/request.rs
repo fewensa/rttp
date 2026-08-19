@@ -1,5 +1,9 @@
 use super::*;
 
+pub use rttp_protocol::accept_charset::{
+  AcceptCharset as HttpRequestAcceptCharsets,
+  AcceptCharsetParseError as HttpAcceptCharsetParseError, AcceptCharsetRange as HttpAcceptCharset,
+};
 pub use rttp_protocol::accept_encoding::{
   AcceptEncoding as HttpRequestAcceptEncodings, AcceptEncodingCoding as HttpAcceptEncoding,
   AcceptEncodingParseError as HttpAcceptEncodingParseError,
@@ -87,6 +91,11 @@ pub use rttp_protocol::signature_input::{
 };
 pub use rttp_protocol::te::{
   Te as HttpRequestTe, TeCoding as HttpTe, TeParseError as HttpTeParseError,
+};
+pub use rttp_protocol::trace_context::{
+  TraceParent as HttpTraceParent, TraceParentParseError as HttpTraceParentParseError,
+  TraceState as HttpTraceState, TraceStateMember as HttpTraceStateMember,
+  TraceStateParseError as HttpTraceStateParseError,
 };
 pub use rttp_protocol::trailer::{
   Trailer as HttpTrailer, TrailerParseError as HttpTrailerParseError,
@@ -203,6 +212,8 @@ fn is_sensitive_debug_header(name: &str) -> bool {
     || name.eq_ignore_ascii_case("idempotency-key")
     || name.eq_ignore_ascii_case("proxy-authorization")
     || name.eq_ignore_ascii_case("set-cookie")
+    || name.eq_ignore_ascii_case("traceparent")
+    || name.eq_ignore_ascii_case("tracestate")
 }
 
 impl Request {
@@ -512,10 +523,42 @@ impl Request {
     HttpIdempotencyKey::parse_values(values).map(Some)
   }
 
+  /// Parses received W3C `traceparent` request metadata without creating
+  /// identifiers, deciding sampling, or configuring propagation.
+  pub fn traceparent(&self) -> Result<Option<HttpTraceParent>, HttpTraceParentParseError> {
+    let values: Vec<&str> = self.headers_named("traceparent").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpTraceParent::parse_values(values).map(Some)
+  }
+
+  /// Parses received W3C `tracestate` request metadata without invoking a
+  /// tracing backend or automatically propagating metadata.
+  pub fn tracestate(&self) -> Result<Option<HttpTraceState>, HttpTraceStateParseError> {
+    let values: Vec<&str> = self.headers_named("tracestate").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpTraceState::parse_values(values).map(Some)
+  }
+
   /// Parses received `Prefer` request metadata without applying preferences.
   pub fn prefer(&self) -> Result<Option<HttpRequestPreferences>, HttpPreferParseError> {
     parse_prefer_values(self.headers_named("Prefer"))
   }
+  /// Parses received `Accept-Charset` request metadata without negotiating,
+  /// transcoding, or selecting a response charset.
+  pub fn accept_charset(
+    &self,
+  ) -> Result<Option<HttpRequestAcceptCharsets>, HttpAcceptCharsetParseError> {
+    let values: Vec<&str> = self.headers_named("Accept-Charset").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpRequestAcceptCharsets::parse_values(values).map(Some)
+  }
+
   /// Parses received `Accept-Encoding` request metadata without enabling
   /// automatic compression, decompression, or content negotiation.
   pub fn accept_encoding(
@@ -2169,6 +2212,36 @@ impl HttpRequest {
     HttpIdempotencyKey::parse_values(values).map(Some)
   }
 
+  /// Parses received W3C `traceparent` request metadata without creating
+  /// identifiers, deciding sampling, or configuring propagation.
+  pub fn traceparent(&self) -> Result<Option<HttpTraceParent>, HttpTraceParentParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("traceparent"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpTraceParent::parse_values(values).map(Some)
+  }
+
+  /// Parses received W3C `tracestate` request metadata without invoking a
+  /// tracing backend or automatically propagating metadata.
+  pub fn tracestate(&self) -> Result<Option<HttpTraceState>, HttpTraceStateParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("tracestate"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpTraceState::parse_values(values).map(Some)
+  }
+
   /// Parses received `Prefer` request metadata without applying preferences.
   pub fn prefer(&self) -> Result<Option<HttpRequestPreferences>, HttpPreferParseError> {
     parse_prefer_values(
@@ -2275,6 +2348,23 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpDnt::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Accept-Charset` request metadata without negotiating,
+  /// transcoding, or selecting a response charset.
+  pub fn accept_charset(
+    &self,
+  ) -> Result<Option<HttpRequestAcceptCharsets>, HttpAcceptCharsetParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Accept-Charset"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpRequestAcceptCharsets::parse_values(values).map(Some)
   }
 
   /// Parses received `Sec-GPC` request metadata without applying consent,

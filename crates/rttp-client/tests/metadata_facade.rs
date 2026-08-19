@@ -1,6 +1,7 @@
 use rttp_client::response::{
-  AcceptCh, AcceptEncoding, AccessControlAllowCredentials, AccessControlAllowCredentialsParseError,
-  AccessControlAllowHeaders, AccessControlAllowHeadersParseError, AccessControlAllowMethods,
+  AcceptCh, AcceptCharset, AcceptEncoding, AccessControlAllowCredentials,
+  AccessControlAllowCredentialsParseError, AccessControlAllowHeaders,
+  AccessControlAllowHeadersParseError, AccessControlAllowMethods,
   AccessControlAllowMethodsParseError, AccessControlExposeHeaders, AccessControlMaxAge,
   AccessControlMaxAgeParseError, Age, AgeParseError, AltSvc, AuthenticationInfo,
   AuthenticationInfoParseError, CacheStatus, CacheStatusParseError, Connection,
@@ -23,8 +24,9 @@ use rttp_client::response::{
   ContentLocationParseError, Deprecation, DeprecationParseError, ReprDigest,
 };
 use rttp_client::{
-  HttpClient, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecGpc, SecGpcParseError,
-  SecPurpose, UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
+  Dnt, DntParseError, HttpClient, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecGpc,
+  SecGpcParseError, SecPurpose, TraceParent, TraceParentParseError, TraceState, TraceStateMember,
+  TraceStateParseError, UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
 };
 use rttp_protocol::expect::Expect;
 use rttp_test_support as support;
@@ -92,6 +94,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     NoVarySearch::parse("params=utm").expect_err("invalid No-Vary-Search should be rejected");
   let want_content_digest =
     WantContentDigest::parse("sha-256=10").expect("Want-Content-Digest should parse");
+  let accept_charset =
+    AcceptCharset::parse("utf-8, iso-8859-1;q=0.5, *;q=0").expect("Accept-Charset should parse");
   let accept_encoding =
     AcceptEncoding::parse("gzip, br;q=0.8").expect("Accept-Encoding should parse");
   let want_repr_digest =
@@ -136,9 +140,19 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
   let fetch_user = SecFetchUser::parse("?1").expect("Sec-Fetch-User should parse");
+  let dnt = Dnt::parse("1").expect("DNT should parse");
+  let _: DntParseError = Dnt::parse("on").expect_err("invalid DNT should be rejected");
   let sec_gpc = SecGpc::parse("1").expect("Sec-GPC should parse");
   let _: SecGpcParseError = SecGpc::parse("0").expect_err("invalid Sec-GPC should be rejected");
   let sec_purpose = SecPurpose::parse("prefetch, vendor-ext").expect("Sec-Purpose should parse");
+  let traceparent = TraceParent::parse("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+    .expect("traceparent should parse");
+  let _: TraceParentParseError =
+    TraceParent::parse("invalid").expect_err("invalid traceparent should be rejected");
+  let tracestate = TraceState::parse("rojo=00f067aa0ba902b7").expect("tracestate should parse");
+  let _: TraceStateParseError =
+    TraceState::parse("rojo=1,rojo=2").expect_err("duplicate tracestate should be rejected");
+  let member: &TraceStateMember = &tracestate.members()[0];
   let upgrade_insecure_requests =
     UpgradeInsecureRequests::parse("1").expect("Upgrade-Insecure-Requests should parse");
   let _: UpgradeInsecureRequestsParseError = UpgradeInsecureRequests::parse("0")
@@ -230,6 +244,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     Some(&NoVarySearchParams::Names(vec!["utm_source".to_owned()]))
   );
   assert_eq!(want_content_digest.entries()[0].preference(), 10);
+  assert_eq!(accept_charset.charsets()[0].charset(), "utf-8");
+  assert_eq!(accept_charset.charsets()[1].quality(), 500);
   assert_eq!(accept_encoding.codings()[0].coding(), "gzip");
   assert_eq!(accept_encoding.codings()[1].quality(), 800);
   assert_eq!(want_repr_digest.entries()[0].preference(), 10);
@@ -264,9 +280,12 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_mode.header_value(), "navigate");
   assert_eq!(fetch_dest.header_value(), "document");
   assert_eq!(fetch_user.header_value(), "?1");
+  assert_eq!(dnt.header_value(), "1");
   assert_eq!(sec_gpc.header_value(), "1");
   assert_eq!(sec_purpose.tokens(), ["prefetch", "vendor-ext"]);
   assert!(sec_purpose.contains_prefetch());
+  assert_eq!("00", traceparent.version());
+  assert_eq!("rojo", member.key());
   assert_eq!(upgrade_insecure_requests.header_value(), "1");
   assert_eq!(cross_origin_resource_policy.header_value(), "same-origin");
   assert_eq!(cross_origin_embedder_policy.header_value(), "require-corp");

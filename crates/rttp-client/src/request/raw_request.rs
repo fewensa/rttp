@@ -243,6 +243,8 @@ fn is_sensitive_debug_header(name: &str) -> bool {
     || name.eq_ignore_ascii_case("idempotency-key")
     || name.eq_ignore_ascii_case("proxy-authorization")
     || name.eq_ignore_ascii_case("set-cookie")
+    || name.eq_ignore_ascii_case("traceparent")
+    || name.eq_ignore_ascii_case("tracestate")
 }
 
 #[cfg(test)]
@@ -250,7 +252,7 @@ mod tests {
   use super::*;
 
   #[test]
-  fn raw_request_debug_redacts_built_authorization_header_values() {
+  fn raw_request_debug_redacts_sensitive_header_values() {
     let mut request = Request::new();
     request.url_set("http://example.test/asset".to_rourl());
     request
@@ -262,6 +264,14 @@ mod tests {
     request
       .headers_mut()
       .push(Header::new("Idempotency-Key", "charge-2026-08-19-9f3c"));
+    request.headers_mut().push(Header::new(
+      "traceparent",
+      "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+    ));
+    request.headers_mut().push(Header::new(
+      "tracestate",
+      "rojo=00f067aa0ba902b7,congo=t61rcWkgMzE",
+    ));
 
     let raw_request = RawRequest::block_new(&mut request).expect("raw request should build");
     let debug = format!("{raw_request:?}");
@@ -269,9 +279,14 @@ mod tests {
     assert!(debug.contains("Authorization"));
     assert!(debug.contains("Proxy-Authorization"));
     assert!(debug.contains("Idempotency-Key"));
+    assert!(debug.contains("traceparent"));
+    assert!(debug.contains("tracestate"));
     assert!(debug.contains("[REDACTED]"));
     assert!(!debug.contains("origin-secret-token"));
     assert!(!debug.contains("cHJveHktc2VjcmV0"));
     assert!(!debug.contains("charge-2026-08-19-9f3c"));
+    assert!(!debug.contains("4bf92f3577b34da6a3ce929d0e0e4736"));
+    assert!(!debug.contains("00f067aa0ba902b7"));
+    assert!(!debug.contains("t61rcWkgMzE"));
   }
 }

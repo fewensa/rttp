@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::error;
+use rttp_protocol::trace_context::{TraceParent, TraceState};
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct Header {
@@ -32,6 +33,13 @@ impl Header {
       return Err(error::builder_with_message(
         "Invalid outbound HTTP header value",
       ));
+    }
+    if self.name.eq_ignore_ascii_case("traceparent") {
+      TraceParent::parse(&self.value)
+        .map_err(|error| error::builder_with_message(error.to_string()))?;
+    } else if self.name.eq_ignore_ascii_case("tracestate") {
+      TraceState::parse(&self.value)
+        .map_err(|error| error::builder_with_message(error.to_string()))?;
     }
     Ok(())
   }
@@ -104,6 +112,8 @@ fn is_sensitive_debug_header(name: &str) -> bool {
     || name.eq_ignore_ascii_case("idempotency-key")
     || name.eq_ignore_ascii_case("proxy-authorization")
     || name.eq_ignore_ascii_case("set-cookie")
+    || name.eq_ignore_ascii_case("traceparent")
+    || name.eq_ignore_ascii_case("tracestate")
 }
 
 impl IntoHeader for &str {
