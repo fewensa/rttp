@@ -25,6 +25,8 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp_client::response::ContentRange::parse("bytes 3-6/10").expect("Content-Range should parse");
   let _: rttp::ContentRangeParseError = rttp_client::response::ContentRange::parse("bytes */*")
     .expect_err("invalid Content-Range should be rejected");
+  let accept_ranges: rttp::AcceptRanges =
+    rttp_client::response::AcceptRanges::parse("bytes, pages").expect("Accept-Ranges should parse");
   let content_location: rttp::ContentLocation =
     rttp_client::response::ContentLocation::parse("../representations/current.json")
       .expect("Content-Location should parse");
@@ -57,6 +59,17 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::StrictTransportSecurityParseError =
     rttp_client::response::StrictTransportSecurity::parse("includeSubDomains")
       .expect_err("Strict-Transport-Security without max-age should be rejected");
+  let x_content_type_options: rttp::XContentTypeOptions =
+    rttp_client::response::XContentTypeOptions::parse("NoSniff")
+      .expect("X-Content-Type-Options should parse");
+  let _: rttp::XContentTypeOptionsParseError =
+    rttp_client::response::XContentTypeOptions::parse("unknown")
+      .expect_err("unknown X-Content-Type-Options should be rejected");
+  let x_frame_options: rttp::XFrameOptions =
+    rttp_client::response::XFrameOptions::parse("deny").expect("X-Frame-Options should parse");
+  let _: rttp::XFrameOptionsParseError =
+    rttp_client::response::XFrameOptions::parse("ALLOW-FROM https://example.test")
+      .expect_err("deprecated X-Frame-Options ALLOW-FROM should be rejected");
   let fetch_site: rttp::SecFetchSite =
     rttp_client::SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let location: rttp::Location =
@@ -69,6 +82,8 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(accept_patch.media_types().len(), 1);
   assert_eq!(accept_post.media_types().len(), 1);
   assert_eq!(content_range.header_value(), "bytes 3-6/10");
+  assert_eq!(accept_ranges.units(), ["bytes", "pages"]);
+  assert_eq!(accept_ranges.header_value(), "bytes, pages");
   assert_eq!(
     content_location.header_value(),
     "../representations/current.json"
@@ -86,8 +101,21 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(opener_policy.header_value(), "noopener-allow-popups");
   assert_eq!(strict_transport_security.max_age(), 31_536_000);
   assert!(strict_transport_security.include_sub_domains());
+  assert_eq!(x_content_type_options, rttp::XContentTypeOptions::Nosniff);
+  assert_eq!(x_content_type_options.header_value(), "nosniff");
+  assert_eq!(x_frame_options, rttp::XFrameOptions::Deny);
+  assert_eq!(x_frame_options.header_value(), "DENY");
   assert_eq!(fetch_site.header_value(), "same-origin");
   assert_eq!(location.as_str(), "/next");
+}
+
+#[test]
+#[cfg(feature = "client")]
+fn compatibility_facade_exports_content_length_metadata_type() {
+  let content_length: rttp::HttpContentLength = rttp::HttpContentLength::new(2);
+
+  assert_eq!(2, content_length.len());
+  assert_eq!("2", content_length.header_value());
 }
 
 #[test]
