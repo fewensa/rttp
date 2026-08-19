@@ -14,6 +14,8 @@ use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
 use rttp_protocol::forwarded::{Forwarded, MAX_FORWARDED_VALUE_BYTES};
+use rttp_protocol::if_modified_since::IfModifiedSince;
+use rttp_protocol::if_unmodified_since::IfUnmodifiedSince;
 use rttp_protocol::max_forwards::MaxForwards;
 use rttp_protocol::origin::Origin;
 use rttp_protocol::priority::Priority;
@@ -805,14 +807,22 @@ impl HttpClient {
 
   /// Set an HTTP-date modification validator, `If-Modified-Since: <http-date>`.
   pub fn if_modified_since<S: AsRef<str>>(&mut self, http_date: S) -> error::Result<&mut Self> {
-    let http_date = validate_http_date(http_date.as_ref())?;
-    Ok(self.header(Header::new("If-Modified-Since", http_date)))
+    let if_modified_since = IfModifiedSince::parse(http_date.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "If-Modified-Since",
+      if_modified_since.header_value(),
+    )))
   }
 
   /// Set an HTTP-date modification validator, `If-Unmodified-Since: <http-date>`.
   pub fn if_unmodified_since<S: AsRef<str>>(&mut self, http_date: S) -> error::Result<&mut Self> {
-    let http_date = validate_http_date(http_date.as_ref())?;
-    Ok(self.header(Header::new("If-Unmodified-Since", http_date)))
+    let if_unmodified_since = IfUnmodifiedSince::parse(http_date.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "If-Unmodified-Since",
+      if_unmodified_since.header_value(),
+    )))
   }
 
   /// Set request content type

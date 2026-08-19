@@ -29,6 +29,14 @@ pub use rttp_protocol::forwarded::{
   ForwardedParameter as HttpForwardedParameter, ForwardedParseError as HttpForwardedParseError,
 };
 pub use rttp_protocol::host::{Host as HttpHost, HostParseError as HttpHostParseError};
+pub use rttp_protocol::if_modified_since::{
+  IfModifiedSince as HttpIfModifiedSince,
+  IfModifiedSinceParseError as HttpIfModifiedSinceParseError,
+};
+pub use rttp_protocol::if_unmodified_since::{
+  IfUnmodifiedSince as HttpIfUnmodifiedSince,
+  IfUnmodifiedSinceParseError as HttpIfUnmodifiedSinceParseError,
+};
 pub use rttp_protocol::max_forwards::{
   MaxForwards as HttpMaxForwards, MaxForwardsParseError as HttpMaxForwardsParseError,
 };
@@ -361,8 +369,25 @@ impl Request {
   }
 
   /// Parses one HTTP-date `If-Modified-Since` validator without evaluating it.
-  pub fn if_modified_since(&self) -> Result<Option<SystemTime>, HttpIfModifiedSinceParseError> {
-    parse_if_modified_since_values(self.headers_named("If-Modified-Since"))
+  pub fn if_modified_since(
+    &self,
+  ) -> Result<Option<HttpIfModifiedSince>, HttpIfModifiedSinceParseError> {
+    let values: Vec<&str> = self.headers_named("If-Modified-Since").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpIfModifiedSince::parse_values(values).map(Some)
+  }
+
+  /// Parses one HTTP-date `If-Unmodified-Since` validator without evaluating it.
+  pub fn if_unmodified_since(
+    &self,
+  ) -> Result<Option<HttpIfUnmodifiedSince>, HttpIfUnmodifiedSinceParseError> {
+    let values: Vec<&str> = self.headers_named("If-Unmodified-Since").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpIfUnmodifiedSince::parse_values(values).map(Some)
   }
 
   pub fn cache_control(
@@ -1605,27 +1630,6 @@ impl fmt::Display for HttpIfNoneMatchParseError {
 
 impl Error for HttpIfNoneMatchParseError {}
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HttpIfModifiedSinceParseError {
-  message: String,
-}
-
-impl HttpIfModifiedSinceParseError {
-  fn new(message: impl Into<String>) -> Self {
-    Self {
-      message: message.into(),
-    }
-  }
-}
-
-impl fmt::Display for HttpIfModifiedSinceParseError {
-  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-    formatter.write_str(&self.message)
-  }
-}
-
-impl Error for HttpIfModifiedSinceParseError {}
-
 fn parse_range_values<'a, I>(
   values: I,
   entity_length: usize,
@@ -1641,31 +1645,6 @@ where
     return Err(HttpByteRangeError::MultipleRanges);
   }
   HttpByteRange::parse(value, entity_length).map(Some)
-}
-
-fn parse_if_modified_since_values<'a, I>(
-  values: I,
-) -> Result<Option<SystemTime>, HttpIfModifiedSinceParseError>
-where
-  I: IntoIterator<Item = &'a str>,
-{
-  let mut values = values.into_iter();
-  let Some(value) = values.next() else {
-    return Ok(None);
-  };
-  if values.next().is_some() {
-    return Err(HttpIfModifiedSinceParseError::new(
-      "duplicate If-Modified-Since headers",
-    ));
-  }
-  if value.len() > MAX_CONDITIONAL_VALUE_BYTES {
-    return Err(HttpIfModifiedSinceParseError::new(
-      "If-Modified-Since header value is too large",
-    ));
-  }
-  httpdate::parse_http_date(value.trim())
-    .map(Some)
-    .map_err(|_| HttpIfModifiedSinceParseError::new("invalid If-Modified-Since validator"))
 }
 
 impl HttpConditionalMetadata {
@@ -2234,14 +2213,35 @@ impl HttpRequest {
   }
 
   /// Parses one HTTP-date `If-Modified-Since` validator without evaluating it.
-  pub fn if_modified_since(&self) -> Result<Option<SystemTime>, HttpIfModifiedSinceParseError> {
-    parse_if_modified_since_values(
-      self
-        .headers
-        .iter()
-        .filter(|header| header.name.eq_ignore_ascii_case("If-Modified-Since"))
-        .map(|header| header.value.as_str()),
-    )
+  pub fn if_modified_since(
+    &self,
+  ) -> Result<Option<HttpIfModifiedSince>, HttpIfModifiedSinceParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("If-Modified-Since"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpIfModifiedSince::parse_values(values).map(Some)
+  }
+
+  /// Parses one HTTP-date `If-Unmodified-Since` validator without evaluating it.
+  pub fn if_unmodified_since(
+    &self,
+  ) -> Result<Option<HttpIfUnmodifiedSince>, HttpIfUnmodifiedSinceParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("If-Unmodified-Since"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpIfUnmodifiedSince::parse_values(values).map(Some)
   }
 
   pub fn cache_control(

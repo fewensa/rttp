@@ -2133,6 +2133,83 @@ fn request_exposes_bounded_range_and_conditional_metadata() {
   assert!(matches!(request.if_range(), Ok(Some(HttpIfRange::Date(_)))));
   assert_eq!(Ok(Some(HttpIfNoneMatch::Any)), request.if_none_match());
   assert!(matches!(request.if_modified_since(), Ok(Some(_))));
+  assert!(matches!(request.if_unmodified_since(), Ok(None)));
+}
+
+#[test]
+fn request_conditional_http_date_metadata_is_optional_bounded_and_rejects_invalid_headers() {
+  let absent = Request::from_raw_frame(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(None, absent.if_modified_since().expect("absent should be valid"));
+  assert_eq!(None, absent.if_unmodified_since().expect("absent should be valid"));
+
+  let modified = Request::from_raw_frame(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nIf-Modified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert_eq!(
+    "Sun, 06 Nov 1994 08:49:37 GMT",
+    modified
+      .if_modified_since()
+      .expect("If-Modified-Since should parse")
+      .expect("If-Modified-Since should be present")
+      .header_value()
+  );
+
+  let unmodified = Request::from_raw_frame(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nIf-Unmodified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert_eq!(
+    "Sun, 06 Nov 1994 08:49:37 GMT",
+    unmodified
+      .if_unmodified_since()
+      .expect("If-Unmodified-Since should parse")
+      .expect("If-Unmodified-Since should be present")
+      .header_value()
+  );
+
+  for value in ["not-a-date", "", "08:49:37 06 Nov 1994"] {
+    let request = Request::from_raw_frame(
+      format!(
+        "GET /asset HTTP/1.1\r\nHost: example.test\r\nIf-Modified-Since: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should parse");
+    assert!(request.if_modified_since().is_err());
+    assert_eq!(Some(value), request.header("If-Modified-Since"));
+  }
+
+  let oversized = "0".repeat(64 * 1024 + 1);
+  let oversized_request = Request {
+    method: "GET".to_string(),
+    target: "/".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("If-Modified-Since".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.if_modified_since().is_err());
+  assert_eq!(
+    Some(oversized.as_str()),
+    oversized_request.header("If-Modified-Since")
+  );
+
+  let duplicate = Request::from_raw_frame(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nIf-Unmodified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\nif-unmodified-since: Sun, 06 Nov 1994 08:49:38 GMT\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert!(duplicate.if_unmodified_since().is_err());
+  assert_eq!(
+    None,
+    duplicate.if_modified_since().expect("absent should be valid")
+  );
 }
 
   #[test]

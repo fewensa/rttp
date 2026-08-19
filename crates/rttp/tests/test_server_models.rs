@@ -856,6 +856,7 @@ fn request_parses_bounded_range_and_conditional_metadata() {
     request
       .if_modified_since()
       .expect("If-Modified-Since should parse")
+      .map(|value| value.datetime())
   );
 }
 
@@ -882,6 +883,12 @@ fn request_conditional_metadata_helpers_preserve_absent_and_invalid_headers() {
       .if_modified_since()
       .expect("missing If-Modified-Since should be valid")
   );
+  assert_eq!(
+    None,
+    absent
+      .if_unmodified_since()
+      .expect("missing If-Unmodified-Since should be valid")
+  );
 
   let invalid = parse_request(concat!(
     "GET /asset HTTP/1.1\r\n",
@@ -890,6 +897,7 @@ fn request_conditional_metadata_helpers_preserve_absent_and_invalid_headers() {
     "If-Range: W/\"weak\"\r\n",
     "If-None-Match: *, \"version-7\"\r\n",
     "If-Modified-Since: not-a-date\r\n",
+    "If-Unmodified-Since: not-a-date\r\n",
     "\r\n"
   ));
   assert_eq!(Some("bytes=9-2"), invalid.header("Range"));
@@ -900,6 +908,56 @@ fn request_conditional_metadata_helpers_preserve_absent_and_invalid_headers() {
   assert!(invalid.if_none_match().is_err());
   assert_eq!(Some("not-a-date"), invalid.header("If-Modified-Since"));
   assert!(invalid.if_modified_since().is_err());
+  assert_eq!(Some("not-a-date"), invalid.header("If-Unmodified-Since"));
+  assert!(invalid.if_unmodified_since().is_err());
+}
+
+#[test]
+fn request_conditional_http_date_metadata_is_bounded_and_rejects_duplicates() {
+  let modified = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "If-Modified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+    "\r\n"
+  ));
+  let parsed = modified
+    .if_modified_since()
+    .expect("If-Modified-Since should parse")
+    .expect("If-Modified-Since should be present");
+  assert_eq!("Sun, 06 Nov 1994 08:49:37 GMT", parsed.header_value());
+
+  let unmodified = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "If-Unmodified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+    "\r\n"
+  ));
+  let parsed = unmodified
+    .if_unmodified_since()
+    .expect("If-Unmodified-Since should parse")
+    .expect("If-Unmodified-Since should be present");
+  assert_eq!("Sun, 06 Nov 1994 08:49:37 GMT", parsed.header_value());
+
+  assert!(rttp::server::HttpIfModifiedSince::parse("0".repeat(64 * 1024 + 1)).is_err());
+  assert!(rttp::server::HttpIfUnmodifiedSince::parse("0".repeat(64 * 1024 + 1)).is_err());
+
+  let duplicate = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "If-Modified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+    "if-modified-since: Sun, 06 Nov 1994 08:49:38 GMT\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.if_modified_since().is_err());
+
+  let duplicate_unmodified = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "If-Unmodified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+    "if-unmodified-since: Sun, 06 Nov 1994 08:49:38 GMT\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate_unmodified.if_unmodified_since().is_err());
 }
 
 #[test]

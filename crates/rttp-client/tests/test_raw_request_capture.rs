@@ -1728,6 +1728,31 @@ fn conditional_etag_helpers_reject_oversized_validators_before_connecting() {
 }
 
 #[test]
+fn conditional_http_date_helpers_reject_oversized_and_duplicate_dates_before_connecting() {
+  let oversized = "0".repeat(64 * 1024 + 1);
+
+  for helper in ["If-Modified-Since", "If-Unmodified-Since"] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let request = client.get().url(format!("{}/asset", base_url));
+      let error = match helper {
+        "If-Modified-Since" => request.if_modified_since(&oversized),
+        "If-Unmodified-Since" => request.if_unmodified_since(&oversized),
+        _ => unreachable!("test helper names are exhaustive"),
+      }
+      .expect_err("oversized http date should be rejected");
+
+      assert!(error.is_builder());
+    });
+
+    assert!(
+      request.is_empty(),
+      "oversized {helper} helper input should not open a socket"
+    );
+  }
+}
+
+#[test]
 fn manual_conditional_headers_remain_available_as_escape_hatch() {
   let request = capture_request(|base_url| {
     client()

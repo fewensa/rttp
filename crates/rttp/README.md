@@ -137,6 +137,15 @@ or `HEAD` and `PreconditionFailed` for other methods. `If-Modified-Since` and
 successfully, and last-modified comparisons are performed at HTTP-date second
 precision.
 
+Handlers can also parse the raw validators without evaluation:
+`Request::if_modified_since()`, `HttpRequest::if_modified_since()`, and the
+matching `if_unmodified_since()` accessors expose one HTTP-date instant through
+the shared protocol `HttpIfModifiedSince` and `HttpIfUnmodifiedSince` types.
+Absent fields return `Ok(None)`; malformed, oversized, duplicate, or
+control-byte values return a parse error while the raw field stays available
+through `header()`. These accessors only parse metadata and do not change
+evaluator precedence or comparison behavior.
+
 Use `HttpResponse::not_modified(&metadata)` for `304 Not Modified`; it adds
 available `ETag` and `Last-Modified` validators and serializes without a
 message body. `HttpResponse::with_etag(HttpEntityTag::strong("tag"))` and

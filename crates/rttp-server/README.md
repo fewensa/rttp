@@ -405,6 +405,24 @@ expose the original raw field.
 These helpers parse request metadata only. They do not decrement the hop
 count, route a request, select TRACE or OPTIONS, or apply forwarding policy.
 
+## Conditional HTTP-date request metadata
+
+Handlers can call `Request::if_modified_since()`,
+`HttpRequest::if_modified_since()`, and the matching `if_unmodified_since()`
+accessors to observe bounded typed HTTP-date validators through the shared
+protocol `HttpIfModifiedSince` and `HttpIfUnmodifiedSince` types. Absent
+fields return `Ok(None)`. A recognized value is one HTTP-date instant with
+optional surrounding SP or HTAB; `datetime()` exposes the instant and
+`header_value()` formats it as IMF-fixdate. Malformed, oversized, duplicate,
+or control-byte values return a parser error while `Request::header()` and
+`HttpRequest::header()` continue to expose the original raw field.
+
+These helpers parse request metadata only. They do not compare
+`Last-Modified`, evaluate conditional precedence, serve or reject a
+representation, or apply cache policy. `Request::evaluate_conditional()` and
+`evaluate_conditional_request()` keep their existing RFC 9110 precedence and
+second-level date comparison behavior.
+
 ## HTTP message signature metadata
 
 `Request::signature()` / `signature_input()` and the same methods on
