@@ -13,6 +13,26 @@ fn content_language_preserves_tag_spelling_and_order() {
 }
 
 #[test]
+fn content_language_accepts_strict_language_tag_forms() {
+  for value in [
+    "en",
+    "fr-CA",
+    "es-419",
+    "zh-cmn-Hans-CN",
+    "sl-rozaj-biske-1994",
+    "en-US-u-ca-gregory",
+    "de-CH-x-phonebk",
+    "x-private",
+    "i-klingon",
+  ] {
+    assert!(
+      ContentLanguage::parse(value).is_ok(),
+      "{value:?} must parse as a valid language tag"
+    );
+  }
+}
+
+#[test]
 fn content_language_accepts_multiple_fields_in_wire_order() {
   let content_language = ContentLanguage::parse_values(["fr-CA, es-419", "en"])
     .expect("multiple Content-Language fields should parse");
@@ -52,6 +72,10 @@ fn content_language_rejects_invalid_values() {
     "en;q=1",
     "en-US-",
     "-en-US",
+    "a-1",
+    "en-a",
+    "en-12",
+    "x",
     "abcdefghi",
     "en-abcdefghi",
     "en-\u{e9}",
@@ -106,7 +130,7 @@ fn content_language_enforces_value_and_tag_bounds() {
     "values at the 64 KiB bound must still obey language tag syntax"
   );
 
-  let at_value_limit_valid = "aa-".to_string() + &"a-".repeat(32766) + "a";
+  let at_value_limit_valid = "aa-x-".to_string() + &"private-".repeat(8191) + "pvt";
   assert_eq!(at_value_limit_valid.len(), MAX_CONTENT_LANGUAGE_VALUE_BYTES);
   assert!(
     ContentLanguage::parse(&at_value_limit_valid).is_ok(),

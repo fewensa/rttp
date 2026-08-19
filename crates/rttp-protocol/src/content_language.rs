@@ -111,25 +111,171 @@ impl fmt::Display for ContentLanguageParseError {
 impl Error for ContentLanguageParseError {}
 
 fn is_language_tag(value: &str) -> bool {
-  let mut subtags = value.split('-');
-  let Some(primary) = subtags.next() else {
+  if is_grandfathered_tag(value) {
+    return true;
+  }
+
+  let subtags = value.split('-').collect::<Vec<_>>();
+  if subtags.iter().any(|subtag| subtag.is_empty()) {
+    return false;
+  }
+  if is_privateuse_subtags(&subtags) {
+    return true;
+  }
+
+  let Some(language) = subtags.first() else {
     return false;
   };
 
-  if !is_language_primary_subtag(primary) {
+  if !is_language_subtag(language) {
     return false;
   }
 
-  subtags.all(is_language_subtag)
-}
+  let mut index = 1;
 
-fn is_language_primary_subtag(value: &str) -> bool {
-  (1..=8).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_alphabetic())
+  if (2..=3).contains(&language.len()) {
+    let extlang_end = usize::min(index + 3, subtags.len());
+    while index < extlang_end && is_extlang_subtag(subtags[index]) {
+      index += 1;
+    }
+  }
+
+  if subtags
+    .get(index)
+    .is_some_and(|subtag| is_script_subtag(subtag))
+  {
+    index += 1;
+  }
+
+  if subtags
+    .get(index)
+    .is_some_and(|subtag| is_region_subtag(subtag))
+  {
+    index += 1;
+  }
+
+  while subtags
+    .get(index)
+    .is_some_and(|subtag| is_variant_subtag(subtag))
+  {
+    index += 1;
+  }
+
+  while subtags
+    .get(index)
+    .is_some_and(|subtag| is_extension_singleton(subtag))
+  {
+    index += 1;
+    let extension_start = index;
+    while subtags
+      .get(index)
+      .is_some_and(|subtag| is_extension_subtag(subtag))
+    {
+      index += 1;
+    }
+    if index == extension_start {
+      return false;
+    }
+  }
+
+  if subtags
+    .get(index)
+    .is_some_and(|subtag| is_privateuse_prefix(subtag))
+  {
+    return is_privateuse_subtags(&subtags[index..]);
+  }
+
+  index == subtags.len()
 }
 
 fn is_language_subtag(value: &str) -> bool {
+  ((2..=3).contains(&value.len()) || (4..=8).contains(&value.len()))
+    && value.bytes().all(|byte| byte.is_ascii_alphabetic())
+}
+
+fn is_extlang_subtag(value: &str) -> bool {
+  value.len() == 3 && value.bytes().all(|byte| byte.is_ascii_alphabetic())
+}
+
+fn is_script_subtag(value: &str) -> bool {
+  value.len() == 4 && value.bytes().all(|byte| byte.is_ascii_alphabetic())
+}
+
+fn is_region_subtag(value: &str) -> bool {
+  (value.len() == 2 && value.bytes().all(|byte| byte.is_ascii_alphabetic()))
+    || (value.len() == 3 && value.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
+fn is_variant_subtag(value: &str) -> bool {
+  ((5..=8).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_alphanumeric()))
+    || (value.len() == 4
+      && value
+        .bytes()
+        .next()
+        .is_some_and(|byte| byte.is_ascii_digit())
+      && value.bytes().all(|byte| byte.is_ascii_alphanumeric()))
+}
+
+fn is_extension_singleton(value: &str) -> bool {
+  value.len() == 1
+    && value.bytes().all(|byte| byte.is_ascii_alphanumeric())
+    && !is_privateuse_prefix(value)
+}
+
+fn is_extension_subtag(value: &str) -> bool {
+  (2..=8).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_alphanumeric())
+}
+
+fn is_privateuse_subtag(value: &str) -> bool {
   (1..=8).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_alphanumeric())
 }
+
+fn is_privateuse_subtags(subtags: &[&str]) -> bool {
+  subtags.len() >= 2
+    && is_privateuse_prefix(subtags[0])
+    && subtags[1..]
+      .iter()
+      .all(|subtag| is_privateuse_subtag(subtag))
+}
+
+fn is_privateuse_prefix(value: &str) -> bool {
+  value.eq_ignore_ascii_case("x")
+}
+
+fn is_grandfathered_tag(value: &str) -> bool {
+  GRANDFATHERED_TAGS
+    .iter()
+    .any(|tag| tag.eq_ignore_ascii_case(value))
+}
+
+const GRANDFATHERED_TAGS: &[&str] = &[
+  "art-lojban",
+  "cel-gaulish",
+  "en-GB-oed",
+  "i-ami",
+  "i-bnn",
+  "i-default",
+  "i-enochian",
+  "i-hak",
+  "i-klingon",
+  "i-lux",
+  "i-mingo",
+  "i-navajo",
+  "i-pwn",
+  "i-tao",
+  "i-tay",
+  "i-tsu",
+  "no-bok",
+  "no-nyn",
+  "sgn-BE-FR",
+  "sgn-BE-NL",
+  "sgn-CH-DE",
+  "zh-guoyu",
+  "zh-hakka",
+  "zh-min",
+  "zh-min-nan",
+  "zh-xiang",
+];
 
 fn is_invalid_control_byte(byte: u8) -> bool {
   byte != b'\t' && (byte <= 0x1f || byte == 0x7f)
