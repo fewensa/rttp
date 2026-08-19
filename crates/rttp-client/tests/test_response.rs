@@ -1,10 +1,10 @@
 use rttp_client::response::{
-  AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentRange, ContentType,
-  CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy,
-  CrossOriginResourcePolicy, HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues, Location,
-  ProxyAuthenticate, ProxyAuthenticationInfo, ReferrerPolicy, ReferrerPolicyToken, Response,
-  RetryAfter, ServerTiming, SignatureInput, StrictTransportSecurity, Warning, XContentTypeOptions,
-  XFrameOptions,
+  AltSvc, AuthenticationInfo, ContentDisposition, ContentEncoding, ContentLocation, ContentRange,
+  ContentType, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly,
+  CrossOriginOpenerPolicy, CrossOriginResourcePolicy, HttpClearSiteData, HttpSetCookies, KeepAlive,
+  LinkValues, Location, ProxyAuthenticate, ProxyAuthenticationInfo, ReferrerPolicy,
+  ReferrerPolicyToken, Response, RetryAfter, ServerTiming, SignatureInput, StrictTransportSecurity,
+  Warning, XContentTypeOptions, XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -1470,6 +1470,66 @@ fn test_www_authenticate_rejects_malformed_duplicate_and_bounded_values() {
 }
 
 #[test]
+fn test_authentication_info_response_helper_parses_bounded_auth_params() {
+  let digest_field = concat!(
+    r#"nextnonce="6629fae49393a05397450978507c4ef1", "#,
+    r#"qop=auth, "#,
+    r#"rspauth="6629fae49393a05397450978507c4ef1", "#,
+    r#"cnonce="0a4f113b", "#,
+    "nc=00000001"
+  );
+  let raw = format!(
+    "HTTP/1.1 200 OK\r\nAuthentication-Info: {digest_field}\r\nContent-Length: 2\r\n\r\nOK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response should remain usable");
+
+  let info = response
+    .authentication_info()
+    .expect("valid Authentication-Info should parse")
+    .expect("Authentication-Info should be present");
+
+  assert_eq!(
+    info.parameter("nextnonce"),
+    Some("6629fae49393a05397450978507c4ef1")
+  );
+  assert_eq!(info.parameter("qop"), Some("auth"));
+  assert_eq!(
+    info.parameter("rspauth"),
+    Some("6629fae49393a05397450978507c4ef1")
+  );
+  assert_eq!(info.parameter("cnonce"), Some("0a4f113b"));
+  assert_eq!(info.parameter("nc"), Some("00000001"));
+  assert_eq!(
+    Some(&digest_field.to_string()),
+    response.header_value("Authentication-Info")
+  );
+
+  let combined = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Authentication-Info: nextnonce=abc\r\n",
+      "Authentication-Info: qop=auth\r\n",
+      "Content-Length: 2\r\n\r\nOK"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("raw response should remain usable");
+  let combined_info = combined
+    .authentication_info()
+    .expect("combined fields should parse")
+    .expect("Authentication-Info should be present");
+  assert_eq!(combined_info.parameter("nextnonce"), Some("abc"));
+  assert_eq!(combined_info.parameter("qop"), Some("auth"));
+  assert_eq!(
+    combined.header_values("Authentication-Info"),
+    [&"nextnonce=abc".to_string(), &"qop=auth".to_string()]
+  );
+}
+
+#[test]
 fn test_proxy_authenticate_response_helper_parses_bounded_challenges() {
   let raw = concat!(
     "HTTP/1.1 407 Proxy Authentication Required\r\n",
@@ -1503,6 +1563,75 @@ fn test_proxy_authenticate_response_helper_parses_bounded_challenges() {
       &"Bearer mF_9.B5f-4.1JqM, Digest realm=\"apps\", nonce=\"n-1\"".to_string()
     ]
   );
+}
+
+#[test]
+fn test_authentication_info_rejects_invalid_and_absent_values() {
+  for value in ["", "nextnonce=", "Bearer mF_9.B5f-4.1JqM"] {
+    let raw =
+      format!("HTTP/1.1 200 OK\r\nAuthentication-Info: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(
+      response.authentication_info().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Authentication-Info")
+    );
+  }
+
+  let duplicate = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Authentication-Info: qop=auth\r\n",
+      "Authentication-Info: QOP=auth\r\n",
+      "Content-Length: 2\r\n\r\nOK"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("raw response should remain usable");
+  assert!(duplicate.authentication_info().is_err());
+  assert_eq!(
+    Some(&"qop=auth".to_string()),
+    duplicate.header_value("Authentication-Info")
+  );
+  assert_eq!(
+    duplicate.header_values("Authentication-Info"),
+    [&"qop=auth".to_string(), &"QOP=auth".to_string()]
+  );
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_raw =
+    format!("HTTP/1.1 200 OK\r\nAuthentication-Info: {oversized}\r\nContent-Length: 0\r\n\r\n");
+  let oversized_response = Response::new(
+    RoUrl::with("https://example.test"),
+    oversized_raw.into_bytes(),
+  )
+  .expect("raw response should remain usable");
+  assert!(oversized_response.authentication_info().is_err());
+  assert_eq!(
+    Some(&oversized),
+    oversized_response.header_value("Authentication-Info")
+  );
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response without Authentication-Info should parse");
+  assert_eq!(
+    None,
+    absent
+      .authentication_info()
+      .expect("absent Authentication-Info should parse")
+  );
+  let _: Option<AuthenticationInfo> = absent
+    .authentication_info()
+    .expect("absent Authentication-Info should parse");
 }
 
 #[test]
