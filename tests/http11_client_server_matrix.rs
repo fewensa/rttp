@@ -2,7 +2,7 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 #[cfg(feature = "async")]
 use futures::executor::block_on;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::mpsc;
 use std::thread;
@@ -1201,6 +1201,209 @@ fn sync_client_sec_fetch_metadata_is_observed_by_server_helpers() {
   handle.join().expect("Sec-Fetch metadata server thread");
 }
 
+#[derive(Debug, PartialEq)]
+struct ObservedUpgradeInsecureRequests {
+  target: String,
+  raw: Option<String>,
+  parsed: Result<Option<String>, String>,
+}
+
+fn observe_upgrade_insecure_requests(request: &Request) -> ObservedUpgradeInsecureRequests {
+  ObservedUpgradeInsecureRequests {
+    target: request.target().to_string(),
+    raw: request
+      .header("Upgrade-Insecure-Requests")
+      .map(str::to_string),
+    parsed: request
+      .upgrade_insecure_requests()
+      .map(|metadata| metadata.map(|metadata| metadata.header_value().to_string()))
+      .map_err(|error| error.to_string()),
+  }
+}
+
+fn spawn_upgrade_insecure_requests_observer() -> (
+  std::net::SocketAddr,
+  mpsc::Receiver<ObservedUpgradeInsecureRequests>,
+  thread::JoinHandle<()>,
+) {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind Upgrade-Insecure-Requests metadata server");
+  let addr = server
+    .local_addr()
+    .expect("Upgrade-Insecure-Requests metadata server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send(observe_upgrade_insecure_requests(&request))
+          .expect("send observed Upgrade-Insecure-Requests metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve Upgrade-Insecure-Requests request");
+  });
+
+  (addr, observed_rx, handle)
+}
+
+#[test]
+fn sync_client_upgrade_insecure_requests_is_observed_by_server_helpers() {
+  let (addr, observed_rx, handle) = spawn_upgrade_insecure_requests_observer();
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/page"))
+    .upgrade_insecure_requests()
+    .expect("Upgrade-Insecure-Requests should be accepted")
+    .emit()
+    .expect("Upgrade-Insecure-Requests request should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    ObservedUpgradeInsecureRequests {
+      target: "/page".to_string(),
+      raw: Some("1".to_string()),
+      parsed: Ok(Some("1".to_string())),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe Upgrade-Insecure-Requests metadata")
+  );
+  handle
+    .join()
+    .expect("Upgrade-Insecure-Requests server thread");
+}
+
+#[test]
+fn facade_server_reports_absent_upgrade_insecure_requests_without_policy() {
+  let (addr, observed_rx, handle) = spawn_upgrade_insecure_requests_observer();
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/page"))
+    .emit()
+    .expect("request without Upgrade-Insecure-Requests should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    ObservedUpgradeInsecureRequests {
+      target: "/page".to_string(),
+      raw: None,
+      parsed: Ok(None),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe absent Upgrade-Insecure-Requests")
+  );
+  handle
+    .join()
+    .expect("absent Upgrade-Insecure-Requests server thread");
+}
+
+#[test]
+fn facade_server_rejects_malformed_upgrade_insecure_requests_without_losing_raw_headers() {
+  let (addr, observed_rx, handle) = spawn_upgrade_insecure_requests_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect malformed Upgrade-Insecure-Requests");
+  stream
+    .write_all(
+      b"GET /page HTTP/1.1\r\nHost: example.test\r\nUpgrade-Insecure-Requests: 0\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write malformed Upgrade-Insecure-Requests request");
+
+  assert_eq!(
+    ObservedUpgradeInsecureRequests {
+      target: "/page".to_string(),
+      raw: Some("0".to_string()),
+      parsed: Err("invalid Upgrade-Insecure-Requests header value".to_string()),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe malformed Upgrade-Insecure-Requests")
+  );
+  handle
+    .join()
+    .expect("malformed Upgrade-Insecure-Requests server thread");
+}
+
+#[test]
+fn facade_server_rejects_duplicate_upgrade_insecure_requests_without_losing_raw_headers() {
+  let (addr, observed_rx, handle) = spawn_upgrade_insecure_requests_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect duplicate Upgrade-Insecure-Requests");
+  stream
+    .write_all(
+      b"GET /page HTTP/1.1\r\nHost: example.test\r\nUpgrade-Insecure-Requests: 1\r\nupgrade-insecure-requests: 1\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write duplicate Upgrade-Insecure-Requests request");
+
+  assert_eq!(
+    ObservedUpgradeInsecureRequests {
+      target: "/page".to_string(),
+      raw: Some("1".to_string()),
+      parsed: Err("duplicate Upgrade-Insecure-Requests header fields".to_string()),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe duplicate Upgrade-Insecure-Requests")
+  );
+  handle
+    .join()
+    .expect("duplicate Upgrade-Insecure-Requests server thread");
+}
+
+#[test]
+fn facade_server_rejects_oversized_upgrade_insecure_requests_request_head() {
+  // A 64 KiB + 1 field value plus the request line exceeds the shared HTTP/1.1
+  // request-head bound, so the request is rejected as 400 before handler
+  // dispatch. Oversized accessor parsing without losing raw access is covered
+  // by protocol and server unit tests plus the raised-limit h2c facade test.
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind oversized Upgrade-Insecure-Requests server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server
+    .local_addr()
+    .expect("oversized Upgrade-Insecure-Requests server addr");
+  let (observed_tx, observed_rx) = mpsc::channel::<()>();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_request| {
+        observed_tx
+          .send(())
+          .expect("handler must not observe oversized request head");
+        HttpResponse::ok("unreachable")
+      })
+      .expect("oversized request head should be answered as 400");
+  });
+
+  let oversized = "1".repeat(64 * 1024 + 1);
+  let request = format!(
+    "GET /page HTTP/1.1\r\nHost: example.test\r\nUpgrade-Insecure-Requests: {oversized}\r\nConnection: close\r\n\r\n"
+  );
+  let mut stream = TcpStream::connect(addr).expect("connect oversized Upgrade-Insecure-Requests");
+  stream
+    .write_all(request.as_bytes())
+    .expect("write oversized Upgrade-Insecure-Requests request");
+  let mut response = Vec::new();
+  stream
+    .read_to_end(&mut response)
+    .expect("read oversized request-head response");
+  let response = String::from_utf8(response).expect("response should be utf-8");
+
+  assert!(
+    response.starts_with("HTTP/1.1 400 "),
+    "oversized request head should be rejected before handler dispatch: {response}"
+  );
+  assert!(
+    observed_rx.try_recv().is_err(),
+    "oversized Upgrade-Insecure-Requests must not reach the handler"
+  );
+  handle
+    .join()
+    .expect("oversized Upgrade-Insecure-Requests server thread");
+}
+
 #[test]
 fn facade_client_and_server_exchange_valid_cors_preflight_metadata_without_policy() {
   let (addr, observed_rx, handle) = spawn_facade_cors_preflight_observer();
@@ -2183,6 +2386,47 @@ fn sync_client_and_server_exchange_bounded_authentication_metadata() {
     response.header_value("WWW-Authenticate")
   );
   handle.join().expect("authentication server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_bounded_idempotency_key_metadata_without_policy() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind idempotency server");
+  let addr = server.local_addr().expect("idempotency server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request
+            .idempotency_key()
+            .expect("Idempotency-Key should parse")
+            .map(|key| key.as_str().to_string()),
+          request.header("Idempotency-Key").map(str::to_string),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed idempotency metadata");
+        HttpResponse::new(201, "Created")
+      })
+      .expect("serve idempotency request");
+  });
+
+  let response = client()
+    .post()
+    .url(format!("http://{addr}/matrix/charges"))
+    .idempotency_key("charge-2026-08-19-9f3c")
+    .expect("Idempotency-Key should be accepted")
+    .emit()
+    .expect("idempotency response should parse");
+
+  let (typed, raw) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe idempotency metadata");
+  assert_eq!(Some("charge-2026-08-19-9f3c".to_string()), typed);
+  assert_eq!(Some("charge-2026-08-19-9f3c".to_string()), raw);
+  assert_eq!(201, response.code());
+  handle.join().expect("idempotency server thread");
 }
 
 #[test]

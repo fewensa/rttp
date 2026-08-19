@@ -19,6 +19,10 @@ pub use rttp_protocol::access_control_request_private_network::{
   AccessControlRequestPrivateNetwork as HttpAccessControlRequestPrivateNetwork,
   AccessControlRequestPrivateNetworkParseError as HttpAccessControlRequestPrivateNetworkParseError,
 };
+pub use rttp_protocol::authorization::{
+  Authorization as HttpAuthorization, AuthorizationParseError as HttpAuthorizationParseError,
+  ProxyAuthorization as HttpProxyAuthorization,
+};
 pub use rttp_protocol::connection::{
   Connection as HttpConnection, ConnectionParseError as HttpConnectionParseError,
 };
@@ -39,6 +43,9 @@ pub use rttp_protocol::forwarded::{
   ForwardedParameter as HttpForwardedParameter, ForwardedParseError as HttpForwardedParseError,
 };
 pub use rttp_protocol::host::{Host as HttpHost, HostParseError as HttpHostParseError};
+pub use rttp_protocol::idempotency_key::{
+  IdempotencyKey as HttpIdempotencyKey, IdempotencyKeyParseError as HttpIdempotencyKeyParseError,
+};
 pub use rttp_protocol::if_modified_since::{
   IfModifiedSince as HttpIfModifiedSince,
   IfModifiedSinceParseError as HttpIfModifiedSinceParseError,
@@ -89,6 +96,10 @@ pub use rttp_protocol::transfer_encoding::{
 pub use rttp_protocol::upgrade::{
   Upgrade as HttpUpgrade, UpgradeParseError as HttpUpgradeParseError,
 };
+pub use rttp_protocol::upgrade_insecure_requests::{
+  UpgradeInsecureRequests as HttpUpgradeInsecureRequests,
+  UpgradeInsecureRequestsParseError as HttpUpgradeInsecureRequestsParseError,
+};
 pub use rttp_protocol::want_content_digest::{
   WantContentDigest as HttpWantContentDigest, WantContentDigestEntry as HttpWantContentDigestEntry,
   WantContentDigestParseError as HttpWantContentDigestParseError,
@@ -105,92 +116,7 @@ pub(crate) const MAX_ACCEPT_MEDIA_RANGES: usize = 256;
 const MAX_CONDITIONAL_VALUE_BYTES: usize = 64 * 1024;
 const MAX_IF_NONE_MATCH_TAGS: usize = 32;
 
-pub(crate) const MAX_AUTHORIZATION_VALUE_BYTES: usize = 64 * 1024;
-
-/// Typed, bounded `Authorization` request metadata.
-///
-/// Credentials are opaque application-owned values. RTTP validates only the
-/// generic HTTP header shape and does not select, verify, or log them.
 #[derive(Clone, PartialEq, Eq)]
-pub struct HttpAuthorization {
-  scheme: String,
-  credentials: String,
-}
-
-impl HttpAuthorization {
-  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpAuthorizationParseError> {
-    Self::parse_header(value.as_ref(), "Authorization")
-  }
-
-  fn parse_header(value: &str, header_name: &str) -> Result<Self, HttpAuthorizationParseError> {
-    if value.len() > MAX_AUTHORIZATION_VALUE_BYTES {
-      return Err(HttpAuthorizationParseError::new(format!(
-        "{header_name} header value is too large"
-      )));
-    }
-    let Some(separator) = value.bytes().position(|byte| byte == b' ' || byte == b'\t') else {
-      return Err(HttpAuthorizationParseError::new(format!(
-        "{header_name} header requires credentials"
-      )));
-    };
-    let scheme = &value[..separator];
-    let credentials = value[separator..].trim_matches([' ', '\t']);
-    if !is_http_token(scheme) {
-      return Err(HttpAuthorizationParseError::new(format!(
-        "invalid {header_name} authentication scheme"
-      )));
-    }
-    if credentials.is_empty() || !credentials.bytes().all(is_header_value_byte) {
-      return Err(HttpAuthorizationParseError::new(format!(
-        "invalid {header_name} credentials"
-      )));
-    }
-    Ok(Self {
-      scheme: scheme.to_string(),
-      credentials: credentials.to_string(),
-    })
-  }
-
-  pub fn scheme(&self) -> &str {
-    &self.scheme
-  }
-
-  pub fn credentials(&self) -> &str {
-    &self.credentials
-  }
-}
-
-impl fmt::Debug for HttpAuthorization {
-  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    formatter
-      .debug_struct("HttpAuthorization")
-      .field("scheme", &self.scheme)
-      .field("credentials", &"[REDACTED]")
-      .finish()
-  }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HttpAuthorizationParseError {
-  message: String,
-}
-
-impl HttpAuthorizationParseError {
-  fn new(message: impl Into<String>) -> Self {
-    Self {
-      message: message.into(),
-    }
-  }
-}
-
-impl fmt::Display for HttpAuthorizationParseError {
-  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    formatter.write_str(&self.message)
-  }
-}
-
-impl Error for HttpAuthorizationParseError {}
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request {
   pub(crate) method: String,
   pub(crate) target: String,
@@ -200,6 +126,81 @@ pub struct Request {
   pub(crate) body: Vec<u8>,
   pub(crate) content_length: Option<HttpContentLength>,
   pub(crate) extended_connect_protocol: Option<String>,
+}
+
+impl fmt::Debug for Request {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter
+      .debug_struct("Request")
+      .field("method", &self.method)
+      .field("target", &self.target)
+      .field("version", &self.version)
+      .field("headers", &DebugHeaderPairs(&self.headers))
+      .field("trailers", &DebugHeaderPairs(&self.trailers))
+      .field("body", &self.body)
+      .field("content_length", &self.content_length)
+      .field("extended_connect_protocol", &self.extended_connect_protocol)
+      .finish()
+  }
+}
+
+struct DebugHeaderPairs<'a>(&'a [(String, String)]);
+
+impl fmt::Debug for DebugHeaderPairs<'_> {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter
+      .debug_list()
+      .entries(self.0.iter().map(|(name, value)| DebugHeaderPair {
+        name: name.as_str(),
+        value: value.as_str(),
+      }))
+      .finish()
+  }
+}
+
+struct DebugHeaderPair<'a> {
+  name: &'a str,
+  value: &'a str,
+}
+
+impl fmt::Debug for DebugHeaderPair<'_> {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter
+      .debug_tuple("")
+      .field(&self.name)
+      .field(&debug_header_value(self.name, self.value))
+      .finish()
+  }
+}
+
+fn debug_header_value<'a>(name: &str, value: &'a str) -> DebugHeaderValue<'a> {
+  if is_sensitive_debug_header(name) {
+    DebugHeaderValue::Redacted
+  } else {
+    DebugHeaderValue::Visible(value)
+  }
+}
+
+enum DebugHeaderValue<'a> {
+  Redacted,
+  Visible(&'a str),
+}
+
+impl fmt::Debug for DebugHeaderValue<'_> {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      Self::Redacted => formatter.write_str("\"[REDACTED]\""),
+      Self::Visible(value) => fmt::Debug::fmt(value, formatter),
+    }
+  }
+}
+
+fn is_sensitive_debug_header(name: &str) -> bool {
+  name.eq_ignore_ascii_case("authorization")
+    || name.eq_ignore_ascii_case("cookie")
+    || name.eq_ignore_ascii_case("idempotency-key")
+    || name.eq_ignore_ascii_case("proxy-authorization")
+    || name.eq_ignore_ascii_case("set-cookie")
 }
 
 impl Request {
@@ -415,6 +416,18 @@ impl Request {
     HttpSaveData::parse_values(values).map(Some)
   }
 
+  /// Parses received `Upgrade-Insecure-Requests` request metadata without
+  /// rewriting URLs, redirecting, or enforcing Content-Security-Policy.
+  pub fn upgrade_insecure_requests(
+    &self,
+  ) -> Result<Option<HttpUpgradeInsecureRequests>, HttpUpgradeInsecureRequestsParseError> {
+    let values: Vec<&str> = self.headers_named("Upgrade-Insecure-Requests").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpUpgradeInsecureRequests::parse_values(values).map(Some)
+  }
+
   /// Parses received `Host` request authority without applying virtual-host
   /// routing or scheme defaults.
   pub fn host(&self) -> Result<Option<HttpHost>, HttpHostParseError> {
@@ -424,33 +437,23 @@ impl Request {
   /// Parses exactly one bounded `Authorization` field as opaque typed
   /// metadata. Duplicate fields are rejected to avoid ambiguous credentials.
   pub fn authorization(&self) -> Result<Option<HttpAuthorization>, HttpAuthorizationParseError> {
-    let mut values = self.headers_named("Authorization");
-    let Some(value) = values.next() else {
+    let values: Vec<&str> = self.headers_named("Authorization").collect();
+    if values.is_empty() {
       return Ok(None);
-    };
-    if values.next().is_some() {
-      return Err(HttpAuthorizationParseError::new(
-        "duplicate Authorization headers",
-      ));
     }
-    HttpAuthorization::parse(value).map(Some)
+    HttpAuthorization::parse_values(values).map(Some)
   }
 
   /// Parses exactly one bounded `Proxy-Authorization` field as opaque typed
   /// metadata. Duplicate fields are rejected to avoid ambiguous credentials.
   pub fn proxy_authorization(
     &self,
-  ) -> Result<Option<HttpAuthorization>, HttpAuthorizationParseError> {
-    let mut values = self.headers_named("Proxy-Authorization");
-    let Some(value) = values.next() else {
+  ) -> Result<Option<HttpProxyAuthorization>, HttpAuthorizationParseError> {
+    let values: Vec<&str> = self.headers_named("Proxy-Authorization").collect();
+    if values.is_empty() {
       return Ok(None);
-    };
-    if values.next().is_some() {
-      return Err(HttpAuthorizationParseError::new(
-        "duplicate Proxy-Authorization headers",
-      ));
     }
-    HttpAuthorization::parse_header(value, "Proxy-Authorization").map(Some)
+    HttpProxyAuthorization::parse_values(values).map(Some)
   }
 
   /// Parses request `Cookie` pairs as bounded opaque metadata without applying
@@ -471,6 +474,20 @@ impl Request {
       return Ok(None);
     }
     HttpMaxForwards::parse_values(values).map(Some)
+  }
+
+  /// Parses exactly one opaque, bounded `Idempotency-Key` field as typed
+  /// metadata. Duplicate fields are rejected to avoid ambiguous keys. This
+  /// accessor does not retry requests, store keys, or apply idempotency
+  /// policy.
+  pub fn idempotency_key(
+    &self,
+  ) -> Result<Option<HttpIdempotencyKey>, HttpIdempotencyKeyParseError> {
+    let values: Vec<&str> = self.headers_named("Idempotency-Key").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpIdempotencyKey::parse_values(values).map(Some)
   }
 
   /// Parses received `Prefer` request metadata without applying preferences.
@@ -1828,7 +1845,7 @@ impl IntoIterator for EntityTagValidatorList {
   }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct HttpRequest {
   pub(crate) method: String,
   pub(crate) path: String,
@@ -1837,6 +1854,21 @@ pub struct HttpRequest {
   pub(crate) headers: Vec<HttpHeader>,
   pub(crate) body: Vec<u8>,
   pub(crate) content_length: Option<HttpContentLength>,
+}
+
+impl fmt::Debug for HttpRequest {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter
+      .debug_struct("HttpRequest")
+      .field("method", &self.method)
+      .field("path", &self.path)
+      .field("query", &self.query)
+      .field("version", &self.version)
+      .field("headers", &self.headers)
+      .field("body", &self.body)
+      .field("content_length", &self.content_length)
+      .finish()
+  }
 }
 
 impl HttpRequest {
@@ -2037,41 +2069,33 @@ impl HttpRequest {
   /// Parses exactly one bounded `Authorization` field as opaque typed
   /// metadata. Duplicate fields are rejected to avoid ambiguous credentials.
   pub fn authorization(&self) -> Result<Option<HttpAuthorization>, HttpAuthorizationParseError> {
-    let mut values = self
+    let values: Vec<&str> = self
       .headers
       .iter()
       .filter(|header| header.name.eq_ignore_ascii_case("Authorization"))
-      .map(|header| header.value.as_str());
-    let Some(value) = values.next() else {
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
       return Ok(None);
-    };
-    if values.next().is_some() {
-      return Err(HttpAuthorizationParseError::new(
-        "duplicate Authorization headers",
-      ));
     }
-    HttpAuthorization::parse(value).map(Some)
+    HttpAuthorization::parse_values(values).map(Some)
   }
 
   /// Parses exactly one bounded `Proxy-Authorization` field as opaque typed
   /// metadata. Duplicate fields are rejected to avoid ambiguous credentials.
   pub fn proxy_authorization(
     &self,
-  ) -> Result<Option<HttpAuthorization>, HttpAuthorizationParseError> {
-    let mut values = self
+  ) -> Result<Option<HttpProxyAuthorization>, HttpAuthorizationParseError> {
+    let values: Vec<&str> = self
       .headers
       .iter()
       .filter(|header| header.name.eq_ignore_ascii_case("Proxy-Authorization"))
-      .map(|header| header.value.as_str());
-    let Some(value) = values.next() else {
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
       return Ok(None);
-    };
-    if values.next().is_some() {
-      return Err(HttpAuthorizationParseError::new(
-        "duplicate Proxy-Authorization headers",
-      ));
     }
-    HttpAuthorization::parse_header(value, "Proxy-Authorization").map(Some)
+    HttpProxyAuthorization::parse_values(values).map(Some)
   }
 
   /// Parses request `Cookie` pairs as bounded opaque metadata without applying
@@ -2102,6 +2126,25 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpMaxForwards::parse_values(values).map(Some)
+  }
+
+  /// Parses exactly one opaque, bounded `Idempotency-Key` field as typed
+  /// metadata. Duplicate fields are rejected to avoid ambiguous keys. This
+  /// accessor does not retry requests, store keys, or apply idempotency
+  /// policy.
+  pub fn idempotency_key(
+    &self,
+  ) -> Result<Option<HttpIdempotencyKey>, HttpIdempotencyKeyParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Idempotency-Key"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpIdempotencyKey::parse_values(values).map(Some)
   }
 
   /// Parses received `Prefer` request metadata without applying preferences.
@@ -2195,6 +2238,27 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpSaveData::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Upgrade-Insecure-Requests` request metadata without
+  /// rewriting URLs, redirecting, or enforcing Content-Security-Policy.
+  pub fn upgrade_insecure_requests(
+    &self,
+  ) -> Result<Option<HttpUpgradeInsecureRequests>, HttpUpgradeInsecureRequestsParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Upgrade-Insecure-Requests")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpUpgradeInsecureRequests::parse_values(values).map(Some)
   }
 
   /// Parses received `Accept-Encoding` request metadata without enabling

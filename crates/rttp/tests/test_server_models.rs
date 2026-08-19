@@ -247,6 +247,49 @@ fn request_save_data_preserves_absent_valid_and_malformed_metadata() {
 }
 
 #[test]
+fn request_upgrade_insecure_requests_preserves_absent_valid_and_malformed_metadata() {
+  let absent = parse_request("GET /page HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .upgrade_insecure_requests()
+      .expect("missing Upgrade-Insecure-Requests should be accepted")
+  );
+  assert_eq!(None, absent.header("Upgrade-Insecure-Requests"));
+
+  let request = parse_request(concat!(
+    "GET /page HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Upgrade-Insecure-Requests: 1\r\n",
+    "\r\n"
+  ));
+  let metadata = request
+    .upgrade_insecure_requests()
+    .expect("Upgrade-Insecure-Requests should parse")
+    .expect("Upgrade-Insecure-Requests should be present");
+  assert_eq!("1", metadata.header_value());
+
+  let malformed = parse_request(concat!(
+    "GET /page HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Upgrade-Insecure-Requests: 0\r\n",
+    "\r\n"
+  ));
+  assert!(malformed.upgrade_insecure_requests().is_err());
+  assert_eq!(Some("0"), malformed.header("Upgrade-Insecure-Requests"));
+
+  let duplicate = parse_request(concat!(
+    "GET /page HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Upgrade-Insecure-Requests: 1\r\n",
+    "upgrade-insecure-requests: 1\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.upgrade_insecure_requests().is_err());
+  assert_eq!(Some("1"), duplicate.header("Upgrade-Insecure-Requests"));
+}
+
+#[test]
 fn request_representation_metadata_parses_without_applying_policy() {
   let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
   assert_eq!(
@@ -1097,6 +1140,56 @@ fn request_max_forwards_is_optional_and_rejects_invalid_metadata() {
   ));
   assert!(duplicate.max_forwards().is_err());
   assert_eq!(Some("1"), duplicate.header("Max-Forwards"));
+}
+
+#[test]
+fn request_idempotency_key_is_optional_and_rejects_invalid_metadata() {
+  let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .idempotency_key()
+      .expect("missing Idempotency-Key should be valid")
+  );
+
+  for value in [
+    "charge-2026-08-19-9f3c",
+    "urn:uuid:6e7bc004-2445-45a3-8d16-392b33764f00",
+    "A",
+  ] {
+    let valid = parse_request(&format!(
+      "POST /charges HTTP/1.1\r\nHost: example.test\r\nIdempotency-Key: {value}\r\n\r\n"
+    ));
+    let parsed = valid
+      .idempotency_key()
+      .expect("value should parse")
+      .expect("Idempotency-Key should be present");
+    assert_eq!(value, parsed.as_str());
+    assert_eq!(value, parsed.header_value());
+  }
+
+  for value in ["", "key with space"] {
+    let request = parse_request(&format!(
+      "POST /charges HTTP/1.1\r\nHost: example.test\r\nIdempotency-Key: {value}\r\n\r\n"
+    ));
+    assert!(
+      request.idempotency_key().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(Some(value), request.header("Idempotency-Key"));
+  }
+
+  assert!(rttp::server::HttpIdempotencyKey::parse("x".repeat(64 * 1024 + 1)).is_err());
+
+  let duplicate = parse_request(concat!(
+    "POST /charges HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Idempotency-Key: first\r\n",
+    "idempotency-key: second\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.idempotency_key().is_err());
+  assert_eq!(Some("first"), duplicate.header("Idempotency-Key"));
 }
 
 #[test]

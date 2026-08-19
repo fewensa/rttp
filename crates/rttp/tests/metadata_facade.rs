@@ -1,16 +1,17 @@
 use rttp::server::{
   HttpAcceptCh, HttpAcceptLanguageParseError, HttpAcceptLanguages, HttpAccessControlRequestMethod,
-  HttpAccessControlRequestPrivateNetwork, HttpConditionalMetadata, HttpContentDpr,
-  HttpContentDprParseError, HttpContentLocation, HttpContentLocationParseError, HttpContentRange,
-  HttpContentRangeParseError, HttpCrossOriginEmbedderPolicy,
+  HttpAccessControlRequestPrivateNetwork, HttpAuthorization, HttpConditionalMetadata,
+  HttpContentDpr, HttpContentDprParseError, HttpContentLocation, HttpContentLocationParseError,
+  HttpContentRange, HttpContentRangeParseError, HttpCrossOriginEmbedderPolicy,
   HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
   HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpEntityTag,
-  HttpExpectations, HttpIfModifiedSince, HttpIfUnmodifiedSince, HttpMaxForwards,
-  HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNel, HttpProxyStatus,
-  HttpProxyStatusParseError, HttpResponse, HttpSaveData, HttpSignature, HttpSignatureInput,
-  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
-  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
-  HttpSunsetParseError, HttpUpgrade, HttpUpgradeParseError,
+  HttpExpectations, HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince,
+  HttpIfUnmodifiedSince, HttpMaxForwards, HttpMementoDatetime, HttpMementoDatetimeParseError,
+  HttpNel, HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError, HttpResponse,
+  HttpSaveData, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
+  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
+  HttpSignatureInputParseError, HttpSignatureParseError, HttpSunsetParseError, HttpUpgrade,
+  HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
 };
 use std::io::Write;
 use std::net::SocketAddr;
@@ -609,10 +610,23 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpAccessControlRequestPrivateNetwork::parse("true")
       .expect("Access-Control-Request-Private-Network should parse");
   let save_data: HttpSaveData = HttpSaveData::parse("on").expect("Save-Data should parse");
+  let upgrade_insecure_requests: HttpUpgradeInsecureRequests =
+    HttpUpgradeInsecureRequests::parse("1").expect("Upgrade-Insecure-Requests should parse");
+  let _: Result<HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError> =
+    HttpUpgradeInsecureRequests::parse("0");
+  let authorization: HttpAuthorization =
+    HttpAuthorization::parse("Bearer origin-token").expect("Authorization should parse");
+  let proxy_authorization: HttpProxyAuthorization =
+    HttpProxyAuthorization::parse("Basic cHJveHk6c2VjcmV0")
+      .expect("Proxy-Authorization should parse");
   let max_forwards: HttpMaxForwards =
     HttpMaxForwards::parse("0").expect("Max-Forwards should parse");
   let expectations: HttpExpectations =
     HttpExpectations::parse("100-continue, preview").expect("Expect should parse");
+  let idempotency_key: HttpIdempotencyKey =
+    HttpIdempotencyKey::parse("charge-2026-08-19-9f3c").expect("Idempotency-Key should parse");
+  let _: Result<HttpIdempotencyKey, HttpIdempotencyKeyParseError> =
+    HttpIdempotencyKey::parse("key with space");
   let if_modified_since: HttpIfModifiedSince =
     HttpIfModifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
       .expect("If-Modified-Since should parse");
@@ -664,11 +678,17 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(request_method.header_value(), "PATCH");
   assert_eq!(private_network.header_value(), "true");
   assert_eq!(save_data.header_value(), "on");
+  assert_eq!(upgrade_insecure_requests.header_value(), "1");
+  assert_eq!(authorization.header_value(), "Bearer origin-token");
+  assert_eq!(proxy_authorization.header_value(), "Basic cHJveHk6c2VjcmV0");
   assert_eq!(max_forwards.value(), 0);
   assert_eq!(max_forwards.header_value(), "0");
   assert!(expectations.expects_continue());
   assert_eq!(["preview"], expectations.unsupported());
   assert_eq!(expectations.header_value(), "100-continue, preview");
+  assert_eq!("charge-2026-08-19-9f3c", idempotency_key.as_str());
+  assert_eq!("charge-2026-08-19-9f3c", idempotency_key.header_value());
+  assert!(!format!("{idempotency_key:?}").contains("charge-2026-08-19-9f3c"));
   assert_eq!(
     if_modified_since.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"

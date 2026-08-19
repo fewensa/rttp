@@ -2,8 +2,9 @@ use rttp_test_support as support;
 
 #[cfg(feature = "async")]
 use futures::executor::block_on;
-use rttp_client::types::{Header, Proxy};
+use rttp_client::types::{Auth, Header, Proxy};
 use rttp_client::{HttpClient, SecPurpose};
+use rttp_protocol::authorization::MAX_AUTHORIZATION_VALUE_BYTES;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::thread;
@@ -31,6 +32,14 @@ fn capture_proxy_request(request: impl FnOnce(Proxy)) -> Vec<u8> {
   handle.join().expect("raw proxy request capture server")
 }
 
+fn capture_optional_proxy_request(request: impl FnOnce(Proxy)) -> Vec<u8> {
+  let (addr, handle) = support::capture_optional_raw_http_request(Duration::from_millis(250));
+  request(Proxy::http("127.0.0.1", u32::from(addr.port())));
+  handle
+    .join()
+    .expect("optional raw proxy request capture server")
+}
+
 fn request_text(request: &[u8]) -> String {
   String::from_utf8(request.to_vec()).expect("request should be utf-8")
 }
@@ -53,6 +62,15 @@ fn request_body(request: &[u8]) -> &[u8] {
     .map(|position| position + 4)
     .expect("request should contain header terminator");
   &request[body_start..]
+}
+
+fn request_head_text(request: &[u8]) -> String {
+  let head_end = request
+    .windows(4)
+    .position(|window| window == b"\r\n\r\n")
+    .map(|position| position + 4)
+    .expect("request should contain header terminator");
+  request_text(&request[..head_end])
 }
 
 #[test]
@@ -435,6 +453,9 @@ fn authorization_helper_rejects_invalid_or_oversized_metadata_before_connecting(
     ("bad scheme", "token".to_string()),
     ("Bearer", "".to_string()),
     ("Bearer", " \t ".to_string()),
+    ("Bearer", "token\rnext".to_string()),
+    ("Bearer", "token\nnext".to_string()),
+    ("Bearer", "token\0next".to_string()),
     ("Bearer", "x".repeat(64 * 1024 + 1)),
   ] {
     let request = capture_optional_request(|base_url| {
@@ -445,6 +466,9 @@ fn authorization_helper_rejects_invalid_or_oversized_metadata_before_connecting(
         .authorization(scheme, &credentials)
         .expect_err("invalid authorization metadata should be rejected");
       assert!(error.is_builder());
+      if !credentials.is_empty() {
+        assert!(!error.to_string().contains(&credentials));
+      }
     });
     assert!(
       request.is_empty(),
@@ -470,6 +494,94 @@ fn raw_headers_remain_an_escape_hatch_for_custom_authorization_schemes() {
     Some("Signature keyId=\"client\",algorithm=\"hs2019\""),
     header_value(&request_text(&request), "Authorization")
   );
+}
+
+#[test]
+fn auth_facade_rejects_oversized_bearer_before_connecting_without_exposing_token() {
+  let token = "x".repeat(MAX_AUTHORIZATION_VALUE_BYTES);
+  let request = capture_optional_request(|base_url| {
+    let error = client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .auth(Auth::bearer(&token))
+      .emit()
+      .expect_err("oversized Authorization metadata should be rejected");
+    assert!(error.is_builder());
+    assert!(!error.to_string().contains(&token));
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized Authorization metadata should not open a socket"
+  );
+}
+
+#[test]
+fn proxy_auth_rejects_oversized_basic_before_connecting_without_exposing_credentials() {
+  let username = "proxy-user";
+  let password = "x".repeat(MAX_AUTHORIZATION_VALUE_BYTES);
+  let request = capture_optional_proxy_request(|proxy| {
+    let error = client()
+      .get()
+      .url("http://example.test/asset")
+      .proxy(
+        Proxy::builder(proxy.type_().clone())
+          .host(proxy.host())
+          .port(proxy.port())
+          .username(username)
+          .password(&password),
+      )
+      .emit()
+      .expect_err("oversized Proxy-Authorization metadata should be rejected");
+    assert!(error.is_builder());
+    let message = error.to_string();
+    assert!(!message.contains(username));
+    assert!(!message.contains(&password));
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized Proxy-Authorization metadata should not open a proxy socket"
+  );
+}
+
+#[test]
+fn proxy_debug_redacts_credentials() {
+  let proxy = Proxy::http_with_authorization("127.0.0.1", 8080, "proxy-user", "proxy-secret");
+  let debug = format!("{proxy:?}");
+
+  assert!(debug.contains("127.0.0.1"));
+  assert!(!debug.contains("proxy-user"));
+  assert!(!debug.contains("proxy-secret"));
+  assert!(debug.contains("[REDACTED]"));
+}
+
+#[test]
+fn facade_debug_redacts_sensitive_header_values() {
+  let mut client = HttpClient::new();
+  client
+    .auth(Auth::bearer("origin-token"))
+    .header(("Proxy-Authorization", "Basic cHJveHk6c2VjcmV0"))
+    .header(("Cookie", "session=private"))
+    .header(("Idempotency-Key", "charge-2026-08-19-9f3c"))
+    .header(("Accept", "application/json"));
+
+  let debug = format!("{client:?}");
+  assert!(debug.contains("Authorization"));
+  assert!(debug.contains("Proxy-Authorization"));
+  assert!(debug.contains("Cookie"));
+  assert!(debug.contains("Idempotency-Key"));
+  assert!(debug.contains("Accept"));
+  assert!(debug.contains("application/json"));
+  assert!(debug.contains("[REDACTED]"));
+  for secret in [
+    "origin-token",
+    "cHJveHk6c2VjcmV0",
+    "session=private",
+    "charge-2026-08-19-9f3c",
+  ] {
+    assert!(!debug.contains(secret));
+  }
 }
 
 #[test]
@@ -1756,6 +1868,120 @@ fn manual_max_forwards_header_remains_available_as_escape_hatch() {
 }
 
 #[test]
+fn idempotency_key_helper_emits_canonical_metadata() {
+  for (value, expected) in [
+    ("charge-2026-08-19-9f3c", "charge-2026-08-19-9f3c"),
+    (
+      "urn:uuid:6e7bc004-2445-45a3-8d16-392b33764f00",
+      "urn:uuid:6e7bc004-2445-45a3-8d16-392b33764f00",
+    ),
+    (" \tcharge-2026-08-19-9f3c\t ", "charge-2026-08-19-9f3c"),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .post()
+        .url(format!("{}/charges", base_url))
+        .idempotency_key(value)
+        .expect("idempotency key should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+    assert_eq!(Some(expected), header_value(&request, "Idempotency-Key"));
+  }
+}
+
+#[test]
+fn idempotency_key_helper_replaces_existing_fields() {
+  let request = capture_request(|base_url| {
+    client()
+      .post()
+      .url(format!("{}/charges", base_url))
+      .header(("Idempotency-Key", "legacy-key"))
+      .idempotency_key("charge-2026-08-19-9f3c")
+      .expect("idempotency key should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("charge-2026-08-19-9f3c"),
+    header_value(&request, "Idempotency-Key")
+  );
+  assert!(
+    !request.contains("legacy-key"),
+    "the typed helper must replace an existing same-name field"
+  );
+}
+
+#[test]
+fn idempotency_key_helper_rejects_invalid_values_before_connecting() {
+  for value in [
+    "",
+    " ",
+    "key with space",
+    "key\r\nX-Injected: 1",
+    "key\rX: y",
+    "key\nX: y",
+    "key\0value",
+    "key\u{7f}value",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .post()
+        .url(format!("{}/charges", base_url))
+        .idempotency_key(value)
+        .expect_err("invalid idempotency key should be rejected");
+      assert!(error.is_builder());
+      if !value.trim().is_empty() {
+        assert!(!error.to_string().contains(value));
+      }
+    });
+    assert!(
+      request.is_empty(),
+      "invalid idempotency key must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn idempotency_key_helper_rejects_oversized_values_before_connecting() {
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .post()
+      .url(format!("{}/charges", base_url))
+      .idempotency_key(oversized.as_str())
+      .expect_err("oversized idempotency key should be rejected");
+    assert!(error.is_builder());
+    assert!(!error.to_string().contains(&oversized[..64]));
+  });
+  assert!(
+    request.is_empty(),
+    "oversized idempotency key must not open a socket"
+  );
+}
+
+#[test]
+fn raw_idempotency_key_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .post()
+      .url(format!("{}/charges", base_url))
+      .header(("Idempotency-Key", "opaque custom value"))
+      .emit()
+      .expect("manual Idempotency-Key header should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("opaque custom value"),
+    header_value(&request, "Idempotency-Key")
+  );
+}
+
+#[test]
 fn conditional_request_helpers_emit_validator_headers() {
   let request = capture_request(|base_url| {
     client()
@@ -2148,6 +2374,32 @@ fn http_proxy_request_sends_absolute_form_request_target() {
   let request_line = text.lines().next().expect("request line");
 
   assert_eq!("GET http://example.test/path?x=1 HTTP/1.1", request_line);
+}
+
+#[test]
+fn http_proxy_request_sends_proxy_authorization_in_header_block() {
+  let request = capture_proxy_request(|proxy| {
+    client()
+      .post()
+      .url("http://example.test/path?x=1")
+      .proxy(
+        Proxy::builder(proxy.type_().clone())
+          .host(proxy.host())
+          .port(proxy.port())
+          .username("proxy-user")
+          .password("proxy-secret"),
+      )
+      .raw("Proxy-Authorization: body-value")
+      .emit()
+      .expect("request should succeed");
+  });
+
+  let head = request_head_text(&request);
+  assert_eq!(
+    Some("Basic cHJveHktdXNlcjpwcm94eS1zZWNyZXQ="),
+    header_value(&head, "Proxy-Authorization")
+  );
+  assert_eq!(b"Proxy-Authorization: body-value", request_body(&request));
 }
 
 #[test]
@@ -2632,6 +2884,40 @@ fn save_data_helper_emits_on_request_token() {
   let request = request_text(&request);
 
   assert_eq!(Some("on"), header_value(&request, "Save-Data"));
+}
+
+#[test]
+fn upgrade_insecure_requests_helper_emits_signal_value_without_rewriting_target() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/page", base_url))
+      .upgrade_insecure_requests()
+      .expect("Upgrade-Insecure-Requests should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  let request_line = request.lines().next().expect("request line");
+
+  assert!(
+    request_line.starts_with("GET /page HTTP/1.1"),
+    "helper must keep the original origin-form target: {request_line}"
+  );
+  assert_eq!(
+    Some("1"),
+    header_value(&request, "Upgrade-Insecure-Requests")
+  );
+  assert!(header_value(&request, "Host").is_some());
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| line
+        .to_ascii_lowercase()
+        .starts_with("upgrade-insecure-requests:"))
+      .count()
+  );
 }
 
 #[test]

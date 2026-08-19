@@ -4,21 +4,23 @@ use rttp_server::server::{
   HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods, HttpAccessControlRequestHeaders,
   HttpAccessControlRequestHeadersParseError, HttpAccessControlRequestMethod,
   HttpAccessControlRequestMethodParseError, HttpAccessControlRequestPrivateNetwork,
-  HttpAccessControlRequestPrivateNetworkParseError, HttpCacheStatus, HttpCacheStatusParseError,
-  HttpCdnCacheControl, HttpConditionalMetadata, HttpConnection, HttpConnectionParseError,
-  HttpContentDisposition, HttpContentDispositionParseError, HttpContentDpr,
-  HttpContentDprParseError, HttpContentLength, HttpContentLocation, HttpContentLocationParseError,
-  HttpContentRange, HttpContentRangeParseError, HttpCrossOriginEmbedderPolicyReportOnly,
-  HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpEntityTag,
-  HttpExpectParseError, HttpExpectations, HttpHost, HttpIfModifiedSince,
+  HttpAccessControlRequestPrivateNetworkParseError, HttpAuthorization, HttpAuthorizationParseError,
+  HttpCacheStatus, HttpCacheStatusParseError, HttpCdnCacheControl, HttpConditionalMetadata,
+  HttpConnection, HttpConnectionParseError, HttpContentDisposition,
+  HttpContentDispositionParseError, HttpContentDpr, HttpContentDprParseError, HttpContentLength,
+  HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
+  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeprecation,
+  HttpDeprecationParseError, HttpEntityTag, HttpExpectParseError, HttpExpectations, HttpHost,
+  HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince,
   HttpIfModifiedSinceParseError, HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError,
   HttpKeepAlive, HttpMaxForwards, HttpMaxForwardsParseError, HttpMementoDatetime,
   HttpMementoDatetimeParseError, HttpNoVarySearch, HttpNoVarySearchParams, HttpPreferenceKind,
-  HttpProxyStatus, HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptEncodings,
-  HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSignature, HttpSignatureInput,
-  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
-  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
-  HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeParseError,
+  HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError, HttpRequest,
+  HttpRequestAcceptEncodings, HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSignature,
+  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
+  HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
   HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite,
   SecFetchUser, SecPurpose,
 };
@@ -63,6 +65,19 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   > = HttpAccessControlRequestPrivateNetwork::parse("false");
   let save_data: HttpSaveData = HttpSaveData::parse("on").expect("Save-Data should parse");
   let save_data_error: Result<HttpSaveData, HttpSaveDataParseError> = HttpSaveData::parse("?1");
+  let upgrade_insecure_requests: HttpUpgradeInsecureRequests =
+    HttpUpgradeInsecureRequests::parse("1").expect("Upgrade-Insecure-Requests should parse");
+  let upgrade_insecure_requests_error: Result<
+    HttpUpgradeInsecureRequests,
+    HttpUpgradeInsecureRequestsParseError,
+  > = HttpUpgradeInsecureRequests::parse("0");
+  let authorization: HttpAuthorization =
+    HttpAuthorization::parse("Bearer origin-token").expect("Authorization should parse");
+  let authorization_error: Result<HttpAuthorization, HttpAuthorizationParseError> =
+    HttpAuthorization::parse("Bearer \rsecret");
+  let proxy_authorization: HttpProxyAuthorization =
+    HttpProxyAuthorization::parse("Basic cHJveHk6c2VjcmV0")
+      .expect("Proxy-Authorization should parse");
   let max_forwards: HttpMaxForwards =
     HttpMaxForwards::parse("0").expect("Max-Forwards should parse");
   let max_forwards_error: Result<HttpMaxForwards, HttpMaxForwardsParseError> =
@@ -170,6 +185,13 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert!(request_private_network_error.is_err());
   assert_eq!(save_data.header_value(), "on");
   assert!(save_data_error.is_err());
+  assert_eq!(upgrade_insecure_requests.header_value(), "1");
+  assert!(upgrade_insecure_requests_error.is_err());
+  assert_eq!(authorization.scheme(), "Bearer");
+  assert_eq!(authorization.header_value(), "Bearer origin-token");
+  assert!(authorization_error.is_err());
+  assert_eq!(proxy_authorization.scheme(), "Basic");
+  assert_eq!(proxy_authorization.header_value(), "Basic cHJveHk6c2VjcmV0");
   assert_eq!(max_forwards.value(), 0);
   assert_eq!(max_forwards.header_value(), "0");
   assert!(max_forwards_error.is_err());
@@ -669,6 +691,52 @@ fn request_facade_parses_expect_metadata() {
   assert!(malformed.expectations().is_err());
 
   assert!(HttpExpectations::parse("a".repeat(64 * 1024 + 1)).is_err());
+}
+
+#[test]
+fn request_facade_parses_idempotency_key_metadata_without_policy() {
+  let request = HttpRequest::parse(
+    b"POST /charges HTTP/1.1\r\nHost: example.test\r\nIdempotency-Key: charge-2026-08-19-9f3c\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let idempotency_key: HttpIdempotencyKey = request
+    .idempotency_key()
+    .expect("Idempotency-Key should parse")
+    .expect("Idempotency-Key should be present");
+
+  assert_eq!("charge-2026-08-19-9f3c", idempotency_key.as_str());
+  assert_eq!("charge-2026-08-19-9f3c", idempotency_key.header_value());
+  assert!(!format!("{idempotency_key:?}").contains("charge-2026-08-19-9f3c"));
+
+  let absent = HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .idempotency_key()
+      .expect("missing Idempotency-Key should be accepted")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"POST /charges HTTP/1.1\r\nHost: example.test\r\nIdempotency-Key: key with space\r\n\r\n",
+  )
+  .expect("malformed metadata should not reject raw request parsing");
+  assert!(malformed.idempotency_key().is_err());
+  assert_eq!(Some("key with space"), malformed.header("Idempotency-Key"));
+
+  let duplicate = HttpRequest::parse(
+    b"POST /charges HTTP/1.1\r\nHost: example.test\r\nIdempotency-Key: first\r\nidempotency-key: second\r\n\r\n",
+  )
+  .expect("request should retain duplicate metadata");
+  assert!(duplicate.idempotency_key().is_err());
+  assert_eq!(Some("first"), duplicate.header("Idempotency-Key"));
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_error: Result<HttpIdempotencyKey, HttpIdempotencyKeyParseError> =
+    HttpIdempotencyKey::parse(oversized.as_str());
+  assert!(oversized_error.is_err());
+  assert!(!format!("{:?}", oversized_error.as_ref().unwrap_err()).contains(&oversized[..16]));
 }
 
 #[test]

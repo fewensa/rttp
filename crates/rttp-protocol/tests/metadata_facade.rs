@@ -6,6 +6,7 @@ use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::access_control_request_method::AccessControlRequestMethod;
 use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
 use rttp_protocol::age::Age;
+use rttp_protocol::authorization::{Authorization, ProxyAuthorization};
 use rttp_protocol::cache_status::CacheStatus;
 use rttp_protocol::cdn_cache_control::CdnCacheControl;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
@@ -28,6 +29,7 @@ use rttp_protocol::fetch_metadata::{
 };
 use rttp_protocol::from::From;
 use rttp_protocol::host::Host;
+use rttp_protocol::idempotency_key::IdempotencyKey;
 use rttp_protocol::if_modified_since::IfModifiedSince;
 use rttp_protocol::if_unmodified_since::IfUnmodifiedSince;
 use rttp_protocol::keep_alive::KeepAlive;
@@ -51,6 +53,7 @@ use rttp_protocol::te::Te;
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
 use rttp_protocol::transfer_encoding::TransferEncoding;
 use rttp_protocol::upgrade::{Upgrade, UpgradeParseError};
+use rttp_protocol::upgrade_insecure_requests::UpgradeInsecureRequests;
 use rttp_protocol::want_content_digest::WantContentDigest;
 use rttp_protocol::want_repr_digest::WantReprDigest;
 use rttp_protocol::warning::Warning;
@@ -72,6 +75,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let request_private_network = AccessControlRequestPrivateNetwork::parse("true")
     .expect("Access-Control-Request-Private-Network should parse");
   let save_data = SaveData::parse("on").expect("Save-Data should parse");
+  let upgrade_insecure_requests =
+    UpgradeInsecureRequests::parse("1").expect("Upgrade-Insecure-Requests should parse");
   let critical_ch = CriticalCh::parse("Sec-CH-UA").expect("Critical-CH should parse");
   let entity_tag = EntityTag::parse("\"revision-42\"").expect("entity tag should parse");
   let expect = Expect::parse("100-continue, preview").expect("Expect should parse");
@@ -87,6 +92,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let keep_alive = KeepAlive::parse("timeout=5, max=100").expect("Keep-Alive should parse");
   let location = Location::parse("../login?next=%2Fdashboard").expect("Location should parse");
   let max_forwards = MaxForwards::parse("0").expect("Max-Forwards should parse");
+  let idempotency_key = IdempotencyKey::parse("charge-2026-08-19-9f3c")
+    .expect("Idempotency-Key request metadata should parse");
   let if_modified_since = IfModifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
     .expect("If-Modified-Since should parse");
   let if_unmodified_since = IfUnmodifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
@@ -101,6 +108,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
     "nextnonce=\"xyz789\", qop=auth, rspauth=\"...\", cnonce=\"c\", nc=00000001",
   )
   .expect("Proxy-Authentication-Info should parse");
+  let authorization = Authorization::parse("Bearer origin-token")
+    .expect("Authorization request metadata should parse");
+  let proxy_authorization = ProxyAuthorization::parse("Basic cHJveHk6c2VjcmV0")
+    .expect("Proxy-Authorization request metadata should parse");
   let proxy_status =
     ProxyStatus::parse("ExampleCDN; error=connection_timeout").expect("Proxy-Status should parse");
   let _: ProxyStatusParseError =
@@ -177,6 +188,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(request_method.header_value(), "PATCH");
   assert_eq!(request_private_network.header_value(), "true");
   assert_eq!(save_data.header_value(), "on");
+  assert_eq!(upgrade_insecure_requests.header_value(), "1");
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
   assert_eq!(entity_tag.opaque_tag(), "revision-42");
   assert!(expect.expects_continue());
@@ -204,6 +216,9 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(location.as_str(), "../login?next=%2Fdashboard");
   assert_eq!(max_forwards.value(), 0);
   assert_eq!(max_forwards.header_value(), "0");
+  assert_eq!(idempotency_key.as_str(), "charge-2026-08-19-9f3c");
+  assert_eq!(idempotency_key.header_value(), "charge-2026-08-19-9f3c");
+  assert!(!format!("{idempotency_key:?}").contains("charge-2026-08-19-9f3c"));
   assert_eq!(
     if_modified_since.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
@@ -231,6 +246,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
     proxy_authentication_info.parameter("nextnonce"),
     Some("xyz789")
   );
+  assert_eq!(authorization.scheme(), "Bearer");
+  assert_eq!(authorization.header_value(), "Bearer origin-token");
+  assert_eq!(proxy_authorization.scheme(), "Basic");
+  assert_eq!(proxy_authorization.header_value(), "Basic cHJveHk6c2VjcmV0");
   assert_eq!(referer.header_value(), "https://example.test/path?q=1");
   assert_eq!(timing_allow_origin.origins(), ["https://example.test"]);
   assert_eq!(warning.items()[0].code(), 110);
