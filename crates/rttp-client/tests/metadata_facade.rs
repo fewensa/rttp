@@ -2,9 +2,9 @@ use rttp_client::response::{
   AcceptCh, AccessControlAllowHeaders, AccessControlAllowHeadersParseError,
   AccessControlAllowMethods, AccessControlAllowMethodsParseError, AccessControlExposeHeaders,
   AccessControlMaxAge, AccessControlMaxAgeParseError, AltSvc, CrossOriginEmbedderPolicy,
-  CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest, HttpClearSiteData, PreferenceApplied,
-  Priority, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ReferrerPolicy,
-  ReferrerPolicyToken, ServerTiming, Trailer,
+  CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest, HttpClearSiteData, LinkValues,
+  PreferenceApplied, Priority, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError,
+  ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Trailer,
 };
 use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 
@@ -90,6 +90,37 @@ fn response_facade_parses_preference_applied_metadata() {
   assert_eq!(applied.preferences()[0].name(), "return");
   assert_eq!(applied.preferences()[0].value(), Some("minimal"));
   assert_eq!(applied.preferences()[0].parameters()[0].name(), "source");
+}
+
+#[test]
+fn response_facade_parses_link_metadata() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Link: </style.css>; rel=preload; as=style\r\n",
+      "Link: <https://cdn.example.test/app.js>; rel=modulepreload\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let links: LinkValues = response
+    .links()
+    .expect("Link should parse")
+    .expect("Link should be present");
+
+  assert_eq!(2, links.len());
+  assert_eq!("/style.css", links.values()[0].target());
+  assert_eq!(Some("preload"), links.values()[0].parameter("rel"));
+  assert_eq!(Some("style"), links.values()[0].parameter("as"));
+  assert_eq!(
+    "https://cdn.example.test/app.js",
+    links.values()[1].target()
+  );
+  assert_eq!(Some("modulepreload"), links.values()[1].parameter("rel"));
 }
 
 #[test]

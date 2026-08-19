@@ -7,6 +7,7 @@ use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::entity_tag::{EntityTag, IfMatch};
 use rttp_protocol::fetch_metadata::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 use rttp_protocol::from::From;
+use rttp_protocol::link::LinkValues;
 use rttp_protocol::origin::Origin;
 use rttp_protocol::prefer::{Prefer, PreferenceApplied, PreferenceKind};
 use rttp_protocol::proxy_authentication_info::ProxyAuthenticationInfo;
@@ -139,4 +140,22 @@ fn protocol_exports_bounded_cross_origin_opener_policy_metadata() {
     cross_origin_opener_policy.header_value(),
     "noopener-allow-popups"
   );
+}
+
+#[test]
+fn protocol_exports_bounded_link_metadata() {
+  let links = LinkValues::parse(
+    "</style.css>; rel=preload; as=style, <https://cdn.example.test/app.js>; rel=modulepreload",
+  )
+  .expect("Link should parse");
+
+  assert_eq!(2, links.len());
+  assert_eq!("/style.css", links.values()[0].target());
+  assert_eq!(Some("preload"), links.values()[0].parameter("rel"));
+  assert_eq!(Some("style"), links.values()[0].parameter("as"));
+  assert_eq!(
+    "https://cdn.example.test/app.js",
+    links.values()[1].target()
+  );
+  assert_eq!(Some("modulepreload"), links.values()[1].parameter("rel"));
 }
