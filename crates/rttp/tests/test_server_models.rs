@@ -3,9 +3,9 @@ use std::time::{Duration, UNIX_EPOCH};
 use rttp::server::{
   HttpAccept, HttpAcceptCh, HttpAcceptRanges, HttpAccessControlAllowHeaders,
   HttpAccessControlAllowMethods, HttpAccessControlAllowOrigin, HttpAccessControlRequestHeaders,
-  HttpAccessControlRequestMethod, HttpAllowedMethods, HttpAuthorization, HttpByteRange,
-  HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata, HttpContentDisposition,
-  HttpContentLanguages, HttpContentRange, HttpContentSecurityPolicy,
+  HttpAccessControlRequestMethod, HttpAllowedMethods, HttpAltUsed, HttpAuthorization,
+  HttpByteRange, HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata,
+  HttpContentDisposition, HttpContentLanguages, HttpContentRange, HttpContentSecurityPolicy,
   HttpContentSecurityPolicyReportOnly, HttpContentType, HttpCriticalCh, HttpDeprecation,
   HttpEntityTag, HttpExpectations, HttpHost, HttpIfNoneMatch, HttpIfRange,
   HttpIfRangeRequestOutcome, HttpLinkValues, HttpMementoDatetime, HttpNel, HttpPermissionsPolicy,
@@ -829,6 +829,54 @@ fn response_server_timing_helper_validates_formats_and_preserves_raw_headers() {
     .contains("\r\nServer-Timing: db;dur=not-a-number\r\n"));
 
   assert!(HttpServerTiming::parse(format!("db;desc=\"{}\"", "a".repeat(64 * 1024))).is_err());
+}
+
+#[test]
+fn response_alt_used_helper_declares_replaces_and_parses_authority_metadata() {
+  let response = HttpResponse::ok("body")
+    .header("Alt-Used", "old.example:443")
+    .header("alt-used", "older.example:443")
+    .with_alt_used("[2001:db8::1]:8443")
+    .expect("valid Alt-Used metadata should be accepted");
+  let alt_used: HttpAltUsed = response
+    .alt_used()
+    .expect("attached Alt-Used should parse")
+    .expect("Alt-Used should be present");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+
+  assert_eq!("[2001:db8::1]", alt_used.host());
+  assert_eq!(Some("8443"), alt_used.port());
+  assert_eq!("[2001:db8::1]:8443", alt_used.header_value());
+  assert_eq!(1, serialized.matches("\r\nAlt-Used: ").count());
+  assert!(serialized.contains("\r\nAlt-Used: [2001:db8::1]:8443\r\n"));
+}
+
+#[test]
+fn response_alt_used_helper_rejects_invalid_duplicates_and_bounds_without_hiding_headers() {
+  assert!(HttpResponse::ok("body")
+    .with_alt_used("https://alt.example")
+    .is_err());
+
+  let duplicate = HttpResponse::ok("body")
+    .header("Alt-Used", "alt.example:443")
+    .header("alt-used", "other.example:443");
+  assert!(duplicate.alt_used().is_err());
+  assert!(String::from_utf8(duplicate.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nAlt-Used: alt.example:443\r\nalt-used: other.example:443\r\n"));
+
+  let malformed = HttpResponse::ok("body").header("Alt-Used", "2001:db8::1");
+  assert!(malformed.alt_used().is_err());
+  assert!(String::from_utf8(malformed.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nAlt-Used: 2001:db8::1\r\n"));
+
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let raw = HttpResponse::ok("body").header("Alt-Used", &oversized);
+  assert!(raw.alt_used().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains(&format!("\r\nAlt-Used: {oversized}\r\n")));
 }
 
 #[test]

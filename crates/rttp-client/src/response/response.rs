@@ -9,6 +9,7 @@ use url::Url;
 use crate::error;
 use crate::response::raw_response::RawResponse;
 use crate::response::AltSvc;
+use crate::response::AltUsed;
 use crate::response::AuthenticationInfo;
 use crate::response::Connection;
 use crate::response::ContentDigest;
@@ -984,6 +985,19 @@ impl Response {
       return Ok(None);
     }
     AltSvc::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses `Alt-Used` as bounded alternative-service authority metadata.
+  /// This does not migrate connections, rewrite origins, or select an
+  /// alternative endpoint.
+  pub fn alt_used(&self) -> error::Result<Option<AltUsed>> {
+    let values = self.header_values("alt-used");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    AltUsed::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

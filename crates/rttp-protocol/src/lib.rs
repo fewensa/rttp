@@ -25,6 +25,7 @@ pub mod access_control_request_private_network;
 pub mod age;
 pub mod allow;
 pub mod alt_svc;
+pub mod alt_used;
 pub mod authentication_info;
 pub mod authorization;
 pub mod baggage;

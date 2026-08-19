@@ -405,6 +405,19 @@ unbracketed IPv6, empty ports, ASCII controls, and other values outside the
 inbound Host grammar are errors. This is syntax validation only: callers own
 virtual-host routing and scheme defaults.
 
+## Alt-Used
+
+`alt_used` parses a singleton HTTP `Alt-Used` response field as one authority
+(`uri-host` plus optional port) using the same bounded grammar as `Host`.
+Each field value is bounded to 64 KiB. A second field is rejected after every
+supplied field is bound-checked. Surrounding SP and HTAB are trimmed as
+optional whitespace. The parser preserves the trimmed host and port spelling,
+including bracketed IPv6 literal form, and does not canonicalize names, IPv6
+text, or default ports. Empty values, userinfo, path, query, fragment,
+unbracketed IPv6, empty ports, ASCII controls, and other values outside the
+authority grammar are errors. This is response metadata only: callers own
+alternative-service selection, origin handling, and connection policy.
+
 ## Signature
 
 `signature` parses one or more RFC 9421 `Signature` field values into an

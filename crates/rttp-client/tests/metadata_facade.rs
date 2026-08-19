@@ -3,8 +3,8 @@ use rttp_client::response::{
   AccessControlAllowCredentialsParseError, AccessControlAllowHeaders,
   AccessControlAllowHeadersParseError, AccessControlAllowMethods,
   AccessControlAllowMethodsParseError, AccessControlExposeHeaders, AccessControlMaxAge,
-  AccessControlMaxAgeParseError, Age, AgeParseError, AltSvc, AuthenticationInfo,
-  AuthenticationInfoParseError, CacheStatus, CacheStatusParseError, Connection,
+  AccessControlMaxAgeParseError, Age, AgeParseError, AltSvc, AltUsed, AltUsedParseError,
+  AuthenticationInfo, AuthenticationInfoParseError, CacheStatus, CacheStatusParseError, Connection,
   ConnectionParseError, ContentDpr, ContentDprParseError, ContentRange, ContentRangeParseError,
   ContentSecurityPolicy, ContentSecurityPolicyParseError, ContentSecurityPolicyReportOnly,
   ContentSecurityPolicyReportOnlyParseError, CrossOriginEmbedderPolicy,
@@ -149,6 +149,9 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let _: PragmaParseError = Pragma::parse("no-cache, no-cache")
     .expect_err("duplicate Pragma directives should be rejected");
   let alt_svc = AltSvc::parse("h3=\":443\"").expect("Alt-Svc should parse");
+  let alt_used = AltUsed::parse("alt.example:8443").expect("Alt-Used should parse");
+  let _: AltUsedParseError =
+    AltUsed::parse("https://alt.example").expect_err("invalid Alt-Used should be rejected");
   let content_range = ContentRange::parse("bytes 3-6/10").expect("Content-Range should parse");
   let _: ContentRangeParseError =
     ContentRange::parse("bytes */*").expect_err("invalid Content-Range should be rejected");
@@ -308,6 +311,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(Some("private"), pragma.extensions()[0].value());
   assert_eq!("no-cache, community=private", pragma.header_value());
   assert_eq!(alt_svc.alternatives().len(), 1);
+  assert_eq!(alt_used.host(), "alt.example");
+  assert_eq!(alt_used.port(), Some("8443"));
   assert_eq!(
     ContentRange::Bytes {
       start: 3,
