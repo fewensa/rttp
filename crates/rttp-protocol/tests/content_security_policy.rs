@@ -10,13 +10,27 @@ fn content_security_policy_preserves_opaque_policy_values() {
   assert_eq!(policy.as_str(), value);
   assert_eq!(policy.header_value(), value);
   assert_eq!(policy.as_ref(), value);
+  assert_eq!(policy.header_values(), [value]);
 }
 
 #[test]
-fn content_security_policy_rejects_absent_empty_duplicate_malformed_and_oversized_values() {
+fn content_security_policy_preserves_multiple_policy_fields() {
+  let policy = ContentSecurityPolicy::parse_values(["default-src 'self'", "object-src 'none'"])
+    .expect("multiple CSP fields should parse");
+
+  assert_eq!(policy.as_str(), "default-src 'self'");
+  assert_eq!(policy.header_value(), "default-src 'self'");
+  assert_eq!(
+    policy.header_values(),
+    ["default-src 'self'", "object-src 'none'"]
+  );
+}
+
+#[test]
+fn content_security_policy_rejects_absent_empty_malformed_and_oversized_values() {
   assert!(
     ContentSecurityPolicy::parse_values([]).is_err(),
-    "absent singleton values must be rejected by the parser"
+    "absent values must be rejected by the parser"
   );
   assert!(
     ContentSecurityPolicy::parse("").is_err(),
@@ -29,10 +43,6 @@ fn content_security_policy_rejects_absent_empty_duplicate_malformed_and_oversize
   assert!(
     ContentSecurityPolicy::parse("default-src 'self'\u{7f}").is_err(),
     "DEL controls must be rejected"
-  );
-  assert!(
-    ContentSecurityPolicy::parse_values(["default-src 'self'", "object-src 'none'"]).is_err(),
-    "duplicate singleton fields must be rejected"
   );
   assert!(
     ContentSecurityPolicy::parse("x".repeat(MAX_CONTENT_SECURITY_POLICY_VALUE_BYTES + 1)).is_err(),

@@ -271,9 +271,41 @@ fn content_security_policy_metadata_preserves_opaque_value_without_enforcing_pol
 
   assert_eq!(metadata.as_str(), value);
   assert_eq!(metadata.header_value(), value);
+  assert_eq!(metadata.header_values(), [value]);
   assert_eq!(
     response.header_value("Content-Security-Policy"),
     Some(&value.to_string())
+  );
+}
+
+#[test]
+fn content_security_policy_metadata_preserves_layered_policy_fields() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Content-Security-Policy: default-src 'self'\r\n",
+      "content-security-policy: object-src 'none'\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let metadata = response
+    .content_security_policy()
+    .expect("Content-Security-Policy should parse")
+    .expect("Content-Security-Policy should be present");
+
+  assert_eq!(metadata.as_str(), "default-src 'self'");
+  assert_eq!(
+    metadata.header_values(),
+    ["default-src 'self'", "object-src 'none'"]
+  );
+  assert_eq!(
+    response.header_value("Content-Security-Policy"),
+    Some(&"default-src 'self'".to_string())
   );
 }
 
@@ -296,24 +328,6 @@ fn content_security_policy_metadata_rejects_invalid_values_without_hiding_raw_he
       Some(&value.to_string())
     );
   }
-
-  let response = Response::new(
-    RoUrl::with("https://example.test"),
-    concat!(
-      "HTTP/1.1 200 OK\r\n",
-      "Content-Security-Policy: default-src 'self'\r\n",
-      "content-security-policy: object-src 'none'\r\n",
-      "Content-Length: 0\r\n\r\n"
-    )
-    .as_bytes()
-    .to_vec(),
-  )
-  .expect("response should parse");
-  assert!(response.content_security_policy().is_err());
-  assert_eq!(
-    response.header_value("Content-Security-Policy"),
-    Some(&"default-src 'self'".to_string())
-  );
 
   let oversized = "x".repeat(64 * 1024 + 1);
   let response = Response::new(

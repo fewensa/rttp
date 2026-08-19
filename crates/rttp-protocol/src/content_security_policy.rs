@@ -8,43 +8,42 @@ use std::fmt;
 
 pub const MAX_CONTENT_SECURITY_POLICY_VALUE_BYTES: usize = 64 * 1024;
 
-/// The opaque policy declared by `Content-Security-Policy`.
+/// The opaque policies declared by `Content-Security-Policy`.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct ContentSecurityPolicy(String);
+pub struct ContentSecurityPolicy(Vec<String>);
 
 impl ContentSecurityPolicy {
   pub fn parse(value: impl AsRef<str>) -> Result<Self, ContentSecurityPolicyParseError> {
     let value = value.as_ref();
     validate_bounded_value(value)?;
-    Ok(Self(value.to_owned()))
+    Ok(Self(vec![value.to_owned()]))
   }
 
   pub fn parse_values<'a, I>(values: I) -> Result<Self, ContentSecurityPolicyParseError>
   where
     I: IntoIterator<Item = &'a str>,
   {
-    let mut values = values.into_iter();
-    let value = values.next().ok_or_else(invalid_value)?;
-    validate_bounded_value(value)?;
-    let mut has_duplicate = false;
+    let mut policies = Vec::new();
     for value in values {
-      has_duplicate = true;
       validate_bounded_value(value)?;
+      policies.push(value.to_owned());
     }
-    if has_duplicate {
-      return Err(ContentSecurityPolicyParseError::new(
-        "duplicate Content-Security-Policy header fields",
-      ));
+    if policies.is_empty() {
+      return Err(invalid_value());
     }
-    Ok(Self(value.to_owned()))
+    Ok(Self(policies))
   }
 
   pub fn as_str(&self) -> &str {
-    &self.0
+    &self.0[0]
   }
 
   pub fn header_value(&self) -> &str {
     self.as_str()
+  }
+
+  pub fn header_values(&self) -> &[String] {
+    &self.0
   }
 }
 
