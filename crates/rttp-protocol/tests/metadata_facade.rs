@@ -10,6 +10,7 @@ use rttp_protocol::entity_tag::{EntityTag, IfMatch};
 use rttp_protocol::fetch_metadata::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 use rttp_protocol::from::From;
 use rttp_protocol::host::Host;
+use rttp_protocol::no_vary_search::{NoVarySearch, NoVarySearchParams};
 use rttp_protocol::origin::Origin;
 use rttp_protocol::prefer::{Prefer, PreferenceApplied, PreferenceKind};
 use rttp_protocol::proxy_authentication_info::ProxyAuthenticationInfo;
@@ -20,6 +21,7 @@ use rttp_protocol::signature_input::{SignatureInput, SignatureInputParseError};
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
 use rttp_protocol::transfer_encoding::TransferEncoding;
+use rttp_protocol::want_content_digest::WantContentDigest;
 use rttp_protocol::want_repr_digest::WantReprDigest;
 use rttp_protocol::warning::Warning;
 use rttp_protocol::x_content_type_options::XContentTypeOptions;
@@ -40,6 +42,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let from = From::parse("Ops Team <ops@example.test>").expect("From should parse");
   let host = Host::parse("example.test:8443").expect("Host should parse");
   let origin = Origin::parse("https://example.test").expect("Origin should parse");
+  let no_vary_search =
+    NoVarySearch::parse(r#"params=("utm_source")"#).expect("No-Vary-Search should parse");
   let proxy_authentication_info = ProxyAuthenticationInfo::parse(
     "nextnonce=\"xyz789\", qop=auth, rspauth=\"...\", cnonce=\"c\", nc=00000001",
   )
@@ -66,6 +70,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let content_encoding = ContentEncoding::parse("gzip, br").expect("Content-Encoding should parse");
   let transfer_encoding =
     TransferEncoding::parse("chunked").expect("Transfer-Encoding should parse");
+  let want_content_digest =
+    WantContentDigest::parse("sha-256=10, sha-512=0").expect("Want-Content-Digest should parse");
   let want_repr_digest =
     WantReprDigest::parse("sha-256=10, sha-512=0").expect("Want-Repr-Digest should parse");
   let signature = Signature::parse("sig1=:YWJj:").expect("Signature should parse");
@@ -93,6 +99,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(host.port(), Some("8443"));
   assert_eq!(origin.header_value(), "https://example.test");
   assert_eq!(
+    no_vary_search.params(),
+    Some(&NoVarySearchParams::Names(vec!["utm_source".to_owned()]))
+  );
+  assert_eq!(
     proxy_authentication_info.parameter("nextnonce"),
     Some("xyz789")
   );
@@ -118,6 +128,9 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(content_encoding.header_value(), "gzip, br");
   assert_eq!(transfer_encoding.codings(), ["chunked"]);
   assert_eq!(transfer_encoding.header_value(), "chunked");
+  assert_eq!(want_content_digest.entries()[0].algorithm(), "sha-256");
+  assert_eq!(want_content_digest.entries()[0].preference(), 10);
+  assert_eq!(want_content_digest.header_value(), "sha-256=10, sha-512=0");
   assert_eq!(want_repr_digest.entries()[0].algorithm(), "sha-256");
   assert_eq!(want_repr_digest.entries()[0].preference(), 10);
   assert_eq!(want_repr_digest.header_value(), "sha-256=10, sha-512=0");
