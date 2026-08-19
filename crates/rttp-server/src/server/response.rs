@@ -3795,11 +3795,11 @@ pub(crate) fn serialize_content_disposition_parameter_value(value: &str) -> Stri
   }
 
   let mut quoted = String::from("\"");
-  for byte in value.bytes() {
-    if matches!(byte, b'\\' | b'"') {
+  for ch in value.chars() {
+    if matches!(ch, '\\' | '"') {
       quoted.push('\\');
     }
-    quoted.push(byte as char);
+    quoted.push(ch);
   }
   quoted.push('"');
   quoted

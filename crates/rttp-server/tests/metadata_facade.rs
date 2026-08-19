@@ -2,8 +2,8 @@ use rttp_server::server::{
   HttpAcceptCh, HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods,
   HttpAccessControlRequestHeaders, HttpAccessControlRequestHeadersParseError,
   HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError,
-  HttpConditionalMetadata, HttpConnection, HttpConnectionParseError, HttpContentLocation,
-  HttpContentLocationParseError, HttpCrossOriginEmbedderPolicyReportOnly,
+  HttpConditionalMetadata, HttpConnection, HttpConnectionParseError, HttpContentDisposition,
+  HttpContentLocation, HttpContentLocationParseError, HttpCrossOriginEmbedderPolicyReportOnly,
   HttpCrossOriginResourcePolicy, HttpEntityTag, HttpHost, HttpNoVarySearch, HttpNoVarySearchParams,
   HttpPreferenceKind, HttpRequest, HttpResponse, HttpSignature, HttpSignatureInput,
   HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
@@ -300,4 +300,25 @@ fn request_facade_returns_none_when_transfer_encoding_is_absent() {
 fn request_facade_rejects_non_sole_chunked_transfer_encoding_values() {
   let _: HttpTransferEncodingParseError = HttpTransferEncoding::parse("gzip, chunked")
     .expect_err("non-sole chunked Transfer-Encoding should be rejected");
+}
+
+#[test]
+fn response_facade_round_trips_obs_text_content_disposition_parameter_value() {
+  let disposition = HttpContentDisposition::parse("attachment; filename=\"é\"")
+    .expect("obs-text Content-Disposition parameter should parse");
+
+  assert_eq!(Some("é"), disposition.parameter("filename"));
+  assert_eq!("attachment; filename=\"é\"", disposition.header_value());
+}
+
+#[test]
+fn response_facade_round_trips_escaped_content_disposition_parameter_value() {
+  let disposition = HttpContentDisposition::parse(r#"attachment; filename="a\"b\\c""#)
+    .expect("escaped Content-Disposition parameter should parse");
+
+  assert_eq!(Some(r#"a"b\c"#), disposition.parameter("filename"));
+  assert_eq!(
+    r#"attachment; filename="a\"b\\c""#,
+    disposition.header_value()
+  );
 }
