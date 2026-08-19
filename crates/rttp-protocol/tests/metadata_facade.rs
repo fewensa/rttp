@@ -2,6 +2,7 @@ use rttp_protocol::accept_ranges::AcceptRanges;
 use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
 use rttp_protocol::age::Age;
+use rttp_protocol::cdn_cache_control::CdnCacheControl;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::connection::Connection;
 use rttp_protocol::content_encoding::ContentEncoding;
@@ -17,6 +18,7 @@ use rttp_protocol::from::From;
 use rttp_protocol::host::Host;
 use rttp_protocol::keep_alive::KeepAlive;
 use rttp_protocol::location::Location;
+use rttp_protocol::nel::Nel;
 use rttp_protocol::no_vary_search::{NoVarySearch, NoVarySearchParams};
 use rttp_protocol::origin::Origin;
 use rttp_protocol::prefer::{Prefer, PreferenceApplied, PreferenceKind};
@@ -50,6 +52,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
   let fetch_user = SecFetchUser::parse("?1").expect("Sec-Fetch-User should parse");
   let from = From::parse("Ops Team <ops@example.test>").expect("From should parse");
+  let nel =
+    Nel::parse(r#"{"report_to":"network-errors","max_age":2592000}"#).expect("NEL should parse");
   let keep_alive = KeepAlive::parse("timeout=5, max=100").expect("Keep-Alive should parse");
   let location = Location::parse("../login?next=%2Fdashboard").expect("Location should parse");
   let host = Host::parse("example.test:8443").expect("Host should parse");
@@ -64,6 +68,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let timing_allow_origin =
     TimingAllowOrigin::parse("https://example.test").expect("Timing-Allow-Origin should parse");
   let warning = Warning::parse(r#"110 - "Response is Stale""#).expect("Warning should parse");
+  let _signature_input = SignatureInput::parse(r#"sig1=("@method" "@path");created=1700000000"#)
+    .expect("Signature-Input should parse");
   let x_content_type_options =
     XContentTypeOptions::parse("nosniff").expect("X-Content-Type-Options should parse");
   let x_frame_options = XFrameOptions::parse("SAMEORIGIN").expect("X-Frame-Options should parse");
@@ -85,6 +91,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let content_security_policy =
     ContentSecurityPolicy::parse("default-src 'self'; object-src 'none'")
       .expect("Content-Security-Policy should parse");
+  let cdn_cache_control =
+    CdnCacheControl::parse("max-age=600, cdn-example=\"a, b\"").expect("CDN metadata should parse");
   let accept_ranges = AcceptRanges::parse("bytes, pages").expect("Accept-Ranges should parse");
   let transfer_encoding =
     TransferEncoding::parse("chunked").expect("Transfer-Encoding should parse");
@@ -115,6 +123,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_dest.header_value(), "document");
   assert_eq!(fetch_user.header_value(), "?1");
   assert_eq!(from.header_value(), "Ops Team <ops@example.test>");
+  assert_eq!(nel.max_age(), 2592000);
+  assert_eq!(nel.report_to(), Some("network-errors"));
   assert_eq!(keep_alive.timeout(), Some(5));
   assert_eq!(keep_alive.max(), Some(100));
   assert_eq!(keep_alive.header_value(), "timeout=5, max=100");
@@ -134,6 +144,11 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(timing_allow_origin.origins(), ["https://example.test"]);
   assert_eq!(warning.items()[0].code(), 110);
   assert_eq!(warning.items()[0].text(), "Response is Stale");
+  assert_eq!(signature_input.members()[0].label(), "sig1");
+  assert_eq!(
+    signature_input.header_value(),
+    r#"sig1=("@method" "@path");created=1618884473"#
+  );
   assert_eq!(x_content_type_options.header_value(), "nosniff");
   assert_eq!(x_frame_options.header_value(), "SAMEORIGIN");
   assert_eq!(cross_origin_embedder_policy.header_value(), "require-corp");
@@ -158,6 +173,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
     content_security_policy.header_value(),
     "default-src 'self'; object-src 'none'"
   );
+  assert_eq!(cdn_cache_control.directives()[1].name(), "cdn-example");
+  assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
   assert_eq!(accept_ranges.units(), ["bytes", "pages"]);
   assert_eq!(accept_ranges.header_value(), "bytes, pages");
   assert_eq!(transfer_encoding.codings(), ["chunked"]);

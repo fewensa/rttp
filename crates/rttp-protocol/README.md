@@ -159,10 +159,11 @@ and 256 member parameters, and each component may carry at most 256
 parameters. Members must be dictionary keys mapped to inner lists of strings.
 Well-formed member parameters (`created`, `keyid`, `alg`, `nonce`, `tag`, and
 unknown names) and well-formed component parameters are retained as opaque
-data and are not interpreted. Duplicate labels, non-inner-list members,
-non-string components, empty present fields, and other unparsable input are
-errors. This parser does not sign, verify, look up keys, canonicalize covered
-components, or apply cryptographic policy.
+data and are not interpreted. Duplicate labels keep the later value.
+Non-inner-list members, non-string components, empty covered-component lists,
+empty present fields, and other unparsable input are errors. This parser does
+not sign, verify, look up keys, canonicalize covered components, or apply
+cryptographic policy.
 
 ## Cross-Origin-Opener-Policy
 
@@ -191,6 +192,20 @@ The parser never fails open to `unsafe-none`.
 Protocol helpers define and bound wire metadata for the client and server
 crates. They do not add higher-level runtime policy such as caching,
 authentication, retries, representation selection, or body transformation.
+
+## CDN-Cache-Control
+
+`cdn_cache_control` parses one or more `CDN-Cache-Control` response field
+values into ordered directive metadata. It preserves CDN-specific extension
+directives with each directive token name and optional parsed value. Each field
+value is bounded to 64 KiB, the combined directive count is bounded to 256, and
+directive names and unquoted values must be valid HTTP tokens. Quoted strings
+must be well formed and are exposed as parsed values.
+
+The parser only reports bounded wire metadata. It does not create a CDN cache,
+compute freshness, evaluate surrogate keys, revalidate automatically, enforce
+shared-cache policy, retry, replay, redirect, or choose response-acceptance
+behavior.
 
 ## Authentication-Info
 
@@ -320,6 +335,25 @@ quoted-string; an optional quoted HTTP-date is parsed with the same
 `httpdate` helper as Sunset. Empty input, empty members, malformed quoting,
 invalid codes, and bound violations are rejected. This parser does not
 implement cache, freshness, stale-response, or response-acceptance policy.
+
+## NEL
+
+`nel` parses one `NEL` response field as a bounded JSON object exposing the W3C
+Network Error Logging policy members `report_to`, `max_age`,
+`include_subdomains`, `success_fraction`, and `failure_fraction` with checked
+types. Each field value is bounded to 64 KiB, member counts are bounded to 256
+per object, nesting depth is bounded to 64, and each decoded string is bounded
+to 64 KiB. A second field is rejected after every supplied field is
+bound-checked. `max_age` is required and must be a non-negative JSON integer
+literal that fits in `u64`; fraction and exponent forms are rejected for this
+member. Fractions must parse as finite doubles in the inclusive range `0.0` to
+`1.0`. Malformed JSON, invalid member types, duplicate singleton members,
+non-finite or out-of-range fractions, missing `max_age`, and bound violations
+are errors. Unknown JSON members are preserved verbatim as raw metadata
+without policy semantics. Absent optional members keep their W3C defaults
+(`include_subdomains` `false`, `success_fraction` `0.0`, `failure_fraction`
+`1.0`) but are not re-emitted by `header_value()`. This parser does not send
+reports, persist policy, or configure Reporting endpoint groups.
 
 ## Keep-Alive
 

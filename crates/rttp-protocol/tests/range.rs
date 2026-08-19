@@ -28,13 +28,14 @@ fn range_rejects_repeated_field_values() {
 
 #[test]
 fn content_range_parses_satisfied_unknown_and_unsatisfied_forms() {
+  let satisfied = ContentRange::parse("bytes 0-499/1234").expect("satisfied content range");
   assert_eq!(
     ContentRange::Bytes {
       start: 0,
       end: 499,
       complete_length: Some(1_234),
     },
-    ContentRange::parse("bytes 0-499/1234").expect("satisfied content range")
+    satisfied
   );
   assert_eq!(
     ContentRange::Bytes {
@@ -50,6 +51,12 @@ fn content_range_parses_satisfied_unknown_and_unsatisfied_forms() {
     },
     ContentRange::parse("bytes */1234").expect("unsatisfied content range")
   );
+  assert_eq!("bytes", satisfied.unit());
+  assert_eq!(Some(0), satisfied.start());
+  assert_eq!(Some(499), satisfied.end());
+  assert_eq!(Some(1_234), satisfied.complete_length());
+  assert!(!satisfied.is_unsatisfied());
+  assert_eq!("bytes 0-499/1234", satisfied.header_value());
 }
 
 #[test]

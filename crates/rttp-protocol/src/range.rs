@@ -50,7 +50,7 @@ impl RangeParseError {
 }
 
 impl ContentRangeParseError {
-  fn new(message: impl Into<String>) -> Self {
+  pub fn new(message: impl Into<String>) -> Self {
     Self {
       message: message.into(),
     }
@@ -215,6 +215,37 @@ impl ContentRange {
       ),
       Self::Unsatisfied { complete_length } => format!("bytes */{complete_length}"),
     }
+  }
+
+  pub fn unit(&self) -> &str {
+    "bytes"
+  }
+
+  pub fn start(&self) -> Option<u64> {
+    match self {
+      Self::Bytes { start, .. } => Some(*start),
+      Self::Unsatisfied { .. } => None,
+    }
+  }
+
+  pub fn end(&self) -> Option<u64> {
+    match self {
+      Self::Bytes { end, .. } => Some(*end),
+      Self::Unsatisfied { .. } => None,
+    }
+  }
+
+  pub fn complete_length(&self) -> Option<u64> {
+    match self {
+      Self::Bytes {
+        complete_length, ..
+      } => *complete_length,
+      Self::Unsatisfied { complete_length } => Some(*complete_length),
+    }
+  }
+
+  pub fn is_unsatisfied(&self) -> bool {
+    matches!(self, Self::Unsatisfied { .. })
   }
 }
 

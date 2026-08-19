@@ -36,11 +36,18 @@ pub use rttp_protocol::signature::{
   SignatureParseError as HttpSignatureParseError,
 };
 pub use rttp_protocol::signature_input::{
-  SignatureInput as HttpSignatureInput, SignatureInputBareItem as HttpSignatureInputBareItem,
+  SignatureCoveredComponent as HttpSignatureCoveredComponent,
+  SignatureDecimal as HttpSignatureDecimal, SignatureInput as HttpSignatureInput,
+  SignatureInputMember as HttpSignatureInputMember,
+  SignatureInputParseError as HttpSignatureInputParseError,
+  SignatureParameter as HttpSignatureParameter,
+  SignatureParameterValue as HttpSignatureParameterValue,
+};
+pub use rttp_protocol::signature_input::{
+  SignatureInputBareItem as HttpSignatureInputBareItem,
   SignatureInputComponent as HttpSignatureInputComponent,
   SignatureInputEntry as HttpSignatureInputEntry,
   SignatureInputParameter as HttpSignatureInputParameter,
-  SignatureInputParseError as HttpSignatureInputParseError,
 };
 pub use rttp_protocol::trailer::{
   Trailer as HttpTrailer, TrailerParseError as HttpTrailerParseError,

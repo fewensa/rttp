@@ -26,6 +26,10 @@ pub use rttp_protocol::authentication_info::{
   AuthenticationInfo as HttpAuthenticationInfo,
   AuthenticationInfoParseError as HttpAuthenticationInfoParseError,
 };
+pub use rttp_protocol::cdn_cache_control::{
+  CdnCacheControl as HttpCdnCacheControl,
+  CdnCacheControlParseError as HttpCdnCacheControlParseError,
+};
 pub use rttp_protocol::clear_site_data::{
   ClearSiteData as HttpClearSiteData, ClearSiteDataDirective as HttpClearSiteDataDirective,
   ClearSiteDataParseError as HttpClearSiteDataParseError,
@@ -62,6 +66,9 @@ pub use rttp_protocol::keep_alive::{
   KeepAlive as HttpKeepAlive, KeepAliveExtension as HttpKeepAliveExtension,
   KeepAliveParseError as HttpKeepAliveParseError,
 };
+pub use rttp_protocol::nel::{
+  Nel as HttpNel, NelParseError as HttpNelParseError, NelUnknownMember as HttpNelUnknownMember,
+};
 pub use rttp_protocol::no_vary_search::{
   NoVarySearch as HttpNoVarySearch, NoVarySearchExtension as HttpNoVarySearchExtension,
   NoVarySearchParams as HttpNoVarySearchParams,
@@ -82,6 +89,9 @@ pub use rttp_protocol::server_timing::{
   ServerTiming as HttpServerTiming, ServerTimingMetric as HttpServerTimingMetric,
   ServerTimingParameter as HttpServerTimingParameter,
   ServerTimingParseError as HttpServerTimingParseError,
+};
+pub use rttp_protocol::signature_input::{
+  SignatureInput as HttpSignatureInput, SignatureInputParseError as HttpSignatureInputParseError,
 };
 pub use rttp_protocol::strict_transport_security::{
   StrictTransportSecurity as HttpStrictTransportSecurity,
@@ -617,14 +627,24 @@ impl HttpResponse {
     Self::new(206, "Partial Content")
       .header(
         "Content-Range",
-        format!("bytes {}-{}/{}", range.start(), range.end(), body.len()),
+        HttpContentRange::Bytes {
+          start: range.start() as u64,
+          end: range.end() as u64,
+          complete_length: Some(body.len() as u64),
+        }
+        .header_value(),
       )
       .body(partial)
   }
 
   pub fn range_not_satisfiable(entity_length: usize) -> Self {
-    Self::new(416, "Range Not Satisfiable")
-      .header("Content-Range", format!("bytes */{entity_length}"))
+    Self::new(416, "Range Not Satisfiable").header(
+      "Content-Range",
+      HttpContentRange::Unsatisfied {
+        complete_length: entity_length as u64,
+      }
+      .header_value(),
+    )
   }
 
   pub fn not_modified(metadata: &HttpConditionalMetadata) -> Self {
@@ -828,6 +848,19 @@ impl HttpResponse {
       "Cross-Origin-Resource-Policy",
       policy.header_value(),
     ));
+    Ok(self)
+  }
+
+  /// Validates and replaces `NEL` response metadata without sending reports
+  /// or persisting policy.
+  pub fn with_nel(mut self, value: impl AsRef<str>) -> Result<Self, HttpNelParseError> {
+    let nel = HttpNel::parse(value)?;
+    let header_value = nel.header_value();
+    assert_valid_header_component(&header_value);
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("NEL"));
+    self.headers.push(HttpHeader::new("NEL", header_value));
     Ok(self)
   }
 
@@ -1418,6 +1451,22 @@ impl HttpResponse {
     HttpResponseCacheControl::parse_values(values).map(Some)
   }
 
+  /// Parses attached `CDN-Cache-Control` response metadata without applying CDN cache policy.
+  pub fn cdn_cache_control(
+    &self,
+  ) -> Result<Option<HttpCdnCacheControl>, HttpCdnCacheControlParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("CDN-Cache-Control"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpCdnCacheControl::parse_values(values).map(Some)
+  }
+
   pub fn vary(&self) -> Result<Option<HttpVary>, HttpVaryParseError> {
     let values: Vec<&str> = self
       .headers
@@ -1937,6 +1986,20 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpAltSvc::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `NEL` metadata without sending reports or persisting policy.
+  pub fn nel(&self) -> Result<Option<HttpNel>, HttpNelParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("NEL"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpNel::parse_values(values).map(Some)
   }
 
   /// Parses attached `Keep-Alive` metadata without changing connection lifetime.
