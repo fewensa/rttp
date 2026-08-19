@@ -404,9 +404,10 @@ policy, retry, replay, redirect, or status-policy behavior from
 ### Bounded HTTP/1.1 Accept-Language behavior
 
 `HttpClient::accept_language(ranges)` validates and emits one
-`Accept-Language` request header from ordered language ranges. Each range may
-include an optional `q` weight, for example `fr-CA; q=0.8`; `*` is also
-accepted. The helper limits each supplied value to 64 KiB and the parsed range
+`Accept-Language` request header from ordered language ranges through the
+shared protocol-owned `AcceptLanguage` type. Each range may include an
+optional `q` weight, for example `fr-CA; q=0.8`; `*` is also accepted. The
+shared primitive limits each supplied value to 64 KiB and the parsed range
 list to 32 entries, rejects malformed ranges or q-values and case-insensitive
 duplicates, and returns a builder error before opening a connection. Raw
 `header(("Accept-Language", value))` remains available when callers need to
@@ -414,7 +415,8 @@ preserve unvalidated metadata.
 
 On the server, `Request::accept_language()` and
 `HttpRequest::accept_language()` parse received fields in wire order into
-`HttpAcceptLanguages`, returning `Ok(None)` when the header is absent.
+`HttpAcceptLanguages` (the server alias for the shared protocol `AcceptLanguage`
+type), returning `Ok(None)` when the header is absent.
 `HttpAcceptLanguages::ranges()` and `HttpAcceptLanguages::qualities()` expose
 the validated ranges and optional q-values. Each received field is bounded to
 64 KiB and the combined range list to 32 entries; malformed values, invalid
@@ -789,10 +791,15 @@ connection lifetime, connection pooling, keep-alive timers, or HTTP/2 behavior.
 
 ### Bounded HTTP/1.1 request control metadata
 
-`Request::max_forwards()` and `HttpRequest::max_forwards()` expose one bounded
-`Max-Forwards` value as a `u8`. They return `Ok(None)` when the field is absent
-and reject duplicate, empty, signed, non-decimal, or out-of-range values. RTTP
-does not decrement the value, route the request, or infer forwarding behavior.
+`Request::max_forwards()` and `HttpRequest::max_forwards()` reuse the shared
+protocol `Max-Forwards` type. They return `Ok(None)` when the field is absent
+and otherwise expose one singleton `1*DIGIT` hop count that fits in `u32`
+(`0` through `4294967295`). Duplicate, empty, signed, non-decimal, overflowing,
+oversized (over 64 KiB), or control-byte values return a parse error while
+`header("Max-Forwards")` continues to expose the raw field. The client helper
+`HttpClient::max_forwards()` validates and emits the same type. RTTP does not
+decrement the value, route the request, select TRACE or OPTIONS, or infer
+forwarding behavior.
 
 `HttpClient::te()`, `te_with_q()`, and `te_trailers()` build a single bounded
 `TE` field validated through the shared protocol-owned `rttp-protocol` `Te`
@@ -1017,6 +1024,7 @@ gain additional HTTP/2 header-block handling.
 | HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and explicit `Expect: 100-continue` metadata | Expect metadata does not gate body transmission; SOCKS handshakes are delegated to the `socks` crate |
 | Fetch Metadata | Client `sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, `sec_fetch_user`, and `sec_purpose` emit bounded `Sec-Fetch-*`/`Sec-Purpose` fields; server `Request` helpers parse typed received values while preserving raw headers on errors | No browser security policy, request blocking, origin validation, navigation policy, automatic header generation, prefetch execution, or cache behavior |
 | Save-Data | Client `save_data` emits bounded `Save-Data: on` request metadata; server `Request::save_data()` and `HttpRequest::save_data()` parse typed received values while preserving raw headers on errors | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |
+| Accept-Language | Client `accept_language` emits bounded `Accept-Language` request metadata through the protocol `AcceptLanguage` type; server `Request::accept_language()` and `HttpRequest::accept_language()` parse typed received values as `HttpAcceptLanguages` while preserving raw headers on errors | No locale matching, fallback selection, translation lookup, routing, or automatic response choice |
 | Preflight request metadata | Client `origin`, `access_control_request_method`, `access_control_request_headers`, and `access_control_request_private_network` emit bounded `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`, and `Access-Control-Request-Private-Network` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, CORS policy, or Private Network Access policy |
 | Access-Control-Allow-Credentials | Client `Response::access_control_allow_credentials` and server `HttpAccessControlAllowCredentials`, `HttpResponse::with_access_control_allow_credentials`, and `HttpResponse::access_control_allow_credentials` parse or declare bounded singleton `Access-Control-Allow-Credentials` `true`-token metadata while preserving raw headers on parse failures | No CORS request evaluation, automatic credential attachment, or automatic credentials granting |
 | Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_content_digest()`, `HttpRequest::want_content_digest()`, `Request::want_repr_digest()`, and `HttpRequest::want_repr_digest()` parse received preference fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |
@@ -1033,7 +1041,7 @@ gain additional HTTP/2 header-block handling.
 | Content-Type and Content-Encoding | `Response::content_type`/`ContentType::parse` parse bounded singleton `Content-Type` metadata, and `Response::content_encoding`/`ContentEncoding::parse` parse bounded ordered `Content-Encoding` codings while preserving raw headers on parse failures | No MIME sniffing, body decoding, charset transcoding, compression/decompression policy, negotiation, cache policy, redirects, retry/replay, or filesystem serving |
 | Connection | `Response::connection`/`Connection::parse` parse bounded HTTP/1 `Connection` tokens, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to keep-alive, `auto_add_connection`, hop-by-hop stripping, or HTTP/2 rejection |
 | Transfer-Encoding | `Response::transfer_encoding`/`TransferEncoding::parse` parse bounded HTTP/1 `Transfer-Encoding` fields that must be sole `chunked`, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to HTTP/1 framing decoders, `TE`, Content-Length, chunked body decoding policy, or HTTP/2 decode rejection |
-| Content-Disposition | Client `Response::content_disposition` and server `HttpContentDisposition`, `HttpResponse::with_content_disposition`, `with_attachment_filename`, and `content_disposition` parse or declare bounded singleton response `Content-Disposition` metadata, preserve raw headers on parse failures, and preserve parsed `filename` plus `filename*` parameter values as metadata | No automatic download, filesystem path handling, MIME sniffing, cache behavior, redirect behavior, retry/replay, negotiation, or status-policy behavior |
+| Content-Disposition | Client `Response::content_disposition` and protocol-backed server `HttpContentDisposition`, `HttpResponse::with_content_disposition`, `with_attachment_filename`, and `content_disposition` parse or declare bounded singleton response `Content-Disposition` metadata, preserve raw headers on parse failures, and preserve parsed `filename` plus `filename*` parameter values as metadata | No automatic download, filesystem path handling, MIME sniffing, cache behavior, redirect behavior, retry/replay, negotiation, or status-policy behavior |
 | WWW-Authenticate | Client `Response::www_authenticate` and server `HttpWwwAuthenticate`, `HttpResponse::with_www_authenticate`, and `HttpResponse::www_authenticate` parse or declare bounded response authentication challenges while preserving raw headers on parse failures | No credential storage, authentication policy, retry, automatic `Authorization` generation, Basic/Bearer implementation, redirect behavior, or status-policy behavior |
 | Proxy-Authenticate | Client `Response::proxy_authenticate` and protocol `ProxyAuthenticate::parse`/`parse_values` parse bounded proxy authentication challenges across one or more response fields while preserving raw headers on parse failures | No credential storage, proxy authentication policy, retry, automatic `Proxy-Authorization` generation, Basic/Bearer implementation, redirect behavior, or status-policy behavior |
 | Proxy-Status | Client `Response::proxy_status` and server `HttpProxyStatus`, `HttpResponse::with_proxy_status`, and `HttpResponse::proxy_status` parse or declare bounded RFC 9209 Token/String proxy identifiers with opaque parameters while preserving raw headers on parse failures | No proxy health checks, retries, trailer promotion, or origin-generation policy |
@@ -1606,6 +1614,7 @@ from `Content-DPR`.
 Server-side `Content-Disposition` helpers expose response metadata declaration
 and parsing without implementing download policy, filesystem handling, MIME
 sniffing, cache behavior, redirect handling, retry, or negotiation.
+`HttpContentDisposition` is backed by the shared protocol primitive.
 `HttpContentDisposition::parse(value)` validates one field value, including a
 token disposition type and bounded parameters. `HttpContentDisposition::inline()`
 and `HttpContentDisposition::attachment()` construct common dispositions, and
@@ -1619,11 +1628,12 @@ is a convenience helper for `attachment; filename=...`.
 returns `Ok(None)` when the header is absent.
 
 Parsing is bounded and validation-oriented. The field value is limited to
-64 KiB, parameter count is limited to 32, token positions must be valid HTTP
-tokens, quoted-string input must be well formed, and CR/LF or other control
-characters are rejected. Duplicate parameters and duplicate
-`Content-Disposition` fields are rejected by the typed parser. Raw
-`HttpResponse::header("Content-Disposition", ...)` values remain preserved
+64 KiB, parameter count is limited to 256, each parameter value is limited to
+64 KiB, token positions must be valid HTTP tokens, quoted-string input must be
+well formed, `filename*` must be an unquoted RFC 5987 ext-value, and CR/LF or
+other control characters other than HTAB are rejected. Duplicate parameters
+and duplicate `Content-Disposition` fields are rejected by the typed parser.
+Raw `HttpResponse::header("Content-Disposition", ...)` values remain preserved
 exactly as ordinary response headers until a typed declaration helper replaces
 them or the typed parser is requested.
 
@@ -1913,6 +1923,7 @@ TLS or async accept loops.
 | Memento-Datetime | `HttpResponse::with_memento_datetime`/`memento_datetime` declare and parse bounded singleton `Memento-Datetime` IMF-fixdate metadata while preserving raw headers on parse errors | No archival selection, `Accept-Datetime` negotiation, TimeGate behavior, retry, or transport changes |
 | Fetch Metadata | `Request::sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, `sec_fetch_user`, and `sec_purpose` parse bounded typed `Sec-Fetch-*`/`Sec-Purpose` request fields and preserve raw values on errors | No browser security policy, request blocking, origin validation, navigation policy, automatic header generation, prefetch execution, or cache behavior |
 | Save-Data | `Request::save_data` and `HttpRequest::save_data` parse bounded singleton `Save-Data` `on`-token metadata and preserve raw values on errors | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |
+| Accept-Language | `HttpAcceptLanguages`, `Request::accept_language`, and `HttpRequest::accept_language` parse bounded ordered `Accept-Language` ranges and q-values through the protocol `AcceptLanguage` type and preserve raw values on errors | No locale matching, fallback selection, translation lookup, routing, or automatic response choice |
 | Vary | `HttpVary`, `HttpResponse::with_vary`, `HttpResponse::vary`, `Request::vary_selection`, and `HttpRequest::vary_selection` parse, declare, and select bounded `Vary` metadata with case-insensitive field-name handling | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | No-Vary-Search | `HttpNoVarySearch`, `HttpResponse::with_no_vary_search`, and `HttpResponse::no_vary_search` parse and declare bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
 | Allow | `HttpAllowedMethods`, `HttpResponse::with_allow`, and `HttpResponse::allow` declare and parse bounded `Allow` method-list metadata | No route dispatch, automatic `405` generation, `OPTIONS` policy, fallback method selection, retry/replay, or status-code policy engine |
@@ -1923,7 +1934,7 @@ TLS or async accept loops.
 | Connection | `HttpConnection`, `Request::connection`, `HttpRequest::connection`, and `HttpResponse::connection` parse bounded HTTP/1 `Connection` tokens, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to hop-by-hop stripping, keep-alive/close, upgrade/h2c, or HTTP/2 rejection |
 | Transfer-Encoding | `HttpTransferEncoding`, `Request::transfer_encoding`, and `HttpRequest::transfer_encoding` parse bounded HTTP/1 `Transfer-Encoding` fields that must be sole `chunked`, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to `request_body_kind`, `TE`, Content-Length, or HTTP/2 decode rejection |
 | Upgrade metadata | `Upgrade`, `HttpUpgrade`, `HttpClient::upgrade_protocols`, `Response::upgrade`, `Request::upgrade`, `HttpRequest::upgrade`, `HttpResponse::with_upgrade`, and `HttpResponse::upgrade` validate, declare, or parse bounded HTTP/1 `Upgrade` protocol metadata while preserving raw headers on parse failures | No automatic `Connection: Upgrade`, h2c selection, client/server socket handoff, ALPN negotiation, or upgraded protocol implementation |
-| Content-Disposition | `HttpContentDisposition`, `HttpResponse::with_content_disposition`, `with_attachment_filename`, and `content_disposition` declare and parse bounded singleton `Content-Disposition` response metadata, preserve parsed `filename` and `filename*` parameter values, preserve raw headers on parse failures, and replace raw duplicates on typed declaration | No automatic download, filesystem path handling, MIME sniffing, cache behavior, redirect behavior, retry/replay, negotiation, or status-policy behavior |
+| Content-Disposition | Protocol-backed `HttpContentDisposition`, `HttpResponse::with_content_disposition`, `with_attachment_filename`, and `content_disposition` declare and parse bounded singleton `Content-Disposition` response metadata, preserve parsed `filename` and `filename*` parameter values, preserve raw headers on parse failures, and replace raw duplicates on typed declaration | No automatic download, filesystem path handling, MIME sniffing, cache behavior, redirect behavior, retry/replay, negotiation, or status-policy behavior |
 | WWW-Authenticate | `HttpWwwAuthenticate`, `HttpResponse::with_www_authenticate`, and `HttpResponse::www_authenticate` declare or parse bounded response authentication challenge metadata while preserving raw headers on parse failures | No credential storage, authentication policy, retry, automatic `Authorization` generation, Basic/Bearer implementation, redirect behavior, or status-policy behavior |
 | Proxy-Status | `HttpProxyStatus`, `HttpResponse::with_proxy_status`, and `HttpResponse::proxy_status` declare or parse bounded RFC 9209 Token/String proxy identifiers with opaque parameters while preserving raw headers on parse failures | No proxy health checks, retries, trailer promotion, or origin-generation policy |
 | Server-Timing | `HttpServerTiming`, `HttpResponse::with_server_timing`, and `HttpResponse::server_timing` declare or parse bounded response timing metadata while preserving raw headers on parse failures | No metric collection, measurement, telemetry export, metrics backend integration, retry, redirect behavior, or status-policy behavior |

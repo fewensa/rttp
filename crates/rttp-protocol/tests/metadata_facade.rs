@@ -1,3 +1,4 @@
+use rttp_protocol::accept_language::AcceptLanguage;
 use rttp_protocol::accept_ranges::AcceptRanges;
 use rttp_protocol::access_control_allow_credentials::AccessControlAllowCredentials;
 use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
@@ -8,6 +9,7 @@ use rttp_protocol::cache_status::CacheStatus;
 use rttp_protocol::cdn_cache_control::CdnCacheControl;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::connection::Connection;
+use rttp_protocol::content_disposition::ContentDisposition;
 use rttp_protocol::content_dpr::ContentDpr;
 use rttp_protocol::content_encoding::ContentEncoding;
 use rttp_protocol::content_language::ContentLanguage;
@@ -27,6 +29,7 @@ use rttp_protocol::host::Host;
 use rttp_protocol::keep_alive::KeepAlive;
 use rttp_protocol::link::LinkValues;
 use rttp_protocol::location::Location;
+use rttp_protocol::max_forwards::MaxForwards;
 use rttp_protocol::memento_datetime::MementoDatetime;
 use rttp_protocol::nel::Nel;
 use rttp_protocol::no_vary_search::{NoVarySearch, NoVarySearchParams};
@@ -53,6 +56,8 @@ use rttp_protocol::x_frame_options::XFrameOptions;
 #[test]
 fn protocol_exports_representative_bounded_metadata_types() {
   let age = Age::parse("60").expect("Age should parse");
+  let accept_language =
+    AcceptLanguage::parse("en-US, fr-CA; q=0.8, *;q=0").expect("Accept-Language should parse");
   let accept_ch = AcceptCh::parse("Sec-CH-UA, DPR").expect("Accept-CH should parse");
   let allow_credentials = AccessControlAllowCredentials::parse("true")
     .expect("Access-Control-Allow-Credentials should parse");
@@ -76,6 +81,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
     Nel::parse(r#"{"report_to":"network-errors","max_age":2592000}"#).expect("NEL should parse");
   let keep_alive = KeepAlive::parse("timeout=5, max=100").expect("Keep-Alive should parse");
   let location = Location::parse("../login?next=%2Fdashboard").expect("Location should parse");
+  let max_forwards = MaxForwards::parse("0").expect("Max-Forwards should parse");
   let memento_datetime =
     MementoDatetime::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Memento-Datetime should parse");
   let host = Host::parse("example.test:8443").expect("Host should parse");
@@ -111,6 +117,9 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let content_type =
     ContentType::parse("text/plain; charset=utf-8").expect("Content-Type should parse");
   let content_dpr = ContentDpr::parse("1.5").expect("Content-DPR should parse");
+  let content_disposition =
+    ContentDisposition::parse("attachment; filename=\"report.txt\"; filename*=UTF-8''report.txt")
+      .expect("Content-Disposition should parse");
   let content_location = ContentLocation::parse("../representations/current.json")
     .expect("Content-Location should parse");
   let deprecation = Deprecation::parse("?1").expect("Deprecation should parse");
@@ -144,6 +153,12 @@ fn protocol_exports_representative_bounded_metadata_types() {
     SignatureInput::parse("").expect_err("empty Signature-Input should be rejected");
 
   assert_eq!(age.seconds(), 60);
+  assert_eq!(accept_language.ranges(), ["en-US", "fr-CA", "*"]);
+  assert_eq!(accept_language.qualities(), [None, Some("0.8"), Some("0")]);
+  assert_eq!(
+    accept_language.header_value(),
+    "en-US, fr-CA; q=0.8, *; q=0"
+  );
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(allow_credentials.header_value(), "true");
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
@@ -172,6 +187,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(deprecation, Deprecation::Boolean(true));
   assert_eq!(deprecation.header_value(), "?1");
   assert_eq!(location.as_str(), "../login?next=%2Fdashboard");
+  assert_eq!(max_forwards.value(), 0);
+  assert_eq!(max_forwards.header_value(), "0");
   assert_eq!(
     memento_datetime.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
@@ -214,6 +231,16 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(content_type.header_value(), "text/plain; charset=utf-8");
   assert_eq!(content_dpr.ratio(), 1.5);
   assert_eq!(content_dpr.header_value(), "1.5");
+  assert_eq!(content_disposition.disposition_type(), "attachment");
+  assert_eq!(content_disposition.filename(), Some("report.txt"));
+  assert_eq!(
+    content_disposition.filename_ext(),
+    Some("UTF-8''report.txt")
+  );
+  assert_eq!(
+    content_disposition.header_value(),
+    "attachment; filename=report.txt; filename*=UTF-8''report.txt"
+  );
   assert_eq!(
     content_location.header_value(),
     "../representations/current.json"

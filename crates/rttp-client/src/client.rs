@@ -7,6 +7,7 @@ use crate::types::{Auth, Header, IntoHeader, IntoPara, Proxy, ToFormData, ToRoUr
 use crate::{error, Config, H2cClientPolicy};
 #[cfg(feature = "async")]
 use futures::io::AsyncRead;
+use rttp_protocol::accept_language::{AcceptLanguage, MAX_ACCEPT_LANGUAGE_VALUE_BYTES};
 use rttp_protocol::access_control_request_headers::AccessControlRequestHeaders;
 use rttp_protocol::access_control_request_method::AccessControlRequestMethod;
 use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
@@ -14,6 +15,7 @@ use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
 use rttp_protocol::forwarded::{Forwarded, MAX_FORWARDED_VALUE_BYTES};
+use rttp_protocol::max_forwards::MaxForwards;
 use rttp_protocol::origin::Origin;
 use rttp_protocol::priority::Priority;
 use rttp_protocol::save_data::SaveData;
@@ -292,8 +294,9 @@ impl HttpClient {
   /// Set bounded `Accept-Language` request metadata.
   ///
   /// Each supplied item is a language range, optionally followed by a `q`
-  /// weight such as `fr-CA; q=0.8`. This validates metadata only; it does not
-  /// perform locale matching or choose a response language.
+  /// weight such as `fr-CA; q=0.8`. Validation is delegated to the shared
+  /// protocol-owned `AcceptLanguage` type. This validates metadata only; it
+  /// does not perform locale matching or choose a response language.
   pub fn accept_language<I, L>(&mut self, ranges: I) -> error::Result<&mut Self>
   where
     I: IntoIterator<Item = L>,
@@ -608,13 +611,14 @@ impl HttpClient {
 
   /// Set a bounded `Max-Forwards` request header for TRACE or OPTIONS diagnostics.
   ///
-  /// The value must be at most ten ASCII decimal digits and fit in the `u32`
+  /// The value must be a singleton `1*DIGIT` hop count that fits in the `u32`
   /// range (`0` through `4294967295`). This only emits the header; it does not
   /// route through proxies, decrement the value, retry requests, or select a
   /// TRACE or OPTIONS policy. Use `header` directly for unusual values.
   pub fn max_forwards<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
-    let value = validate_max_forwards(value.as_ref())?;
-    Ok(self.header(Header::new("Max-Forwards", value)))
+    let max_forwards = MaxForwards::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("Max-Forwards", max_forwards.header_value())))
   }
 
   /// Append a validated `Accept-Encoding` coding with the default quality of
@@ -1360,22 +1364,6 @@ fn bounded_forwarded_header_value(forwarded: Forwarded) -> error::Result<String>
   Ok(value)
 }
 
-fn validate_max_forwards(value: &str) -> error::Result<&str> {
-  if value.is_empty()
-    || value.len() > MAX_MAX_FORWARDS_VALUE_BYTES
-    || !value.bytes().all(|byte| byte.is_ascii_digit())
-  {
-    return Err(error::builder_with_message(
-      "Max-Forwards must be a non-empty decimal u32",
-    ));
-  }
-  value.parse::<u32>().map_err(|_| {
-    error::builder_with_message("Max-Forwards must be a decimal value no greater than u32::MAX")
-  })?;
-  Ok(value)
-}
-
-const MAX_MAX_FORWARDS_VALUE_BYTES: usize = 10;
 const MAX_ACCEPT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
 const MAX_ACCEPT_ENCODINGS: usize = 32;
 const MAX_AUTHORIZATION_VALUE_BYTES: usize = 64 * 1024;
@@ -1839,105 +1827,20 @@ fn validate_http_date(http_date: &str) -> error::Result<&str> {
   Ok(http_date)
 }
 
-const MAX_ACCEPT_LANGUAGE_VALUE_BYTES: usize = 64 * 1024;
-const MAX_ACCEPT_LANGUAGE_RANGES: usize = 32;
-
 fn build_accept_language_value<I, L>(ranges: I) -> error::Result<String>
 where
   I: IntoIterator<Item = L>,
   L: AsRef<str>,
 {
-  let mut parsed = Vec::new();
-
-  for value in ranges {
-    if value.as_ref().len() > MAX_ACCEPT_LANGUAGE_VALUE_BYTES {
-      return Err(error::builder_with_message(
-        "Accept-Language header value is too large",
-      ));
-    }
-    for range in value.as_ref().split(',') {
-      let range = range.trim();
-      let (language_range, quality) = parse_accept_language_item(range)?;
-      if parsed.len() >= MAX_ACCEPT_LANGUAGE_RANGES {
-        return Err(error::builder_with_message(
-          "too many Accept-Language ranges",
-        ));
-      }
-      if parsed
-        .iter()
-        .any(|(known, _): &(String, Option<String>)| known.eq_ignore_ascii_case(language_range))
-      {
-        return Err(error::builder_with_message(
-          "duplicate Accept-Language range",
-        ));
-      }
-      parsed.push((language_range.to_string(), quality.map(ToString::to_string)));
-    }
-  }
-
-  if parsed.is_empty() {
-    return Err(error::builder_with_message("invalid Accept-Language range"));
-  }
-
-  let value = parsed
-    .into_iter()
-    .map(|(range, quality)| match quality {
-      Some(quality) => format!("{range}; q={quality}"),
-      None => range,
-    })
-    .collect::<Vec<_>>()
-    .join(", ");
+  let accept_language = AcceptLanguage::from_ranges(ranges)
+    .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+  let value = accept_language.header_value();
   if value.len() > MAX_ACCEPT_LANGUAGE_VALUE_BYTES {
     return Err(error::builder_with_message(
       "Accept-Language header value is too large",
     ));
   }
   Ok(value)
-}
-
-fn parse_accept_language_item(value: &str) -> error::Result<(&str, Option<&str>)> {
-  let mut parts = value.split(';');
-  let range = parts.next().unwrap_or_default().trim();
-  if !is_language_range(range) {
-    return Err(error::builder_with_message("invalid Accept-Language range"));
-  }
-
-  let Some(parameter) = parts.next() else {
-    return Ok((range, None));
-  };
-  if parts.next().is_some() {
-    return Err(error::builder_with_message(
-      "invalid Accept-Language q-value",
-    ));
-  }
-  let Some((name, quality)) = parameter.trim().split_once('=') else {
-    return Err(error::builder_with_message(
-      "invalid Accept-Language q-value",
-    ));
-  };
-  let quality = quality.trim();
-  if !name.trim().eq_ignore_ascii_case("q") || !is_qvalue(quality) {
-    return Err(error::builder_with_message(
-      "invalid Accept-Language q-value",
-    ));
-  }
-  Ok((range, Some(quality)))
-}
-
-fn is_language_range(value: &str) -> bool {
-  if value == "*" {
-    return true;
-  }
-
-  let mut subtags = value.split('-');
-  let Some(primary) = subtags.next() else {
-    return false;
-  };
-  (1..=8).contains(&primary.len())
-    && primary.bytes().all(|byte| byte.is_ascii_alphabetic())
-    && subtags.all(|subtag| {
-      (1..=8).contains(&subtag.len()) && subtag.bytes().all(|byte| byte.is_ascii_alphanumeric())
-    })
 }
 
 fn is_qvalue(value: &str) -> bool {

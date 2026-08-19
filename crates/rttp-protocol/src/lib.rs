@@ -7,6 +7,7 @@
 //! specific header type, including bounded value parsing, wire formatting, and
 //! the limits and error types that apply to that header.
 
+pub mod accept_language;
 pub mod accept_patch;
 pub mod accept_post;
 pub mod accept_ranges;
@@ -29,6 +30,7 @@ pub mod cdn_cache_control;
 pub mod clear_site_data;
 pub mod client_hints;
 pub mod connection;
+pub mod content_disposition;
 pub mod content_dpr;
 pub mod content_encoding;
 pub mod content_language;
@@ -52,6 +54,7 @@ pub mod http1;
 pub mod keep_alive;
 pub mod link;
 pub mod location;
+pub mod max_forwards;
 mod media_type;
 pub mod memento_datetime;
 pub mod nel;

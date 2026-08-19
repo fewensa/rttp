@@ -47,6 +47,7 @@ pub use rttp_protocol::client_hints::{
   AcceptCh as HttpAcceptCh, AcceptChParseError as HttpAcceptChParseError,
   CriticalCh as HttpCriticalCh, CriticalChParseError as HttpCriticalChParseError,
 };
+pub use rttp_protocol::content_disposition::ContentDispositionParseError as HttpContentDispositionParseError;
 pub use rttp_protocol::content_dpr::{
   ContentDpr as HttpContentDpr, ContentDprParseError as HttpContentDprParseError,
 };
@@ -302,8 +303,6 @@ pub(crate) const MAX_VARY_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_VARY_FIELDS: usize = 256;
 pub(crate) const MAX_ACCEPT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_ACCEPT_ENCODINGS: usize = 32;
-pub(crate) const MAX_CONTENT_DISPOSITION_VALUE_BYTES: usize = 64 * 1024;
-pub(crate) const MAX_CONTENT_DISPOSITION_PARAMETERS: usize = 32;
 pub(crate) const MAX_ACCEPT_PATCH_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_ACCEPT_PATCH_MEDIA_TYPES: usize = 32;
 pub(crate) const MAX_ACCEPT_POST_VALUE_BYTES: usize = 64 * 1024;
@@ -811,14 +810,14 @@ fn parse_http_link_quoted_string(value: &str) -> Result<String, HttpLinkParseErr
   let mut escaped = false;
   for ch in inner.chars() {
     if escaped {
-      if !is_content_disposition_quoted_pair_char(ch) {
+      if !is_http_link_quoted_pair_char(ch) {
         return Err(HttpLinkParseError::new("invalid Link quoted-string"));
       }
       parsed.push(ch);
       escaped = false;
     } else if ch == '\\' {
       escaped = true;
-    } else if ch == '"' || !is_content_disposition_quoted_text_char(ch) {
+    } else if ch == '"' || !is_http_link_quoted_text_char(ch) {
       return Err(HttpLinkParseError::new("invalid Link quoted-string"));
     } else {
       parsed.push(ch);
@@ -829,6 +828,14 @@ fn parse_http_link_quoted_string(value: &str) -> Result<String, HttpLinkParseErr
     return Err(HttpLinkParseError::new("invalid Link quoted-string"));
   }
   Ok(parsed)
+}
+
+fn is_http_link_quoted_text_char(ch: char) -> bool {
+  matches!(ch, '\t' | ' ' | '!' | '#'..='[' | ']'..='~') || ('\u{80}'..='\u{ff}').contains(&ch)
+}
+
+fn is_http_link_quoted_pair_char(ch: char) -> bool {
+  matches!(ch, '\t' | ' '..='~') || ('\u{80}'..='\u{ff}').contains(&ch)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2476,14 +2483,16 @@ impl HttpResponse {
   pub fn content_disposition(
     &self,
   ) -> Result<Option<HttpContentDisposition>, HttpContentDispositionParseError> {
-    let Some(value) = self.single_header_value(
-      "Content-Disposition",
-      HttpContentDispositionParseError::new("multiple Content-Disposition headers"),
-    )?
-    else {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Content-Disposition"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
       return Ok(None);
-    };
-    HttpContentDisposition::parse(value).map(Some)
+    }
+    HttpContentDisposition::parse_values(values).map(Some)
   }
 
   pub fn content_type(&self) -> Result<Option<HttpContentType>, HttpContentTypeParseError> {
@@ -3560,118 +3569,47 @@ fn parse_accept_encoding_qvalue(qvalue: &str) -> Result<u16, HttpAcceptEncodingP
   })
 }
 
+/// Server `Content-Disposition` response metadata backed by the shared
+/// protocol parser, preserving the server facade accessor surface.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HttpContentDisposition {
-  pub(crate) disposition_type: String,
-  pub(crate) parameters: Vec<(String, String)>,
+  inner: rttp_protocol::content_disposition::ContentDisposition,
 }
 
 impl HttpContentDisposition {
   pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpContentDispositionParseError> {
-    let value = value.as_ref();
-    if value.len() > MAX_CONTENT_DISPOSITION_VALUE_BYTES {
-      return Err(HttpContentDispositionParseError::new(
-        "Content-Disposition header value is too large",
-      ));
-    }
-    if value.bytes().any(|byte| byte.is_ascii_control()) {
-      return Err(HttpContentDispositionParseError::new(
-        "invalid Content-Disposition value",
-      ));
-    }
+    Self::parse_values([value.as_ref()])
+  }
 
-    let mut parts = split_content_disposition_parts(value)?;
-    if parts.is_empty() {
-      return Err(HttpContentDispositionParseError::new(
-        "invalid Content-Disposition type",
-      ));
-    }
-
-    let disposition_type = parts.remove(0).trim().to_ascii_lowercase();
-    if !is_http_token(&disposition_type) {
-      return Err(HttpContentDispositionParseError::new(
-        "invalid Content-Disposition type",
-      ));
-    }
-
-    let mut parameters = Vec::new();
-    for part in parts {
-      let part = part.trim();
-      if part.is_empty() {
-        return Err(HttpContentDispositionParseError::new(
-          "invalid Content-Disposition parameter",
-        ));
-      }
-      let Some((name, value)) = part.split_once('=') else {
-        return Err(HttpContentDispositionParseError::new(
-          "invalid Content-Disposition parameter",
-        ));
-      };
-      let name = name.trim().to_ascii_lowercase();
-      let value = value.trim();
-      if !is_http_token(&name) {
-        return Err(HttpContentDispositionParseError::new(
-          "invalid Content-Disposition parameter name",
-        ));
-      }
-      if parameters
-        .iter()
-        .any(|(known, _): &(String, String)| known.eq_ignore_ascii_case(&name))
-      {
-        return Err(HttpContentDispositionParseError::new(
-          "duplicate Content-Disposition parameter",
-        ));
-      }
-      if parameters.len() >= MAX_CONTENT_DISPOSITION_PARAMETERS {
-        return Err(HttpContentDispositionParseError::new(
-          "too many Content-Disposition parameters",
-        ));
-      }
-
-      let value = parse_content_disposition_parameter_value(value)?;
-      parameters.push((name, value));
-    }
-
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpContentDispositionParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
     Ok(Self {
-      disposition_type,
-      parameters,
+      inner: rttp_protocol::content_disposition::ContentDisposition::parse_values(values)?,
     })
   }
 
   pub fn new(disposition_type: impl AsRef<str>) -> Result<Self, HttpContentDispositionParseError> {
-    let disposition_type = disposition_type.as_ref().trim().to_ascii_lowercase();
-    if disposition_type.len() > MAX_CONTENT_DISPOSITION_VALUE_BYTES {
-      return Err(HttpContentDispositionParseError::new(
-        "Content-Disposition header value is too large",
-      ));
-    }
-    if !is_http_token(&disposition_type) {
-      return Err(HttpContentDispositionParseError::new(
-        "invalid Content-Disposition type",
-      ));
-    }
     Ok(Self {
-      disposition_type,
-      parameters: Vec::new(),
+      inner: rttp_protocol::content_disposition::ContentDisposition::new(disposition_type)?,
     })
   }
 
   pub fn inline() -> Self {
     Self {
-      disposition_type: "inline".to_string(),
-      parameters: Vec::new(),
+      inner: rttp_protocol::content_disposition::ContentDisposition::inline(),
     }
   }
 
   pub fn attachment() -> Self {
     Self {
-      disposition_type: "attachment".to_string(),
-      parameters: Vec::new(),
+      inner: rttp_protocol::content_disposition::ContentDisposition::attachment(),
     }
   }
 
   pub fn with_parameter<N, V>(
-    mut self,
+    self,
     name: N,
     value: V,
   ) -> Result<Self, HttpContentDispositionParseError>
@@ -3679,79 +3617,33 @@ impl HttpContentDisposition {
     N: AsRef<str>,
     V: AsRef<str>,
   {
-    let name = name.as_ref().trim().to_ascii_lowercase();
-    let value = value.as_ref();
-    if !is_http_token(&name) {
-      return Err(HttpContentDispositionParseError::new(
-        "invalid Content-Disposition parameter name",
-      ));
-    }
-    if value.is_empty() || !value.is_ascii() || value.bytes().any(|byte| byte.is_ascii_control()) {
-      return Err(HttpContentDispositionParseError::new(
-        "invalid Content-Disposition parameter value",
-      ));
-    }
-    if self
-      .parameters
-      .iter()
-      .any(|(known, _)| known.eq_ignore_ascii_case(&name))
-    {
-      return Err(HttpContentDispositionParseError::new(
-        "duplicate Content-Disposition parameter",
-      ));
-    }
-    if self.parameters.len() >= MAX_CONTENT_DISPOSITION_PARAMETERS {
-      return Err(HttpContentDispositionParseError::new(
-        "too many Content-Disposition parameters",
-      ));
-    }
-
-    let mut candidate = self.header_value();
-    candidate.push_str("; ");
-    candidate.push_str(&name);
-    candidate.push('=');
-    candidate.push_str(&serialize_content_disposition_parameter_value(value));
-    if candidate.len() > MAX_CONTENT_DISPOSITION_VALUE_BYTES {
-      return Err(HttpContentDispositionParseError::new(
-        "Content-Disposition header value is too large",
-      ));
-    }
-
-    self.parameters.push((name, value.to_string()));
-    Ok(self)
+    Ok(Self {
+      inner: self.inner.with_parameter(name, value)?,
+    })
   }
 
   pub fn disposition_type(&self) -> &str {
-    &self.disposition_type
+    self.inner.disposition_type()
   }
 
   pub fn parameter<S: AsRef<str>>(&self, name: S) -> Option<&str> {
     self
-      .parameters
-      .iter()
-      .find(|(key, _)| key.eq_ignore_ascii_case(name.as_ref()))
-      .map(|(_, value)| value.as_str())
+      .inner
+      .parameter(name)
+      .map(rttp_protocol::content_disposition::ContentDispositionParameter::value)
   }
 
   pub fn parameters(&self) -> Vec<(&str, &str)> {
     self
-      .parameters
+      .inner
+      .parameters()
       .iter()
-      .map(|(name, value)| (name.as_str(), value.as_str()))
+      .map(|parameter| (parameter.name(), parameter.value()))
       .collect()
   }
 
   pub fn header_value(&self) -> String {
-    let mut value = self.disposition_type.clone();
-    for (name, parameter_value) in &self.parameters {
-      value.push_str("; ");
-      value.push_str(name);
-      value.push('=');
-      value.push_str(&serialize_content_disposition_parameter_value(
-        parameter_value,
-      ));
-    }
-    value
+    self.inner.header_value()
   }
 }
 
@@ -3799,151 +3691,6 @@ impl IntoHttpContentDisposition for &String {
   ) -> Result<HttpContentDisposition, HttpContentDispositionParseError> {
     HttpContentDisposition::parse(self)
   }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpContentDispositionParseError {
-  pub(crate) message: String,
-}
-
-impl HttpContentDispositionParseError {
-  pub(crate) fn new<S: AsRef<str>>(message: S) -> Self {
-    Self {
-      message: message.as_ref().to_string(),
-    }
-  }
-}
-
-impl fmt::Display for HttpContentDispositionParseError {
-  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    formatter.write_str(&self.message)
-  }
-}
-
-impl Error for HttpContentDispositionParseError {}
-
-pub(crate) fn split_content_disposition_parts(
-  value: &str,
-) -> Result<Vec<&str>, HttpContentDispositionParseError> {
-  let mut parts = Vec::new();
-  let mut quoted = false;
-  let mut escaped = false;
-  let mut start = 0usize;
-
-  for (index, ch) in value.char_indices() {
-    if escaped {
-      if !is_content_disposition_quoted_pair_char(ch) {
-        return Err(HttpContentDispositionParseError::new(
-          "invalid Content-Disposition quoted-string",
-        ));
-      }
-      escaped = false;
-      continue;
-    }
-
-    match ch {
-      '\\' if quoted => escaped = true,
-      '"' => quoted = !quoted,
-      ';' if !quoted => {
-        parts.push(&value[start..index]);
-        start = index + 1;
-      }
-      _ => {}
-    }
-  }
-
-  if quoted || escaped {
-    return Err(HttpContentDispositionParseError::new(
-      "invalid Content-Disposition quoted-string",
-    ));
-  }
-
-  parts.push(&value[start..]);
-  Ok(parts)
-}
-
-pub(crate) fn parse_content_disposition_parameter_value(
-  value: &str,
-) -> Result<String, HttpContentDispositionParseError> {
-  if value.is_empty() {
-    return Err(HttpContentDispositionParseError::new(
-      "invalid Content-Disposition parameter value",
-    ));
-  }
-  if value.starts_with('"') {
-    parse_content_disposition_quoted_string(value)
-  } else if value.contains('"') || !is_http_token(value) {
-    Err(HttpContentDispositionParseError::new(
-      "invalid Content-Disposition parameter value",
-    ))
-  } else {
-    Ok(value.to_string())
-  }
-}
-
-pub(crate) fn parse_content_disposition_quoted_string(
-  value: &str,
-) -> Result<String, HttpContentDispositionParseError> {
-  if !value.ends_with('"') || value.len() < 2 {
-    return Err(HttpContentDispositionParseError::new(
-      "invalid Content-Disposition quoted-string",
-    ));
-  }
-
-  let inner = &value[1..value.len() - 1];
-  let mut parsed = String::new();
-  let mut escaped = false;
-  for ch in inner.chars() {
-    if escaped {
-      if !is_content_disposition_quoted_pair_char(ch) {
-        return Err(HttpContentDispositionParseError::new(
-          "invalid Content-Disposition quoted-string",
-        ));
-      }
-      parsed.push(ch);
-      escaped = false;
-    } else if ch == '\\' {
-      escaped = true;
-    } else if ch == '"' || !is_content_disposition_quoted_text_char(ch) {
-      return Err(HttpContentDispositionParseError::new(
-        "invalid Content-Disposition quoted-string",
-      ));
-    } else {
-      parsed.push(ch);
-    }
-  }
-
-  if escaped || parsed.is_empty() {
-    return Err(HttpContentDispositionParseError::new(
-      "invalid Content-Disposition quoted-string",
-    ));
-  }
-
-  Ok(parsed)
-}
-
-pub(crate) fn is_content_disposition_quoted_text_char(ch: char) -> bool {
-  matches!(ch, '\t' | ' ' | '!' | '#'..='[' | ']'..='~') || ('\u{80}'..='\u{ff}').contains(&ch)
-}
-
-pub(crate) fn is_content_disposition_quoted_pair_char(ch: char) -> bool {
-  matches!(ch, '\t' | ' '..='~') || ('\u{80}'..='\u{ff}').contains(&ch)
-}
-
-pub(crate) fn serialize_content_disposition_parameter_value(value: &str) -> String {
-  if is_http_token(value) {
-    return value.to_string();
-  }
-
-  let mut quoted = String::from("\"");
-  for ch in value.chars() {
-    if matches!(ch, '\\' | '"') {
-      quoted.push('\\');
-    }
-    quoted.push(ch);
-  }
-  quoted.push('"');
-  quoted
 }
 
 pub trait IntoHttpContentType {

@@ -36,13 +36,15 @@ through `Response::trailers`, `Response::trailer`, and
 ## Bounded Max-Forwards diagnostics
 
 `HttpClient::max_forwards(value)` sets a `Max-Forwards` request header for
-application-selected `TRACE` or `OPTIONS` diagnostics. The helper accepts only
-up to ten ASCII decimal digits that fit in the `u32` range (`0` through
-`4294967295`) and rejects negative, fractional, empty, oversized, and
-overflowing values before a socket is opened. It only validates and emits the
-header: RTTP does not select a diagnostic policy, route through proxies,
-decrement the value, or retry the request. Callers needing an unusual value can
-retain full raw-header control with `header(("Max-Forwards", "..."))`.
+application-selected `TRACE` or `OPTIONS` diagnostics through the shared
+protocol `MaxForwards` type. The helper accepts a singleton `1*DIGIT` hop
+count that fits in the `u32` range (`0` through `4294967295`), trims HTTP OWS,
+and rejects negative, fractional, empty, oversized (over 64 KiB), overflowing,
+duplicate, and control-byte values before a socket is opened. It only
+validates and emits the canonical integer form: RTTP does not select a
+diagnostic policy, route through proxies, decrement the value, or retry the
+request. Callers needing an unusual value can retain full raw-header control
+with `header(("Max-Forwards", "..."))`.
 
 ## Bounded HTTP/1.1 byte ranges
 
@@ -725,17 +727,18 @@ raw-header control with `header(("Save-Data", "..."))`.
 ## Bounded HTTP/1.1 Content-Disposition behavior
 
 `Response::content_disposition()` parses a singleton response
-`Content-Disposition` header into `ContentDisposition` metadata. It returns
-`Ok(None)` when the header is absent and rejects duplicate header fields.
-Present values expose the disposition type, ordered parameters, `filename`,
-and `filename*`; `ContentDisposition::parse(value)` is available when callers
-want to validate a single raw field value directly.
+`Content-Disposition` header into the shared protocol-owned
+`ContentDisposition` metadata type. It returns `Ok(None)` when the header is
+absent and rejects duplicate header fields. Present values expose the
+disposition type, ordered parameters, `filename`, and `filename*`;
+`ContentDisposition::parse(value)` is available when callers want to validate
+a single raw field value directly.
 
 The helper is bounded and validation-oriented. The field value is limited to
-64 KiB, the parameter list is limited to 256 entries, disposition type and
-unquoted parameter values must be valid HTTP tokens, quoted strings must be
-well formed, and `filename*` must be an extended value with valid percent
-encoding. Duplicate parameters, malformed quoted strings, CR/LF injection,
+64 KiB, the parameter list is limited to 256 entries, each parameter value is
+limited to 64 KiB, disposition type and unquoted parameter values must be
+valid HTTP tokens, quoted strings must be well formed, and `filename*` must be
+an extended value with valid percent encoding. Duplicate parameters, malformed quoted strings, CR/LF injection,
 oversized values, and too many parameters make
 `Response::content_disposition()` return an error while leaving the original
 response headers and body available through the ordinary response APIs.
@@ -888,6 +891,7 @@ header-block model.
 | HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and `Expect: 100-continue` | SOCKS handshakes are delegated to the `socks` crate |
 | Fetch Metadata | `sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, `sec_fetch_user`, and `sec_purpose` emit bounded `Sec-Fetch-*`/`Sec-Purpose` request metadata | No browser security policy, automatic header generation, origin validation, navigation policy, request blocking, prefetch execution, or cache behavior |
 | Save-Data | `save_data` emits bounded `Save-Data: on` request metadata | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |
+| Max-Forwards | `max_forwards` emits bounded singleton `Max-Forwards` request metadata through the shared protocol type | No hop decrement, proxy routing, TRACE/OPTIONS selection, retry, or forwarding policy |
 | Preflight request metadata | `origin`, `access_control_request_method`, `access_control_request_headers`, and `access_control_request_private_network` emit bounded `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`, and `Access-Control-Request-Private-Network` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, CORS policy, or Private Network Access policy |
 | Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_content_digest()`, `HttpRequest::want_content_digest()`, `Request::want_repr_digest()`, and `HttpRequest::want_repr_digest()` parse received preference fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |
 | HTTP message signatures | `signature` and `signature_input` emit bounded RFC 9421 request metadata; `Response::signature()` and `signature_input()` parse received fields | No signing, verification, key lookup, covered-component canonicalization, or cryptographic policy |
@@ -908,7 +912,7 @@ header-block model.
 | Connection | `Response::connection`/`Connection::parse` parse bounded HTTP/1 `Connection` tokens, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to keep-alive, `auto_add_connection`, hop-by-hop stripping, or HTTP/2 rejection |
 | Keep-Alive | `Response::keep_alive` parses bounded RFC 2068 `Keep-Alive` fields in wire order with `timeout` delta-seconds and `max` `1*DIGIT` values as checked unsigned integers, preserving unrecognized `name=token` parameters as bounded extension metadata and raw headers on parse failures | No connection lifetime management, connection pooling, keep-alive timers, or HTTP/2 behavior changes |
 | Transfer-Encoding | `Response::transfer_encoding`/`TransferEncoding::parse` parse bounded HTTP/1 `Transfer-Encoding` fields that must be sole `chunked`, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to HTTP/1 framing decoders, `TE`, Content-Length, chunked body decoding policy, or HTTP/2 decode rejection |
-| Content-Disposition | `Response::content_disposition` and `ContentDisposition::parse` parse bounded singleton response `Content-Disposition` metadata into disposition type plus ordered parameters, including preserved `filename` and `filename*` values, while preserving raw headers on parse failures | No automatic download, filesystem path handling, MIME sniffing, redirect behavior, retry/replay, cache behavior, negotiation behavior, or status-policy behavior |
+| Content-Disposition | `Response::content_disposition` and the protocol-owned `ContentDisposition::parse` parse bounded singleton response `Content-Disposition` metadata into disposition type plus ordered parameters, including preserved `filename` and `filename*` values, while preserving raw headers on parse failures | No automatic download, filesystem path handling, MIME sniffing, redirect behavior, retry/replay, cache behavior, negotiation behavior, or status-policy behavior |
 | Vary | `Response::vary` parses bounded response `Vary` fields into wildcard or normalized case-insensitive field-name metadata | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | NEL | `Response::nel` parses the bounded singleton `NEL` field as W3C Network Error Logging policy metadata while preserving raw headers | No network error report sending, policy persistence, Reporting endpoint group configuration, or status-policy behavior |
 | Proxy-Status | `Response::proxy_status` parses bounded RFC 9209 Token/String proxy identifiers with opaque parameters while preserving raw headers on parse failures | No proxy health checks, retries, trailer promotion, or origin-generation policy |
