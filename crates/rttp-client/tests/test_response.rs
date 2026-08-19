@@ -2977,7 +2977,8 @@ fn test_access_control_allow_origin_response_helper_parses_valid_metadata_and_pr
 #[test]
 fn test_access_control_allow_credentials_response_helper_parses_valid_metadata_and_preserves_invalid_raw_headers(
 ) {
-  for value in ["true", "TRUE"] {
+  {
+    let value = "true";
     let raw = format!(
       "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Credentials: {value}\r\nContent-Length: 0\r\n\r\n"
     );
@@ -3006,6 +3007,8 @@ fn test_access_control_allow_credentials_response_helper_parses_valid_metadata_a
   );
 
   for value in [
+    "TRUE".to_string(),
+    "True".to_string(),
     "false".to_string(),
     "true, true".to_string(),
     "x".repeat(64 * 1024 + 1),

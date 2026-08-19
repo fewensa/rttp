@@ -4,7 +4,7 @@ use rttp_protocol::access_control_allow_credentials::{
 
 #[test]
 fn access_control_allow_credentials_parses_the_true_token() {
-  for value in ["true", "TRUE", "True", " true ", "\ttrue"] {
+  for value in ["true", " true ", "\ttrue"] {
     let credentials =
       AccessControlAllowCredentials::parse(value).expect("the true token should parse");
     assert_eq!("true", credentials.header_value());
@@ -18,6 +18,8 @@ fn access_control_allow_credentials_rejects_duplicate_and_malformed_values() {
     vec![""],
     vec!["  "],
     vec!["false"],
+    vec!["TRUE"],
+    vec!["True"],
     vec!["true, true"],
     vec!["true\r\n"],
     vec!["true\n"],

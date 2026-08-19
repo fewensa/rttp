@@ -533,7 +533,7 @@ fn access_control_allow_credentials_helpers_validate_replace_and_preserve_raw_me
   let response = HttpResponse::ok([])
     .header("Access-Control-Allow-Credentials", "false")
     .header("access-control-allow-credentials", "false")
-    .with_access_control_allow_credentials("TRUE")
+    .with_access_control_allow_credentials("true")
     .expect("Access-Control-Allow-Credentials should be accepted");
 
   assert_eq!(
@@ -564,7 +564,7 @@ fn access_control_allow_credentials_helpers_validate_replace_and_preserve_raw_me
       .access_control_allow_credentials()
       .expect("absent Access-Control-Allow-Credentials should parse")
   );
-  for value in ["true", "TRUE", " true "] {
+  for value in ["true", " true "] {
     assert_eq!(
       "true",
       HttpResponse::ok([])
@@ -576,6 +576,9 @@ fn access_control_allow_credentials_helpers_validate_replace_and_preserve_raw_me
         .header_value()
     );
   }
+  assert!(HttpResponse::ok([])
+    .with_access_control_allow_credentials("TRUE")
+    .is_err());
 
   let duplicate = HttpResponse::ok([])
     .header("Access-Control-Allow-Credentials", "true")

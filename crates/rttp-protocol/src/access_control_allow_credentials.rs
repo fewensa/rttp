@@ -25,7 +25,8 @@ impl AccessControlAllowCredentials {
     I: IntoIterator<Item = &'a str>,
   {
     let value = parse_singleton(values)?;
-    if value.eq_ignore_ascii_case("true") {
+    // The Fetch CORS grammar requires the case-sensitive token `%s"true"`.
+    if value == "true" {
       Ok(Self::True)
     } else {
       Err(invalid_value())
