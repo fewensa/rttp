@@ -1,14 +1,15 @@
 use rttp::server::{
-  HttpAcceptCh, HttpAccessControlRequestMethod, HttpAccessControlRequestPrivateNetwork,
-  HttpConditionalMetadata, HttpContentDpr, HttpContentDprParseError, HttpContentLocation,
-  HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
-  HttpCrossOriginEmbedderPolicy, HttpCrossOriginEmbedderPolicyReportOnly,
-  HttpCrossOriginOpenerPolicy, HttpCrossOriginResourcePolicy, HttpDeprecation,
-  HttpDeprecationParseError, HttpEntityTag, HttpMementoDatetime, HttpMementoDatetimeParseError,
-  HttpNel, HttpProxyStatus, HttpProxyStatusParseError, HttpResponse, HttpSaveData, HttpSignature,
-  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpSunsetParseError, HttpUpgrade, HttpUpgradeParseError,
+  HttpAcceptCh, HttpAcceptLanguageParseError, HttpAcceptLanguages, HttpAccessControlRequestMethod,
+  HttpAccessControlRequestPrivateNetwork, HttpConditionalMetadata, HttpContentDpr,
+  HttpContentDprParseError, HttpContentLocation, HttpContentLocationParseError, HttpContentRange,
+  HttpContentRangeParseError, HttpCrossOriginEmbedderPolicy,
+  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
+  HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpEntityTag,
+  HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNel, HttpProxyStatus,
+  HttpProxyStatusParseError, HttpResponse, HttpSaveData, HttpSignature, HttpSignatureInput,
+  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
+  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
+  HttpSunsetParseError, HttpUpgrade, HttpUpgradeParseError,
 };
 use std::io::Write;
 use std::net::SocketAddr;
@@ -520,6 +521,10 @@ fn compatibility_facade_roundtrips_representation_metadata_matrix() {
 #[test]
 fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let accept_ch: HttpAcceptCh = HttpAcceptCh::parse("Sec-CH-UA").expect("Accept-CH should parse");
+  let accept_languages: HttpAcceptLanguages =
+    HttpAcceptLanguages::parse("en-US, fr-CA; q=0.8").expect("Accept-Language should parse");
+  let _: HttpAcceptLanguageParseError = HttpAcceptLanguages::parse("en; q=1.001")
+    .expect_err("malformed Accept-Language should be rejected");
   let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("revision-42"));
   let response = HttpResponse::ok("").with_etag(HttpEntityTag::weak("revision-42"));
   let request_method: HttpAccessControlRequestMethod =
@@ -567,6 +572,9 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpContentRange::parse("bytes */*").expect_err("invalid Content-Range should be rejected");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA"]);
+  assert_eq!(accept_languages.ranges(), ["en-US", "fr-CA"]);
+  assert_eq!(accept_languages.qualities(), [None, Some("0.8")]);
+  assert_eq!(accept_languages.header_value(), "en-US, fr-CA; q=0.8");
   assert_eq!(request_method.method(), "PATCH");
   assert_eq!(request_method.header_value(), "PATCH");
   assert_eq!(private_network.header_value(), "true");

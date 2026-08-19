@@ -1,5 +1,6 @@
 use rttp_server::server::{
-  HttpAcceptCh, HttpAccessControlAllowCredentials, HttpAccessControlAllowCredentialsParseError,
+  HttpAcceptCh, HttpAcceptLanguageParseError, HttpAcceptLanguages,
+  HttpAccessControlAllowCredentials, HttpAccessControlAllowCredentialsParseError,
   HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods, HttpAccessControlRequestHeaders,
   HttpAccessControlRequestHeadersParseError, HttpAccessControlRequestMethod,
   HttpAccessControlRequestMethodParseError, HttpAccessControlRequestPrivateNetwork,
@@ -21,6 +22,10 @@ use rttp_server::server::{
 #[test]
 fn server_facade_exports_representative_bounded_metadata_types() {
   let accept_ch: HttpAcceptCh = HttpAcceptCh::parse("Sec-CH-UA").expect("Accept-CH should parse");
+  let accept_languages: HttpAcceptLanguages =
+    HttpAcceptLanguages::parse("en-US, fr-CA; q=0.8").expect("Accept-Language should parse");
+  let _: HttpAcceptLanguageParseError = HttpAcceptLanguages::parse("en; q=1.001")
+    .expect_err("malformed Accept-Language should be rejected");
   let allow_credentials: HttpAccessControlAllowCredentials =
     HttpAccessControlAllowCredentials::parse("true")
       .expect("Access-Control-Allow-Credentials should parse");
@@ -120,6 +125,9 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let _: HttpUpgradeParseError = HttpUpgrade::parse("").expect_err("empty Upgrade should fail");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA"]);
+  assert_eq!(accept_languages.ranges(), ["en-US", "fr-CA"]);
+  assert_eq!(accept_languages.qualities(), [None, Some("0.8")]);
+  assert_eq!(accept_languages.header_value(), "en-US, fr-CA; q=0.8");
   assert_eq!(allow_credentials.header_value(), "true");
   assert_eq!(allow_methods.methods(), ["GET"]);
   assert_eq!(allow_headers.field_names(), ["x-request-id"]);
@@ -540,6 +548,40 @@ fn request_facade_parses_want_repr_digest_metadata() {
   assert_eq!(digest.entries()[1].preference(), 3);
   assert_eq!(digest.entries()[2].algorithm(), "unixsum");
   assert_eq!(digest.entries()[2].preference(), 0);
+}
+
+#[test]
+fn request_facade_parses_accept_language_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /localized HTTP/1.1\r\nHost: example.test\r\nAccept-Language: en-US, fr-CA; q=0.8\r\nAccept-Language: *;q=0\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let languages = request
+    .accept_language()
+    .expect("Accept-Language should parse")
+    .expect("Accept-Language should be present");
+
+  assert_eq!(languages.ranges(), ["en-US", "fr-CA", "*"]);
+  assert_eq!(languages.qualities(), [None, Some("0.8"), Some("0")]);
+
+  let absent = HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert!(absent
+    .accept_language()
+    .expect("missing Accept-Language should be accepted")
+    .is_none());
+}
+
+#[test]
+fn request_facade_rejects_malformed_accept_language_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /localized HTTP/1.1\r\nHost: example.test\r\nAccept-Language: en; q=1.001\r\n\r\n",
+  )
+  .expect("malformed metadata should not reject raw request parsing");
+
+  assert_eq!(request.header("Accept-Language"), Some("en; q=1.001"));
+  assert!(request.accept_language().is_err());
 }
 
 #[test]

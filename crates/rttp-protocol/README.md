@@ -24,6 +24,24 @@ as invalid. A present header set that yields no unit still fails as invalid.
 The server facade aliases this type as `HttpAcceptRanges` and reuses
 `from_units`/`none` for its declaration helpers.
 
+## Accept-Language
+
+`accept_language` parses one or more RFC 9110 `Accept-Language` field values
+into an ordered list of language ranges with optional q-values. Each field
+value is bounded to 64 KiB, and the cumulative range count across all supplied
+fields is bounded to 32 ranges. Items are split on commas with SP and HTAB
+accepted only as optional whitespace; empty members and malformed ranges are
+errors. A range is `*` or a primary subtag of 1-8 ASCII letters followed by
+any number of 1-8 character ASCII alphanumeric subtags separated by hyphens.
+Each range may carry one `q` parameter whose value is `0` or `1`, optionally
+with up to three fractional digits and with a `1` integer part requiring an
+all-zero fraction. Case-insensitive duplicate ranges are rejected while the
+first-seen spelling is retained. `from_ranges` validates supplied ranges for
+client construction and `header_value()` re-emits them normalized as
+`range; q=quality`. This parser reports declared metadata only; it does not
+perform locale matching, fallback selection, translation lookup, routing, or
+automatic response choice.
+
 ## Age
 
 `age` parses a singleton HTTP `Age` field as non-negative `1*DIGIT`
