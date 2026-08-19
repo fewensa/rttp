@@ -21,6 +21,7 @@
 
 pub use self::response::*;
 
+pub use rttp_protocol::accept_ranges::{AcceptRanges, AcceptRangesParseError};
 pub use rttp_protocol::access_control_allow_headers::{
   AccessControlAllowHeaders, AccessControlAllowHeadersParseError,
 };
@@ -36,6 +37,7 @@ pub use rttp_protocol::access_control_expose_headers::{
 pub use rttp_protocol::access_control_max_age::{
   AccessControlMaxAge, AccessControlMaxAgeParseError,
 };
+pub use rttp_protocol::age::{Age, AgeParseError};
 pub use rttp_protocol::clear_site_data::{
   ClearSiteData as HttpClearSiteData, ClearSiteDataDirective as HttpClearSiteDataDirective,
   ClearSiteDataParseError as HttpClearSiteDataParseError,
@@ -43,6 +45,7 @@ pub use rttp_protocol::clear_site_data::{
 pub use rttp_protocol::client_hints::{
   AcceptCh, AcceptChParseError, CriticalCh, CriticalChParseError,
 };
+pub use rttp_protocol::content_length::HttpContentLength;
 pub use rttp_protocol::cookie::{
   HttpCookieParseError, HttpSetCookie, HttpSetCookieAttribute, HttpSetCookies,
 };
@@ -69,6 +72,7 @@ pub use rttp_protocol::digest::{
   ContentDigest, ContentDigestEntry, Digest, DigestEntry, DigestParseError, ReprDigest,
   ReprDigestEntry,
 };
+pub use rttp_protocol::keep_alive::{KeepAlive, KeepAliveExtension, KeepAliveParseError};
 pub use rttp_protocol::link::{LinkParameter, LinkParseError, LinkValue, LinkValues};
 pub use rttp_protocol::location::{Location, LocationParseError};
 pub use rttp_protocol::no_vary_search::{
@@ -79,6 +83,10 @@ pub use rttp_protocol::prefer::{
   PreferenceParameter,
 };
 pub use rttp_protocol::priority::{Priority, PriorityExtension, PriorityParseError};
+pub use rttp_protocol::proxy_authenticate::{
+  ProxyAuthenticate, ProxyAuthenticateChallenge, ProxyAuthenticateParameter,
+  ProxyAuthenticateParseError,
+};
 pub use rttp_protocol::proxy_authentication_info::{
   ProxyAuthenticationInfo, ProxyAuthenticationInfoParameter, ProxyAuthenticationInfoParseError,
 };

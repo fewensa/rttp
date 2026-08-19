@@ -1,10 +1,11 @@
 use rttp::server::{
-  HttpAcceptCh, HttpConditionalMetadata, HttpContentLocation, HttpContentLocationParseError,
-  HttpCrossOriginEmbedderPolicy, HttpCrossOriginEmbedderPolicyReportOnly,
-  HttpCrossOriginOpenerPolicy, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpResponse,
-  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpSunsetParseError,
+  HttpAcceptCh, HttpAccessControlRequestPrivateNetwork, HttpConditionalMetadata,
+  HttpContentLocation, HttpContentLocationParseError, HttpCrossOriginEmbedderPolicy,
+  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
+  HttpCrossOriginResourcePolicy, HttpEntityTag, HttpResponse, HttpSignature, HttpSignatureInput,
+  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
+  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
+  HttpSunsetParseError,
 };
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -20,6 +21,8 @@ fn compatibility_facade_exports_client_metadata_types() {
       .expect("Accept-Patch should parse");
   let accept_post: rttp::AcceptPost =
     rttp_client::response::AcceptPost::parse("application/json").expect("Accept-Post should parse");
+  let accept_ranges: rttp::AcceptRanges =
+    rttp_client::response::AcceptRanges::parse("bytes, pages").expect("Accept-Ranges should parse");
   let content_location: rttp::ContentLocation =
     rttp_client::response::ContentLocation::parse("../representations/current.json")
       .expect("Content-Location should parse");
@@ -74,6 +77,8 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
   assert_eq!(accept_patch.media_types().len(), 1);
   assert_eq!(accept_post.media_types().len(), 1);
+  assert_eq!(accept_ranges.units(), ["bytes", "pages"]);
+  assert_eq!(accept_ranges.header_value(), "bytes, pages");
   assert_eq!(
     content_location.header_value(),
     "../representations/current.json"
@@ -100,9 +105,21 @@ fn compatibility_facade_exports_client_metadata_types() {
 }
 
 #[test]
+#[cfg(feature = "client")]
+fn compatibility_facade_exports_content_length_metadata_type() {
+  let content_length: rttp::HttpContentLength = rttp::HttpContentLength::new(2);
+
+  assert_eq!(2, content_length.len());
+  assert_eq!("2", content_length.header_value());
+}
+
+#[test]
 fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let accept_ch: HttpAcceptCh = HttpAcceptCh::parse("Sec-CH-UA").expect("Accept-CH should parse");
   let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("revision-42"));
+  let private_network: HttpAccessControlRequestPrivateNetwork =
+    HttpAccessControlRequestPrivateNetwork::parse("true")
+      .expect("Access-Control-Request-Private-Network should parse");
   let policy: HttpCrossOriginResourcePolicy = HttpCrossOriginResourcePolicy::parse("same-origin")
     .expect("Cross-Origin-Resource-Policy should parse");
   let embedder_policy: HttpCrossOriginEmbedderPolicy =
@@ -121,6 +138,7 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     .expect_err("invalid Content-Location should be rejected");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA"]);
+  assert_eq!(private_network.header_value(), "true");
   assert_eq!(
     content_location.header_value(),
     "../representations/current.json"

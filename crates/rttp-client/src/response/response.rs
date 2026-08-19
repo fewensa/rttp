@@ -3,6 +3,7 @@ use std::fmt;
 use std::time::SystemTime;
 
 use httpdate::parse_http_date;
+use rttp_protocol::content_length::HttpContentLength;
 use url::Url;
 
 use crate::error;
@@ -11,8 +12,10 @@ use crate::response::AltSvc;
 use crate::response::Connection;
 use crate::response::ContentDigest;
 use crate::response::Digest;
+use crate::response::KeepAlive;
 use crate::response::NoVarySearch;
 use crate::response::Priority;
+use crate::response::ProxyAuthenticate;
 use crate::response::ProxyAuthenticationInfo;
 use crate::response::ReprDigest;
 use crate::response::ServerTiming;
@@ -23,11 +26,13 @@ use crate::response::TransferEncoding;
 use crate::response::Warning;
 use crate::response::WwwAuthenticate;
 use crate::types::{Cookie, Header, RoUrl, StatusCode};
+use rttp_protocol::accept_ranges::AcceptRanges;
 use rttp_protocol::access_control_allow_headers::AccessControlAllowHeaders;
 use rttp_protocol::access_control_allow_methods::AccessControlAllowMethods;
 use rttp_protocol::access_control_allow_origin::AccessControlAllowOrigin;
 use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::access_control_max_age::AccessControlMaxAge;
+use rttp_protocol::age::Age;
 use rttp_protocol::allow as protocol_allow;
 use rttp_protocol::clear_site_data::ClearSiteData;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
@@ -50,8 +55,6 @@ use rttp_protocol::x_frame_options::XFrameOptions;
 
 const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
-const MAX_ACCEPT_RANGES_VALUE_BYTES: usize = 64 * 1024;
-const MAX_ACCEPT_RANGE_UNITS: usize = 256;
 const MAX_ACCEPT_MEDIA_TYPES: usize = 256;
 const MAX_DATE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_RETRY_AFTER_VALUE_BYTES: usize = 64 * 1024;
@@ -72,6 +75,7 @@ const MAX_REPORTING_ENDPOINTS: usize = 256;
 pub struct Response {
   raw: RawResponse,
   informational_responses: Vec<InformationalResponse>,
+  content_length: Option<HttpContentLength>,
 }
 
 impl Response {
@@ -79,6 +83,7 @@ impl Response {
     Ok(Self {
       raw: RawResponse::new(url, binary)?,
       informational_responses: Vec::new(),
+      content_length: None,
     })
   }
 
@@ -101,6 +106,7 @@ impl Response {
       binary,
       trailers,
       Vec::new(),
+      None,
       max_body_bytes,
     )
   }
@@ -116,6 +122,7 @@ impl Response {
       binary,
       trailers,
       informational_responses,
+      None,
       crate::config::DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES,
     )
   }
@@ -125,11 +132,13 @@ impl Response {
     binary: Vec<u8>,
     trailers: Vec<Header>,
     informational_responses: Vec<InformationalResponse>,
+    content_length: Option<HttpContentLength>,
     max_body_bytes: usize,
   ) -> error::Result<Self> {
     Ok(Self {
       raw: RawResponse::with_trailers_and_limit(url, binary, trailers, max_body_bytes)?,
       informational_responses,
+      content_length,
     })
   }
 }
@@ -296,6 +305,10 @@ impl Response {
     self.raw.body_get()
   }
 
+  pub fn content_length(&self) -> Option<HttpContentLength> {
+    self.content_length
+  }
+
   pub fn binary(&self) -> &[u8] {
     self.raw.binary_get()
   }
@@ -353,11 +366,15 @@ impl Response {
     }
   }
 
+  /// Parses bounded `Age` response metadata without applying freshness or cache policy.
   pub fn age(&self) -> error::Result<Option<u64>> {
-    self
-      .header_value("age")
-      .map(|value| parse_age_delta_seconds(value).map(Some))
-      .unwrap_or(Ok(None))
+    let values = self.header_values("age");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Age::parse_values(values.into_iter().map(String::as_str))
+      .map(|age| Some(age.seconds()))
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   pub fn expires(&self) -> error::Result<Option<SystemTime>> {
@@ -402,7 +419,9 @@ impl Response {
     if values.is_empty() {
       return Ok(None);
     }
-    AcceptRanges::parse_values(values.into_iter().map(String::as_str)).map(Some)
+    AcceptRanges::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   /// Parses `Accept-Patch` media-type metadata without selecting a request
@@ -669,6 +688,18 @@ impl Response {
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
+  /// Parses all `Proxy-Authenticate` fields as bounded proxy authentication
+  /// challenge metadata without selecting a challenge or generating credentials.
+  pub fn proxy_authenticate(&self) -> error::Result<Option<ProxyAuthenticate>> {
+    let values = self.header_values("proxy-authenticate");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    ProxyAuthenticate::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
   /// Parses all `Proxy-Authentication-Info` fields as bounded auth-param
   /// metadata without verifying `rspauth` or generating `Proxy-Authorization`.
   pub fn proxy_authentication_info(&self) -> error::Result<Option<ProxyAuthenticationInfo>> {
@@ -774,6 +805,19 @@ impl Response {
       return Ok(None);
     }
     Warning::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses all `Keep-Alive` fields as bounded RFC 2068 response metadata.
+  /// This does not change connection lifetime, connection pooling, or
+  /// HTTP/2 behavior.
+  pub fn keep_alive(&self) -> error::Result<Option<KeepAlive>> {
+    let values = self.header_values("keep-alive");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    KeepAlive::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
@@ -1033,11 +1077,6 @@ impl Allow {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AcceptRanges {
-  units: Vec<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AcceptPatch {
   media_types: Vec<ContentType>,
 }
@@ -1111,67 +1150,6 @@ where
     return Err(error::bad_response(format!("Invalid {header} media type")));
   }
   Ok(media_types)
-}
-
-impl AcceptRanges {
-  pub fn parse(value: impl AsRef<str>) -> error::Result<Self> {
-    Self::parse_values([value.as_ref()])
-  }
-
-  fn parse_values<'a, I>(values: I) -> error::Result<Self>
-  where
-    I: IntoIterator<Item = &'a str>,
-  {
-    let mut units = Vec::new();
-    let mut seen = HashSet::new();
-
-    for value in values {
-      if value.len() > MAX_ACCEPT_RANGES_VALUE_BYTES {
-        return Err(error::bad_response(
-          "Accept-Ranges header value is too large",
-        ));
-      }
-
-      for unit in value.split(',') {
-        let unit = unit.trim();
-        if unit.is_empty() || !is_token(unit) {
-          return Err(error::bad_response("Invalid Accept-Ranges range-unit"));
-        }
-        if units.len() >= MAX_ACCEPT_RANGE_UNITS {
-          return Err(error::bad_response("Too many Accept-Ranges range-units"));
-        }
-
-        let normalized = unit.to_ascii_lowercase();
-        if !seen.insert(normalized.clone()) {
-          return Err(error::bad_response("Duplicate Accept-Ranges range-unit"));
-        }
-        units.push(normalized);
-      }
-    }
-
-    if units.is_empty() {
-      return Err(error::bad_response("Invalid Accept-Ranges range-unit"));
-    }
-    if units.iter().any(|unit| unit == "none") && units.len() != 1 {
-      return Err(error::bad_response(
-        "Accept-Ranges none cannot be combined with range-units",
-      ));
-    }
-
-    Ok(Self { units })
-  }
-
-  pub fn units(&self) -> Vec<&str> {
-    self.units.iter().map(String::as_str).collect()
-  }
-
-  pub fn is_none(&self) -> bool {
-    self.units.as_slice() == ["none"]
-  }
-
-  pub fn accepts_bytes(&self) -> bool {
-    self.units.iter().any(|unit| unit == "bytes")
-  }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2391,15 +2369,6 @@ fn parse_delta_seconds(
   value
     .parse::<u64>()
     .map_err(|_| error::bad_response(format!("Invalid Cache-Control {name} delta-seconds")))
-}
-
-fn parse_age_delta_seconds(value: &str) -> error::Result<u64> {
-  if value.is_empty() || !value.chars().all(|ch| ch.is_ascii_digit()) {
-    return Err(error::bad_response("Invalid Age delta-seconds"));
-  }
-  value
-    .parse::<u64>()
-    .map_err(|_| error::bad_response("Invalid Age delta-seconds"))
 }
 
 fn split_field_names(value: &str) -> Vec<String> {
