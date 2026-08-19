@@ -723,8 +723,10 @@ impl HttpClient {
     )
   }
 
-  /// Append a validated `TE` transfer coding. This declares request metadata
-  /// only; it does not enable a transfer-coding engine.
+  /// Append validated `TE` transfer codings. A single call may carry one
+  /// coding or several comma-separated codings, and a coding may include an
+  /// inline `;q=` value. This declares request metadata only; it does not
+  /// enable a transfer-coding engine.
   pub fn te<S: AsRef<str>>(&mut self, coding: S) -> error::Result<&mut Self> {
     self.te_member(coding.as_ref(), None)
   }

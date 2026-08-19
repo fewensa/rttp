@@ -988,6 +988,48 @@ fn te_helpers_emit_validated_codings_and_trailers() {
 }
 
 #[test]
+fn te_helpers_accept_multiple_codings_and_inline_qvalues_in_one_call() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .te("gzip;q=0.5")
+      .expect("inline q-value should be accepted")
+      .te("deflate, br")
+      .expect("comma-separated codings should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("gzip;q=0.5, deflate, br"),
+    header_value(&request, "TE")
+  );
+  assert_eq!(Some("Close, TE"), header_value(&request, "Connection"));
+}
+
+#[test]
+fn te_helpers_reject_duplicate_codings_within_one_call_before_connecting() {
+  for value in ["gzip, GZIP", "gzip, gzip;q=0.5"] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .te(value)
+        .expect_err("duplicate codings in one call should be rejected");
+
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "duplicate TE input should not open a socket"
+    );
+  }
+}
+
+#[test]
 fn te_helpers_reject_invalid_members_before_connecting() {
   let request = capture_optional_request(|base_url| {
     let mut client = client();
