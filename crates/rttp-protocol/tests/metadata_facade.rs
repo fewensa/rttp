@@ -68,7 +68,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_dest.header_value(), "document");
   assert_eq!(fetch_user.header_value(), "?1");
   assert_eq!(from.header_value(), "Ops Team <ops@example.test>");
-  assert_eq!(keep_alive.timeout(), 5);
+  assert_eq!(keep_alive.timeout(), Some(5));
   assert_eq!(keep_alive.max(), Some(100));
   assert_eq!(keep_alive.header_value(), "timeout=5, max=100");
   assert_eq!(origin.header_value(), "https://example.test");

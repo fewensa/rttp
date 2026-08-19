@@ -1416,7 +1416,7 @@ fn test_keep_alive_response_helper_parses_combined_fields_and_retains_raw_header
     .expect("valid Keep-Alive should parse")
     .expect("Keep-Alive should be present");
 
-  assert_eq!(5, keep_alive.timeout());
+  assert_eq!(Some(5), keep_alive.timeout());
   assert_eq!(Some(100), keep_alive.max());
   assert_eq!(
     response.header_values("Keep-Alive"),
@@ -1438,13 +1438,11 @@ fn test_keep_alive_response_helper_returns_none_when_absent() {
 }
 
 #[test]
-fn test_keep_alive_rejects_malformed_duplicate_unknown_and_bounds_without_hiding_headers() {
+fn test_keep_alive_rejects_malformed_duplicate_and_bounds_without_hiding_headers() {
   for value in [
     "timeout=abc",
     "timeout=5, timeout=6",
     "timeout=5, max=100, max=200",
-    "max=100",
-    "keep=alive",
     "timeout=18446744073709551616",
     "",
   ] {

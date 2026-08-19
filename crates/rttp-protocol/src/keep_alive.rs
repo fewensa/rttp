@@ -6,11 +6,15 @@
 //! HTTP/2 behavior. Unparsable input is an error; this parser never fails
 //! open.
 //!
+//! `timeout` and `max` are the recognized RFC 2068 parameters and are both
+//! optional. Unrecognized `name=token` parameters are preserved as bounded
+//! extension metadata so that interoperable fields never fail to parse.
+//!
 //! ```
 //! use rttp_protocol::keep_alive::KeepAlive;
 //!
 //! let keep_alive = KeepAlive::parse("timeout=5, max=100").expect("valid Keep-Alive");
-//! assert_eq!(keep_alive.timeout(), 5);
+//! assert_eq!(keep_alive.timeout(), Some(5));
 //! assert_eq!(keep_alive.max(), Some(100));
 //! ```
 
@@ -25,10 +29,21 @@ pub const MAX_KEEP_ALIVE_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_KEEP_ALIVE_ITEMS: usize = 256;
 
 /// Parsed, bounded `Keep-Alive` response metadata.
+///
+/// `timeout` and `max` are optional; unrecognized parameters are preserved as
+/// [`KeepAliveExtension`] entries.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KeepAlive {
-  timeout: u64,
+  timeout: Option<u64>,
   max: Option<u64>,
+  extensions: Vec<KeepAliveExtension>,
+}
+
+/// A single unrecognized RFC 2068 `Keep-Alive` extension parameter.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct KeepAliveExtension {
+  name: String,
+  value: String,
 }
 
 /// An error returned when `Keep-Alive` metadata is malformed or exceeds bounds.
@@ -64,6 +79,7 @@ impl KeepAlive {
   {
     let mut timeout = None;
     let mut max = None;
+    let mut extensions = Vec::new();
     let mut items = 0usize;
     for value in values {
       if value.len() > MAX_KEEP_ALIVE_VALUE_BYTES {
@@ -82,15 +98,15 @@ impl KeepAlive {
           return Err(KeepAliveParseError::new("too many Keep-Alive parameters"));
         }
         items += 1;
-        let name = parse_name(value, &mut position)?;
+        let name = parse_token(value, &mut position)?;
         skip_ows(bytes, &mut position);
         if bytes.get(position) != Some(&b'=') {
           return Err(invalid_value());
         }
         position += 1;
         skip_ows(bytes, &mut position);
-        let parsed = parse_delta_seconds(value, &mut position)?;
         if name.eq_ignore_ascii_case("timeout") {
+          let parsed = parse_delta_seconds(value, &mut position)?;
           if timeout.is_some() {
             return Err(KeepAliveParseError::new(
               "duplicate Keep-Alive timeout parameter",
@@ -98,6 +114,7 @@ impl KeepAlive {
           }
           timeout = Some(parsed);
         } else if name.eq_ignore_ascii_case("max") {
+          let parsed = parse_delta_seconds(value, &mut position)?;
           if max.is_some() {
             return Err(KeepAliveParseError::new(
               "duplicate Keep-Alive max parameter",
@@ -105,7 +122,10 @@ impl KeepAlive {
           }
           max = Some(parsed);
         } else {
-          return Err(invalid_value());
+          extensions.push(KeepAliveExtension {
+            name: name.to_string(),
+            value: parse_token(value, &mut position)?.to_string(),
+          });
         }
         skip_ows(bytes, &mut position);
         if position == bytes.len() {
@@ -121,13 +141,17 @@ impl KeepAlive {
         }
       }
     }
-    let Some(timeout) = timeout else {
+    if items == 0 {
       return Err(invalid_value());
-    };
-    Ok(KeepAlive { timeout, max })
+    }
+    Ok(KeepAlive {
+      timeout,
+      max,
+      extensions,
+    })
   }
 
-  pub fn timeout(&self) -> u64 {
+  pub fn timeout(&self) -> Option<u64> {
     self.timeout
   }
 
@@ -135,15 +159,38 @@ impl KeepAlive {
     self.max
   }
 
+  pub fn extensions(&self) -> &[KeepAliveExtension] {
+    &self.extensions
+  }
+
   pub fn header_value(&self) -> String {
-    match self.max {
-      Some(max) => format!("timeout={}, max={}", self.timeout, max),
-      None => format!("timeout={}", self.timeout),
+    let mut members = Vec::new();
+    if let Some(timeout) = self.timeout {
+      members.push(format!("timeout={timeout}"));
     }
+    if let Some(max) = self.max {
+      members.push(format!("max={max}"));
+    }
+    members.extend(self.extensions.iter().map(KeepAliveExtension::header_value));
+    members.join(", ")
   }
 }
 
-fn parse_name<'a>(value: &'a str, position: &mut usize) -> Result<&'a str, KeepAliveParseError> {
+impl KeepAliveExtension {
+  pub fn name(&self) -> &str {
+    &self.name
+  }
+
+  pub fn value(&self) -> &str {
+    &self.value
+  }
+
+  fn header_value(&self) -> String {
+    format!("{}={}", self.name, self.value)
+  }
+}
+
+fn parse_token<'a>(value: &'a str, position: &mut usize) -> Result<&'a str, KeepAliveParseError> {
   let bytes = value.as_bytes();
   let start = *position;
   while bytes

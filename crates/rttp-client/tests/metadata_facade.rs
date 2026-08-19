@@ -59,7 +59,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(priority.urgency(), Some(1));
   assert_eq!(server_timing.metrics().len(), 1);
   assert_eq!(warning.items()[0].code(), 110);
-  assert_eq!(keep_alive.timeout(), 5);
+  assert_eq!(keep_alive.timeout(), Some(5));
   assert_eq!(keep_alive.max(), Some(100));
   assert_eq!(trailer.field_names(), ["x-trace"]);
   assert_eq!(alt_svc.alternatives().len(), 1);

@@ -588,11 +588,12 @@ response acceptance.
 ### Bounded Keep-Alive response metadata
 
 `Response::keep_alive()` parses all received `Keep-Alive` fields in wire order
-into bounded RFC 2068 `KeepAlive` metadata. The required `timeout` delta-seconds
-and the optional `max` `1*DIGIT` value are parsed as checked unsigned integers;
-unknown parameters, duplicate parameters, malformed values, overflow, oversized
-values, and excessive elements return an error while the raw response headers
-remain available.
+into bounded RFC 2068 `KeepAlive` metadata. The optional `timeout` delta-seconds
+and optional `max` `1*DIGIT` values are parsed as checked unsigned integers;
+unrecognized `name=token` parameters are preserved as bounded extension
+metadata. Duplicate recognized parameters, malformed values, overflow,
+oversized values, and excessive elements return an error while the raw response
+headers remain available.
 
 These helpers expose Keep-Alive as metadata only. RTTP does not change
 connection lifetime, connection pooling, keep-alive timers, or HTTP/2 behavior.
