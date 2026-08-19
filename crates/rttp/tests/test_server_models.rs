@@ -9,9 +9,9 @@ use rttp::server::{
   HttpCriticalCh, HttpDeprecation, HttpEntityTag, HttpExpectations, HttpHost, HttpIfNoneMatch,
   HttpIfRange, HttpIfRangeRequestOutcome, HttpLinkValues, HttpMementoDatetime, HttpNel,
   HttpPermissionsPolicy, HttpProxyStatus, HttpProxyStatusBareItem, HttpReferrerPolicy,
-  HttpReportingEndpoints, HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl,
-  HttpRequestTe, HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings,
-  HttpRetryAfter, HttpServerTiming, HttpVary,
+  HttpReportingEndpoints, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
+  HttpRequestCacheControl, HttpRequestTe, HttpResponse, HttpResponseCacheControl,
+  HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming, HttpVary,
 };
 
 #[test]
@@ -319,6 +319,7 @@ fn request_representation_metadata_parses_without_applying_policy() {
     "content-encoding: zstd\r\n",
     "Content-Language: fr-CA, es-419\r\n",
     "content-language: en\r\n",
+    "Accept-Charset: utf-8\r\n",
     "Accept-Encoding: gzip\r\n",
     "Accept-Language: en\r\n",
     "Content-Length: 4\r\n",
@@ -345,6 +346,11 @@ fn request_representation_metadata_parses_without_applying_policy() {
     .expect("Content-Language should be present");
   assert_eq!(vec!["fr-CA", "es-419", "en"], languages.languages());
 
+  let accept_charset = request
+    .accept_charset()
+    .expect("Accept-Charset should parse")
+    .expect("Accept-Charset should be present");
+  assert_eq!("utf-8", accept_charset.charsets()[0].charset());
   let accept_encoding = request
     .accept_encoding()
     .expect("Accept-Encoding should parse")
@@ -1476,6 +1482,30 @@ fn parses_request_cache_control_directives() {
 }
 
 #[test]
+fn request_accept_charset_parses_ranges_and_quality_values() {
+  let request = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Accept-Charset: utf-8, iso-8859-1;q=0.5\r\n",
+    "accept-charset: *; q=0\r\n",
+    "\r\n"
+  ));
+
+  let charsets = request
+    .accept_charset()
+    .expect("Accept-Charset should parse")
+    .expect("Accept-Charset should be present");
+
+  assert_eq!(3, charsets.len());
+  assert_eq!("utf-8", charsets.charsets()[0].charset());
+  assert_eq!(1000, charsets.charsets()[0].quality());
+  assert_eq!("iso-8859-1", charsets.charsets()[1].charset());
+  assert_eq!(500, charsets.charsets()[1].quality());
+  assert_eq!("*", charsets.charsets()[2].charset());
+  assert_eq!(0, charsets.charsets()[2].quality());
+}
+
+#[test]
 fn request_accept_encoding_parses_codings_and_quality_values() {
   let request = parse_request(concat!(
     "GET /asset HTTP/1.1\r\n",
@@ -1497,6 +1527,47 @@ fn request_accept_encoding_parses_codings_and_quality_values() {
   assert_eq!(800, encodings.codings()[1].quality());
   assert_eq!("identity", encodings.codings()[2].coding());
   assert_eq!(0, encodings.codings()[2].quality());
+}
+
+#[test]
+fn request_accept_charset_rejects_duplicate_invalid_and_oversized_values() {
+  assert_eq!(
+    None,
+    parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .accept_charset()
+      .expect("absent Accept-Charset should be accepted")
+  );
+
+  for value in [
+    "",
+    "utf-8,",
+    ", utf-8",
+    "utf-8,,iso-8859-1",
+    "utf 8",
+    "utf-8;q=1.1",
+  ] {
+    let request = parse_request(&format!(
+      "GET / HTTP/1.1\r\nHost: example.test\r\nAccept-Charset: {value}\r\n\r\n"
+    ));
+    assert!(request.accept_charset().is_err(), "should reject {value:?}");
+    assert_eq!(request.header("Accept-Charset"), Some(value));
+  }
+
+  let duplicate = parse_request(concat!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\n",
+    "Accept-Charset: utf-8\r\naccept-charset: UTF-8;q=0.5\r\n\r\n"
+  ));
+  assert!(duplicate.accept_charset().is_err());
+  assert_eq!(duplicate.header("Accept-Charset"), Some("utf-8"));
+
+  let oversized = "utf-8".repeat(64 * 1024);
+  assert!(HttpRequestAcceptCharsets::parse(oversized).is_err());
+
+  let too_many = (0..33)
+    .map(|index| format!("charset{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  assert!(HttpRequestAcceptCharsets::parse(too_many).is_err());
 }
 
 #[test]

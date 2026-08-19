@@ -541,6 +541,21 @@ compression or decompression policy, negotiation, cache policy, redirects,
 retry/replay, or filesystem serving from `Content-Type` or
 `Content-Encoding`.
 
+## Bounded Accept-Charset request metadata
+
+`rttp-protocol` owns the shared `Accept-Charset` primitive. Client helpers
+format through that type.
+
+`HttpClient::accept_charset()` appends a validated request charset range,
+while `accept_charset_with_q()` accepts an HTTP q-value from `0` through `1`
+with at most three fractional digits. The helpers emit one comma-separated
+`Accept-Charset` field and reject invalid charset tokens, q-values,
+duplicates, oversized values, and more than 32 ranges before a connection is
+opened.
+
+These helpers declare request metadata only. They do not negotiate, transcode,
+decode bodies, sniff MIME types, or select a response charset.
+
 ## Bounded Accept-Encoding request metadata
 
 `rttp-protocol` owns the shared `Accept-Encoding` primitive. Client helpers
@@ -961,6 +976,7 @@ header-block model.
 | W3C Trace Context | `traceparent` and `tracestate` validate and emit bounded W3C Trace Context request metadata through shared protocol types, replacing existing same-name fields and redacting propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |
 | Preflight request metadata | `origin`, `access_control_request_method`, `access_control_request_headers`, and `access_control_request_private_network` emit bounded `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`, and `Access-Control-Request-Private-Network` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, CORS policy, or Private Network Access policy |
 | Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_content_digest()`, `HttpRequest::want_content_digest()`, `Request::want_repr_digest()`, and `HttpRequest::want_repr_digest()` parse received preference fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |
+| Accept-Charset | `accept_charset` and `accept_charset_with_q` format bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |
 | Accept-Encoding | `accept_encoding`, `accept_encoding_with_q`, and gzip/deflate/br/identity helpers format bounded `Accept-Encoding` request metadata through the shared `rttp-protocol` type | No compression, decompression, content negotiation, retries, or transport changes |
 | HTTP message signatures | `signature` and `signature_input` emit bounded RFC 9421 request metadata; `Response::signature()` and `signature_input()` parse received fields | No signing, verification, key lookup, covered-component canonicalization, or cryptographic policy |
 | Upgrade and tunnel handoff | `CONNECT` returns the tunnel socket after a successful `200`; `upgrade()` returns the socket after `101 Switching Protocols` and skips interim `1xx` responses | Upgraded protocols are handed to the caller and are not parsed by `rttp_client` |

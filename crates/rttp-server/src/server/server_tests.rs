@@ -536,6 +536,7 @@ fn request_representation_metadata_parses_without_applying_policy() {
     "content-encoding: zstd\r\n",
     "Content-Language: fr-CA, es-419\r\n",
     "content-language: en\r\n",
+    "Accept-Charset: utf-8\r\n",
     "Accept-Encoding: gzip\r\n",
     "Accept-Language: en\r\n",
     "Content-Length: 4\r\n",
@@ -566,6 +567,11 @@ fn request_representation_metadata_parses_without_applying_policy() {
     .expect("Content-Language should be present");
   assert_eq!(vec!["fr-CA", "es-419", "en"], languages.languages());
 
+  let accept_charset = valid
+    .accept_charset()
+    .expect("Accept-Charset should parse")
+    .expect("Accept-Charset should be present");
+  assert_eq!("utf-8", accept_charset.charsets()[0].charset());
   let accept_encoding = valid
     .accept_encoding()
     .expect("Accept-Encoding should parse")
@@ -577,6 +583,58 @@ fn request_representation_metadata_parses_without_applying_policy() {
     .expect("Accept-Language should be present");
   assert_eq!(vec!["en"], accept_language.ranges());
   assert_eq!(b"body", valid.body());
+}
+
+#[test]
+fn request_accept_charset_parses_ranges_without_selecting_a_charset() {
+  let request = Request::from_raw_frame(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Accept-Charset: utf-8, iso-8859-1;q=0.5\r\n",
+    "accept-charset: *; q=0\r\n",
+    "Content-Length: 4\r\n",
+    "\r\n",
+    "body"
+  ).as_bytes())
+  .expect("request should parse");
+
+  let charsets = request
+    .accept_charset()
+    .expect("Accept-Charset should parse")
+    .expect("Accept-Charset should be present");
+  assert_eq!(3, charsets.len());
+  assert_eq!("utf-8", charsets.charsets()[0].charset());
+  assert_eq!(1000, charsets.charsets()[0].quality());
+  assert_eq!("iso-8859-1", charsets.charsets()[1].charset());
+  assert_eq!(500, charsets.charsets()[1].quality());
+  assert_eq!("*", charsets.charsets()[2].charset());
+  assert_eq!(0, charsets.charsets()[2].quality());
+  assert_eq!(b"body", request.body());
+}
+
+#[test]
+fn request_accept_charset_preserves_absent_and_malformed_headers() {
+  let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .accept_charset()
+      .expect("absent Accept-Charset should be accepted")
+  );
+
+  let malformed = Request::from_raw_frame(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Accept-Charset: utf-8, UTF-8\r\n",
+    "Content-Length: 4\r\n",
+    "\r\n",
+    "body"
+  ).as_bytes())
+  .expect("malformed Accept-Charset should not reject raw request parsing");
+  assert_eq!(Some("utf-8, UTF-8"), malformed.header("Accept-Charset"));
+  assert!(malformed.accept_charset().is_err());
+  assert_eq!(b"body", malformed.body());
 }
 
 #[test]
