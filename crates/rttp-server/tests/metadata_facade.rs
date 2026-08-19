@@ -13,7 +13,7 @@ use rttp_server::server::{
   HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
   HttpSignatureParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
   HttpUpgradeParseError, HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode,
-  SecFetchSite, SecFetchUser,
+  SecFetchSite, SecFetchUser, SecPurpose,
 };
 
 #[test]
@@ -89,6 +89,7 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
   let fetch_user = SecFetchUser::parse("?1").expect("Sec-Fetch-User should parse");
+  let sec_purpose = SecPurpose::parse("prefetch, vendor-ext").expect("Sec-Purpose should parse");
   let upgrade: HttpUpgrade = HttpUpgrade::parse("websocket").expect("Upgrade should parse");
   let _: HttpUpgradeParseError = HttpUpgrade::parse("").expect_err("empty Upgrade should fail");
 
@@ -172,7 +173,32 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_mode.header_value(), "navigate");
   assert_eq!(fetch_dest.header_value(), "document");
   assert_eq!(fetch_user.header_value(), "?1");
+  assert_eq!(sec_purpose.tokens(), ["prefetch", "vendor-ext"]);
+  assert!(sec_purpose.contains_prefetch());
   assert_eq!(upgrade.protocols(), ["websocket"]);
+}
+
+#[test]
+fn parsed_http_request_exposes_sec_purpose_metadata_without_policy() {
+  let request = HttpRequest::parse(
+    b"GET /prefetch HTTP/1.1\r\nHost: example.test\r\nSec-Purpose: prefetch, vendor-ext\r\n\r\n",
+  )
+  .expect("request should parse");
+  let purpose = request
+    .sec_purpose()
+    .expect("Sec-Purpose should parse")
+    .expect("Sec-Purpose should be present");
+
+  assert_eq!(purpose.tokens(), ["prefetch", "vendor-ext"]);
+  assert!(purpose.contains_prefetch());
+
+  let malformed = HttpRequest::parse(
+    b"GET /prefetch HTTP/1.1\r\nHost: example.test\r\nSec-Purpose: prefetch,\r\n\r\n",
+  )
+  .expect("malformed metadata should not reject raw request parsing");
+
+  assert_eq!(malformed.header("Sec-Purpose"), Some("prefetch,"));
+  assert!(malformed.sec_purpose().is_err());
 }
 
 #[test]

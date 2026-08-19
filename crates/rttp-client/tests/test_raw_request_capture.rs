@@ -3,7 +3,7 @@ use rttp_test_support as support;
 #[cfg(feature = "async")]
 use futures::executor::block_on;
 use rttp_client::types::{Header, Proxy};
-use rttp_client::HttpClient;
+use rttp_client::{HttpClient, SecPurpose};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::thread;
@@ -191,6 +191,26 @@ fn outbound_upgrade_protocols_reject_invalid_values_before_connecting() {
   });
 
   assert!(request.is_empty(), "invalid Upgrade must not open a socket");
+}
+
+#[test]
+fn outbound_sec_purpose_emits_validated_metadata() {
+  let purpose = SecPurpose::from_tokens(["prefetch", "vendor-ext"])
+    .expect("valid Sec-Purpose tokens should parse");
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/sec-purpose", base_url))
+      .sec_purpose(&purpose)
+      .emit()
+      .expect("request should be sent");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    header_value(&request, "Sec-Purpose"),
+    Some("prefetch, vendor-ext")
+  );
 }
 
 #[cfg(feature = "async")]
