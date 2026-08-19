@@ -73,6 +73,9 @@ and sends only the selected body bytes. Use
 `HttpResponse::range_not_satisfiable(entity_length)` for an unsatisfied range;
 it returns `416 Range Not Satisfiable` with
 `Content-Range: bytes */length` and an empty body.
+`HttpResponse::content_range()` parses an attached `Content-Range` field into
+the shared checked protocol `HttpContentRange` metadata type and rejects
+invalid or duplicate fields only when the typed helper is requested.
 
 Use `HttpResponse::with_accept_ranges(units)` to declare supported range units
 with one bounded comma-separated `Accept-Ranges` header, or
@@ -85,12 +88,13 @@ attached `HttpResponse::header("Accept-Ranges", ...)` fields remain preserved
 until the typed parser is requested.
 
 The helper is bounded and validation-oriented. Each header field value is
-limited to 64 KiB, the parsed header set is limited to 32 range units, range
+limited to 64 KiB, the parsed header set is limited to 256 range units, range
 units must be valid HTTP tokens, malformed or empty values are rejected,
 duplicates are rejected case-insensitively across all parsed header fields, and
-`none` is accepted only as the exclusive sentinel through
-`with_accept_ranges_none()` or a parsed raw `Accept-Ranges: none` field. These
-helpers interoperate with adjacent response metadata helpers such as
+the `none` sentinel is represented as an empty unit list through
+`with_accept_ranges_none()` or a parsed raw `Accept-Ranges: none` field. The
+underlying parser is shared with the client facade through `rttp-protocol`.
+These helpers interoperate with adjacent response metadata helpers such as
 `HttpResponse::cache_control()`, `HttpResponse::vary()`,
 `HttpResponse::allow()`, and `HttpResponse::content_language()` by preserving
 raw headers and parsing only when requested.
@@ -388,22 +392,25 @@ redirect, retry, or select representations from `Content-Language`.
 ## Bounded HTTP/1.1 Content-Location behavior
 
 Server-side `Content-Location` helpers expose response metadata declaration and
-parsing without implementing redirect handling, cache selection, or route
-policy. `HttpResponse::with_content_location(value)` validates one
-`Content-Location` field value, trims outer whitespace, removes any existing
-raw `Content-Location` fields, and adds a single validated
-`Content-Location` header. `HttpResponse::content_location()` parses any
-attached `Content-Location` header and returns `Ok(None)` when the header is
-absent.
+parsing through the shared protocol-owned `HttpContentLocation` type without
+implementing redirect handling, cache selection, or route policy.
+`HttpResponse::with_content_location(value)` validates one `Content-Location`
+URI-reference field value, trims outer whitespace, removes any existing raw
+`Content-Location` fields, and adds a single validated `Content-Location`
+header. `HttpResponse::content_location()` parses any attached
+`Content-Location` header into `HttpContentLocation` and returns `Ok(None)`
+when the header is absent.
 
 Parsing is bounded and validation-oriented. The field value is limited to
-64 KiB, must be non-empty after trimming, and must not contain control
-characters. Duplicate `Content-Location` fields are rejected because the helper
-treats the header as singleton response metadata. Malformed values, duplicated
-singleton fields, and oversized values return `HttpContentLocationParseError`
-from the helper. Raw `HttpResponse::header("Content-Location", ...)` values
-remain preserved exactly as ordinary response headers until a typed declaration
-helper replaces them or the typed parser is requested.
+64 KiB and must be a non-empty absolute URI or relative URI reference without
+control characters, interior whitespace, unsafe field-value characters,
+malformed URI syntax, or broken percent-encoding. Duplicate
+`Content-Location` fields are rejected because the helper treats the header as
+singleton response metadata. Malformed values, duplicated singleton fields, and
+oversized values return `HttpContentLocationParseError` from the helper. Raw
+`HttpResponse::header("Content-Location", ...)` values remain preserved exactly
+as ordinary response headers until a typed declaration helper replaces them or
+the typed parser is requested.
 
 These helpers interoperate with adjacent response metadata helpers such as
 `HttpResponse::cache_control()`, `HttpResponse::allow()`,
@@ -449,6 +456,27 @@ precedence, display, storage, or download policy. These helpers are
 metadata-only: RTTP does not start automatic downloads, derive filesystem
 paths, sniff MIME types, negotiate response variants, redirect, retry/replay,
 cache, or attach status-code policy from `Content-Disposition`.
+
+## Bounded NEL response metadata
+
+Server-side NEL helpers expose response declaration and parsing without
+implementing network error reporting. `HttpResponse::with_nel(value)` validates
+one `NEL` field as bounded W3C Network Error Logging policy JSON, removes any
+existing raw `NEL` fields, and adds one normalized value.
+`HttpResponse::nel()` parses an attached raw field and returns `Ok(None)` when
+the header is absent.
+
+On the client, `Response::nel()` parses the `NEL` response field into the same
+typed `Nel` policy metadata, returning `Ok(None)` when the header is absent
+and preserving raw headers on parse failures. The policy exposes its required
+non-negative `max_age` as `u64`, optional `report_to` name,
+`include_subdomains` flag, and `success_fraction`/`failure_fraction` values as
+checked members; unknown JSON members are preserved verbatim without policy
+semantics. Field values are bounded to 64 KiB, member counts to 256 per
+object, nesting depth to 64, and each decoded string to 64 KiB.
+
+These helpers are metadata-only: RTTP does not send network error reports,
+persist policy, or configure Reporting endpoint groups.
 
 ## Bounded HTTP/1.1 representation metadata behavior
 
@@ -756,7 +784,7 @@ scheduling, or async accept loops.
 | HTTP/1.1 request parsing | Required `Host` validation, origin-form, absolute-form, asterisk-form `OPTIONS`, authority-form `CONNECT`, fixed and chunked bodies, chunk extensions, `Expect: 100-continue`, and obsolete line folding rejection | Intended for local tests and simple embedded use, not full RFC coverage |
 | HTTP/1.1 connection handling | Bounded sequential `serve_requests`, keep-alive and close behavior for HTTP/1.1 and HTTP/1.0, pipelined request boundaries, malformed request rejection before handler dispatch | Blocking listener only; no async accept loop |
 | HTTP/1.1 response framing | Automatic `Content-Length`, explicit chunked responses, bodyless `HEAD`, `101`, `204`, and `304`, response trailers after the terminating chunk | No server TLS |
-| Byte ranges | `HttpByteRange` parses one `bytes` range, `Request::evaluate_if_range` and `HttpRequest::evaluate_if_range` gate it with caller-provided strong ETag or exact HTTP-date metadata, `HttpResponse::partial_content`/`range_not_satisfiable` serialize `206`/`416` with `Content-Range`, and `HttpAcceptRanges` plus `HttpResponse::with_accept_ranges`/`with_accept_ranges_none`/`accept_ranges` declare and parse bounded `Accept-Ranges` metadata while preserving raw headers | No Range request generation, multipart range serialization, partial response engine, automatic retry/replay, redirect behavior, cache storage or policy, filesystem serving, automatic cache validation, static-file policy, automatic byte serving, content slicing, download resume, or status-policy behavior |
+| Byte ranges | `HttpByteRange` parses one `bytes` range, `Request::evaluate_if_range` and `HttpRequest::evaluate_if_range` gate it with caller-provided strong ETag or exact HTTP-date metadata, `HttpResponse::partial_content`/`range_not_satisfiable` serialize `206`/`416` with the shared checked `HttpContentRange` formatter, `HttpResponse::content_range` parses attached `Content-Range` metadata, and `HttpAcceptRanges` plus `HttpResponse::with_accept_ranges`/`with_accept_ranges_none`/`accept_ranges` declare and parse bounded `Accept-Ranges` metadata while preserving raw headers | No Range request generation, multipart range serialization, partial response engine, automatic retry/replay, redirect behavior, cache storage or policy, filesystem serving, automatic cache validation, static-file policy, automatic byte serving, content slicing, download resume, or status-policy behavior |
 | Conditional requests | `Request::evaluate_conditional`, `evaluate_conditional_request`, `HttpConditionalMetadata`, and `HttpEntityTag` evaluate bounded HTTP/1.1 validators; `HttpResponse::not_modified` and `precondition_failed` serialize `304` and `412` outcomes | No cache storage, static-file serving policy, automatic revalidation, or cache-control engine |
 | Informational responses and Early Hints | `HttpResponse::early_hints` and `early_hints_with_headers` construct validated bodyless `103 Early Hints` response metadata with bounded `Link` and safe metadata headers | `101 Switching Protocols` remains a separate terminal handoff response; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
 | Cache-Control and CDN-Cache-Control | `Request::cache_control`, `HttpRequest::cache_control`, and `HttpResponse::cache_control` parse bounded request/response directives, numeric freshness fields, quoted field-name lists, and extension directives; `HttpResponse::cdn_cache_control` parses bounded response `CDN-Cache-Control` directives and CDN extension metadata while preserving raw response headers on parse errors; `HttpResponse::with_age`/`age`, `with_expires`/`expires`, and `with_retry_after_delta`/`with_retry_after_date`/`retry_after` declare and parse response `Age`, `Expires`, and `Retry-After` metadata | No cache storage, CDN cache, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, surrogate-key behavior, automatic conditional requests, directive-based validator evaluation, automatic sleep, retry, replay, backoff, scheduler integration, or status-code policy engine |
@@ -771,6 +799,7 @@ scheduling, or async accept loops.
 | Connection | `HttpConnection`, `Request::connection`, `HttpRequest::connection`, and `HttpResponse::connection` parse bounded HTTP/1 `Connection` tokens, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to hop-by-hop stripping, keep-alive/close, upgrade/h2c, or HTTP/2 rejection |
 | Transfer-Encoding | `HttpTransferEncoding`, `Request::transfer_encoding`, and `HttpRequest::transfer_encoding` parse bounded HTTP/1 `Transfer-Encoding` fields that must be sole `chunked`, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to `request_body_kind`, `TE`, Content-Length, or HTTP/2 decode rejection |
 | Content-Disposition | `HttpContentDisposition`, `HttpResponse::with_content_disposition`, `with_attachment_filename`, and `content_disposition` declare and parse bounded singleton `Content-Disposition` response metadata, preserve parsed `filename` and `filename*` parameter values, preserve raw headers on parse failures, and replace raw duplicates on typed declaration | No automatic download, filesystem path handling, MIME sniffing, cache behavior, redirect behavior, retry/replay, negotiation, or status-policy behavior |
+| NEL | `HttpNel`, `HttpResponse::with_nel`, and `HttpResponse::nel` declare and parse bounded W3C Network Error Logging policy JSON, preserve unknown JSON members as raw metadata, preserve raw headers on parse failures, and replace raw duplicates on typed declaration; the client `Response::nel` parses the same metadata | No network error report sending, policy persistence, Reporting endpoint group configuration, retry, redirect behavior, or status-policy behavior |
 | Upgrade and tunnel targets | `CONNECT` authority-form requests are accepted as HTTP requests; `HttpResponse::upgrade` can hand an upgraded socket to caller code after a matching request | The server does not implement the upgraded protocol after handoff |
 | Trailers | Chunked request trailers are preserved on `Request`; malformed, oversized, forbidden, and pseudo-header trailers are rejected; response trailers can be serialized for chunked responses | Application metadata trailers are allowed; trailer names that affect connection state, routing, authentication/cookies, framing, or payload processing are rejected |
 | Bounded h2c server | The same `socket2` listener detects the HTTP/2 prior-knowledge preface or a valid HTTP/1.1 `Upgrade: h2c` request with `HTTP2-Settings`, validates SETTINGS including legal `SETTINGS_ENABLE_PUSH` and `SETTINGS_ENABLE_CONNECT_PROTOCOL` values of only `0` or `1` and legal `SETTINGS_MAX_FRAME_SIZE` values from 16,384 through 16,777,215 bytes, dispatches RFC 8441 extended CONNECT only after `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1` has been negotiated, exposes negotiated extended CONNECT as a normal `Request` with method `CONNECT`, version `HTTP/2`, target from `:path`, `host` from `:authority`, and `Request::extended_connect_protocol()` from `:protocol`, advertises the default 16,384-byte `SETTINGS_MAX_FRAME_SIZE`, rejects inbound frames above the active local limit, splits outbound HEADERS, DATA, and trailers to the active peer frame-size limit, advertises `SETTINGS_MAX_CONCURRENT_STREAMS` from the bounded active stream allowance, enforces that allowance before dispatching new streams, advertises and enforces a conservative `SETTINGS_MAX_HEADER_LIST_SIZE` for inbound request metadata, bounds HPACK dynamic table use with `SETTINGS_HEADER_TABLE_SIZE`, serves bounded streams including bodyless DELETE, OPTIONS, TRACE, and negotiated extended CONNECT, handles HEAD without response DATA, rejects connection-specific request fields before handler dispatch, strips connection-specific response fields during h2c serialization, treats `RST_STREAM` as a bounded reset/cancellation signal for the affected stream, acknowledges inbound PING without ACK on stream 0 and exactly 8 octets with matching opaque data, ignores inbound PING ACK, rejects malformed PING frames, accepts padded HEADERS/DATA/trailers without exposing padding, handles HPACK Huffman fields and bounded CONTINUATION header blocks, emits `GOAWAY` with the last completed stream id at bounded shutdown, validates and ignores valid PRIORITY metadata, ignores HTTP/2-allowed unknown/extension frames inside this bounded path, normalizes reserved stream-id high bits, and applies conservative DATA flow control | Ordinary `CONNECT`, missing-negotiation `:protocol`, non-CONNECT `:protocol`, malformed h2c Upgrade, request bodies on h2c Upgrade, and `PUSH_PROMISE` are rejected deterministically before handler dispatch; HTTP/1.1 `CONNECT` and non-h2c `Upgrade` remain separate handoff paths; bounded h2c only, with no keepalive timers, no automatic client/server initiated PING policy, no public cancellation callback API, no dynamic policy API, no extension callback API, no full extension negotiation, TLS ALPN, external h2 integration, full WebSocket-over-h2, proxy h2, tunnel handoff, connection pooling, persistent multiplex sessions, persistent HTTP/2 session management, automatic retry/replay, server push, full RFC 8441 support, full session manager, full stream state machine, full multiplex scheduler, unbounded multiplexing, unbounded multiplex scheduling, general multiplexing, general tunnel scheduling, priority scheduling, or full HTTP/2 server feature set |
@@ -785,7 +814,7 @@ and `range_suffix(length)` set single `bytes` ranges; `if_range_etag(etag)`
 sets a single strong entity-tag `If-Range` validator; and
 `if_range_date(http_date)` sets an HTTP-date `If-Range` validator. `Response`
 exposes `is_partial_content()`, `is_range_not_satisfiable()`, and
-`content_range()` for `206` and `416` responses. Manual `Range` and
+checked `content_range()` for `206` and `416` responses. Manual `Range` and
 `If-Range` headers remain available through the generic header API. These
 client helpers do not evaluate `If-Range`, retry requests, store cache entries,
 generate multipart range requests, or apply automatic cache validation. The

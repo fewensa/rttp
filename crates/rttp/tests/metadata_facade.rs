@@ -1,10 +1,11 @@
 use rttp::server::{
-  HttpAcceptCh, HttpConditionalMetadata, HttpCrossOriginEmbedderPolicy,
-  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
-  HttpCrossOriginResourcePolicy, HttpEntityTag, HttpResponse, HttpSignature, HttpSignatureInput,
-  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
-  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
-  HttpSunsetParseError,
+  HttpAcceptCh, HttpAccessControlRequestPrivateNetwork, HttpConditionalMetadata,
+  HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
+  HttpCrossOriginEmbedderPolicy, HttpCrossOriginEmbedderPolicyReportOnly,
+  HttpCrossOriginOpenerPolicy, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpNel, HttpResponse,
+  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpSunsetParseError,
 };
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -26,6 +27,18 @@ fn compatibility_facade_exports_client_metadata_types() {
       .expect("Accept-Patch should parse");
   let accept_post: rttp::AcceptPost =
     rttp_client::response::AcceptPost::parse("application/json").expect("Accept-Post should parse");
+  let content_range: rttp::ContentRange =
+    rttp_client::response::ContentRange::parse("bytes 3-6/10").expect("Content-Range should parse");
+  let _: rttp::ContentRangeParseError = rttp_client::response::ContentRange::parse("bytes */*")
+    .expect_err("invalid Content-Range should be rejected");
+  let accept_ranges: rttp::AcceptRanges =
+    rttp_client::response::AcceptRanges::parse("bytes, pages").expect("Accept-Ranges should parse");
+  let content_location: rttp::ContentLocation =
+    rttp_client::response::ContentLocation::parse("../representations/current.json")
+      .expect("Content-Location should parse");
+  let _: rttp::ContentLocationParseError =
+    rttp_client::response::ContentLocation::parse("not valid")
+      .expect_err("invalid Content-Location should be rejected");
   let alt_svc: rttp::AltSvc =
     rttp_client::response::AltSvc::parse("h3=\":443\"; ma=60").expect("Alt-Svc should parse");
   let no_vary_search: rttp::NoVarySearch =
@@ -33,6 +46,9 @@ fn compatibility_facade_exports_client_metadata_types() {
       .expect("No-Vary-Search should parse");
   let _: rttp::AltSvcParseError =
     rttp_client::response::AltSvc::parse("h3=:443").expect_err("invalid Alt-Svc should fail");
+  let nel: rttp::Nel =
+    rttp_client::response::Nel::parse(r#"{"report_to":"network-errors","max_age":2592000}"#)
+      .expect("NEL should parse");
   let embedder_policy: rttp::CrossOriginEmbedderPolicy =
     rttp_client::response::CrossOriginEmbedderPolicy::parse("require-corp; report-to=\"coep\"")
       .expect("Cross-Origin-Embedder-Policy should parse");
@@ -52,6 +68,17 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::StrictTransportSecurityParseError =
     rttp_client::response::StrictTransportSecurity::parse("includeSubDomains")
       .expect_err("Strict-Transport-Security without max-age should be rejected");
+  let x_content_type_options: rttp::XContentTypeOptions =
+    rttp_client::response::XContentTypeOptions::parse("NoSniff")
+      .expect("X-Content-Type-Options should parse");
+  let _: rttp::XContentTypeOptionsParseError =
+    rttp_client::response::XContentTypeOptions::parse("unknown")
+      .expect_err("unknown X-Content-Type-Options should be rejected");
+  let x_frame_options: rttp::XFrameOptions =
+    rttp_client::response::XFrameOptions::parse("deny").expect("X-Frame-Options should parse");
+  let _: rttp::XFrameOptionsParseError =
+    rttp_client::response::XFrameOptions::parse("ALLOW-FROM https://example.test")
+      .expect_err("deprecated X-Frame-Options ALLOW-FROM should be rejected");
   let fetch_site: rttp::SecFetchSite =
     rttp_client::SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let location: rttp::Location =
@@ -64,8 +91,17 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
   assert_eq!(accept_patch.media_types().len(), 1);
   assert_eq!(accept_post.media_types().len(), 1);
+  assert_eq!(content_range.header_value(), "bytes 3-6/10");
+  assert_eq!(accept_ranges.units(), ["bytes", "pages"]);
+  assert_eq!(accept_ranges.header_value(), "bytes, pages");
+  assert_eq!(
+    content_location.header_value(),
+    "../representations/current.json"
+  );
   assert_eq!(alt_svc.alternatives()[0].protocol_id(), "h3");
   assert_eq!(alt_svc.alternatives()[0].max_age(), Some(60));
+  assert_eq!(nel.max_age(), 2592000);
+  assert_eq!(nel.report_to(), Some("network-errors"));
   assert_eq!(
     no_vary_search.params(),
     Some(&rttp::NoVarySearchParams::Names(vec![
@@ -77,14 +113,30 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(opener_policy.header_value(), "noopener-allow-popups");
   assert_eq!(strict_transport_security.max_age(), 31_536_000);
   assert!(strict_transport_security.include_sub_domains());
+  assert_eq!(x_content_type_options, rttp::XContentTypeOptions::Nosniff);
+  assert_eq!(x_content_type_options.header_value(), "nosniff");
+  assert_eq!(x_frame_options, rttp::XFrameOptions::Deny);
+  assert_eq!(x_frame_options.header_value(), "DENY");
   assert_eq!(fetch_site.header_value(), "same-origin");
   assert_eq!(location.as_str(), "/next");
+}
+
+#[test]
+#[cfg(feature = "client")]
+fn compatibility_facade_exports_content_length_metadata_type() {
+  let content_length: rttp::HttpContentLength = rttp::HttpContentLength::new(2);
+
+  assert_eq!(2, content_length.len());
+  assert_eq!("2", content_length.header_value());
 }
 
 #[test]
 fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let accept_ch: HttpAcceptCh = HttpAcceptCh::parse("Sec-CH-UA").expect("Accept-CH should parse");
   let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("revision-42"));
+  let private_network: HttpAccessControlRequestPrivateNetwork =
+    HttpAccessControlRequestPrivateNetwork::parse("true")
+      .expect("Access-Control-Request-Private-Network should parse");
   let policy: HttpCrossOriginResourcePolicy = HttpCrossOriginResourcePolicy::parse("same-origin")
     .expect("Cross-Origin-Resource-Policy should parse");
   let embedder_policy: HttpCrossOriginEmbedderPolicy =
@@ -96,12 +148,31 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let opener_policy: HttpCrossOriginOpenerPolicy =
     HttpCrossOriginOpenerPolicy::parse("noopener-allow-popups; report-to=\"coop\"")
       .expect("Cross-Origin-Opener-Policy should parse");
+  let nel: HttpNel = HttpNel::parse(r#"{"report_to":"network-errors","max_age":2592000}"#)
+    .expect("NEL should parse");
+  let content_location: HttpContentLocation =
+    HttpContentLocation::parse("../representations/current.json")
+      .expect("Content-Location should parse");
+  let _: HttpContentLocationParseError = HttpContentLocation::parse("not valid")
+    .expect_err("invalid Content-Location should be rejected");
+  let content_range: HttpContentRange =
+    HttpContentRange::parse("bytes */10").expect("Content-Range should parse");
+  let _: HttpContentRangeParseError =
+    HttpContentRange::parse("bytes */*").expect_err("invalid Content-Range should be rejected");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA"]);
+  assert_eq!(private_network.header_value(), "true");
+  assert_eq!(
+    content_location.header_value(),
+    "../representations/current.json"
+  );
+  assert_eq!(content_range.header_value(), "bytes */10");
   assert_eq!(policy.header_value(), "same-origin");
   assert_eq!(embedder_policy.header_value(), "require-corp");
   assert_eq!(embedder_policy_report_only.header_value(), "require-corp");
   assert_eq!(opener_policy.header_value(), "noopener-allow-popups");
+  assert_eq!(nel.max_age(), 2592000);
+  assert_eq!(nel.report_to(), Some("network-errors"));
   assert_eq!(
     metadata
       .entity_tag_value()

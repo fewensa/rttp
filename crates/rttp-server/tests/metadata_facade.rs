@@ -1,11 +1,14 @@
 use rttp_server::server::{
   HttpAcceptCh, HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods,
   HttpAccessControlRequestHeaders, HttpAccessControlRequestHeadersParseError,
-  HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError, HttpCdnCacheControl,
-  HttpConditionalMetadata, HttpConnection, HttpConnectionParseError,
-  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpHost,
-  HttpNoVarySearch, HttpNoVarySearchParams, HttpPreferenceKind, HttpRequest, HttpResponse,
-  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError,
+  HttpAccessControlRequestPrivateNetwork, HttpAccessControlRequestPrivateNetworkParseError,
+  HttpCdnCacheControl, HttpConditionalMetadata, HttpConnection, HttpConnectionParseError,
+  HttpContentLength, HttpContentLocation, HttpContentLocationParseError, HttpContentRange,
+  HttpContentRangeParseError, HttpCrossOriginEmbedderPolicyReportOnly,
+  HttpCrossOriginResourcePolicy, HttpEntityTag, HttpHost, HttpKeepAlive, HttpNoVarySearch,
+  HttpNoVarySearchParams, HttpPreferenceKind, HttpRequest, HttpResponse, HttpSignature,
+  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
   HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
   HttpSignatureParseError, HttpTransferEncoding, HttpTransferEncodingParseError,
   HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite,
@@ -34,6 +37,13 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpAccessControlRequestHeaders,
     HttpAccessControlRequestHeadersParseError,
   > = HttpAccessControlRequestHeaders::parse("X-Request Id");
+  let request_private_network: HttpAccessControlRequestPrivateNetwork =
+    HttpAccessControlRequestPrivateNetwork::parse("true")
+      .expect("Access-Control-Request-Private-Network should parse");
+  let request_private_network_error: Result<
+    HttpAccessControlRequestPrivateNetwork,
+    HttpAccessControlRequestPrivateNetworkParseError,
+  > = HttpAccessControlRequestPrivateNetwork::parse("false");
   let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("revision-42"));
   let no_vary_search: HttpNoVarySearch =
     HttpNoVarySearch::parse(r#"params=("utm_source")"#).expect("No-Vary-Search should parse");
@@ -42,13 +52,29 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let cdn_cache_control: HttpCdnCacheControl =
     HttpCdnCacheControl::parse("max-age=600, cdn-example=\"a, b\"")
       .expect("CDN-Cache-Control should parse");
+  let content_range = HttpContentRange::parse("bytes */10").expect("Content-Range should parse");
+  let content_range_error: Result<HttpContentRange, HttpContentRangeParseError> =
+    HttpContentRange::parse("bytes */*");
   let report_only_policy: HttpCrossOriginEmbedderPolicyReportOnly =
     HttpCrossOriginEmbedderPolicyReportOnly::parse("require-corp")
       .expect("Cross-Origin-Embedder-Policy-Report-Only should parse");
+  let signature_input: HttpSignatureInput =
+    HttpSignatureInput::parse(r#"sig1=("@method");created=1700000000"#)
+      .expect("Signature-Input should parse");
+  let signature_input_error: Result<HttpSignatureInput, HttpSignatureInputParseError> =
+    HttpSignatureInput::parse("");
+  let content_location = HttpContentLocation::parse("../representations/current.json")
+    .expect("Content-Location should parse");
+  let _: HttpContentLocationParseError = HttpContentLocation::parse("not valid")
+    .expect_err("invalid Content-Location should be rejected");
   let response = HttpResponse::ok("")
     .with_accept_ch(["Sec-CH-UA"])
     .expect("Accept-CH should be accepted")
     .header("CDN-Cache-Control", "max-age=600, cdn-example=\"a, b\"");
+  let keep_alive = HttpKeepAlive::parse("timeout=5, max=100").expect("Keep-Alive should parse");
+  let keep_alive_response = HttpResponse::ok("")
+    .with_keep_alive("timeout=5, max=100")
+    .expect("Keep-Alive should be accepted");
   let fetch_site = SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
@@ -64,10 +90,25 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     ["x-request-id", "authorization"]
   );
   assert!(request_headers_error.is_err());
+  assert_eq!(request_private_network.header_value(), "true");
+  assert!(request_private_network_error.is_err());
   assert_eq!(policy.header_value(), "same-origin");
   assert_eq!(cdn_cache_control.directives()[1].name(), "cdn-example");
   assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
   assert_eq!(report_only_policy.header_value(), "require-corp");
+  assert_eq!(signature_input.members()[0].label(), "sig1");
+  assert!(signature_input_error.is_err());
+  assert_eq!(
+    HttpContentRange::Unsatisfied {
+      complete_length: 10,
+    },
+    content_range
+  );
+  assert!(content_range_error.is_err());
+  assert_eq!(
+    content_location.header_value(),
+    "../representations/current.json"
+  );
   assert_eq!(
     metadata
       .entity_tag_value()
@@ -98,6 +139,16 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .value(),
     Some("600")
   );
+  assert_eq!(Some(5), keep_alive.timeout());
+  assert_eq!(Some(100), keep_alive.max());
+  assert_eq!(
+    Some(5),
+    keep_alive_response
+      .keep_alive()
+      .expect("Keep-Alive should parse")
+      .expect("Keep-Alive should be present")
+      .timeout()
+  );
   assert_eq!(fetch_site.header_value(), "same-origin");
   assert_eq!(fetch_mode.header_value(), "navigate");
   assert_eq!(fetch_dest.header_value(), "document");
@@ -126,6 +177,115 @@ fn response_facade_parses_cdn_cache_control_and_absent_metadata() {
     .cdn_cache_control()
     .expect("missing header should be valid")
     .is_none());
+}
+
+#[test]
+fn server_facade_parses_signature_input_without_signature_policy() {
+  let request = HttpRequest::parse(
+    b"GET / HTTP/1.1\r\nHost: example.test\r\nSignature-Input: sig1=(\"@method\" \"@path\");created=1700000000\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let request_metadata = request
+    .signature_input()
+    .expect("request Signature-Input should parse")
+    .expect("request Signature-Input should be present");
+  assert_eq!(
+    request_metadata.members()[0].covered_components()[1].identifier(),
+    "@path"
+  );
+
+  let response = HttpResponse::ok("")
+    .with_signature_input(r#"sig1=("@status");keyid="test-key""#)
+    .expect("Signature-Input should be accepted");
+  let response_metadata = response
+    .signature_input()
+    .expect("response Signature-Input should parse")
+    .expect("response Signature-Input should be present");
+  assert_eq!(
+    response_metadata.header_value(),
+    r#"sig1=("@status");keyid="test-key""#
+  );
+
+  assert!(HttpResponse::ok("")
+    .with_signature_input("sig1=(@status)")
+    .is_err());
+  assert_eq!(
+    HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .expect("request should parse")
+      .signature_input()
+      .expect("absent Signature-Input should parse"),
+    None
+  );
+}
+
+#[test]
+fn response_facade_parses_content_range_metadata() {
+  let satisfied = HttpResponse::ok("").header("Content-Range", "bytes 3-6/10");
+  let unsatisfied = HttpResponse::ok("").header("Content-Range", "bytes */10");
+  let duplicate = HttpResponse::ok("")
+    .header("Content-Range", "bytes 0-0/2")
+    .header("Content-Range", "bytes 1-1/2");
+
+  assert_eq!(
+    Some(HttpContentRange::Bytes {
+      start: 3,
+      end: 6,
+      complete_length: Some(10),
+    }),
+    satisfied
+      .content_range()
+      .expect("satisfied Content-Range should parse")
+  );
+  assert_eq!(
+    Some(HttpContentRange::Unsatisfied {
+      complete_length: 10,
+    }),
+    unsatisfied
+      .content_range()
+      .expect("unsatisfied Content-Range should parse")
+  );
+  assert!(duplicate.content_range().is_err());
+}
+
+#[test]
+fn request_facade_exposes_validated_content_length_metadata() {
+  let request = HttpRequest::parse(
+    b"POST /upload HTTP/1.1\r\nHost: example.test\r\nContent-Length: 5\r\n\r\nhello",
+  )
+  .expect("request should parse");
+  let content_length: HttpContentLength = request
+    .content_length()
+    .expect("validated fixed length should be present");
+
+  assert_eq!(5, content_length.len());
+  assert!(!content_length.is_zero());
+  assert_eq!("5", content_length.header_value());
+}
+
+#[test]
+fn request_facade_omits_content_length_metadata_when_header_is_absent() {
+  let request = HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+
+  assert_eq!(None, request.content_length());
+}
+
+#[test]
+fn request_facade_omits_content_length_metadata_for_chunked_framing() {
+  let request = HttpRequest::parse(
+    concat!(
+      "POST /upload HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "\r\n",
+      "5\r\nhello\r\n0\r\n\r\n"
+    )
+    .as_bytes(),
+  )
+  .expect("chunked request should parse");
+
+  assert_eq!(None, request.content_length());
 }
 
 #[test]
