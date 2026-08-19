@@ -2084,14 +2084,16 @@ impl HttpResponse {
   }
 
   pub fn content_range(&self) -> Result<Option<HttpContentRange>, HttpContentRangeParseError> {
-    let Some(value) = self.single_header_value(
-      "Content-Range",
-      HttpContentRangeParseError::new("multiple Content-Range headers"),
-    )?
-    else {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Content-Range"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
       return Ok(None);
-    };
-    HttpContentRange::parse(value).map(Some)
+    }
+    HttpContentRange::parse_values(values).map(Some)
   }
 
   pub fn age(&self) -> Result<Option<u64>, HttpAgeParseError> {
