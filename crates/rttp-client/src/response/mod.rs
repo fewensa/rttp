@@ -144,6 +144,9 @@ pub use rttp_protocol::reporting_endpoints::{ReportingEndpoints, ReportingEndpoi
 pub use rttp_protocol::server_timing::{
   ServerTiming, ServerTimingMetric, ServerTimingParameter, ServerTimingParseError,
 };
+pub use rttp_protocol::service_worker_allowed::{
+  ServiceWorkerAllowed, ServiceWorkerAllowedParseError,
+};
 pub use rttp_protocol::signature::{Signature, SignatureEntry, SignatureParseError};
 pub use rttp_protocol::signature_input::{
   SignatureCoveredComponent, SignatureDecimal, SignatureInput, SignatureInputMember,

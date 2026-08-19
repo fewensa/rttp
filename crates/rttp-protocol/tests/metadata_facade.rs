@@ -56,6 +56,7 @@ use rttp_protocol::referrer_policy::{ReferrerPolicy, ReferrerPolicyToken};
 use rttp_protocol::reporting_endpoints::ReportingEndpoints;
 use rttp_protocol::save_data::SaveData;
 use rttp_protocol::sec_gpc::SecGpc;
+use rttp_protocol::service_worker_allowed::ServiceWorkerAllowed;
 use rttp_protocol::signature::{Signature, SignatureParseError};
 use rttp_protocol::signature_input::{SignatureInput, SignatureInputParseError};
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
@@ -167,6 +168,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
       .expect("Content-Disposition should parse");
   let content_location = ContentLocation::parse("../representations/current.json")
     .expect("Content-Location should parse");
+  let service_worker_allowed =
+    ServiceWorkerAllowed::parse("/").expect("Service-Worker-Allowed should parse");
   let deprecation = Deprecation::parse("?1").expect("Deprecation should parse");
   let connection = Connection::parse("keep-alive, TE").expect("Connection should parse");
   let content_encoding = ContentEncoding::parse("gzip, br").expect("Content-Encoding should parse");
@@ -359,6 +362,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
     content_location.header_value(),
     "../representations/current.json"
   );
+  assert_eq!(service_worker_allowed.header_value(), "/");
+  assert_eq!(service_worker_allowed.as_str(), "/");
   assert_eq!(connection.tokens(), ["keep-alive", "TE"]);
   assert_eq!(connection.header_value(), "keep-alive, TE");
   assert_eq!(content_encoding.codings(), ["gzip", "br"]);

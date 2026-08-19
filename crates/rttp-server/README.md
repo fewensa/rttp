@@ -422,6 +422,29 @@ references against a response URL, follow redirects, select cache variants,
 replace representations, generate routes, trigger retries, or alter status
 policy from `Content-Location`.
 
+## Service-Worker-Allowed response metadata
+
+`HttpResponse::with_service_worker_allowed(value)` validates one
+`Service-Worker-Allowed` origin-relative or absolute path field value with the
+shared protocol-owned `HttpServiceWorkerAllowed` type, trims outer whitespace,
+removes any existing raw `Service-Worker-Allowed` fields, and adds a single
+validated `Service-Worker-Allowed` header.
+`HttpResponse::service_worker_allowed()` parses attached raw fields into
+`HttpServiceWorkerAllowed`, returns `Ok(None)` when absent, and preserves
+invalid raw fields until typed parsing is requested.
+
+The helper is bounded and validation-oriented. The field value is limited to
+64 KiB and must be a non-empty origin-relative or absolute path without
+control or non-ASCII characters, interior whitespace, unsafe field-value characters, broken
+percent-encoding, absolute URIs, or network-path authority forms. Duplicate
+fields are rejected because `Service-Worker-Allowed` is singleton response
+metadata. The preserved trimmed path is available through `as_str()` and
+`header_value()`.
+
+These helpers only declare and parse metadata. RTTP does not register service
+workers, evaluate service-worker scope, resolve the value against a script
+URL, or apply application routing policy from `Service-Worker-Allowed`.
+
 ## Content-DPR response metadata
 
 `HttpResponse::with_content_dpr(value)` validates one `Content-DPR` field value

@@ -24,7 +24,8 @@ use rttp_client::response::{
 };
 use rttp_client::response::{
   ContentDigest, ContentDisposition, ContentDispositionParseError, ContentLocation,
-  ContentLocationParseError, Deprecation, DeprecationParseError, ReprDigest,
+  ContentLocationParseError, Deprecation, DeprecationParseError, ReprDigest, ServiceWorkerAllowed,
+  ServiceWorkerAllowedParseError,
 };
 use rttp_client::{
   Baggage, BaggageMember, BaggageParseError, BaggageProperty, HttpClient, SecFetchDest,
@@ -68,6 +69,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .expect("Content-Location should parse");
   let _: ContentLocationParseError =
     ContentLocation::parse("not valid").expect_err("invalid Content-Location should be rejected");
+  let service_worker_allowed =
+    ServiceWorkerAllowed::parse("/").expect("Service-Worker-Allowed should parse");
+  let _: ServiceWorkerAllowedParseError = ServiceWorkerAllowed::parse("http://example.test/scope")
+    .expect_err("absolute URI Service-Worker-Allowed should be rejected");
   let content_disposition =
     ContentDisposition::parse("attachment; filename=\"report.txt\"; filename*=UTF-8''report.txt")
       .expect("Content-Disposition should parse");
@@ -252,6 +257,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     content_location.header_value(),
     "../representations/current.json"
   );
+  assert_eq!(service_worker_allowed.header_value(), "/");
+  assert_eq!(service_worker_allowed.as_str(), "/");
   assert_eq!(content_disposition.disposition_type(), "attachment");
   assert_eq!(content_disposition.filename(), Some("report.txt"));
   assert_eq!(
