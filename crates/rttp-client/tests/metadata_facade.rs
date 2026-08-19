@@ -19,8 +19,8 @@ use rttp_client::response::{
   XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
-  ContentDigest, ContentLocation, ContentLocationParseError, Deprecation, DeprecationParseError,
-  ReprDigest,
+  ContentDigest, ContentDisposition, ContentDispositionParseError, ContentLocation,
+  ContentLocationParseError, Deprecation, DeprecationParseError, ReprDigest,
 };
 use rttp_client::{HttpClient, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose};
 use rttp_test_support as support;
@@ -58,6 +58,11 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .expect("Content-Location should parse");
   let _: ContentLocationParseError =
     ContentLocation::parse("not valid").expect_err("invalid Content-Location should be rejected");
+  let content_disposition =
+    ContentDisposition::parse("attachment; filename=\"report.txt\"; filename*=UTF-8''report.txt")
+      .expect("Content-Disposition should parse");
+  let _: ContentDispositionParseError = ContentDisposition::parse("attachment;")
+    .expect_err("invalid Content-Disposition should be rejected");
   let content_dpr = ContentDpr::parse("1.5").expect("Content-DPR should parse");
   let _: ContentDprParseError =
     ContentDpr::parse("0").expect_err("zero Content-DPR should be rejected");
@@ -186,6 +191,12 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(
     content_location.header_value(),
     "../representations/current.json"
+  );
+  assert_eq!(content_disposition.disposition_type(), "attachment");
+  assert_eq!(content_disposition.filename(), Some("report.txt"));
+  assert_eq!(
+    content_disposition.filename_ext(),
+    Some("UTF-8''report.txt")
   );
   assert_eq!(content_dpr.ratio(), 1.5);
   assert_eq!(content_dpr.header_value(), "1.5");

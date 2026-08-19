@@ -1005,23 +1005,30 @@ fn request_max_forwards_is_optional_and_rejects_invalid_metadata() {
       .expect("missing Max-Forwards should be valid")
   );
 
-  for value in ["0", "256", "999999999999999999999"] {
+  for value in ["0", "256", "4294967295"] {
     let valid = parse_request(&format!(
       "OPTIONS / HTTP/1.1\r\nHost: example.test\r\nMax-Forwards: {value}\r\n\r\n"
     ));
+    let parsed = valid
+      .max_forwards()
+      .expect("value should parse")
+      .expect("Max-Forwards should be present");
     assert_eq!(
-      Some(value.to_owned()),
-      valid.max_forwards().expect("value should parse")
+      value.parse::<u32>().expect("fixture is a u32"),
+      parsed.value()
     );
+    assert_eq!(value, parsed.header_value());
   }
 
-  for value in ["abc", "1.0"] {
+  for value in ["abc", "1.0", "4294967296", "999999999999999999999"] {
     let request = parse_request(&format!(
       "OPTIONS / HTTP/1.1\r\nHost: example.test\r\nMax-Forwards: {value}\r\n\r\n"
     ));
     assert!(request.max_forwards().is_err(), "should reject {value:?}");
     assert_eq!(Some(value), request.header("Max-Forwards"));
   }
+
+  assert!(rttp::server::HttpMaxForwards::parse("0".repeat(64 * 1024 + 1)).is_err());
 
   let duplicate = parse_request(concat!(
     "OPTIONS / HTTP/1.1\r\n",
@@ -2468,12 +2475,7 @@ fn content_disposition_helpers_reject_malformed_duplicate_oversized_and_excessiv
     "Content-Disposition helper should reject oversized values"
   );
 
-  let too_many = format!(
-    "attachment{}",
-    (0..33)
-      .map(|index| format!("; p{index}=v"))
-      .collect::<String>()
-  );
+  let too_many = rttp_test_support::content_disposition::too_many_parameters_value();
   assert!(
     HttpContentDisposition::parse(too_many).is_err(),
     "Content-Disposition helper should reject too many parameters"

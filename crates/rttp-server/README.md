@@ -238,6 +238,30 @@ These helpers only declare and inspect metadata. RTTP does not parse request
 serve bytes, slice content, resume downloads, or choose redirect, retry, or
 status-policy behavior.
 
+## Content-Disposition response metadata
+
+`HttpResponse::with_content_disposition(value)` validates one
+`Content-Disposition` field value with the shared protocol-owned
+`HttpContentDisposition` type, removes any existing raw `Content-Disposition`
+fields, and adds a single validated `Content-Disposition` header.
+`HttpResponse::with_attachment_filename` is a convenience helper for
+`attachment; filename=...`. `HttpResponse::content_disposition()` parses
+attached raw fields into `HttpContentDisposition`, returns `Ok(None)` when
+absent, and preserves invalid raw fields until typed parsing is requested.
+
+The helper is bounded and validation-oriented. The field value is limited to
+64 KiB, the parameter list is limited to 256 entries, and each parameter value
+is limited to 64 KiB. Disposition type and parameter names are HTTP tokens,
+quoted-strings must be well formed, and `filename*` must be an unquoted RFC
+5987 ext-value. Duplicate parameters and duplicate fields are rejected because
+`Content-Disposition` is singleton response metadata. `filename` and
+`filename*` remain independent stored parameters.
+
+These helpers only declare and parse metadata. RTTP does not start automatic
+downloads, derive filesystem paths, decode RFC 5987 values, choose a filename
+winner, sniff MIME types, negotiate variants, redirect, retry/replay, cache,
+or attach status-code policy from `Content-Disposition`.
+
 ## Content-Location response metadata
 
 `HttpResponse::with_content_location(value)` validates one
@@ -383,6 +407,19 @@ parameters or q-values, invalid q-values, oversized fields, or more than 256
 media ranges return a parse error without removing or changing raw `Accept`
 headers. These helpers parse request metadata only; they do not select response
 representations or apply negotiation policy.
+
+## Max-Forwards request metadata
+
+Handlers can call `Request::max_forwards()` and `HttpRequest::max_forwards()`
+to observe bounded typed `Max-Forwards` request metadata. Absent fields return
+`Ok(None)`. The recognized value is a singleton `1*DIGIT` hop count that fits
+in `u32` (`0` through `4294967295`) with optional surrounding SP or HTAB.
+Malformed, overflowing, oversized, duplicate, or control-byte values return a
+parser error while `Request::header()` and `HttpRequest::header()` continue to
+expose the original raw field.
+
+These helpers parse request metadata only. They do not decrement the hop
+count, route a request, select TRACE or OPTIONS, or apply forwarding policy.
 
 ## HTTP message signature metadata
 

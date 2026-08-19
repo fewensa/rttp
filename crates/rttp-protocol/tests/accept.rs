@@ -81,6 +81,22 @@ fn accept_rejects_duplicate_parameters_and_quality_values() {
 }
 
 #[test]
+fn accept_distinguishes_server_extensions_from_builder_validation() {
+  let server_accept =
+    Accept::parse("text/html; q=0.8; foo").expect("server Accept should allow extension tokens");
+
+  assert_eq!(Some(800), server_accept.media_ranges()[0].quality());
+  assert!(
+    Accept::parse_request_builder_values_with_limit(
+      ["text/html; q=0.8; foo"],
+      MAX_CLIENT_ACCEPT_MEDIA_RANGES,
+    )
+    .is_err(),
+    "client builder validation should reject valueless extension tokens"
+  );
+}
+
+#[test]
 fn accept_rejects_malformed_media_ranges_parameters_and_qvalues() {
   for value in [
     "",
@@ -122,7 +138,7 @@ fn accept_enforces_size_and_count_bounds() {
     .map(|index| format!("application/x-{index}"))
     .collect::<Vec<_>>()
     .join(", ");
-  assert!(Accept::parse_values_with_limit(
+  assert!(Accept::parse_request_builder_values_with_limit(
     [too_many_client.as_str()],
     MAX_CLIENT_ACCEPT_MEDIA_RANGES
   )

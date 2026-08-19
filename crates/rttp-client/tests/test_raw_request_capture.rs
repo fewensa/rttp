@@ -951,6 +951,26 @@ fn accept_helpers_reject_invalid_values_before_connecting() {
 }
 
 #[test]
+fn accept_helpers_reject_invalid_existing_header_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/document", base_url))
+      .header(("Accept", "text/html; q=0.8; foo"))
+      .accept_json()
+      .expect_err("invalid existing Accept header should be rejected before append");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "invalid existing Accept metadata should not open a socket"
+  );
+}
+
+#[test]
 fn manual_accept_header_remains_available_as_escape_hatch() {
   let request = capture_request(|base_url| {
     client()

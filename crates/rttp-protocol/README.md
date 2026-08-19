@@ -23,7 +23,10 @@ q-values are rejected, while server-side parsing tolerates extension parameters
 after the first q-value without making representation choices.
 
 The client facade reuses this module to validate and format helper-built
-`Accept` request fields. The server facade aliases the same types as
+`Accept` request fields. When helper appends inspect an existing raw `Accept`
+field, the protocol primitive also provides the strict client-builder parse
+mode needed to preserve that facade's earlier rejection of valueless extension
+parameters. The server facade aliases the same types as
 `HttpAccept`, `HttpMediaRange`, and `HttpAcceptParseError` for request
 accessors. Raw `Accept` headers remain caller-owned escape hatches outside the
 bounded helper API.
@@ -53,6 +56,19 @@ signed or plus-prefixed numbers, fractions, comma-lists, non-digits, overflow
 beyond `u64::MAX`, and forbidden ASCII control bytes are errors. This parser
 reports declared metadata only; it does not calculate freshness, adjust age
 over elapsed time, store cache entries, or apply cache policy.
+
+## Max-Forwards
+
+`max_forwards` parses a singleton HTTP `Max-Forwards` request field as
+non-negative `1*DIGIT` hop counts that fit in `u32`. Each field value is
+bounded to 64 KiB. A second field is rejected after every supplied field is
+bound-checked. Surrounding SP and HTAB are trimmed as optional whitespace.
+Empty values, signed or plus-prefixed numbers, fractions, comma-lists,
+non-digits, overflow beyond `u32::MAX`, oversized values, and forbidden ASCII
+control bytes are errors. `header_value()` emits the accepted count in
+canonical decimal form. This parser reports declared metadata only; it does
+not decrement the hop count, route through proxies, select TRACE or OPTIONS,
+or apply forwarding policy.
 
 ## Content-DPR
 
@@ -91,6 +107,26 @@ that cannot be represented as `SystemTime` are errors. This parser reports
 declared metadata only; it does not compare `Sunset`, follow `Link`
 `rel=deprecation`, decide whether a resource is already deprecated, retry
 requests, or select another endpoint.
+
+## Content-Disposition
+
+`content_disposition` parses a singleton response `Content-Disposition` field
+as one disposition type plus an ordered list of parameters. Each field value
+is bounded to 64 KiB, the parameter count is bounded to 256, and each
+parameter value is bounded to 64 KiB. A second field is rejected after every
+supplied field is bound-checked. Surrounding SP and HTAB are treated as
+optional whitespace around separators. Quoted-strings are unescaped, including
+obs-text, and the stored parameter value is the logical value rather than the
+wire quoting. Parameter names are compared case-insensitively for duplicates,
+and both the disposition type and parameter names are stored in lowercase.
+`filename` and `filename*` remain independent parameters; `filename*` must be
+an unquoted RFC 5987 ext-value and is preserved without decoding. Empty
+values, empty parameter values, malformed quoted-strings, ASCII controls other
+than HTAB, duplicate parameters, invalid tokens, and unparsable input are
+errors. This parser never fails open to `inline` or an empty parameter list.
+It reports declared metadata only: callers own download handling, filesystem
+paths, filename precedence, RFC 5987 decoding, MIME sniffing, cache behavior,
+redirects, retries, negotiation, and status policy.
 
 ## Content-Location
 

@@ -32,6 +32,27 @@ impl Accept {
   where
     I: IntoIterator<Item = &'a str>,
   {
+    Self::parse_values_with_limit_and_extensions(values, maximum_media_ranges, true)
+  }
+
+  pub fn parse_request_builder_values_with_limit<'a, I>(
+    values: I,
+    maximum_media_ranges: usize,
+  ) -> Result<Self, AcceptParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    Self::parse_values_with_limit_and_extensions(values, maximum_media_ranges, false)
+  }
+
+  fn parse_values_with_limit_and_extensions<'a, I>(
+    values: I,
+    maximum_media_ranges: usize,
+    allow_extensions_after_quality: bool,
+  ) -> Result<Self, AcceptParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
     let mut media_ranges = Vec::new();
     for value in values {
       if value.len() > MAX_ACCEPT_VALUE_BYTES {
@@ -45,7 +66,8 @@ impl Accept {
         if media_ranges.len() >= maximum_media_ranges {
           return Err(AcceptParseError::new("too many Accept media ranges"));
         }
-        media_ranges.push(AcceptMediaRange::parse(member)?);
+        media_ranges
+          .push(AcceptMediaRange::parse_inner(member, allow_extensions_after_quality)?.media_range);
       }
     }
 
