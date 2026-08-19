@@ -373,6 +373,18 @@ quoted-string; an optional quoted HTTP-date is parsed with the same
 invalid codes, and bound violations are rejected. This parser does not
 implement cache, freshness, stale-response, or response-acceptance policy.
 
+## Access-Control-Allow-Credentials
+
+`access_control_allow_credentials` parses a singleton
+`Access-Control-Allow-Credentials` field. Each field value is bounded to
+64 KiB. A second field is rejected after every supplied field is bound-checked.
+The field value must be exactly the standards-defined `true` token, matched
+case-sensitively per the Fetch `%s"true"` grammar and returned in canonical
+lowercase wire form. Surrounding SP and HTAB are trimmed as optional
+whitespace. Unknown tokens, lists, quoted values, empty values, control
+bytes, and other unparsable input are errors.
+This parser does not evaluate CORS requests or grant credentials automatically.
+
 ## NEL
 
 `nel` parses one `NEL` response field as a bounded JSON object exposing the W3C

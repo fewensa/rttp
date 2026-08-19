@@ -14,6 +14,12 @@ use std::time::{Duration, UNIX_EPOCH};
 fn compatibility_facade_exports_client_metadata_types() {
   let accept_ch: rttp::AcceptCh =
     rttp_client::response::AcceptCh::parse("Sec-CH-UA, DPR").expect("Accept-CH should parse");
+  let allow_credentials: rttp::AccessControlAllowCredentials =
+    rttp_client::response::AccessControlAllowCredentials::parse("true")
+      .expect("Access-Control-Allow-Credentials should parse");
+  let _: rttp::AccessControlAllowCredentialsParseError =
+    rttp_client::response::AccessControlAllowCredentials::parse("false")
+      .expect_err("invalid Access-Control-Allow-Credentials should fail");
   let critical_ch: rttp::CriticalCh =
     rttp_client::response::CriticalCh::parse("Sec-CH-UA").expect("Critical-CH should parse");
   let cdn_cache_control: rttp::CdnCacheControl =
@@ -105,6 +111,7 @@ fn compatibility_facade_exports_client_metadata_types() {
   let content_length = rttp::HttpContentLength::new(123);
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
+  assert_eq!(allow_credentials.header_value(), "true");
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
   assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
   assert_eq!(accept_patch.media_types().len(), 1);

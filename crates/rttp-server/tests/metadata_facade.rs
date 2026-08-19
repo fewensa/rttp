@@ -1,23 +1,28 @@
 use rttp_server::server::{
-  HttpAcceptCh, HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods,
-  HttpAccessControlRequestHeaders, HttpAccessControlRequestHeadersParseError,
-  HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError,
-  HttpAccessControlRequestPrivateNetwork, HttpAccessControlRequestPrivateNetworkParseError,
-  HttpCdnCacheControl, HttpConditionalMetadata, HttpConnection, HttpConnectionParseError,
-  HttpContentDisposition, HttpContentLength, HttpContentLocation, HttpContentLocationParseError,
-  HttpContentRange, HttpContentRangeParseError, HttpCrossOriginEmbedderPolicyReportOnly,
-  HttpCrossOriginResourcePolicy, HttpEntityTag, HttpHost, HttpKeepAlive, HttpNoVarySearch,
-  HttpNoVarySearchParams, HttpPreferenceKind, HttpRequest, HttpResponse, HttpSignature,
-  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
-  HttpUpgradeParseError, HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode,
-  SecFetchSite, SecFetchUser,
+  HttpAcceptCh, HttpAccessControlAllowCredentials, HttpAccessControlAllowCredentialsParseError,
+  HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods, HttpAccessControlRequestHeaders,
+  HttpAccessControlRequestHeadersParseError, HttpAccessControlRequestMethod,
+  HttpAccessControlRequestMethodParseError, HttpAccessControlRequestPrivateNetwork,
+  HttpAccessControlRequestPrivateNetworkParseError, HttpCdnCacheControl, HttpConditionalMetadata,
+  HttpConnection, HttpConnectionParseError, HttpContentDisposition, HttpContentLength,
+  HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
+  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpHost,
+  HttpKeepAlive, HttpNoVarySearch, HttpNoVarySearchParams, HttpPreferenceKind, HttpRequest,
+  HttpResponse, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
+  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
+  HttpSignatureInputParseError, HttpSignatureParseError, HttpTransferEncoding,
+  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeParseError, HttpWantContentDigest,
+  HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
 };
 
 #[test]
 fn server_facade_exports_representative_bounded_metadata_types() {
   let accept_ch: HttpAcceptCh = HttpAcceptCh::parse("Sec-CH-UA").expect("Accept-CH should parse");
+  let allow_credentials: HttpAccessControlAllowCredentials =
+    HttpAccessControlAllowCredentials::parse("true")
+      .expect("Access-Control-Allow-Credentials should parse");
+  let _: Result<HttpAccessControlAllowCredentials, HttpAccessControlAllowCredentialsParseError> =
+    HttpAccessControlAllowCredentials::parse("false");
   let allow_methods: HttpAccessControlAllowMethods =
     HttpAccessControlAllowMethods::parse("GET").expect("Access-Control-Allow-Methods should parse");
   let allow_headers: HttpAccessControlAllowHeaders =
@@ -84,6 +89,7 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let _: HttpUpgradeParseError = HttpUpgrade::parse("").expect_err("empty Upgrade should fail");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA"]);
+  assert_eq!(allow_credentials.header_value(), "true");
   assert_eq!(allow_methods.methods(), ["GET"]);
   assert_eq!(allow_headers.field_names(), ["x-request-id"]);
   assert_eq!("PATCH", request_method.method());

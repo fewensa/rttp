@@ -1,8 +1,9 @@
 use rttp_client::response::{
-  AcceptCh, AccessControlAllowHeaders, AccessControlAllowHeadersParseError,
-  AccessControlAllowMethods, AccessControlAllowMethodsParseError, AccessControlExposeHeaders,
-  AccessControlMaxAge, AccessControlMaxAgeParseError, Age, AgeParseError, AltSvc,
-  AuthenticationInfo, AuthenticationInfoParseError, Connection, ConnectionParseError, ContentRange,
+  AcceptCh, AccessControlAllowCredentials, AccessControlAllowCredentialsParseError,
+  AccessControlAllowHeaders, AccessControlAllowHeadersParseError, AccessControlAllowMethods,
+  AccessControlAllowMethodsParseError, AccessControlExposeHeaders, AccessControlMaxAge,
+  AccessControlMaxAgeParseError, Age, AgeParseError, AltSvc, AuthenticationInfo,
+  AuthenticationInfoParseError, Connection, ConnectionParseError, ContentRange,
   ContentRangeParseError, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly,
   CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest, EntityTag, HttpClearSiteData,
   HttpContentLength, KeepAlive, LinkValues, Location, LocationParseError, Nel, NoVarySearch,
@@ -24,6 +25,10 @@ use rttp_test_support as support;
 #[test]
 fn response_facade_exports_representative_bounded_metadata_types() {
   let accept_ch = AcceptCh::parse("Sec-CH-UA, DPR").expect("Accept-CH should parse");
+  let allow_credentials = AccessControlAllowCredentials::parse("true")
+    .expect("Access-Control-Allow-Credentials should parse");
+  let _: AccessControlAllowCredentialsParseError = AccessControlAllowCredentials::parse("false")
+    .expect_err("false Access-Control-Allow-Credentials should be rejected");
   let allow_methods = AccessControlAllowMethods::parse("GET, POST")
     .expect("Access-Control-Allow-Methods should parse");
   let _: AccessControlAllowMethodsParseError = AccessControlAllowMethods::parse("")
@@ -138,6 +143,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     SignatureInput::parse("").expect_err("empty Signature-Input should be rejected");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
+  assert_eq!(allow_credentials.header_value(), "true");
   assert_eq!(allow_methods.methods(), ["GET", "POST"]);
   assert_eq!(allow_headers.field_names(), ["x-request-id", "etag"]);
   assert_eq!(max_age.seconds(), 60);

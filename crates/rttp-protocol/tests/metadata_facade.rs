@@ -1,4 +1,5 @@
 use rttp_protocol::accept_ranges::AcceptRanges;
+use rttp_protocol::access_control_allow_credentials::AccessControlAllowCredentials;
 use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
 use rttp_protocol::age::Age;
@@ -42,6 +43,8 @@ use rttp_protocol::x_frame_options::XFrameOptions;
 fn protocol_exports_representative_bounded_metadata_types() {
   let age = Age::parse("60").expect("Age should parse");
   let accept_ch = AcceptCh::parse("Sec-CH-UA, DPR").expect("Accept-CH should parse");
+  let allow_credentials = AccessControlAllowCredentials::parse("true")
+    .expect("Access-Control-Allow-Credentials should parse");
   let expose_headers = AccessControlExposeHeaders::parse("X-Request-Id")
     .expect("Access-Control-Expose-Headers should parse");
   let request_private_network = AccessControlRequestPrivateNetwork::parse("true")
@@ -113,6 +116,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
 
   assert_eq!(age.seconds(), 60);
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
+  assert_eq!(allow_credentials.header_value(), "true");
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
   assert_eq!(request_private_network.header_value(), "true");
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);

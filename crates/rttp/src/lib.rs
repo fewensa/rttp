@@ -6,7 +6,8 @@ pub use rttp_server::server;
 
 #[cfg(feature = "client")]
 pub use rttp_client::response::{
-  AcceptCh, AcceptPatch, AcceptPost, AcceptRanges, AltSvc, AltSvcAlternative, AltSvcParameter,
+  AcceptCh, AcceptPatch, AcceptPost, AcceptRanges, AccessControlAllowCredentials,
+  AccessControlAllowCredentialsParseError, AltSvc, AltSvcAlternative, AltSvcParameter,
   AltSvcParseError, AuthenticationInfo, AuthenticationInfoParameter, AuthenticationInfoParseError,
   CdnCacheControl, CdnCacheControlParseError, ContentLocation, ContentLocationParseError,
   ContentRange, ContentRangeParseError, CriticalCh, CrossOriginEmbedderPolicy,
