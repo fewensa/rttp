@@ -1908,6 +1908,21 @@ fn response_link_metadata_rejects_invalid_and_bounded_values_without_losing_head
     "</style.css>; =preload",
     "</style.css>; bad name=value",
     "</style.css>; rel=\"unterminated",
+    "<foo bar>",
+    "<foo\tbar>",
+    r"<foo\bar>",
+    "<a%zz>",
+    "<a%2>",
+    "<a%>",
+    "<foo\"bar>",
+    "<foo^bar>",
+    "<foo`bar>",
+    "<foo|bar>",
+    "<caf\u{e9}>",
+    "</style.css>; rel=",
+    "</style.css>; rel= ",
+    "</style.css>; rel =",
+    "</style.css>; rel = ",
   ] {
     let response = HttpResponse::ok("body").header("Link", value);
     assert!(

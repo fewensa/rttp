@@ -459,9 +459,8 @@ impl Error for HttpLinkParseError {}
 
 fn validate_http_link_target(target: &str) -> Result<(), HttpLinkParseError> {
   if target.is_empty()
-    || target
-      .bytes()
-      .any(|byte| byte.is_ascii_control() || matches!(byte, b'<' | b'>'))
+    || target.bytes().any(|byte| !is_uri_reference_byte(byte))
+    || !has_valid_percent_escapes(target)
   {
     return Err(HttpLinkParseError::new("invalid Link target"));
   }
@@ -471,6 +470,59 @@ fn validate_http_link_target(target: &str) -> Result<(), HttpLinkParseError> {
     .parse(target)
     .map_err(|_| HttpLinkParseError::new("invalid Link target"))?;
   Ok(())
+}
+
+/// Whether `byte` is permitted raw in an RFC 3986 URI-reference.
+fn is_uri_reference_byte(byte: u8) -> bool {
+  matches!(
+    byte,
+    b'%'
+      | b':'
+      | b'/'
+      | b'?'
+      | b'#'
+      | b'['
+      | b']'
+      | b'@'
+      | b'!'
+      | b'$'
+      | b'&'
+      | b'\''
+      | b'('
+      | b')'
+      | b'*'
+      | b'+'
+      | b','
+      | b';'
+      | b'='
+      | b'-'
+      | b'.'
+      | b'_'
+      | b'~'
+      | b'0'..=b'9'
+      | b'A'..=b'Z'
+      | b'a'..=b'z'
+  )
+}
+
+/// Whether every `%` in `target` starts a well-formed percent-encoding.
+fn has_valid_percent_escapes(target: &str) -> bool {
+  let mut bytes = target.bytes();
+  while let Some(byte) = bytes.next() {
+    if byte != b'%' {
+      continue;
+    }
+    let Some(high) = bytes.next() else {
+      return false;
+    };
+    let Some(low) = bytes.next() else {
+      return false;
+    };
+    if !high.is_ascii_hexdigit() || !low.is_ascii_hexdigit() {
+      return false;
+    }
+  }
+  true
 }
 
 fn split_http_link_members(value: &str, delimiter: u8) -> Result<Vec<String>, HttpLinkParseError> {
@@ -512,23 +564,31 @@ fn split_http_link_members(value: &str, delimiter: u8) -> Result<Vec<String>, Ht
 }
 
 fn parse_http_link_parameter(value: &str) -> Result<(String, String), HttpLinkParseError> {
-  let (name, value) = value.split_once('=').unwrap_or((value, ""));
+  let (name, value) = match value.split_once('=') {
+    Some((name, value)) => (name, Some(value.trim())),
+    None => (value, None),
+  };
   let name = name.trim();
-  let value = value.trim();
   if !is_http_token(name) {
     return Err(HttpLinkParseError::new("invalid Link parameter name"));
   }
-  if value.len() > MAX_LINK_PARAMETER_VALUE_BYTES {
-    return Err(HttpLinkParseError::new("Link parameter value is too large"));
-  }
-  let value = if value.is_empty() {
-    String::new()
-  } else if value.starts_with('"') {
-    parse_http_link_quoted_string(value)?
-  } else if value.contains('"') || !is_http_token(value) {
-    return Err(HttpLinkParseError::new("invalid Link parameter value"));
-  } else {
-    value.to_string()
+  let value = match value {
+    Some("") => {
+      return Err(HttpLinkParseError::new("invalid Link parameter value"));
+    }
+    Some(value) => {
+      if value.len() > MAX_LINK_PARAMETER_VALUE_BYTES {
+        return Err(HttpLinkParseError::new("Link parameter value is too large"));
+      }
+      if value.starts_with('"') {
+        parse_http_link_quoted_string(value)?
+      } else if value.contains('"') || !is_http_token(value) {
+        return Err(HttpLinkParseError::new("invalid Link parameter value"));
+      } else {
+        value.to_string()
+      }
+    }
+    None => String::new(),
   };
   Ok((name.to_ascii_lowercase(), value))
 }
