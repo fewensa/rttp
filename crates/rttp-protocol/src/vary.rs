@@ -68,6 +68,15 @@ impl Vary {
     self.field_names.iter().map(String::as_str).collect()
   }
 
+  pub fn contains_field_name(&self, field_name: impl AsRef<str>) -> bool {
+    let field_name = field_name.as_ref();
+    if !is_http_token(field_name) {
+      return false;
+    }
+    let field_name = field_name.to_ascii_lowercase();
+    self.field_names.iter().any(|name| name == &field_name)
+  }
+
   pub fn len(&self) -> usize {
     self.field_names.len()
   }
