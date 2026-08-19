@@ -6,12 +6,13 @@ use rttp::server::{
   HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
   HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpEntityTag,
   HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfUnmodifiedSince,
-  HttpMaxForwards, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNel,
-  HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError, HttpResponse, HttpSaveData,
-  HttpSecGpc, HttpSecGpcParseError, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
-  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpSunsetParseError, HttpUpgrade,
-  HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
+  HttpMaxForwards, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNel, HttpPragma,
+  HttpPragmaParseError, HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError,
+  HttpResponse, HttpSaveData, HttpSecGpc, HttpSecGpcParseError, HttpSignature, HttpSignatureInput,
+  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
+  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
+  HttpSunsetParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
 };
 use std::io::Write;
 use std::net::SocketAddr;
@@ -168,6 +169,10 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp_client::response::Upgrade::parse("websocket").expect("Upgrade should parse");
   let _: rttp::UpgradeParseError =
     rttp_client::response::Upgrade::parse("").expect_err("empty Upgrade should fail");
+  let pragma: rttp::Pragma = rttp_client::response::Pragma::parse("no-cache, community=private")
+    .expect("Pragma should parse");
+  let _: rttp::PragmaParseError = rttp_client::response::Pragma::parse("no-cache, no-cache")
+    .expect_err("duplicate Pragma directives should be rejected");
   let x_content_type_options: rttp::XContentTypeOptions =
     rttp_client::response::XContentTypeOptions::parse("NoSniff")
       .expect("X-Content-Type-Options should parse");
@@ -255,6 +260,10 @@ fn compatibility_facade_exports_client_metadata_types() {
     Some("users")
   );
   assert_eq!(upgrade.protocols(), ["websocket"]);
+  assert!(pragma.no_cache());
+  assert_eq!("community", pragma.extensions()[0].name());
+  assert_eq!(Some("private"), pragma.extensions()[0].value());
+  assert_eq!("no-cache, community=private", pragma.header_value());
   assert_eq!(x_content_type_options, rttp::XContentTypeOptions::Nosniff);
   assert_eq!(x_content_type_options.header_value(), "nosniff");
   assert_eq!(x_frame_options, rttp::XFrameOptions::Deny);
@@ -680,6 +689,10 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
       .expect("Cross-Origin-Opener-Policy should parse");
   let upgrade: HttpUpgrade = HttpUpgrade::parse("websocket").expect("Upgrade should parse");
   let _: HttpUpgradeParseError = HttpUpgrade::parse("").expect_err("empty Upgrade should fail");
+  let pragma: HttpPragma =
+    HttpPragma::parse("no-cache, community=private").expect("Pragma should parse");
+  let _: HttpPragmaParseError = HttpPragma::parse("no-cache, no-cache")
+    .expect_err("duplicate Pragma directives should be rejected");
   let nel: HttpNel = HttpNel::parse(r#"{"report_to":"network-errors","max_age":2592000}"#)
     .expect("NEL should parse");
   let proxy_status: HttpProxyStatus =
@@ -743,6 +756,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(embedder_policy_report_only.header_value(), "require-corp");
   assert_eq!(opener_policy.header_value(), "noopener-allow-popups");
   assert_eq!(upgrade.protocols(), ["websocket"]);
+  assert!(pragma.no_cache());
+  assert_eq!("no-cache, community=private", pragma.header_value());
   assert_eq!(nel.max_age(), 2592000);
   assert_eq!(nel.report_to(), Some("network-errors"));
   assert_eq!(

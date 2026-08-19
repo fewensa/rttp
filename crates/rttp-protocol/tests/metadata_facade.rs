@@ -39,6 +39,7 @@ use rttp_protocol::memento_datetime::MementoDatetime;
 use rttp_protocol::nel::Nel;
 use rttp_protocol::no_vary_search::{NoVarySearch, NoVarySearchParams};
 use rttp_protocol::origin::Origin;
+use rttp_protocol::pragma::{Pragma, PragmaParseError};
 use rttp_protocol::prefer::{Prefer, PreferenceApplied, PreferenceKind};
 use rttp_protocol::proxy_authentication_info::ProxyAuthenticationInfo;
 use rttp_protocol::proxy_status::{ProxyStatus, ProxyStatusParseError};
@@ -162,6 +163,9 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let te = Te::parse("gzip;q=0.5, trailers").expect("TE should parse");
   let upgrade = Upgrade::parse("websocket").expect("Upgrade should parse");
   let _: UpgradeParseError = Upgrade::parse("").expect_err("empty Upgrade should be rejected");
+  let pragma = Pragma::parse("no-cache, community=private").expect("Pragma should parse");
+  let _: PragmaParseError =
+    Pragma::parse("no-cache, no-cache").expect_err("duplicate Pragma should be rejected");
   let want_content_digest =
     WantContentDigest::parse("sha-256=10, sha-512=0").expect("Want-Content-Digest should parse");
   let want_repr_digest =
@@ -321,6 +325,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert!(te.codings()[1].is_trailers());
   assert_eq!(upgrade.protocols(), ["websocket"]);
   assert_eq!(upgrade.header_value(), "websocket");
+  assert!(pragma.no_cache());
+  assert_eq!(pragma.directives()[1].name(), "community");
+  assert_eq!(pragma.directives()[1].value(), Some("private"));
+  assert_eq!(pragma.header_value(), "no-cache, community=private");
   assert_eq!(want_content_digest.entries()[0].algorithm(), "sha-256");
   assert_eq!(want_content_digest.entries()[0].preference(), 10);
   assert_eq!(want_content_digest.header_value(), "sha-256=10, sha-512=0");

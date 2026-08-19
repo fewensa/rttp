@@ -16,6 +16,7 @@ use crate::response::Digest;
 use crate::response::KeepAlive;
 use crate::response::Nel;
 use crate::response::NoVarySearch;
+use crate::response::Pragma;
 use crate::response::Priority;
 use crate::response::ProxyAuthenticate;
 use crate::response::ProxyAuthenticationInfo;
@@ -966,6 +967,18 @@ impl Response {
       return Ok(None);
     }
     Upgrade::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Pragma` response metadata without applying cache or
+  /// intermediary policy.
+  pub fn pragma(&self) -> error::Result<Option<Pragma>> {
+    let values = self.header_values("pragma");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Pragma::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

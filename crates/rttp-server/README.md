@@ -482,6 +482,28 @@ continue to expose the original raw field. The key is redacted from typed
 These helpers parse request metadata only. They do not retry requests, store
 keys, compare keys across requests, or apply application idempotency policy.
 
+## Pragma request and response metadata
+
+Handlers can call `Request::pragma()` and `HttpRequest::pragma()` to observe
+bounded typed `Pragma` request metadata through the shared protocol
+`HttpPragma` type, and `HttpResponse::with_pragma(value)` to declare validated
+`Pragma` response metadata that replaces attached same-name fields.
+`HttpResponse::pragma()` parses attached response `Pragma` fields. Absent
+fields return `Ok(None)`. The helpers parse RFC 9111 `pragma-directive`
+members: the defined valueless `no-cache` token or an `extension-pragma`
+token with an optional token or quoted-string value. Multiple `Pragma` fields
+are combined in wire order, directive names are matched case-insensitively,
+duplicate names are rejected, each field value is bounded to 64 KiB, each
+directive value is bounded to 64 KiB, and the combined directive count is
+bounded to 256. Empty members, malformed tokens or quoted-strings, valued
+`no-cache` forms, forbidden ASCII control bytes, and bound violations return a
+parser error while `Request::header()` and `HttpRequest::header()` continue to
+expose the original raw fields.
+
+These helpers declare and parse metadata only. They do not translate `Pragma`
+into `Cache-Control`, store cache entries, or apply cache, intermediary, or
+HTTP/1.0 compatibility policy.
+
 ## Conditional HTTP-date request metadata
 
 Handlers can call `Request::if_modified_since()`,

@@ -100,6 +100,7 @@ pub use rttp_protocol::no_vary_search::{
   NoVarySearchParams as HttpNoVarySearchParams,
   NoVarySearchParseError as HttpNoVarySearchParseError,
 };
+pub use rttp_protocol::pragma::{Pragma as HttpPragma, PragmaParseError as HttpPragmaParseError};
 pub use rttp_protocol::priority::{
   Priority as HttpPriority, PriorityExtension as HttpPriorityExtension,
   PriorityParseError as HttpPriorityParseError,
@@ -1499,6 +1500,19 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Pragma` response metadata without applying cache
+  /// or intermediary policy.
+  pub fn with_pragma(mut self, value: impl AsRef<str>) -> Result<Self, HttpPragmaParseError> {
+    let pragma = HttpPragma::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Pragma"));
+    self
+      .headers
+      .push(HttpHeader::new("Pragma", pragma.header_value()));
+    Ok(self)
+  }
+
   /// Validates and replaces `Clear-Site-Data` metadata without clearing server state.
   pub fn with_clear_site_data(
     mut self,
@@ -1865,6 +1879,21 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpUpgrade::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Pragma` response metadata without applying cache or
+  /// intermediary policy.
+  pub fn pragma(&self) -> Result<Option<HttpPragma>, HttpPragmaParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Pragma"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpPragma::parse_values(values).map(Some)
   }
 
   /// Parses `Link` response metadata without enabling preload, redirects,

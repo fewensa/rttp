@@ -2638,6 +2638,88 @@ fn test_server_timing_rejects_malformed_and_oversized_values_without_hiding_head
 }
 
 #[test]
+fn test_pragma_response_helper_parses_combined_fields_and_retains_raw_headers() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Pragma: no-cache\r\n",
+    "Pragma: community=private, example=\"quoted, value\"\r\n",
+    "Content-Length: 2\r\n\r\nOK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+  let pragma = response
+    .pragma()
+    .expect("valid Pragma should parse")
+    .expect("Pragma should be present");
+
+  assert!(pragma.no_cache());
+  assert_eq!(2, pragma.extensions().len());
+  assert_eq!("community", pragma.extensions()[0].name());
+  assert_eq!(Some("private"), pragma.extensions()[0].value());
+  assert_eq!(
+    "no-cache, community=private, example=\"quoted, value\"",
+    pragma.header_value()
+  );
+  assert_eq!(
+    response.header_values("Pragma"),
+    [
+      &"no-cache".to_string(),
+      &"community=private, example=\"quoted, value\"".to_string()
+    ]
+  );
+}
+
+#[test]
+fn test_pragma_response_helper_returns_none_when_absent() {
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response without Pragma should parse");
+  assert_eq!(None, absent.pragma().expect("absent Pragma should parse"));
+}
+
+#[test]
+fn test_pragma_rejects_malformed_duplicate_and_bounds_without_hiding_headers() {
+  for value in [
+    "",
+    "no-cache,",
+    "no-cache=value",
+    "no-cache, no-cache",
+    "community=private, COMMUNITY=public",
+    "bad name",
+    "x=\"unterminated",
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\nPragma: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(response.pragma().is_err(), "should reject {value:?}");
+    assert_eq!(Some(&value.to_string()), response.header_value("Pragma"));
+    assert_eq!("OK", response.body().string().unwrap());
+  }
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_raw =
+    format!("HTTP/1.1 200 OK\r\nPragma: {oversized}\r\nContent-Length: 0\r\n\r\n");
+  let oversized_response = Response::new(
+    RoUrl::with("https://example.test"),
+    oversized_raw.into_bytes(),
+  )
+  .expect("raw response should remain usable");
+  assert!(oversized_response.pragma().is_err());
+  assert_eq!(Some(&oversized), oversized_response.header_value("Pragma"));
+
+  let duplicate = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nPragma: no-cache\r\npragma: no-cache\r\nContent-Length: 0\r\n\r\n"
+      .to_vec(),
+  )
+  .expect("raw response should remain usable");
+  assert!(duplicate.pragma().is_err());
+  assert_eq!(2, duplicate.header_values("Pragma").len());
+}
+
+#[test]
 fn test_parse_content_disposition_rejects_invalid_helper_values_without_rejecting_response() {
   let invalid_values = [
     "",

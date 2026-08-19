@@ -762,6 +762,21 @@ URLs to `https://`, redirect requests, or enforce Content-Security-Policy.
 Callers that need values outside the helper can retain raw-header control with
 `header(("Upgrade-Insecure-Requests", "..."))`.
 
+## Bounded Pragma request metadata
+
+`HttpClient::pragma(value)` validates RFC 9111 `pragma-directive` metadata
+through the shared protocol `Pragma` type and emits one normalized `Pragma`
+field. Already-attached `Pragma` fields are combined in wire order and
+replaced by that single field, so duplicate directive names, empty members,
+malformed tokens, and bound violations fail before a socket opens.
+`HttpClient::pragma_no_cache()` is a convenience for the defined valueless
+`no-cache` directive.
+
+This helper only declares request metadata. RTTP does not translate `Pragma`
+into `Cache-Control`, store cache entries, or apply cache, intermediary, or
+HTTP/1.0 compatibility policy. Callers that need unusual values can retain
+raw-header control with `header(("Pragma", "..."))`.
+
 ## Bounded HTTP/1.1 Content-Disposition behavior
 
 `Response::content_disposition()` parses a singleton response
@@ -933,6 +948,7 @@ header-block model.
 | Upgrade-Insecure-Requests | `upgrade_insecure_requests` emits bounded singleton `Upgrade-Insecure-Requests: 1` request metadata | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Max-Forwards | `max_forwards` emits bounded singleton `Max-Forwards` request metadata through the shared protocol type | No hop decrement, proxy routing, TRACE/OPTIONS selection, retry, or forwarding policy |
 | Idempotency-Key | `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
+| Pragma | `pragma` and `pragma_no_cache` emit bounded RFC 9111 `Pragma` request metadata through the shared protocol type, combining and replacing existing same-name fields | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |
 | Preflight request metadata | `origin`, `access_control_request_method`, `access_control_request_headers`, and `access_control_request_private_network` emit bounded `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`, and `Access-Control-Request-Private-Network` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, CORS policy, or Private Network Access policy |
 | Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_content_digest()`, `HttpRequest::want_content_digest()`, `Request::want_repr_digest()`, and `HttpRequest::want_repr_digest()` parse received preference fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |
 | Accept-Encoding | `accept_encoding`, `accept_encoding_with_q`, and gzip/deflate/br/identity helpers format bounded `Accept-Encoding` request metadata through the shared `rttp-protocol` type | No compression, decompression, content negotiation, retries, or transport changes |

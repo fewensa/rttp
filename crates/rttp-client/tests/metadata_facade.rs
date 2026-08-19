@@ -9,14 +9,14 @@ use rttp_client::response::{
   CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest,
   EntityTag, HttpClearSiteData, HttpContentLength, KeepAlive, LinkValues, Location,
   LocationParseError, MementoDatetime, MementoDatetimeParseError, Nel, NoVarySearch,
-  NoVarySearchParams, NoVarySearchParseError, PreferenceApplied, Priority, ProxyAuthenticate,
-  ProxyAuthenticateParseError, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError,
-  ProxyStatus, ProxyStatusParseError, ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Signature,
-  SignatureInput, SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
-  StrictTransportSecurityParseError, Trailer, TransferEncoding, TransferEncodingParseError,
-  Upgrade, UpgradeParseError, Vary, VaryParseError, WantContentDigest, WantReprDigest, Warning,
-  WwwAuthenticate, WwwAuthenticateParseError, XContentTypeOptions, XContentTypeOptionsParseError,
-  XFrameOptions, XFrameOptionsParseError,
+  NoVarySearchParams, NoVarySearchParseError, Pragma, PragmaParseError, PreferenceApplied,
+  Priority, ProxyAuthenticate, ProxyAuthenticateParseError, ProxyAuthenticationInfo,
+  ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError, ReferrerPolicy,
+  ReferrerPolicyToken, ServerTiming, Signature, SignatureInput, SignatureInputParseError,
+  SignatureParseError, StrictTransportSecurity, StrictTransportSecurityParseError, Trailer,
+  TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError,
+  WantContentDigest, WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError,
+  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentDisposition, ContentDispositionParseError, ContentLocation,
@@ -127,6 +127,9 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .expect_err("non-sole chunked Transfer-Encoding should be rejected");
   let upgrade = Upgrade::parse("websocket").expect("Upgrade should parse");
   let _: UpgradeParseError = Upgrade::parse("").expect_err("empty Upgrade should be rejected");
+  let pragma = Pragma::parse("no-cache, community=private").expect("Pragma should parse");
+  let _: PragmaParseError = Pragma::parse("no-cache, no-cache")
+    .expect_err("duplicate Pragma directives should be rejected");
   let alt_svc = AltSvc::parse("h3=\":443\"").expect("Alt-Svc should parse");
   let content_range = ContentRange::parse("bytes 3-6/10").expect("Content-Range should parse");
   let _: ContentRangeParseError =
@@ -250,6 +253,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(connection.tokens(), ["close"]);
   assert_eq!(transfer_encoding.codings(), ["chunked"]);
   assert_eq!(upgrade.protocols(), ["websocket"]);
+  assert!(pragma.no_cache());
+  assert_eq!("community", pragma.extensions()[0].name());
+  assert_eq!(Some("private"), pragma.extensions()[0].value());
+  assert_eq!("no-cache, community=private", pragma.header_value());
   assert_eq!(alt_svc.alternatives().len(), 1);
   assert_eq!(
     ContentRange::Bytes {

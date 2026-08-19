@@ -22,6 +22,7 @@ use rttp_protocol::if_modified_since::IfModifiedSince;
 use rttp_protocol::if_unmodified_since::IfUnmodifiedSince;
 use rttp_protocol::max_forwards::MaxForwards;
 use rttp_protocol::origin::Origin;
+use rttp_protocol::pragma::Pragma;
 use rttp_protocol::priority::Priority;
 use rttp_protocol::save_data::SaveData;
 use rttp_protocol::sec_gpc::SecGpc;
@@ -446,6 +447,41 @@ impl HttpClient {
       "Upgrade-Insecure-Requests",
       metadata.header_value(),
     )))
+  }
+
+  /// Set bounded `Pragma` request metadata from an RFC 9111 directive list.
+  ///
+  /// The value is validated through the shared protocol `Pragma` type: each
+  /// directive name must be an HTTP token, optional values must be tokens or
+  /// quoted-strings, `no-cache` must appear without a value, duplicate
+  /// directive names are rejected case-insensitively, and combined fields are
+  /// bounded to 256 directives with 64 KiB per field and per value. Any
+  /// already-attached `Pragma` fields are combined in wire order and replaced
+  /// by one normalized field. This declares request metadata only; it does
+  /// not translate `Pragma` into `Cache-Control`, store cache entries, or
+  /// apply cache or intermediary policy. Use `header` directly for unusual
+  /// values.
+  pub fn pragma<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let mut values: Vec<String> = self
+      .request
+      .headers()
+      .iter()
+      .filter(|header| header.name().eq_ignore_ascii_case("Pragma"))
+      .map(|header| header.value().clone())
+      .collect();
+    values.push(value.as_ref().to_string());
+    let pragma = Pragma::parse_values(values.iter().map(String::as_str))
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("Pragma", pragma.header_value())))
+  }
+
+  /// Set `Pragma: no-cache` request metadata.
+  ///
+  /// This is a convenience for [`Self::pragma`] with the defined valueless
+  /// `no-cache` directive. It declares request metadata only; it does not
+  /// translate `Pragma` into `Cache-Control` or apply cache policy.
+  pub fn pragma_no_cache(&mut self) -> error::Result<&mut Self> {
+    self.pragma("no-cache")
   }
 
   /// Append a validated `Accept` media range with its supplied quality value.

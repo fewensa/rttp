@@ -54,6 +54,10 @@ pub use rttp_protocol::if_unmodified_since::{
 pub use rttp_protocol::max_forwards::{
   MaxForwards as HttpMaxForwards, MaxForwardsParseError as HttpMaxForwardsParseError,
 };
+pub use rttp_protocol::pragma::{
+  Pragma as HttpPragma, PragmaDirective as HttpPragmaDirective,
+  PragmaParseError as HttpPragmaParseError,
+};
 pub use rttp_protocol::prefer::{
   Prefer as HttpRequestPreferences, PreferParseError as HttpPreferParseError,
   Preference as HttpPreference, PreferenceKind as HttpPreferenceKind,
@@ -647,6 +651,16 @@ impl Request {
       return Ok(None);
     }
     HttpUpgrade::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Pragma` request metadata without applying cache,
+  /// intermediary, or HTTP/1.0 compatibility policy.
+  pub fn pragma(&self) -> Result<Option<HttpPragma>, HttpPragmaParseError> {
+    let values: Vec<&str> = self.headers_named("Pragma").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpPragma::parse_values(values).map(Some)
   }
 
   /// Parses received `Content-Type` representation metadata without sniffing
@@ -2463,6 +2477,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpUpgrade::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Pragma` request metadata without applying cache,
+  /// intermediary, or HTTP/1.0 compatibility policy.
+  pub fn pragma(&self) -> Result<Option<HttpPragma>, HttpPragmaParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Pragma"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpPragma::parse_values(values).map(Some)
   }
 
   /// Parses received `Content-Type` representation metadata without sniffing
