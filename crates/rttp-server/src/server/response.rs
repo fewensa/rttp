@@ -75,10 +75,16 @@ pub use rttp_protocol::proxy_authentication_info::{
   ProxyAuthenticationInfo as HttpProxyAuthenticationInfo,
   ProxyAuthenticationInfoParseError as HttpProxyAuthenticationInfoParseError,
 };
+pub use rttp_protocol::range::{
+  ContentRange as HttpContentRange, ContentRangeParseError as HttpContentRangeParseError,
+};
 pub use rttp_protocol::server_timing::{
   ServerTiming as HttpServerTiming, ServerTimingMetric as HttpServerTimingMetric,
   ServerTimingParameter as HttpServerTimingParameter,
   ServerTimingParseError as HttpServerTimingParseError,
+};
+pub use rttp_protocol::signature_input::{
+  SignatureInput as HttpSignatureInput, SignatureInputParseError as HttpSignatureInputParseError,
 };
 pub use rttp_protocol::strict_transport_security::{
   StrictTransportSecurity as HttpStrictTransportSecurity,
@@ -614,14 +620,24 @@ impl HttpResponse {
     Self::new(206, "Partial Content")
       .header(
         "Content-Range",
-        format!("bytes {}-{}/{}", range.start(), range.end(), body.len()),
+        HttpContentRange::Bytes {
+          start: range.start() as u64,
+          end: range.end() as u64,
+          complete_length: Some(body.len() as u64),
+        }
+        .header_value(),
       )
       .body(partial)
   }
 
   pub fn range_not_satisfiable(entity_length: usize) -> Self {
-    Self::new(416, "Range Not Satisfiable")
-      .header("Content-Range", format!("bytes */{entity_length}"))
+    Self::new(416, "Range Not Satisfiable").header(
+      "Content-Range",
+      HttpContentRange::Unsatisfied {
+        complete_length: entity_length as u64,
+      }
+      .header_value(),
+    )
   }
 
   pub fn not_modified(metadata: &HttpConditionalMetadata) -> Self {
@@ -2089,6 +2105,19 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpAcceptRanges::parse_values(values).map(Some)
+  }
+
+  pub fn content_range(&self) -> Result<Option<HttpContentRange>, HttpContentRangeParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Content-Range"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpContentRange::parse_values(values).map(Some)
   }
 
   pub fn age(&self) -> Result<Option<u64>, HttpAgeParseError> {

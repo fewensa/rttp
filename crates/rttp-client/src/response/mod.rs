@@ -90,6 +90,7 @@ pub use rttp_protocol::proxy_authenticate::{
 pub use rttp_protocol::proxy_authentication_info::{
   ProxyAuthenticationInfo, ProxyAuthenticationInfoParameter, ProxyAuthenticationInfoParseError,
 };
+pub use rttp_protocol::range::{ContentRange, ContentRangeParseError};
 pub use rttp_protocol::referrer_policy::{
   ReferrerPolicy, ReferrerPolicyParseError, ReferrerPolicyToken,
 };
@@ -98,8 +99,11 @@ pub use rttp_protocol::server_timing::{
 };
 pub use rttp_protocol::signature::{Signature, SignatureEntry, SignatureParseError};
 pub use rttp_protocol::signature_input::{
-  SignatureInput, SignatureInputBareItem, SignatureInputComponent, SignatureInputEntry,
-  SignatureInputParameter, SignatureInputParseError,
+  SignatureCoveredComponent, SignatureDecimal, SignatureInput, SignatureInputMember,
+  SignatureInputParseError, SignatureParameter, SignatureParameterValue,
+};
+pub use rttp_protocol::signature_input::{
+  SignatureInputBareItem, SignatureInputComponent, SignatureInputEntry, SignatureInputParameter,
 };
 pub use rttp_protocol::strict_transport_security::{
   StrictTransportSecurity, StrictTransportSecurityParseError,

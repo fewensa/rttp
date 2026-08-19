@@ -5,12 +5,12 @@ use rttp::server::{
   HttpAccessControlAllowMethods, HttpAccessControlAllowOrigin, HttpAccessControlRequestHeaders,
   HttpAccessControlRequestMethod, HttpAllowedMethods, HttpAuthorization, HttpByteRange,
   HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata, HttpContentDisposition,
-  HttpContentLanguages, HttpContentSecurityPolicy, HttpContentType, HttpCriticalCh, HttpEntityTag,
-  HttpExpectations, HttpHost, HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome,
-  HttpLinkValues, HttpPermissionsPolicy, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
-  HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
-  HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming,
-  HttpVary,
+  HttpContentLanguages, HttpContentRange, HttpContentSecurityPolicy, HttpContentType,
+  HttpCriticalCh, HttpEntityTag, HttpExpectations, HttpHost, HttpIfNoneMatch, HttpIfRange,
+  HttpIfRangeRequestOutcome, HttpLinkValues, HttpPermissionsPolicy, HttpReferrerPolicy,
+  HttpReportingEndpoints, HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl,
+  HttpRequestTe, HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings,
+  HttpRetryAfter, HttpServerTiming, HttpVary,
 };
 
 #[test]
@@ -3266,6 +3266,16 @@ fn serializes_partial_content_response_for_parsed_byte_range() {
   let response = HttpResponse::partial_content(body, range);
 
   assert_eq!(
+    Some(HttpContentRange::Bytes {
+      start: 3,
+      end: 6,
+      complete_length: Some(10),
+    }),
+    response
+      .content_range()
+      .expect("Content-Range should parse")
+  );
+  assert_eq!(
     concat!(
       "HTTP/1.1 206 Partial Content\r\n",
       "Content-Range: bytes 3-6/10\r\n",
@@ -3282,6 +3292,14 @@ fn serializes_partial_content_response_for_parsed_byte_range() {
 fn serializes_range_not_satisfiable_response() {
   let response = HttpResponse::range_not_satisfiable(10);
 
+  assert_eq!(
+    Some(HttpContentRange::Unsatisfied {
+      complete_length: 10,
+    }),
+    response
+      .content_range()
+      .expect("Content-Range should parse")
+  );
   assert_eq!(
     concat!(
       "HTTP/1.1 416 Range Not Satisfiable\r\n",

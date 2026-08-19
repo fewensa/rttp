@@ -1,10 +1,10 @@
 use rttp_client::response::{
-  AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType,
+  AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentRange, ContentType,
   CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy,
   CrossOriginResourcePolicy, EntityTag, HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues,
   Location, ProxyAuthenticate, ProxyAuthenticationInfo, ReferrerPolicy, ReferrerPolicyToken,
-  Response, RetryAfter, ServerTiming, StrictTransportSecurity, Warning, XContentTypeOptions,
-  XFrameOptions,
+  Response, RetryAfter, ServerTiming, SignatureInput, StrictTransportSecurity, Warning,
+  XContentTypeOptions, XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -66,6 +66,63 @@ fn clear_site_data_metadata_parses_quoted_directives_and_wildcard_without_cleari
   assert!(wildcard.clears_cookies());
   assert!(wildcard.clears_storage());
   assert!(wildcard.clears_execution_contexts());
+}
+
+#[test]
+fn signature_input_metadata_parses_without_verifying_signatures() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Signature-Input: sig1=(\"@method\" \"@path\");created=1700000000\r\n",
+      "Signature-Input: sig2=(\"content-digest\";sf);keyid=\"test-key\"\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let metadata = response
+    .signature_input()
+    .expect("Signature-Input should parse")
+    .expect("Signature-Input should be present");
+
+  assert_eq!(metadata.members()[0].label(), "sig1");
+  assert_eq!(
+    metadata.members()[1].covered_components()[0].identifier(),
+    "content-digest"
+  );
+  assert_eq!(
+    response.header_values("Signature-Input").len(),
+    2,
+    "raw headers should remain available"
+  );
+}
+
+#[test]
+fn signature_input_metadata_errors_without_hiding_raw_headers() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nSignature-Input: sig1=(content-digest)\r\nContent-Length: 0\r\n\r\n"
+      .to_vec(),
+  )
+  .expect("response should parse");
+
+  assert!(response.signature_input().is_err());
+  assert_eq!(
+    response.header_value("Signature-Input"),
+    Some(&"sig1=(content-digest)".to_string())
+  );
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+  let _: Option<SignatureInput> = absent
+    .signature_input()
+    .expect("absent Signature-Input should not fail");
 }
 
 #[test]
@@ -725,10 +782,19 @@ fn test_parse_partial_content_range_metadata() {
   .expect("parse partial content response");
   let content_range = response
     .content_range()
+    .expect("Content-Range should parse")
     .expect("partial content response should expose content range");
 
   assert!(response.is_partial_content());
   assert!(!response.is_range_not_satisfiable());
+  assert_eq!(
+    ContentRange::Bytes {
+      start: 10,
+      end: 19,
+      complete_length: Some(200),
+    },
+    content_range
+  );
   assert_eq!("bytes", content_range.unit());
   assert_eq!(Some(10), content_range.start());
   assert_eq!(Some(19), content_range.end());
@@ -754,10 +820,17 @@ fn test_parse_range_not_satisfiable_metadata_preserves_body_and_headers() {
   .expect("parse range not satisfiable response");
   let content_range = response
     .content_range()
+    .expect("Content-Range should parse")
     .expect("416 response should expose unsatisfied content range");
 
   assert!(!response.is_partial_content());
   assert!(response.is_range_not_satisfiable());
+  assert_eq!(
+    ContentRange::Unsatisfied {
+      complete_length: 200,
+    },
+    content_range
+  );
   assert_eq!("bytes", content_range.unit());
   assert_eq!(None, content_range.start());
   assert_eq!(None, content_range.end());
@@ -768,6 +841,45 @@ fn test_parse_range_not_satisfiable_metadata_preserves_body_and_headers() {
     response.header_value("Content-Type")
   );
   assert_eq!("range unavailable", response.body().string().unwrap());
+}
+
+#[test]
+fn test_invalid_content_range_metadata_is_checked_without_removing_raw_header() {
+  let s = concat!(
+    "HTTP/1.1 206 Partial Content\r\n",
+    "Content-Range: bytes 10-20/20\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/asset"),
+    s.as_bytes().to_vec(),
+  )
+  .expect("parse response with invalid metadata");
+
+  assert!(response.content_range().is_err());
+  assert_eq!(
+    Some(&"bytes 10-20/20".to_string()),
+    response.header_value("Content-Range")
+  );
+}
+
+#[test]
+fn test_duplicate_content_range_metadata_is_checked() {
+  let s = concat!(
+    "HTTP/1.1 206 Partial Content\r\n",
+    "Content-Range: bytes 0-0/2\r\n",
+    "Content-Range: bytes 1-1/2\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/asset"),
+    s.as_bytes().to_vec(),
+  )
+  .expect("parse response with duplicate metadata");
+
+  assert!(response.content_range().is_err());
 }
 
 #[test]

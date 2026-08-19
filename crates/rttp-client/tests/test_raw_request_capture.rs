@@ -699,14 +699,15 @@ fn raw_want_digest_headers_remain_available_for_extended_syntax() {
       .emit()
       .expect("request should succeed");
   });
+  let request = request_text(&request);
 
   assert_eq!(
     Some("sha-256;example=custom"),
-    header_value(&request_text(&request), "Want-Content-Digest")
+    header_value(&request, "Want-Content-Digest")
   );
   assert_eq!(
     Some("sha-512;example=custom"),
-    header_value(&request_text(&request), "Want-Repr-Digest")
+    header_value(&request, "Want-Repr-Digest")
   );
 }
 
