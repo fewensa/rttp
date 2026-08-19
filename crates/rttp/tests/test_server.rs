@@ -7390,6 +7390,42 @@ fn conditional_request_helpers_compare_http_dates_at_second_precision() {
 }
 
 #[test]
+fn conditional_request_helpers_evaluate_head_if_modified_since_as_not_modified() {
+  let metadata = HttpConditionalMetadata::new()
+    .last_modified(UNIX_EPOCH + Duration::from_secs(784_111_777));
+
+  let outcome = conditional_outcome_for(
+    concat!(
+      "HEAD /cached HTTP/1.1\r\n",
+      "Host: localhost\r\n",
+      "If-Modified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+      "\r\n",
+    ),
+    metadata,
+  );
+
+  assert_eq!(HttpConditionalRequestOutcome::NotModified, outcome);
+}
+
+#[test]
+fn conditional_request_helpers_evaluate_head_if_unmodified_since_as_precondition_failed() {
+  let metadata = HttpConditionalMetadata::new()
+    .last_modified(UNIX_EPOCH + Duration::from_secs(784_111_777));
+
+  let outcome = conditional_outcome_for(
+    concat!(
+      "HEAD /cached HTTP/1.1\r\n",
+      "Host: localhost\r\n",
+      "If-Unmodified-Since: Sun, 06 Nov 1994 08:49:36 GMT\r\n",
+      "\r\n",
+    ),
+    metadata,
+  );
+
+  assert_eq!(HttpConditionalRequestOutcome::PreconditionFailed, outcome);
+}
+
+#[test]
 fn conditional_response_helpers_include_available_validators_and_preserve_304_framing() {
   let metadata = HttpConditionalMetadata::new()
     .entity_tag(HttpEntityTag::weak("abc"))

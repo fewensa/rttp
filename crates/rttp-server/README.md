@@ -429,8 +429,10 @@ accessors to observe bounded typed HTTP-date validators through the shared
 protocol `HttpIfModifiedSince` and `HttpIfUnmodifiedSince` types. Absent
 fields return `Ok(None)`. A recognized value is one HTTP-date instant with
 optional surrounding SP or HTAB; `datetime()` exposes the instant and
-`header_value()` formats it as IMF-fixdate. Malformed, oversized, duplicate,
-or control-byte values return a parser error while `Request::header()` and
+`header_value()` formats it as IMF-fixdate. The accessors previously returned
+`SystemTime` directly; they now return the typed protocol value, so callers
+call `datetime()` to obtain the instant. Malformed, oversized, duplicate, or
+control-byte values return a parser error while `Request::header()` and
 `HttpRequest::header()` continue to expose the original raw field.
 
 These helpers parse request metadata only. They do not compare
