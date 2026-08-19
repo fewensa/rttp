@@ -11,12 +11,12 @@ use rttp_client::response::{
   LocationParseError, MementoDatetime, MementoDatetimeParseError, Nel, NoVarySearch,
   NoVarySearchParams, NoVarySearchParseError, PreferenceApplied, Priority, ProxyAuthenticate,
   ProxyAuthenticateParseError, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError,
-  ProxyStatus, ProxyStatusParseError, ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Signature,
-  SignatureInput, SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
-  StrictTransportSecurityParseError, Trailer, TransferEncoding, TransferEncodingParseError,
-  Upgrade, UpgradeParseError, Vary, VaryParseError, WantContentDigest, WantReprDigest, Warning,
-  WwwAuthenticate, WwwAuthenticateParseError, XContentTypeOptions, XContentTypeOptionsParseError,
-  XFrameOptions, XFrameOptionsParseError,
+  ProxyStatus, ProxyStatusParseError, ReferrerPolicy, ReferrerPolicyToken, RetryAfter,
+  RetryAfterParseError, ServerTiming, Signature, SignatureInput, SignatureInputParseError,
+  SignatureParseError, StrictTransportSecurity, StrictTransportSecurityParseError, Trailer,
+  TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError,
+  WantContentDigest, WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError,
+  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentLocation, ContentLocationParseError, Deprecation, DeprecationParseError,
@@ -77,6 +77,11 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     MementoDatetime::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Memento-Datetime should parse");
   let _: MementoDatetimeParseError =
     MementoDatetime::parse("").expect_err("empty Memento-Datetime should be rejected");
+  let retry_after_delta = RetryAfter::parse("120").expect("Retry-After delta should parse");
+  let retry_after_date =
+    RetryAfter::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Retry-After date should parse");
+  let _: RetryAfterParseError =
+    RetryAfter::parse("").expect_err("empty Retry-After should be rejected");
   let no_vary_search =
     NoVarySearch::parse(r#"params=("utm_source")"#).expect("No-Vary-Search should parse");
   let _: NoVarySearchParseError =
@@ -200,6 +205,11 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(location.as_str(), "/next");
   assert_eq!(
     memento_datetime.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(retry_after_delta.header_value(), "120");
+  assert_eq!(
+    retry_after_date.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
   );
   assert_eq!(

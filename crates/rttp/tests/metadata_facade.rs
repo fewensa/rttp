@@ -104,6 +104,13 @@ fn compatibility_facade_exports_client_metadata_types() {
       .expect("Memento-Datetime should parse");
   let _: rttp::MementoDatetimeParseError = rttp_client::response::MementoDatetime::parse("")
     .expect_err("empty Memento-Datetime should be rejected");
+  let retry_after_delta: rttp::RetryAfter =
+    rttp_client::response::RetryAfter::parse("120").expect("Retry-After delta should parse");
+  let retry_after_date: rttp::RetryAfter =
+    rttp_client::response::RetryAfter::parse("Sun, 06 Nov 1994 08:49:37 GMT")
+      .expect("Retry-After date should parse");
+  let _: rttp::RetryAfterParseError =
+    rttp_client::response::RetryAfter::parse("").expect_err("empty Retry-After should be rejected");
   let content_security_policy: rttp::ContentSecurityPolicy =
     rttp_client::response::ContentSecurityPolicy::parse("default-src 'self'; object-src 'none'")
       .expect("Content-Security-Policy should parse");
@@ -209,6 +216,11 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(deprecation.header_value(), "?1");
   assert_eq!(
     memento_datetime.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(retry_after_delta.header_value(), "120");
+  assert_eq!(
+    retry_after_date.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
   );
   assert_eq!(

@@ -36,6 +36,7 @@ use rttp_protocol::proxy_authentication_info::ProxyAuthenticationInfo;
 use rttp_protocol::proxy_status::{ProxyStatus, ProxyStatusParseError};
 use rttp_protocol::referer::Referer;
 use rttp_protocol::referrer_policy::{ReferrerPolicy, ReferrerPolicyToken};
+use rttp_protocol::retry_after::RetryAfter;
 use rttp_protocol::save_data::SaveData;
 use rttp_protocol::signature::{Signature, SignatureParseError};
 use rttp_protocol::signature_input::{SignatureInput, SignatureInputParseError};
@@ -77,6 +78,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let location = Location::parse("../login?next=%2Fdashboard").expect("Location should parse");
   let memento_datetime =
     MementoDatetime::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Memento-Datetime should parse");
+  let retry_after = RetryAfter::parse("120").expect("Retry-After should parse");
   let host = Host::parse("example.test:8443").expect("Host should parse");
   let origin = Origin::parse("https://example.test").expect("Origin should parse");
   let no_vary_search =
@@ -174,6 +176,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
     memento_datetime.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
   );
+  assert_eq!(retry_after.header_value(), "120");
   assert_eq!(host.host(), "example.test");
   assert_eq!(host.port(), Some("8443"));
   assert_eq!(origin.header_value(), "https://example.test");

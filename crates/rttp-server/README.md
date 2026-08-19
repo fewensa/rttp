@@ -49,6 +49,24 @@ handler-owned policy; it does not create or manage a CDN cache, compute
 freshness, evaluate surrogate keys, revalidate automatically, enforce
 shared-cache policy, retry, replay, redirect, or choose status behavior.
 
+## Response Retry-After metadata
+
+`HttpResponse::with_retry_after_delta(delta_seconds)` and
+`HttpResponse::with_retry_after_date(time)` declare `Retry-After` metadata
+through the protocol `RetryAfter` formatter, exposed from this facade as
+`HttpRetryAfter`. `HttpResponse::retry_after()` parses attached raw
+`Retry-After` fields through the same protocol primitive and returns
+`Ok(None)` when absent.
+
+The helper treats `Retry-After` as bounded singleton metadata. Each value is
+limited to 64 KiB, duplicate fields are rejected after bound checks, and
+delta-seconds must be unsigned decimal digits that fit in `u64`; malformed
+HTTP dates, unsupported time zones, control bytes, overflow, and other invalid
+values return `HttpRetryAfterParseError`. Raw response headers remain
+available after typed parse failures. RTTP does not sleep, retry, replay,
+apply backoff, integrate with a scheduler, calculate cache freshness, or
+decide status-code retry policy from `Retry-After`.
+
 ## Authentication metadata
 
 `Request::authorization()` / `HttpRequest::authorization()` and

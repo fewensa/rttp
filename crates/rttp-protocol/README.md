@@ -35,6 +35,20 @@ beyond `u64::MAX`, and forbidden ASCII control bytes are errors. This parser
 reports declared metadata only; it does not calculate freshness, adjust age
 over elapsed time, store cache entries, or apply cache policy.
 
+## Retry-After
+
+`retry_after` parses a singleton HTTP `Retry-After` field as either
+non-negative `1*DIGIT` delta-seconds that fit in `u64` or an HTTP-date through
+`httpdate`. Each field value is bounded to 64 KiB. A second field is rejected
+after every supplied field is bound-checked. Surrounding SP and HTAB are
+trimmed as optional whitespace. Empty values, signed or plus-prefixed numbers,
+fractions, comma-lists, non-date text, overflow beyond `u64::MAX`, malformed
+dates, unsupported time zones, and forbidden ASCII control bytes are errors.
+`header_value()` formats delta-seconds as decimal and dates as IMF-fixdate.
+The client and server facades reuse this shared primitive as metadata only;
+they do not sleep, retry, replay, back off, schedule work, calculate cache
+freshness, or decide status-code retry policy.
+
 ## Content-DPR
 
 `content_dpr` parses a singleton HTTP `Content-DPR` field as a finite positive

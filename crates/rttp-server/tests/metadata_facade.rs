@@ -10,12 +10,13 @@ use rttp_server::server::{
   HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeprecation,
   HttpDeprecationParseError, HttpEntityTag, HttpHost, HttpKeepAlive, HttpMementoDatetime,
   HttpMementoDatetimeParseError, HttpNoVarySearch, HttpNoVarySearchParams, HttpPreferenceKind,
-  HttpProxyStatus, HttpProxyStatusParseError, HttpRequest, HttpResponse, HttpSaveData,
-  HttpSaveDataParseError, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
-  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpTransferEncoding,
-  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeParseError, HttpWantContentDigest,
-  HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
+  HttpProxyStatus, HttpProxyStatusParseError, HttpRequest, HttpResponse, HttpRetryAfter,
+  HttpRetryAfterParseError, HttpSaveData, HttpSaveDataParseError, HttpSignature,
+  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
+  HttpUpgradeParseError, HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode,
+  SecFetchSite, SecFetchUser, SecPurpose,
 };
 
 #[test]
@@ -98,8 +99,14 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     .expect("Memento-Datetime should parse");
   let _: HttpMementoDatetimeParseError =
     HttpMementoDatetime::parse("").expect_err("empty Memento-Datetime should be rejected");
+  let retry_after_delta = HttpRetryAfter::parse("120").expect("Retry-After delta should parse");
+  let retry_after_date =
+    HttpRetryAfter::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Retry-After date should parse");
+  let _: HttpRetryAfterParseError =
+    HttpRetryAfter::parse("").expect_err("empty Retry-After should be rejected");
   let memento_response = HttpResponse::ok("")
     .with_memento_datetime(std::time::UNIX_EPOCH + std::time::Duration::from_secs(784_111_777));
+  let retry_after_response = HttpResponse::ok("").with_retry_after_delta(120);
   let keep_alive_response = HttpResponse::ok("")
     .with_keep_alive("timeout=5, max=100")
     .expect("Keep-Alive should be accepted");
@@ -243,6 +250,18 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .expect("Memento-Datetime should be present")
       .header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(retry_after_delta.header_value(), "120");
+  assert_eq!(
+    retry_after_date.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
+    retry_after_response
+      .retry_after()
+      .expect("Retry-After should parse")
+      .expect("Retry-After should be present"),
+    HttpRetryAfter::DeltaSeconds(120)
   );
 }
 
