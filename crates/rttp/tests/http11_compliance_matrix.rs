@@ -276,7 +276,7 @@ fn assert_response_content_language(
 ) {
   assert_eq!(
     expected.languages,
-    content_language.tags().as_slice(),
+    content_language.languages().as_slice(),
     "{name}"
   );
 }
@@ -894,11 +894,11 @@ fn server_response_accept_patch_and_accept_post_helpers_declare_and_parse_media_
     .expect("Accept-Patch should parse")
     .expect("Accept-Patch should be present");
   assert_eq!(
-    vec![("application", "json"), ("application", "merge-patch+json"),],
+    vec!["application/json", "application/merge-patch+json"],
     accept_patch
       .media_types()
       .iter()
-      .map(|media_type| (media_type.type_(), media_type.subtype()))
+      .map(|media_type| media_type.media_type())
       .collect::<Vec<_>>()
   );
   assert_eq!(
@@ -911,11 +911,11 @@ fn server_response_accept_patch_and_accept_post_helpers_declare_and_parse_media_
     .expect("Accept-Post should parse")
     .expect("Accept-Post should be present");
   assert_eq!(
-    vec![("application", "json"), ("text", "plain")],
+    vec!["application/json", "text/plain"],
     accept_post
       .media_types()
       .iter()
-      .map(|media_type| (media_type.type_(), media_type.subtype()))
+      .map(|media_type| media_type.media_type())
       .collect::<Vec<_>>()
   );
   assert_eq!(
@@ -1166,7 +1166,7 @@ fn server_accept_ranges_helpers_coexist_with_adjacent_metadata_helpers() {
       .content_language()
       .expect("Content-Language should parse")
       .expect("Content-Language should be present")
-      .tags()
+      .languages()
       .as_slice()
   );
   assert!(response
@@ -1490,7 +1490,7 @@ fn server_content_language_helpers_coexist_with_adjacent_metadata_helpers() {
       .content_language()
       .expect("Content-Language should parse")
       .expect("Content-Language should be present")
-      .tags()
+      .languages()
       .as_slice()
   );
   assert!(response

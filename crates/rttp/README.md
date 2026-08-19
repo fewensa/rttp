@@ -375,7 +375,8 @@ tag list and adds one comma-separated `Content-Language` header, while
 `HttpResponse::content_language()` parses any `Content-Language` headers
 already attached to a response into `HttpContentLanguages`.
 `HttpContentLanguages::parse(value)` accepts comma-separated language tags and
-preserves the declared spelling and order.
+preserves the declared spelling and order; the parsed tags are exposed by both
+`HttpContentLanguages::languages()` and `HttpContentLanguages::tags()`.
 
 Parsing is bounded and validation-oriented. Each `Content-Language` field value
 is limited to 64 KiB, the parsed language list is limited to 256 entries, and
@@ -493,9 +494,10 @@ when absent. Duplicate `Content-Type` fields are a helper error.
 received `Content-Encoding` fields in wire order into
 `HttpResponseContentEncodings`. HTTP/1.1 and HTTP/2 share the same `Request`
 helpers. `HttpContentType::parse(value)`
-validates a `Content-Type` field, preserves the declared media type and
-parameter spelling and order, and exposes
-`type_()`, `subtype()`, `parameter(name)`, `parameters()`, and `header_value()`.
+validates a `Content-Type` field, normalizes the media type and parameter
+names to lowercase, preserves parameter values, and exposes
+`media_type()`, `type_()`, `subtype()`, `parameter(name)`, `parameters()`,
+and `header_value()`.
 `HttpContentType::new(type_name, subtype)` constructs a normalized media type,
 and `with_parameter(name, value)` appends safely serialized parameters with
 normalized names and preserved values.
@@ -529,7 +531,7 @@ body.
 
 ```rust
 let content_type = request.content_type()?.expect("Content-Type");
-if content_type.type_() == "application" && content_type.subtype() == "json" {
+if content_type.media_type() == "application/json" {
   let charset = content_type.parameter("charset");
 }
 

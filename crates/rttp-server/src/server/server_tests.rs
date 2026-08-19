@@ -234,8 +234,7 @@ fn request_representation_metadata_parses_without_applying_policy() {
     .content_type()
     .expect("Content-Type should parse")
     .expect("Content-Type should be present");
-  assert_eq!("application", content_type.type_());
-  assert_eq!("json", content_type.subtype());
+  assert_eq!("application/json", content_type.media_type());
   assert_eq!(Some("utf-8"), content_type.parameter("charset"));
 
   let encodings = valid
@@ -248,7 +247,7 @@ fn request_representation_metadata_parses_without_applying_policy() {
     .content_language()
     .expect("Content-Language should parse")
     .expect("Content-Language should be present");
-  assert_eq!(vec!["fr-CA", "es-419", "en"], languages.tags());
+  assert_eq!(vec!["fr-CA", "es-419", "en"], languages.languages());
 
   let accept_encoding = valid
     .accept_encoding()

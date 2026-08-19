@@ -42,17 +42,12 @@ pub use rttp_protocol::content_encoding::{
   ContentEncoding as HttpResponseContentEncodings,
   ContentEncodingParseError as HttpContentEncodingParseError,
 };
-pub use rttp_protocol::content_language::{
-  ContentLanguage as HttpContentLanguages,
-  ContentLanguageParseError as HttpContentLanguageParseError,
-};
+pub use rttp_protocol::content_language::ContentLanguageParseError as HttpContentLanguageParseError;
 pub use rttp_protocol::content_location::{
   ContentLocation as HttpContentLocation,
   ContentLocationParseError as HttpContentLocationParseError,
 };
-pub use rttp_protocol::content_type::{
-  ContentType as HttpContentType, ContentTypeParseError as HttpContentTypeParseError,
-};
+pub use rttp_protocol::content_type::ContentTypeParseError as HttpContentTypeParseError;
 pub use rttp_protocol::cross_origin_embedder_policy::{
   CrossOriginEmbedderPolicy as HttpCrossOriginEmbedderPolicy,
   CrossOriginEmbedderPolicyParseError as HttpCrossOriginEmbedderPolicyParseError,
@@ -121,6 +116,157 @@ pub use rttp_protocol::x_content_type_options::{
 pub use rttp_protocol::x_frame_options::{
   XFrameOptions as HttpXFrameOptions, XFrameOptionsParseError as HttpXFrameOptionsParseError,
 };
+
+/// Server `Content-Type` representation metadata backed by the shared protocol
+/// parser, preserving the server facade accessor surface and normalized
+/// output.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpContentType {
+  inner: rttp_protocol::content_type::ContentType,
+  essence: String,
+}
+
+impl HttpContentType {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpContentTypeParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpContentTypeParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let parsed = rttp_protocol::content_type::ContentType::parse_values(values)?;
+    Self::normalize(parsed)
+  }
+
+  pub fn new<T, S>(type_name: T, subtype: S) -> Result<Self, HttpContentTypeParseError>
+  where
+    T: AsRef<str>,
+    S: AsRef<str>,
+  {
+    Ok(Self::from_protocol(
+      rttp_protocol::content_type::ContentType::new(type_name, subtype)?,
+    ))
+  }
+
+  pub fn with_parameter<N, V>(
+    mut self,
+    name: N,
+    value: V,
+  ) -> Result<Self, HttpContentTypeParseError>
+  where
+    N: AsRef<str>,
+    V: AsRef<str>,
+  {
+    self.inner = self.inner.with_parameter(name, value)?;
+    Ok(self)
+  }
+
+  /// Returns the normalized `type/subtype` media type string.
+  pub fn media_type(&self) -> &str {
+    &self.essence
+  }
+
+  pub fn type_(&self) -> &str {
+    self.inner.type_()
+  }
+
+  pub fn subtype(&self) -> &str {
+    self.inner.subtype()
+  }
+
+  pub fn parameter(&self, name: impl AsRef<str>) -> Option<&str> {
+    self.inner.parameter(name)
+  }
+
+  pub fn parameters(&self) -> Vec<(&str, &str)> {
+    self
+      .inner
+      .parameters()
+      .iter()
+      .map(|parameter| (parameter.name(), parameter.value()))
+      .collect()
+  }
+
+  pub fn header_value(&self) -> String {
+    self.inner.header_value()
+  }
+
+  fn normalize(
+    parsed: rttp_protocol::content_type::ContentType,
+  ) -> Result<Self, HttpContentTypeParseError> {
+    let mut normalized = rttp_protocol::content_type::ContentType::new(
+      parsed.type_().to_ascii_lowercase(),
+      parsed.subtype().to_ascii_lowercase(),
+    )?;
+    for parameter in parsed.parameters() {
+      normalized =
+        normalized.with_parameter(parameter.name().to_ascii_lowercase(), parameter.value())?;
+    }
+    Ok(Self::from_protocol(normalized))
+  }
+
+  fn from_protocol(inner: rttp_protocol::content_type::ContentType) -> Self {
+    let essence = format!("{}/{}", inner.type_(), inner.subtype());
+    Self { inner, essence }
+  }
+}
+
+/// Server `Content-Language` representation metadata backed by the shared
+/// protocol parser, preserving the server facade accessor surface.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpContentLanguages {
+  inner: rttp_protocol::content_language::ContentLanguage,
+}
+
+impl HttpContentLanguages {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpContentLanguageParseError> {
+    Ok(Self {
+      inner: rttp_protocol::content_language::ContentLanguage::parse(value)?,
+    })
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpContentLanguageParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    Ok(Self {
+      inner: rttp_protocol::content_language::ContentLanguage::parse_values(values)?,
+    })
+  }
+
+  pub fn from_languages<I, L>(languages: I) -> Result<Self, HttpContentLanguageParseError>
+  where
+    I: IntoIterator<Item = L>,
+    L: AsRef<str>,
+  {
+    Ok(Self {
+      inner: rttp_protocol::content_language::ContentLanguage::from_languages(languages)?,
+    })
+  }
+
+  /// Returns the parsed language tags in wire order.
+  pub fn languages(&self) -> Vec<&str> {
+    self.inner.tags()
+  }
+
+  /// Returns the parsed language tags in wire order.
+  pub fn tags(&self) -> Vec<&str> {
+    self.inner.tags()
+  }
+
+  pub fn len(&self) -> usize {
+    self.inner.len()
+  }
+
+  pub fn is_empty(&self) -> bool {
+    self.inner.is_empty()
+  }
+
+  pub fn header_value(&self) -> String {
+    self.inner.header_value()
+  }
+}
 
 pub(crate) const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
