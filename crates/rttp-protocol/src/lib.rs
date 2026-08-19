@@ -50,6 +50,7 @@ pub mod keep_alive;
 pub mod link;
 pub mod location;
 mod media_type;
+pub mod memento_datetime;
 pub mod nel;
 pub mod no_vary_search;
 pub mod origin;

@@ -3,10 +3,11 @@ use rttp::server::{
   HttpConditionalMetadata, HttpContentLocation, HttpContentLocationParseError, HttpContentRange,
   HttpContentRangeParseError, HttpCrossOriginEmbedderPolicy,
   HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
-  HttpCrossOriginResourcePolicy, HttpEntityTag, HttpNel, HttpResponse, HttpSaveData, HttpSignature,
-  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpSunsetParseError, HttpUpgrade, HttpUpgradeParseError,
+  HttpCrossOriginResourcePolicy, HttpEntityTag, HttpMementoDatetime, HttpMementoDatetimeParseError,
+  HttpNel, HttpResponse, HttpSaveData, HttpSignature, HttpSignatureInput,
+  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
+  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
+  HttpSunsetParseError, HttpUpgrade, HttpUpgradeParseError,
 };
 use std::io::Write;
 use std::net::SocketAddr;
@@ -537,6 +538,21 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(
     response.etag().expect("ETag should parse"),
     Some(HttpEntityTag::weak("revision-42"))
+  );
+}
+
+#[test]
+fn compatibility_facade_exposes_memento_datetime_response_metadata() {
+  let datetime = UNIX_EPOCH + Duration::from_secs(784_111_777);
+  let response = HttpResponse::ok("").with_memento_datetime(datetime);
+  let _: Result<Option<HttpMementoDatetime>, HttpMementoDatetimeParseError> =
+    response.memento_datetime();
+
+  assert_eq!(
+    Some(HttpMementoDatetime::new(datetime)),
+    response
+      .memento_datetime()
+      .expect("Memento-Datetime should parse")
   );
 }
 

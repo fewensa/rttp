@@ -35,6 +35,17 @@ beyond `u64::MAX`, and forbidden ASCII control bytes are errors. This parser
 reports declared metadata only; it does not calculate freshness, adjust age
 over elapsed time, store cache entries, or apply cache policy.
 
+## Memento-Datetime
+
+`memento_datetime` parses a singleton `Memento-Datetime` field as one
+IMF-fixdate through `httpdate`. Each field value is bounded to 64 KiB. A
+second field is rejected after every supplied field is bound-checked.
+Surrounding SP and HTAB are trimmed as optional whitespace. Empty values,
+malformed dates, forbidden ASCII control bytes, and oversized values are
+errors. `header_value()` formats the accepted instant as IMF-fixdate. This
+parser reports declared metadata only; it does not select an archival
+representation, negotiate `Accept-Datetime`, or implement TimeGate behavior.
+
 ## Content-Location
 
 `content_location` parses a singleton response `Content-Location` field as one

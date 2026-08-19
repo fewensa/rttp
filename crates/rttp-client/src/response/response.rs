@@ -51,6 +51,7 @@ use rttp_protocol::cross_origin_resource_policy::CrossOriginResourcePolicy;
 use rttp_protocol::entity_tag::{EntityTag, EntityTagParseError};
 use rttp_protocol::link::LinkValues;
 use rttp_protocol::location::Location;
+use rttp_protocol::memento_datetime::MementoDatetime;
 use rttp_protocol::prefer::PreferenceApplied;
 use rttp_protocol::range::ContentRange;
 use rttp_protocol::referrer_policy::ReferrerPolicy;
@@ -412,6 +413,22 @@ impl Response {
   pub fn sunset(&self) -> error::Result<Option<SystemTime>> {
     parse_sunset_values(self.header_values("sunset").into_iter().map(String::as_str))
       .map_err(|err| error::bad_response(err.to_string()))
+  }
+
+  /// Parses bounded `Memento-Datetime` response metadata without archival
+  /// selection or time negotiation.
+  ///
+  /// Returns `Ok(None)` when the header is absent. Parse errors do not reject
+  /// the raw response; the original field remains available through
+  /// `header_value()` and `header_values()`.
+  pub fn memento_datetime(&self) -> error::Result<Option<MementoDatetime>> {
+    let values = self.header_values("memento-datetime");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    MementoDatetime::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   pub fn retry_after(&self) -> error::Result<Option<RetryAfter>> {

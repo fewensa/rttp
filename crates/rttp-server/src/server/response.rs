@@ -76,6 +76,10 @@ pub use rttp_protocol::keep_alive::{
   KeepAlive as HttpKeepAlive, KeepAliveExtension as HttpKeepAliveExtension,
   KeepAliveParseError as HttpKeepAliveParseError,
 };
+pub use rttp_protocol::memento_datetime::{
+  MementoDatetime as HttpMementoDatetime,
+  MementoDatetimeParseError as HttpMementoDatetimeParseError,
+};
 pub use rttp_protocol::nel::{
   Nel as HttpNel, NelParseError as HttpNelParseError, NelUnknownMember as HttpNelUnknownMember,
 };
@@ -1677,6 +1681,17 @@ impl HttpResponse {
     self
   }
 
+  pub fn with_memento_datetime(mut self, http_date: SystemTime) -> Self {
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Memento-Datetime"));
+    self.headers.push(HttpHeader::new(
+      "Memento-Datetime",
+      HttpMementoDatetime::new(http_date).header_value(),
+    ));
+    self
+  }
+
   pub fn with_retry_after_delta(mut self, delta_seconds: u64) -> Self {
     self
       .headers
@@ -2495,6 +2510,21 @@ impl HttpResponse {
         .filter(|header| header.name.eq_ignore_ascii_case("Sunset"))
         .map(|header| header.value.as_str()),
     )
+  }
+
+  pub fn memento_datetime(
+    &self,
+  ) -> Result<Option<HttpMementoDatetime>, HttpMementoDatetimeParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Memento-Datetime"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpMementoDatetime::parse_values(values).map(Some)
   }
 
   pub fn retry_after(&self) -> Result<Option<HttpRetryAfter>, HttpRetryAfterParseError> {
