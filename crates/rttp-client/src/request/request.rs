@@ -7,6 +7,8 @@ pub(crate) fn is_sensitive_redirect_header(name: &str) -> bool {
   name.eq_ignore_ascii_case("authorization")
     || name.eq_ignore_ascii_case("cookie")
     || name.eq_ignore_ascii_case("proxy-authorization")
+    || name.eq_ignore_ascii_case("traceparent")
+    || name.eq_ignore_ascii_case("tracestate")
 }
 
 #[derive(Clone)]

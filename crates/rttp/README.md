@@ -388,6 +388,24 @@ These helpers declare and observe request metadata only. RTTP does not retry
 requests, store or compare keys across requests, deduplicate requests, or
 apply application idempotency policy.
 
+## Bounded W3C Trace Context request metadata
+
+`HttpClient::traceparent()` and `HttpClient::tracestate()` validate and emit
+bounded W3C Trace Context request metadata through shared `rttp_protocol`
+`TraceParent` and `TraceState` types, replacing existing same-name fields
+before a socket is opened. `Request::traceparent()` / `HttpRequest::traceparent()`
+and `Request::tracestate()` / `HttpRequest::tracestate()` parse received fields,
+returning `Ok(None)` when absent and preserving raw headers on parse errors.
+
+Traceparent validation checks version `00`, rejects version `ff` and
+unsupported versions, malformed or uppercase identifiers, malformed flags,
+duplicates, and all-zero trace or parent identifiers. Tracestate validation
+preserves member order while bounding total size, member count, key/value size,
+member grammar, and duplicate keys. Typed `Debug` redacts propagation values.
+These helpers declare and observe request metadata only: RTTP does not create
+trace identifiers, decide sampling, select a tracing backend, or automatically
+propagate context.
+
 ## Bounded HTTP/1.1 Allow behavior
 
 Server-side `Allow` helpers expose response declaration and method-list parsing
@@ -921,6 +939,7 @@ scheduling, or async accept loops.
 | Vary | `HttpVary`, `HttpResponse::with_vary`, `HttpResponse::vary`, `Request::vary_selection`, and `HttpRequest::vary_selection` parse, declare, and select bounded `Vary` metadata with case-insensitive field-name handling | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | Authentication metadata | `Request::authorization`/`proxy_authorization` and `HttpRequest::authorization`/`proxy_authorization` expose one bounded opaque credential field, `Response::www_authenticate` parses bounded client response challenges, and `HttpResponse::with_www_authenticate`/`www_authenticate` declare and parse bounded `WWW-Authenticate` challenges | No credential validation, realm selection, automatic client challenge, retry, or authentication/authorization enforcement |
 | Idempotency-Key | `HttpClient::idempotency_key` validates and emits one bounded opaque `Idempotency-Key` request field through the shared protocol type, and `Request::idempotency_key`/`HttpRequest::idempotency_key` parse received fields into the same representation while preserving raw headers on errors and redacting the key from typed debug output | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
+| W3C Trace Context | `HttpClient::traceparent`/`tracestate` validate and emit bounded W3C Trace Context request metadata, and `Request::traceparent`/`tracestate` plus `HttpRequest` helpers parse received fields while preserving raw headers on errors and redacting propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |
 | No-Vary-Search | `NoVarySearch`, `HttpNoVarySearch`, `Response::no_vary_search`, `HttpResponse::with_no_vary_search`, and `HttpResponse::no_vary_search` parse and declare bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
 | Allow | `HttpAllowedMethods`, `HttpResponse::with_allow`, and `HttpResponse::allow` declare and parse bounded `Allow` method-list metadata | No route dispatch, automatic `405` generation, `OPTIONS` policy, fallback method selection, retry/replay, or status-code policy engine |
 | Client Hints | `HttpAcceptCh`/`HttpCriticalCh`, `HttpResponse::with_accept_ch`/`with_critical_ch`, and `accept_ch`/`critical_ch` declare and parse bounded Client Hints opt-in metadata; `Response::accept_ch` and `critical_ch` expose it to clients | No browser opt-in state, request-header generation, automatic retry, persistence, or Client Hints policy |

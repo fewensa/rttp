@@ -2430,6 +2430,81 @@ fn sync_client_and_server_exchange_bounded_idempotency_key_metadata_without_poli
 }
 
 #[test]
+fn sync_client_and_server_exchange_w3c_trace_context_metadata_without_policy() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind trace context server");
+  let addr = server.local_addr().expect("trace context server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let traceparent = request
+          .traceparent()
+          .expect("traceparent should parse")
+          .expect("traceparent should be present");
+        let tracestate = request
+          .tracestate()
+          .expect("tracestate should parse")
+          .expect("tracestate should be present");
+        let observed = (
+          traceparent.version().to_string(),
+          traceparent.trace_id().to_string(),
+          traceparent.parent_id().to_string(),
+          traceparent.sampled(),
+          tracestate
+            .members()
+            .iter()
+            .map(|member| (member.key().to_string(), member.value().to_string()))
+            .collect::<Vec<_>>(),
+          request.header("traceparent").map(str::to_string),
+          request.header("tracestate").map(str::to_string),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed trace context metadata");
+        HttpResponse::new(204, "No Content")
+      })
+      .expect("serve trace context request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/trace"))
+    .traceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+    .expect("traceparent should be accepted")
+    .tracestate("rojo=00f067aa0ba902b7,congo=t61rcWkgMzE")
+    .expect("tracestate should be accepted")
+    .emit()
+    .expect("trace context response should parse");
+
+  let (version, trace_id, parent_id, sampled, members, raw_traceparent, raw_tracestate) =
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe trace context metadata");
+  assert_eq!("00", version);
+  assert_eq!("4bf92f3577b34da6a3ce929d0e0e4736", trace_id);
+  assert_eq!("00f067aa0ba902b7", parent_id);
+  assert!(sampled);
+  assert_eq!(
+    vec![
+      ("rojo".to_string(), "00f067aa0ba902b7".to_string()),
+      ("congo".to_string(), "t61rcWkgMzE".to_string())
+    ],
+    members
+  );
+  assert_eq!(
+    Some("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01".to_string()),
+    raw_traceparent
+  );
+  assert_eq!(
+    Some("rojo=00f067aa0ba902b7,congo=t61rcWkgMzE".to_string()),
+    raw_tracestate
+  );
+  assert_eq!(204, response.code());
+  handle.join().expect("trace context server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_authentication_info_response_metadata_without_policy() {
   const AUTHENTICATION_INFO: &str =
     r#"nextnonce="n-2", qop=auth, rspauth="origin-rsp", cnonce="c-1", nc=00000001"#;

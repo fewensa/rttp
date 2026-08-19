@@ -23,7 +23,8 @@ use rttp_client::response::{
   ContentLocationParseError, Deprecation, DeprecationParseError, ReprDigest,
 };
 use rttp_client::{
-  HttpClient, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
+  HttpClient, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose, TraceParent,
+  TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError,
   UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
 };
 use rttp_test_support as support;
@@ -136,6 +137,14 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
   let fetch_user = SecFetchUser::parse("?1").expect("Sec-Fetch-User should parse");
   let sec_purpose = SecPurpose::parse("prefetch, vendor-ext").expect("Sec-Purpose should parse");
+  let traceparent = TraceParent::parse("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+    .expect("traceparent should parse");
+  let _: TraceParentParseError =
+    TraceParent::parse("invalid").expect_err("invalid traceparent should be rejected");
+  let tracestate = TraceState::parse("rojo=00f067aa0ba902b7").expect("tracestate should parse");
+  let _: TraceStateParseError =
+    TraceState::parse("rojo=1,rojo=2").expect_err("duplicate tracestate should be rejected");
+  let member: &TraceStateMember = &tracestate.members()[0];
   let upgrade_insecure_requests =
     UpgradeInsecureRequests::parse("1").expect("Upgrade-Insecure-Requests should parse");
   let _: UpgradeInsecureRequestsParseError = UpgradeInsecureRequests::parse("0")
@@ -263,6 +272,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_user.header_value(), "?1");
   assert_eq!(sec_purpose.tokens(), ["prefetch", "vendor-ext"]);
   assert!(sec_purpose.contains_prefetch());
+  assert_eq!("00", traceparent.version());
+  assert_eq!("rojo", member.key());
   assert_eq!(upgrade_insecure_requests.header_value(), "1");
   assert_eq!(cross_origin_resource_policy.header_value(), "same-origin");
   assert_eq!(cross_origin_embedder_policy.header_value(), "require-corp");

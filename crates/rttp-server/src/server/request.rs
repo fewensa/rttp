@@ -83,6 +83,11 @@ pub use rttp_protocol::signature_input::{
 pub use rttp_protocol::te::{
   Te as HttpRequestTe, TeCoding as HttpTe, TeParseError as HttpTeParseError,
 };
+pub use rttp_protocol::trace_context::{
+  TraceParent as HttpTraceParent, TraceParentParseError as HttpTraceParentParseError,
+  TraceState as HttpTraceState, TraceStateMember as HttpTraceStateMember,
+  TraceStateParseError as HttpTraceStateParseError,
+};
 pub use rttp_protocol::trailer::{
   Trailer as HttpTrailer, TrailerParseError as HttpTrailerParseError,
 };
@@ -293,6 +298,8 @@ fn is_sensitive_debug_header(name: &str) -> bool {
     || name.eq_ignore_ascii_case("idempotency-key")
     || name.eq_ignore_ascii_case("proxy-authorization")
     || name.eq_ignore_ascii_case("set-cookie")
+    || name.eq_ignore_ascii_case("traceparent")
+    || name.eq_ignore_ascii_case("tracestate")
 }
 
 impl Request {
@@ -580,6 +587,26 @@ impl Request {
       return Ok(None);
     }
     HttpIdempotencyKey::parse_values(values).map(Some)
+  }
+
+  /// Parses received W3C `traceparent` request metadata without creating
+  /// identifiers, deciding sampling, or configuring propagation.
+  pub fn traceparent(&self) -> Result<Option<HttpTraceParent>, HttpTraceParentParseError> {
+    let values: Vec<&str> = self.headers_named("traceparent").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpTraceParent::parse_values(values).map(Some)
+  }
+
+  /// Parses received W3C `tracestate` request metadata without invoking a
+  /// tracing backend or automatically propagating metadata.
+  pub fn tracestate(&self) -> Result<Option<HttpTraceState>, HttpTraceStateParseError> {
+    let values: Vec<&str> = self.headers_named("tracestate").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpTraceState::parse_values(values).map(Some)
   }
 
   /// Parses received `Prefer` request metadata without applying preferences.
@@ -2237,6 +2264,36 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpIdempotencyKey::parse_values(values).map(Some)
+  }
+
+  /// Parses received W3C `traceparent` request metadata without creating
+  /// identifiers, deciding sampling, or configuring propagation.
+  pub fn traceparent(&self) -> Result<Option<HttpTraceParent>, HttpTraceParentParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("traceparent"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpTraceParent::parse_values(values).map(Some)
+  }
+
+  /// Parses received W3C `tracestate` request metadata without invoking a
+  /// tracing backend or automatically propagating metadata.
+  pub fn tracestate(&self) -> Result<Option<HttpTraceState>, HttpTraceStateParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("tracestate"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpTraceState::parse_values(values).map(Some)
   }
 
   /// Parses received `Prefer` request metadata without applying preferences.

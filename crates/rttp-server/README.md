@@ -469,6 +469,22 @@ continue to expose the original raw field. The key is redacted from typed
 These helpers parse request metadata only. They do not retry requests, store
 keys, compare keys across requests, or apply application idempotency policy.
 
+## W3C Trace Context request metadata
+
+Handlers can call `Request::traceparent()`, `Request::tracestate()`, and the
+matching `HttpRequest` helpers to observe bounded W3C Trace Context request
+metadata through shared protocol types. Absent fields return `Ok(None)`.
+Malformed, oversized, duplicate, unsupported-version, all-zero identifier, or
+invalid-member values return parser errors while `Request::header()` and
+`HttpRequest::header()` continue to expose the original raw fields.
+
+`HttpTraceParent` exposes the documented version, trace-id, parent-id, flags,
+and sampled-bit accessors. `HttpTraceState` preserves ordered members with
+key/value accessors. Trace context propagation values are redacted from typed
+`Debug`. These helpers parse request metadata only; they do not create trace
+identifiers, decide sampling, select a tracing backend, or automatically
+propagate context.
+
 ## Conditional HTTP-date request metadata
 
 Handlers can call `Request::if_modified_since()`,
