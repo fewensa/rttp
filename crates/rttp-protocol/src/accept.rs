@@ -349,7 +349,7 @@ fn parse_accept_quoted_string(value: &str) -> Result<String, AcceptParseError> {
     }
   }
 
-  if escaped || parsed.is_empty() {
+  if escaped {
     return Err(AcceptParseError::new("invalid Accept parameter value"));
   }
 

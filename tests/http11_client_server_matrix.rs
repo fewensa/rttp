@@ -141,6 +141,130 @@ fn sync_raw_malformed_accept_reaches_server_until_typed_accessor() {
   handle.join().expect("Accept server thread");
 }
 
+#[test]
+fn sync_raw_duplicate_accept_reaches_server_until_typed_accessor() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Accept server");
+  let addr = server.local_addr().expect("Accept server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send(observe_accept_metadata(&request))
+          .expect("send observed duplicate Accept metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve raw Accept request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect Accept server");
+  stream
+    .write_all(
+      b"GET /matrix/accept HTTP/1.1\r\nHost: example.test\r\nAccept: text/plain; charset=utf-8; charset=us-ascii\r\n\r\n",
+    )
+    .expect("write raw Accept request");
+  let mut response = Vec::new();
+  stream
+    .read_to_end(&mut response)
+    .expect("read raw Accept response");
+
+  let observed = observed_rx
+    .recv()
+    .expect("receive observed Accept metadata");
+  assert_eq!(
+    Some("text/plain; charset=utf-8; charset=us-ascii".to_string()),
+    observed.raw_accept
+  );
+  assert_eq!(
+    Err("duplicate Accept parameter".to_string()),
+    observed.accept
+  );
+  handle.join().expect("Accept server thread");
+}
+
+#[test]
+fn sync_raw_too_many_accept_ranges_reach_server_until_typed_accessor() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Accept server");
+  let addr = server.local_addr().expect("Accept server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send(observe_accept_metadata(&request))
+          .expect("send observed oversized Accept metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve raw Accept request");
+  });
+  let accept = (0..=256)
+    .map(|index| format!("application/x-{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+
+  let mut stream = TcpStream::connect(addr).expect("connect Accept server");
+  stream
+    .write_all(
+      format!("GET /matrix/accept HTTP/1.1\r\nHost: example.test\r\nAccept: {accept}\r\n\r\n")
+        .as_bytes(),
+    )
+    .expect("write raw Accept request");
+  let mut response = Vec::new();
+  stream
+    .read_to_end(&mut response)
+    .expect("read raw Accept response");
+
+  let observed = observed_rx
+    .recv()
+    .expect("receive observed Accept metadata");
+  assert_eq!(Some(accept), observed.raw_accept);
+  assert_eq!(
+    Err("too many Accept media ranges".to_string()),
+    observed.accept
+  );
+  handle.join().expect("Accept server thread");
+}
+
+#[test]
+fn sync_raw_oversized_accept_is_rejected_before_handler() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Accept server");
+  let addr = server.local_addr().expect("Accept server addr");
+  let (unexpected_tx, unexpected_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        unexpected_tx
+          .send(observe_accept_metadata(&request))
+          .expect("send unexpected Accept metadata");
+        HttpResponse::ok("unexpected")
+      })
+      .expect("serve oversized Accept request");
+  });
+  let accept = format!("text/plain; p={}", "a".repeat(70 * 1024));
+
+  let mut stream = TcpStream::connect(addr).expect("connect Accept server");
+  stream
+    .write_all(
+      format!("GET /matrix/accept HTTP/1.1\r\nHost: example.test\r\nAccept: {accept}\r\n\r\n")
+        .as_bytes(),
+    )
+    .expect("write raw Accept request");
+  let mut response = String::new();
+  stream
+    .read_to_string(&mut response)
+    .expect("read raw Accept response");
+
+  assert!(
+    unexpected_rx.try_recv().is_err(),
+    "oversized Accept request must not reach handler"
+  );
+  assert_eq!(
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
+  handle.join().expect("Accept server thread");
+}
+
 fn observe_cors_preflight(request: Request) -> ObservedCorsPreflight {
   ObservedCorsPreflight {
     method: request.method().to_string(),

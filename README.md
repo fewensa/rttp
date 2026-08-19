@@ -584,7 +584,8 @@ algorithm, compute digests, verify response body hashes, attach
 `accept_with_q()` adds a q-value from `0` through `1` with at most three
 fractional digits. Convenience helpers cover `*/*`, JSON, HTML, XML, and plain
 text, including q-value variants. The shared `rttp-protocol` Accept primitive
-owns media-range parsing, q-value validation, bounds, and header formatting.
+owns media-range parsing, quoted-string parameter validation including empty
+quoted values, q-value validation, bounds, and header formatting.
 The client reuses it while keeping the existing 32-helper-range limit, rejecting
 malformed media types or parameters, duplicate parameters or q-values, invalid
 q-values, oversized fields, and more than 32 media ranges before opening a

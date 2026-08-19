@@ -17,9 +17,10 @@ to 64 KiB, inbound parsing is bounded to 256 media ranges, and the client
 builder helper path uses the same primitive with its existing 32-range append
 limit. Media types allow `*/*` and `type/*` but reject invalid wildcard forms
 such as `*/json`; q-values must be `0`, `1`, or a valid decimal value with at
-most three fractional digits. Duplicate media parameters and duplicate q-values
-are rejected, while server-side parsing tolerates extension parameters after
-the first q-value without making representation choices.
+most three fractional digits. Quoted-string media parameter values, including
+empty quoted values, are accepted. Duplicate media parameters and duplicate
+q-values are rejected, while server-side parsing tolerates extension parameters
+after the first q-value without making representation choices.
 
 The client facade reuses this module to validate and format helper-built
 `Accept` request fields. The server facade aliases the same types as

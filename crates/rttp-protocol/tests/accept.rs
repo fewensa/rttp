@@ -46,6 +46,19 @@ fn accept_request_builder_member_preserves_wire_spelling() {
     AcceptMediaRange::request_builder_member("application/json", None)
       .expect("builder member should parse")
   );
+  assert_eq!(
+    "text/plain; feature=\"\"",
+    AcceptMediaRange::request_builder_member("text/plain; feature=\"\"", None)
+      .expect("empty quoted-string parameter should parse")
+  );
+}
+
+#[test]
+fn accept_allows_empty_quoted_string_parameter_values() {
+  let accept = Accept::parse("text/plain; feature=\"\"").expect("Accept should parse");
+
+  assert_eq!(Some(""), accept.media_ranges()[0].parameter("feature"));
+  assert_eq!("text/plain; feature=\"\"", accept.header_value());
 }
 
 #[test]

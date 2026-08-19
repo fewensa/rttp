@@ -774,13 +774,17 @@ fn accept_helpers_emit_validated_media_ranges_and_quality_values() {
       .expect("HTML quality should be accepted")
       .accept("text/plain; charset=utf-8; q=0.5")
       .expect("parameterized media range should be accepted")
+      .accept("application/example; feature=\"\"")
+      .expect("empty quoted parameter should be accepted")
       .emit()
       .expect("request should succeed");
   });
   let request = request_text(&request);
 
   assert_eq!(
-    Some("application/json, text/html;q=0.8, text/plain; charset=utf-8; q=0.5"),
+    Some(
+      "application/json, text/html;q=0.8, text/plain; charset=utf-8; q=0.5, application/example; feature=\"\""
+    ),
     header_value(&request, "Accept")
   );
 }
