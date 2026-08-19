@@ -71,6 +71,25 @@ beyond `u64::MAX`, and forbidden ASCII control bytes are errors. This parser
 reports declared metadata only; it does not calculate freshness, adjust age
 over elapsed time, store cache entries, or apply cache policy.
 
+## Expect
+
+`expect` parses one or more HTTP `Expect` request field values into bounded
+expectation metadata. Each field value is bounded to 64 KiB, and the combined
+expectation count across all supplied fields is bounded to 32. Members are
+split on commas with surrounding whitespace trimmed from each member. The
+standardized `100-continue` expectation is represented by a canonical
+singleton constructor and `expects_continue()`; unknown well-formed extension
+names are retained by `unsupported()` with their original spelling. Duplicate
+expectation names are rejected case-insensitively. Empty members, invalid
+tokens, oversized values, too many members, and a present header set that
+yields no member are errors. `Expect::expect_continue()` constructs the
+standardized singleton, and `header_value()` emits `100-continue` plus any
+retained extension names. This type is the shared authority for singleton
+construction, token validation, duplicate detection, malformed members, and
+size bounds. It reports declared request metadata only; it does not wait for
+an interim response, send `100 Continue`, reject unsupported extensions, or
+change body framing.
+
 ## Max-Forwards
 
 `max_forwards` parses a singleton HTTP `Max-Forwards` request field as

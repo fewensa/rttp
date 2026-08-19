@@ -26,6 +26,7 @@ use rttp_client::{
   HttpClient, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecGpc, SecGpcParseError,
   SecPurpose, UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
 };
+use rttp_protocol::expect::Expect;
 use rttp_test_support as support;
 
 #[test]
@@ -603,4 +604,27 @@ fn response_facade_returns_none_when_transfer_encoding_is_absent() {
     .transfer_encoding()
     .expect("missing Transfer-Encoding should be accepted")
     .is_none());
+}
+
+#[test]
+fn client_expect_continue_uses_the_shared_protocol_singleton() {
+  let expect = Expect::expect_continue();
+
+  assert!(expect.expects_continue());
+  assert!(expect.unsupported().is_empty());
+  assert_eq!(expect.header_value(), "100-continue");
+
+  let mixed = Expect::parse("100-continue, preview").expect("mixed Expect should parse");
+  assert!(mixed.expects_continue());
+  assert_eq!(["preview"], mixed.unsupported());
+
+  assert!(Expect::parse("100-continue, 100-CONTINUE").is_err());
+  assert!(Expect::parse("not a token").is_err());
+  assert!(
+    Expect::parse("tea-time")
+      .expect("unsupported names parse")
+      .unsupported()
+      == ["tea-time"]
+  );
+  assert!(Expect::parse("a".repeat(64 * 1024 + 1)).is_err());
 }

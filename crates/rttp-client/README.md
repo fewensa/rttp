@@ -600,6 +600,14 @@ The helpers emit one comma-separated `Accept` field and do not choose a
 response representation. `header(("Accept", value))` remains available for
 media ranges or extensions outside this bounded helper API.
 
+## Bounded Expect request metadata
+
+`rttp-protocol` owns the shared `Expect` primitive. `HttpClient::expect_continue()`
+formats that type's standardized singleton as `Expect: 100-continue`. It is
+metadata only: the client does not delay the request body or wait for an
+interim response. Raw `header(("Expect", value))` remains available for
+extension values outside the typed helper.
+
 ## Bounded Authorization request metadata
 
 `HttpClient::authorization(scheme, credentials)` emits one `Authorization`
@@ -926,7 +934,7 @@ header-block model.
 | area | tested coverage | limits |
 |------|-----------------|--------|
 | HTTP/1.1 response parsing | `Content-Length`, chunked transfer coding, chunk extensions, informational responses, bodyless `204`/`304`, duplicate `Set-Cookie`, and framing ambiguity rejection | Not a complete RFC conformance suite |
-| HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and `Expect: 100-continue` | SOCKS handshakes are delegated to the `socks` crate |
+| HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and explicit `Expect: 100-continue` metadata through the shared protocol type | Expect metadata does not gate body transmission; raw `header(("Expect", value))` remains an escape hatch; SOCKS handshakes are delegated to the `socks` crate |
 | Fetch Metadata | `sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, `sec_fetch_user`, and `sec_purpose` emit bounded `Sec-Fetch-*`/`Sec-Purpose` request metadata | No browser security policy, automatic header generation, origin validation, navigation policy, request blocking, prefetch execution, or cache behavior |
 | Save-Data | `save_data` emits bounded `Save-Data: on` request metadata | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |
 | Sec-GPC | `sec_gpc` emits bounded `Sec-GPC: 1` request metadata through the shared protocol type | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |

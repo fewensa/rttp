@@ -427,6 +427,21 @@ These helpers parse request metadata only. They do not select a
 representation, compress a body, advertise Client Hints, or apply browser
 data-saver policy.
 
+## Expect request metadata
+
+Handlers can call `Request::expectations()` and `HttpRequest::expectations()`
+to observe bounded typed `Expect` request metadata through the shared
+protocol type, re-exported as `HttpExpectations`. Absent fields return
+`Ok(None)`. `expects_continue()` identifies the standardized `100-continue`
+expectation, while `unsupported()` preserves well-formed extension names for
+handler policy. Malformed, duplicate, oversized, or excessive values return
+`HttpExpectParseError` while `Request::header()` and `HttpRequest::header()`
+continue to expose the original raw field.
+
+These helpers parse request metadata only. They do not send `100 Continue`,
+wait for an interim response, reject unsupported extensions, or change body
+framing.
+
 ## Sec-GPC request metadata
 
 Handlers can call `Request::sec_gpc()` and `HttpRequest::sec_gpc()` to observe

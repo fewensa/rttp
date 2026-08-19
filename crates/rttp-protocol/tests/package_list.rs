@@ -26,6 +26,7 @@ fn package_includes_protocol_metadata_facade_test() {
     "tests/idempotency_key.rs",
     "tests/if_modified_since.rs",
     "tests/if_unmodified_since.rs",
+    "tests/expect.rs",
     "tests/package_list.rs",
     "tests/metadata_facade.rs",
     "tests/content_disposition.rs",
