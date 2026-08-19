@@ -468,6 +468,31 @@ requested. It is metadata-only: RTTP does not treat `Content-Location` as
 redirect behavior, cache variant selection, representation replacement,
 retry/replay behavior, route generation, or status-policy behavior.
 
+### Bounded HTTP/1.1 Service-Worker-Allowed behavior
+
+`Response::service_worker_allowed()` parses a response `Service-Worker-Allowed`
+header into the shared protocol-owned `ServiceWorkerAllowed` metadata type. It
+returns `Ok(None)` when the header is absent and rejects duplicate header
+fields because `Service-Worker-Allowed` is handled as a singleton response
+metadata field. `ServiceWorkerAllowed::parse(value)` is available when callers
+want to validate one raw field value directly; it trims outer HTTP optional
+whitespace and exposes the preserved path text with
+`ServiceWorkerAllowed::as_str()` and `ServiceWorkerAllowed::header_value()`.
+
+The helper is bounded and validation-oriented. The field value is limited to
+64 KiB and must be a non-empty origin-relative or absolute path without
+control or non-ASCII characters, interior whitespace, unsafe field-value characters, broken
+percent-encoding, absolute URIs, or network-path authority forms.
+Malformed values, duplicated singleton fields, and oversized values make
+`Response::service_worker_allowed()` return an error while leaving the original
+response headers and body available through `Response::header_value()`,
+`Response::header_values()`, and the other response metadata helpers.
+
+The helper interoperates with adjacent response metadata helpers by preserving
+raw headers and parsing only when requested. It is metadata-only: RTTP does
+not register service workers, evaluate service-worker scope, resolve the
+value against a script URL, or apply application routing policy.
+
 ### Bounded HTTP/1.1 Content-DPR behavior
 
 `Response::content_dpr()` parses a response `Content-DPR` header into the
@@ -1197,6 +1222,23 @@ The helper is metadata-only. RTTP does not grant or deny browser permissions,
 compare origins, resolve `self`, enable or disable APIs, or enforce origin
 policy, and it does not send reports.
 
+### Bounded Supports-Loading-Mode metadata
+
+`Response::supports_loading_mode()` parses one or more `Supports-Loading-Mode`
+response fields through the shared protocol parser as bounded Structured
+Fields token-list metadata, combining fields in wire order. The typed value
+exposes the ordered tokens with `tokens()`, membership checks with
+`contains(token)`, and exact predicates for the defined `fenced-frame`,
+`credentialed-prerender`, and `prerender-cross-origin-frames` tokens;
+well-formed unknown tokens such as `uncredentialed-prerender` are retained.
+Each field value is limited to 64 KiB, the combined raw bytes across fields
+are limited to 64 KiB, and the token count is limited to 256 per header set.
+Duplicate tokens are rejected with ASCII case-insensitive comparison. Parse
+errors are returned by the typed helper while raw headers remain available.
+
+The helper is metadata-only. RTTP does not prerender documents, admit fenced
+frames, change navigation, or alter resource loading based on this field.
+
 ### Bounded trailer behavior
 
 Trailer support is explicit and bounded by protocol path. On the client,
@@ -1289,6 +1331,7 @@ gain additional HTTP/2 header-block handling.
 | Content-Security-Policy-Report-Only | `Response::content_security_policy_report_only`, `ContentSecurityPolicyReportOnly`, `HttpContentSecurityPolicyReportOnly`, and `HttpResponse::with_content_security_policy_report_only` share bounded opaque CSP field validation while keeping the report-only header identity distinct, preserving repeated fields in wire order and raw headers on parse failures | No CSP enforcement, directive evaluation, report delivery, browser policy state, retry, redirect, cache behavior, or status-policy behavior |
 | Content-Language | `Response::content_language` parses bounded response `Content-Language` fields into ordered language metadata while preserving raw headers | No automatic language negotiation, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
 | Content-Location | `Response::content_location` and `ContentLocation::parse` parse bounded singleton response `Content-Location` metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |
+| Service-Worker-Allowed | `Response::service_worker_allowed` and `ServiceWorkerAllowed::parse` parse bounded singleton response `Service-Worker-Allowed` path metadata while preserving raw headers | No service-worker registration, scope evaluation, script-URL resolution, or application routing policy |
 | Content-DPR | `Response::content_dpr` and `ContentDpr::parse` parse bounded singleton response `Content-DPR` decimal-ratio metadata while preserving raw headers | No image rescaling, request DPR emission, Client Hints policy, retry, or transport changes |
 | Content-Type and Content-Encoding | `Response::content_type`/`ContentType::parse` parse bounded singleton `Content-Type` metadata, and `Response::content_encoding`/`ContentEncoding::parse` parse bounded ordered `Content-Encoding` codings while preserving raw headers on parse failures | No MIME sniffing, body decoding, charset transcoding, compression/decompression policy, negotiation, cache policy, redirects, retry/replay, or filesystem serving |
 | Connection | `Response::connection`/`Connection::parse` parse bounded HTTP/1 `Connection` tokens, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to keep-alive, `auto_add_connection`, hop-by-hop stripping, or HTTP/2 rejection |
@@ -1309,6 +1352,7 @@ gain additional HTTP/2 header-block handling.
 | Vary | `Response::vary` parses bounded response `Vary` fields into wildcard or normalized case-insensitive field-name metadata | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | No-Vary-Search | `Response::no_vary_search` parses bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
 | Permissions-Policy | `Response::permissions_policy` parses bounded W3C Permissions Policy dictionary metadata through the shared protocol type, combining fields in wire order and preserving raw headers on parse failures | No browser permission grants or denials, origin comparison, `self` resolution, API enablement, origin-policy enforcement, or report sending |
+| Supports-Loading-Mode | `Response::supports_loading_mode` parses bounded Structured Fields token-list response metadata through the shared protocol type, combining fields in wire order, retaining unknown tokens, and preserving raw headers on parse failures | No prerendering, fenced-frame admission, navigation changes, redirects, retries, or resource-loading behavior |
 | Trailers | Chunked response trailers are exposed for blocking and async APIs; streaming chunked uploads can send declared request trailers | Application metadata trailers such as `X-Trace` are allowed; pseudo-header, connection-specific, routing, authentication/cookie, and framing trailer fields are rejected |
 | Bounded h2c client | With `http2`, direct `socket2` h2c sends GET, HEAD, bodyless DELETE, OPTIONS, or TRACE, buffered POST, PUT, or PATCH requests, and opt-in RFC 8441 extended CONNECT request HEADERS via `http2_extended_connect`, opens at most one request stream, supports prior-knowledge with `emit_http2_prior_knowledge`, supports explicit HTTP/1.1 `Upgrade: h2c` negotiation with `emit_http2_upgrade`, advertises `SETTINGS_ENABLE_PUSH = 0`, advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1` only for the explicit extended CONNECT path, validates received `SETTINGS_ENABLE_PUSH` values as only `0` or `1`, honors initial peer `SETTINGS_MAX_CONCURRENT_STREAMS` by failing before request HEADERS when the peer allows zero streams, honors peer-advertised `SETTINGS_MAX_HEADER_LIST_SIZE` request metadata limits, accepts only legal `SETTINGS_MAX_FRAME_SIZE` values from 16,384 through 16,777,215 bytes, splits outbound HEADERS, DATA, and trailers to the active peer frame-size limit, rejects oversized inbound frames when a configured local frame-size limit is exceeded, bounds HPACK dynamic table use with `SETTINGS_HEADER_TABLE_SIZE`, strips HTTP/1.x connection-specific request fields before emission, rejects connection-specific peer response fields, suppresses HEAD response bodies, treats `RST_STREAM` on the active stream as a bounded reset/cancellation signal, acknowledges inbound PING without ACK on stream 0 and exactly 8 octets with matching opaque data, ignores inbound PING ACK, rejects malformed PING frames, DATA bodies, trailers, HPACK static Huffman strings, bounded large header blocks, padded incoming frames, `GOAWAY` shutdown boundaries, PRIORITY metadata validation without scheduling, HTTP/2-allowed unknown/extension frame ignoring inside this bounded path, reserved stream-id high-bit normalization, and conservative DATA flow control | Ordinary `CONNECT`, header-configured `:protocol` metadata, non-h2c HTTP/1.1 `Upgrade` handoff requests, and proxies are rejected deterministically, and `PUSH_PROMISE`/server push is rejected instead of managed; bounded direct h2c only, with no keepalive timers, no automatic client/server initiated PING policy, no public cancellation callback API, no dynamic policy API, no extension callback API, no full extension negotiation, TLS ALPN, external h2 integration, proxy tunneling to h2, proxy h2, tunnel handoff, connection pooling, persistent HTTP/2 session management, automatic retry/replay, server push, full session manager, full stream state machine, full multiplex scheduler, unbounded multiplex scheduling, general multiplexing, priority scheduling, request bodies or trailers for extended CONNECT, or request bodies for GET, HEAD, DELETE, OPTIONS, or TRACE |
 
@@ -1924,6 +1968,37 @@ not treat `Content-Location` as redirect behavior, cache variant selection,
 representation replacement, retry/replay behavior, route generation, or
 status-policy behavior.
 
+### Bounded HTTP/1.1 Service-Worker-Allowed behavior
+
+Server-side `Service-Worker-Allowed` helpers expose response metadata
+declaration and parsing through the shared protocol-owned
+`HttpServiceWorkerAllowed` type without registering service workers or
+resolving application routing policy.
+`HttpResponse::with_service_worker_allowed(value)` validates one
+`Service-Worker-Allowed` origin-relative or absolute path field value, trims
+outer whitespace, removes any existing raw `Service-Worker-Allowed` fields,
+and adds a single validated `Service-Worker-Allowed` header.
+`HttpResponse::service_worker_allowed()` parses any attached
+`Service-Worker-Allowed` header into `HttpServiceWorkerAllowed` and returns
+`Ok(None)` when the header is absent.
+
+Parsing is bounded and validation-oriented. The field value is limited to
+64 KiB and must be a non-empty origin-relative or absolute path without
+control or non-ASCII characters, interior whitespace, unsafe field-value characters, broken
+percent-encoding, absolute URIs, or network-path authority forms. Duplicate
+`Service-Worker-Allowed` fields are rejected because the helper treats the
+header as singleton response metadata. Malformed values, duplicated singleton
+fields, and oversized values return `HttpServiceWorkerAllowedParseError` from
+the helper. Raw `HttpResponse::header("Service-Worker-Allowed", ...)` values
+remain preserved exactly as ordinary response headers until a typed
+declaration helper replaces them or the typed parser is requested.
+
+These helpers interoperate with adjacent response metadata helpers by
+preserving raw headers and parsing only when requested. They are
+metadata-only: RTTP does not register service workers, evaluate
+service-worker scope, resolve the value against a script URL, or apply
+application routing policy from `Service-Worker-Allowed`.
+
 ### Bounded HTTP/1.1 Content-DPR behavior
 
 Server-side `Content-DPR` helpers expose response metadata declaration and
@@ -2116,6 +2191,25 @@ directives to 256 per header set, and allowlist members to 256 per directive.
 They do not grant or deny browser permissions, compare origins, resolve
 `self`, enable or disable APIs, enforce origin policy, or send reports.
 
+### Bounded Supports-Loading-Mode metadata
+
+Server-side `Supports-Loading-Mode` helpers expose response declaration
+metadata without applying prerender or fenced-frame loading policy.
+`HttpResponse::with_supports_loading_mode(tokens)` validates a declared token
+list through the shared protocol parser and replaces any existing
+`Supports-Loading-Mode` response fields with one canonical comma-separated
+value, while `HttpResponse::supports_loading_mode()` parses attached raw
+fields into `HttpSupportsLoadingMode` metadata. The typed value exposes the
+ordered tokens with `tokens()`, membership checks with `contains(token)`, and
+exact predicates for the defined `fenced-frame`,
+`credentialed-prerender`, and `prerender-cross-origin-frames` tokens;
+well-formed unknown tokens such as `uncredentialed-prerender` are retained.
+
+The helpers are bounded and metadata-only. Field values are limited to 64 KiB,
+the combined raw bytes across fields to 64 KiB, and tokens to 256 per header
+set. They do not prerender documents, admit fenced frames, change navigation,
+or alter resource loading.
+
 The server is intentionally small: it handles blocking HTTP/1.x request parsing
 for local tests and simple embedded use. It accepts fixed `Content-Length` and
 chunked request bodies, exposes chunked request trailers, applies bounded
@@ -2292,11 +2386,13 @@ TLS or async accept loops.
 | Vary | `HttpVary`, `HttpResponse::with_vary`, `HttpResponse::vary`, `Request::vary_selection`, and `HttpRequest::vary_selection` parse, declare, and select bounded `Vary` metadata with case-insensitive field-name handling | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | No-Vary-Search | `HttpNoVarySearch`, `HttpResponse::with_no_vary_search`, and `HttpResponse::no_vary_search` parse and declare bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
 | Permissions-Policy | `HttpPermissionsPolicy`, `HttpResponse::with_permissions_policy`, and `HttpResponse::permissions_policy` parse and declare bounded W3C Permissions Policy dictionary response metadata through the shared protocol type, replacing raw duplicates on declaration and preserving raw headers on parse failures | No browser permission grants or denials, origin comparison, `self` resolution, API enablement, origin-policy enforcement, or report sending |
+| Supports-Loading-Mode | `HttpSupportsLoadingMode`, `HttpResponse::with_supports_loading_mode`, and `HttpResponse::supports_loading_mode` parse and declare bounded Structured Fields token-list response metadata through the shared protocol type, replacing raw duplicates on declaration, retaining unknown tokens, and preserving raw headers on parse failures | No prerendering, fenced-frame admission, navigation changes, redirects, retries, or resource-loading behavior |
 | Allow | `HttpAllowedMethods`, `HttpResponse::with_allow`, and `HttpResponse::allow` declare and parse bounded `Allow` method-list metadata | No route dispatch, automatic `405` generation, `OPTIONS` policy, fallback method selection, retry/replay, or status-code policy engine |
 | Content-Security-Policy-Report-Only | `HttpContentSecurityPolicyReportOnly`, `HttpResponse::with_content_security_policy_report_only`, `content_security_policy_report_only`, and client `Response::content_security_policy_report_only` parse or declare bounded opaque `Content-Security-Policy-Report-Only` response metadata while preserving repeated fields in wire order and raw headers on parse failures | No CSP enforcement, directive evaluation, report delivery, browser policy state, retry, redirect, cache behavior, or status-policy behavior |
 | Content-Language | `HttpContentLanguages`, `Request::content_language`, `HttpRequest::content_language`, `HttpResponse::with_content_language`, and `HttpResponse::content_language` parse or declare bounded `Content-Language` metadata | No automatic language negotiation, route selection, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
 | Accept-Encoding | `HttpRequestAcceptEncodings`, `Request::accept_encoding`, and `HttpRequest::accept_encoding` parse bounded `Accept-Encoding` request metadata through the shared `rttp-protocol` type | No compression, decompression, content negotiation, retries, or transport changes |
 | Content-Location | `HttpResponse::with_content_location` declares one bounded singleton `Content-Location` header, and `HttpResponse::content_location` parses attached singleton response metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |
+| Service-Worker-Allowed | `HttpResponse::with_service_worker_allowed` declares one bounded singleton `Service-Worker-Allowed` header, and `HttpResponse::service_worker_allowed` parses attached singleton path metadata while preserving raw headers | No service-worker registration, scope evaluation, script-URL resolution, or application routing policy |
 | Content-DPR | `HttpResponse::with_content_dpr` declares one bounded singleton `Content-DPR` header, and `HttpResponse::content_dpr` plus client `Response::content_dpr` parse attached singleton decimal-ratio metadata while preserving raw headers | No image rescaling, request DPR emission, Client Hints policy, retry, or transport changes |
 | Content-Type and Content-Encoding | `HttpContentType`, `Request::content_type`, `HttpRequest::content_type`, `HttpResponse::with_content_type`, `content_type`, `HttpResponseContentEncodings`, `Request::content_encoding`, `HttpRequest::content_encoding`, `HttpResponse::with_content_encoding`, and `content_encoding` parse or declare bounded representation metadata while preserving raw headers on parse failures and replacing raw response duplicates on typed declaration | No MIME sniffing, body decoding, charset transcoding, compression/decompression, negotiation, cache policy, redirects, retry/replay, or filesystem serving |
 | Connection | `HttpConnection`, `Request::connection`, `HttpRequest::connection`, and `HttpResponse::connection` parse bounded HTTP/1 `Connection` tokens, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to hop-by-hop stripping, keep-alive/close, upgrade/h2c, or HTTP/2 rejection |

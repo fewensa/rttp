@@ -259,6 +259,19 @@ references, and broken percent-encoding are errors. This is syntax validation
 only: callers own redirect handling, cache variant selection, representation
 replacement, route generation, retries, and status policy.
 
+## Service-Worker-Allowed
+
+`service_worker_allowed` parses a singleton response `Service-Worker-Allowed`
+field as one bounded origin-relative or absolute path value. Each field value
+is bounded to 64 KiB. A second field is rejected after every supplied field is
+bound-checked. Surrounding SP and HTAB are trimmed as optional whitespace, and
+the trimmed path text is preserved through `as_str()` and `header_value()`
+without resolving scope against a script URL. Empty values, ASCII controls,
+interior whitespace, unsafe field-value characters, broken percent-encoding,
+absolute URIs, and network-path authority forms are errors. This is syntax
+validation only: callers own service-worker registration, scope evaluation,
+and application routing policy.
+
 ## Connection
 
 `connection` parses one or more RFC 9110 `Connection` field values into an
@@ -872,6 +885,23 @@ are rejected, and a well-formed `report-to` string parameter is accepted and
 dropped. The parser reports declared metadata only: it does not compare
 origins, resolve `self`, grant or deny browser permissions, or enforce origin
 policy.
+
+## Supports-Loading-Mode
+
+`supports_loading_mode` parses bounded `Supports-Loading-Mode` response
+metadata as a Structured Fields list of tokens, combining fields in wire
+order. Each field value is bounded to 64 KiB, the combined raw bytes across
+all supplied fields are bounded to 64 KiB, and the cumulative token count is
+bounded to 256. Tokens are opaque and are retained with their wire spelling;
+well-formed tokens that are not part of the defined set, such as
+`uncredentialed-prerender`, are preserved. The exact `fenced-frame`,
+`credentialed-prerender`, and `prerender-cross-origin-frames` tokens are
+exposed through predicates, and `from_tokens` builds metadata from declared
+tokens. Duplicate tokens, including across fields, are rejected with ASCII
+case-insensitive comparison. Empty members, strings, integers, inner lists,
+parameterized items, non-token members, and oversized values are rejected.
+The parser reports declared metadata only: it does not prerender documents,
+admit fenced frames, change navigation, or alter resource loading.
 
 ## Pragma
 

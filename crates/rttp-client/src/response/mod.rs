@@ -144,6 +144,9 @@ pub use rttp_protocol::reporting_endpoints::{ReportingEndpoints, ReportingEndpoi
 pub use rttp_protocol::server_timing::{
   ServerTiming, ServerTimingMetric, ServerTimingParameter, ServerTimingParseError,
 };
+pub use rttp_protocol::service_worker_allowed::{
+  ServiceWorkerAllowed, ServiceWorkerAllowedParseError,
+};
 pub use rttp_protocol::signature::{Signature, SignatureEntry, SignatureParseError};
 pub use rttp_protocol::signature_input::{
   SignatureCoveredComponent, SignatureDecimal, SignatureInput, SignatureInputMember,
@@ -154,6 +157,9 @@ pub use rttp_protocol::signature_input::{
 };
 pub use rttp_protocol::strict_transport_security::{
   StrictTransportSecurity, StrictTransportSecurityParseError,
+};
+pub use rttp_protocol::supports_loading_mode::{
+  SupportsLoadingMode, SupportsLoadingModeParseError,
 };
 pub use rttp_protocol::timing_allow_origin::{TimingAllowOrigin, TimingAllowOriginParseError};
 pub use rttp_protocol::trailer::{Trailer, TrailerParseError};

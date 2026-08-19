@@ -1345,6 +1345,116 @@ fn etag_response_helper_rejects_malformed_duplicate_and_oversized_raw_headers() 
 }
 
 #[test]
+fn service_worker_allowed_response_helpers_validate_replace_and_parse_singleton_metadata() {
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .service_worker_allowed()
+      .expect("absent Service-Worker-Allowed should parse")
+  );
+
+  let response = HttpResponse::ok([])
+    .header("Service-Worker-Allowed", "/old")
+    .header("service-worker-allowed", "/older")
+    .with_service_worker_allowed(" / ")
+    .expect("valid Service-Worker-Allowed should be accepted");
+  assert_eq!(
+    "/",
+    response
+      .service_worker_allowed()
+      .expect("Service-Worker-Allowed should parse")
+      .expect("Service-Worker-Allowed should be present")
+      .as_str()
+  );
+  assert_eq!(
+    vec![("Service-Worker-Allowed", "/")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let attached = HttpResponse::ok([]).header("Service-Worker-Allowed", "../scope");
+  assert_eq!(
+    "../scope",
+    attached
+      .service_worker_allowed()
+      .expect("Service-Worker-Allowed should parse")
+      .expect("Service-Worker-Allowed should be present")
+      .as_str()
+  );
+}
+
+#[test]
+fn service_worker_allowed_response_helper_rejects_malformed_duplicate_and_oversized_raw_headers() {
+  for value in [
+    "",
+    " ",
+    "/bad path",
+    "/bad%zz",
+    "http://example.test/scope",
+    "//example.test/scope",
+    "/safe\u{7f}",
+  ] {
+    assert!(
+      HttpResponse::ok([])
+        .with_service_worker_allowed(value)
+        .is_err(),
+      "Service-Worker-Allowed helper should reject {value:?}"
+    );
+
+    let response = HttpResponse::ok([]).header("Service-Worker-Allowed", value);
+    assert!(
+      response.service_worker_allowed().is_err(),
+      "Service-Worker-Allowed parser should reject {value:?}"
+    );
+    assert_eq!(
+      vec![("Service-Worker-Allowed", value)],
+      response
+        .headers
+        .iter()
+        .map(|header| (header.name.as_str(), header.value.as_str()))
+        .collect::<Vec<_>>()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("Service-Worker-Allowed", "/")
+    .header("service-worker-allowed", "/app/");
+  assert!(duplicate.service_worker_allowed().is_err());
+  assert_eq!(
+    vec![
+      ("Service-Worker-Allowed", "/"),
+      ("service-worker-allowed", "/app/")
+    ],
+    duplicate
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let oversized = format!("/{}", "a".repeat(64 * 1024));
+  assert!(
+    HttpResponse::ok([])
+      .with_service_worker_allowed(&oversized)
+      .is_err(),
+    "Service-Worker-Allowed helper should reject oversized values"
+  );
+  let response = HttpResponse::ok([]).header("Service-Worker-Allowed", &oversized);
+  assert!(response.service_worker_allowed().is_err());
+  assert_eq!(
+    vec![("Service-Worker-Allowed", oversized.as_str())],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
 fn access_control_allow_methods_helpers_validate_replace_and_parse_response_metadata() {
   let response = HttpResponse::ok([])
     .header("Access-Control-Allow-Methods", "DELETE")
@@ -2318,6 +2428,119 @@ fn permissions_policy_helpers_preserve_raw_metadata_and_report_parse_errors() {
     .with_permissions_policy(
       format!("geolocation=(\"{}\")", "https://example.test/".repeat(64 * 1024))
     )
+    .is_err());
+}
+
+#[test]
+fn supports_loading_mode_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Supports-Loading-Mode", "fenced-frame")
+    .header("supports-loading-mode", "credentialed-prerender")
+    .with_supports_loading_mode(["fenced-frame", "credentialed-prerender"])
+    .expect("Supports-Loading-Mode should be accepted");
+
+  let modes = response
+    .supports_loading_mode()
+    .expect("Supports-Loading-Mode should parse")
+    .expect("Supports-Loading-Mode should be present");
+  assert_eq!(
+    "fenced-frame, credentialed-prerender",
+    modes.header_value()
+  );
+  assert_eq!(modes.tokens(), ["fenced-frame", "credentialed-prerender"]);
+  assert!(modes.contains_fenced_frame());
+  assert!(modes.contains_credentialed_prerender());
+  assert_eq!(
+    vec![(
+      "Supports-Loading-Mode",
+      "fenced-frame, credentialed-prerender"
+    )],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn supports_loading_mode_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::ok([])
+    .header("Supports-Loading-Mode", "fenced-frame")
+    .header("supports-loading-mode", "credentialed-prerender");
+  let modes = raw
+    .supports_loading_mode()
+    .expect("raw Supports-Loading-Mode should parse")
+    .expect("Supports-Loading-Mode should be present");
+  assert_eq!(
+    "fenced-frame, credentialed-prerender",
+    modes.header_value()
+  );
+  assert_eq!(
+    vec!["fenced-frame", "credentialed-prerender"],
+    raw
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Supports-Loading-Mode"))
+      .map(|header| header.value.as_str())
+      .collect::<Vec<_>>()
+  );
+
+  for value in [
+    "",
+    "fenced-frame credentialed-prerender",
+    "fenced-frame,,credentialed-prerender",
+    "?1",
+    "\"fenced-frame\"",
+    "(fenced-frame)",
+    "fenced-frame;foo=bar",
+    "fenced-frame, fenced-frame",
+  ] {
+    let malformed = HttpResponse::ok([]).header("Supports-Loading-Mode", value);
+    assert!(
+      malformed.supports_loading_mode().is_err(),
+      "should reject {value:?}"
+    );
+    assert!(
+      HttpResponse::ok([])
+        .with_supports_loading_mode([value])
+        .is_err(),
+      "should reject {value:?}"
+    );
+  }
+
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .supports_loading_mode()
+      .expect("absent Supports-Loading-Mode should parse")
+  );
+
+  let duplicate = HttpResponse::ok([])
+    .header("Supports-Loading-Mode", "fenced-frame")
+    .header("supports-loading-mode", "Fenced-Frame");
+  assert!(duplicate.supports_loading_mode().is_err());
+  assert!(HttpResponse::ok([])
+    .with_supports_loading_mode(["fenced-frame", "FENCED-FRAME"])
+    .is_err());
+  assert!(HttpResponse::ok([])
+    .with_supports_loading_mode([format!("fenced-frame{}", "x".repeat(64 * 1024))])
+    .is_err());
+
+  let extension = HttpResponse::ok([])
+    .with_supports_loading_mode(["vendor/mode", "vendor:mode"])
+    .expect("Structured Fields tokens with ':' and '/' should be accepted");
+  let modes = extension
+    .supports_loading_mode()
+    .expect("Supports-Loading-Mode should parse")
+    .expect("Supports-Loading-Mode should be present");
+  assert_eq!(modes.tokens(), ["vendor/mode", "vendor:mode"]);
+  assert_eq!(modes.header_value(), "vendor/mode, vendor:mode");
+
+  let over_first = format!("a{}", "x".repeat(32_767));
+  let over_second = format!("b{}", "x".repeat(32_767));
+  assert!(HttpResponse::ok([])
+    .with_supports_loading_mode([&over_first, &over_second])
     .is_err());
 }
 

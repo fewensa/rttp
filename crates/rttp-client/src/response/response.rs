@@ -67,8 +67,10 @@ use rttp_protocol::prefer::PreferenceApplied;
 use rttp_protocol::range::ContentRange;
 use rttp_protocol::referrer_policy::ReferrerPolicy;
 use rttp_protocol::reporting_endpoints::ReportingEndpoints;
+use rttp_protocol::service_worker_allowed::ServiceWorkerAllowed;
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::sunset::parse_sunset_values;
+use rttp_protocol::supports_loading_mode::SupportsLoadingMode;
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
 use rttp_protocol::vary::Vary;
 use rttp_protocol::x_content_type_options::XContentTypeOptions;
@@ -673,6 +675,18 @@ impl Response {
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
+  /// Parses bounded `Supports-Loading-Mode` response metadata without applying
+  /// prerender or fenced-frame loading policy.
+  pub fn supports_loading_mode(&self) -> error::Result<Option<SupportsLoadingMode>> {
+    let values = self.header_values("supports-loading-mode");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    SupportsLoadingMode::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
   pub fn content_range(&self) -> error::Result<Option<ContentRange>> {
     let values = self.header_values("content-range");
     if values.is_empty() {
@@ -720,6 +734,18 @@ impl Response {
       return Ok(None);
     }
     ContentLocation::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Service-Worker-Allowed` response metadata without
+  /// registering service workers or resolving application routing policy.
+  pub fn service_worker_allowed(&self) -> error::Result<Option<ServiceWorkerAllowed>> {
+    let values = self.header_values("service-worker-allowed");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    ServiceWorkerAllowed::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

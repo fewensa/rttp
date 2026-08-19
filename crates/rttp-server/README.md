@@ -422,6 +422,29 @@ references against a response URL, follow redirects, select cache variants,
 replace representations, generate routes, trigger retries, or alter status
 policy from `Content-Location`.
 
+## Service-Worker-Allowed response metadata
+
+`HttpResponse::with_service_worker_allowed(value)` validates one
+`Service-Worker-Allowed` origin-relative or absolute path field value with the
+shared protocol-owned `HttpServiceWorkerAllowed` type, trims outer whitespace,
+removes any existing raw `Service-Worker-Allowed` fields, and adds a single
+validated `Service-Worker-Allowed` header.
+`HttpResponse::service_worker_allowed()` parses attached raw fields into
+`HttpServiceWorkerAllowed`, returns `Ok(None)` when absent, and preserves
+invalid raw fields until typed parsing is requested.
+
+The helper is bounded and validation-oriented. The field value is limited to
+64 KiB and must be a non-empty origin-relative or absolute path without
+control or non-ASCII characters, interior whitespace, unsafe field-value characters, broken
+percent-encoding, absolute URIs, or network-path authority forms. Duplicate
+fields are rejected because `Service-Worker-Allowed` is singleton response
+metadata. The preserved trimmed path is available through `as_str()` and
+`header_value()`.
+
+These helpers only declare and parse metadata. RTTP does not register service
+workers, evaluate service-worker scope, resolve the value against a script
+URL, or apply application routing policy from `Service-Worker-Allowed`.
+
 ## Content-DPR response metadata
 
 `HttpResponse::with_content_dpr(value)` validates one `Content-DPR` field value
@@ -490,6 +513,26 @@ well-formed `report-to` parameter is accepted and dropped.
 These helpers only declare and parse metadata. RTTP does not grant or deny
 browser permissions, compare origins, resolve `self`, or enforce origin
 policy, and it does not send reports.
+
+## Supports-Loading-Mode response metadata
+
+`HttpResponse::with_supports_loading_mode(tokens)` validates a declared token
+list through the shared protocol parser and replaces any existing raw
+`Supports-Loading-Mode` fields with one canonical comma-separated value.
+`HttpResponse::supports_loading_mode()` parses attached raw fields into
+`HttpSupportsLoadingMode` metadata, returning `Ok(None)` when absent and
+parser errors without changing raw fields. The typed value exposes the
+ordered tokens with `tokens()`, membership checks with `contains(token)`, and
+exact predicates for the defined `fenced-frame`,
+`credentialed-prerender`, and `prerender-cross-origin-frames` tokens;
+well-formed unknown tokens such as `uncredentialed-prerender` are retained.
+Field values are bounded to 64 KiB, the combined raw bytes across fields to
+64 KiB, and tokens to 256 per header set. Empty members, strings, integers,
+inner lists, parameterized items, duplicate tokens, non-token members, and
+oversized values are rejected.
+
+These helpers only declare and parse metadata. RTTP does not prerender
+documents, admit fenced frames, change navigation, or alter resource loading.
 
 ## Want-Content-Digest request metadata
 

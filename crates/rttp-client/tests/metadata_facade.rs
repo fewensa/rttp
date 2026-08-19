@@ -16,14 +16,16 @@ use rttp_client::response::{
   Priority, ProxyAuthenticate, ProxyAuthenticateParseError, ProxyAuthenticationInfo,
   ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError, ReferrerPolicy,
   ReferrerPolicyToken, ServerTiming, Signature, SignatureInput, SignatureInputParseError,
-  SignatureParseError, StrictTransportSecurity, StrictTransportSecurityParseError, Trailer,
-  TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError,
-  WantContentDigest, WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError,
-  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  SignatureParseError, StrictTransportSecurity, StrictTransportSecurityParseError,
+  SupportsLoadingMode, SupportsLoadingModeParseError, Trailer, TransferEncoding,
+  TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError, WantContentDigest,
+  WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError, XContentTypeOptions,
+  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentDisposition, ContentDispositionParseError, ContentLocation,
-  ContentLocationParseError, Deprecation, DeprecationParseError, ReprDigest,
+  ContentLocationParseError, Deprecation, DeprecationParseError, ReprDigest, ServiceWorkerAllowed,
+  ServiceWorkerAllowedParseError,
 };
 use rttp_client::{
   Baggage, BaggageMember, BaggageParseError, BaggageProperty, HttpClient, SecFetchDest,
@@ -67,6 +69,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .expect("Content-Location should parse");
   let _: ContentLocationParseError =
     ContentLocation::parse("not valid").expect_err("invalid Content-Location should be rejected");
+  let service_worker_allowed =
+    ServiceWorkerAllowed::parse("/").expect("Service-Worker-Allowed should parse");
+  let _: ServiceWorkerAllowedParseError = ServiceWorkerAllowed::parse("http://example.test/scope")
+    .expect_err("absolute URI Service-Worker-Allowed should be rejected");
   let content_disposition =
     ContentDisposition::parse("attachment; filename=\"report.txt\"; filename*=UTF-8''report.txt")
       .expect("Content-Disposition should parse");
@@ -132,6 +138,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
       .expect("Permissions-Policy should parse");
   let _: PermissionsPolicyParseError =
     PermissionsPolicy::parse("geolocation=src").expect_err("src should be rejected");
+  let supports_loading_mode = SupportsLoadingMode::parse("fenced-frame, credentialed-prerender")
+    .expect("Supports-Loading-Mode should parse");
+  let _: SupportsLoadingModeParseError =
+    SupportsLoadingMode::parse("?1").expect_err("non-token should be rejected");
   let warning = Warning::parse(r#"110 - "Response is Stale""#).expect("Warning should parse");
   let nel =
     Nel::parse(r#"{"report_to":"network-errors","max_age":2592000}"#).expect("NEL should parse");
@@ -247,6 +257,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     content_location.header_value(),
     "../representations/current.json"
   );
+  assert_eq!(service_worker_allowed.header_value(), "/");
+  assert_eq!(service_worker_allowed.as_str(), "/");
   assert_eq!(content_disposition.disposition_type(), "attachment");
   assert_eq!(content_disposition.filename(), Some("report.txt"));
   assert_eq!(
@@ -301,6 +313,16 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .unwrap()
     .allowlist()
     .is_empty());
+  assert_eq!(
+    supports_loading_mode.tokens(),
+    ["fenced-frame", "credentialed-prerender"]
+  );
+  assert!(supports_loading_mode.contains_fenced_frame());
+  assert!(supports_loading_mode.contains_credentialed_prerender());
+  assert_eq!(
+    supports_loading_mode.header_value(),
+    "fenced-frame, credentialed-prerender"
+  );
   assert_eq!(warning.items()[0].code(), 110);
   assert_eq!(nel.max_age(), 2592000);
   assert_eq!(nel.report_to(), Some("network-errors"));
@@ -584,6 +606,50 @@ fn response_facade_parses_permissions_policy_metadata() {
     [
       &"geolocation=(self \"https://maps.example.test\");report-to=\"rp\"".to_string(),
       &"camera=()".to_string()
+    ]
+  );
+}
+
+#[test]
+fn response_facade_parses_supports_loading_mode_metadata() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Supports-Loading-Mode: fenced-frame, uncredentialed-prerender\r\n",
+      "Supports-Loading-Mode: credentialed-prerender\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let modes: SupportsLoadingMode = response
+    .supports_loading_mode()
+    .expect("Supports-Loading-Mode should parse")
+    .expect("Supports-Loading-Mode should be present");
+
+  assert_eq!(
+    modes.tokens(),
+    [
+      "fenced-frame",
+      "uncredentialed-prerender",
+      "credentialed-prerender"
+    ]
+  );
+  assert!(modes.contains_fenced_frame());
+  assert!(modes.contains_credentialed_prerender());
+  assert!(modes.contains("uncredentialed-prerender"));
+  assert_eq!(
+    modes.header_value(),
+    "fenced-frame, uncredentialed-prerender, credentialed-prerender"
+  );
+  assert_eq!(
+    response.header_values("Supports-Loading-Mode"),
+    [
+      &"fenced-frame, uncredentialed-prerender".to_string(),
+      &"credentialed-prerender".to_string()
     ]
   );
 }
