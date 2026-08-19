@@ -26,11 +26,12 @@ use rttp_server::server::{
   HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSecGpc, HttpSecGpcParseError,
   HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
   HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpTraceParent, HttpTraceParentParseError, HttpTraceState,
-  HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
-  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
-  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpWantContentDigest,
-  HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
+  HttpSignatureParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError,
+  HttpTraceParent, HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember,
+  HttpTraceStateParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
+  HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
+  HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite,
+  SecFetchUser, SecPurpose,
 };
 
 #[test]
@@ -191,6 +192,14 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let permissions_policy_response = HttpResponse::ok("")
     .with_permissions_policy(r#"geolocation=(self "https://maps.example.test"), camera=()"#)
     .expect("Permissions-Policy should be accepted");
+  let supports_loading_mode: HttpSupportsLoadingMode =
+    HttpSupportsLoadingMode::parse("fenced-frame, credentialed-prerender")
+      .expect("Supports-Loading-Mode should parse");
+  let _: HttpSupportsLoadingModeParseError =
+    HttpSupportsLoadingMode::parse("?1").expect_err("non-token should be rejected");
+  let supports_loading_mode_response = HttpResponse::ok("")
+    .with_supports_loading_mode(["fenced-frame", "credentialed-prerender"])
+    .expect("Supports-Loading-Mode should be accepted");
   let fetch_site = SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
@@ -382,6 +391,20 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .permissions_policy()
       .expect("Permissions-Policy should parse")
       .expect("Permissions-Policy should be present")
+      .header_value()
+  );
+  assert_eq!(
+    supports_loading_mode.tokens(),
+    ["fenced-frame", "credentialed-prerender"]
+  );
+  assert!(supports_loading_mode.contains_fenced_frame());
+  assert!(supports_loading_mode.contains_credentialed_prerender());
+  assert_eq!(
+    "fenced-frame, credentialed-prerender",
+    supports_loading_mode_response
+      .supports_loading_mode()
+      .expect("Supports-Loading-Mode should parse")
+      .expect("Supports-Loading-Mode should be present")
       .header_value()
   );
   assert_eq!(fetch_site.header_value(), "same-origin");

@@ -152,6 +152,10 @@ pub use rttp_protocol::strict_transport_security::{
   StrictTransportSecurityParseError as HttpStrictTransportSecurityParseError,
 };
 pub use rttp_protocol::sunset::SunsetParseError as HttpSunsetParseError;
+pub use rttp_protocol::supports_loading_mode::{
+  SupportsLoadingMode as HttpSupportsLoadingMode,
+  SupportsLoadingModeParseError as HttpSupportsLoadingModeParseError,
+};
 pub use rttp_protocol::upgrade::{
   Upgrade as HttpUpgrade, UpgradeParseError as HttpUpgradeParseError,
 };
@@ -1356,6 +1360,27 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Supports-Loading-Mode` response metadata without
+  /// applying prerender or fenced-frame loading policy.
+  pub fn with_supports_loading_mode<I, H>(
+    mut self,
+    tokens: I,
+  ) -> Result<Self, HttpSupportsLoadingModeParseError>
+  where
+    I: IntoIterator<Item = H>,
+    H: AsRef<str>,
+  {
+    let modes = HttpSupportsLoadingMode::from_tokens(tokens)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Supports-Loading-Mode"));
+    self.headers.push(HttpHeader::new(
+      "Supports-Loading-Mode",
+      modes.header_value(),
+    ));
+    Ok(self)
+  }
+
   pub fn with_content_encoding<I, C>(
     mut self,
     codings: I,
@@ -2316,6 +2341,23 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpPermissionsPolicy::parse_values(values).map(Some)
+  }
+
+  /// Returns attached `Supports-Loading-Mode` response metadata without
+  /// applying prerender or fenced-frame loading policy.
+  pub fn supports_loading_mode(
+    &self,
+  ) -> Result<Option<HttpSupportsLoadingMode>, HttpSupportsLoadingModeParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Supports-Loading-Mode"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSupportsLoadingMode::parse_values(values).map(Some)
   }
 
   /// Returns attached `Referrer-Policy` metadata without altering requests.

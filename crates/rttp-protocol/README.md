@@ -830,6 +830,23 @@ dropped. The parser reports declared metadata only: it does not compare
 origins, resolve `self`, grant or deny browser permissions, or enforce origin
 policy.
 
+## Supports-Loading-Mode
+
+`supports_loading_mode` parses bounded `Supports-Loading-Mode` response
+metadata as a Structured Fields list of tokens, combining fields in wire
+order. Each field value is bounded to 64 KiB, the combined raw bytes across
+all supplied fields are bounded to 64 KiB, and the cumulative token count is
+bounded to 256. Tokens are opaque and are retained with their wire spelling;
+well-formed tokens that are not part of the defined set, such as
+`uncredentialed-prerender`, are preserved. The exact `fenced-frame`,
+`credentialed-prerender`, and `prerender-cross-origin-frames` tokens are
+exposed through predicates, and `from_tokens` builds metadata from declared
+tokens. Duplicate tokens, including across fields, are rejected with ASCII
+case-insensitive comparison. Empty members, strings, integers, inner lists,
+parameterized items, non-token members, and oversized values are rejected.
+The parser reports declared metadata only: it does not prerender documents,
+admit fenced frames, change navigation, or alter resource loading.
+
 ## Pragma
 
 `pragma` parses RFC 9111 `Pragma` fields as a comma-separated list of

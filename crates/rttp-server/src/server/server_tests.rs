@@ -2322,6 +2322,103 @@ fn permissions_policy_helpers_preserve_raw_metadata_and_report_parse_errors() {
 }
 
 #[test]
+fn supports_loading_mode_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Supports-Loading-Mode", "fenced-frame")
+    .header("supports-loading-mode", "credentialed-prerender")
+    .with_supports_loading_mode(["fenced-frame", "credentialed-prerender"])
+    .expect("Supports-Loading-Mode should be accepted");
+
+  let modes = response
+    .supports_loading_mode()
+    .expect("Supports-Loading-Mode should parse")
+    .expect("Supports-Loading-Mode should be present");
+  assert_eq!(
+    "fenced-frame, credentialed-prerender",
+    modes.header_value()
+  );
+  assert_eq!(modes.tokens(), ["fenced-frame", "credentialed-prerender"]);
+  assert!(modes.contains_fenced_frame());
+  assert!(modes.contains_credentialed_prerender());
+  assert_eq!(
+    vec![(
+      "Supports-Loading-Mode",
+      "fenced-frame, credentialed-prerender"
+    )],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn supports_loading_mode_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::ok([])
+    .header("Supports-Loading-Mode", "fenced-frame")
+    .header("supports-loading-mode", "credentialed-prerender");
+  let modes = raw
+    .supports_loading_mode()
+    .expect("raw Supports-Loading-Mode should parse")
+    .expect("Supports-Loading-Mode should be present");
+  assert_eq!(
+    "fenced-frame, credentialed-prerender",
+    modes.header_value()
+  );
+  assert_eq!(
+    vec!["fenced-frame", "credentialed-prerender"],
+    raw
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Supports-Loading-Mode"))
+      .map(|header| header.value.as_str())
+      .collect::<Vec<_>>()
+  );
+
+  for value in [
+    "",
+    "fenced-frame credentialed-prerender",
+    "fenced-frame,,credentialed-prerender",
+    "?1",
+    "\"fenced-frame\"",
+    "(fenced-frame)",
+    "fenced-frame;foo=bar",
+    "fenced-frame, fenced-frame",
+  ] {
+    let malformed = HttpResponse::ok([]).header("Supports-Loading-Mode", value);
+    assert!(
+      malformed.supports_loading_mode().is_err(),
+      "should reject {value:?}"
+    );
+    assert!(
+      HttpResponse::ok([])
+        .with_supports_loading_mode([value])
+        .is_err(),
+      "should reject {value:?}"
+    );
+  }
+
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .supports_loading_mode()
+      .expect("absent Supports-Loading-Mode should parse")
+  );
+
+  let duplicate = HttpResponse::ok([])
+    .header("Supports-Loading-Mode", "fenced-frame")
+    .header("supports-loading-mode", "Fenced-Frame");
+  assert!(duplicate.supports_loading_mode().is_err());
+  assert!(HttpResponse::ok([])
+    .with_supports_loading_mode(["fenced-frame", "FENCED-FRAME"])
+    .is_err());
+  assert!(HttpResponse::ok([])
+    .with_supports_loading_mode([format!("fenced-frame{}", "x".repeat(64 * 1024))])
+    .is_err());
+}
+
+#[test]
 fn authentication_info_helpers_validate_replace_and_parse_response_metadata() {
   let response = HttpResponse::ok([])
     .header("Authentication-Info", "qop=auth")
