@@ -24,8 +24,8 @@ use rttp_client::response::{
   ContentLocationParseError, Deprecation, DeprecationParseError, ReprDigest,
 };
 use rttp_client::{
-  HttpClient, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
-  UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
+  HttpClient, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecGpc, SecGpcParseError,
+  SecPurpose, UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
 };
 use rttp_test_support as support;
 
@@ -138,6 +138,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
   let fetch_user = SecFetchUser::parse("?1").expect("Sec-Fetch-User should parse");
+  let sec_gpc = SecGpc::parse("1").expect("Sec-GPC should parse");
+  let _: SecGpcParseError = SecGpc::parse("0").expect_err("invalid Sec-GPC should be rejected");
   let sec_purpose = SecPurpose::parse("prefetch, vendor-ext").expect("Sec-Purpose should parse");
   let upgrade_insecure_requests =
     UpgradeInsecureRequests::parse("1").expect("Upgrade-Insecure-Requests should parse");
@@ -266,6 +268,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_mode.header_value(), "navigate");
   assert_eq!(fetch_dest.header_value(), "document");
   assert_eq!(fetch_user.header_value(), "?1");
+  assert_eq!(sec_gpc.header_value(), "1");
   assert_eq!(sec_purpose.tokens(), ["prefetch", "vendor-ext"]);
   assert!(sec_purpose.contains_prefetch());
   assert_eq!(upgrade_insecure_requests.header_value(), "1");

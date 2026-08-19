@@ -8,11 +8,11 @@ use rttp::server::{
   HttpDeprecationParseError, HttpEntityTag, HttpIdempotencyKey, HttpIdempotencyKeyParseError,
   HttpIfModifiedSince, HttpIfUnmodifiedSince, HttpMaxForwards, HttpMementoDatetime,
   HttpMementoDatetimeParseError, HttpNel, HttpProxyAuthorization, HttpProxyStatus,
-  HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse, HttpSaveData, HttpSignature,
-  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpSunsetParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
-  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
+  HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse, HttpSaveData, HttpSecGpc,
+  HttpSecGpcParseError, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
+  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
+  HttpSignatureInputParseError, HttpSignatureParseError, HttpSunsetParseError, HttpUpgrade,
+  HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
 };
 use std::io::Write;
 use std::net::SocketAddr;
@@ -416,6 +416,8 @@ fn compatibility_facade_roundtrips_representation_metadata_matrix() {
     .expect("Want-Repr-Digest algorithm should be accepted")
     .want_repr_digest_with_q("sha-512", "0")
     .expect("Want-Repr-Digest preference should be accepted")
+    .sec_gpc()
+    .expect("Sec-GPC should be accepted")
     .emit()
     .expect("client request should complete");
   let captured_request = handle
@@ -444,6 +446,7 @@ fn compatibility_facade_roundtrips_representation_metadata_matrix() {
     Some("en-US"),
     header_value(&captured_request_text, "Content-Language")
   );
+  assert_eq!(Some("1"), header_value(&captured_request_text, "Sec-GPC"));
 
   let server_request =
     rttp::server::HttpRequest::parse(&captured_request).expect("server request should parse");
@@ -457,6 +460,14 @@ fn compatibility_facade_roundtrips_representation_metadata_matrix() {
     .expect("server Want-Repr-Digest should be present");
   assert_eq!(want_content_digest.header_value(), "sha-256=10, sha-512=8");
   assert_eq!(want_repr_digest.header_value(), "sha-256=10, sha-512=0");
+  assert_eq!(
+    server_request
+      .sec_gpc()
+      .expect("server Sec-GPC should parse")
+      .expect("server Sec-GPC should be present")
+      .header_value(),
+    "1"
+  );
   assert_eq!(
     server_request
       .content_type()
@@ -605,6 +616,28 @@ fn client_accept_charset_helpers_parse_through_shared_server_type() {
 
 #[test]
 #[cfg(feature = "client")]
+fn compatibility_facade_rejects_invalid_sec_gpc_request_metadata() {
+  let malformed = rttp::server::HttpRequest::parse(
+    b"GET /privacy HTTP/1.1\r\nHost: example.test\r\nSec-GPC: 0\r\n\r\n",
+  )
+  .expect("malformed Sec-GPC request should still parse");
+  assert!(
+    malformed.sec_gpc().is_err(),
+    "malformed Sec-GPC values must fail closed"
+  );
+
+  let duplicate = rttp::server::HttpRequest::parse(
+    b"GET /privacy HTTP/1.1\r\nHost: example.test\r\nSec-GPC: 1\r\nsec-gpc: 1\r\n\r\n",
+  )
+  .expect("duplicate Sec-GPC request should still parse");
+  assert!(
+    duplicate.sec_gpc().is_err(),
+    "duplicate Sec-GPC fields must fail closed"
+  );
+}
+
+#[test]
+#[cfg(feature = "client")]
 fn client_accept_encoding_helpers_parse_through_shared_server_type() {
   let (addr, handle) = spawn_representation_metadata_response_server(
     b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
@@ -691,6 +724,9 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpAccessControlRequestPrivateNetwork::parse("true")
       .expect("Access-Control-Request-Private-Network should parse");
   let save_data: HttpSaveData = HttpSaveData::parse("on").expect("Save-Data should parse");
+  let sec_gpc: HttpSecGpc = HttpSecGpc::parse("1").expect("Sec-GPC should parse");
+  let _: HttpSecGpcParseError =
+    HttpSecGpc::parse("0").expect_err("invalid Sec-GPC should be rejected");
   let upgrade_insecure_requests: HttpUpgradeInsecureRequests =
     HttpUpgradeInsecureRequests::parse("1").expect("Upgrade-Insecure-Requests should parse");
   let _: Result<HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError> =
@@ -760,6 +796,7 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(request_method.header_value(), "PATCH");
   assert_eq!(private_network.header_value(), "true");
   assert_eq!(save_data.header_value(), "on");
+  assert_eq!(sec_gpc.header_value(), "1");
   assert_eq!(upgrade_insecure_requests.header_value(), "1");
   assert_eq!(authorization.header_value(), "Bearer origin-token");
   assert_eq!(proxy_authorization.header_value(), "Basic cHJveHk6c2VjcmV0");
