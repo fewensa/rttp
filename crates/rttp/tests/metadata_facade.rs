@@ -1,9 +1,10 @@
 use rttp::server::{
-  HttpAcceptCh, HttpAccessControlRequestPrivateNetwork, HttpConditionalMetadata,
-  HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
-  HttpCrossOriginEmbedderPolicy, HttpCrossOriginEmbedderPolicyReportOnly,
-  HttpCrossOriginOpenerPolicy, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpNel, HttpResponse,
-  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpAcceptCh, HttpAccessControlRequestMethod, HttpAccessControlRequestPrivateNetwork,
+  HttpConditionalMetadata, HttpContentLocation, HttpContentLocationParseError, HttpContentRange,
+  HttpContentRangeParseError, HttpCrossOriginEmbedderPolicy,
+  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
+  HttpCrossOriginResourcePolicy, HttpEntityTag, HttpNel, HttpResponse, HttpSignature,
+  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
   HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
   HttpSignatureParseError, HttpSunsetParseError, HttpUpgrade, HttpUpgradeParseError,
 };
@@ -185,6 +186,9 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let accept_ch: HttpAcceptCh = HttpAcceptCh::parse("Sec-CH-UA").expect("Accept-CH should parse");
   let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("revision-42"));
   let response = HttpResponse::ok("").with_etag(HttpEntityTag::weak("revision-42"));
+  let request_method: HttpAccessControlRequestMethod =
+    HttpAccessControlRequestMethod::parse("patch")
+      .expect("Access-Control-Request-Method should parse");
   let private_network: HttpAccessControlRequestPrivateNetwork =
     HttpAccessControlRequestPrivateNetwork::parse("true")
       .expect("Access-Control-Request-Private-Network should parse");
@@ -214,6 +218,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpContentRange::parse("bytes */*").expect_err("invalid Content-Range should be rejected");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA"]);
+  assert_eq!(request_method.method(), "PATCH");
+  assert_eq!(request_method.header_value(), "PATCH");
   assert_eq!(private_network.header_value(), "true");
   assert_eq!(
     content_location.header_value(),
