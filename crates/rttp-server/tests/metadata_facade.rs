@@ -6,10 +6,11 @@ use rttp_server::server::{
   HttpAccessControlRequestHeadersParseError, HttpAccessControlRequestMethod,
   HttpAccessControlRequestMethodParseError, HttpAccessControlRequestPrivateNetwork,
   HttpAccessControlRequestPrivateNetworkParseError, HttpAuthorization, HttpAuthorizationParseError,
-  HttpCacheStatus, HttpCacheStatusParseError, HttpCdnCacheControl, HttpConditionalMetadata,
-  HttpConnection, HttpConnectionParseError, HttpContentDisposition,
-  HttpContentDispositionParseError, HttpContentDpr, HttpContentDprParseError, HttpContentLength,
-  HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
+  HttpBaggage, HttpBaggageMember, HttpBaggageParseError, HttpBaggageProperty, HttpCacheStatus,
+  HttpCacheStatusParseError, HttpCdnCacheControl, HttpConditionalMetadata, HttpConnection,
+  HttpConnectionParseError, HttpContentDisposition, HttpContentDispositionParseError,
+  HttpContentDpr, HttpContentDprParseError, HttpContentLength, HttpContentLocation,
+  HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
   HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeprecation,
   HttpDeprecationParseError, HttpEntityTag, HttpExpectParseError, HttpExpectations, HttpHost,
   HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince,
@@ -17,17 +18,17 @@ use rttp_server::server::{
   HttpKeepAlive, HttpMaxForwards, HttpMaxForwardsParseError, HttpMementoDatetime,
   HttpMementoDatetimeParseError, HttpNoVarySearch, HttpNoVarySearchParams, HttpPermissionsPolicy,
   HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
-  HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPreferenceKind,
-  HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError, HttpRequest,
-  HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpResponse, HttpSaveData,
-  HttpSaveDataParseError, HttpSecGpc, HttpSecGpcParseError, HttpSignature, HttpSignatureInput,
-  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
-  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
-  HttpTraceParent, HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember,
-  HttpTraceStateParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
-  HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
-  HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite,
-  SecFetchUser, SecPurpose,
+  HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective,
+  HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus,
+  HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
+  HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSecGpc, HttpSecGpcParseError,
+  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpTraceParent, HttpTraceParentParseError, HttpTraceState,
+  HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
+  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpWantContentDigest,
+  HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
 
 #[test]
@@ -873,6 +874,45 @@ fn request_facade_parses_trace_context_metadata_without_policy() {
 }
 
 #[test]
+fn request_facade_parses_baggage_metadata_without_policy() {
+  let request = HttpRequest::parse(
+    b"GET /baggage HTTP/1.1\r\nHost: example.test\r\nbaggage: tenant=acme;source=gateway,release=2026-08-19\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let baggage: HttpBaggage = request
+    .baggage()
+    .expect("baggage should parse")
+    .expect("baggage should be present");
+  let member: &HttpBaggageMember = &baggage.members()[0];
+  let property: &HttpBaggageProperty = &member.properties()[0];
+
+  assert_eq!("tenant", member.key());
+  assert_eq!("acme", member.value());
+  assert_eq!("source", property.key());
+  assert_eq!(Some("gateway"), property.value());
+  assert_eq!("release", baggage.members()[1].key());
+
+  let absent = HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(None, absent.baggage().expect("missing baggage"));
+
+  let malformed = HttpRequest::parse(
+    b"GET /baggage HTTP/1.1\r\nHost: example.test\r\nbaggage: tenant=secret,tenant=other\r\n\r\n",
+  )
+  .expect("malformed metadata should not reject raw request parsing");
+  assert!(malformed.baggage().is_err());
+  assert_eq!(
+    Some("tenant=secret,tenant=other"),
+    malformed.header("baggage")
+  );
+
+  let baggage_error: Result<HttpBaggage, HttpBaggageParseError> =
+    HttpBaggage::parse("tenant=1,tenant=2");
+  assert!(baggage_error.is_err());
+}
+
+#[test]
 fn request_facade_parses_conditional_http_date_metadata() {
   let request = HttpRequest::parse(
     b"GET /asset HTTP/1.1\r\nHost: example.test\r\nIf-Modified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\nIf-Unmodified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\n\r\n",
@@ -1206,4 +1246,120 @@ fn content_dpr_helper_rejects_invalid_duplicate_and_oversized_values() {
     response.content_dpr().is_err(),
     "Content-DPR parser should reject oversized raw values"
   );
+}
+
+#[test]
+fn request_facade_parses_pragma_metadata_without_policy() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nPragma: no-cache\r\nPragma: community=private, example=\"quoted, value\"\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let pragma = request
+    .pragma()
+    .expect("Pragma should parse")
+    .expect("Pragma should be present");
+
+  assert!(pragma.no_cache());
+  assert_eq!(
+    pragma.extensions().len(),
+    2,
+    "extensions must exclude the defined no-cache directive"
+  );
+  let extensions: Vec<&HttpPragmaDirective> = pragma.extensions();
+  assert_eq!("community", extensions[0].name());
+  assert_eq!(Some("private"), extensions[0].value());
+  assert_eq!("example", extensions[1].name());
+  assert_eq!(Some("quoted, value"), extensions[1].value());
+  assert_eq!(
+    "no-cache, community=private, example=\"quoted, value\"",
+    pragma.header_value()
+  );
+
+  let absent = HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent.pragma().expect("missing Pragma should be accepted")
+  );
+
+  let malformed =
+    HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\nPragma: no-cache,\r\n\r\n")
+      .expect("malformed metadata should not reject raw request parsing");
+  assert!(malformed.pragma().is_err());
+  assert_eq!(Some("no-cache,"), malformed.header("Pragma"));
+
+  let duplicate = HttpRequest::parse(
+    b"GET / HTTP/1.1\r\nHost: example.test\r\nPragma: no-cache\r\npragma: no-cache\r\n\r\n",
+  )
+  .expect("request should retain duplicate metadata");
+  assert!(duplicate.pragma().is_err());
+  assert_eq!(Some("no-cache"), duplicate.header("Pragma"));
+
+  let oversized_value = "x".repeat(64 * 1024 + 1);
+  let oversized_error: Result<HttpPragma, HttpPragmaParseError> =
+    HttpPragma::parse(oversized_value.as_str());
+  assert!(oversized_error.is_err());
+  assert!(!format!("{:?}", oversized_error.as_ref().unwrap_err()).contains(&oversized_value[..16]));
+
+  let first = "a".repeat(32 * 1024);
+  let second = "b".repeat(32 * 1024);
+  let combined_error = HttpPragma::parse_values([first.as_str(), second.as_str()]);
+  assert!(combined_error.is_err());
+  assert!(combined_error
+    .unwrap_err()
+    .to_string()
+    .contains("too large"));
+}
+
+#[test]
+fn response_facade_builds_and_parses_pragma_metadata() {
+  let response = HttpResponse::new(200, "OK")
+    .header("Pragma", "raw")
+    .with_pragma("no-cache, community=private")
+    .expect("Pragma should be accepted");
+
+  let pragma = response
+    .pragma()
+    .expect("Pragma should parse")
+    .expect("Pragma should be present");
+  assert!(pragma.no_cache());
+  assert_eq!("no-cache, community=private", pragma.header_value());
+  let mut serialized = Vec::new();
+  response.write_to(&mut serialized).expect("response writes");
+  let serialized = String::from_utf8(serialized).expect("response is utf8");
+  assert!(serialized.contains("\r\nPragma: no-cache, community=private\r\n"));
+  assert_eq!(1, serialized.matches("\r\nPragma: ").count());
+  assert!(!serialized.contains("\r\nPragma: raw\r\n"));
+
+  assert!(HttpResponse::ok("").with_pragma("no-cache=value").is_err());
+  let unchanged = HttpResponse::ok("").header("Pragma", "legacy");
+  assert!(unchanged.clone().with_pragma("no-cache,").is_err());
+  let mut unchanged_serialized = Vec::new();
+  unchanged
+    .write_to(&mut unchanged_serialized)
+    .expect("response writes");
+  let unchanged_serialized = String::from_utf8(unchanged_serialized).expect("response is utf8");
+  assert!(
+    unchanged_serialized.contains("\r\nPragma: legacy\r\n"),
+    "failed with_pragma must leave the response unchanged"
+  );
+
+  let absent = HttpResponse::ok("");
+  assert!(absent
+    .pragma()
+    .expect("missing Pragma should be valid")
+    .is_none());
+
+  let first = "a".repeat(32 * 1024);
+  let second = "b".repeat(32 * 1024);
+  let combined = HttpResponse::ok("")
+    .header("Pragma", first.as_str())
+    .header("Pragma", second.as_str());
+  assert!(combined.pragma().is_err());
+  let mut serialized = Vec::new();
+  combined.write_to(&mut serialized).expect("response writes");
+  let serialized = String::from_utf8(serialized).expect("response is utf8");
+  assert!(serialized.contains(&format!("\r\nPragma: {first}\r\n")));
+  assert!(serialized.contains(&format!("\r\nPragma: {second}\r\n")));
 }

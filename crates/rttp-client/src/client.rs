@@ -14,6 +14,7 @@ use rttp_protocol::access_control_request_headers::AccessControlRequestHeaders;
 use rttp_protocol::access_control_request_method::AccessControlRequestMethod;
 use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
 use rttp_protocol::authorization::Authorization;
+use rttp_protocol::baggage::Baggage;
 use rttp_protocol::expect::Expect;
 use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
@@ -24,6 +25,7 @@ use rttp_protocol::if_modified_since::IfModifiedSince;
 use rttp_protocol::if_unmodified_since::IfUnmodifiedSince;
 use rttp_protocol::max_forwards::MaxForwards;
 use rttp_protocol::origin::Origin;
+use rttp_protocol::pragma::Pragma;
 use rttp_protocol::priority::Priority;
 use rttp_protocol::save_data::SaveData;
 use rttp_protocol::sec_gpc::SecGpc;
@@ -454,6 +456,41 @@ impl HttpClient {
     )))
   }
 
+  /// Set bounded `Pragma` request metadata from an RFC 9111 directive list.
+  ///
+  /// The value is validated through the shared protocol `Pragma` type: each
+  /// directive name must be an HTTP token, optional values must be tokens or
+  /// quoted-strings, `no-cache` must appear without a value, duplicate
+  /// directive names are rejected case-insensitively, and combined fields are
+  /// bounded to 256 directives with 64 KiB per field and per value. Any
+  /// already-attached `Pragma` fields are combined in wire order and replaced
+  /// by one normalized field. This declares request metadata only; it does
+  /// not translate `Pragma` into `Cache-Control`, store cache entries, or
+  /// apply cache or intermediary policy. Use `header` directly for unusual
+  /// values.
+  pub fn pragma<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let mut values: Vec<String> = self
+      .request
+      .headers()
+      .iter()
+      .filter(|header| header.name().eq_ignore_ascii_case("Pragma"))
+      .map(|header| header.value().clone())
+      .collect();
+    values.push(value.as_ref().to_string());
+    let pragma = Pragma::parse_values(values.iter().map(String::as_str))
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("Pragma", pragma.header_value())))
+  }
+
+  /// Set `Pragma: no-cache` request metadata.
+  ///
+  /// This is a convenience for [`Self::pragma`] with the defined valueless
+  /// `no-cache` directive. It declares request metadata only; it does not
+  /// translate `Pragma` into `Cache-Control` or apply cache policy.
+  pub fn pragma_no_cache(&mut self) -> error::Result<&mut Self> {
+    self.pragma("no-cache")
+  }
+
   /// Append a validated `Accept` media range with its supplied quality value.
   ///
   /// This declares request metadata only; it does not select a response
@@ -696,6 +733,18 @@ impl HttpClient {
     let tracestate = TraceState::parse(value.as_ref())
       .map_err(|error| error::builder_with_message(error.to_string()))?;
     Ok(self.header(Header::new("tracestate", tracestate.header_value())))
+  }
+
+  /// Set bounded W3C `baggage` request metadata.
+  ///
+  /// This validates member keys, values, properties, duplicate keys, ordering,
+  /// count, and size bounds before connecting and replaces any existing
+  /// `baggage` field. It does not interpret application data, store request
+  /// context, or automatically propagate metadata between requests.
+  pub fn baggage<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let baggage = Baggage::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("baggage", baggage.header_value())))
   }
 
   /// Append a validated `Accept-Encoding` coding with the default quality of

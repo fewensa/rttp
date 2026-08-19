@@ -1,6 +1,7 @@
 use rttp::server::{
   HttpAcceptCh, HttpAcceptCharsetParseError, HttpAcceptLanguageParseError, HttpAcceptLanguages,
   HttpAccessControlRequestMethod, HttpAccessControlRequestPrivateNetwork, HttpAuthorization,
+  HttpBaggage, HttpBaggageMember, HttpBaggageParseError, HttpBaggageProperty,
   HttpConditionalMetadata, HttpContentDpr, HttpContentDprParseError, HttpContentLocation,
   HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
   HttpCrossOriginEmbedderPolicy, HttpCrossOriginEmbedderPolicyReportOnly,
@@ -8,12 +9,13 @@ use rttp::server::{
   HttpDeprecationParseError, HttpEntityTag, HttpExpectations, HttpIdempotencyKey,
   HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfUnmodifiedSince, HttpMaxForwards,
   HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNel, HttpPermissionsPolicy,
-  HttpPermissionsPolicyParseError, HttpProxyAuthorization, HttpProxyStatus,
-  HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse, HttpSaveData, HttpSecGpc,
-  HttpSecGpcParseError, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
-  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpSunsetParseError, HttpUpgrade,
-  HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
+  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization,
+  HttpProxyStatus, HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse,
+  HttpSaveData, HttpSecGpc, HttpSecGpcParseError, HttpSignature, HttpSignatureInput,
+  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
+  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
+  HttpSunsetParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
 };
 use std::io::Write;
 use std::net::SocketAddr;
@@ -173,6 +175,10 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp_client::response::Upgrade::parse("websocket").expect("Upgrade should parse");
   let _: rttp::UpgradeParseError =
     rttp_client::response::Upgrade::parse("").expect_err("empty Upgrade should fail");
+  let pragma: rttp::Pragma = rttp_client::response::Pragma::parse("no-cache, community=private")
+    .expect("Pragma should parse");
+  let _: rttp::PragmaParseError = rttp_client::response::Pragma::parse("no-cache, no-cache")
+    .expect_err("duplicate Pragma directives should be rejected");
   let x_content_type_options: rttp::XContentTypeOptions =
     rttp_client::response::XContentTypeOptions::parse("NoSniff")
       .expect("X-Content-Type-Options should parse");
@@ -196,6 +202,12 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp_client::SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let sec_purpose: rttp::SecPurpose =
     rttp_client::SecPurpose::parse("prefetch, vendor-ext").expect("Sec-Purpose should parse");
+  let baggage: rttp::Baggage =
+    rttp_client::Baggage::parse("tenant=acme;source=gateway").expect("baggage should parse");
+  let _: rttp::BaggageParseError = rttp_client::Baggage::parse("tenant=1,tenant=2")
+    .expect_err("duplicate baggage should be rejected");
+  let baggage_member: &rttp::BaggageMember = &baggage.members()[0];
+  let baggage_property: &rttp::BaggageProperty = &baggage_member.properties()[0];
   let etag: rttp::EntityTag =
     rttp_client::response::EntityTag::parse("\"asset-v7\"").expect("ETag should parse");
   let location: rttp::Location =
@@ -272,6 +284,10 @@ fn compatibility_facade_exports_client_metadata_types() {
     Some("users")
   );
   assert_eq!(upgrade.protocols(), ["websocket"]);
+  assert!(pragma.no_cache());
+  assert_eq!("community", pragma.extensions()[0].name());
+  assert_eq!(Some("private"), pragma.extensions()[0].value());
+  assert_eq!("no-cache, community=private", pragma.header_value());
   assert_eq!(x_content_type_options, rttp::XContentTypeOptions::Nosniff);
   assert_eq!(x_content_type_options.header_value(), "nosniff");
   assert_eq!(x_frame_options, rttp::XFrameOptions::Deny);
@@ -286,6 +302,8 @@ fn compatibility_facade_exports_client_metadata_types() {
     .unwrap()
     .allowlist()
     .is_empty());
+  assert_eq!("tenant", baggage_member.key());
+  assert_eq!("source", baggage_property.key());
   assert_eq!(fetch_site.header_value(), "same-origin");
   assert_eq!(sec_purpose.tokens(), ["prefetch", "vendor-ext"]);
   assert!(sec_purpose.contains_prefetch());
@@ -761,6 +779,12 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpExpectations::parse("100-continue, preview").expect("Expect should parse");
   let idempotency_key: HttpIdempotencyKey =
     HttpIdempotencyKey::parse("charge-2026-08-19-9f3c").expect("Idempotency-Key should parse");
+  let baggage: HttpBaggage =
+    HttpBaggage::parse("tenant=acme;source=gateway").expect("baggage should parse");
+  let _: HttpBaggageParseError =
+    HttpBaggage::parse("tenant=1,tenant=2").expect_err("duplicate baggage should be rejected");
+  let baggage_member: &HttpBaggageMember = &baggage.members()[0];
+  let baggage_property: &HttpBaggageProperty = &baggage_member.properties()[0];
   let _: Result<HttpIdempotencyKey, HttpIdempotencyKeyParseError> =
     HttpIdempotencyKey::parse("key with space");
   let if_modified_since: HttpIfModifiedSince =
@@ -782,6 +806,10 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
       .expect("Cross-Origin-Opener-Policy should parse");
   let upgrade: HttpUpgrade = HttpUpgrade::parse("websocket").expect("Upgrade should parse");
   let _: HttpUpgradeParseError = HttpUpgrade::parse("").expect_err("empty Upgrade should fail");
+  let pragma: HttpPragma =
+    HttpPragma::parse("no-cache, community=private").expect("Pragma should parse");
+  let _: HttpPragmaParseError = HttpPragma::parse("no-cache, no-cache")
+    .expect_err("duplicate Pragma directives should be rejected");
   let nel: HttpNel = HttpNel::parse(r#"{"report_to":"network-errors","max_age":2592000}"#)
     .expect("NEL should parse");
   let proxy_status: HttpProxyStatus =
@@ -834,6 +862,9 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!("charge-2026-08-19-9f3c", idempotency_key.as_str());
   assert_eq!("charge-2026-08-19-9f3c", idempotency_key.header_value());
   assert!(!format!("{idempotency_key:?}").contains("charge-2026-08-19-9f3c"));
+  assert_eq!("tenant", baggage_member.key());
+  assert_eq!("source", baggage_property.key());
+  assert!(!format!("{baggage:?}").contains("acme"));
   assert_eq!(
     if_modified_since.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
@@ -856,6 +887,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(embedder_policy_report_only.header_value(), "require-corp");
   assert_eq!(opener_policy.header_value(), "noopener-allow-popups");
   assert_eq!(upgrade.protocols(), ["websocket"]);
+  assert!(pragma.no_cache());
+  assert_eq!("no-cache, community=private", pragma.header_value());
   assert_eq!(nel.max_age(), 2592000);
   assert_eq!(nel.report_to(), Some("network-errors"));
   assert_eq!(

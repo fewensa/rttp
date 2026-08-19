@@ -421,6 +421,103 @@ fn request_sec_gpc_parses_request_metadata_without_policy() {
 }
 
 #[test]
+fn request_pragma_parses_request_metadata_without_policy() {
+  let absent_raw = "GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n";
+  let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
+  let absent = Request::read_next_from(&mut absent_reader)
+    .expect("absent request should parse")
+    .expect("absent request should be present");
+  assert_eq!(
+    None,
+    absent
+      .pragma()
+      .expect("missing Pragma should be accepted")
+  );
+  assert_eq!(None, absent.header("Pragma"));
+
+  let valid_raw = concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Pragma: no-cache\r\n",
+    "Pragma: community=private, example=\"quoted, value\"\r\n",
+    "\r\n"
+  );
+  let mut valid_reader = BufReader::new(Cursor::new(valid_raw.as_bytes()));
+  let valid = Request::read_next_from(&mut valid_reader)
+    .expect("valid request should parse")
+    .expect("valid request should be present");
+  let pragma = valid
+    .pragma()
+    .expect("Pragma should parse")
+    .expect("Pragma should be present");
+  assert!(pragma.no_cache());
+  assert_eq!(2, pragma.extensions().len());
+  assert_eq!("community", pragma.extensions()[0].name());
+  assert_eq!(Some("private"), pragma.extensions()[0].value());
+  assert_eq!(
+    "no-cache, community=private, example=\"quoted, value\"",
+    pragma.header_value()
+  );
+
+  let malformed_raw = concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Pragma: no-cache=\r\n",
+    "\r\n"
+  );
+  let mut malformed_reader = BufReader::new(Cursor::new(malformed_raw.as_bytes()));
+  let malformed = Request::read_next_from(&mut malformed_reader)
+    .expect("malformed metadata should not reject the request frame")
+    .expect("malformed request should be present");
+  assert!(malformed.pragma().is_err());
+  assert_eq!(Some("no-cache="), malformed.header("Pragma"));
+
+  let duplicate_raw = concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Pragma: no-cache\r\n",
+    "pragma: no-cache\r\n",
+    "\r\n"
+  );
+  let mut duplicate_reader = BufReader::new(Cursor::new(duplicate_raw.as_bytes()));
+  let duplicate = Request::read_next_from(&mut duplicate_reader)
+    .expect("duplicate metadata should not reject the request frame")
+    .expect("duplicate request should be present");
+  assert!(duplicate.pragma().is_err());
+  assert_eq!(Some("no-cache"), duplicate.header("Pragma"));
+
+  let oversized_value = "x".repeat(rttp_protocol::pragma::MAX_PRAGMA_VALUE_BYTES + 1);
+  let oversized = HttpRequest {
+    method: "GET".to_string(),
+    path: "/asset".to_string(),
+    query: None,
+    version: "HTTP/1.1".to_string(),
+    headers: vec![HttpHeader::new("Pragma", oversized_value)],
+    body: Vec::new(),
+    content_length: None,
+  };
+  assert!(oversized.pragma().is_err());
+  assert!(oversized.header("Pragma").is_some());
+
+  let first = "a".repeat(rttp_protocol::pragma::MAX_PRAGMA_VALUE_BYTES / 2);
+  let second = "b".repeat(rttp_protocol::pragma::MAX_PRAGMA_VALUE_BYTES / 2);
+  let combined = HttpRequest {
+    method: "GET".to_string(),
+    path: "/asset".to_string(),
+    query: None,
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      HttpHeader::new("Pragma", first),
+      HttpHeader::new("Pragma", second),
+    ],
+    body: Vec::new(),
+    content_length: None,
+  };
+  assert!(combined.pragma().is_err());
+  assert!(combined.header("Pragma").is_some());
+}
+
+#[test]
 fn request_upgrade_insecure_requests_parses_request_metadata_without_policy() {
   let absent_raw = "GET /page HTTP/1.1\r\nHost: example.test\r\n\r\n";
   let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
@@ -2651,6 +2748,53 @@ fn request_trace_context_is_optional_bounded_and_preserves_invalid_headers() {
 }
 
 #[test]
+fn request_baggage_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(None, absent.baggage().expect("missing baggage"));
+
+  let request = Request::from_raw_frame(
+    b"GET /baggage HTTP/1.1\r\nHost: example.test\r\nbaggage: tenant=acme;source=gateway\r\nbaggage: release=2026-08-19\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let baggage = request
+    .baggage()
+    .expect("baggage should parse")
+    .expect("baggage should be present");
+  assert_eq!(2, baggage.members().len());
+  assert_eq!("tenant", baggage.members()[0].key());
+  assert_eq!("acme", baggage.members()[0].value());
+  assert_eq!("source", baggage.members()[0].properties()[0].key());
+  assert_eq!("release", baggage.members()[1].key());
+  assert_eq!(
+    Some("tenant=acme;source=gateway"),
+    request.header("baggage")
+  );
+
+  let invalid = Request::from_raw_frame(
+    b"GET /baggage HTTP/1.1\r\nHost: example.test\r\nbaggage: tenant=secret,tenant=other\r\n\r\n",
+  )
+  .expect("request should retain invalid baggage metadata");
+  assert!(invalid.baggage().is_err());
+  assert_eq!(
+    Some("tenant=secret,tenant=other"),
+    invalid.header("baggage")
+  );
+
+  let oversized = Request::from_raw_frame(
+    format!(
+      "GET /baggage HTTP/1.1\r\nHost: example.test\r\nbaggage: k={}\r\n\r\n",
+      "v".repeat(8193)
+    )
+    .as_bytes(),
+  )
+  .expect("request should retain oversized baggage metadata");
+  assert!(oversized.baggage().is_err());
+  assert!(oversized.header("baggage").is_some());
+}
+
+#[test]
 fn request_cookies_are_bounded_and_preserve_pairs() {
   let request = Request::from_raw_frame(
     b"GET / HTTP/1.1\r\nHost: example.test\r\nCookie: session=abc; theme=dark\r\nCookie: flag=\r\n\r\n",
@@ -3429,6 +3573,36 @@ hello\r\n\
     assert!(trace_header_debug.contains("[REDACTED]"));
     assert!(!trace_header_debug.contains("4bf92f3577b34da6a3ce929d0e0e4736"));
     assert!(!trace_header_debug.contains("00f067aa0ba902b7"));
+
+    let baggage_raw = concat!(
+      "GET /baggage HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "baggage: tenant=acme-secret;source=gateway\r\n",
+      "\r\n"
+    );
+    let baggage_request =
+      Request::from_raw_frame(baggage_raw.as_bytes()).expect("baggage request should parse");
+    let baggage = baggage_request
+      .baggage()
+      .expect("baggage should parse")
+      .expect("baggage should be present");
+    assert_eq!("acme-secret", baggage.members()[0].value());
+    let baggage_debug = format!(
+      "{baggage_request:?} {:?} {:?}",
+      baggage,
+      baggage.members()[0]
+    );
+    assert!(!baggage_debug.contains("acme-secret"));
+    assert!(!baggage_debug.contains("gateway"));
+
+    let baggage_http_request =
+      HttpRequest::parse(baggage_raw.as_bytes()).expect("baggage HttpRequest should parse");
+    let baggage_http_request_debug = format!("{baggage_http_request:?}");
+    assert!(!baggage_http_request_debug.contains("acme-secret"));
+    assert!(!baggage_http_request_debug.contains("gateway"));
+    let baggage_header_debug = format!("{:?}", HttpHeader::new("baggage", "tenant=acme-secret"));
+    assert!(baggage_header_debug.contains("[REDACTED]"));
+    assert!(!baggage_header_debug.contains("acme-secret"));
 
     let response = HttpResponse::new(401, "Unauthorized")
       .header("WWW-Authenticate", "Broken")

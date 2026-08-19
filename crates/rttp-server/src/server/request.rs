@@ -27,6 +27,10 @@ pub use rttp_protocol::authorization::{
   Authorization as HttpAuthorization, AuthorizationParseError as HttpAuthorizationParseError,
   ProxyAuthorization as HttpProxyAuthorization,
 };
+pub use rttp_protocol::baggage::{
+  Baggage as HttpBaggage, BaggageMember as HttpBaggageMember,
+  BaggageParseError as HttpBaggageParseError, BaggageProperty as HttpBaggageProperty,
+};
 pub use rttp_protocol::connection::{
   Connection as HttpConnection, ConnectionParseError as HttpConnectionParseError,
 };
@@ -60,6 +64,10 @@ pub use rttp_protocol::if_unmodified_since::{
 };
 pub use rttp_protocol::max_forwards::{
   MaxForwards as HttpMaxForwards, MaxForwardsParseError as HttpMaxForwardsParseError,
+};
+pub use rttp_protocol::pragma::{
+  Pragma as HttpPragma, PragmaDirective as HttpPragmaDirective,
+  PragmaParseError as HttpPragmaParseError,
 };
 pub use rttp_protocol::prefer::{
   Prefer as HttpRequestPreferences, PreferParseError as HttpPreferParseError,
@@ -213,6 +221,7 @@ fn is_sensitive_debug_header(name: &str) -> bool {
     || name.eq_ignore_ascii_case("set-cookie")
     || name.eq_ignore_ascii_case("traceparent")
     || name.eq_ignore_ascii_case("tracestate")
+    || name.eq_ignore_ascii_case("baggage")
 }
 
 impl Request {
@@ -532,6 +541,16 @@ impl Request {
     HttpTraceState::parse_values(values).map(Some)
   }
 
+  /// Parses received W3C `baggage` request metadata without interpreting
+  /// application values or automatically propagating metadata.
+  pub fn baggage(&self) -> Result<Option<HttpBaggage>, HttpBaggageParseError> {
+    let values: Vec<&str> = self.headers_named("baggage").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpBaggage::parse_values(values).map(Some)
+  }
+
   /// Parses received `Prefer` request metadata without applying preferences.
   pub fn prefer(&self) -> Result<Option<HttpRequestPreferences>, HttpPreferParseError> {
     parse_prefer_values(self.headers_named("Prefer"))
@@ -598,6 +617,16 @@ impl Request {
       return Ok(None);
     }
     HttpUpgrade::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Pragma` request metadata without applying cache,
+  /// intermediary, or HTTP/1.0 compatibility policy.
+  pub fn pragma(&self) -> Result<Option<HttpPragma>, HttpPragmaParseError> {
+    let values: Vec<&str> = self.headers_named("Pragma").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpPragma::parse_values(values).map(Some)
   }
 
   /// Parses received `Content-Type` representation metadata without sniffing
@@ -2231,6 +2260,21 @@ impl HttpRequest {
     HttpTraceState::parse_values(values).map(Some)
   }
 
+  /// Parses received W3C `baggage` request metadata without interpreting
+  /// application values or automatically propagating metadata.
+  pub fn baggage(&self) -> Result<Option<HttpBaggage>, HttpBaggageParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("baggage"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpBaggage::parse_values(values).map(Some)
+  }
+
   /// Parses received `Prefer` request metadata without applying preferences.
   pub fn prefer(&self) -> Result<Option<HttpRequestPreferences>, HttpPreferParseError> {
     parse_prefer_values(
@@ -2461,6 +2505,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpUpgrade::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Pragma` request metadata without applying cache,
+  /// intermediary, or HTTP/1.0 compatibility policy.
+  pub fn pragma(&self) -> Result<Option<HttpPragma>, HttpPragmaParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Pragma"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpPragma::parse_values(values).map(Some)
   }
 
   /// Parses received `Content-Type` representation metadata without sniffing

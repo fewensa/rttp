@@ -110,6 +110,7 @@ pub use rttp_protocol::permissions_policy::{
   PermissionsPolicy, PermissionsPolicyAllowlist, PermissionsPolicyAllowlistMember,
   PermissionsPolicyDirective, PermissionsPolicyParseError,
 };
+pub use rttp_protocol::pragma::{Pragma, PragmaDirective, PragmaParseError};
 pub use rttp_protocol::prefer::{
   PreferParseError, Preference, PreferenceApplied, PreferenceAppliedParseError, PreferenceKind,
   PreferenceParameter,
@@ -130,6 +131,7 @@ pub use rttp_protocol::range::{ContentRange, ContentRangeParseError};
 pub use rttp_protocol::referrer_policy::{
   ReferrerPolicy, ReferrerPolicyParseError, ReferrerPolicyToken,
 };
+pub use rttp_protocol::reporting_endpoints::{ReportingEndpoints, ReportingEndpointsParseError};
 pub use rttp_protocol::server_timing::{
   ServerTiming, ServerTimingMetric, ServerTimingParameter, ServerTimingParseError,
 };

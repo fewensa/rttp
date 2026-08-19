@@ -136,6 +136,18 @@ returns the stored key and `header_value()` emits it unchanged. This parser
 reports declared request metadata only; it does not retry requests, store
 keys, compare keys across requests, or apply application idempotency policy.
 
+## W3C Baggage
+
+`baggage` parses bounded W3C `baggage` request metadata. `Baggage` preserves
+wire order while validating HTTP token keys, baggage-octet values, optional
+properties, duplicate member keys, at most 180 members, at most 8192 combined
+bytes, and 4096-byte per-member bounds. Values and property values are treated
+as opaque application data and are not decoded or interpreted. Typed `Debug`
+redacts member and property values, and parse errors describe validation
+categories without echoing supplied values. These parsers report declared
+request metadata only; they do not store request context, select a tracing
+backend, or propagate baggage automatically.
+
 ## W3C Trace Context
 
 `trace_context` parses bounded W3C `traceparent` and `tracestate` request
@@ -742,6 +754,24 @@ without policy semantics. Absent optional members keep their W3C defaults
 `1.0`) but are not re-emitted by `header_value()`. This parser does not send
 reports, persist policy, or configure Reporting endpoint groups.
 
+## Reporting-Endpoints
+
+`reporting_endpoints` parses one or more `Reporting-Endpoints` dictionary
+field values into an ordered list of endpoint-name to quoted-URL members.
+Each field value is bounded to 64 KiB, the combined raw field-value bytes
+across all supplied fields are bounded to 64 KiB, and the combined member
+count is bounded to 32. Endpoint names start with lowercase ASCII or `*` and
+continue with lowercase ASCII, digits, `_`, `-`, `.`, or `*`. Each member
+must use `name="url"` form. Quoted URLs unescape only `\\` and `\"` and
+reject ASCII controls and obs-text. Duplicate names across all supplied
+fields, empty dictionaries, unquoted URLs, malformed escapes, oversized
+values, oversized cumulative input, and too many members are errors.
+`from_endpoints()` constructs the same dictionary and `header_value()`
+re-emits escaped `name="url"` members joined with `", "`. This type is the
+shared authority for endpoint-name, quoted URL, duplicate, member-count, and
+size validation. It reports declared response metadata only; it does not
+schedule, send, persist, retry, or route reports.
+
 ## Keep-Alive
 
 `keep_alive` parses RFC 2068 `Keep-Alive` fields as a comma-separated list of
@@ -780,3 +810,23 @@ are rejected, and a well-formed `report-to` string parameter is accepted and
 dropped. The parser reports declared metadata only: it does not compare
 origins, resolve `self`, grant or deny browser permissions, or enforce origin
 policy.
+
+## Pragma
+
+`pragma` parses RFC 9111 `Pragma` fields as a comma-separated list of
+`pragma-directive` members: the defined valueless `no-cache` token or an
+`extension-pragma` token with an optional token or quoted-string value. Each
+field value is bounded to 64 KiB, combined field values are bounded to 64 KiB
+including `", "` separator overhead, and the combined directive count is
+bounded to 256; each directive value is bounded to 64 KiB. Directive names are
+matched case-insensitively, duplicate names across combined fields are rejected,
+and multiple `Pragma` fields are combined in wire order, matching the RFC 9111
+list rule. Surrounding SP and HTAB are trimmed as optional whitespace.
+Quoted-string values are unescaped on parse and re-escaped on emit, while
+unquoted values must be tokens. Empty or whitespace-only fields, empty list
+members, leading or trailing commas, malformed tokens, unparsable
+quoted-strings, forbidden ASCII control bytes, valued `no-cache` forms, and
+bound violations are errors. Extensions preserve their first-seen spelling and
+wire order. This parser reports declared metadata only; it does not translate
+`Pragma` into `Cache-Control`, store cache entries, or apply cache,
+intermediary, or HTTP/1.0 compatibility policy.

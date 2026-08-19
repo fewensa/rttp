@@ -981,6 +981,91 @@ fn test_parse_reporting_endpoints_response_metadata() {
   )
   .expect("raw response should remain inspectable");
   assert!(invalid.reporting_endpoints().is_err());
+  assert_eq!(
+    Some(&r#"Default="https://reports.example/default""#.to_string()),
+    invalid.header_value("Reporting-Endpoints")
+  );
+}
+
+#[test]
+fn test_parse_reporting_endpoints_escaped_duplicate_and_bounded_metadata() {
+  let escaped = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Reporting-Endpoints: default=\"https://reports.example/a\\\"b\\\\c\"\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("escaped Reporting-Endpoints response should parse");
+  let endpoints = escaped
+    .reporting_endpoints()
+    .expect("escaped Reporting-Endpoints should parse")
+    .expect("Reporting-Endpoints should be present");
+  assert_eq!(
+    Some(r#"https://reports.example/a"b\c"#),
+    endpoints.endpoint("default")
+  );
+
+  let duplicate = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Reporting-Endpoints: default=\"https://reports.example/default\"\r\n",
+      "Reporting-Endpoints: default=\"https://reports.example/other\"\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("raw response should remain inspectable");
+  assert!(duplicate.reporting_endpoints().is_err());
+  assert_eq!(
+    vec![
+      r#"default="https://reports.example/default""#,
+      r#"default="https://reports.example/other""#,
+    ],
+    duplicate
+      .header_values("Reporting-Endpoints")
+      .iter()
+      .map(|value| value.as_str())
+      .collect::<Vec<_>>()
+  );
+
+  let oversized_value = format!(r#"default="{}""#, "x".repeat(64 * 1024));
+  let oversized = Response::new(
+    RoUrl::with("https://example.test"),
+    format!(
+      "HTTP/1.1 200 OK\r\nReporting-Endpoints: {oversized_value}\r\nContent-Length: 0\r\n\r\n"
+    )
+    .into_bytes(),
+  )
+  .expect("raw response should remain inspectable");
+  assert!(oversized.reporting_endpoints().is_err());
+  assert_eq!(
+    Some(&oversized_value),
+    oversized.header_value("Reporting-Endpoints")
+  );
+
+  let excessive_value = (0..33)
+    .map(|index| format!(r#"endpoint{index}="https://reports.example/""#))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let excessive = Response::new(
+    RoUrl::with("https://example.test"),
+    format!(
+      "HTTP/1.1 200 OK\r\nReporting-Endpoints: {excessive_value}\r\nContent-Length: 0\r\n\r\n"
+    )
+    .into_bytes(),
+  )
+  .expect("raw response should remain inspectable");
+  assert!(excessive.reporting_endpoints().is_err());
+  assert_eq!(
+    Some(&excessive_value),
+    excessive.header_value("Reporting-Endpoints")
+  );
 }
 
 #[test]
@@ -2759,6 +2844,100 @@ fn test_server_timing_rejects_malformed_and_oversized_values_without_hiding_head
       .collect::<String>()
   ))
   .is_err());
+}
+
+#[test]
+fn test_pragma_response_helper_parses_combined_fields_and_retains_raw_headers() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Pragma: no-cache\r\n",
+    "Pragma: community=private, example=\"quoted, value\"\r\n",
+    "Content-Length: 2\r\n\r\nOK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+  let pragma = response
+    .pragma()
+    .expect("valid Pragma should parse")
+    .expect("Pragma should be present");
+
+  assert!(pragma.no_cache());
+  assert_eq!(2, pragma.extensions().len());
+  assert_eq!("community", pragma.extensions()[0].name());
+  assert_eq!(Some("private"), pragma.extensions()[0].value());
+  assert_eq!(
+    "no-cache, community=private, example=\"quoted, value\"",
+    pragma.header_value()
+  );
+  assert_eq!(
+    response.header_values("Pragma"),
+    [
+      &"no-cache".to_string(),
+      &"community=private, example=\"quoted, value\"".to_string()
+    ]
+  );
+}
+
+#[test]
+fn test_pragma_response_helper_returns_none_when_absent() {
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response without Pragma should parse");
+  assert_eq!(None, absent.pragma().expect("absent Pragma should parse"));
+}
+
+#[test]
+fn test_pragma_rejects_malformed_duplicate_and_bounds_without_hiding_headers() {
+  for value in [
+    "",
+    "no-cache,",
+    "no-cache=value",
+    "no-cache, no-cache",
+    "community=private, COMMUNITY=public",
+    "bad name",
+    "x=\"unterminated",
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\nPragma: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(response.pragma().is_err(), "should reject {value:?}");
+    assert_eq!(Some(&value.to_string()), response.header_value("Pragma"));
+    assert_eq!("OK", response.body().string().unwrap());
+  }
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_raw =
+    format!("HTTP/1.1 200 OK\r\nPragma: {oversized}\r\nContent-Length: 0\r\n\r\n");
+  let oversized_response = Response::new(
+    RoUrl::with("https://example.test"),
+    oversized_raw.into_bytes(),
+  )
+  .expect("raw response should remain usable");
+  assert!(oversized_response.pragma().is_err());
+  assert_eq!(Some(&oversized), oversized_response.header_value("Pragma"));
+
+  let first = "a".repeat(32 * 1024);
+  let second = "b".repeat(32 * 1024);
+  let combined_oversized =
+    format!("HTTP/1.1 200 OK\r\nPragma: {first}\r\nPragma: {second}\r\nContent-Length: 0\r\n\r\n");
+  let combined_response = Response::new(
+    RoUrl::with("https://example.test"),
+    combined_oversized.into_bytes(),
+  )
+  .expect("raw response should remain usable");
+  assert!(combined_response.pragma().is_err());
+  assert_eq!(2, combined_response.header_values("Pragma").len());
+
+  let duplicate = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nPragma: no-cache\r\npragma: no-cache\r\nContent-Length: 0\r\n\r\n"
+      .to_vec(),
+  )
+  .expect("raw response should remain usable");
+  assert!(duplicate.pragma().is_err());
+  assert_eq!(2, duplicate.header_values("Pragma").len());
 }
 
 #[test]

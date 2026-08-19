@@ -254,6 +254,25 @@ string to 64 KiB.
 These helpers only declare and parse metadata. The server does not send
 network error reports, persist policy, or configure Reporting endpoint groups.
 
+## Reporting-Endpoints response metadata
+
+`HttpResponse::with_reporting_endpoints(endpoints)` validates a bounded
+`Reporting-Endpoints` dictionary through the shared protocol
+`HttpReportingEndpoints` type and replaces any existing
+`Reporting-Endpoints` fields with one normalized value.
+`HttpResponse::reporting_endpoints()` parses attached raw fields into the
+same type, returning parser errors without changing those raw fields.
+Each field value is bounded to 64 KiB, the combined raw field-value bytes
+are bounded to 64 KiB, and the member count is bounded to 32. Endpoint names
+are lowercase tokens that may start with `*`; URLs must be quoted and
+unescape only `\\` and `\"`. Invalid names, unquoted URLs, malformed quoted
+strings, duplicate names, oversized input, and too many members return a
+parser error while `HttpResponse` raw headers continue to expose the
+original fields.
+
+These helpers only declare and parse metadata. The server does not schedule,
+send, persist, retry, or route reports.
+
 ## Proxy-Status response metadata
 
 `HttpResponse::with_proxy_status(value)` validates RFC 9209 `Proxy-Status` as
@@ -533,6 +552,29 @@ continue to expose the original raw field. The key is redacted from typed
 These helpers parse request metadata only. They do not retry requests, store
 keys, compare keys across requests, or apply application idempotency policy.
 
+## Pragma request and response metadata
+
+Handlers can call `Request::pragma()` and `HttpRequest::pragma()` to observe
+bounded typed `Pragma` request metadata through the shared protocol
+`HttpPragma` type, and `HttpResponse::with_pragma(value)` to declare validated
+`Pragma` response metadata that replaces attached same-name fields.
+`HttpResponse::pragma()` parses attached response `Pragma` fields. Absent
+fields return `Ok(None)`. The helpers parse RFC 9111 `pragma-directive`
+members: the defined valueless `no-cache` token or an `extension-pragma`
+token with an optional token or quoted-string value. Multiple `Pragma` fields
+are combined in wire order, directive names are matched case-insensitively,
+duplicate names are rejected, each field value is bounded to 64 KiB, combined
+field values are bounded to 64 KiB including `", "` separator overhead, each
+directive value is bounded to 64 KiB, and the combined directive count is
+bounded to 256. Empty members, malformed tokens or quoted-strings, valued
+`no-cache` forms, forbidden ASCII control bytes, and bound violations return a
+parser error while `Request::header()` and `HttpRequest::header()` continue to
+expose the original raw fields.
+
+These helpers declare and parse metadata only. They do not translate `Pragma`
+into `Cache-Control`, store cache entries, or apply cache, intermediary, or
+HTTP/1.0 compatibility policy.
+
 ## W3C Trace Context request metadata
 
 Handlers can call `Request::traceparent()`, `Request::tracestate()`, and the
@@ -548,6 +590,21 @@ key/value accessors. Trace context propagation values are redacted from typed
 `Debug`. These helpers parse request metadata only; they do not create trace
 identifiers, decide sampling, select a tracing backend, or automatically
 propagate context.
+
+## W3C Baggage request metadata
+
+Handlers can call `Request::baggage()` and the matching `HttpRequest` helper
+to observe bounded W3C Baggage request metadata through the shared protocol
+`HttpBaggage` type. Absent fields return `Ok(None)`. Malformed, oversized,
+duplicate-key, or over-limit values return parser errors while
+`Request::header()` and `HttpRequest::header()` continue to expose the
+original raw fields.
+
+`HttpBaggage` preserves ordered members with key, value, and property
+accessors. Member and property values are redacted from typed `Debug`. These
+helpers parse request metadata only; they do not interpret application data,
+store request context, select a tracing backend, or automatically propagate
+baggage.
 
 ## Conditional HTTP-date request metadata
 

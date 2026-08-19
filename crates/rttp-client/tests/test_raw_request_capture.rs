@@ -2161,6 +2161,201 @@ fn raw_idempotency_key_header_remains_available_as_escape_hatch() {
 }
 
 #[test]
+fn pragma_helper_emits_canonical_metadata() {
+  for (value, expected) in [
+    ("no-cache", "no-cache"),
+    ("no-cache, community=private", "no-cache, community=private"),
+    (
+      " \tcommunity=\"quoted, value\"\t ",
+      "community=\"quoted, value\"",
+    ),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .pragma(value)
+        .expect("Pragma should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+    assert_eq!(Some(expected), header_value(&request, "Pragma"));
+  }
+}
+
+#[test]
+fn pragma_helper_combines_existing_fields_and_replaces_them() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .pragma("community=private")
+      .expect("first Pragma should be accepted")
+      .pragma("example=\"quoted, value\"")
+      .expect("second Pragma should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("community=private, example=\"quoted, value\""),
+    header_value(&request, "Pragma")
+  );
+}
+
+#[test]
+fn pragma_helper_combines_existing_raw_fields_into_one_field() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Pragma", "legacy"))
+      .pragma("no-cache")
+      .expect("Pragma should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("legacy, no-cache"),
+    header_value(&request, "Pragma"),
+    "the typed helper must combine existing same-name fields with the new value"
+  );
+  assert_eq!(
+    1,
+    request.matches("Pragma:").count(),
+    "combined Pragma fields must be replaced by one field"
+  );
+}
+
+#[test]
+fn pragma_no_cache_helper_emits_defined_directive_without_cache_control() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .pragma_no_cache()
+      .expect("Pragma no-cache should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(Some("no-cache"), header_value(&request, "Pragma"));
+  assert!(
+    header_value(&request, "Cache-Control").is_none(),
+    "the Pragma helper must not emit Cache-Control"
+  );
+}
+
+#[test]
+fn pragma_helper_rejects_invalid_values_before_connecting() {
+  for value in [
+    "",
+    " ",
+    ",",
+    "no-cache,",
+    ",no-cache",
+    "no-cache=value",
+    "no-cache=\"value\"",
+    "no-cache, no-cache",
+    "community=private, COMMUNITY=public",
+    "bad name",
+    "x=\"unterminated",
+    "x=value\r\nX-Injected: 1",
+    "x=\u{1}",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .pragma(value)
+        .expect_err("invalid Pragma should be rejected");
+      assert!(error.is_builder());
+      if !value.trim().is_empty() {
+        assert!(!error.to_string().contains(value));
+      }
+    });
+    assert!(request.is_empty(), "invalid Pragma must not open a socket");
+  }
+}
+
+#[test]
+fn pragma_helper_rejects_invalid_existing_fields_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Pragma", "legacy value"))
+      .pragma("no-cache")
+      .expect_err("combined invalid Pragma should be rejected");
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "invalid combined Pragma must not open a socket"
+  );
+}
+
+#[test]
+fn pragma_helper_rejects_oversized_values_before_connecting() {
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .pragma(oversized.as_str())
+      .expect_err("oversized Pragma should be rejected");
+    assert!(error.is_builder());
+    assert!(!error.to_string().contains(&oversized[..64]));
+  });
+  assert!(
+    request.is_empty(),
+    "oversized Pragma must not open a socket"
+  );
+}
+
+#[test]
+fn pragma_helper_rejects_combined_fields_that_exceed_total_size() {
+  let first = "a".repeat(32 * 1024);
+  let second = "b".repeat(32 * 1024);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Pragma", first.as_str()))
+      .pragma(second.as_str())
+      .expect_err("combined oversized Pragma should be rejected");
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "combined oversized Pragma must not open a socket"
+  );
+}
+
+#[test]
+fn raw_pragma_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Pragma", "opaque custom value"))
+      .emit()
+      .expect("manual Pragma header should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("opaque custom value"),
+    header_value(&request, "Pragma")
+  );
+}
+
+#[test]
 fn trace_context_helpers_emit_and_replace_bounded_metadata() {
   let request = capture_request(|base_url| {
     client()
@@ -2192,6 +2387,27 @@ fn trace_context_helpers_emit_and_replace_bounded_metadata() {
 }
 
 #[test]
+fn baggage_helper_emits_and_replaces_bounded_metadata() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/baggage", base_url))
+      .header(("baggage", "old=value"))
+      .baggage("tenant=acme;source=gateway,release=2026-08-19")
+      .expect("baggage should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("tenant=acme;source=gateway,release=2026-08-19"),
+    header_value(&request, "baggage")
+  );
+  assert!(!request.contains("old=value"));
+}
+
+#[test]
 fn trace_context_helpers_reject_invalid_values_before_connecting_without_echoing_values() {
   for (name, value) in [
     (
@@ -2199,6 +2415,7 @@ fn trace_context_helpers_reject_invalid_values_before_connecting_without_echoing
       "00-00000000000000000000000000000000-00f067aa0ba902b7-01",
     ),
     ("tracestate", "rojo=1,rojo=2"),
+    ("baggage", "tenant=secret,tenant=other"),
   ] {
     let request = capture_optional_request(|base_url| {
       let mut client = client();
@@ -2208,12 +2425,18 @@ fn trace_context_helpers_reject_invalid_values_before_connecting_without_echoing
           .url(format!("{}/trace", base_url))
           .traceparent(value)
           .expect_err("invalid traceparent should be rejected")
-      } else {
+      } else if name == "tracestate" {
         client
           .get()
           .url(format!("{}/trace", base_url))
           .tracestate(value)
           .expect_err("invalid tracestate should be rejected")
+      } else {
+        client
+          .get()
+          .url(format!("{}/baggage", base_url))
+          .baggage(value)
+          .expect_err("invalid baggage should be rejected")
       };
       assert!(error.is_builder());
       assert!(!error.to_string().contains(value));
@@ -2259,6 +2482,44 @@ fn raw_trace_context_headers_are_validated_and_redacted() {
       .emit()
       .expect_err("invalid raw traceparent should be rejected before connect");
     assert!(error.is_builder());
+  });
+  assert!(rejected.is_empty());
+}
+
+#[test]
+fn raw_baggage_headers_are_validated_and_redacted() {
+  let baggage = "tenant=acme-secret;source=gateway";
+
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/baggage", base_url))
+      .header(("baggage", baggage))
+      .emit()
+      .expect("manual valid baggage header should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(Some(baggage), header_value(&request, "baggage"));
+
+  let debug = format!(
+    "{:?}",
+    client()
+      .get()
+      .url("http://127.0.0.1/baggage")
+      .header(("baggage", baggage))
+  );
+  assert!(!debug.contains("acme-secret"));
+  assert!(!debug.contains("gateway"));
+
+  let rejected = capture_optional_request(|base_url| {
+    let error = client()
+      .get()
+      .url(format!("{}/baggage", base_url))
+      .header(("baggage", "tenant=secret,tenant=other"))
+      .emit()
+      .expect_err("invalid raw baggage should be rejected before connect");
+    assert!(error.is_builder());
+    assert!(!error.to_string().contains("secret"));
   });
   assert!(rejected.is_empty());
 }

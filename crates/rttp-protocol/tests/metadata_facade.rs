@@ -8,6 +8,7 @@ use rttp_protocol::access_control_request_method::AccessControlRequestMethod;
 use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
 use rttp_protocol::age::Age;
 use rttp_protocol::authorization::{Authorization, ProxyAuthorization};
+use rttp_protocol::baggage::Baggage;
 use rttp_protocol::cache_status::CacheStatus;
 use rttp_protocol::cdn_cache_control::CdnCacheControl;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
@@ -42,11 +43,13 @@ use rttp_protocol::nel::Nel;
 use rttp_protocol::no_vary_search::{NoVarySearch, NoVarySearchParams};
 use rttp_protocol::origin::Origin;
 use rttp_protocol::permissions_policy::PermissionsPolicy;
+use rttp_protocol::pragma::{Pragma, PragmaParseError};
 use rttp_protocol::prefer::{Prefer, PreferenceApplied, PreferenceKind};
 use rttp_protocol::proxy_authentication_info::ProxyAuthenticationInfo;
 use rttp_protocol::proxy_status::{ProxyStatus, ProxyStatusParseError};
 use rttp_protocol::referer::Referer;
 use rttp_protocol::referrer_policy::{ReferrerPolicy, ReferrerPolicyToken};
+use rttp_protocol::reporting_endpoints::ReportingEndpoints;
 use rttp_protocol::save_data::SaveData;
 use rttp_protocol::sec_gpc::SecGpc;
 use rttp_protocol::signature::{Signature, SignatureParseError};
@@ -124,6 +127,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
     ProxyStatus::parse("ExampleCDN; error=connection_timeout").expect("Proxy-Status should parse");
   let _: ProxyStatusParseError =
     ProxyStatus::parse("").expect_err("empty Proxy-Status should be rejected");
+  let reporting_endpoints = ReportingEndpoints::parse(
+    r#"default="https://reports.example/default", csp="https://reports.example/csp""#,
+  )
+  .expect("Reporting-Endpoints should parse");
   let referer = Referer::parse("https://example.test/path?q=1").expect("Referer should parse");
   let timing_allow_origin =
     TimingAllowOrigin::parse("https://example.test").expect("Timing-Allow-Origin should parse");
@@ -170,12 +177,17 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let transfer_encoding =
     TransferEncoding::parse("chunked").expect("Transfer-Encoding should parse");
   let te = Te::parse("gzip;q=0.5, trailers").expect("TE should parse");
+  let baggage =
+    Baggage::parse("tenant=acme;source=gateway,release=2026-08-19").expect("baggage should parse");
   let traceparent = TraceParent::parse("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
     .expect("traceparent should parse");
   let tracestate =
     TraceState::parse("rojo=00f067aa0ba902b7,congo=t61rcWkgMzE").expect("tracestate should parse");
   let upgrade = Upgrade::parse("websocket").expect("Upgrade should parse");
   let _: UpgradeParseError = Upgrade::parse("").expect_err("empty Upgrade should be rejected");
+  let pragma = Pragma::parse("no-cache, community=private").expect("Pragma should parse");
+  let _: PragmaParseError =
+    Pragma::parse("no-cache, no-cache").expect_err("duplicate Pragma should be rejected");
   let want_content_digest =
     WantContentDigest::parse("sha-256=10, sha-512=0").expect("Want-Content-Digest should parse");
   let want_repr_digest =
@@ -226,6 +238,13 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(keep_alive.timeout(), Some(5));
   assert_eq!(keep_alive.max(), Some(100));
   assert_eq!(keep_alive.header_value(), "timeout=5, max=100");
+  assert_eq!(
+    reporting_endpoints.endpoints(),
+    [
+      ("default", "https://reports.example/default"),
+      ("csp", "https://reports.example/csp"),
+    ]
+  );
   assert_eq!(deprecation, Deprecation::Boolean(true));
   assert_eq!(deprecation.header_value(), "?1");
   assert_eq!(location.as_str(), "../login?next=%2Fdashboard");
@@ -358,12 +377,20 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(te.codings()[0].quality(), Some(500));
   assert_eq!(te.codings()[1].coding(), "trailers");
   assert!(te.codings()[1].is_trailers());
+  assert_eq!(2, baggage.members().len());
+  assert_eq!("tenant", baggage.members()[0].key());
+  assert_eq!("acme", baggage.members()[0].value());
+  assert_eq!("source", baggage.members()[0].properties()[0].key());
   assert_eq!("00", traceparent.version());
   assert_eq!("4bf92f3577b34da6a3ce929d0e0e4736", traceparent.trace_id());
   assert_eq!(2, tracestate.members().len());
   assert_eq!("rojo", tracestate.members()[0].key());
   assert_eq!(upgrade.protocols(), ["websocket"]);
   assert_eq!(upgrade.header_value(), "websocket");
+  assert!(pragma.no_cache());
+  assert_eq!(pragma.directives()[1].name(), "community");
+  assert_eq!(pragma.directives()[1].value(), Some("private"));
+  assert_eq!(pragma.header_value(), "no-cache, community=private");
   assert_eq!(want_content_digest.entries()[0].algorithm(), "sha-256");
   assert_eq!(want_content_digest.entries()[0].preference(), 10);
   assert_eq!(want_content_digest.header_value(), "sha-256=10, sha-512=0");
