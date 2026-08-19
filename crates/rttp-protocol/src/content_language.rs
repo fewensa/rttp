@@ -154,17 +154,35 @@ fn is_language_tag(value: &str) -> bool {
     index += 1;
   }
 
+  let mut seen_variants: Vec<&str> = Vec::new();
   while subtags
     .get(index)
     .is_some_and(|subtag| is_variant_subtag(subtag))
   {
+    let variant = subtags[index];
+    if seen_variants
+      .iter()
+      .any(|known| known.eq_ignore_ascii_case(variant))
+    {
+      return false;
+    }
+    seen_variants.push(variant);
     index += 1;
   }
 
+  let mut seen_extension_singletons: Vec<&str> = Vec::new();
   while subtags
     .get(index)
     .is_some_and(|subtag| is_extension_singleton(subtag))
   {
+    let singleton = subtags[index];
+    if seen_extension_singletons
+      .iter()
+      .any(|known| known.eq_ignore_ascii_case(singleton))
+    {
+      return false;
+    }
+    seen_extension_singletons.push(singleton);
     index += 1;
     let extension_start = index;
     while subtags
