@@ -117,6 +117,7 @@ pub use rttp_protocol::strict_transport_security::{
 pub use rttp_protocol::timing_allow_origin::{TimingAllowOrigin, TimingAllowOriginParseError};
 pub use rttp_protocol::trailer::{Trailer, TrailerParseError};
 pub use rttp_protocol::transfer_encoding::{TransferEncoding, TransferEncodingParseError};
+pub use rttp_protocol::upgrade::{Upgrade, UpgradeParseError};
 pub use rttp_protocol::vary::{Vary, VaryParseError};
 pub use rttp_protocol::want_content_digest::{
   WantContentDigest, WantContentDigestEntry, WantContentDigestParseError,

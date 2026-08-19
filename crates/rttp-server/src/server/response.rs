@@ -98,6 +98,9 @@ pub use rttp_protocol::strict_transport_security::{
   StrictTransportSecurityParseError as HttpStrictTransportSecurityParseError,
 };
 pub use rttp_protocol::sunset::SunsetParseError as HttpSunsetParseError;
+pub use rttp_protocol::upgrade::{
+  Upgrade as HttpUpgrade, UpgradeParseError as HttpUpgradeParseError,
+};
 pub use rttp_protocol::www_authenticate::{
   WwwAuthenticate as HttpWwwAuthenticate, WwwAuthenticateChallenge as HttpWwwAuthenticateChallenge,
   WwwAuthenticateParameter as HttpWwwAuthenticateParameter,
@@ -804,6 +807,27 @@ impl HttpResponse {
       "No-Vary-Search",
       no_vary_search.header_value(),
     ));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Upgrade` response metadata without changing
+  /// handoff behavior or adding `Connection: Upgrade`.
+  pub fn with_upgrade<I, P>(mut self, protocols: I) -> Result<Self, HttpUpgradeParseError>
+  where
+    I: IntoIterator<Item = P>,
+    P: AsRef<str>,
+  {
+    let protocols: Vec<String> = protocols
+      .into_iter()
+      .map(|protocol| protocol.as_ref().to_string())
+      .collect();
+    let upgrade = HttpUpgrade::parse_values(protocols.iter().map(String::as_str))?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Upgrade"));
+    self
+      .headers
+      .push(HttpHeader::new("Upgrade", upgrade.header_value()));
     Ok(self)
   }
 
@@ -1563,6 +1587,21 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpNoVarySearch::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Upgrade` response metadata without changing socket
+  /// handoff behavior or interpreting the upgraded protocol.
+  pub fn upgrade(&self) -> Result<Option<HttpUpgrade>, HttpUpgradeParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Upgrade"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpUpgrade::parse_values(values).map(Some)
   }
 
   /// Parses `Link` response metadata without enabling preload, redirects,

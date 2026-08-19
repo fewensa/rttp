@@ -14,9 +14,10 @@ pub use rttp_client::response::{
   CrossOriginEmbedderPolicyReportOnlyParseError, CrossOriginOpenerPolicy,
   CrossOriginOpenerPolicyParseError, EntityTag, EntityTagParseError, HttpContentLength, Location,
   LocationParseError, Nel, NelParseError, NelUnknownMember, NoVarySearch, NoVarySearchParams,
-  NoVarySearchParseError, StrictTransportSecurity, StrictTransportSecurityParseError,
-  WwwAuthenticate, WwwAuthenticateChallenge, WwwAuthenticateParameter, WwwAuthenticateParseError,
-  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  NoVarySearchParseError, StrictTransportSecurity, StrictTransportSecurityParseError, Upgrade,
+  UpgradeParseError, WwwAuthenticate, WwwAuthenticateChallenge, WwwAuthenticateParameter,
+  WwwAuthenticateParseError, XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions,
+  XFrameOptionsParseError,
 };
 #[cfg(feature = "client")]
 pub use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};

@@ -25,6 +25,7 @@ use crate::response::Signature;
 use crate::response::SignatureInput;
 use crate::response::Trailer;
 use crate::response::TransferEncoding;
+use crate::response::Upgrade;
 use crate::response::Warning;
 use crate::response::WwwAuthenticate;
 use crate::types::{Cookie, Header, RoUrl, StatusCode};
@@ -872,6 +873,18 @@ impl Response {
       return Ok(None);
     }
     AltSvc::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Upgrade` response metadata without changing socket
+  /// handoff behavior or interpreting the upgraded protocol.
+  pub fn upgrade(&self) -> error::Result<Option<Upgrade>> {
+    let values = self.header_values("upgrade");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Upgrade::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

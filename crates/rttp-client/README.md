@@ -546,6 +546,26 @@ This helper is HTTP/1 header metadata only. `rttp_client` does not change
 keep-alive, `auto_add_connection`, hop-by-hop stripping, or HTTP/2 rejection
 from this accessor.
 
+## Bounded Upgrade metadata
+
+`HttpClient::upgrade_protocols()` validates and replaces request `Upgrade`
+metadata without opening a socket, changing request method, or adding
+`Connection: Upgrade`. `Response::upgrade()` parses retained HTTP/1 `Upgrade`
+response fields into `Upgrade` metadata. It returns `Ok(None)` when the header
+is absent. Present values combine fields in wire order and preserve protocol
+spelling.
+
+Each field value is limited to 64 KiB. Parsing accepts at most 32 protocols.
+Each protocol must be an HTTP token, optionally followed by `/` and a token
+protocol version. Empty members, malformed protocols, control bytes,
+oversized values, and too many protocols are rejected. Parse errors do not
+reject the raw response: original headers remain available through
+`Response::header_value()` and `Response::header_values()`.
+
+These helpers expose HTTP/1 header metadata only. They do not select h2c,
+perform `connect()` or `upgrade()` handoff, alter `Connection` handling,
+negotiate ALPN, or implement the upgraded protocol.
+
 ## Bounded Keep-Alive metadata
 
 `Response::keep_alive()` parses retained HTTP/1 `Keep-Alive` fields into

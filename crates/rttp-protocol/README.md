@@ -62,6 +62,21 @@ present header set that yields no token still fails as invalid. This parser
 never fails open and does not apply keep-alive, hop-by-hop stripping, upgrade,
 or HTTP/2 rejection policy.
 
+## Upgrade
+
+`upgrade` parses one or more HTTP/1 `Upgrade` field values into an ordered
+list of protocol names. This is header-field metadata, not a socket handoff
+type. Each field value is bounded to 64 KiB, and the cumulative protocol count
+across all supplied fields is bounded to 32 protocols.
+
+Protocols are split on commas with SP and HTAB accepted only as optional
+whitespace around each protocol. A protocol is an RFC 9110 token, optionally
+followed by `/` and a token protocol version. Empty members, forbidden ASCII
+control bytes, malformed tokens, empty versions, nested `/` versions, and
+over-limit protocol lists are rejected. This parser validates declared
+metadata only; callers own `Connection: Upgrade`, h2c negotiation, socket
+handoff, and any upgraded protocol bytes.
+
 ## Content-Encoding
 
 `content_encoding` parses one or more `Content-Encoding` field values into an
