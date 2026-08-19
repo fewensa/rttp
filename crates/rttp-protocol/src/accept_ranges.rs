@@ -110,10 +110,21 @@ impl AcceptRanges {
     let mut value = String::new();
 
     for (index, unit) in units.into_iter().enumerate() {
+      if index >= MAX_ACCEPT_RANGES_UNITS {
+        return Err(AcceptRangesParseError::new(
+          "too many Accept-Ranges range units",
+        ));
+      }
       let unit = unit.as_ref();
       if unit.trim().eq_ignore_ascii_case("none") {
         return Err(AcceptRangesParseError::new(
           "Accept-Ranges none must use the none helper",
+        ));
+      }
+      let separator_len = if index > 0 { 2 } else { 0 };
+      if value.len() + separator_len + unit.len() > MAX_ACCEPT_RANGES_VALUE_BYTES {
+        return Err(AcceptRangesParseError::new(
+          "Accept-Ranges header value is too large",
         ));
       }
       if index > 0 {

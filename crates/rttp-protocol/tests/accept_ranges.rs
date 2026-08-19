@@ -165,6 +165,36 @@ fn accept_ranges_enforces_value_and_unit_bounds() {
 }
 
 #[test]
+fn accept_ranges_from_units_enforces_bounds_while_consuming() {
+  let too_many = std::iter::repeat_n("unit", MAX_ACCEPT_RANGES_UNITS + 1);
+  assert!(
+    AcceptRanges::from_units(too_many).is_err(),
+    "unit count bounds must be enforced while consuming the iterator"
+  );
+
+  let oversized_unit = "x".repeat(MAX_ACCEPT_RANGES_VALUE_BYTES + 1);
+  assert!(
+    AcceptRanges::from_units([oversized_unit.as_str()]).is_err(),
+    "oversized units must be rejected while consuming the iterator"
+  );
+
+  let overflowing = [
+    "x".repeat(MAX_ACCEPT_RANGES_VALUE_BYTES / 2),
+    "x".repeat(MAX_ACCEPT_RANGES_VALUE_BYTES / 2),
+  ];
+  assert!(
+    AcceptRanges::from_units(overflowing.iter().map(String::as_str)).is_err(),
+    "units that overflow the value bound together must be rejected"
+  );
+
+  let at_value_limit = "x".repeat(MAX_ACCEPT_RANGES_VALUE_BYTES);
+  assert!(
+    AcceptRanges::from_units([at_value_limit.as_str()]).is_ok(),
+    "units at the 64 KiB bound must build"
+  );
+}
+
+#[test]
 fn accept_ranges_parse_error_implements_display_and_error() {
   use std::error::Error;
 
