@@ -1570,7 +1570,7 @@ fn test_www_authenticate_response_helper_parses_bounded_challenges() {
   let raw = concat!(
     "HTTP/1.1 401 Unauthorized\r\n",
     "WWW-Authenticate: Basic realm=\"users\"\r\n",
-    "WWW-Authenticate: Bearer mF_9.B5f-4.1JqM, Digest realm=\"apps\", nonce=\"a\\\\b\"\r\n",
+    "WWW-Authenticate: Bearer mF_9.B5f-4.1JqM=, Digest realm=\"apps\", nonce=\"a\\\\b\"\r\n",
     "Content-Length: 2\r\n\r\nOK"
   );
   let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
@@ -1586,11 +1586,34 @@ fn test_www_authenticate_response_helper_parses_bounded_challenges() {
   assert_eq!(Some("users"), challenges.challenges()[0].parameter("realm"));
   assert_eq!("Bearer", challenges.challenges()[1].scheme());
   assert_eq!(
-    Some("mF_9.B5f-4.1JqM"),
+    Some("mF_9.B5f-4.1JqM="),
     challenges.challenges()[1].token68()
   );
   assert_eq!("Digest", challenges.challenges()[2].scheme());
   assert_eq!(Some("a\\b"), challenges.challenges()[2].parameter("nonce"));
+}
+
+#[test]
+fn test_www_authenticate_response_helper_combines_repeated_field_parameters() {
+  let raw = concat!(
+    "HTTP/1.1 401 Unauthorized\r\n",
+    "WWW-Authenticate: Digest realm=apps\r\n",
+    "WWW-Authenticate: nonce=abc\r\n",
+    "Content-Length: 2\r\n\r\nOK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  let challenges = response
+    .www_authenticate()
+    .expect("valid challenges should parse")
+    .expect("WWW-Authenticate should be present");
+
+  assert_eq!(1, challenges.len());
+  let digest = &challenges.challenges()[0];
+  assert_eq!("Digest", digest.scheme());
+  assert_eq!(Some("apps"), digest.parameter("realm"));
+  assert_eq!(Some("abc"), digest.parameter("nonce"));
 }
 
 #[test]
@@ -1617,7 +1640,6 @@ fn test_www_authenticate_preserves_quoted_parameter_wire_bytes() {
 #[test]
 fn test_www_authenticate_rejects_malformed_duplicate_and_bounded_values() {
   for value in [
-    "Basic realm=",
     "Basic realm=\"unterminated",
     "Basic realm=one, REALM=two",
     "Basic @",
@@ -4366,6 +4388,76 @@ fn test_access_control_allow_origin_response_helper_parses_valid_metadata_and_pr
       &"https://example.test".to_string(),
       &"https://other.test".to_string()
     ]
+  );
+}
+
+#[test]
+fn test_access_control_allow_credentials_response_helper_parses_valid_metadata_and_preserves_invalid_raw_headers(
+) {
+  {
+    let value = "true";
+    let raw = format!(
+      "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Credentials: {value}\r\nContent-Length: 0\r\n\r\n"
+    );
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert_eq!(
+      "true",
+      response
+        .access_control_allow_credentials()
+        .expect("Access-Control-Allow-Credentials should parse")
+        .expect("Access-Control-Allow-Credentials should be present")
+        .header_value()
+    );
+  }
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("raw response without metadata should remain usable");
+  assert_eq!(
+    None,
+    absent
+      .access_control_allow_credentials()
+      .expect("absence should parse")
+  );
+
+  for value in [
+    "TRUE".to_string(),
+    "True".to_string(),
+    "false".to_string(),
+    "true, true".to_string(),
+    "x".repeat(64 * 1024 + 1),
+  ] {
+    let raw = format!(
+      "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Credentials: {value}\r\nContent-Length: 0\r\n\r\n"
+    );
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(response.access_control_allow_credentials().is_err());
+    assert_eq!(
+      response.header_value("Access-Control-Allow-Credentials"),
+      Some(&value)
+    );
+  }
+
+  let duplicate = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Access-Control-Allow-Credentials: true\r\n",
+      "access-control-allow-credentials: true\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response with duplicate metadata should remain usable");
+  assert!(duplicate.access_control_allow_credentials().is_err());
+  assert_eq!(
+    duplicate.header_values("Access-Control-Allow-Credentials"),
+    [&"true".to_string(), &"true".to_string()]
   );
 }
 

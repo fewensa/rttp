@@ -14,6 +14,12 @@ use std::time::{Duration, UNIX_EPOCH};
 fn compatibility_facade_exports_client_metadata_types() {
   let accept_ch: rttp::AcceptCh =
     rttp_client::response::AcceptCh::parse("Sec-CH-UA, DPR").expect("Accept-CH should parse");
+  let allow_credentials: rttp::AccessControlAllowCredentials =
+    rttp_client::response::AccessControlAllowCredentials::parse("true")
+      .expect("Access-Control-Allow-Credentials should parse");
+  let _: rttp::AccessControlAllowCredentialsParseError =
+    rttp_client::response::AccessControlAllowCredentials::parse("false")
+      .expect_err("invalid Access-Control-Allow-Credentials should fail");
   let critical_ch: rttp::CriticalCh =
     rttp_client::response::CriticalCh::parse("Sec-CH-UA").expect("Critical-CH should parse");
   let cdn_cache_control: rttp::CdnCacheControl =
@@ -81,6 +87,12 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::StrictTransportSecurityParseError =
     rttp_client::response::StrictTransportSecurity::parse("includeSubDomains")
       .expect_err("Strict-Transport-Security without max-age should be rejected");
+  let www_authenticate: rttp::WwwAuthenticate =
+    rttp_client::response::WwwAuthenticate::parse("Basic realm=\"users\"")
+      .expect("WWW-Authenticate should parse");
+  let _: rttp::WwwAuthenticateParseError =
+    rttp_client::response::WwwAuthenticate::parse("Basic realm=\"")
+      .expect_err("malformed WWW-Authenticate should be rejected");
   let upgrade: rttp::Upgrade =
     rttp_client::response::Upgrade::parse("websocket").expect("Upgrade should parse");
   let _: rttp::UpgradeParseError =
@@ -107,6 +119,7 @@ fn compatibility_facade_exports_client_metadata_types() {
   let content_length = rttp::HttpContentLength::new(123);
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
+  assert_eq!(allow_credentials.header_value(), "true");
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
   assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
   assert_eq!(accept_patch.media_types().len(), 1);
@@ -143,6 +156,10 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(opener_policy.header_value(), "noopener-allow-popups");
   assert_eq!(strict_transport_security.max_age(), 31_536_000);
   assert!(strict_transport_security.include_sub_domains());
+  assert_eq!(
+    www_authenticate.challenges()[0].parameter("realm"),
+    Some("users")
+  );
   assert_eq!(upgrade.protocols(), ["websocket"]);
   assert_eq!(x_content_type_options, rttp::XContentTypeOptions::Nosniff);
   assert_eq!(x_content_type_options.header_value(), "nosniff");

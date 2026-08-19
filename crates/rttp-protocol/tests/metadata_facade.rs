@@ -1,4 +1,5 @@
 use rttp_protocol::accept_ranges::AcceptRanges;
+use rttp_protocol::access_control_allow_credentials::AccessControlAllowCredentials;
 use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
 use rttp_protocol::age::Age;
@@ -6,6 +7,7 @@ use rttp_protocol::cdn_cache_control::CdnCacheControl;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::connection::Connection;
 use rttp_protocol::content_encoding::ContentEncoding;
+use rttp_protocol::content_language::ContentLanguage;
 use rttp_protocol::content_location::ContentLocation;
 use rttp_protocol::content_security_policy::ContentSecurityPolicy;
 use rttp_protocol::content_type::ContentType;
@@ -42,6 +44,8 @@ use rttp_protocol::x_frame_options::XFrameOptions;
 fn protocol_exports_representative_bounded_metadata_types() {
   let age = Age::parse("60").expect("Age should parse");
   let accept_ch = AcceptCh::parse("Sec-CH-UA, DPR").expect("Accept-CH should parse");
+  let allow_credentials = AccessControlAllowCredentials::parse("true")
+    .expect("Access-Control-Allow-Credentials should parse");
   let expose_headers = AccessControlExposeHeaders::parse("X-Request-Id")
     .expect("Access-Control-Expose-Headers should parse");
   let request_private_network = AccessControlRequestPrivateNetwork::parse("true")
@@ -93,6 +97,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let content_security_policy =
     ContentSecurityPolicy::parse("default-src 'self'; object-src 'none'")
       .expect("Content-Security-Policy should parse");
+  let content_language =
+    ContentLanguage::parse("fr-CA, es-419").expect("Content-Language should parse");
   let cdn_cache_control =
     CdnCacheControl::parse("max-age=600, cdn-example=\"a, b\"").expect("CDN metadata should parse");
   let accept_ranges = AcceptRanges::parse("bytes, pages").expect("Accept-Ranges should parse");
@@ -114,6 +120,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
 
   assert_eq!(age.seconds(), 60);
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
+  assert_eq!(allow_credentials.header_value(), "true");
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
   assert_eq!(request_private_network.header_value(), "true");
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
@@ -177,6 +184,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
     content_security_policy.header_value(),
     "default-src 'self'; object-src 'none'"
   );
+  assert_eq!(content_language.tags(), ["fr-CA", "es-419"]);
+  assert_eq!(content_language.header_value(), "fr-CA, es-419");
   assert_eq!(cdn_cache_control.directives()[1].name(), "cdn-example");
   assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
   assert_eq!(accept_ranges.units(), ["bytes", "pages"]);

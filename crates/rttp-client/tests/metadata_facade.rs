@@ -1,8 +1,9 @@
 use rttp_client::response::{
-  AcceptCh, AccessControlAllowHeaders, AccessControlAllowHeadersParseError,
-  AccessControlAllowMethods, AccessControlAllowMethodsParseError, AccessControlExposeHeaders,
-  AccessControlMaxAge, AccessControlMaxAgeParseError, Age, AgeParseError, AltSvc,
-  AuthenticationInfo, AuthenticationInfoParseError, Connection, ConnectionParseError, ContentRange,
+  AcceptCh, AccessControlAllowCredentials, AccessControlAllowCredentialsParseError,
+  AccessControlAllowHeaders, AccessControlAllowHeadersParseError, AccessControlAllowMethods,
+  AccessControlAllowMethodsParseError, AccessControlExposeHeaders, AccessControlMaxAge,
+  AccessControlMaxAgeParseError, Age, AgeParseError, AltSvc, AuthenticationInfo,
+  AuthenticationInfoParseError, Connection, ConnectionParseError, ContentRange,
   ContentRangeParseError, ContentSecurityPolicy, ContentSecurityPolicyParseError,
   CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy,
   CrossOriginResourcePolicy, Digest, EntityTag, HttpClearSiteData, HttpContentLength, KeepAlive,
@@ -13,7 +14,8 @@ use rttp_client::response::{
   SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
   StrictTransportSecurityParseError, Trailer, TransferEncoding, TransferEncodingParseError,
   Upgrade, UpgradeParseError, Vary, VaryParseError, WantContentDigest, WantReprDigest, Warning,
-  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  WwwAuthenticate, WwwAuthenticateParseError, XContentTypeOptions, XContentTypeOptionsParseError,
+  XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentLocation, ContentLocationParseError, ReprDigest,
@@ -24,6 +26,10 @@ use rttp_test_support as support;
 #[test]
 fn response_facade_exports_representative_bounded_metadata_types() {
   let accept_ch = AcceptCh::parse("Sec-CH-UA, DPR").expect("Accept-CH should parse");
+  let allow_credentials = AccessControlAllowCredentials::parse("true")
+    .expect("Access-Control-Allow-Credentials should parse");
+  let _: AccessControlAllowCredentialsParseError = AccessControlAllowCredentials::parse("false")
+    .expect_err("false Access-Control-Allow-Credentials should be rejected");
   let allow_methods = AccessControlAllowMethods::parse("GET, POST")
     .expect("Access-Control-Allow-Methods should parse");
   let _: AccessControlAllowMethodsParseError = AccessControlAllowMethods::parse("")
@@ -122,6 +128,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
       .expect("Proxy-Authentication-Info should parse");
   let _: ProxyAuthenticationInfoParseError = ProxyAuthenticationInfo::parse("")
     .expect_err("empty Proxy-Authentication-Info should be rejected");
+  let www_authenticate =
+    WwwAuthenticate::parse("Basic realm=\"users\"").expect("WWW-Authenticate should parse");
+  let _: WwwAuthenticateParseError = WwwAuthenticate::parse("Basic realm=\"")
+    .expect_err("malformed WWW-Authenticate should be rejected");
   let proxy_authenticate =
     ProxyAuthenticate::parse(r#"Basic realm="corp""#).expect("Proxy-Authenticate should parse");
   let _: ProxyAuthenticateParseError =
@@ -139,6 +149,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     SignatureInput::parse("").expect_err("empty Signature-Input should be rejected");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
+  assert_eq!(allow_credentials.header_value(), "true");
   assert_eq!(allow_methods.methods(), ["GET", "POST"]);
   assert_eq!(allow_headers.field_names(), ["x-request-id", "etag"]);
   assert_eq!(max_age.seconds(), 60);
@@ -213,6 +224,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(
     proxy_authentication_info.parameter("nextnonce"),
     Some("6629fae49393a05397450978507c4ef1")
+  );
+  assert_eq!(
+    www_authenticate.challenges()[0].parameter("realm"),
+    Some("users")
   );
   assert_eq!(
     proxy_authenticate.challenges()[0].parameter("realm"),

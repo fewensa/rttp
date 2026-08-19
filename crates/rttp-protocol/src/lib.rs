@@ -10,6 +10,7 @@
 pub mod accept_patch;
 pub mod accept_post;
 pub mod accept_ranges;
+pub mod access_control_allow_credentials;
 pub mod access_control_allow_headers;
 pub mod access_control_allow_methods;
 pub mod access_control_allow_origin;
@@ -28,6 +29,7 @@ pub mod clear_site_data;
 pub mod client_hints;
 pub mod connection;
 pub mod content_encoding;
+pub mod content_language;
 pub mod content_length;
 pub mod content_location;
 pub mod content_security_policy;

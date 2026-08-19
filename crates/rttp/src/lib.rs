@@ -6,7 +6,8 @@ pub use rttp_server::server;
 
 #[cfg(feature = "client")]
 pub use rttp_client::response::{
-  AcceptCh, AcceptPatch, AcceptPost, AcceptRanges, AltSvc, AltSvcAlternative, AltSvcParameter,
+  AcceptCh, AcceptPatch, AcceptPost, AcceptRanges, AccessControlAllowCredentials,
+  AccessControlAllowCredentialsParseError, AltSvc, AltSvcAlternative, AltSvcParameter,
   AltSvcParseError, AuthenticationInfo, AuthenticationInfoParameter, AuthenticationInfoParseError,
   CdnCacheControl, CdnCacheControlParseError, ContentLocation, ContentLocationParseError,
   ContentRange, ContentRangeParseError, ContentSecurityPolicy, ContentSecurityPolicyParseError,
@@ -15,8 +16,9 @@ pub use rttp_client::response::{
   CrossOriginOpenerPolicy, CrossOriginOpenerPolicyParseError, EntityTag, EntityTagParseError,
   HttpContentLength, Location, LocationParseError, Nel, NelParseError, NelUnknownMember,
   NoVarySearch, NoVarySearchParams, NoVarySearchParseError, StrictTransportSecurity,
-  StrictTransportSecurityParseError, Upgrade, UpgradeParseError, XContentTypeOptions,
-  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  StrictTransportSecurityParseError, Upgrade, UpgradeParseError, WwwAuthenticate,
+  WwwAuthenticateChallenge, WwwAuthenticateParameter, WwwAuthenticateParseError,
+  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 #[cfg(feature = "client")]
 pub use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
