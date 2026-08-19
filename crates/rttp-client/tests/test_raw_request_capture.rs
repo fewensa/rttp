@@ -435,6 +435,9 @@ fn authorization_helper_rejects_invalid_or_oversized_metadata_before_connecting(
     ("bad scheme", "token".to_string()),
     ("Bearer", "".to_string()),
     ("Bearer", " \t ".to_string()),
+    ("Bearer", "token\rnext".to_string()),
+    ("Bearer", "token\nnext".to_string()),
+    ("Bearer", "token\0next".to_string()),
     ("Bearer", "x".repeat(64 * 1024 + 1)),
   ] {
     let request = capture_optional_request(|base_url| {
@@ -445,6 +448,9 @@ fn authorization_helper_rejects_invalid_or_oversized_metadata_before_connecting(
         .authorization(scheme, &credentials)
         .expect_err("invalid authorization metadata should be rejected");
       assert!(error.is_builder());
+      if !credentials.is_empty() {
+        assert!(!error.to_string().contains(&credentials));
+      }
     });
     assert!(
       request.is_empty(),

@@ -613,14 +613,19 @@ reject unsupported expectations.
 
 `HttpClient::authorization(scheme, credentials)` emits one validated
 `Authorization` field from an HTTP-token scheme and a non-empty credential
-value bounded to 64 KiB. `header(("Authorization", value))` remains available
-as the raw escape hatch for application-specific schemes and syntaxes.
+value bounded to 64 KiB. The client uses the shared `rttp-protocol`
+authorization primitive, including CR, LF, NUL, and other control-byte
+injection checks. `header(("Authorization", value))` remains available as the
+raw escape hatch for application-specific schemes and syntaxes.
 
 On the server, `Request::authorization()` and `HttpRequest::authorization()`
 parse exactly one field into `HttpAuthorization`, exposing `scheme()` and
-`credentials()`. Absent metadata returns `Ok(None)`; invalid, oversized, or
-duplicate fields return an error so handlers do not receive ambiguous
-credentials. Typed debug output redacts credential values.
+`credentials()`. `Request::proxy_authorization()` and
+`HttpRequest::proxy_authorization()` parse `Proxy-Authorization` into
+`HttpProxyAuthorization` with the same bounds. Absent metadata returns
+`Ok(None)`; invalid, oversized, control-byte-injected, or duplicate fields
+return an error so handlers do not receive ambiguous credentials. Typed debug
+output redacts credential values.
 
 Credential interpretation remains application-owned. These helpers do not
 store credentials, validate individual schemes, refresh tokens, process
@@ -1030,6 +1035,7 @@ gain additional HTTP/2 header-block handling.
 | Transfer-Encoding | `Response::transfer_encoding`/`TransferEncoding::parse` parse bounded HTTP/1 `Transfer-Encoding` fields that must be sole `chunked`, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to HTTP/1 framing decoders, `TE`, Content-Length, chunked body decoding policy, or HTTP/2 decode rejection |
 | Content-Disposition | Client `Response::content_disposition` and server `HttpContentDisposition`, `HttpResponse::with_content_disposition`, `with_attachment_filename`, and `content_disposition` parse or declare bounded singleton response `Content-Disposition` metadata, preserve raw headers on parse failures, and preserve parsed `filename` plus `filename*` parameter values as metadata | No automatic download, filesystem path handling, MIME sniffing, cache behavior, redirect behavior, retry/replay, negotiation, or status-policy behavior |
 | WWW-Authenticate | Client `Response::www_authenticate` and server `HttpWwwAuthenticate`, `HttpResponse::with_www_authenticate`, and `HttpResponse::www_authenticate` parse or declare bounded response authentication challenges while preserving raw headers on parse failures | No credential storage, authentication policy, retry, automatic `Authorization` generation, Basic/Bearer implementation, redirect behavior, or status-policy behavior |
+| Authorization and Proxy-Authorization | Protocol `Authorization`/`ProxyAuthorization`, client `HttpClient::authorization`, and server `Request::authorization`/`proxy_authorization` validate bounded request authorization metadata, reject duplicate parsed inbound fields, and redact credentials from typed debug output | No credential storage, authentication policy, challenge processing, retry, Basic/Bearer implementation, redirect policy changes, or automatic credential forwarding |
 | Proxy-Authenticate | Client `Response::proxy_authenticate` and protocol `ProxyAuthenticate::parse`/`parse_values` parse bounded proxy authentication challenges across one or more response fields while preserving raw headers on parse failures | No credential storage, proxy authentication policy, retry, automatic `Proxy-Authorization` generation, Basic/Bearer implementation, redirect behavior, or status-policy behavior |
 | Proxy-Status | Client `Response::proxy_status` and server `HttpProxyStatus`, `HttpResponse::with_proxy_status`, and `HttpResponse::proxy_status` parse or declare bounded RFC 9209 Token/String proxy identifiers with opaque parameters while preserving raw headers on parse failures | No proxy health checks, retries, trailer promotion, or origin-generation policy |
 | Server-Timing | Client `Response::server_timing` and server `HttpServerTiming`, `HttpResponse::with_server_timing`, and `HttpResponse::server_timing` parse or declare bounded response timing metadata while preserving raw headers on parse failures | No metric collection, measurement, telemetry export, metrics backend integration, retry, redirect behavior, or status-policy behavior |
@@ -1920,6 +1926,7 @@ TLS or async accept loops.
 | Upgrade metadata | `Upgrade`, `HttpUpgrade`, `HttpClient::upgrade_protocols`, `Response::upgrade`, `Request::upgrade`, `HttpRequest::upgrade`, `HttpResponse::with_upgrade`, and `HttpResponse::upgrade` validate, declare, or parse bounded HTTP/1 `Upgrade` protocol metadata while preserving raw headers on parse failures | No automatic `Connection: Upgrade`, h2c selection, client/server socket handoff, ALPN negotiation, or upgraded protocol implementation |
 | Content-Disposition | `HttpContentDisposition`, `HttpResponse::with_content_disposition`, `with_attachment_filename`, and `content_disposition` declare and parse bounded singleton `Content-Disposition` response metadata, preserve parsed `filename` and `filename*` parameter values, preserve raw headers on parse failures, and replace raw duplicates on typed declaration | No automatic download, filesystem path handling, MIME sniffing, cache behavior, redirect behavior, retry/replay, negotiation, or status-policy behavior |
 | WWW-Authenticate | `HttpWwwAuthenticate`, `HttpResponse::with_www_authenticate`, and `HttpResponse::www_authenticate` declare or parse bounded response authentication challenge metadata while preserving raw headers on parse failures | No credential storage, authentication policy, retry, automatic `Authorization` generation, Basic/Bearer implementation, redirect behavior, or status-policy behavior |
+| Authorization and Proxy-Authorization | `HttpAuthorization`, `HttpProxyAuthorization`, `Request::authorization`, and `Request::proxy_authorization` expose shared bounded request authorization metadata, reject duplicate parsed inbound fields, and redact credentials from typed debug output | No credential storage, authentication policy, challenge processing, retry, Basic/Bearer implementation, redirect policy changes, or automatic credential forwarding |
 | Proxy-Status | `HttpProxyStatus`, `HttpResponse::with_proxy_status`, and `HttpResponse::proxy_status` declare or parse bounded RFC 9209 Token/String proxy identifiers with opaque parameters while preserving raw headers on parse failures | No proxy health checks, retries, trailer promotion, or origin-generation policy |
 | Server-Timing | `HttpServerTiming`, `HttpResponse::with_server_timing`, and `HttpResponse::server_timing` declare or parse bounded response timing metadata while preserving raw headers on parse failures | No metric collection, measurement, telemetry export, metrics backend integration, retry, redirect behavior, or status-policy behavior |
 | Upgrade and tunnel targets | `CONNECT` authority-form requests are accepted as HTTP requests; `HttpHandoff::upgrade` can hand an upgraded socket to caller code after a matching request | The server does not implement the upgraded protocol after handoff |

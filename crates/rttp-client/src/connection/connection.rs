@@ -4,6 +4,7 @@ use socket2::{Domain, Protocol, Socket, Type};
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use rttp_protocol::authorization::ProxyAuthorization;
 #[cfg(feature = "tls-rustls")]
 use std::sync::Arc;
 
@@ -473,7 +474,12 @@ fn proxy_authorization_value(proxy: &Proxy) -> Option<String> {
 
 fn append_proxy_authorization_header(header: &mut String, proxy: &Proxy) {
   if let Some(auth) = proxy_authorization_value(proxy) {
-    header.push_str(&format!("Proxy-Authorization: Basic {}\r\n", auth));
+    let proxy_auth = ProxyAuthorization::new("Basic", auth)
+      .expect("generated Proxy-Authorization metadata should be valid");
+    header.push_str(&format!(
+      "Proxy-Authorization: {}\r\n",
+      proxy_auth.header_value()
+    ));
   }
 }
 

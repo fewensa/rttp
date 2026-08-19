@@ -4,6 +4,7 @@ use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::access_control_request_method::AccessControlRequestMethod;
 use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
 use rttp_protocol::age::Age;
+use rttp_protocol::authorization::{Authorization, ProxyAuthorization};
 use rttp_protocol::cache_status::CacheStatus;
 use rttp_protocol::cdn_cache_control::CdnCacheControl;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
@@ -85,6 +86,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
     "nextnonce=\"xyz789\", qop=auth, rspauth=\"...\", cnonce=\"c\", nc=00000001",
   )
   .expect("Proxy-Authentication-Info should parse");
+  let authorization = Authorization::parse("Bearer origin-token")
+    .expect("Authorization request metadata should parse");
+  let proxy_authorization = ProxyAuthorization::parse("Basic cHJveHk6c2VjcmV0")
+    .expect("Proxy-Authorization request metadata should parse");
   let proxy_status =
     ProxyStatus::parse("ExampleCDN; error=connection_timeout").expect("Proxy-Status should parse");
   let _: ProxyStatusParseError =
@@ -189,6 +194,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
     proxy_authentication_info.parameter("nextnonce"),
     Some("xyz789")
   );
+  assert_eq!(authorization.scheme(), "Bearer");
+  assert_eq!(authorization.header_value(), "Bearer origin-token");
+  assert_eq!(proxy_authorization.scheme(), "Basic");
+  assert_eq!(proxy_authorization.header_value(), "Basic cHJveHk6c2VjcmV0");
   assert_eq!(referer.header_value(), "https://example.test/path?q=1");
   assert_eq!(timing_allow_origin.origins(), ["https://example.test"]);
   assert_eq!(warning.items()[0].code(), 110);

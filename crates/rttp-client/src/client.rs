@@ -10,6 +10,7 @@ use futures::io::AsyncRead;
 use rttp_protocol::access_control_request_headers::AccessControlRequestHeaders;
 use rttp_protocol::access_control_request_method::AccessControlRequestMethod;
 use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
+use rttp_protocol::authorization::Authorization;
 use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
@@ -169,7 +170,11 @@ impl HttpClient {
   /// client.auth(Auth::bearer("my-token"));
   /// ```
   pub fn auth<A: AsRef<Auth>>(&mut self, auth: A) -> &mut Self {
-    self.header(("Authorization", auth.as_ref().header_value().as_str()))
+    let value = auth.as_ref().header_value();
+    let value = Authorization::parse(&value)
+      .map(|authorization| authorization.header_value())
+      .unwrap_or(value);
+    self.header(Header::new("Authorization", value))
   }
 
   /// Set bounded `Authorization` request metadata from an authentication
@@ -184,28 +189,9 @@ impl HttpClient {
     scheme: S,
     credentials: C,
   ) -> error::Result<&mut Self> {
-    let scheme = scheme.as_ref().trim();
-    let credentials = credentials.as_ref();
-    if !is_http_token(scheme) {
-      return Err(error::builder_with_message(
-        "invalid Authorization authentication scheme",
-      ));
-    }
-    if credentials.is_empty()
-      || credentials.bytes().all(|byte| matches!(byte, b' ' | b'\t'))
-      || !credentials.bytes().all(is_header_value_byte)
-    {
-      return Err(error::builder_with_message(
-        "invalid Authorization credentials",
-      ));
-    }
-    let value = format!("{scheme} {credentials}");
-    if value.len() > MAX_AUTHORIZATION_VALUE_BYTES {
-      return Err(error::builder_with_message(
-        "Authorization header value is too large",
-      ));
-    }
-    Ok(self.header(Header::new("Authorization", value)))
+    let authorization = Authorization::new(scheme, credentials)
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("Authorization", authorization.header_value())))
   }
 
   ///  Add request header
@@ -1366,7 +1352,6 @@ fn validate_max_forwards(value: &str) -> error::Result<&str> {
 const MAX_MAX_FORWARDS_VALUE_BYTES: usize = 10;
 const MAX_ACCEPT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
 const MAX_ACCEPT_ENCODINGS: usize = 32;
-const MAX_AUTHORIZATION_VALUE_BYTES: usize = 64 * 1024;
 const MAX_REQUEST_METADATA_VALUE_BYTES: usize = 64 * 1024;
 const MAX_REQUEST_METADATA_MEMBERS: usize = 32;
 const MAX_PREFER_FIELD_BYTES: usize = 64 * 1024;

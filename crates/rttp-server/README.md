@@ -53,10 +53,12 @@ shared-cache policy, retry, replay, redirect, or choose status behavior.
 
 `Request::authorization()` / `HttpRequest::authorization()` and
 `Request::proxy_authorization()` / `HttpRequest::proxy_authorization()` expose
-one bounded opaque credential field as `HttpAuthorization` metadata. Both
+one bounded opaque credential field as shared `rttp-protocol` metadata.
+`Authorization` is exposed as `HttpAuthorization`, and `Proxy-Authorization`
+as `HttpProxyAuthorization`; both expose `scheme()` and `credentials()`. Both
 helpers return `Ok(None)` when absent and reject malformed, oversized (over 64
-KiB), or duplicate fields while leaving the raw request headers available to
-handler code.
+KiB), duplicate, or control-byte-injected fields while leaving the raw request
+headers available to handler code. Typed debug output redacts credentials.
 
 `HttpResponse::with_www_authenticate(value)` validates and replaces attached
 `WWW-Authenticate` fields with one normalized declaration, and

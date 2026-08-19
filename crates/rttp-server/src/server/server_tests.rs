@@ -2712,6 +2712,7 @@ hello\r\n\
       .expect("Proxy-Authorization should be present");
     assert_eq!("Basic", proxy_authorization.scheme());
     assert_eq!("cHJveHk6c2VjcmV0", proxy_authorization.credentials());
+    assert!(!format!("{proxy_authorization:?}").contains("cHJveHk6c2VjcmV0"));
 
     let response = HttpResponse::new(401, "Unauthorized")
       .header("WWW-Authenticate", "Broken")
@@ -2738,6 +2739,7 @@ hello\r\n\
     )
     .expect("request should parse");
     assert!(malformed.proxy_authorization().is_err());
+    assert!(HttpProxyAuthorization::parse("Basic proxy\rsecret").is_err());
     assert_eq!(
       Some("invalid"),
       malformed.header("Proxy-Authorization")
