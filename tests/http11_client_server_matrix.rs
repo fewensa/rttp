@@ -86,6 +86,57 @@ fn observe_signature_metadata(request: &Request) -> ObservedSignatureMetadata {
   }
 }
 
+#[derive(Debug, PartialEq)]
+struct ObservedAcceptLanguageMetadata {
+  ranges: Result<Option<Vec<String>>, String>,
+  qualities: Result<Option<Vec<Option<String>>>, String>,
+}
+
+fn observe_accept_language_metadata(request: &Request) -> ObservedAcceptLanguageMetadata {
+  ObservedAcceptLanguageMetadata {
+    ranges: request
+      .accept_language()
+      .map(|languages| {
+        languages.map(|languages| languages.ranges().into_iter().map(str::to_owned).collect())
+      })
+      .map_err(|error| error.to_string()),
+    qualities: request
+      .accept_language()
+      .map(|languages| {
+        languages.map(|languages| {
+          languages
+            .qualities()
+            .into_iter()
+            .map(|quality| quality.map(str::to_owned))
+            .collect()
+        })
+      })
+      .map_err(|error| error.to_string()),
+  }
+}
+
+fn spawn_facade_accept_language_observer() -> (
+  std::net::SocketAddr,
+  mpsc::Receiver<ObservedAcceptLanguageMetadata>,
+  thread::JoinHandle<()>,
+) {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind Accept-Language facade server");
+  let addr = server.local_addr().expect("Accept-Language facade addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send(observe_accept_language_metadata(&request))
+          .expect("send observed Accept-Language metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve Accept-Language facade request");
+  });
+
+  (addr, observed_rx, handle)
+}
+
 fn spawn_facade_signature_observer() -> (
   std::net::SocketAddr,
   mpsc::Receiver<ObservedSignatureMetadata>,
@@ -1387,6 +1438,84 @@ fn facade_server_reports_absent_signature_metadata_without_policy() {
   handle
     .join()
     .expect("absent signature facade server thread");
+}
+
+#[test]
+fn facade_client_and_server_exchange_accept_language_request_metadata() {
+  let (addr, observed_rx, handle) = spawn_facade_accept_language_observer();
+
+  let response = rttp::Http::client()
+    .get()
+    .url(format!("http://{addr}/localized"))
+    .accept_language(["en-US", "fr-CA; q=0.8", "*"])
+    .expect("language ranges should be accepted")
+    .emit()
+    .expect("Accept-Language request should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    ObservedAcceptLanguageMetadata {
+      ranges: Ok(Some(vec![
+        "en-US".to_owned(),
+        "fr-CA".to_owned(),
+        "*".to_owned()
+      ])),
+      qualities: Ok(Some(vec![None, Some("0.8".to_owned()), None])),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe valid Accept-Language metadata")
+  );
+  handle
+    .join()
+    .expect("valid Accept-Language facade server thread");
+}
+
+#[test]
+fn facade_server_rejects_malformed_accept_language_metadata_without_losing_raw_headers() {
+  let (addr, observed_rx, handle) = spawn_facade_accept_language_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect malformed Accept-Language request");
+  stream
+    .write_all(
+      b"GET /localized HTTP/1.1\r\nHost: 127.0.0.1\r\nAccept-Language: en; q=1.001, EN\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write malformed Accept-Language request");
+
+  let observed = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe malformed Accept-Language metadata");
+  assert!(observed.ranges.is_err());
+  assert!(observed.qualities.is_err());
+
+  handle
+    .join()
+    .expect("malformed Accept-Language facade server thread");
+}
+
+#[test]
+fn facade_server_reports_absent_accept_language_metadata() {
+  let (addr, observed_rx, handle) = spawn_facade_accept_language_observer();
+
+  let response = rttp::Http::client()
+    .get()
+    .url(format!("http://{addr}/plain"))
+    .emit()
+    .expect("request without Accept-Language metadata should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    ObservedAcceptLanguageMetadata {
+      ranges: Ok(None),
+      qualities: Ok(None),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe absent Accept-Language metadata")
+  );
+  handle
+    .join()
+    .expect("absent Accept-Language facade server thread");
 }
 
 #[test]

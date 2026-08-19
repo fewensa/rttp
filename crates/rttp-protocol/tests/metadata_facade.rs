@@ -1,3 +1,4 @@
+use rttp_protocol::accept_language::AcceptLanguage;
 use rttp_protocol::accept_ranges::AcceptRanges;
 use rttp_protocol::access_control_allow_credentials::AccessControlAllowCredentials;
 use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
@@ -54,6 +55,8 @@ use rttp_protocol::x_frame_options::XFrameOptions;
 #[test]
 fn protocol_exports_representative_bounded_metadata_types() {
   let age = Age::parse("60").expect("Age should parse");
+  let accept_language =
+    AcceptLanguage::parse("en-US, fr-CA; q=0.8, *;q=0").expect("Accept-Language should parse");
   let accept_ch = AcceptCh::parse("Sec-CH-UA, DPR").expect("Accept-CH should parse");
   let allow_credentials = AccessControlAllowCredentials::parse("true")
     .expect("Access-Control-Allow-Credentials should parse");
@@ -148,6 +151,12 @@ fn protocol_exports_representative_bounded_metadata_types() {
     SignatureInput::parse("").expect_err("empty Signature-Input should be rejected");
 
   assert_eq!(age.seconds(), 60);
+  assert_eq!(accept_language.ranges(), ["en-US", "fr-CA", "*"]);
+  assert_eq!(accept_language.qualities(), [None, Some("0.8"), Some("0")]);
+  assert_eq!(
+    accept_language.header_value(),
+    "en-US, fr-CA; q=0.8, *; q=0"
+  );
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(allow_credentials.header_value(), "true");
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
