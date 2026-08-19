@@ -15,9 +15,13 @@ use sfv::{BareItem, Dictionary, ListEntry, Parser};
 
 pub const MAX_SIGNATURE_INPUT_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_SIGNATURE_INPUT_ENTRIES: usize = 256;
+pub const MAX_SIGNATURE_INPUT_MEMBERS: usize = MAX_SIGNATURE_INPUT_ENTRIES;
 pub const MAX_SIGNATURE_INPUT_ENTRY_PARAMETERS: usize = 256;
+pub const MAX_SIGNATURE_INPUT_PARAMETERS: usize = MAX_SIGNATURE_INPUT_ENTRY_PARAMETERS;
 pub const MAX_SIGNATURE_INPUT_ENTRY_COMPONENTS: usize = 256;
+pub const MAX_SIGNATURE_INPUT_COVERED_COMPONENTS: usize = MAX_SIGNATURE_INPUT_ENTRY_COMPONENTS;
 pub const MAX_SIGNATURE_INPUT_COMPONENT_PARAMETERS: usize = 256;
+pub const MAX_SIGNATURE_INPUT_PARAMETER_VALUE_BYTES: usize = MAX_SIGNATURE_INPUT_VALUE_BYTES;
 
 /// Parsed, bounded HTTP `Signature-Input` field metadata.
 ///
@@ -65,6 +69,12 @@ pub enum SignatureInputBareItem {
   DisplayString(String),
 }
 
+pub type SignatureInputMember = SignatureInputEntry;
+pub type SignatureCoveredComponent = SignatureInputComponent;
+pub type SignatureParameter = SignatureInputParameter;
+pub type SignatureParameterValue = SignatureInputBareItem;
+pub type SignatureDecimal = String;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SignatureInputParseError {
   message: String,
@@ -96,13 +106,14 @@ impl SignatureInput {
     I: IntoIterator<Item = &'a str>,
   {
     let mut entries = Vec::new();
+    let mut member_count = 0usize;
     for value in values {
       if value.len() > MAX_SIGNATURE_INPUT_VALUE_BYTES {
         return Err(SignatureInputParseError::new(
           "Signature-Input field value is too large",
         ));
       }
-      parse_field(value, &mut entries)?;
+      parse_field(value, &mut entries, &mut member_count)?;
     }
     if entries.is_empty() {
       return Err(SignatureInputParseError::new(
@@ -116,11 +127,19 @@ impl SignatureInput {
     &self.entries
   }
 
+  pub fn members(&self) -> &[SignatureInputMember] {
+    &self.entries
+  }
+
   pub fn entry(&self, label: impl AsRef<str>) -> Option<&SignatureInputEntry> {
     self
       .entries
       .iter()
       .find(|entry| entry.label == label.as_ref())
+  }
+
+  pub fn member(&self, label: impl AsRef<str>) -> Option<&SignatureInputMember> {
+    self.entry(label)
   }
 
   pub fn len(&self) -> usize {
@@ -147,6 +166,10 @@ impl SignatureInputEntry {
   }
 
   pub fn components(&self) -> &[SignatureInputComponent] {
+    &self.components
+  }
+
+  pub fn covered_components(&self) -> &[SignatureCoveredComponent] {
     &self.components
   }
 
@@ -206,12 +229,27 @@ impl SignatureInputParameter {
   pub fn value(&self) -> &SignatureInputBareItem {
     &self.value
   }
+
+  pub fn is_valueless(&self) -> bool {
+    false
+  }
 }
 
 fn parse_field(
   value: &str,
   entries: &mut Vec<SignatureInputEntry>,
+  member_count: &mut usize,
 ) -> Result<(), SignatureInputParseError> {
+  let field_member_count = count_top_level_members(value);
+  if member_count
+    .checked_add(field_member_count)
+    .is_none_or(|count| count > MAX_SIGNATURE_INPUT_MEMBERS)
+  {
+    return Err(SignatureInputParseError::new(
+      "too many Signature-Input field entries",
+    ));
+  }
+
   let dictionary = Parser::new(value)
     .parse::<Dictionary>()
     .map_err(|_| invalid_member())?;
@@ -220,20 +258,15 @@ fn parse_field(
       "Signature-Input field must contain an entry",
     ));
   }
-  if top_level_member_count(value) != dictionary.len() {
-    return Err(SignatureInputParseError::new(
-      "duplicate Signature-Input dictionary key",
-    ));
-  }
+  *member_count += field_member_count;
 
   for (key, member) in dictionary {
     let ListEntry::InnerList(inner_list) = member else {
       return Err(invalid_member());
     };
-    if entries.len() >= MAX_SIGNATURE_INPUT_ENTRIES {
-      return Err(SignatureInputParseError::new(
-        "too many Signature-Input field entries",
-      ));
+    let label = key.as_str().to_owned();
+    if inner_list.items.is_empty() {
+      return Err(invalid_member());
     }
     if inner_list.items.len() > MAX_SIGNATURE_INPUT_ENTRY_COMPONENTS {
       return Err(SignatureInputParseError::new(
@@ -243,12 +276,6 @@ fn parse_field(
     if inner_list.params.len() > MAX_SIGNATURE_INPUT_ENTRY_PARAMETERS {
       return Err(SignatureInputParseError::new(
         "too many Signature-Input entry parameters",
-      ));
-    }
-    let label = key.as_str().to_owned();
-    if entries.iter().any(|entry| entry.label == label) {
-      return Err(SignatureInputParseError::new(
-        "duplicate Signature-Input dictionary key",
       ));
     }
     let mut components = Vec::with_capacity(inner_list.items.len());
@@ -266,13 +293,103 @@ fn parse_field(
         parameters: convert_parameters(item.params)?,
       });
     }
-    entries.push(SignatureInputEntry {
+    let entry = SignatureInputEntry {
       label,
       components,
       parameters: convert_parameters(inner_list.params)?,
-    });
+    };
+    if let Some(existing) = entries
+      .iter_mut()
+      .find(|existing| existing.label == entry.label)
+    {
+      *existing = entry;
+    } else {
+      entries.push(entry);
+    }
   }
   Ok(())
+}
+
+fn count_top_level_members(value: &str) -> usize {
+  let bytes = value.as_bytes();
+  let mut count = usize::from(!value.trim().is_empty());
+  let mut depth = 0usize;
+  let mut previous_significant = None;
+  let mut index = 0usize;
+
+  while index < bytes.len() {
+    let byte = bytes[index];
+    match byte {
+      b'"' => {
+        index = skip_string(bytes, index + 1);
+        previous_significant = Some(byte);
+      }
+      b'%' if bytes.get(index + 1) == Some(&b'"') => {
+        index = skip_display_string(bytes, index + 2);
+        previous_significant = Some(b'"');
+      }
+      b':' if previous_significant == Some(b'=') => {
+        index = skip_byte_sequence(bytes, index + 1);
+        previous_significant = Some(byte);
+      }
+      b'(' => {
+        depth = depth.saturating_add(1);
+        previous_significant = Some(byte);
+        index += 1;
+      }
+      b')' => {
+        depth = depth.saturating_sub(1);
+        previous_significant = Some(byte);
+        index += 1;
+      }
+      b',' if depth == 0 => {
+        count += 1;
+        previous_significant = Some(byte);
+        index += 1;
+      }
+      b' ' | b'\t' => {
+        index += 1;
+      }
+      _ => {
+        previous_significant = Some(byte);
+        index += 1;
+      }
+    }
+  }
+
+  count
+}
+
+fn skip_string(bytes: &[u8], mut index: usize) -> usize {
+  while index < bytes.len() {
+    match bytes[index] {
+      b'\\' => index += 2,
+      b'"' => return index + 1,
+      _ => index += 1,
+    }
+  }
+  index
+}
+
+fn skip_display_string(bytes: &[u8], mut index: usize) -> usize {
+  while index < bytes.len() {
+    match bytes[index] {
+      b'%' => index += 3,
+      b'"' => return index + 1,
+      _ => index += 1,
+    }
+  }
+  index
+}
+
+fn skip_byte_sequence(bytes: &[u8], mut index: usize) -> usize {
+  while index < bytes.len() {
+    if bytes[index] == b':' {
+      return index + 1;
+    }
+    index += 1;
+  }
+  index
 }
 
 fn convert_parameters(
@@ -369,94 +486,6 @@ fn escape_display_string(value: &str) -> String {
     }
   }
   escaped
-}
-
-fn top_level_member_count(value: &str) -> usize {
-  let bytes = value.as_bytes();
-  let mut index = 0;
-  let mut count = 0;
-  let mut depth = 0usize;
-  let mut member_started = false;
-  let mut after_equals = false;
-  while index < bytes.len() {
-    match bytes[index] {
-      b'"' => {
-        skip_quoted(bytes, &mut index);
-        member_started = true;
-        after_equals = false;
-      }
-      b'%' if bytes.get(index + 1) == Some(&b'"') => {
-        index += 1;
-        skip_quoted(bytes, &mut index);
-        member_started = true;
-        after_equals = false;
-      }
-      b':' if after_equals => {
-        skip_byte_sequence(bytes, &mut index);
-        member_started = true;
-        after_equals = false;
-      }
-      b'=' => {
-        member_started = true;
-        after_equals = true;
-        index += 1;
-      }
-      b'(' => {
-        depth += 1;
-        index += 1;
-        member_started = true;
-        after_equals = false;
-      }
-      b')' => {
-        depth = depth.saturating_sub(1);
-        index += 1;
-        after_equals = false;
-      }
-      b',' if depth == 0 => {
-        if member_started {
-          count += 1;
-        }
-        member_started = false;
-        after_equals = false;
-        index += 1;
-      }
-      b' ' | b'\t' => index += 1,
-      _ => {
-        member_started = true;
-        after_equals = false;
-        index += 1;
-      }
-    }
-  }
-  if member_started {
-    count += 1;
-  }
-  count
-}
-
-fn skip_quoted(bytes: &[u8], index: &mut usize) {
-  *index += 1;
-  while *index < bytes.len() {
-    match bytes[*index] {
-      b'\\' => *index += 2,
-      b'"' => {
-        *index += 1;
-        return;
-      }
-      _ => *index += 1,
-    }
-  }
-}
-
-fn skip_byte_sequence(bytes: &[u8], index: &mut usize) {
-  *index += 1;
-  while *index < bytes.len() {
-    if bytes[*index] == b':' {
-      *index += 1;
-      return;
-    }
-    *index += 1;
-  }
 }
 
 fn invalid_member() -> SignatureInputParseError {

@@ -7,7 +7,7 @@ use rttp::server::{
   HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata, HttpContentDisposition,
   HttpContentLanguages, HttpContentRange, HttpContentSecurityPolicy, HttpContentType,
   HttpCriticalCh, HttpEntityTag, HttpExpectations, HttpHost, HttpIfNoneMatch, HttpIfRange,
-  HttpIfRangeRequestOutcome, HttpLinkValues, HttpPermissionsPolicy, HttpReferrerPolicy,
+  HttpIfRangeRequestOutcome, HttpLinkValues, HttpNel, HttpPermissionsPolicy, HttpReferrerPolicy,
   HttpReportingEndpoints, HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl,
   HttpRequestTe, HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings,
   HttpRetryAfter, HttpServerTiming, HttpVary,
@@ -660,6 +660,47 @@ fn response_server_timing_helper_validates_formats_and_preserves_raw_headers() {
     .contains("\r\nServer-Timing: db;dur=not-a-number\r\n"));
 
   assert!(HttpServerTiming::parse(format!("db;desc=\"{}\"", "a".repeat(64 * 1024))).is_err());
+}
+
+#[test]
+fn response_nel_helper_validates_replaces_and_preserves_raw_headers() {
+  let response = HttpResponse::ok("body")
+    .header("NEL", r#"{"max_age":1}"#)
+    .header("nel", r#"{"max_age":2}"#)
+    .with_nel(
+      r#"{"report_to":"network-errors","max_age":2592000,"include_subdomains":true,"success_fraction":0.1}"#,
+    )
+    .expect("valid NEL policy should be accepted");
+
+  let nel: HttpNel = response
+    .nel()
+    .expect("attached NEL should parse")
+    .expect("NEL should be present");
+  assert_eq!(2592000, nel.max_age());
+  assert_eq!(Some("network-errors"), nel.report_to());
+  assert_eq!(Some(true), nel.include_subdomains());
+  assert_eq!(Some(0.1), nel.success_fraction());
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert_eq!(1, serialized.matches("\r\nNEL: ").count());
+  assert!(serialized.contains(
+    "\r\nNEL: {\"max_age\":2592000,\"report_to\":\"network-errors\",\"include_subdomains\":true,\"success_fraction\":0.1}\r\n"
+  ));
+
+  assert!(HttpResponse::ok("body").with_nel("{bad").is_err());
+  assert!(HttpResponse::ok("body")
+    .with_nel(r#"{"max_age":"1"}"#)
+    .is_err());
+  let raw = HttpResponse::ok("body").header("NEL", r#"{"max_age":"1"}"#);
+  assert!(raw.nel().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nNEL: {\"max_age\":\"1\"}\r\n"));
+  assert_eq!(
+    None,
+    HttpResponse::ok("body")
+      .nel()
+      .expect("absent NEL should parse")
+  );
 }
 
 fn parse_request(raw: &str) -> HttpRequest {
