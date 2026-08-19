@@ -2,8 +2,9 @@ use rttp_test_support as support;
 
 #[cfg(feature = "async")]
 use futures::executor::block_on;
-use rttp_client::types::{Header, Proxy};
+use rttp_client::types::{Auth, Header, Proxy};
 use rttp_client::{HttpClient, SecPurpose};
+use rttp_protocol::authorization::MAX_AUTHORIZATION_VALUE_BYTES;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::thread;
@@ -29,6 +30,14 @@ fn capture_proxy_request(request: impl FnOnce(Proxy)) -> Vec<u8> {
   let (addr, handle) = support::capture_raw_http_request();
   request(Proxy::http("127.0.0.1", u32::from(addr.port())));
   handle.join().expect("raw proxy request capture server")
+}
+
+fn capture_optional_proxy_request(request: impl FnOnce(Proxy)) -> Vec<u8> {
+  let (addr, handle) = support::capture_optional_raw_http_request(Duration::from_millis(250));
+  request(Proxy::http("127.0.0.1", u32::from(addr.port())));
+  handle
+    .join()
+    .expect("optional raw proxy request capture server")
 }
 
 fn request_text(request: &[u8]) -> String {
@@ -475,6 +484,55 @@ fn raw_headers_remain_an_escape_hatch_for_custom_authorization_schemes() {
   assert_eq!(
     Some("Signature keyId=\"client\",algorithm=\"hs2019\""),
     header_value(&request_text(&request), "Authorization")
+  );
+}
+
+#[test]
+fn auth_facade_rejects_oversized_bearer_before_connecting_without_exposing_token() {
+  let token = "x".repeat(MAX_AUTHORIZATION_VALUE_BYTES);
+  let request = capture_optional_request(|base_url| {
+    let error = client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .auth(Auth::bearer(&token))
+      .emit()
+      .expect_err("oversized Authorization metadata should be rejected");
+    assert!(error.is_builder());
+    assert!(!error.to_string().contains(&token));
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized Authorization metadata should not open a socket"
+  );
+}
+
+#[test]
+fn proxy_auth_rejects_oversized_basic_before_connecting_without_exposing_credentials() {
+  let username = "proxy-user";
+  let password = "x".repeat(MAX_AUTHORIZATION_VALUE_BYTES);
+  let request = capture_optional_proxy_request(|proxy| {
+    let error = client()
+      .get()
+      .url("http://example.test/asset")
+      .proxy(
+        Proxy::builder(proxy.type_().clone())
+          .host(proxy.host())
+          .port(proxy.port())
+          .username(username)
+          .password(&password),
+      )
+      .emit()
+      .expect_err("oversized Proxy-Authorization metadata should be rejected");
+    assert!(error.is_builder());
+    let message = error.to_string();
+    assert!(!message.contains(username));
+    assert!(!message.contains(&password));
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized Proxy-Authorization metadata should not open a proxy socket"
   );
 }
 

@@ -258,13 +258,13 @@ impl<'a> Connection<'a> {
     let mut proxy_header = String::new();
     proxy_header.push_str(&format!("CONNECT {}:{} HTTP/1.1\r\n", host, port));
     proxy_header.push_str(&format!("Host: {}:{}\r\n", host, port));
-    append_proxy_authorization_header(&mut proxy_header, proxy);
+    append_proxy_authorization_header(&mut proxy_header, proxy)?;
 
     proxy_header.push_str("\r\n");
     Ok(proxy_header)
   }
 
-  pub fn proxy_http_header(&self, url: &Url, proxy: &Proxy) -> String {
+  pub fn proxy_http_header(&self, url: &Url, proxy: &Proxy) -> error::Result<String> {
     let header = self.header();
     let (_, rest) = header.split_once("\r\n").unwrap_or(("", ""));
     let request_target = self
@@ -278,8 +278,8 @@ impl<'a> Connection<'a> {
       request_target,
       rest
     );
-    append_proxy_authorization_header(&mut proxy_header, proxy);
-    proxy_header
+    append_proxy_authorization_header(&mut proxy_header, proxy)?;
+    Ok(proxy_header)
   }
 
   pub fn resolve_redirect_url(&self, url: &Url, location: &str) -> error::Result<RedirectUrl> {
@@ -472,15 +472,16 @@ fn proxy_authorization_value(proxy: &Proxy) -> Option<String> {
   })
 }
 
-fn append_proxy_authorization_header(header: &mut String, proxy: &Proxy) {
+fn append_proxy_authorization_header(header: &mut String, proxy: &Proxy) -> error::Result<()> {
   if let Some(auth) = proxy_authorization_value(proxy) {
     let proxy_auth = ProxyAuthorization::new("Basic", auth)
-      .expect("generated Proxy-Authorization metadata should be valid");
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
     header.push_str(&format!(
       "Proxy-Authorization: {}\r\n",
       proxy_auth.header_value()
     ));
   }
+  Ok(())
 }
 
 fn write_http_request<W>(

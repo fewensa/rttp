@@ -187,8 +187,8 @@ impl<'a> BlockConnection<'a> {
 
   fn call_with_proxy_http(&self, url: &Url, proxy: &Proxy) -> error::Result<ResponseParts> {
     let addr = format!("{}:{}", proxy.host(), proxy.port());
+    let header = self.conn.proxy_http_header(url, proxy)?;
     let mut stream = self.conn.block_tcp_stream(&addr)?;
-    let header = self.conn.proxy_http_header(url, proxy);
 
     match self
       .conn

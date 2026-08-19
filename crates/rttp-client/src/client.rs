@@ -170,11 +170,7 @@ impl HttpClient {
   /// client.auth(Auth::bearer("my-token"));
   /// ```
   pub fn auth<A: AsRef<Auth>>(&mut self, auth: A) -> &mut Self {
-    let value = auth.as_ref().header_value();
-    let value = Authorization::parse(&value)
-      .map(|authorization| authorization.header_value())
-      .unwrap_or(value);
-    self.header(Header::new("Authorization", value))
+    self.header(Header::new("Authorization", auth.as_ref().header_value()))
   }
 
   /// Set bounded `Authorization` request metadata from an authentication

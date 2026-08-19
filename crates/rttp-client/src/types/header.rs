@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::error;
+use rttp_protocol::authorization::{Authorization, ProxyAuthorization};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Header {
@@ -31,6 +32,13 @@ impl Header {
       return Err(error::builder_with_message(
         "Invalid outbound HTTP header value",
       ));
+    }
+    if self.name.eq_ignore_ascii_case("Authorization") {
+      Authorization::parse(&self.value)
+        .map_err(|error| error::builder_with_message(error.to_string()))?;
+    } else if self.name.eq_ignore_ascii_case("Proxy-Authorization") {
+      ProxyAuthorization::parse(&self.value)
+        .map_err(|error| error::builder_with_message(error.to_string()))?;
     }
     Ok(())
   }
