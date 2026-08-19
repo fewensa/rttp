@@ -252,6 +252,25 @@ fn allow_response(values: &[&str]) -> Vec<u8> {
   response.into_bytes()
 }
 
+fn authentication_info_response(
+  authentication_info: Option<&str>,
+  proxy_authentication_info: Option<&str>,
+) -> Vec<u8> {
+  let mut response = String::from("HTTP/1.1 200 OK\r\n");
+  if let Some(value) = authentication_info {
+    response.push_str("Authentication-Info: ");
+    response.push_str(value);
+    response.push_str("\r\n");
+  }
+  if let Some(value) = proxy_authentication_info {
+    response.push_str("Proxy-Authentication-Info: ");
+    response.push_str(value);
+    response.push_str("\r\n");
+  }
+  response.push_str("Content-Length: 2\r\n\r\nOK");
+  response.into_bytes()
+}
+
 fn accept_ranges_response(values: &[&str], include_adjacent_metadata: bool) -> Vec<u8> {
   let mut response = String::from("HTTP/1.1 200 OK\r\n");
   for value in values {
@@ -1827,6 +1846,149 @@ fn sync_client_and_server_exchange_bounded_authentication_metadata() {
     response.header_value("WWW-Authenticate")
   );
   handle.join().expect("authentication server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_authentication_info_response_metadata_without_policy() {
+  const AUTHENTICATION_INFO: &str =
+    r#"nextnonce="n-2", qop=auth, rspauth="origin-rsp", cnonce="c-1", nc=00000001"#;
+  const PROXY_AUTHENTICATION_INFO: &str =
+    r#"nextnonce="p-2", qop=auth, rspauth="proxy-rsp", cnonce="pc-1", nc=00000001"#;
+  const AUTHENTICATION_INFO_CANONICAL: &str =
+    "nextnonce=n-2, qop=auth, rspauth=origin-rsp, cnonce=c-1, nc=00000001";
+  const PROXY_AUTHENTICATION_INFO_CANONICAL: &str =
+    "nextnonce=p-2, qop=auth, rspauth=proxy-rsp, cnonce=pc-1, nc=00000001";
+
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind Authentication-Info response server");
+  let addr = server
+    .local_addr()
+    .expect("Authentication-Info response server addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        HttpResponse::ok("OK")
+          .with_authentication_info(AUTHENTICATION_INFO)
+          .expect("Authentication-Info should be accepted")
+          .with_proxy_authentication_info(PROXY_AUTHENTICATION_INFO)
+          .expect("Proxy-Authentication-Info should be accepted")
+      })
+      .expect("serve Authentication-Info response");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/authentication-info"))
+    .emit()
+    .expect("Authentication-Info response should parse");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    Some(&AUTHENTICATION_INFO_CANONICAL.to_string()),
+    response.header_value("Authentication-Info")
+  );
+  assert_eq!(
+    Some(&PROXY_AUTHENTICATION_INFO_CANONICAL.to_string()),
+    response.header_value("Proxy-Authentication-Info")
+  );
+
+  let authentication_info = response
+    .authentication_info()
+    .expect("Authentication-Info should parse")
+    .expect("Authentication-Info should be present");
+  assert_eq!(Some("n-2"), authentication_info.parameter("nextnonce"));
+  assert_eq!(Some("auth"), authentication_info.parameter("qop"));
+  assert_eq!(Some("origin-rsp"), authentication_info.parameter("rspauth"));
+  assert_eq!(
+    AUTHENTICATION_INFO_CANONICAL,
+    authentication_info.header_value()
+  );
+
+  let proxy_authentication_info = response
+    .proxy_authentication_info()
+    .expect("Proxy-Authentication-Info should parse")
+    .expect("Proxy-Authentication-Info should be present");
+  assert_eq!(
+    Some("p-2"),
+    proxy_authentication_info.parameter("nextnonce")
+  );
+  assert_eq!(Some("auth"), proxy_authentication_info.parameter("qop"));
+  assert_eq!(
+    Some("proxy-rsp"),
+    proxy_authentication_info.parameter("rspauth")
+  );
+  assert_eq!(
+    PROXY_AUTHENTICATION_INFO_CANONICAL,
+    proxy_authentication_info.header_value()
+  );
+
+  handle
+    .join()
+    .expect("Authentication-Info response server thread");
+}
+
+#[test]
+fn sync_client_reports_absent_authentication_info_response_metadata() {
+  let (addr, handle) = spawn_metadata_response_server(&[]);
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/authentication-info-absent"))
+    .emit()
+    .expect("response without Authentication-Info should parse");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert!(response
+    .authentication_info()
+    .expect("absent Authentication-Info should parse")
+    .is_none());
+  assert!(response
+    .proxy_authentication_info()
+    .expect("absent Proxy-Authentication-Info should parse")
+    .is_none());
+
+  handle
+    .join()
+    .expect("absent Authentication-Info response server thread");
+}
+
+#[test]
+fn sync_client_authentication_info_helpers_reject_malformed_metadata_without_losing_response() {
+  const AUTHENTICATION_INFO: &str = "nextnonce";
+  const PROXY_AUTHENTICATION_INFO: &str = "rspauth";
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(
+    authentication_info_response(Some(AUTHENTICATION_INFO), Some(PROXY_AUTHENTICATION_INFO)),
+  );
+
+  let response = client()
+    .get()
+    .url(format!(
+      "http://{addr}/matrix/authentication-info-malformed"
+    ))
+    .emit()
+    .expect("malformed Authentication-Info response should remain parseable");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    Some(&AUTHENTICATION_INFO.to_string()),
+    response.header_value("Authentication-Info")
+  );
+  assert_eq!(
+    Some(&PROXY_AUTHENTICATION_INFO.to_string()),
+    response.header_value("Proxy-Authentication-Info")
+  );
+  assert!(
+    response.authentication_info().is_err(),
+    "Authentication-Info helper should reject malformed metadata"
+  );
+  assert!(
+    response.proxy_authentication_info().is_err(),
+    "Proxy-Authentication-Info helper should reject malformed metadata"
+  );
+
+  handle
+    .join()
+    .expect("malformed Authentication-Info response server thread");
 }
 
 #[test]
