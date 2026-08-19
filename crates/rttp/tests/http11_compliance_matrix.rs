@@ -314,11 +314,13 @@ fn assert_response_content_location(
   response: &HttpResponse,
   expected: &fixtures::content_location::ResponseCase,
 ) {
+  let content_location = response
+    .content_location()
+    .unwrap_or_else(|err| panic!("{name} Content-Location should parse: {err}"))
+    .unwrap_or_else(|| panic!("{name} should include Content-Location"));
   assert_eq!(
-    Some(expected.normalized_value),
-    response
-      .content_location()
-      .unwrap_or_else(|err| panic!("{name} Content-Location should parse: {err}")),
+    expected.normalized_value,
+    content_location.as_str(),
     "{name}"
   );
 }
@@ -1442,10 +1444,12 @@ fn server_content_location_helpers_coexist_with_adjacent_metadata_helpers() {
     header_value(&serialized, "Accept-Ranges")
   );
   assert_eq!(
-    Some("/representations/current"),
+    "/representations/current",
     response
       .content_location()
       .expect("Content-Location should parse")
+      .expect("Content-Location should be present")
+      .as_str()
   );
 }
 

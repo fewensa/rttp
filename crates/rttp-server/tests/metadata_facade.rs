@@ -3,14 +3,14 @@ use rttp_server::server::{
   HttpAccessControlRequestHeaders, HttpAccessControlRequestHeadersParseError,
   HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError,
   HttpAccessControlRequestPrivateNetwork, HttpAccessControlRequestPrivateNetworkParseError,
-  HttpConditionalMetadata, HttpConnection, HttpConnectionParseError,
-  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpHost,
-  HttpNoVarySearch, HttpNoVarySearchParams, HttpPreferenceKind, HttpRequest, HttpResponse,
-  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpTransferEncoding, HttpTransferEncodingParseError,
-  HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite,
-  SecFetchUser,
+  HttpConditionalMetadata, HttpConnection, HttpConnectionParseError, HttpContentLocation,
+  HttpContentLocationParseError, HttpCrossOriginEmbedderPolicyReportOnly,
+  HttpCrossOriginResourcePolicy, HttpEntityTag, HttpHost, HttpNoVarySearch, HttpNoVarySearchParams,
+  HttpPreferenceKind, HttpRequest, HttpResponse, HttpSignature, HttpSignatureInput,
+  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
+  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
+  HttpTransferEncoding, HttpTransferEncodingParseError, HttpWantContentDigest, HttpWantReprDigest,
+  SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
 };
 
 #[test]
@@ -50,6 +50,10 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let report_only_policy: HttpCrossOriginEmbedderPolicyReportOnly =
     HttpCrossOriginEmbedderPolicyReportOnly::parse("require-corp")
       .expect("Cross-Origin-Embedder-Policy-Report-Only should parse");
+  let content_location = HttpContentLocation::parse("../representations/current.json")
+    .expect("Content-Location should parse");
+  let _: HttpContentLocationParseError = HttpContentLocation::parse("not valid")
+    .expect_err("invalid Content-Location should be rejected");
   let response = HttpResponse::ok("")
     .with_accept_ch(["Sec-CH-UA"])
     .expect("Accept-CH should be accepted");
@@ -72,6 +76,10 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert!(request_private_network_error.is_err());
   assert_eq!(policy.header_value(), "same-origin");
   assert_eq!(report_only_policy.header_value(), "require-corp");
+  assert_eq!(
+    content_location.header_value(),
+    "../representations/current.json"
+  );
   assert_eq!(
     metadata
       .entity_tag_value()
