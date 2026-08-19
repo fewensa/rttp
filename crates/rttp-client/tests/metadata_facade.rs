@@ -12,9 +12,10 @@ use rttp_client::response::{
   XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
-  ContentDigest, ContentLocation, ContentLocationParseError, ReprDigest,
+  ContentDigest, ContentLocation, ContentLocationParseError, HttpContentLength, ReprDigest,
 };
-use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
+use rttp_client::{HttpClient, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
+use rttp_test_support as support;
 
 #[test]
 fn response_facade_exports_representative_bounded_metadata_types() {
@@ -210,6 +211,66 @@ fn response_facade_exports_content_digest_metadata() {
     content_digest.entry("sha-256").map(|entry| entry.value()),
     Some(&b"abc"[..])
   );
+}
+
+#[test]
+fn response_facade_exports_content_length_metadata_type() {
+  let content_length = HttpContentLength::new(2);
+
+  assert_eq!(2, content_length.len());
+  assert!(!content_length.is_zero());
+  assert_eq!("2", content_length.header_value());
+}
+
+#[test]
+fn direct_response_new_does_not_infer_content_length_metadata() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(None, response.content_length());
+}
+
+#[test]
+fn client_response_exposes_validated_content_length_metadata() {
+  let (addr, _handle) = support::spawn_chunked_response_server(
+    "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK",
+  );
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/"))
+    .emit()
+    .expect("response should parse");
+  let content_length = response
+    .content_length()
+    .expect("validated fixed length should be retained");
+
+  assert_eq!(2, content_length.len());
+  assert_eq!("2", content_length.header_value());
+}
+
+#[test]
+fn client_response_omits_content_length_metadata_for_chunked_framing() {
+  let (addr, _handle) = support::spawn_chunked_response_server(concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "2\r\nOK\r\n",
+    "0\r\n\r\n"
+  ));
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/"))
+    .emit()
+    .expect("response should parse");
+
+  assert_eq!("OK", response.body().string().expect("body should decode"));
+  assert_eq!(None, response.content_length());
 }
 
 #[test]
