@@ -253,6 +253,7 @@ fn signature_input_rejects_empty_malformed_and_non_inner_list_values() {
     "   ",
     "sig1",
     "sig1=",
+    "sig1=()",
     "sig1=:YWJj:",
     r#"sig1="@method""#,
     r#"SIG1=("@method")"#,

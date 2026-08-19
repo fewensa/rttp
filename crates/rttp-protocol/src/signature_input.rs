@@ -258,6 +258,9 @@ fn parse_field(
         "too many Signature-Input field entries",
       ));
     }
+    if inner_list.items.is_empty() {
+      return Err(invalid_member());
+    }
     if inner_list.items.len() > MAX_SIGNATURE_INPUT_ENTRY_COMPONENTS {
       return Err(SignatureInputParseError::new(
         "too many Signature-Input entry components",
