@@ -1,15 +1,12 @@
 use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
+use rttp_protocol::authentication_info::AuthenticationInfo;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
-use rttp_protocol::content_type::ContentType;
-use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
 use rttp_protocol::entity_tag::{EntityTag, IfMatch};
 use rttp_protocol::fetch_metadata::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 use rttp_protocol::origin::Origin;
 use rttp_protocol::prefer::{Prefer, PreferenceApplied, PreferenceKind};
-use rttp_protocol::referer::Referer;
 use rttp_protocol::referrer_policy::{ReferrerPolicy, ReferrerPolicyToken};
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
-use rttp_protocol::x_content_type_options::XContentTypeOptions;
 
 #[test]
 fn protocol_exports_representative_bounded_metadata_types() {
@@ -17,6 +14,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let expose_headers = AccessControlExposeHeaders::parse("X-Request-Id")
     .expect("Access-Control-Expose-Headers should parse");
   let critical_ch = CriticalCh::parse("Sec-CH-UA").expect("Critical-CH should parse");
+  let authentication_info =
+    AuthenticationInfo::parse("nextnonce=\"n-2\"").expect("Authentication-Info should parse");
   let entity_tag = EntityTag::parse("\"revision-42\"").expect("entity tag should parse");
   let if_match = IfMatch::parse("\"revision-42\"").expect("If-Match should parse");
   let fetch_site = SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
@@ -24,20 +23,13 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
   let fetch_user = SecFetchUser::parse("?1").expect("Sec-Fetch-User should parse");
   let origin = Origin::parse("https://example.test").expect("Origin should parse");
-  let referer = Referer::parse("https://example.test/path?q=1").expect("Referer should parse");
   let timing_allow_origin =
     TimingAllowOrigin::parse("https://example.test").expect("Timing-Allow-Origin should parse");
-  let x_content_type_options =
-    XContentTypeOptions::parse("nosniff").expect("X-Content-Type-Options should parse");
-  let cross_origin_embedder_policy =
-    CrossOriginEmbedderPolicy::parse(r#"require-corp; report-to="coep""#)
-      .expect("Cross-Origin-Embedder-Policy should parse");
-  let content_type =
-    ContentType::parse("text/plain; charset=utf-8").expect("Content-Type should parse");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
+  assert_eq!(authentication_info.parameter("nextnonce"), Some("n-2"));
   assert_eq!(entity_tag.opaque_tag(), "revision-42");
   assert_eq!(
     if_match.entity_tags()[0].header_value(),
@@ -48,11 +40,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_dest.header_value(), "document");
   assert_eq!(fetch_user.header_value(), "?1");
   assert_eq!(origin.header_value(), "https://example.test");
-  assert_eq!(referer.header_value(), "https://example.test/path?q=1");
   assert_eq!(timing_allow_origin.origins(), ["https://example.test"]);
-  assert_eq!(x_content_type_options.header_value(), "nosniff");
-  assert_eq!(cross_origin_embedder_policy.header_value(), "require-corp");
-  assert_eq!(content_type.header_value(), "text/plain; charset=utf-8");
 }
 
 #[test]

@@ -46,9 +46,6 @@ pub use rttp_protocol::client_hints::{
 pub use rttp_protocol::cookie::{
   HttpCookieParseError, HttpSetCookie, HttpSetCookieAttribute, HttpSetCookies,
 };
-pub use rttp_protocol::cross_origin_embedder_policy::{
-  CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyParseError,
-};
 pub use rttp_protocol::cross_origin_resource_policy::{
   CrossOriginResourcePolicy, CrossOriginResourcePolicyParseError,
 };

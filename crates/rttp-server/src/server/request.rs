@@ -1,13 +1,5 @@
 use super::*;
 
-pub use rttp_protocol::access_control_request_headers::{
-  AccessControlRequestHeaders as HttpAccessControlRequestHeaders,
-  AccessControlRequestHeadersParseError as HttpAccessControlRequestHeadersParseError,
-};
-pub use rttp_protocol::access_control_request_method::{
-  AccessControlRequestMethod as HttpAccessControlRequestMethod,
-  AccessControlRequestMethodParseError as HttpAccessControlRequestMethodParseError,
-};
 pub use rttp_protocol::cookie::{HttpCookiePair, HttpCookieParseError, HttpCookies};
 pub use rttp_protocol::fetch_metadata::{
   FetchMetadataParseError as HttpFetchMetadataParseError, SecFetchDest, SecFetchMode, SecFetchSite,
@@ -349,35 +341,6 @@ impl Request {
       self.headers_named("Sec-Fetch-User"),
       "Sec-Fetch-User",
     )
-  }
-
-  /// Parses received `Access-Control-Request-Method` preflight metadata
-  /// without applying CORS policy.
-  pub fn access_control_request_method(
-    &self,
-  ) -> Result<Option<HttpAccessControlRequestMethod>, HttpAccessControlRequestMethodParseError> {
-    let values: Vec<&str> = self
-      .headers_named("Access-Control-Request-Method")
-      .collect();
-    if values.is_empty() {
-      return Ok(None);
-    }
-    HttpAccessControlRequestMethod::parse_values(values).map(Some)
-  }
-
-  /// Parses received `Access-Control-Request-Headers` preflight metadata
-  /// without applying CORS policy.
-  pub fn access_control_request_headers(
-    &self,
-  ) -> Result<Option<HttpAccessControlRequestHeaders>, HttpAccessControlRequestHeadersParseError>
-  {
-    let values: Vec<&str> = self
-      .headers_named("Access-Control-Request-Headers")
-      .collect();
-    if values.is_empty() {
-      return Ok(None);
-    }
-    HttpAccessControlRequestHeaders::parse_values(values).map(Some)
   }
 
   /// Parses exactly one bounded `Authorization` field as opaque typed
@@ -2151,50 +2114,6 @@ impl HttpRequest {
         .map(|header| header.value.as_str()),
     )
   }
-
-  /// Parses received `Access-Control-Request-Method` preflight metadata
-  /// without applying CORS policy.
-  pub fn access_control_request_method(
-    &self,
-  ) -> Result<Option<HttpAccessControlRequestMethod>, HttpAccessControlRequestMethodParseError> {
-    let values: Vec<&str> = self
-      .headers
-      .iter()
-      .filter(|header| {
-        header
-          .name
-          .eq_ignore_ascii_case("Access-Control-Request-Method")
-      })
-      .map(|header| header.value.as_str())
-      .collect();
-    if values.is_empty() {
-      return Ok(None);
-    }
-    HttpAccessControlRequestMethod::parse_values(values).map(Some)
-  }
-
-  /// Parses received `Access-Control-Request-Headers` preflight metadata
-  /// without applying CORS policy.
-  pub fn access_control_request_headers(
-    &self,
-  ) -> Result<Option<HttpAccessControlRequestHeaders>, HttpAccessControlRequestHeadersParseError>
-  {
-    let values: Vec<&str> = self
-      .headers
-      .iter()
-      .filter(|header| {
-        header
-          .name
-          .eq_ignore_ascii_case("Access-Control-Request-Headers")
-      })
-      .map(|header| header.value.as_str())
-      .collect();
-    if values.is_empty() {
-      return Ok(None);
-    }
-    HttpAccessControlRequestHeaders::parse_values(values).map(Some)
-  }
-
   /// Parses received `Accept-Encoding` request metadata without enabling
   /// automatic compression, decompression, or content negotiation.
   pub fn accept_encoding(

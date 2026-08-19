@@ -24,7 +24,6 @@ use rttp_protocol::access_control_max_age::AccessControlMaxAge;
 use rttp_protocol::clear_site_data::ClearSiteData;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::cookie::HttpSetCookies;
-use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
 use rttp_protocol::cross_origin_resource_policy::CrossOriginResourcePolicy;
 use rttp_protocol::prefer::PreferenceApplied;
 use rttp_protocol::referrer_policy::ReferrerPolicy;
@@ -212,22 +211,6 @@ impl Response {
     self
       .classified_status()
       .is_some_and(|code| code.is_server_error())
-  }
-
-  pub fn is_informational(&self) -> bool {
-    self
-      .classified_status()
-      .is_some_and(|code| code.is_informational())
-  }
-
-  pub fn is_redirection(&self) -> bool {
-    self
-      .classified_status()
-      .is_some_and(|code| code.is_redirection())
-  }
-
-  pub fn is_error(&self) -> bool {
-    self.classified_status().is_some_and(|code| code.is_error())
   }
 
   pub fn is_partial_content(&self) -> bool {
@@ -654,17 +637,6 @@ impl Response {
       return Ok(None);
     }
     CrossOriginResourcePolicy::parse_values(values.into_iter().map(String::as_str))
-      .map(Some)
-      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
-  }
-
-  /// Parses `Cross-Origin-Embedder-Policy` response metadata without enforcing embedder policy.
-  pub fn cross_origin_embedder_policy(&self) -> error::Result<Option<CrossOriginEmbedderPolicy>> {
-    let values = self.header_values("cross-origin-embedder-policy");
-    if values.is_empty() {
-      return Ok(None);
-    }
-    CrossOriginEmbedderPolicy::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
