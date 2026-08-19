@@ -103,6 +103,12 @@ pub use rttp_protocol::proxy_authentication_info::{
   ProxyAuthenticationInfo as HttpProxyAuthenticationInfo,
   ProxyAuthenticationInfoParseError as HttpProxyAuthenticationInfoParseError,
 };
+pub use rttp_protocol::proxy_status::{
+  ProxyStatus as HttpProxyStatus, ProxyStatusBareItem as HttpProxyStatusBareItem,
+  ProxyStatusIdentifier as HttpProxyStatusIdentifier, ProxyStatusMember as HttpProxyStatusMember,
+  ProxyStatusParameter as HttpProxyStatusParameter,
+  ProxyStatusParseError as HttpProxyStatusParseError,
+};
 pub use rttp_protocol::range::{
   ContentRange as HttpContentRange, ContentRangeParseError as HttpContentRangeParseError,
 };
@@ -1415,6 +1421,22 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces RFC 9209 `Proxy-Status` response metadata
+  /// without generating origin proxy status or applying health policy.
+  pub fn with_proxy_status(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpProxyStatusParseError> {
+    let proxy_status = HttpProxyStatus::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Proxy-Status"));
+    self
+      .headers
+      .push(HttpHeader::new("Proxy-Status", proxy_status.header_value()));
+    Ok(self)
+  }
+
   /// Validates and replaces HTTP `Priority` response metadata.
   pub fn with_priority(mut self, value: impl AsRef<str>) -> Result<Self, HttpPriorityParseError> {
     let priority = HttpPriority::parse(value)?;
@@ -2298,6 +2320,21 @@ impl HttpResponse {
         "multiple {name} headers"
       ))),
     }
+  }
+
+  /// Parses attached `Proxy-Status` metadata without changing raw headers
+  /// or applying proxy health, retry, trailer, or origin-generation policy.
+  pub fn proxy_status(&self) -> Result<Option<HttpProxyStatus>, HttpProxyStatusParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Proxy-Status"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpProxyStatus::parse_values(values).map(Some)
   }
 
   /// Parses attached HTTP `Priority` metadata without changing raw headers.

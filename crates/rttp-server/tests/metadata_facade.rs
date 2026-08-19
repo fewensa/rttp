@@ -9,12 +9,13 @@ use rttp_server::server::{
   HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
   HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeprecation,
   HttpDeprecationParseError, HttpEntityTag, HttpHost, HttpKeepAlive, HttpNoVarySearch,
-  HttpNoVarySearchParams, HttpPreferenceKind, HttpRequest, HttpResponse, HttpSaveData,
-  HttpSaveDataParseError, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
-  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpTransferEncoding,
-  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeParseError, HttpWantContentDigest,
-  HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
+  HttpNoVarySearchParams, HttpPreferenceKind, HttpProxyStatus, HttpProxyStatusParseError,
+  HttpRequest, HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSignature,
+  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
+  HttpUpgradeParseError, HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode,
+  SecFetchSite, SecFetchUser, SecPurpose,
 };
 
 #[test]
@@ -96,6 +97,14 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let keep_alive_response = HttpResponse::ok("")
     .with_keep_alive("timeout=5, max=100")
     .expect("Keep-Alive should be accepted");
+  let proxy_status: HttpProxyStatus =
+    HttpProxyStatus::parse("ExampleCDN; error=connection_timeout")
+      .expect("Proxy-Status should parse");
+  let _: HttpProxyStatusParseError =
+    HttpProxyStatus::parse("").expect_err("empty Proxy-Status should be rejected");
+  let proxy_status_response = HttpResponse::ok("")
+    .with_proxy_status("ExampleCDN; error=connection_timeout")
+    .expect("Proxy-Status should be accepted");
   let fetch_site = SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
@@ -195,6 +204,20 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .expect("Keep-Alive should parse")
       .expect("Keep-Alive should be present")
       .timeout()
+  );
+  assert_eq!(
+    proxy_status.members()[0].identifier().as_str(),
+    "ExampleCDN"
+  );
+  assert_eq!(
+    "ExampleCDN",
+    proxy_status_response
+      .proxy_status()
+      .expect("Proxy-Status should parse")
+      .expect("Proxy-Status should be present")
+      .members()[0]
+      .identifier()
+      .as_str()
   );
   assert_eq!(fetch_site.header_value(), "same-origin");
   assert_eq!(fetch_mode.header_value(), "navigate");

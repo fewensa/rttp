@@ -32,6 +32,7 @@ use rttp_protocol::no_vary_search::{NoVarySearch, NoVarySearchParams};
 use rttp_protocol::origin::Origin;
 use rttp_protocol::prefer::{Prefer, PreferenceApplied, PreferenceKind};
 use rttp_protocol::proxy_authentication_info::ProxyAuthenticationInfo;
+use rttp_protocol::proxy_status::{ProxyStatus, ProxyStatusParseError};
 use rttp_protocol::referer::Referer;
 use rttp_protocol::referrer_policy::{ReferrerPolicy, ReferrerPolicyToken};
 use rttp_protocol::save_data::SaveData;
@@ -81,6 +82,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
     "nextnonce=\"xyz789\", qop=auth, rspauth=\"...\", cnonce=\"c\", nc=00000001",
   )
   .expect("Proxy-Authentication-Info should parse");
+  let proxy_status =
+    ProxyStatus::parse("ExampleCDN; error=connection_timeout").expect("Proxy-Status should parse");
+  let _: ProxyStatusParseError =
+    ProxyStatus::parse("").expect_err("empty Proxy-Status should be rejected");
   let referer = Referer::parse("https://example.test/path?q=1").expect("Referer should parse");
   let timing_allow_origin =
     TimingAllowOrigin::parse("https://example.test").expect("Timing-Allow-Origin should parse");
@@ -168,6 +173,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(
     no_vary_search.params(),
     Some(&NoVarySearchParams::Names(vec!["utm_source".to_owned()]))
+  );
+  assert_eq!(
+    proxy_status.members()[0].identifier().as_str(),
+    "ExampleCDN"
   );
   assert_eq!(
     proxy_authentication_info.parameter("nextnonce"),

@@ -19,6 +19,7 @@ use crate::response::NoVarySearch;
 use crate::response::Priority;
 use crate::response::ProxyAuthenticate;
 use crate::response::ProxyAuthenticationInfo;
+use crate::response::ProxyStatus;
 use crate::response::ReprDigest;
 use crate::response::ServerTiming;
 use crate::response::Signature;
@@ -805,6 +806,18 @@ impl Response {
       return Ok(None);
     }
     ProxyAuthenticationInfo::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses all `Proxy-Status` fields as bounded RFC 9209 metadata without
+  /// interpreting proxy health, retries, trailer promotion, or origin policy.
+  pub fn proxy_status(&self) -> error::Result<Option<ProxyStatus>> {
+    let values = self.header_values("proxy-status");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    ProxyStatus::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

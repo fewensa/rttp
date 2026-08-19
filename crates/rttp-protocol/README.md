@@ -336,6 +336,20 @@ names are rejected. This parser exposes proxy authentication challenges as
 metadata only; it does not select credentials, retry requests, generate
 `Proxy-Authorization`, or implement proxy authentication policy.
 
+## Proxy-Status
+
+`proxy_status` parses one or more RFC 9209 `Proxy-Status` field values as a
+Structured Fields list of Token or String proxy identifiers with opaque
+parameters. Each field value is bounded to 64 KiB, the combined member count
+is bounded to 256, each member holds at most 256 parameters, and each
+parameter value is bounded to 64 KiB. Combined fields are parsed in wire
+order. Empty input, empty lists, inner-lists, non-Token/non-String
+identifiers, malformed syntax, control bytes other than HTAB, oversized
+values, excessive members or parameters, and duplicate parameter names are
+rejected. This parser reports declared metadata only; it does not interpret
+proxy health, promote trailers, retry requests, or generate origin
+`Proxy-Status` values.
+
 ## Cross-Origin-Embedder-Policy
 
 `cross_origin_embedder_policy` parses a singleton `Cross-Origin-Embedder-Policy`

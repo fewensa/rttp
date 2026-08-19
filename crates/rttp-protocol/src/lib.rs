@@ -60,6 +60,7 @@ pub mod prefer;
 pub mod priority;
 pub mod proxy_authenticate;
 pub mod proxy_authentication_info;
+pub mod proxy_status;
 pub mod range;
 pub mod rate_limit;
 pub mod referer;
