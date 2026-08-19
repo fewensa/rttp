@@ -311,6 +311,15 @@ fn signature_input_enforces_value_entry_component_and_parameter_bounds() {
     "more than 256 signature-input members across fields must be rejected even when labels repeat"
   );
 
+  let duplicate_members_in_one_field =
+    std::iter::repeat_n(r#"sig1=("@method")"#, MAX_SIGNATURE_INPUT_ENTRIES + 1)
+      .collect::<Vec<_>>()
+      .join(", ");
+  assert!(
+    SignatureInput::parse(&duplicate_members_in_one_field).is_err(),
+    "more than 256 signature-input members in one field must be rejected even when labels repeat"
+  );
+
   let at_component_limit = format!(
     "sig1=({})",
     (0..MAX_SIGNATURE_INPUT_ENTRY_COMPONENTS)

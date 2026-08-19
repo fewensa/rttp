@@ -240,6 +240,16 @@ fn parse_field(
   entries: &mut Vec<SignatureInputEntry>,
   member_count: &mut usize,
 ) -> Result<(), SignatureInputParseError> {
+  let field_member_count = count_top_level_members(value);
+  if member_count
+    .checked_add(field_member_count)
+    .is_none_or(|count| count > MAX_SIGNATURE_INPUT_MEMBERS)
+  {
+    return Err(SignatureInputParseError::new(
+      "too many Signature-Input field entries",
+    ));
+  }
+
   let dictionary = Parser::new(value)
     .parse::<Dictionary>()
     .map_err(|_| invalid_member())?;
@@ -248,15 +258,9 @@ fn parse_field(
       "Signature-Input field must contain an entry",
     ));
   }
+  *member_count += field_member_count;
 
   for (key, member) in dictionary {
-    if *member_count >= MAX_SIGNATURE_INPUT_ENTRIES {
-      return Err(SignatureInputParseError::new(
-        "too many Signature-Input field entries",
-      ));
-    }
-    *member_count += 1;
-
     let ListEntry::InnerList(inner_list) = member else {
       return Err(invalid_member());
     };
@@ -304,6 +308,88 @@ fn parse_field(
     }
   }
   Ok(())
+}
+
+fn count_top_level_members(value: &str) -> usize {
+  let bytes = value.as_bytes();
+  let mut count = usize::from(!value.trim().is_empty());
+  let mut depth = 0usize;
+  let mut previous_significant = None;
+  let mut index = 0usize;
+
+  while index < bytes.len() {
+    let byte = bytes[index];
+    match byte {
+      b'"' => {
+        index = skip_string(bytes, index + 1);
+        previous_significant = Some(byte);
+      }
+      b'%' if bytes.get(index + 1) == Some(&b'"') => {
+        index = skip_display_string(bytes, index + 2);
+        previous_significant = Some(b'"');
+      }
+      b':' if previous_significant == Some(b'=') => {
+        index = skip_byte_sequence(bytes, index + 1);
+        previous_significant = Some(byte);
+      }
+      b'(' => {
+        depth = depth.saturating_add(1);
+        previous_significant = Some(byte);
+        index += 1;
+      }
+      b')' => {
+        depth = depth.saturating_sub(1);
+        previous_significant = Some(byte);
+        index += 1;
+      }
+      b',' if depth == 0 => {
+        count += 1;
+        previous_significant = Some(byte);
+        index += 1;
+      }
+      b' ' | b'\t' => {
+        index += 1;
+      }
+      _ => {
+        previous_significant = Some(byte);
+        index += 1;
+      }
+    }
+  }
+
+  count
+}
+
+fn skip_string(bytes: &[u8], mut index: usize) -> usize {
+  while index < bytes.len() {
+    match bytes[index] {
+      b'\\' => index += 2,
+      b'"' => return index + 1,
+      _ => index += 1,
+    }
+  }
+  index
+}
+
+fn skip_display_string(bytes: &[u8], mut index: usize) -> usize {
+  while index < bytes.len() {
+    match bytes[index] {
+      b'%' => index += 3,
+      b'"' => return index + 1,
+      _ => index += 1,
+    }
+  }
+  index
+}
+
+fn skip_byte_sequence(bytes: &[u8], mut index: usize) -> usize {
+  while index < bytes.len() {
+    if bytes[index] == b':' {
+      return index + 1;
+    }
+    index += 1;
+  }
+  index
 }
 
 fn convert_parameters(
