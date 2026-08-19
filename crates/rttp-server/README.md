@@ -269,6 +269,21 @@ string to 64 KiB.
 These helpers only declare and parse metadata. The server does not send
 network error reports, persist policy, or configure Reporting endpoint groups.
 
+## Alt-Used response metadata
+
+`HttpResponse::with_alt_used(value)` validates one bounded `Alt-Used`
+authority through the shared protocol `HttpAltUsed` type and replaces any
+existing `Alt-Used` fields with one normalized value. `HttpResponse::alt_used()`
+parses attached raw fields into `HttpAltUsed` metadata, returning `Ok(None)`
+when the header is absent and returning parser errors without changing raw
+fields. Valid metadata preserves host spelling, optional port, and bracketed
+IPv6 literal form. Malformed authorities, duplicate fields, control bytes, and
+values larger than 64 KiB are rejected.
+
+These helpers only declare and parse metadata. The server does not select
+alternative services, rewrite origins, migrate sockets, retry, or change
+connection policy from `Alt-Used`.
+
 ## Reporting-Endpoints response metadata
 
 `HttpResponse::with_reporting_endpoints(endpoints)` validates a bounded
