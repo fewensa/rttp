@@ -91,6 +91,19 @@ fn proxy_authenticate_accepts_bws_and_case_insensitive_parameter_lookup() {
 }
 
 #[test]
+fn proxy_authenticate_parses_first_non_realm_unquoted_parameter() {
+  let challenges = ProxyAuthenticate::parse("Digest nonce=abc")
+    .expect("first non-realm auth-param should parse as parameter metadata");
+  let digest = &challenges.challenges()[0];
+
+  assert_eq!(digest.scheme(), "Digest");
+  assert_eq!(digest.token68(), None);
+  assert_eq!(digest.parameter("nonce"), Some("abc"));
+  assert_eq!(digest.parameters()[0].name(), "nonce");
+  assert_eq!(digest.parameters()[0].value(), "abc");
+}
+
+#[test]
 fn proxy_authenticate_rejects_empty_malformed_and_duplicates() {
   for value in [
     "",
