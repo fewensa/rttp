@@ -86,6 +86,23 @@ expose the original request.
 These helpers parse request metadata only; they do not sniff, decode,
 negotiate, cache, redirect, retry, or select representations.
 
+## Accept-Charset request metadata
+
+Handlers can call `Request::accept_charset()` and
+`HttpRequest::accept_charset()` to observe bounded typed `Accept-Charset`
+request metadata through the shared `rttp-protocol` primitive. The helpers
+combine case-insensitive fields in wire order into
+`HttpRequestAcceptCharsets`. Each entry exposes `charset()` and q-value
+`quality()` in thousandths (`1000` is the default quality of `1`). The shared
+protocol type is the authority for charset-range, wildcard, q-value,
+duplicate, member-count, and size validation. Absent metadata returns
+`Ok(None)`. Malformed, oversized, duplicate, empty, or over-limit values
+return a parse error while `Request::header()` and `Request::body()` continue
+to expose the original request.
+
+These helpers parse request metadata only. They do not negotiate, transcode,
+decode bodies, sniff MIME types, or select a response charset.
+
 ## Accept-Encoding request metadata
 
 Handlers can call `Request::accept_encoding()` and
@@ -426,6 +443,21 @@ control-byte values return a parser error while `Request::header()` and
 These helpers parse request metadata only. They do not select a
 representation, compress a body, advertise Client Hints, or apply browser
 data-saver policy.
+
+## Expect request metadata
+
+Handlers can call `Request::expectations()` and `HttpRequest::expectations()`
+to observe bounded typed `Expect` request metadata through the shared
+protocol type, re-exported as `HttpExpectations`. Absent fields return
+`Ok(None)`. `expects_continue()` identifies the standardized `100-continue`
+expectation, while `unsupported()` preserves well-formed extension names for
+handler policy. Malformed, duplicate, oversized, or excessive values return
+`HttpExpectParseError` while `Request::header()` and `HttpRequest::header()`
+continue to expose the original raw field.
+
+These helpers parse request metadata only. They do not send `100 Continue`,
+wait for an interim response, reject unsupported extensions, or change body
+framing.
 
 ## Sec-GPC request metadata
 

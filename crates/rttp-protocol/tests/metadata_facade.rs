@@ -1,3 +1,4 @@
+use rttp_protocol::accept_charset::AcceptCharset;
 use rttp_protocol::accept_encoding::AcceptEncoding;
 use rttp_protocol::accept_language::AcceptLanguage;
 use rttp_protocol::accept_ranges::AcceptRanges;
@@ -23,6 +24,7 @@ use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedder
 use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::deprecation::Deprecation;
 use rttp_protocol::entity_tag::{EntityTag, IfMatch};
+use rttp_protocol::expect::Expect;
 use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
@@ -81,6 +83,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
     UpgradeInsecureRequests::parse("1").expect("Upgrade-Insecure-Requests should parse");
   let critical_ch = CriticalCh::parse("Sec-CH-UA").expect("Critical-CH should parse");
   let entity_tag = EntityTag::parse("\"revision-42\"").expect("entity tag should parse");
+  let expect = Expect::parse("100-continue, preview").expect("Expect should parse");
   let if_match = IfMatch::parse("\"revision-42\"").expect("If-Match should parse");
   let fetch_site = SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
@@ -155,6 +158,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
     CacheStatus::parse("OriginCache; hit; ttl=1100").expect("Cache-Status should parse");
   let cdn_cache_control =
     CdnCacheControl::parse("max-age=600, cdn-example=\"a, b\"").expect("CDN metadata should parse");
+  let accept_charset =
+    AcceptCharset::parse("utf-8, iso-8859-1;q=0.5, *;q=0").expect("Accept-Charset should parse");
   let accept_encoding =
     AcceptEncoding::parse("gzip, br;q=0.8, identity;q=0").expect("Accept-Encoding should parse");
   let accept_ranges = AcceptRanges::parse("bytes, pages").expect("Accept-Ranges should parse");
@@ -196,6 +201,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(upgrade_insecure_requests.header_value(), "1");
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
   assert_eq!(entity_tag.opaque_tag(), "revision-42");
+  assert!(expect.expects_continue());
+  assert_eq!(["preview"], expect.unsupported());
+  assert_eq!(expect.header_value(), "100-continue, preview");
+  assert_eq!(Expect::expect_continue().header_value(), "100-continue");
   assert_eq!(
     if_match.entity_tags()[0].header_value(),
     entity_tag.header_value()
@@ -305,6 +314,17 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(cache_status.members()[0].ttl(), Some(1100));
   assert_eq!(cdn_cache_control.directives()[1].name(), "cdn-example");
   assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
+  assert_eq!(accept_charset.charsets()[0].charset(), "utf-8");
+  assert_eq!(accept_charset.charsets()[0].quality(), 1000);
+  assert_eq!(accept_charset.charsets()[1].charset(), "iso-8859-1");
+  assert_eq!(accept_charset.charsets()[1].quality(), 500);
+  assert_eq!(accept_charset.charsets()[2].charset(), "*");
+  assert_eq!(accept_charset.charsets()[2].quality(), 0);
+  assert!(accept_charset.charsets()[2].is_wildcard());
+  assert_eq!(
+    accept_charset.header_value(),
+    "utf-8, iso-8859-1;q=0.5, *;q=0"
+  );
   assert_eq!(accept_encoding.codings()[0].coding(), "gzip");
   assert_eq!(accept_encoding.codings()[0].quality(), 1000);
   assert_eq!(accept_encoding.codings()[1].coding(), "br");

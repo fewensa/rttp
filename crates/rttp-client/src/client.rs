@@ -7,12 +7,14 @@ use crate::types::{Auth, Header, IntoHeader, IntoPara, Proxy, ToFormData, ToRoUr
 use crate::{error, Config, H2cClientPolicy};
 #[cfg(feature = "async")]
 use futures::io::AsyncRead;
+use rttp_protocol::accept_charset::AcceptCharset;
 use rttp_protocol::accept_encoding::AcceptEncoding;
 use rttp_protocol::accept_language::{AcceptLanguage, MAX_ACCEPT_LANGUAGE_VALUE_BYTES};
 use rttp_protocol::access_control_request_headers::AccessControlRequestHeaders;
 use rttp_protocol::access_control_request_method::AccessControlRequestMethod;
 use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
 use rttp_protocol::authorization::Authorization;
+use rttp_protocol::expect::Expect;
 use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
@@ -300,7 +302,10 @@ impl HttpClient {
   /// This is metadata only: the client still writes the request body normally
   /// and does not wait for an interim response before sending it.
   pub fn expect_continue(&mut self) -> &mut Self {
-    self.header(("Expect", "100-continue"))
+    self.header(Header::new(
+      "Expect",
+      Expect::expect_continue().header_value(),
+    ))
   }
 
   /// Set bounded `Sec-Fetch-Site` request metadata without applying browser policy.
@@ -668,6 +673,26 @@ impl HttpClient {
     Ok(self.header(Header::new("Max-Forwards", max_forwards.header_value())))
   }
 
+  /// Append a validated `Accept-Charset` range with the default quality of
+  /// `1`. This declares request metadata only; it does not negotiate,
+  /// transcode, or select a response charset.
+  pub fn accept_charset<S: AsRef<str>>(&mut self, charset: S) -> error::Result<&mut Self> {
+    self.accept_charset_member(charset.as_ref(), None)
+  }
+
+  /// Append a validated `Accept-Charset` range with an HTTP q-value.
+  ///
+  /// The q-value must be between `0` and `1` with at most three fractional
+  /// digits. This declares request metadata only; it does not negotiate,
+  /// transcode, or select a response charset.
+  pub fn accept_charset_with_q<C: AsRef<str>, Q: AsRef<str>>(
+    &mut self,
+    charset: C,
+    qvalue: Q,
+  ) -> error::Result<&mut Self> {
+    self.accept_charset_member(charset.as_ref(), Some(qvalue.as_ref()))
+  }
+
   /// Set a bounded `Idempotency-Key` request header as opaque metadata.
   ///
   /// The key must be one or more visible ASCII bytes after HTTP optional
@@ -895,6 +920,50 @@ impl HttpClient {
   /// Set request content type
   pub fn content_type<S: AsRef<str>>(&mut self, content_type: S) -> &mut Self {
     self.header(("Content-Type", content_type.as_ref()))
+  }
+
+  fn accept_charset_member(
+    &mut self,
+    charset: &str,
+    qvalue: Option<&str>,
+  ) -> error::Result<&mut Self> {
+    let charset = charset.trim();
+    if !is_http_token(charset) {
+      return Err(error::builder_with_message("invalid Accept-Charset range"));
+    }
+    let member = qvalue.map_or_else(
+      || charset.to_string(),
+      |qvalue| format!("{charset};q={qvalue}"),
+    );
+    let parsed_member = AcceptCharset::parse(&member)
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    if parsed_member.len() != 1 {
+      return Err(error::builder_with_message(if qvalue.is_some() {
+        "invalid Accept-Charset q-value"
+      } else {
+        "invalid Accept-Charset range"
+      }));
+    }
+    let headers = self.request.headers_mut();
+    let candidate = match headers
+      .iter()
+      .find(|header| header.name().eq_ignore_ascii_case("Accept-Charset"))
+    {
+      Some(header) => format!("{}, {member}", header.value()),
+      None => member,
+    };
+    let charsets = AcceptCharset::parse(&candidate)
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    let value = charsets.header_value();
+    if let Some(header) = headers
+      .iter_mut()
+      .find(|header| header.name().eq_ignore_ascii_case("Accept-Charset"))
+    {
+      header.replace(Header::new("Accept-Charset", value));
+    } else {
+      headers.push(Header::new("Accept-Charset", value));
+    }
+    Ok(self)
   }
 
   fn accept_encoding_member(
