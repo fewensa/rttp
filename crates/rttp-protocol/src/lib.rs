@@ -27,6 +27,7 @@ pub mod allow;
 pub mod alt_svc;
 pub mod authentication_info;
 pub mod authorization;
+pub mod baggage;
 pub mod cache_control;
 pub mod cache_status;
 pub mod cdn_cache_control;

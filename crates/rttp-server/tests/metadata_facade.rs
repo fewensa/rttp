@@ -6,10 +6,11 @@ use rttp_server::server::{
   HttpAccessControlRequestHeadersParseError, HttpAccessControlRequestMethod,
   HttpAccessControlRequestMethodParseError, HttpAccessControlRequestPrivateNetwork,
   HttpAccessControlRequestPrivateNetworkParseError, HttpAuthorization, HttpAuthorizationParseError,
-  HttpCacheStatus, HttpCacheStatusParseError, HttpCdnCacheControl, HttpConditionalMetadata,
-  HttpConnection, HttpConnectionParseError, HttpContentDisposition,
-  HttpContentDispositionParseError, HttpContentDpr, HttpContentDprParseError, HttpContentLength,
-  HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
+  HttpBaggage, HttpBaggageMember, HttpBaggageParseError, HttpBaggageProperty, HttpCacheStatus,
+  HttpCacheStatusParseError, HttpCdnCacheControl, HttpConditionalMetadata, HttpConnection,
+  HttpConnectionParseError, HttpContentDisposition, HttpContentDispositionParseError,
+  HttpContentDpr, HttpContentDprParseError, HttpContentLength, HttpContentLocation,
+  HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
   HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeprecation,
   HttpDeprecationParseError, HttpEntityTag, HttpExpectParseError, HttpExpectations, HttpHost,
   HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince,
@@ -841,6 +842,45 @@ fn request_facade_parses_trace_context_metadata_without_policy() {
     HttpTraceState::parse("rojo=1,rojo=2");
   assert!(traceparent_error.is_err());
   assert!(tracestate_error.is_err());
+}
+
+#[test]
+fn request_facade_parses_baggage_metadata_without_policy() {
+  let request = HttpRequest::parse(
+    b"GET /baggage HTTP/1.1\r\nHost: example.test\r\nbaggage: tenant=acme;source=gateway,release=2026-08-19\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let baggage: HttpBaggage = request
+    .baggage()
+    .expect("baggage should parse")
+    .expect("baggage should be present");
+  let member: &HttpBaggageMember = &baggage.members()[0];
+  let property: &HttpBaggageProperty = &member.properties()[0];
+
+  assert_eq!("tenant", member.key());
+  assert_eq!("acme", member.value());
+  assert_eq!("source", property.key());
+  assert_eq!(Some("gateway"), property.value());
+  assert_eq!("release", baggage.members()[1].key());
+
+  let absent = HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(None, absent.baggage().expect("missing baggage"));
+
+  let malformed = HttpRequest::parse(
+    b"GET /baggage HTTP/1.1\r\nHost: example.test\r\nbaggage: tenant=secret,tenant=other\r\n\r\n",
+  )
+  .expect("malformed metadata should not reject raw request parsing");
+  assert!(malformed.baggage().is_err());
+  assert_eq!(
+    Some("tenant=secret,tenant=other"),
+    malformed.header("baggage")
+  );
+
+  let baggage_error: Result<HttpBaggage, HttpBaggageParseError> =
+    HttpBaggage::parse("tenant=1,tenant=2");
+  assert!(baggage_error.is_err());
 }
 
 #[test]

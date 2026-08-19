@@ -27,6 +27,10 @@ pub use rttp_protocol::authorization::{
   Authorization as HttpAuthorization, AuthorizationParseError as HttpAuthorizationParseError,
   ProxyAuthorization as HttpProxyAuthorization,
 };
+pub use rttp_protocol::baggage::{
+  Baggage as HttpBaggage, BaggageMember as HttpBaggageMember,
+  BaggageParseError as HttpBaggageParseError, BaggageProperty as HttpBaggageProperty,
+};
 pub use rttp_protocol::connection::{
   Connection as HttpConnection, ConnectionParseError as HttpConnectionParseError,
 };
@@ -213,6 +217,7 @@ fn is_sensitive_debug_header(name: &str) -> bool {
     || name.eq_ignore_ascii_case("set-cookie")
     || name.eq_ignore_ascii_case("traceparent")
     || name.eq_ignore_ascii_case("tracestate")
+    || name.eq_ignore_ascii_case("baggage")
 }
 
 impl Request {
@@ -530,6 +535,16 @@ impl Request {
       return Ok(None);
     }
     HttpTraceState::parse_values(values).map(Some)
+  }
+
+  /// Parses received W3C `baggage` request metadata without interpreting
+  /// application values or automatically propagating metadata.
+  pub fn baggage(&self) -> Result<Option<HttpBaggage>, HttpBaggageParseError> {
+    let values: Vec<&str> = self.headers_named("baggage").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpBaggage::parse_values(values).map(Some)
   }
 
   /// Parses received `Prefer` request metadata without applying preferences.
@@ -2229,6 +2244,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpTraceState::parse_values(values).map(Some)
+  }
+
+  /// Parses received W3C `baggage` request metadata without interpreting
+  /// application values or automatically propagating metadata.
+  pub fn baggage(&self) -> Result<Option<HttpBaggage>, HttpBaggageParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("baggage"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpBaggage::parse_values(values).map(Some)
   }
 
   /// Parses received `Prefer` request metadata without applying preferences.

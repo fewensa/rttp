@@ -2192,6 +2192,27 @@ fn trace_context_helpers_emit_and_replace_bounded_metadata() {
 }
 
 #[test]
+fn baggage_helper_emits_and_replaces_bounded_metadata() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/baggage", base_url))
+      .header(("baggage", "old=value"))
+      .baggage("tenant=acme;source=gateway,release=2026-08-19")
+      .expect("baggage should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("tenant=acme;source=gateway,release=2026-08-19"),
+    header_value(&request, "baggage")
+  );
+  assert!(!request.contains("old=value"));
+}
+
+#[test]
 fn trace_context_helpers_reject_invalid_values_before_connecting_without_echoing_values() {
   for (name, value) in [
     (
@@ -2199,6 +2220,7 @@ fn trace_context_helpers_reject_invalid_values_before_connecting_without_echoing
       "00-00000000000000000000000000000000-00f067aa0ba902b7-01",
     ),
     ("tracestate", "rojo=1,rojo=2"),
+    ("baggage", "tenant=secret,tenant=other"),
   ] {
     let request = capture_optional_request(|base_url| {
       let mut client = client();
@@ -2208,12 +2230,18 @@ fn trace_context_helpers_reject_invalid_values_before_connecting_without_echoing
           .url(format!("{}/trace", base_url))
           .traceparent(value)
           .expect_err("invalid traceparent should be rejected")
-      } else {
+      } else if name == "tracestate" {
         client
           .get()
           .url(format!("{}/trace", base_url))
           .tracestate(value)
           .expect_err("invalid tracestate should be rejected")
+      } else {
+        client
+          .get()
+          .url(format!("{}/baggage", base_url))
+          .baggage(value)
+          .expect_err("invalid baggage should be rejected")
       };
       assert!(error.is_builder());
       assert!(!error.to_string().contains(value));
@@ -2259,6 +2287,44 @@ fn raw_trace_context_headers_are_validated_and_redacted() {
       .emit()
       .expect_err("invalid raw traceparent should be rejected before connect");
     assert!(error.is_builder());
+  });
+  assert!(rejected.is_empty());
+}
+
+#[test]
+fn raw_baggage_headers_are_validated_and_redacted() {
+  let baggage = "tenant=acme-secret;source=gateway";
+
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/baggage", base_url))
+      .header(("baggage", baggage))
+      .emit()
+      .expect("manual valid baggage header should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(Some(baggage), header_value(&request, "baggage"));
+
+  let debug = format!(
+    "{:?}",
+    client()
+      .get()
+      .url("http://127.0.0.1/baggage")
+      .header(("baggage", baggage))
+  );
+  assert!(!debug.contains("acme-secret"));
+  assert!(!debug.contains("gateway"));
+
+  let rejected = capture_optional_request(|base_url| {
+    let error = client()
+      .get()
+      .url(format!("{}/baggage", base_url))
+      .header(("baggage", "tenant=secret,tenant=other"))
+      .emit()
+      .expect_err("invalid raw baggage should be rejected before connect");
+    assert!(error.is_builder());
+    assert!(!error.to_string().contains("secret"));
   });
   assert!(rejected.is_empty());
 }

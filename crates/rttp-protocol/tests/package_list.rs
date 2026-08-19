@@ -27,6 +27,7 @@ fn package_includes_protocol_metadata_facade_test() {
     "tests/if_modified_since.rs",
     "tests/if_unmodified_since.rs",
     "tests/trace_context.rs",
+    "tests/baggage.rs",
     "tests/expect.rs",
     "tests/package_list.rs",
     "tests/metadata_facade.rs",
