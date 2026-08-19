@@ -1,7 +1,7 @@
 use rttp_client::response::{
   AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType,
   CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy,
-  CrossOriginResourcePolicy, HttpClearSiteData, HttpSetCookies, LinkValues,
+  CrossOriginResourcePolicy, HttpClearSiteData, HttpSetCookies, LinkValues, Location,
   ProxyAuthenticationInfo, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
   StrictTransportSecurity, Warning,
 };
@@ -2150,6 +2150,143 @@ fn test_parse_content_location_rejects_control_characters_and_crlf_injection() {
 }
 
 #[test]
+fn test_parse_location_response_helper_allows_absent_absolute_and_relative_targets() {
+  for value in [
+    "https://example.test/path?q=1#section",
+    "/next",
+    "../login?next=%2Fdashboard",
+    "?page=2",
+    "//cdn.example.test/asset.js",
+  ] {
+    let raw = format!("HTTP/1.1 302 Found\r\nLocation: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(
+      RoUrl::with("https://example.test/base/page"),
+      raw.into_bytes(),
+    )
+    .expect("raw response remains usable");
+    let location = response
+      .location()
+      .expect("Location should parse")
+      .expect("Location should be present");
+
+    assert_eq!(value, location.as_str());
+    assert_eq!(Some(&value.to_string()), response.header_value("Location"));
+  }
+
+  let raw = concat!("HTTP/1.1 200 OK\r\n", "Content-Length: 2\r\n", "\r\n", "OK");
+  let response = Response::new(
+    RoUrl::with("https://example.test/base/page"),
+    raw.as_bytes().to_vec(),
+  )
+  .expect("parse response without location");
+  assert_eq!(
+    None,
+    response.location().expect("absent Location should parse")
+  );
+}
+
+#[test]
+fn test_parse_location_response_helper_trims_outer_whitespace() {
+  let raw = concat!(
+    "HTTP/1.1 302 Found\r\n",
+    "Location:   /representations/current.json   \r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/base/page"),
+    raw.as_bytes().to_vec(),
+  )
+  .expect("parse response with location");
+  let location = response
+    .location()
+    .expect("Location should parse")
+    .expect("Location header should be present");
+
+  assert_eq!("/representations/current.json", location.as_str());
+  assert_eq!(
+    Some(&"/representations/current.json".to_string()),
+    response.header_value("Location")
+  );
+}
+
+#[test]
+fn test_parse_location_rejects_invalid_values_without_rejecting_response() {
+  let invalid_values = ["", "http://[::1", "/bad path", "/bad%zz", "ok\u{7f}"];
+
+  for value in invalid_values {
+    let raw = format!("HTTP/1.1 302 Found\r\nLocation: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(
+      RoUrl::with("https://example.test/base/page"),
+      raw.into_bytes(),
+    )
+    .expect("raw response remains usable");
+
+    assert!(
+      response.location().is_err(),
+      "Location helper should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.trim().to_string()),
+      response.header_value("Location")
+    );
+  }
+}
+
+#[test]
+fn test_parse_location_rejects_duplicate_and_oversized_values() {
+  let raw = concat!(
+    "HTTP/1.1 302 Found\r\n",
+    "Location: /one\r\n",
+    "location: /two\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/base/page"),
+    raw.as_bytes().to_vec(),
+  )
+  .expect("raw response with duplicate Location remains usable");
+
+  assert!(
+    response.location().is_err(),
+    "Location helper should reject duplicate singleton headers"
+  );
+  assert_eq!(
+    vec![&"/one".to_string(), &"/two".to_string()],
+    response.header_values("Location")
+  );
+
+  let oversized = format!("/{}", "a".repeat(64 * 1024));
+  let raw = format!("HTTP/1.1 302 Found\r\nLocation: {oversized}\r\nContent-Length: 2\r\n\r\nOK");
+  let response = Response::new(
+    RoUrl::with("https://example.test/base/page"),
+    raw.into_bytes(),
+  )
+  .expect("raw response with oversized Location remains usable");
+
+  assert!(
+    response.location().is_err(),
+    "Location helper should reject oversized values"
+  );
+  assert_eq!(Some(&oversized), response.header_value("Location"));
+}
+
+#[test]
+fn test_parse_location_rejects_control_characters_and_crlf_injection() {
+  let invalid_values = ["\r\nX-Evil: true", "/ok\r", "/ok\n", "/ok\tinner"];
+
+  for value in invalid_values {
+    assert!(
+      Location::parse(value).is_err(),
+      "Location parser should reject {value:?}"
+    );
+  }
+}
+
+#[test]
 fn test_parse_cache_control_response_directives() {
   let s = concat!(
     "HTTP/1.1 200 OK\r\n",
@@ -2373,9 +2510,16 @@ fn test_parse_sunset_response_metadata_and_preserves_raw_value() {
 
 #[test]
 fn test_parse_sunset_rejects_invalid_and_duplicate_values_without_rejecting_response() {
-  for header in [
-    "Sunset: not a date\r\n",
-    "Sunset: Sun, 06 Nov 1994 08:49:37 GMT\r\nSunset: Sun, 06 Nov 1994 08:49:38 GMT\r\n",
+  for (header, expected_values) in [
+    ("Sunset: not a date\r\n", vec!["not a date"]),
+    ("sunset: not a date\r\n", vec!["not a date"]),
+    (
+      "Sunset: Sun, 06 Nov 1994 08:49:37 GMT\r\nsunset: Sun, 06 Nov 1994 08:49:38 GMT\r\n",
+      vec![
+        "Sun, 06 Nov 1994 08:49:37 GMT",
+        "Sun, 06 Nov 1994 08:49:38 GMT",
+      ],
+    ),
   ] {
     let raw = format!("HTTP/1.1 200 OK\r\n{header}Content-Length: 0\r\n\r\n");
     let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
@@ -2385,7 +2529,28 @@ fn test_parse_sunset_rejects_invalid_and_duplicate_values_without_rejecting_resp
       response.sunset().is_err(),
       "Sunset helper should reject {header:?}"
     );
+    assert_eq!(
+      expected_values,
+      response
+        .header_values("Sunset")
+        .into_iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>(),
+      "raw Sunset headers must remain inspectable after rejection"
+    );
   }
+}
+
+#[test]
+fn test_parse_sunset_returns_none_when_header_is_absent() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(None, response.sunset().expect("absent Sunset should parse"));
+  assert_eq!(None, response.sunset_value());
 }
 
 #[test]
