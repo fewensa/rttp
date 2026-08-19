@@ -490,28 +490,6 @@ These helpers parse request metadata only; they do not sniff, decode,
 negotiate, cache, redirect, retry, or select representations from
 `Content-Type` or `Content-Encoding`.
 
-## Bounded Connection metadata
-
-`Request::connection()`, `HttpRequest::connection()`, and
-`HttpResponse::connection()` parse retained HTTP/1 `Connection` fields into
-`HttpConnection`. They return `Ok(None)` when the header is absent. Present
-values combine case-insensitive fields in wire order and preserve token
-spelling, including duplicates. Parse errors leave raw headers unchanged.
-HTTP/2 continues to reject inbound `Connection` at decode time. These helpers
-do not change keep-alive, hop-by-hop stripping, upgrade/h2c, or HTTP/2
-rejection.
-
-## Bounded Transfer-Encoding framing metadata
-
-`Request::transfer_encoding()` and `HttpRequest::transfer_encoding()` parse
-retained HTTP/1 `Transfer-Encoding` fields into `HttpTransferEncoding`. They
-return `Ok(None)` when the header is absent. Present values combine
-case-insensitive fields in wire order and must yield a sole `chunked` coding,
-matching existing HTTP/1 framing. Parse errors leave raw headers and the
-request body unchanged. HTTP/2 continues to reject `Transfer-Encoding` at
-decode time. These helpers do not change `request_body_kind`, `TE`,
-Content-Length, or HTTP/2 decode.
-
 ## Bounded trailer behavior
 
 HTTP/1.1 server trailer support remains chunked-scope only. Chunked request
@@ -739,8 +717,6 @@ scheduling, or async accept loops.
 | Content-Language | `HttpContentLanguages`, `Request::content_language`, `HttpRequest::content_language`, `HttpResponse::with_content_language`, and `HttpResponse::content_language` parse or declare bounded `Content-Language` metadata | No automatic language negotiation, route selection, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
 | Content-Location | `HttpResponse::with_content_location` declares one bounded singleton `Content-Location` header, and `HttpResponse::content_location` parses attached singleton response metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |
 | Content-Type and Content-Encoding | `HttpContentType`, `Request::content_type`, `HttpRequest::content_type`, `HttpResponse::with_content_type`, `content_type`, `HttpResponseContentEncodings`, `Request::content_encoding`, `HttpRequest::content_encoding`, `HttpResponse::with_content_encoding`, and `content_encoding` parse or declare bounded representation metadata while preserving raw headers on parse failures and replacing raw response duplicates on typed declaration | No MIME sniffing, body decoding, charset transcoding, compression/decompression, negotiation, cache policy, redirects, retry/replay, or filesystem serving |
-| Connection | `HttpConnection`, `Request::connection`, `HttpRequest::connection`, and `HttpResponse::connection` parse bounded HTTP/1 `Connection` tokens, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to hop-by-hop stripping, keep-alive/close, upgrade/h2c, or HTTP/2 rejection |
-| Transfer-Encoding | `HttpTransferEncoding`, `Request::transfer_encoding`, and `HttpRequest::transfer_encoding` parse bounded HTTP/1 `Transfer-Encoding` fields that must be sole `chunked`, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to `request_body_kind`, `TE`, Content-Length, or HTTP/2 decode rejection |
 | Content-Disposition | `HttpContentDisposition`, `HttpResponse::with_content_disposition`, `with_attachment_filename`, and `content_disposition` declare and parse bounded singleton `Content-Disposition` response metadata, preserve parsed `filename` and `filename*` parameter values, preserve raw headers on parse failures, and replace raw duplicates on typed declaration | No automatic download, filesystem path handling, MIME sniffing, cache behavior, redirect behavior, retry/replay, negotiation, or status-policy behavior |
 | Upgrade and tunnel targets | `CONNECT` authority-form requests are accepted as HTTP requests; `HttpResponse::upgrade` can hand an upgraded socket to caller code after a matching request | The server does not implement the upgraded protocol after handoff |
 | Trailers | Chunked request trailers are preserved on `Request`; malformed, oversized, forbidden, and pseudo-header trailers are rejected; response trailers can be serialized for chunked responses | Application metadata trailers are allowed; trailer names that affect connection state, routing, authentication/cookies, framing, or payload processing are rejected |
