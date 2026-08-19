@@ -1527,6 +1527,30 @@ fn response_vary_helper_declares_normalized_vary_header() {
 }
 
 #[test]
+fn response_no_vary_search_helper_parses_and_declares_metadata() {
+  let response = HttpResponse::ok("body")
+    .header("No-Vary-Search", "params")
+    .header("no-vary-search", r#"except=("session")"#);
+
+  let no_vary_search = response
+    .no_vary_search()
+    .expect("attached No-Vary-Search headers should parse")
+    .expect("No-Vary-Search should be present");
+
+  assert!(no_vary_search.ignores_all_query_params());
+  assert_eq!(no_vary_search.except(), ["session"]);
+
+  let response = HttpResponse::ok("body")
+    .header("No-Vary-Search", "params")
+    .with_no_vary_search(r#"key-order=?0, params=("utm_source")"#)
+    .expect("valid No-Vary-Search should be accepted");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(!serialized.contains("\r\nNo-Vary-Search: params\r\n"));
+  assert!(serialized.contains("\r\nNo-Vary-Search: key-order=?0, params=(\"utm_source\")\r\n"));
+}
+
+#[test]
 fn parses_allow_methods_and_serializes_single_header_value() {
   let allow =
     HttpAllowedMethods::parse("GET, HEAD, POST").expect("valid Allow header should parse");

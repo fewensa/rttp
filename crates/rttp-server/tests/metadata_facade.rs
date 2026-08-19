@@ -4,12 +4,12 @@ use rttp_server::server::{
   HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError,
   HttpConditionalMetadata, HttpConnection, HttpConnectionParseError, HttpContentRange,
   HttpContentRangeParseError, HttpCrossOriginEmbedderPolicyReportOnly,
-  HttpCrossOriginResourcePolicy, HttpEntityTag, HttpHost, HttpPreferenceKind, HttpRequest,
-  HttpResponse, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
-  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpTransferEncoding,
-  HttpTransferEncodingParseError, HttpWantContentDigest, HttpWantReprDigest, SecFetchDest,
-  SecFetchMode, SecFetchSite, SecFetchUser,
+  HttpCrossOriginResourcePolicy, HttpEntityTag, HttpHost, HttpNoVarySearch, HttpNoVarySearchParams,
+  HttpPreferenceKind, HttpRequest, HttpResponse, HttpSignature, HttpSignatureInput,
+  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
+  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
+  HttpTransferEncoding, HttpTransferEncodingParseError, HttpWantContentDigest, HttpWantReprDigest,
+  SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
 };
 
 #[test]
@@ -35,6 +35,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpAccessControlRequestHeadersParseError,
   > = HttpAccessControlRequestHeaders::parse("X-Request Id");
   let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("revision-42"));
+  let no_vary_search: HttpNoVarySearch =
+    HttpNoVarySearch::parse(r#"params=("utm_source")"#).expect("No-Vary-Search should parse");
   let policy: HttpCrossOriginResourcePolicy = HttpCrossOriginResourcePolicy::parse("same-origin")
     .expect("Cross-Origin-Resource-Policy should parse");
   let content_range = HttpContentRange::parse("bytes */10").expect("Content-Range should parse");
@@ -76,6 +78,12 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .expect("entity tag should be retained")
       .opaque_tag(),
     "revision-42"
+  );
+  assert_eq!(
+    no_vary_search.params(),
+    Some(&HttpNoVarySearchParams::Names(
+      vec!["utm_source".to_owned()]
+    ))
   );
   assert_eq!(
     response

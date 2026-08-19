@@ -38,6 +38,7 @@ pub mod from;
 pub mod host;
 pub mod http1;
 mod media_type;
+pub mod no_vary_search;
 pub mod origin;
 pub mod prefer;
 pub mod priority;

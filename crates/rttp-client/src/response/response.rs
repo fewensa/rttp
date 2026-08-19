@@ -11,6 +11,7 @@ use crate::response::AltSvc;
 use crate::response::Connection;
 use crate::response::ContentDigest;
 use crate::response::Digest;
+use crate::response::NoVarySearch;
 use crate::response::Priority;
 use crate::response::ProxyAuthenticationInfo;
 use crate::response::ReprDigest;
@@ -707,6 +708,18 @@ impl Response {
       return Ok(None);
     }
     ServerTiming::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses `No-Vary-Search` response metadata without changing cache keys,
+  /// normalizing URLs, or applying navigation/cache policy.
+  pub fn no_vary_search(&self) -> error::Result<Option<NoVarySearch>> {
+    let values = self.header_values("no-vary-search");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    NoVarySearch::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
