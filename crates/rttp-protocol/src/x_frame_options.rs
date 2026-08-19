@@ -1,15 +1,15 @@
 //! Bounded, policy-free `X-Frame-Options` response metadata parsing.
 //!
 //! This module validates the response field value only. Callers decide whether
-//! and how to enforce clickjacking protection. The deprecated `ALLOW-FROM`
-//! directive is ignored by browsers and rejected here.
+//! and how to enforce frame embedding policy. The deprecated `ALLOW-FROM`
+//! directive is rejected here.
 
 use std::error::Error;
 use std::fmt;
 
 pub const MAX_X_FRAME_OPTIONS_VALUE_BYTES: usize = 64 * 1024;
 
-/// The frame-embedding restriction declared by `X-Frame-Options`.
+/// The frame embedding policy declared by `X-Frame-Options`.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum XFrameOptions {
   Deny,

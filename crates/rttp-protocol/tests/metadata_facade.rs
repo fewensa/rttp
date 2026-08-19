@@ -56,7 +56,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let warning = Warning::parse(r#"110 - "Response is Stale""#).expect("Warning should parse");
   let x_content_type_options =
     XContentTypeOptions::parse("nosniff").expect("X-Content-Type-Options should parse");
-  let x_frame_options = XFrameOptions::parse("DENY").expect("X-Frame-Options should parse");
+  let x_frame_options = XFrameOptions::parse("SAMEORIGIN").expect("X-Frame-Options should parse");
   let cross_origin_embedder_policy =
     CrossOriginEmbedderPolicy::parse(r#"require-corp; report-to="coep""#)
       .expect("Cross-Origin-Embedder-Policy should parse");
@@ -114,7 +114,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(warning.items()[0].code(), 110);
   assert_eq!(warning.items()[0].text(), "Response is Stale");
   assert_eq!(x_content_type_options.header_value(), "nosniff");
-  assert_eq!(x_frame_options.header_value(), "DENY");
+  assert_eq!(x_frame_options.header_value(), "SAMEORIGIN");
   assert_eq!(cross_origin_embedder_policy.header_value(), "require-corp");
   assert_eq!(
     cross_origin_embedder_policy_report_only.header_value(),
