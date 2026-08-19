@@ -24,8 +24,8 @@ use rttp_client::response::{
 };
 use rttp_client::{
   HttpClient, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecGpc, SecGpcParseError,
-  SecPurpose, TraceParent, TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError,
-  UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
+  SecPurpose, TraceParent, TraceParentParseError, TraceState, TraceStateMember,
+  TraceStateParseError, UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
 };
 use rttp_test_support as support;
 
