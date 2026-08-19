@@ -106,7 +106,9 @@ fn content_disposition_response(values: &[&str]) -> HttpResponse {
 fn age_expires_response(age: u64, expires: std::time::SystemTime) -> HttpResponse {
   HttpResponse::ok("OK")
     .with_age(age)
+    .with_date(expires)
     .with_expires(expires)
+    .with_last_modified(expires)
     .header("Cache-Control", "public, max-age=60")
     .with_vary("Accept-Encoding")
     .expect("test Vary should parse")
@@ -487,14 +489,33 @@ fn server_response_helper_accepts_shared_age_response_matrix() {
 
 #[test]
 fn server_response_helper_accepts_shared_expires_response_matrix() {
-  for case in fixtures::age_expires::expires_cases() {
-    let response = HttpResponse::ok("OK").header("Expires", case.value);
+  for case in fixtures::response_http_date::valid_cases() {
+    let response = HttpResponse::ok("OK")
+      .header("Date", case.value)
+      .header("Expires", case.value)
+      .header("Last-Modified", case.value);
 
+    assert_eq!(
+      Some(UNIX_EPOCH + Duration::from_secs(case.unix_seconds)),
+      response
+        .date()
+        .unwrap_or_else(|err| panic!("{} Date should parse: {err}", case.name)),
+      "{}",
+      case.name
+    );
     assert_eq!(
       Some(UNIX_EPOCH + Duration::from_secs(case.unix_seconds)),
       response
         .expires()
         .unwrap_or_else(|err| panic!("{} Expires should parse: {err}", case.name)),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      Some(UNIX_EPOCH + Duration::from_secs(case.unix_seconds)),
+      response
+        .last_modified_date()
+        .unwrap_or_else(|err| panic!("{} Last-Modified should parse: {err}", case.name)),
       "{}",
       case.name
     );
@@ -518,7 +539,19 @@ fn server_response_with_age_and_expires_declares_shared_metadata_matrix() {
     );
     assert_eq!(
       Some(case.expires_value),
+      header_value(&serialized, "Date"),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      Some(case.expires_value),
       header_value(&serialized, "Expires"),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      Some(case.expires_value),
+      header_value(&serialized, "Last-Modified"),
       "{}",
       case.name
     );
@@ -549,15 +582,48 @@ fn server_response_age_and_expires_helpers_reject_shared_invalid_matrix() {
     );
   }
 
-  for case in fixtures::age_expires::invalid_expires_cases() {
-    let response = HttpResponse::ok("OK").header("Expires", case.value);
+  for case in fixtures::response_http_date::invalid_cases() {
+    let response = HttpResponse::ok("OK")
+      .header("Date", case.value)
+      .header("Expires", case.value)
+      .header("Last-Modified", case.value);
 
+    assert!(
+      response.date().is_err(),
+      "{} Date helper should reject invalid value",
+      case.name
+    );
     assert!(
       response.expires().is_err(),
       "{} Expires helper should reject invalid value",
       case.name
     );
+    assert!(
+      response.last_modified_date().is_err(),
+      "{} Last-Modified helper should reject invalid value",
+      case.name
+    );
   }
+
+  let duplicate = HttpResponse::ok("OK")
+    .header("Date", fixtures::age_expires::EXPIRES_IMF_FIXDATE)
+    .header("Date", fixtures::age_expires::EXPIRES_IMF_FIXDATE)
+    .header("Expires", fixtures::age_expires::EXPIRES_IMF_FIXDATE)
+    .header("Expires", fixtures::age_expires::EXPIRES_IMF_FIXDATE)
+    .header("Last-Modified", fixtures::age_expires::EXPIRES_IMF_FIXDATE)
+    .header("Last-Modified", fixtures::age_expires::EXPIRES_IMF_FIXDATE);
+  assert!(duplicate.date().is_err());
+  assert!(duplicate.expires().is_err());
+  assert!(duplicate.last_modified_date().is_err());
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized = HttpResponse::ok("OK")
+    .header("Date", &oversized)
+    .header("Expires", &oversized)
+    .header("Last-Modified", &oversized);
+  assert!(oversized.date().is_err());
+  assert!(oversized.expires().is_err());
+  assert!(oversized.last_modified_date().is_err());
 }
 
 #[test]

@@ -2817,17 +2817,64 @@ fn raw_content_type_headers_are_preserved_without_helper_validation() {
 #[test]
 fn response_age_and_expires_helpers_declare_metadata_headers() {
   let expires = UNIX_EPOCH + Duration::from_secs(784_111_777);
-  let response = HttpResponse::ok("body").with_age(60).with_expires(expires);
+  let response = HttpResponse::ok("body")
+    .with_age(60)
+    .with_date(expires)
+    .with_expires(expires)
+    .with_last_modified(expires);
 
   let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
 
   assert!(serialized.contains("\r\nAge: 60\r\n"));
+  assert!(serialized.contains("\r\nDate: Sun, 06 Nov 1994 08:49:37 GMT\r\n"));
   assert!(serialized.contains("\r\nExpires: Sun, 06 Nov 1994 08:49:37 GMT\r\n"));
+  assert!(serialized.contains("\r\nLast-Modified: Sun, 06 Nov 1994 08:49:37 GMT\r\n"));
   assert_eq!(Some(60), response.age().expect("Age should parse"));
+  assert_eq!(Some(expires), response.date().expect("Date should parse"));
   assert_eq!(
     Some(expires),
     response.expires().expect("Expires should parse")
   );
+  assert_eq!(
+    Some(expires),
+    response
+      .last_modified_date()
+      .expect("Last-Modified should parse")
+  );
+}
+
+#[test]
+fn response_http_date_helpers_reject_malformed_duplicate_and_oversized_raw_headers() {
+  let malformed = HttpResponse::ok("body")
+    .header("Date", "not a date")
+    .header("Expires", "Sun, 06 Nov 1994 08:49:37 PST")
+    .header("Last-Modified", "");
+
+  assert!(malformed.date().is_err());
+  assert!(malformed.expires().is_err());
+  assert!(malformed.last_modified_date().is_err());
+
+  let duplicate = HttpResponse::ok("body")
+    .header("Date", "Sun, 06 Nov 1994 08:49:37 GMT")
+    .header("date", "Sun, 06 Nov 1994 08:49:38 GMT")
+    .header("Expires", "Sun, 06 Nov 1994 08:49:37 GMT")
+    .header("expires", "Sun, 06 Nov 1994 08:49:38 GMT")
+    .header("Last-Modified", "Sun, 06 Nov 1994 08:49:37 GMT")
+    .header("last-modified", "Sun, 06 Nov 1994 08:49:38 GMT");
+
+  assert!(duplicate.date().is_err());
+  assert!(duplicate.expires().is_err());
+  assert!(duplicate.last_modified_date().is_err());
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_response = HttpResponse::ok("body")
+    .header("Date", &oversized)
+    .header("Expires", &oversized)
+    .header("Last-Modified", &oversized);
+
+  assert!(oversized_response.date().is_err());
+  assert!(oversized_response.expires().is_err());
+  assert!(oversized_response.last_modified_date().is_err());
 }
 
 #[test]

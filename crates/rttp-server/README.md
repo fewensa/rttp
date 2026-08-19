@@ -49,6 +49,25 @@ handler-owned policy; it does not create or manage a CDN cache, compute
 freshness, evaluate surrogate keys, revalidate automatically, enforce
 shared-cache policy, retry, replay, redirect, or choose status behavior.
 
+## Response HTTP-date metadata
+
+`HttpResponse::with_date(time)`, `with_expires(time)`, and
+`with_last_modified(time)` declare canonical IMF-fixdate `Date`, `Expires`, and
+`Last-Modified` fields from `SystemTime`. `HttpResponse::date()`,
+`expires()`, and `last_modified_date()` parse attached singleton fields through
+the shared protocol HTTP-date primitives and return `Ok(None)` when absent.
+
+Each field value is bounded to 64 KiB. Supported HTTP-date forms are
+IMF-fixdate, obsolete RFC 850 dates, and asctime dates. Empty, malformed,
+duplicate, control-byte, unsupported-time-zone, and oversize values return the
+field's typed parse error while raw `HttpResponse::header(...)` values remain
+preserved until a typed helper is requested.
+
+These helpers only declare and inspect metadata. RTTP does not calculate
+freshness, correct clock skew, store cache entries, generate conditional
+requests, revalidate automatically, or change conditional validator
+second-level comparison semantics.
+
 ## Authentication metadata
 
 `Request::authorization()` / `HttpRequest::authorization()` and

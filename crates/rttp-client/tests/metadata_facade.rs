@@ -11,8 +11,10 @@ use rttp_client::response::{
   LocationParseError, MementoDatetime, MementoDatetimeParseError, Nel, NoVarySearch,
   NoVarySearchParams, NoVarySearchParseError, PreferenceApplied, Priority, ProxyAuthenticate,
   ProxyAuthenticateParseError, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError,
-  ProxyStatus, ProxyStatusParseError, ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Signature,
-  SignatureInput, SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
+  ProxyStatus, ProxyStatusParseError, ReferrerPolicy, ReferrerPolicyToken, ResponseDate,
+  ResponseDateParseError, ResponseExpires, ResponseExpiresParseError, ResponseLastModified,
+  ResponseLastModifiedParseError, ServerTiming, Signature, SignatureInput,
+  SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
   StrictTransportSecurityParseError, Trailer, TransferEncoding, TransferEncodingParseError,
   Upgrade, UpgradeParseError, Vary, VaryParseError, WantContentDigest, WantReprDigest, Warning,
   WwwAuthenticate, WwwAuthenticateParseError, XContentTypeOptions, XContentTypeOptionsParseError,
@@ -77,6 +79,18 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     MementoDatetime::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Memento-Datetime should parse");
   let _: MementoDatetimeParseError =
     MementoDatetime::parse("").expect_err("empty Memento-Datetime should be rejected");
+  let response_date = ResponseDate::parse("Sun, 06 Nov 1994 08:49:37 GMT")
+    .expect("Date response metadata should parse");
+  let _: ResponseDateParseError =
+    ResponseDate::parse("").expect_err("empty Date should be rejected");
+  let response_expires = ResponseExpires::parse("Sun, 06 Nov 1994 08:49:37 GMT")
+    .expect("Expires response metadata should parse");
+  let _: ResponseExpiresParseError =
+    ResponseExpires::parse("").expect_err("empty Expires should be rejected");
+  let response_last_modified = ResponseLastModified::parse("Sun, 06 Nov 1994 08:49:37 GMT")
+    .expect("Last-Modified response metadata should parse");
+  let _: ResponseLastModifiedParseError =
+    ResponseLastModified::parse("").expect_err("empty Last-Modified should be rejected");
   let no_vary_search =
     NoVarySearch::parse(r#"params=("utm_source")"#).expect("No-Vary-Search should parse");
   let _: NoVarySearchParseError =
@@ -200,6 +214,18 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(location.as_str(), "/next");
   assert_eq!(
     memento_datetime.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
+    response_date.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
+    response_expires.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
+    response_last_modified.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
   );
   assert_eq!(

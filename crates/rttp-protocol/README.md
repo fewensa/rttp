@@ -35,6 +35,22 @@ beyond `u64::MAX`, and forbidden ASCII control bytes are errors. This parser
 reports declared metadata only; it does not calculate freshness, adjust age
 over elapsed time, store cache entries, or apply cache policy.
 
+## Response HTTP-date metadata
+
+`http_date` parses singleton `Date`, `Expires`, and `Last-Modified` response
+fields through `ResponseDate`, `ResponseExpires`, and
+`ResponseLastModified`. Each field value is bounded to 64 KiB, a second field
+is rejected after every supplied field is bound-checked, and surrounding SP and
+HTAB are trimmed as optional whitespace. Supported HTTP-date forms are the
+forms accepted by `httpdate`: IMF-fixdate, obsolete RFC 850 dates, and
+asctime dates. Empty values, malformed dates, unsupported time zones,
+forbidden ASCII control bytes, and oversized values are errors.
+`header_value()` formats accepted instants as canonical IMF-fixdate.
+
+These parsers report response metadata only. They do not calculate freshness,
+correct clock skew, store responses, generate conditional requests, or replace
+validator comparison policy.
+
 ## Max-Forwards
 
 `max_forwards` parses a singleton HTTP `Max-Forwards` request field as

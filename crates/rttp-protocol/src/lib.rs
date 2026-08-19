@@ -49,6 +49,7 @@ pub mod forwarded;
 pub mod from;
 pub mod host;
 pub mod http1;
+pub mod http_date;
 pub mod keep_alive;
 pub mod link;
 pub mod location;

@@ -8,10 +8,12 @@ use rttp_server::server::{
   HttpContentDisposition, HttpContentDpr, HttpContentDprParseError, HttpContentLength,
   HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
   HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeprecation,
-  HttpDeprecationParseError, HttpEntityTag, HttpHost, HttpKeepAlive, HttpMaxForwards,
-  HttpMaxForwardsParseError, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNoVarySearch,
-  HttpNoVarySearchParams, HttpPreferenceKind, HttpProxyStatus, HttpProxyStatusParseError,
-  HttpRequest, HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSignature,
+  HttpDeprecationParseError, HttpEntityTag, HttpExpiresParseError, HttpHost, HttpKeepAlive,
+  HttpMaxForwards, HttpMaxForwardsParseError, HttpMementoDatetime, HttpMementoDatetimeParseError,
+  HttpNoVarySearch, HttpNoVarySearchParams, HttpPreferenceKind, HttpProxyStatus,
+  HttpProxyStatusParseError, HttpRequest, HttpResponse, HttpResponseDate,
+  HttpResponseDateParseError, HttpResponseExpires, HttpResponseLastModified,
+  HttpResponseLastModifiedParseError, HttpSaveData, HttpSaveDataParseError, HttpSignature,
   HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
   HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
   HttpSignatureParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
@@ -103,8 +105,24 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     .expect("Memento-Datetime should parse");
   let _: HttpMementoDatetimeParseError =
     HttpMementoDatetime::parse("").expect_err("empty Memento-Datetime should be rejected");
+  let response_date =
+    HttpResponseDate::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Date should parse");
+  let _: HttpResponseDateParseError =
+    HttpResponseDate::parse("").expect_err("empty Date should be rejected");
+  let response_expires =
+    HttpResponseExpires::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Expires should parse");
+  let _: HttpExpiresParseError =
+    HttpResponseExpires::parse("").expect_err("empty Expires should be rejected");
+  let response_last_modified = HttpResponseLastModified::parse("Sun, 06 Nov 1994 08:49:37 GMT")
+    .expect("Last-Modified should parse");
+  let _: HttpResponseLastModifiedParseError =
+    HttpResponseLastModified::parse("").expect_err("empty Last-Modified should be rejected");
   let memento_response = HttpResponse::ok("")
     .with_memento_datetime(std::time::UNIX_EPOCH + std::time::Duration::from_secs(784_111_777));
+  let http_date_response = HttpResponse::ok("")
+    .with_date(std::time::UNIX_EPOCH + std::time::Duration::from_secs(784_111_777))
+    .with_expires(std::time::UNIX_EPOCH + std::time::Duration::from_secs(784_111_777))
+    .with_last_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(784_111_777));
   let keep_alive_response = HttpResponse::ok("")
     .with_keep_alive("timeout=5, max=100")
     .expect("Keep-Alive should be accepted");
@@ -245,12 +263,38 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     "Sun, 06 Nov 1994 08:49:37 GMT"
   );
   assert_eq!(
+    response_date.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
+    response_expires.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
+    response_last_modified.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
     memento_response
       .memento_datetime()
       .expect("Memento-Datetime should parse")
       .expect("Memento-Datetime should be present")
       .header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
+    Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(784_111_777)),
+    http_date_response.date().expect("Date should parse")
+  );
+  assert_eq!(
+    Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(784_111_777)),
+    http_date_response.expires().expect("Expires should parse")
+  );
+  assert_eq!(
+    Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(784_111_777)),
+    http_date_response
+      .last_modified_date()
+      .expect("Last-Modified should parse")
   );
 }
 

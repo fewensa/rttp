@@ -252,18 +252,22 @@ cache, compute freshness, evaluate surrogate keys, revalidate automatically,
 enforce shared-cache policy, retry, replay, redirect, or choose status behavior
 from `CDN-Cache-Control`.
 
-Server `Age` and `Expires` helpers expose adjacent response metadata without
-adding cache policy. `HttpResponse::with_age(delta_seconds)` adds an `Age`
-header from a non-negative `u64` delta-seconds value, and
+Server `Date`, `Age`, `Expires`, and `Last-Modified` helpers expose adjacent
+response metadata without adding cache policy.
+`HttpResponse::with_age(delta_seconds)` adds an `Age` header from a
+non-negative `u64` delta-seconds value, and
 `HttpResponse::age()` parses an attached single `Age` header back into `u64`.
 The accepted bound is exactly the `u64` delta-seconds range: `0` through
 `u64::MAX`. Empty, signed, fractional, non-numeric, comma-list, duplicated, and
 overflowing values return `HttpAgeParseError`.
 
-`HttpResponse::with_expires(time)` serializes an HTTP-date `Expires` header from
-`SystemTime`, and `HttpResponse::expires()` parses an attached single `Expires`
-header as an HTTP-date. Valid HTTP-date values parse to `SystemTime`; malformed,
-duplicated, or non-date values return `HttpExpiresParseError`.
+`HttpResponse::with_date(time)`, `with_expires(time)`, and
+`with_last_modified(time)` serialize canonical IMF-fixdate `Date`, `Expires`,
+and `Last-Modified` headers from `SystemTime`. `HttpResponse::date()`,
+`expires()`, and `last_modified_date()` parse attached singleton HTTP-date
+fields through the shared protocol primitives. IMF-fixdate, obsolete RFC 850
+dates, and asctime dates are supported; malformed, duplicated, control-byte,
+unsupported-time-zone, oversized, or non-date values return typed parse errors.
 
 `HttpResponse::with_retry_after_delta(delta_seconds)` serializes a
 delta-seconds `Retry-After` header from a non-negative `u64`, while
@@ -275,13 +279,15 @@ comma-list, duplicated, overflowing, oversized, or malformed HTTP-date values
 return `HttpRetryAfterParseError`.
 
 Malformed typed helper reads return validation errors, while raw
-`HttpResponse::header("Age", ...)`, `HttpResponse::header("Expires", ...)`,
-and `HttpResponse::header("Retry-After", ...)` values remain preserved exactly
-as response headers. These helpers do not calculate freshness, validate cache
-state against wall-clock time, store responses, match stored responses,
-revalidate responses, enforce shared-cache policy, attach behavior to status
-codes, throttle requests, sleep, retry, replay requests, apply backoff,
-integrate with a scheduler, or issue automatic conditional requests.
+`HttpResponse::header("Date", ...)`, `HttpResponse::header("Age", ...)`,
+`HttpResponse::header("Expires", ...)`,
+`HttpResponse::header("Last-Modified", ...)`, and
+`HttpResponse::header("Retry-After", ...)` values remain preserved exactly as
+response headers. These helpers do not calculate freshness, correct clock skew,
+validate cache state against wall-clock time, store responses, match stored
+responses, revalidate responses, enforce shared-cache policy, attach behavior
+to status codes, throttle requests, sleep, retry, replay requests, apply
+backoff, integrate with a scheduler, or issue automatic conditional requests.
 
 Server `Memento-Datetime` helpers expose archival datetime metadata without
 adding time negotiation. `HttpResponse::with_memento_datetime(time)` replaces
@@ -862,7 +868,7 @@ scheduling, or async accept loops.
 | Byte ranges | `HttpByteRange` parses one `bytes` range, `Request::evaluate_if_range` and `HttpRequest::evaluate_if_range` gate it with caller-provided strong ETag or exact HTTP-date metadata, `HttpResponse::partial_content`/`range_not_satisfiable` serialize `206`/`416` with the shared checked `HttpContentRange` formatter, `HttpResponse::content_range` parses attached `Content-Range` metadata, and `HttpAcceptRanges` plus `HttpResponse::with_accept_ranges`/`with_accept_ranges_none`/`accept_ranges` declare and parse bounded `Accept-Ranges` metadata while preserving raw headers | No Range request generation, multipart range serialization, partial response engine, automatic retry/replay, redirect behavior, cache storage or policy, filesystem serving, automatic cache validation, static-file policy, automatic byte serving, content slicing, download resume, or status-policy behavior |
 | Conditional requests | `Request::evaluate_conditional`, `evaluate_conditional_request`, `HttpConditionalMetadata`, and `HttpEntityTag` evaluate bounded HTTP/1.1 validators; `HttpResponse::not_modified`, `precondition_failed`, `with_etag`, and typed bounded `etag` serialize or expose `304`/`412` metadata while preserving raw headers | No cache storage, static-file serving policy, automatic revalidation, or cache-control engine |
 | Informational responses and Early Hints | `HttpResponse::early_hints` and `early_hints_with_headers` construct validated bodyless `103 Early Hints` response metadata with bounded `Link` and safe metadata headers | `101 Switching Protocols` remains a separate terminal handoff response; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
-| Cache-Control, CDN-Cache-Control, and Cache-Status | `Request::cache_control`, `HttpRequest::cache_control`, and `HttpResponse::cache_control` parse bounded request/response directives, numeric freshness fields, quoted field-name lists, and extension directives; `HttpResponse::cdn_cache_control` parses bounded response `CDN-Cache-Control` directives and CDN extension metadata while preserving raw response headers on parse errors; `HttpResponse::cache_status` parses bounded RFC 9211 `Cache-Status` list members and parameters while preserving raw response headers on parse errors; `HttpResponse::with_age`/`age`, `with_expires`/`expires`, and `with_retry_after_delta`/`with_retry_after_date`/`retry_after` declare and parse response `Age`, `Expires`, and `Retry-After` metadata | No cache storage, CDN cache, Cache-Status forwarding or freshness policy, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, surrogate-key behavior, automatic conditional requests, directive-based validator evaluation, automatic sleep, retry, replay, backoff, scheduler integration, or status-code policy engine |
+| Cache-Control, CDN-Cache-Control, and Cache-Status | `Request::cache_control`, `HttpRequest::cache_control`, and `HttpResponse::cache_control` parse bounded request/response directives, numeric freshness fields, quoted field-name lists, and extension directives; `HttpResponse::cdn_cache_control` parses bounded response `CDN-Cache-Control` directives and CDN extension metadata while preserving raw response headers on parse errors; `HttpResponse::cache_status` parses bounded RFC 9211 `Cache-Status` list members and parameters while preserving raw response headers on parse errors; `HttpResponse::with_date`/`date`, `with_age`/`age`, `with_expires`/`expires`, `with_last_modified`/`last_modified_date`, and `with_retry_after_delta`/`with_retry_after_date`/`retry_after` declare and parse response `Date`, `Age`, `Expires`, `Last-Modified`, and `Retry-After` metadata | No cache storage, CDN cache, Cache-Status forwarding or freshness policy, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, surrogate-key behavior, automatic conditional requests, directive-based validator evaluation, automatic sleep, retry, replay, backoff, scheduler integration, or status-code policy engine |
 | Memento-Datetime | `HttpResponse::with_memento_datetime`/`memento_datetime` declare and parse bounded singleton `Memento-Datetime` IMF-fixdate metadata while preserving raw headers on parse errors | No archival selection, `Accept-Datetime` negotiation, TimeGate behavior, retry, or transport changes |
 | Vary | `HttpVary`, `HttpResponse::with_vary`, `HttpResponse::vary`, `Request::vary_selection`, and `HttpRequest::vary_selection` parse, declare, and select bounded `Vary` metadata with case-insensitive field-name handling | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | Authentication metadata | `Request::authorization`/`proxy_authorization` and `HttpRequest::authorization`/`proxy_authorization` expose one bounded opaque credential field, `Response::www_authenticate` parses bounded client response challenges, and `HttpResponse::with_www_authenticate`/`www_authenticate` declare and parse bounded `WWW-Authenticate` challenges | No credential validation, realm selection, automatic client challenge, retry, or authentication/authorization enforcement |

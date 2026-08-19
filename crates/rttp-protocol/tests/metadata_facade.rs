@@ -24,6 +24,7 @@ use rttp_protocol::fetch_metadata::{
 };
 use rttp_protocol::from::From;
 use rttp_protocol::host::Host;
+use rttp_protocol::http_date::{ResponseDate, ResponseExpires, ResponseLastModified};
 use rttp_protocol::keep_alive::KeepAlive;
 use rttp_protocol::link::LinkValues;
 use rttp_protocol::location::Location;
@@ -79,6 +80,12 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let max_forwards = MaxForwards::parse("0").expect("Max-Forwards should parse");
   let memento_datetime =
     MementoDatetime::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Memento-Datetime should parse");
+  let response_date =
+    ResponseDate::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Date should parse");
+  let response_expires =
+    ResponseExpires::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Expires should parse");
+  let response_last_modified = ResponseLastModified::parse("Sun, 06 Nov 1994 08:49:37 GMT")
+    .expect("Last-Modified should parse");
   let host = Host::parse("example.test:8443").expect("Host should parse");
   let origin = Origin::parse("https://example.test").expect("Origin should parse");
   let no_vary_search =
@@ -176,6 +183,18 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(max_forwards.header_value(), "0");
   assert_eq!(
     memento_datetime.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
+    response_date.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
+    response_expires.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
+    response_last_modified.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
   );
   assert_eq!(host.host(), "example.test");

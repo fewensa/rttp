@@ -90,6 +90,10 @@ pub use rttp_protocol::digest::{
   ReprDigestEntry,
 };
 pub use rttp_protocol::entity_tag::{EntityTag, EntityTagParseError};
+pub use rttp_protocol::http_date::{
+  ResponseDate, ResponseDateParseError, ResponseExpires, ResponseExpiresParseError,
+  ResponseLastModified, ResponseLastModifiedParseError,
+};
 pub use rttp_protocol::keep_alive::{KeepAlive, KeepAliveExtension, KeepAliveParseError};
 pub use rttp_protocol::link::{LinkParameter, LinkParseError, LinkValue, LinkValues};
 pub use rttp_protocol::location::{Location, LocationParseError};
