@@ -232,6 +232,12 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::PermissionsPolicyParseError =
     rttp_client::response::PermissionsPolicy::parse("geolocation=src")
       .expect_err("src should be rejected");
+  let document_policy: rttp::DocumentPolicy =
+    rttp_client::response::DocumentPolicy::parse("oversized-images=2.0, unsized-media=?0")
+      .expect("Document-Policy should parse");
+  let _: rttp::DocumentPolicyParseError =
+    rttp_client::response::DocumentPolicy::parse("unsized-media=src;foo=bar")
+      .expect_err("unknown Document-Policy parameter should be rejected");
   let supports_loading_mode: rttp::SupportsLoadingMode =
     rttp_client::response::SupportsLoadingMode::parse("fenced-frame, credentialed-prerender")
       .expect("Supports-Loading-Mode should parse");
@@ -361,6 +367,18 @@ fn compatibility_facade_exports_client_metadata_types() {
     .unwrap()
     .allowlist()
     .is_empty());
+  assert_eq!(document_policy.directives().len(), 2);
+  assert_eq!(
+    document_policy.header_value(),
+    "oversized-images=2.0, unsized-media=?0"
+  );
+  assert_eq!(
+    document_policy
+      .directive("oversized-images")
+      .unwrap()
+      .value(),
+    &rttp::DocumentPolicyValue::Decimal("2.0".to_string())
+  );
   assert_eq!(
     supports_loading_mode.tokens(),
     ["fenced-frame", "credentialed-prerender"]

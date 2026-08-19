@@ -53,6 +53,7 @@ pub mod cross_origin_resource_policy;
 mod csp_policy;
 pub mod deprecation;
 pub mod digest;
+pub mod document_policy;
 pub mod entity_tag;
 pub mod expect;
 pub mod fetch_metadata;
