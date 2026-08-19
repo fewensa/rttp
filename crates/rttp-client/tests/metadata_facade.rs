@@ -3,14 +3,17 @@ use rttp_client::response::{
   AccessControlAllowMethods, AccessControlAllowMethodsParseError, AccessControlExposeHeaders,
   AccessControlMaxAge, AccessControlMaxAgeParseError, AltSvc, Connection, ConnectionParseError,
   CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy,
-  CrossOriginResourcePolicy, Digest, HttpClearSiteData, HttpContentLength, Location,
-  LocationParseError, NoVarySearch, NoVarySearchParams, NoVarySearchParseError, PreferenceApplied,
-  Priority, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ReferrerPolicy,
-  ReferrerPolicyToken, ServerTiming, Signature, SignatureInput, SignatureInputParseError,
-  SignatureParseError, StrictTransportSecurity, StrictTransportSecurityParseError, Trailer,
-  TransferEncoding, TransferEncodingParseError, WantContentDigest, WantReprDigest, Warning,
+  CrossOriginResourcePolicy, Digest, HttpClearSiteData, Location, LocationParseError, NoVarySearch,
+  NoVarySearchParams, NoVarySearchParseError, PreferenceApplied, Priority, ProxyAuthenticationInfo,
+  ProxyAuthenticationInfoParseError, ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Signature,
+  SignatureInput, SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
+  StrictTransportSecurityParseError, Trailer, TransferEncoding, TransferEncodingParseError, Vary,
+  VaryParseError, WantContentDigest, WantReprDigest, Warning, XContentTypeOptions,
+  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
-use rttp_client::response::{ContentDigest, ReprDigest};
+use rttp_client::response::{
+  ContentDigest, ContentLocation, ContentLocationParseError, HttpContentLength, ReprDigest,
+};
 use rttp_client::{HttpClient, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 use rttp_test_support as support;
 
@@ -32,6 +35,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .expect("Access-Control-Expose-Headers should parse");
   let clear_site_data =
     HttpClearSiteData::parse("\"cache\"").expect("Clear-Site-Data should parse");
+  let content_location = ContentLocation::parse("../representations/current.json")
+    .expect("Content-Location should parse");
+  let _: ContentLocationParseError =
+    ContentLocation::parse("not valid").expect_err("invalid Content-Location should be rejected");
   let digest = Digest::parse("sha-256=:YWJj:").expect("Digest should parse");
   let location = Location::parse("/next").expect("Location should parse");
   let _: LocationParseError = Location::parse("").expect_err("empty Location should be rejected");
@@ -50,6 +57,13 @@ fn response_facade_exports_representative_bounded_metadata_types() {
       .expect("Strict-Transport-Security should parse");
   let _: StrictTransportSecurityParseError = StrictTransportSecurity::parse("includeSubDomains")
     .expect_err("Strict-Transport-Security without max-age should be rejected");
+  let x_content_type_options =
+    XContentTypeOptions::parse("NoSniff").expect("X-Content-Type-Options should parse");
+  let _: XContentTypeOptionsParseError = XContentTypeOptions::parse("unknown")
+    .expect_err("unknown X-Content-Type-Options should be rejected");
+  let x_frame_options = XFrameOptions::parse("deny").expect("X-Frame-Options should parse");
+  let _: XFrameOptionsParseError = XFrameOptions::parse("ALLOW-FROM https://example.test")
+    .expect_err("deprecated X-Frame-Options ALLOW-FROM should be rejected");
   let warning = Warning::parse(r#"110 - "Response is Stale""#).expect("Warning should parse");
   let trailer = Trailer::parse("X-Trace").expect("Trailer should parse");
   let connection = Connection::parse("close").expect("Connection should parse");
@@ -78,6 +92,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
       .expect("Proxy-Authentication-Info should parse");
   let _: ProxyAuthenticationInfoParseError = ProxyAuthenticationInfo::parse("")
     .expect_err("empty Proxy-Authentication-Info should be rejected");
+  let vary = Vary::parse("Accept-Encoding, User-Agent").expect("Vary should parse");
+  let _: VaryParseError = Vary::parse("").expect_err("empty Vary should be rejected");
   let signature = Signature::parse("sig1=:YWJj:").expect("Signature should parse");
   let _: SignatureParseError =
     Signature::parse("").expect_err("empty Signature should be rejected");
@@ -94,6 +110,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(max_age.seconds(), 60);
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
   assert_eq!(clear_site_data.directives().len(), 1);
+  assert_eq!(
+    content_location.header_value(),
+    "../representations/current.json"
+  );
   assert_eq!(digest.entries().len(), 1);
   assert_eq!(location.as_str(), "/next");
   assert_eq!(
@@ -106,6 +126,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(server_timing.metrics().len(), 1);
   assert_eq!(strict_transport_security.max_age(), 31_536_000);
   assert!(strict_transport_security.include_sub_domains());
+  assert_eq!(x_content_type_options, XContentTypeOptions::Nosniff);
+  assert_eq!(x_content_type_options.header_value(), "nosniff");
+  assert_eq!(x_frame_options, XFrameOptions::Deny);
+  assert_eq!(x_frame_options.header_value(), "DENY");
   assert_eq!(warning.items()[0].code(), 110);
   assert_eq!(trailer.field_names(), ["x-trace"]);
   assert_eq!(connection.tokens(), ["close"]);
@@ -129,6 +153,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     proxy_authentication_info.parameter("nextnonce"),
     Some("6629fae49393a05397450978507c4ef1")
   );
+  assert_eq!(vary.field_names(), ["accept-encoding", "user-agent"]);
   assert_eq!(signature.header_value(), "sig1=:YWJj:");
   assert_eq!(
     signature_input.header_value(),
