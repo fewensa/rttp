@@ -84,8 +84,9 @@ when callers need values outside the helper validation.
 `Response::accept_ranges()` parses one or more response `Accept-Ranges` header
 fields into `AcceptRanges` metadata. It returns `Ok(None)` when the header is
 absent. Present values expose `units()`, `is_none()`, and `accepts_bytes()`;
-`none` is accepted only as the exclusive sentinel, while range units are
-normalized to lowercase token values in received order.
+the `none` sentinel is represented as an empty unit list, while range units
+preserve their spelling and wire order. The parser is shared with the server
+facade through `rttp-protocol`.
 
 The helper is bounded and validation-oriented. Each header field value is
 limited to 64 KiB, the parsed header set is limited to 256 range units,

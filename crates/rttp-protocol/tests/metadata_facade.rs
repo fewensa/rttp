@@ -1,3 +1,4 @@
+use rttp_protocol::accept_ranges::AcceptRanges;
 use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::content_encoding::ContentEncoding;
@@ -50,6 +51,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let content_type =
     ContentType::parse("text/plain; charset=utf-8").expect("Content-Type should parse");
   let content_encoding = ContentEncoding::parse("gzip, br").expect("Content-Encoding should parse");
+  let accept_ranges = AcceptRanges::parse("bytes, pages").expect("Accept-Ranges should parse");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
@@ -81,6 +83,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(content_type.header_value(), "text/plain; charset=utf-8");
   assert_eq!(content_encoding.codings(), ["gzip", "br"]);
   assert_eq!(content_encoding.header_value(), "gzip, br");
+  assert_eq!(accept_ranges.units(), ["bytes", "pages"]);
+  assert_eq!(accept_ranges.header_value(), "bytes, pages");
 }
 
 #[test]

@@ -108,7 +108,8 @@ cases outside the helper validation.
 present values expose `units()`, `is_none()`, and `accepts_bytes()`. Parsing is
 bounded to 64 KiB per header field and 256 range units, rejects malformed or
 empty values, rejects duplicate units case-insensitively across all parsed
-fields, and treats `none` as an exclusive sentinel. Raw `Accept-Ranges` fields
+fields while preserving each unit's spelling and order, and represents the
+`none` sentinel as an empty unit list. Raw `Accept-Ranges` fields
 remain available through the ordinary response header accessors even when the
 typed parser rejects a malformed value.
 
@@ -968,7 +969,8 @@ caller-owned policy before choosing `200`, `206`, or `416`.
 one bounded comma-separated `Accept-Ranges` response header, while
 `HttpResponse::with_accept_ranges_none()` declares the exclusive
 `Accept-Ranges: none` sentinel. `HttpResponse::accept_ranges()` parses attached
-fields into `HttpAcceptRanges`, bounded to 64 KiB per field and 32 range units.
+fields into `HttpAcceptRanges`, the shared protocol parser used by both the
+client and server facades, bounded to 64 KiB per field and 256 range units.
 Malformed or empty values, duplicate units across parsed fields, combining
 `none` with any unit, and passing `none` through the unit declaration helper
 are rejected. Manual raw `Accept-Ranges` headers remain preserved until a

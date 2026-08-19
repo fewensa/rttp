@@ -6,7 +6,7 @@ pub use rttp_server::server;
 
 #[cfg(feature = "client")]
 pub use rttp_client::response::{
-  AcceptCh, AcceptPatch, AcceptPost, CriticalCh, CrossOriginEmbedderPolicy,
+  AcceptCh, AcceptPatch, AcceptPost, AcceptRanges, CriticalCh, CrossOriginEmbedderPolicy,
   CrossOriginEmbedderPolicyParseError, CrossOriginOpenerPolicy, CrossOriginOpenerPolicyParseError,
 };
 #[cfg(feature = "client")]
