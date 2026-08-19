@@ -14,6 +14,8 @@ use rttp_protocol::fetch_metadata::{SecFetchDest, SecFetchMode, SecFetchSite, Se
 use rttp_protocol::forwarded::{Forwarded, MAX_FORWARDED_VALUE_BYTES};
 use rttp_protocol::origin::Origin;
 use rttp_protocol::priority::Priority;
+use rttp_protocol::signature::Signature;
+use rttp_protocol::signature_input::SignatureInput;
 use rttp_protocol::trailer::Trailer;
 use std::io;
 
@@ -333,6 +335,29 @@ impl HttpClient {
     Ok(self.header(Header::new(
       "Access-Control-Request-Method",
       method.header_value(),
+    )))
+  }
+
+  /// Set bounded RFC 9421 `Signature` request metadata.
+  ///
+  /// This validates and replaces one `Signature` field. It does not sign,
+  /// verify, or look up keys.
+  pub fn signature<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let signature = Signature::parse(value)
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new("Signature", signature.header_value())))
+  }
+
+  /// Set bounded RFC 9421 `Signature-Input` request metadata.
+  ///
+  /// This validates and replaces one `Signature-Input` field. It does not
+  /// sign, verify, look up keys, or apply cryptographic policy.
+  pub fn signature_input<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let signature_input = SignatureInput::parse(value)
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Signature-Input",
+      signature_input.header_value(),
     )))
   }
 

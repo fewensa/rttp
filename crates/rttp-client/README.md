@@ -412,8 +412,29 @@ and more than 32 algorithms before opening a connection. Raw
 `header(("Want-Repr-Digest", value))` remain available for syntax outside the
 bounded helper API.
 
-These helpers declare preferences only. RTTP does not compute digests, verify
-response body hashes, retry requests, or sign messages.
+On the server, `Request::want_content_digest()` and
+`HttpRequest::want_content_digest()` parse received `Want-Content-Digest`
+fields in wire order into `HttpWantContentDigest`. `Request::want_repr_digest()`
+and `HttpRequest::want_repr_digest()` do the same for `Want-Repr-Digest` into
+`HttpWantReprDigest`. Each entry exposes `algorithm()` and `preference()` (`0`
+through `10`). Absent metadata returns `Ok(None)`; malformed, duplicate, empty,
+oversized, or excessive entries return a parse error without changing the
+request itself.
+
+These helpers declare and parse preferences only. They do not select an
+algorithm, compute digests, verify response body hashes, attach
+`Content-Digest` or `Repr-Digest`, retry requests, or sign messages.
+
+## Bounded HTTP message signature request metadata
+
+`HttpClient::signature()` and `signature_input()` validate and replace one
+RFC 9421 `Signature` or `Signature-Input` request field. Malformed present
+input is rejected before a connection is opened. `Response::signature()` and
+`signature_input()` parse received fields independently, returning `Ok(None)`
+when a field set is absent and leaving raw headers in place on parse errors.
+
+These helpers declare and parse metadata only. They do not sign, verify, look
+up keys, canonicalize covered components, or apply cryptographic policy.
 
 ## Bounded Accept request metadata
 
@@ -454,6 +475,46 @@ engine, change request framing, apply response preferences, schedule async
 work, forward requests, retry, or otherwise infer behavior from `TE` or
 `Prefer`.
 
+## Bounded Connection metadata
+
+`Response::connection()` parses retained HTTP/1 `Connection` fields into
+`Connection` header metadata. It returns `Ok(None)` when the header is absent.
+Present values combine case-insensitive fields in wire order and preserve
+token spelling, including duplicates. `Connection::parse(value)` is available
+when callers want to validate one raw field value directly.
+
+Each field value is limited to 64 KiB. Parsing accepts at most 256 tokens and
+rejects empty members, malformed tokens, parameters, oversized values, and too
+many tokens. Parse errors do not reject the raw response: original headers
+remain available through `Response::header_value()` and
+`Response::header_values()`. HTTP/2 continues to reject `Connection` at decode
+time.
+
+This helper is HTTP/1 header metadata only. `rttp_client` does not change
+keep-alive, `auto_add_connection`, hop-by-hop stripping, or HTTP/2 rejection
+from this accessor.
+
+## Bounded Transfer-Encoding framing metadata
+
+`Response::transfer_encoding()` parses retained HTTP/1 `Transfer-Encoding`
+fields into `TransferEncoding` metadata. It returns `Ok(None)` when the header
+is absent. Present values combine case-insensitive fields in wire order and
+must yield a sole `chunked` coding, matching existing HTTP/1 framing.
+`TransferEncoding::parse(value)` is available when callers want to validate
+one raw field value directly.
+
+Each field value is limited to 64 KiB. Parsing accepts at most 256 tokens and
+rejects empty members, malformed tokens, stacked or non-final `chunked`
+codings, combined duplicate fields that are no longer sole `chunked`,
+oversized values, and too many tokens. Parse errors do not reject the raw
+response: original headers remain available through
+`Response::header_value()` and `Response::header_values()`. HTTP/2 continues
+to reject `Transfer-Encoding` at decode time.
+
+This helper is framing metadata only. `rttp_client` does not change
+`connection_reader`, decode a chunked body from this accessor, negotiate `TE`,
+or alter Content-Length handling.
+
 ## Bounded preflight request metadata
 
 `HttpClient::origin(value)` emits one validated `Origin` field, accepting
@@ -463,22 +524,18 @@ userinfo. `HttpClient::access_control_request_method(value)` emits one
 `HttpClient::access_control_request_headers(field_names)` emits one
 `Access-Control-Request-Headers` field from a bounded field-name list,
 normalized to lowercase with duplicates rejected.
-`HttpClient::access_control_request_private_network()` emits the valid
-`Access-Control-Request-Private-Network: true` request form.
 
 These helpers reject invalid input before a socket is opened: origins with a
 path, query, fragment, userinfo, or non-`http(s)` scheme; methods that are
 `*`, comma-separated, or not HTTP tokens; and field names that are malformed,
-duplicated, or excessive. Private-network request metadata accepts only the
-lowercase `true` form and rejects malformed values, control bytes, oversized
-values, and duplicate fields. Values are bounded to 64 KiB and the field-name
-list to 256 entries. Callers that need values outside the helper validation can
+duplicated, or excessive. Values are bounded to 64 KiB and the field-name list
+to 256 entries. Callers that need values outside the helper validation can
 retain raw-header control with `header(("Origin", "..."))` and the other
 `header` forms.
 
 These are declaration helpers only. RTTP does not decide whether a preflight
-is needed, read `Access-Control-Allow-*` response fields, or apply CORS or
-Private Network Access policy.
+is needed, read `Access-Control-Allow-*` response fields, or apply CORS
+policy.
 
 ## Bounded HTTP/1.1 Content-Disposition behavior
 
@@ -531,6 +588,15 @@ headers and body available through the ordinary response APIs.
 The helper is metadata-only. `rttp_client` does not store cache entries, match
 stored responses, persist cache keys, replay requests, enforce shared-cache
 policy, or issue automatic conditional requests based on `Vary`.
+
+## Bounded No-Vary-Search metadata
+
+`Response::no_vary_search()` parses one or more `No-Vary-Search` response
+fields as bounded Structured Fields dictionary metadata. The typed value
+exposes recognized `key-order`, `params`, and `except` members and leaves raw
+headers available when helper parsing fails. The helper is metadata-only: it
+does not store responses, change cache keys, normalize URLs, replay requests,
+apply browser navigation behavior, or enforce shared-cache policy.
 
 ## Bounded trailer behavior
 
@@ -600,7 +666,8 @@ header-block model.
 | HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and `Expect: 100-continue` | SOCKS handshakes are delegated to the `socks` crate |
 | Fetch Metadata | `sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, and `sec_fetch_user` emit bounded `Sec-Fetch-*` request metadata | No browser security policy, automatic header generation, origin validation, navigation policy, or request blocking |
 | Preflight request metadata | `origin`, `access_control_request_method`, `access_control_request_headers`, and `access_control_request_private_network` emit bounded `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`, and `Access-Control-Request-Private-Network` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, CORS policy, or Private Network Access policy |
-| Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata | No digest computation, response body hash validation, retries, or signing |
+| Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_content_digest()`, `HttpRequest::want_content_digest()`, `Request::want_repr_digest()`, and `HttpRequest::want_repr_digest()` parse received preference fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |
+| HTTP message signatures | `signature` and `signature_input` emit bounded RFC 9421 request metadata; `Response::signature()` and `signature_input()` parse received fields | No signing, verification, key lookup, covered-component canonicalization, or cryptographic policy |
 | Upgrade and tunnel handoff | `CONNECT` returns the tunnel socket after a successful `200`; `upgrade()` returns the socket after `101 Switching Protocols` and skips interim `1xx` responses | Upgraded protocols are handed to the caller and are not parsed by `rttp_client` |
 | Redirects | Auto-redirect covers 301, 302, 303, 307, and 308 method/body behavior, relative and absolute `Location` resolution, same- and cross-authority header handling, loop detection, and redirect bounds | Redirects are HTTP client behavior, not a browser policy implementation |
 | Byte ranges | `range`, `range_from`, `range_suffix`, `if_range_etag`, and `if_range_date` emit bounded HTTP/1.1 range request metadata; `Response::content_range`, `accept_ranges`, `is_partial_content`, and `is_range_not_satisfiable` expose `Content-Range`, `Accept-Ranges`, `206`, and `416` metadata while preserving raw headers | No Range request generation from `Accept-Ranges`, client-side `If-Range` evaluation, partial response engine, byte serving, content slicing, download resume, automatic retry/replay, cache storage, redirect handling, status-policy behavior, multipart range generation, or automatic cache validation policy |
@@ -612,8 +679,11 @@ header-block model.
 | Content-Language | `Response::content_language` parses bounded response `Content-Language` fields into ordered language metadata while preserving raw headers | No automatic language negotiation, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
 | Content-Location | `Response::content_location` and `ContentLocation::parse` parse bounded singleton response `Content-Location` metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |
 | Content-Type and Content-Encoding | `Response::content_type`/`ContentType::parse` parse bounded singleton `Content-Type` metadata, and `Response::content_encoding`/`ContentEncoding::parse` parse bounded ordered `Content-Encoding` codings while preserving raw headers on parse failures | No MIME sniffing, body decoding, charset transcoding, compression/decompression policy, negotiation, cache policy, redirects, retry/replay, or filesystem serving |
+| Connection | `Response::connection`/`Connection::parse` parse bounded HTTP/1 `Connection` tokens, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to keep-alive, `auto_add_connection`, hop-by-hop stripping, or HTTP/2 rejection |
+| Transfer-Encoding | `Response::transfer_encoding`/`TransferEncoding::parse` parse bounded HTTP/1 `Transfer-Encoding` fields that must be sole `chunked`, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to HTTP/1 framing decoders, `TE`, Content-Length, chunked body decoding policy, or HTTP/2 decode rejection |
 | Content-Disposition | `Response::content_disposition` and `ContentDisposition::parse` parse bounded singleton response `Content-Disposition` metadata into disposition type plus ordered parameters, including preserved `filename` and `filename*` values, while preserving raw headers on parse failures | No automatic download, filesystem path handling, MIME sniffing, redirect behavior, retry/replay, cache behavior, negotiation behavior, or status-policy behavior |
 | Vary | `Response::vary` parses bounded response `Vary` fields into wildcard or normalized case-insensitive field-name metadata | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
+| No-Vary-Search | `Response::no_vary_search` parses bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
 | Trailers | Chunked response trailers are exposed for blocking and async APIs; streaming chunked uploads can send declared request trailers | Application metadata trailers such as `X-Trace` are allowed; pseudo-header, connection-specific, routing, authentication/cookie, and framing trailer fields are rejected |
 | Bounded h2c client | With `http2`, direct `socket2` h2c sends GET, HEAD, bodyless DELETE, OPTIONS, or TRACE, buffered POST, PUT, or PATCH requests, and opt-in RFC 8441 extended CONNECT request HEADERS via `http2_extended_connect`, opens at most one request stream, supports prior-knowledge with `emit_http2_prior_knowledge`, supports explicit HTTP/1.1 `Upgrade: h2c` negotiation with `emit_http2_upgrade`, advertises `SETTINGS_ENABLE_PUSH = 0`, advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1` only for the explicit extended CONNECT path, validates received `SETTINGS_ENABLE_PUSH` values as only `0` or `1`, honors initial peer `SETTINGS_MAX_CONCURRENT_STREAMS` by failing before request HEADERS when the peer allows zero streams, honors peer-advertised `SETTINGS_MAX_HEADER_LIST_SIZE` request metadata limits, accepts only legal `SETTINGS_MAX_FRAME_SIZE` values from 16,384 through 16,777,215 bytes, splits outbound HEADERS, DATA, and trailers to the active peer frame-size limit, rejects oversized inbound frames when a configured local frame-size limit is exceeded, bounds HPACK dynamic table use with `SETTINGS_HEADER_TABLE_SIZE`, strips HTTP/1.x connection-specific request fields before emission, rejects connection-specific peer response fields, suppresses HEAD response bodies, treats `RST_STREAM` on the active stream as a bounded reset/cancellation signal, acknowledges inbound PING without ACK on stream 0 and exactly 8 octets with matching opaque data, ignores inbound PING ACK, rejects malformed PING frames, DATA bodies, trailers, HPACK static Huffman strings, bounded large header blocks, padded incoming frames, `GOAWAY` shutdown boundaries, PRIORITY metadata validation without scheduling, HTTP/2-allowed unknown/extension frame ignoring inside this bounded path, reserved stream-id high-bit normalization, and conservative DATA flow control | Ordinary `CONNECT`, header-configured `:protocol` metadata, non-h2c HTTP/1.1 `Upgrade` handoff requests, and proxies are rejected deterministically, and `PUSH_PROMISE`/server push is rejected instead of managed; bounded direct h2c only, with no keepalive timers, no automatic client/server initiated PING policy, no public cancellation callback API, no dynamic policy API, no extension callback API, no full extension negotiation, TLS ALPN, external h2 integration, proxy tunneling to h2, proxy h2, tunnel handoff, connection pooling, persistent HTTP/2 session management, automatic retry/replay, server push, full session manager, full stream state machine, full multiplex scheduler, unbounded multiplex scheduling, general multiplexing, priority scheduling, request bodies or trailers for extended CONNECT, or request bodies for GET, HEAD, DELETE, OPTIONS, or TRACE |
 
