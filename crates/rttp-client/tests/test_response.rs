@@ -2023,9 +2023,16 @@ fn test_parse_sunset_response_metadata_and_preserves_raw_value() {
 
 #[test]
 fn test_parse_sunset_rejects_invalid_and_duplicate_values_without_rejecting_response() {
-  for header in [
-    "Sunset: not a date\r\n",
-    "Sunset: Sun, 06 Nov 1994 08:49:37 GMT\r\nSunset: Sun, 06 Nov 1994 08:49:38 GMT\r\n",
+  for (header, expected_values) in [
+    ("Sunset: not a date\r\n", vec!["not a date"]),
+    ("sunset: not a date\r\n", vec!["not a date"]),
+    (
+      "Sunset: Sun, 06 Nov 1994 08:49:37 GMT\r\nsunset: Sun, 06 Nov 1994 08:49:38 GMT\r\n",
+      vec![
+        "Sun, 06 Nov 1994 08:49:37 GMT",
+        "Sun, 06 Nov 1994 08:49:38 GMT",
+      ],
+    ),
   ] {
     let raw = format!("HTTP/1.1 200 OK\r\n{header}Content-Length: 0\r\n\r\n");
     let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
@@ -2035,7 +2042,28 @@ fn test_parse_sunset_rejects_invalid_and_duplicate_values_without_rejecting_resp
       response.sunset().is_err(),
       "Sunset helper should reject {header:?}"
     );
+    assert_eq!(
+      expected_values,
+      response
+        .header_values("Sunset")
+        .into_iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>(),
+      "raw Sunset headers must remain inspectable after rejection"
+    );
   }
+}
+
+#[test]
+fn test_parse_sunset_returns_none_when_header_is_absent() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(None, response.sunset().expect("absent Sunset should parse"));
+  assert_eq!(None, response.sunset_value());
 }
 
 #[test]
