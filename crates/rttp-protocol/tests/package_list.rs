@@ -21,6 +21,7 @@ fn package_includes_protocol_metadata_facade_test() {
     "README.md",
     "tests/link.rs",
     "tests/location.rs",
+    "tests/max_forwards.rs",
     "tests/package_list.rs",
     "tests/metadata_facade.rs",
     "tests/content_disposition.rs",

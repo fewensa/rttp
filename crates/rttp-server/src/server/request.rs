@@ -29,6 +29,9 @@ pub use rttp_protocol::forwarded::{
   ForwardedParameter as HttpForwardedParameter, ForwardedParseError as HttpForwardedParseError,
 };
 pub use rttp_protocol::host::{Host as HttpHost, HostParseError as HttpHostParseError};
+pub use rttp_protocol::max_forwards::{
+  MaxForwards as HttpMaxForwards, MaxForwardsParseError as HttpMaxForwardsParseError,
+};
 pub use rttp_protocol::prefer::{
   Prefer as HttpRequestPreferences, PreferParseError as HttpPreferParseError,
   Preference as HttpPreference, PreferenceKind as HttpPreferenceKind,
@@ -519,11 +522,12 @@ impl Request {
 
   /// Parses received `Max-Forwards` request metadata without automatically
   /// decrementing or forwarding the request.
-  ///
-  /// The validated decimal count is returned verbatim so valid values are not
-  /// constrained by a machine integer width.
-  pub fn max_forwards(&self) -> Result<Option<String>, HttpMaxForwardsParseError> {
-    parse_max_forwards_values(self.headers_named("Max-Forwards"))
+  pub fn max_forwards(&self) -> Result<Option<HttpMaxForwards>, HttpMaxForwardsParseError> {
+    let values: Vec<&str> = self.headers_named("Max-Forwards").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpMaxForwards::parse_values(values).map(Some)
   }
 
   /// Parses received `Prefer` request metadata without applying preferences.
@@ -1266,11 +1270,6 @@ impl fmt::Display for HttpAcceptParseError {
 
 impl Error for HttpAcceptParseError {}
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HttpMaxForwardsParseError {
-  message: String,
-}
-
 fn parse_prefer_values<'a>(
   values: impl IntoIterator<Item = &'a str>,
 ) -> Result<Option<HttpRequestPreferences>, HttpPreferParseError> {
@@ -1329,43 +1328,6 @@ fn parse_host_values<'a>(
     return Ok(None);
   }
   HttpHost::parse_values(values).map(Some)
-}
-impl HttpMaxForwardsParseError {
-  fn new(message: impl Into<String>) -> Self {
-    Self {
-      message: message.into(),
-    }
-  }
-}
-
-impl fmt::Display for HttpMaxForwardsParseError {
-  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    formatter.write_str(&self.message)
-  }
-}
-
-impl Error for HttpMaxForwardsParseError {}
-
-fn parse_max_forwards_values<'a>(
-  values: impl IntoIterator<Item = &'a str>,
-) -> Result<Option<String>, HttpMaxForwardsParseError> {
-  let mut values = values.into_iter();
-  let Some(value) = values.next() else {
-    return Ok(None);
-  };
-  if values.next().is_some() {
-    return Err(HttpMaxForwardsParseError::new(
-      "duplicate Max-Forwards headers",
-    ));
-  }
-
-  let value = value.trim();
-  if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
-    return Err(HttpMaxForwardsParseError::new(
-      "invalid Max-Forwards header value",
-    ));
-  }
-  Ok(Some(value.to_owned()))
 }
 
 fn split_accept_members(value: &str) -> Result<Vec<&str>, HttpAcceptParseError> {
@@ -2379,17 +2341,17 @@ impl HttpRequest {
 
   /// Parses received `Max-Forwards` request metadata without automatically
   /// decrementing or forwarding the request.
-  ///
-  /// The validated decimal count is returned verbatim so valid values are not
-  /// constrained by a machine integer width.
-  pub fn max_forwards(&self) -> Result<Option<String>, HttpMaxForwardsParseError> {
-    parse_max_forwards_values(
-      self
-        .headers
-        .iter()
-        .filter(|header| header.name.eq_ignore_ascii_case("Max-Forwards"))
-        .map(|header| header.value.as_str()),
-    )
+  pub fn max_forwards(&self) -> Result<Option<HttpMaxForwards>, HttpMaxForwardsParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Max-Forwards"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpMaxForwards::parse_values(values).map(Some)
   }
 
   /// Parses received `Prefer` request metadata without applying preferences.

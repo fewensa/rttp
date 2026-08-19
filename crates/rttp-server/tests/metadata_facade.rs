@@ -9,14 +9,14 @@ use rttp_server::server::{
   HttpContentDprParseError, HttpContentLength, HttpContentLocation, HttpContentLocationParseError,
   HttpContentRange, HttpContentRangeParseError, HttpCrossOriginEmbedderPolicyReportOnly,
   HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpEntityTag,
-  HttpHost, HttpKeepAlive, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNoVarySearch,
-  HttpNoVarySearchParams, HttpPreferenceKind, HttpProxyStatus, HttpProxyStatusParseError,
-  HttpRequest, HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSignature,
-  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
-  HttpUpgradeParseError, HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode,
-  SecFetchSite, SecFetchUser, SecPurpose,
+  HttpHost, HttpKeepAlive, HttpMaxForwards, HttpMaxForwardsParseError, HttpMementoDatetime,
+  HttpMementoDatetimeParseError, HttpNoVarySearch, HttpNoVarySearchParams, HttpPreferenceKind,
+  HttpProxyStatus, HttpProxyStatusParseError, HttpRequest, HttpResponse, HttpSaveData,
+  HttpSaveDataParseError, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
+  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
+  HttpSignatureInputParseError, HttpSignatureParseError, HttpTransferEncoding,
+  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeParseError, HttpWantContentDigest,
+  HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
 
 #[test]
@@ -55,6 +55,10 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   > = HttpAccessControlRequestPrivateNetwork::parse("false");
   let save_data: HttpSaveData = HttpSaveData::parse("on").expect("Save-Data should parse");
   let save_data_error: Result<HttpSaveData, HttpSaveDataParseError> = HttpSaveData::parse("?1");
+  let max_forwards: HttpMaxForwards =
+    HttpMaxForwards::parse("0").expect("Max-Forwards should parse");
+  let max_forwards_error: Result<HttpMaxForwards, HttpMaxForwardsParseError> =
+    HttpMaxForwards::parse("4294967296");
   let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("revision-42"));
   let no_vary_search: HttpNoVarySearch =
     HttpNoVarySearch::parse(r#"params=("utm_source")"#).expect("No-Vary-Search should parse");
@@ -141,6 +145,9 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert!(request_private_network_error.is_err());
   assert_eq!(save_data.header_value(), "on");
   assert!(save_data_error.is_err());
+  assert_eq!(max_forwards.value(), 0);
+  assert_eq!(max_forwards.header_value(), "0");
+  assert!(max_forwards_error.is_err());
   assert_eq!(policy.header_value(), "same-origin");
   assert_eq!(
     cache_status.members()[0].identifier().as_str(),
@@ -536,6 +543,22 @@ fn request_facade_parses_host_authority() {
   assert_eq!("example.test", host.host());
   assert_eq!(Some("8443"), host.port());
   assert_eq!("example.test:8443", host.header_value());
+}
+
+#[test]
+fn request_facade_parses_max_forwards_metadata() {
+  let request = HttpRequest::parse(
+    b"OPTIONS /diagnostics HTTP/1.1\r\nHost: example.test\r\nMax-Forwards: 0\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let max_forwards: HttpMaxForwards = request
+    .max_forwards()
+    .expect("Max-Forwards should parse")
+    .expect("Max-Forwards should be present");
+
+  assert_eq!(0, max_forwards.value());
+  assert_eq!("0", max_forwards.header_value());
 }
 
 #[test]
