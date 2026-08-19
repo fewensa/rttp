@@ -8,13 +8,19 @@ use url::Url;
 use crate::error;
 use crate::response::raw_response::RawResponse;
 use crate::response::AltSvc;
+use crate::response::Connection;
+use crate::response::ContentDigest;
 use crate::response::Digest;
+use crate::response::NoVarySearch;
 use crate::response::Priority;
 use crate::response::ProxyAuthenticate;
 use crate::response::ProxyAuthenticationInfo;
 use crate::response::ReprDigest;
 use crate::response::ServerTiming;
+use crate::response::Signature;
+use crate::response::SignatureInput;
 use crate::response::Trailer;
+use crate::response::TransferEncoding;
 use crate::response::Warning;
 use crate::response::WwwAuthenticate;
 use crate::types::{Cookie, Header, RoUrl, StatusCode};
@@ -31,6 +37,7 @@ use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
 use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedderPolicyReportOnly;
 use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::cross_origin_resource_policy::CrossOriginResourcePolicy;
+use rttp_protocol::location::Location;
 use rttp_protocol::prefer::PreferenceApplied;
 use rttp_protocol::referrer_policy::ReferrerPolicy;
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
@@ -295,8 +302,15 @@ impl Response {
     self.raw.binary_get()
   }
 
-  pub fn location(&self) -> Option<&String> {
-    self.header_value("location")
+  pub fn location(&self) -> error::Result<Option<Location>> {
+    let values = self.header_values("location");
+    match values.as_slice() {
+      [] => Ok(None),
+      [value] => Location::parse(value)
+        .map(Some)
+        .map_err(|parse_error| error::bad_response(parse_error.to_string())),
+      _ => Err(error::bad_response("Duplicate Location header values")),
+    }
   }
 
   pub fn etag(&self) -> Option<&String> {
@@ -583,6 +597,30 @@ impl Response {
     ContentEncoding::parse_values(values.into_iter().map(String::as_str)).map(Some)
   }
 
+  /// Parses retained HTTP/1 `Connection` header metadata without changing
+  /// keep-alive, hop-by-hop stripping, or HTTP/2 rejection.
+  pub fn connection(&self) -> error::Result<Option<Connection>> {
+    let values = self.header_values("connection");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Connection::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses retained `Transfer-Encoding` framing metadata without changing
+  /// HTTP/1 body framing or HTTP/2 decode.
+  pub fn transfer_encoding(&self) -> error::Result<Option<TransferEncoding>> {
+    let values = self.header_values("transfer-encoding");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    TransferEncoding::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
   /// Parses all `WWW-Authenticate` fields as bounded authentication challenge metadata.
   pub fn www_authenticate(&self) -> error::Result<Option<WwwAuthenticate>> {
     let values = self.header_values("www-authenticate");
@@ -623,9 +661,39 @@ impl Response {
     self.digest_field("content-digest")
   }
 
+  /// Parses all `Content-Digest` fields as bounded response metadata without
+  /// verifying hashes or selecting an algorithm.
+  pub fn content_digest(&self) -> error::Result<Option<ContentDigest>> {
+    self.digest_field("content-digest")
+  }
+
   /// Parses all `Repr-Digest` fields as bounded response metadata.
   pub fn repr_digest(&self) -> error::Result<Option<ReprDigest>> {
     self.digest_field("repr-digest")
+  }
+
+  /// Parses all `Signature` fields as bounded RFC 9421 metadata without
+  /// verifying signatures or looking up keys.
+  pub fn signature(&self) -> error::Result<Option<Signature>> {
+    let values = self.header_values("signature");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Signature::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses all `Signature-Input` fields as bounded RFC 9421 metadata without
+  /// verifying signatures or applying cryptographic policy.
+  pub fn signature_input(&self) -> error::Result<Option<SignatureInput>> {
+    let values = self.header_values("signature-input");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    SignatureInput::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   fn digest_field(&self, name: &str) -> error::Result<Option<Digest>> {
@@ -656,6 +724,18 @@ impl Response {
       return Ok(None);
     }
     ServerTiming::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses `No-Vary-Search` response metadata without changing cache keys,
+  /// normalizing URLs, or applying navigation/cache policy.
+  pub fn no_vary_search(&self) -> error::Result<Option<NoVarySearch>> {
+    let values = self.header_values("no-vary-search");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    NoVarySearch::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

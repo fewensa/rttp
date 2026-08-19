@@ -6,8 +6,8 @@ use rttp::server::{
   HttpAccessControlRequestMethod, HttpAllowedMethods, HttpAuthorization, HttpByteRange,
   HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata, HttpContentDisposition,
   HttpContentLanguages, HttpContentSecurityPolicy, HttpContentType, HttpCriticalCh, HttpEntityTag,
-  HttpExpectations, HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome, HttpLinkValues,
-  HttpPermissionsPolicy, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
+  HttpExpectations, HttpHost, HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome,
+  HttpLinkValues, HttpPermissionsPolicy, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
   HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
   HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming,
   HttpVary,
@@ -1139,6 +1139,139 @@ fn request_accept_encoding_rejects_duplicate_invalid_and_oversized_values() {
 }
 
 #[test]
+fn request_want_content_digest_parses_algorithm_preferences() {
+  let request = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Want-Content-Digest: sha-256=10, sha-512=3\r\n",
+    "want-content-digest: unixsum=0\r\n",
+    "\r\n"
+  ));
+
+  let digest = request
+    .want_content_digest()
+    .expect("Want-Content-Digest should parse")
+    .expect("Want-Content-Digest should be present");
+
+  assert_eq!(3, digest.len());
+  assert_eq!("sha-256", digest.entries()[0].algorithm());
+  assert_eq!(10, digest.entries()[0].preference());
+  assert_eq!("sha-512", digest.entries()[1].algorithm());
+  assert_eq!(3, digest.entries()[1].preference());
+  assert_eq!("unixsum", digest.entries()[2].algorithm());
+  assert_eq!(0, digest.entries()[2].preference());
+}
+
+#[test]
+fn request_want_content_digest_rejects_absent_malformed_and_preserves_raw_headers() {
+  assert_eq!(
+    None,
+    parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .want_content_digest()
+      .expect("absent Want-Content-Digest should be accepted")
+  );
+
+  for value in ["", "sha-256", "sha-256=11", "sha-256=10, sha-256=3"] {
+    let request = parse_request(&format!(
+      "GET / HTTP/1.1\r\nHost: example.test\r\nWant-Content-Digest: {value}\r\n\r\n"
+    ));
+    assert!(
+      request.want_content_digest().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(Some(value), request.header("Want-Content-Digest"));
+  }
+}
+
+#[test]
+fn request_host_parses_http11_authority() {
+  let request = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test:8443\r\n",
+    "\r\n"
+  ));
+
+  let host: HttpHost = request
+    .host()
+    .expect("Host should parse")
+    .expect("Host should be present");
+
+  assert_eq!("example.test", host.host());
+  assert_eq!(Some("8443"), host.port());
+  assert_eq!("example.test:8443", host.header_value());
+}
+
+#[test]
+fn request_host_rejects_absent_duplicate_and_malformed_values() {
+  assert_eq!(
+    None,
+    parse_request("GET / HTTP/1.0\r\n\r\n")
+      .host()
+      .expect("absent Host should be accepted")
+  );
+
+  let duplicate = parse_request(concat!(
+    "GET / HTTP/1.0\r\n",
+    "Host: example.test\r\n",
+    "host: other.test\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.host().is_err());
+  assert_eq!(Some("example.test"), duplicate.header("Host"));
+
+  for value in ["", "example.test/path", "user@example.test"] {
+    let request = parse_request(&format!("GET / HTTP/1.0\r\nHost: {value}\r\n\r\n"));
+    assert!(request.host().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Host"));
+  }
+}
+
+#[test]
+fn request_want_repr_digest_parses_algorithm_preferences() {
+  let request = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Want-Repr-Digest: sha-256=10, sha-512=3\r\n",
+    "want-repr-digest: unixsum=0\r\n",
+    "\r\n"
+  ));
+
+  let digest = request
+    .want_repr_digest()
+    .expect("Want-Repr-Digest should parse")
+    .expect("Want-Repr-Digest should be present");
+
+  assert_eq!(3, digest.len());
+  assert_eq!("sha-256", digest.entries()[0].algorithm());
+  assert_eq!(10, digest.entries()[0].preference());
+  assert_eq!("sha-512", digest.entries()[1].algorithm());
+  assert_eq!(3, digest.entries()[1].preference());
+  assert_eq!("unixsum", digest.entries()[2].algorithm());
+  assert_eq!(0, digest.entries()[2].preference());
+}
+
+#[test]
+fn request_want_repr_digest_rejects_absent_malformed_and_preserves_raw_headers() {
+  assert_eq!(
+    None,
+    parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .want_repr_digest()
+      .expect("absent Want-Repr-Digest should be accepted")
+  );
+
+  for value in ["", "sha-256", "sha-256=11", "sha-256=10, sha-256=3"] {
+    let request = parse_request(&format!(
+      "GET / HTTP/1.1\r\nHost: example.test\r\nWant-Repr-Digest: {value}\r\n\r\n"
+    ));
+    assert!(
+      request.want_repr_digest().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(Some(value), request.header("Want-Repr-Digest"));
+  }
+}
+
+#[test]
 fn request_expectations_distinguish_continue_from_unsupported_extensions() {
   assert_eq!(
     None,
@@ -1391,6 +1524,30 @@ fn response_vary_helper_declares_normalized_vary_header() {
   let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
 
   assert!(serialized.contains("\r\nVary: accept-encoding, x-user\r\n"));
+}
+
+#[test]
+fn response_no_vary_search_helper_parses_and_declares_metadata() {
+  let response = HttpResponse::ok("body")
+    .header("No-Vary-Search", "params")
+    .header("no-vary-search", r#"except=("session")"#);
+
+  let no_vary_search = response
+    .no_vary_search()
+    .expect("attached No-Vary-Search headers should parse")
+    .expect("No-Vary-Search should be present");
+
+  assert!(no_vary_search.ignores_all_query_params());
+  assert_eq!(no_vary_search.except(), ["session"]);
+
+  let response = HttpResponse::ok("body")
+    .header("No-Vary-Search", "params")
+    .with_no_vary_search(r#"key-order=?0, params=("utm_source")"#)
+    .expect("valid No-Vary-Search should be accepted");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(!serialized.contains("\r\nNo-Vary-Search: params\r\n"));
+  assert!(serialized.contains("\r\nNo-Vary-Search: key-order=?0, params=(\"utm_source\")\r\n"));
 }
 
 #[test]
