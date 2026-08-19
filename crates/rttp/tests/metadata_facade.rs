@@ -2,7 +2,7 @@ use rttp::server::{
   HttpAcceptCh, HttpAccessControlRequestPrivateNetwork, HttpConditionalMetadata,
   HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
   HttpCrossOriginEmbedderPolicy, HttpCrossOriginEmbedderPolicyReportOnly,
-  HttpCrossOriginOpenerPolicy, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpResponse,
+  HttpCrossOriginOpenerPolicy, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpNel, HttpResponse,
   HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
   HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
   HttpSignatureParseError, HttpSunsetParseError,
@@ -40,6 +40,9 @@ fn compatibility_facade_exports_client_metadata_types() {
       .expect("No-Vary-Search should parse");
   let _: rttp::AltSvcParseError =
     rttp_client::response::AltSvc::parse("h3=:443").expect_err("invalid Alt-Svc should fail");
+  let nel: rttp::Nel =
+    rttp_client::response::Nel::parse(r#"{"report_to":"network-errors","max_age":2592000}"#)
+      .expect("NEL should parse");
   let embedder_policy: rttp::CrossOriginEmbedderPolicy =
     rttp_client::response::CrossOriginEmbedderPolicy::parse("require-corp; report-to=\"coep\"")
       .expect("Cross-Origin-Embedder-Policy should parse");
@@ -90,6 +93,8 @@ fn compatibility_facade_exports_client_metadata_types() {
   );
   assert_eq!(alt_svc.alternatives()[0].protocol_id(), "h3");
   assert_eq!(alt_svc.alternatives()[0].max_age(), Some(60));
+  assert_eq!(nel.max_age(), 2592000);
+  assert_eq!(nel.report_to(), Some("network-errors"));
   assert_eq!(
     no_vary_search.params(),
     Some(&rttp::NoVarySearchParams::Names(vec![
@@ -136,6 +141,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let opener_policy: HttpCrossOriginOpenerPolicy =
     HttpCrossOriginOpenerPolicy::parse("noopener-allow-popups; report-to=\"coop\"")
       .expect("Cross-Origin-Opener-Policy should parse");
+  let nel: HttpNel = HttpNel::parse(r#"{"report_to":"network-errors","max_age":2592000}"#)
+    .expect("NEL should parse");
   let content_location: HttpContentLocation =
     HttpContentLocation::parse("../representations/current.json")
       .expect("Content-Location should parse");
@@ -157,6 +164,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(embedder_policy.header_value(), "require-corp");
   assert_eq!(embedder_policy_report_only.header_value(), "require-corp");
   assert_eq!(opener_policy.header_value(), "noopener-allow-popups");
+  assert_eq!(nel.max_age(), 2592000);
+  assert_eq!(nel.report_to(), Some("network-errors"));
   assert_eq!(
     metadata
       .entity_tag_value()
