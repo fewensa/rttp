@@ -39,6 +39,7 @@ pub mod cross_origin_embedder_policy;
 pub mod cross_origin_embedder_policy_report_only;
 pub mod cross_origin_opener_policy;
 pub mod cross_origin_resource_policy;
+pub mod deprecation;
 pub mod digest;
 pub mod entity_tag;
 pub mod fetch_metadata;

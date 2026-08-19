@@ -384,6 +384,29 @@ does not treat `Content-Location` as redirect behavior, cache variant
 selection, representation replacement, retry/replay behavior, route
 generation, or status-policy behavior.
 
+## Bounded Deprecation response metadata
+
+`Response::deprecation()` parses a response `Deprecation` header into the
+shared protocol-owned `Deprecation` metadata type. It returns `Ok(None)` when
+the header is absent and rejects duplicate header fields because `Deprecation`
+is handled as a singleton response metadata field. Present values are a
+Structured Fields boolean (`?0` / `?1`) or date (`@` followed by signed UNIX
+seconds). `Deprecation::parse(value)` is available when callers want to
+validate one raw field value directly.
+
+The helper is bounded and validation-oriented. The field value is limited to
+64 KiB. Empty values, item parameters, inner lists, comma-joined items,
+integers without `@`, decimals, strings, tokens including historical `true`,
+byte sequences, display strings, IMF-fixdate values, forbidden ASCII control
+bytes, and dates that cannot be represented as `SystemTime` make
+`Response::deprecation()` return an error while leaving the original response
+headers and body available through `Response::header_value()`,
+`Response::header_values()`, and the other response metadata helpers.
+
+The helper is metadata-only: `rttp_client` does not compare `Sunset`, follow
+`Link` `rel=deprecation`, decide whether a resource is already deprecated,
+retry requests, or select another endpoint.
+
 ## Bounded HTTP/1.1 representation metadata behavior
 
 `Response::content_type()` parses a singleton response `Content-Type` header
@@ -802,6 +825,7 @@ header-block model.
 | Client Hints | `Response::accept_ch` and `Response::critical_ch` parse bounded, ordered Client Hints opt-in metadata while preserving raw headers on parse failures | No browser opt-in state, request-header generation, retry, persistence, or Client Hints policy |
 | Content-Language | `Response::content_language` parses bounded response `Content-Language` fields into ordered language metadata while preserving raw headers | No automatic language negotiation, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
 | Content-Location | `Response::content_location` and `ContentLocation::parse` parse bounded singleton response `Content-Location` metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |
+| Deprecation | `Response::deprecation` and `Deprecation::parse` parse bounded singleton Structured Fields boolean or date `Deprecation` metadata while preserving raw headers | No Sunset comparison, Link follow, already-deprecated clocks, retries, endpoint selection, or browser/cache policy |
 | Content-Type and Content-Encoding | `Response::content_type`/`ContentType::parse` parse bounded singleton `Content-Type` metadata, and `Response::content_encoding`/`ContentEncoding::parse` parse bounded ordered `Content-Encoding` codings while preserving raw headers on parse failures | No MIME sniffing, body decoding, charset transcoding, compression/decompression policy, negotiation, cache policy, redirects, retry/replay, or filesystem serving |
 | Connection | `Response::connection`/`Connection::parse` parse bounded HTTP/1 `Connection` tokens, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to keep-alive, `auto_add_connection`, hop-by-hop stripping, or HTTP/2 rejection |
 | Keep-Alive | `Response::keep_alive` parses bounded RFC 2068 `Keep-Alive` fields in wire order with `timeout` delta-seconds and `max` `1*DIGIT` values as checked unsigned integers, preserving unrecognized `name=token` parameters as bounded extension metadata and raw headers on parse failures | No connection lifetime management, connection pooling, keep-alive timers, or HTTP/2 behavior changes |
