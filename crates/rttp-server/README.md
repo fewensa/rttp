@@ -244,6 +244,26 @@ references against a response URL, follow redirects, select cache variants,
 replace representations, generate routes, trigger retries, or alter status
 policy from `Content-Location`.
 
+## Deprecation response metadata
+
+`HttpResponse::with_deprecation(value)` replaces any existing raw `Deprecation`
+fields and adds one canonical Structured Fields boolean (`?0` / `?1`) or date
+(`@` followed by signed UNIX seconds) header from `HttpDeprecation`.
+`HttpResponse::deprecation()` parses attached raw fields into
+`HttpDeprecation`, returns `Ok(None)` when absent, and preserves invalid raw
+fields until typed parsing is requested.
+
+The helper is bounded and validation-oriented. The field value is limited to
+64 KiB. Empty values, item parameters, inner lists, comma-joined items,
+integers without `@`, decimals, strings, tokens including historical `true`,
+byte sequences, display strings, IMF-fixdate values, forbidden ASCII control
+bytes, and dates that cannot be represented as `SystemTime` are rejected
+because `Deprecation` is singleton response metadata.
+
+These helpers only declare and parse metadata. RTTP does not compare `Sunset`,
+follow `Link` `rel=deprecation`, decide whether a resource is already
+deprecated, retry requests, or select another endpoint.
+
 ## No-Vary-Search response metadata
 
 `HttpResponse::with_no_vary_search(value)` validates and replaces attached

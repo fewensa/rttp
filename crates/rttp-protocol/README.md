@@ -35,6 +35,21 @@ beyond `u64::MAX`, and forbidden ASCII control bytes are errors. This parser
 reports declared metadata only; it does not calculate freshness, adjust age
 over elapsed time, store cache entries, or apply cache policy.
 
+## Deprecation
+
+`deprecation` parses a singleton HTTP `Deprecation` field as one Structured
+Fields item that is either a boolean (`?0` / `?1`) or a date (`@` followed by
+a signed integer number of UNIX seconds). Each field value is bounded to
+64 KiB. A second field is rejected after every supplied field is bound-checked.
+Surrounding SP and HTAB are trimmed as optional whitespace. Empty values,
+item parameters, inner lists, comma-joined items, integers without `@`,
+decimals, strings, tokens (including historical `true`), byte sequences,
+display strings, IMF-fixdate values, forbidden ASCII control bytes, and dates
+that cannot be represented as `SystemTime` are errors. This parser reports
+declared metadata only; it does not compare `Sunset`, follow `Link`
+`rel=deprecation`, decide whether a resource is already deprecated, retry
+requests, or select another endpoint.
+
 ## Content-Location
 
 `content_location` parses a singleton response `Content-Location` field as one

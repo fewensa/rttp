@@ -83,6 +83,7 @@ pub use rttp_protocol::authentication_info::{
 };
 pub use rttp_protocol::connection::{Connection, ConnectionParseError};
 pub use rttp_protocol::content_location::{ContentLocation, ContentLocationParseError};
+pub use rttp_protocol::deprecation::{Deprecation, DeprecationParseError};
 pub use rttp_protocol::digest::{
   ContentDigest, ContentDigestEntry, Digest, DigestEntry, DigestParseError, ReprDigest,
   ReprDigestEntry,

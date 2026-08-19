@@ -49,6 +49,7 @@ use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
 use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedderPolicyReportOnly;
 use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::cross_origin_resource_policy::CrossOriginResourcePolicy;
+use rttp_protocol::deprecation::Deprecation;
 use rttp_protocol::entity_tag::{EntityTag, EntityTagParseError};
 use rttp_protocol::link::LinkValues;
 use rttp_protocol::location::Location;
@@ -413,6 +414,18 @@ impl Response {
   pub fn sunset(&self) -> error::Result<Option<SystemTime>> {
     parse_sunset_values(self.header_values("sunset").into_iter().map(String::as_str))
       .map_err(|err| error::bad_response(err.to_string()))
+  }
+
+  /// Parses bounded `Deprecation` response metadata without applying lifecycle
+  /// policy.
+  pub fn deprecation(&self) -> error::Result<Option<Deprecation>> {
+    let values = self.header_values("deprecation");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Deprecation::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   pub fn retry_after(&self) -> error::Result<Option<RetryAfter>> {

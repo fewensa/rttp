@@ -2,9 +2,10 @@ use rttp_client::response::{
   AltSvc, AuthenticationInfo, ContentDisposition, ContentEncoding, ContentLocation, ContentRange,
   ContentSecurityPolicy, ContentType, CrossOriginEmbedderPolicy,
   CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginResourcePolicy,
-  EntityTag, HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues, Location, ProxyAuthenticate,
-  ProxyAuthenticationInfo, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
-  SignatureInput, StrictTransportSecurity, Warning, XContentTypeOptions, XFrameOptions,
+  Deprecation, EntityTag, HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues, Location,
+  ProxyAuthenticate, ProxyAuthenticationInfo, ReferrerPolicy, ReferrerPolicyToken, Response,
+  RetryAfter, ServerTiming, SignatureInput, StrictTransportSecurity, Warning, XContentTypeOptions,
+  XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -3052,6 +3053,136 @@ fn test_parse_content_location_rejects_duplicate_and_oversized_values() {
     "content-location helper should reject oversized values"
   );
   assert_eq!(Some(&oversized), response.header_value("Content-Location"));
+}
+
+#[test]
+fn test_parse_deprecation_response_helper_accepts_boolean_and_date() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Deprecation: ?1\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/v1/widgets"),
+    raw.as_bytes().to_vec(),
+  )
+  .expect("parse response with boolean deprecation");
+  let deprecation = response
+    .deprecation()
+    .expect("valid deprecation should parse")
+    .expect("deprecation header should be present");
+
+  assert_eq!(Deprecation::Boolean(true), deprecation);
+  assert_eq!(
+    Some(&"?1".to_string()),
+    response.header_value("Deprecation")
+  );
+
+  let instant = UNIX_EPOCH + Duration::from_secs(1_688_169_599);
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Deprecation: @1688169599\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/v1/widgets"),
+    raw.as_bytes().to_vec(),
+  )
+  .expect("parse response with date deprecation");
+  let deprecation = response
+    .deprecation()
+    .expect("valid date deprecation should parse")
+    .expect("deprecation header should be present");
+
+  assert_eq!(Deprecation::Date(instant), deprecation);
+  assert_eq!(
+    Some(&"@1688169599".to_string()),
+    response.header_value("Deprecation")
+  );
+}
+
+#[test]
+fn test_parse_deprecation_response_helper_allows_absent() {
+  let raw = concat!("HTTP/1.1 200 OK\r\n", "Content-Length: 2\r\n", "\r\n", "OK");
+  let response = Response::new(
+    RoUrl::with("https://example.test/v1/widgets"),
+    raw.as_bytes().to_vec(),
+  )
+  .expect("parse response without deprecation");
+  assert_eq!(
+    None,
+    response
+      .deprecation()
+      .expect("absent deprecation should parse")
+  );
+  assert_eq!(None, response.header_value("Deprecation"));
+}
+
+#[test]
+fn test_parse_deprecation_rejects_invalid_helper_values_without_rejecting_response() {
+  let invalid_values = ["true", "Sun, 06 Nov 1994 08:49:37 GMT", "?1;foo=?1", "?2"];
+
+  for value in invalid_values {
+    let raw = format!("HTTP/1.1 200 OK\r\nDeprecation: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(
+      RoUrl::with("https://example.test/v1/widgets"),
+      raw.into_bytes(),
+    )
+    .expect("raw response remains usable");
+
+    assert!(
+      response.deprecation().is_err(),
+      "deprecation helper should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Deprecation")
+    );
+  }
+}
+
+#[test]
+fn test_parse_deprecation_rejects_duplicate_and_oversized_values() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Deprecation: ?1\r\n",
+    "deprecation: ?0\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/v1/widgets"),
+    raw.as_bytes().to_vec(),
+  )
+  .expect("raw response with duplicate deprecation remains usable");
+
+  assert!(
+    response.deprecation().is_err(),
+    "deprecation helper should reject duplicate singleton headers"
+  );
+  assert_eq!(
+    vec![&"?1".to_string(), &"?0".to_string()],
+    response.header_values("Deprecation")
+  );
+
+  let oversized = format!("?{}", "1".repeat(64 * 1024));
+  let raw = format!("HTTP/1.1 200 OK\r\nDeprecation: {oversized}\r\nContent-Length: 2\r\n\r\nOK");
+  let response = Response::new(
+    RoUrl::with("https://example.test/v1/widgets"),
+    raw.into_bytes(),
+  )
+  .expect("raw response with oversized deprecation remains usable");
+
+  assert!(
+    response.deprecation().is_err(),
+    "deprecation helper should reject oversized values"
+  );
+  assert_eq!(Some(&oversized), response.header_value("Deprecation"));
 }
 
 #[test]

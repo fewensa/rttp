@@ -18,7 +18,8 @@ use rttp_client::response::{
   XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
-  ContentDigest, ContentLocation, ContentLocationParseError, ReprDigest,
+  ContentDigest, ContentLocation, ContentLocationParseError, Deprecation, DeprecationParseError,
+  ReprDigest,
 };
 use rttp_client::{HttpClient, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose};
 use rttp_test_support as support;
@@ -56,6 +57,9 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .expect("Content-Location should parse");
   let _: ContentLocationParseError =
     ContentLocation::parse("not valid").expect_err("invalid Content-Location should be rejected");
+  let deprecation = Deprecation::parse("?1").expect("Deprecation should parse");
+  let _: DeprecationParseError =
+    Deprecation::parse("true").expect_err("historical Deprecation token should be rejected");
   let content_security_policy =
     ContentSecurityPolicy::parse("default-src 'self'; object-src 'none'")
       .expect("Content-Security-Policy should parse");
@@ -171,6 +175,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     content_location.header_value(),
     "../representations/current.json"
   );
+  assert_eq!(deprecation, Deprecation::Boolean(true));
+  assert_eq!(deprecation.header_value(), "?1");
   assert_eq!(
     content_security_policy.header_value(),
     "default-src 'self'; object-src 'none'"
