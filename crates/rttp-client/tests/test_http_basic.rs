@@ -1472,6 +1472,19 @@ fn test_redirect_is_not_followed_by_default() {
   assert!(response.is_redirect());
 }
 
+#[test]
+fn test_auto_redirect_uses_first_raw_location_when_typed_location_is_duplicate() {
+  let (addr, _handle) = support::spawn_duplicate_location_redirect_target_echo_server();
+  let response = client()
+    .config(Config::builder().auto_redirect(true))
+    .get()
+    .url(format!("http://{}/redirect/from", addr))
+    .emit()
+    .expect("auto redirect should use the first raw Location header");
+
+  assert_eq!("/final", response.body().string().unwrap());
+}
+
 fn assert_redirect_resolves_to_target<F>(location: F, expected_target: &str)
 where
   F: FnOnce(std::net::SocketAddr) -> String + Send + 'static,

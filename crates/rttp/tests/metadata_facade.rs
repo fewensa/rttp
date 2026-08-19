@@ -52,6 +52,10 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp_client::response::Upgrade::parse("").expect_err("empty Upgrade should fail");
   let fetch_site: rttp::SecFetchSite =
     rttp_client::SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
+  let location: rttp::Location =
+    rttp_client::response::Location::parse("/next").expect("Location should parse");
+  let _: rttp::LocationParseError =
+    rttp_client::response::Location::parse("").expect_err("empty Location should be rejected");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
@@ -72,6 +76,7 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert!(strict_transport_security.include_sub_domains());
   assert_eq!(upgrade.protocols(), ["websocket"]);
   assert_eq!(fetch_site.header_value(), "same-origin");
+  assert_eq!(location.as_str(), "/next");
 }
 
 #[test]
