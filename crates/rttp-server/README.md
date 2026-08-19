@@ -118,6 +118,26 @@ without changing those raw fields.
 These helpers only declare and parse metadata. They do not calculate hashes,
 verify bodies, canonicalize representations, sign values, or enforce integrity.
 
+## Accept-Ranges response metadata
+
+`HttpResponse::with_accept_ranges(units)` declares supported range units with
+one bounded comma-separated `Accept-Ranges` response header, while
+`HttpResponse::with_accept_ranges_none()` declares the `Accept-Ranges: none`
+sentinel. `HttpResponse::accept_ranges()` parses attached raw fields into
+`HttpAcceptRanges`, the shared protocol parser also used by the client facade.
+Present values expose `units()`, `is_none()`, and `header_value()`; the `none`
+sentinel is represented as an empty unit list. Each field value is bounded to
+64 KiB and the parsed header set to 256 range units; malformed or empty values,
+case-insensitive duplicate units, `none` combined with any unit, and `none`
+through the unit declaration helper are rejected. The declaration helper
+replaces existing raw `Accept-Ranges` fields, while manually attached fields
+remain preserved until the typed parser is requested.
+
+These helpers only declare and inspect metadata. RTTP does not parse request
+`Range` fields, generate `Range` requests, create a partial response engine,
+serve bytes, slice content, resume downloads, or choose redirect, retry, or
+status-policy behavior.
+
 ## Content-Location response metadata
 
 `HttpResponse::with_content_location(value)` validates one

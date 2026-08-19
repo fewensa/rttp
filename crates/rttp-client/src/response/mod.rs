@@ -21,6 +21,7 @@
 
 pub use self::response::*;
 
+pub use rttp_protocol::accept_ranges::{AcceptRanges, AcceptRangesParseError};
 pub use rttp_protocol::access_control_allow_headers::{
   AccessControlAllowHeaders, AccessControlAllowHeadersParseError,
 };

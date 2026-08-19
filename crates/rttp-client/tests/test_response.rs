@@ -3118,7 +3118,7 @@ fn test_parse_accept_ranges_response_helper_supports_none_and_absent_header() {
 
   assert!(accept_ranges.is_none());
   assert!(!accept_ranges.accepts_bytes());
-  assert_eq!(vec!["none"], accept_ranges.units());
+  assert!(accept_ranges.units().is_empty());
 
   let s = concat!("HTTP/1.1 200 OK\r\n", "Content-Length: 2\r\n", "\r\n", "OK");
   let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())

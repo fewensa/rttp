@@ -9,6 +9,21 @@ and server crates.
 This crate supports rttp's implementation; its public API is not a standalone
 application-level HTTP interface.
 
+## Accept-Ranges
+
+`accept_ranges` parses one or more `Accept-Ranges` field values into an ordered
+list of range-unit tokens, preserving each unit's spelling and wire order. Each
+field value is bounded to 64 KiB, and the cumulative unit count across all
+supplied fields is bounded to 256 units. Units are split on commas with SP and
+HTAB accepted only as optional whitespace around each unit; empty members,
+members containing forbidden ASCII control bytes, and units that are not RFC
+9110 tokens are rejected. Duplicate units are rejected case-insensitively while
+the first-seen spelling is retained. The `none` sentinel is accepted only alone
+and is represented as an empty unit list; `none` combined with any unit fails
+as invalid. A present header set that yields no unit still fails as invalid.
+The server facade aliases this type as `HttpAcceptRanges` and reuses
+`from_units`/`none` for its declaration helpers.
+
 ## Age
 
 `age` parses a singleton HTTP `Age` field as non-negative `1*DIGIT`

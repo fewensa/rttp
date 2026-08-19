@@ -20,6 +20,8 @@ fn compatibility_facade_exports_client_metadata_types() {
       .expect("Accept-Patch should parse");
   let accept_post: rttp::AcceptPost =
     rttp_client::response::AcceptPost::parse("application/json").expect("Accept-Post should parse");
+  let accept_ranges: rttp::AcceptRanges =
+    rttp_client::response::AcceptRanges::parse("bytes, pages").expect("Accept-Ranges should parse");
   let content_location: rttp::ContentLocation =
     rttp_client::response::ContentLocation::parse("../representations/current.json")
       .expect("Content-Location should parse");
@@ -74,6 +76,8 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
   assert_eq!(accept_patch.media_types().len(), 1);
   assert_eq!(accept_post.media_types().len(), 1);
+  assert_eq!(accept_ranges.units(), ["bytes", "pages"]);
+  assert_eq!(accept_ranges.header_value(), "bytes, pages");
   assert_eq!(
     content_location.header_value(),
     "../representations/current.json"
