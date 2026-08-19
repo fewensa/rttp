@@ -15,12 +15,14 @@ use rttp_server::server::{
   HttpContentSecurityPolicyReportOnlyParseError, HttpCrossOriginEmbedderPolicyReportOnly,
   HttpCrossOriginOpenerPolicy, HttpCrossOriginOpenerPolicyReportOnly,
   HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpDocumentPolicy,
-  HttpDocumentPolicyDirective, HttpDocumentPolicyParseError, HttpDocumentPolicyValue,
-  HttpEntityTag, HttpExpectParseError, HttpExpectations, HttpHost, HttpIdempotencyKey,
-  HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfModifiedSinceParseError,
-  HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError, HttpKeepAlive, HttpMaxForwards,
-  HttpMaxForwardsParseError, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNoVarySearch,
-  HttpNoVarySearchParams, HttpOriginTrialParseError, HttpOriginTrials, HttpPermissionsPolicy,
+  HttpDocumentPolicyDirective, HttpDocumentPolicyParseError, HttpDocumentPolicyReportOnly,
+  HttpDocumentPolicyReportOnlyParseError, HttpDocumentPolicyReportOnlyValue,
+  HttpDocumentPolicyValue, HttpEntityTag, HttpExpectParseError, HttpExpectations, HttpHost,
+  HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince,
+  HttpIfModifiedSinceParseError, HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError,
+  HttpKeepAlive, HttpMaxForwards, HttpMaxForwardsParseError, HttpMementoDatetime,
+  HttpMementoDatetimeParseError, HttpNoVarySearch, HttpNoVarySearchParams,
+  HttpOriginTrialParseError, HttpOriginTrials, HttpPermissionsPolicy,
   HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
   HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective,
   HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus,
@@ -215,6 +217,17 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let document_policy_response = HttpResponse::ok("")
     .with_document_policy("oversized-images=2.0, unsized-media=?0, *;report-to=default")
     .expect("Document-Policy should be accepted");
+  let document_policy_report_only: HttpDocumentPolicyReportOnly =
+    HttpDocumentPolicyReportOnly::parse(
+      "oversized-images=2.0, unsized-media=?0, *;report-to=default",
+    )
+    .expect("Document-Policy-Report-Only should parse");
+  let _: HttpDocumentPolicyReportOnlyParseError =
+    HttpDocumentPolicyReportOnly::parse("unsized-media=src;foo=bar")
+      .expect_err("unknown Document-Policy-Report-Only parameter should be rejected");
+  let document_policy_report_only_response = HttpResponse::ok("")
+    .with_document_policy_report_only("oversized-images=2.0, unsized-media=?0, *;report-to=default")
+    .expect("Document-Policy-Report-Only should be accepted");
   let supports_loading_mode: HttpSupportsLoadingMode =
     HttpSupportsLoadingMode::parse("fenced-frame, credentialed-prerender")
       .expect("Supports-Loading-Mode should parse");
@@ -436,6 +449,22 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .document_policy()
       .expect("Document-Policy should parse")
       .expect("Document-Policy should be present")
+      .header_value()
+  );
+  assert_eq!(document_policy_report_only.directives().len(), 3);
+  assert_eq!(
+    document_policy_report_only
+      .directive("oversized-images")
+      .unwrap()
+      .value(),
+    &HttpDocumentPolicyReportOnlyValue::Decimal("2.0".to_string())
+  );
+  assert_eq!(
+    "oversized-images=2.0, unsized-media=?0, *;report-to=default",
+    document_policy_report_only_response
+      .document_policy_report_only()
+      .expect("Document-Policy-Report-Only should parse")
+      .expect("Document-Policy-Report-Only should be present")
       .header_value()
   );
   assert_eq!(

@@ -534,6 +534,14 @@ These helpers only declare and parse metadata. RTTP does not execute
 configuration points, block document loads, compare required policies, echo
 `Sec-Required-Document-Policy`, or send reports.
 
+`HttpResponse::with_document_policy_report_only(value)` validates and
+canonicalizes `Document-Policy-Report-Only` through the same shared protocol
+parser, formatter, directive model, and bounds while
+`HttpResponse::document_policy_report_only()` returns distinct
+`HttpDocumentPolicyReportOnly` metadata. The helpers replace raw duplicate
+report-only fields on declaration, preserve raw fields on parse errors, and
+do not enforce policy or deliver reports.
+
 ## Supports-Loading-Mode response metadata
 
 `HttpResponse::with_supports_loading_mode(tokens)` validates a declared token

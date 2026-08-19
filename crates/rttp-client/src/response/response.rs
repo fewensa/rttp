@@ -59,6 +59,7 @@ use rttp_protocol::cross_origin_opener_policy_report_only::CrossOriginOpenerPoli
 use rttp_protocol::cross_origin_resource_policy::CrossOriginResourcePolicy;
 use rttp_protocol::deprecation::Deprecation;
 use rttp_protocol::document_policy::DocumentPolicy;
+use rttp_protocol::document_policy_report_only::DocumentPolicyReportOnly;
 use rttp_protocol::entity_tag::{EntityTag, EntityTagParseError};
 use rttp_protocol::link::LinkValues;
 use rttp_protocol::location::Location;
@@ -684,6 +685,18 @@ impl Response {
       return Ok(None);
     }
     DocumentPolicy::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Document-Policy-Report-Only` response metadata without
+  /// enforcing document policy or sending reports.
+  pub fn document_policy_report_only(&self) -> error::Result<Option<DocumentPolicyReportOnly>> {
+    let values = self.header_values("document-policy-report-only");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    DocumentPolicyReportOnly::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
