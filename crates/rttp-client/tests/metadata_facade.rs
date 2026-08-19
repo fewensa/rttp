@@ -5,12 +5,12 @@ use rttp_client::response::{
   ConnectionParseError, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly,
   CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest, HttpClearSiteData, KeepAlive,
   Location, LocationParseError, NoVarySearch, NoVarySearchParams, NoVarySearchParseError,
-  PreferenceApplied, Priority, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError,
-  ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Signature, SignatureInput,
-  SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
-  StrictTransportSecurityParseError, Trailer, TransferEncoding, TransferEncodingParseError, Vary,
-  VaryParseError, WantContentDigest, WantReprDigest, Warning, XContentTypeOptions,
-  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  PreferenceApplied, Priority, ProxyAuthenticate, ProxyAuthenticateParseError,
+  ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ReferrerPolicy, ReferrerPolicyToken,
+  ServerTiming, Signature, SignatureInput, SignatureInputParseError, SignatureParseError,
+  StrictTransportSecurity, StrictTransportSecurityParseError, Trailer, TransferEncoding,
+  TransferEncodingParseError, Vary, VaryParseError, WantContentDigest, WantReprDigest, Warning,
+  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentLocation, ContentLocationParseError, HttpContentLength, ReprDigest,
@@ -96,6 +96,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
       .expect("Proxy-Authentication-Info should parse");
   let _: ProxyAuthenticationInfoParseError = ProxyAuthenticationInfo::parse("")
     .expect_err("empty Proxy-Authentication-Info should be rejected");
+  let proxy_authenticate =
+    ProxyAuthenticate::parse(r#"Basic realm="corp""#).expect("Proxy-Authenticate should parse");
+  let _: ProxyAuthenticateParseError =
+    ProxyAuthenticate::parse("").expect_err("empty Proxy-Authenticate should be rejected");
   let vary = Vary::parse("Accept-Encoding, User-Agent").expect("Vary should parse");
   let _: VaryParseError = Vary::parse("").expect_err("empty Vary should be rejected");
   let signature = Signature::parse("sig1=:YWJj:").expect("Signature should parse");
@@ -159,6 +163,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(
     proxy_authentication_info.parameter("nextnonce"),
     Some("6629fae49393a05397450978507c4ef1")
+  );
+  assert_eq!(
+    proxy_authenticate.challenges()[0].parameter("realm"),
+    Some("corp")
   );
   assert_eq!(vary.field_names(), ["accept-encoding", "user-agent"]);
   assert_eq!(signature.header_value(), "sig1=:YWJj:");
