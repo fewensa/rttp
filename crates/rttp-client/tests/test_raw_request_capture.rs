@@ -562,6 +562,70 @@ fn accept_encoding_helpers_reject_invalid_members_before_connecting() {
     request.is_empty(),
     "oversized first Accept-Encoding coding should not open a socket"
   );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .accept_encoding("gzip, br")
+      .expect_err("comma-bearing coding should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "comma-bearing Accept-Encoding coding should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .accept_encoding("gzip;q=0")
+      .expect_err("parameterized coding should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "parameterized Accept-Encoding coding should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .accept_encoding_with_q("gzip", "0.8, br")
+      .expect_err("comma-bearing q-value should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "comma-bearing Accept-Encoding q-value should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .accept_gzip_with_q("0.8, br")
+      .expect_err("comma-bearing gzip q-value should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "comma-bearing gzip Accept-Encoding q-value should not open a socket"
+  );
 }
 
 #[test]
