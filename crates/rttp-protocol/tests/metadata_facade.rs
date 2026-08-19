@@ -9,6 +9,7 @@ use rttp_protocol::connection::Connection;
 use rttp_protocol::content_encoding::ContentEncoding;
 use rttp_protocol::content_language::ContentLanguage;
 use rttp_protocol::content_location::ContentLocation;
+use rttp_protocol::content_security_policy::ContentSecurityPolicy;
 use rttp_protocol::content_type::ContentType;
 use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
 use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedderPolicyReportOnly;
@@ -93,6 +94,9 @@ fn protocol_exports_representative_bounded_metadata_types() {
     .expect("Content-Location should parse");
   let connection = Connection::parse("keep-alive, TE").expect("Connection should parse");
   let content_encoding = ContentEncoding::parse("gzip, br").expect("Content-Encoding should parse");
+  let content_security_policy =
+    ContentSecurityPolicy::parse("default-src 'self'; object-src 'none'")
+      .expect("Content-Security-Policy should parse");
   let content_language =
     ContentLanguage::parse("fr-CA, es-419").expect("Content-Language should parse");
   let cdn_cache_control =
@@ -176,6 +180,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(connection.header_value(), "keep-alive, TE");
   assert_eq!(content_encoding.codings(), ["gzip", "br"]);
   assert_eq!(content_encoding.header_value(), "gzip, br");
+  assert_eq!(
+    content_security_policy.header_value(),
+    "default-src 'self'; object-src 'none'"
+  );
   assert_eq!(content_language.tags(), ["fr-CA", "es-419"]);
   assert_eq!(content_language.header_value(), "fr-CA, es-419");
   assert_eq!(cdn_cache_control.directives()[1].name(), "cdn-example");

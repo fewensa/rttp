@@ -33,7 +33,7 @@ fn compatibility_facade_exports_client_metadata_types() {
       .expect("Accept-Patch should parse");
   let accept_post: rttp::AcceptPost =
     rttp_client::response::AcceptPost::parse("application/json").expect("Accept-Post should parse");
-  let content_range: rttp::ContentRange =
+  let content_range_window: rttp::ContentRange =
     rttp_client::response::ContentRange::parse("bytes 3-6/10").expect("Content-Range should parse");
   let _: rttp::ContentRangeParseError = rttp_client::response::ContentRange::parse("bytes */*")
     .expect_err("invalid Content-Range should be rejected");
@@ -45,6 +45,14 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::ContentLocationParseError =
     rttp_client::response::ContentLocation::parse("not valid")
       .expect_err("invalid Content-Location should be rejected");
+  let content_security_policy: rttp::ContentSecurityPolicy =
+    rttp_client::response::ContentSecurityPolicy::parse("default-src 'self'; object-src 'none'")
+      .expect("Content-Security-Policy should parse");
+  let _: rttp::ContentSecurityPolicyParseError =
+    rttp_client::response::ContentSecurityPolicy::parse("")
+      .expect_err("empty Content-Security-Policy should be rejected");
+  let content_range: rttp::ContentRange =
+    rttp_client::response::ContentRange::parse("bytes 0-4/10").expect("Content-Range should parse");
   let alt_svc: rttp::AltSvc =
     rttp_client::response::AltSvc::parse("h3=\":443\"; ma=60").expect("Alt-Svc should parse");
   let authentication_info: rttp::AuthenticationInfo =
@@ -116,13 +124,22 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
   assert_eq!(accept_patch.media_types().len(), 1);
   assert_eq!(accept_post.media_types().len(), 1);
-  assert_eq!(content_range.header_value(), "bytes 3-6/10");
+  assert_eq!(content_range_window.header_value(), "bytes 3-6/10");
   assert_eq!(accept_ranges.units(), ["bytes", "pages"]);
   assert_eq!(accept_ranges.header_value(), "bytes, pages");
   assert_eq!(
     content_location.header_value(),
     "../representations/current.json"
   );
+  assert_eq!(
+    content_security_policy.header_value(),
+    "default-src 'self'; object-src 'none'"
+  );
+  assert_eq!("bytes", content_range.unit());
+  assert_eq!(Some(0), content_range.start());
+  assert_eq!(Some(4), content_range.end());
+  assert_eq!(Some(10), content_range.complete_length());
+  assert!(!content_range.is_unsatisfied());
   assert_eq!(alt_svc.alternatives()[0].protocol_id(), "h3");
   assert_eq!(alt_svc.alternatives()[0].max_age(), Some(60));
   assert_eq!(authentication_info.parameter("nextnonce"), Some("n-2"));

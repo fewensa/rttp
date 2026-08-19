@@ -462,6 +462,28 @@ fn response_browser_policy_helpers_preserve_metadata_without_enforcing_it() {
 }
 
 #[test]
+fn response_content_range_helper_parses_and_rejects_duplicate_metadata() {
+  let response = HttpResponse::partial_content("0123456789", HttpByteRange::new(3, 6));
+
+  assert_eq!(
+    Some(HttpContentRange::Bytes {
+      start: 3,
+      end: 6,
+      complete_length: Some(10),
+    }),
+    response
+      .content_range()
+      .expect("Content-Range metadata should parse")
+  );
+
+  assert!(HttpResponse::ok("body")
+    .header("Content-Range", "bytes 0-1/4")
+    .header("Content-Range", "bytes 2-3/4")
+    .content_range()
+    .is_err());
+}
+
+#[test]
 fn response_client_hints_helpers_declare_and_parse_metadata_without_policy() {
   let response = HttpResponse::ok("body")
     .header("Accept-CH", "DPR")

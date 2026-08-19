@@ -4,10 +4,11 @@ use rttp_client::response::{
   AccessControlAllowMethodsParseError, AccessControlExposeHeaders, AccessControlMaxAge,
   AccessControlMaxAgeParseError, Age, AgeParseError, AltSvc, AuthenticationInfo,
   AuthenticationInfoParseError, Connection, ConnectionParseError, ContentRange,
-  ContentRangeParseError, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly,
-  CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest, EntityTag, HttpClearSiteData,
-  HttpContentLength, KeepAlive, LinkValues, Location, LocationParseError, Nel, NoVarySearch,
-  NoVarySearchParams, NoVarySearchParseError, PreferenceApplied, Priority, ProxyAuthenticate,
+  ContentRangeParseError, ContentSecurityPolicy, ContentSecurityPolicyParseError,
+  CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy,
+  CrossOriginResourcePolicy, Digest, EntityTag, HttpClearSiteData, HttpContentLength, KeepAlive,
+  LinkValues, Location, LocationParseError, Nel, NoVarySearch, NoVarySearchParams,
+  NoVarySearchParseError, PreferenceApplied, Priority, ProxyAuthenticate,
   ProxyAuthenticateParseError, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError,
   ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Signature, SignatureInput,
   SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
@@ -51,6 +52,11 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .expect("Content-Location should parse");
   let _: ContentLocationParseError =
     ContentLocation::parse("not valid").expect_err("invalid Content-Location should be rejected");
+  let content_security_policy =
+    ContentSecurityPolicy::parse("default-src 'self'; object-src 'none'")
+      .expect("Content-Security-Policy should parse");
+  let _: ContentSecurityPolicyParseError =
+    ContentSecurityPolicy::parse("").expect_err("empty Content-Security-Policy should be rejected");
   let digest = Digest::parse("sha-256=:YWJj:").expect("Digest should parse");
   let etag = EntityTag::parse("\"asset-v7\"").expect("ETag should parse");
   let location = Location::parse("/next").expect("Location should parse");
@@ -154,6 +160,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(
     content_location.header_value(),
     "../representations/current.json"
+  );
+  assert_eq!(
+    content_security_policy.header_value(),
+    "default-src 'self'; object-src 'none'"
   );
   assert_eq!(digest.entries().len(), 1);
   assert_eq!(etag, EntityTag::strong("asset-v7"));

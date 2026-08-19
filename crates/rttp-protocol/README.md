@@ -89,6 +89,16 @@ repeated codings are retained in wire order so callers can inspect the full
 encoding stack. A present header set that yields no coding still fails as
 invalid.
 
+## Content-Security-Policy
+
+`content_security_policy` parses one or more `Content-Security-Policy` field
+values as opaque response metadata. Each field value is bounded to 64 KiB.
+Absent fields, empty values, ASCII control bytes other than HTAB, and oversized
+values are errors. Valid values are preserved exactly in wire order for
+`header_values()`, with `as_str()` and `header_value()` returning the first
+policy value. This parser does not evaluate directives, enforce browser
+security policy, deliver violation reports, or change raw header availability.
+
 ## Content-Language
 
 `content_language` parses one or more `Content-Language` field values into an
