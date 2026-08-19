@@ -13,6 +13,7 @@ use crate::response::Connection;
 use crate::response::ContentDigest;
 use crate::response::Digest;
 use crate::response::KeepAlive;
+use crate::response::Nel;
 use crate::response::NoVarySearch;
 use crate::response::Priority;
 use crate::response::ProxyAuthenticate;
@@ -651,6 +652,18 @@ impl Response {
       return Ok(None);
     }
     ReportingEndpoints::parse_values(values.into_iter().map(String::as_str)).map(Some)
+  }
+
+  /// Parses the `NEL` response field as bounded W3C Network Error Logging
+  /// policy metadata. This does not send reports or persist policy.
+  pub fn nel(&self) -> error::Result<Option<Nel>> {
+    let values = self.header_values("nel");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Nel::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   pub fn content_encoding(&self) -> error::Result<Option<ContentEncoding>> {
