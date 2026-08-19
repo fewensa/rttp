@@ -2346,6 +2346,22 @@ fn preflight_metadata_helpers_emit_validated_request_headers() {
 }
 
 #[test]
+fn save_data_helper_emits_on_request_token() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/catalog", base_url))
+      .save_data()
+      .expect("Save-Data should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("on"), header_value(&request, "Save-Data"));
+}
+
+#[test]
 fn origin_helper_emits_null_and_normalized_tuple_origins() {
   let request = capture_request(|base_url| {
     client()

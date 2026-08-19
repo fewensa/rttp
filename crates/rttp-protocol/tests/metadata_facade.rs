@@ -28,6 +28,7 @@ use rttp_protocol::prefer::{Prefer, PreferenceApplied, PreferenceKind};
 use rttp_protocol::proxy_authentication_info::ProxyAuthenticationInfo;
 use rttp_protocol::referer::Referer;
 use rttp_protocol::referrer_policy::{ReferrerPolicy, ReferrerPolicyToken};
+use rttp_protocol::save_data::SaveData;
 use rttp_protocol::signature::{Signature, SignatureParseError};
 use rttp_protocol::signature_input::{SignatureInput, SignatureInputParseError};
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
@@ -50,6 +51,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
     .expect("Access-Control-Expose-Headers should parse");
   let request_private_network = AccessControlRequestPrivateNetwork::parse("true")
     .expect("Access-Control-Request-Private-Network should parse");
+  let save_data = SaveData::parse("on").expect("Save-Data should parse");
   let critical_ch = CriticalCh::parse("Sec-CH-UA").expect("Critical-CH should parse");
   let entity_tag = EntityTag::parse("\"revision-42\"").expect("entity tag should parse");
   let if_match = IfMatch::parse("\"revision-42\"").expect("If-Match should parse");
@@ -123,6 +125,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(allow_credentials.header_value(), "true");
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
   assert_eq!(request_private_network.header_value(), "true");
+  assert_eq!(save_data.header_value(), "on");
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
   assert_eq!(entity_tag.opaque_tag(), "revision-42");
   assert_eq!(

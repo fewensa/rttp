@@ -61,6 +61,7 @@ pub mod range;
 pub mod rate_limit;
 pub mod referer;
 pub mod referrer_policy;
+pub mod save_data;
 pub mod server_timing;
 pub mod signature;
 pub mod signature_input;

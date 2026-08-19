@@ -395,6 +395,18 @@ whitespace. Unknown tokens, lists, quoted values, empty values, control
 bytes, and other unparsable input are errors.
 This parser does not evaluate CORS requests or grant credentials automatically.
 
+## Save-Data
+
+`save_data` parses a singleton `Save-Data` request field. Each field value is
+bounded to 64 KiB. A second field is rejected after every supplied field is
+bound-checked. The field value must be exactly the standards-defined `on`
+token, matched case-sensitively and returned in canonical lowercase wire form.
+Surrounding SP and HTAB are trimmed as optional whitespace. Unknown tokens,
+lists, parameterized values, empty values, control bytes, and other
+unparsable input are errors.
+This parser does not apply reduced-data serving, content adaptation, or
+browser data-saver policy.
+
 ## NEL
 
 `nel` parses one `NEL` response field as a bounded JSON object exposing the W3C
