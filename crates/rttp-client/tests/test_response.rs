@@ -3,7 +3,8 @@ use rttp_client::response::{
   CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy,
   CrossOriginResourcePolicy, HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues, Location,
   ProxyAuthenticate, ProxyAuthenticationInfo, ReferrerPolicy, ReferrerPolicyToken, Response,
-  RetryAfter, ServerTiming, StrictTransportSecurity, Warning, XContentTypeOptions, XFrameOptions,
+  RetryAfter, ServerTiming, SignatureInput, StrictTransportSecurity, Warning, XContentTypeOptions,
+  XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -65,6 +66,63 @@ fn clear_site_data_metadata_parses_quoted_directives_and_wildcard_without_cleari
   assert!(wildcard.clears_cookies());
   assert!(wildcard.clears_storage());
   assert!(wildcard.clears_execution_contexts());
+}
+
+#[test]
+fn signature_input_metadata_parses_without_verifying_signatures() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Signature-Input: sig1=(\"@method\" \"@path\");created=1700000000\r\n",
+      "Signature-Input: sig2=(\"content-digest\";sf);keyid=\"test-key\"\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let metadata = response
+    .signature_input()
+    .expect("Signature-Input should parse")
+    .expect("Signature-Input should be present");
+
+  assert_eq!(metadata.members()[0].label(), "sig1");
+  assert_eq!(
+    metadata.members()[1].covered_components()[0].identifier(),
+    "content-digest"
+  );
+  assert_eq!(
+    response.header_values("Signature-Input").len(),
+    2,
+    "raw headers should remain available"
+  );
+}
+
+#[test]
+fn signature_input_metadata_errors_without_hiding_raw_headers() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nSignature-Input: sig1=(content-digest)\r\nContent-Length: 0\r\n\r\n"
+      .to_vec(),
+  )
+  .expect("response should parse");
+
+  assert!(response.signature_input().is_err());
+  assert_eq!(
+    response.header_value("Signature-Input"),
+    Some(&"sig1=(content-digest)".to_string())
+  );
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+  let _: Option<SignatureInput> = absent
+    .signature_input()
+    .expect("absent Signature-Input should not fail");
 }
 
 #[test]
@@ -5003,4 +5061,90 @@ fn test_no_body_status_responses_expose_empty_body_with_illegal_framing_bytes() 
     assert_eq!(Some(&"kept".to_string()), response.header_value("X-Trace"));
     assert_eq!("", response.body().string().unwrap());
   }
+}
+
+#[test]
+fn test_nel_response_helper_parses_typed_policy_metadata() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "NEL: {\"report_to\":\"network-errors\",\"max_age\":2592000,\"include_subdomains\":true,\"success_fraction\":0.1,\"failure_fraction\":1.0}\r\n",
+    "Content-Length: 2\r\n\r\nOK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+  let nel = response
+    .nel()
+    .expect("valid NEL should parse")
+    .expect("NEL should be present");
+
+  assert_eq!(2592000, nel.max_age());
+  assert_eq!(Some("network-errors"), nel.report_to());
+  assert_eq!(Some(true), nel.include_subdomains());
+  assert_eq!(Some(0.1), nel.success_fraction());
+  assert_eq!(Some(1.0), nel.failure_fraction());
+  assert_eq!(
+    Some(&"{\"report_to\":\"network-errors\",\"max_age\":2592000,\"include_subdomains\":true,\"success_fraction\":0.1,\"failure_fraction\":1.0}".to_string()),
+    response.header_value("NEL")
+  );
+}
+
+#[test]
+fn test_nel_response_helper_returns_none_when_absent() {
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response without NEL should parse");
+  assert_eq!(None, absent.nel().expect("absent NEL should parse"));
+}
+
+#[test]
+fn test_nel_rejects_malformed_duplicate_and_oversized_values_without_hiding_headers() {
+  for value in [
+    r#"{bad"#,
+    r#"{"max_age":"1"}"#,
+    r#"{"max_age":1,"max_age":2}"#,
+    r#"{"success_fraction":1.5,"max_age":1}"#,
+    r#"{"max_age":18446744073709551616}"#,
+    r#"{"max_age":1} trailing"#,
+    "",
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\nNEL: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(response.nel().is_err(), "should reject {value:?}");
+    assert_eq!(Some(&value.to_string()), response.header_value("NEL"));
+    assert_eq!("OK", response.body().string().unwrap());
+  }
+
+  let duplicate = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "NEL: {\"max_age\":1}\r\n",
+    "NEL: {\"max_age\":2}\r\n",
+    "Content-Length: 0\r\n\r\n"
+  );
+  let duplicate_response = Response::new(
+    RoUrl::with("https://example.test"),
+    duplicate.as_bytes().to_vec(),
+  )
+  .expect("raw response should remain usable");
+  assert!(
+    duplicate_response.nel().is_err(),
+    "duplicate NEL header fields must be rejected"
+  );
+  assert_eq!(
+    2,
+    duplicate_response.header_values("NEL").len(),
+    "raw duplicate NEL headers must remain available"
+  );
+
+  let oversized = format!("{{\"max_age\":1{}}}", " ".repeat(64 * 1024));
+  let oversized_raw = format!("HTTP/1.1 200 OK\r\nNEL: {oversized}\r\nContent-Length: 0\r\n\r\n");
+  let oversized_response = Response::new(
+    RoUrl::with("https://example.test"),
+    oversized_raw.into_bytes(),
+  )
+  .expect("raw response should remain usable");
+  assert!(oversized_response.nel().is_err());
+  assert_eq!(Some(&oversized), oversized_response.header_value("NEL"));
 }

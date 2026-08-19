@@ -64,6 +64,7 @@ pub use rttp_protocol::cross_origin_opener_policy::{
 pub use rttp_protocol::cross_origin_resource_policy::{
   CrossOriginResourcePolicy, CrossOriginResourcePolicyParseError,
 };
+pub use rttp_protocol::nel::{Nel, NelParseError, NelUnknownMember};
 
 mod raw_response;
 mod response;
@@ -101,8 +102,11 @@ pub use rttp_protocol::server_timing::{
 };
 pub use rttp_protocol::signature::{Signature, SignatureEntry, SignatureParseError};
 pub use rttp_protocol::signature_input::{
-  SignatureInput, SignatureInputBareItem, SignatureInputComponent, SignatureInputEntry,
-  SignatureInputParameter, SignatureInputParseError,
+  SignatureCoveredComponent, SignatureDecimal, SignatureInput, SignatureInputMember,
+  SignatureInputParseError, SignatureParameter, SignatureParameterValue,
+};
+pub use rttp_protocol::signature_input::{
+  SignatureInputBareItem, SignatureInputComponent, SignatureInputEntry, SignatureInputParameter,
 };
 pub use rttp_protocol::strict_transport_security::{
   StrictTransportSecurity, StrictTransportSecurityParseError,

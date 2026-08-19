@@ -46,6 +46,7 @@ pub mod http1;
 pub mod keep_alive;
 pub mod location;
 mod media_type;
+pub mod nel;
 pub mod no_vary_search;
 pub mod origin;
 pub mod prefer;

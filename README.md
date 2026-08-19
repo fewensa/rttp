@@ -652,6 +652,26 @@ on demand without changing them.
 These helpers expose credentials metadata only. RTTP does not evaluate CORS
 requests, attach credentials to requests, or grant credentials automatically.
 
+### Bounded NEL response metadata
+
+`Response::nel()` parses the `NEL` response field as bounded W3C Network Error
+Logging policy metadata. The policy exposes its required non-negative
+`max_age` as `u64`, optional `report_to` name, `include_subdomains` flag, and
+`success_fraction`/`failure_fraction` values as checked members; unknown JSON
+members are preserved verbatim without policy semantics. Absent metadata
+returns `Ok(None)`; malformed JSON, invalid member types, duplicate singleton
+members, non-finite or out-of-range fractions, and oversized input return an
+error while the raw response headers remain available.
+
+On the server, `HttpNel::parse()` validates the same syntax and
+`HttpResponse::with_nel()` replaces raw `NEL` fields with one validated value.
+`HttpResponse::nel()` parses raw response fields on demand without changing
+them.
+
+These helpers expose NEL as metadata only. RTTP does not send network error
+reports, persist policy, configure Reporting endpoint groups, or change
+redirect behavior.
+
 ### Bounded Keep-Alive response metadata
 
 Client `Response::keep_alive()` and server `HttpResponse::keep_alive()` parse
@@ -877,6 +897,7 @@ gain additional HTTP/2 header-block handling.
 | Proxy-Authenticate | Client `Response::proxy_authenticate` and protocol `ProxyAuthenticate::parse`/`parse_values` parse bounded proxy authentication challenges across one or more response fields while preserving raw headers on parse failures | No credential storage, proxy authentication policy, retry, automatic `Proxy-Authorization` generation, Basic/Bearer implementation, redirect behavior, or status-policy behavior |
 | Server-Timing | Client `Response::server_timing` and server `HttpServerTiming`, `HttpResponse::with_server_timing`, and `HttpResponse::server_timing` parse or declare bounded response timing metadata while preserving raw headers on parse failures | No metric collection, measurement, telemetry export, metrics backend integration, retry, redirect behavior, or status-policy behavior |
 | Warning | Client `Response::warning` parses bounded RFC 7234 `Warning` warning-value lists while preserving raw headers on parse failures | No cache storage, freshness calculation, stale-response handling, warn-code policy, retry, redirect behavior, or response-acceptance changes |
+| NEL | Client `Response::nel` and server `HttpNel`, `HttpResponse::with_nel`, and `HttpResponse::nel` parse or declare bounded W3C Network Error Logging policy JSON while preserving raw headers on parse failures | No network error report sending, policy persistence, Reporting endpoint group configuration, retry, redirect behavior, or status-policy behavior |
 | Keep-Alive | Client `Response::keep_alive` and server `HttpKeepAlive`, `HttpResponse::with_keep_alive`, and `HttpResponse::keep_alive` parse or declare bounded RFC 2068 `Keep-Alive` `timeout` and `max` parameters as checked unsigned integers while preserving raw headers on parse failures | No connection lifetime management, connection pooling, keep-alive timers, or HTTP/2 behavior changes |
 | Vary | `Response::vary` parses bounded response `Vary` fields into wildcard or normalized case-insensitive field-name metadata | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | No-Vary-Search | `Response::no_vary_search` parses bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
