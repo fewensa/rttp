@@ -43,6 +43,7 @@ use rttp_protocol::cache_status::CacheStatus;
 use rttp_protocol::cdn_cache_control::CdnCacheControl;
 use rttp_protocol::clear_site_data::ClearSiteData;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
+use rttp_protocol::content_disposition::ContentDisposition;
 use rttp_protocol::content_dpr::ContentDpr;
 use rttp_protocol::content_location::ContentLocation;
 use rttp_protocol::content_security_policy::ContentSecurityPolicy;
@@ -73,9 +74,6 @@ const MAX_ACCEPT_MEDIA_TYPES: usize = 256;
 const MAX_RETRY_AFTER_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_TYPE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_TYPE_PARAMETERS: usize = 256;
-const MAX_CONTENT_DISPOSITION_VALUE_BYTES: usize = 64 * 1024;
-const MAX_CONTENT_DISPOSITION_PARAMETER_VALUE_BYTES: usize = 64 * 1024;
-const MAX_CONTENT_DISPOSITION_PARAMETERS: usize = 256;
 const MAX_CONTENT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_ENCODINGS: usize = 256;
 const MAX_CONTENT_LANGUAGE_VALUE_BYTES: usize = 64 * 1024;
@@ -702,13 +700,12 @@ impl Response {
 
   pub fn content_disposition(&self) -> error::Result<Option<ContentDisposition>> {
     let values = self.header_values("content-disposition");
-    match values.as_slice() {
-      [] => Ok(None),
-      [value] => ContentDisposition::parse(value).map(Some),
-      _ => Err(error::bad_response(
-        "Duplicate Content-Disposition header values",
-      )),
+    if values.is_empty() {
+      return Ok(None);
     }
+    ContentDisposition::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   pub fn content_language(&self) -> error::Result<Option<ContentLanguage>> {
@@ -1598,294 +1595,6 @@ fn parse_content_type_quoted_string(value: &str) -> error::Result<String> {
     return Err(error::bad_response("Malformed Content-Type quoted-string"));
   }
   Ok(parsed)
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ContentDisposition {
-  disposition_type: String,
-  parameters: Vec<ContentDispositionParameter>,
-}
-
-impl ContentDisposition {
-  pub fn parse(value: impl AsRef<str>) -> error::Result<Self> {
-    let value = value.as_ref();
-    if value.len() > MAX_CONTENT_DISPOSITION_VALUE_BYTES {
-      return Err(error::bad_response(
-        "Content-Disposition header value is too large",
-      ));
-    }
-    if value.contains(['\r', '\n']) {
-      return Err(error::bad_response("Invalid Content-Disposition value"));
-    }
-
-    let members = split_content_disposition_members(value)?;
-    let Some(disposition_type) = members.first().map(|member| member.trim()) else {
-      return Err(error::bad_response(
-        "Invalid Content-Disposition disposition type",
-      ));
-    };
-    if !is_token(disposition_type) {
-      return Err(error::bad_response(
-        "Invalid Content-Disposition disposition type",
-      ));
-    }
-
-    let mut parameters = Vec::new();
-    let mut seen = HashSet::new();
-    for member in members.iter().skip(1) {
-      if parameters.len() >= MAX_CONTENT_DISPOSITION_PARAMETERS {
-        return Err(error::bad_response(
-          "Too many Content-Disposition parameters",
-        ));
-      }
-
-      let parameter = ContentDispositionParameter::parse(member)?;
-      let normalized = parameter.name.to_ascii_lowercase();
-      if !seen.insert(normalized) {
-        return Err(error::bad_response(
-          "Duplicate Content-Disposition parameter",
-        ));
-      }
-      parameters.push(parameter);
-    }
-
-    Ok(Self {
-      disposition_type: disposition_type.to_string(),
-      parameters,
-    })
-  }
-
-  pub fn disposition_type(&self) -> &str {
-    &self.disposition_type
-  }
-
-  pub fn parameters(&self) -> &[ContentDispositionParameter] {
-    &self.parameters
-  }
-
-  pub fn parameter(&self, name: impl AsRef<str>) -> Option<&ContentDispositionParameter> {
-    self
-      .parameters
-      .iter()
-      .find(|parameter| parameter.name.eq_ignore_ascii_case(name.as_ref()))
-  }
-
-  pub fn filename(&self) -> Option<&str> {
-    self
-      .parameter("filename")
-      .map(ContentDispositionParameter::value)
-  }
-
-  pub fn filename_ext(&self) -> Option<&str> {
-    self
-      .parameter("filename*")
-      .map(ContentDispositionParameter::value)
-  }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ContentDispositionParameter {
-  name: String,
-  value: String,
-}
-
-impl ContentDispositionParameter {
-  fn parse(value: &str) -> error::Result<Self> {
-    let (name, raw_value) = value
-      .split_once('=')
-      .ok_or_else(|| error::bad_response("Invalid Content-Disposition parameter"))?;
-    let name = name.trim();
-    let raw_value = raw_value.trim();
-    if !is_token(name) {
-      return Err(error::bad_response(
-        "Invalid Content-Disposition parameter name",
-      ));
-    }
-    if raw_value.len() > MAX_CONTENT_DISPOSITION_PARAMETER_VALUE_BYTES {
-      return Err(error::bad_response(
-        "Content-Disposition parameter value is too large",
-      ));
-    }
-
-    let (parsed_value, value_was_quoted) = parse_content_disposition_parameter_value(raw_value)?;
-    if name.eq_ignore_ascii_case("filename*")
-      && (value_was_quoted || !is_content_disposition_ext_value(&parsed_value))
-    {
-      return Err(error::bad_response(
-        "Invalid Content-Disposition filename* parameter",
-      ));
-    }
-
-    Ok(Self {
-      name: name.to_string(),
-      value: parsed_value,
-    })
-  }
-
-  pub fn name(&self) -> &str {
-    &self.name
-  }
-
-  pub fn value(&self) -> &str {
-    &self.value
-  }
-}
-
-fn split_content_disposition_members(value: &str) -> error::Result<Vec<String>> {
-  let mut members = Vec::new();
-  let mut current = String::new();
-  let mut in_quote = false;
-  let mut escaped = false;
-
-  for ch in value.chars() {
-    if escaped {
-      current.push(ch);
-      escaped = false;
-      continue;
-    }
-
-    match ch {
-      '\\' if in_quote => {
-        current.push(ch);
-        escaped = true;
-      }
-      '"' => {
-        current.push(ch);
-        in_quote = !in_quote;
-      }
-      ';' if !in_quote => {
-        push_content_disposition_member(&mut members, &current)?;
-        current.clear();
-      }
-      _ => current.push(ch),
-    }
-  }
-
-  if in_quote || escaped {
-    return Err(error::bad_response(
-      "Malformed Content-Disposition quoted-string",
-    ));
-  }
-  push_content_disposition_member(&mut members, &current)?;
-  Ok(members)
-}
-
-fn push_content_disposition_member(members: &mut Vec<String>, member: &str) -> error::Result<()> {
-  let member = member.trim();
-  if member.is_empty() {
-    return Err(error::bad_response("Invalid Content-Disposition member"));
-  }
-  members.push(member.to_string());
-  Ok(())
-}
-
-fn parse_content_disposition_parameter_value(value: &str) -> error::Result<(String, bool)> {
-  if value.is_empty() {
-    return Err(error::bad_response(
-      "Invalid Content-Disposition parameter value",
-    ));
-  }
-  if let Some(value) = value.strip_prefix('"') {
-    return parse_content_disposition_quoted_string(value).map(|value| (value, true));
-  }
-  if value.contains('"') || !is_token(value) {
-    return Err(error::bad_response(
-      "Invalid Content-Disposition parameter value",
-    ));
-  }
-  Ok((value.to_string(), false))
-}
-
-fn parse_content_disposition_quoted_string(value: &str) -> error::Result<String> {
-  let mut chars = value.chars();
-  let mut parsed = String::new();
-  let mut closed = false;
-
-  while let Some(ch) = chars.next() {
-    match ch {
-      '"' => {
-        closed = true;
-        break;
-      }
-      '\\' => {
-        let Some(escaped) = chars.next() else {
-          return Err(error::bad_response(
-            "Malformed Content-Disposition quoted-string",
-          ));
-        };
-        if !is_quoted_pair_char(escaped) {
-          return Err(error::bad_response(
-            "Malformed Content-Disposition quoted-string",
-          ));
-        }
-        parsed.push(escaped);
-      }
-      _ if is_qdtext(ch) => parsed.push(ch),
-      _ => {
-        return Err(error::bad_response(
-          "Malformed Content-Disposition quoted-string",
-        ))
-      }
-    }
-  }
-
-  if !closed || chars.any(|ch| !ch.is_ascii_whitespace()) {
-    return Err(error::bad_response(
-      "Malformed Content-Disposition quoted-string",
-    ));
-  }
-  Ok(parsed)
-}
-
-fn is_content_disposition_ext_value(value: &str) -> bool {
-  let mut parts = value.splitn(3, '\'');
-  let Some(charset) = parts.next() else {
-    return false;
-  };
-  let Some(language) = parts.next() else {
-    return false;
-  };
-  let Some(encoded_value) = parts.next() else {
-    return false;
-  };
-
-  !charset.is_empty()
-    && is_token(charset)
-    && language.bytes().all(is_content_disposition_language_byte)
-    && !encoded_value.is_empty()
-    && is_content_disposition_ext_value_chars(encoded_value)
-}
-
-fn is_content_disposition_ext_value_chars(value: &str) -> bool {
-  let mut bytes = value.bytes().peekable();
-  while let Some(byte) = bytes.next() {
-    if byte == b'%' {
-      let Some(first) = bytes.next() else {
-        return false;
-      };
-      let Some(second) = bytes.next() else {
-        return false;
-      };
-      if !first.is_ascii_hexdigit() || !second.is_ascii_hexdigit() {
-        return false;
-      }
-    } else if !is_content_disposition_attr_char(byte) {
-      return false;
-    }
-  }
-  true
-}
-
-fn is_content_disposition_attr_char(byte: u8) -> bool {
-  byte.is_ascii_alphanumeric()
-    || matches!(
-      byte,
-      b'!' | b'#' | b'$' | b'&' | b'+' | b'-' | b'.' | b'^' | b'_' | b'`' | b'|' | b'~'
-    )
-}
-
-fn is_content_disposition_language_byte(byte: u8) -> bool {
-  byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.')
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
