@@ -38,6 +38,7 @@ pub use rttp_protocol::access_control_max_age::{
   AccessControlMaxAge, AccessControlMaxAgeParseError,
 };
 pub use rttp_protocol::age::{Age, AgeParseError};
+pub use rttp_protocol::cdn_cache_control::{CdnCacheControl, CdnCacheControlParseError};
 pub use rttp_protocol::clear_site_data::{
   ClearSiteData as HttpClearSiteData, ClearSiteDataDirective as HttpClearSiteDataDirective,
   ClearSiteDataParseError as HttpClearSiteDataParseError,

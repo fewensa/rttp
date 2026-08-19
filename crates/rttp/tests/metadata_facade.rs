@@ -16,6 +16,12 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp_client::response::AcceptCh::parse("Sec-CH-UA, DPR").expect("Accept-CH should parse");
   let critical_ch: rttp::CriticalCh =
     rttp_client::response::CriticalCh::parse("Sec-CH-UA").expect("Critical-CH should parse");
+  let cdn_cache_control: rttp::CdnCacheControl =
+    rttp_client::response::CdnCacheControl::parse("max-age=600, cdn-example=\"a, b\"")
+      .expect("CDN-Cache-Control should parse");
+  let _: rttp::CdnCacheControlParseError =
+    rttp_client::response::CdnCacheControl::parse("max-age=")
+      .expect_err("invalid CDN-Cache-Control should fail");
   let accept_patch: rttp::AcceptPatch =
     rttp_client::response::AcceptPatch::parse("application/json")
       .expect("Accept-Patch should parse");
@@ -86,6 +92,7 @@ fn compatibility_facade_exports_client_metadata_types() {
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
+  assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
   assert_eq!(accept_patch.media_types().len(), 1);
   assert_eq!(accept_post.media_types().len(), 1);
   assert_eq!(content_range.header_value(), "bytes 3-6/10");

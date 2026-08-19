@@ -3,15 +3,16 @@ use rttp_server::server::{
   HttpAccessControlRequestHeaders, HttpAccessControlRequestHeadersParseError,
   HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError,
   HttpAccessControlRequestPrivateNetwork, HttpAccessControlRequestPrivateNetworkParseError,
-  HttpConditionalMetadata, HttpConnection, HttpConnectionParseError, HttpContentLength,
-  HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
-  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpHost,
-  HttpKeepAlive, HttpNoVarySearch, HttpNoVarySearchParams, HttpPreferenceKind, HttpRequest,
-  HttpResponse, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
-  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpTransferEncoding,
-  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeParseError, HttpWantContentDigest,
-  HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
+  HttpCdnCacheControl, HttpConditionalMetadata, HttpConnection, HttpConnectionParseError,
+  HttpContentLength, HttpContentLocation, HttpContentLocationParseError, HttpContentRange,
+  HttpContentRangeParseError, HttpCrossOriginEmbedderPolicyReportOnly,
+  HttpCrossOriginResourcePolicy, HttpEntityTag, HttpHost, HttpKeepAlive, HttpNoVarySearch,
+  HttpNoVarySearchParams, HttpPreferenceKind, HttpRequest, HttpResponse, HttpSignature,
+  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
+  HttpUpgradeParseError, HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode,
+  SecFetchSite, SecFetchUser,
 };
 
 #[test]
@@ -48,6 +49,9 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpNoVarySearch::parse(r#"params=("utm_source")"#).expect("No-Vary-Search should parse");
   let policy: HttpCrossOriginResourcePolicy = HttpCrossOriginResourcePolicy::parse("same-origin")
     .expect("Cross-Origin-Resource-Policy should parse");
+  let cdn_cache_control: HttpCdnCacheControl =
+    HttpCdnCacheControl::parse("max-age=600, cdn-example=\"a, b\"")
+      .expect("CDN-Cache-Control should parse");
   let content_range = HttpContentRange::parse("bytes */10").expect("Content-Range should parse");
   let content_range_error: Result<HttpContentRange, HttpContentRangeParseError> =
     HttpContentRange::parse("bytes */*");
@@ -65,7 +69,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     .expect_err("invalid Content-Location should be rejected");
   let response = HttpResponse::ok("")
     .with_accept_ch(["Sec-CH-UA"])
-    .expect("Accept-CH should be accepted");
+    .expect("Accept-CH should be accepted")
+    .header("CDN-Cache-Control", "max-age=600, cdn-example=\"a, b\"");
   let keep_alive = HttpKeepAlive::parse("timeout=5, max=100").expect("Keep-Alive should parse");
   let keep_alive_response = HttpResponse::ok("")
     .with_keep_alive("timeout=5, max=100")
@@ -90,6 +95,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(request_private_network.header_value(), "true");
   assert!(request_private_network_error.is_err());
   assert_eq!(policy.header_value(), "same-origin");
+  assert_eq!(cdn_cache_control.directives()[1].name(), "cdn-example");
+  assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
   assert_eq!(report_only_policy.header_value(), "require-corp");
   assert_eq!(signature_input.members()[0].label(), "sig1");
   assert!(signature_input_error.is_err());
@@ -125,6 +132,15 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .client_hints(),
     ["Sec-CH-UA"]
   );
+  assert_eq!(
+    response
+      .cdn_cache_control()
+      .expect("CDN-Cache-Control should parse")
+      .expect("CDN-Cache-Control should be present")
+      .directives()[0]
+      .value(),
+    Some("600")
+  );
   assert_eq!(Some(5), keep_alive.timeout());
   assert_eq!(Some(100), keep_alive.max());
   assert_eq!(
@@ -140,6 +156,30 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_dest.header_value(), "document");
   assert_eq!(fetch_user.header_value(), "?1");
   assert_eq!(upgrade.protocols(), ["websocket"]);
+}
+
+#[test]
+fn response_facade_parses_cdn_cache_control_and_absent_metadata() {
+  let response = HttpResponse::ok("")
+    .header("CDN-Cache-Control", "max-age=600, cdn-example=\"a, b\"")
+    .header("cdn-cache-control", "immutable");
+
+  let metadata = response
+    .cdn_cache_control()
+    .expect("CDN-Cache-Control should parse")
+    .expect("CDN-Cache-Control should be present");
+
+  assert_eq!(metadata.len(), 3);
+  assert_eq!(metadata.directives()[1].name(), "cdn-example");
+  assert_eq!(metadata.directives()[1].value(), Some("a, b"));
+  let malformed = HttpResponse::ok("").header("CDN-Cache-Control", "max-age=");
+  assert!(malformed.cdn_cache_control().is_err());
+
+  let absent = HttpResponse::ok("");
+  assert!(absent
+    .cdn_cache_control()
+    .expect("missing header should be valid")
+    .is_none());
 }
 
 #[test]
