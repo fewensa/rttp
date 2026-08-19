@@ -1387,6 +1387,29 @@ fn test_www_authenticate_response_helper_parses_bounded_challenges() {
 }
 
 #[test]
+fn test_www_authenticate_response_helper_combines_repeated_field_parameters() {
+  let raw = concat!(
+    "HTTP/1.1 401 Unauthorized\r\n",
+    "WWW-Authenticate: Digest realm=apps\r\n",
+    "WWW-Authenticate: nonce=abc\r\n",
+    "Content-Length: 2\r\n\r\nOK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  let challenges = response
+    .www_authenticate()
+    .expect("valid challenges should parse")
+    .expect("WWW-Authenticate should be present");
+
+  assert_eq!(1, challenges.len());
+  let digest = &challenges.challenges()[0];
+  assert_eq!("Digest", digest.scheme());
+  assert_eq!(Some("apps"), digest.parameter("realm"));
+  assert_eq!(Some("abc"), digest.parameter("nonce"));
+}
+
+#[test]
 fn test_www_authenticate_preserves_quoted_parameter_wire_bytes() {
   let raw = concat!(
     "HTTP/1.1 401 Unauthorized\r\n",
