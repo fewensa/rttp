@@ -6,13 +6,14 @@ use rttp_server::server::{
   HttpAccessControlRequestPrivateNetworkParseError, HttpCdnCacheControl, HttpConditionalMetadata,
   HttpConnection, HttpConnectionParseError, HttpContentDisposition, HttpContentLength,
   HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
-  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpHost,
-  HttpKeepAlive, HttpNoVarySearch, HttpNoVarySearchParams, HttpPreferenceKind, HttpRequest,
-  HttpResponse, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
-  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpTransferEncoding,
-  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeParseError, HttpWantContentDigest,
-  HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
+  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeprecation,
+  HttpDeprecationParseError, HttpEntityTag, HttpHost, HttpKeepAlive, HttpNoVarySearch,
+  HttpNoVarySearchParams, HttpPreferenceKind, HttpRequest, HttpResponse, HttpSignature,
+  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
+  HttpUpgradeParseError, HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode,
+  SecFetchSite, SecFetchUser,
 };
 
 #[test]
@@ -72,8 +73,12 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     .expect("Content-Location should parse");
   let _: HttpContentLocationParseError = HttpContentLocation::parse("not valid")
     .expect_err("invalid Content-Location should be rejected");
+  let deprecation = HttpDeprecation::parse("?1").expect("Deprecation should parse");
+  let _: HttpDeprecationParseError =
+    HttpDeprecation::parse("true").expect_err("historical Deprecation token should be rejected");
   let response = HttpResponse::ok("")
     .with_etag(HttpEntityTag::weak("revision-42"))
+    .with_deprecation(HttpDeprecation::Boolean(true))
     .with_accept_ch(["Sec-CH-UA"])
     .expect("Accept-CH should be accepted")
     .header("CDN-Cache-Control", "max-age=600, cdn-example=\"a, b\"");
@@ -117,6 +122,15 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(
     content_location.header_value(),
     "../representations/current.json"
+  );
+  assert_eq!(deprecation, HttpDeprecation::Boolean(true));
+  assert_eq!(deprecation.header_value(), "?1");
+  assert_eq!(
+    response
+      .deprecation()
+      .expect("Deprecation should parse")
+      .expect("Deprecation should be present"),
+    HttpDeprecation::Boolean(true)
   );
   assert_eq!(
     metadata

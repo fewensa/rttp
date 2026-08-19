@@ -13,11 +13,11 @@ pub use rttp_client::response::{
   ContentRange, ContentRangeParseError, ContentSecurityPolicy, ContentSecurityPolicyParseError,
   CriticalCh, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyParseError,
   CrossOriginEmbedderPolicyReportOnly, CrossOriginEmbedderPolicyReportOnlyParseError,
-  CrossOriginOpenerPolicy, CrossOriginOpenerPolicyParseError, EntityTag, EntityTagParseError,
-  HttpContentLength, Location, LocationParseError, Nel, NelParseError, NelUnknownMember,
-  NoVarySearch, NoVarySearchParams, NoVarySearchParseError, StrictTransportSecurity,
-  StrictTransportSecurityParseError, Upgrade, UpgradeParseError, WwwAuthenticate,
-  WwwAuthenticateChallenge, WwwAuthenticateParameter, WwwAuthenticateParseError,
+  CrossOriginOpenerPolicy, CrossOriginOpenerPolicyParseError, Deprecation, DeprecationParseError,
+  EntityTag, EntityTagParseError, HttpContentLength, Location, LocationParseError, Nel,
+  NelParseError, NelUnknownMember, NoVarySearch, NoVarySearchParams, NoVarySearchParseError,
+  StrictTransportSecurity, StrictTransportSecurityParseError, Upgrade, UpgradeParseError,
+  WwwAuthenticate, WwwAuthenticateChallenge, WwwAuthenticateParameter, WwwAuthenticateParseError,
   XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 #[cfg(feature = "client")]

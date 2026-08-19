@@ -14,6 +14,7 @@ use rttp_protocol::content_type::ContentType;
 use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
 use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedderPolicyReportOnly;
 use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
+use rttp_protocol::deprecation::Deprecation;
 use rttp_protocol::entity_tag::{EntityTag, IfMatch};
 use rttp_protocol::fetch_metadata::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 use rttp_protocol::from::From;
@@ -92,6 +93,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
     ContentType::parse("text/plain; charset=utf-8").expect("Content-Type should parse");
   let content_location = ContentLocation::parse("../representations/current.json")
     .expect("Content-Location should parse");
+  let deprecation = Deprecation::parse("?1").expect("Deprecation should parse");
   let connection = Connection::parse("keep-alive, TE").expect("Connection should parse");
   let content_encoding = ContentEncoding::parse("gzip, br").expect("Content-Encoding should parse");
   let content_security_policy =
@@ -139,6 +141,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(keep_alive.timeout(), Some(5));
   assert_eq!(keep_alive.max(), Some(100));
   assert_eq!(keep_alive.header_value(), "timeout=5, max=100");
+  assert_eq!(deprecation, Deprecation::Boolean(true));
+  assert_eq!(deprecation.header_value(), "?1");
   assert_eq!(location.as_str(), "../login?next=%2Fdashboard");
   assert_eq!(host.host(), "example.test");
   assert_eq!(host.port(), Some("8443"));
