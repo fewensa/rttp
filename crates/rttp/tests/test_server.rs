@@ -7391,8 +7391,8 @@ fn conditional_request_helpers_compare_http_dates_at_second_precision() {
 
 #[test]
 fn conditional_request_helpers_evaluate_head_if_modified_since_as_not_modified() {
-  let metadata = HttpConditionalMetadata::new()
-    .last_modified(UNIX_EPOCH + Duration::from_secs(784_111_777));
+  let metadata =
+    HttpConditionalMetadata::new().last_modified(UNIX_EPOCH + Duration::from_secs(784_111_777));
 
   let outcome = conditional_outcome_for(
     concat!(
@@ -7409,8 +7409,8 @@ fn conditional_request_helpers_evaluate_head_if_modified_since_as_not_modified()
 
 #[test]
 fn conditional_request_helpers_evaluate_head_if_unmodified_since_as_precondition_failed() {
-  let metadata = HttpConditionalMetadata::new()
-    .last_modified(UNIX_EPOCH + Duration::from_secs(784_111_777));
+  let metadata =
+    HttpConditionalMetadata::new().last_modified(UNIX_EPOCH + Duration::from_secs(784_111_777));
 
   let outcome = conditional_outcome_for(
     concat!(
