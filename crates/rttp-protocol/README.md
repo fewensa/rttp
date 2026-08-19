@@ -35,6 +35,18 @@ beyond `u64::MAX`, and forbidden ASCII control bytes are errors. This parser
 reports declared metadata only; it does not calculate freshness, adjust age
 over elapsed time, store cache entries, or apply cache policy.
 
+## Content-DPR
+
+`content_dpr` parses a singleton HTTP `Content-DPR` field as a finite positive
+decimal ratio matching `1*DIGIT["." 1*DIGIT]`. Each field value is bounded to
+64 KiB. A second field is rejected after every supplied field is bound-checked.
+Surrounding SP and HTAB are trimmed as optional whitespace, and the trimmed
+decimal text is preserved through `header_value()`. Empty values, zero,
+non-finite numbers, trailing or leading decimal points, signs, exponent
+notation, leftover characters, and forbidden ASCII control bytes are errors.
+This parser reports declared metadata only; it does not rescale images, send
+request DPR, apply Client Hints policy, retry, or change transport.
+
 ## Deprecation
 
 `deprecation` parses a singleton HTTP `Deprecation` field as one Structured

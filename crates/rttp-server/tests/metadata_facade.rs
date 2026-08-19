@@ -5,16 +5,16 @@ use rttp_server::server::{
   HttpAccessControlRequestMethodParseError, HttpAccessControlRequestPrivateNetwork,
   HttpAccessControlRequestPrivateNetworkParseError, HttpCacheStatus, HttpCacheStatusParseError,
   HttpCdnCacheControl, HttpConditionalMetadata, HttpConnection, HttpConnectionParseError,
-  HttpContentDisposition, HttpContentLength, HttpContentLocation, HttpContentLocationParseError,
-  HttpContentRange, HttpContentRangeParseError, HttpCrossOriginEmbedderPolicyReportOnly,
-  HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpEntityTag,
-  HttpHost, HttpKeepAlive, HttpNoVarySearch, HttpNoVarySearchParams, HttpPreferenceKind,
-  HttpRequest, HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSignature,
-  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
-  HttpUpgradeParseError, HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode,
-  SecFetchSite, SecFetchUser, SecPurpose,
+  HttpContentDisposition, HttpContentDpr, HttpContentDprParseError, HttpContentLength,
+  HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
+  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeprecation,
+  HttpDeprecationParseError, HttpEntityTag, HttpHost, HttpKeepAlive, HttpNoVarySearch,
+  HttpNoVarySearchParams, HttpPreferenceKind, HttpRequest, HttpResponse, HttpSaveData,
+  HttpSaveDataParseError, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
+  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
+  HttpSignatureInputParseError, HttpSignatureParseError, HttpTransferEncoding,
+  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeParseError, HttpWantContentDigest,
+  HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
 
 #[test]
@@ -80,6 +80,9 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     .expect("Content-Location should parse");
   let _: HttpContentLocationParseError = HttpContentLocation::parse("not valid")
     .expect_err("invalid Content-Location should be rejected");
+  let content_dpr = HttpContentDpr::parse("1.5").expect("Content-DPR should parse");
+  let _: HttpContentDprParseError =
+    HttpContentDpr::parse("0").expect_err("zero Content-DPR should be rejected");
   let deprecation = HttpDeprecation::parse("?1").expect("Deprecation should parse");
   let _: HttpDeprecationParseError =
     HttpDeprecation::parse("true").expect_err("historical Deprecation token should be rejected");
@@ -138,6 +141,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     content_location.header_value(),
     "../representations/current.json"
   );
+  assert_eq!(content_dpr.ratio(), 1.5);
+  assert_eq!(content_dpr.header_value(), "1.5");
   assert_eq!(deprecation, HttpDeprecation::Boolean(true));
   assert_eq!(deprecation.header_value(), "?1");
   assert_eq!(
@@ -648,5 +653,74 @@ fn response_facade_round_trips_escaped_content_disposition_parameter_value() {
   assert_eq!(
     r#"attachment; filename="a\"b\\c""#,
     disposition.header_value()
+  );
+}
+
+#[test]
+fn response_content_dpr_helper_declares_and_parses_singleton_metadata() {
+  let absent = HttpResponse::ok("body");
+  assert_eq!(
+    None,
+    absent
+      .content_dpr()
+      .expect("absent Content-DPR should parse")
+  );
+
+  let response = HttpResponse::ok("body")
+    .header("Content-DPR", "3")
+    .with_content_dpr(" 2.0 ")
+    .expect("valid Content-DPR should be accepted");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nContent-DPR: 2.0\r\n"));
+  assert_eq!(1, serialized.matches("\r\nContent-DPR: ").count());
+  assert_eq!(
+    2.0,
+    response
+      .content_dpr()
+      .expect("Content-DPR should parse")
+      .expect("Content-DPR should be present")
+      .ratio()
+  );
+
+  let attached = HttpResponse::ok("body").header("Content-DPR", "1.5");
+  assert_eq!(
+    "1.5",
+    attached
+      .content_dpr()
+      .expect("attached Content-DPR should parse")
+      .expect("Content-DPR should be present")
+      .header_value()
+  );
+}
+
+#[test]
+fn content_dpr_helper_rejects_invalid_duplicate_and_oversized_values() {
+  for value in ["0", "2.", ".5", "+1", "1e1", "1\u{7f}"] {
+    assert!(
+      HttpResponse::ok("body").with_content_dpr(value).is_err(),
+      "Content-DPR helper should reject {value:?}"
+    );
+  }
+
+  let duplicate = HttpResponse::ok("body")
+    .header("Content-DPR", "1")
+    .header("content-dpr", "2.0");
+  assert!(
+    duplicate.content_dpr().is_err(),
+    "Content-DPR parser should reject duplicate header fields"
+  );
+
+  let oversized = "1".repeat(64 * 1024 + 1);
+  assert!(
+    HttpResponse::ok("body")
+      .with_content_dpr(&oversized)
+      .is_err(),
+    "Content-DPR helper should reject oversized values"
+  );
+  let response = HttpResponse::ok("body").header("Content-DPR", oversized);
+  assert!(
+    response.content_dpr().is_err(),
+    "Content-DPR parser should reject oversized raw values"
   );
 }
