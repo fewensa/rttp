@@ -2515,6 +2515,55 @@ fn request_idempotency_key_is_optional_bounded_and_preserves_invalid_headers() {
 }
 
 #[test]
+fn request_trace_context_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(None, absent.traceparent().expect("missing traceparent"));
+  assert_eq!(None, absent.tracestate().expect("missing tracestate"));
+
+  let request = Request::from_raw_frame(
+    b"GET /trace HTTP/1.1\r\nHost: example.test\r\ntraceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\r\ntracestate: rojo=00f067aa0ba902b7\r\ntracestate: congo=t61rcWkgMzE\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let traceparent = request
+    .traceparent()
+    .expect("traceparent should parse")
+    .expect("traceparent should be present");
+  assert_eq!("00", traceparent.version());
+  assert_eq!("4bf92f3577b34da6a3ce929d0e0e4736", traceparent.trace_id());
+  assert!(traceparent.sampled());
+  let tracestate = request
+    .tracestate()
+    .expect("tracestate should parse")
+    .expect("tracestate should be present");
+  assert_eq!(2, tracestate.members().len());
+  assert_eq!("rojo", tracestate.members()[0].key());
+  assert_eq!(
+    Some("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"),
+    request.header("traceparent")
+  );
+
+  let invalid = Request::from_raw_frame(
+    b"GET /trace HTTP/1.1\r\nHost: example.test\r\ntraceparent: 00-00000000000000000000000000000000-00f067aa0ba902b7-01\r\ntracestate: rojo=1,rojo=2\r\n\r\n",
+  )
+  .expect("request should retain invalid trace context metadata");
+  assert!(invalid.traceparent().is_err());
+  assert!(invalid.tracestate().is_err());
+  assert_eq!(
+    Some("00-00000000000000000000000000000000-00f067aa0ba902b7-01"),
+    invalid.header("traceparent")
+  );
+  assert_eq!(Some("rojo=1,rojo=2"), invalid.header("tracestate"));
+
+  let duplicate = Request::from_raw_frame(
+    b"GET /trace HTTP/1.1\r\nHost: example.test\r\ntraceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\r\nTraceparent: 00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-00\r\n\r\n",
+  )
+  .expect("request should retain duplicate traceparent metadata");
+  assert!(duplicate.traceparent().is_err());
+}
+
+#[test]
 fn request_cookies_are_bounded_and_preserve_pairs() {
   let request = Request::from_raw_frame(
     b"GET / HTTP/1.1\r\nHost: example.test\r\nCookie: session=abc; theme=dark\r\nCookie: flag=\r\n\r\n",
@@ -3249,6 +3298,50 @@ hello\r\n\
     assert!(cookie_header_debug.contains("Cookie"));
     assert!(cookie_header_debug.contains("[REDACTED]"));
     assert!(!cookie_header_debug.contains("session=private"));
+
+    let trace_raw = concat!(
+      "GET /trace HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\r\n",
+      "tracestate: rojo=00f067aa0ba902b7\r\n",
+      "\r\n"
+    );
+    let trace_request =
+      Request::from_raw_frame(trace_raw.as_bytes()).expect("trace request should parse");
+    let traceparent = trace_request
+      .traceparent()
+      .expect("traceparent should parse")
+      .expect("traceparent should be present");
+    let tracestate = trace_request
+      .tracestate()
+      .expect("tracestate should parse")
+      .expect("tracestate should be present");
+    assert_eq!("4bf92f3577b34da6a3ce929d0e0e4736", traceparent.trace_id());
+    assert_eq!("00f067aa0ba902b7", tracestate.members()[0].value());
+    let trace_debug = format!(
+      "{trace_request:?} {:?} {:?}",
+      traceparent,
+      tracestate.members()[0]
+    );
+    assert!(!trace_debug.contains("4bf92f3577b34da6a3ce929d0e0e4736"));
+    assert!(!trace_debug.contains("00f067aa0ba902b7"));
+
+    let trace_http_request =
+      HttpRequest::parse(trace_raw.as_bytes()).expect("trace HttpRequest should parse");
+    let trace_http_request_debug = format!("{trace_http_request:?}");
+    assert!(!trace_http_request_debug.contains("4bf92f3577b34da6a3ce929d0e0e4736"));
+    assert!(!trace_http_request_debug.contains("00f067aa0ba902b7"));
+    let trace_header_debug = format!(
+      "{:?} {:?}",
+      HttpHeader::new(
+        "traceparent",
+        "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+      ),
+      HttpHeader::new("tracestate", "rojo=00f067aa0ba902b7")
+    );
+    assert!(trace_header_debug.contains("[REDACTED]"));
+    assert!(!trace_header_debug.contains("4bf92f3577b34da6a3ce929d0e0e4736"));
+    assert!(!trace_header_debug.contains("00f067aa0ba902b7"));
 
     let response = HttpResponse::new(401, "Unauthorized")
       .header("WWW-Authenticate", "Broken")
