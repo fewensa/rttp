@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::error::Error;
 use std::fmt;
 use std::time::SystemTime;
 
@@ -45,6 +46,8 @@ use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::sunset::parse_sunset_values;
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
 use rttp_protocol::vary::Vary;
+use rttp_protocol::x_content_type_options::XContentTypeOptions;
+use rttp_protocol::x_frame_options::XFrameOptions;
 
 const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
@@ -52,6 +55,7 @@ const MAX_ACCEPT_RANGES_VALUE_BYTES: usize = 64 * 1024;
 const MAX_ACCEPT_RANGE_UNITS: usize = 256;
 const MAX_ACCEPT_MEDIA_TYPES: usize = 256;
 const MAX_DATE_VALUE_BYTES: usize = 64 * 1024;
+const MAX_AGE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_RETRY_AFTER_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_TYPE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_TYPE_PARAMETERS: usize = 256;
@@ -73,6 +77,7 @@ const MAX_REPORTING_ENDPOINTS: usize = 256;
 pub struct Response {
   raw: RawResponse,
   informational_responses: Vec<InformationalResponse>,
+  content_length: Option<HttpContentLength>,
 }
 
 impl Response {
@@ -80,6 +85,7 @@ impl Response {
     Ok(Self {
       raw: RawResponse::new(url, binary)?,
       informational_responses: Vec::new(),
+      content_length: None,
     })
   }
 
@@ -102,6 +108,7 @@ impl Response {
       binary,
       trailers,
       Vec::new(),
+      None,
       max_body_bytes,
     )
   }
@@ -117,6 +124,7 @@ impl Response {
       binary,
       trailers,
       informational_responses,
+      None,
       crate::config::DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES,
     )
   }
@@ -126,11 +134,13 @@ impl Response {
     binary: Vec<u8>,
     trailers: Vec<Header>,
     informational_responses: Vec<InformationalResponse>,
+    content_length: Option<HttpContentLength>,
     max_body_bytes: usize,
   ) -> error::Result<Self> {
     Ok(Self {
       raw: RawResponse::with_trailers_and_limit(url, binary, trailers, max_body_bytes)?,
       informational_responses,
+      content_length,
     })
   }
 }
@@ -295,6 +305,10 @@ impl Response {
 
   pub fn body(&self) -> &ResponseBody {
     self.raw.body_get()
+  }
+
+  pub fn content_length(&self) -> Option<HttpContentLength> {
+    self.content_length
   }
 
   pub fn binary(&self) -> &[u8] {
@@ -557,6 +571,28 @@ impl Response {
       return Ok(None);
     }
     StrictTransportSecurity::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `X-Content-Type-Options` response metadata without applying MIME-sniffing policy.
+  pub fn x_content_type_options(&self) -> error::Result<Option<XContentTypeOptions>> {
+    let values = self.header_values("x-content-type-options");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    XContentTypeOptions::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `X-Frame-Options` response metadata without applying clickjacking policy.
+  pub fn x_frame_options(&self) -> error::Result<Option<XFrameOptions>> {
+    let values = self.header_values("x-frame-options");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    XFrameOptions::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
@@ -989,6 +1025,86 @@ impl fmt::Display for Response {
     fmt::Display::fmt(&self.raw, formatter)
   }
 }
+
+/// Read-only HTTP `Content-Length` framing metadata.
+///
+/// This value is populated from already validated message framing state. It
+/// does not parse headers or decide body framing.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct HttpContentLength {
+  len: usize,
+}
+
+impl HttpContentLength {
+  pub fn new(len: usize) -> Self {
+    Self { len }
+  }
+
+  pub fn len(&self) -> usize {
+    self.len
+  }
+
+  pub fn is_zero(&self) -> bool {
+    self.len == 0
+  }
+
+  pub fn is_empty(&self) -> bool {
+    self.is_zero()
+  }
+
+  pub fn header_value(&self) -> String {
+    self.len.to_string()
+  }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct Age(u64);
+
+impl Age {
+  pub const fn new(seconds: u64) -> Self {
+    Self(seconds)
+  }
+
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, AgeParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, AgeParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    parse_age_singleton(values).map(Self)
+  }
+
+  pub const fn seconds(self) -> u64 {
+    self.0
+  }
+
+  pub fn header_value(self) -> String {
+    self.0.to_string()
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AgeParseError {
+  message: String,
+}
+
+impl AgeParseError {
+  fn new(message: impl Into<String>) -> Self {
+    Self {
+      message: message.into(),
+    }
+  }
+}
+
+impl fmt::Display for AgeParseError {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter.write_str(&self.message)
+  }
+}
+
+impl Error for AgeParseError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Allow {
@@ -2606,6 +2722,46 @@ fn parse_age_delta_seconds(value: &str) -> error::Result<u64> {
   value
     .parse::<u64>()
     .map_err(|_| error::bad_response("Invalid Age delta-seconds"))
+}
+
+fn parse_age_singleton<'a, I>(values: I) -> Result<u64, AgeParseError>
+where
+  I: IntoIterator<Item = &'a str>,
+{
+  let mut values = values.into_iter();
+  let value = values.next().ok_or_else(invalid_age_value)?;
+  validate_age_value(value)?;
+  let mut has_duplicate = false;
+  for value in values {
+    has_duplicate = true;
+    validate_age_value(value)?;
+  }
+  if has_duplicate {
+    return Err(AgeParseError::new("duplicate Age header fields"));
+  }
+
+  let value = value.trim_matches([' ', '\t']);
+  if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+    return Err(invalid_age_value());
+  }
+  value.parse().map_err(|_| invalid_age_value())
+}
+
+fn validate_age_value(value: &str) -> Result<(), AgeParseError> {
+  if value.len() > MAX_AGE_VALUE_BYTES {
+    return Err(AgeParseError::new("Age header value is too large"));
+  }
+  if value
+    .bytes()
+    .any(|byte| byte.is_ascii_control() && byte != b'\t')
+  {
+    return Err(AgeParseError::new("invalid Age control byte"));
+  }
+  Ok(())
+}
+
+fn invalid_age_value() -> AgeParseError {
+  AgeParseError::new("invalid Age header value")
 }
 
 fn split_field_names(value: &str) -> Vec<String> {

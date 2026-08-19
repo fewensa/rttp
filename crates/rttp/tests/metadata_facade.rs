@@ -60,6 +60,12 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp_client::response::Location::parse("/next").expect("Location should parse");
   let _: rttp::LocationParseError =
     rttp_client::response::Location::parse("").expect_err("empty Location should be rejected");
+  let content_length = rttp::HttpContentLength::new(123);
+  let x_content_type_options: rttp::XContentTypeOptions =
+    rttp_client::response::XContentTypeOptions::parse("nosniff")
+      .expect("X-Content-Type-Options should parse");
+  let x_frame_options: rttp::XFrameOptions =
+    rttp_client::response::XFrameOptions::parse("DENY").expect("X-Frame-Options should parse");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
@@ -85,6 +91,9 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(fetch_site.header_value(), "same-origin");
   assert_eq!(etag, rttp::EntityTag::strong("asset-v7"));
   assert_eq!(location.as_str(), "/next");
+  assert_eq!(content_length.len(), 123);
+  assert_eq!(x_content_type_options.header_value(), "nosniff");
+  assert_eq!(x_frame_options.header_value(), "DENY");
 }
 
 #[test]

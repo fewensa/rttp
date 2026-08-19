@@ -3,13 +3,15 @@ use rttp_client::response::{
   AccessControlAllowMethods, AccessControlAllowMethodsParseError, AccessControlExposeHeaders,
   AccessControlMaxAge, AccessControlMaxAgeParseError, AltSvc, Connection, ConnectionParseError,
   CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy,
-  CrossOriginResourcePolicy, Digest, HttpClearSiteData, Location, LocationParseError, NoVarySearch,
-  NoVarySearchParams, NoVarySearchParseError, PreferenceApplied, Priority, ProxyAuthenticationInfo,
-  ProxyAuthenticationInfoParseError, ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Signature,
-  SignatureInput, SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
-  StrictTransportSecurityParseError, Trailer, TransferEncoding, TransferEncodingParseError, Vary,
-  VaryParseError, WantContentDigest, WantReprDigest, Warning,
+  CrossOriginResourcePolicy, Digest, HttpClearSiteData, HttpContentLength, Location,
+  LocationParseError, NoVarySearch, NoVarySearchParams, NoVarySearchParseError, PreferenceApplied,
+  Priority, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ReferrerPolicy,
+  ReferrerPolicyToken, ServerTiming, Signature, SignatureInput, SignatureInputParseError,
+  SignatureParseError, StrictTransportSecurity, StrictTransportSecurityParseError, Trailer,
+  TransferEncoding, TransferEncodingParseError, Vary, VaryParseError, WantContentDigest,
+  WantReprDigest, Warning, XContentTypeOptions, XFrameOptions,
 };
+use rttp_client::response::{Age, AgeParseError};
 use rttp_client::response::{
   ContentDigest, ContentLocation, ContentLocationParseError, ReprDigest,
 };
@@ -31,8 +33,11 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     AccessControlMaxAge::parse("").expect_err("empty Access-Control-Max-Age should be rejected");
   let expose_headers = AccessControlExposeHeaders::parse("X-Request-Id")
     .expect("Access-Control-Expose-Headers should parse");
+  let age = Age::parse("60").expect("Age should parse");
+  let _: AgeParseError = Age::parse("").expect_err("empty Age should be rejected");
   let clear_site_data =
     HttpClearSiteData::parse("\"cache\"").expect("Clear-Site-Data should parse");
+  let content_length = HttpContentLength::new(123);
   let content_location = ContentLocation::parse("../representations/current.json")
     .expect("Content-Location should parse");
   let _: ContentLocationParseError =
@@ -78,6 +83,9 @@ fn response_facade_exports_representative_bounded_metadata_types() {
       .expect("COEP-Report-Only should parse");
   let cross_origin_opener_policy =
     CrossOriginOpenerPolicy::parse("noopener-allow-popups").expect("COOP should parse");
+  let x_content_type_options =
+    XContentTypeOptions::parse("nosniff").expect("X-Content-Type-Options should parse");
+  let x_frame_options = XFrameOptions::parse("DENY").expect("X-Frame-Options should parse");
   let proxy_authentication_info =
     ProxyAuthenticationInfo::parse(r#"nextnonce="6629fae49393a05397450978507c4ef1", qop=auth"#)
       .expect("Proxy-Authentication-Info should parse");
@@ -100,6 +108,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(allow_headers.field_names(), ["x-request-id", "etag"]);
   assert_eq!(max_age.seconds(), 60);
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
+  assert_eq!(age.seconds(), 60);
+  assert_eq!(content_length.len(), 123);
   assert_eq!(clear_site_data.directives().len(), 1);
   assert_eq!(
     content_location.header_value(),
@@ -136,6 +146,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     cross_origin_opener_policy.header_value(),
     "noopener-allow-popups"
   );
+  assert_eq!(x_content_type_options.header_value(), "nosniff");
+  assert_eq!(x_frame_options.header_value(), "DENY");
   assert_eq!(
     proxy_authentication_info.parameter("nextnonce"),
     Some("6629fae49393a05397450978507c4ef1")

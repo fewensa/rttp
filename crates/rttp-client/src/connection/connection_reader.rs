@@ -9,7 +9,7 @@ use url::Url;
 
 use crate::config::DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES;
 use crate::error;
-use crate::response::{InformationalResponse, Response};
+use crate::response::{HttpContentLength, InformationalResponse, Response};
 use crate::types::{Header, RoUrl};
 
 const HEADER_END: &[u8] = b"\r\n\r\n";
@@ -29,6 +29,7 @@ pub(crate) struct ResponseParts {
   pub(crate) binary: Vec<u8>,
   pub(crate) trailers: Vec<Header>,
   pub(crate) informational_responses: Vec<InformationalResponse>,
+  pub(crate) content_length: Option<HttpContentLength>,
   pub(crate) connection_reusable: bool,
   pub(crate) close_connection: bool,
 }
@@ -73,12 +74,20 @@ impl<'a, R: Read + ?Sized> StreamingResponse<'a, R> {
 
   pub fn read_to_response(mut self) -> error::Result<Response> {
     let mut binary = self.head.clone();
+    let content_length = content_length_from_response_body_kind(&self.body.kind);
     read_response_body_to_end(
       &mut self.body,
       &mut binary,
       DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES,
     )?;
-    Response::with_trailers(self.url, binary, self.body.trailers().clone())
+    Response::with_trailers_and_informational_and_limit(
+      self.url,
+      binary,
+      self.body.trailers().clone(),
+      Vec::new(),
+      content_length,
+      DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES,
+    )
   }
 }
 
@@ -264,6 +273,7 @@ impl<'a> ConnectionReader<'a> {
       parts.binary,
       parts.trailers,
       parts.informational_responses,
+      parts.content_length,
       self.max_buffered_response_body_bytes,
     )
   }
@@ -362,6 +372,7 @@ where
   let close_connection = response_connection_should_close(&binary)?;
   let mut trailers = Vec::new();
   let body_kind = response_body_kind(&binary, expect_no_body)?;
+  let content_length = content_length_from_response_body_kind(&body_kind);
   let connection_reusable = response_connection_reusable(&binary, &body_kind)?;
   match body_kind {
     ResponseBodyKind::NoBody => {}
@@ -383,9 +394,19 @@ where
     binary,
     trailers,
     informational_responses,
+    content_length,
     connection_reusable,
     close_connection,
   })
+}
+
+pub(crate) fn content_length_from_response_body_kind(
+  kind: &ResponseBodyKind,
+) -> Option<HttpContentLength> {
+  match kind {
+    ResponseBodyKind::ContentLength(length) => Some(HttpContentLength::new(*length)),
+    ResponseBodyKind::NoBody | ResponseBodyKind::Chunked | ResponseBodyKind::UntilEof => None,
+  }
 }
 
 fn read_response_body_to_end<R>(
