@@ -84,8 +84,9 @@ when callers need values outside the helper validation.
 `Response::accept_ranges()` parses one or more response `Accept-Ranges` header
 fields into `AcceptRanges` metadata. It returns `Ok(None)` when the header is
 absent. Present values expose `units()`, `is_none()`, and `accepts_bytes()`;
-`none` is accepted only as the exclusive sentinel, while range units are
-normalized to lowercase token values in received order.
+the `none` sentinel is represented as an empty unit list, while range units
+preserve their spelling and wire order. The parser is shared with the server
+facade through `rttp-protocol`.
 
 The helper is bounded and validation-oriented. Each header field value is
 limited to 64 KiB, the parsed header set is limited to 256 range units,
@@ -229,12 +230,14 @@ metadata. The helper returns `Ok(None)` when the header is absent, returns
 `SystemTime` when the value is present and valid, and returns an error for
 malformed or duplicate values.
 
-`Response::age()` parses the response `Age` header as HTTP/1.1 delta-seconds
-metadata. The helper returns `Ok(None)` when the header is absent, returns the
-non-negative decimal value as `u64` when it is present and valid, and returns an
-error for empty, signed, fractional, non-numeric, comma-list, or overflowing
-values. The accepted bound is exactly the `u64` delta-seconds range: `0`
-through `u64::MAX`.
+`Response::age()` parses the response `Age` header through the protocol `Age`
+type as HTTP/1.1 delta-seconds metadata. The helper returns `Ok(None)` when the
+header is absent, returns the non-negative decimal value as `u64` when it is
+present and valid, and returns an error for empty, signed, fractional,
+non-numeric, comma-list, overflowing, duplicate, or oversize values.
+Surrounding SP and HTAB are trimmed as optional whitespace. Each field value
+is bounded to 64 KiB, and the accepted numeric bound is the `u64`
+delta-seconds range: `0` through `u64::MAX`.
 
 `Response::expires()` parses the response `Expires` header as an HTTP-date using
 the same HTTP-date parser used by the client date helpers. It returns
@@ -502,6 +505,27 @@ This helper is HTTP/1 header metadata only. `rttp_client` does not change
 keep-alive, `auto_add_connection`, hop-by-hop stripping, or HTTP/2 rejection
 from this accessor.
 
+## Bounded Keep-Alive metadata
+
+`Response::keep_alive()` parses retained HTTP/1 `Keep-Alive` fields into
+`KeepAlive` metadata. It returns `Ok(None)` when the header is absent.
+Present values combine all `Keep-Alive` fields in wire order into bounded
+RFC 2068 metadata. The optional `timeout` delta-seconds and optional `max`
+`1*DIGIT` values are parsed as checked unsigned integers; unrecognized
+`name=token` parameters are preserved as bounded `KeepAliveExtension`
+metadata. `KeepAlive::parse(value)` is available when callers want to
+validate one raw field value directly.
+
+Each field value is limited to 64 KiB. Parsing accepts at most 256 parameters
+and rejects duplicate recognized parameters, malformed values, overflow,
+oversized values, and too many parameters. Parse errors do not reject the raw
+response: original headers remain available through
+`Response::header_value()` and `Response::header_values()`.
+
+This helper is HTTP/1 header metadata only. `rttp_client` does not change
+connection lifetime, connection pooling, keep-alive timers, or HTTP/2
+behavior from this accessor.
+
 ## Bounded Transfer-Encoding framing metadata
 
 `Response::transfer_encoding()` parses retained HTTP/1 `Transfer-Encoding`
@@ -683,13 +707,14 @@ header-block model.
 | Byte ranges | `range`, `range_from`, `range_suffix`, `if_range_etag`, and `if_range_date` emit bounded HTTP/1.1 range request metadata; `Response::content_range`, `accept_ranges`, `is_partial_content`, and `is_range_not_satisfiable` expose `Content-Range`, `Accept-Ranges`, `206`, and `416` metadata while preserving raw headers | No Range request generation from `Accept-Ranges`, client-side `If-Range` evaluation, partial response engine, byte serving, content slicing, download resume, automatic retry/replay, cache storage, redirect handling, status-policy behavior, multipart range generation, or automatic cache validation policy |
 | Conditional requests | `if_none_match`, `if_match`, `if_modified_since`, and `if_unmodified_since` emit bounded HTTP/1.1 validators; `Response::is_not_modified`, `is_precondition_failed`, `etag`, `last_modified`, and `last_modified_date` expose `304`/`412` metadata | One ETag validator per helper call, `If-Range` is range-scoped, no cache storage, no automatic revalidation, and no cache-control engine |
 | Informational responses and Early Hints | `Response::informational_responses` exposes skipped bounded HTTP/1.1 `1xx` heads, including `103 Early Hints`, with preserved raw headers | `101 Switching Protocols` remains terminal for upgrade handoff; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
-| Cache-Control, Date, Age, and Expires | `Response::cache_control` parses bounded response directives, numeric freshness fields, quoted field-name lists, and extension directives; `Response::date` parses singleton HTTP-date metadata; `Response::age` parses bounded delta-seconds; `Response::expires` parses bounded HTTP-date metadata | No cache storage, automatic revalidation, wall-clock freshness calculation, clock-skew correction, `Vary` matching, shared-cache policy enforcement, automatic conditional requests, retry, redirect, scheduling, or status policy |
+| Cache-Control, Date, Age, and Expires | `Response::cache_control` parses bounded response directives, numeric freshness fields, quoted field-name lists, and extension directives; `Response::date` parses singleton HTTP-date metadata; `Response::age` parses bounded singleton `Age` metadata through the protocol `Age` type, rejecting duplicate fields, values larger than 64 KiB, and overflowing `u64` delta-seconds; `Response::expires` parses bounded HTTP-date metadata | No cache storage, automatic revalidation, wall-clock freshness calculation, clock-skew correction, `Vary` matching, shared-cache policy enforcement, automatic conditional requests, retry, redirect, scheduling, or status policy |
 | Allow | `Response::allow` parses bounded response `Allow` fields into an ordered HTTP method-token list | No fallback method selection, automatic retry/replay, or status-code policy behavior for `405` or `OPTIONS` |
 | Client Hints | `Response::accept_ch` and `Response::critical_ch` parse bounded, ordered Client Hints opt-in metadata while preserving raw headers on parse failures | No browser opt-in state, request-header generation, retry, persistence, or Client Hints policy |
 | Content-Language | `Response::content_language` parses bounded response `Content-Language` fields into ordered language metadata while preserving raw headers | No automatic language negotiation, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
 | Content-Location | `Response::content_location` and `ContentLocation::parse` parse bounded singleton response `Content-Location` metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |
 | Content-Type and Content-Encoding | `Response::content_type`/`ContentType::parse` parse bounded singleton `Content-Type` metadata, and `Response::content_encoding`/`ContentEncoding::parse` parse bounded ordered `Content-Encoding` codings while preserving raw headers on parse failures | No MIME sniffing, body decoding, charset transcoding, compression/decompression policy, negotiation, cache policy, redirects, retry/replay, or filesystem serving |
 | Connection | `Response::connection`/`Connection::parse` parse bounded HTTP/1 `Connection` tokens, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to keep-alive, `auto_add_connection`, hop-by-hop stripping, or HTTP/2 rejection |
+| Keep-Alive | `Response::keep_alive` parses bounded RFC 2068 `Keep-Alive` fields in wire order with `timeout` delta-seconds and `max` `1*DIGIT` values as checked unsigned integers, preserving unrecognized `name=token` parameters as bounded extension metadata and raw headers on parse failures | No connection lifetime management, connection pooling, keep-alive timers, or HTTP/2 behavior changes |
 | Transfer-Encoding | `Response::transfer_encoding`/`TransferEncoding::parse` parse bounded HTTP/1 `Transfer-Encoding` fields that must be sole `chunked`, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to HTTP/1 framing decoders, `TE`, Content-Length, chunked body decoding policy, or HTTP/2 decode rejection |
 | Content-Disposition | `Response::content_disposition` and `ContentDisposition::parse` parse bounded singleton response `Content-Disposition` metadata into disposition type plus ordered parameters, including preserved `filename` and `filename*` values, while preserving raw headers on parse failures | No automatic download, filesystem path handling, MIME sniffing, redirect behavior, retry/replay, cache behavior, negotiation behavior, or status-policy behavior |
 | Vary | `Response::vary` parses bounded response `Vary` fields into wildcard or normalized case-insensitive field-name metadata | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
