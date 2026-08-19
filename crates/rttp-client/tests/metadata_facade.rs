@@ -24,7 +24,7 @@ use rttp_client::response::{
 };
 use rttp_client::{
   HttpClient, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecGpc, SecGpcParseError,
-  SecPurpose,
+  SecPurpose, UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
 };
 use rttp_test_support as support;
 
@@ -138,6 +138,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let sec_gpc = SecGpc::parse("1").expect("Sec-GPC should parse");
   let _: SecGpcParseError = SecGpc::parse("0").expect_err("invalid Sec-GPC should be rejected");
   let sec_purpose = SecPurpose::parse("prefetch, vendor-ext").expect("Sec-Purpose should parse");
+  let upgrade_insecure_requests =
+    UpgradeInsecureRequests::parse("1").expect("Upgrade-Insecure-Requests should parse");
+  let _: UpgradeInsecureRequestsParseError = UpgradeInsecureRequests::parse("0")
+    .expect_err("malformed Upgrade-Insecure-Requests should be rejected");
   let cross_origin_resource_policy =
     CrossOriginResourcePolicy::parse("same-origin").expect("CORP should parse");
   let cross_origin_embedder_policy =
@@ -262,6 +266,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(sec_gpc.header_value(), "1");
   assert_eq!(sec_purpose.tokens(), ["prefetch", "vendor-ext"]);
   assert!(sec_purpose.contains_prefetch());
+  assert_eq!(upgrade_insecure_requests.header_value(), "1");
   assert_eq!(cross_origin_resource_policy.header_value(), "same-origin");
   assert_eq!(cross_origin_embedder_policy.header_value(), "require-corp");
   assert_eq!(

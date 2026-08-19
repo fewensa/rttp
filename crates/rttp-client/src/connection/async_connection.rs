@@ -1485,8 +1485,8 @@ impl<'a> AsyncConnection<'a> {
 
   async fn call_with_proxy_http(&self, url: &Url, proxy: &Proxy) -> error::Result<ResponseParts> {
     let addr = format!("{}:{}", proxy.host(), proxy.port());
+    let header = self.conn.proxy_http_header(url, proxy)?;
     let mut stream = self.async_tcp_stream(&addr).await?;
-    let header = self.conn.proxy_http_header(url, proxy);
 
     match self
       .async_send_expect_continue_parts_with_header(&mut stream, &header)

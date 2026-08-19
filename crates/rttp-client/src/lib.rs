@@ -133,6 +133,9 @@ pub use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
 pub use rttp_protocol::sec_gpc::{SecGpc, SecGpcParseError};
+pub use rttp_protocol::upgrade_insecure_requests::{
+  UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
+};
 
 mod client;
 mod config;
