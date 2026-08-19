@@ -8,6 +8,7 @@ use rttp_protocol::access_control_request_method::AccessControlRequestMethod;
 use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
 use rttp_protocol::age::Age;
 use rttp_protocol::authorization::{Authorization, ProxyAuthorization};
+use rttp_protocol::baggage::Baggage;
 use rttp_protocol::cache_status::CacheStatus;
 use rttp_protocol::cdn_cache_control::CdnCacheControl;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
@@ -172,6 +173,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let transfer_encoding =
     TransferEncoding::parse("chunked").expect("Transfer-Encoding should parse");
   let te = Te::parse("gzip;q=0.5, trailers").expect("TE should parse");
+  let baggage =
+    Baggage::parse("tenant=acme;source=gateway,release=2026-08-19").expect("baggage should parse");
   let traceparent = TraceParent::parse("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
     .expect("traceparent should parse");
   let tracestate =
@@ -360,6 +363,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(te.codings()[0].quality(), Some(500));
   assert_eq!(te.codings()[1].coding(), "trailers");
   assert!(te.codings()[1].is_trailers());
+  assert_eq!(2, baggage.members().len());
+  assert_eq!("tenant", baggage.members()[0].key());
+  assert_eq!("acme", baggage.members()[0].value());
+  assert_eq!("source", baggage.members()[0].properties()[0].key());
   assert_eq!("00", traceparent.version());
   assert_eq!("4bf92f3577b34da6a3ce929d0e0e4736", traceparent.trace_id());
   assert_eq!(2, tracestate.members().len());

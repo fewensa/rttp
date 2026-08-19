@@ -3,6 +3,7 @@ use std::fmt;
 
 use crate::error;
 use rttp_protocol::authorization::{Authorization, ProxyAuthorization};
+use rttp_protocol::baggage::Baggage;
 use rttp_protocol::trace_context::{TraceParent, TraceState};
 
 #[derive(Clone, Eq, PartialEq)]
@@ -46,6 +47,9 @@ impl Header {
         .map_err(|error| error::builder_with_message(error.to_string()))?;
     } else if self.name.eq_ignore_ascii_case("tracestate") {
       TraceState::parse(&self.value)
+        .map_err(|error| error::builder_with_message(error.to_string()))?;
+    } else if self.name.eq_ignore_ascii_case("baggage") {
+      Baggage::parse(&self.value)
         .map_err(|error| error::builder_with_message(error.to_string()))?;
     }
     Ok(())
@@ -121,6 +125,7 @@ fn is_sensitive_debug_header(name: &str) -> bool {
     || name.eq_ignore_ascii_case("set-cookie")
     || name.eq_ignore_ascii_case("traceparent")
     || name.eq_ignore_ascii_case("tracestate")
+    || name.eq_ignore_ascii_case("baggage")
 }
 
 impl IntoHeader for &str {

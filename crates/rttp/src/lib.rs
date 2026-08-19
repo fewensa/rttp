@@ -28,8 +28,9 @@ pub use rttp_client::response::{
 };
 #[cfg(feature = "client")]
 pub use rttp_client::{
-  SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose, TraceParent,
-  TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError,
+  Baggage, BaggageMember, BaggageParseError, BaggageProperty, SecFetchDest, SecFetchMode,
+  SecFetchSite, SecFetchUser, SecPurpose, TraceParent, TraceParentParseError, TraceState,
+  TraceStateMember, TraceStateParseError,
 };
 
 impl Http {

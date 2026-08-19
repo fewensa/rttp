@@ -572,6 +572,21 @@ key/value accessors. Trace context propagation values are redacted from typed
 identifiers, decide sampling, select a tracing backend, or automatically
 propagate context.
 
+## W3C Baggage request metadata
+
+Handlers can call `Request::baggage()` and the matching `HttpRequest` helper
+to observe bounded W3C Baggage request metadata through the shared protocol
+`HttpBaggage` type. Absent fields return `Ok(None)`. Malformed, oversized,
+duplicate-key, or over-limit values return parser errors while
+`Request::header()` and `HttpRequest::header()` continue to expose the
+original raw fields.
+
+`HttpBaggage` preserves ordered members with key, value, and property
+accessors. Member and property values are redacted from typed `Debug`. These
+helpers parse request metadata only; they do not interpret application data,
+store request context, select a tracing backend, or automatically propagate
+baggage.
+
 ## Conditional HTTP-date request metadata
 
 Handlers can call `Request::if_modified_since()`,
