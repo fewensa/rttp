@@ -2466,12 +2466,7 @@ fn content_disposition_helpers_reject_malformed_duplicate_oversized_and_excessiv
     "Content-Disposition helper should reject oversized values"
   );
 
-  let too_many = format!(
-    "attachment{}",
-    (0..33)
-      .map(|index| format!("; p{index}=v"))
-      .collect::<String>()
-  );
+  let too_many = rttp_test_support::content_disposition::too_many_parameters_value();
   assert!(
     HttpContentDisposition::parse(too_many).is_err(),
     "Content-Disposition helper should reject too many parameters"
