@@ -10,20 +10,20 @@ use rttp_server::server::{
   HttpContentDispositionParseError, HttpContentDpr, HttpContentDprParseError, HttpContentLength,
   HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
   HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeprecation,
-  HttpDeprecationParseError, HttpEntityTag, HttpHost, HttpIdempotencyKey,
-  HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfModifiedSinceParseError,
-  HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError, HttpKeepAlive, HttpMaxForwards,
-  HttpMaxForwardsParseError, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNoVarySearch,
-  HttpNoVarySearchParams, HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus,
-  HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptEncodings, HttpResponse, HttpSaveData,
-  HttpSaveDataParseError, HttpSecGpc, HttpSecGpcParseError, HttpSignature, HttpSignatureInput,
-  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
-  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
-  HttpTraceParent, HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember,
-  HttpTraceStateParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
-  HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
-  HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite,
-  SecFetchUser, SecPurpose,
+  HttpDeprecationParseError, HttpEntityTag, HttpExpectParseError, HttpExpectations, HttpHost,
+  HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince,
+  HttpIfModifiedSinceParseError, HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError,
+  HttpKeepAlive, HttpMaxForwards, HttpMaxForwardsParseError, HttpMementoDatetime,
+  HttpMementoDatetimeParseError, HttpNoVarySearch, HttpNoVarySearchParams, HttpPreferenceKind,
+  HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError, HttpRequest,
+  HttpRequestAcceptEncodings, HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSecGpc,
+  HttpSecGpcParseError, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
+  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
+  HttpSignatureInputParseError, HttpSignatureParseError, HttpTraceParent,
+  HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError,
+  HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpWantContentDigest,
+  HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
 
 #[test]
@@ -85,6 +85,10 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpMaxForwards::parse("0").expect("Max-Forwards should parse");
   let max_forwards_error: Result<HttpMaxForwards, HttpMaxForwardsParseError> =
     HttpMaxForwards::parse("4294967296");
+  let expectations: HttpExpectations =
+    HttpExpectations::parse("100-continue, preview").expect("Expect should parse");
+  let expectations_error: Result<HttpExpectations, HttpExpectParseError> =
+    HttpExpectations::parse("100-continue, 100-CONTINUE");
   let if_modified_since: HttpIfModifiedSince =
     HttpIfModifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
       .expect("If-Modified-Since should parse");
@@ -196,6 +200,10 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(max_forwards.value(), 0);
   assert_eq!(max_forwards.header_value(), "0");
   assert!(max_forwards_error.is_err());
+  assert!(expectations.expects_continue());
+  assert_eq!(["preview"], expectations.unsupported());
+  assert_eq!(expectations.header_value(), "100-continue, preview");
+  assert!(expectations_error.is_err());
   assert_eq!(
     if_modified_since.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
@@ -638,6 +646,56 @@ fn request_facade_parses_max_forwards_metadata() {
 
   assert_eq!(0, max_forwards.value());
   assert_eq!("0", max_forwards.header_value());
+}
+
+#[test]
+fn request_facade_parses_expect_metadata() {
+  let request = HttpRequest::parse(
+    b"POST /upload HTTP/1.1\r\nHost: example.test\r\nExpect: 100-continue\r\nExpect: preview=sha256; chunk=1\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let expectations: HttpExpectations = request
+    .expectations()
+    .expect("Expect should parse")
+    .expect("Expect should be present");
+
+  assert!(expectations.expects_continue());
+  assert_eq!(["preview"], expectations.unsupported());
+  assert_eq!("100-continue, preview", expectations.header_value());
+
+  let absent = HttpRequest::parse(b"POST /upload HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .expectations()
+      .expect("absent Expect should be accepted")
+  );
+
+  let unsupported =
+    HttpRequest::parse(b"POST /upload HTTP/1.1\r\nHost: example.test\r\nExpect: tea-time\r\n\r\n")
+      .expect("request should parse");
+  let unsupported = unsupported
+    .expectations()
+    .expect("unsupported Expect should parse")
+    .expect("Expect should be present");
+  assert!(!unsupported.expects_continue());
+  assert_eq!(["tea-time"], unsupported.unsupported());
+
+  let duplicate = HttpRequest::parse(
+    b"POST /upload HTTP/1.1\r\nHost: example.test\r\nExpect: 100-continue\r\nExpect: 100-CONTINUE\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert!(duplicate.expectations().is_err());
+
+  let malformed = HttpRequest::parse(
+    b"POST /upload HTTP/1.1\r\nHost: example.test\r\nExpect: not a token\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert!(malformed.expectations().is_err());
+
+  assert!(HttpExpectations::parse("a".repeat(64 * 1024 + 1)).is_err());
 }
 
 #[test]
