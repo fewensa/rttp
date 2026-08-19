@@ -132,15 +132,21 @@ Conditional responses are exposed through response metadata helpers.
 `Response::is_precondition_failed()` identifies `412 Precondition Failed`,
 `Response::etag()` returns the response `ETag` field when present, and
 `Response::last_modified()` returns the response `Last-Modified` field when
-present. A `304` response is treated as bodyless even if misleading framing
+present. `Response::last_modified_date()` parses that field as an HTTP-date
+using the same parser used by the client date helpers: it returns `Ok(None)`
+when the header is absent, returns `SystemTime` for a valid HTTP-date
+singleton, and returns an error for malformed or duplicate values. The raw
+field stays available through `last_modified()` and the ordinary header
+accessors. A `304` response is treated as bodyless even if misleading framing
 headers are present, so the connection remains framed for the next response.
 `412` is surfaced as a normal response status and body/framing rules remain the
 server's responsibility.
 
 RTTP does not provide cache storage, automatic revalidation, or a
 cache-control engine. Client conditional helpers only set request headers and
-expose response metadata; applications decide when to persist validators, when
-to revalidate, and how to interpret cache directives.
+expose response metadata; `last_modified_date()` applies no cache policy,
+freshness calculation, or revalidation; applications decide when to persist
+validators, when to revalidate, and how to interpret cache directives.
 
 ## Bounded HTTP/1.1 informational responses and Early Hints
 
@@ -594,7 +600,7 @@ header-block model.
 | Upgrade and tunnel handoff | `CONNECT` returns the tunnel socket after a successful `200`; `upgrade()` returns the socket after `101 Switching Protocols` and skips interim `1xx` responses | Upgraded protocols are handed to the caller and are not parsed by `rttp_client` |
 | Redirects | Auto-redirect covers 301, 302, 303, 307, and 308 method/body behavior, relative and absolute `Location` resolution, same- and cross-authority header handling, loop detection, and redirect bounds | Redirects are HTTP client behavior, not a browser policy implementation |
 | Byte ranges | `range`, `range_from`, `range_suffix`, `if_range_etag`, and `if_range_date` emit bounded HTTP/1.1 range request metadata; `Response::content_range`, `accept_ranges`, `is_partial_content`, and `is_range_not_satisfiable` expose `Content-Range`, `Accept-Ranges`, `206`, and `416` metadata while preserving raw headers | No Range request generation from `Accept-Ranges`, client-side `If-Range` evaluation, partial response engine, byte serving, content slicing, download resume, automatic retry/replay, cache storage, redirect handling, status-policy behavior, multipart range generation, or automatic cache validation policy |
-| Conditional requests | `if_none_match`, `if_match`, `if_modified_since`, and `if_unmodified_since` emit bounded HTTP/1.1 validators; `Response::is_not_modified`, `is_precondition_failed`, `etag`, and `last_modified` expose `304`/`412` metadata | One ETag validator per helper call, `If-Range` is range-scoped, no cache storage, no automatic revalidation, and no cache-control engine |
+| Conditional requests | `if_none_match`, `if_match`, `if_modified_since`, and `if_unmodified_since` emit bounded HTTP/1.1 validators; `Response::is_not_modified`, `is_precondition_failed`, `etag`, `last_modified`, and `last_modified_date` expose `304`/`412` metadata | One ETag validator per helper call, `If-Range` is range-scoped, no cache storage, no automatic revalidation, and no cache-control engine |
 | Informational responses and Early Hints | `Response::informational_responses` exposes skipped bounded HTTP/1.1 `1xx` heads, including `103 Early Hints`, with preserved raw headers | `101 Switching Protocols` remains terminal for upgrade handoff; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
 | Cache-Control, Age, and Expires | `Response::cache_control` parses bounded response directives, numeric freshness fields, quoted field-name lists, and extension directives; `Response::age` parses bounded delta-seconds; `Response::expires` parses bounded HTTP-date metadata | No cache storage, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, or automatic conditional requests |
 | Allow | `Response::allow` parses bounded response `Allow` fields into an ordered HTTP method-token list | No fallback method selection, automatic retry/replay, or status-code policy behavior for `405` or `OPTIONS` |

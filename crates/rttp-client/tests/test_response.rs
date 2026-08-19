@@ -796,6 +796,98 @@ fn test_parse_conditional_response_metadata() {
 }
 
 #[test]
+fn last_modified_date_parses_valid_singleton_and_absent_values() {
+  let response = Response::new(
+    RoUrl::with("https://example.test/asset"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Last-Modified: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(
+    Some(UNIX_EPOCH + Duration::from_secs(784111777)),
+    response
+      .last_modified_date()
+      .expect("valid Last-Modified should parse")
+  );
+  assert_eq!(
+    Some(&"Sun, 06 Nov 1994 08:49:37 GMT".to_string()),
+    response.last_modified()
+  );
+  assert_eq!(
+    Some(&"Sun, 06 Nov 1994 08:49:37 GMT".to_string()),
+    response.header_value("Last-Modified")
+  );
+
+  let response = Response::new(
+    RoUrl::with("https://example.test/asset"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(
+    None,
+    response
+      .last_modified_date()
+      .expect("absent Last-Modified should parse")
+  );
+  assert_eq!(None, response.last_modified());
+}
+
+#[test]
+fn last_modified_date_rejects_malformed_and_duplicate_values_without_hiding_headers() {
+  for value in ["", "not a date", "Sun, 06 Nov 1994 08:49:37 PST"] {
+    let raw = format!("HTTP/1.1 200 OK\r\nLast-Modified: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response remains usable");
+
+    assert!(
+      response.last_modified_date().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Last-Modified")
+    );
+    assert_eq!("OK", response.body().string().unwrap());
+  }
+
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Last-Modified: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+      "last-modified: Mon, 07 Nov 1994 08:49:37 GMT\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("raw response with duplicate Last-Modified remains usable");
+
+  assert!(
+    response.last_modified_date().is_err(),
+    "should reject duplicate singleton fields"
+  );
+  assert_eq!(
+    vec![
+      &"Sun, 06 Nov 1994 08:49:37 GMT".to_string(),
+      &"Mon, 07 Nov 1994 08:49:37 GMT".to_string()
+    ],
+    response.header_values("Last-Modified")
+  );
+  assert_eq!(
+    Some(&"Sun, 06 Nov 1994 08:49:37 GMT".to_string()),
+    response.last_modified()
+  );
+}
+
+#[test]
 fn test_parse_content_location_response_helper_accepts_uri_references() {
   let cases = [
     (

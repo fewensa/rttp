@@ -303,6 +303,24 @@ impl Response {
     self.header_value("last-modified")
   }
 
+  /// Parses the response `Last-Modified` field as an HTTP-date.
+  ///
+  /// Returns `Ok(None)` when the header is absent, `Ok(Some(SystemTime))` for
+  /// a valid HTTP-date singleton, and an error for malformed or duplicate
+  /// values. This exposes metadata only; it does not apply cache policy or
+  /// trigger revalidation, and the raw field stays available through
+  /// `last_modified()` and `header_value()`.
+  pub fn last_modified_date(&self) -> error::Result<Option<SystemTime>> {
+    let values = self.header_values("last-modified");
+    match values.as_slice() {
+      [] => Ok(None),
+      [value] => parse_http_date(value)
+        .map(Some)
+        .map_err(|_| error::bad_response("Invalid Last-Modified HTTP-date")),
+      _ => Err(error::bad_response("Duplicate Last-Modified header values")),
+    }
+  }
+
   pub fn age(&self) -> error::Result<Option<u64>> {
     self
       .header_value("age")
