@@ -15,7 +15,8 @@ pub use rttp_client::response::{
   CrossOriginOpenerPolicyParseError, EntityTag, EntityTagParseError, HttpContentLength, Location,
   LocationParseError, Nel, NelParseError, NelUnknownMember, NoVarySearch, NoVarySearchParams,
   NoVarySearchParseError, StrictTransportSecurity, StrictTransportSecurityParseError, Upgrade,
-  UpgradeParseError, XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions,
+  UpgradeParseError, WwwAuthenticate, WwwAuthenticateChallenge, WwwAuthenticateParameter,
+  WwwAuthenticateParseError, XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions,
   XFrameOptionsParseError,
 };
 #[cfg(feature = "client")]

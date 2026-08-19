@@ -12,7 +12,8 @@ use rttp_client::response::{
   SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
   StrictTransportSecurityParseError, Trailer, TransferEncoding, TransferEncodingParseError,
   Upgrade, UpgradeParseError, Vary, VaryParseError, WantContentDigest, WantReprDigest, Warning,
-  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  WwwAuthenticate, WwwAuthenticateParseError, XContentTypeOptions, XContentTypeOptionsParseError,
+  XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentLocation, ContentLocationParseError, ReprDigest,
@@ -116,6 +117,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
       .expect("Proxy-Authentication-Info should parse");
   let _: ProxyAuthenticationInfoParseError = ProxyAuthenticationInfo::parse("")
     .expect_err("empty Proxy-Authentication-Info should be rejected");
+  let www_authenticate =
+    WwwAuthenticate::parse("Basic realm=\"users\"").expect("WWW-Authenticate should parse");
+  let _: WwwAuthenticateParseError = WwwAuthenticate::parse("Basic realm=\"")
+    .expect_err("malformed WWW-Authenticate should be rejected");
   let proxy_authenticate =
     ProxyAuthenticate::parse(r#"Basic realm="corp""#).expect("Proxy-Authenticate should parse");
   let _: ProxyAuthenticateParseError =
@@ -203,6 +208,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(
     proxy_authentication_info.parameter("nextnonce"),
     Some("6629fae49393a05397450978507c4ef1")
+  );
+  assert_eq!(
+    www_authenticate.challenges()[0].parameter("realm"),
+    Some("users")
   );
   assert_eq!(
     proxy_authenticate.challenges()[0].parameter("realm"),

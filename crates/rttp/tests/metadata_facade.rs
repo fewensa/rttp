@@ -73,6 +73,12 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::StrictTransportSecurityParseError =
     rttp_client::response::StrictTransportSecurity::parse("includeSubDomains")
       .expect_err("Strict-Transport-Security without max-age should be rejected");
+  let www_authenticate: rttp::WwwAuthenticate =
+    rttp_client::response::WwwAuthenticate::parse("Basic realm=\"users\"")
+      .expect("WWW-Authenticate should parse");
+  let _: rttp::WwwAuthenticateParseError =
+    rttp_client::response::WwwAuthenticate::parse("Basic realm=\"")
+      .expect_err("malformed WWW-Authenticate should be rejected");
   let upgrade: rttp::Upgrade =
     rttp_client::response::Upgrade::parse("websocket").expect("Upgrade should parse");
   let _: rttp::UpgradeParseError =
@@ -126,6 +132,10 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(opener_policy.header_value(), "noopener-allow-popups");
   assert_eq!(strict_transport_security.max_age(), 31_536_000);
   assert!(strict_transport_security.include_sub_domains());
+  assert_eq!(
+    www_authenticate.challenges()[0].parameter("realm"),
+    Some("users")
+  );
   assert_eq!(upgrade.protocols(), ["websocket"]);
   assert_eq!(x_content_type_options, rttp::XContentTypeOptions::Nosniff);
   assert_eq!(x_content_type_options.header_value(), "nosniff");
