@@ -39,6 +39,7 @@ use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::access_control_max_age::AccessControlMaxAge;
 use rttp_protocol::age::Age;
 use rttp_protocol::allow as protocol_allow;
+use rttp_protocol::cache_status::CacheStatus;
 use rttp_protocol::cdn_cache_control::CdnCacheControl;
 use rttp_protocol::clear_site_data::ClearSiteData;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
@@ -957,6 +958,17 @@ impl Response {
       return Ok(None);
     }
     CdnCacheControl::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Cache-Status` response metadata without applying cache policy.
+  pub fn cache_status(&self) -> error::Result<Option<CacheStatus>> {
+    let values = self.header_values("cache-status");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    CacheStatus::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

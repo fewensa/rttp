@@ -208,6 +208,17 @@ fn cache_control_response(values: &[&str]) -> Vec<u8> {
   response.into_bytes()
 }
 
+fn cache_status_response(values: &[&str]) -> Vec<u8> {
+  let mut response = String::from("HTTP/1.1 200 OK\r\n");
+  for value in values {
+    response.push_str("Cache-Status: ");
+    response.push_str(value);
+    response.push_str("\r\n");
+  }
+  response.push_str("Content-Length: 2\r\n\r\nOK");
+  response.into_bytes()
+}
+
 fn cdn_cache_control_response(values: &[&str]) -> Vec<u8> {
   let mut response = String::from("HTTP/1.1 200 OK\r\n");
   for value in values {
@@ -2520,6 +2531,24 @@ fn assert_cache_control_helper_rejects_but_preserves_response(name: &str, raw_re
   handle.join().expect("raw response server thread");
 }
 
+fn assert_cache_status_helper_rejects_but_preserves_response(name: &str, raw_response: Vec<u8>) {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/cache-status-invalid", addr))
+    .emit()
+    .unwrap_or_else(|err| panic!("{name} response should remain parseable: {err}"));
+
+  assert!(
+    response.cache_status().is_err(),
+    "{name} helper should reject invalid Cache-Status"
+  );
+  assert_eq!("OK", response.body().string().unwrap(), "{name}");
+
+  handle.join().expect("raw response server thread");
+}
+
 fn assert_cdn_cache_control_helper_rejects_but_preserves_response(
   name: &str,
   raw_response: Vec<u8>,
@@ -4278,6 +4307,57 @@ fn sync_client_cache_control_matrix_keeps_cache_engine_non_goals_explicit() {
   assert_eq!("OK", response.body().string().unwrap());
 
   handle.join().expect("raw response server thread");
+}
+
+#[test]
+fn sync_client_parses_cache_status_response_metadata_without_policy() {
+  const HEADERS: &[(&str, &str)] = &[
+    ("Cache-Status", "OriginCache; hit; ttl=1100"),
+    ("cache-status", r#""CDN Company Here"; hit; ttl=545"#),
+  ];
+  let (addr, handle) = spawn_metadata_response_server(HEADERS);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/cache-status", addr))
+    .emit()
+    .expect("Cache-Status response should parse");
+
+  let metadata = response
+    .cache_status()
+    .expect("Cache-Status metadata should parse")
+    .expect("Cache-Status should be present");
+
+  assert_eq!(metadata.len(), 2);
+  assert_eq!(metadata.members()[0].identifier().as_str(), "OriginCache");
+  assert_eq!(metadata.members()[0].hit(), Some(true));
+  assert_eq!(metadata.members()[0].ttl(), Some(1100));
+  assert_eq!(
+    metadata.members()[1].identifier().as_str(),
+    "CDN Company Here"
+  );
+  assert!(metadata.members()[1].identifier().is_string());
+  assert_eq!(metadata.members()[1].ttl(), Some(545));
+  assert_eq!("OK", response.body().string().unwrap());
+
+  handle.join().expect("metadata response server thread");
+}
+
+#[test]
+fn sync_client_cache_status_helper_rejects_invalid_and_bounded_metadata() {
+  let oversized = "x".repeat(64 * 1024 + 1);
+  assert_cache_status_helper_rejects_but_preserves_response(
+    "invalid Cache-Status boolean",
+    cache_status_response(&["OriginCache; hit=yes"]),
+  );
+  assert_cache_status_helper_rejects_but_preserves_response(
+    "trailing Cache-Status member",
+    cache_status_response(&["OriginCache,"]),
+  );
+  assert_cache_status_helper_rejects_but_preserves_response(
+    "oversized Cache-Status value",
+    cache_status_response(&[oversized.as_str()]),
+  );
 }
 
 #[test]
