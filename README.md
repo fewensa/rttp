@@ -420,6 +420,29 @@ requested. It is metadata-only: RTTP does not treat `Content-Location` as
 redirect behavior, cache variant selection, representation replacement,
 retry/replay behavior, route generation, or status-policy behavior.
 
+### Bounded HTTP/1.1 Content-DPR behavior
+
+`Response::content_dpr()` parses a response `Content-DPR` header into the
+shared protocol-owned `ContentDpr` metadata type. It returns `Ok(None)` when
+the header is absent and rejects duplicate header fields because `Content-DPR`
+is handled as a singleton response metadata field. `ContentDpr::parse(value)`
+is available when callers want to validate one raw field value directly; it
+trims outer HTTP optional whitespace and exposes the finite positive ratio with
+`ContentDpr::ratio()` plus the preserved decimal text with
+`ContentDpr::header_value()`.
+
+The helper is bounded and validation-oriented. The field value is limited to
+64 KiB and must match `1*DIGIT["." 1*DIGIT]` as a finite ratio greater than
+zero. Zero, trailing or leading decimal points, signs, exponent notation,
+control bytes, malformed values, duplicated singleton fields, and oversized
+values make `Response::content_dpr()` return an error while leaving the
+original response headers and body available through `Response::header_value()`,
+`Response::header_values()`, and the other response metadata helpers.
+
+The helper is observation-only. RTTP does not rescale images, send request DPR,
+apply Client Hints policy, retry, replay, redirect, or change transport from
+`Content-DPR`.
+
 ### Bounded HTTP/1.1 representation metadata behavior
 
 `Response::content_type()` parses a singleton response `Content-Type` header
@@ -936,6 +959,7 @@ gain additional HTTP/2 header-block handling.
 | Cache-Control, CDN-Cache-Control, Date, Age, Expires, Retry-After, and Allow | `Response::cache_control` parses bounded response directives, numeric freshness fields, quoted field-name lists, and extension directives; `Response::cdn_cache_control` parses bounded `CDN-Cache-Control` directives and CDN extension metadata while preserving raw responses on parse errors; `Response::date` parses singleton HTTP-date metadata; `Response::age` parses bounded singleton `Age` metadata through the protocol `Age` type, rejecting duplicate fields, values larger than 64 KiB, and overflowing `u64` delta-seconds; `Response::expires` parses bounded HTTP-date metadata; `Response::retry_after` parses bounded delta-seconds or HTTP-date metadata; `Response::allow` parses bounded ordered method metadata | No cache storage, CDN cache, automatic revalidation, wall-clock freshness calculation, clock-skew correction, `Vary` matching, shared-cache policy enforcement, surrogate-key behavior, automatic conditional requests, automatic sleep, retry, replay, redirect, backoff, scheduler integration, fallback method selection, or status-code policy engine |
 | Content-Language | `Response::content_language` parses bounded response `Content-Language` fields into ordered language metadata while preserving raw headers | No automatic language negotiation, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
 | Content-Location | `Response::content_location` and `ContentLocation::parse` parse bounded singleton response `Content-Location` metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |
+| Content-DPR | `Response::content_dpr` and `ContentDpr::parse` parse bounded singleton response `Content-DPR` decimal-ratio metadata while preserving raw headers | No image rescaling, request DPR emission, Client Hints policy, retry, or transport changes |
 | Content-Type and Content-Encoding | `Response::content_type`/`ContentType::parse` parse bounded singleton `Content-Type` metadata, and `Response::content_encoding`/`ContentEncoding::parse` parse bounded ordered `Content-Encoding` codings while preserving raw headers on parse failures | No MIME sniffing, body decoding, charset transcoding, compression/decompression policy, negotiation, cache policy, redirects, retry/replay, or filesystem serving |
 | Connection | `Response::connection`/`Connection::parse` parse bounded HTTP/1 `Connection` tokens, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to keep-alive, `auto_add_connection`, hop-by-hop stripping, or HTTP/2 rejection |
 | Transfer-Encoding | `Response::transfer_encoding`/`TransferEncoding::parse` parse bounded HTTP/1 `Transfer-Encoding` fields that must be sole `chunked`, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to HTTP/1 framing decoders, `TE`, Content-Length, chunked body decoding policy, or HTTP/2 decode rejection |
@@ -1461,6 +1485,30 @@ not treat `Content-Location` as redirect behavior, cache variant selection,
 representation replacement, retry/replay behavior, route generation, or
 status-policy behavior.
 
+### Bounded HTTP/1.1 Content-DPR behavior
+
+Server-side `Content-DPR` helpers expose response metadata declaration and
+parsing through the shared protocol-owned `HttpContentDpr` type without
+rescaling images or applying Client Hints policy.
+`HttpResponse::with_content_dpr(value)` validates one `Content-DPR` field
+value, trims outer whitespace, removes any existing raw `Content-DPR` fields,
+and adds a single validated `Content-DPR` header. `HttpResponse::content_dpr()`
+parses any attached `Content-DPR` header into `HttpContentDpr` and returns
+`Ok(None)` when the header is absent.
+
+Parsing is bounded and validation-oriented. The field value is limited to
+64 KiB and must match `1*DIGIT["." 1*DIGIT]` as a finite ratio greater than
+zero. Duplicate `Content-DPR` fields are rejected because the helper treats the
+header as singleton response metadata. Malformed values, duplicated singleton
+fields, and oversized values return `HttpContentDprParseError` from the helper.
+Raw `HttpResponse::header("Content-DPR", ...)` values remain preserved exactly
+as ordinary response headers until a typed declaration helper replaces them or
+the typed parser is requested.
+
+These helpers are observation-only. RTTP does not rescale images, send request
+DPR, apply Client Hints policy, retry, replay, redirect, or change transport
+from `Content-DPR`.
+
 ### Bounded HTTP/1.1 Content-Disposition behavior
 
 Server-side `Content-Disposition` helpers expose response metadata declaration
@@ -1776,6 +1824,7 @@ TLS or async accept loops.
 | Allow | `HttpAllowedMethods`, `HttpResponse::with_allow`, and `HttpResponse::allow` declare and parse bounded `Allow` method-list metadata | No route dispatch, automatic `405` generation, `OPTIONS` policy, fallback method selection, retry/replay, or status-code policy engine |
 | Content-Language | `HttpContentLanguages`, `Request::content_language`, `HttpRequest::content_language`, `HttpResponse::with_content_language`, and `HttpResponse::content_language` parse or declare bounded `Content-Language` metadata | No automatic language negotiation, route selection, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
 | Content-Location | `HttpResponse::with_content_location` declares one bounded singleton `Content-Location` header, and `HttpResponse::content_location` parses attached singleton response metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |
+| Content-DPR | `HttpResponse::with_content_dpr` declares one bounded singleton `Content-DPR` header, and `HttpResponse::content_dpr` plus client `Response::content_dpr` parse attached singleton decimal-ratio metadata while preserving raw headers | No image rescaling, request DPR emission, Client Hints policy, retry, or transport changes |
 | Content-Type and Content-Encoding | `HttpContentType`, `Request::content_type`, `HttpRequest::content_type`, `HttpResponse::with_content_type`, `content_type`, `HttpResponseContentEncodings`, `Request::content_encoding`, `HttpRequest::content_encoding`, `HttpResponse::with_content_encoding`, and `content_encoding` parse or declare bounded representation metadata while preserving raw headers on parse failures and replacing raw response duplicates on typed declaration | No MIME sniffing, body decoding, charset transcoding, compression/decompression, negotiation, cache policy, redirects, retry/replay, or filesystem serving |
 | Connection | `HttpConnection`, `Request::connection`, `HttpRequest::connection`, and `HttpResponse::connection` parse bounded HTTP/1 `Connection` tokens, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to hop-by-hop stripping, keep-alive/close, upgrade/h2c, or HTTP/2 rejection |
 | Transfer-Encoding | `HttpTransferEncoding`, `Request::transfer_encoding`, and `HttpRequest::transfer_encoding` parse bounded HTTP/1 `Transfer-Encoding` fields that must be sole `chunked`, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to `request_body_kind`, `TE`, Content-Length, or HTTP/2 decode rejection |

@@ -1,9 +1,10 @@
 use rttp::server::{
-  HttpAcceptCh, HttpAccessControlRequestPrivateNetwork, HttpConditionalMetadata,
-  HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
-  HttpCrossOriginEmbedderPolicy, HttpCrossOriginEmbedderPolicyReportOnly,
-  HttpCrossOriginOpenerPolicy, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpNel, HttpResponse,
-  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpAcceptCh, HttpAccessControlRequestPrivateNetwork, HttpConditionalMetadata, HttpContentDpr,
+  HttpContentDprParseError, HttpContentLocation, HttpContentLocationParseError, HttpContentRange,
+  HttpContentRangeParseError, HttpCrossOriginEmbedderPolicy,
+  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
+  HttpCrossOriginResourcePolicy, HttpEntityTag, HttpNel, HttpResponse, HttpSignature,
+  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
   HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
   HttpSignatureParseError, HttpSunsetParseError, HttpUpgrade, HttpUpgradeParseError,
 };
@@ -45,6 +46,10 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::ContentLocationParseError =
     rttp_client::response::ContentLocation::parse("not valid")
       .expect_err("invalid Content-Location should be rejected");
+  let content_dpr: rttp::ContentDpr =
+    rttp_client::response::ContentDpr::parse("1.5").expect("Content-DPR should parse");
+  let _: rttp::ContentDprParseError =
+    rttp_client::response::ContentDpr::parse("0").expect_err("zero Content-DPR should be rejected");
   let content_security_policy: rttp::ContentSecurityPolicy =
     rttp_client::response::ContentSecurityPolicy::parse("default-src 'self'; object-src 'none'")
       .expect("Content-Security-Policy should parse");
@@ -131,6 +136,8 @@ fn compatibility_facade_exports_client_metadata_types() {
     content_location.header_value(),
     "../representations/current.json"
   );
+  assert_eq!(content_dpr.ratio(), 1.5);
+  assert_eq!(content_dpr.header_value(), "1.5");
   assert_eq!(
     content_security_policy.header_value(),
     "default-src 'self'; object-src 'none'"
@@ -208,6 +215,9 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
       .expect("Content-Location should parse");
   let _: HttpContentLocationParseError = HttpContentLocation::parse("not valid")
     .expect_err("invalid Content-Location should be rejected");
+  let content_dpr: HttpContentDpr = HttpContentDpr::parse("2.0").expect("Content-DPR should parse");
+  let _: HttpContentDprParseError =
+    HttpContentDpr::parse("0").expect_err("zero Content-DPR should be rejected");
   let content_range: HttpContentRange =
     HttpContentRange::parse("bytes */10").expect("Content-Range should parse");
   let _: HttpContentRangeParseError =
@@ -219,6 +229,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     content_location.header_value(),
     "../representations/current.json"
   );
+  assert_eq!(content_dpr.ratio(), 2.0);
+  assert_eq!(content_dpr.header_value(), "2.0");
   assert_eq!(content_range.header_value(), "bytes */10");
   assert_eq!(policy.header_value(), "same-origin");
   assert_eq!(embedder_policy.header_value(), "require-corp");
@@ -292,4 +304,27 @@ fn compatibility_facade_keeps_signature_metadata_in_the_server_module() {
       .header_value(),
     "sig1=:YWJj:"
   );
+}
+
+#[test]
+fn compatibility_facade_exposes_content_dpr_response_metadata() {
+  let response = HttpResponse::ok("")
+    .header("Content-DPR", "3")
+    .with_content_dpr("1.5")
+    .expect("valid Content-DPR should be accepted");
+
+  assert_eq!(
+    "1.5",
+    response
+      .content_dpr()
+      .expect("Content-DPR should parse")
+      .expect("Content-DPR should be present")
+      .header_value()
+  );
+  assert!(HttpResponse::ok("").with_content_dpr("0").is_err());
+  assert!(HttpResponse::ok("")
+    .header("Content-DPR", "1")
+    .header("Content-DPR", "2")
+    .content_dpr()
+    .is_err());
 }

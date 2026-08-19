@@ -1,6 +1,6 @@
 use rttp_client::response::{
-  AltSvc, AuthenticationInfo, ContentDisposition, ContentEncoding, ContentLocation, ContentRange,
-  ContentSecurityPolicy, ContentType, CrossOriginEmbedderPolicy,
+  AltSvc, AuthenticationInfo, ContentDisposition, ContentDpr, ContentEncoding, ContentLocation,
+  ContentRange, ContentSecurityPolicy, ContentType, CrossOriginEmbedderPolicy,
   CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginResourcePolicy,
   EntityTag, HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues, Location, ProxyAuthenticate,
   ProxyAuthenticationInfo, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
@@ -3052,6 +3052,119 @@ fn test_parse_content_location_rejects_duplicate_and_oversized_values() {
     "content-location helper should reject oversized values"
   );
   assert_eq!(Some(&oversized), response.header_value("Content-Location"));
+}
+
+#[test]
+fn test_parse_content_dpr_response_helper_accepts_present_and_absent_values() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Content-DPR:  2.0  \r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/image.png"),
+    raw.as_bytes().to_vec(),
+  )
+  .expect("parse response with content-dpr");
+  let content_dpr = response
+    .content_dpr()
+    .expect("valid content-dpr should parse")
+    .expect("content-dpr header should be present");
+
+  assert_eq!(2.0, content_dpr.ratio());
+  assert_eq!("2.0", content_dpr.header_value());
+  assert_eq!(
+    Some(&"2.0".to_string()),
+    response.header_value("Content-DPR")
+  );
+
+  let raw = concat!("HTTP/1.1 200 OK\r\n", "Content-Length: 2\r\n", "\r\n", "OK");
+  let response = Response::new(
+    RoUrl::with("https://example.test/image.png"),
+    raw.as_bytes().to_vec(),
+  )
+  .expect("parse response without content-dpr");
+  assert_eq!(
+    None,
+    response
+      .content_dpr()
+      .expect("absent content-dpr should parse")
+  );
+}
+
+#[test]
+fn test_parse_content_dpr_rejects_invalid_helper_values_without_rejecting_response() {
+  let invalid_values = ["0", "2.", ".5", "+1", "1e1"];
+
+  for value in invalid_values {
+    let raw = format!("HTTP/1.1 200 OK\r\nContent-DPR: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(
+      RoUrl::with("https://example.test/image.png"),
+      raw.into_bytes(),
+    )
+    .expect("raw response remains usable");
+
+    assert!(
+      response.content_dpr().is_err(),
+      "content-dpr helper should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Content-DPR")
+    );
+  }
+}
+
+#[test]
+fn test_parse_content_dpr_rejects_duplicate_and_oversized_values() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Content-DPR: 1\r\n",
+    "content-dpr: 2.0\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(
+    RoUrl::with("https://example.test/image.png"),
+    raw.as_bytes().to_vec(),
+  )
+  .expect("raw response with duplicate content-dpr remains usable");
+
+  assert!(
+    response.content_dpr().is_err(),
+    "content-dpr helper should reject duplicate singleton headers"
+  );
+  assert_eq!(
+    vec![&"1".to_string(), &"2.0".to_string()],
+    response.header_values("Content-DPR")
+  );
+
+  let oversized = "1".repeat(64 * 1024 + 1);
+  let raw = format!("HTTP/1.1 200 OK\r\nContent-DPR: {oversized}\r\nContent-Length: 2\r\n\r\nOK");
+  let response = Response::new(
+    RoUrl::with("https://example.test/image.png"),
+    raw.into_bytes(),
+  )
+  .expect("raw response with oversized content-dpr remains usable");
+
+  assert!(
+    response.content_dpr().is_err(),
+    "content-dpr helper should reject oversized values"
+  );
+  assert_eq!(Some(&oversized), response.header_value("Content-DPR"));
+}
+
+#[test]
+fn test_parse_content_dpr_rejects_control_characters_and_crlf_injection() {
+  for value in ["1\r\nX-Evil: yes", "1\r", "1\n", "1\u{7f}"] {
+    assert!(
+      ContentDpr::parse(value).is_err(),
+      "content-dpr parser should reject {value:?}"
+    );
+  }
 }
 
 #[test]

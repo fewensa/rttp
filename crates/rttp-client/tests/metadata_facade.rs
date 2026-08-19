@@ -3,8 +3,8 @@ use rttp_client::response::{
   AccessControlAllowHeaders, AccessControlAllowHeadersParseError, AccessControlAllowMethods,
   AccessControlAllowMethodsParseError, AccessControlExposeHeaders, AccessControlMaxAge,
   AccessControlMaxAgeParseError, Age, AgeParseError, AltSvc, AuthenticationInfo,
-  AuthenticationInfoParseError, Connection, ConnectionParseError, ContentRange,
-  ContentRangeParseError, ContentSecurityPolicy, ContentSecurityPolicyParseError,
+  AuthenticationInfoParseError, Connection, ConnectionParseError, ContentDpr, ContentDprParseError,
+  ContentRange, ContentRangeParseError, ContentSecurityPolicy, ContentSecurityPolicyParseError,
   CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy,
   CrossOriginResourcePolicy, Digest, EntityTag, HttpClearSiteData, HttpContentLength, KeepAlive,
   LinkValues, Location, LocationParseError, Nel, NoVarySearch, NoVarySearchParams,
@@ -52,6 +52,9 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .expect("Content-Location should parse");
   let _: ContentLocationParseError =
     ContentLocation::parse("not valid").expect_err("invalid Content-Location should be rejected");
+  let content_dpr = ContentDpr::parse("1.5").expect("Content-DPR should parse");
+  let _: ContentDprParseError =
+    ContentDpr::parse("0").expect_err("zero Content-DPR should be rejected");
   let content_security_policy =
     ContentSecurityPolicy::parse("default-src 'self'; object-src 'none'")
       .expect("Content-Security-Policy should parse");
@@ -161,6 +164,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     content_location.header_value(),
     "../representations/current.json"
   );
+  assert_eq!(content_dpr.ratio(), 1.5);
+  assert_eq!(content_dpr.header_value(), "1.5");
   assert_eq!(
     content_security_policy.header_value(),
     "default-src 'self'; object-src 'none'"
