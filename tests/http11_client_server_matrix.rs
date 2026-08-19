@@ -1016,6 +1016,53 @@ fn sync_client_and_server_exchange_cross_origin_opener_policy_metadata_without_p
 }
 
 #[test]
+fn sync_client_and_server_exchange_cross_origin_opener_policy_report_only_metadata_without_policy()
+{
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind Cross-Origin-Opener-Policy-Report-Only server");
+  let addr = server
+    .local_addr()
+    .expect("Cross-Origin-Opener-Policy-Report-Only server addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        HttpResponse::ok("OK")
+          .with_cross_origin_opener_policy_report_only("same-origin; report-to=\"coop-reporting\"")
+          .expect("Cross-Origin-Opener-Policy-Report-Only should be accepted")
+      })
+      .expect("serve Cross-Origin-Opener-Policy-Report-Only response");
+  });
+
+  let response = client()
+    .get()
+    .url(format!(
+      "http://{addr}/matrix/cross-origin-opener-policy-report-only"
+    ))
+    .emit()
+    .expect("Cross-Origin-Opener-Policy-Report-Only response should parse");
+  let policy = response
+    .cross_origin_opener_policy_report_only()
+    .expect("Cross-Origin-Opener-Policy-Report-Only should parse")
+    .expect("Cross-Origin-Opener-Policy-Report-Only should be present");
+  assert_eq!(
+    rttp_client::response::CrossOriginOpenerPolicy::SameOrigin,
+    policy.policy()
+  );
+  assert_eq!(Some("coop-reporting"), policy.report_to());
+  assert_eq!(
+    r#"same-origin; report-to="coop-reporting""#,
+    policy.header_value()
+  );
+  assert_eq!(
+    Some(&r#"same-origin; report-to="coop-reporting""#.to_string()),
+    response.header_value("Cross-Origin-Opener-Policy-Report-Only")
+  );
+  handle
+    .join()
+    .expect("Cross-Origin-Opener-Policy-Report-Only server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_alt_svc_metadata_without_connection_policy() {
   const HEADERS: &[(&str, &str)] = &[(
     "Alt-Svc",

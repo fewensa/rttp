@@ -73,6 +73,12 @@ pub use rttp_protocol::cross_origin_opener_policy::{
   CrossOriginOpenerPolicy as HttpCrossOriginOpenerPolicy,
   CrossOriginOpenerPolicyParseError as HttpCrossOriginOpenerPolicyParseError,
 };
+pub use rttp_protocol::cross_origin_opener_policy_report_only::{
+  CrossOriginOpenerPolicyReportOnly as HttpCrossOriginOpenerPolicyReportOnly,
+  CrossOriginOpenerPolicyReportOnlyBareItem as HttpCrossOriginOpenerPolicyReportOnlyBareItem,
+  CrossOriginOpenerPolicyReportOnlyParameter as HttpCrossOriginOpenerPolicyReportOnlyParameter,
+  CrossOriginOpenerPolicyReportOnlyParseError as HttpCrossOriginOpenerPolicyReportOnlyParseError,
+};
 pub use rttp_protocol::cross_origin_resource_policy::{
   CrossOriginResourcePolicy as HttpCrossOriginResourcePolicy,
   CrossOriginResourcePolicyParseError as HttpCrossOriginResourcePolicyParseError,
@@ -1206,6 +1212,25 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Cross-Origin-Opener-Policy-Report-Only`
+  /// response metadata without applying opener policy or sending reports.
+  pub fn with_cross_origin_opener_policy_report_only(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpCrossOriginOpenerPolicyReportOnlyParseError> {
+    let policy = HttpCrossOriginOpenerPolicyReportOnly::parse(value)?;
+    self.headers.retain(|header| {
+      !header
+        .name
+        .eq_ignore_ascii_case("Cross-Origin-Opener-Policy-Report-Only")
+    });
+    self.headers.push(HttpHeader::new(
+      "Cross-Origin-Opener-Policy-Report-Only",
+      policy.header_value(),
+    ));
+    Ok(self)
+  }
+
   /// Validates and replaces `Strict-Transport-Security` response metadata
   /// without applying HTTPS-only policy.
   pub fn with_strict_transport_security(
@@ -2126,6 +2151,30 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpCrossOriginOpenerPolicy::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Cross-Origin-Opener-Policy-Report-Only` response
+  /// metadata without enforcing opener policy or sending reports.
+  pub fn cross_origin_opener_policy_report_only(
+    &self,
+  ) -> Result<
+    Option<HttpCrossOriginOpenerPolicyReportOnly>,
+    HttpCrossOriginOpenerPolicyReportOnlyParseError,
+  > {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Cross-Origin-Opener-Policy-Report-Only")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpCrossOriginOpenerPolicyReportOnly::parse_values(values).map(Some)
   }
 
   /// Parses attached `Strict-Transport-Security` response metadata without

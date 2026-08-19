@@ -5,16 +5,16 @@ use rttp::server::{
   HttpConditionalMetadata, HttpContentDpr, HttpContentDprParseError, HttpContentLocation,
   HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
   HttpCrossOriginEmbedderPolicy, HttpCrossOriginEmbedderPolicyReportOnly,
-  HttpCrossOriginOpenerPolicy, HttpCrossOriginResourcePolicy, HttpDeprecation,
-  HttpDeprecationParseError, HttpEntityTag, HttpExpectations, HttpIdempotencyKey,
-  HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfUnmodifiedSince, HttpMaxForwards,
-  HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNel, HttpPragma, HttpPragmaParseError,
-  HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError, HttpRequestAcceptCharsets,
-  HttpResponse, HttpSaveData, HttpSecGpc, HttpSecGpcParseError, HttpSignature, HttpSignatureInput,
-  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
-  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
-  HttpSunsetParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
-  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
+  HttpCrossOriginOpenerPolicy, HttpCrossOriginOpenerPolicyReportOnly,
+  HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpEntityTag,
+  HttpExpectations, HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince,
+  HttpIfUnmodifiedSince, HttpMaxForwards, HttpMementoDatetime, HttpMementoDatetimeParseError,
+  HttpNel, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization, HttpProxyStatus,
+  HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse, HttpSaveData, HttpSecGpc,
+  HttpSecGpcParseError, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
+  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
+  HttpSignatureInputParseError, HttpSignatureParseError, HttpSunsetParseError, HttpUpgrade,
+  HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
 };
 use std::io::Write;
 use std::net::SocketAddr;
@@ -158,6 +158,14 @@ fn compatibility_facade_exports_client_metadata_types() {
       "noopener-allow-popups; report-to=\"coop\"",
     )
     .expect("Cross-Origin-Opener-Policy should parse");
+  let opener_policy_report_only: rttp::CrossOriginOpenerPolicyReportOnly =
+    rttp_client::response::CrossOriginOpenerPolicyReportOnly::parse(
+      "same-origin; report-to=\"coop\"",
+    )
+    .expect("Cross-Origin-Opener-Policy-Report-Only should parse");
+  let _: rttp::CrossOriginOpenerPolicyReportOnlyParseError =
+    rttp_client::response::CrossOriginOpenerPolicyReportOnly::parse("same origin")
+      .expect_err("malformed Cross-Origin-Opener-Policy-Report-Only should be rejected");
   let strict_transport_security: rttp::StrictTransportSecurity =
     rttp_client::response::StrictTransportSecurity::parse("max-age=31536000; includeSubDomains")
       .expect("Strict-Transport-Security should parse");
@@ -268,6 +276,15 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(embedder_policy.header_value(), "require-corp");
   assert_eq!(embedder_policy_report_only.header_value(), "require-corp");
   assert_eq!(opener_policy.header_value(), "noopener-allow-popups");
+  assert_eq!(
+    rttp::CrossOriginOpenerPolicy::SameOrigin,
+    opener_policy_report_only.policy()
+  );
+  assert_eq!(Some("coop"), opener_policy_report_only.report_to());
+  assert_eq!(
+    opener_policy_report_only.header_value(),
+    r#"same-origin; report-to="coop""#
+  );
   assert_eq!(strict_transport_security.max_age(), 31_536_000);
   assert!(strict_transport_security.include_sub_domains());
   assert_eq!(
@@ -785,6 +802,9 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let opener_policy: HttpCrossOriginOpenerPolicy =
     HttpCrossOriginOpenerPolicy::parse("noopener-allow-popups; report-to=\"coop\"")
       .expect("Cross-Origin-Opener-Policy should parse");
+  let opener_policy_report_only: HttpCrossOriginOpenerPolicyReportOnly =
+    HttpCrossOriginOpenerPolicyReportOnly::parse("same-origin; report-to=\"coop\"")
+      .expect("Cross-Origin-Opener-Policy-Report-Only should parse");
   let upgrade: HttpUpgrade = HttpUpgrade::parse("websocket").expect("Upgrade should parse");
   let _: HttpUpgradeParseError = HttpUpgrade::parse("").expect_err("empty Upgrade should fail");
   let pragma: HttpPragma =
@@ -862,6 +882,15 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(embedder_policy.header_value(), "require-corp");
   assert_eq!(embedder_policy_report_only.header_value(), "require-corp");
   assert_eq!(opener_policy.header_value(), "noopener-allow-popups");
+  assert_eq!(
+    HttpCrossOriginOpenerPolicy::SameOrigin,
+    opener_policy_report_only.policy()
+  );
+  assert_eq!(Some("coop"), opener_policy_report_only.report_to());
+  assert_eq!(
+    opener_policy_report_only.header_value(),
+    r#"same-origin; report-to="coop""#
+  );
   assert_eq!(upgrade.protocols(), ["websocket"]);
   assert!(pragma.no_cache());
   assert_eq!("no-cache, community=private", pragma.header_value());

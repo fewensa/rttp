@@ -11,7 +11,8 @@ use rttp_server::server::{
   HttpConnectionParseError, HttpContentDisposition, HttpContentDispositionParseError,
   HttpContentDpr, HttpContentDprParseError, HttpContentLength, HttpContentLocation,
   HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
-  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeprecation,
+  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
+  HttpCrossOriginOpenerPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeprecation,
   HttpDeprecationParseError, HttpEntityTag, HttpExpectParseError, HttpExpectations, HttpHost,
   HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince,
   HttpIfModifiedSinceParseError, HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError,
@@ -125,6 +126,9 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let report_only_policy: HttpCrossOriginEmbedderPolicyReportOnly =
     HttpCrossOriginEmbedderPolicyReportOnly::parse("require-corp")
       .expect("Cross-Origin-Embedder-Policy-Report-Only should parse");
+  let opener_policy_report_only: HttpCrossOriginOpenerPolicyReportOnly =
+    HttpCrossOriginOpenerPolicyReportOnly::parse(r#"same-origin; report-to="coop""#)
+      .expect("Cross-Origin-Opener-Policy-Report-Only should parse");
   let signature_input: HttpSignatureInput =
     HttpSignatureInput::parse(r#"sig1=("@method");created=1700000000"#)
       .expect("Signature-Input should parse");
@@ -240,6 +244,15 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(cdn_cache_control.directives()[1].name(), "cdn-example");
   assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
   assert_eq!(report_only_policy.header_value(), "require-corp");
+  assert_eq!(
+    HttpCrossOriginOpenerPolicy::SameOrigin,
+    opener_policy_report_only.policy()
+  );
+  assert_eq!(Some("coop"), opener_policy_report_only.report_to());
+  assert_eq!(
+    opener_policy_report_only.header_value(),
+    r#"same-origin; report-to="coop""#
+  );
   assert_eq!(signature_input.members()[0].label(), "sig1");
   assert!(signature_input_error.is_err());
   assert_eq!(

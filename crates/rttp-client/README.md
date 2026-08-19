@@ -919,6 +919,23 @@ response headers remain available through `Response::header_value()` and
 The helper is metadata-only. `rttp_client` does not schedule, send, persist,
 retry, or route reports.
 
+## Bounded Cross-Origin-Opener-Policy-Report-Only response metadata
+
+`Response::cross_origin_opener_policy_report_only()` parses retained
+`Cross-Origin-Opener-Policy-Report-Only` fields through the shared protocol
+type. It returns `Ok(None)` when the header is absent. Present values must be
+a singleton structured-field item using the canonical COOP directives
+`unsafe-none`, `same-origin-allow-popups`, `same-origin`, or
+`noopener-allow-popups`. Well-formed parameters are retained as metadata;
+`report-to` is exposed as a reporting-endpoint name when present. Each field
+value is limited to 64 KiB. Duplicate fields, duplicate parameter names,
+unknown directives, malformed structured fields, and oversized values return
+an error while the raw response headers remain available through
+`Response::header_value()` and `Response::header_values()`.
+
+The helper is metadata-only. `rttp_client` does not isolate browsing
+contexts, validate `Reporting-Endpoints` members, or send reports.
+
 ## Bounded Proxy-Status response metadata
 
 `Response::proxy_status()` parses retained RFC 9209 `Proxy-Status` fields into
@@ -1047,6 +1064,7 @@ header-block model.
 | Vary | `Response::vary` parses bounded response `Vary` fields into wildcard or normalized case-insensitive field-name metadata | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | NEL | `Response::nel` parses the bounded singleton `NEL` field as W3C Network Error Logging policy metadata while preserving raw headers | No network error report sending, policy persistence, Reporting endpoint group configuration, or status-policy behavior |
 | Reporting-Endpoints | `Response::reporting_endpoints` parses bounded endpoint-name to quoted-URL dictionaries through the shared protocol type while preserving raw headers | No report scheduling, sending, persistence, retry, routing, or endpoint policy behavior |
+| Cross-Origin-Opener-Policy-Report-Only | `Response::cross_origin_opener_policy_report_only` parses bounded singleton COOP Report-Only metadata through the shared protocol type, reuses the canonical COOP directives, retains reporting parameters including `report-to`, and preserves raw headers | No browsing-context isolation, report scheduling, sending, persistence, retry, routing, or `Reporting-Endpoints` validation |
 | Proxy-Status | `Response::proxy_status` parses bounded RFC 9209 Token/String proxy identifiers with opaque parameters while preserving raw headers on parse failures | No proxy health checks, retries, trailer promotion, or origin-generation policy |
 | No-Vary-Search | `Response::no_vary_search` parses bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
 | Trailers | Chunked response trailers are exposed for blocking and async APIs; streaming chunked uploads can send declared request trailers | Application metadata trailers such as `X-Trace` are allowed; pseudo-header, connection-specific, routing, authentication/cookie, and framing trailer fields are rejected |

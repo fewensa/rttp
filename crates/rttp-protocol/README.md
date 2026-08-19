@@ -431,15 +431,19 @@ reporting metadata or enforce opener policy. Case variants, lists, quoted
 values, unknown tokens, empty values, and other unparsable input are errors.
 The parser never fails open to `unsafe-none`.
 
-## Cross-Origin-Opener-Policy
+## Cross-Origin-Opener-Policy-Report-Only
 
-`cross_origin_opener_policy` parses a singleton `Cross-Origin-Opener-Policy`
-structured-field item. Each field value is bounded to 64 KiB. A second field is
-rejected after every supplied field is bound-checked. The bare item must be
-exactly one of the tokens `unsafe-none`, `same-origin-allow-popups`,
-`same-origin`, or `noopener-allow-popups`. Well-formed parameters, including
-`report-to`, are accepted as syntax and discarded; this parser does not retain
-reporting metadata or enforce opener policy. Case variants, lists, quoted
+`cross_origin_opener_policy_report_only` parses a singleton
+`Cross-Origin-Opener-Policy-Report-Only` structured-field item with the same
+canonical directive vocabulary as `Cross-Origin-Opener-Policy`. Each field
+value is bounded to 64 KiB. A second field is rejected after every supplied
+field is bound-checked. The bare item must be exactly one of the tokens
+`unsafe-none`, `same-origin-allow-popups`, `same-origin`, or
+`noopener-allow-popups`. Well-formed parameters are retained as opaque
+metadata; `report-to` is exposed as a reporting-endpoint name when present.
+Duplicate parameter names are rejected. This parser does not enforce opener
+policy, isolate browsing contexts, validate `Reporting-Endpoints` members,
+deliver reports, or schedule report delivery. Case variants, lists, quoted
 values, unknown tokens, empty values, and other unparsable input are errors.
 The parser never fails open to `unsafe-none`.
 

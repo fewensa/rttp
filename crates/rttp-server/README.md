@@ -273,6 +273,25 @@ original fields.
 These helpers only declare and parse metadata. The server does not schedule,
 send, persist, retry, or route reports.
 
+## Cross-Origin-Opener-Policy-Report-Only response metadata
+
+`HttpResponse::with_cross_origin_opener_policy_report_only(value)` validates
+a singleton `Cross-Origin-Opener-Policy-Report-Only` structured-field item
+through the shared protocol `HttpCrossOriginOpenerPolicyReportOnly` type and
+replaces any existing same-name fields with one normalized value.
+`HttpResponse::cross_origin_opener_policy_report_only()` parses attached raw
+fields into the same type, returning parser errors without changing those raw
+fields. The type reuses the canonical COOP directives `unsafe-none`,
+`same-origin-allow-popups`, `same-origin`, and `noopener-allow-popups`.
+Well-formed parameters are retained as metadata; `report-to` is exposed as a
+reporting-endpoint name when present. Each field value is bounded to 64 KiB.
+Duplicate fields, duplicate parameter names, unknown directives, malformed
+structured fields, and oversized values return a parser error while
+`HttpResponse` raw headers continue to expose the original fields.
+
+These helpers only declare and parse metadata. The server does not isolate
+browsing contexts, validate `Reporting-Endpoints` members, or send reports.
+
 ## Proxy-Status response metadata
 
 `HttpResponse::with_proxy_status(value)` validates RFC 9209 `Proxy-Status` as
