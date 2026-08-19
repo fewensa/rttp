@@ -81,6 +81,23 @@ fn supports_loading_mode_from_tokens_validates_and_deduplicates() {
 }
 
 #[test]
+fn supports_loading_mode_accepts_structured_tokens_with_colon_and_slash() {
+  let parsed = SupportsLoadingMode::parse("vendor/mode, vendor:mode")
+    .expect("Structured Fields tokens may contain ':' and '/'");
+  assert_eq!(parsed.tokens(), ["vendor/mode", "vendor:mode"]);
+  assert_eq!(parsed.header_value(), "vendor/mode, vendor:mode");
+
+  let declared = SupportsLoadingMode::from_tokens(["vendor/mode", "vendor:mode"])
+    .expect("from_tokens must accept the same Structured Fields token grammar");
+  assert_eq!(declared.tokens(), ["vendor/mode", "vendor:mode"]);
+  assert_eq!(declared.header_value(), "vendor/mode, vendor:mode");
+  assert_eq!(
+    SupportsLoadingMode::parse(declared.header_value()).expect("canonical header must round-trip"),
+    declared
+  );
+}
+
+#[test]
 fn supports_loading_mode_retains_first_seen_spelling() {
   let modes =
     SupportsLoadingMode::parse("Fenced-Frame").expect("mixed-case well-formed token should parse");
@@ -183,5 +200,27 @@ fn supports_loading_mode_enforces_value_and_token_bounds() {
     )
     .is_err(),
     "from_tokens must reject more than 256 tokens"
+  );
+
+  let first = format!("a{}", "x".repeat(32_766));
+  let second = format!("b{}", "x".repeat(32_766));
+  assert_eq!(
+    first.len() + second.len() + 2,
+    MAX_SUPPORTS_LOADING_MODE_VALUE_BYTES
+  );
+  let at_serialized_limit = SupportsLoadingMode::from_tokens([&first, &second])
+    .expect("canonical serialized value at 64 KiB should be accepted");
+  assert_eq!(
+    at_serialized_limit.header_value().len(),
+    MAX_SUPPORTS_LOADING_MODE_VALUE_BYTES
+  );
+
+  let over_first = format!("a{}", "x".repeat(32_767));
+  let over_second = format!("b{}", "x".repeat(32_767));
+  assert!(over_first.len() + over_second.len() <= MAX_SUPPORTS_LOADING_MODE_VALUE_BYTES);
+  assert!(over_first.len() + over_second.len() + 2 > MAX_SUPPORTS_LOADING_MODE_VALUE_BYTES);
+  assert!(
+    SupportsLoadingMode::from_tokens([&over_first, &over_second]).is_err(),
+    "from_tokens must reject lists whose comma-space serialization exceeds 64 KiB"
   );
 }

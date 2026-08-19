@@ -2416,6 +2416,22 @@ fn supports_loading_mode_helpers_preserve_raw_metadata_and_report_parse_errors()
   assert!(HttpResponse::ok([])
     .with_supports_loading_mode([format!("fenced-frame{}", "x".repeat(64 * 1024))])
     .is_err());
+
+  let extension = HttpResponse::ok([])
+    .with_supports_loading_mode(["vendor/mode", "vendor:mode"])
+    .expect("Structured Fields tokens with ':' and '/' should be accepted");
+  let modes = extension
+    .supports_loading_mode()
+    .expect("Supports-Loading-Mode should parse")
+    .expect("Supports-Loading-Mode should be present");
+  assert_eq!(modes.tokens(), ["vendor/mode", "vendor:mode"]);
+  assert_eq!(modes.header_value(), "vendor/mode, vendor:mode");
+
+  let over_first = format!("a{}", "x".repeat(32_767));
+  let over_second = format!("b{}", "x".repeat(32_767));
+  assert!(HttpResponse::ok([])
+    .with_supports_loading_mode([&over_first, &over_second])
+    .is_err());
 }
 
 #[test]

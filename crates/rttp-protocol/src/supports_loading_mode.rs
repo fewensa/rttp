@@ -9,7 +9,7 @@
 use std::error::Error;
 use std::fmt;
 
-use sfv::{BareItem, List, ListEntry, Parser};
+use sfv::{BareItem, List, ListEntry, Parser, TokenRef};
 
 /// Maximum bytes accepted in one `Supports-Loading-Mode` field value.
 pub const MAX_SUPPORTS_LOADING_MODE_VALUE_BYTES: usize = 64 * 1024;
@@ -67,8 +67,11 @@ impl SupportsLoadingMode {
     let mut total_bytes = 0usize;
     for token in tokens {
       let token = token.as_ref();
-      if !is_structured_token(token) {
+      if TokenRef::from_str(token).is_err() {
         return Err(invalid_token());
+      }
+      if !parsed.is_empty() {
+        total_bytes += 2;
       }
       total_bytes += token.len();
       if total_bytes > MAX_SUPPORTS_LOADING_MODE_VALUE_BYTES {
@@ -189,32 +192,6 @@ fn parse_field(value: &str, tokens: &mut Vec<String>) -> Result<(), SupportsLoad
     tokens.push(token.as_str().to_owned());
   }
   Ok(())
-}
-
-fn is_structured_token(value: &str) -> bool {
-  let mut bytes = value.bytes();
-  matches!(bytes.next(), Some(b'*' | b'a'..=b'z' | b'A'..=b'Z'))
-    && bytes.all(|byte| {
-      byte.is_ascii_alphanumeric()
-        || matches!(
-          byte,
-          b'!'
-            | b'#'
-            | b'$'
-            | b'%'
-            | b'&'
-            | b'\''
-            | b'*'
-            | b'+'
-            | b'-'
-            | b'.'
-            | b'^'
-            | b'_'
-            | b'`'
-            | b'|'
-            | b'~'
-        )
-    })
 }
 
 fn invalid_token() -> SupportsLoadingModeParseError {
