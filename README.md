@@ -591,8 +591,9 @@ response acceptance.
 `Access-Control-Allow-Credentials` response field into
 `AccessControlAllowCredentials` metadata. Absent metadata returns `Ok(None)`.
 The field value must be exactly the standards-defined `true` token, matched
-case-insensitively and exposed in canonical lowercase form; surrounding SP and
-HTAB are trimmed. Unknown tokens, empty values, duplicate fields, oversized
+case-sensitively per the Fetch `%s"true"` grammar and exposed in canonical
+lowercase form; surrounding SP and HTAB are trimmed. Unknown tokens, empty
+values, duplicate fields, oversized
 values, and control bytes return an error while the raw response headers
 remain available through `Response::header_value()` and
 `Response::header_values()`.
