@@ -68,6 +68,7 @@ use rttp_protocol::prefer::PreferenceApplied;
 use rttp_protocol::range::ContentRange;
 use rttp_protocol::referrer_policy::ReferrerPolicy;
 use rttp_protocol::reporting_endpoints::ReportingEndpoints;
+use rttp_protocol::service_worker_allowed::ServiceWorkerAllowed;
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::sunset::parse_sunset_values;
 use rttp_protocol::supports_loading_mode::SupportsLoadingMode;
@@ -746,6 +747,18 @@ impl Response {
       return Ok(None);
     }
     ContentLocation::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Service-Worker-Allowed` response metadata without
+  /// registering service workers or resolving application routing policy.
+  pub fn service_worker_allowed(&self) -> error::Result<Option<ServiceWorkerAllowed>> {
+    let values = self.header_values("service-worker-allowed");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    ServiceWorkerAllowed::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

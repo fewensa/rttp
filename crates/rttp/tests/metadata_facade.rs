@@ -12,7 +12,8 @@ use rttp::server::{
   HttpNel, HttpOriginTrialParseError, HttpOriginTrials, HttpPermissionsPolicy,
   HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization,
   HttpProxyStatus, HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse,
-  HttpSaveData, HttpSecGpc, HttpSecGpcParseError, HttpSignature, HttpSignatureInput,
+  HttpSaveData, HttpSecGpc, HttpSecGpcParseError, HttpServiceWorkerAllowed,
+  HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
   HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
   HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
   HttpSunsetParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpUpgrade,
@@ -105,6 +106,12 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::ContentLocationParseError =
     rttp_client::response::ContentLocation::parse("not valid")
       .expect_err("invalid Content-Location should be rejected");
+  let service_worker_allowed: rttp::ServiceWorkerAllowed =
+    rttp_client::response::ServiceWorkerAllowed::parse("/")
+      .expect("Service-Worker-Allowed should parse");
+  let _: rttp::ServiceWorkerAllowedParseError =
+    rttp_client::response::ServiceWorkerAllowed::parse("http://example.test/scope")
+      .expect_err("absolute URI Service-Worker-Allowed should be rejected");
   let content_dpr: rttp::ContentDpr =
     rttp_client::response::ContentDpr::parse("1.5").expect("Content-DPR should parse");
   let _: rttp::ContentDprParseError =
@@ -281,6 +288,8 @@ fn compatibility_facade_exports_client_metadata_types() {
     content_location.header_value(),
     "../representations/current.json"
   );
+  assert_eq!(service_worker_allowed.header_value(), "/");
+  assert_eq!(service_worker_allowed.as_str(), "/");
   assert_eq!(content_dpr.ratio(), 1.5);
   assert_eq!(content_dpr.header_value(), "1.5");
   assert_eq!(deprecation, rttp::Deprecation::Boolean(true));
@@ -415,6 +424,8 @@ fn compatibility_facade_roundtrips_representation_metadata_matrix() {
     .expect("Content-Language should be accepted")
     .with_content_location("/representations/asset.json")
     .expect("Content-Location should be accepted")
+    .with_service_worker_allowed("/")
+    .expect("Service-Worker-Allowed should be accepted")
     .with_digest("sha-256=:YWJj:")
     .expect("Content-Digest should be accepted")
     .with_repr_digest("sha-512=:ZGVm:")
@@ -452,6 +463,14 @@ fn compatibility_facade_roundtrips_representation_metadata_matrix() {
       .expect("server Content-Location should be present")
       .header_value(),
     "/representations/asset.json"
+  );
+  assert_eq!(
+    server_response
+      .service_worker_allowed()
+      .expect("server Service-Worker-Allowed should parse")
+      .expect("server Service-Worker-Allowed should be present")
+      .header_value(),
+    "/"
   );
   assert_eq!(
     server_response
@@ -503,6 +522,10 @@ fn compatibility_facade_roundtrips_representation_metadata_matrix() {
   assert_eq!(
     Some("/representations/asset.json"),
     header_value(&response_text, "Content-Location")
+  );
+  assert_eq!(
+    Some("/"),
+    header_value(&response_text, "Service-Worker-Allowed")
   );
   assert_eq!(
     Some("sha-256=:YWJj:"),
@@ -640,6 +663,14 @@ fn compatibility_facade_roundtrips_representation_metadata_matrix() {
       .expect("client Content-Location should be present")
       .header_value(),
     "/representations/asset.json"
+  );
+  assert_eq!(
+    client_response
+      .service_worker_allowed()
+      .expect("client Service-Worker-Allowed should parse")
+      .expect("client Service-Worker-Allowed should be present")
+      .header_value(),
+    "/"
   );
   assert_eq!(
     content_digest.entry("sha-256").map(|entry| entry.value()),
@@ -921,6 +952,11 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
       .expect("Content-Location should parse");
   let _: HttpContentLocationParseError = HttpContentLocation::parse("not valid")
     .expect_err("invalid Content-Location should be rejected");
+  let service_worker_allowed: HttpServiceWorkerAllowed =
+    HttpServiceWorkerAllowed::parse("/").expect("Service-Worker-Allowed should parse");
+  let _: HttpServiceWorkerAllowedParseError =
+    HttpServiceWorkerAllowed::parse("http://example.test/scope")
+      .expect_err("absolute URI Service-Worker-Allowed should be rejected");
   let content_dpr: HttpContentDpr = HttpContentDpr::parse("2.0").expect("Content-DPR should parse");
   let _: HttpContentDprParseError =
     HttpContentDpr::parse("0").expect_err("zero Content-DPR should be rejected");
@@ -971,6 +1007,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     content_location.header_value(),
     "../representations/current.json"
   );
+  assert_eq!(service_worker_allowed.header_value(), "/");
+  assert_eq!(service_worker_allowed.as_str(), "/");
   assert_eq!(content_dpr.ratio(), 2.0);
   assert_eq!(content_dpr.header_value(), "2.0");
   assert_eq!(deprecation, HttpDeprecation::Boolean(true));

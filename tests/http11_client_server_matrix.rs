@@ -418,6 +418,17 @@ fn content_language_response(values: &[&str], include_adjacent_metadata: bool) -
   response.into_bytes()
 }
 
+fn service_worker_allowed_response(values: &[&str]) -> Vec<u8> {
+  let mut response = String::from("HTTP/1.1 200 OK\r\n");
+  for value in values {
+    response.push_str("Service-Worker-Allowed: ");
+    response.push_str(value);
+    response.push_str("\r\n");
+  }
+  response.push_str("Content-Length: 2\r\n\r\nOK");
+  response.into_bytes()
+}
+
 fn content_location_response(values: &[&str], include_adjacent_metadata: bool) -> Vec<u8> {
   let mut response = String::from("HTTP/1.1 200 OK\r\n");
   for value in values {
@@ -3926,6 +3937,37 @@ fn assert_content_language_helper_rejects_but_preserves_response(
   handle.join().expect("raw response server thread");
 }
 
+fn assert_service_worker_allowed_helper_rejects_but_preserves_response(
+  name: &str,
+  raw_response: Vec<u8>,
+  expected_values: &[&str],
+) {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!(
+      "http://{}/matrix/service-worker-allowed-invalid",
+      addr
+    ))
+    .emit()
+    .unwrap_or_else(|err| panic!("{name} response should remain parseable: {err}"));
+
+  assert!(
+    response.service_worker_allowed().is_err(),
+    "{name} helper should reject invalid Service-Worker-Allowed"
+  );
+  let raw_values: Vec<&str> = response
+    .header_values("Service-Worker-Allowed")
+    .into_iter()
+    .map(String::as_str)
+    .collect();
+  assert_eq!(expected_values, raw_values.as_slice(), "{name}");
+  assert_eq!("OK", response.body().string().unwrap(), "{name}");
+
+  handle.join().expect("raw response server thread");
+}
+
 fn assert_content_location_helper_rejects_but_preserves_response(
   name: &str,
   raw_response: Vec<u8>,
@@ -4294,6 +4336,66 @@ fn sync_client_parses_shared_content_language_response_matrix() {
     assert_eq!("OK", response.body().string().unwrap(), "{}", case.name);
     handle.join().expect("raw response server thread");
   }
+}
+
+#[test]
+fn sync_client_parses_service_worker_allowed_from_server_declaration() {
+  let server_response = HttpResponse::ok("OK")
+    .with_service_worker_allowed("/")
+    .expect("Service-Worker-Allowed declaration should parse");
+  let raw_response = server_response.to_bytes();
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/service-worker-allowed", addr))
+    .emit()
+    .expect("Service-Worker-Allowed response should parse");
+
+  assert_eq!(
+    "/",
+    response
+      .service_worker_allowed()
+      .expect("Service-Worker-Allowed should parse")
+      .expect("Service-Worker-Allowed should be present")
+      .as_str()
+  );
+  assert_eq!(
+    Some(&"/".to_string()),
+    response.header_value("Service-Worker-Allowed")
+  );
+  assert_eq!("OK", response.body().string().unwrap());
+  handle.join().expect("raw response server thread");
+}
+
+#[test]
+fn sync_client_service_worker_allowed_helper_rejects_malformed_duplicate_and_oversized_values() {
+  for value in [
+    "",
+    "/bad path",
+    "/bad%zz",
+    "http://example.test/scope",
+    "//example.test/scope",
+  ] {
+    assert_service_worker_allowed_helper_rejects_but_preserves_response(
+      "malformed Service-Worker-Allowed value",
+      service_worker_allowed_response(&[value]),
+      &[value.trim()],
+    );
+  }
+
+  assert_service_worker_allowed_helper_rejects_but_preserves_response(
+    "duplicate Service-Worker-Allowed header fields",
+    service_worker_allowed_response(&["/", "/app/"]),
+    &["/", "/app/"],
+  );
+
+  let oversized = format!("/{}", "a".repeat(64 * 1024));
+  assert_service_worker_allowed_helper_rejects_but_preserves_response(
+    "oversized Service-Worker-Allowed value",
+    service_worker_allowed_response(&[&oversized]),
+    &[&oversized],
+  );
 }
 
 #[test]

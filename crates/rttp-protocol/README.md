@@ -259,6 +259,19 @@ references, and broken percent-encoding are errors. This is syntax validation
 only: callers own redirect handling, cache variant selection, representation
 replacement, route generation, retries, and status policy.
 
+## Service-Worker-Allowed
+
+`service_worker_allowed` parses a singleton response `Service-Worker-Allowed`
+field as one bounded origin-relative or absolute path value. Each field value
+is bounded to 64 KiB. A second field is rejected after every supplied field is
+bound-checked. Surrounding SP and HTAB are trimmed as optional whitespace, and
+the trimmed path text is preserved through `as_str()` and `header_value()`
+without resolving scope against a script URL. Empty values, ASCII controls,
+interior whitespace, unsafe field-value characters, broken percent-encoding,
+absolute URIs, and network-path authority forms are errors. This is syntax
+validation only: callers own service-worker registration, scope evaluation,
+and application routing policy.
+
 ## Connection
 
 `connection` parses one or more RFC 9110 `Connection` field values into an
