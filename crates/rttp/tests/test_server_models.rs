@@ -1906,10 +1906,12 @@ fn response_content_location_helper_declares_single_header_value() {
   assert!(serialized.contains("\r\nContent-Location: /representations/current\r\n"));
   assert_eq!(1, serialized.matches("\r\nContent-Location: ").count());
   assert_eq!(
-    Some("/representations/current"),
+    "/representations/current",
     response
       .content_location()
       .expect("Content-Location should parse")
+      .expect("Content-Location should be present")
+      .as_str()
   );
 }
 
@@ -1918,10 +1920,12 @@ fn response_content_location_helper_parses_attached_singleton_header() {
   let response = HttpResponse::ok("body").header("Content-Location", "../variant.en");
 
   assert_eq!(
-    Some("../variant.en"),
+    "../variant.en",
     response
       .content_location()
       .expect("Content-Location should parse")
+      .expect("Content-Location should be present")
+      .as_str()
   );
 }
 

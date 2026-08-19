@@ -3,6 +3,7 @@ use rttp_protocol::age::Age;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::connection::Connection;
 use rttp_protocol::content_encoding::ContentEncoding;
+use rttp_protocol::content_location::ContentLocation;
 use rttp_protocol::content_type::ContentType;
 use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
 use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedderPolicyReportOnly;
@@ -11,6 +12,7 @@ use rttp_protocol::entity_tag::{EntityTag, IfMatch};
 use rttp_protocol::fetch_metadata::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 use rttp_protocol::from::From;
 use rttp_protocol::host::Host;
+use rttp_protocol::location::Location;
 use rttp_protocol::no_vary_search::{NoVarySearch, NoVarySearchParams};
 use rttp_protocol::origin::Origin;
 use rttp_protocol::prefer::{Prefer, PreferenceApplied, PreferenceKind};
@@ -42,6 +44,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
   let fetch_user = SecFetchUser::parse("?1").expect("Sec-Fetch-User should parse");
   let from = From::parse("Ops Team <ops@example.test>").expect("From should parse");
+  let location = Location::parse("../login?next=%2Fdashboard").expect("Location should parse");
   let host = Host::parse("example.test:8443").expect("Host should parse");
   let origin = Origin::parse("https://example.test").expect("Origin should parse");
   let no_vary_search =
@@ -56,7 +59,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let warning = Warning::parse(r#"110 - "Response is Stale""#).expect("Warning should parse");
   let x_content_type_options =
     XContentTypeOptions::parse("nosniff").expect("X-Content-Type-Options should parse");
-  let x_frame_options = XFrameOptions::parse("DENY").expect("X-Frame-Options should parse");
+  let x_frame_options = XFrameOptions::parse("SAMEORIGIN").expect("X-Frame-Options should parse");
   let cross_origin_embedder_policy =
     CrossOriginEmbedderPolicy::parse(r#"require-corp; report-to="coep""#)
       .expect("Cross-Origin-Embedder-Policy should parse");
@@ -68,6 +71,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
       .expect("Strict-Transport-Security should parse");
   let content_type =
     ContentType::parse("text/plain; charset=utf-8").expect("Content-Type should parse");
+  let content_location = ContentLocation::parse("../representations/current.json")
+    .expect("Content-Location should parse");
   let connection = Connection::parse("keep-alive, TE").expect("Connection should parse");
   let content_encoding = ContentEncoding::parse("gzip, br").expect("Content-Encoding should parse");
   let transfer_encoding =
@@ -98,6 +103,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_dest.header_value(), "document");
   assert_eq!(fetch_user.header_value(), "?1");
   assert_eq!(from.header_value(), "Ops Team <ops@example.test>");
+  assert_eq!(location.as_str(), "../login?next=%2Fdashboard");
   assert_eq!(host.host(), "example.test");
   assert_eq!(host.port(), Some("8443"));
   assert_eq!(origin.header_value(), "https://example.test");
@@ -114,7 +120,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(warning.items()[0].code(), 110);
   assert_eq!(warning.items()[0].text(), "Response is Stale");
   assert_eq!(x_content_type_options.header_value(), "nosniff");
-  assert_eq!(x_frame_options.header_value(), "DENY");
+  assert_eq!(x_frame_options.header_value(), "SAMEORIGIN");
   assert_eq!(cross_origin_embedder_policy.header_value(), "require-corp");
   assert_eq!(
     cross_origin_embedder_policy_report_only.header_value(),
@@ -125,6 +131,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
     "max-age=31536000; includeSubDomains; preload"
   );
   assert_eq!(content_type.header_value(), "text/plain; charset=utf-8");
+  assert_eq!(
+    content_location.header_value(),
+    "../representations/current.json"
+  );
   assert_eq!(connection.tokens(), ["keep-alive", "TE"]);
   assert_eq!(connection.header_value(), "keep-alive, TE");
   assert_eq!(content_encoding.codings(), ["gzip", "br"]);
