@@ -370,19 +370,21 @@ fn parse_accept_quoted_string(value: &str) -> Result<String, AcceptParseError> {
   let inner = &value[1..value.len() - 1];
   let mut parsed = String::new();
   let mut escaped = false;
-  for byte in inner.bytes() {
+  for value_char in inner.chars() {
+    let mut encoded = [0; 4];
+    let bytes = value_char.encode_utf8(&mut encoded).bytes();
     if escaped {
-      if !is_quoted_pair_char(byte) {
+      if !bytes.clone().all(is_quoted_pair_char) {
         return Err(AcceptParseError::new("invalid Accept parameter value"));
       }
-      parsed.push(byte as char);
+      parsed.push(value_char);
       escaped = false;
-    } else if byte == b'\\' {
+    } else if value_char == '\\' {
       escaped = true;
-    } else if byte == b'"' || !is_qdtext(byte) {
+    } else if value_char == '"' || !bytes.clone().all(is_qdtext) {
       return Err(AcceptParseError::new("invalid Accept parameter value"));
     } else {
-      parsed.push(byte as char);
+      parsed.push(value_char);
     }
   }
 

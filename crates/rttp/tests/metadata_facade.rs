@@ -1,15 +1,16 @@
 use rttp::server::{
-  HttpAccept, HttpAcceptCh, HttpAcceptParseError, HttpAccessControlRequestMethod,
-  HttpAccessControlRequestPrivateNetwork, HttpConditionalMetadata, HttpContentDpr,
-  HttpContentDprParseError, HttpContentLocation, HttpContentLocationParseError, HttpContentRange,
-  HttpContentRangeParseError, HttpCrossOriginEmbedderPolicy,
-  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
-  HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpEntityTag,
-  HttpMaxForwards, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNel, HttpProxyStatus,
-  HttpProxyStatusParseError, HttpResponse, HttpSaveData, HttpSignature, HttpSignatureInput,
-  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
-  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
-  HttpSunsetParseError, HttpUpgrade, HttpUpgradeParseError,
+  HttpAccept, HttpAcceptCh, HttpAcceptLanguageParseError, HttpAcceptLanguages,
+  HttpAcceptParseError, HttpAccessControlRequestMethod, HttpAccessControlRequestPrivateNetwork,
+  HttpConditionalMetadata, HttpContentDpr, HttpContentDprParseError, HttpContentLocation,
+  HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
+  HttpCrossOriginEmbedderPolicy, HttpCrossOriginEmbedderPolicyReportOnly,
+  HttpCrossOriginOpenerPolicy, HttpCrossOriginResourcePolicy, HttpDeprecation,
+  HttpDeprecationParseError, HttpEntityTag, HttpMaxForwards, HttpMementoDatetime,
+  HttpMementoDatetimeParseError, HttpNel, HttpProxyStatus, HttpProxyStatusParseError, HttpResponse,
+  HttpSaveData, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
+  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
+  HttpSignatureInputParseError, HttpSignatureParseError, HttpSunsetParseError, HttpUpgrade,
+  HttpUpgradeParseError,
 };
 use std::io::Write;
 use std::net::SocketAddr;
@@ -86,6 +87,9 @@ fn compatibility_facade_exports_client_metadata_types() {
     .expect_err("invalid Content-Range should be rejected");
   let accept_ranges: rttp::AcceptRanges =
     rttp_client::response::AcceptRanges::parse("bytes, pages").expect("Accept-Ranges should parse");
+  let accept_encoding: rttp::AcceptEncoding =
+    rttp_client::response::AcceptEncoding::parse("gzip, br;q=0.8, identity;q=0")
+      .expect("Accept-Encoding should parse");
   let content_location: rttp::ContentLocation =
     rttp_client::response::ContentLocation::parse("../representations/current.json")
       .expect("Content-Location should parse");
@@ -201,6 +205,10 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(accept_ranges.units(), ["bytes", "pages"]);
   assert_eq!(accept_ranges.header_value(), "bytes, pages");
   assert_eq!(
+    accept_encoding.header_value(),
+    "gzip, br;q=0.8, identity;q=0"
+  );
+  assert_eq!(
     content_location.header_value(),
     "../representations/current.json"
   );
@@ -277,6 +285,21 @@ fn compatibility_facade_exports_server_accept_metadata_types() {
   assert_eq!("text/html", accept.media_ranges()[0].media_type());
   assert_eq!(Some(800), accept.media_ranges()[0].quality());
   assert_eq!(Some("1"), accept.media_ranges()[0].parameter("level"));
+}
+
+#[test]
+fn compatibility_facade_accept_preserves_utf8_quoted_parameter_values() {
+  let request = rttp::server::HttpRequest::parse(
+    "GET / HTTP/1.1\r\nHost: example.test\r\nAccept: text/plain; title=\"é\"\r\n\r\n".as_bytes(),
+  )
+  .expect("request should parse");
+  let accept = request
+    .accept()
+    .expect("Accept should parse")
+    .expect("Accept should be present");
+
+  assert_eq!(Some("é"), accept.media_ranges()[0].parameter("title"));
+  assert_eq!("text/plain; title=\"é\"", accept.header_value());
 }
 
 #[test]
@@ -531,8 +554,79 @@ fn compatibility_facade_roundtrips_representation_metadata_matrix() {
 }
 
 #[test]
+#[cfg(feature = "client")]
+fn client_accept_encoding_helpers_parse_through_shared_server_type() {
+  let (addr, handle) = spawn_representation_metadata_response_server(
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  );
+  rttp::Http::client()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .accept_gzip()
+    .expect("gzip should be accepted")
+    .accept_br_with_q("0.8")
+    .expect("br quality should be accepted")
+    .accept_identity_with_q("0")
+    .expect("identity quality should be accepted")
+    .emit()
+    .expect("client request should complete");
+  let captured_request = handle
+    .join()
+    .expect("Accept-Encoding capture server should join");
+  let captured_request_text =
+    String::from_utf8(captured_request.clone()).expect("request should be utf-8");
+
+  assert_eq!(
+    Some("gzip, br;q=0.8, identity;q=0"),
+    header_value(&captured_request_text, "Accept-Encoding")
+  );
+
+  let server_request =
+    rttp::server::HttpRequest::parse(&captured_request).expect("server request should parse");
+  let encodings: rttp::AcceptEncoding = server_request
+    .accept_encoding()
+    .expect("server Accept-Encoding should parse")
+    .expect("server Accept-Encoding should be present");
+
+  assert_eq!(encodings.len(), 3);
+  assert_eq!(encodings.codings()[0].coding(), "gzip");
+  assert_eq!(encodings.codings()[0].quality(), 1000);
+  assert_eq!(encodings.codings()[1].coding(), "br");
+  assert_eq!(encodings.codings()[1].quality(), 800);
+  assert_eq!(encodings.codings()[2].coding(), "identity");
+  assert_eq!(encodings.codings()[2].quality(), 0);
+  assert_eq!(encodings.header_value(), "gzip, br;q=0.8, identity;q=0");
+
+  let malformed = rttp::server::HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nAccept-Encoding: gzip, GZIP\r\n\r\n",
+  )
+  .expect("malformed Accept-Encoding request should still parse");
+  assert!(
+    malformed.accept_encoding().is_err(),
+    "duplicate Accept-Encoding members must fail closed"
+  );
+
+  assert!(
+    rttp::AcceptEncoding::parse("gzip".repeat(64 * 1024 + 1)).is_err(),
+    "oversized Accept-Encoding values must fail closed"
+  );
+  let too_many = (0..33)
+    .map(|index| format!("coding{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  assert!(
+    rttp::server::HttpRequestAcceptEncodings::parse(too_many).is_err(),
+    "more than 32 Accept-Encoding members must fail closed"
+  );
+}
+
+#[test]
 fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let accept_ch: HttpAcceptCh = HttpAcceptCh::parse("Sec-CH-UA").expect("Accept-CH should parse");
+  let accept_languages: HttpAcceptLanguages =
+    HttpAcceptLanguages::parse("en-US, fr-CA; q=0.8").expect("Accept-Language should parse");
+  let _: HttpAcceptLanguageParseError = HttpAcceptLanguages::parse("en; q=1.001")
+    .expect_err("malformed Accept-Language should be rejected");
   let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("revision-42"));
   let response = HttpResponse::ok("").with_etag(HttpEntityTag::weak("revision-42"));
   let request_method: HttpAccessControlRequestMethod =
@@ -582,6 +676,9 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpContentRange::parse("bytes */*").expect_err("invalid Content-Range should be rejected");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA"]);
+  assert_eq!(accept_languages.ranges(), ["en-US", "fr-CA"]);
+  assert_eq!(accept_languages.qualities(), [None, Some("0.8")]);
+  assert_eq!(accept_languages.header_value(), "en-US, fr-CA; q=0.8");
   assert_eq!(request_method.method(), "PATCH");
   assert_eq!(request_method.header_value(), "PATCH");
   assert_eq!(private_network.header_value(), "true");

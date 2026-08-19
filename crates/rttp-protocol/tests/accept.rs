@@ -82,6 +82,14 @@ fn accept_allows_empty_quoted_string_parameter_values() {
 }
 
 #[test]
+fn accept_preserves_utf8_quoted_string_parameter_values() {
+  let accept = Accept::parse("text/plain; title=\"é\"").expect("Accept should parse");
+
+  assert_eq!(Some("é"), accept.media_ranges()[0].parameter("title"));
+  assert_eq!("text/plain; title=\"é\"", accept.header_value());
+}
+
+#[test]
 fn accept_rejects_duplicate_parameters_and_quality_values() {
   for value in [
     "text/plain; charset=utf-8; charset=utf-16",

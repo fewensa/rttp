@@ -1,4 +1,6 @@
 use rttp_protocol::accept::{Accept, AcceptMediaRange, AcceptParseError};
+use rttp_protocol::accept_encoding::AcceptEncoding;
+use rttp_protocol::accept_language::AcceptLanguage;
 use rttp_protocol::accept_ranges::AcceptRanges;
 use rttp_protocol::access_control_allow_credentials::AccessControlAllowCredentials;
 use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
@@ -43,6 +45,7 @@ use rttp_protocol::save_data::SaveData;
 use rttp_protocol::signature::{Signature, SignatureParseError};
 use rttp_protocol::signature_input::{SignatureInput, SignatureInputParseError};
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
+use rttp_protocol::te::Te;
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
 use rttp_protocol::transfer_encoding::TransferEncoding;
 use rttp_protocol::upgrade::{Upgrade, UpgradeParseError};
@@ -55,6 +58,8 @@ use rttp_protocol::x_frame_options::XFrameOptions;
 #[test]
 fn protocol_exports_representative_bounded_metadata_types() {
   let age = Age::parse("60").expect("Age should parse");
+  let accept_language =
+    AcceptLanguage::parse("en-US, fr-CA; q=0.8, *;q=0").expect("Accept-Language should parse");
   let accept_ch = AcceptCh::parse("Sec-CH-UA, DPR").expect("Accept-CH should parse");
   let allow_credentials = AccessControlAllowCredentials::parse("true")
     .expect("Access-Control-Allow-Credentials should parse");
@@ -133,9 +138,12 @@ fn protocol_exports_representative_bounded_metadata_types() {
     CacheStatus::parse("OriginCache; hit; ttl=1100").expect("Cache-Status should parse");
   let cdn_cache_control =
     CdnCacheControl::parse("max-age=600, cdn-example=\"a, b\"").expect("CDN metadata should parse");
+  let accept_encoding =
+    AcceptEncoding::parse("gzip, br;q=0.8, identity;q=0").expect("Accept-Encoding should parse");
   let accept_ranges = AcceptRanges::parse("bytes, pages").expect("Accept-Ranges should parse");
   let transfer_encoding =
     TransferEncoding::parse("chunked").expect("Transfer-Encoding should parse");
+  let te = Te::parse("gzip;q=0.5, trailers").expect("TE should parse");
   let upgrade = Upgrade::parse("websocket").expect("Upgrade should parse");
   let _: UpgradeParseError = Upgrade::parse("").expect_err("empty Upgrade should be rejected");
   let want_content_digest =
@@ -151,6 +159,12 @@ fn protocol_exports_representative_bounded_metadata_types() {
     SignatureInput::parse("").expect_err("empty Signature-Input should be rejected");
 
   assert_eq!(age.seconds(), 60);
+  assert_eq!(accept_language.ranges(), ["en-US", "fr-CA", "*"]);
+  assert_eq!(accept_language.qualities(), [None, Some("0.8"), Some("0")]);
+  assert_eq!(
+    accept_language.header_value(),
+    "en-US, fr-CA; q=0.8, *; q=0"
+  );
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(allow_credentials.header_value(), "true");
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
@@ -258,10 +272,24 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(cache_status.members()[0].ttl(), Some(1100));
   assert_eq!(cdn_cache_control.directives()[1].name(), "cdn-example");
   assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
+  assert_eq!(accept_encoding.codings()[0].coding(), "gzip");
+  assert_eq!(accept_encoding.codings()[0].quality(), 1000);
+  assert_eq!(accept_encoding.codings()[1].coding(), "br");
+  assert_eq!(accept_encoding.codings()[1].quality(), 800);
+  assert_eq!(accept_encoding.codings()[2].coding(), "identity");
+  assert_eq!(accept_encoding.codings()[2].quality(), 0);
+  assert_eq!(
+    accept_encoding.header_value(),
+    "gzip, br;q=0.8, identity;q=0"
+  );
   assert_eq!(accept_ranges.units(), ["bytes", "pages"]);
   assert_eq!(accept_ranges.header_value(), "bytes, pages");
   assert_eq!(transfer_encoding.codings(), ["chunked"]);
   assert_eq!(transfer_encoding.header_value(), "chunked");
+  assert_eq!(te.codings()[0].coding(), "gzip");
+  assert_eq!(te.codings()[0].quality(), Some(500));
+  assert_eq!(te.codings()[1].coding(), "trailers");
+  assert!(te.codings()[1].is_trailers());
   assert_eq!(upgrade.protocols(), ["websocket"]);
   assert_eq!(upgrade.header_value(), "websocket");
   assert_eq!(want_content_digest.entries()[0].algorithm(), "sha-256");

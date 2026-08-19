@@ -84,6 +84,23 @@ expose the original request.
 These helpers parse request metadata only; they do not sniff, decode,
 negotiate, cache, redirect, retry, or select representations.
 
+## Accept-Encoding request metadata
+
+Handlers can call `Request::accept_encoding()` and
+`HttpRequest::accept_encoding()` to observe bounded typed `Accept-Encoding`
+request metadata through the shared `rttp-protocol` primitive. The helpers
+combine case-insensitive fields in wire order into
+`HttpRequestAcceptEncodings`. Each entry exposes `coding()` and q-value
+`quality()` in thousandths (`1000` is the default quality of `1`). The shared
+protocol type is the authority for coding-token, wildcard, q-value, duplicate,
+member-count, and size validation. Absent metadata returns `Ok(None)`.
+Malformed, oversized, duplicate, empty, or over-limit values return a parse
+error while `Request::header()` and `Request::body()` continue to expose the
+original request.
+
+These helpers parse request metadata only. They do not enable automatic
+compression, decompression, or content negotiation.
+
 ## Request and response Connection metadata
 
 Handlers can call `Request::connection()`, `HttpRequest::connection()`, and
@@ -150,6 +167,22 @@ request. HTTP/2 continues to reject `Transfer-Encoding` at decode time.
 These helpers parse framing metadata only. They do not change
 `request_body_kind`, decode a chunked body, negotiate `TE`, or alter
 Content-Length handling.
+
+## TE request metadata
+
+Handlers can call `Request::te()` and `HttpRequest::te()` to observe bounded
+typed `TE` request metadata through the shared protocol-owned
+`rttp-protocol` `Te` type. The helpers combine case-insensitive fields in wire
+order into `HttpRequestTe`; each `HttpTe` exposes `coding()`, optional
+thousandths `quality()`, and `is_trailers()`. Absent fields return `Ok(None)`.
+Malformed codings, `chunked`, q-valued `trailers`, invalid q-values,
+case-insensitive duplicates, oversized values, or more than 32 codings return a
+parser error while `Request::header()` continues to expose the original raw
+field. HTTP/2 continues to reject every `TE` value other than an exact
+`TE: trailers` at decode time.
+
+These helpers parse metadata only. They do not enable a transfer-coding
+engine, negotiate trailers, apply compression, or alter request framing.
 
 ## Fetch Metadata request metadata
 

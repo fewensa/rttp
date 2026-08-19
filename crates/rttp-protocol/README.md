@@ -33,6 +33,24 @@ of valueless extension parameters. The server facade aliases the same types as
 accessors. Raw `Accept` headers remain caller-owned escape hatches outside the
 bounded helper API.
 
+## Accept-Encoding
+
+`accept_encoding` parses one or more RFC 9110 `Accept-Encoding` field values
+into an ordered list of coding tokens with optional quality weights. Each
+field value is bounded to 64 KiB, and the combined member count across all
+supplied fields is bounded to 32. Codings are RFC 9110 tokens, including
+`identity` and the `*` wildcard. Duplicate codings are rejected
+case-insensitively while the first-seen spelling is retained. Each member may
+carry a single `q` parameter; the default quality is `1000` thousandths. Empty
+members, invalid tokens, invalid q-values, extra parameters, forbidden ASCII
+control bytes other than HTAB, oversized values, too many members, and a
+present header set that yields no member are errors. `header_value()` joins
+members with `", "`, omits quality when no `q` parameter was present, and
+otherwise emits the original q-text. This type is the shared authority for
+coding-token, wildcard, q-value, duplicate, member-count, and size validation.
+It reports declared request metadata only; it does not compress, decompress,
+or negotiate content.
+
 ## Accept-Ranges
 
 `accept_ranges` parses one or more `Accept-Ranges` field values into an ordered
@@ -47,6 +65,24 @@ and is represented as an empty unit list; `none` combined with any unit fails
 as invalid. A present header set that yields no unit still fails as invalid.
 The server facade aliases this type as `HttpAcceptRanges` and reuses
 `from_units`/`none` for its declaration helpers.
+
+## Accept-Language
+
+`accept_language` parses one or more RFC 9110 `Accept-Language` field values
+into an ordered list of language ranges with optional q-values. Each field
+value is bounded to 64 KiB, and the cumulative range count across all supplied
+fields is bounded to 32 ranges. Items are split on commas with surrounding
+whitespace trimmed from each item; empty members and malformed ranges are
+errors. A range is `*` or a primary subtag of 1-8 ASCII letters followed by
+any number of 1-8 character ASCII alphanumeric subtags separated by hyphens.
+Each range may carry one `q` parameter whose value is `0` or `1`, optionally
+with up to three fractional digits and with a `1` integer part requiring an
+all-zero fraction. Case-insensitive duplicate ranges are rejected while the
+first-seen spelling is retained. `from_ranges` validates supplied ranges for
+client construction and `header_value()` re-emits them normalized as
+`range; q=quality`. This parser reports declared metadata only; it does not
+perform locale matching, fallback selection, translation lookup, routing, or
+automatic response choice.
 
 ## Age
 
@@ -502,6 +538,26 @@ valued flags, malformed tokens or quoted-strings, missing `max-age`, and other
 unparsable input are errors. The parser reports declared metadata only; it does
 not pin TLS, store hosts, consult a preload list, or apply HTTPS-only policy.
 `max-age=0` is returned as data and does not delete stored HSTS hosts.
+
+## TE
+
+`te` parses one or more RFC 9110 `TE` field values into an ordered list of
+transfer codings with optional q-values. Each field value is bounded to
+64 KiB, and the cumulative coding count across all supplied fields is bounded
+to 32 codings.
+
+Codings are split on commas with SP and HTAB accepted only as optional
+whitespace around each coding. Each coding must be an RFC 9110 token;
+`chunked` is rejected because request framing remains owned by the HTTP/1
+implementation. `trailers` is accepted only without a parameter and carries no
+q-value. Other codings accept one optional `q` parameter whose value is a
+weight from `0` through `1` with at most three fractional digits, stored as
+thousandths. Empty members, forbidden ASCII control bytes, malformed tokens,
+multiple parameters, non-`q` parameter names, invalid q-values,
+case-insensitive duplicate codings across all supplied fields, over-limit
+coding lists, and empty present field sets are errors. This parser never fails
+open and does not enable a transfer-coding engine, negotiate trailers, or
+apply compression or proxy behavior.
 
 ## X-Frame-Options
 
