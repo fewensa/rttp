@@ -1,9 +1,10 @@
 use rttp_client::response::{
   AltSvc, ContentDisposition, ContentEncoding, ContentLocation, ContentType,
   CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy,
-  CrossOriginResourcePolicy, EntityTag, HttpClearSiteData, HttpSetCookies, LinkValues, Location,
-  ProxyAuthenticationInfo, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
-  StrictTransportSecurity, Warning, XContentTypeOptions, XFrameOptions,
+  CrossOriginResourcePolicy, EntityTag, HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues,
+  Location, ProxyAuthenticate, ProxyAuthenticationInfo, ReferrerPolicy, ReferrerPolicyToken,
+  Response, RetryAfter, ServerTiming, StrictTransportSecurity, Warning, XContentTypeOptions,
+  XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -1438,6 +1439,111 @@ fn test_www_authenticate_rejects_malformed_duplicate_and_bounded_values() {
 }
 
 #[test]
+fn test_proxy_authenticate_response_helper_parses_bounded_challenges() {
+  let raw = concat!(
+    "HTTP/1.1 407 Proxy Authentication Required\r\n",
+    "Proxy-Authenticate: Basic realm=\"corp\"\r\n",
+    "Proxy-Authenticate: Bearer mF_9.B5f-4.1JqM, Digest realm=\"apps\", nonce=\"n-1\"\r\n",
+    "Content-Length: 2\r\n\r\nOK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  let challenges = response
+    .proxy_authenticate()
+    .expect("valid challenges should parse")
+    .expect("Proxy-Authenticate should be present");
+
+  assert_eq!(3, challenges.len());
+  assert_eq!("Basic", challenges.challenges()[0].scheme());
+  assert_eq!(Some("corp"), challenges.challenges()[0].parameter("realm"));
+  assert_eq!("Bearer", challenges.challenges()[1].scheme());
+  assert_eq!(
+    Some("mF_9.B5f-4.1JqM"),
+    challenges.challenges()[1].token68()
+  );
+  assert_eq!("Digest", challenges.challenges()[2].scheme());
+  assert_eq!(Some("apps"), challenges.challenges()[2].parameter("realm"));
+  assert_eq!(Some("n-1"), challenges.challenges()[2].parameter("nonce"));
+  assert_eq!(
+    response.header_values("Proxy-Authenticate"),
+    [
+      &"Basic realm=\"corp\"".to_string(),
+      &"Bearer mF_9.B5f-4.1JqM, Digest realm=\"apps\", nonce=\"n-1\"".to_string()
+    ]
+  );
+}
+
+#[test]
+fn test_proxy_authenticate_response_helper_combines_repeated_fields() {
+  let raw = concat!(
+    "HTTP/1.1 407 Proxy Authentication Required\r\n",
+    "Proxy-Authenticate: Digest realm=corp\r\n",
+    "Proxy-Authenticate: nonce=abc\r\n",
+    "Content-Length: 0\r\n\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+
+  let challenges = response
+    .proxy_authenticate()
+    .expect("valid repeated fields should parse")
+    .expect("Proxy-Authenticate should be present");
+
+  assert_eq!(1, challenges.len());
+  let digest = &challenges.challenges()[0];
+  assert_eq!("Digest", digest.scheme());
+  assert_eq!(Some("corp"), digest.parameter("realm"));
+  assert_eq!(Some("abc"), digest.parameter("nonce"));
+}
+
+#[test]
+fn test_proxy_authenticate_rejects_invalid_and_absent_values() {
+  for value in ["", "Basic @", "Basic realm=", "Basic realm=one, REALM=two"] {
+    let raw = format!(
+      "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: {value}\r\nContent-Length: 2\r\n\r\nOK"
+    );
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(
+      response.proxy_authenticate().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Proxy-Authenticate")
+    );
+  }
+
+  let oversized = "Basic realm=".to_string() + &"a".repeat(64 * 1024);
+  let raw = format!(
+    "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: {oversized}\r\nContent-Length: 0\r\n\r\n"
+  );
+  let oversized_response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response should remain usable");
+  assert!(oversized_response.proxy_authenticate().is_err());
+  assert_eq!(
+    Some(&oversized),
+    oversized_response.header_value("Proxy-Authenticate")
+  );
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response without Proxy-Authenticate should parse");
+  assert_eq!(
+    None,
+    absent
+      .proxy_authenticate()
+      .expect("absent Proxy-Authenticate should parse")
+  );
+  let _: Option<ProxyAuthenticate> = absent
+    .proxy_authenticate()
+    .expect("absent Proxy-Authenticate should parse");
+}
+
+#[test]
 fn test_proxy_authentication_info_response_helper_parses_bounded_auth_params() {
   let digest_field = concat!(
     r#"nextnonce="6629fae49393a05397450978507c4ef1", "#,
@@ -1917,6 +2023,90 @@ fn test_warning_rejects_malformed_invalid_code_and_bounds_without_hiding_headers
   assert!(Warning::parse(
     (0..257)
       .map(|index| format!(r#"110 - "item{index}""#))
+      .collect::<Vec<_>>()
+      .join(", ")
+  )
+  .is_err());
+}
+
+#[test]
+fn test_keep_alive_response_helper_parses_combined_fields_and_retains_raw_headers() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Keep-Alive: timeout=5\r\n",
+    "Keep-Alive: max=100\r\n",
+    "Content-Length: 2\r\n\r\nOK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+  let keep_alive = response
+    .keep_alive()
+    .expect("valid Keep-Alive should parse")
+    .expect("Keep-Alive should be present");
+
+  assert_eq!(Some(5), keep_alive.timeout());
+  assert_eq!(Some(100), keep_alive.max());
+  assert_eq!(
+    response.header_values("Keep-Alive"),
+    [&"timeout=5".to_string(), &"max=100".to_string()]
+  );
+}
+
+#[test]
+fn test_keep_alive_response_helper_returns_none_when_absent() {
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response without Keep-Alive should parse");
+  assert_eq!(
+    None,
+    absent.keep_alive().expect("absent Keep-Alive should parse")
+  );
+}
+
+#[test]
+fn test_keep_alive_rejects_malformed_duplicate_and_bounds_without_hiding_headers() {
+  for value in [
+    "timeout=abc",
+    "timeout=5, timeout=6",
+    "timeout=5, max=100, max=200",
+    "timeout=18446744073709551616",
+    "",
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\nKeep-Alive: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(response.keep_alive().is_err(), "should reject {value:?}");
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Keep-Alive")
+    );
+    assert_eq!("OK", response.body().string().unwrap());
+  }
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_raw =
+    format!("HTTP/1.1 200 OK\r\nKeep-Alive: {oversized}\r\nContent-Length: 0\r\n\r\n");
+  let oversized_response = Response::new(
+    RoUrl::with("https://example.test"),
+    oversized_raw.into_bytes(),
+  )
+  .expect("raw response should remain usable");
+  assert!(oversized_response.keep_alive().is_err());
+  assert_eq!(
+    Some(&oversized),
+    oversized_response.header_value("Keep-Alive")
+  );
+  assert!(KeepAlive::parse(
+    (0..257)
+      .map(|index| {
+        if index % 2 == 0 {
+          "timeout=1".to_string()
+        } else {
+          "max=2".to_string()
+        }
+      })
       .collect::<Vec<_>>()
       .join(", ")
   )
@@ -3199,7 +3389,7 @@ fn test_parse_accept_ranges_response_helper_supports_none_and_absent_header() {
 
   assert!(accept_ranges.is_none());
   assert!(!accept_ranges.accepts_bytes());
-  assert_eq!(vec!["none"], accept_ranges.units());
+  assert!(accept_ranges.units().is_empty());
 
   let s = concat!("HTTP/1.1 200 OK\r\n", "Content-Length: 2\r\n", "\r\n", "OK");
   let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
@@ -4244,6 +4434,42 @@ fn test_parse_age_rejects_invalid_helper_values_without_rejecting_response() {
     );
     assert_eq!(Some(&value.to_string()), response.header_value("Age"));
   }
+}
+
+#[test]
+fn test_parse_age_rejects_duplicate_and_oversized_helper_values_without_rejecting_response() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Age: 5\r\n",
+    "age: 12\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response with duplicate Age remains usable");
+
+  assert!(
+    response.age().is_err(),
+    "age helper should reject duplicates"
+  );
+  assert_eq!(Some(&"5".to_string()), response.header_value("Age"));
+  assert_eq!(
+    vec![&"5".to_string(), &"12".to_string()],
+    response.header_values("Age")
+  );
+
+  let oversized = "0".repeat(64 * 1024 + 1);
+  let raw = format!("HTTP/1.1 200 OK\r\nAge: {oversized}\r\nContent-Length: 2\r\n\r\nOK");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response with oversized Age remains usable");
+
+  assert!(
+    response.age().is_err(),
+    "age helper should reject oversized values"
+  );
+  assert_eq!(Some(&oversized), response.header_value("Age"));
+  assert_eq!(vec![&oversized], response.header_values("Age"));
 }
 
 #[test]

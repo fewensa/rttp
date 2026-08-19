@@ -1,21 +1,23 @@
 use rttp_client::response::{
   AcceptCh, AccessControlAllowHeaders, AccessControlAllowHeadersParseError,
   AccessControlAllowMethods, AccessControlAllowMethodsParseError, AccessControlExposeHeaders,
-  AccessControlMaxAge, AccessControlMaxAgeParseError, AltSvc, Connection, ConnectionParseError,
-  CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy,
-  CrossOriginResourcePolicy, Digest, HttpClearSiteData, HttpContentLength, Location,
-  LocationParseError, NoVarySearch, NoVarySearchParams, NoVarySearchParseError, PreferenceApplied,
-  Priority, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ReferrerPolicy,
-  ReferrerPolicyToken, ServerTiming, Signature, SignatureInput, SignatureInputParseError,
-  SignatureParseError, StrictTransportSecurity, StrictTransportSecurityParseError, Trailer,
-  TransferEncoding, TransferEncodingParseError, Vary, VaryParseError, WantContentDigest,
-  WantReprDigest, Warning, XContentTypeOptions, XFrameOptions,
+  AccessControlMaxAge, AccessControlMaxAgeParseError, Age, AgeParseError, AltSvc, Connection,
+  ConnectionParseError, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly,
+  CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest, EntityTag, HttpClearSiteData,
+  HttpContentLength, KeepAlive, Location, LocationParseError, NoVarySearch, NoVarySearchParams,
+  NoVarySearchParseError, PreferenceApplied, Priority, ProxyAuthenticate,
+  ProxyAuthenticateParseError, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError,
+  ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Signature, SignatureInput,
+  SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
+  StrictTransportSecurityParseError, Trailer, TransferEncoding, TransferEncodingParseError, Vary,
+  VaryParseError, WantContentDigest, WantReprDigest, Warning, XContentTypeOptions,
+  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
-use rttp_client::response::{Age, AgeParseError};
 use rttp_client::response::{
   ContentDigest, ContentLocation, ContentLocationParseError, ReprDigest,
 };
-use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
+use rttp_client::{HttpClient, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
+use rttp_test_support as support;
 
 #[test]
 fn response_facade_exports_representative_bounded_metadata_types() {
@@ -31,10 +33,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let max_age = AccessControlMaxAge::parse("60").expect("Access-Control-Max-Age should parse");
   let _: AccessControlMaxAgeParseError =
     AccessControlMaxAge::parse("").expect_err("empty Access-Control-Max-Age should be rejected");
-  let expose_headers = AccessControlExposeHeaders::parse("X-Request-Id")
-    .expect("Access-Control-Expose-Headers should parse");
   let age = Age::parse("60").expect("Age should parse");
   let _: AgeParseError = Age::parse("").expect_err("empty Age should be rejected");
+  let expose_headers = AccessControlExposeHeaders::parse("X-Request-Id")
+    .expect("Access-Control-Expose-Headers should parse");
   let clear_site_data =
     HttpClearSiteData::parse("\"cache\"").expect("Clear-Site-Data should parse");
   let content_length = HttpContentLength::new(123);
@@ -43,6 +45,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let _: ContentLocationParseError =
     ContentLocation::parse("not valid").expect_err("invalid Content-Location should be rejected");
   let digest = Digest::parse("sha-256=:YWJj:").expect("Digest should parse");
+  let etag = EntityTag::parse("\"asset-v7\"").expect("ETag should parse");
   let location = Location::parse("/next").expect("Location should parse");
   let _: LocationParseError = Location::parse("").expect_err("empty Location should be rejected");
   let no_vary_search =
@@ -55,11 +58,19 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     WantReprDigest::parse("sha-256=10").expect("Want-Repr-Digest should parse");
   let priority = Priority::parse("u=1, i").expect("Priority should parse");
   let server_timing = ServerTiming::parse("db;dur=53").expect("Server-Timing should parse");
+  let keep_alive = KeepAlive::parse("timeout=5, max=100").expect("Keep-Alive should parse");
   let strict_transport_security =
     StrictTransportSecurity::parse("max-age=31536000; includeSubDomains")
       .expect("Strict-Transport-Security should parse");
   let _: StrictTransportSecurityParseError = StrictTransportSecurity::parse("includeSubDomains")
     .expect_err("Strict-Transport-Security without max-age should be rejected");
+  let x_content_type_options =
+    XContentTypeOptions::parse("NoSniff").expect("X-Content-Type-Options should parse");
+  let _: XContentTypeOptionsParseError = XContentTypeOptions::parse("unknown")
+    .expect_err("unknown X-Content-Type-Options should be rejected");
+  let x_frame_options = XFrameOptions::parse("deny").expect("X-Frame-Options should parse");
+  let _: XFrameOptionsParseError = XFrameOptions::parse("ALLOW-FROM https://example.test")
+    .expect_err("deprecated X-Frame-Options ALLOW-FROM should be rejected");
   let warning = Warning::parse(r#"110 - "Response is Stale""#).expect("Warning should parse");
   let trailer = Trailer::parse("X-Trace").expect("Trailer should parse");
   let connection = Connection::parse("close").expect("Connection should parse");
@@ -83,14 +94,15 @@ fn response_facade_exports_representative_bounded_metadata_types() {
       .expect("COEP-Report-Only should parse");
   let cross_origin_opener_policy =
     CrossOriginOpenerPolicy::parse("noopener-allow-popups").expect("COOP should parse");
-  let x_content_type_options =
-    XContentTypeOptions::parse("nosniff").expect("X-Content-Type-Options should parse");
-  let x_frame_options = XFrameOptions::parse("DENY").expect("X-Frame-Options should parse");
   let proxy_authentication_info =
     ProxyAuthenticationInfo::parse(r#"nextnonce="6629fae49393a05397450978507c4ef1", qop=auth"#)
       .expect("Proxy-Authentication-Info should parse");
   let _: ProxyAuthenticationInfoParseError = ProxyAuthenticationInfo::parse("")
     .expect_err("empty Proxy-Authentication-Info should be rejected");
+  let proxy_authenticate =
+    ProxyAuthenticate::parse(r#"Basic realm="corp""#).expect("Proxy-Authenticate should parse");
+  let _: ProxyAuthenticateParseError =
+    ProxyAuthenticate::parse("").expect_err("empty Proxy-Authenticate should be rejected");
   let vary = Vary::parse("Accept-Encoding, User-Agent").expect("Vary should parse");
   let _: VaryParseError = Vary::parse("").expect_err("empty Vary should be rejected");
   let signature = Signature::parse("sig1=:YWJj:").expect("Signature should parse");
@@ -107,8 +119,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(allow_methods.methods(), ["GET", "POST"]);
   assert_eq!(allow_headers.field_names(), ["x-request-id", "etag"]);
   assert_eq!(max_age.seconds(), 60);
-  assert_eq!(expose_headers.field_names(), ["x-request-id"]);
   assert_eq!(age.seconds(), 60);
+  assert_eq!(expose_headers.field_names(), ["x-request-id"]);
   assert_eq!(content_length.len(), 123);
   assert_eq!(clear_site_data.directives().len(), 1);
   assert_eq!(
@@ -116,6 +128,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     "../representations/current.json"
   );
   assert_eq!(digest.entries().len(), 1);
+  assert_eq!(etag, EntityTag::strong("asset-v7"));
   assert_eq!(location.as_str(), "/next");
   assert_eq!(
     no_vary_search.params(),
@@ -127,7 +140,13 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(server_timing.metrics().len(), 1);
   assert_eq!(strict_transport_security.max_age(), 31_536_000);
   assert!(strict_transport_security.include_sub_domains());
+  assert_eq!(x_content_type_options, XContentTypeOptions::Nosniff);
+  assert_eq!(x_content_type_options.header_value(), "nosniff");
+  assert_eq!(x_frame_options, XFrameOptions::Deny);
+  assert_eq!(x_frame_options.header_value(), "DENY");
   assert_eq!(warning.items()[0].code(), 110);
+  assert_eq!(keep_alive.timeout(), Some(5));
+  assert_eq!(keep_alive.max(), Some(100));
   assert_eq!(trailer.field_names(), ["x-trace"]);
   assert_eq!(connection.tokens(), ["close"]);
   assert_eq!(transfer_encoding.codings(), ["chunked"]);
@@ -151,6 +170,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(
     proxy_authentication_info.parameter("nextnonce"),
     Some("6629fae49393a05397450978507c4ef1")
+  );
+  assert_eq!(
+    proxy_authenticate.challenges()[0].parameter("realm"),
+    Some("corp")
   );
   assert_eq!(vary.field_names(), ["accept-encoding", "user-agent"]);
   assert_eq!(signature.header_value(), "sig1=:YWJj:");
@@ -210,6 +233,66 @@ fn response_facade_exports_content_digest_metadata() {
     content_digest.entry("sha-256").map(|entry| entry.value()),
     Some(&b"abc"[..])
   );
+}
+
+#[test]
+fn response_facade_exports_content_length_metadata_type() {
+  let content_length = HttpContentLength::new(2);
+
+  assert_eq!(2, content_length.len());
+  assert!(!content_length.is_zero());
+  assert_eq!("2", content_length.header_value());
+}
+
+#[test]
+fn direct_response_new_does_not_infer_content_length_metadata() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(None, response.content_length());
+}
+
+#[test]
+fn client_response_exposes_validated_content_length_metadata() {
+  let (addr, _handle) = support::spawn_chunked_response_server(
+    "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK",
+  );
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/"))
+    .emit()
+    .expect("response should parse");
+  let content_length = response
+    .content_length()
+    .expect("validated fixed length should be retained");
+
+  assert_eq!(2, content_length.len());
+  assert_eq!("2", content_length.header_value());
+}
+
+#[test]
+fn client_response_omits_content_length_metadata_for_chunked_framing() {
+  let (addr, _handle) = support::spawn_chunked_response_server(concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "Connection: close\r\n",
+    "\r\n",
+    "2\r\nOK\r\n",
+    "0\r\n\r\n"
+  ));
+
+  let response = HttpClient::new()
+    .get()
+    .url(format!("http://{addr}/"))
+    .emit()
+    .expect("response should parse");
+
+  assert_eq!("OK", response.body().string().expect("body should decode"));
+  assert_eq!(None, response.content_length());
 }
 
 #[test]

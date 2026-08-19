@@ -1,6 +1,7 @@
 use std::io;
 use std::io::Read;
 
+use rttp_protocol::content_length::HttpContentLength;
 use rttp_protocol::http1::{
   is_header_value_byte, is_reason_phrase_byte, is_token as is_http_token,
   parse_chunk_size as parse_protocol_chunk_size, ChunkSizeError,
@@ -9,7 +10,7 @@ use url::Url;
 
 use crate::config::DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES;
 use crate::error;
-use crate::response::{HttpContentLength, InformationalResponse, Response};
+use crate::response::{InformationalResponse, Response};
 use crate::types::{Header, RoUrl};
 
 const HEADER_END: &[u8] = b"\r\n\r\n";
@@ -1365,6 +1366,7 @@ mod tests {
       let response = reader.response().unwrap();
 
       assert_eq!("", response.body().string().unwrap());
+      assert_eq!(None, response.content_length());
       assert_eq!(
         (raw.len() - "ignored".len()) as u64,
         cursor.position(),
@@ -1389,6 +1391,30 @@ mod tests {
     let response = reader.response().unwrap();
 
     assert_eq!("OK", response.body().string().unwrap());
+    let content_length = response
+      .content_length()
+      .expect("matching fixed length should be retained");
+    assert_eq!(2, content_length.len());
+  }
+
+  #[test]
+  fn streaming_response_read_to_response_retains_content_length_metadata() {
+    let raw = concat!("HTTP/1.1 200 OK\r\n", "Content-Length: 2\r\n", "\r\n", "OK");
+    let url = url::Url::parse("http://localhost").unwrap();
+    let mut cursor = Cursor::new(raw.as_bytes());
+    let mut reader = ConnectionReader::new(&url, &mut cursor, false);
+
+    let response = reader
+      .streaming_response()
+      .unwrap()
+      .read_to_response()
+      .unwrap();
+
+    assert_eq!("OK", response.body().string().unwrap());
+    let content_length = response
+      .content_length()
+      .expect("streaming fixed length should be retained");
+    assert_eq!(2, content_length.len());
   }
 
   #[test]
