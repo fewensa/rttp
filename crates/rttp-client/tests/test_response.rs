@@ -2919,6 +2919,72 @@ fn test_parse_cache_control_rejects_invalid_helper_values_without_rejecting_resp
 }
 
 #[test]
+fn test_parse_cdn_cache_control_response_metadata() {
+  let s = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "CDN-Cache-Control: max-age=600, stale-while-revalidate=30, cdn-example=\"a, b\"\r\n",
+    "cdn-cache-control: immutable\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
+    .expect("parse CDN-Cache-Control response");
+
+  let metadata = response
+    .cdn_cache_control()
+    .expect("valid CDN-Cache-Control should parse")
+    .expect("CDN-Cache-Control should be present");
+
+  assert_eq!(metadata.len(), 4);
+  assert_eq!(metadata.directives()[0].name(), "max-age");
+  assert_eq!(metadata.directives()[0].value(), Some("600"));
+  assert_eq!(metadata.directives()[2].name(), "cdn-example");
+  assert_eq!(metadata.directives()[2].value(), Some("a, b"));
+  assert_eq!(metadata.directives()[3].name(), "immutable");
+  assert_eq!("OK", response.body().string().unwrap());
+}
+
+#[test]
+fn test_parse_cdn_cache_control_rejects_invalid_helper_values_without_rejecting_response() {
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let invalid_values = [
+    "max-age=",
+    "max-age=not a token",
+    "extension=\"unterminated",
+    oversized.as_str(),
+  ];
+
+  for value in invalid_values {
+    let raw =
+      format!("HTTP/1.1 200 OK\r\nCDN-Cache-Control: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response remains usable");
+
+    assert!(
+      response.cdn_cache_control().is_err(),
+      "CDN-Cache-Control helper should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("CDN-Cache-Control")
+    );
+    assert_eq!("OK", response.body().string().unwrap());
+  }
+
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK".to_vec(),
+  )
+  .expect("raw response without CDN-Cache-Control remains usable");
+
+  assert!(response
+    .cdn_cache_control()
+    .expect("missing header should be valid")
+    .is_none());
+}
+
+#[test]
 fn test_parse_age_and_expires_response_metadata() {
   let s = concat!(
     "HTTP/1.1 200 OK\r\n",

@@ -26,6 +26,10 @@ pub use rttp_protocol::authentication_info::{
   AuthenticationInfo as HttpAuthenticationInfo,
   AuthenticationInfoParseError as HttpAuthenticationInfoParseError,
 };
+pub use rttp_protocol::cdn_cache_control::{
+  CdnCacheControl as HttpCdnCacheControl,
+  CdnCacheControlParseError as HttpCdnCacheControlParseError,
+};
 pub use rttp_protocol::clear_site_data::{
   ClearSiteData as HttpClearSiteData, ClearSiteDataDirective as HttpClearSiteDataDirective,
   ClearSiteDataParseError as HttpClearSiteDataParseError,
@@ -1445,6 +1449,22 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpResponseCacheControl::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `CDN-Cache-Control` response metadata without applying CDN cache policy.
+  pub fn cdn_cache_control(
+    &self,
+  ) -> Result<Option<HttpCdnCacheControl>, HttpCdnCacheControlParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("CDN-Cache-Control"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpCdnCacheControl::parse_values(values).map(Some)
   }
 
   pub fn vary(&self) -> Result<Option<HttpVary>, HttpVaryParseError> {
