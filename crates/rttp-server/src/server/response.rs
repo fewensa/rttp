@@ -75,6 +75,9 @@ pub use rttp_protocol::proxy_authentication_info::{
   ProxyAuthenticationInfo as HttpProxyAuthenticationInfo,
   ProxyAuthenticationInfoParseError as HttpProxyAuthenticationInfoParseError,
 };
+pub use rttp_protocol::range::{
+  ContentRange as HttpContentRange, ContentRangeParseError as HttpContentRangeParseError,
+};
 pub use rttp_protocol::server_timing::{
   ServerTiming as HttpServerTiming, ServerTimingMetric as HttpServerTimingMetric,
   ServerTimingParameter as HttpServerTimingParameter,
@@ -2068,6 +2071,19 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpAcceptRanges::parse_values(values).map(Some)
+  }
+
+  pub fn content_range(&self) -> Result<Option<HttpContentRange>, HttpContentRangeParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Content-Range"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpContentRange::parse_values(values).map(Some)
   }
 
   pub fn age(&self) -> Result<Option<u64>, HttpAgeParseError> {

@@ -35,6 +35,10 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::ContentSecurityPolicyParseError =
     rttp_client::response::ContentSecurityPolicy::parse("")
       .expect_err("empty Content-Security-Policy should be rejected");
+  let content_range: rttp::ContentRange =
+    rttp_client::response::ContentRange::parse("bytes 0-4/10").expect("Content-Range should parse");
+  let _: rttp::ContentRangeParseError = rttp_client::response::ContentRange::parse("")
+    .expect_err("empty Content-Range should be rejected");
   let alt_svc: rttp::AltSvc =
     rttp_client::response::AltSvc::parse("h3=\":443\"; ma=60").expect("Alt-Svc should parse");
   let no_vary_search: rttp::NoVarySearch =
@@ -93,6 +97,7 @@ fn compatibility_facade_exports_client_metadata_types() {
     content_security_policy.header_value(),
     "default-src 'self'; object-src 'none'"
   );
+  assert_eq!(content_range.header_value(), "bytes 0-4/10");
   assert_eq!(alt_svc.alternatives()[0].protocol_id(), "h3");
   assert_eq!(alt_svc.alternatives()[0].max_age(), Some(60));
   assert_eq!(

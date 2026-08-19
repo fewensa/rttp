@@ -53,6 +53,11 @@ fn content_range_parses_satisfied_unknown_and_unsatisfied_forms() {
 }
 
 #[test]
+fn content_range_rejects_repeated_field_values() {
+  assert!(ContentRange::parse_values(["bytes 0-1/4", "bytes 2-3/4"]).is_err());
+}
+
+#[test]
 fn range_and_content_range_reject_invalid_syntax_controls_and_overflow() {
   for value in [
     "items=0-1",

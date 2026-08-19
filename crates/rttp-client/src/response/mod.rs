@@ -92,6 +92,7 @@ pub use rttp_protocol::proxy_authenticate::{
 pub use rttp_protocol::proxy_authentication_info::{
   ProxyAuthenticationInfo, ProxyAuthenticationInfoParameter, ProxyAuthenticationInfoParseError,
 };
+pub use rttp_protocol::range::{ContentRange, ContentRangeParseError};
 pub use rttp_protocol::referrer_policy::{
   ReferrerPolicy, ReferrerPolicyParseError, ReferrerPolicyToken,
 };

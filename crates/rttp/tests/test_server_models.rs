@@ -5,12 +5,12 @@ use rttp::server::{
   HttpAccessControlAllowMethods, HttpAccessControlAllowOrigin, HttpAccessControlRequestHeaders,
   HttpAccessControlRequestMethod, HttpAllowedMethods, HttpAuthorization, HttpByteRange,
   HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata, HttpContentDisposition,
-  HttpContentLanguages, HttpContentSecurityPolicy, HttpContentType, HttpCriticalCh, HttpEntityTag,
-  HttpExpectations, HttpHost, HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome,
-  HttpLinkValues, HttpPermissionsPolicy, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
-  HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
-  HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming,
-  HttpVary,
+  HttpContentLanguages, HttpContentRange, HttpContentSecurityPolicy, HttpContentType,
+  HttpCriticalCh, HttpEntityTag, HttpExpectations, HttpHost, HttpIfNoneMatch, HttpIfRange,
+  HttpIfRangeRequestOutcome, HttpLinkValues, HttpPermissionsPolicy, HttpReferrerPolicy,
+  HttpReportingEndpoints, HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl,
+  HttpRequestTe, HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings,
+  HttpRetryAfter, HttpServerTiming, HttpVary,
 };
 
 #[test]
@@ -459,6 +459,28 @@ fn response_browser_policy_helpers_preserve_metadata_without_enforcing_it() {
   assert!(HttpContentSecurityPolicy::parse("default-src\r\nblocked").is_err());
   assert!(HttpPermissionsPolicy::parse("").is_err());
   assert!(HttpReferrerPolicy::parse("origin\0").is_err());
+}
+
+#[test]
+fn response_content_range_helper_parses_and_rejects_duplicate_metadata() {
+  let response = HttpResponse::partial_content("0123456789", HttpByteRange::new(3, 6));
+
+  assert_eq!(
+    Some(HttpContentRange::Bytes {
+      start: 3,
+      end: 6,
+      complete_length: Some(10),
+    }),
+    response
+      .content_range()
+      .expect("Content-Range metadata should parse")
+  );
+
+  assert!(HttpResponse::ok("body")
+    .header("Content-Range", "bytes 0-1/4")
+    .header("Content-Range", "bytes 2-3/4")
+    .content_range()
+    .is_err());
 }
 
 #[test]
