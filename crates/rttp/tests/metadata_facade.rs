@@ -41,6 +41,11 @@ fn compatibility_facade_exports_client_metadata_types() {
       .expect_err("invalid Content-Location should be rejected");
   let alt_svc: rttp::AltSvc =
     rttp_client::response::AltSvc::parse("h3=\":443\"; ma=60").expect("Alt-Svc should parse");
+  let authentication_info: rttp::AuthenticationInfo =
+    rttp_client::response::AuthenticationInfo::parse("nextnonce=\"n-2\"")
+      .expect("Authentication-Info should parse");
+  let _: rttp::AuthenticationInfoParseError = rttp_client::response::AuthenticationInfo::parse("")
+    .expect_err("empty Authentication-Info should be rejected");
   let no_vary_search: rttp::NoVarySearch =
     rttp_client::response::NoVarySearch::parse(r#"params=("utm_source")"#)
       .expect("No-Vary-Search should parse");
@@ -103,6 +108,7 @@ fn compatibility_facade_exports_client_metadata_types() {
   );
   assert_eq!(alt_svc.alternatives()[0].protocol_id(), "h3");
   assert_eq!(alt_svc.alternatives()[0].max_age(), Some(60));
+  assert_eq!(authentication_info.parameter("nextnonce"), Some("n-2"));
   assert_eq!(nel.max_age(), 2592000);
   assert_eq!(nel.report_to(), Some("network-errors"));
   assert_eq!(
