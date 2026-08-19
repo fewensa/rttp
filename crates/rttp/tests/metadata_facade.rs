@@ -1,14 +1,15 @@
 use rttp::server::{
   HttpAcceptCh, HttpAcceptCharsetParseError, HttpAcceptLanguageParseError, HttpAcceptLanguages,
-  HttpAccessControlRequestMethod, HttpAccessControlRequestPrivateNetwork, HttpAuthorization,
-  HttpBaggage, HttpBaggageMember, HttpBaggageParseError, HttpBaggageProperty,
-  HttpConditionalMetadata, HttpContentDpr, HttpContentDprParseError, HttpContentLocation,
-  HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
+  HttpAccessControlRequestMethod, HttpAccessControlRequestPrivateNetwork, HttpAltUsed,
+  HttpAltUsedParseError, HttpAuthorization, HttpBaggage, HttpBaggageMember, HttpBaggageParseError,
+  HttpBaggageProperty, HttpConditionalMetadata, HttpContentDpr, HttpContentDprParseError,
+  HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
   HttpCrossOriginEmbedderPolicy, HttpCrossOriginEmbedderPolicyReportOnly,
-  HttpCrossOriginOpenerPolicy, HttpCrossOriginResourcePolicy, HttpDeprecation,
-  HttpDeprecationParseError, HttpEntityTag, HttpExpectations, HttpIdempotencyKey,
-  HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfUnmodifiedSince, HttpMaxForwards,
-  HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNel, HttpPermissionsPolicy,
+  HttpCrossOriginOpenerPolicy, HttpCrossOriginOpenerPolicyReportOnly,
+  HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpEntityTag,
+  HttpExpectations, HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince,
+  HttpIfUnmodifiedSince, HttpMaxForwards, HttpMementoDatetime, HttpMementoDatetimeParseError,
+  HttpNel, HttpOriginTrialParseError, HttpOriginTrials, HttpPermissionsPolicy,
   HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization,
   HttpProxyStatus, HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse,
   HttpSaveData, HttpSecGpc, HttpSecGpcParseError, HttpSignature, HttpSignatureInput,
@@ -135,6 +136,16 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp_client::response::ContentRange::parse("bytes 0-4/10").expect("Content-Range should parse");
   let alt_svc: rttp::AltSvc =
     rttp_client::response::AltSvc::parse("h3=\":443\"; ma=60").expect("Alt-Svc should parse");
+  let alt_used: rttp::AltUsed =
+    rttp_client::response::AltUsed::parse("alt.example:8443").expect("Alt-Used should parse");
+  let _: rttp::AltUsedParseError = rttp_client::response::AltUsed::parse("https://alt.example")
+    .expect_err("invalid Alt-Used should be rejected");
+  let origin_trials: rttp::OriginTrials =
+    rttp_client::response::OriginTrials::parse_values(["token-one", "token-two"])
+      .expect("Origin-Trial should parse");
+  let _: rttp::OriginTrialParseError =
+    rttp_client::response::OriginTrials::parse("token\r\nX-Injected: 1")
+      .expect_err("injected Origin-Trial should be rejected");
   let authentication_info: rttp::AuthenticationInfo =
     rttp_client::response::AuthenticationInfo::parse("nextnonce=\"n-2\"")
       .expect("Authentication-Info should parse");
@@ -167,6 +178,14 @@ fn compatibility_facade_exports_client_metadata_types() {
       "noopener-allow-popups; report-to=\"coop\"",
     )
     .expect("Cross-Origin-Opener-Policy should parse");
+  let opener_policy_report_only: rttp::CrossOriginOpenerPolicyReportOnly =
+    rttp_client::response::CrossOriginOpenerPolicyReportOnly::parse(
+      "same-origin; report-to=\"coop\"",
+    )
+    .expect("Cross-Origin-Opener-Policy-Report-Only should parse");
+  let _: rttp::CrossOriginOpenerPolicyReportOnlyParseError =
+    rttp_client::response::CrossOriginOpenerPolicyReportOnly::parse("same origin")
+      .expect_err("malformed Cross-Origin-Opener-Policy-Report-Only should be rejected");
   let strict_transport_security: rttp::StrictTransportSecurity =
     rttp_client::response::StrictTransportSecurity::parse("max-age=31536000; includeSubDomains")
       .expect("Strict-Transport-Security should parse");
@@ -279,6 +298,10 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert!(!content_range.is_unsatisfied());
   assert_eq!(alt_svc.alternatives()[0].protocol_id(), "h3");
   assert_eq!(alt_svc.alternatives()[0].max_age(), Some(60));
+  assert_eq!(alt_used.host(), "alt.example");
+  assert_eq!(alt_used.port(), Some("8443"));
+  assert_eq!(origin_trials.tokens(), ["token-one", "token-two"]);
+  assert!(!format!("{origin_trials:?}").contains("token-one"));
   assert_eq!(authentication_info.parameter("nextnonce"), Some("n-2"));
   assert_eq!(nel.max_age(), 2592000);
   assert_eq!(nel.report_to(), Some("network-errors"));
@@ -295,6 +318,15 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(embedder_policy.header_value(), "require-corp");
   assert_eq!(embedder_policy_report_only.header_value(), "require-corp");
   assert_eq!(opener_policy.header_value(), "noopener-allow-popups");
+  assert_eq!(
+    rttp::CrossOriginOpenerPolicy::SameOrigin,
+    opener_policy_report_only.policy()
+  );
+  assert_eq!(Some("coop"), opener_policy_report_only.report_to());
+  assert_eq!(
+    opener_policy_report_only.header_value(),
+    r#"same-origin; report-to="coop""#
+  );
   assert_eq!(strict_transport_security.max_age(), 31_536_000);
   assert!(strict_transport_security.include_sub_domains());
   assert_eq!(
@@ -834,6 +866,9 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let opener_policy: HttpCrossOriginOpenerPolicy =
     HttpCrossOriginOpenerPolicy::parse("noopener-allow-popups; report-to=\"coop\"")
       .expect("Cross-Origin-Opener-Policy should parse");
+  let opener_policy_report_only: HttpCrossOriginOpenerPolicyReportOnly =
+    HttpCrossOriginOpenerPolicyReportOnly::parse("same-origin; report-to=\"coop\"")
+      .expect("Cross-Origin-Opener-Policy-Report-Only should parse");
   let upgrade: HttpUpgrade = HttpUpgrade::parse("websocket").expect("Upgrade should parse");
   let _: HttpUpgradeParseError = HttpUpgrade::parse("").expect_err("empty Upgrade should fail");
   let pragma: HttpPragma =
@@ -847,6 +882,14 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
       .expect("Proxy-Status should parse");
   let _: HttpProxyStatusParseError =
     HttpProxyStatus::parse("").expect_err("empty Proxy-Status should be rejected");
+  let alt_used: HttpAltUsed =
+    HttpAltUsed::parse("[2001:db8::1]:8443").expect("Alt-Used should parse");
+  let _: HttpAltUsedParseError =
+    HttpAltUsed::parse("https://alt.example").expect_err("invalid Alt-Used should be rejected");
+  let origin_trials: HttpOriginTrials =
+    HttpOriginTrials::parse_values(["token-one", "token-two"]).expect("Origin-Trial should parse");
+  let _: HttpOriginTrialParseError = HttpOriginTrials::parse("token\r\nX-Injected: 1")
+    .expect_err("injected Origin-Trial should be rejected");
   let permissions_policy: HttpPermissionsPolicy =
     HttpPermissionsPolicy::parse(r#"geolocation=(self "https://maps.example.test"), camera=()"#)
       .expect("Permissions-Policy should parse");
@@ -916,6 +959,15 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(embedder_policy.header_value(), "require-corp");
   assert_eq!(embedder_policy_report_only.header_value(), "require-corp");
   assert_eq!(opener_policy.header_value(), "noopener-allow-popups");
+  assert_eq!(
+    HttpCrossOriginOpenerPolicy::SameOrigin,
+    opener_policy_report_only.policy()
+  );
+  assert_eq!(Some("coop"), opener_policy_report_only.report_to());
+  assert_eq!(
+    opener_policy_report_only.header_value(),
+    r#"same-origin; report-to="coop""#
+  );
   assert_eq!(upgrade.protocols(), ["websocket"]);
   assert!(pragma.no_cache());
   assert_eq!("no-cache, community=private", pragma.header_value());
@@ -925,6 +977,10 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     proxy_status.members()[0].identifier().as_str(),
     "ExampleCDN"
   );
+  assert_eq!(alt_used.host(), "[2001:db8::1]");
+  assert_eq!(alt_used.port(), Some("8443"));
+  assert_eq!(origin_trials.tokens(), ["token-one", "token-two"]);
+  assert!(!format!("{origin_trials:?}").contains("token-one"));
   assert_eq!(
     permissions_policy.header_value(),
     r#"geolocation=(self "https://maps.example.test"), camera=()"#

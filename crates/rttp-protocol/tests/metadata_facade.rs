@@ -7,6 +7,7 @@ use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::access_control_request_method::AccessControlRequestMethod;
 use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
 use rttp_protocol::age::Age;
+use rttp_protocol::alt_used::AltUsed;
 use rttp_protocol::authorization::{Authorization, ProxyAuthorization};
 use rttp_protocol::baggage::Baggage;
 use rttp_protocol::cache_status::CacheStatus;
@@ -24,6 +25,7 @@ use rttp_protocol::content_type::ContentType;
 use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
 use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedderPolicyReportOnly;
 use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
+use rttp_protocol::cross_origin_opener_policy_report_only::CrossOriginOpenerPolicyReportOnly;
 use rttp_protocol::deprecation::Deprecation;
 use rttp_protocol::document_policy::{DocumentPolicy, DocumentPolicyParseError};
 use rttp_protocol::entity_tag::{EntityTag, IfMatch};
@@ -44,6 +46,7 @@ use rttp_protocol::memento_datetime::MementoDatetime;
 use rttp_protocol::nel::Nel;
 use rttp_protocol::no_vary_search::{NoVarySearch, NoVarySearchParams};
 use rttp_protocol::origin::Origin;
+use rttp_protocol::origin_trial::OriginTrials;
 use rttp_protocol::permissions_policy::PermissionsPolicy;
 use rttp_protocol::pragma::{Pragma, PragmaParseError};
 use rttp_protocol::prefer::{Prefer, PreferenceApplied, PreferenceKind};
@@ -111,7 +114,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let memento_datetime =
     MementoDatetime::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Memento-Datetime should parse");
   let host = Host::parse("example.test:8443").expect("Host should parse");
+  let alt_used = AltUsed::parse("[2001:db8::1]:8443").expect("Alt-Used should parse");
   let origin = Origin::parse("https://example.test").expect("Origin should parse");
+  let origin_trials = OriginTrials::parse_values(["token-one", "token-two"])
+    .expect("Origin-Trial response metadata should parse");
   let no_vary_search =
     NoVarySearch::parse(r#"params=("utm_source")"#).expect("No-Vary-Search should parse");
   let permissions_policy =
@@ -286,6 +292,11 @@ fn protocol_exports_representative_bounded_metadata_types() {
   );
   assert_eq!(host.host(), "example.test");
   assert_eq!(host.port(), Some("8443"));
+  assert_eq!(alt_used.host(), "[2001:db8::1]");
+  assert_eq!(alt_used.port(), Some("8443"));
+  assert_eq!(alt_used.header_value(), "[2001:db8::1]:8443");
+  assert_eq!(origin_trials.tokens(), ["token-one", "token-two"]);
+  assert!(!format!("{origin_trials:?}").contains("token-one"));
   assert_eq!(origin.header_value(), "https://example.test");
   assert_eq!(
     permissions_policy.header_value(),
@@ -478,10 +489,25 @@ fn protocol_exports_bounded_cross_origin_opener_policy_metadata() {
   let cross_origin_opener_policy =
     CrossOriginOpenerPolicy::parse(r#"noopener-allow-popups; report-to="coop""#)
       .expect("Cross-Origin-Opener-Policy should parse");
+  let cross_origin_opener_policy_report_only =
+    CrossOriginOpenerPolicyReportOnly::parse(r#"same-origin; report-to="coop"; endpoint="canary""#)
+      .expect("Cross-Origin-Opener-Policy-Report-Only should parse");
 
   assert_eq!(
     cross_origin_opener_policy.header_value(),
     "noopener-allow-popups"
+  );
+  assert_eq!(
+    CrossOriginOpenerPolicy::SameOrigin,
+    cross_origin_opener_policy_report_only.policy()
+  );
+  assert_eq!(
+    Some("coop"),
+    cross_origin_opener_policy_report_only.report_to()
+  );
+  assert_eq!(
+    cross_origin_opener_policy_report_only.header_value(),
+    r#"same-origin; report-to="coop"; endpoint="canary""#
   );
 }
 

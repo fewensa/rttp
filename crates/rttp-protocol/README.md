@@ -405,6 +405,31 @@ unbracketed IPv6, empty ports, ASCII controls, and other values outside the
 inbound Host grammar are errors. This is syntax validation only: callers own
 virtual-host routing and scheme defaults.
 
+## Alt-Used
+
+`alt_used` parses a singleton HTTP `Alt-Used` response field as one authority
+(`uri-host` plus optional port) using the same bounded grammar as `Host`.
+Each field value is bounded to 64 KiB. A second field is rejected after every
+supplied field is bound-checked. Surrounding SP and HTAB are trimmed as
+optional whitespace. The parser preserves the trimmed host and port spelling,
+including bracketed IPv6 literal form, and does not canonicalize names, IPv6
+text, or default ports. Empty values, userinfo, path, query, fragment,
+unbracketed IPv6, empty ports, ASCII controls, and other values outside the
+authority grammar are errors. This is response metadata only: callers own
+alternative-service selection, origin handling, and connection policy.
+
+## Origin-Trial
+
+`origin_trial` parses one or more HTTP `Origin-Trial` response fields as
+opaque trial tokens in wire order. Surrounding SP and HTAB are trimmed as
+optional whitespace. Each trimmed token must be non-empty, free of CR, LF,
+NUL, other C0 controls, DEL, and obs-text, and at most 8 KiB. The collection
+accepts at most 64 tokens and at most 64 KiB of combined token bytes.
+Duplicate token strings are preserved. Parse errors name only the validation
+category and never echo token material. `Debug` reports the type name and
+token count only. This parser does not validate token signatures, expiration,
+origin applicability, feature activation, browser behavior, or trial policy.
+
 ## Signature
 
 `signature` parses one or more RFC 9421 `Signature` field values into an
@@ -445,17 +470,22 @@ reporting metadata or enforce opener policy. Case variants, lists, quoted
 values, unknown tokens, empty values, and other unparsable input are errors.
 The parser never fails open to `unsafe-none`.
 
-## Cross-Origin-Opener-Policy
+## Cross-Origin-Opener-Policy-Report-Only
 
-`cross_origin_opener_policy` parses a singleton `Cross-Origin-Opener-Policy`
-structured-field item. Each field value is bounded to 64 KiB. A second field is
-rejected after every supplied field is bound-checked. The bare item must be
-exactly one of the tokens `unsafe-none`, `same-origin-allow-popups`,
-`same-origin`, or `noopener-allow-popups`. Well-formed parameters, including
-`report-to`, are accepted as syntax and discarded; this parser does not retain
-reporting metadata or enforce opener policy. Case variants, lists, quoted
-values, unknown tokens, empty values, and other unparsable input are errors.
-The parser never fails open to `unsafe-none`.
+`cross_origin_opener_policy_report_only` parses a singleton
+`Cross-Origin-Opener-Policy-Report-Only` structured-field item with the same
+canonical directive vocabulary as `Cross-Origin-Opener-Policy`. Each field
+value is bounded to 64 KiB. A second field is rejected after every supplied
+field is bound-checked. The bare item must be exactly one of the tokens
+`unsafe-none`, `same-origin-allow-popups`, `same-origin`, or
+`noopener-allow-popups`. Well-formed parameters are retained as opaque
+metadata; `report-to` is exposed as a reporting-endpoint name when present.
+Parameter count is bounded to 256, and each parameter value is bounded to
+64 KiB. Duplicate parameter names are rejected. This parser does not enforce
+opener policy, isolate browsing contexts, validate `Reporting-Endpoints`
+members, deliver reports, or schedule report delivery. Case variants, lists,
+quoted values, unknown tokens, empty values, and other unparsable input are
+errors. The parser never fails open to `unsafe-none`.
 
 Protocol helpers define and bound wire metadata for the client and server
 crates. They do not add higher-level runtime policy such as caching,

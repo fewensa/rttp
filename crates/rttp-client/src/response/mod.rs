@@ -82,6 +82,10 @@ pub use rttp_protocol::cross_origin_embedder_policy_report_only::{
 pub use rttp_protocol::cross_origin_opener_policy::{
   CrossOriginOpenerPolicy, CrossOriginOpenerPolicyParseError,
 };
+pub use rttp_protocol::cross_origin_opener_policy_report_only::{
+  CrossOriginOpenerPolicyReportOnly, CrossOriginOpenerPolicyReportOnlyBareItem,
+  CrossOriginOpenerPolicyReportOnlyParameter, CrossOriginOpenerPolicyReportOnlyParseError,
+};
 pub use rttp_protocol::cross_origin_resource_policy::{
   CrossOriginResourcePolicy, CrossOriginResourcePolicyParseError,
 };
@@ -91,6 +95,7 @@ mod raw_response;
 mod response;
 
 pub use rttp_protocol::alt_svc::{AltSvc, AltSvcAlternative, AltSvcParameter, AltSvcParseError};
+pub use rttp_protocol::alt_used::{AltUsed, AltUsedParseError};
 pub use rttp_protocol::authentication_info::{
   AuthenticationInfo, AuthenticationInfoParameter, AuthenticationInfoParseError,
 };
@@ -112,6 +117,7 @@ pub use rttp_protocol::memento_datetime::{MementoDatetime, MementoDatetimeParseE
 pub use rttp_protocol::no_vary_search::{
   NoVarySearch, NoVarySearchExtension, NoVarySearchParams, NoVarySearchParseError,
 };
+pub use rttp_protocol::origin_trial::{OriginTrialParseError, OriginTrials};
 pub use rttp_protocol::permissions_policy::{
   PermissionsPolicy, PermissionsPolicyAllowlist, PermissionsPolicyAllowlistMember,
   PermissionsPolicyDirective, PermissionsPolicyParseError,

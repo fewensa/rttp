@@ -1890,6 +1890,109 @@ fn cross_origin_opener_policy_helpers_preserve_raw_metadata_and_report_parse_err
 }
 
 #[test]
+fn cross_origin_opener_policy_report_only_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Cross-Origin-Opener-Policy-Report-Only", "unsafe-none")
+    .header("cross-origin-opener-policy-report-only", "same-origin")
+    .with_cross_origin_opener_policy_report_only(r#"same-origin; report-to="coop""#)
+    .expect("Cross-Origin-Opener-Policy-Report-Only should be accepted");
+
+  let policy = response
+    .cross_origin_opener_policy_report_only()
+    .expect("Cross-Origin-Opener-Policy-Report-Only should parse")
+    .expect("Cross-Origin-Opener-Policy-Report-Only should be present");
+  assert_eq!(HttpCrossOriginOpenerPolicy::SameOrigin, policy.policy());
+  assert_eq!(Some("coop"), policy.report_to());
+  assert_eq!(r#"same-origin; report-to="coop""#, policy.header_value());
+  assert_eq!(
+    vec![(
+      "Cross-Origin-Opener-Policy-Report-Only",
+      r#"same-origin; report-to="coop""#
+    )],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn cross_origin_opener_policy_report_only_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::ok([]).header(
+    "Cross-Origin-Opener-Policy-Report-Only",
+    r#"noopener-allow-popups; report-to="coop""#,
+  );
+  let policy = raw
+    .cross_origin_opener_policy_report_only()
+    .expect("raw report-only COOP should parse")
+    .expect("Cross-Origin-Opener-Policy-Report-Only should be present");
+  assert_eq!(
+    HttpCrossOriginOpenerPolicy::NoopenerAllowPopups,
+    policy.policy()
+  );
+  assert_eq!(Some("coop"), policy.report_to());
+  assert_eq!(
+    Some(r#"noopener-allow-popups; report-to="coop""#),
+    raw
+      .headers
+      .iter()
+      .find(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Cross-Origin-Opener-Policy-Report-Only")
+      })
+      .map(|header| header.value.as_str())
+  );
+
+  let malformed =
+    HttpResponse::ok([]).header("Cross-Origin-Opener-Policy-Report-Only", "same origin");
+  assert!(malformed
+    .cross_origin_opener_policy_report_only()
+    .is_err());
+  assert!(HttpResponse::ok([])
+    .with_cross_origin_opener_policy_report_only("same origin")
+    .is_err());
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .cross_origin_opener_policy_report_only()
+      .expect("absent Cross-Origin-Opener-Policy-Report-Only should parse")
+  );
+  for value in [
+    "unsafe-none",
+    "same-origin-allow-popups",
+    "same-origin",
+    "noopener-allow-popups",
+  ] {
+    let metadata = HttpResponse::ok([])
+      .with_cross_origin_opener_policy_report_only(value)
+      .expect("valid Cross-Origin-Opener-Policy-Report-Only should be accepted")
+      .cross_origin_opener_policy_report_only()
+      .expect("Cross-Origin-Opener-Policy-Report-Only should parse")
+      .expect("Cross-Origin-Opener-Policy-Report-Only should be present");
+    assert_eq!(value, metadata.header_value());
+    assert_eq!(
+      HttpCrossOriginOpenerPolicy::parse(value).expect("canonical COOP should parse"),
+      metadata.policy()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("Cross-Origin-Opener-Policy-Report-Only", "same-origin")
+    .header(
+      "cross-origin-opener-policy-report-only",
+      "noopener-allow-popups",
+    );
+  assert!(duplicate
+    .cross_origin_opener_policy_report_only()
+    .is_err());
+  assert!(HttpResponse::ok([])
+    .with_cross_origin_opener_policy_report_only("x".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
 fn strict_transport_security_helpers_validate_replace_and_parse_response_metadata() {
   let response = HttpResponse::ok([])
     .header("Strict-Transport-Security", "max-age=60")
@@ -3866,6 +3969,44 @@ hello\r\n\
       .expect("clear should parse")
       .expect("clear should be present")
       .is_clear());
+  }
+
+  #[test]
+  fn origin_trial_helpers_declare_parse_and_redact_response_metadata() {
+    let response = HttpResponse::ok([])
+      .header("Origin-Trial", "stale-token")
+      .with_origin_trials(["secret-token-one", "secret-token-two"])
+      .expect("Origin-Trial should be accepted");
+    let origin_trials = response
+      .origin_trials()
+      .expect("response Origin-Trial should parse")
+      .expect("response Origin-Trial should be present");
+
+    assert_eq!(
+      origin_trials.tokens(),
+      ["secret-token-one", "secret-token-two"]
+    );
+    let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+    assert_eq!(2, serialized.matches("\r\nOrigin-Trial: ").count());
+    assert!(serialized.contains("\r\nOrigin-Trial: secret-token-one\r\n"));
+    assert!(!serialized.contains("stale-token"));
+
+    let response_debug = format!("{response:?}");
+    assert!(response_debug.contains("Origin-Trial"));
+    assert!(response_debug.contains("[REDACTED]"));
+    assert!(!response_debug.contains("secret-token-one"));
+    assert!(!format!("{origin_trials:?}").contains("secret-token-one"));
+
+    let header_debug = format!("{:?}", HttpHeader::new("Origin-Trial", "secret-token-one"));
+    assert!(header_debug.contains("Origin-Trial"));
+    assert!(header_debug.contains("[REDACTED]"));
+    assert!(!header_debug.contains("secret-token-one"));
+
+    let malformed = HttpResponse::ok([]).header("Origin-Trial", "token\twith-tab");
+    assert!(malformed.origin_trials().is_err());
+    assert!(String::from_utf8(malformed.to_bytes())
+      .expect("response should serialize")
+      .contains("\r\nOrigin-Trial: token\twith-tab\r\n"));
   }
 
   #[test]

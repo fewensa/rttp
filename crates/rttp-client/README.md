@@ -952,6 +952,36 @@ The helper is metadata-only. `rttp_client` does not send network error
 reports, persist policy, configure Reporting endpoint groups, or attach
 status-code policy from `NEL`.
 
+## Bounded Alt-Used response metadata
+
+`Response::alt_used()` parses the `Alt-Used` response field as one bounded
+authority value using the shared protocol `AltUsed` type. It returns
+`Ok(None)` when the header is absent. Valid metadata preserves host spelling,
+optional port, and bracketed IPv6 literal form. Malformed authorities,
+duplicate fields, and values larger than 64 KiB return an error while the raw
+response headers remain available through `Response::header_value()` and
+`Response::header_values()`.
+
+The helper is metadata-only. `rttp_client` does not select an alternative
+service, rewrite origins, migrate sockets, retry, or change connection policy
+based on `Alt-Used`.
+
+## Bounded Origin-Trial response metadata
+
+`Response::origin_trials()` parses retained `Origin-Trial` fields as an
+ordered collection of opaque tokens through the shared protocol `OriginTrials`
+type. It returns `Ok(None)` when the header is absent. Valid metadata
+preserves multiple tokens and duplicates in wire order. Each token is limited
+to 8 KiB, the collection is limited to 64 tokens, and the combined token
+bytes are limited to 64 KiB. Injected controls, obs-text, empty values,
+oversized tokens, and oversized collections return an error while the raw
+response headers remain available through `Response::header_value()` and
+`Response::header_values()`. Token material is redacted from typed `Debug`
+output and generic `Header` debug output.
+
+The helper is metadata-only. `rttp_client` does not validate token
+signatures, expiration, origin applicability, or activate browser trials.
+
 ## Bounded Reporting-Endpoints response metadata
 
 `Response::reporting_endpoints()` parses retained `Reporting-Endpoints`
@@ -966,6 +996,24 @@ response headers remain available through `Response::header_value()` and
 
 The helper is metadata-only. `rttp_client` does not schedule, send, persist,
 retry, or route reports.
+
+## Bounded Cross-Origin-Opener-Policy-Report-Only response metadata
+
+`Response::cross_origin_opener_policy_report_only()` parses retained
+`Cross-Origin-Opener-Policy-Report-Only` fields through the shared protocol
+type. It returns `Ok(None)` when the header is absent. Present values must be
+a singleton structured-field item using the canonical COOP directives
+`unsafe-none`, `same-origin-allow-popups`, `same-origin`, or
+`noopener-allow-popups`. Well-formed parameters are retained as metadata;
+`report-to` is exposed as a reporting-endpoint name when present. Each field
+value is limited to 64 KiB; parameter count is bounded to 256, and each
+parameter value is bounded to 64 KiB. Duplicate fields, duplicate parameter
+names, unknown directives, malformed structured fields, and oversized values
+return an error while the raw response headers remain available through
+`Response::header_value()` and `Response::header_values()`.
+
+The helper is metadata-only. `rttp_client` does not isolate browsing
+contexts, validate `Reporting-Endpoints` members, or send reports.
 
 ## Bounded Proxy-Status response metadata
 
@@ -1080,6 +1128,8 @@ header-block model.
 | Conditional requests | `if_none_match`, `if_match`, `if_modified_since`, and `if_unmodified_since` emit bounded HTTP/1.1 validators; the date helpers validate and emit through the shared protocol `IfModifiedSince` and `IfUnmodifiedSince` types; `Response::is_not_modified`, `is_precondition_failed`, typed bounded `etag`, `last_modified`, and `last_modified_date` expose `304`/`412` metadata while preserving raw headers | One ETag validator per helper call, `If-Range` is range-scoped, no cache storage, no automatic revalidation, and no cache-control engine |
 | Informational responses and Early Hints | `Response::informational_responses` exposes skipped bounded HTTP/1.1 `1xx` heads, including `103 Early Hints`, with preserved raw headers | `101 Switching Protocols` remains terminal for upgrade handoff; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
 | Cache-Control, CDN-Cache-Control, Cache-Status, Date, Age, and Expires | `Response::cache_control` parses bounded response directives, numeric freshness fields, quoted field-name lists, and extension directives; `Response::cdn_cache_control` parses bounded `CDN-Cache-Control` directives and CDN extension metadata while preserving raw responses on parse errors; `Response::cache_status` parses bounded RFC 9211 `Cache-Status` list members and parameters while preserving raw responses on parse errors; `Response::date` parses singleton HTTP-date metadata; `Response::age` parses bounded singleton `Age` metadata through the protocol `Age` type, rejecting duplicate fields, values larger than 64 KiB, and overflowing `u64` delta-seconds; `Response::expires` parses bounded HTTP-date metadata | No cache storage, CDN cache, Cache-Status forwarding or freshness policy, automatic revalidation, wall-clock freshness calculation, clock-skew correction, `Vary` matching, shared-cache policy enforcement, surrogate-key behavior, automatic conditional requests, retry, redirect, scheduling, or status policy |
+| Alt-Used | `Response::alt_used` parses bounded singleton response authority metadata through the shared protocol `AltUsed` type while preserving raw headers on parse failures | No alternative service selection, origin rewriting, socket migration, retry, or connection-policy behavior |
+| Origin-Trial | `Response::origin_trials` parses bounded opaque `Origin-Trial` tokens in wire order through the shared protocol `OriginTrials` type, preserves duplicates, redacts token material from debug output, and preserves raw headers on parse failures | No token signature validation, expiration checks, origin applicability, feature activation, or browser trial policy |
 | Memento-Datetime | `Response::memento_datetime` parses bounded singleton `Memento-Datetime` IMF-fixdate metadata through the protocol `MementoDatetime` type while preserving raw headers on parse errors | No archival selection, `Accept-Datetime` negotiation, TimeGate behavior, retry, or transport changes |
 | Allow | `Response::allow` parses bounded response `Allow` fields into an ordered HTTP method-token list | No fallback method selection, automatic retry/replay, or status-code policy behavior for `405` or `OPTIONS` |
 | Client Hints | `Response::accept_ch` and `Response::critical_ch` parse bounded, ordered Client Hints opt-in metadata while preserving raw headers on parse failures | No browser opt-in state, request-header generation, retry, persistence, or Client Hints policy |
@@ -1096,6 +1146,7 @@ header-block model.
 | Vary | `Response::vary` parses bounded response `Vary` fields into wildcard or normalized case-insensitive field-name metadata | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | NEL | `Response::nel` parses the bounded singleton `NEL` field as W3C Network Error Logging policy metadata while preserving raw headers | No network error report sending, policy persistence, Reporting endpoint group configuration, or status-policy behavior |
 | Reporting-Endpoints | `Response::reporting_endpoints` parses bounded endpoint-name to quoted-URL dictionaries through the shared protocol type while preserving raw headers | No report scheduling, sending, persistence, retry, routing, or endpoint policy behavior |
+| Cross-Origin-Opener-Policy-Report-Only | `Response::cross_origin_opener_policy_report_only` parses bounded singleton COOP Report-Only metadata through the shared protocol type, reuses the canonical COOP directives, retains reporting parameters including `report-to`, and preserves raw headers | No browsing-context isolation, report scheduling, sending, persistence, retry, routing, or `Reporting-Endpoints` validation |
 | Proxy-Status | `Response::proxy_status` parses bounded RFC 9209 Token/String proxy identifiers with opaque parameters while preserving raw headers on parse failures | No proxy health checks, retries, trailer promotion, or origin-generation policy |
 | No-Vary-Search | `Response::no_vary_search` parses bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
 | Permissions-Policy | `Response::permissions_policy` parses bounded W3C Permissions Policy dictionary metadata through the shared protocol type, combining fields in wire order and preserving raw headers on parse failures | No browser permission grants or denials, origin comparison, `self` resolution, API enablement, origin-policy enforcement, or report sending |

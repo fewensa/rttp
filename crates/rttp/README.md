@@ -682,6 +682,37 @@ object, nesting depth to 64, and each decoded string to 64 KiB.
 These helpers are metadata-only: RTTP does not send network error reports,
 persist policy, or configure Reporting endpoint groups.
 
+## Bounded Alt-Used response metadata
+
+`AltUsed` and `HttpAltUsed` share the protocol authority parser for bounded
+`Alt-Used` response metadata. Client responses can call `Response::alt_used()`
+to parse one attached field, and server responses can call
+`HttpResponse::with_alt_used(value)` or `HttpResponse::alt_used()` to declare
+or observe the same metadata. Valid metadata preserves host spelling,
+optional port, and bracketed IPv6 literal form. Malformed authorities,
+duplicate fields, and values larger than 64 KiB are rejected while raw headers
+remain available on parse failures.
+
+These helpers are metadata-only: RTTP does not select alternative services,
+rewrite origins, migrate sockets, retry, or change connection policy from
+`Alt-Used`.
+
+## Bounded Origin-Trial response metadata
+
+`OriginTrials` and `HttpOriginTrials` share the protocol parser for bounded
+opaque `Origin-Trial` response metadata. Client responses can call
+`Response::origin_trials()` to parse attached fields, and server responses
+can call `HttpResponse::with_origin_trials(values)` or
+`HttpResponse::origin_trials()` to declare or observe the same metadata.
+Valid metadata preserves multiple tokens and duplicates in wire order. Each
+token is limited to 8 KiB, the collection is limited to 64 tokens, and the
+combined token bytes are limited to 64 KiB. Injected controls, obs-text,
+empty values, and oversized collections are rejected while raw headers remain
+available on parse failures. Token material is redacted from debug output.
+
+These helpers are metadata-only: RTTP does not validate token signatures,
+expiration, origin applicability, or activate browser trials.
+
 ## Bounded Reporting-Endpoints response metadata
 
 Server-side Reporting-Endpoints helpers expose response declaration and
@@ -699,6 +730,29 @@ and the member count is bounded to 32.
 
 These helpers are metadata-only: RTTP does not schedule, send, persist,
 retry, or route reports.
+
+## Bounded Cross-Origin-Opener-Policy-Report-Only response metadata
+
+Server-side COOP Report-Only helpers expose response declaration and parsing
+without isolating browsing contexts or sending reports.
+`HttpResponse::with_cross_origin_opener_policy_report_only(value)` validates
+a singleton structured-field item through the shared protocol type, removes
+any existing raw `Cross-Origin-Opener-Policy-Report-Only` fields, and adds
+one normalized value. `HttpResponse::cross_origin_opener_policy_report_only()`
+parses attached raw fields and returns `Ok(None)` when the header is absent.
+
+On the client, `Response::cross_origin_opener_policy_report_only()` parses
+the same metadata, returning `Ok(None)` when the header is absent and
+preserving raw headers on parse failures. The type reuses the canonical COOP
+directives `unsafe-none`, `same-origin-allow-popups`, `same-origin`, and
+`noopener-allow-popups`. Well-formed parameters are retained; `report-to` is
+exposed as a reporting-endpoint name when present. Each field value is
+bounded to 64 KiB; parameter count is bounded to 256, and each parameter
+value is bounded to 64 KiB.
+
+These helpers are metadata-only: RTTP does not isolate browsing contexts,
+validate `Reporting-Endpoints` members, deliver reports, or schedule report
+delivery.
 
 ## Bounded HTTP/1.1 representation metadata behavior
 
@@ -1033,6 +1087,8 @@ scheduling, or async accept loops.
 | Conditional requests | `Request::evaluate_conditional`, `evaluate_conditional_request`, `HttpConditionalMetadata`, and `HttpEntityTag` evaluate bounded HTTP/1.1 validators; `HttpResponse::not_modified`, `precondition_failed`, `with_etag`, and typed bounded `etag` serialize or expose `304`/`412` metadata while preserving raw headers | No cache storage, static-file serving policy, automatic revalidation, or cache-control engine |
 | Informational responses and Early Hints | `HttpResponse::early_hints` and `early_hints_with_headers` construct validated bodyless `103 Early Hints` response metadata with bounded `Link` and safe metadata headers | `101 Switching Protocols` remains a separate terminal handoff response; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
 | Cache-Control, CDN-Cache-Control, and Cache-Status | `Request::cache_control`, `HttpRequest::cache_control`, and `HttpResponse::cache_control` parse bounded request/response directives, numeric freshness fields, quoted field-name lists, and extension directives; `HttpResponse::cdn_cache_control` parses bounded response `CDN-Cache-Control` directives and CDN extension metadata while preserving raw response headers on parse errors; `HttpResponse::cache_status` parses bounded RFC 9211 `Cache-Status` list members and parameters while preserving raw response headers on parse errors; `HttpResponse::with_age`/`age`, `with_expires`/`expires`, and `with_retry_after_delta`/`with_retry_after_date`/`retry_after` declare and parse response `Age`, `Expires`, and `Retry-After` metadata | No cache storage, CDN cache, Cache-Status forwarding or freshness policy, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, surrogate-key behavior, automatic conditional requests, directive-based validator evaluation, automatic sleep, retry, replay, backoff, scheduler integration, or status-code policy engine |
+| Alt-Used | `AltUsed`, `HttpAltUsed`, `Response::alt_used`, `HttpResponse::with_alt_used`, and `HttpResponse::alt_used` parse or declare bounded singleton response authority metadata while preserving raw headers on parse failures and replacing raw response duplicates on typed declaration | No alternative service selection, origin rewriting, socket migration, retry, or connection-policy behavior |
+| Origin-Trial | `OriginTrials`, `HttpOriginTrials`, `Response::origin_trials`, `HttpResponse::with_origin_trials`, and `HttpResponse::origin_trials` parse or declare bounded opaque `Origin-Trial` tokens in wire order, preserve duplicates, redact token material from debug output, and replace raw response fields on typed declaration | No token signature validation, expiration checks, origin applicability, feature activation, or browser trial policy |
 | Memento-Datetime | `HttpResponse::with_memento_datetime`/`memento_datetime` declare and parse bounded singleton `Memento-Datetime` IMF-fixdate metadata while preserving raw headers on parse errors | No archival selection, `Accept-Datetime` negotiation, TimeGate behavior, retry, or transport changes |
 | Vary | `HttpVary`, `HttpResponse::with_vary`, `HttpResponse::vary`, `Request::vary_selection`, and `HttpRequest::vary_selection` parse, declare, and select bounded `Vary` metadata with case-insensitive field-name handling | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | Authentication metadata | `Request::authorization`/`proxy_authorization` and `HttpRequest::authorization`/`proxy_authorization` expose one bounded opaque credential field, `Response::www_authenticate` parses bounded client response challenges, and `HttpResponse::with_www_authenticate`/`www_authenticate` declare and parse bounded `WWW-Authenticate` challenges | No credential validation, realm selection, automatic client challenge, retry, or authentication/authorization enforcement |
@@ -1056,6 +1112,7 @@ scheduling, or async accept loops.
 | Content-Disposition | Protocol-backed `HttpContentDisposition`, `HttpResponse::with_content_disposition`, `with_attachment_filename`, and `content_disposition` declare and parse bounded singleton `Content-Disposition` response metadata, preserve parsed `filename` and `filename*` parameter values, preserve raw headers on parse failures, and replace raw duplicates on typed declaration | No automatic download, filesystem path handling, MIME sniffing, cache behavior, redirect behavior, retry/replay, negotiation, or status-policy behavior |
 | NEL | `HttpNel`, `HttpResponse::with_nel`, and `HttpResponse::nel` declare and parse bounded W3C Network Error Logging policy JSON, preserve unknown JSON members as raw metadata, preserve raw headers on parse failures, and replace raw duplicates on typed declaration; the client `Response::nel` parses the same metadata | No network error report sending, policy persistence, Reporting endpoint group configuration, retry, redirect behavior, or status-policy behavior |
 | Reporting-Endpoints | `HttpReportingEndpoints`, `HttpResponse::with_reporting_endpoints`, and `HttpResponse::reporting_endpoints` declare and parse bounded endpoint-name to quoted-URL dictionaries through the shared protocol type, preserve raw headers on parse failures, and replace raw duplicates on typed declaration; the client `Response::reporting_endpoints` parses the same metadata | No report scheduling, sending, persistence, retry, routing, or endpoint policy behavior |
+| Cross-Origin-Opener-Policy-Report-Only | `HttpCrossOriginOpenerPolicyReportOnly`, `HttpResponse::with_cross_origin_opener_policy_report_only`, and `HttpResponse::cross_origin_opener_policy_report_only` declare and parse bounded singleton COOP Report-Only metadata, reuse the canonical COOP directives, retain reporting parameters including `report-to`, preserve raw headers on parse failures, and replace raw duplicates on typed declaration; the client `Response::cross_origin_opener_policy_report_only` parses the same metadata | No browsing-context isolation, report scheduling, sending, persistence, retry, routing, or `Reporting-Endpoints` validation |
 | Upgrade and tunnel targets | `CONNECT` authority-form requests are accepted as HTTP requests; `HttpHandoff::upgrade` can hand an upgraded socket to caller code after a matching request | The server does not implement the upgraded protocol after handoff |
 | Trailers | Chunked request trailers are preserved on `Request`; malformed, oversized, forbidden, and pseudo-header trailers are rejected; response trailers can be serialized for chunked responses | Application metadata trailers are allowed; trailer names that affect connection state, routing, authentication/cookies, framing, or payload processing are rejected |
 | Bounded h2c server | The same `socket2` listener detects the HTTP/2 prior-knowledge preface or a valid HTTP/1.1 `Upgrade: h2c` request with `HTTP2-Settings`, validates SETTINGS including legal `SETTINGS_ENABLE_PUSH` and `SETTINGS_ENABLE_CONNECT_PROTOCOL` values of only `0` or `1` and legal `SETTINGS_MAX_FRAME_SIZE` values from 16,384 through 16,777,215 bytes, dispatches RFC 8441 extended CONNECT only after `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1` has been negotiated, exposes negotiated extended CONNECT as a normal `Request` with method `CONNECT`, version `HTTP/2`, target from `:path`, `host` from `:authority`, and `Request::extended_connect_protocol()` from `:protocol`, advertises the default 16,384-byte `SETTINGS_MAX_FRAME_SIZE`, rejects inbound frames above the active local limit, splits outbound HEADERS, DATA, and trailers to the active peer frame-size limit, advertises `SETTINGS_MAX_CONCURRENT_STREAMS` from the bounded active stream allowance, enforces that allowance before dispatching new streams, advertises and enforces a conservative `SETTINGS_MAX_HEADER_LIST_SIZE` for inbound request metadata, bounds HPACK dynamic table use with `SETTINGS_HEADER_TABLE_SIZE`, serves bounded streams including bodyless DELETE, OPTIONS, TRACE, and negotiated extended CONNECT, handles HEAD without response DATA, rejects connection-specific request fields before handler dispatch, strips connection-specific response fields during h2c serialization, treats `RST_STREAM` as a bounded reset/cancellation signal for the affected stream, acknowledges inbound PING without ACK on stream 0 and exactly 8 octets with matching opaque data, ignores inbound PING ACK, rejects malformed PING frames, accepts padded HEADERS/DATA/trailers without exposing padding, handles HPACK Huffman fields and bounded CONTINUATION header blocks, emits `GOAWAY` with the last completed stream id at bounded shutdown, validates and ignores valid PRIORITY metadata, ignores HTTP/2-allowed unknown/extension frames inside this bounded path, normalizes reserved stream-id high bits, and applies conservative DATA flow control | Ordinary `CONNECT`, missing-negotiation `:protocol`, non-CONNECT `:protocol`, malformed h2c Upgrade, request bodies on h2c Upgrade, and `PUSH_PROMISE` are rejected deterministically before handler dispatch; HTTP/1.1 `CONNECT` and non-h2c `Upgrade` remain separate handoff paths; bounded h2c only, with no keepalive timers, no automatic client/server initiated PING policy, no public cancellation callback API, no dynamic policy API, no extension callback API, no full extension negotiation, TLS ALPN, external h2 integration, full WebSocket-over-h2, proxy h2, tunnel handoff, connection pooling, persistent multiplex sessions, persistent HTTP/2 session management, automatic retry/replay, server push, full RFC 8441 support, full session manager, full stream state machine, full multiplex scheduler, unbounded multiplexing, unbounded multiplex scheduling, general multiplexing, general tunnel scheduling, priority scheduling, or full HTTP/2 server feature set |

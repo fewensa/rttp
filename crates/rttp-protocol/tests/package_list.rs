@@ -31,6 +31,8 @@ fn package_includes_protocol_metadata_facade_test() {
     "tests/expect.rs",
     "tests/package_list.rs",
     "tests/metadata_facade.rs",
+    "tests/cross_origin_opener_policy.rs",
+    "tests/cross_origin_opener_policy_report_only.rs",
     "tests/content_disposition.rs",
     "tests/content_language.rs",
     "tests/no_vary_search.rs",
@@ -39,6 +41,8 @@ fn package_includes_protocol_metadata_facade_test() {
     "tests/upgrade_insecure_requests.rs",
     "tests/pragma.rs",
     "tests/accept_language.rs",
+    "tests/alt_used.rs",
+    "tests/origin_trial.rs",
     "tests/sec_gpc.rs",
   ] {
     assert!(

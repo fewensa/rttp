@@ -1081,6 +1081,53 @@ fn sync_client_and_server_exchange_cross_origin_opener_policy_metadata_without_p
 }
 
 #[test]
+fn sync_client_and_server_exchange_cross_origin_opener_policy_report_only_metadata_without_policy()
+{
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind Cross-Origin-Opener-Policy-Report-Only server");
+  let addr = server
+    .local_addr()
+    .expect("Cross-Origin-Opener-Policy-Report-Only server addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        HttpResponse::ok("OK")
+          .with_cross_origin_opener_policy_report_only("same-origin; report-to=\"coop-reporting\"")
+          .expect("Cross-Origin-Opener-Policy-Report-Only should be accepted")
+      })
+      .expect("serve Cross-Origin-Opener-Policy-Report-Only response");
+  });
+
+  let response = client()
+    .get()
+    .url(format!(
+      "http://{addr}/matrix/cross-origin-opener-policy-report-only"
+    ))
+    .emit()
+    .expect("Cross-Origin-Opener-Policy-Report-Only response should parse");
+  let policy = response
+    .cross_origin_opener_policy_report_only()
+    .expect("Cross-Origin-Opener-Policy-Report-Only should parse")
+    .expect("Cross-Origin-Opener-Policy-Report-Only should be present");
+  assert_eq!(
+    rttp_client::response::CrossOriginOpenerPolicy::SameOrigin,
+    policy.policy()
+  );
+  assert_eq!(Some("coop-reporting"), policy.report_to());
+  assert_eq!(
+    r#"same-origin; report-to="coop-reporting""#,
+    policy.header_value()
+  );
+  assert_eq!(
+    Some(&r#"same-origin; report-to="coop-reporting""#.to_string()),
+    response.header_value("Cross-Origin-Opener-Policy-Report-Only")
+  );
+  handle
+    .join()
+    .expect("Cross-Origin-Opener-Policy-Report-Only server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_alt_svc_metadata_without_connection_policy() {
   const HEADERS: &[(&str, &str)] = &[(
     "Alt-Svc",
@@ -1121,6 +1168,77 @@ fn sync_client_and_server_exchange_alt_svc_metadata_without_connection_policy() 
   );
 
   handle.join().expect("Alt-Svc server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_alt_used_metadata_without_connection_policy() {
+  const HEADERS: &[(&str, &str)] = &[("Alt-Used", "alt.example:8443")];
+  let (addr, handle) = spawn_metadata_response_server(HEADERS);
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/alt-used"))
+    .emit()
+    .expect("Alt-Used response should parse without connection policy");
+  let alt_used = response
+    .alt_used()
+    .expect("Alt-Used should parse")
+    .expect("Alt-Used should be present");
+
+  assert_eq!(200, response.code());
+  assert_eq!("OK", response.body().string().unwrap());
+  assert_eq!(
+    Some(&"alt.example:8443".to_string()),
+    response.header_value("Alt-Used")
+  );
+  assert_eq!("alt.example", alt_used.host());
+  assert_eq!(Some("8443"), alt_used.port());
+  assert_eq!("alt.example:8443", alt_used.header_value());
+
+  handle.join().expect("Alt-Used server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_origin_trial_metadata_without_activation() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Origin-Trial server");
+  let addr = server.local_addr().expect("Origin-Trial server addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        HttpResponse::ok("OK")
+          .with_origin_trials(["token-one", "token-one", "token-two"])
+          .expect("Origin-Trial should be accepted")
+      })
+      .expect("serve Origin-Trial response");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/origin-trial"))
+    .emit()
+    .expect("Origin-Trial response should parse without activating trials");
+  let origin_trials = response
+    .origin_trials()
+    .expect("Origin-Trial should parse")
+    .expect("Origin-Trial should be present");
+
+  assert_eq!(200, response.code());
+  assert_eq!("OK", response.body().string().unwrap());
+  assert_eq!(
+    origin_trials.tokens(),
+    ["token-one", "token-one", "token-two"]
+  );
+  assert_eq!(
+    vec![
+      &"token-one".to_string(),
+      &"token-one".to_string(),
+      &"token-two".to_string()
+    ],
+    response.header_values("Origin-Trial")
+  );
+
+  handle.join().expect("Origin-Trial server thread");
 }
 
 #[test]
