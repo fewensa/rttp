@@ -149,6 +149,47 @@ fn link_rejects_malformed_values() {
 }
 
 #[test]
+fn link_rejects_targets_url_parse_would_canonicalize() {
+  for value in [
+    "<foo bar>",
+    "<foo\tbar>",
+    r"<foo\bar>",
+    "<a%zz>",
+    "<a%2>",
+    "<a%>",
+    "<foo\"bar>",
+    "<foo^bar>",
+    "<foo`bar>",
+    "<foo|bar>",
+    "<café>",
+  ] {
+    assert!(
+      LinkValues::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+}
+
+#[test]
+fn link_rejects_empty_assigned_parameter_values() {
+  for value in [
+    "</asset>; rel=",
+    "</asset>; rel= ",
+    "</asset>; rel =",
+    "</asset>; rel = ",
+  ] {
+    assert!(
+      LinkValues::parse(value).is_err(),
+      "{value:?} must be rejected"
+    );
+  }
+
+  let links = LinkValues::parse("</asset>; rel=\"\"")
+    .expect("an empty quoted-string is a valid assigned value");
+  assert_eq!(Some(""), links.values()[0].parameter("rel"));
+}
+
+#[test]
 fn link_rejects_case_insensitive_duplicate_parameters_within_a_value() {
   assert!(LinkValues::parse("</a.css>; rel=preload; rel=prefetch").is_err());
   assert!(LinkValues::parse("</a.css>; rel=preload; REL=prefetch").is_err());
