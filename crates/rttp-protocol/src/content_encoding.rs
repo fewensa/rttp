@@ -68,6 +68,28 @@ impl ContentEncoding {
     self.codings.iter().map(String::as_str).collect()
   }
 
+  pub fn from_codings<I, C>(codings: I) -> Result<Self, ContentEncodingParseError>
+  where
+    I: IntoIterator<Item = C>,
+    C: AsRef<str>,
+  {
+    let mut value = String::new();
+
+    for (index, coding) in codings.into_iter().enumerate() {
+      if index > 0 {
+        value.push_str(", ");
+      }
+      value.push_str(coding.as_ref());
+      if value.len() > MAX_CONTENT_ENCODING_VALUE_BYTES {
+        return Err(ContentEncodingParseError::new(
+          "Content-Encoding header value is too large",
+        ));
+      }
+    }
+
+    Self::parse(value)
+  }
+
   pub fn len(&self) -> usize {
     self.codings.len()
   }

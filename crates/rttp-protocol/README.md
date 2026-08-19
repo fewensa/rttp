@@ -74,6 +74,18 @@ repeated codings are retained in wire order so callers can inspect the full
 encoding stack. A present header set that yields no coding still fails as
 invalid.
 
+## Content-Language
+
+`content_language` parses one or more `Content-Language` field values into an
+ordered list of language tags. Each field value is bounded to 64 KiB, and the
+cumulative tag count across all supplied fields is bounded to 256 tags. Tags
+are split on commas with SP and HTAB accepted only as optional whitespace
+around each tag; each tag must contain non-empty ASCII alphanumeric subtags
+separated by hyphens with an alphabetic primary subtag no longer than 8
+characters. Case-insensitive duplicate tags, empty members, malformed tags,
+and oversized values are rejected. A present header set that yields no tag
+still fails as invalid.
+
 ## Transfer-Encoding
 
 `transfer_encoding` parses one or more `Transfer-Encoding` field values into

@@ -378,7 +378,7 @@ already attached to a response into `HttpContentLanguages`.
 preserves the declared spelling and order.
 
 Parsing is bounded and validation-oriented. Each `Content-Language` field value
-is limited to 64 KiB, the parsed language list is limited to 32 entries, and
+is limited to 64 KiB, the parsed language list is limited to 256 entries, and
 each tag must contain non-empty ASCII alphanumeric subtags separated by hyphens
 with an alphabetic primary subtag. Empty members, malformed tags, duplicates
 across one or more helper-parsed header fields, oversized values, and too many
@@ -493,11 +493,12 @@ when absent. Duplicate `Content-Type` fields are a helper error.
 received `Content-Encoding` fields in wire order into
 `HttpResponseContentEncodings`. HTTP/1.1 and HTTP/2 share the same `Request`
 helpers. `HttpContentType::parse(value)`
-validates a `Content-Type` field, normalizes the media type and parameter
-names to lowercase, preserves parameter values, and exposes
-`media_type()`, `parameter(name)`, `parameters()`, and `header_value()`.
+validates a `Content-Type` field, preserves the declared media type and
+parameter spelling and order, and exposes
+`type_()`, `subtype()`, `parameter(name)`, `parameters()`, and `header_value()`.
 `HttpContentType::new(type_name, subtype)` constructs a normalized media type,
-and `with_parameter(name, value)` appends safely serialized parameters.
+and `with_parameter(name, value)` appends safely serialized parameters with
+normalized names and preserved values.
 `HttpResponse::with_content_type(value)` accepts any `IntoHttpContentType`,
 removes existing raw `Content-Type` fields, and adds one validated
 `Content-Type` header. `HttpResponse::content_type()` parses an attached
@@ -510,17 +511,17 @@ coding list for declarations. `HttpResponse::with_content_encoding(codings)`
 removes existing raw `Content-Encoding` fields and adds one validated
 comma-separated header. `HttpResponse::content_encoding()` parses all attached
 `Content-Encoding` fields in wire order and returns `Ok(None)` when absent.
-Coding spelling and order are preserved, and duplicate detection is
-case-insensitive.
+Coding spelling and order are preserved, including repeated codings across
+one or more header fields.
 
 Parsing and declaration are bounded. Each `Content-Type` and
 `Content-Encoding` field value is limited to 64 KiB. Server `Content-Type`
-helpers accept at most 32 parameters and reject malformed media types,
+helpers accept at most 256 parameters and reject malformed media types,
 malformed parameter syntax, malformed quoted strings, duplicate parameters,
 duplicate singleton fields, CR/LF or other control bytes, oversized values,
-and too many parameters. Server `Content-Encoding` helpers accept at most 32
-codings and reject empty members, malformed tokens, duplicate codings,
-oversized values, and too many codings. Raw `Request::header(...)` and
+and too many parameters. Server `Content-Encoding` helpers accept at most 256
+codings and reject empty members, malformed tokens, oversized values, and too
+many codings. Raw `Request::header(...)` and
 `HttpResponse::header(...)` values remain preserved exactly as ordinary
 headers until a typed declaration helper replaces them or the typed parser is
 requested; parser errors do not remove existing headers or change the request
@@ -528,7 +529,7 @@ body.
 
 ```rust
 let content_type = request.content_type()?.expect("Content-Type");
-if content_type.media_type() == "application/json" {
+if content_type.type_() == "application" && content_type.subtype() == "json" {
   let charset = content_type.parameter("charset");
 }
 

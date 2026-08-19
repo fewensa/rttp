@@ -234,7 +234,8 @@ fn request_representation_metadata_parses_without_applying_policy() {
     .content_type()
     .expect("Content-Type should parse")
     .expect("Content-Type should be present");
-  assert_eq!("application/json", content_type.media_type());
+  assert_eq!("application", content_type.type_());
+  assert_eq!("json", content_type.subtype());
   assert_eq!(Some("utf-8"), content_type.parameter("charset"));
 
   let encodings = valid
@@ -247,7 +248,7 @@ fn request_representation_metadata_parses_without_applying_policy() {
     .content_language()
     .expect("Content-Language should parse")
     .expect("Content-Language should be present");
-  assert_eq!(vec!["fr-CA", "es-419", "en"], languages.languages());
+  assert_eq!(vec!["fr-CA", "es-419", "en"], languages.tags());
 
   let accept_encoding = valid
     .accept_encoding()
@@ -591,7 +592,11 @@ fn request_representation_metadata_preserves_invalid_headers_and_body() {
   ).as_bytes())
   .expect("duplicate members should not reject the request frame");
   assert!(duplicate_members.content_type().is_err());
-  assert!(duplicate_members.content_encoding().is_err());
+  let duplicate_encodings = duplicate_members
+    .content_encoding()
+    .expect("repeated Content-Encoding should parse")
+    .expect("Content-Encoding should be present");
+  assert_eq!(vec!["gzip", "GZIP"], duplicate_encodings.codings());
   assert!(duplicate_members.content_language().is_err());
   assert_eq!(
     Some("text/plain; charset=utf-8; CHARSET=us-ascii"),
@@ -613,15 +618,15 @@ fn request_representation_metadata_preserves_invalid_headers_and_body() {
 
   let too_many_parameters = format!(
     "text/plain{}",
-    (0..33)
+    (0..257)
       .map(|index| format!("; p{index}=v"))
       .collect::<String>()
   );
-  let too_many_codings = (0..33)
+  let too_many_codings = (0..257)
     .map(|index| format!("x-{index}"))
     .collect::<Vec<_>>()
     .join(", ");
-  let too_many_languages = (0..33)
+  let too_many_languages = (0..257)
     .map(|index| format!("x-{index}"))
     .collect::<Vec<_>>()
     .join(", ");

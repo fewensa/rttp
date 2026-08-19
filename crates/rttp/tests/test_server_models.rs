@@ -243,7 +243,8 @@ fn request_representation_metadata_parses_without_applying_policy() {
     .content_type()
     .expect("Content-Type should parse")
     .expect("Content-Type should be present");
-  assert_eq!("application/json", content_type.media_type());
+  assert_eq!("application", content_type.type_());
+  assert_eq!("json", content_type.subtype());
   assert_eq!(Some("utf-8"), content_type.parameter("charset"));
 
   let encodings = request
@@ -256,7 +257,7 @@ fn request_representation_metadata_parses_without_applying_policy() {
     .content_language()
     .expect("Content-Language should parse")
     .expect("Content-Language should be present");
-  assert_eq!(vec!["fr-CA", "es-419", "en"], languages.languages());
+  assert_eq!(vec!["fr-CA", "es-419", "en"], languages.tags());
 
   let accept_encoding = request
     .accept_encoding()
@@ -317,7 +318,11 @@ fn request_representation_metadata_preserves_invalid_headers_and_body() {
     "body"
   ));
   assert!(duplicate_members.content_type().is_err());
-  assert!(duplicate_members.content_encoding().is_err());
+  let duplicate_encodings = duplicate_members
+    .content_encoding()
+    .expect("repeated Content-Encoding should parse")
+    .expect("Content-Encoding should be present");
+  assert_eq!(vec!["gzip", "GZIP"], duplicate_encodings.codings());
   assert!(duplicate_members.content_language().is_err());
   assert_eq!(
     Some("text/plain; charset=utf-8; CHARSET=us-ascii"),
@@ -1729,7 +1734,7 @@ fn parses_content_languages_and_serializes_single_header_value() {
   let languages = HttpContentLanguages::parse("en, fr-CA, x-private")
     .expect("valid Content-Language header should parse");
 
-  assert_eq!(vec!["en", "fr-CA", "x-private"], languages.languages());
+  assert_eq!(vec!["en", "fr-CA", "x-private"], languages.tags());
   assert_eq!("en, fr-CA, x-private", languages.header_value());
 
   let response = HttpResponse::ok("body")
@@ -1757,7 +1762,7 @@ fn response_content_language_helper_parses_attached_header_fields() {
     .expect("Content-Language header should parse")
     .expect("Content-Language header should be present");
 
-  assert_eq!(vec!["en", "fr-CA", "es-419"], languages.languages());
+  assert_eq!(vec!["en", "fr-CA", "es-419"], languages.tags());
 }
 
 #[test]
@@ -1788,7 +1793,7 @@ fn content_language_helpers_reject_malformed_duplicate_oversized_and_excessive_v
     "Content-Language helper should reject oversized values"
   );
 
-  let too_many = (0..33)
+  let too_many = (0..257)
     .map(|index| format!("x-{index}"))
     .collect::<Vec<_>>()
     .join(", ");
@@ -2411,11 +2416,12 @@ fn parses_content_type_and_serializes_single_header_value() {
   let content_type = HttpContentType::parse("Text/HTML; Charset=\"utf-8\"; boundary=abc-123")
     .expect("valid Content-Type should parse");
 
-  assert_eq!("text/html", content_type.media_type());
+  assert_eq!("Text", content_type.type_());
+  assert_eq!("HTML", content_type.subtype());
   assert_eq!(Some("utf-8"), content_type.parameter("charset"));
   assert_eq!(Some("abc-123"), content_type.parameter("boundary"));
   assert_eq!(
-    "text/html; charset=utf-8; boundary=abc-123",
+    "Text/HTML; Charset=utf-8; boundary=abc-123",
     content_type.header_value()
   );
 
@@ -2426,7 +2432,7 @@ fn parses_content_type_and_serializes_single_header_value() {
     .expect("valid Content-Type should be accepted");
   let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
 
-  assert!(serialized.contains("\r\nContent-Type: text/html; charset=utf-8; boundary=abc-123\r\n"));
+  assert!(serialized.contains("\r\nContent-Type: Text/HTML; Charset=utf-8; boundary=abc-123\r\n"));
   assert_eq!(1, serialized.matches("\r\nContent-Type: ").count());
   assert_eq!(
     Some("utf-8"),
@@ -2469,10 +2475,9 @@ fn content_encoding_helpers_reject_malformed_duplicate_oversized_and_excessive_v
     );
   }
 
-  assert!(
-    HttpResponseContentEncodings::parse("gzip, br, GZIP").is_err(),
-    "Content-Encoding helper should reject duplicate codings"
-  );
+  let duplicate_codings = HttpResponseContentEncodings::parse("gzip, br, GZIP")
+    .expect("Content-Encoding helper should retain repeated codings");
+  assert_eq!(vec!["gzip", "br", "GZIP"], duplicate_codings.codings());
 
   let oversized = "gzip".repeat(64 * 1024);
   assert!(
@@ -2480,7 +2485,7 @@ fn content_encoding_helpers_reject_malformed_duplicate_oversized_and_excessive_v
     "Content-Encoding helper should reject oversized values"
   );
 
-  let too_many = (0..33)
+  let too_many = (0..257)
     .map(|index| format!("coding{index}"))
     .collect::<Vec<_>>()
     .join(", ");
@@ -2514,7 +2519,7 @@ fn content_type_helpers_declare_common_media_types_with_safe_parameters() {
     .expect("Content-Type string should be accepted");
   let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
 
-  assert!(serialized.contains("\r\nContent-Type: application/json; charset=utf-8\r\n"));
+  assert!(serialized.contains("\r\nContent-Type: Application/JSON; Charset=utf-8\r\n"));
 }
 
 #[test]
@@ -2526,7 +2531,8 @@ fn response_content_type_helper_parses_attached_singleton_header() {
     .expect("Content-Type should parse")
     .expect("Content-Type should be present");
 
-  assert_eq!("text/plain", content_type.media_type());
+  assert_eq!("text", content_type.type_());
+  assert_eq!("plain", content_type.subtype());
   assert_eq!(Some("utf-8"), content_type.parameter("charset"));
 }
 
@@ -2563,7 +2569,7 @@ fn content_type_helpers_reject_malformed_duplicate_oversized_and_excessive_value
 
   let too_many = format!(
     "text/plain{}",
-    (0..33)
+    (0..257)
       .map(|index| format!("; p{index}=v"))
       .collect::<String>()
   );
