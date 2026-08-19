@@ -648,6 +648,16 @@ unparsable input are errors.
 This parser does not apply reduced-data serving, content adaptation, or
 browser data-saver policy.
 
+## Sec-GPC
+
+`sec_gpc` parses a singleton `Sec-GPC` request field. Each field value is
+bounded to 64 KiB. A second field is rejected after every supplied field is
+bound-checked. The field value must be exactly the standards-defined `1`
+signal and is returned in canonical wire form. Surrounding SP and HTAB are
+trimmed as optional whitespace. Unknown tokens, lists, parameterized values,
+empty values, control bytes, and other unparsable input are errors.
+This parser does not infer consent, tracking, legal, or serving policy.
+
 ## Upgrade-Insecure-Requests
 
 `upgrade_insecure_requests` parses a singleton `Upgrade-Insecure-Requests`

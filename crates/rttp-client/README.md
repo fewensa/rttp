@@ -744,6 +744,15 @@ representation, compress a body, advertise Client Hints, or apply browser
 data-saver policy. Callers that need values outside the helper can retain
 raw-header control with `header(("Save-Data", "..."))`.
 
+## Bounded Sec-GPC request metadata
+
+`HttpClient::sec_gpc()` emits `Sec-GPC: 1` through the shared protocol
+`SecGpc` representation.
+
+This helper only declares request metadata. RTTP does not infer or enforce
+consent, tracking, legal, or serving policy. Callers that need values outside
+the helper can retain raw-header control with `header(("Sec-GPC", "..."))`.
+
 ## Bounded Upgrade-Insecure-Requests request metadata
 
 `HttpClient::upgrade_insecure_requests()` emits `Upgrade-Insecure-Requests: 1`.
@@ -920,6 +929,7 @@ header-block model.
 | HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and `Expect: 100-continue` | SOCKS handshakes are delegated to the `socks` crate |
 | Fetch Metadata | `sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, `sec_fetch_user`, and `sec_purpose` emit bounded `Sec-Fetch-*`/`Sec-Purpose` request metadata | No browser security policy, automatic header generation, origin validation, navigation policy, request blocking, prefetch execution, or cache behavior |
 | Save-Data | `save_data` emits bounded `Save-Data: on` request metadata | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |
+| Sec-GPC | `sec_gpc` emits bounded `Sec-GPC: 1` request metadata through the shared protocol type | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
 | Upgrade-Insecure-Requests | `upgrade_insecure_requests` emits bounded singleton `Upgrade-Insecure-Requests: 1` request metadata | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Max-Forwards | `max_forwards` emits bounded singleton `Max-Forwards` request metadata through the shared protocol type | No hop decrement, proxy routing, TRACE/OPTIONS selection, retry, or forwarding policy |
 | Idempotency-Key | `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
