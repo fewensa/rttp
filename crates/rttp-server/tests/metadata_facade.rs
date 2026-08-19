@@ -8,12 +8,12 @@ use rttp_server::server::{
   HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
   HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeprecation,
   HttpDeprecationParseError, HttpEntityTag, HttpHost, HttpKeepAlive, HttpNoVarySearch,
-  HttpNoVarySearchParams, HttpPreferenceKind, HttpRequest, HttpResponse, HttpSignature,
-  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
-  HttpUpgradeParseError, HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode,
-  SecFetchSite, SecFetchUser, SecPurpose,
+  HttpNoVarySearchParams, HttpPreferenceKind, HttpRequest, HttpResponse, HttpSaveData,
+  HttpSaveDataParseError, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
+  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
+  HttpSignatureInputParseError, HttpSignatureParseError, HttpTransferEncoding,
+  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeParseError, HttpWantContentDigest,
+  HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
 
 #[test]
@@ -50,6 +50,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpAccessControlRequestPrivateNetwork,
     HttpAccessControlRequestPrivateNetworkParseError,
   > = HttpAccessControlRequestPrivateNetwork::parse("false");
+  let save_data: HttpSaveData = HttpSaveData::parse("on").expect("Save-Data should parse");
+  let save_data_error: Result<HttpSaveData, HttpSaveDataParseError> = HttpSaveData::parse("?1");
   let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("revision-42"));
   let no_vary_search: HttpNoVarySearch =
     HttpNoVarySearch::parse(r#"params=("utm_source")"#).expect("No-Vary-Search should parse");
@@ -107,6 +109,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert!(request_headers_error.is_err());
   assert_eq!(request_private_network.header_value(), "true");
   assert!(request_private_network_error.is_err());
+  assert_eq!(save_data.header_value(), "on");
+  assert!(save_data_error.is_err());
   assert_eq!(policy.header_value(), "same-origin");
   assert_eq!(cdn_cache_control.directives()[1].name(), "cdn-example");
   assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));

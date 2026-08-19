@@ -203,6 +203,49 @@ fn request_access_control_request_private_network_preserves_absent_valid_and_mal
 }
 
 #[test]
+fn request_save_data_preserves_absent_valid_and_malformed_metadata() {
+  let absent = parse_request("GET /catalog HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .save_data()
+      .expect("missing Save-Data should be accepted")
+  );
+  assert_eq!(None, absent.header("Save-Data"));
+
+  let request = parse_request(concat!(
+    "GET /catalog HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Save-Data: on\r\n",
+    "\r\n"
+  ));
+  let save_data = request
+    .save_data()
+    .expect("Save-Data should parse")
+    .expect("Save-Data should be present");
+  assert_eq!("on", save_data.header_value());
+
+  let malformed = parse_request(concat!(
+    "GET /catalog HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Save-Data: ?1\r\n",
+    "\r\n"
+  ));
+  assert!(malformed.save_data().is_err());
+  assert_eq!(Some("?1"), malformed.header("Save-Data"));
+
+  let duplicate = parse_request(concat!(
+    "GET /catalog HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Save-Data: on\r\n",
+    "save-data: on\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.save_data().is_err());
+  assert_eq!(Some("on"), duplicate.header("Save-Data"));
+}
+
+#[test]
 fn request_representation_metadata_parses_without_applying_policy() {
   let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
   assert_eq!(

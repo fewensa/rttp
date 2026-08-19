@@ -186,6 +186,68 @@ fn request_access_control_request_private_network_parses_preflight_metadata_with
 }
 
 #[test]
+fn request_save_data_parses_request_metadata_without_policy() {
+  let absent_raw = "GET /catalog HTTP/1.1\r\nHost: example.test\r\n\r\n";
+  let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
+  let absent = Request::read_next_from(&mut absent_reader)
+    .expect("absent request should parse")
+    .expect("absent request should be present");
+  assert_eq!(
+    None,
+    absent
+      .save_data()
+      .expect("missing Save-Data should be accepted")
+  );
+  assert_eq!(None, absent.header("Save-Data"));
+
+  let valid_raw = concat!(
+    "GET /catalog HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Save-Data: on\r\n",
+    "\r\n"
+  );
+  let mut valid_reader = BufReader::new(Cursor::new(valid_raw.as_bytes()));
+  let valid = Request::read_next_from(&mut valid_reader)
+    .expect("valid request should parse")
+    .expect("valid request should be present");
+  assert_eq!(
+    "on",
+    valid
+      .save_data()
+      .expect("Save-Data should parse")
+      .expect("Save-Data should be present")
+      .header_value()
+  );
+
+  let malformed_raw = concat!(
+    "GET /catalog HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Save-Data: ?1\r\n",
+    "\r\n"
+  );
+  let mut malformed_reader = BufReader::new(Cursor::new(malformed_raw.as_bytes()));
+  let malformed = Request::read_next_from(&mut malformed_reader)
+    .expect("malformed metadata should not reject the request frame")
+    .expect("malformed request should be present");
+  assert!(malformed.save_data().is_err());
+  assert_eq!(Some("?1"), malformed.header("Save-Data"));
+
+  let duplicate_raw = concat!(
+    "GET /catalog HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Save-Data: on\r\n",
+    "save-data: on\r\n",
+    "\r\n"
+  );
+  let mut duplicate_reader = BufReader::new(Cursor::new(duplicate_raw.as_bytes()));
+  let duplicate = Request::read_next_from(&mut duplicate_reader)
+    .expect("duplicate metadata should not reject the request frame")
+    .expect("duplicate request should be present");
+  assert!(duplicate.save_data().is_err());
+  assert_eq!(Some("on"), duplicate.header("Save-Data"));
+}
+
+#[test]
 fn request_representation_metadata_parses_without_applying_policy() {
   let absent_raw = "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n";
   let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
