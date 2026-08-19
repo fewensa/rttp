@@ -11,15 +11,16 @@ use rttp_client::response::{
   CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginOpenerPolicyReportOnly,
   CrossOriginResourcePolicy, Digest, EntityTag, HttpClearSiteData, HttpContentLength, KeepAlive,
   LinkValues, Location, LocationParseError, MementoDatetime, MementoDatetimeParseError, Nel,
-  NoVarySearch, NoVarySearchParams, NoVarySearchParseError, PermissionsPolicy,
-  PermissionsPolicyParseError, Pragma, PragmaParseError, PreferenceApplied, Priority,
-  ProxyAuthenticate, ProxyAuthenticateParseError, ProxyAuthenticationInfo,
+  NoVarySearch, NoVarySearchParams, NoVarySearchParseError, OriginTrialParseError, OriginTrials,
+  PermissionsPolicy, PermissionsPolicyParseError, Pragma, PragmaParseError, PreferenceApplied,
+  Priority, ProxyAuthenticate, ProxyAuthenticateParseError, ProxyAuthenticationInfo,
   ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError, ReferrerPolicy,
   ReferrerPolicyToken, ServerTiming, Signature, SignatureInput, SignatureInputParseError,
-  SignatureParseError, StrictTransportSecurity, StrictTransportSecurityParseError, Trailer,
-  TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError,
-  WantContentDigest, WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError,
-  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  SignatureParseError, StrictTransportSecurity, StrictTransportSecurityParseError,
+  SupportsLoadingMode, SupportsLoadingModeParseError, Trailer, TransferEncoding,
+  TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError, WantContentDigest,
+  WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError, XContentTypeOptions,
+  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentDisposition, ContentDispositionParseError, ContentLocation,
@@ -137,6 +138,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
       .expect("Permissions-Policy should parse");
   let _: PermissionsPolicyParseError =
     PermissionsPolicy::parse("geolocation=src").expect_err("src should be rejected");
+  let supports_loading_mode = SupportsLoadingMode::parse("fenced-frame, credentialed-prerender")
+    .expect("Supports-Loading-Mode should parse");
+  let _: SupportsLoadingModeParseError =
+    SupportsLoadingMode::parse("?1").expect_err("non-token should be rejected");
   let warning = Warning::parse(r#"110 - "Response is Stale""#).expect("Warning should parse");
   let nel =
     Nel::parse(r#"{"report_to":"network-errors","max_age":2592000}"#).expect("NEL should parse");
@@ -157,6 +162,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let alt_used = AltUsed::parse("alt.example:8443").expect("Alt-Used should parse");
   let _: AltUsedParseError =
     AltUsed::parse("https://alt.example").expect_err("invalid Alt-Used should be rejected");
+  let origin_trials =
+    OriginTrials::parse_values(["token-one", "token-two"]).expect("Origin-Trial should parse");
+  let _: OriginTrialParseError = OriginTrials::parse("token\r\nX-Injected: 1")
+    .expect_err("injected Origin-Trial should be rejected");
   let content_range = ContentRange::parse("bytes 3-6/10").expect("Content-Range should parse");
   let _: ContentRangeParseError =
     ContentRange::parse("bytes */*").expect_err("invalid Content-Range should be rejected");
@@ -304,6 +313,16 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .unwrap()
     .allowlist()
     .is_empty());
+  assert_eq!(
+    supports_loading_mode.tokens(),
+    ["fenced-frame", "credentialed-prerender"]
+  );
+  assert!(supports_loading_mode.contains_fenced_frame());
+  assert!(supports_loading_mode.contains_credentialed_prerender());
+  assert_eq!(
+    supports_loading_mode.header_value(),
+    "fenced-frame, credentialed-prerender"
+  );
   assert_eq!(warning.items()[0].code(), 110);
   assert_eq!(nel.max_age(), 2592000);
   assert_eq!(nel.report_to(), Some("network-errors"));
@@ -320,6 +339,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(alt_svc.alternatives().len(), 1);
   assert_eq!(alt_used.host(), "alt.example");
   assert_eq!(alt_used.port(), Some("8443"));
+  assert_eq!(origin_trials.tokens(), ["token-one", "token-two"]);
+  assert!(!format!("{origin_trials:?}").contains("token-one"));
   assert_eq!(
     ContentRange::Bytes {
       start: 3,
@@ -590,6 +611,50 @@ fn response_facade_parses_permissions_policy_metadata() {
 }
 
 #[test]
+fn response_facade_parses_supports_loading_mode_metadata() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Supports-Loading-Mode: fenced-frame, uncredentialed-prerender\r\n",
+      "Supports-Loading-Mode: credentialed-prerender\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let modes: SupportsLoadingMode = response
+    .supports_loading_mode()
+    .expect("Supports-Loading-Mode should parse")
+    .expect("Supports-Loading-Mode should be present");
+
+  assert_eq!(
+    modes.tokens(),
+    [
+      "fenced-frame",
+      "uncredentialed-prerender",
+      "credentialed-prerender"
+    ]
+  );
+  assert!(modes.contains_fenced_frame());
+  assert!(modes.contains_credentialed_prerender());
+  assert!(modes.contains("uncredentialed-prerender"));
+  assert_eq!(
+    modes.header_value(),
+    "fenced-frame, uncredentialed-prerender, credentialed-prerender"
+  );
+  assert_eq!(
+    response.header_values("Supports-Loading-Mode"),
+    [
+      &"fenced-frame, uncredentialed-prerender".to_string(),
+      &"credentialed-prerender".to_string()
+    ]
+  );
+}
+
+#[test]
 fn response_facade_parses_link_metadata() {
   let response = rttp_client::response::Response::new(
     rttp_client::types::RoUrl::with("http://example.test/"),
@@ -732,6 +797,67 @@ fn response_facade_returns_none_when_transfer_encoding_is_absent() {
     .transfer_encoding()
     .expect("missing Transfer-Encoding should be accepted")
     .is_none());
+}
+
+#[test]
+fn response_facade_parses_origin_trial_metadata() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Origin-Trial: token-one\r\n",
+      "origin-trial: token-one\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+  let origin_trials = response
+    .origin_trials()
+    .expect("Origin-Trial should parse")
+    .expect("Origin-Trial should be present");
+
+  assert_eq!(origin_trials.tokens(), ["token-one", "token-one"]);
+  assert_eq!(
+    vec![&"token-one".to_string(), &"token-one".to_string()],
+    response.header_values("Origin-Trial")
+  );
+  assert!(!format!("{origin_trials:?}").contains("token-one"));
+
+  let absent = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+  assert!(absent
+    .origin_trials()
+    .expect("missing Origin-Trial should be accepted")
+    .is_none());
+
+  let malformed = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    b"HTTP/1.1 200 OK\r\nOrigin-Trial: token\twith-tab\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("raw response should remain usable");
+  assert!(malformed.origin_trials().is_err());
+  assert_eq!(
+    Some(&"token\twith-tab".to_string()),
+    malformed.header_value("Origin-Trial")
+  );
+
+  let oversized = "x".repeat(8 * 1024 + 1);
+  let oversized_response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    format!("HTTP/1.1 200 OK\r\nOrigin-Trial: {oversized}\r\nContent-Length: 0\r\n\r\n")
+      .into_bytes(),
+  )
+  .expect("oversized Origin-Trial should remain on the raw response");
+  assert!(oversized_response.origin_trials().is_err());
+  assert_eq!(
+    Some(&oversized),
+    oversized_response.header_value("Origin-Trial")
+  );
 }
 
 #[test]

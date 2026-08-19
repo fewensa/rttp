@@ -284,6 +284,23 @@ These helpers only declare and parse metadata. The server does not select
 alternative services, rewrite origins, migrate sockets, retry, or change
 connection policy from `Alt-Used`.
 
+## Origin-Trial response metadata
+
+`HttpResponse::with_origin_trials(values)` validates a bounded collection of
+opaque `Origin-Trial` tokens through the shared protocol `HttpOriginTrials`
+type, replaces any existing `Origin-Trial` fields, and emits one
+`Origin-Trial` header per token. `HttpResponse::origin_trials()` parses
+attached raw fields into the same type, returning `Ok(None)` when the header
+is absent and returning parser errors without changing raw fields. Each token
+is limited to 8 KiB after OWS trim, the collection is limited to 64 tokens,
+and the combined token bytes are limited to 64 KiB. Duplicate token strings
+are preserved. Token material is redacted from typed debug output and generic
+`HttpHeader` debug output.
+
+These helpers only declare and parse metadata. The server does not validate
+token signatures, expiration, origin applicability, or activate browser
+trials.
+
 ## Reporting-Endpoints response metadata
 
 `HttpResponse::with_reporting_endpoints(endpoints)` validates a bounded
@@ -496,6 +513,26 @@ well-formed `report-to` parameter is accepted and dropped.
 These helpers only declare and parse metadata. RTTP does not grant or deny
 browser permissions, compare origins, resolve `self`, or enforce origin
 policy, and it does not send reports.
+
+## Supports-Loading-Mode response metadata
+
+`HttpResponse::with_supports_loading_mode(tokens)` validates a declared token
+list through the shared protocol parser and replaces any existing raw
+`Supports-Loading-Mode` fields with one canonical comma-separated value.
+`HttpResponse::supports_loading_mode()` parses attached raw fields into
+`HttpSupportsLoadingMode` metadata, returning `Ok(None)` when absent and
+parser errors without changing raw fields. The typed value exposes the
+ordered tokens with `tokens()`, membership checks with `contains(token)`, and
+exact predicates for the defined `fenced-frame`,
+`credentialed-prerender`, and `prerender-cross-origin-frames` tokens;
+well-formed unknown tokens such as `uncredentialed-prerender` are retained.
+Field values are bounded to 64 KiB, the combined raw bytes across fields to
+64 KiB, and tokens to 256 per header set. Empty members, strings, integers,
+inner lists, parameterized items, duplicate tokens, non-token members, and
+oversized values are rejected.
+
+These helpers only declare and parse metadata. RTTP does not prerender
+documents, admit fenced frames, change navigation, or alter resource loading.
 
 ## Want-Content-Digest request metadata
 

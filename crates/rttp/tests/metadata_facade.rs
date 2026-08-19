@@ -9,14 +9,15 @@ use rttp::server::{
   HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpEntityTag,
   HttpExpectations, HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince,
   HttpIfUnmodifiedSince, HttpMaxForwards, HttpMementoDatetime, HttpMementoDatetimeParseError,
-  HttpNel, HttpPermissionsPolicy, HttpPermissionsPolicyParseError, HttpPragma,
-  HttpPragmaParseError, HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError,
-  HttpRequestAcceptCharsets, HttpResponse, HttpSaveData, HttpSecGpc, HttpSecGpcParseError,
-  HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
+  HttpNel, HttpOriginTrialParseError, HttpOriginTrials, HttpPermissionsPolicy,
+  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization,
+  HttpProxyStatus, HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse,
+  HttpSaveData, HttpSecGpc, HttpSecGpcParseError, HttpServiceWorkerAllowed,
+  HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
   HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
   HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
-  HttpSunsetParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
-  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
+  HttpSunsetParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpUpgrade,
+  HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
 };
 use std::io::Write;
 use std::net::SocketAddr;
@@ -146,6 +147,12 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp_client::response::AltUsed::parse("alt.example:8443").expect("Alt-Used should parse");
   let _: rttp::AltUsedParseError = rttp_client::response::AltUsed::parse("https://alt.example")
     .expect_err("invalid Alt-Used should be rejected");
+  let origin_trials: rttp::OriginTrials =
+    rttp_client::response::OriginTrials::parse_values(["token-one", "token-two"])
+      .expect("Origin-Trial should parse");
+  let _: rttp::OriginTrialParseError =
+    rttp_client::response::OriginTrials::parse("token\r\nX-Injected: 1")
+      .expect_err("injected Origin-Trial should be rejected");
   let authentication_info: rttp::AuthenticationInfo =
     rttp_client::response::AuthenticationInfo::parse("nextnonce=\"n-2\"")
       .expect("Authentication-Info should parse");
@@ -225,6 +232,12 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::PermissionsPolicyParseError =
     rttp_client::response::PermissionsPolicy::parse("geolocation=src")
       .expect_err("src should be rejected");
+  let supports_loading_mode: rttp::SupportsLoadingMode =
+    rttp_client::response::SupportsLoadingMode::parse("fenced-frame, credentialed-prerender")
+      .expect("Supports-Loading-Mode should parse");
+  let _: rttp::SupportsLoadingModeParseError =
+    rttp_client::response::SupportsLoadingMode::parse("?1")
+      .expect_err("non-token should be rejected");
   let fetch_site: rttp::SecFetchSite =
     rttp_client::SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let sec_purpose: rttp::SecPurpose =
@@ -296,6 +309,8 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(alt_svc.alternatives()[0].max_age(), Some(60));
   assert_eq!(alt_used.host(), "alt.example");
   assert_eq!(alt_used.port(), Some("8443"));
+  assert_eq!(origin_trials.tokens(), ["token-one", "token-two"]);
+  assert!(!format!("{origin_trials:?}").contains("token-one"));
   assert_eq!(authentication_info.parameter("nextnonce"), Some("n-2"));
   assert_eq!(nel.max_age(), 2592000);
   assert_eq!(nel.report_to(), Some("network-errors"));
@@ -346,6 +361,16 @@ fn compatibility_facade_exports_client_metadata_types() {
     .unwrap()
     .allowlist()
     .is_empty());
+  assert_eq!(
+    supports_loading_mode.tokens(),
+    ["fenced-frame", "credentialed-prerender"]
+  );
+  assert!(supports_loading_mode.contains_fenced_frame());
+  assert!(supports_loading_mode.contains_credentialed_prerender());
+  assert_eq!(
+    supports_loading_mode.header_value(),
+    "fenced-frame, credentialed-prerender"
+  );
   assert_eq!("tenant", baggage_member.key());
   assert_eq!("source", baggage_property.key());
   assert_eq!(fetch_site.header_value(), "same-origin");
@@ -890,11 +915,20 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpAltUsed::parse("[2001:db8::1]:8443").expect("Alt-Used should parse");
   let _: HttpAltUsedParseError =
     HttpAltUsed::parse("https://alt.example").expect_err("invalid Alt-Used should be rejected");
+  let origin_trials: HttpOriginTrials =
+    HttpOriginTrials::parse_values(["token-one", "token-two"]).expect("Origin-Trial should parse");
+  let _: HttpOriginTrialParseError = HttpOriginTrials::parse("token\r\nX-Injected: 1")
+    .expect_err("injected Origin-Trial should be rejected");
   let permissions_policy: HttpPermissionsPolicy =
     HttpPermissionsPolicy::parse(r#"geolocation=(self "https://maps.example.test"), camera=()"#)
       .expect("Permissions-Policy should parse");
   let _: HttpPermissionsPolicyParseError =
     HttpPermissionsPolicy::parse("geolocation=src").expect_err("src should be rejected");
+  let supports_loading_mode: HttpSupportsLoadingMode =
+    HttpSupportsLoadingMode::parse("fenced-frame, credentialed-prerender")
+      .expect("Supports-Loading-Mode should parse");
+  let _: HttpSupportsLoadingModeParseError =
+    HttpSupportsLoadingMode::parse("?1").expect_err("non-token should be rejected");
   let content_location: HttpContentLocation =
     HttpContentLocation::parse("../representations/current.json")
       .expect("Content-Location should parse");
@@ -986,6 +1020,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   );
   assert_eq!(alt_used.host(), "[2001:db8::1]");
   assert_eq!(alt_used.port(), Some("8443"));
+  assert_eq!(origin_trials.tokens(), ["token-one", "token-two"]);
+  assert!(!format!("{origin_trials:?}").contains("token-one"));
   assert_eq!(
     permissions_policy.header_value(),
     r#"geolocation=(self "https://maps.example.test"), camera=()"#
@@ -995,6 +1031,16 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     .unwrap()
     .allowlist()
     .is_empty());
+  assert_eq!(
+    supports_loading_mode.tokens(),
+    ["fenced-frame", "credentialed-prerender"]
+  );
+  assert!(supports_loading_mode.contains_fenced_frame());
+  assert!(supports_loading_mode.contains_credentialed_prerender());
+  assert_eq!(
+    supports_loading_mode.header_value(),
+    "fenced-frame, credentialed-prerender"
+  );
   assert_eq!(
     metadata
       .entity_tag_value()

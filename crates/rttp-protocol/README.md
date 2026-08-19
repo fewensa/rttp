@@ -431,6 +431,18 @@ unbracketed IPv6, empty ports, ASCII controls, and other values outside the
 authority grammar are errors. This is response metadata only: callers own
 alternative-service selection, origin handling, and connection policy.
 
+## Origin-Trial
+
+`origin_trial` parses one or more HTTP `Origin-Trial` response fields as
+opaque trial tokens in wire order. Surrounding SP and HTAB are trimmed as
+optional whitespace. Each trimmed token must be non-empty, free of CR, LF,
+NUL, other C0 controls, DEL, and obs-text, and at most 8 KiB. The collection
+accepts at most 64 tokens and at most 64 KiB of combined token bytes.
+Duplicate token strings are preserved. Parse errors name only the validation
+category and never echo token material. `Debug` reports the type name and
+token count only. This parser does not validate token signatures, expiration,
+origin applicability, feature activation, browser behavior, or trial policy.
+
 ## Signature
 
 `signature` parses one or more RFC 9421 `Signature` field values into an
@@ -855,6 +867,23 @@ are rejected, and a well-formed `report-to` string parameter is accepted and
 dropped. The parser reports declared metadata only: it does not compare
 origins, resolve `self`, grant or deny browser permissions, or enforce origin
 policy.
+
+## Supports-Loading-Mode
+
+`supports_loading_mode` parses bounded `Supports-Loading-Mode` response
+metadata as a Structured Fields list of tokens, combining fields in wire
+order. Each field value is bounded to 64 KiB, the combined raw bytes across
+all supplied fields are bounded to 64 KiB, and the cumulative token count is
+bounded to 256. Tokens are opaque and are retained with their wire spelling;
+well-formed tokens that are not part of the defined set, such as
+`uncredentialed-prerender`, are preserved. The exact `fenced-frame`,
+`credentialed-prerender`, and `prerender-cross-origin-frames` tokens are
+exposed through predicates, and `from_tokens` builds metadata from declared
+tokens. Duplicate tokens, including across fields, are rejected with ASCII
+case-insensitive comparison. Empty members, strings, integers, inner lists,
+parameterized items, non-token members, and oversized values are rejected.
+The parser reports declared metadata only: it does not prerender documents,
+admit fenced frames, change navigation, or alter resource loading.
 
 ## Pragma
 

@@ -8,11 +8,11 @@ use rttp::server::{
   HttpContentDisposition, HttpContentLanguages, HttpContentRange, HttpContentSecurityPolicy,
   HttpContentSecurityPolicyReportOnly, HttpContentType, HttpCriticalCh, HttpDeprecation,
   HttpEntityTag, HttpExpectations, HttpHost, HttpIfNoneMatch, HttpIfRange,
-  HttpIfRangeRequestOutcome, HttpLinkValues, HttpMementoDatetime, HttpNel, HttpPermissionsPolicy,
-  HttpProxyStatus, HttpProxyStatusBareItem, HttpReferrerPolicy, HttpReportingEndpoints,
-  HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpRequestCacheControl,
-  HttpRequestTe, HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings,
-  HttpRetryAfter, HttpServerTiming, HttpVary,
+  HttpIfRangeRequestOutcome, HttpLinkValues, HttpMementoDatetime, HttpNel, HttpOriginTrials,
+  HttpPermissionsPolicy, HttpProxyStatus, HttpProxyStatusBareItem, HttpReferrerPolicy,
+  HttpReportingEndpoints, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
+  HttpRequestCacheControl, HttpRequestTe, HttpResponse, HttpResponseCacheControl,
+  HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming, HttpVary,
 };
 
 #[test]
@@ -877,6 +877,55 @@ fn response_alt_used_helper_rejects_invalid_duplicates_and_bounds_without_hiding
   assert!(String::from_utf8(raw.to_bytes())
     .expect("response should serialize")
     .contains(&format!("\r\nAlt-Used: {oversized}\r\n")));
+}
+
+#[test]
+fn response_origin_trial_helper_declares_replaces_and_parses_opaque_tokens() {
+  let response = HttpResponse::ok("body")
+    .header("Origin-Trial", "stale-token")
+    .header("origin-trial", "older-token")
+    .with_origin_trials(["token-one", "token-one", "token-two"])
+    .expect("valid Origin-Trial metadata should be accepted");
+  let origin_trials: HttpOriginTrials = response
+    .origin_trials()
+    .expect("attached Origin-Trial should parse")
+    .expect("Origin-Trial should be present");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+
+  assert_eq!(
+    origin_trials.tokens(),
+    ["token-one", "token-one", "token-two"]
+  );
+  assert_eq!(3, serialized.matches("\r\nOrigin-Trial: ").count());
+  assert!(serialized.contains("\r\nOrigin-Trial: token-one\r\n"));
+  assert!(serialized.contains("\r\nOrigin-Trial: token-two\r\n"));
+  assert!(!serialized.contains("stale-token"));
+  assert!(!format!("{origin_trials:?}").contains("token-one"));
+}
+
+#[test]
+fn response_origin_trial_helper_rejects_invalid_and_bounds_without_hiding_headers() {
+  assert!(HttpResponse::ok("body")
+    .with_origin_trials(["token\r\nX-Injected: 1"])
+    .is_err());
+
+  let malformed = HttpResponse::ok("body").header("Origin-Trial", "token\twith-tab");
+  assert!(malformed.origin_trials().is_err());
+  assert!(String::from_utf8(malformed.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nOrigin-Trial: token\twith-tab\r\n"));
+
+  let oversized = "x".repeat(8 * 1024 + 1);
+  let raw = HttpResponse::ok("body").header("Origin-Trial", &oversized);
+  assert!(raw.origin_trials().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains(&format!("\r\nOrigin-Trial: {oversized}\r\n")));
+
+  let too_many: Vec<String> = (0..=64).map(|index| format!("token-{index}")).collect();
+  assert!(HttpResponse::ok("body")
+    .with_origin_trials(too_many.iter().map(String::as_str))
+    .is_err());
 }
 
 #[test]

@@ -114,6 +114,7 @@ pub use rttp_protocol::memento_datetime::{MementoDatetime, MementoDatetimeParseE
 pub use rttp_protocol::no_vary_search::{
   NoVarySearch, NoVarySearchExtension, NoVarySearchParams, NoVarySearchParseError,
 };
+pub use rttp_protocol::origin_trial::{OriginTrialParseError, OriginTrials};
 pub use rttp_protocol::permissions_policy::{
   PermissionsPolicy, PermissionsPolicyAllowlist, PermissionsPolicyAllowlistMember,
   PermissionsPolicyDirective, PermissionsPolicyParseError,
@@ -156,6 +157,9 @@ pub use rttp_protocol::signature_input::{
 };
 pub use rttp_protocol::strict_transport_security::{
   StrictTransportSecurity, StrictTransportSecurityParseError,
+};
+pub use rttp_protocol::supports_loading_mode::{
+  SupportsLoadingMode, SupportsLoadingModeParseError,
 };
 pub use rttp_protocol::timing_allow_origin::{TimingAllowOrigin, TimingAllowOriginParseError};
 pub use rttp_protocol::trailer::{Trailer, TrailerParseError};
