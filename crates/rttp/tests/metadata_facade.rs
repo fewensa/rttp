@@ -7,7 +7,44 @@ use rttp::server::{
   HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
   HttpSignatureParseError, HttpSunsetParseError, HttpUpgrade, HttpUpgradeParseError,
 };
+use std::io::Write;
+use std::net::SocketAddr;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, UNIX_EPOCH};
+
+#[cfg(feature = "client")]
+fn header_value<'a>(message: &'a str, name: &str) -> Option<&'a str> {
+  message.lines().find_map(|line| {
+    let (header_name, value) = line.split_once(':')?;
+    if header_name.eq_ignore_ascii_case(name) {
+      Some(value.trim())
+    } else {
+      None
+    }
+  })
+}
+
+#[cfg(feature = "client")]
+fn spawn_representation_metadata_response_server(
+  response: Vec<u8>,
+) -> (SocketAddr, JoinHandle<Vec<u8>>) {
+  let listener =
+    std::net::TcpListener::bind("127.0.0.1:0").expect("representation metadata server should bind");
+  let addr = listener
+    .local_addr()
+    .expect("representation metadata server addr");
+  let handle = thread::spawn(move || {
+    let Ok((mut stream, _)) = listener.accept() else {
+      return Vec::new();
+    };
+    let request = rttp_test_support::read_http_request(&mut stream);
+    stream
+      .write_all(&response)
+      .expect("representation metadata response should write");
+    request
+  });
+  (addr, handle)
+}
 
 #[test]
 #[cfg(feature = "client")]
@@ -178,6 +215,257 @@ fn compatibility_facade_exports_content_length_metadata_type() {
 
   assert_eq!(2, content_length.len());
   assert_eq!("2", content_length.header_value());
+}
+
+#[test]
+#[cfg(feature = "client")]
+fn compatibility_facade_roundtrips_representation_metadata_matrix() {
+  let server_response = HttpResponse::ok(r#"{"ok":true}"#)
+    .header("Content-Type", "text/plain")
+    .header("Content-Encoding", "gzip")
+    .header("Content-Digest", "sha-512=:b2xk:")
+    .header("Repr-Digest", "sha-256=:b2xk:")
+    .with_content_type("application/json; charset=utf-8")
+    .expect("Content-Type should be accepted")
+    .with_content_encoding(["identity"])
+    .expect("Content-Encoding should be accepted")
+    .with_content_language(["en-US"])
+    .expect("Content-Language should be accepted")
+    .with_content_location("/representations/asset.json")
+    .expect("Content-Location should be accepted")
+    .with_digest("sha-256=:YWJj:")
+    .expect("Content-Digest should be accepted")
+    .with_repr_digest("sha-512=:ZGVm:")
+    .expect("Repr-Digest should be accepted")
+    .header("Content-Range", "bytes 0-10/11");
+
+  assert_eq!(
+    server_response
+      .content_type()
+      .expect("server Content-Type should parse")
+      .expect("server Content-Type should be present")
+      .header_value(),
+    "application/json; charset=utf-8"
+  );
+  assert_eq!(
+    server_response
+      .content_encoding()
+      .expect("server Content-Encoding should parse")
+      .expect("server Content-Encoding should be present")
+      .codings(),
+    ["identity"]
+  );
+  assert_eq!(
+    server_response
+      .content_language()
+      .expect("server Content-Language should parse")
+      .expect("server Content-Language should be present")
+      .tags(),
+    ["en-US"]
+  );
+  assert_eq!(
+    server_response
+      .content_location()
+      .expect("server Content-Location should parse")
+      .expect("server Content-Location should be present")
+      .header_value(),
+    "/representations/asset.json"
+  );
+  assert_eq!(
+    server_response
+      .digest()
+      .expect("server Content-Digest should parse")
+      .expect("server Content-Digest should be present")
+      .entry("sha-256")
+      .map(|entry| entry.value()),
+    Some(&b"abc"[..])
+  );
+  assert_eq!(
+    server_response
+      .repr_digest()
+      .expect("server Repr-Digest should parse")
+      .expect("server Repr-Digest should be present")
+      .entry("sha-512")
+      .map(|entry| entry.value()),
+    Some(&b"def"[..])
+  );
+  assert_eq!(
+    server_response
+      .content_range()
+      .expect("server Content-Range should parse"),
+    Some(HttpContentRange::Bytes {
+      start: 0,
+      end: 10,
+      complete_length: Some(11),
+    })
+  );
+
+  let mut serialized_response = Vec::new();
+  server_response
+    .write_to(&mut serialized_response)
+    .expect("server response should serialize");
+  let response_text =
+    String::from_utf8(serialized_response.clone()).expect("server response should be utf-8");
+  assert_eq!(
+    Some("application/json; charset=utf-8"),
+    header_value(&response_text, "Content-Type")
+  );
+  assert_eq!(
+    Some("identity"),
+    header_value(&response_text, "Content-Encoding")
+  );
+  assert_eq!(
+    Some("en-US"),
+    header_value(&response_text, "Content-Language")
+  );
+  assert_eq!(
+    Some("/representations/asset.json"),
+    header_value(&response_text, "Content-Location")
+  );
+  assert_eq!(
+    Some("sha-256=:YWJj:"),
+    header_value(&response_text, "Content-Digest")
+  );
+  assert_eq!(
+    Some("sha-512=:ZGVm:"),
+    header_value(&response_text, "Repr-Digest")
+  );
+  assert_eq!(1, response_text.matches("\r\nContent-Encoding: ").count());
+  assert_eq!(1, response_text.matches("\r\nContent-Digest: ").count());
+  assert_eq!(1, response_text.matches("\r\nRepr-Digest: ").count());
+
+  let (addr, handle) = spawn_representation_metadata_response_server(serialized_response);
+  let client_response = rttp::Http::client()
+    .post()
+    .url(format!("http://{addr}/asset"))
+    .content_type("application/json; charset=utf-8")
+    .header(("Content-Encoding", "identity"))
+    .header(("Content-Language", "en-US"))
+    .want_content_digest("sha-256")
+    .expect("Want-Content-Digest algorithm should be accepted")
+    .want_content_digest_with_q("sha-512", "8")
+    .expect("Want-Content-Digest preference should be accepted")
+    .want_repr_digest("sha-256")
+    .expect("Want-Repr-Digest algorithm should be accepted")
+    .want_repr_digest_with_q("sha-512", "0")
+    .expect("Want-Repr-Digest preference should be accepted")
+    .emit()
+    .expect("client request should complete");
+  let captured_request = handle
+    .join()
+    .expect("representation metadata server should join");
+  let captured_request_text =
+    String::from_utf8(captured_request.clone()).expect("request should be utf-8");
+
+  assert_eq!(
+    Some("sha-256=10, sha-512=8"),
+    header_value(&captured_request_text, "Want-Content-Digest")
+  );
+  assert_eq!(
+    Some("sha-256=10, sha-512=0"),
+    header_value(&captured_request_text, "Want-Repr-Digest")
+  );
+  assert_eq!(
+    Some("application/json; charset=utf-8"),
+    header_value(&captured_request_text, "Content-Type")
+  );
+  assert_eq!(
+    Some("identity"),
+    header_value(&captured_request_text, "Content-Encoding")
+  );
+  assert_eq!(
+    Some("en-US"),
+    header_value(&captured_request_text, "Content-Language")
+  );
+
+  let server_request =
+    rttp::server::HttpRequest::parse(&captured_request).expect("server request should parse");
+  let want_content_digest: rttp::WantContentDigest = server_request
+    .want_content_digest()
+    .expect("server Want-Content-Digest should parse")
+    .expect("server Want-Content-Digest should be present");
+  let want_repr_digest: rttp::WantReprDigest = server_request
+    .want_repr_digest()
+    .expect("server Want-Repr-Digest should parse")
+    .expect("server Want-Repr-Digest should be present");
+  assert_eq!(want_content_digest.header_value(), "sha-256=10, sha-512=8");
+  assert_eq!(want_repr_digest.header_value(), "sha-256=10, sha-512=0");
+  assert_eq!(
+    server_request
+      .content_type()
+      .expect("request Content-Type should parse")
+      .expect("request Content-Type should be present")
+      .header_value(),
+    "application/json; charset=utf-8"
+  );
+  assert_eq!(
+    server_request
+      .content_encoding()
+      .expect("request Content-Encoding should parse")
+      .expect("request Content-Encoding should be present")
+      .codings(),
+    ["identity"]
+  );
+  assert_eq!(
+    server_request
+      .content_language()
+      .expect("request Content-Language should parse")
+      .expect("request Content-Language should be present")
+      .tags(),
+    ["en-US"]
+  );
+
+  let content_type: rttp::ContentType = client_response
+    .content_type()
+    .expect("client Content-Type should parse")
+    .expect("client Content-Type should be present");
+  let content_encoding: rttp::ContentEncoding = client_response
+    .content_encoding()
+    .expect("client Content-Encoding should parse")
+    .expect("client Content-Encoding should be present");
+  let content_language: rttp::ContentLanguage = client_response
+    .content_language()
+    .expect("client Content-Language should parse")
+    .expect("client Content-Language should be present");
+  let content_digest: rttp::ContentDigest = client_response
+    .content_digest()
+    .expect("client Content-Digest should parse")
+    .expect("client Content-Digest should be present");
+  let repr_digest: rttp::ReprDigest = client_response
+    .repr_digest()
+    .expect("client Repr-Digest should parse")
+    .expect("client Repr-Digest should be present");
+
+  assert_eq!(content_type.essence(), "application/json");
+  assert_eq!(content_type.parameter("charset"), Some("utf-8"));
+  assert_eq!(content_encoding.codings(), ["identity"]);
+  assert_eq!(content_language.tags(), ["en-US"]);
+  assert_eq!(
+    client_response
+      .content_location()
+      .expect("client Content-Location should parse")
+      .expect("client Content-Location should be present")
+      .header_value(),
+    "/representations/asset.json"
+  );
+  assert_eq!(
+    content_digest.entry("sha-256").map(|entry| entry.value()),
+    Some(&b"abc"[..])
+  );
+  assert_eq!(
+    repr_digest.entry("sha-512").map(|entry| entry.value()),
+    Some(&b"def"[..])
+  );
+  assert_eq!(
+    client_response
+      .content_range()
+      .expect("client Content-Range should parse"),
+    Some(rttp::ContentRange::Bytes {
+      start: 0,
+      end: 10,
+      complete_length: Some(11),
+    })
+  );
 }
 
 #[test]
