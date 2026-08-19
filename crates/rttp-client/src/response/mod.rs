@@ -80,7 +80,6 @@ pub use rttp_protocol::server_timing::{
 };
 pub use rttp_protocol::timing_allow_origin::{TimingAllowOrigin, TimingAllowOriginParseError};
 pub use rttp_protocol::trailer::{Trailer, TrailerParseError};
-pub use rttp_protocol::warning::{Warning, WarningParseError, WarningValue};
 pub use rttp_protocol::www_authenticate::{
   WwwAuthenticate, WwwAuthenticateChallenge, WwwAuthenticateParameter, WwwAuthenticateParseError,
 };
