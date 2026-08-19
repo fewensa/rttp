@@ -216,6 +216,24 @@ unique across the combined field set. Empty input, empty members, malformed
 syntax, and duplicate names are rejected. This parser does not implement
 authentication policy.
 
+## Proxy-Authenticate
+
+`proxy_authenticate` parses one or more `Proxy-Authenticate` field values into
+bounded proxy authentication challenge metadata. Each field value is bounded to
+64 KiB, the combined challenge count is bounded to 256, each challenge keeps
+its scheme, optional token68 value, and ordered auth-parameters. Each
+challenge's parameter count is bounded to 256. Parameter values are bounded to
+64 KiB, quoted-string values are unescaped, and duplicate parameter names
+within a challenge are rejected case-insensitively.
+
+`ProxyAuthenticate::parse()` validates a single field value, and
+`ProxyAuthenticate::parse_values()` preserves challenges across multiple field
+values. Empty input, empty members, malformed syntax, invalid tokens,
+oversized values, excessive challenges or parameters, and duplicate parameter
+names are rejected. This parser exposes proxy authentication challenges as
+metadata only; it does not select credentials, retry requests, generate
+`Proxy-Authorization`, or implement proxy authentication policy.
+
 ## Cross-Origin-Embedder-Policy
 
 `cross_origin_embedder_policy` parses a singleton `Cross-Origin-Embedder-Policy`
@@ -307,6 +325,18 @@ quoted-string; an optional quoted HTTP-date is parsed with the same
 `httpdate` helper as Sunset. Empty input, empty members, malformed quoting,
 invalid codes, and bound violations are rejected. This parser does not
 implement cache, freshness, stale-response, or response-acceptance policy.
+
+## Keep-Alive
+
+`keep_alive` parses RFC 2068 `Keep-Alive` fields as a comma-separated list of
+`timeout=delta-seconds` and `max=1*DIGIT` parameters (both optional) with
+case-insensitive parameter names and optional whitespace around separators.
+Each field value is bounded to 64 KiB and the combined parameter count is
+bounded to 256. Values are parsed as checked unsigned 64-bit integers;
+unrecognized `name=token` parameters are preserved as bounded extension
+metadata. Empty input, missing `=`, duplicate recognized parameters, malformed
+tokens, overflow, and bound violations are rejected. This parser does not
+change connection lifetime, connection pooling, or HTTP/2 behavior.
 
 ## No-Vary-Search
 

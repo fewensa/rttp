@@ -1,5 +1,6 @@
 use rttp_protocol::accept_ranges::AcceptRanges;
 use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
+use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
 use rttp_protocol::age::Age;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::connection::Connection;
@@ -13,6 +14,7 @@ use rttp_protocol::entity_tag::{EntityTag, IfMatch};
 use rttp_protocol::fetch_metadata::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 use rttp_protocol::from::From;
 use rttp_protocol::host::Host;
+use rttp_protocol::keep_alive::KeepAlive;
 use rttp_protocol::location::Location;
 use rttp_protocol::no_vary_search::{NoVarySearch, NoVarySearchParams};
 use rttp_protocol::origin::Origin;
@@ -38,6 +40,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let accept_ch = AcceptCh::parse("Sec-CH-UA, DPR").expect("Accept-CH should parse");
   let expose_headers = AccessControlExposeHeaders::parse("X-Request-Id")
     .expect("Access-Control-Expose-Headers should parse");
+  let request_private_network = AccessControlRequestPrivateNetwork::parse("true")
+    .expect("Access-Control-Request-Private-Network should parse");
   let critical_ch = CriticalCh::parse("Sec-CH-UA").expect("Critical-CH should parse");
   let entity_tag = EntityTag::parse("\"revision-42\"").expect("entity tag should parse");
   let if_match = IfMatch::parse("\"revision-42\"").expect("If-Match should parse");
@@ -46,6 +50,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
   let fetch_user = SecFetchUser::parse("?1").expect("Sec-Fetch-User should parse");
   let from = From::parse("Ops Team <ops@example.test>").expect("From should parse");
+  let keep_alive = KeepAlive::parse("timeout=5, max=100").expect("Keep-Alive should parse");
   let location = Location::parse("../login?next=%2Fdashboard").expect("Location should parse");
   let host = Host::parse("example.test:8443").expect("Host should parse");
   let origin = Origin::parse("https://example.test").expect("Origin should parse");
@@ -97,6 +102,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(age.seconds(), 60);
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
+  assert_eq!(request_private_network.header_value(), "true");
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
   assert_eq!(entity_tag.opaque_tag(), "revision-42");
   assert_eq!(
@@ -108,6 +114,9 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_dest.header_value(), "document");
   assert_eq!(fetch_user.header_value(), "?1");
   assert_eq!(from.header_value(), "Ops Team <ops@example.test>");
+  assert_eq!(keep_alive.timeout(), Some(5));
+  assert_eq!(keep_alive.max(), Some(100));
+  assert_eq!(keep_alive.header_value(), "timeout=5, max=100");
   assert_eq!(location.as_str(), "../login?next=%2Fdashboard");
   assert_eq!(host.host(), "example.test");
   assert_eq!(host.port(), Some("8443"));

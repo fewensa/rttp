@@ -9,6 +9,7 @@ use crate::{error, Config, H2cClientPolicy};
 use futures::io::AsyncRead;
 use rttp_protocol::access_control_request_headers::AccessControlRequestHeaders;
 use rttp_protocol::access_control_request_method::AccessControlRequestMethod;
+use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
 use rttp_protocol::fetch_metadata::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 use rttp_protocol::forwarded::{Forwarded, MAX_FORWARDED_VALUE_BYTES};
 use rttp_protocol::origin::Origin;
@@ -397,6 +398,19 @@ impl HttpClient {
     Ok(self.header(Header::new(
       "Access-Control-Request-Headers",
       request_headers.header_value(),
+    )))
+  }
+
+  /// Set `Access-Control-Request-Private-Network: true` request metadata.
+  ///
+  /// This declares the valid private-network preflight request form only; it
+  /// does not decide whether a preflight is needed or apply browser policy.
+  pub fn access_control_request_private_network(&mut self) -> error::Result<&mut Self> {
+    let request_private_network = AccessControlRequestPrivateNetwork::parse("true")
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Access-Control-Request-Private-Network",
+      request_private_network.header_value(),
     )))
   }
 

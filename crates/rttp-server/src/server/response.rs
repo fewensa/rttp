@@ -58,6 +58,10 @@ pub use rttp_protocol::digest::{
   Digest as HttpDigest, DigestEntry as HttpDigestEntry, DigestParseError as HttpDigestParseError,
   ReprDigest as HttpReprDigest, ReprDigestEntry as HttpReprDigestEntry,
 };
+pub use rttp_protocol::keep_alive::{
+  KeepAlive as HttpKeepAlive, KeepAliveExtension as HttpKeepAliveExtension,
+  KeepAliveParseError as HttpKeepAliveParseError,
+};
 pub use rttp_protocol::no_vary_search::{
   NoVarySearch as HttpNoVarySearch, NoVarySearchExtension as HttpNoVarySearchExtension,
   NoVarySearchParams as HttpNoVarySearchParams,
@@ -70,6 +74,9 @@ pub use rttp_protocol::priority::{
 pub use rttp_protocol::proxy_authentication_info::{
   ProxyAuthenticationInfo as HttpProxyAuthenticationInfo,
   ProxyAuthenticationInfoParseError as HttpProxyAuthenticationInfoParseError,
+};
+pub use rttp_protocol::range::{
+  ContentRange as HttpContentRange, ContentRangeParseError as HttpContentRangeParseError,
 };
 pub use rttp_protocol::server_timing::{
   ServerTiming as HttpServerTiming, ServerTimingMetric as HttpServerTimingMetric,
@@ -613,14 +620,24 @@ impl HttpResponse {
     Self::new(206, "Partial Content")
       .header(
         "Content-Range",
-        format!("bytes {}-{}/{}", range.start(), range.end(), body.len()),
+        HttpContentRange::Bytes {
+          start: range.start() as u64,
+          end: range.end() as u64,
+          complete_length: Some(body.len() as u64),
+        }
+        .header_value(),
       )
       .body(partial)
   }
 
   pub fn range_not_satisfiable(entity_length: usize) -> Self {
-    Self::new(416, "Range Not Satisfiable")
-      .header("Content-Range", format!("bytes */{entity_length}"))
+    Self::new(416, "Range Not Satisfiable").header(
+      "Content-Range",
+      HttpContentRange::Unsatisfied {
+        complete_length: entity_length as u64,
+      }
+      .header_value(),
+    )
   }
 
   pub fn not_modified(metadata: &HttpConditionalMetadata) -> Self {
@@ -1166,6 +1183,22 @@ impl HttpResponse {
     self
       .headers
       .push(HttpHeader::new("Alt-Svc", alt_svc.header_value()));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Keep-Alive` response metadata without changing
+  /// connection lifetime.
+  pub fn with_keep_alive(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpKeepAliveParseError> {
+    let keep_alive = HttpKeepAlive::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Keep-Alive"));
+    self
+      .headers
+      .push(HttpHeader::new("Keep-Alive", keep_alive.header_value()));
     Ok(self)
   }
 
@@ -1955,6 +1988,20 @@ impl HttpResponse {
     HttpAltSvc::parse_values(values).map(Some)
   }
 
+  /// Parses attached `Keep-Alive` metadata without changing connection lifetime.
+  pub fn keep_alive(&self) -> Result<Option<HttpKeepAlive>, HttpKeepAliveParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Keep-Alive"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpKeepAlive::parse_values(values).map(Some)
+  }
+
   /// Parses attached `Clear-Site-Data` metadata without changing server state.
   pub fn clear_site_data(&self) -> Result<Option<HttpClearSiteData>, HttpClearSiteDataParseError> {
     let values: Vec<&str> = self
@@ -2073,6 +2120,19 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpAcceptRanges::parse_values(values).map(Some)
+  }
+
+  pub fn content_range(&self) -> Result<Option<HttpContentRange>, HttpContentRangeParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Content-Range"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpContentRange::parse_values(values).map(Some)
   }
 
   pub fn age(&self) -> Result<Option<u64>, HttpAgeParseError> {

@@ -72,6 +72,7 @@ pub use rttp_protocol::digest::{
   ContentDigest, ContentDigestEntry, Digest, DigestEntry, DigestParseError, ReprDigest,
   ReprDigestEntry,
 };
+pub use rttp_protocol::keep_alive::{KeepAlive, KeepAliveExtension, KeepAliveParseError};
 pub use rttp_protocol::location::{Location, LocationParseError};
 pub use rttp_protocol::no_vary_search::{
   NoVarySearch, NoVarySearchExtension, NoVarySearchParams, NoVarySearchParseError,
@@ -81,9 +82,14 @@ pub use rttp_protocol::prefer::{
   PreferenceParameter,
 };
 pub use rttp_protocol::priority::{Priority, PriorityExtension, PriorityParseError};
+pub use rttp_protocol::proxy_authenticate::{
+  ProxyAuthenticate, ProxyAuthenticateChallenge, ProxyAuthenticateParameter,
+  ProxyAuthenticateParseError,
+};
 pub use rttp_protocol::proxy_authentication_info::{
   ProxyAuthenticationInfo, ProxyAuthenticationInfoParameter, ProxyAuthenticationInfoParseError,
 };
+pub use rttp_protocol::range::{ContentRange, ContentRangeParseError};
 pub use rttp_protocol::referrer_policy::{
   ReferrerPolicy, ReferrerPolicyParseError, ReferrerPolicyToken,
 };
