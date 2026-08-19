@@ -1513,6 +1513,23 @@ fn test_async_redirect_is_not_followed_by_default() {
   });
 }
 
+#[test]
+#[cfg(feature = "async")]
+fn test_async_auto_redirect_uses_first_raw_location_when_typed_location_is_duplicate() {
+  let (addr, _handle) = support::spawn_duplicate_location_redirect_target_echo_server();
+  block_on(async {
+    let response = client()
+      .config(Config::builder().auto_redirect(true))
+      .get()
+      .url(format!("http://{}/redirect/from", addr))
+      .rasync()
+      .await
+      .expect("auto redirect should use the first raw Location header");
+
+    assert_eq!("/final", response.body().string().unwrap());
+  });
+}
+
 #[cfg(feature = "async")]
 async fn assert_async_redirect_resolves_to_target<F>(location: F, expected_target: &str)
 where
