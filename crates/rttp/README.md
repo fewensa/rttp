@@ -523,6 +523,27 @@ available.
 These helpers only declare or parse request metadata. RTTP does not infer or
 enforce consent, tracking, legal, or serving policy.
 
+## Bounded Pragma metadata
+
+`HttpClient::pragma(value)` and `HttpClient::pragma_no_cache()` emit bounded
+RFC 9111 `Pragma` request metadata through the shared protocol `Pragma` type,
+combining and replacing already-attached same-name fields. Server-side
+`Request::pragma()`, `HttpRequest::pragma()`, and `HttpResponse::pragma()`
+parse the same representation into `HttpPragma`, and
+`HttpResponse::with_pragma(value)` declares validated response metadata that
+replaces attached same-name fields. Absent fields return `Ok(None)`. Multiple
+fields are combined in wire order, directive names are matched
+case-insensitively, duplicate names are rejected, each field value is bounded
+to 64 KiB, combined field values are bounded to 64 KiB including `", "`
+separator overhead, each directive value is bounded to 64 KiB, and the combined
+directive count is bounded to 256. Malformed tokens or quoted-strings, valued
+`no-cache` forms, empty members, and bound violations return a parser error
+while raw request headers remain available.
+
+These helpers only declare or parse metadata. RTTP does not translate `Pragma`
+into `Cache-Control`, store cache entries, or apply cache, intermediary, or
+HTTP/1.0 compatibility policy.
+
 ## Bounded HTTP/1.1 Content-Location behavior
 
 Server-side `Content-Location` helpers expose response metadata declaration and
@@ -1001,6 +1022,7 @@ scheduling, or async accept loops.
 | Accept-Charset | `HttpRequestAcceptCharsets`, `Request::accept_charset`, and `HttpRequest::accept_charset` parse bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |
 | Accept-Encoding | `HttpRequestAcceptEncodings`, `Request::accept_encoding`, and `HttpRequest::accept_encoding` parse bounded `Accept-Encoding` request metadata through the shared `rttp-protocol` type | No compression, decompression, content negotiation, retries, or transport changes |
 | Sec-GPC | `HttpClient::sec_gpc`, `Request::sec_gpc`, and `HttpRequest::sec_gpc` share the bounded protocol `Sec-GPC` `1`-signal representation and preserve raw values on errors | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
+| Pragma | `HttpClient::pragma`/`pragma_no_cache`, `Request::pragma`, `HttpRequest::pragma`, `HttpResponse::with_pragma`, and `HttpResponse::pragma` share the bounded protocol `Pragma` representation across client construction, server access, server response declaration, and client response access, combining fields in wire order and preserving raw headers on errors | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |
 | Content-Location | `HttpResponse::with_content_location` declares one bounded singleton `Content-Location` header, and `HttpResponse::content_location` parses attached singleton response metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |
 | Content-DPR | `HttpResponse::with_content_dpr` declares one bounded singleton `Content-DPR` header, and `HttpResponse::content_dpr` plus client `Response::content_dpr` parse attached singleton decimal-ratio metadata while preserving raw headers | No image rescaling, request DPR emission, Client Hints policy, retry, or transport changes |
 | Content-Type and Content-Encoding | `HttpContentType`, `Request::content_type`, `HttpRequest::content_type`, `HttpResponse::with_content_type`, `content_type`, `HttpResponseContentEncodings`, `Request::content_encoding`, `HttpRequest::content_encoding`, `HttpResponse::with_content_encoding`, and `content_encoding` parse or declare bounded representation metadata while preserving raw headers on parse failures and replacing raw response duplicates on typed declaration | No MIME sniffing, body decoding, charset transcoding, compression/decompression, negotiation, cache policy, redirects, retry/replay, or filesystem serving |

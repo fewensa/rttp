@@ -1021,6 +1021,31 @@ field available.
 These helpers only declare or parse request metadata. RTTP does not infer or
 enforce consent, tracking, legal, or serving policy.
 
+### Bounded Pragma metadata
+
+`rttp-protocol` owns the shared `Pragma` primitive. Client helpers format
+through that type, and server `Request` / `HttpRequest` plus client and server
+response helpers parse with the same rules.
+
+`HttpClient::pragma(value)` and `HttpClient::pragma_no_cache()` emit bounded
+RFC 9111 `Pragma` request metadata, combining and replacing already-attached
+same-name fields. `Response::pragma()` parses the same representation on the
+client. On the server, `Request::pragma()` and `HttpRequest::pragma()` parse
+received fields into `HttpPragma`, and `HttpResponse::with_pragma(value)`
+declares validated response metadata that replaces attached same-name fields.
+`HttpResponse::pragma()` parses attached response fields. Absent fields return
+`Ok(None)`. Multiple fields are combined in wire order, directive names are
+matched case-insensitively, duplicate names are rejected, each field value is
+bounded to 64 KiB, combined field values are bounded to 64 KiB including
+`", "` separator overhead, each directive value is bounded to 64 KiB, and the
+combined directive count is bounded to 256. Malformed tokens or
+quoted-strings, valued `no-cache` forms, empty members, and bound violations
+return a parser error while raw headers remain available.
+
+These helpers only declare or parse metadata. RTTP does not translate `Pragma`
+into `Cache-Control`, store cache entries, or apply cache, freshness,
+revalidation, intermediary, or HTTP/1.0 compatibility policy.
+
 ### Bounded Upgrade-Insecure-Requests request metadata
 
 `HttpClient::upgrade_insecure_requests()` emits `Upgrade-Insecure-Requests: 1`.
@@ -1141,6 +1166,7 @@ gain additional HTTP/2 header-block handling.
 | Sec-GPC | Client `sec_gpc` emits bounded `Sec-GPC: 1` request metadata; server `Request::sec_gpc()` and `HttpRequest::sec_gpc()` parse typed received values while preserving raw headers on errors | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
 | Upgrade-Insecure-Requests | Client `upgrade_insecure_requests` emits bounded singleton `Upgrade-Insecure-Requests: 1` request metadata; server `Request::upgrade_insecure_requests()` and `HttpRequest::upgrade_insecure_requests()` parse typed received values while preserving raw headers on errors | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Idempotency-Key | Client `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field; server `Request::idempotency_key()` and `HttpRequest::idempotency_key()` parse typed received values while preserving raw headers on errors, and the key is redacted from typed debug output | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
+| Pragma | Client `pragma`/`pragma_no_cache` and `Response::pragma` share the bounded protocol `Pragma` representation with server `Request::pragma`, `HttpRequest::pragma`, `HttpResponse::with_pragma`, and `HttpResponse::pragma` across client construction, server request access, server response construction, and client response access, combining fields in wire order and preserving raw headers on errors | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |
 | W3C Trace Context | Client `traceparent`/`tracestate` validate and emit bounded W3C Trace Context request metadata through shared protocol types; server `Request`/`HttpRequest` helpers parse received fields, preserve raw headers on errors, preserve tracestate ordering, and redact propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |
 | Accept-Language | Client `accept_language` emits bounded `Accept-Language` request metadata through the protocol `AcceptLanguage` type; server `Request::accept_language()` and `HttpRequest::accept_language()` parse typed received values as `HttpAcceptLanguages` while preserving raw headers on errors | No locale matching, fallback selection, translation lookup, routing, or automatic response choice |
 | Preflight request metadata | Client `origin`, `access_control_request_method`, `access_control_request_headers`, and `access_control_request_private_network` emit bounded `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`, and `Access-Control-Request-Private-Network` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, CORS policy, or Private Network Access policy |
@@ -1706,6 +1732,30 @@ ordinary headers; helper parse errors do not remove existing headers.
 These helpers parse request metadata only. They do not negotiate, transcode,
 decode bodies, sniff MIME types, or select a response charset.
 
+### Bounded Pragma metadata
+
+Server-side `Pragma` helpers expose request and response metadata through the
+shared `rttp-protocol` primitive. `Request::pragma()` and `HttpRequest::pragma()`
+parse received `Pragma` fields in wire order into `HttpPragma`, and
+`HttpResponse::with_pragma(value)` declares validated response metadata that
+replaces attached same-name fields. `HttpResponse::pragma()` parses attached
+response fields. Absent fields return `Ok(None)`. HTTP/1.1 and HTTP/2 share
+the same `Request` helpers. The shared protocol type is the authority for
+directive-token, optional-value, duplicate, member-count, and size validation.
+
+Parsing is bounded and validation-oriented. Each `Pragma` field value is
+limited to 64 KiB, combined field values are limited to 64 KiB including
+`", "` separator overhead, each directive value is limited to 64 KiB, and the
+combined directive count is limited to 256. Empty members, malformed tokens or
+quoted-strings, valued `no-cache` forms, duplicate names, and bound violations
+return `HttpPragmaParseError` from the helper. Raw `Request::header("Pragma",
+...)` values remain preserved exactly as ordinary headers; helper parse errors
+do not remove existing headers.
+
+These helpers declare and parse metadata only. They do not translate `Pragma`
+into `Cache-Control`, store cache entries, or apply cache, freshness,
+revalidation, intermediary, or HTTP/1.0 compatibility policy.
+
 ### Bounded Accept-Encoding request metadata
 
 Server-side `Accept-Encoding` helpers expose request metadata through the
@@ -2105,6 +2155,7 @@ TLS or async accept loops.
 | Sec-GPC | `Request::sec_gpc` and `HttpRequest::sec_gpc` parse bounded singleton `Sec-GPC` `1`-signal metadata and preserve raw values on errors | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
 | Upgrade-Insecure-Requests | `Request::upgrade_insecure_requests` and `HttpRequest::upgrade_insecure_requests` parse bounded singleton `Upgrade-Insecure-Requests` `1`-token metadata and preserve raw values on errors | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Idempotency-Key | `Request::idempotency_key` and `HttpRequest::idempotency_key` parse bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, preserve raw values on errors, and redact the key from typed debug output | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
+| Pragma | `HttpPragma`, `Request::pragma`, `HttpRequest::pragma`, `HttpResponse::with_pragma`, and `HttpResponse::pragma` share the bounded protocol `Pragma` representation for server request access and server response construction, combining fields in wire order and preserving raw headers on errors | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |
 | W3C Trace Context | `Request::traceparent`/`tracestate` and `HttpRequest` helpers parse bounded W3C Trace Context request metadata, preserve raw values on errors, preserve tracestate ordering, and redact propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |
 | Accept-Language | `HttpAcceptLanguages`, `Request::accept_language`, and `HttpRequest::accept_language` parse bounded ordered `Accept-Language` ranges and q-values through the protocol `AcceptLanguage` type and preserve raw values on errors | No locale matching, fallback selection, translation lookup, routing, or automatic response choice |
 | Vary | `HttpVary`, `HttpResponse::with_vary`, `HttpResponse::vary`, `Request::vary_selection`, and `HttpRequest::vary_selection` parse, declare, and select bounded `Vary` metadata with case-insensitive field-name handling | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
