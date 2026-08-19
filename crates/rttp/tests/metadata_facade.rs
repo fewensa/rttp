@@ -5,12 +5,12 @@ use rttp::server::{
   HttpContentRangeParseError, HttpCrossOriginEmbedderPolicy,
   HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
   HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpEntityTag,
-  HttpIfModifiedSince, HttpIfUnmodifiedSince, HttpMaxForwards, HttpMementoDatetime,
-  HttpMementoDatetimeParseError, HttpNel, HttpProxyStatus, HttpProxyStatusParseError, HttpResponse,
-  HttpSaveData, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
-  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpSunsetParseError, HttpUpgrade,
-  HttpUpgradeParseError,
+  HttpExpectations, HttpIfModifiedSince, HttpIfUnmodifiedSince, HttpMaxForwards,
+  HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNel, HttpProxyStatus,
+  HttpProxyStatusParseError, HttpResponse, HttpSaveData, HttpSignature, HttpSignatureInput,
+  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
+  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
+  HttpSunsetParseError, HttpUpgrade, HttpUpgradeParseError,
 };
 use std::io::Write;
 use std::net::SocketAddr;
@@ -611,6 +611,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let save_data: HttpSaveData = HttpSaveData::parse("on").expect("Save-Data should parse");
   let max_forwards: HttpMaxForwards =
     HttpMaxForwards::parse("0").expect("Max-Forwards should parse");
+  let expectations: HttpExpectations =
+    HttpExpectations::parse("100-continue, preview").expect("Expect should parse");
   let if_modified_since: HttpIfModifiedSince =
     HttpIfModifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
       .expect("If-Modified-Since should parse");
@@ -664,6 +666,9 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(save_data.header_value(), "on");
   assert_eq!(max_forwards.value(), 0);
   assert_eq!(max_forwards.header_value(), "0");
+  assert!(expectations.expects_continue());
+  assert_eq!(["preview"], expectations.unsupported());
+  assert_eq!(expectations.header_value(), "100-continue, preview");
   assert_eq!(
     if_modified_since.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"

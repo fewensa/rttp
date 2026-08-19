@@ -603,19 +603,21 @@ representation selection, retries, redirects, caching, or server policy from
 
 ### Bounded `Expect: 100-continue` request metadata
 
-`HttpClient::expect_continue()` emits the validated standardized
-`Expect: 100-continue` field. It is metadata only: the client does not delay
-the request body or wait for an interim response. `Response::informational_responses()`
-continues to expose a received `100 Continue` alongside other bounded
-informational responses.
+`HttpClient::expect_continue()` formats the protocol-owned `Expect` singleton
+as `Expect: 100-continue`. It is metadata only: the client does not delay
+the request body or wait for an interim response. Raw
+`header(("Expect", value))` remains available for extension values outside
+the typed helper. `Response::informational_responses()` continues to expose a
+received `100 Continue` alongside other bounded informational responses.
 
 On the server, `Request::expectations()` and `HttpRequest::expectations()`
-return bounded `HttpExpectations` metadata. `expects_continue()` identifies
-the standardized expectation, while `unsupported()` preserves extension names
-for handler policy. Absent fields return `Ok(None)`; malformed, duplicate,
-oversized, or excessive values return `HttpExpectParseError` without changing
-the raw request. The server does not automatically send `100 Continue` or
-reject unsupported expectations.
+delegate to the shared protocol type and return bounded `HttpExpectations`
+aliases. `expects_continue()` identifies the standardized expectation, while
+`unsupported()` preserves extension names for handler policy. Absent fields
+return `Ok(None)`; malformed, duplicate, oversized, or excessive values
+return `HttpExpectParseError` without changing the raw request. The server
+does not automatically send `100 Continue` or reject unsupported
+expectations.
 
 ### Bounded Authorization request metadata
 
@@ -1027,7 +1029,7 @@ gain additional HTTP/2 header-block handling.
 | area | tested coverage | limits |
 |------|-----------------|--------|
 | HTTP/1.1 response parsing | `Content-Length`, chunked transfer coding, chunk extensions, informational responses, `Response::is_informational`, `is_redirection`, `is_error`, bodyless `204`/`304`, duplicate `Set-Cookie`, and framing ambiguity rejection | Not a complete RFC conformance suite |
-| HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and explicit `Expect: 100-continue` metadata | Expect metadata does not gate body transmission; SOCKS handshakes are delegated to the `socks` crate |
+| HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and explicit `Expect: 100-continue` metadata through the shared protocol type | Expect metadata does not gate body transmission; raw `header(("Expect", value))` remains an escape hatch; SOCKS handshakes are delegated to the `socks` crate |
 | Fetch Metadata | Client `sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, `sec_fetch_user`, and `sec_purpose` emit bounded `Sec-Fetch-*`/`Sec-Purpose` fields; server `Request` helpers parse typed received values while preserving raw headers on errors | No browser security policy, request blocking, origin validation, navigation policy, automatic header generation, prefetch execution, or cache behavior |
 | Save-Data | Client `save_data` emits bounded `Save-Data: on` request metadata; server `Request::save_data()` and `HttpRequest::save_data()` parse typed received values while preserving raw headers on errors | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |
 | Accept-Language | Client `accept_language` emits bounded `Accept-Language` request metadata through the protocol `AcceptLanguage` type; server `Request::accept_language()` and `HttpRequest::accept_language()` parse typed received values as `HttpAcceptLanguages` while preserving raw headers on errors | No locale matching, fallback selection, translation lookup, routing, or automatic response choice |
@@ -1953,7 +1955,7 @@ TLS or async accept loops.
 
 | area | tested coverage | limits |
 |------|-----------------|--------|
-| HTTP/1.1 request parsing | Required `Host` validation, origin-form, absolute-form, asterisk-form `OPTIONS`, authority-form `CONNECT`, fixed and chunked bodies, chunk extensions, `Expect: 100-continue`, and obsolete line folding rejection | Intended for local tests and simple embedded use, not full RFC coverage |
+| HTTP/1.1 request parsing | Required `Host` validation, origin-form, absolute-form, asterisk-form `OPTIONS`, authority-form `CONNECT`, fixed and chunked bodies, chunk extensions, protocol-owned `Expect` metadata including `100-continue`, and obsolete line folding rejection | Expect metadata does not send `100 Continue` or reject unsupported extensions; intended for local tests and simple embedded use, not full RFC coverage |
 | HTTP/1.1 connection handling | Bounded sequential `serve_requests`, keep-alive and close behavior for HTTP/1.1 and HTTP/1.0, pipelined request boundaries, malformed request rejection before handler dispatch | Blocking listener only; no async accept loop |
 | HTTP/1.1 response framing | Automatic `Content-Length`, explicit chunked responses, bodyless `HEAD`, `101`, `204`, and `304`, response trailers after the terminating chunk | No server TLS |
 | Byte ranges | `HttpByteRange` parses one `bytes` range, `Request::evaluate_if_range` gates it with caller-provided strong ETag or exact HTTP-date metadata, `HttpResponse::partial_content`/`range_not_satisfiable` serialize `206`/`416` with `Content-Range`, and `HttpAcceptRanges` plus `HttpResponse::with_accept_ranges`/`with_accept_ranges_none`/`accept_ranges` declare and parse bounded `Accept-Ranges` metadata while preserving raw headers | No Range request generation, multipart range serialization, partial response engine, automatic retry/replay, redirect behavior, cache storage or policy, filesystem serving, MIME detection, automatic cache validation, automatic static-file policy, automatic byte serving, content slicing, download resume, or status-policy behavior |

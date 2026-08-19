@@ -12,6 +12,7 @@ use rttp_protocol::accept_language::{AcceptLanguage, MAX_ACCEPT_LANGUAGE_VALUE_B
 use rttp_protocol::access_control_request_headers::AccessControlRequestHeaders;
 use rttp_protocol::access_control_request_method::AccessControlRequestMethod;
 use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
+use rttp_protocol::expect::Expect;
 use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
@@ -314,7 +315,10 @@ impl HttpClient {
   /// This is metadata only: the client still writes the request body normally
   /// and does not wait for an interim response before sending it.
   pub fn expect_continue(&mut self) -> &mut Self {
-    self.header(("Expect", "100-continue"))
+    self.header(Header::new(
+      "Expect",
+      Expect::expect_continue().header_value(),
+    ))
   }
 
   /// Set bounded `Sec-Fetch-Site` request metadata without applying browser policy.

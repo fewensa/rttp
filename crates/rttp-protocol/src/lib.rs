@@ -47,6 +47,7 @@ pub mod cross_origin_resource_policy;
 pub mod deprecation;
 pub mod digest;
 pub mod entity_tag;
+pub mod expect;
 pub mod fetch_metadata;
 pub mod forwarded;
 pub mod from;
