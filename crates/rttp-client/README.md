@@ -532,6 +532,8 @@ userinfo. `HttpClient::access_control_request_method(value)` emits one
 `HttpClient::access_control_request_headers(field_names)` emits one
 `Access-Control-Request-Headers` field from a bounded field-name list,
 normalized to lowercase with duplicates rejected.
+`HttpClient::access_control_request_private_network()` emits
+`Access-Control-Request-Private-Network: true`.
 
 These helpers reject invalid input before a socket is opened: origins with a
 path, query, fragment, userinfo, or non-`http(s)` scheme; methods that are
@@ -542,8 +544,8 @@ retain raw-header control with `header(("Origin", "..."))` and the other
 `header` forms.
 
 These are declaration helpers only. RTTP does not decide whether a preflight
-is needed, read `Access-Control-Allow-*` response fields, or apply CORS
-policy.
+is needed, read `Access-Control-Allow-*` response fields, apply CORS policy, or
+apply Private Network Access policy.
 
 ## Bounded HTTP/1.1 Content-Disposition behavior
 
