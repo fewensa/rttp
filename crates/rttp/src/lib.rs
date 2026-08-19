@@ -10,7 +10,7 @@ pub use rttp_client::response::{
   ContentLocation, ContentLocationParseError, CriticalCh, CrossOriginEmbedderPolicy,
   CrossOriginEmbedderPolicyParseError, CrossOriginEmbedderPolicyReportOnly,
   CrossOriginEmbedderPolicyReportOnlyParseError, CrossOriginOpenerPolicy,
-  CrossOriginOpenerPolicyParseError, Location, LocationParseError, NoVarySearch,
+  CrossOriginOpenerPolicyParseError, HttpContentLength, Location, LocationParseError, NoVarySearch,
   NoVarySearchParams, NoVarySearchParseError, StrictTransportSecurity,
   StrictTransportSecurityParseError, XContentTypeOptions, XContentTypeOptionsParseError,
   XFrameOptions, XFrameOptionsParseError,

@@ -2,8 +2,8 @@ use rttp_server::server::{
   HttpAcceptCh, HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods,
   HttpAccessControlRequestHeaders, HttpAccessControlRequestHeadersParseError,
   HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError,
-  HttpConditionalMetadata, HttpConnection, HttpConnectionParseError, HttpContentLocation,
-  HttpContentLocationParseError, HttpCrossOriginEmbedderPolicyReportOnly,
+  HttpConditionalMetadata, HttpConnection, HttpConnectionParseError, HttpContentLength,
+  HttpContentLocation, HttpContentLocationParseError, HttpCrossOriginEmbedderPolicyReportOnly,
   HttpCrossOriginResourcePolicy, HttpEntityTag, HttpHost, HttpKeepAlive, HttpNoVarySearch,
   HttpNoVarySearchParams, HttpPreferenceKind, HttpRequest, HttpResponse, HttpSignature,
   HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
@@ -110,6 +110,46 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_mode.header_value(), "navigate");
   assert_eq!(fetch_dest.header_value(), "document");
   assert_eq!(fetch_user.header_value(), "?1");
+}
+
+#[test]
+fn request_facade_exposes_validated_content_length_metadata() {
+  let request = HttpRequest::parse(
+    b"POST /upload HTTP/1.1\r\nHost: example.test\r\nContent-Length: 5\r\n\r\nhello",
+  )
+  .expect("request should parse");
+  let content_length: HttpContentLength = request
+    .content_length()
+    .expect("validated fixed length should be present");
+
+  assert_eq!(5, content_length.len());
+  assert!(!content_length.is_zero());
+  assert_eq!("5", content_length.header_value());
+}
+
+#[test]
+fn request_facade_omits_content_length_metadata_when_header_is_absent() {
+  let request = HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+
+  assert_eq!(None, request.content_length());
+}
+
+#[test]
+fn request_facade_omits_content_length_metadata_for_chunked_framing() {
+  let request = HttpRequest::parse(
+    concat!(
+      "POST /upload HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Transfer-Encoding: chunked\r\n",
+      "\r\n",
+      "5\r\nhello\r\n0\r\n\r\n"
+    )
+    .as_bytes(),
+  )
+  .expect("chunked request should parse");
+
+  assert_eq!(None, request.content_length());
 }
 
 #[test]
