@@ -260,6 +260,25 @@ references against a response URL, follow redirects, select cache variants,
 replace representations, generate routes, trigger retries, or alter status
 policy from `Content-Location`.
 
+## Content-DPR response metadata
+
+`HttpResponse::with_content_dpr(value)` validates one `Content-DPR` field value
+with the shared protocol-owned `HttpContentDpr` type, trims outer whitespace,
+removes any existing raw `Content-DPR` fields, and adds a single validated
+`Content-DPR` header. `HttpResponse::content_dpr()` parses attached raw fields
+into `HttpContentDpr`, returns `Ok(None)` when absent, and preserves invalid
+raw fields until typed parsing is requested.
+
+The helper is bounded and validation-oriented. The field value is limited to
+64 KiB and must match `1*DIGIT["." 1*DIGIT]` as a finite ratio greater than
+zero. Duplicate fields are rejected because `Content-DPR` is singleton response
+metadata. The parsed ratio is available through `ratio()`, and the preserved
+trimmed decimal is available through `header_value()`.
+
+These helpers only declare and parse metadata. RTTP does not rescale images,
+send request DPR, apply Client Hints policy, retry, or change transport from
+`Content-DPR`.
+
 ## Deprecation response metadata
 
 `HttpResponse::with_deprecation(value)` replaces any existing raw `Deprecation`

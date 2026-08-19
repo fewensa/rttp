@@ -43,6 +43,7 @@ use rttp_protocol::cache_status::CacheStatus;
 use rttp_protocol::cdn_cache_control::CdnCacheControl;
 use rttp_protocol::clear_site_data::ClearSiteData;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
+use rttp_protocol::content_dpr::ContentDpr;
 use rttp_protocol::content_location::ContentLocation;
 use rttp_protocol::content_security_policy::ContentSecurityPolicy;
 use rttp_protocol::cookie::HttpSetCookies;
@@ -674,6 +675,18 @@ impl Response {
       return Ok(None);
     }
     ContentLocation::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Content-DPR` response metadata without rescaling images
+  /// or applying Client Hints policy.
+  pub fn content_dpr(&self) -> error::Result<Option<ContentDpr>> {
+    let values = self.header_values("content-dpr");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    ContentDpr::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

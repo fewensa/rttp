@@ -4,14 +4,15 @@ use rttp_client::response::{
   AccessControlAllowMethodsParseError, AccessControlExposeHeaders, AccessControlMaxAge,
   AccessControlMaxAgeParseError, Age, AgeParseError, AltSvc, AuthenticationInfo,
   AuthenticationInfoParseError, CacheStatus, CacheStatusParseError, Connection,
-  ConnectionParseError, ContentRange, ContentRangeParseError, ContentSecurityPolicy,
-  ContentSecurityPolicyParseError, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly,
-  CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest, EntityTag, HttpClearSiteData,
-  HttpContentLength, KeepAlive, LinkValues, Location, LocationParseError, Nel, NoVarySearch,
-  NoVarySearchParams, NoVarySearchParseError, PreferenceApplied, Priority, ProxyAuthenticate,
-  ProxyAuthenticateParseError, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError,
-  ProxyStatus, ProxyStatusParseError, ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Signature,
-  SignatureInput, SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
+  ConnectionParseError, ContentDpr, ContentDprParseError, ContentRange, ContentRangeParseError,
+  ContentSecurityPolicy, ContentSecurityPolicyParseError, CrossOriginEmbedderPolicy,
+  CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest,
+  EntityTag, HttpClearSiteData, HttpContentLength, KeepAlive, LinkValues, Location,
+  LocationParseError, Nel, NoVarySearch, NoVarySearchParams, NoVarySearchParseError,
+  PreferenceApplied, Priority, ProxyAuthenticate, ProxyAuthenticateParseError,
+  ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError,
+  ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Signature, SignatureInput,
+  SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
   StrictTransportSecurityParseError, Trailer, TransferEncoding, TransferEncodingParseError,
   Upgrade, UpgradeParseError, Vary, VaryParseError, WantContentDigest, WantReprDigest, Warning,
   WwwAuthenticate, WwwAuthenticateParseError, XContentTypeOptions, XContentTypeOptionsParseError,
@@ -57,6 +58,9 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .expect("Content-Location should parse");
   let _: ContentLocationParseError =
     ContentLocation::parse("not valid").expect_err("invalid Content-Location should be rejected");
+  let content_dpr = ContentDpr::parse("1.5").expect("Content-DPR should parse");
+  let _: ContentDprParseError =
+    ContentDpr::parse("0").expect_err("zero Content-DPR should be rejected");
   let deprecation = Deprecation::parse("?1").expect("Deprecation should parse");
   let _: DeprecationParseError =
     Deprecation::parse("true").expect_err("historical Deprecation token should be rejected");
@@ -179,6 +183,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     content_location.header_value(),
     "../representations/current.json"
   );
+  assert_eq!(content_dpr.ratio(), 1.5);
+  assert_eq!(content_dpr.header_value(), "1.5");
   assert_eq!(deprecation, Deprecation::Boolean(true));
   assert_eq!(deprecation.header_value(), "?1");
   assert_eq!(

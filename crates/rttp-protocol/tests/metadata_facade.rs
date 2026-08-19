@@ -8,6 +8,7 @@ use rttp_protocol::cache_status::CacheStatus;
 use rttp_protocol::cdn_cache_control::CdnCacheControl;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::connection::Connection;
+use rttp_protocol::content_dpr::ContentDpr;
 use rttp_protocol::content_encoding::ContentEncoding;
 use rttp_protocol::content_language::ContentLanguage;
 use rttp_protocol::content_location::ContentLocation;
@@ -105,6 +106,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
       .expect("Strict-Transport-Security should parse");
   let content_type =
     ContentType::parse("text/plain; charset=utf-8").expect("Content-Type should parse");
+  let content_dpr = ContentDpr::parse("1.5").expect("Content-DPR should parse");
   let content_location = ContentLocation::parse("../representations/current.json")
     .expect("Content-Location should parse");
   let deprecation = Deprecation::parse("?1").expect("Deprecation should parse");
@@ -201,6 +203,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
     "max-age=31536000; includeSubDomains; preload"
   );
   assert_eq!(content_type.header_value(), "text/plain; charset=utf-8");
+  assert_eq!(content_dpr.ratio(), 1.5);
+  assert_eq!(content_dpr.header_value(), "1.5");
   assert_eq!(
     content_location.header_value(),
     "../representations/current.json"
