@@ -5,18 +5,19 @@ use rttp_server::server::{
   HttpAccessControlRequestMethodParseError, HttpAccessControlRequestPrivateNetwork,
   HttpAccessControlRequestPrivateNetworkParseError, HttpCacheStatus, HttpCacheStatusParseError,
   HttpCdnCacheControl, HttpConditionalMetadata, HttpConnection, HttpConnectionParseError,
-  HttpContentDisposition, HttpContentDpr, HttpContentDprParseError, HttpContentLength,
-  HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
-  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeprecation,
-  HttpDeprecationParseError, HttpEntityTag, HttpHost, HttpKeepAlive, HttpMaxForwards,
-  HttpMaxForwardsParseError, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNoVarySearch,
-  HttpNoVarySearchParams, HttpPreferenceKind, HttpProxyStatus, HttpProxyStatusParseError,
-  HttpRequest, HttpRequestAcceptEncodings, HttpResponse, HttpSaveData, HttpSaveDataParseError,
-  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
-  HttpUpgradeParseError, HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode,
-  SecFetchSite, SecFetchUser, SecPurpose,
+  HttpContentDisposition, HttpContentDispositionParseError, HttpContentDpr,
+  HttpContentDprParseError, HttpContentLength, HttpContentLocation, HttpContentLocationParseError,
+  HttpContentRange, HttpContentRangeParseError, HttpCrossOriginEmbedderPolicyReportOnly,
+  HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpEntityTag,
+  HttpHost, HttpKeepAlive, HttpMaxForwards, HttpMaxForwardsParseError, HttpMementoDatetime,
+  HttpMementoDatetimeParseError, HttpNoVarySearch, HttpNoVarySearchParams, HttpPreferenceKind,
+  HttpProxyStatus, HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptEncodings,
+  HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSignature, HttpSignatureInput,
+  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
+  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
+  HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeParseError,
+  HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite,
+  SecFetchUser, SecPurpose,
 };
 
 #[test]
@@ -86,6 +87,12 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     .expect("Content-Location should parse");
   let _: HttpContentLocationParseError = HttpContentLocation::parse("not valid")
     .expect_err("invalid Content-Location should be rejected");
+  let content_disposition = HttpContentDisposition::parse(
+    "attachment; filename=\"report.txt\"; filename*=UTF-8''report.txt",
+  )
+  .expect("Content-Disposition should parse");
+  let _: HttpContentDispositionParseError = HttpContentDisposition::parse("attachment;")
+    .expect_err("invalid Content-Disposition should be rejected");
   let content_dpr = HttpContentDpr::parse("1.5").expect("Content-DPR should parse");
   let _: HttpContentDprParseError =
     HttpContentDpr::parse("0").expect_err("zero Content-DPR should be rejected");
@@ -163,6 +170,15 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(
     content_location.header_value(),
     "../representations/current.json"
+  );
+  assert_eq!(content_disposition.disposition_type(), "attachment");
+  assert_eq!(
+    content_disposition.parameter("filename"),
+    Some("report.txt")
+  );
+  assert_eq!(
+    content_disposition.parameter("filename*"),
+    Some("UTF-8''report.txt")
   );
   assert_eq!(content_dpr.ratio(), 1.5);
   assert_eq!(content_dpr.header_value(), "1.5");

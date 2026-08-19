@@ -24,6 +24,7 @@ fn package_includes_protocol_metadata_facade_test() {
     "tests/max_forwards.rs",
     "tests/package_list.rs",
     "tests/metadata_facade.rs",
+    "tests/content_disposition.rs",
     "tests/content_language.rs",
     "tests/no_vary_search.rs",
     "tests/upgrade.rs",

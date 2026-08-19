@@ -56,6 +56,9 @@ pub use rttp_protocol::clear_site_data::{
 pub use rttp_protocol::client_hints::{
   AcceptCh, AcceptChParseError, CriticalCh, CriticalChParseError,
 };
+pub use rttp_protocol::content_disposition::{
+  ContentDisposition, ContentDispositionParameter, ContentDispositionParseError,
+};
 pub use rttp_protocol::content_dpr::{ContentDpr, ContentDprParseError};
 pub use rttp_protocol::content_length::HttpContentLength;
 pub use rttp_protocol::content_security_policy::{

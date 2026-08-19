@@ -768,7 +768,7 @@ fn server_response_content_disposition_helper_rejects_duplicates_and_enforces_sh
     "oversized response Content-Disposition value should be rejected"
   );
 
-  let too_many = fixtures::content_disposition::too_many_server_parameters_value();
+  let too_many = fixtures::content_disposition::too_many_parameters_value();
   assert!(
     HttpContentDisposition::parse(&too_many).is_err(),
     "too many Content-Disposition parameters should be rejected"
