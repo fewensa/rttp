@@ -245,6 +245,7 @@ fn is_sensitive_debug_header(name: &str) -> bool {
     || name.eq_ignore_ascii_case("set-cookie")
     || name.eq_ignore_ascii_case("traceparent")
     || name.eq_ignore_ascii_case("tracestate")
+    || name.eq_ignore_ascii_case("baggage")
 }
 
 #[cfg(test)]
@@ -272,6 +273,9 @@ mod tests {
       "tracestate",
       "rojo=00f067aa0ba902b7,congo=t61rcWkgMzE",
     ));
+    request
+      .headers_mut()
+      .push(Header::new("baggage", "tenant=acme-secret;source=gateway"));
 
     let raw_request = RawRequest::block_new(&mut request).expect("raw request should build");
     let debug = format!("{raw_request:?}");
@@ -281,6 +285,7 @@ mod tests {
     assert!(debug.contains("Idempotency-Key"));
     assert!(debug.contains("traceparent"));
     assert!(debug.contains("tracestate"));
+    assert!(debug.contains("baggage"));
     assert!(debug.contains("[REDACTED]"));
     assert!(!debug.contains("origin-secret-token"));
     assert!(!debug.contains("cHJveHktc2VjcmV0"));
@@ -288,5 +293,7 @@ mod tests {
     assert!(!debug.contains("4bf92f3577b34da6a3ce929d0e0e4736"));
     assert!(!debug.contains("00f067aa0ba902b7"));
     assert!(!debug.contains("t61rcWkgMzE"));
+    assert!(!debug.contains("acme-secret"));
+    assert!(!debug.contains("gateway"));
   }
 }

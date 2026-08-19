@@ -1,19 +1,20 @@
 use rttp::server::{
   HttpAcceptCh, HttpAcceptCharsetParseError, HttpAcceptLanguageParseError, HttpAcceptLanguages,
   HttpAccessControlRequestMethod, HttpAccessControlRequestPrivateNetwork, HttpAltUsed,
-  HttpAltUsedParseError, HttpAuthorization, HttpConditionalMetadata, HttpContentDpr,
-  HttpContentDprParseError, HttpContentLocation, HttpContentLocationParseError, HttpContentRange,
-  HttpContentRangeParseError, HttpCrossOriginEmbedderPolicy,
-  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
-  HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpEntityTag,
-  HttpExpectations, HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince,
-  HttpIfUnmodifiedSince, HttpMaxForwards, HttpMementoDatetime, HttpMementoDatetimeParseError,
-  HttpNel, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization, HttpProxyStatus,
-  HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse, HttpSaveData, HttpSecGpc,
-  HttpSecGpcParseError, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
-  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpSunsetParseError, HttpUpgrade,
-  HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
+  HttpAltUsedParseError, HttpAuthorization, HttpBaggage, HttpBaggageMember, HttpBaggageParseError,
+  HttpBaggageProperty, HttpConditionalMetadata, HttpContentDpr, HttpContentDprParseError,
+  HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
+  HttpCrossOriginEmbedderPolicy, HttpCrossOriginEmbedderPolicyReportOnly,
+  HttpCrossOriginOpenerPolicy, HttpCrossOriginResourcePolicy, HttpDeprecation,
+  HttpDeprecationParseError, HttpEntityTag, HttpExpectations, HttpIdempotencyKey,
+  HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfUnmodifiedSince, HttpMaxForwards,
+  HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNel, HttpPragma, HttpPragmaParseError,
+  HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError, HttpRequestAcceptCharsets,
+  HttpResponse, HttpSaveData, HttpSecGpc, HttpSecGpcParseError, HttpSignature, HttpSignatureInput,
+  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
+  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
+  HttpSunsetParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
 };
 use std::io::Write;
 use std::net::SocketAddr;
@@ -196,6 +197,12 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp_client::SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let sec_purpose: rttp::SecPurpose =
     rttp_client::SecPurpose::parse("prefetch, vendor-ext").expect("Sec-Purpose should parse");
+  let baggage: rttp::Baggage =
+    rttp_client::Baggage::parse("tenant=acme;source=gateway").expect("baggage should parse");
+  let _: rttp::BaggageParseError = rttp_client::Baggage::parse("tenant=1,tenant=2")
+    .expect_err("duplicate baggage should be rejected");
+  let baggage_member: &rttp::BaggageMember = &baggage.members()[0];
+  let baggage_property: &rttp::BaggageProperty = &baggage_member.properties()[0];
   let etag: rttp::EntityTag =
     rttp_client::response::EntityTag::parse("\"asset-v7\"").expect("ETag should parse");
   let location: rttp::Location =
@@ -282,6 +289,8 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(x_content_type_options.header_value(), "nosniff");
   assert_eq!(x_frame_options, rttp::XFrameOptions::Deny);
   assert_eq!(x_frame_options.header_value(), "DENY");
+  assert_eq!("tenant", baggage_member.key());
+  assert_eq!("source", baggage_property.key());
   assert_eq!(fetch_site.header_value(), "same-origin");
   assert_eq!(sec_purpose.tokens(), ["prefetch", "vendor-ext"]);
   assert!(sec_purpose.contains_prefetch());
@@ -757,6 +766,12 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpExpectations::parse("100-continue, preview").expect("Expect should parse");
   let idempotency_key: HttpIdempotencyKey =
     HttpIdempotencyKey::parse("charge-2026-08-19-9f3c").expect("Idempotency-Key should parse");
+  let baggage: HttpBaggage =
+    HttpBaggage::parse("tenant=acme;source=gateway").expect("baggage should parse");
+  let _: HttpBaggageParseError =
+    HttpBaggage::parse("tenant=1,tenant=2").expect_err("duplicate baggage should be rejected");
+  let baggage_member: &HttpBaggageMember = &baggage.members()[0];
+  let baggage_property: &HttpBaggageProperty = &baggage_member.properties()[0];
   let _: Result<HttpIdempotencyKey, HttpIdempotencyKeyParseError> =
     HttpIdempotencyKey::parse("key with space");
   let if_modified_since: HttpIfModifiedSince =
@@ -833,6 +848,9 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!("charge-2026-08-19-9f3c", idempotency_key.as_str());
   assert_eq!("charge-2026-08-19-9f3c", idempotency_key.header_value());
   assert!(!format!("{idempotency_key:?}").contains("charge-2026-08-19-9f3c"));
+  assert_eq!("tenant", baggage_member.key());
+  assert_eq!("source", baggage_property.key());
+  assert!(!format!("{baggage:?}").contains("acme"));
   assert_eq!(
     if_modified_since.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"

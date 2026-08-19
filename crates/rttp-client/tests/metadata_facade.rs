@@ -24,9 +24,10 @@ use rttp_client::response::{
   ContentLocationParseError, Deprecation, DeprecationParseError, ReprDigest,
 };
 use rttp_client::{
-  HttpClient, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecGpc, SecGpcParseError,
-  SecPurpose, TraceParent, TraceParentParseError, TraceState, TraceStateMember,
-  TraceStateParseError, UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
+  Baggage, BaggageMember, BaggageParseError, BaggageProperty, HttpClient, SecFetchDest,
+  SecFetchMode, SecFetchSite, SecFetchUser, SecGpc, SecGpcParseError, SecPurpose, TraceParent,
+  TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError,
+  UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
 };
 use rttp_protocol::expect::Expect;
 use rttp_test_support as support;
@@ -149,6 +150,11 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let sec_gpc = SecGpc::parse("1").expect("Sec-GPC should parse");
   let _: SecGpcParseError = SecGpc::parse("0").expect_err("invalid Sec-GPC should be rejected");
   let sec_purpose = SecPurpose::parse("prefetch, vendor-ext").expect("Sec-Purpose should parse");
+  let baggage = Baggage::parse("tenant=acme;source=gateway").expect("baggage should parse");
+  let _: BaggageParseError =
+    Baggage::parse("tenant=1,tenant=2").expect_err("duplicate baggage should be rejected");
+  let baggage_member: &BaggageMember = &baggage.members()[0];
+  let baggage_property: &BaggageProperty = &baggage_member.properties()[0];
   let traceparent = TraceParent::parse("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
     .expect("traceparent should parse");
   let _: TraceParentParseError =
@@ -293,6 +299,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(sec_gpc.header_value(), "1");
   assert_eq!(sec_purpose.tokens(), ["prefetch", "vendor-ext"]);
   assert!(sec_purpose.contains_prefetch());
+  assert_eq!("tenant", baggage_member.key());
+  assert_eq!("source", baggage_property.key());
   assert_eq!("00", traceparent.version());
   assert_eq!("rojo", member.key());
   assert_eq!(upgrade_insecure_requests.header_value(), "1");

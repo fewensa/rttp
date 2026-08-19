@@ -136,6 +136,18 @@ returns the stored key and `header_value()` emits it unchanged. This parser
 reports declared request metadata only; it does not retry requests, store
 keys, compare keys across requests, or apply application idempotency policy.
 
+## W3C Baggage
+
+`baggage` parses bounded W3C `baggage` request metadata. `Baggage` preserves
+wire order while validating HTTP token keys, baggage-octet values, optional
+properties, duplicate member keys, at most 180 members, at most 8192 combined
+bytes, and 4096-byte per-member bounds. Values and property values are treated
+as opaque application data and are not decoded or interpreted. Typed `Debug`
+redacts member and property values, and parse errors describe validation
+categories without echoing supplied values. These parsers report declared
+request metadata only; they do not store request context, select a tracing
+backend, or propagate baggage automatically.
+
 ## W3C Trace Context
 
 `trace_context` parses bounded W3C `traceparent` and `tracestate` request
