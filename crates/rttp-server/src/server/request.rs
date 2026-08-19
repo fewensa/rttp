@@ -78,6 +78,10 @@ pub use rttp_protocol::save_data::{
   SaveData as HttpSaveData, SaveDataParseError as HttpSaveDataParseError,
 };
 pub use rttp_protocol::sec_gpc::{SecGpc as HttpSecGpc, SecGpcParseError as HttpSecGpcParseError};
+pub use rttp_protocol::sec_websocket_key::{
+  SecWebSocketKey as HttpSecWebSocketKey,
+  SecWebSocketKeyParseError as HttpSecWebSocketKeyParseError,
+};
 pub use rttp_protocol::signature::{
   Signature as HttpSignature, SignatureEntry as HttpSignatureEntry,
   SignatureParseError as HttpSignatureParseError,
@@ -218,6 +222,7 @@ fn is_sensitive_debug_header(name: &str) -> bool {
     || name.eq_ignore_ascii_case("cookie")
     || name.eq_ignore_ascii_case("idempotency-key")
     || name.eq_ignore_ascii_case("proxy-authorization")
+    || name.eq_ignore_ascii_case("sec-websocket-key")
     || name.eq_ignore_ascii_case("set-cookie")
     || name.eq_ignore_ascii_case("traceparent")
     || name.eq_ignore_ascii_case("tracestate")
@@ -519,6 +524,20 @@ impl Request {
       return Ok(None);
     }
     HttpIdempotencyKey::parse_values(values).map(Some)
+  }
+
+  /// Parses exactly one bounded `Sec-WebSocket-Key` field as typed nonce
+  /// metadata. Duplicate fields are rejected to avoid ambiguous nonces. This
+  /// accessor does not perform an HTTP upgrade, compute
+  /// `Sec-WebSocket-Accept`, or implement WebSocket frames.
+  pub fn sec_websocket_key(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketKey>, HttpSecWebSocketKeyParseError> {
+    let values: Vec<&str> = self.headers_named("Sec-WebSocket-Key").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketKey::parse_values(values).map(Some)
   }
 
   /// Parses received W3C `traceparent` request metadata without creating
@@ -2228,6 +2247,25 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpIdempotencyKey::parse_values(values).map(Some)
+  }
+
+  /// Parses exactly one bounded `Sec-WebSocket-Key` field as typed nonce
+  /// metadata. Duplicate fields are rejected to avoid ambiguous nonces. This
+  /// accessor does not perform an HTTP upgrade, compute
+  /// `Sec-WebSocket-Accept`, or implement WebSocket frames.
+  pub fn sec_websocket_key(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketKey>, HttpSecWebSocketKeyParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Key"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketKey::parse_values(values).map(Some)
   }
 
   /// Parses received W3C `traceparent` request metadata without creating

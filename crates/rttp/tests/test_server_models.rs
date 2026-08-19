@@ -1430,6 +1430,56 @@ fn request_idempotency_key_is_optional_and_rejects_invalid_metadata() {
 }
 
 #[test]
+fn request_sec_websocket_key_is_optional_and_rejects_invalid_metadata() {
+  let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .sec_websocket_key()
+      .expect("missing Sec-WebSocket-Key should be valid")
+  );
+
+  for value in ["dGhlIHNhbXBsZSBub25jZQ==", "AAAAAAAAAAAAAAAAAAAAAA=="] {
+    let valid = parse_request(&format!(
+      "GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Key: {value}\r\n\r\n"
+    ));
+    let parsed = valid
+      .sec_websocket_key()
+      .expect("value should parse")
+      .expect("Sec-WebSocket-Key should be present");
+    assert_eq!(value, parsed.as_str());
+    assert_eq!(value, parsed.header_value());
+    assert!(!format!("{parsed:?}").contains(value));
+  }
+
+  for value in ["", "the sample nonce", "dGhlIHNhbXBsZSBub25jZQ"] {
+    let request = parse_request(&format!(
+      "GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Key: {value}\r\n\r\n"
+    ));
+    assert!(
+      request.sec_websocket_key().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(Some(value), request.header("Sec-WebSocket-Key"));
+  }
+
+  assert!(rttp::server::HttpSecWebSocketKey::parse("A".repeat(64 * 1024 + 1)).is_err());
+
+  let duplicate = parse_request(concat!(
+    "GET /chat HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n",
+    "sec-websocket-key: AAAAAAAAAAAAAAAAAAAAAA==\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.sec_websocket_key().is_err());
+  assert_eq!(
+    Some("dGhlIHNhbXBsZSBub25jZQ=="),
+    duplicate.header("Sec-WebSocket-Key")
+  );
+}
+
+#[test]
 fn request_trace_context_is_optional_and_rejects_invalid_metadata() {
   let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
   assert_eq!(None, absent.traceparent().expect("missing traceparent"));

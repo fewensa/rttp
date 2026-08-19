@@ -682,6 +682,24 @@ continue to expose the original raw field. The key is redacted from typed
 These helpers parse request metadata only. They do not retry requests, store
 keys, compare keys across requests, or apply application idempotency policy.
 
+## Sec-WebSocket-Key request metadata
+
+Handlers can call `Request::sec_websocket_key()` and
+`HttpRequest::sec_websocket_key()` to observe bounded typed
+`Sec-WebSocket-Key` request metadata through the shared protocol
+`HttpSecWebSocketKey` type. Absent fields return `Ok(None)`. A recognized
+value is a singleton RFC 4648 section 4 base64 encoding of exactly 16 nonce
+bytes with optional surrounding SP or HTAB, bounded to 64 KiB. `as_str()`
+returns the stored encoded nonce and `header_value()` emits it unchanged.
+Malformed, URL-safe or unpadded, wrong-decoded-length, oversized, duplicate,
+or control-byte values return a parser error while `Request::header()` and
+`HttpRequest::header()` continue to expose the original raw field. The nonce
+is redacted from typed `Debug`.
+
+These helpers parse request metadata only. They do not perform an HTTP
+upgrade, compute `Sec-WebSocket-Accept`, generate a random nonce, or
+implement WebSocket frames.
+
 ## Pragma request and response metadata
 
 Handlers can call `Request::pragma()` and `HttpRequest::pragma()` to observe

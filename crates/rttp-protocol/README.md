@@ -780,6 +780,24 @@ trimmed as optional whitespace. Unknown tokens, lists, parameterized values,
 empty values, control bytes, and other unparsable input are errors.
 This parser does not infer consent, tracking, legal, or serving policy.
 
+## Sec-WebSocket-Key
+
+`sec_websocket_key` parses a singleton HTTP `Sec-WebSocket-Key` request field
+as a base64-encoded handshake nonce. Each field value is bounded to 64 KiB,
+and a second field is rejected after every supplied field is bound-checked.
+Surrounding SP and HTAB are trimmed as optional whitespace. The stored value
+is the OWS-trimmed RFC 4648 section 4 base64 text, returned by `as_str()` and
+`header_value()`; the RFC 6455 example
+`dGhlIHNhbXBsZSBub25jZQ==` decodes to the 16-byte sample nonce. Empty values,
+interior whitespace, non-base64 input, URL-safe or unpadded encodings,
+decoded nonces whose length is not exactly 16 bytes, duplicate fields,
+forbidden ASCII control bytes (including CR, LF, NUL, and obs-text), and
+oversized values are errors. The nonce is redacted from typed `Debug`, and
+parse errors describe only the header and validation category. This parser
+reports declared request metadata only; it does not perform an HTTP upgrade,
+compute `Sec-WebSocket-Accept`, generate a random nonce, or implement
+WebSocket frames.
+
 ## Upgrade-Insecure-Requests
 
 `upgrade_insecure_requests` parses a singleton `Upgrade-Insecure-Requests`
