@@ -42,6 +42,7 @@ fn package_includes_protocol_metadata_facade_test() {
     "tests/pragma.rs",
     "tests/accept_language.rs",
     "tests/alt_used.rs",
+    "tests/origin_trial.rs",
     "tests/sec_gpc.rs",
   ] {
     assert!(

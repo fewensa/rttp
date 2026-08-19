@@ -19,19 +19,19 @@ use rttp_server::server::{
   HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfModifiedSinceParseError,
   HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError, HttpKeepAlive, HttpMaxForwards,
   HttpMaxForwardsParseError, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNoVarySearch,
-  HttpNoVarySearchParams, HttpPermissionsPolicy, HttpPermissionsPolicyAllowlist,
-  HttpPermissionsPolicyAllowlistMember, HttpPermissionsPolicyDirective,
-  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective, HttpPragmaParseError,
-  HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError,
-  HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpResponse, HttpSaveData,
-  HttpSaveDataParseError, HttpSecGpc, HttpSecGpcParseError, HttpSignature, HttpSignatureInput,
-  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
-  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
-  HttpTraceParent, HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember,
-  HttpTraceStateParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
-  HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
-  HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite,
-  SecFetchUser, SecPurpose,
+  HttpNoVarySearchParams, HttpOriginTrialParseError, HttpOriginTrials, HttpPermissionsPolicy,
+  HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
+  HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective,
+  HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus,
+  HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
+  HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSecGpc, HttpSecGpcParseError,
+  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpTraceParent, HttpTraceParentParseError, HttpTraceState,
+  HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
+  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpWantContentDigest,
+  HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
 
 #[test]
@@ -60,6 +60,10 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpAltUsed::parse("[2001:db8::1]:8443").expect("Alt-Used should parse");
   let _: HttpAltUsedParseError =
     HttpAltUsed::parse("https://alt.example").expect_err("invalid Alt-Used should be rejected");
+  let origin_trials: HttpOriginTrials =
+    HttpOriginTrials::parse_values(["token-one", "token-two"]).expect("Origin-Trial should parse");
+  let _: HttpOriginTrialParseError = HttpOriginTrials::parse("token\r\nX-Injected: 1")
+    .expect_err("injected Origin-Trial should be rejected");
   let request_method: HttpAccessControlRequestMethod =
     HttpAccessControlRequestMethod::parse("patch")
       .expect("Access-Control-Request-Method should parse");
@@ -222,6 +226,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(allow_headers.field_names(), ["x-request-id"]);
   assert_eq!(alt_used.host(), "[2001:db8::1]");
   assert_eq!(alt_used.port(), Some("8443"));
+  assert_eq!(origin_trials.tokens(), ["token-one", "token-two"]);
+  assert!(!format!("{origin_trials:?}").contains("token-one"));
   assert_eq!("PATCH", request_method.method());
   assert!(request_method_error.is_err());
   assert_eq!(
@@ -1393,4 +1399,54 @@ fn response_facade_builds_and_parses_pragma_metadata() {
   let serialized = String::from_utf8(serialized).expect("response is utf8");
   assert!(serialized.contains(&format!("\r\nPragma: {first}\r\n")));
   assert!(serialized.contains(&format!("\r\nPragma: {second}\r\n")));
+}
+
+#[test]
+fn response_facade_builds_and_parses_origin_trial_metadata() {
+  let response = HttpResponse::ok("body")
+    .header("Origin-Trial", "stale-token")
+    .header("origin-trial", "older-token")
+    .with_origin_trials(["token-one", "token-one", "token-two"])
+    .expect("valid Origin-Trial metadata should be accepted");
+  let origin_trials: HttpOriginTrials = response
+    .origin_trials()
+    .expect("attached Origin-Trial should parse")
+    .expect("Origin-Trial should be present");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+
+  assert_eq!(
+    origin_trials.tokens(),
+    ["token-one", "token-one", "token-two"]
+  );
+  assert_eq!(3, serialized.matches("\r\nOrigin-Trial: ").count());
+  assert!(serialized.contains("\r\nOrigin-Trial: token-one\r\n"));
+  assert!(serialized.contains("\r\nOrigin-Trial: token-two\r\n"));
+  assert!(!serialized.contains("stale-token"));
+  assert!(!format!("{origin_trials:?}").contains("token-one"));
+  assert!(!format!("{response:?}").contains("token-one"));
+  assert!(format!("{response:?}").contains("[REDACTED]"));
+
+  let absent = HttpResponse::ok("body");
+  assert_eq!(
+    None,
+    absent
+      .origin_trials()
+      .expect("missing Origin-Trial should be accepted")
+  );
+
+  let malformed = HttpResponse::ok("body").header("Origin-Trial", "token\twith-tab");
+  assert!(malformed.origin_trials().is_err());
+  assert!(String::from_utf8(malformed.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nOrigin-Trial: token\twith-tab\r\n"));
+
+  let oversized = "x".repeat(8 * 1024 + 1);
+  let raw = HttpResponse::ok("body").header("Origin-Trial", &oversized);
+  assert!(raw.origin_trials().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains(&format!("\r\nOrigin-Trial: {oversized}\r\n")));
+  assert!(HttpResponse::ok("body")
+    .with_origin_trials(["token\r\nX-Injected: 1"])
+    .is_err());
 }

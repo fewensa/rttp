@@ -23,12 +23,13 @@ pub use rttp_client::response::{
   CrossOriginOpenerPolicyReportOnlyParseError, Deprecation, DeprecationParseError, EntityTag,
   EntityTagParseError, HttpContentLength, Location, LocationParseError, MementoDatetime,
   MementoDatetimeParseError, Nel, NelParseError, NelUnknownMember, NoVarySearch,
-  NoVarySearchParams, NoVarySearchParseError, PermissionsPolicy, PermissionsPolicyAllowlist,
-  PermissionsPolicyAllowlistMember, PermissionsPolicyDirective, PermissionsPolicyParseError,
-  Pragma, PragmaParseError, ReprDigest, StrictTransportSecurity, StrictTransportSecurityParseError,
-  Upgrade, UpgradeParseError, WantContentDigest, WantReprDigest, WwwAuthenticate,
-  WwwAuthenticateChallenge, WwwAuthenticateParameter, WwwAuthenticateParseError,
-  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  NoVarySearchParams, NoVarySearchParseError, OriginTrialParseError, OriginTrials,
+  PermissionsPolicy, PermissionsPolicyAllowlist, PermissionsPolicyAllowlistMember,
+  PermissionsPolicyDirective, PermissionsPolicyParseError, Pragma, PragmaParseError, ReprDigest,
+  StrictTransportSecurity, StrictTransportSecurityParseError, Upgrade, UpgradeParseError,
+  WantContentDigest, WantReprDigest, WwwAuthenticate, WwwAuthenticateChallenge,
+  WwwAuthenticateParameter, WwwAuthenticateParseError, XContentTypeOptions,
+  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 #[cfg(feature = "client")]
 pub use rttp_client::{

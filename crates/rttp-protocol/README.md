@@ -418,6 +418,18 @@ unbracketed IPv6, empty ports, ASCII controls, and other values outside the
 authority grammar are errors. This is response metadata only: callers own
 alternative-service selection, origin handling, and connection policy.
 
+## Origin-Trial
+
+`origin_trial` parses one or more HTTP `Origin-Trial` response fields as
+opaque trial tokens in wire order. Surrounding SP and HTAB are trimmed as
+optional whitespace. Each trimmed token must be non-empty, free of CR, LF,
+NUL, other C0 controls, DEL, and obs-text, and at most 8 KiB. The collection
+accepts at most 64 tokens and at most 64 KiB of combined token bytes.
+Duplicate token strings are preserved. Parse errors name only the validation
+category and never echo token material. `Debug` reports the type name and
+token count only. This parser does not validate token signatures, expiration,
+origin applicability, feature activation, browser behavior, or trial policy.
+
 ## Signature
 
 `signature` parses one or more RFC 9421 `Signature` field values into an
