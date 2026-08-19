@@ -43,6 +43,7 @@ use rttp_protocol::memento_datetime::MementoDatetime;
 use rttp_protocol::nel::Nel;
 use rttp_protocol::no_vary_search::{NoVarySearch, NoVarySearchParams};
 use rttp_protocol::origin::Origin;
+use rttp_protocol::permissions_policy::PermissionsPolicy;
 use rttp_protocol::pragma::{Pragma, PragmaParseError};
 use rttp_protocol::prefer::{Prefer, PreferenceApplied, PreferenceKind};
 use rttp_protocol::proxy_authentication_info::ProxyAuthenticationInfo;
@@ -113,6 +114,9 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let origin = Origin::parse("https://example.test").expect("Origin should parse");
   let no_vary_search =
     NoVarySearch::parse(r#"params=("utm_source")"#).expect("No-Vary-Search should parse");
+  let permissions_policy =
+    PermissionsPolicy::parse(r#"geolocation=(self "https://maps.example.test"), camera=()"#)
+      .expect("Permissions-Policy should parse");
   let proxy_authentication_info = ProxyAuthenticationInfo::parse(
     "nextnonce=\"xyz789\", qop=auth, rspauth=\"...\", cnonce=\"c\", nc=00000001",
   )
@@ -269,6 +273,16 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(alt_used.port(), Some("8443"));
   assert_eq!(alt_used.header_value(), "[2001:db8::1]:8443");
   assert_eq!(origin.header_value(), "https://example.test");
+  assert_eq!(
+    permissions_policy.header_value(),
+    r#"geolocation=(self "https://maps.example.test"), camera=()"#
+  );
+  assert_eq!(permissions_policy.directives().len(), 2);
+  assert!(permissions_policy
+    .directive("camera")
+    .unwrap()
+    .allowlist()
+    .is_empty());
   assert_eq!(
     no_vary_search.params(),
     Some(&NoVarySearchParams::Names(vec!["utm_source".to_owned()]))
