@@ -24,6 +24,17 @@ as invalid. A present header set that yields no unit still fails as invalid.
 The server facade aliases this type as `HttpAcceptRanges` and reuses
 `from_units`/`none` for its declaration helpers.
 
+## Age
+
+`age` parses a singleton HTTP `Age` field as non-negative `1*DIGIT`
+delta-seconds that fit in `u64`. Each field value is bounded to 64 KiB. A
+second field is rejected after every supplied field is bound-checked.
+Surrounding SP and HTAB are trimmed as optional whitespace. Empty values,
+signed or plus-prefixed numbers, fractions, comma-lists, non-digits, overflow
+beyond `u64::MAX`, and forbidden ASCII control bytes are errors. This parser
+reports declared metadata only; it does not calculate freshness, adjust age
+over elapsed time, store cache entries, or apply cache policy.
+
 ## Content-Location
 
 `content_location` parses a singleton response `Content-Location` field as one
