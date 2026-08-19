@@ -589,9 +589,12 @@ quoted values, q-value validation, bounds, and header formatting.
 The client reuses it while keeping the existing 32-helper-range limit, rejecting
 malformed media types or parameters, duplicate parameters or q-values, invalid
 q-values, oversized fields, and more than 32 media ranges before opening a
-connection. Helper appends also validate any existing raw `Accept` field with
-the protocol primitive's strict client-builder mode, preserving the facade's
-earlier rejection of valueless extension parameters before connecting. Raw
+connection. Helper q-value arguments preserve the existing facade boundary by
+accepting legacy empty fractional forms such as `0.` and `1.` while rejecting
+surrounding whitespace. Helper appends also validate any existing raw `Accept`
+field with the protocol primitive's strict client-builder mode, preserving the
+facade's earlier rejection of valueless extension parameters before
+connecting. Raw
 `header(("Accept", value))` by itself remains available for values outside the
 bounded helper API.
 

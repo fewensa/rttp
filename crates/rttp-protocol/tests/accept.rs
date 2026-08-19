@@ -51,6 +51,26 @@ fn accept_request_builder_member_preserves_wire_spelling() {
     AcceptMediaRange::request_builder_member("text/plain; feature=\"\"", None)
       .expect("empty quoted-string parameter should parse")
   );
+  assert_eq!(
+    "text/plain;q=0.",
+    AcceptMediaRange::request_builder_member("text/plain", Some("0."))
+      .expect("empty fractional q-value should preserve client compatibility")
+  );
+  assert_eq!(
+    "text/html;q=1.",
+    AcceptMediaRange::request_builder_member("text/html", Some("1."))
+      .expect("empty fractional q-value should preserve client compatibility")
+  );
+}
+
+#[test]
+fn accept_request_builder_member_rejects_padded_qvalues() {
+  for qvalue in [" 0.8", "0.8 ", "\t0.8"] {
+    assert!(
+      AcceptMediaRange::request_builder_member("text/plain", Some(qvalue)).is_err(),
+      "{qvalue:?} should preserve raw client q-value rejection"
+    );
+  }
 }
 
 #[test]

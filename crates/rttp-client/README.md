@@ -579,7 +579,9 @@ values, q-values, duplicate parameters, duplicate q-values, bounds, and header
 formatting are validated by the shared `rttp-protocol` Accept primitive; the
 client keeps the existing 32-helper-range limit and rejects oversized values,
 excessive media ranges, or invalid existing raw `Accept` fields before a helper
-append opens a connection.
+append opens a connection. Helper q-value arguments preserve the existing
+facade boundary by accepting legacy empty fractional forms such as `0.` and
+`1.` while rejecting surrounding whitespace.
 
 The helpers emit one comma-separated `Accept` field and do not choose a
 response representation. `header(("Accept", value))` remains available for

@@ -66,8 +66,15 @@ impl Accept {
         if media_ranges.len() >= maximum_media_ranges {
           return Err(AcceptParseError::new("too many Accept media ranges"));
         }
-        media_ranges
-          .push(AcceptMediaRange::parse_inner(member, allow_extensions_after_quality)?.media_range);
+        let qvalue_mode = if allow_extensions_after_quality {
+          AcceptQValueMode::Header
+        } else {
+          AcceptQValueMode::RequestBuilder
+        };
+        media_ranges.push(
+          AcceptMediaRange::parse_inner(member, allow_extensions_after_quality, qvalue_mode)?
+            .media_range,
+        );
       }
     }
 
@@ -110,7 +117,8 @@ pub struct AcceptMediaRange {
 
 impl AcceptMediaRange {
   pub fn parse(value: impl AsRef<str>) -> Result<Self, AcceptParseError> {
-    Self::parse_inner(value.as_ref(), true).map(|parsed| parsed.media_range)
+    Self::parse_inner(value.as_ref(), true, AcceptQValueMode::Header)
+      .map(|parsed| parsed.media_range)
   }
 
   pub fn request_builder_member(
@@ -121,8 +129,8 @@ impl AcceptMediaRange {
       return Err(AcceptParseError::new("invalid Accept media range"));
     }
     let media_range = media_range.trim();
-    let parsed = Self::parse_inner(media_range, false)?;
-    let qvalue = qvalue.map(validate_accept_qvalue).transpose()?;
+    let parsed = Self::parse_inner(media_range, false, AcceptQValueMode::RequestBuilder)?;
+    let qvalue = qvalue.map(validate_request_builder_qvalue).transpose()?;
     if parsed.has_quality && qvalue.is_some() {
       return Err(AcceptParseError::new("duplicate Accept quality value"));
     }
@@ -139,6 +147,7 @@ impl AcceptMediaRange {
   fn parse_inner(
     value: &str,
     allow_extensions_after_quality: bool,
+    qvalue_mode: AcceptQValueMode,
   ) -> Result<Parsed, AcceptParseError> {
     let mut parts = split_accept_parameters(value)?;
     let Some(media_type) = parts.first() else {
@@ -169,7 +178,7 @@ impl AcceptMediaRange {
         let Some(value) = value else {
           return Err(AcceptParseError::new("invalid Accept parameter"));
         };
-        quality = Some(parse_accept_quality(value)?);
+        quality = Some(parse_accept_quality(value, qvalue_mode)?);
         parsing_extensions = true;
         continue;
       }
@@ -241,6 +250,12 @@ impl AcceptMediaRange {
 struct Parsed {
   media_range: AcceptMediaRange,
   has_quality: bool,
+}
+
+#[derive(Clone, Copy)]
+enum AcceptQValueMode {
+  Header,
+  RequestBuilder,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -378,8 +393,14 @@ fn parse_accept_quoted_string(value: &str) -> Result<String, AcceptParseError> {
   Ok(parsed)
 }
 
-fn parse_accept_quality(value: &str) -> Result<u16, AcceptParseError> {
-  let value = validate_accept_qvalue(value)?;
+fn parse_accept_quality(
+  value: &str,
+  qvalue_mode: AcceptQValueMode,
+) -> Result<u16, AcceptParseError> {
+  let value = match qvalue_mode {
+    AcceptQValueMode::Header => validate_accept_qvalue(value)?,
+    AcceptQValueMode::RequestBuilder => validate_request_builder_qvalue(value)?,
+  };
   let valid = match value {
     "0" => Some(0),
     "1" => Some(1000),
@@ -387,6 +408,13 @@ fn parse_accept_quality(value: &str) -> Result<u16, AcceptParseError> {
       let Some((whole, fractional)) = value.split_once('.') else {
         return Err(AcceptParseError::new("invalid Accept quality value"));
       };
+      if fractional.is_empty() {
+        return match (whole, qvalue_mode) {
+          ("0", AcceptQValueMode::RequestBuilder) => Ok(0),
+          ("1", AcceptQValueMode::RequestBuilder) => Ok(1000),
+          _ => Err(AcceptParseError::new("invalid Accept quality value")),
+        };
+      }
       let scale = 10u16.pow((3 - fractional.len()) as u32);
       match whole {
         "0" => fractional
@@ -415,6 +443,23 @@ fn validate_accept_qvalue(qvalue: &str) -> Result<&str, AcceptParseError> {
   };
   if valid {
     Ok(value)
+  } else {
+    Err(AcceptParseError::new("invalid Accept quality value"))
+  }
+}
+
+fn validate_request_builder_qvalue(qvalue: &str) -> Result<&str, AcceptParseError> {
+  let valid = match qvalue.split_once('.') {
+    Some((whole, fraction)) => {
+      (whole == "0" || whole == "1")
+        && fraction.len() <= 3
+        && fraction.bytes().all(|byte| byte.is_ascii_digit())
+        && (whole == "0" || fraction.bytes().all(|byte| byte == b'0'))
+    }
+    None => qvalue == "0" || qvalue == "1",
+  };
+  if valid {
+    Ok(qvalue)
   } else {
     Err(AcceptParseError::new("invalid Accept quality value"))
   }

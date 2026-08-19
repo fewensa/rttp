@@ -422,7 +422,9 @@ redirect, retry, or select representations from `Content-Language`.
 `HttpClient::accept()` and `accept_with_q()` validate helper-built request
 media ranges through the shared `rttp-protocol` Accept primitive while keeping
 the client facade's existing 32-helper-range limit and raw
-`header(("Accept", value))` escape hatch. `Request::accept()` and
+`header(("Accept", value))` escape hatch. Helper q-value arguments preserve the
+existing facade boundary by accepting legacy empty fractional forms such as
+`0.` and `1.` while rejecting surrounding whitespace. `Request::accept()` and
 `HttpRequest::accept()` expose the same protocol representation as
 `HttpAccept`/`HttpMediaRange`, returning `Ok(None)` when absent and preserving
 raw headers when malformed, duplicate, oversized, or excessive values fail typed

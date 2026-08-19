@@ -23,10 +23,12 @@ q-values are rejected, while server-side parsing tolerates extension parameters
 after the first q-value without making representation choices.
 
 The client facade reuses this module to validate and format helper-built
-`Accept` request fields. When helper appends inspect an existing raw `Accept`
-field, the protocol primitive also provides the strict client-builder parse
-mode needed to preserve that facade's earlier rejection of valueless extension
-parameters. The server facade aliases the same types as
+`Accept` request fields. Helper-supplied q-value arguments preserve the client
+facade boundary by accepting legacy empty fractional forms such as `0.` and
+`1.` while rejecting surrounding whitespace. When helper appends inspect an
+existing raw `Accept` field, the protocol primitive also provides the strict
+client-builder parse mode needed to preserve that facade's earlier rejection
+of valueless extension parameters. The server facade aliases the same types as
 `HttpAccept`, `HttpMediaRange`, and `HttpAcceptParseError` for request
 accessors. Raw `Accept` headers remain caller-owned escape hatches outside the
 bounded helper API.
