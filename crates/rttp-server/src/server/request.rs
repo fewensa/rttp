@@ -59,6 +59,9 @@ pub use rttp_protocol::transfer_encoding::{
   TransferEncoding as HttpTransferEncoding,
   TransferEncodingParseError as HttpTransferEncodingParseError,
 };
+pub use rttp_protocol::upgrade::{
+  Upgrade as HttpUpgrade, UpgradeParseError as HttpUpgradeParseError,
+};
 pub use rttp_protocol::want_content_digest::{
   WantContentDigest as HttpWantContentDigest, WantContentDigestEntry as HttpWantContentDigestEntry,
   WantContentDigestParseError as HttpWantContentDigestParseError,
@@ -545,6 +548,16 @@ impl Request {
     &self,
   ) -> Result<Option<HttpSignatureInput>, HttpSignatureInputParseError> {
     parse_signature_input_values(self.headers_named("Signature-Input"))
+  }
+
+  /// Parses received `Upgrade` protocol metadata without changing handoff
+  /// validation or interpreting the upgraded protocol.
+  pub fn upgrade(&self) -> Result<Option<HttpUpgrade>, HttpUpgradeParseError> {
+    let values: Vec<&str> = self.headers_named("Upgrade").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpUpgrade::parse_values(values).map(Some)
   }
 
   /// Parses received `Content-Type` representation metadata without sniffing
@@ -2491,6 +2504,21 @@ impl HttpRequest {
         .filter(|header| header.name.eq_ignore_ascii_case("Signature-Input"))
         .map(|header| header.value.as_str()),
     )
+  }
+
+  /// Parses received `Upgrade` protocol metadata without changing handoff
+  /// validation or interpreting the upgraded protocol.
+  pub fn upgrade(&self) -> Result<Option<HttpUpgrade>, HttpUpgradeParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Upgrade"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpUpgrade::parse_values(values).map(Some)
   }
 
   /// Parses received `Content-Type` representation metadata without sniffing

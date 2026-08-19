@@ -1,9 +1,9 @@
-//! Bounded, policy-free `Content-Language` response metadata parsing.
+//! Bounded, policy-free `Content-Language` representation metadata parsing.
 //!
 //! This module validates one or more RFC 9110 `Content-Language` field values
-//! as an ordered list of language tags. Callers decide whether and how to
-//! negotiate or select language variants. Unparsable input is an error; this
-//! parser never fails open.
+//! as an ordered list of concrete language tags. Callers decide whether and how
+//! to select, negotiate, or localize representations. Unparsable input is an
+//! error; this parser never fails open.
 
 use std::error::Error;
 use std::fmt;
@@ -26,7 +26,7 @@ impl ContentLanguage {
   where
     I: IntoIterator<Item = &'a str>,
   {
-    let mut tags = Vec::new();
+    let mut tags: Vec<String> = Vec::new();
 
     for value in values {
       if value.len() > MAX_CONTENT_LANGUAGE_VALUE_BYTES {
@@ -34,10 +34,14 @@ impl ContentLanguage {
           "Content-Language header value is too large",
         ));
       }
-
-      for tag in value.split(',') {
-        let tag = tag.trim_matches([' ', '\t']);
-        if !is_valid_language_tag(tag) {
+      if value.bytes().any(is_invalid_control_byte) {
+        return Err(ContentLanguageParseError::new(
+          "invalid Content-Language control byte",
+        ));
+      }
+      for member in value.split(',') {
+        let tag = member.trim_matches([' ', '\t']);
+        if tag.is_empty() || !is_language_tag(tag) {
           return Err(ContentLanguageParseError::new(
             "invalid Content-Language tag",
           ));
@@ -55,7 +59,7 @@ impl ContentLanguage {
             "too many Content-Language tags",
           ));
         }
-        tags.push(tag.to_string());
+        tags.push(tag.to_owned());
       }
     }
 
@@ -128,22 +132,191 @@ impl fmt::Display for ContentLanguageParseError {
 
 impl Error for ContentLanguageParseError {}
 
-fn is_valid_language_tag(value: &str) -> bool {
-  let mut subtags = value.split('-');
-  let Some(primary) = subtags.next() else {
+fn is_language_tag(value: &str) -> bool {
+  if is_grandfathered_tag(value) {
+    return true;
+  }
+
+  let subtags = value.split('-').collect::<Vec<_>>();
+  if subtags.iter().any(|subtag| subtag.is_empty()) {
+    return false;
+  }
+  if is_privateuse_subtags(&subtags) {
+    return true;
+  }
+
+  let Some(language) = subtags.first() else {
     return false;
   };
 
-  if primary.is_empty()
-    || primary.len() > 8
-    || !primary.bytes().all(|byte| byte.is_ascii_alphabetic())
-  {
+  if !is_language_subtag(language) {
     return false;
   }
 
-  subtags.all(|subtag| {
-    !subtag.is_empty()
-      && subtag.len() <= 8
-      && subtag.bytes().all(|byte| byte.is_ascii_alphanumeric())
-  })
+  let mut index = 1;
+
+  if (2..=3).contains(&language.len()) {
+    let extlang_end = usize::min(index + 3, subtags.len());
+    while index < extlang_end && is_extlang_subtag(subtags[index]) {
+      index += 1;
+    }
+  }
+
+  if subtags
+    .get(index)
+    .is_some_and(|subtag| is_script_subtag(subtag))
+  {
+    index += 1;
+  }
+
+  if subtags
+    .get(index)
+    .is_some_and(|subtag| is_region_subtag(subtag))
+  {
+    index += 1;
+  }
+
+  let mut seen_variants: Vec<&str> = Vec::new();
+  while subtags
+    .get(index)
+    .is_some_and(|subtag| is_variant_subtag(subtag))
+  {
+    let variant = subtags[index];
+    if seen_variants
+      .iter()
+      .any(|known| known.eq_ignore_ascii_case(variant))
+    {
+      return false;
+    }
+    seen_variants.push(variant);
+    index += 1;
+  }
+
+  let mut seen_extension_singletons: Vec<&str> = Vec::new();
+  while subtags
+    .get(index)
+    .is_some_and(|subtag| is_extension_singleton(subtag))
+  {
+    let singleton = subtags[index];
+    if seen_extension_singletons
+      .iter()
+      .any(|known| known.eq_ignore_ascii_case(singleton))
+    {
+      return false;
+    }
+    seen_extension_singletons.push(singleton);
+    index += 1;
+    let extension_start = index;
+    while subtags
+      .get(index)
+      .is_some_and(|subtag| is_extension_subtag(subtag))
+    {
+      index += 1;
+    }
+    if index == extension_start {
+      return false;
+    }
+  }
+
+  if subtags
+    .get(index)
+    .is_some_and(|subtag| is_privateuse_prefix(subtag))
+  {
+    return is_privateuse_subtags(&subtags[index..]);
+  }
+
+  index == subtags.len()
+}
+
+fn is_language_subtag(value: &str) -> bool {
+  ((2..=3).contains(&value.len()) || (4..=8).contains(&value.len()))
+    && value.bytes().all(|byte| byte.is_ascii_alphabetic())
+}
+
+fn is_extlang_subtag(value: &str) -> bool {
+  value.len() == 3 && value.bytes().all(|byte| byte.is_ascii_alphabetic())
+}
+
+fn is_script_subtag(value: &str) -> bool {
+  value.len() == 4 && value.bytes().all(|byte| byte.is_ascii_alphabetic())
+}
+
+fn is_region_subtag(value: &str) -> bool {
+  (value.len() == 2 && value.bytes().all(|byte| byte.is_ascii_alphabetic()))
+    || (value.len() == 3 && value.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
+fn is_variant_subtag(value: &str) -> bool {
+  ((5..=8).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_alphanumeric()))
+    || (value.len() == 4
+      && value
+        .bytes()
+        .next()
+        .is_some_and(|byte| byte.is_ascii_digit())
+      && value.bytes().all(|byte| byte.is_ascii_alphanumeric()))
+}
+
+fn is_extension_singleton(value: &str) -> bool {
+  value.len() == 1
+    && value.bytes().all(|byte| byte.is_ascii_alphanumeric())
+    && !is_privateuse_prefix(value)
+}
+
+fn is_extension_subtag(value: &str) -> bool {
+  (2..=8).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_alphanumeric())
+}
+
+fn is_privateuse_subtag(value: &str) -> bool {
+  (1..=8).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_alphanumeric())
+}
+
+fn is_privateuse_subtags(subtags: &[&str]) -> bool {
+  subtags.len() >= 2
+    && is_privateuse_prefix(subtags[0])
+    && subtags[1..]
+      .iter()
+      .all(|subtag| is_privateuse_subtag(subtag))
+}
+
+fn is_privateuse_prefix(value: &str) -> bool {
+  value.eq_ignore_ascii_case("x")
+}
+
+fn is_grandfathered_tag(value: &str) -> bool {
+  GRANDFATHERED_TAGS
+    .iter()
+    .any(|tag| tag.eq_ignore_ascii_case(value))
+}
+
+const GRANDFATHERED_TAGS: &[&str] = &[
+  "art-lojban",
+  "cel-gaulish",
+  "en-GB-oed",
+  "i-ami",
+  "i-bnn",
+  "i-default",
+  "i-enochian",
+  "i-hak",
+  "i-klingon",
+  "i-lux",
+  "i-mingo",
+  "i-navajo",
+  "i-pwn",
+  "i-tao",
+  "i-tay",
+  "i-tsu",
+  "no-bok",
+  "no-nyn",
+  "sgn-BE-FR",
+  "sgn-BE-NL",
+  "sgn-CH-DE",
+  "zh-guoyu",
+  "zh-hakka",
+  "zh-min",
+  "zh-min-nan",
+  "zh-xiang",
+];
+
+fn is_invalid_control_byte(byte: u8) -> bool {
+  byte != b'\t' && (byte <= 0x1f || byte == 0x7f)
 }

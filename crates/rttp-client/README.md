@@ -183,6 +183,22 @@ metadata does not trigger automatic preload execution, cache policy, redirect,
 retry, replay, route generation, streaming early-write behavior, TLS/ALPN
 behavior, or status-policy behavior.
 
+## Bounded HTTP/1.1 Link response metadata
+
+`Response::links()` parses one or more final-response `Link` fields into
+ordered `LinkValues` and `LinkValue` metadata. It returns `Ok(None)` when the
+header is absent. Each value retains its target URI/reference and ordered
+parameters, including unknown parameters such as extensions alongside `rel`.
+Parsing is on demand, so malformed or oversized metadata returns an error
+without discarding raw response headers. Fields and parameter values are
+limited to 64 KiB, with at most 256 link-values and 256 parameters per value;
+the original `Link` fields remain available through `Response::header_value()`
+and `Response::header_values()`.
+
+The helper is metadata-only and shares Early Hints' bounded metadata posture:
+it does not preload, resolve, schedule fetches, redirect, apply cache policy,
+or generate routes from `Link`.
+
 ## Bounded Cache-Control request metadata
 
 `HttpClient::cache_control_no_cache()`, `cache_control_no_store()`, and
@@ -529,6 +545,26 @@ time.
 This helper is HTTP/1 header metadata only. `rttp_client` does not change
 keep-alive, `auto_add_connection`, hop-by-hop stripping, or HTTP/2 rejection
 from this accessor.
+
+## Bounded Upgrade metadata
+
+`HttpClient::upgrade_protocols()` validates and replaces request `Upgrade`
+metadata without opening a socket, changing request method, or adding
+`Connection: Upgrade`. `Response::upgrade()` parses retained HTTP/1 `Upgrade`
+response fields into `Upgrade` metadata. It returns `Ok(None)` when the header
+is absent. Present values combine fields in wire order and preserve protocol
+spelling.
+
+Each field value is limited to 64 KiB. Parsing accepts at most 32 protocols.
+Each protocol must be an HTTP token, optionally followed by `/` and a token
+protocol version. Empty members, malformed protocols, control bytes,
+oversized values, and too many protocols are rejected. Parse errors do not
+reject the raw response: original headers remain available through
+`Response::header_value()` and `Response::header_values()`.
+
+These helpers expose HTTP/1 header metadata only. They do not select h2c,
+perform `connect()` or `upgrade()` handoff, alter `Connection` handling,
+negotiate ALPN, or implement the upgraded protocol.
 
 ## Bounded Keep-Alive metadata
 

@@ -466,6 +466,28 @@ fn response_browser_policy_helpers_preserve_metadata_without_enforcing_it() {
 }
 
 #[test]
+fn response_content_range_helper_parses_and_rejects_duplicate_metadata() {
+  let response = HttpResponse::partial_content("0123456789", HttpByteRange::new(3, 6));
+
+  assert_eq!(
+    Some(HttpContentRange::Bytes {
+      start: 3,
+      end: 6,
+      complete_length: Some(10),
+    }),
+    response
+      .content_range()
+      .expect("Content-Range metadata should parse")
+  );
+
+  assert!(HttpResponse::ok("body")
+    .header("Content-Range", "bytes 0-1/4")
+    .header("Content-Range", "bytes 2-3/4")
+    .content_range()
+    .is_err());
+}
+
+#[test]
 fn response_client_hints_helpers_declare_and_parse_metadata_without_policy() {
   let response = HttpResponse::ok("body")
     .header("Accept-CH", "DPR")
@@ -545,13 +567,13 @@ fn response_www_authenticate_helper_validates_and_preserves_raw_headers() {
     .contains("\r\nWWW-Authenticate: Digest realm=\"apps\", nonce=n-1, Basic\r\n"));
 
   assert!(HttpResponse::ok("body")
-    .with_www_authenticate("Basic realm=")
+    .with_www_authenticate("Basic realm=\"")
     .is_err());
-  let raw = HttpResponse::ok("body").header("WWW-Authenticate", "Basic realm=");
+  let raw = HttpResponse::ok("body").header("WWW-Authenticate", "Basic realm=\"");
   assert!(raw.www_authenticate().is_err());
   assert!(String::from_utf8(raw.to_bytes())
     .expect("response should serialize")
-    .contains("\r\nWWW-Authenticate: Basic realm=\r\n"));
+    .contains("\r\nWWW-Authenticate: Basic realm=\"\r\n"));
 }
 
 #[test]
@@ -2221,6 +2243,18 @@ fn response_link_metadata_preserves_valueless_extensions_and_empty_quoted_values
 }
 
 #[test]
+fn response_link_metadata_accepts_obs_text_in_quoted_parameter_values() {
+  let response = HttpResponse::ok("body").header("Link", r#"</style.css>; title="\é""#);
+
+  let links = response
+    .links()
+    .expect("Link metadata should parse")
+    .expect("Link metadata should be present");
+
+  assert_eq!(Some("é"), links.values()[0].parameter("title"));
+}
+
+#[test]
 fn response_link_metadata_rejects_invalid_and_bounded_values_without_losing_headers() {
   for value in [
     "style.css; rel=preload",
@@ -2229,6 +2263,21 @@ fn response_link_metadata_rejects_invalid_and_bounded_values_without_losing_head
     "</style.css>; =preload",
     "</style.css>; bad name=value",
     "</style.css>; rel=\"unterminated",
+    "<foo bar>",
+    "<foo\tbar>",
+    r"<foo\bar>",
+    "<a%zz>",
+    "<a%2>",
+    "<a%>",
+    "<foo\"bar>",
+    "<foo^bar>",
+    "<foo`bar>",
+    "<foo|bar>",
+    "<caf\u{e9}>",
+    "</style.css>; rel=",
+    "</style.css>; rel= ",
+    "</style.css>; rel =",
+    "</style.css>; rel = ",
   ] {
     let response = HttpResponse::ok("body").header("Link", value);
     assert!(
@@ -3754,4 +3803,35 @@ fn early_hints_rejects_invalid_injected_forbidden_and_oversized_headers() {
     [("X-Trace", "x".repeat(64 * 1024 + 1))]
   )
   .is_err());
+}
+
+#[test]
+fn early_hints_rejects_links_that_links_parser_rejects() {
+  for value in [
+    "style.css; rel=preload",
+    "<foo bar>",
+    "<foo\tbar>",
+    "<a%zz>",
+    "<a%2>",
+    "<a%>",
+    "<foo\"bar>",
+    "<caf\u{e9}>",
+    "</style.css>; rel=",
+    "</style.css>; rel= ",
+  ] {
+    assert!(
+      HttpResponse::early_hints([value]).is_err(),
+      "early_hints should reject {value:?}"
+    );
+  }
+
+  let response = HttpResponse::early_hints([r#"</style.css>; rel=preload; as=style"#])
+    .expect("valid RFC 8288 link should build");
+  let links = response
+    .links()
+    .expect("early-hints Link should parse")
+    .expect("Link metadata should be present");
+  assert_eq!(1, links.len());
+  assert_eq!("/style.css", links.values()[0].target());
+  assert_eq!(Some("preload"), links.values()[0].parameter("rel"));
 }

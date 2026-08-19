@@ -22,6 +22,9 @@
 pub use self::response::*;
 
 pub use rttp_protocol::accept_ranges::{AcceptRanges, AcceptRangesParseError};
+pub use rttp_protocol::access_control_allow_credentials::{
+  AccessControlAllowCredentials, AccessControlAllowCredentialsParseError,
+};
 pub use rttp_protocol::access_control_allow_headers::{
   AccessControlAllowHeaders, AccessControlAllowHeadersParseError,
 };
@@ -47,6 +50,9 @@ pub use rttp_protocol::client_hints::{
   AcceptCh, AcceptChParseError, CriticalCh, CriticalChParseError,
 };
 pub use rttp_protocol::content_length::HttpContentLength;
+pub use rttp_protocol::content_security_policy::{
+  ContentSecurityPolicy, ContentSecurityPolicyParseError,
+};
 pub use rttp_protocol::cookie::{
   HttpCookieParseError, HttpSetCookie, HttpSetCookieAttribute, HttpSetCookies,
 };
@@ -79,6 +85,7 @@ pub use rttp_protocol::digest::{
 };
 pub use rttp_protocol::entity_tag::{EntityTag, EntityTagParseError};
 pub use rttp_protocol::keep_alive::{KeepAlive, KeepAliveExtension, KeepAliveParseError};
+pub use rttp_protocol::link::{LinkParameter, LinkParseError, LinkValue, LinkValues};
 pub use rttp_protocol::location::{Location, LocationParseError};
 pub use rttp_protocol::no_vary_search::{
   NoVarySearch, NoVarySearchExtension, NoVarySearchParams, NoVarySearchParseError,
@@ -116,6 +123,7 @@ pub use rttp_protocol::strict_transport_security::{
 pub use rttp_protocol::timing_allow_origin::{TimingAllowOrigin, TimingAllowOriginParseError};
 pub use rttp_protocol::trailer::{Trailer, TrailerParseError};
 pub use rttp_protocol::transfer_encoding::{TransferEncoding, TransferEncodingParseError};
+pub use rttp_protocol::upgrade::{Upgrade, UpgradeParseError};
 pub use rttp_protocol::vary::{Vary, VaryParseError};
 pub use rttp_protocol::want_content_digest::{
   WantContentDigest, WantContentDigestEntry, WantContentDigestParseError,

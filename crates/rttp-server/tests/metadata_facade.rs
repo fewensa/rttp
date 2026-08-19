@@ -1,23 +1,28 @@
 use rttp_server::server::{
-  HttpAcceptCh, HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods,
-  HttpAccessControlRequestHeaders, HttpAccessControlRequestHeadersParseError,
-  HttpAccessControlRequestMethod, HttpAccessControlRequestMethodParseError,
-  HttpAccessControlRequestPrivateNetwork, HttpAccessControlRequestPrivateNetworkParseError,
-  HttpCdnCacheControl, HttpConditionalMetadata, HttpConnection, HttpConnectionParseError,
-  HttpContentLength, HttpContentLocation, HttpContentLocationParseError, HttpContentRange,
-  HttpContentRangeParseError, HttpCrossOriginEmbedderPolicyReportOnly,
-  HttpCrossOriginResourcePolicy, HttpEntityTag, HttpHost, HttpKeepAlive, HttpNoVarySearch,
-  HttpNoVarySearchParams, HttpPreferenceKind, HttpRequest, HttpResponse, HttpSignature,
-  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpTransferEncoding, HttpTransferEncodingParseError,
-  HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite,
-  SecFetchUser,
+  HttpAcceptCh, HttpAccessControlAllowCredentials, HttpAccessControlAllowCredentialsParseError,
+  HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods, HttpAccessControlRequestHeaders,
+  HttpAccessControlRequestHeadersParseError, HttpAccessControlRequestMethod,
+  HttpAccessControlRequestMethodParseError, HttpAccessControlRequestPrivateNetwork,
+  HttpAccessControlRequestPrivateNetworkParseError, HttpCdnCacheControl, HttpConditionalMetadata,
+  HttpConnection, HttpConnectionParseError, HttpContentDisposition, HttpContentLength,
+  HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
+  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpHost,
+  HttpKeepAlive, HttpNoVarySearch, HttpNoVarySearchParams, HttpPreferenceKind, HttpRequest,
+  HttpResponse, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
+  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
+  HttpSignatureInputParseError, HttpSignatureParseError, HttpTransferEncoding,
+  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeParseError, HttpWantContentDigest,
+  HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
 };
 
 #[test]
 fn server_facade_exports_representative_bounded_metadata_types() {
   let accept_ch: HttpAcceptCh = HttpAcceptCh::parse("Sec-CH-UA").expect("Accept-CH should parse");
+  let allow_credentials: HttpAccessControlAllowCredentials =
+    HttpAccessControlAllowCredentials::parse("true")
+      .expect("Access-Control-Allow-Credentials should parse");
+  let _: Result<HttpAccessControlAllowCredentials, HttpAccessControlAllowCredentialsParseError> =
+    HttpAccessControlAllowCredentials::parse("false");
   let allow_methods: HttpAccessControlAllowMethods =
     HttpAccessControlAllowMethods::parse("GET").expect("Access-Control-Allow-Methods should parse");
   let allow_headers: HttpAccessControlAllowHeaders =
@@ -80,8 +85,11 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
   let fetch_user = SecFetchUser::parse("?1").expect("Sec-Fetch-User should parse");
+  let upgrade: HttpUpgrade = HttpUpgrade::parse("websocket").expect("Upgrade should parse");
+  let _: HttpUpgradeParseError = HttpUpgrade::parse("").expect_err("empty Upgrade should fail");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA"]);
+  assert_eq!(allow_credentials.header_value(), "true");
   assert_eq!(allow_methods.methods(), ["GET"]);
   assert_eq!(allow_headers.field_names(), ["x-request-id"]);
   assert_eq!("PATCH", request_method.method());
@@ -158,6 +166,7 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_mode.header_value(), "navigate");
   assert_eq!(fetch_dest.header_value(), "document");
   assert_eq!(fetch_user.header_value(), "?1");
+  assert_eq!(upgrade.protocols(), ["websocket"]);
 }
 
 #[test]
@@ -330,6 +339,42 @@ fn request_facade_parses_want_content_digest_metadata() {
 }
 
 #[test]
+fn request_facade_parses_upgrade_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /chat HTTP/1.1\r\nHost: example.test\r\nUpgrade: websocket\r\nUpgrade: HTTP/2.0, custom\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let upgrade = request
+    .upgrade()
+    .expect("Upgrade should parse")
+    .expect("Upgrade should be present");
+
+  assert_eq!(upgrade.protocols(), ["websocket", "HTTP/2.0", "custom"]);
+}
+
+#[test]
+fn response_facade_builds_and_parses_upgrade_metadata() {
+  let response = HttpResponse::new(101, "Switching Protocols")
+    .header("Upgrade", "raw")
+    .with_upgrade(["websocket", "TLS/1.3"])
+    .expect("Upgrade should be accepted");
+
+  let upgrade = response
+    .upgrade()
+    .expect("Upgrade should parse")
+    .expect("Upgrade should be present");
+
+  assert_eq!(upgrade.protocols(), ["websocket", "TLS/1.3"]);
+  let mut serialized = Vec::new();
+  response.write_to(&mut serialized).expect("response writes");
+  let serialized = String::from_utf8(serialized).expect("response is utf8");
+  assert!(serialized.contains("\r\nUpgrade: websocket, TLS/1.3\r\n"));
+  assert!(!serialized.contains("\r\nUpgrade: raw\r\n"));
+  assert!(!serialized.contains("\r\nContent-Length:"));
+}
+
+#[test]
 fn request_facade_parses_host_authority() {
   let request = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test:8443\r\n\r\n")
     .expect("request should parse");
@@ -496,4 +541,25 @@ fn request_facade_returns_none_when_transfer_encoding_is_absent() {
 fn request_facade_rejects_non_sole_chunked_transfer_encoding_values() {
   let _: HttpTransferEncodingParseError = HttpTransferEncoding::parse("gzip, chunked")
     .expect_err("non-sole chunked Transfer-Encoding should be rejected");
+}
+
+#[test]
+fn response_facade_round_trips_obs_text_content_disposition_parameter_value() {
+  let disposition = HttpContentDisposition::parse("attachment; filename=\"é\"")
+    .expect("obs-text Content-Disposition parameter should parse");
+
+  assert_eq!(Some("é"), disposition.parameter("filename"));
+  assert_eq!("attachment; filename=\"é\"", disposition.header_value());
+}
+
+#[test]
+fn response_facade_round_trips_escaped_content_disposition_parameter_value() {
+  let disposition = HttpContentDisposition::parse(r#"attachment; filename="a\"b\\c""#)
+    .expect("escaped Content-Disposition parameter should parse");
+
+  assert_eq!(Some(r#"a"b\c"#), disposition.parameter("filename"));
+  assert_eq!(
+    r#"attachment; filename="a\"b\\c""#,
+    disposition.header_value()
+  );
 }

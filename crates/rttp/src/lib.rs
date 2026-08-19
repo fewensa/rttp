@@ -6,15 +6,18 @@ pub use rttp_server::server;
 
 #[cfg(feature = "client")]
 pub use rttp_client::response::{
-  AcceptCh, AcceptPatch, AcceptPost, AcceptRanges, AltSvc, AltSvcAlternative, AltSvcParameter,
+  AcceptCh, AcceptPatch, AcceptPost, AcceptRanges, AccessControlAllowCredentials,
+  AccessControlAllowCredentialsParseError, AltSvc, AltSvcAlternative, AltSvcParameter,
   AltSvcParseError, AuthenticationInfo, AuthenticationInfoParameter, AuthenticationInfoParseError,
   CdnCacheControl, CdnCacheControlParseError, ContentLocation, ContentLocationParseError,
-  ContentRange, ContentRangeParseError, CriticalCh, CrossOriginEmbedderPolicy,
-  CrossOriginEmbedderPolicyParseError, CrossOriginEmbedderPolicyReportOnly,
-  CrossOriginEmbedderPolicyReportOnlyParseError, CrossOriginOpenerPolicy,
-  CrossOriginOpenerPolicyParseError, EntityTag, EntityTagParseError, HttpContentLength, Location,
-  LocationParseError, Nel, NelParseError, NelUnknownMember, NoVarySearch, NoVarySearchParams,
-  NoVarySearchParseError, StrictTransportSecurity, StrictTransportSecurityParseError,
+  ContentRange, ContentRangeParseError, ContentSecurityPolicy, ContentSecurityPolicyParseError,
+  CriticalCh, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyParseError,
+  CrossOriginEmbedderPolicyReportOnly, CrossOriginEmbedderPolicyReportOnlyParseError,
+  CrossOriginOpenerPolicy, CrossOriginOpenerPolicyParseError, EntityTag, EntityTagParseError,
+  HttpContentLength, Location, LocationParseError, Nel, NelParseError, NelUnknownMember,
+  NoVarySearch, NoVarySearchParams, NoVarySearchParseError, StrictTransportSecurity,
+  StrictTransportSecurityParseError, Upgrade, UpgradeParseError, WwwAuthenticate,
+  WwwAuthenticateChallenge, WwwAuthenticateParameter, WwwAuthenticateParseError,
   XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 #[cfg(feature = "client")]

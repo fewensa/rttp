@@ -62,6 +62,21 @@ present header set that yields no token still fails as invalid. This parser
 never fails open and does not apply keep-alive, hop-by-hop stripping, upgrade,
 or HTTP/2 rejection policy.
 
+## Upgrade
+
+`upgrade` parses one or more HTTP/1 `Upgrade` field values into an ordered
+list of protocol names. This is header-field metadata, not a socket handoff
+type. Each field value is bounded to 64 KiB, and the cumulative protocol count
+across all supplied fields is bounded to 32 protocols.
+
+Protocols are split on commas with SP and HTAB accepted only as optional
+whitespace around each protocol. A protocol is an RFC 9110 token, optionally
+followed by `/` and a token protocol version. Empty members, forbidden ASCII
+control bytes, malformed tokens, empty versions, nested `/` versions, and
+over-limit protocol lists are rejected. This parser validates declared
+metadata only; callers own `Connection: Upgrade`, h2c negotiation, socket
+handoff, and any upgraded protocol bytes.
+
 ## Content-Encoding
 
 `content_encoding` parses one or more `Content-Encoding` field values into an
@@ -74,17 +89,31 @@ repeated codings are retained in wire order so callers can inspect the full
 encoding stack. A present header set that yields no coding still fails as
 invalid.
 
+## Content-Security-Policy
+
+`content_security_policy` parses one or more `Content-Security-Policy` field
+values as opaque response metadata. Each field value is bounded to 64 KiB.
+Absent fields, empty values, ASCII control bytes other than HTAB, and oversized
+values are errors. Valid values are preserved exactly in wire order for
+`header_values()`, with `as_str()` and `header_value()` returning the first
+policy value. This parser does not evaluate directives, enforce browser
+security policy, deliver violation reports, or change raw header availability.
+
 ## Content-Language
 
 `content_language` parses one or more `Content-Language` field values into an
-ordered list of language tags. Each field value is bounded to 64 KiB, and the
-cumulative tag count across all supplied fields is bounded to 256 tags. Tags
-are split on commas with SP and HTAB accepted only as optional whitespace
-around each tag; each tag must contain non-empty ASCII alphanumeric subtags
-separated by hyphens with an alphabetic primary subtag no longer than 8
-characters. Case-insensitive duplicate tags, empty members, malformed tags,
-and oversized values are rejected. A present header set that yields no tag
-still fails as invalid.
+ordered list of concrete language tags, preserving each tag's spelling and
+wire order. Each field value is bounded to 64 KiB, and the cumulative tag
+count across all supplied fields is bounded to 256 tags. Tags are split on
+commas with SP and HTAB accepted only as optional whitespace around each tag;
+empty members, members containing forbidden ASCII control bytes, `*`, and
+non-ASCII bytes are rejected. Each tag must match the supported BCP 47-shaped
+grammar: language, optional extlang, script, region, variant, extension, and
+private-use subtags, plus registered grandfathered tags. Duplicate tags are
+rejected case-insensitively while valid spelling and order are preserved. A
+present header set that yields no tag still fails as invalid. This parser
+reports declared representation metadata only; it does not negotiate, infer, or
+select languages.
 
 ## Transfer-Encoding
 
@@ -299,6 +328,22 @@ policy names remain forward-compatible within the same validation and count
 bounds. A present header set that yields no recognized token still fails as
 invalid.
 
+## Link
+
+`link` parses one or more RFC 8288 `Link` field values into ordered `LinkValues`
+and `LinkValue` metadata. Each value retains its target URI-reference and its
+ordered parameters, including unknown extension parameters alongside `rel`.
+Targets are validated structurally as RFC 3986 URI-references and stored as raw
+text, never resolved, normalized, fetched, or preloaded; fragments are allowed.
+Each field value is bounded to 64 KiB, the cumulative value count is bounded to
+256, each value holds at most 256 parameters, and each parameter value is
+bounded to 64 KiB. Parameter names are matched case-insensitively, stored
+lowercase, and must be unique within a value. Quoted parameter values are
+unescaped and valueless parameters are preserved with an empty value. Empty
+input, empty members, malformed syntax, and duplicate parameter names are
+rejected. This parser does not preload, schedule fetches, redirect, apply cache
+policy, or generate routes.
+
 ## Strict-Transport-Security
 
 `strict_transport_security` parses a singleton `Strict-Transport-Security`
@@ -337,6 +382,18 @@ quoted-string; an optional quoted HTTP-date is parsed with the same
 `httpdate` helper as Sunset. Empty input, empty members, malformed quoting,
 invalid codes, and bound violations are rejected. This parser does not
 implement cache, freshness, stale-response, or response-acceptance policy.
+
+## Access-Control-Allow-Credentials
+
+`access_control_allow_credentials` parses a singleton
+`Access-Control-Allow-Credentials` field. Each field value is bounded to
+64 KiB. A second field is rejected after every supplied field is bound-checked.
+The field value must be exactly the standards-defined `true` token, matched
+case-sensitively per the Fetch `%s"true"` grammar and returned in canonical
+lowercase wire form. Surrounding SP and HTAB are trimmed as optional
+whitespace. Unknown tokens, lists, quoted values, empty values, control
+bytes, and other unparsable input are errors.
+This parser does not evaluate CORS requests or grant credentials automatically.
 
 ## NEL
 

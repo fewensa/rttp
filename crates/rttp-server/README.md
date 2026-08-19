@@ -83,6 +83,25 @@ time.
 These helpers parse HTTP/1 header metadata only. They do not change
 keep-alive, hop-by-hop stripping, upgrade/h2c handoff, or HTTP/2 rejection.
 
+## Request and response Upgrade metadata
+
+Handlers can call `Request::upgrade()`, `HttpRequest::upgrade()`, and
+`HttpResponse::upgrade()` to observe bounded typed `Upgrade` metadata from
+already-retained HTTP/1 fields. `HttpResponse::with_upgrade()` validates and
+replaces attached response `Upgrade` metadata. The helpers combine fields in
+wire order into `HttpUpgrade`, preserve protocol spelling, and return
+`Ok(None)` when the header is absent.
+
+Each field value is limited to 64 KiB. Parsing accepts at most 32 protocols.
+Each protocol must be an HTTP token, optionally followed by `/` and a token
+protocol version. Empty members, malformed protocols, control bytes,
+oversized values, and too many protocols return a parser error while raw
+request or response headers remain available.
+
+These helpers parse or declare HTTP/1 header metadata only. They do not add
+`Connection: Upgrade`, select h2c, change CONNECT handling, transfer sockets
+to `handoff`, or implement the upgraded protocol.
+
 ## Response Keep-Alive metadata
 
 Handlers can call `HttpResponse::keep_alive()` to observe bounded typed

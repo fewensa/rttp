@@ -62,7 +62,7 @@ impl WwwAuthenticate {
           "WWW-Authenticate header value is too large",
         ));
       }
-      parse_field(value, &mut challenges)?;
+      parse_value(value, &mut challenges)?;
     }
     if challenges.is_empty() {
       return Err(WwwAuthenticateParseError::new(
@@ -151,6 +151,55 @@ impl WwwAuthenticateParameter {
   }
 }
 
+fn parse_value(
+  value: &str,
+  challenges: &mut Vec<WwwAuthenticateChallenge>,
+) -> Result<(), WwwAuthenticateParseError> {
+  let bytes = value.as_bytes();
+  let mut position = 0;
+  skip_ows(bytes, &mut position);
+  if can_continue_parameters(value, position, challenges) {
+    parse_parameters(
+      value,
+      &mut position,
+      &mut challenges
+        .last_mut()
+        .expect("checked continuation challenge")
+        .parameters,
+    )?;
+    skip_ows(bytes, &mut position);
+    if position == bytes.len() {
+      return Ok(());
+    }
+    if bytes[position] != b',' {
+      return Err(WwwAuthenticateParseError::new(
+        "invalid WWW-Authenticate challenge",
+      ));
+    }
+    position += 1;
+    skip_ows(bytes, &mut position);
+    if position == bytes.len() {
+      return Err(WwwAuthenticateParseError::new(
+        "invalid WWW-Authenticate challenge",
+      ));
+    }
+    return parse_field(&value[position..], challenges);
+  }
+  parse_field(value, challenges)
+}
+
+fn can_continue_parameters(
+  value: &str,
+  position: usize,
+  challenges: &[WwwAuthenticateChallenge],
+) -> bool {
+  challenges.last().is_some_and(|challenge| {
+    challenge.token68.is_none()
+      && !challenge.parameters.is_empty()
+      && looks_like_parameter(value, position)
+  })
+}
+
 fn parse_field(
   value: &str,
   challenges: &mut Vec<WwwAuthenticateChallenge>,
@@ -183,7 +232,12 @@ fn parse_field(
           "invalid WWW-Authenticate challenge",
         ));
       }
-      if looks_like_parameter(value, position) {
+      if let Some(token68_end) = token68_end(value, position) {
+        let token68 = &value[position..token68_end];
+        challenge.token68 = Some(token68.to_string());
+        position = token68_end;
+        skip_ows(bytes, &mut position);
+      } else if looks_like_parameter(value, position) {
         parse_parameters(value, &mut position, &mut challenge.parameters)?;
       } else {
         let start = position;
@@ -281,6 +335,15 @@ fn parse_parameters(
       return Ok(());
     }
   }
+}
+
+fn token68_end(value: &str, mut position: usize) -> Option<usize> {
+  let bytes = value.as_bytes();
+  let start = position;
+  while position < bytes.len() && bytes[position] != b',' && !is_ows(bytes[position]) {
+    position += 1;
+  }
+  is_token68(&value[start..position]).then_some(position)
 }
 
 fn parse_parameter_value(

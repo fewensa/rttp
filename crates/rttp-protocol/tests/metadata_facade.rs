@@ -1,4 +1,5 @@
 use rttp_protocol::accept_ranges::AcceptRanges;
+use rttp_protocol::access_control_allow_credentials::AccessControlAllowCredentials;
 use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
 use rttp_protocol::age::Age;
@@ -8,6 +9,7 @@ use rttp_protocol::connection::Connection;
 use rttp_protocol::content_encoding::ContentEncoding;
 use rttp_protocol::content_language::ContentLanguage;
 use rttp_protocol::content_location::ContentLocation;
+use rttp_protocol::content_security_policy::ContentSecurityPolicy;
 use rttp_protocol::content_type::ContentType;
 use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
 use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedderPolicyReportOnly;
@@ -17,6 +19,7 @@ use rttp_protocol::fetch_metadata::{SecFetchDest, SecFetchMode, SecFetchSite, Se
 use rttp_protocol::from::From;
 use rttp_protocol::host::Host;
 use rttp_protocol::keep_alive::KeepAlive;
+use rttp_protocol::link::LinkValues;
 use rttp_protocol::location::Location;
 use rttp_protocol::nel::Nel;
 use rttp_protocol::no_vary_search::{NoVarySearch, NoVarySearchParams};
@@ -30,6 +33,7 @@ use rttp_protocol::signature_input::{SignatureInput, SignatureInputParseError};
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
 use rttp_protocol::transfer_encoding::TransferEncoding;
+use rttp_protocol::upgrade::{Upgrade, UpgradeParseError};
 use rttp_protocol::want_content_digest::WantContentDigest;
 use rttp_protocol::want_repr_digest::WantReprDigest;
 use rttp_protocol::warning::Warning;
@@ -40,6 +44,8 @@ use rttp_protocol::x_frame_options::XFrameOptions;
 fn protocol_exports_representative_bounded_metadata_types() {
   let age = Age::parse("60").expect("Age should parse");
   let accept_ch = AcceptCh::parse("Sec-CH-UA, DPR").expect("Accept-CH should parse");
+  let allow_credentials = AccessControlAllowCredentials::parse("true")
+    .expect("Access-Control-Allow-Credentials should parse");
   let expose_headers = AccessControlExposeHeaders::parse("X-Request-Id")
     .expect("Access-Control-Expose-Headers should parse");
   let request_private_network = AccessControlRequestPrivateNetwork::parse("true")
@@ -88,13 +94,18 @@ fn protocol_exports_representative_bounded_metadata_types() {
     .expect("Content-Location should parse");
   let connection = Connection::parse("keep-alive, TE").expect("Connection should parse");
   let content_encoding = ContentEncoding::parse("gzip, br").expect("Content-Encoding should parse");
+  let content_security_policy =
+    ContentSecurityPolicy::parse("default-src 'self'; object-src 'none'")
+      .expect("Content-Security-Policy should parse");
   let content_language =
-    ContentLanguage::parse("en, fr-CA").expect("Content-Language should parse");
+    ContentLanguage::parse("fr-CA, es-419").expect("Content-Language should parse");
   let cdn_cache_control =
     CdnCacheControl::parse("max-age=600, cdn-example=\"a, b\"").expect("CDN metadata should parse");
   let accept_ranges = AcceptRanges::parse("bytes, pages").expect("Accept-Ranges should parse");
   let transfer_encoding =
     TransferEncoding::parse("chunked").expect("Transfer-Encoding should parse");
+  let upgrade = Upgrade::parse("websocket").expect("Upgrade should parse");
+  let _: UpgradeParseError = Upgrade::parse("").expect_err("empty Upgrade should be rejected");
   let want_content_digest =
     WantContentDigest::parse("sha-256=10, sha-512=0").expect("Want-Content-Digest should parse");
   let want_repr_digest =
@@ -109,6 +120,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
 
   assert_eq!(age.seconds(), 60);
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
+  assert_eq!(allow_credentials.header_value(), "true");
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
   assert_eq!(request_private_network.header_value(), "true");
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
@@ -168,14 +180,20 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(connection.header_value(), "keep-alive, TE");
   assert_eq!(content_encoding.codings(), ["gzip", "br"]);
   assert_eq!(content_encoding.header_value(), "gzip, br");
-  assert_eq!(content_language.tags(), ["en", "fr-CA"]);
-  assert_eq!(content_language.header_value(), "en, fr-CA");
+  assert_eq!(
+    content_security_policy.header_value(),
+    "default-src 'self'; object-src 'none'"
+  );
+  assert_eq!(content_language.tags(), ["fr-CA", "es-419"]);
+  assert_eq!(content_language.header_value(), "fr-CA, es-419");
   assert_eq!(cdn_cache_control.directives()[1].name(), "cdn-example");
   assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
   assert_eq!(accept_ranges.units(), ["bytes", "pages"]);
   assert_eq!(accept_ranges.header_value(), "bytes, pages");
   assert_eq!(transfer_encoding.codings(), ["chunked"]);
   assert_eq!(transfer_encoding.header_value(), "chunked");
+  assert_eq!(upgrade.protocols(), ["websocket"]);
+  assert_eq!(upgrade.header_value(), "websocket");
   assert_eq!(want_content_digest.entries()[0].algorithm(), "sha-256");
   assert_eq!(want_content_digest.entries()[0].preference(), 10);
   assert_eq!(want_content_digest.header_value(), "sha-256=10, sha-512=0");
@@ -245,4 +263,22 @@ fn protocol_exports_bounded_cross_origin_opener_policy_metadata() {
     cross_origin_opener_policy.header_value(),
     "noopener-allow-popups"
   );
+}
+
+#[test]
+fn protocol_exports_bounded_link_metadata() {
+  let links = LinkValues::parse(
+    "</style.css>; rel=preload; as=style, <https://cdn.example.test/app.js>; rel=modulepreload",
+  )
+  .expect("Link should parse");
+
+  assert_eq!(2, links.len());
+  assert_eq!("/style.css", links.values()[0].target());
+  assert_eq!(Some("preload"), links.values()[0].parameter("rel"));
+  assert_eq!(Some("style"), links.values()[0].parameter("as"));
+  assert_eq!(
+    "https://cdn.example.test/app.js",
+    links.values()[1].target()
+  );
+  assert_eq!(Some("modulepreload"), links.values()[1].parameter("rel"));
 }
