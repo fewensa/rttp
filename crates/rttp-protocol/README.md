@@ -102,6 +102,21 @@ canonical decimal form. This parser reports declared metadata only; it does
 not decrement the hop count, route through proxies, select TRACE or OPTIONS,
 or apply forwarding policy.
 
+## Idempotency-Key
+
+`idempotency_key` parses a singleton HTTP `Idempotency-Key` request field as
+an opaque, bounded key. Each field value is bounded to 64 KiB, and a second
+field is rejected after every supplied field is bound-checked. Surrounding SP
+and HTAB are trimmed as optional whitespace. The stored value is the
+OWS-trimmed key; quotes, backslashes, and punctuation remain part of the
+opaque key when they are visible ASCII. Empty values, embedded spaces,
+forbidden ASCII control bytes (including CR, LF, NUL, and obs-text), and
+oversized values are errors. The key is redacted from typed `Debug`, and
+parse errors describe only the header and validation category. `as_str()`
+returns the stored key and `header_value()` emits it unchanged. This parser
+reports declared request metadata only; it does not retry requests, store
+keys, compare keys across requests, or apply application idempotency policy.
+
 ## If-Modified-Since
 
 `if_modified_since` parses a singleton HTTP `If-Modified-Since` request field
@@ -440,6 +455,21 @@ unique across the combined field set. Empty input, empty members, malformed
 syntax, and duplicate names are rejected. This parser does not implement
 authentication policy.
 
+## Authorization and Proxy-Authorization
+
+`authorization` parses or constructs bounded `Authorization` and
+`Proxy-Authorization` request metadata. `Authorization::new()` /
+`ProxyAuthorization::new()` validate an HTTP-token scheme and a non-empty
+opaque credential value before formatting `scheme credentials`. `parse()` and
+`parse_values()` validate singleton inbound field values and reject duplicates
+to avoid ambiguous credentials. The full serialized field value is bounded to
+64 KiB, and credentials reject CR, LF, NUL, and other control-byte injection.
+
+Credential values are redacted from typed `Debug`, and parse errors describe
+only the header and validation category. These primitives do not store
+credentials, implement Basic or Bearer authentication, process challenges,
+retry requests, or decide redirect forwarding.
+
 ## Proxy-Authenticate
 
 `proxy_authenticate` parses one or more `Proxy-Authenticate` field values into
@@ -635,6 +665,18 @@ lists, parameterized values, empty values, control bytes, and other
 unparsable input are errors.
 This parser does not apply reduced-data serving, content adaptation, or
 browser data-saver policy.
+
+## Upgrade-Insecure-Requests
+
+`upgrade_insecure_requests` parses a singleton `Upgrade-Insecure-Requests`
+request field. Each field value is bounded to 64 KiB. A second field is
+rejected after every supplied field is bound-checked. The field value must be
+exactly the standards-defined `1` token, matched case-sensitively and returned
+in canonical wire form. Surrounding SP and HTAB are trimmed as optional
+whitespace. Unknown tokens, lists, parameterized values, empty values, control
+bytes, and other unparsable input are errors.
+This parser does not rewrite `http://` URLs to `https://`, redirect requests,
+or enforce Content-Security-Policy.
 
 ## NEL
 

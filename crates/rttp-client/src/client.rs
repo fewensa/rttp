@@ -13,10 +13,12 @@ use rttp_protocol::accept_language::{AcceptLanguage, MAX_ACCEPT_LANGUAGE_VALUE_B
 use rttp_protocol::access_control_request_headers::AccessControlRequestHeaders;
 use rttp_protocol::access_control_request_method::AccessControlRequestMethod;
 use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
+use rttp_protocol::authorization::Authorization;
 use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
 use rttp_protocol::forwarded::{Forwarded, MAX_FORWARDED_VALUE_BYTES};
+use rttp_protocol::idempotency_key::IdempotencyKey;
 use rttp_protocol::if_modified_since::IfModifiedSince;
 use rttp_protocol::if_unmodified_since::IfUnmodifiedSince;
 use rttp_protocol::max_forwards::MaxForwards;
@@ -28,6 +30,7 @@ use rttp_protocol::signature_input::SignatureInput;
 use rttp_protocol::te::{Te, MAX_TE_CODINGS, MAX_TE_VALUE_BYTES};
 use rttp_protocol::trailer::Trailer;
 use rttp_protocol::upgrade::Upgrade;
+use rttp_protocol::upgrade_insecure_requests::UpgradeInsecureRequests;
 use std::io;
 
 #[derive(Debug)]
@@ -176,7 +179,7 @@ impl HttpClient {
   /// client.auth(Auth::bearer("my-token"));
   /// ```
   pub fn auth<A: AsRef<Auth>>(&mut self, auth: A) -> &mut Self {
-    self.header(("Authorization", auth.as_ref().header_value().as_str()))
+    self.header(Header::new("Authorization", auth.as_ref().header_value()))
   }
 
   /// Set bounded `Authorization` request metadata from an authentication
@@ -191,28 +194,9 @@ impl HttpClient {
     scheme: S,
     credentials: C,
   ) -> error::Result<&mut Self> {
-    let scheme = scheme.as_ref().trim();
-    let credentials = credentials.as_ref();
-    if !is_http_token(scheme) {
-      return Err(error::builder_with_message(
-        "invalid Authorization authentication scheme",
-      ));
-    }
-    if credentials.is_empty()
-      || credentials.bytes().all(|byte| matches!(byte, b' ' | b'\t'))
-      || !credentials.bytes().all(is_header_value_byte)
-    {
-      return Err(error::builder_with_message(
-        "invalid Authorization credentials",
-      ));
-    }
-    let value = format!("{scheme} {credentials}");
-    if value.len() > MAX_AUTHORIZATION_VALUE_BYTES {
-      return Err(error::builder_with_message(
-        "Authorization header value is too large",
-      ));
-    }
-    Ok(self.header(Header::new("Authorization", value)))
+    let authorization = Authorization::new(scheme, credentials)
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("Authorization", authorization.header_value())))
   }
 
   ///  Add request header
@@ -441,6 +425,19 @@ impl HttpClient {
     Ok(self.header(Header::new("Save-Data", save_data.header_value())))
   }
 
+  /// Set `Upgrade-Insecure-Requests: 1` request metadata.
+  ///
+  /// This declares the valid upgrade-insecure-requests form only; it does not
+  /// rewrite URLs, redirect requests, or enforce Content-Security-Policy.
+  pub fn upgrade_insecure_requests(&mut self) -> error::Result<&mut Self> {
+    let metadata = UpgradeInsecureRequests::parse("1")
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Upgrade-Insecure-Requests",
+      metadata.header_value(),
+    )))
+  }
+
   /// Append a validated `Accept` media range with its supplied quality value.
   ///
   /// This declares request metadata only; it does not select a response
@@ -643,6 +640,23 @@ impl HttpClient {
     qvalue: Q,
   ) -> error::Result<&mut Self> {
     self.accept_charset_member(charset.as_ref(), Some(qvalue.as_ref()))
+  }
+
+  /// Set a bounded `Idempotency-Key` request header as opaque metadata.
+  ///
+  /// The key must be one or more visible ASCII bytes after HTTP optional
+  /// whitespace is trimmed, and is limited to 64 KiB. CR, LF, NUL, other
+  /// control bytes, and obs-text are rejected before a socket is opened. This
+  /// only validates and emits the header; it does not retry requests, store
+  /// keys, compare keys across requests, or apply application idempotency
+  /// policy. Use `header` directly for unusual values.
+  pub fn idempotency_key<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let idempotency_key = IdempotencyKey::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Idempotency-Key",
+      idempotency_key.header_value(),
+    )))
   }
 
   /// Append a validated `Accept-Encoding` coding with the default quality of
@@ -1432,7 +1446,6 @@ fn bounded_forwarded_header_value(forwarded: Forwarded) -> error::Result<String>
   Ok(value)
 }
 
-const MAX_AUTHORIZATION_VALUE_BYTES: usize = 64 * 1024;
 const MAX_REQUEST_METADATA_VALUE_BYTES: usize = 64 * 1024;
 const MAX_REQUEST_METADATA_MEMBERS: usize = 32;
 const MAX_PREFER_FIELD_BYTES: usize = 64 * 1024;

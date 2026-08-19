@@ -354,9 +354,10 @@ policy.
 `credentials()` accessors. They return `Ok(None)` when the field is absent and
 reject invalid, oversized (over 64 KiB), or duplicate fields so credentials are
 not ambiguous. `Request::proxy_authorization()` and
-`HttpRequest::proxy_authorization()` expose `Proxy-Authorization` with the
-same bounded opaque representation and duplicate handling. Raw request headers
-remain available when either typed parser reports an error.
+`HttpRequest::proxy_authorization()` expose `Proxy-Authorization` as
+`HttpProxyAuthorization` with the same bounded opaque representation,
+control-byte injection checks, duplicate handling, and redacted debug output.
+Raw request headers remain available when either typed parser reports an error.
 
 `HttpResponse::with_www_authenticate(value)` validates bounded challenges from
 `rttp_protocol::www_authenticate`, replaces existing raw `WWW-Authenticate`
@@ -368,6 +369,24 @@ Credential interpretation remains application-owned. RTTP does not validate
 credentials, select realms, challenge clients automatically, enforce
 authentication or authorization decisions, verify schemes, store or refresh
 credentials, retry, or forward credentials across redirects.
+
+## Bounded Idempotency-Key request metadata
+
+`HttpClient::idempotency_key(value)` validates and emits one opaque
+`Idempotency-Key` request field through the shared `rttp_protocol`
+`IdempotencyKey` type, replacing any existing same-name field before a socket
+is opened. `Request::idempotency_key()` and `HttpRequest::idempotency_key()`
+parse received fields into the same `HttpIdempotencyKey` representation,
+returning `Ok(None)` when absent. A recognized value is a singleton key of one
+or more visible ASCII characters bounded to 64 KiB with optional surrounding
+SP or HTAB; empty, space-containing, control-byte (including CR/LF/NUL and
+obs-text), duplicate, and oversized values are rejected. The key is redacted
+from typed `Debug`, and raw request headers remain available when the typed
+parser reports an error.
+
+These helpers declare and observe request metadata only. RTTP does not retry
+requests, store or compare keys across requests, deduplicate requests, or
+apply application idempotency policy.
 
 ## Bounded HTTP/1.1 Allow behavior
 
@@ -925,6 +944,7 @@ scheduling, or async accept loops.
 | Memento-Datetime | `HttpResponse::with_memento_datetime`/`memento_datetime` declare and parse bounded singleton `Memento-Datetime` IMF-fixdate metadata while preserving raw headers on parse errors | No archival selection, `Accept-Datetime` negotiation, TimeGate behavior, retry, or transport changes |
 | Vary | `HttpVary`, `HttpResponse::with_vary`, `HttpResponse::vary`, `Request::vary_selection`, and `HttpRequest::vary_selection` parse, declare, and select bounded `Vary` metadata with case-insensitive field-name handling | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | Authentication metadata | `Request::authorization`/`proxy_authorization` and `HttpRequest::authorization`/`proxy_authorization` expose one bounded opaque credential field, `Response::www_authenticate` parses bounded client response challenges, and `HttpResponse::with_www_authenticate`/`www_authenticate` declare and parse bounded `WWW-Authenticate` challenges | No credential validation, realm selection, automatic client challenge, retry, or authentication/authorization enforcement |
+| Idempotency-Key | `HttpClient::idempotency_key` validates and emits one bounded opaque `Idempotency-Key` request field through the shared protocol type, and `Request::idempotency_key`/`HttpRequest::idempotency_key` parse received fields into the same representation while preserving raw headers on errors and redacting the key from typed debug output | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | No-Vary-Search | `NoVarySearch`, `HttpNoVarySearch`, `Response::no_vary_search`, `HttpResponse::with_no_vary_search`, and `HttpResponse::no_vary_search` parse and declare bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
 | Allow | `HttpAllowedMethods`, `HttpResponse::with_allow`, and `HttpResponse::allow` declare and parse bounded `Allow` method-list metadata | No route dispatch, automatic `405` generation, `OPTIONS` policy, fallback method selection, retry/replay, or status-code policy engine |
 | Client Hints | `HttpAcceptCh`/`HttpCriticalCh`, `HttpResponse::with_accept_ch`/`with_critical_ch`, and `accept_ch`/`critical_ch` declare and parse bounded Client Hints opt-in metadata; `Response::accept_ch` and `critical_ch` expose it to clients | No browser opt-in state, request-header generation, automatic retry, persistence, or Client Hints policy |

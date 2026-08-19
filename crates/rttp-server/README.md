@@ -53,10 +53,12 @@ shared-cache policy, retry, replay, redirect, or choose status behavior.
 
 `Request::authorization()` / `HttpRequest::authorization()` and
 `Request::proxy_authorization()` / `HttpRequest::proxy_authorization()` expose
-one bounded opaque credential field as `HttpAuthorization` metadata. Both
+one bounded opaque credential field as shared `rttp-protocol` metadata.
+`Authorization` is exposed as `HttpAuthorization`, and `Proxy-Authorization`
+as `HttpProxyAuthorization`; both expose `scheme()` and `credentials()`. Both
 helpers return `Ok(None)` when absent and reject malformed, oversized (over 64
-KiB), or duplicate fields while leaving the raw request headers available to
-handler code.
+KiB), duplicate, or control-byte-injected fields while leaving the raw request
+headers available to handler code. Typed debug output redacts credentials.
 
 `HttpResponse::with_www_authenticate(value)` validates and replaces attached
 `WWW-Authenticate` fields with one normalized declaration, and
@@ -442,6 +444,19 @@ These helpers parse request metadata only. They do not select a
 representation, compress a body, advertise Client Hints, or apply browser
 data-saver policy.
 
+## Upgrade-Insecure-Requests request metadata
+
+Handlers can call `Request::upgrade_insecure_requests()` and
+`HttpRequest::upgrade_insecure_requests()` to observe bounded typed
+`Upgrade-Insecure-Requests` request metadata. Absent fields return `Ok(None)`.
+The recognized value is the case-sensitive `1` token with optional surrounding
+SP or HTAB. Malformed, oversized, duplicate, or control-byte values return a
+parser error while `Request::header()` and `HttpRequest::header()` continue to
+expose the original raw field.
+
+These helpers parse request metadata only. They do not rewrite `http://` URLs
+to `https://`, redirect requests, or enforce Content-Security-Policy.
+
 ## Max-Forwards request metadata
 
 Handlers can call `Request::max_forwards()` and `HttpRequest::max_forwards()`
@@ -454,6 +469,22 @@ expose the original raw field.
 
 These helpers parse request metadata only. They do not decrement the hop
 count, route a request, select TRACE or OPTIONS, or apply forwarding policy.
+
+## Idempotency-Key request metadata
+
+Handlers can call `Request::idempotency_key()` and
+`HttpRequest::idempotency_key()` to observe bounded typed `Idempotency-Key`
+request metadata through the shared protocol `HttpIdempotencyKey` type.
+Absent fields return `Ok(None)`. A recognized value is a singleton opaque key
+of one or more visible ASCII characters with optional surrounding SP or HTAB,
+bounded to 64 KiB. `as_str()` returns the stored key and `header_value()`
+emits it unchanged. Malformed, oversized, duplicate, or control-byte values
+return a parser error while `Request::header()` and `HttpRequest::header()`
+continue to expose the original raw field. The key is redacted from typed
+`Debug`.
+
+These helpers parse request metadata only. They do not retry requests, store
+keys, compare keys across requests, or apply application idempotency policy.
 
 ## Conditional HTTP-date request metadata
 
