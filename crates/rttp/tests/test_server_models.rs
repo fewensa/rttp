@@ -2255,6 +2255,41 @@ fn reporting_endpoints_helpers_parse_and_build_bounded_metadata() {
       "should reject {value:?}"
     );
   }
+
+  let escaped = HttpResponse::ok("body")
+    .with_reporting_endpoints([("default", r#"https://reports.example/a"b\c"#)])
+    .expect("escaped Reporting-Endpoints URL should be accepted");
+  let serialized = String::from_utf8(escaped.to_bytes()).expect("response is UTF-8");
+  assert!(serialized.contains(r#"default="https://reports.example/a\"b\\c""#));
+  assert_eq!(
+    Some(r#"https://reports.example/a"b\c"#),
+    escaped
+      .reporting_endpoints()
+      .expect("escaped Reporting-Endpoints should parse")
+      .expect("Reporting-Endpoints should be present")
+      .endpoint("default")
+  );
+
+  let malformed = HttpResponse::ok("body").header(
+    "Reporting-Endpoints",
+    "default=https://reports.example/default",
+  );
+  let malformed_serialized = String::from_utf8(malformed.to_bytes()).expect("response is UTF-8");
+  assert!(malformed_serialized
+    .contains("\r\nReporting-Endpoints: default=https://reports.example/default\r\n"));
+  assert!(
+    malformed.reporting_endpoints().is_err(),
+    "typed Reporting-Endpoints parser should reject malformed raw values"
+  );
+
+  assert!(
+    HttpReportingEndpoints::from_endpoints([
+      ("default", "https://reports.example/default"),
+      ("default", "https://reports.example/other"),
+    ])
+    .is_err(),
+    "builder should reject duplicate endpoint names"
+  );
 }
 
 #[test]

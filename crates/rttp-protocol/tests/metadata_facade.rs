@@ -46,6 +46,7 @@ use rttp_protocol::proxy_authentication_info::ProxyAuthenticationInfo;
 use rttp_protocol::proxy_status::{ProxyStatus, ProxyStatusParseError};
 use rttp_protocol::referer::Referer;
 use rttp_protocol::referrer_policy::{ReferrerPolicy, ReferrerPolicyToken};
+use rttp_protocol::reporting_endpoints::ReportingEndpoints;
 use rttp_protocol::save_data::SaveData;
 use rttp_protocol::sec_gpc::SecGpc;
 use rttp_protocol::signature::{Signature, SignatureParseError};
@@ -120,6 +121,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
     ProxyStatus::parse("ExampleCDN; error=connection_timeout").expect("Proxy-Status should parse");
   let _: ProxyStatusParseError =
     ProxyStatus::parse("").expect_err("empty Proxy-Status should be rejected");
+  let reporting_endpoints = ReportingEndpoints::parse(
+    r#"default="https://reports.example/default", csp="https://reports.example/csp""#,
+  )
+  .expect("Reporting-Endpoints should parse");
   let referer = Referer::parse("https://example.test/path?q=1").expect("Referer should parse");
   let timing_allow_origin =
     TimingAllowOrigin::parse("https://example.test").expect("Timing-Allow-Origin should parse");
@@ -222,6 +227,13 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(keep_alive.timeout(), Some(5));
   assert_eq!(keep_alive.max(), Some(100));
   assert_eq!(keep_alive.header_value(), "timeout=5, max=100");
+  assert_eq!(
+    reporting_endpoints.endpoints(),
+    [
+      ("default", "https://reports.example/default"),
+      ("csp", "https://reports.example/csp"),
+    ]
+  );
   assert_eq!(deprecation, Deprecation::Boolean(true));
   assert_eq!(deprecation.header_value(), "?1");
   assert_eq!(location.as_str(), "../login?next=%2Fdashboard");
