@@ -1386,6 +1386,13 @@ pub mod content_location {
       normalized_value: "../current?variant=full#metadata",
       declaration_value: "../current?variant=full#metadata",
     },
+    ResponseCase {
+      name: "network-path reference with IPv6 authority",
+      values: &["//[2001:db8::1]/representation"],
+      raw_value: "//[2001:db8::1]/representation",
+      normalized_value: "//[2001:db8::1]/representation",
+      declaration_value: "//[2001:db8::1]/representation",
+    },
   ];
 
   const INVALID_CASES: &[InvalidCase] = &[
@@ -1404,6 +1411,18 @@ pub mod content_location {
     InvalidCase {
       name: "unit separator control character",
       value: "/safe\u{1f}",
+    },
+    InvalidCase {
+      name: "malformed absolute URI",
+      value: "http://[::1",
+    },
+    InvalidCase {
+      name: "relative reference with space",
+      value: "/bad path",
+    },
+    InvalidCase {
+      name: "reference with embedded space",
+      value: "not valid",
     },
   ];
 

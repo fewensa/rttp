@@ -85,3 +85,17 @@ fn vary_rejects_field_name_list_overflow() {
 
   assert!(Vary::parse(too_many).is_err());
 }
+
+#[test]
+fn vary_contains_field_name_is_case_insensitive_and_rejects_invalid_tokens() {
+  let vary = Vary::parse("Accept-Encoding, User-Agent").expect("valid Vary field names");
+
+  assert!(vary.contains_field_name("ACCEPT-ENCODING"));
+  assert!(vary.contains_field_name("user-agent"));
+  assert!(!vary.contains_field_name("authorization"));
+  assert!(!vary.contains_field_name("Accept Encoding"));
+  assert!(!vary.contains_field_name(""));
+
+  let wildcard = Vary::parse("*").expect("valid wildcard Vary");
+  assert!(!wildcard.contains_field_name("accept-encoding"));
+}
