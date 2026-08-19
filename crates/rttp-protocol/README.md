@@ -8,6 +8,46 @@ and server crates.
 
 This crate supports rttp's implementation; its public API is not a standalone
 application-level HTTP interface.
+
+## Accept-Ranges
+
+`accept_ranges` parses one or more `Accept-Ranges` field values into an ordered
+list of range-unit tokens, preserving each unit's spelling and wire order. Each
+field value is bounded to 64 KiB, and the cumulative unit count across all
+supplied fields is bounded to 256 units. Units are split on commas with SP and
+HTAB accepted only as optional whitespace around each unit; empty members,
+members containing forbidden ASCII control bytes, and units that are not RFC
+9110 tokens are rejected. Duplicate units are rejected case-insensitively while
+the first-seen spelling is retained. The `none` sentinel is accepted only alone
+and is represented as an empty unit list; `none` combined with any unit fails
+as invalid. A present header set that yields no unit still fails as invalid.
+The server facade aliases this type as `HttpAcceptRanges` and reuses
+`from_units`/`none` for its declaration helpers.
+
+## Age
+
+`age` parses a singleton HTTP `Age` field as non-negative `1*DIGIT`
+delta-seconds that fit in `u64`. Each field value is bounded to 64 KiB. A
+second field is rejected after every supplied field is bound-checked.
+Surrounding SP and HTAB are trimmed as optional whitespace. Empty values,
+signed or plus-prefixed numbers, fractions, comma-lists, non-digits, overflow
+beyond `u64::MAX`, and forbidden ASCII control bytes are errors. This parser
+reports declared metadata only; it does not calculate freshness, adjust age
+over elapsed time, store cache entries, or apply cache policy.
+
+## Content-Location
+
+`content_location` parses a singleton response `Content-Location` field as one
+bounded URI reference. Each field value is bounded to 64 KiB. A second field is
+rejected after every supplied field is bound-checked. Surrounding SP and HTAB
+are trimmed as optional whitespace, and the trimmed reference text is preserved
+through `as_str()` and `header_value()` without resolution against any request
+or response URL. Empty values, ASCII controls, interior whitespace, unsafe
+field-value characters, malformed absolute URIs, malformed relative
+references, and broken percent-encoding are errors. This is syntax validation
+only: callers own redirect handling, cache variant selection, representation
+replacement, route generation, retries, and status policy.
+
 ## Connection
 
 `connection` parses one or more RFC 9110 `Connection` field values into an
@@ -270,6 +310,18 @@ quoted-string; an optional quoted HTTP-date is parsed with the same
 `httpdate` helper as Sunset. Empty input, empty members, malformed quoting,
 invalid codes, and bound violations are rejected. This parser does not
 implement cache, freshness, stale-response, or response-acceptance policy.
+
+## Keep-Alive
+
+`keep_alive` parses RFC 2068 `Keep-Alive` fields as a comma-separated list of
+`timeout=delta-seconds` and `max=1*DIGIT` parameters (both optional) with
+case-insensitive parameter names and optional whitespace around separators.
+Each field value is bounded to 64 KiB and the combined parameter count is
+bounded to 256. Values are parsed as checked unsigned 64-bit integers;
+unrecognized `name=token` parameters are preserved as bounded extension
+metadata. Empty input, missing `=`, duplicate recognized parameters, malformed
+tokens, overflow, and bound violations are rejected. This parser does not
+change connection lifetime, connection pooling, or HTTP/2 behavior.
 
 ## No-Vary-Search
 

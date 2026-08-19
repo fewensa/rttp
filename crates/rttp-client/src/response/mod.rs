@@ -21,6 +21,7 @@
 
 pub use self::response::*;
 
+pub use rttp_protocol::accept_ranges::{AcceptRanges, AcceptRangesParseError};
 pub use rttp_protocol::access_control_allow_headers::{
   AccessControlAllowHeaders, AccessControlAllowHeadersParseError,
 };
@@ -36,6 +37,7 @@ pub use rttp_protocol::access_control_expose_headers::{
 pub use rttp_protocol::access_control_max_age::{
   AccessControlMaxAge, AccessControlMaxAgeParseError,
 };
+pub use rttp_protocol::age::{Age, AgeParseError};
 pub use rttp_protocol::clear_site_data::{
   ClearSiteData as HttpClearSiteData, ClearSiteDataDirective as HttpClearSiteDataDirective,
   ClearSiteDataParseError as HttpClearSiteDataParseError,
@@ -43,6 +45,7 @@ pub use rttp_protocol::clear_site_data::{
 pub use rttp_protocol::client_hints::{
   AcceptCh, AcceptChParseError, CriticalCh, CriticalChParseError,
 };
+pub use rttp_protocol::content_length::HttpContentLength;
 pub use rttp_protocol::cookie::{
   HttpCookieParseError, HttpSetCookie, HttpSetCookieAttribute, HttpSetCookies,
 };
@@ -64,10 +67,12 @@ mod response;
 
 pub use rttp_protocol::alt_svc::{AltSvc, AltSvcAlternative, AltSvcParameter, AltSvcParseError};
 pub use rttp_protocol::connection::{Connection, ConnectionParseError};
+pub use rttp_protocol::content_location::{ContentLocation, ContentLocationParseError};
 pub use rttp_protocol::digest::{
   ContentDigest, ContentDigestEntry, Digest, DigestEntry, DigestParseError, ReprDigest,
   ReprDigestEntry,
 };
+pub use rttp_protocol::keep_alive::{KeepAlive, KeepAliveExtension, KeepAliveParseError};
 pub use rttp_protocol::location::{Location, LocationParseError};
 pub use rttp_protocol::no_vary_search::{
   NoVarySearch, NoVarySearchExtension, NoVarySearchParams, NoVarySearchParseError,
@@ -101,6 +106,7 @@ pub use rttp_protocol::strict_transport_security::{
 pub use rttp_protocol::timing_allow_origin::{TimingAllowOrigin, TimingAllowOriginParseError};
 pub use rttp_protocol::trailer::{Trailer, TrailerParseError};
 pub use rttp_protocol::transfer_encoding::{TransferEncoding, TransferEncodingParseError};
+pub use rttp_protocol::vary::{Vary, VaryParseError};
 pub use rttp_protocol::want_content_digest::{
   WantContentDigest, WantContentDigestEntry, WantContentDigestParseError,
 };
@@ -111,3 +117,7 @@ pub use rttp_protocol::warning::{Warning, WarningParseError, WarningValue};
 pub use rttp_protocol::www_authenticate::{
   WwwAuthenticate, WwwAuthenticateChallenge, WwwAuthenticateParameter, WwwAuthenticateParseError,
 };
+pub use rttp_protocol::x_content_type_options::{
+  XContentTypeOptions, XContentTypeOptionsParseError,
+};
+pub use rttp_protocol::x_frame_options::{XFrameOptions, XFrameOptionsParseError};

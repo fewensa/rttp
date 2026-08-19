@@ -22,9 +22,10 @@ use crate::connection::connection::{
   MAX_PROXY_CONNECT_INFORMATIONAL_RESPONSES,
 };
 use crate::connection::connection_reader::{
-  is_skippable_informational_status, parse_informational_response, response_body_kind,
-  response_connection_reusable, response_connection_should_close, response_headers,
-  response_status_code, validate_response_trailer_header, ResponseBodyKind, ResponseParts,
+  content_length_from_response_body_kind, is_skippable_informational_status,
+  parse_informational_response, response_body_kind, response_connection_reusable,
+  response_connection_should_close, response_headers, response_status_code,
+  validate_response_trailer_header, ResponseBodyKind, ResponseParts,
   MAX_CHUNKED_RESPONSE_LINE_BYTES, MAX_RESPONSE_HEAD_BYTES,
 };
 use crate::error;
@@ -170,6 +171,7 @@ impl<'a, S: AsyncRead + Unpin + ?Sized> AsyncStreamingResponse<'a, S> {
       binary,
       trailers: self.body.trailers().clone(),
       informational_responses: Vec::new(),
+      content_length: content_length_from_response_body_kind(&self.body.kind),
       connection_reusable,
       close_connection,
     })
@@ -380,6 +382,7 @@ impl<'a> AsyncConnection<'a> {
         parts.binary,
         parts.trailers,
         parts.informational_responses,
+        parts.content_length,
         self.conn.config().max_buffered_response_body_bytes(),
       )?;
       let config = self.conn.config().clone();
@@ -452,6 +455,7 @@ impl<'a> AsyncConnection<'a> {
       parts.binary,
       parts.trailers,
       parts.informational_responses,
+      parts.content_length,
       self.conn.config().max_buffered_response_body_bytes(),
     )?;
     self.conn.closed_set(close_connection);
