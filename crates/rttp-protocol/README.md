@@ -224,6 +224,28 @@ Protocol helpers define and bound wire metadata for the client and server
 crates. They do not add higher-level runtime policy such as caching,
 authentication, retries, representation selection, or body transformation.
 
+## Cache-Status
+
+`cache_status` parses one or more `Cache-Status` response field values as a
+bounded RFC 9211 / RFC 8941 `sf-list` of cache identifiers and parameters. Each
+identifier is an `sf-token` or `sf-string`. Known parameters (`hit`, `fwd`,
+`fwd-status`, `ttl`, `stored`, `collapsed`, `key`, and `detail`) are typed;
+unknown well-formed parameters are retained as extension metadata. Each field
+value is bounded to 64 KiB, the combined member count is bounded to 256, each
+member is bounded to 256 parameters, and each parameter value is bounded to
+64 KiB.
+
+Repeated `Cache-Status` fields are concatenated in wire order into one list.
+Empty fields, empty list members, inner lists, trailing commas, control bytes
+other than HTAB, invalid Structured Fields grammar, and duplicate parameter
+keys on one member are rejected. A member with neither `hit` nor `fwd`, or
+with both, remains valid metadata. `ttl` is a signed integer and may be
+negative.
+
+The parser only reports bounded wire metadata. It does not store cache
+entries, compute freshness, revalidate, select endpoints, retry, or change
+response acceptance.
+
 ## CDN-Cache-Control
 
 `cdn_cache_control` parses one or more `CDN-Cache-Control` response field

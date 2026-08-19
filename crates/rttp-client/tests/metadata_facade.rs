@@ -3,12 +3,12 @@ use rttp_client::response::{
   AccessControlAllowHeaders, AccessControlAllowHeadersParseError, AccessControlAllowMethods,
   AccessControlAllowMethodsParseError, AccessControlExposeHeaders, AccessControlMaxAge,
   AccessControlMaxAgeParseError, Age, AgeParseError, AltSvc, AuthenticationInfo,
-  AuthenticationInfoParseError, Connection, ConnectionParseError, ContentRange,
-  ContentRangeParseError, ContentSecurityPolicy, ContentSecurityPolicyParseError,
-  CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy,
-  CrossOriginResourcePolicy, Digest, EntityTag, HttpClearSiteData, HttpContentLength, KeepAlive,
-  LinkValues, Location, LocationParseError, Nel, NoVarySearch, NoVarySearchParams,
-  NoVarySearchParseError, PreferenceApplied, Priority, ProxyAuthenticate,
+  AuthenticationInfoParseError, CacheStatus, CacheStatusParseError, Connection,
+  ConnectionParseError, ContentRange, ContentRangeParseError, ContentSecurityPolicy,
+  ContentSecurityPolicyParseError, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly,
+  CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest, EntityTag, HttpClearSiteData,
+  HttpContentLength, KeepAlive, LinkValues, Location, LocationParseError, Nel, NoVarySearch,
+  NoVarySearchParams, NoVarySearchParseError, PreferenceApplied, Priority, ProxyAuthenticate,
   ProxyAuthenticateParseError, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError,
   ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Signature, SignatureInput,
   SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
@@ -43,6 +43,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     AccessControlMaxAge::parse("").expect_err("empty Access-Control-Max-Age should be rejected");
   let age = Age::parse("60").expect("Age should parse");
   let _: AgeParseError = Age::parse("").expect_err("empty Age should be rejected");
+  let cache_status =
+    CacheStatus::parse("OriginCache; hit; ttl=1100").expect("Cache-Status should parse");
+  let _: CacheStatusParseError = CacheStatus::parse("OriginCache; hit=yes")
+    .expect_err("invalid Cache-Status should be rejected");
   let expose_headers = AccessControlExposeHeaders::parse("X-Request-Id")
     .expect("Access-Control-Expose-Headers should parse");
   let clear_site_data =
@@ -154,6 +158,11 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(allow_headers.field_names(), ["x-request-id", "etag"]);
   assert_eq!(max_age.seconds(), 60);
   assert_eq!(age.seconds(), 60);
+  assert_eq!(
+    cache_status.members()[0].identifier().as_str(),
+    "OriginCache"
+  );
+  assert_eq!(cache_status.members()[0].ttl(), Some(1100));
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
   assert_eq!(content_length.len(), 123);
   assert_eq!(clear_site_data.directives().len(), 1);

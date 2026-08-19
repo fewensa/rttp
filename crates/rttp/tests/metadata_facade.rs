@@ -22,6 +22,12 @@ fn compatibility_facade_exports_client_metadata_types() {
       .expect_err("invalid Access-Control-Allow-Credentials should fail");
   let critical_ch: rttp::CriticalCh =
     rttp_client::response::CriticalCh::parse("Sec-CH-UA").expect("Critical-CH should parse");
+  let cache_status: rttp::CacheStatus =
+    rttp_client::response::CacheStatus::parse("OriginCache; hit; ttl=1100")
+      .expect("Cache-Status should parse");
+  let _: rttp::CacheStatusParseError =
+    rttp_client::response::CacheStatus::parse("OriginCache; hit=yes")
+      .expect_err("invalid Cache-Status should fail");
   let cdn_cache_control: rttp::CdnCacheControl =
     rttp_client::response::CdnCacheControl::parse("max-age=600, cdn-example=\"a, b\"")
       .expect("CDN-Cache-Control should parse");
@@ -121,6 +127,11 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(allow_credentials.header_value(), "true");
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
+  assert_eq!(
+    cache_status.members()[0].identifier().as_str(),
+    "OriginCache"
+  );
+  assert_eq!(cache_status.members()[0].ttl(), Some(1100));
   assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
   assert_eq!(accept_patch.media_types().len(), 1);
   assert_eq!(accept_post.media_types().len(), 1);
