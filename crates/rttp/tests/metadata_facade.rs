@@ -5,11 +5,12 @@ use rttp::server::{
   HttpContentRangeParseError, HttpCrossOriginEmbedderPolicy,
   HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
   HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpEntityTag,
-  HttpMaxForwards, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNel, HttpProxyStatus,
-  HttpProxyStatusParseError, HttpResponse, HttpSaveData, HttpSignature, HttpSignatureInput,
-  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
-  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
-  HttpSunsetParseError, HttpUpgrade, HttpUpgradeParseError,
+  HttpIfModifiedSince, HttpIfUnmodifiedSince, HttpMaxForwards, HttpMementoDatetime,
+  HttpMementoDatetimeParseError, HttpNel, HttpProxyStatus, HttpProxyStatusParseError, HttpResponse,
+  HttpSaveData, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
+  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
+  HttpSignatureInputParseError, HttpSignatureParseError, HttpSunsetParseError, HttpUpgrade,
+  HttpUpgradeParseError,
 };
 use std::io::Write;
 use std::net::SocketAddr;
@@ -610,6 +611,12 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let save_data: HttpSaveData = HttpSaveData::parse("on").expect("Save-Data should parse");
   let max_forwards: HttpMaxForwards =
     HttpMaxForwards::parse("0").expect("Max-Forwards should parse");
+  let if_modified_since: HttpIfModifiedSince =
+    HttpIfModifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
+      .expect("If-Modified-Since should parse");
+  let if_unmodified_since: HttpIfUnmodifiedSince =
+    HttpIfUnmodifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
+      .expect("If-Unmodified-Since should parse");
   let policy: HttpCrossOriginResourcePolicy = HttpCrossOriginResourcePolicy::parse("same-origin")
     .expect("Cross-Origin-Resource-Policy should parse");
   let embedder_policy: HttpCrossOriginEmbedderPolicy =
@@ -657,6 +664,14 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(save_data.header_value(), "on");
   assert_eq!(max_forwards.value(), 0);
   assert_eq!(max_forwards.header_value(), "0");
+  assert_eq!(
+    if_modified_since.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
+    if_unmodified_since.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
   assert_eq!(
     content_location.header_value(),
     "../representations/current.json"

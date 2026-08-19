@@ -84,6 +84,30 @@ canonical decimal form. This parser reports declared metadata only; it does
 not decrement the hop count, route through proxies, select TRACE or OPTIONS,
 or apply forwarding policy.
 
+## If-Modified-Since
+
+`if_modified_since` parses a singleton HTTP `If-Modified-Since` request field
+as one HTTP-date instant through `httpdate`. Each field value is bounded to
+64 KiB. A second field is rejected after every supplied field is
+bound-checked. Surrounding SP and HTAB are trimmed as optional whitespace.
+Empty values, malformed dates, forbidden ASCII control bytes, and oversized
+values are errors. `header_value()` formats the accepted instant as
+IMF-fixdate. This parser reports declared request metadata only; it does not
+compare `Last-Modified`, evaluate conditional precedence, serve a
+representation, or apply cache policy.
+
+## If-Unmodified-Since
+
+`if_unmodified_since` parses a singleton HTTP `If-Unmodified-Since` request
+field as one HTTP-date instant through `httpdate`. Each field value is bounded
+to 64 KiB. A second field is rejected after every supplied field is
+bound-checked. Surrounding SP and HTAB are trimmed as optional whitespace.
+Empty values, malformed dates, forbidden ASCII control bytes, and oversized
+values are errors. `header_value()` formats the accepted instant as
+IMF-fixdate. This parser reports declared request metadata only; it does not
+compare `Last-Modified`, evaluate conditional precedence, reject a
+representation, or apply cache policy.
+
 ## Content-DPR
 
 `content_dpr` parses a singleton HTTP `Content-DPR` field as a finite positive

@@ -10,15 +10,16 @@ use rttp_server::server::{
   HttpContentDprParseError, HttpContentLength, HttpContentLocation, HttpContentLocationParseError,
   HttpContentRange, HttpContentRangeParseError, HttpCrossOriginEmbedderPolicyReportOnly,
   HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpEntityTag,
-  HttpHost, HttpKeepAlive, HttpMaxForwards, HttpMaxForwardsParseError, HttpMementoDatetime,
-  HttpMementoDatetimeParseError, HttpNoVarySearch, HttpNoVarySearchParams, HttpPreferenceKind,
-  HttpProxyStatus, HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptEncodings,
-  HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSignature, HttpSignatureInput,
-  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
-  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
-  HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeParseError,
-  HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite,
-  SecFetchUser, SecPurpose,
+  HttpHost, HttpIfModifiedSince, HttpIfModifiedSinceParseError, HttpIfUnmodifiedSince,
+  HttpIfUnmodifiedSinceParseError, HttpKeepAlive, HttpMaxForwards, HttpMaxForwardsParseError,
+  HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNoVarySearch, HttpNoVarySearchParams,
+  HttpPreferenceKind, HttpProxyStatus, HttpProxyStatusParseError, HttpRequest,
+  HttpRequestAcceptEncodings, HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSignature,
+  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
+  HttpUpgradeParseError, HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode,
+  SecFetchSite, SecFetchUser, SecPurpose,
 };
 
 #[test]
@@ -65,6 +66,16 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpMaxForwards::parse("0").expect("Max-Forwards should parse");
   let max_forwards_error: Result<HttpMaxForwards, HttpMaxForwardsParseError> =
     HttpMaxForwards::parse("4294967296");
+  let if_modified_since: HttpIfModifiedSince =
+    HttpIfModifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
+      .expect("If-Modified-Since should parse");
+  let if_modified_since_error: Result<HttpIfModifiedSince, HttpIfModifiedSinceParseError> =
+    HttpIfModifiedSince::parse("not-a-date");
+  let if_unmodified_since: HttpIfUnmodifiedSince =
+    HttpIfUnmodifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
+      .expect("If-Unmodified-Since should parse");
+  let if_unmodified_since_error: Result<HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError> =
+    HttpIfUnmodifiedSince::parse("not-a-date");
   let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("revision-42"));
   let no_vary_search: HttpNoVarySearch =
     HttpNoVarySearch::parse(r#"params=("utm_source")"#).expect("No-Vary-Search should parse");
@@ -157,6 +168,16 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(max_forwards.value(), 0);
   assert_eq!(max_forwards.header_value(), "0");
   assert!(max_forwards_error.is_err());
+  assert_eq!(
+    if_modified_since.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert!(if_modified_since_error.is_err());
+  assert_eq!(
+    if_unmodified_since.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert!(if_unmodified_since_error.is_err());
   assert_eq!(policy.header_value(), "same-origin");
   assert_eq!(
     cache_status.members()[0].identifier().as_str(),
@@ -589,6 +610,64 @@ fn request_facade_parses_max_forwards_metadata() {
 
   assert_eq!(0, max_forwards.value());
   assert_eq!("0", max_forwards.header_value());
+}
+
+#[test]
+fn request_facade_parses_conditional_http_date_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nIf-Modified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\nIf-Unmodified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let if_modified_since: HttpIfModifiedSince = request
+    .if_modified_since()
+    .expect("If-Modified-Since should parse")
+    .expect("If-Modified-Since should be present");
+  let if_unmodified_since: HttpIfUnmodifiedSince = request
+    .if_unmodified_since()
+    .expect("If-Unmodified-Since should parse")
+    .expect("If-Unmodified-Since should be present");
+
+  assert_eq!(
+    "Sun, 06 Nov 1994 08:49:37 GMT",
+    if_modified_since.header_value()
+  );
+  assert_eq!(
+    "Sun, 06 Nov 1994 08:49:37 GMT",
+    if_unmodified_since.header_value()
+  );
+
+  let absent = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .if_modified_since()
+      .expect("absent value should be valid")
+  );
+  assert_eq!(
+    None,
+    absent
+      .if_unmodified_since()
+      .expect("absent value should be valid")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nIf-Modified-Since: not-a-date\r\nIf-Unmodified-Since: not-a-date\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert!(malformed.if_modified_since().is_err());
+  assert!(malformed.if_unmodified_since().is_err());
+
+  let duplicate = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nIf-Modified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\nIf-Modified-Since: Sun, 06 Nov 1994 08:49:38 GMT\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert!(duplicate.if_modified_since().is_err());
+
+  let oversized = "0".repeat(64 * 1024 + 1);
+  assert!(HttpIfModifiedSince::parse(oversized.as_str()).is_err());
+  assert!(HttpIfUnmodifiedSince::parse(oversized.as_str()).is_err());
 }
 
 #[test]
