@@ -33,6 +33,7 @@ pub mod fetch_metadata;
 pub mod forwarded;
 pub mod from;
 pub mod http1;
+pub mod keep_alive;
 mod media_type;
 pub mod origin;
 pub mod prefer;
