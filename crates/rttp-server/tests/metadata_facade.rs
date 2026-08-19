@@ -10,9 +10,9 @@ use rttp_server::server::{
   HttpNoVarySearchParams, HttpPreferenceKind, HttpRequest, HttpResponse, HttpSignature,
   HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
   HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpTransferEncoding, HttpTransferEncodingParseError,
-  HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite,
-  SecFetchUser,
+  HttpSignatureParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
+  HttpUpgradeParseError, HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode,
+  SecFetchSite, SecFetchUser,
 };
 
 #[test]
@@ -80,6 +80,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
   let fetch_user = SecFetchUser::parse("?1").expect("Sec-Fetch-User should parse");
+  let upgrade: HttpUpgrade = HttpUpgrade::parse("websocket").expect("Upgrade should parse");
+  let _: HttpUpgradeParseError = HttpUpgrade::parse("").expect_err("empty Upgrade should fail");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA"]);
   assert_eq!(allow_methods.methods(), ["GET"]);
@@ -158,6 +160,7 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_mode.header_value(), "navigate");
   assert_eq!(fetch_dest.header_value(), "document");
   assert_eq!(fetch_user.header_value(), "?1");
+  assert_eq!(upgrade.protocols(), ["websocket"]);
 }
 
 #[test]
@@ -327,6 +330,42 @@ fn request_facade_parses_want_content_digest_metadata() {
   assert_eq!(digest.entries()[1].preference(), 3);
   assert_eq!(digest.entries()[2].algorithm(), "unixsum");
   assert_eq!(digest.entries()[2].preference(), 0);
+}
+
+#[test]
+fn request_facade_parses_upgrade_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /chat HTTP/1.1\r\nHost: example.test\r\nUpgrade: websocket\r\nUpgrade: HTTP/2.0, custom\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let upgrade = request
+    .upgrade()
+    .expect("Upgrade should parse")
+    .expect("Upgrade should be present");
+
+  assert_eq!(upgrade.protocols(), ["websocket", "HTTP/2.0", "custom"]);
+}
+
+#[test]
+fn response_facade_builds_and_parses_upgrade_metadata() {
+  let response = HttpResponse::new(101, "Switching Protocols")
+    .header("Upgrade", "raw")
+    .with_upgrade(["websocket", "TLS/1.3"])
+    .expect("Upgrade should be accepted");
+
+  let upgrade = response
+    .upgrade()
+    .expect("Upgrade should parse")
+    .expect("Upgrade should be present");
+
+  assert_eq!(upgrade.protocols(), ["websocket", "TLS/1.3"]);
+  let mut serialized = Vec::new();
+  response.write_to(&mut serialized).expect("response writes");
+  let serialized = String::from_utf8(serialized).expect("response is utf8");
+  assert!(serialized.contains("\r\nUpgrade: websocket, TLS/1.3\r\n"));
+  assert!(!serialized.contains("\r\nUpgrade: raw\r\n"));
+  assert!(!serialized.contains("\r\nContent-Length:"));
 }
 
 #[test]

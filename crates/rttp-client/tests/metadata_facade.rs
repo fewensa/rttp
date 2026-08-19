@@ -10,9 +10,9 @@ use rttp_client::response::{
   ProxyAuthenticateParseError, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError,
   ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Signature, SignatureInput,
   SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
-  StrictTransportSecurityParseError, Trailer, TransferEncoding, TransferEncodingParseError, Vary,
-  VaryParseError, WantContentDigest, WantReprDigest, Warning, XContentTypeOptions,
-  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  StrictTransportSecurityParseError, Trailer, TransferEncoding, TransferEncodingParseError,
+  Upgrade, UpgradeParseError, Vary, VaryParseError, WantContentDigest, WantReprDigest, Warning,
+  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentLocation, ContentLocationParseError, ReprDigest,
@@ -87,6 +87,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     TransferEncoding::parse("chunked").expect("Transfer-Encoding should parse");
   let _: TransferEncodingParseError = TransferEncoding::parse("gzip, chunked")
     .expect_err("non-sole chunked Transfer-Encoding should be rejected");
+  let upgrade = Upgrade::parse("websocket").expect("Upgrade should parse");
+  let _: UpgradeParseError = Upgrade::parse("").expect_err("empty Upgrade should be rejected");
   let alt_svc = AltSvc::parse("h3=\":443\"").expect("Alt-Svc should parse");
   let content_range = ContentRange::parse("bytes 3-6/10").expect("Content-Range should parse");
   let _: ContentRangeParseError =
@@ -168,6 +170,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(trailer.field_names(), ["x-trace"]);
   assert_eq!(connection.tokens(), ["close"]);
   assert_eq!(transfer_encoding.codings(), ["chunked"]);
+  assert_eq!(upgrade.protocols(), ["websocket"]);
   assert_eq!(alt_svc.alternatives().len(), 1);
   assert_eq!(
     ContentRange::Bytes {
@@ -253,6 +256,29 @@ fn response_facade_exports_repr_digest_metadata() {
     repr_digest.entry("sha-512").map(|entry| entry.value()),
     Some(&b"def"[..])
   );
+}
+
+#[test]
+fn response_facade_parses_upgrade_metadata() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 101 Switching Protocols\r\n",
+      "Upgrade: websocket\r\n",
+      "Upgrade: HTTP/2.0, custom\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let upgrade = response
+    .upgrade()
+    .expect("Upgrade should parse")
+    .expect("Upgrade should be present");
+
+  assert_eq!(upgrade.protocols(), ["websocket", "HTTP/2.0", "custom"]);
 }
 
 #[test]

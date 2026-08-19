@@ -66,6 +66,7 @@ pub mod sunset;
 pub mod timing_allow_origin;
 pub mod trailer;
 pub mod transfer_encoding;
+pub mod upgrade;
 pub mod vary;
 pub mod want_content_digest;
 pub mod want_repr_digest;
