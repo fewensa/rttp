@@ -948,6 +948,9 @@ fn response_facade_parses_speculation_rules_metadata() {
   let headers_debug = format!("{:?}", response.headers());
   assert!(headers_debug.contains("[REDACTED]"));
   assert!(!headers_debug.contains(value));
+  let response_debug = format!("{response:?}");
+  assert!(response_debug.contains("[REDACTED]"));
+  assert!(!response_debug.contains(value));
 
   let duplicate = rttp_client::response::Response::new(
     rttp_client::types::RoUrl::with("http://example.test/"),

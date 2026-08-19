@@ -1471,6 +1471,9 @@ fn test_parse_speculation_rules_response_metadata_preserves_singleton_value() {
   let headers_debug = format!("{:?}", response.headers());
   assert!(headers_debug.contains("[REDACTED]"));
   assert!(!headers_debug.contains(value));
+  let response_debug = format!("{response:?}");
+  assert!(response_debug.contains("[REDACTED]"));
+  assert!(!response_debug.contains(value));
 }
 
 #[test]
@@ -1515,6 +1518,9 @@ fn test_parse_speculation_rules_rejects_duplicate_and_unsafe_values_without_hidi
   let headers_debug = format!("{:?}", oversized.headers());
   assert!(headers_debug.contains("[REDACTED]"));
   assert!(!headers_debug.contains(&oversized_value));
+  let response_debug = format!("{oversized:?}");
+  assert!(response_debug.contains("[REDACTED]"));
+  assert!(!response_debug.contains(&oversized_value));
 }
 
 #[test]
