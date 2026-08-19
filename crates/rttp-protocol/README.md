@@ -395,6 +395,18 @@ whitespace. Unknown tokens, lists, quoted values, empty values, control
 bytes, and other unparsable input are errors.
 This parser does not evaluate CORS requests or grant credentials automatically.
 
+## Access-Control-Request-Method
+
+`access_control_request_method` parses a singleton
+`Access-Control-Request-Method` request field. Each field value is bounded to
+64 KiB. A second field is rejected after every supplied field is bound-checked.
+Surrounding SP and HTAB are trimmed as optional whitespace. The value must be
+exactly one HTTP method token and is returned in canonical ASCII-uppercase
+form. The `*` token, comma-separated lists, empty values, control bytes,
+oversized values, and other unparsable input are errors. This parser reports
+declared preflight request metadata only; it does not decide whether a
+preflight is needed or apply CORS policy.
+
 ## NEL
 
 `nel` parses one `NEL` response field as a bounded JSON object exposing the W3C
