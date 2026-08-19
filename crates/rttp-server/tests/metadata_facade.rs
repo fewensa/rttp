@@ -11,21 +11,24 @@ use rttp_server::server::{
   HttpConnectionParseError, HttpContentDisposition, HttpContentDispositionParseError,
   HttpContentDpr, HttpContentDprParseError, HttpContentLength, HttpContentLocation,
   HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
+  HttpContentSecurityPolicyReportOnly, HttpContentSecurityPolicyReportOnlyParseError,
   HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
   HttpCrossOriginOpenerPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeprecation,
   HttpDeprecationParseError, HttpEntityTag, HttpExpectParseError, HttpExpectations, HttpHost,
   HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince,
   HttpIfModifiedSinceParseError, HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError,
   HttpKeepAlive, HttpMaxForwards, HttpMaxForwardsParseError, HttpMementoDatetime,
-  HttpMementoDatetimeParseError, HttpNoVarySearch, HttpNoVarySearchParams, HttpPragma,
-  HttpPragmaDirective, HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthorization,
-  HttpProxyStatus, HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptCharsets,
-  HttpRequestAcceptEncodings, HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSecGpc,
-  HttpSecGpcParseError, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
-  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpTraceParent,
-  HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError,
-  HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpMementoDatetimeParseError, HttpNoVarySearch, HttpNoVarySearchParams, HttpPermissionsPolicy,
+  HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
+  HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective,
+  HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus,
+  HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
+  HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSecGpc, HttpSecGpcParseError,
+  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpTraceParent, HttpTraceParentParseError, HttpTraceState,
+  HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
+  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
   HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpWantContentDigest,
   HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
@@ -129,6 +132,12 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let opener_policy_report_only: HttpCrossOriginOpenerPolicyReportOnly =
     HttpCrossOriginOpenerPolicyReportOnly::parse(r#"same-origin; report-to="coop""#)
       .expect("Cross-Origin-Opener-Policy-Report-Only should parse");
+  let content_security_policy_report_only: HttpContentSecurityPolicyReportOnly =
+    HttpContentSecurityPolicyReportOnly::parse("default-src 'self'; report-to csp-endpoint")
+      .expect("Content-Security-Policy-Report-Only should parse");
+  let _: HttpContentSecurityPolicyReportOnlyParseError =
+    HttpContentSecurityPolicyReportOnly::parse("")
+      .expect_err("empty Content-Security-Policy-Report-Only should be rejected");
   let signature_input: HttpSignatureInput =
     HttpSignatureInput::parse(r#"sig1=("@method");created=1700000000"#)
       .expect("Signature-Input should parse");
@@ -174,6 +183,14 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let proxy_status_response = HttpResponse::ok("")
     .with_proxy_status("ExampleCDN; error=connection_timeout")
     .expect("Proxy-Status should be accepted");
+  let permissions_policy: HttpPermissionsPolicy =
+    HttpPermissionsPolicy::parse(r#"geolocation=(self "https://maps.example.test"), camera=()"#)
+      .expect("Permissions-Policy should parse");
+  let _: HttpPermissionsPolicyParseError =
+    HttpPermissionsPolicy::parse("geolocation=src").expect_err("src should be rejected");
+  let permissions_policy_response = HttpResponse::ok("")
+    .with_permissions_policy(r#"geolocation=(self "https://maps.example.test"), camera=()"#)
+    .expect("Permissions-Policy should be accepted");
   let fetch_site = SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
@@ -252,6 +269,10 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(
     opener_policy_report_only.header_value(),
     r#"same-origin; report-to="coop""#
+  );
+  assert_eq!(
+    content_security_policy_report_only.header_value(),
+    "default-src 'self'; report-to csp-endpoint"
   );
   assert_eq!(signature_input.members()[0].label(), "sig1");
   assert!(signature_input_error.is_err());
@@ -343,6 +364,25 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .members()[0]
       .identifier()
       .as_str()
+  );
+  let geolocation: &HttpPermissionsPolicyDirective =
+    permissions_policy.directive("geolocation").unwrap();
+  assert_eq!(geolocation.feature(), "geolocation");
+  let geolocation_allowlist: &HttpPermissionsPolicyAllowlist = geolocation.allowlist();
+  assert!(!geolocation_allowlist.is_all_origins());
+  let first_member: &HttpPermissionsPolicyAllowlistMember = &geolocation_allowlist.members()[0];
+  assert!(first_member.is_self());
+  assert_eq!(
+    permissions_policy.header_value(),
+    r#"geolocation=(self "https://maps.example.test"), camera=()"#
+  );
+  assert_eq!(
+    r#"geolocation=(self "https://maps.example.test"), camera=()"#,
+    permissions_policy_response
+      .permissions_policy()
+      .expect("Permissions-Policy should parse")
+      .expect("Permissions-Policy should be present")
+      .header_value()
   );
   assert_eq!(fetch_site.header_value(), "same-origin");
   assert_eq!(fetch_mode.header_value(), "navigate");

@@ -60,6 +60,10 @@ pub use rttp_protocol::content_location::{
   ContentLocation as HttpContentLocation,
   ContentLocationParseError as HttpContentLocationParseError,
 };
+pub use rttp_protocol::content_security_policy_report_only::{
+  ContentSecurityPolicyReportOnly as HttpContentSecurityPolicyReportOnly,
+  ContentSecurityPolicyReportOnlyParseError as HttpContentSecurityPolicyReportOnlyParseError,
+};
 pub use rttp_protocol::content_type::ContentTypeParseError as HttpContentTypeParseError;
 pub use rttp_protocol::cross_origin_embedder_policy::{
   CrossOriginEmbedderPolicy as HttpCrossOriginEmbedderPolicy,
@@ -105,6 +109,13 @@ pub use rttp_protocol::no_vary_search::{
   NoVarySearch as HttpNoVarySearch, NoVarySearchExtension as HttpNoVarySearchExtension,
   NoVarySearchParams as HttpNoVarySearchParams,
   NoVarySearchParseError as HttpNoVarySearchParseError,
+};
+pub use rttp_protocol::permissions_policy::{
+  PermissionsPolicy as HttpPermissionsPolicy,
+  PermissionsPolicyAllowlist as HttpPermissionsPolicyAllowlist,
+  PermissionsPolicyAllowlistMember as HttpPermissionsPolicyAllowlistMember,
+  PermissionsPolicyDirective as HttpPermissionsPolicyDirective,
+  PermissionsPolicyParseError as HttpPermissionsPolicyParseError,
 };
 pub use rttp_protocol::pragma::{Pragma as HttpPragma, PragmaParseError as HttpPragmaParseError};
 pub use rttp_protocol::priority::{
@@ -355,7 +366,6 @@ macro_rules! browser_policy_metadata {
 }
 
 browser_policy_metadata!(HttpContentSecurityPolicy, "Content-Security-Policy");
-browser_policy_metadata!(HttpPermissionsPolicy, "Permissions-Policy");
 browser_policy_metadata!(HttpReferrerPolicy, "Referrer-Policy");
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1314,13 +1324,25 @@ impl HttpResponse {
     Ok(self)
   }
 
-  /// Validates and replaces `Permissions-Policy` metadata without enforcing it.
+  /// Validates and replaces `Content-Security-Policy-Report-Only` metadata without
+  /// enforcing CSP or sending reports.
+  pub fn with_content_security_policy_report_only(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpContentSecurityPolicyReportOnlyParseError> {
+    let policy = HttpContentSecurityPolicyReportOnly::parse(value)?;
+    self.set_browser_policy_header("Content-Security-Policy-Report-Only", policy.header_value());
+    Ok(self)
+  }
+
+  /// Validates and replaces `Permissions-Policy` metadata without enforcing
+  /// browser permissions or origin policy.
   pub fn with_permissions_policy(
     mut self,
     value: impl AsRef<str>,
-  ) -> Result<Self, HttpBrowserPolicyParseError> {
+  ) -> Result<Self, HttpPermissionsPolicyParseError> {
     let policy = HttpPermissionsPolicy::parse(value)?;
-    self.set_browser_policy_header("Permissions-Policy", policy.header_value());
+    self.set_browser_policy_header("Permissions-Policy", &policy.header_value());
     Ok(self)
   }
 
@@ -2255,13 +2277,45 @@ impl HttpResponse {
     })
   }
 
-  /// Returns attached `Permissions-Policy` metadata without enforcing it.
+  /// Returns attached `Content-Security-Policy-Report-Only` metadata without
+  /// enforcing CSP or sending reports.
+  pub fn content_security_policy_report_only(
+    &self,
+  ) -> Result<
+    Option<HttpContentSecurityPolicyReportOnly>,
+    HttpContentSecurityPolicyReportOnlyParseError,
+  > {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Content-Security-Policy-Report-Only")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpContentSecurityPolicyReportOnly::parse_values(values).map(Some)
+  }
+
+  /// Returns attached `Permissions-Policy` metadata without enforcing browser
+  /// permissions or origin policy.
   pub fn permissions_policy(
     &self,
-  ) -> Result<Option<HttpPermissionsPolicy>, HttpBrowserPolicyParseError> {
-    self.browser_policy_value("Permissions-Policy", |value| {
-      HttpPermissionsPolicy::parse(value)
-    })
+  ) -> Result<Option<HttpPermissionsPolicy>, HttpPermissionsPolicyParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Permissions-Policy"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpPermissionsPolicy::parse_values(values).map(Some)
   }
 
   /// Returns attached `Referrer-Policy` metadata without altering requests.

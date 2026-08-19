@@ -322,6 +322,20 @@ values are errors. Valid values are preserved exactly in wire order for
 policy value. This parser does not evaluate directives, enforce browser
 security policy, deliver violation reports, or change raw header availability.
 
+## Content-Security-Policy-Report-Only
+
+`content_security_policy_report_only` parses one or more
+`Content-Security-Policy-Report-Only` field values as opaque response metadata
+using the same bounded CSP field validation: each field value is bounded to 64
+KiB, and at most 256 fields are accepted. Empty values, ASCII control bytes
+other than HTAB, and oversized values are errors. Valid values are preserved in
+wire order for `header_values()`, while `as_str()` and `header_value()` return
+the first policy value.
+
+The report-only metadata type, constants, and parse error are distinct from
+`Content-Security-Policy`. This parser does not evaluate directives, enforce
+CSP, send reports, or change raw header availability.
+
 ## Content-Language
 
 `content_language` parses one or more `Content-Language` field values into an
@@ -441,11 +455,12 @@ field is bound-checked. The bare item must be exactly one of the tokens
 `unsafe-none`, `same-origin-allow-popups`, `same-origin`, or
 `noopener-allow-popups`. Well-formed parameters are retained as opaque
 metadata; `report-to` is exposed as a reporting-endpoint name when present.
-Duplicate parameter names are rejected. This parser does not enforce opener
-policy, isolate browsing contexts, validate `Reporting-Endpoints` members,
-deliver reports, or schedule report delivery. Case variants, lists, quoted
-values, unknown tokens, empty values, and other unparsable input are errors.
-The parser never fails open to `unsafe-none`.
+Parameter count is bounded to 256, and each parameter value is bounded to
+64 KiB. Duplicate parameter names are rejected. This parser does not enforce
+opener policy, isolate browsing contexts, validate `Reporting-Endpoints`
+members, deliver reports, or schedule report delivery. Case variants, lists,
+quoted values, unknown tokens, empty values, and other unparsable input are
+errors. The parser never fails open to `unsafe-none`.
 
 Protocol helpers define and bound wire metadata for the client and server
 crates. They do not add higher-level runtime policy such as caching,
@@ -797,6 +812,23 @@ formats a normalized header value. Each field value is limited to 64 KiB,
 parameter lists are limited to 256 strings, and extension members are limited
 to 64. The parser does not implement cache storage, cache-key matching, URL
 normalization, navigation behavior, request replay, or shared-cache policy.
+
+## Permissions-Policy
+
+`permissions_policy` parses bounded W3C Permissions Policy response metadata
+as a Structured Fields dictionary. Each field value is bounded to 64 KiB, the
+cumulative directive count across all supplied fields is bounded to 256, and
+each allowlist is bounded to 256 members. Feature names are opaque tokens and
+are not looked up against a browser feature list. Allowlists are the `*`
+token, the `self` token, quoted serialized HTTP(S) origins, or inner lists of
+`self` and quoted origins, including the empty inner list `()`. `*` is the
+whole allowlist and `()` disables the feature; mixing `*` with other members
+is rejected. Duplicate feature keys, including across fields, and duplicate
+allowlist members are errors. The HTML-attribute tokens `src` and `'none'`
+are rejected, and a well-formed `report-to` string parameter is accepted and
+dropped. The parser reports declared metadata only: it does not compare
+origins, resolve `self`, grant or deny browser permissions, or enforce origin
+policy.
 
 ## Pragma
 

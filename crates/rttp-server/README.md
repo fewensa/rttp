@@ -49,6 +49,21 @@ handler-owned policy; it does not create or manage a CDN cache, compute
 freshness, evaluate surrogate keys, revalidate automatically, enforce
 shared-cache policy, retry, replay, redirect, or choose status behavior.
 
+## Response Content-Security-Policy-Report-Only metadata
+
+`HttpResponse::with_content_security_policy_report_only(value)` validates and
+replaces attached `Content-Security-Policy-Report-Only` response metadata with
+one bounded field. `HttpResponse::content_security_policy_report_only()` parses
+attached raw fields into `HttpContentSecurityPolicyReportOnly`, preserving
+repeated fields in wire order and returning parser errors without removing raw
+headers.
+
+The helper shares CSP policy field bounds with `Content-Security-Policy`: 64
+KiB per field value and at most 256 fields. The report-only type and parse
+error remain distinct. These helpers only declare and parse metadata; RTTP does
+not evaluate directives, enforce CSP, send reports, or create browser policy
+state.
+
 ## Authentication metadata
 
 `Request::authorization()` / `HttpRequest::authorization()` and
@@ -284,9 +299,10 @@ fields into the same type, returning parser errors without changing those raw
 fields. The type reuses the canonical COOP directives `unsafe-none`,
 `same-origin-allow-popups`, `same-origin`, and `noopener-allow-popups`.
 Well-formed parameters are retained as metadata; `report-to` is exposed as a
-reporting-endpoint name when present. Each field value is bounded to 64 KiB.
-Duplicate fields, duplicate parameter names, unknown directives, malformed
-structured fields, and oversized values return a parser error while
+reporting-endpoint name when present. Each field value is bounded to 64 KiB;
+parameter count is bounded to 256, and each parameter value is bounded to
+64 KiB. Duplicate fields, duplicate parameter names, unknown directives,
+malformed structured fields, and oversized values return a parser error while
 `HttpResponse` raw headers continue to expose the original fields.
 
 These helpers only declare and parse metadata. The server does not isolate
@@ -423,6 +439,25 @@ deprecated, retry requests, or select another endpoint.
 
 These helpers do not store responses, match cache keys, normalize URLs, replay
 requests, apply browser navigation behavior, or enforce shared-cache policy.
+
+## Permissions-Policy response metadata
+
+`HttpResponse::with_permissions_policy(value)` validates one W3C Permissions
+Policy Structured Fields dictionary and replaces any existing raw
+`Permissions-Policy` fields with one canonical value from the shared protocol
+parser. `HttpResponse::permissions_policy()` parses attached raw fields into
+`HttpPermissionsPolicy` metadata, returning `Ok(None)` when absent and parser
+errors without changing raw fields. Directives expose the feature token and
+allowlist: `*` as the whole allowlist, the `self` token, quoted serialized
+HTTP(S) origins, and inner lists including the empty `()`. Field values are
+bounded to 64 KiB, directives to 256 per header set, and allowlist members to
+256 per directive. Duplicate feature keys, duplicate allowlist members, the
+HTML-attribute tokens `src` and `'none'`, and unparsable input are rejected; a
+well-formed `report-to` parameter is accepted and dropped.
+
+These helpers only declare and parse metadata. RTTP does not grant or deny
+browser permissions, compare origins, resolve `self`, or enforce origin
+policy, and it does not send reports.
 
 ## Want-Content-Digest request metadata
 

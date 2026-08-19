@@ -67,6 +67,9 @@ pub use rttp_protocol::content_length::HttpContentLength;
 pub use rttp_protocol::content_security_policy::{
   ContentSecurityPolicy, ContentSecurityPolicyParseError,
 };
+pub use rttp_protocol::content_security_policy_report_only::{
+  ContentSecurityPolicyReportOnly, ContentSecurityPolicyReportOnlyParseError,
+};
 pub use rttp_protocol::cookie::{
   HttpCookieParseError, HttpSetCookie, HttpSetCookieAttribute, HttpSetCookies,
 };
@@ -109,6 +112,10 @@ pub use rttp_protocol::location::{Location, LocationParseError};
 pub use rttp_protocol::memento_datetime::{MementoDatetime, MementoDatetimeParseError};
 pub use rttp_protocol::no_vary_search::{
   NoVarySearch, NoVarySearchExtension, NoVarySearchParams, NoVarySearchParseError,
+};
+pub use rttp_protocol::permissions_policy::{
+  PermissionsPolicy, PermissionsPolicyAllowlist, PermissionsPolicyAllowlistMember,
+  PermissionsPolicyDirective, PermissionsPolicyParseError,
 };
 pub use rttp_protocol::pragma::{Pragma, PragmaDirective, PragmaParseError};
 pub use rttp_protocol::prefer::{

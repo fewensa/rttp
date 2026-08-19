@@ -6,19 +6,20 @@ use rttp_client::response::{
   AccessControlMaxAgeParseError, Age, AgeParseError, AltSvc, AuthenticationInfo,
   AuthenticationInfoParseError, CacheStatus, CacheStatusParseError, Connection,
   ConnectionParseError, ContentDpr, ContentDprParseError, ContentRange, ContentRangeParseError,
-  ContentSecurityPolicy, ContentSecurityPolicyParseError, CrossOriginEmbedderPolicy,
+  ContentSecurityPolicy, ContentSecurityPolicyParseError, ContentSecurityPolicyReportOnly,
+  ContentSecurityPolicyReportOnlyParseError, CrossOriginEmbedderPolicy,
   CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginOpenerPolicyReportOnly,
   CrossOriginResourcePolicy, Digest, EntityTag, HttpClearSiteData, HttpContentLength, KeepAlive,
   LinkValues, Location, LocationParseError, MementoDatetime, MementoDatetimeParseError, Nel,
-  NoVarySearch, NoVarySearchParams, NoVarySearchParseError, Pragma, PragmaParseError,
-  PreferenceApplied, Priority, ProxyAuthenticate, ProxyAuthenticateParseError,
-  ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError,
-  ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Signature, SignatureInput,
-  SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
-  StrictTransportSecurityParseError, Trailer, TransferEncoding, TransferEncodingParseError,
-  Upgrade, UpgradeParseError, Vary, VaryParseError, WantContentDigest, WantReprDigest, Warning,
-  WwwAuthenticate, WwwAuthenticateParseError, XContentTypeOptions, XContentTypeOptionsParseError,
-  XFrameOptions, XFrameOptionsParseError,
+  NoVarySearch, NoVarySearchParams, NoVarySearchParseError, PermissionsPolicy,
+  PermissionsPolicyParseError, Pragma, PragmaParseError, PreferenceApplied, Priority,
+  ProxyAuthenticate, ProxyAuthenticateParseError, ProxyAuthenticationInfo,
+  ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError, ReferrerPolicy,
+  ReferrerPolicyToken, ServerTiming, Signature, SignatureInput, SignatureInputParseError,
+  SignatureParseError, StrictTransportSecurity, StrictTransportSecurityParseError, Trailer,
+  TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError,
+  WantContentDigest, WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError,
+  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentDisposition, ContentDispositionParseError, ContentLocation,
@@ -82,6 +83,11 @@ fn response_facade_exports_representative_bounded_metadata_types() {
       .expect("Content-Security-Policy should parse");
   let _: ContentSecurityPolicyParseError =
     ContentSecurityPolicy::parse("").expect_err("empty Content-Security-Policy should be rejected");
+  let content_security_policy_report_only =
+    ContentSecurityPolicyReportOnly::parse("default-src 'self'; report-to csp-endpoint")
+      .expect("Content-Security-Policy-Report-Only should parse");
+  let _: ContentSecurityPolicyReportOnlyParseError = ContentSecurityPolicyReportOnly::parse("")
+    .expect_err("empty Content-Security-Policy-Report-Only should be rejected");
   let digest = Digest::parse("sha-256=:YWJj:").expect("Digest should parse");
   let etag = EntityTag::parse("\"asset-v7\"").expect("ETag should parse");
   let location = Location::parse("/next").expect("Location should parse");
@@ -121,6 +127,11 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let x_frame_options = XFrameOptions::parse("deny").expect("X-Frame-Options should parse");
   let _: XFrameOptionsParseError = XFrameOptions::parse("ALLOW-FROM https://example.test")
     .expect_err("deprecated X-Frame-Options ALLOW-FROM should be rejected");
+  let permissions_policy =
+    PermissionsPolicy::parse(r#"geolocation=(self "https://maps.example.test"), camera=()"#)
+      .expect("Permissions-Policy should parse");
+  let _: PermissionsPolicyParseError =
+    PermissionsPolicy::parse("geolocation=src").expect_err("src should be rejected");
   let warning = Warning::parse(r#"110 - "Response is Stale""#).expect("Warning should parse");
   let nel =
     Nel::parse(r#"{"report_to":"network-errors","max_age":2592000}"#).expect("NEL should parse");
@@ -243,6 +254,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     content_security_policy.header_value(),
     "default-src 'self'; object-src 'none'"
   );
+  assert_eq!(
+    content_security_policy_report_only.header_value(),
+    "default-src 'self'; report-to csp-endpoint"
+  );
   assert_eq!(digest.entries().len(), 1);
   assert_eq!(etag, EntityTag::strong("asset-v7"));
   assert_eq!(location.as_str(), "/next");
@@ -269,6 +284,16 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(x_content_type_options.header_value(), "nosniff");
   assert_eq!(x_frame_options, XFrameOptions::Deny);
   assert_eq!(x_frame_options.header_value(), "DENY");
+  assert_eq!(
+    permissions_policy.header_value(),
+    r#"geolocation=(self "https://maps.example.test"), camera=()"#
+  );
+  assert_eq!(permissions_policy.directives().len(), 2);
+  assert!(permissions_policy
+    .directive("camera")
+    .unwrap()
+    .allowlist()
+    .is_empty());
   assert_eq!(warning.items()[0].code(), 110);
   assert_eq!(nel.max_age(), 2592000);
   assert_eq!(nel.report_to(), Some("network-errors"));
@@ -506,6 +531,50 @@ fn response_facade_parses_preference_applied_metadata() {
   assert_eq!(applied.preferences()[0].name(), "return");
   assert_eq!(applied.preferences()[0].value(), Some("minimal"));
   assert_eq!(applied.preferences()[0].parameters()[0].name(), "source");
+}
+
+#[test]
+fn response_facade_parses_permissions_policy_metadata() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Permissions-Policy: geolocation=(self \"https://maps.example.test\");report-to=\"rp\"\r\n",
+      "Permissions-Policy: camera=()\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let policy: PermissionsPolicy = response
+    .permissions_policy()
+    .expect("Permissions-Policy should parse")
+    .expect("Permissions-Policy should be present");
+
+  assert_eq!(policy.directives().len(), 2);
+  assert_eq!(
+    policy
+      .directive("geolocation")
+      .unwrap()
+      .allowlist()
+      .members()
+      .len(),
+    2
+  );
+  assert!(policy.directive("camera").unwrap().allowlist().is_empty());
+  assert_eq!(
+    policy.header_value(),
+    r#"geolocation=(self "https://maps.example.test"), camera=()"#
+  );
+  assert_eq!(
+    response.header_values("Permissions-Policy"),
+    [
+      &"geolocation=(self \"https://maps.example.test\");report-to=\"rp\"".to_string(),
+      &"camera=()".to_string()
+    ]
+  );
 }
 
 #[test]

@@ -1731,6 +1731,81 @@ fn cross_origin_embedder_policy_report_only_helpers_preserve_raw_metadata_and_re
 }
 
 #[test]
+fn content_security_policy_report_only_helpers_preserve_order_and_raw_headers() {
+  let raw = HttpResponse::ok([])
+    .header("Content-Security-Policy-Report-Only", "default-src 'self'")
+    .header("content-security-policy-report-only", "object-src 'none'");
+
+  let metadata = raw
+    .content_security_policy_report_only()
+    .expect("Content-Security-Policy-Report-Only should parse")
+    .expect("Content-Security-Policy-Report-Only should be present");
+
+  assert_eq!(metadata.as_str(), "default-src 'self'");
+  assert_eq!(
+    metadata.header_values(),
+    ["default-src 'self'", "object-src 'none'"]
+  );
+  assert_eq!(
+    Some("default-src 'self'"),
+    raw
+      .headers
+      .iter()
+      .find(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Content-Security-Policy-Report-Only")
+      })
+      .map(|header| header.value.as_str())
+  );
+
+  let replaced = raw
+    .with_content_security_policy_report_only("script-src 'none'")
+    .expect("Content-Security-Policy-Report-Only should be accepted");
+  assert_eq!(
+    ["script-src 'none'"],
+    replaced
+      .content_security_policy_report_only()
+      .expect("Content-Security-Policy-Report-Only should parse")
+      .expect("Content-Security-Policy-Report-Only should be present")
+      .header_values()
+  );
+  assert_eq!(
+    vec![("Content-Security-Policy-Report-Only", "script-src 'none'")],
+    replaced
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let malformed =
+    HttpResponse::ok([]).header("Content-Security-Policy-Report-Only", "default-src 'self'\u{7f}");
+  assert!(malformed.content_security_policy_report_only().is_err());
+  assert_eq!(
+    Some("default-src 'self'\u{7f}"),
+    malformed
+      .headers
+      .iter()
+      .find(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Content-Security-Policy-Report-Only")
+      })
+      .map(|header| header.value.as_str())
+  );
+  assert!(HttpResponse::ok([])
+    .with_content_security_policy_report_only("default-src\r\nblocked")
+    .is_err());
+
+  let mut too_many = HttpResponse::ok([]);
+  for _ in 0..=rttp_protocol::content_security_policy_report_only::MAX_CONTENT_SECURITY_POLICY_REPORT_ONLY_FIELDS {
+    too_many = too_many.header("Content-Security-Policy-Report-Only", "default-src 'self'");
+  }
+  assert!(too_many.content_security_policy_report_only().is_err());
+}
+
+#[test]
 fn cross_origin_opener_policy_helpers_validate_replace_and_parse_response_metadata() {
   let response = HttpResponse::ok([])
     .header("Cross-Origin-Opener-Policy", "unsafe-none")
@@ -2156,6 +2231,93 @@ fn x_frame_options_helpers_preserve_raw_metadata_and_report_parse_errors() {
   assert!(duplicate.x_frame_options().is_err());
   assert!(HttpResponse::ok([])
     .with_x_frame_options("x".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
+fn permissions_policy_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Permissions-Policy", "geolocation=(self)")
+    .header("permissions-policy", "camera=()")
+    .with_permissions_policy(r#"geolocation=(self "https://maps.example.test"), camera=()"#)
+    .expect("Permissions-Policy should be accepted");
+
+  let policy = response
+    .permissions_policy()
+    .expect("Permissions-Policy should parse")
+    .expect("Permissions-Policy should be present");
+  assert_eq!(
+    r#"geolocation=(self "https://maps.example.test"), camera=()"#,
+    policy.header_value()
+  );
+  assert_eq!(2, policy.directives().len());
+  assert!(policy.directive("camera").unwrap().allowlist().is_empty());
+  assert_eq!(
+    vec![("Permissions-Policy", r#"geolocation=(self "https://maps.example.test"), camera=()"#)],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn permissions_policy_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::ok([]).header(
+    "Permissions-Policy",
+    r#"geolocation=(self "https://maps.example.test");report-to="rp""#,
+  );
+  let policy = raw
+    .permissions_policy()
+    .expect("raw Permissions-Policy should parse")
+    .expect("Permissions-Policy should be present");
+  assert_eq!(
+    r#"geolocation=(self "https://maps.example.test")"#,
+    policy.header_value()
+  );
+  assert_eq!(
+    Some(r#"geolocation=(self "https://maps.example.test");report-to="rp""#),
+    raw
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Permissions-Policy"))
+      .map(|header| header.value.as_str())
+  );
+
+  for value in [
+    "",
+    "geolocation=src",
+    "geolocation=('none')",
+    "geolocation=*;unknown=1",
+    "geolocation=(* \"https://example.test\")",
+    "geolocation=5",
+  ] {
+    let malformed = HttpResponse::ok([]).header("Permissions-Policy", value);
+    assert!(malformed.permissions_policy().is_err(), "should reject {value:?}");
+    assert!(
+      HttpResponse::ok([])
+        .with_permissions_policy(value)
+        .is_err(),
+      "should reject {value:?}"
+    );
+  }
+
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .permissions_policy()
+      .expect("absent Permissions-Policy should parse")
+  );
+
+  let duplicate = HttpResponse::ok([])
+    .header("Permissions-Policy", "geolocation=(self)")
+    .header("permissions-policy", "geolocation=(self)");
+  assert!(duplicate.permissions_policy().is_err());
+  assert!(HttpResponse::ok([])
+    .with_permissions_policy(
+      format!("geolocation=(\"{}\")", "https://example.test/".repeat(64 * 1024))
+    )
     .is_err());
 }
 

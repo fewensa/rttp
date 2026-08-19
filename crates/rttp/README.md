@@ -52,6 +52,14 @@ zero-size chunk, and can be inspected before serialization with
 `HttpResponse::trailers` or `HttpResponse::trailer_value`. Add a `Trailer`
 response header when advertising which trailer fields will follow.
 
+`HttpResponse::with_content_security_policy_report_only(value)` and
+`content_security_policy_report_only()` expose bounded
+`Content-Security-Policy-Report-Only` response metadata through the server
+facade. The client facade re-exports the matching
+`ContentSecurityPolicyReportOnly` type and `Response` accessor. Values remain
+opaque, repeated fields preserve wire order, and raw headers remain observable
+on parse failures; the facade does not enforce CSP or send reports.
+
 ## Bounded HTTP/1.1 byte ranges
 
 The server exposes byte-range primitives, not an automatic static-file server.
@@ -708,7 +716,8 @@ preserving raw headers on parse failures. The type reuses the canonical COOP
 directives `unsafe-none`, `same-origin-allow-popups`, `same-origin`, and
 `noopener-allow-popups`. Well-formed parameters are retained; `report-to` is
 exposed as a reporting-endpoint name when present. Each field value is
-bounded to 64 KiB.
+bounded to 64 KiB; parameter count is bounded to 256, and each parameter
+value is bounded to 64 KiB.
 
 These helpers are metadata-only: RTTP does not isolate browsing contexts,
 validate `Reporting-Endpoints` members, deliver reports, or schedule report
