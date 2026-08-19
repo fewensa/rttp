@@ -646,7 +646,7 @@ fn push_json_string(out: &mut String, value: &str) {
       '\t' => out.push_str("\\t"),
       '\u{08}' => out.push_str("\\b"),
       '\u{0C}' => out.push_str("\\f"),
-      ch if (ch as u32) < 0x20 => {
+      ch if (ch as u32) < 0x20 || ch == '\u{7f}' => {
         out.push_str(&format!("\\u{:04x}", ch as u32));
       }
       ch => out.push(ch),

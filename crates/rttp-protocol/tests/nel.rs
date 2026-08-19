@@ -80,6 +80,56 @@ fn nel_unescapes_json_strings_including_surrogate_pairs() {
 }
 
 #[test]
+fn nel_escapes_del_in_header_value_instead_of_emitting_raw_0x7f() {
+  let nel =
+    Nel::parse(r#"{"report_to":"a\u007fb","max_age":1}"#).expect("\\u007f escape should parse");
+  assert_eq!(nel.report_to(), Some("a\u{7f}b"));
+
+  let header_value = nel.header_value();
+  assert!(
+    !header_value.as_bytes().contains(&0x7f),
+    "header_value must not contain a raw DEL byte: {header_value:?}"
+  );
+  assert_eq!(header_value, r#"{"max_age":1,"report_to":"a\u007fb"}"#);
+  assert_eq!(
+    Nel::parse(header_value)
+      .expect("escaped header_value should reparse")
+      .report_to(),
+    Some("a\u{7f}b")
+  );
+}
+
+#[test]
+fn nel_escapes_del_in_unknown_member_names_in_header_value() {
+  let nel = Nel::parse(r#"{"max_age":1,"x\u007fy":1}"#)
+    .expect("\\u007f escape in an unknown member name should parse");
+  assert_eq!(nel.unknown_members()[0].name(), "x\u{7f}y");
+
+  let header_value = nel.header_value();
+  assert!(
+    !header_value.as_bytes().contains(&0x7f),
+    "header_value must not contain a raw DEL byte: {header_value:?}"
+  );
+  assert_eq!(header_value, r#"{"max_age":1,"x\u007fy":1}"#);
+  assert_eq!(
+    Nel::parse(header_value)
+      .expect("escaped header_value should reparse")
+      .unknown_members()[0]
+      .name(),
+    "x\u{7f}y"
+  );
+}
+
+#[test]
+fn nel_rejects_raw_del_in_field_value_at_parse_entry() {
+  let with_raw_del = "{\"report_to\":\"a\u{7f}b\",\"max_age\":1}";
+  assert!(
+    Nel::parse(with_raw_del).is_err(),
+    "a raw DEL byte in a NEL field value must be rejected"
+  );
+}
+
+#[test]
 fn nel_rejects_malformed_json() {
   for value in [
     "",
