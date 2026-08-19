@@ -422,6 +422,21 @@ unique across the combined field set. Empty input, empty members, malformed
 syntax, and duplicate names are rejected. This parser does not implement
 authentication policy.
 
+## Authorization and Proxy-Authorization
+
+`authorization` parses or constructs bounded `Authorization` and
+`Proxy-Authorization` request metadata. `Authorization::new()` /
+`ProxyAuthorization::new()` validate an HTTP-token scheme and a non-empty
+opaque credential value before formatting `scheme credentials`. `parse()` and
+`parse_values()` validate singleton inbound field values and reject duplicates
+to avoid ambiguous credentials. The full serialized field value is bounded to
+64 KiB, and credentials reject CR, LF, NUL, and other control-byte injection.
+
+Credential values are redacted from typed `Debug`, and parse errors describe
+only the header and validation category. These primitives do not store
+credentials, implement Basic or Bearer authentication, process challenges,
+retry requests, or decide redirect forwarding.
+
 ## Proxy-Authenticate
 
 `proxy_authenticate` parses one or more `Proxy-Authenticate` field values into

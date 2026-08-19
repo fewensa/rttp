@@ -354,9 +354,10 @@ policy.
 `credentials()` accessors. They return `Ok(None)` when the field is absent and
 reject invalid, oversized (over 64 KiB), or duplicate fields so credentials are
 not ambiguous. `Request::proxy_authorization()` and
-`HttpRequest::proxy_authorization()` expose `Proxy-Authorization` with the
-same bounded opaque representation and duplicate handling. Raw request headers
-remain available when either typed parser reports an error.
+`HttpRequest::proxy_authorization()` expose `Proxy-Authorization` as
+`HttpProxyAuthorization` with the same bounded opaque representation,
+control-byte injection checks, duplicate handling, and redacted debug output.
+Raw request headers remain available when either typed parser reports an error.
 
 `HttpResponse::with_www_authenticate(value)` validates bounded challenges from
 `rttp_protocol::www_authenticate`, replaces existing raw `WWW-Authenticate`

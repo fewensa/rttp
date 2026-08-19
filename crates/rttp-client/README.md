@@ -591,10 +591,12 @@ media ranges or extensions outside this bounded helper API.
 
 `HttpClient::authorization(scheme, credentials)` emits one `Authorization`
 field after validating its HTTP-token scheme and non-empty credential value,
-with a 64 KiB bound. Use `header(("Authorization", value))` as the raw escape
-hatch for custom scheme syntax. Credential interpretation remains
-application-owned: RTTP does not validate individual schemes, store or refresh
-credentials, process challenges, retry, or forward credentials on redirects.
+with the shared `rttp-protocol` request authorization primitive and a 64 KiB
+bound. Credentials reject CR, LF, NUL, and other control-byte injection. Use
+`header(("Authorization", value))` as the raw escape hatch for custom scheme
+syntax. Credential interpretation remains application-owned: RTTP does not
+validate individual schemes, store or refresh credentials, process challenges,
+retry, or forward credentials on redirects.
 
 ## Bounded HTTP request control metadata
 

@@ -1,8 +1,10 @@
 use std::collections::HashMap;
+use std::fmt;
 
 use crate::error;
+use rttp_protocol::authorization::{Authorization, ProxyAuthorization};
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct Header {
   name: String,
   value: String,
@@ -31,6 +33,13 @@ impl Header {
       return Err(error::builder_with_message(
         "Invalid outbound HTTP header value",
       ));
+    }
+    if self.name.eq_ignore_ascii_case("Authorization") {
+      Authorization::parse(&self.value)
+        .map_err(|error| error::builder_with_message(error.to_string()))?;
+    } else if self.name.eq_ignore_ascii_case("Proxy-Authorization") {
+      ProxyAuthorization::parse(&self.value)
+        .map_err(|error| error::builder_with_message(error.to_string()))?;
     }
     Ok(())
   }
@@ -63,6 +72,45 @@ impl Header {
   pub fn value_as_usize(&self) -> Result<usize, std::num::ParseIntError> {
     self.value.parse()
   }
+}
+
+impl fmt::Debug for Header {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter
+      .debug_struct("Header")
+      .field("name", &self.name)
+      .field("value", &debug_header_value(&self.name, &self.value))
+      .finish()
+  }
+}
+
+fn debug_header_value<'a>(name: &str, value: &'a str) -> DebugHeaderValue<'a> {
+  if is_sensitive_debug_header(name) {
+    DebugHeaderValue::Redacted
+  } else {
+    DebugHeaderValue::Visible(value)
+  }
+}
+
+enum DebugHeaderValue<'a> {
+  Redacted,
+  Visible(&'a str),
+}
+
+impl fmt::Debug for DebugHeaderValue<'_> {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      Self::Redacted => formatter.write_str("\"[REDACTED]\""),
+      Self::Visible(value) => fmt::Debug::fmt(value, formatter),
+    }
+  }
+}
+
+fn is_sensitive_debug_header(name: &str) -> bool {
+  name.eq_ignore_ascii_case("authorization")
+    || name.eq_ignore_ascii_case("cookie")
+    || name.eq_ignore_ascii_case("proxy-authorization")
+    || name.eq_ignore_ascii_case("set-cookie")
 }
 
 impl IntoHeader for &str {
@@ -213,4 +261,31 @@ fn is_http_token(value: &str) -> bool {
 
 fn is_header_value_byte(byte: u8) -> bool {
   byte == b'\t' || byte == b' ' || (0x21..=0x7e).contains(&byte) || byte >= 0x80
+}
+
+#[cfg(test)]
+mod tests {
+  use super::Header;
+
+  #[test]
+  fn debug_redacts_sensitive_header_values() {
+    for (name, secret) in [
+      ("Authorization", "Bearer origin-token"),
+      ("Proxy-Authorization", "Basic cHJveHk6c2VjcmV0"),
+      ("Cookie", "session=private"),
+      ("Set-Cookie", "session=private"),
+    ] {
+      let debug = format!("{:?}", Header::new(name, secret));
+      assert!(debug.contains(name));
+      assert!(debug.contains("[REDACTED]"));
+      assert!(!debug.contains(secret));
+    }
+  }
+
+  #[test]
+  fn debug_preserves_non_sensitive_header_values() {
+    let debug = format!("{:?}", Header::new("Accept", "application/json"));
+    assert!(debug.contains("Accept"));
+    assert!(debug.contains("application/json"));
+  }
 }

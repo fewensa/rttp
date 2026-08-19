@@ -2911,6 +2911,26 @@ hello\r\n\
       .expect("Proxy-Authorization should be present");
     assert_eq!("Basic", proxy_authorization.scheme());
     assert_eq!("cHJveHk6c2VjcmV0", proxy_authorization.credentials());
+    assert!(!format!("{proxy_authorization:?}").contains("cHJveHk6c2VjcmV0"));
+    let request_debug = format!("{request:?}");
+    assert!(request_debug.contains("Authorization"));
+    assert!(request_debug.contains("Proxy-Authorization"));
+    assert!(request_debug.contains("[REDACTED]"));
+    assert!(!request_debug.contains("origin-token"));
+    assert!(!request_debug.contains("cHJveHk6c2VjcmV0"));
+
+    let http_request = HttpRequest::parse(raw.as_bytes()).expect("request should parse");
+    let http_request_debug = format!("{http_request:?}");
+    assert!(http_request_debug.contains("Authorization"));
+    assert!(http_request_debug.contains("Proxy-Authorization"));
+    assert!(http_request_debug.contains("[REDACTED]"));
+    assert!(!http_request_debug.contains("origin-token"));
+    assert!(!http_request_debug.contains("cHJveHk6c2VjcmV0"));
+
+    let cookie_header_debug = format!("{:?}", HttpHeader::new("Cookie", "session=private"));
+    assert!(cookie_header_debug.contains("Cookie"));
+    assert!(cookie_header_debug.contains("[REDACTED]"));
+    assert!(!cookie_header_debug.contains("session=private"));
 
     let response = HttpResponse::new(401, "Unauthorized")
       .header("WWW-Authenticate", "Broken")
@@ -2937,6 +2957,7 @@ hello\r\n\
     )
     .expect("request should parse");
     assert!(malformed.proxy_authorization().is_err());
+    assert!(HttpProxyAuthorization::parse("Basic proxy\rsecret").is_err());
     assert_eq!(
       Some("invalid"),
       malformed.header("Proxy-Authorization")
