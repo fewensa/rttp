@@ -64,6 +64,15 @@ fn request_body(request: &[u8]) -> &[u8] {
   &request[body_start..]
 }
 
+fn request_head_text(request: &[u8]) -> String {
+  let head_end = request
+    .windows(4)
+    .position(|window| window == b"\r\n\r\n")
+    .map(|position| position + 4)
+    .expect("request should contain header terminator");
+  request_text(&request[..head_end])
+}
+
 #[test]
 fn outbound_headers_reject_invalid_names_and_values_before_connecting() {
   let invalid_headers = [
@@ -534,6 +543,17 @@ fn proxy_auth_rejects_oversized_basic_before_connecting_without_exposing_credent
     request.is_empty(),
     "oversized Proxy-Authorization metadata should not open a proxy socket"
   );
+}
+
+#[test]
+fn proxy_debug_redacts_credentials() {
+  let proxy = Proxy::http_with_authorization("127.0.0.1", 8080, "proxy-user", "proxy-secret");
+  let debug = format!("{proxy:?}");
+
+  assert!(debug.contains("127.0.0.1"));
+  assert!(!debug.contains("proxy-user"));
+  assert!(!debug.contains("proxy-secret"));
+  assert!(debug.contains("[REDACTED]"));
 }
 
 #[test]
@@ -1959,6 +1979,32 @@ fn http_proxy_request_sends_absolute_form_request_target() {
   let request_line = text.lines().next().expect("request line");
 
   assert_eq!("GET http://example.test/path?x=1 HTTP/1.1", request_line);
+}
+
+#[test]
+fn http_proxy_request_sends_proxy_authorization_in_header_block() {
+  let request = capture_proxy_request(|proxy| {
+    client()
+      .post()
+      .url("http://example.test/path?x=1")
+      .proxy(
+        Proxy::builder(proxy.type_().clone())
+          .host(proxy.host())
+          .port(proxy.port())
+          .username("proxy-user")
+          .password("proxy-secret"),
+      )
+      .raw("Proxy-Authorization: body-value")
+      .emit()
+      .expect("request should succeed");
+  });
+
+  let head = request_head_text(&request);
+  assert_eq!(
+    Some("Basic cHJveHktdXNlcjpwcm94eS1zZWNyZXQ="),
+    header_value(&head, "Proxy-Authorization")
+  );
+  assert_eq!(b"Proxy-Authorization: body-value", request_body(&request));
 }
 
 #[test]

@@ -273,12 +273,13 @@ impl<'a> Connection<'a> {
       .map(|target| format!("{}{}", &url[..url::Position::BeforePath], target))
       .unwrap_or_else(|| absolute_url(url));
     let mut proxy_header = format!(
-      "{} {} HTTP/1.1\r\n{}",
+      "{} {} HTTP/1.1\r\n",
       self.request.origin().method().to_uppercase(),
-      request_target,
-      rest
+      request_target
     );
+    proxy_header.push_str(rest.strip_suffix("\r\n").unwrap_or(rest));
     append_proxy_authorization_header(&mut proxy_header, proxy)?;
+    proxy_header.push_str("\r\n");
     Ok(proxy_header)
   }
 

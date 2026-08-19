@@ -1,3 +1,5 @@
+use std::fmt;
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum ProxyType {
   HTTP,
@@ -6,7 +8,7 @@ pub enum ProxyType {
   SOCKS5,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Proxy {
   host: String,
   port: u32,
@@ -115,6 +117,27 @@ impl Proxy {
   }
   pub fn type_(&self) -> &ProxyType {
     &self.type_
+  }
+}
+
+impl fmt::Debug for Proxy {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let mut debug = formatter.debug_struct("Proxy");
+    debug
+      .field("host", &self.host)
+      .field("port", &self.port)
+      .field("type_", &self.type_);
+    if self.username.is_some() {
+      debug.field("username", &"[REDACTED]");
+    } else {
+      debug.field("username", &self.username);
+    }
+    if self.password.is_some() {
+      debug.field("password", &"[REDACTED]");
+    } else {
+      debug.field("password", &self.password);
+    }
+    debug.finish()
   }
 }
 
