@@ -59,6 +59,21 @@ requests, or apply application idempotency policy. The key is redacted from
 typed `Debug` and builder error text. Callers needing an unusual value can
 retain full raw-header control with `header(("Idempotency-Key", "..."))`.
 
+## Bounded Sec-WebSocket-Key metadata
+
+`HttpClient::sec_websocket_key(value)` sets a `Sec-WebSocket-Key` request
+header for application-generated handshake nonces through the shared protocol
+`SecWebSocketKey` type. The helper accepts a singleton RFC 4648 section 4
+base64 encoding of exactly 16 nonce bytes, trims HTTP OWS, and rejects empty,
+interior-whitespace, non-base64, URL-safe or unpadded, wrong-decoded-length,
+control-byte (including CR/LF/NUL and obs-text), duplicate, and oversized
+values before a socket is opened. It validates and emits the trimmed encoded
+nonce unchanged: RTTP does not perform an HTTP upgrade, compute
+`Sec-WebSocket-Accept`, generate a random nonce, or implement WebSocket
+frames. The nonce is redacted from typed `Debug` and builder error text.
+Callers needing an unusual value can retain full raw-header control with
+`header(("Sec-WebSocket-Key", "..."))`.
+
 ## Bounded W3C Trace Context metadata
 
 `HttpClient::traceparent(value)` and `HttpClient::tracestate(value)` validate
@@ -1089,6 +1104,7 @@ header-block model.
 | Upgrade-Insecure-Requests | `upgrade_insecure_requests` emits bounded singleton `Upgrade-Insecure-Requests: 1` request metadata | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Max-Forwards | `max_forwards` emits bounded singleton `Max-Forwards` request metadata through the shared protocol type | No hop decrement, proxy routing, TRACE/OPTIONS selection, retry, or forwarding policy |
 | Idempotency-Key | `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
+| Sec-WebSocket-Key | `sec_websocket_key` emits bounded singleton `Sec-WebSocket-Key` request metadata through the shared protocol type, replacing an existing same-name field and redacting the nonce from typed debug output | No HTTP upgrade, `Sec-WebSocket-Accept` computation, random nonce generation, WebSocket frames, or handshake policy |
 | Pragma | `pragma` and `pragma_no_cache` emit bounded RFC 9111 `Pragma` request metadata through the shared protocol type, combining and replacing existing same-name fields | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |
 | W3C Trace Context | `traceparent` and `tracestate` validate and emit bounded W3C Trace Context request metadata through shared protocol types, replacing existing same-name fields and redacting propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |
 | W3C Baggage | `baggage` validates and emits bounded W3C Baggage request metadata through the shared protocol type, replacing an existing same-name field and redacting member and property values from typed debug output | No application-data interpretation, request-context storage, tracing backend, span model, or automatic propagation |

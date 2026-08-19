@@ -2863,6 +2863,52 @@ fn sync_client_and_server_exchange_bounded_idempotency_key_metadata_without_poli
 }
 
 #[test]
+fn sync_client_and_server_exchange_bounded_sec_websocket_key_metadata_without_handshake() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind sec websocket key server");
+  let addr = server.local_addr().expect("sec websocket key server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request
+            .sec_websocket_key()
+            .expect("Sec-WebSocket-Key should parse")
+            .map(|key| key.as_str().to_string()),
+          request.header("Sec-WebSocket-Key").map(str::to_string),
+          request.header("Upgrade").map(str::to_string),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed sec websocket key metadata");
+        HttpResponse::new(200, "OK")
+      })
+      .expect("serve sec websocket key request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/chat"))
+    .sec_websocket_key("dGhlIHNhbXBsZSBub25jZQ==")
+    .expect("Sec-WebSocket-Key should be accepted")
+    .emit()
+    .expect("sec websocket key response should parse");
+
+  let (typed, raw, upgrade) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe sec websocket key metadata");
+  assert_eq!(Some("dGhlIHNhbXBsZSBub25jZQ==".to_string()), typed);
+  assert_eq!(Some("dGhlIHNhbXBsZSBub25jZQ==".to_string()), raw);
+  assert_eq!(
+    None, upgrade,
+    "typed Sec-WebSocket-Key metadata must not set Connection: Upgrade or an Upgrade field"
+  );
+  assert_eq!(200, response.code());
+  handle.join().expect("sec websocket key server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_bounded_pragma_metadata_without_policy() {
   const PRAGMA_REQUEST: &str = "no-cache, community=private";
   const PRAGMA_RESPONSE: &str = "no-cache, vendor=private";
