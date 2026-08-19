@@ -1,17 +1,18 @@
 use rttp_client::response::{
   AcceptCh, AccessControlAllowHeaders, AccessControlAllowHeadersParseError,
   AccessControlAllowMethods, AccessControlAllowMethodsParseError, AccessControlExposeHeaders,
-  AccessControlMaxAge, AccessControlMaxAgeParseError, Age, AgeParseError, AltSvc, Connection,
-  ConnectionParseError, ContentRange, ContentRangeParseError, CrossOriginEmbedderPolicy,
-  CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest,
-  HttpClearSiteData, KeepAlive, Location, LocationParseError, Nel, NoVarySearch,
-  NoVarySearchParams, NoVarySearchParseError, PreferenceApplied, Priority, ProxyAuthenticate,
-  ProxyAuthenticateParseError, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError,
-  ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Signature, SignatureInput,
-  SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
-  StrictTransportSecurityParseError, Trailer, TransferEncoding, TransferEncodingParseError,
-  Upgrade, UpgradeParseError, Vary, VaryParseError, WantContentDigest, WantReprDigest, Warning,
-  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  AccessControlMaxAge, AccessControlMaxAgeParseError, Age, AgeParseError, AltSvc,
+  AuthenticationInfo, AuthenticationInfoParseError, Connection, ConnectionParseError, ContentRange,
+  ContentRangeParseError, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly,
+  CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest, HttpClearSiteData, KeepAlive,
+  Location, LocationParseError, Nel, NoVarySearch, NoVarySearchParams, NoVarySearchParseError,
+  PreferenceApplied, Priority, ProxyAuthenticate, ProxyAuthenticateParseError,
+  ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ReferrerPolicy, ReferrerPolicyToken,
+  ServerTiming, Signature, SignatureInput, SignatureInputParseError, SignatureParseError,
+  StrictTransportSecurity, StrictTransportSecurityParseError, Trailer, TransferEncoding,
+  TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError, WantContentDigest,
+  WantReprDigest, Warning, XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions,
+  XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentLocation, ContentLocationParseError, HttpContentLength, ReprDigest,
@@ -103,6 +104,11 @@ fn response_facade_exports_representative_bounded_metadata_types() {
       .expect("COEP-Report-Only should parse");
   let cross_origin_opener_policy =
     CrossOriginOpenerPolicy::parse("noopener-allow-popups").expect("COOP should parse");
+  let authentication_info =
+    AuthenticationInfo::parse(r#"nextnonce="6629fae49393a05397450978507c4ef1", qop=auth"#)
+      .expect("Authentication-Info should parse");
+  let _: AuthenticationInfoParseError =
+    AuthenticationInfo::parse("").expect_err("empty Authentication-Info should be rejected");
   let proxy_authentication_info =
     ProxyAuthenticationInfo::parse(r#"nextnonce="6629fae49393a05397450978507c4ef1", qop=auth"#)
       .expect("Proxy-Authentication-Info should parse");
@@ -183,6 +189,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(
     cross_origin_opener_policy.header_value(),
     "noopener-allow-popups"
+  );
+  assert_eq!(
+    authentication_info.parameter("nextnonce"),
+    Some("6629fae49393a05397450978507c4ef1")
   );
   assert_eq!(
     proxy_authentication_info.parameter("nextnonce"),

@@ -9,6 +9,7 @@ use url::Url;
 use crate::error;
 use crate::response::raw_response::RawResponse;
 use crate::response::AltSvc;
+use crate::response::AuthenticationInfo;
 use crate::response::Connection;
 use crate::response::ContentDigest;
 use crate::response::Digest;
@@ -706,6 +707,18 @@ impl Response {
       return Ok(None);
     }
     WwwAuthenticate::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses all `Authentication-Info` fields as bounded auth-param metadata
+  /// without verifying `rspauth` or updating credentials.
+  pub fn authentication_info(&self) -> error::Result<Option<AuthenticationInfo>> {
+    let values = self.header_values("authentication-info");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    AuthenticationInfo::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
