@@ -514,6 +514,26 @@ These helpers only declare and parse metadata. RTTP does not grant or deny
 browser permissions, compare origins, resolve `self`, or enforce origin
 policy, and it does not send reports.
 
+## Document-Policy response metadata
+
+`HttpResponse::with_document_policy(value)` validates one WICG Document Policy
+Structured Fields dictionary and replaces any existing raw `Document-Policy`
+fields with one canonical value from the shared protocol parser.
+`HttpResponse::document_policy()` parses attached raw fields into
+`HttpDocumentPolicy` metadata, returning `Ok(None)` when absent and parser
+errors without changing raw fields. Directives expose the configuration-point
+name, typed value (boolean, integer, decimal, or token), and the retained
+`report-to` endpoint name. Directive names are opaque lowercase tokens or `*`
+and are not looked up against a browser configuration-point list. Field
+values are bounded to 64 KiB, the cumulative raw bytes across all supplied
+fields to 64 KiB, and directives to 256 per header set. Empty dictionaries,
+duplicate directive names, duplicate parameters, unknown parameters, and
+unparsable input are rejected.
+
+These helpers only declare and parse metadata. RTTP does not execute
+configuration points, block document loads, compare required policies, echo
+`Sec-Required-Document-Policy`, or send reports.
+
 ## Supports-Loading-Mode response metadata
 
 `HttpResponse::with_supports_loading_mode(tokens)` validates a declared token
@@ -677,6 +697,24 @@ continue to expose the original raw field. The key is redacted from typed
 
 These helpers parse request metadata only. They do not retry requests, store
 keys, compare keys across requests, or apply application idempotency policy.
+
+## Sec-WebSocket-Key request metadata
+
+Handlers can call `Request::sec_websocket_key()` and
+`HttpRequest::sec_websocket_key()` to observe bounded typed
+`Sec-WebSocket-Key` request metadata through the shared protocol
+`HttpSecWebSocketKey` type. Absent fields return `Ok(None)`. A recognized
+value is a singleton RFC 4648 section 4 base64 encoding of exactly 16 nonce
+bytes with optional surrounding SP or HTAB, bounded to 64 KiB. `as_str()`
+returns the stored encoded nonce and `header_value()` emits it unchanged.
+Malformed, URL-safe or unpadded, wrong-decoded-length, oversized, duplicate,
+or control-byte values return a parser error while `Request::header()` and
+`HttpRequest::header()` continue to expose the original raw field. The nonce
+is redacted from typed `Debug`.
+
+These helpers parse request metadata only. They do not perform an HTTP
+upgrade, compute `Sec-WebSocket-Accept`, generate a random nonce, or
+implement WebSocket frames.
 
 ## Pragma request and response metadata
 

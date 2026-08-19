@@ -97,6 +97,11 @@ pub use rttp_protocol::digest::{
   Digest as HttpDigest, DigestEntry as HttpDigestEntry, DigestParseError as HttpDigestParseError,
   ReprDigest as HttpReprDigest, ReprDigestEntry as HttpReprDigestEntry,
 };
+pub use rttp_protocol::document_policy::{
+  DocumentPolicy as HttpDocumentPolicy, DocumentPolicyDirective as HttpDocumentPolicyDirective,
+  DocumentPolicyParseError as HttpDocumentPolicyParseError,
+  DocumentPolicyValue as HttpDocumentPolicyValue,
+};
 pub use rttp_protocol::keep_alive::{
   KeepAlive as HttpKeepAlive, KeepAliveExtension as HttpKeepAliveExtension,
   KeepAliveParseError as HttpKeepAliveParseError,
@@ -1369,6 +1374,17 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Document-Policy` metadata without enforcing
+  /// document policy in the HTTP layer.
+  pub fn with_document_policy(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpDocumentPolicyParseError> {
+    let policy = HttpDocumentPolicy::parse(value)?;
+    self.set_browser_policy_header("Document-Policy", &policy.header_value());
+    Ok(self)
+  }
+
   /// Validates and replaces `Permissions-Policy` metadata without enforcing
   /// browser permissions or origin policy.
   pub fn with_permissions_policy(
@@ -2400,6 +2416,23 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpContentSecurityPolicyReportOnly::parse_values(values).map(Some)
+  }
+
+  /// Returns attached `Document-Policy` metadata without enforcing document
+  /// policy in the HTTP layer.
+  pub fn document_policy(
+    &self,
+  ) -> Result<Option<HttpDocumentPolicy>, HttpDocumentPolicyParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Document-Policy"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDocumentPolicy::parse_values(values).map(Some)
   }
 
   /// Returns attached `Permissions-Policy` metadata without enforcing browser
@@ -4547,6 +4580,7 @@ fn is_sensitive_debug_header(name: &str) -> bool {
     || name.eq_ignore_ascii_case("idempotency-key")
     || name.eq_ignore_ascii_case("origin-trial")
     || name.eq_ignore_ascii_case("proxy-authorization")
+    || name.eq_ignore_ascii_case("sec-websocket-key")
     || name.eq_ignore_ascii_case("set-cookie")
     || name.eq_ignore_ascii_case("speculation-rules")
     || name.eq_ignore_ascii_case("traceparent")

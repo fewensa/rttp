@@ -46,6 +46,7 @@ fn package_includes_protocol_metadata_facade_test() {
     "tests/origin_trial.rs",
     "tests/speculation_rules.rs",
     "tests/sec_gpc.rs",
+    "tests/sec_websocket_key.rs",
     "tests/service_worker_allowed.rs",
   ] {
     assert!(

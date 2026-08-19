@@ -12,12 +12,12 @@ use rttp::server::{
   HttpNel, HttpOriginTrialParseError, HttpOriginTrials, HttpPermissionsPolicy,
   HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization,
   HttpProxyStatus, HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse,
-  HttpSaveData, HttpSecGpc, HttpSecGpcParseError, HttpServiceWorkerAllowed,
-  HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
-  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
-  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
-  HttpSpeculationRules, HttpSpeculationRulesParseError, HttpSunsetParseError,
-  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpUpgrade,
+  HttpSaveData, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketKey,
+  HttpSecWebSocketKeyParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
+  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
+  HttpSunsetParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpUpgrade,
   HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
 };
 use std::io::Write;
@@ -240,6 +240,12 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::PermissionsPolicyParseError =
     rttp_client::response::PermissionsPolicy::parse("geolocation=src")
       .expect_err("src should be rejected");
+  let document_policy: rttp::DocumentPolicy =
+    rttp_client::response::DocumentPolicy::parse("oversized-images=2.0, unsized-media=?0")
+      .expect("Document-Policy should parse");
+  let _: rttp::DocumentPolicyParseError =
+    rttp_client::response::DocumentPolicy::parse("unsized-media=src;foo=bar")
+      .expect_err("unknown Document-Policy parameter should be rejected");
   let supports_loading_mode: rttp::SupportsLoadingMode =
     rttp_client::response::SupportsLoadingMode::parse("fenced-frame, credentialed-prerender")
       .expect("Supports-Loading-Mode should parse");
@@ -374,6 +380,18 @@ fn compatibility_facade_exports_client_metadata_types() {
     .unwrap()
     .allowlist()
     .is_empty());
+  assert_eq!(document_policy.directives().len(), 2);
+  assert_eq!(
+    document_policy.header_value(),
+    "oversized-images=2.0, unsized-media=?0"
+  );
+  assert_eq!(
+    document_policy
+      .directive("oversized-images")
+      .unwrap()
+      .value(),
+    &rttp::DocumentPolicyValue::Decimal("2.0".to_string())
+  );
   assert_eq!(
     supports_loading_mode.tokens(),
     ["fenced-frame", "credentialed-prerender"]
@@ -883,6 +901,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpExpectations::parse("100-continue, preview").expect("Expect should parse");
   let idempotency_key: HttpIdempotencyKey =
     HttpIdempotencyKey::parse("charge-2026-08-19-9f3c").expect("Idempotency-Key should parse");
+  let sec_websocket_key: HttpSecWebSocketKey =
+    HttpSecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==").expect("Sec-WebSocket-Key should parse");
   let baggage: HttpBaggage =
     HttpBaggage::parse("tenant=acme;source=gateway").expect("baggage should parse");
   let _: HttpBaggageParseError =
@@ -891,6 +911,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let baggage_property: &HttpBaggageProperty = &baggage_member.properties()[0];
   let _: Result<HttpIdempotencyKey, HttpIdempotencyKeyParseError> =
     HttpIdempotencyKey::parse("key with space");
+  let _: Result<HttpSecWebSocketKey, HttpSecWebSocketKeyParseError> =
+    HttpSecWebSocketKey::parse("the sample nonce");
   let if_modified_since: HttpIfModifiedSince =
     HttpIfModifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
       .expect("If-Modified-Since should parse");
@@ -993,6 +1015,9 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!("charge-2026-08-19-9f3c", idempotency_key.as_str());
   assert_eq!("charge-2026-08-19-9f3c", idempotency_key.header_value());
   assert!(!format!("{idempotency_key:?}").contains("charge-2026-08-19-9f3c"));
+  assert_eq!("dGhlIHNhbXBsZSBub25jZQ==", sec_websocket_key.as_str());
+  assert_eq!("dGhlIHNhbXBsZSBub25jZQ==", sec_websocket_key.header_value());
+  assert!(!format!("{sec_websocket_key:?}").contains("dGhlIHNhbXBsZSBub25jZQ=="));
   assert_eq!("tenant", baggage_member.key());
   assert_eq!("source", baggage_property.key());
   assert!(!format!("{baggage:?}").contains("acme"));

@@ -7,7 +7,7 @@ use rttp::server::{
   HttpByteRange, HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata,
   HttpContentDisposition, HttpContentLanguages, HttpContentRange, HttpContentSecurityPolicy,
   HttpContentSecurityPolicyReportOnly, HttpContentType, HttpCriticalCh, HttpDeprecation,
-  HttpEntityTag, HttpExpectations, HttpHost, HttpIfNoneMatch, HttpIfRange,
+  HttpDocumentPolicy, HttpEntityTag, HttpExpectations, HttpHost, HttpIfNoneMatch, HttpIfRange,
   HttpIfRangeRequestOutcome, HttpLinkValues, HttpMementoDatetime, HttpNel, HttpOriginTrials,
   HttpPermissionsPolicy, HttpProxyStatus, HttpProxyStatusBareItem, HttpReferrerPolicy,
   HttpReportingEndpoints, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
@@ -523,6 +523,8 @@ fn response_browser_policy_helpers_preserve_metadata_without_enforcing_it() {
     .expect("Content-Security-Policy metadata should be accepted")
     .with_permissions_policy("geolocation=(), camera=()")
     .expect("Permissions-Policy metadata should be accepted")
+    .with_document_policy("oversized-images=2.0, unsized-media=?0, *;report-to=default")
+    .expect("Document-Policy metadata should be accepted")
     .with_referrer_policy("strict-origin-when-cross-origin")
     .expect("Referrer-Policy metadata should be accepted");
 
@@ -551,12 +553,22 @@ fn response_browser_policy_helpers_preserve_metadata_without_enforcing_it() {
       .as_ref()
       .map(HttpReferrerPolicy::as_str)
   );
+  assert_eq!(
+    Some("oversized-images=2.0, unsized-media=?0, *;report-to=default"),
+    response
+      .document_policy()
+      .expect("Document-Policy metadata should parse")
+      .as_ref()
+      .map(HttpDocumentPolicy::header_value)
+      .as_deref()
+  );
   assert!(String::from_utf8(response.to_bytes())
     .expect("response should serialize")
     .contains("\r\nContent-Security-Policy: default-src 'none'\r\n"));
 
   assert!(HttpContentSecurityPolicy::parse("default-src\r\nblocked").is_err());
   assert!(HttpPermissionsPolicy::parse("").is_err());
+  assert!(HttpDocumentPolicy::parse("oversized-images=1.0, oversized-images=2.0").is_err());
   assert!(HttpReferrerPolicy::parse("origin\0").is_err());
 }
 
@@ -1415,6 +1427,56 @@ fn request_idempotency_key_is_optional_and_rejects_invalid_metadata() {
   ));
   assert!(duplicate.idempotency_key().is_err());
   assert_eq!(Some("first"), duplicate.header("Idempotency-Key"));
+}
+
+#[test]
+fn request_sec_websocket_key_is_optional_and_rejects_invalid_metadata() {
+  let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .sec_websocket_key()
+      .expect("missing Sec-WebSocket-Key should be valid")
+  );
+
+  for value in ["dGhlIHNhbXBsZSBub25jZQ==", "AAAAAAAAAAAAAAAAAAAAAA=="] {
+    let valid = parse_request(&format!(
+      "GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Key: {value}\r\n\r\n"
+    ));
+    let parsed = valid
+      .sec_websocket_key()
+      .expect("value should parse")
+      .expect("Sec-WebSocket-Key should be present");
+    assert_eq!(value, parsed.as_str());
+    assert_eq!(value, parsed.header_value());
+    assert!(!format!("{parsed:?}").contains(value));
+  }
+
+  for value in ["", "the sample nonce", "dGhlIHNhbXBsZSBub25jZQ"] {
+    let request = parse_request(&format!(
+      "GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Key: {value}\r\n\r\n"
+    ));
+    assert!(
+      request.sec_websocket_key().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(Some(value), request.header("Sec-WebSocket-Key"));
+  }
+
+  assert!(rttp::server::HttpSecWebSocketKey::parse("A".repeat(64 * 1024 + 1)).is_err());
+
+  let duplicate = parse_request(concat!(
+    "GET /chat HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n",
+    "sec-websocket-key: AAAAAAAAAAAAAAAAAAAAAA==\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.sec_websocket_key().is_err());
+  assert_eq!(
+    Some("dGhlIHNhbXBsZSBub25jZQ=="),
+    duplicate.header("Sec-WebSocket-Key")
+  );
 }
 
 #[test]

@@ -106,6 +106,9 @@ pub use rttp_protocol::digest::{
   ContentDigest, ContentDigestEntry, Digest, DigestEntry, DigestParseError, ReprDigest,
   ReprDigestEntry,
 };
+pub use rttp_protocol::document_policy::{
+  DocumentPolicy, DocumentPolicyDirective, DocumentPolicyParseError, DocumentPolicyValue,
+};
 pub use rttp_protocol::entity_tag::{EntityTag, EntityTagParseError};
 pub use rttp_protocol::keep_alive::{KeepAlive, KeepAliveExtension, KeepAliveParseError};
 pub use rttp_protocol::link::{LinkParameter, LinkParseError, LinkValue, LinkValues};
