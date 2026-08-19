@@ -22,11 +22,16 @@ fn package_includes_protocol_metadata_facade_test() {
     "tests/authorization.rs",
     "tests/link.rs",
     "tests/location.rs",
+    "tests/max_forwards.rs",
+    "tests/if_modified_since.rs",
+    "tests/if_unmodified_since.rs",
     "tests/package_list.rs",
     "tests/metadata_facade.rs",
+    "tests/content_disposition.rs",
     "tests/content_language.rs",
     "tests/no_vary_search.rs",
     "tests/upgrade.rs",
+    "tests/accept_language.rs",
   ] {
     assert!(
       package_files.lines().any(|path| path == expected),

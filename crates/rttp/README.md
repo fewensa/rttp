@@ -137,6 +137,15 @@ or `HEAD` and `PreconditionFailed` for other methods. `If-Modified-Since` and
 successfully, and last-modified comparisons are performed at HTTP-date second
 precision.
 
+Handlers can also parse the raw validators without evaluation:
+`Request::if_modified_since()`, `HttpRequest::if_modified_since()`, and the
+matching `if_unmodified_since()` accessors expose one HTTP-date instant through
+the shared protocol `HttpIfModifiedSince` and `HttpIfUnmodifiedSince` types.
+Absent fields return `Ok(None)`; malformed, oversized, duplicate, or
+control-byte values return a parse error while the raw field stays available
+through `header()`. These accessors only parse metadata and do not change
+evaluator precedence or comparison behavior.
+
 Use `HttpResponse::not_modified(&metadata)` for `304 Not Modified`; it adds
 available `ETag` and `Last-Modified` validators and serializes without a
 message body. `HttpResponse::with_etag(HttpEntityTag::strong("tag"))` and
@@ -418,6 +427,30 @@ helpers such as `Request::accept_language()`, `HttpResponse::cache_control()`,
 and parsing only when requested. They do not sniff, decode, negotiate, cache,
 redirect, retry, or select representations from `Content-Language`.
 
+## Bounded Accept-Encoding request metadata
+
+Server-side `Accept-Encoding` helpers expose request metadata through the
+shared `rttp-protocol` primitive. `Request::accept_encoding()` and
+`HttpRequest::accept_encoding()` parse all received `Accept-Encoding` fields
+in wire order into `HttpRequestAcceptEncodings` and return `Ok(None)` when
+the header is absent. HTTP/1.1 and HTTP/2 share the same `Request` helpers.
+Each entry provides its `coding()` and q-value `quality()` in thousandths
+(`1000` is the default quality of `1`). The shared protocol type is the
+authority for coding-token, wildcard, q-value, duplicate, member-count, and
+size validation.
+
+Parsing is bounded and validation-oriented. Each `Accept-Encoding` field value
+is limited to 64 KiB, the combined list is limited to 32 members, and each
+coding must be an RFC 9110 token, including `identity` and `*`. Empty members,
+malformed tokens or q-values, duplicates across one or more helper-parsed
+header fields, oversized values, and too many members return
+`HttpAcceptEncodingParseError` from the helper. Raw
+`Request::header("Accept-Encoding", ...)` values remain preserved exactly as
+ordinary headers; helper parse errors do not remove existing headers.
+
+These helpers parse request metadata only. They do not enable automatic
+compression, decompression, or content negotiation.
+
 ## Bounded HTTP/1.1 Content-Location behavior
 
 Server-side `Content-Location` helpers expose response metadata declaration and
@@ -480,6 +513,7 @@ from `Content-DPR`.
 Server-side `Content-Disposition` helpers expose response metadata declaration
 and parsing without implementing download policy, filesystem handling, MIME
 sniffing, cache behavior, redirect handling, retry, or negotiation.
+`HttpContentDisposition` is backed by the shared protocol primitive.
 `HttpContentDisposition::parse(value)` validates one field value, including a
 token disposition type and bounded parameters. `HttpContentDisposition::inline()`
 and `HttpContentDisposition::attachment()` construct common dispositions, and
@@ -493,11 +527,12 @@ is a convenience helper for `attachment; filename=...`.
 returns `Ok(None)` when the header is absent.
 
 Parsing is bounded and validation-oriented. The field value is limited to
-64 KiB, parameter count is limited to 32, token positions must be valid HTTP
-tokens, quoted-string input must be well formed, and CR/LF or other control
-characters are rejected. Duplicate parameters and duplicate
-`Content-Disposition` fields are rejected by the typed parser. Raw
-`HttpResponse::header("Content-Disposition", ...)` values remain preserved
+64 KiB, parameter count is limited to 256, each parameter value is limited to
+64 KiB, token positions must be valid HTTP tokens, quoted-string input must be
+well formed, `filename*` must be an unquoted RFC 5987 ext-value, and CR/LF or
+other control characters other than HTAB are rejected. Duplicate parameters
+and duplicate `Content-Disposition` fields are rejected by the typed parser.
+Raw `HttpResponse::header("Content-Disposition", ...)` values remain preserved
 exactly as ordinary response headers until a typed declaration helper replaces
 them or the typed parser is requested.
 
@@ -871,13 +906,14 @@ scheduling, or async accept loops.
 | Allow | `HttpAllowedMethods`, `HttpResponse::with_allow`, and `HttpResponse::allow` declare and parse bounded `Allow` method-list metadata | No route dispatch, automatic `405` generation, `OPTIONS` policy, fallback method selection, retry/replay, or status-code policy engine |
 | Client Hints | `HttpAcceptCh`/`HttpCriticalCh`, `HttpResponse::with_accept_ch`/`with_critical_ch`, and `accept_ch`/`critical_ch` declare and parse bounded Client Hints opt-in metadata; `Response::accept_ch` and `critical_ch` expose it to clients | No browser opt-in state, request-header generation, automatic retry, persistence, or Client Hints policy |
 | Content-Language | `HttpContentLanguages`, `Request::content_language`, `HttpRequest::content_language`, `HttpResponse::with_content_language`, and `HttpResponse::content_language` parse or declare bounded `Content-Language` metadata | No automatic language negotiation, route selection, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
+| Accept-Encoding | `HttpRequestAcceptEncodings`, `Request::accept_encoding`, and `HttpRequest::accept_encoding` parse bounded `Accept-Encoding` request metadata through the shared `rttp-protocol` type | No compression, decompression, content negotiation, retries, or transport changes |
 | Content-Location | `HttpResponse::with_content_location` declares one bounded singleton `Content-Location` header, and `HttpResponse::content_location` parses attached singleton response metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |
 | Content-DPR | `HttpResponse::with_content_dpr` declares one bounded singleton `Content-DPR` header, and `HttpResponse::content_dpr` plus client `Response::content_dpr` parse attached singleton decimal-ratio metadata while preserving raw headers | No image rescaling, request DPR emission, Client Hints policy, retry, or transport changes |
 | Content-Type and Content-Encoding | `HttpContentType`, `Request::content_type`, `HttpRequest::content_type`, `HttpResponse::with_content_type`, `content_type`, `HttpResponseContentEncodings`, `Request::content_encoding`, `HttpRequest::content_encoding`, `HttpResponse::with_content_encoding`, and `content_encoding` parse or declare bounded representation metadata while preserving raw headers on parse failures and replacing raw response duplicates on typed declaration | No MIME sniffing, body decoding, charset transcoding, compression/decompression, negotiation, cache policy, redirects, retry/replay, or filesystem serving |
 | Connection | `HttpConnection`, `Request::connection`, `HttpRequest::connection`, and `HttpResponse::connection` parse bounded HTTP/1 `Connection` tokens, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to hop-by-hop stripping, keep-alive/close, upgrade/h2c, or HTTP/2 rejection |
 | Transfer-Encoding | `HttpTransferEncoding`, `Request::transfer_encoding`, and `HttpRequest::transfer_encoding` parse bounded HTTP/1 `Transfer-Encoding` fields that must be sole `chunked`, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to `request_body_kind`, `TE`, Content-Length, or HTTP/2 decode rejection |
 | Upgrade metadata | `Upgrade`, `HttpUpgrade`, `HttpClient::upgrade_protocols`, `Response::upgrade`, `Request::upgrade`, `HttpRequest::upgrade`, `HttpResponse::with_upgrade`, and `HttpResponse::upgrade` validate, declare, or parse bounded HTTP/1 `Upgrade` protocol metadata while preserving raw headers on parse failures | No automatic `Connection: Upgrade`, h2c selection, client/server socket handoff, ALPN negotiation, or upgraded protocol implementation |
-| Content-Disposition | `HttpContentDisposition`, `HttpResponse::with_content_disposition`, `with_attachment_filename`, and `content_disposition` declare and parse bounded singleton `Content-Disposition` response metadata, preserve parsed `filename` and `filename*` parameter values, preserve raw headers on parse failures, and replace raw duplicates on typed declaration | No automatic download, filesystem path handling, MIME sniffing, cache behavior, redirect behavior, retry/replay, negotiation, or status-policy behavior |
+| Content-Disposition | Protocol-backed `HttpContentDisposition`, `HttpResponse::with_content_disposition`, `with_attachment_filename`, and `content_disposition` declare and parse bounded singleton `Content-Disposition` response metadata, preserve parsed `filename` and `filename*` parameter values, preserve raw headers on parse failures, and replace raw duplicates on typed declaration | No automatic download, filesystem path handling, MIME sniffing, cache behavior, redirect behavior, retry/replay, negotiation, or status-policy behavior |
 | NEL | `HttpNel`, `HttpResponse::with_nel`, and `HttpResponse::nel` declare and parse bounded W3C Network Error Logging policy JSON, preserve unknown JSON members as raw metadata, preserve raw headers on parse failures, and replace raw duplicates on typed declaration; the client `Response::nel` parses the same metadata | No network error report sending, policy persistence, Reporting endpoint group configuration, retry, redirect behavior, or status-policy behavior |
 | Upgrade and tunnel targets | `CONNECT` authority-form requests are accepted as HTTP requests; `HttpHandoff::upgrade` can hand an upgraded socket to caller code after a matching request | The server does not implement the upgraded protocol after handoff |
 | Trailers | Chunked request trailers are preserved on `Request`; malformed, oversized, forbidden, and pseudo-header trailers are rejected; response trailers can be serialized for chunked responses | Application metadata trailers are allowed; trailer names that affect connection state, routing, authentication/cookies, framing, or payload processing are rejected |

@@ -1,5 +1,5 @@
 use rttp_client::response::{
-  AcceptCh, AccessControlAllowCredentials, AccessControlAllowCredentialsParseError,
+  AcceptCh, AcceptEncoding, AccessControlAllowCredentials, AccessControlAllowCredentialsParseError,
   AccessControlAllowHeaders, AccessControlAllowHeadersParseError, AccessControlAllowMethods,
   AccessControlAllowMethodsParseError, AccessControlExposeHeaders, AccessControlMaxAge,
   AccessControlMaxAgeParseError, Age, AgeParseError, AltSvc, AuthenticationInfo,
@@ -19,8 +19,8 @@ use rttp_client::response::{
   XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
-  ContentDigest, ContentLocation, ContentLocationParseError, Deprecation, DeprecationParseError,
-  ReprDigest,
+  ContentDigest, ContentDisposition, ContentDispositionParseError, ContentLocation,
+  ContentLocationParseError, Deprecation, DeprecationParseError, ReprDigest,
 };
 use rttp_client::{HttpClient, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose};
 use rttp_test_support as support;
@@ -58,6 +58,11 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .expect("Content-Location should parse");
   let _: ContentLocationParseError =
     ContentLocation::parse("not valid").expect_err("invalid Content-Location should be rejected");
+  let content_disposition =
+    ContentDisposition::parse("attachment; filename=\"report.txt\"; filename*=UTF-8''report.txt")
+      .expect("Content-Disposition should parse");
+  let _: ContentDispositionParseError = ContentDisposition::parse("attachment;")
+    .expect_err("invalid Content-Disposition should be rejected");
   let content_dpr = ContentDpr::parse("1.5").expect("Content-DPR should parse");
   let _: ContentDprParseError =
     ContentDpr::parse("0").expect_err("zero Content-DPR should be rejected");
@@ -83,6 +88,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     NoVarySearch::parse("params=utm").expect_err("invalid No-Vary-Search should be rejected");
   let want_content_digest =
     WantContentDigest::parse("sha-256=10").expect("Want-Content-Digest should parse");
+  let accept_encoding =
+    AcceptEncoding::parse("gzip, br;q=0.8").expect("Accept-Encoding should parse");
   let want_repr_digest =
     WantReprDigest::parse("sha-256=10").expect("Want-Repr-Digest should parse");
   let priority = Priority::parse("u=1, i").expect("Priority should parse");
@@ -187,6 +194,12 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     content_location.header_value(),
     "../representations/current.json"
   );
+  assert_eq!(content_disposition.disposition_type(), "attachment");
+  assert_eq!(content_disposition.filename(), Some("report.txt"));
+  assert_eq!(
+    content_disposition.filename_ext(),
+    Some("UTF-8''report.txt")
+  );
   assert_eq!(content_dpr.ratio(), 1.5);
   assert_eq!(content_dpr.header_value(), "1.5");
   assert_eq!(deprecation, Deprecation::Boolean(true));
@@ -207,6 +220,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     Some(&NoVarySearchParams::Names(vec!["utm_source".to_owned()]))
   );
   assert_eq!(want_content_digest.entries()[0].preference(), 10);
+  assert_eq!(accept_encoding.codings()[0].coding(), "gzip");
+  assert_eq!(accept_encoding.codings()[1].quality(), 800);
   assert_eq!(want_repr_digest.entries()[0].preference(), 10);
   assert_eq!(priority.urgency(), Some(1));
   assert_eq!(signature_input.members()[0].label(), "sig1");

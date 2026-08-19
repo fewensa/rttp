@@ -186,6 +186,109 @@ fn request_access_control_request_private_network_parses_preflight_metadata_with
 }
 
 #[test]
+fn request_te_parses_bounded_codings_without_policy() {
+  let absent_raw = "GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n";
+  let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
+  let absent = Request::read_next_from(&mut absent_reader)
+    .expect("absent request should parse")
+    .expect("absent request should be present");
+  assert_eq!(
+    None,
+    absent.te().expect("missing TE should be accepted")
+  );
+
+  let valid_raw = concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "TE: gzip, deflate;q=0.5, trailers\r\n",
+    "\r\n"
+  );
+  let mut valid_reader = BufReader::new(Cursor::new(valid_raw.as_bytes()));
+  let valid = Request::read_next_from(&mut valid_reader)
+    .expect("valid request should parse")
+    .expect("valid request should be present");
+  let te = valid
+    .te()
+    .expect("TE should parse")
+    .expect("TE should be present");
+  assert_eq!(3, te.len());
+  assert_eq!("gzip", te.codings()[0].coding());
+  assert_eq!(Some(1000), te.codings()[0].quality());
+  assert_eq!("deflate", te.codings()[1].coding());
+  assert_eq!(Some(500), te.codings()[1].quality());
+  assert_eq!("trailers", te.codings()[2].coding());
+  assert_eq!(None, te.codings()[2].quality());
+  assert!(te.codings()[2].is_trailers());
+}
+
+#[test]
+fn request_te_rejects_malformed_or_duplicate_values_while_preserving_raw_headers() {
+  for value in ["gzip;q=1.1", "trailers,, deflate", "trailers;q=0.5", "chunked"] {
+    let request = Request::from_raw_frame(
+      format!(
+        "GET /asset HTTP/1.1\r\nHost: example.test\r\nTE: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("malformed TE should not reject the request frame");
+    assert!(request.te().is_err(), "TE should reject {value:?}");
+    assert_eq!(Some(value), request.header("TE"));
+  }
+
+  let duplicate = Request::from_raw_frame(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nTE: trailers\r\nte: TRAILERS;q=0.5\r\n\r\n",
+  )
+  .expect("duplicate TE should not reject the request frame");
+  assert!(duplicate.te().is_err());
+}
+
+#[test]
+fn request_te_enforces_member_and_value_bounds() {
+  let at_limit = (0..32)
+    .map(|index| format!("coding-{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let at_limit_request = Request::from_raw_frame(
+    format!(
+      "GET /asset HTTP/1.1\r\nHost: example.test\r\nTE: {at_limit}\r\n\r\n"
+    )
+    .as_bytes(),
+  )
+  .expect("32 codings should not reject the request frame");
+  assert_eq!(
+    32,
+    at_limit_request
+      .te()
+      .expect("TE should parse")
+      .expect("TE should be present")
+      .len()
+  );
+
+  let too_many = (0..=32)
+    .map(|index| format!("coding-{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let too_many_request = Request::from_raw_frame(
+    format!(
+      "GET /asset HTTP/1.1\r\nHost: example.test\r\nTE: {too_many}\r\n\r\n"
+    )
+    .as_bytes(),
+  )
+  .expect("33 codings should not reject the request frame");
+  assert!(too_many_request.te().is_err());
+
+  let oversized_value = "x".repeat(64 * 1024 + 1);
+  assert!(
+    HttpRequestTe::parse(&oversized_value).is_err(),
+    "oversized TE values must be rejected"
+  );
+  assert!(
+    HttpRequestTe::parse_values(["gzip", oversized_value.as_str()]).is_err(),
+    "an oversized duplicate field must not bypass validation"
+  );
+}
+
+#[test]
 fn request_save_data_parses_request_metadata_without_policy() {
   let absent_raw = "GET /catalog HTTP/1.1\r\nHost: example.test\r\n\r\n";
   let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
@@ -2040,7 +2143,7 @@ fn request_max_forwards_is_optional_bounded_and_preserves_invalid_headers() {
     .expect("request should parse");
   assert_eq!(None, absent.max_forwards().expect("missing value should be valid"));
 
-  for value in ["255", "256", "999999999999999999999"] {
+  for value in ["0", "255", "256", "4294967295"] {
     let valid = Request::from_raw_frame(
       format!(
         "OPTIONS / HTTP/1.1\r\nHost: example.test\r\nMax-Forwards: {value}\r\n\r\n"
@@ -2048,13 +2151,15 @@ fn request_max_forwards_is_optional_bounded_and_preserves_invalid_headers() {
       .as_bytes(),
     )
     .expect("request should parse");
-    assert_eq!(
-      Some(value.to_owned()),
-      valid.max_forwards().expect("value should parse")
-    );
+    let parsed = valid
+      .max_forwards()
+      .expect("value should parse")
+      .expect("Max-Forwards should be present");
+    assert_eq!(value.parse::<u32>().expect("fixture is a u32"), parsed.value());
+    assert_eq!(value, parsed.header_value());
   }
 
-  for value in ["", "-1", "+1", "1.0"] {
+  for value in ["", "-1", "+1", "1.0", "4294967296", "999999999999999999999"] {
     let request = Request::from_raw_frame(
       format!(
         "OPTIONS / HTTP/1.1\r\nHost: example.test\r\nMax-Forwards: {value}\r\n\r\n"
@@ -2065,6 +2170,23 @@ fn request_max_forwards_is_optional_bounded_and_preserves_invalid_headers() {
     assert!(request.max_forwards().is_err(), "should reject {value:?}");
     assert_eq!(Some(value), request.header("Max-Forwards"));
   }
+
+  let oversized = "0".repeat(64 * 1024 + 1);
+  let oversized_request = Request {
+    method: "OPTIONS".to_string(),
+    target: "/".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("Max-Forwards".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.max_forwards().is_err());
+  assert_eq!(Some(oversized.as_str()), oversized_request.header("Max-Forwards"));
 
   let duplicate = Request::from_raw_frame(
     b"OPTIONS / HTTP/1.1\r\nHost: example.test\r\nMax-Forwards: 1\r\nmax-forwards: 2\r\n\r\n",
@@ -2114,6 +2236,83 @@ fn request_exposes_bounded_range_and_conditional_metadata() {
   assert!(matches!(request.if_range(), Ok(Some(HttpIfRange::Date(_)))));
   assert_eq!(Ok(Some(HttpIfNoneMatch::Any)), request.if_none_match());
   assert!(matches!(request.if_modified_since(), Ok(Some(_))));
+  assert!(matches!(request.if_unmodified_since(), Ok(None)));
+}
+
+#[test]
+fn request_conditional_http_date_metadata_is_optional_bounded_and_rejects_invalid_headers() {
+  let absent = Request::from_raw_frame(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(None, absent.if_modified_since().expect("absent should be valid"));
+  assert_eq!(None, absent.if_unmodified_since().expect("absent should be valid"));
+
+  let modified = Request::from_raw_frame(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nIf-Modified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert_eq!(
+    "Sun, 06 Nov 1994 08:49:37 GMT",
+    modified
+      .if_modified_since()
+      .expect("If-Modified-Since should parse")
+      .expect("If-Modified-Since should be present")
+      .header_value()
+  );
+
+  let unmodified = Request::from_raw_frame(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nIf-Unmodified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert_eq!(
+    "Sun, 06 Nov 1994 08:49:37 GMT",
+    unmodified
+      .if_unmodified_since()
+      .expect("If-Unmodified-Since should parse")
+      .expect("If-Unmodified-Since should be present")
+      .header_value()
+  );
+
+  for value in ["not-a-date", "", "08:49:37 06 Nov 1994"] {
+    let request = Request::from_raw_frame(
+      format!(
+        "GET /asset HTTP/1.1\r\nHost: example.test\r\nIf-Modified-Since: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should parse");
+    assert!(request.if_modified_since().is_err());
+    assert_eq!(Some(value), request.header("If-Modified-Since"));
+  }
+
+  let oversized = "0".repeat(64 * 1024 + 1);
+  let oversized_request = Request {
+    method: "GET".to_string(),
+    target: "/".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("If-Modified-Since".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.if_modified_since().is_err());
+  assert_eq!(
+    Some(oversized.as_str()),
+    oversized_request.header("If-Modified-Since")
+  );
+
+  let duplicate = Request::from_raw_frame(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nIf-Unmodified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\nif-unmodified-since: Sun, 06 Nov 1994 08:49:38 GMT\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert!(duplicate.if_unmodified_since().is_err());
+  assert_eq!(
+    None,
+    duplicate.if_modified_since().expect("absent should be valid")
+  );
 }
 
   #[test]

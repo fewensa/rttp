@@ -7,6 +7,8 @@ use crate::types::{Auth, Header, IntoHeader, IntoPara, Proxy, ToFormData, ToRoUr
 use crate::{error, Config, H2cClientPolicy};
 #[cfg(feature = "async")]
 use futures::io::AsyncRead;
+use rttp_protocol::accept_encoding::AcceptEncoding;
+use rttp_protocol::accept_language::{AcceptLanguage, MAX_ACCEPT_LANGUAGE_VALUE_BYTES};
 use rttp_protocol::access_control_request_headers::AccessControlRequestHeaders;
 use rttp_protocol::access_control_request_method::AccessControlRequestMethod;
 use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
@@ -15,11 +17,15 @@ use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
 use rttp_protocol::forwarded::{Forwarded, MAX_FORWARDED_VALUE_BYTES};
+use rttp_protocol::if_modified_since::IfModifiedSince;
+use rttp_protocol::if_unmodified_since::IfUnmodifiedSince;
+use rttp_protocol::max_forwards::MaxForwards;
 use rttp_protocol::origin::Origin;
 use rttp_protocol::priority::Priority;
 use rttp_protocol::save_data::SaveData;
 use rttp_protocol::signature::Signature;
 use rttp_protocol::signature_input::SignatureInput;
+use rttp_protocol::te::{Te, MAX_TE_CODINGS, MAX_TE_VALUE_BYTES};
 use rttp_protocol::trailer::Trailer;
 use rttp_protocol::upgrade::Upgrade;
 use std::io;
@@ -273,8 +279,9 @@ impl HttpClient {
   /// Set bounded `Accept-Language` request metadata.
   ///
   /// Each supplied item is a language range, optionally followed by a `q`
-  /// weight such as `fr-CA; q=0.8`. This validates metadata only; it does not
-  /// perform locale matching or choose a response language.
+  /// weight such as `fr-CA; q=0.8`. Validation is delegated to the shared
+  /// protocol-owned `AcceptLanguage` type. This validates metadata only; it
+  /// does not perform locale matching or choose a response language.
   pub fn accept_language<I, L>(&mut self, ranges: I) -> error::Result<&mut Self>
   where
     I: IntoIterator<Item = L>,
@@ -589,13 +596,14 @@ impl HttpClient {
 
   /// Set a bounded `Max-Forwards` request header for TRACE or OPTIONS diagnostics.
   ///
-  /// The value must be at most ten ASCII decimal digits and fit in the `u32`
+  /// The value must be a singleton `1*DIGIT` hop count that fits in the `u32`
   /// range (`0` through `4294967295`). This only emits the header; it does not
   /// route through proxies, decrement the value, retry requests, or select a
   /// TRACE or OPTIONS policy. Use `header` directly for unusual values.
   pub fn max_forwards<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
-    let value = validate_max_forwards(value.as_ref())?;
-    Ok(self.header(Header::new("Max-Forwards", value)))
+    let max_forwards = MaxForwards::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("Max-Forwards", max_forwards.header_value())))
   }
 
   /// Append a validated `Accept-Encoding` coding with the default quality of
@@ -704,8 +712,10 @@ impl HttpClient {
     )
   }
 
-  /// Append a validated `TE` transfer coding. This declares request metadata
-  /// only; it does not enable a transfer-coding engine.
+  /// Append validated `TE` transfer codings. A single call may carry one
+  /// coding or several comma-separated codings, and a coding may include an
+  /// inline `;q=` value. This declares request metadata only; it does not
+  /// enable a transfer-coding engine.
   pub fn te<S: AsRef<str>>(&mut self, coding: S) -> error::Result<&mut Self> {
     self.te_member(coding.as_ref(), None)
   }
@@ -785,14 +795,22 @@ impl HttpClient {
 
   /// Set an HTTP-date modification validator, `If-Modified-Since: <http-date>`.
   pub fn if_modified_since<S: AsRef<str>>(&mut self, http_date: S) -> error::Result<&mut Self> {
-    let http_date = validate_http_date(http_date.as_ref())?;
-    Ok(self.header(Header::new("If-Modified-Since", http_date)))
+    let if_modified_since = IfModifiedSince::parse(http_date.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "If-Modified-Since",
+      if_modified_since.header_value(),
+    )))
   }
 
   /// Set an HTTP-date modification validator, `If-Unmodified-Since: <http-date>`.
   pub fn if_unmodified_since<S: AsRef<str>>(&mut self, http_date: S) -> error::Result<&mut Self> {
-    let http_date = validate_http_date(http_date.as_ref())?;
-    Ok(self.header(Header::new("If-Unmodified-Since", http_date)))
+    let if_unmodified_since = IfUnmodifiedSince::parse(http_date.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "If-Unmodified-Since",
+      if_unmodified_since.header_value(),
+    )))
   }
 
   /// Set request content type
@@ -811,75 +829,76 @@ impl HttpClient {
         "invalid Accept-Encoding coding",
       ));
     }
-    let qvalue = qvalue.map(validate_accept_encoding_qvalue).transpose()?;
     let member = qvalue.map_or_else(
       || coding.to_string(),
       |qvalue| format!("{coding};q={qvalue}"),
     );
-    if member.len() > MAX_ACCEPT_ENCODING_VALUE_BYTES {
-      return Err(error::builder_with_message(
-        "Accept-Encoding header value is too large",
-      ));
+    let parsed_member = AcceptEncoding::parse(&member)
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    if parsed_member.len() != 1 {
+      return Err(error::builder_with_message(if qvalue.is_some() {
+        "invalid Accept-Encoding q-value"
+      } else {
+        "invalid Accept-Encoding coding"
+      }));
     }
-
     let headers = self.request.headers_mut();
-    let existing = headers
+    let candidate = match headers
+      .iter()
+      .find(|header| header.name().eq_ignore_ascii_case("Accept-Encoding"))
+    {
+      Some(header) => format!("{}, {member}", header.value()),
+      None => member,
+    };
+    let encodings = AcceptEncoding::parse(&candidate)
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    let value = encodings.header_value();
+    if let Some(header) = headers
       .iter_mut()
-      .find(|header| header.name().eq_ignore_ascii_case("Accept-Encoding"));
-    if let Some(header) = existing {
-      let existing_codings = parse_accept_encoding_codings(header.value())?;
-      if existing_codings
-        .iter()
-        .any(|known| known.eq_ignore_ascii_case(coding))
-      {
-        return Err(error::builder_with_message(
-          "duplicate Accept-Encoding coding",
-        ));
-      }
-      if existing_codings.len() >= MAX_ACCEPT_ENCODINGS {
-        return Err(error::builder_with_message(
-          "too many Accept-Encoding codings",
-        ));
-      }
-      let value = format!("{}, {member}", header.value());
-      if value.len() > MAX_ACCEPT_ENCODING_VALUE_BYTES {
-        return Err(error::builder_with_message(
-          "Accept-Encoding header value is too large",
-        ));
-      }
+      .find(|header| header.name().eq_ignore_ascii_case("Accept-Encoding"))
+    {
       header.replace(Header::new("Accept-Encoding", value));
     } else {
-      headers.push(Header::new("Accept-Encoding", member));
+      headers.push(Header::new("Accept-Encoding", value));
     }
     Ok(self)
   }
 
   fn te_member(&mut self, coding: &str, qvalue: Option<&str>) -> error::Result<&mut Self> {
     let coding = coding.trim();
-    if !is_http_token(coding) || coding.eq_ignore_ascii_case("chunked") {
-      return Err(error::builder_with_message("invalid TE coding"));
-    }
-    if coding.eq_ignore_ascii_case("trailers") && qvalue.is_some() {
-      return Err(error::builder_with_message(
-        "TE trailers cannot carry a q-value",
-      ));
-    }
-    let qvalue = qvalue.map(validate_te_qvalue).transpose()?;
+    let qvalue = qvalue.map(str::trim);
     let member = qvalue.map_or_else(
       || coding.to_string(),
       |qvalue| format!("{coding};q={qvalue}"),
     );
-    append_unique_metadata_member(
-      self.request.headers_mut(),
-      "TE",
-      coding,
-      member,
-      "invalid TE coding",
-      "duplicate TE coding",
-      "too many TE codings",
-      "TE header value is too large",
-      parse_te_codings,
-    )?;
+    let incoming = Te::parse_values([member.as_str()])
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    let headers = self.request.headers_mut();
+    if let Some(header) = headers
+      .iter_mut()
+      .find(|header| header.name().eq_ignore_ascii_case("TE"))
+    {
+      let known = Te::parse_values([header.value().as_str()])
+        .map_err(|_| error::builder_with_message("invalid TE coding"))?;
+      if incoming.codings().iter().any(|incoming| {
+        known
+          .codings()
+          .iter()
+          .any(|known| known.coding().eq_ignore_ascii_case(incoming.coding()))
+      }) {
+        return Err(error::builder_with_message("duplicate TE coding"));
+      }
+      if known.len() + incoming.len() > MAX_TE_CODINGS {
+        return Err(error::builder_with_message("too many TE codings"));
+      }
+      let value = format!("{}, {member}", header.value());
+      if value.len() > MAX_TE_VALUE_BYTES {
+        return Err(error::builder_with_message("TE header value is too large"));
+      }
+      header.replace(Header::new("TE", value));
+    } else {
+      headers.push(Header::new("TE", member));
+    }
     self.ensure_connection_te_token();
     Ok(self)
   }
@@ -1330,24 +1349,6 @@ fn bounded_forwarded_header_value(forwarded: Forwarded) -> error::Result<String>
   Ok(value)
 }
 
-fn validate_max_forwards(value: &str) -> error::Result<&str> {
-  if value.is_empty()
-    || value.len() > MAX_MAX_FORWARDS_VALUE_BYTES
-    || !value.bytes().all(|byte| byte.is_ascii_digit())
-  {
-    return Err(error::builder_with_message(
-      "Max-Forwards must be a non-empty decimal u32",
-    ));
-  }
-  value.parse::<u32>().map_err(|_| {
-    error::builder_with_message("Max-Forwards must be a decimal value no greater than u32::MAX")
-  })?;
-  Ok(value)
-}
-
-const MAX_MAX_FORWARDS_VALUE_BYTES: usize = 10;
-const MAX_ACCEPT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
-const MAX_ACCEPT_ENCODINGS: usize = 32;
 const MAX_REQUEST_METADATA_VALUE_BYTES: usize = 64 * 1024;
 const MAX_REQUEST_METADATA_MEMBERS: usize = 32;
 const MAX_PREFER_FIELD_BYTES: usize = 64 * 1024;
@@ -1390,44 +1391,6 @@ fn append_unique_metadata_member(
     headers.push(Header::new(header_name, member));
   }
   Ok(())
-}
-
-fn parse_te_codings(value: &str) -> error::Result<Vec<&str>> {
-  parse_metadata_members(value, "invalid TE coding", |member| {
-    let mut parts = member.split(';');
-    let coding = parts.next().unwrap_or_default().trim();
-    if !is_http_token(coding) || coding.eq_ignore_ascii_case("chunked") {
-      return None;
-    }
-    match parts.next() {
-      None => Some(coding),
-      Some(parameter) if parts.next().is_none() => {
-        let (name, value) = parameter.trim().split_once('=')?;
-        (!coding.eq_ignore_ascii_case("trailers")
-          && name.trim().eq_ignore_ascii_case("q")
-          && validate_te_qvalue(value.trim()).is_ok())
-        .then_some(coding)
-      }
-      Some(_) => None,
-    }
-  })
-}
-
-fn validate_te_qvalue(qvalue: &str) -> error::Result<&str> {
-  let valid = match qvalue.split_once('.') {
-    Some((whole, fraction)) => {
-      fraction.len() <= 3
-        && fraction.bytes().all(|byte| byte.is_ascii_digit())
-        && matches!(whole, "0" | "1")
-        && (whole == "0" || fraction.bytes().all(|byte| byte == b'0'))
-    }
-    None => matches!(qvalue, "0" | "1"),
-  };
-  if valid {
-    Ok(qvalue)
-  } else {
-    Err(error::builder_with_message("invalid TE q-value"))
-  }
 }
 
 fn parse_digest_algorithms(value: &str) -> error::Result<Vec<&str>> {
@@ -1696,83 +1659,6 @@ fn is_accept_quoted_string(value: &str) -> bool {
   !escaped
 }
 
-fn parse_accept_encoding_codings(value: &str) -> error::Result<Vec<&str>> {
-  if value.len() > MAX_ACCEPT_ENCODING_VALUE_BYTES {
-    return Err(error::builder_with_message(
-      "Accept-Encoding header value is too large",
-    ));
-  }
-
-  let mut codings = Vec::new();
-  for member in value.split(',') {
-    let (coding, _) = split_accept_encoding_member(member)?;
-    if codings
-      .iter()
-      .any(|known: &&str| known.eq_ignore_ascii_case(coding))
-    {
-      return Err(error::builder_with_message(
-        "duplicate Accept-Encoding coding",
-      ));
-    }
-    if codings.len() >= MAX_ACCEPT_ENCODINGS {
-      return Err(error::builder_with_message(
-        "too many Accept-Encoding codings",
-      ));
-    }
-    codings.push(coding);
-  }
-  Ok(codings)
-}
-
-fn split_accept_encoding_member(member: &str) -> error::Result<(&str, Option<&str>)> {
-  let mut parts = member.split(';');
-  let coding = parts.next().unwrap_or_default().trim();
-  if !is_http_token(coding) {
-    return Err(error::builder_with_message(
-      "invalid Accept-Encoding coding",
-    ));
-  }
-  let Some(parameter) = parts.next() else {
-    return Ok((coding, None));
-  };
-  if parts.next().is_some() {
-    return Err(error::builder_with_message(
-      "invalid Accept-Encoding q-value",
-    ));
-  }
-  let Some((name, qvalue)) = parameter.trim().split_once('=') else {
-    return Err(error::builder_with_message(
-      "invalid Accept-Encoding q-value",
-    ));
-  };
-  if !name.trim().eq_ignore_ascii_case("q") {
-    return Err(error::builder_with_message(
-      "invalid Accept-Encoding q-value",
-    ));
-  }
-  let qvalue = validate_accept_encoding_qvalue(qvalue.trim())?;
-  Ok((coding, Some(qvalue)))
-}
-
-fn validate_accept_encoding_qvalue(qvalue: &str) -> error::Result<&str> {
-  let valid = match qvalue.split_once('.') {
-    Some((whole, fraction)) => {
-      fraction.len() <= 3
-        && fraction.bytes().all(|byte| byte.is_ascii_digit())
-        && matches!(whole, "0" | "1")
-        && (whole == "0" || fraction.bytes().all(|byte| byte == b'0'))
-    }
-    None => matches!(qvalue, "0" | "1"),
-  };
-  if valid {
-    Ok(qvalue)
-  } else {
-    Err(error::builder_with_message(
-      "invalid Accept-Encoding q-value",
-    ))
-  }
-}
-
 fn validate_request_trailer_header(name: &str, value: &str) -> error::Result<()> {
   if !is_http_token(name) || !value.bytes().all(is_header_value_byte) {
     return Err(error::builder_with_message(
@@ -1846,105 +1732,20 @@ fn validate_http_date(http_date: &str) -> error::Result<&str> {
   Ok(http_date)
 }
 
-const MAX_ACCEPT_LANGUAGE_VALUE_BYTES: usize = 64 * 1024;
-const MAX_ACCEPT_LANGUAGE_RANGES: usize = 32;
-
 fn build_accept_language_value<I, L>(ranges: I) -> error::Result<String>
 where
   I: IntoIterator<Item = L>,
   L: AsRef<str>,
 {
-  let mut parsed = Vec::new();
-
-  for value in ranges {
-    if value.as_ref().len() > MAX_ACCEPT_LANGUAGE_VALUE_BYTES {
-      return Err(error::builder_with_message(
-        "Accept-Language header value is too large",
-      ));
-    }
-    for range in value.as_ref().split(',') {
-      let range = range.trim();
-      let (language_range, quality) = parse_accept_language_item(range)?;
-      if parsed.len() >= MAX_ACCEPT_LANGUAGE_RANGES {
-        return Err(error::builder_with_message(
-          "too many Accept-Language ranges",
-        ));
-      }
-      if parsed
-        .iter()
-        .any(|(known, _): &(String, Option<String>)| known.eq_ignore_ascii_case(language_range))
-      {
-        return Err(error::builder_with_message(
-          "duplicate Accept-Language range",
-        ));
-      }
-      parsed.push((language_range.to_string(), quality.map(ToString::to_string)));
-    }
-  }
-
-  if parsed.is_empty() {
-    return Err(error::builder_with_message("invalid Accept-Language range"));
-  }
-
-  let value = parsed
-    .into_iter()
-    .map(|(range, quality)| match quality {
-      Some(quality) => format!("{range}; q={quality}"),
-      None => range,
-    })
-    .collect::<Vec<_>>()
-    .join(", ");
+  let accept_language = AcceptLanguage::from_ranges(ranges)
+    .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+  let value = accept_language.header_value();
   if value.len() > MAX_ACCEPT_LANGUAGE_VALUE_BYTES {
     return Err(error::builder_with_message(
       "Accept-Language header value is too large",
     ));
   }
   Ok(value)
-}
-
-fn parse_accept_language_item(value: &str) -> error::Result<(&str, Option<&str>)> {
-  let mut parts = value.split(';');
-  let range = parts.next().unwrap_or_default().trim();
-  if !is_language_range(range) {
-    return Err(error::builder_with_message("invalid Accept-Language range"));
-  }
-
-  let Some(parameter) = parts.next() else {
-    return Ok((range, None));
-  };
-  if parts.next().is_some() {
-    return Err(error::builder_with_message(
-      "invalid Accept-Language q-value",
-    ));
-  }
-  let Some((name, quality)) = parameter.trim().split_once('=') else {
-    return Err(error::builder_with_message(
-      "invalid Accept-Language q-value",
-    ));
-  };
-  let quality = quality.trim();
-  if !name.trim().eq_ignore_ascii_case("q") || !is_qvalue(quality) {
-    return Err(error::builder_with_message(
-      "invalid Accept-Language q-value",
-    ));
-  }
-  Ok((range, Some(quality)))
-}
-
-fn is_language_range(value: &str) -> bool {
-  if value == "*" {
-    return true;
-  }
-
-  let mut subtags = value.split('-');
-  let Some(primary) = subtags.next() else {
-    return false;
-  };
-  (1..=8).contains(&primary.len())
-    && primary.bytes().all(|byte| byte.is_ascii_alphabetic())
-    && subtags.all(|subtag| {
-      (1..=8).contains(&subtag.len()) && subtag.bytes().all(|byte| byte.is_ascii_alphanumeric())
-    })
 }
 
 fn is_qvalue(value: &str) -> bool {

@@ -86,6 +86,23 @@ expose the original request.
 These helpers parse request metadata only; they do not sniff, decode,
 negotiate, cache, redirect, retry, or select representations.
 
+## Accept-Encoding request metadata
+
+Handlers can call `Request::accept_encoding()` and
+`HttpRequest::accept_encoding()` to observe bounded typed `Accept-Encoding`
+request metadata through the shared `rttp-protocol` primitive. The helpers
+combine case-insensitive fields in wire order into
+`HttpRequestAcceptEncodings`. Each entry exposes `coding()` and q-value
+`quality()` in thousandths (`1000` is the default quality of `1`). The shared
+protocol type is the authority for coding-token, wildcard, q-value, duplicate,
+member-count, and size validation. Absent metadata returns `Ok(None)`.
+Malformed, oversized, duplicate, empty, or over-limit values return a parse
+error while `Request::header()` and `Request::body()` continue to expose the
+original request.
+
+These helpers parse request metadata only. They do not enable automatic
+compression, decompression, or content negotiation.
+
 ## Request and response Connection metadata
 
 Handlers can call `Request::connection()`, `HttpRequest::connection()`, and
@@ -152,6 +169,22 @@ request. HTTP/2 continues to reject `Transfer-Encoding` at decode time.
 These helpers parse framing metadata only. They do not change
 `request_body_kind`, decode a chunked body, negotiate `TE`, or alter
 Content-Length handling.
+
+## TE request metadata
+
+Handlers can call `Request::te()` and `HttpRequest::te()` to observe bounded
+typed `TE` request metadata through the shared protocol-owned
+`rttp-protocol` `Te` type. The helpers combine case-insensitive fields in wire
+order into `HttpRequestTe`; each `HttpTe` exposes `coding()`, optional
+thousandths `quality()`, and `is_trailers()`. Absent fields return `Ok(None)`.
+Malformed codings, `chunked`, q-valued `trailers`, invalid q-values,
+case-insensitive duplicates, oversized values, or more than 32 codings return a
+parser error while `Request::header()` continues to expose the original raw
+field. HTTP/2 continues to reject every `TE` value other than an exact
+`TE: trailers` at decode time.
+
+These helpers parse metadata only. They do not enable a transfer-coding
+engine, negotiate trailers, apply compression, or alter request framing.
 
 ## Fetch Metadata request metadata
 
@@ -239,6 +272,30 @@ These helpers only declare and inspect metadata. RTTP does not parse request
 `Range` fields, generate `Range` requests, create a partial response engine,
 serve bytes, slice content, resume downloads, or choose redirect, retry, or
 status-policy behavior.
+
+## Content-Disposition response metadata
+
+`HttpResponse::with_content_disposition(value)` validates one
+`Content-Disposition` field value with the shared protocol-owned
+`HttpContentDisposition` type, removes any existing raw `Content-Disposition`
+fields, and adds a single validated `Content-Disposition` header.
+`HttpResponse::with_attachment_filename` is a convenience helper for
+`attachment; filename=...`. `HttpResponse::content_disposition()` parses
+attached raw fields into `HttpContentDisposition`, returns `Ok(None)` when
+absent, and preserves invalid raw fields until typed parsing is requested.
+
+The helper is bounded and validation-oriented. The field value is limited to
+64 KiB, the parameter list is limited to 256 entries, and each parameter value
+is limited to 64 KiB. Disposition type and parameter names are HTTP tokens,
+quoted-strings must be well formed, and `filename*` must be an unquoted RFC
+5987 ext-value. Duplicate parameters and duplicate fields are rejected because
+`Content-Disposition` is singleton response metadata. `filename` and
+`filename*` remain independent stored parameters.
+
+These helpers only declare and parse metadata. RTTP does not start automatic
+downloads, derive filesystem paths, decode RFC 5987 values, choose a filename
+winner, sniff MIME types, negotiate variants, redirect, retry/replay, cache,
+or attach status-code policy from `Content-Disposition`.
 
 ## Content-Location response metadata
 
@@ -369,6 +426,39 @@ control-byte values return a parser error while `Request::header()` and
 These helpers parse request metadata only. They do not select a
 representation, compress a body, advertise Client Hints, or apply browser
 data-saver policy.
+
+## Max-Forwards request metadata
+
+Handlers can call `Request::max_forwards()` and `HttpRequest::max_forwards()`
+to observe bounded typed `Max-Forwards` request metadata. Absent fields return
+`Ok(None)`. The recognized value is a singleton `1*DIGIT` hop count that fits
+in `u32` (`0` through `4294967295`) with optional surrounding SP or HTAB.
+Malformed, overflowing, oversized, duplicate, or control-byte values return a
+parser error while `Request::header()` and `HttpRequest::header()` continue to
+expose the original raw field.
+
+These helpers parse request metadata only. They do not decrement the hop
+count, route a request, select TRACE or OPTIONS, or apply forwarding policy.
+
+## Conditional HTTP-date request metadata
+
+Handlers can call `Request::if_modified_since()`,
+`HttpRequest::if_modified_since()`, and the matching `if_unmodified_since()`
+accessors to observe bounded typed HTTP-date validators through the shared
+protocol `HttpIfModifiedSince` and `HttpIfUnmodifiedSince` types. Absent
+fields return `Ok(None)`. A recognized value is one HTTP-date instant with
+optional surrounding SP or HTAB; `datetime()` exposes the instant and
+`header_value()` formats it as IMF-fixdate. The accessors previously returned
+`SystemTime` directly; they now return the typed protocol value, so callers
+call `datetime()` to obtain the instant. Malformed, oversized, duplicate, or
+control-byte values return a parser error while `Request::header()` and
+`HttpRequest::header()` continue to expose the original raw field.
+
+These helpers parse request metadata only. They do not compare
+`Last-Modified`, evaluate conditional precedence, serve or reject a
+representation, or apply cache policy. `Request::evaluate_conditional()` and
+`evaluate_conditional_request()` keep their existing RFC 9110 precedence and
+second-level date comparison behavior.
 
 ## HTTP message signature metadata
 

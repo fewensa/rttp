@@ -1,5 +1,12 @@
 use super::*;
 
+pub use rttp_protocol::accept_encoding::{
+  AcceptEncoding as HttpRequestAcceptEncodings, AcceptEncodingCoding as HttpAcceptEncoding,
+  AcceptEncodingParseError as HttpAcceptEncodingParseError,
+};
+pub use rttp_protocol::accept_language::{
+  AcceptLanguage as HttpAcceptLanguages, AcceptLanguageParseError as HttpAcceptLanguageParseError,
+};
 pub use rttp_protocol::access_control_request_headers::{
   AccessControlRequestHeaders as HttpAccessControlRequestHeaders,
   AccessControlRequestHeadersParseError as HttpAccessControlRequestHeadersParseError,
@@ -33,6 +40,17 @@ pub use rttp_protocol::forwarded::{
   ForwardedParameter as HttpForwardedParameter, ForwardedParseError as HttpForwardedParseError,
 };
 pub use rttp_protocol::host::{Host as HttpHost, HostParseError as HttpHostParseError};
+pub use rttp_protocol::if_modified_since::{
+  IfModifiedSince as HttpIfModifiedSince,
+  IfModifiedSinceParseError as HttpIfModifiedSinceParseError,
+};
+pub use rttp_protocol::if_unmodified_since::{
+  IfUnmodifiedSince as HttpIfUnmodifiedSince,
+  IfUnmodifiedSinceParseError as HttpIfUnmodifiedSinceParseError,
+};
+pub use rttp_protocol::max_forwards::{
+  MaxForwards as HttpMaxForwards, MaxForwardsParseError as HttpMaxForwardsParseError,
+};
 pub use rttp_protocol::prefer::{
   Prefer as HttpRequestPreferences, PreferParseError as HttpPreferParseError,
   Preference as HttpPreference, PreferenceKind as HttpPreferenceKind,
@@ -58,6 +76,9 @@ pub use rttp_protocol::signature_input::{
   SignatureInputComponent as HttpSignatureInputComponent,
   SignatureInputEntry as HttpSignatureInputEntry,
   SignatureInputParameter as HttpSignatureInputParameter,
+};
+pub use rttp_protocol::te::{
+  Te as HttpRequestTe, TeCoding as HttpTe, TeParseError as HttpTeParseError,
 };
 pub use rttp_protocol::trailer::{
   Trailer as HttpTrailer, TrailerParseError as HttpTrailerParseError,
@@ -351,8 +372,25 @@ impl Request {
   }
 
   /// Parses one HTTP-date `If-Modified-Since` validator without evaluating it.
-  pub fn if_modified_since(&self) -> Result<Option<SystemTime>, HttpIfModifiedSinceParseError> {
-    parse_if_modified_since_values(self.headers_named("If-Modified-Since"))
+  pub fn if_modified_since(
+    &self,
+  ) -> Result<Option<HttpIfModifiedSince>, HttpIfModifiedSinceParseError> {
+    let values: Vec<&str> = self.headers_named("If-Modified-Since").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpIfModifiedSince::parse_values(values).map(Some)
+  }
+
+  /// Parses one HTTP-date `If-Unmodified-Since` validator without evaluating it.
+  pub fn if_unmodified_since(
+    &self,
+  ) -> Result<Option<HttpIfUnmodifiedSince>, HttpIfUnmodifiedSinceParseError> {
+    let values: Vec<&str> = self.headers_named("If-Unmodified-Since").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpIfUnmodifiedSince::parse_values(values).map(Some)
   }
 
   pub fn cache_control(
@@ -502,11 +540,12 @@ impl Request {
 
   /// Parses received `Max-Forwards` request metadata without automatically
   /// decrementing or forwarding the request.
-  ///
-  /// The validated decimal count is returned verbatim so valid values are not
-  /// constrained by a machine integer width.
-  pub fn max_forwards(&self) -> Result<Option<String>, HttpMaxForwardsParseError> {
-    parse_max_forwards_values(self.headers_named("Max-Forwards"))
+  pub fn max_forwards(&self) -> Result<Option<HttpMaxForwards>, HttpMaxForwardsParseError> {
+    let values: Vec<&str> = self.headers_named("Max-Forwards").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpMaxForwards::parse_values(values).map(Some)
   }
 
   /// Parses received `Prefer` request metadata without applying preferences.
@@ -1249,11 +1288,6 @@ impl fmt::Display for HttpAcceptParseError {
 
 impl Error for HttpAcceptParseError {}
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HttpMaxForwardsParseError {
-  message: String,
-}
-
 fn parse_prefer_values<'a>(
   values: impl IntoIterator<Item = &'a str>,
 ) -> Result<Option<HttpRequestPreferences>, HttpPreferParseError> {
@@ -1312,43 +1346,6 @@ fn parse_host_values<'a>(
     return Ok(None);
   }
   HttpHost::parse_values(values).map(Some)
-}
-impl HttpMaxForwardsParseError {
-  fn new(message: impl Into<String>) -> Self {
-    Self {
-      message: message.into(),
-    }
-  }
-}
-
-impl fmt::Display for HttpMaxForwardsParseError {
-  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    formatter.write_str(&self.message)
-  }
-}
-
-impl Error for HttpMaxForwardsParseError {}
-
-fn parse_max_forwards_values<'a>(
-  values: impl IntoIterator<Item = &'a str>,
-) -> Result<Option<String>, HttpMaxForwardsParseError> {
-  let mut values = values.into_iter();
-  let Some(value) = values.next() else {
-    return Ok(None);
-  };
-  if values.next().is_some() {
-    return Err(HttpMaxForwardsParseError::new(
-      "duplicate Max-Forwards headers",
-    ));
-  }
-
-  let value = value.trim();
-  if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
-    return Err(HttpMaxForwardsParseError::new(
-      "invalid Max-Forwards header value",
-    ));
-  }
-  Ok(Some(value.to_owned()))
 }
 
 fn split_accept_members(value: &str) -> Result<Vec<&str>, HttpAcceptParseError> {
@@ -1626,27 +1623,6 @@ impl fmt::Display for HttpIfNoneMatchParseError {
 
 impl Error for HttpIfNoneMatchParseError {}
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HttpIfModifiedSinceParseError {
-  message: String,
-}
-
-impl HttpIfModifiedSinceParseError {
-  fn new(message: impl Into<String>) -> Self {
-    Self {
-      message: message.into(),
-    }
-  }
-}
-
-impl fmt::Display for HttpIfModifiedSinceParseError {
-  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-    formatter.write_str(&self.message)
-  }
-}
-
-impl Error for HttpIfModifiedSinceParseError {}
-
 fn parse_range_values<'a, I>(
   values: I,
   entity_length: usize,
@@ -1662,31 +1638,6 @@ where
     return Err(HttpByteRangeError::MultipleRanges);
   }
   HttpByteRange::parse(value, entity_length).map(Some)
-}
-
-fn parse_if_modified_since_values<'a, I>(
-  values: I,
-) -> Result<Option<SystemTime>, HttpIfModifiedSinceParseError>
-where
-  I: IntoIterator<Item = &'a str>,
-{
-  let mut values = values.into_iter();
-  let Some(value) = values.next() else {
-    return Ok(None);
-  };
-  if values.next().is_some() {
-    return Err(HttpIfModifiedSinceParseError::new(
-      "duplicate If-Modified-Since headers",
-    ));
-  }
-  if value.len() > MAX_CONDITIONAL_VALUE_BYTES {
-    return Err(HttpIfModifiedSinceParseError::new(
-      "If-Modified-Since header value is too large",
-    ));
-  }
-  httpdate::parse_http_date(value.trim())
-    .map(Some)
-    .map_err(|_| HttpIfModifiedSinceParseError::new("invalid If-Modified-Since validator"))
 }
 
 impl HttpConditionalMetadata {
@@ -1952,174 +1903,6 @@ impl IntoIterator for EntityTagValidatorList {
   }
 }
 
-const MAX_ACCEPT_LANGUAGE_VALUE_BYTES: usize = 64 * 1024;
-const MAX_ACCEPT_LANGUAGE_RANGES: usize = 32;
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpAcceptLanguages {
-  ranges: Vec<String>,
-  qualities: Vec<Option<String>>,
-}
-
-impl HttpAcceptLanguages {
-  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpAcceptLanguageParseError> {
-    Self::parse_values([value.as_ref()])
-  }
-
-  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpAcceptLanguageParseError>
-  where
-    I: IntoIterator<Item = &'a str>,
-  {
-    let parsed = Self::parse_values_inner(values)?;
-    if parsed.ranges.is_empty() {
-      return Err(HttpAcceptLanguageParseError::new(
-        "invalid Accept-Language range",
-      ));
-    }
-    Ok(parsed)
-  }
-
-  fn parse_optional_values<'a, I>(values: I) -> Result<Option<Self>, HttpAcceptLanguageParseError>
-  where
-    I: IntoIterator<Item = &'a str>,
-  {
-    let parsed = Self::parse_values_inner(values)?;
-    if parsed.ranges.is_empty() {
-      Ok(None)
-    } else {
-      Ok(Some(parsed))
-    }
-  }
-
-  fn parse_values_inner<'a, I>(values: I) -> Result<Self, HttpAcceptLanguageParseError>
-  where
-    I: IntoIterator<Item = &'a str>,
-  {
-    let mut ranges = Vec::new();
-    let mut qualities = Vec::new();
-
-    for value in values {
-      if value.len() > MAX_ACCEPT_LANGUAGE_VALUE_BYTES {
-        return Err(HttpAcceptLanguageParseError::new(
-          "Accept-Language header value is too large",
-        ));
-      }
-      for item in value.split(',') {
-        let (range, quality) = parse_accept_language_item(item.trim())?;
-        if ranges.len() >= MAX_ACCEPT_LANGUAGE_RANGES {
-          return Err(HttpAcceptLanguageParseError::new(
-            "too many Accept-Language ranges",
-          ));
-        }
-        if ranges
-          .iter()
-          .any(|known: &String| known.eq_ignore_ascii_case(range))
-        {
-          return Err(HttpAcceptLanguageParseError::new(
-            "duplicate Accept-Language range",
-          ));
-        }
-        ranges.push(range.to_string());
-        qualities.push(quality.map(ToString::to_string));
-      }
-    }
-
-    Ok(Self { ranges, qualities })
-  }
-
-  pub fn ranges(&self) -> Vec<&str> {
-    self.ranges.iter().map(String::as_str).collect()
-  }
-
-  pub fn qualities(&self) -> Vec<Option<&str>> {
-    self
-      .qualities
-      .iter()
-      .map(|quality| quality.as_deref())
-      .collect()
-  }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpAcceptLanguageParseError {
-  message: String,
-}
-
-impl HttpAcceptLanguageParseError {
-  fn new(message: impl AsRef<str>) -> Self {
-    Self {
-      message: message.as_ref().to_string(),
-    }
-  }
-}
-
-impl fmt::Display for HttpAcceptLanguageParseError {
-  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    formatter.write_str(&self.message)
-  }
-}
-
-impl Error for HttpAcceptLanguageParseError {}
-
-fn parse_accept_language_item(
-  value: &str,
-) -> Result<(&str, Option<&str>), HttpAcceptLanguageParseError> {
-  let mut parts = value.split(';');
-  let range = parts.next().unwrap_or_default().trim();
-  if !is_valid_accept_language_range(range) {
-    return Err(HttpAcceptLanguageParseError::new(
-      "invalid Accept-Language range",
-    ));
-  }
-  let Some(parameter) = parts.next() else {
-    return Ok((range, None));
-  };
-  if parts.next().is_some() {
-    return Err(HttpAcceptLanguageParseError::new(
-      "invalid Accept-Language q-value",
-    ));
-  }
-  let Some((name, quality)) = parameter.trim().split_once('=') else {
-    return Err(HttpAcceptLanguageParseError::new(
-      "invalid Accept-Language q-value",
-    ));
-  };
-  let quality = quality.trim();
-  if !name.trim().eq_ignore_ascii_case("q") || !is_valid_qvalue(quality) {
-    return Err(HttpAcceptLanguageParseError::new(
-      "invalid Accept-Language q-value",
-    ));
-  }
-  Ok((range, Some(quality)))
-}
-
-fn is_valid_accept_language_range(value: &str) -> bool {
-  if value == "*" {
-    return true;
-  }
-  let mut subtags = value.split('-');
-  let Some(primary) = subtags.next() else {
-    return false;
-  };
-  (1..=8).contains(&primary.len())
-    && primary.bytes().all(|byte| byte.is_ascii_alphabetic())
-    && subtags.all(|subtag| {
-      (1..=8).contains(&subtag.len()) && subtag.bytes().all(|byte| byte.is_ascii_alphanumeric())
-    })
-}
-
-fn is_valid_qvalue(value: &str) -> bool {
-  match value.split_once('.') {
-    Some((whole, fraction)) => {
-      (whole == "0" || whole == "1")
-        && fraction.len() <= 3
-        && fraction.bytes().all(|byte| byte.is_ascii_digit())
-        && (whole == "0" || fraction.bytes().all(|byte| byte == b'0'))
-    }
-    None => value == "0" || value == "1",
-  }
-}
-
 #[derive(Clone, PartialEq, Eq)]
 pub struct HttpRequest {
   pub(crate) method: String,
@@ -2270,14 +2053,35 @@ impl HttpRequest {
   }
 
   /// Parses one HTTP-date `If-Modified-Since` validator without evaluating it.
-  pub fn if_modified_since(&self) -> Result<Option<SystemTime>, HttpIfModifiedSinceParseError> {
-    parse_if_modified_since_values(
-      self
-        .headers
-        .iter()
-        .filter(|header| header.name.eq_ignore_ascii_case("If-Modified-Since"))
-        .map(|header| header.value.as_str()),
-    )
+  pub fn if_modified_since(
+    &self,
+  ) -> Result<Option<HttpIfModifiedSince>, HttpIfModifiedSinceParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("If-Modified-Since"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpIfModifiedSince::parse_values(values).map(Some)
+  }
+
+  /// Parses one HTTP-date `If-Unmodified-Since` validator without evaluating it.
+  pub fn if_unmodified_since(
+    &self,
+  ) -> Result<Option<HttpIfUnmodifiedSince>, HttpIfUnmodifiedSinceParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("If-Unmodified-Since"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpIfUnmodifiedSince::parse_values(values).map(Some)
   }
 
   pub fn cache_control(
@@ -2369,17 +2173,17 @@ impl HttpRequest {
 
   /// Parses received `Max-Forwards` request metadata without automatically
   /// decrementing or forwarding the request.
-  ///
-  /// The validated decimal count is returned verbatim so valid values are not
-  /// constrained by a machine integer width.
-  pub fn max_forwards(&self) -> Result<Option<String>, HttpMaxForwardsParseError> {
-    parse_max_forwards_values(
-      self
-        .headers
-        .iter()
-        .filter(|header| header.name.eq_ignore_ascii_case("Max-Forwards"))
-        .map(|header| header.value.as_str()),
-    )
+  pub fn max_forwards(&self) -> Result<Option<HttpMaxForwards>, HttpMaxForwardsParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Max-Forwards"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpMaxForwards::parse_values(values).map(Some)
   }
 
   /// Parses received `Prefer` request metadata without applying preferences.
@@ -2708,12 +2512,16 @@ impl HttpRequest {
   pub fn accept_language(
     &self,
   ) -> Result<Option<HttpAcceptLanguages>, HttpAcceptLanguageParseError> {
-    let values = self
+    let values: Vec<&str> = self
       .headers
       .iter()
       .filter(|header| header.name.eq_ignore_ascii_case("Accept-Language"))
-      .map(|header| header.value.as_str());
-    HttpAcceptLanguages::parse_optional_values(values)
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAcceptLanguages::parse_values(values).map(Some)
   }
 
   /// Parses bounded RFC 7239 `Forwarded` request metadata without applying a

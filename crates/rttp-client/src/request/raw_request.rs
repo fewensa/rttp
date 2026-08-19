@@ -5,8 +5,8 @@ use crate::request::{Request, RequestBody};
 use crate::types::Header;
 use crate::types::RoUrl;
 use crate::types::{ToRoUrl, ToUrl};
+use std::fmt;
 
-#[derive(Debug)]
 pub struct RawRequest<'a> {
   pub(crate) origin: &'a mut Request,
   pub(crate) url: RoUrl,
@@ -199,5 +199,73 @@ impl<'a> RawRequest<'a> {
     }
 
     rewritten
+  }
+}
+
+impl fmt::Debug for RawRequest<'_> {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter
+      .debug_struct("RawRequest")
+      .field("origin", &self.origin)
+      .field("url", &self.url)
+      .field("header", &RedactedHeaderBlock(&self.header))
+      .field("body", &self.body)
+      .finish()
+  }
+}
+
+struct RedactedHeaderBlock<'a>(&'a str);
+
+impl fmt::Debug for RedactedHeaderBlock<'_> {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let mut redacted = String::with_capacity(self.0.len());
+    for line in self.0.split_inclusive("\r\n") {
+      let trimmed = line.trim_end_matches("\r\n");
+      if let Some((name, _)) = trimmed.split_once(':') {
+        if is_sensitive_debug_header(name) {
+          redacted.push_str(name);
+          redacted.push_str(": [REDACTED]");
+          if line.ends_with("\r\n") {
+            redacted.push_str("\r\n");
+          }
+          continue;
+        }
+      }
+      redacted.push_str(line);
+    }
+    fmt::Debug::fmt(&redacted, formatter)
+  }
+}
+
+fn is_sensitive_debug_header(name: &str) -> bool {
+  name.eq_ignore_ascii_case("authorization")
+    || name.eq_ignore_ascii_case("cookie")
+    || name.eq_ignore_ascii_case("proxy-authorization")
+    || name.eq_ignore_ascii_case("set-cookie")
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn raw_request_debug_redacts_built_authorization_header_values() {
+    let mut request = Request::new();
+    request.url_set("http://example.test/asset".to_rourl());
+    request
+      .headers_mut()
+      .push(Header::new("Authorization", "Bearer origin-secret-token"));
+    request
+      .headers_mut()
+      .push(Header::new("Proxy-Authorization", "Basic cHJveHktc2VjcmV0"));
+
+    let raw_request = RawRequest::block_new(&mut request).expect("raw request should build");
+    let debug = format!("{raw_request:?}");
+
+    assert!(debug.contains("Authorization"));
+    assert!(debug.contains("Proxy-Authorization"));
+    assert!(debug.contains("[REDACTED]"));
+    assert!(!debug.contains("origin-secret-token"));
+    assert!(!debug.contains("cHJveHktc2VjcmV0"));
   }
 }

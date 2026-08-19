@@ -9,6 +9,24 @@ and server crates.
 This crate supports rttp's implementation; its public API is not a standalone
 application-level HTTP interface.
 
+## Accept-Encoding
+
+`accept_encoding` parses one or more RFC 9110 `Accept-Encoding` field values
+into an ordered list of coding tokens with optional quality weights. Each
+field value is bounded to 64 KiB, and the combined member count across all
+supplied fields is bounded to 32. Codings are RFC 9110 tokens, including
+`identity` and the `*` wildcard. Duplicate codings are rejected
+case-insensitively while the first-seen spelling is retained. Each member may
+carry a single `q` parameter; the default quality is `1000` thousandths. Empty
+members, invalid tokens, invalid q-values, extra parameters, forbidden ASCII
+control bytes other than HTAB, oversized values, too many members, and a
+present header set that yields no member are errors. `header_value()` joins
+members with `", "`, omits quality when no `q` parameter was present, and
+otherwise emits the original q-text. This type is the shared authority for
+coding-token, wildcard, q-value, duplicate, member-count, and size validation.
+It reports declared request metadata only; it does not compress, decompress,
+or negotiate content.
+
 ## Accept-Ranges
 
 `accept_ranges` parses one or more `Accept-Ranges` field values into an ordered
@@ -24,6 +42,24 @@ as invalid. A present header set that yields no unit still fails as invalid.
 The server facade aliases this type as `HttpAcceptRanges` and reuses
 `from_units`/`none` for its declaration helpers.
 
+## Accept-Language
+
+`accept_language` parses one or more RFC 9110 `Accept-Language` field values
+into an ordered list of language ranges with optional q-values. Each field
+value is bounded to 64 KiB, and the cumulative range count across all supplied
+fields is bounded to 32 ranges. Items are split on commas with surrounding
+whitespace trimmed from each item; empty members and malformed ranges are
+errors. A range is `*` or a primary subtag of 1-8 ASCII letters followed by
+any number of 1-8 character ASCII alphanumeric subtags separated by hyphens.
+Each range may carry one `q` parameter whose value is `0` or `1`, optionally
+with up to three fractional digits and with a `1` integer part requiring an
+all-zero fraction. Case-insensitive duplicate ranges are rejected while the
+first-seen spelling is retained. `from_ranges` validates supplied ranges for
+client construction and `header_value()` re-emits them normalized as
+`range; q=quality`. This parser reports declared metadata only; it does not
+perform locale matching, fallback selection, translation lookup, routing, or
+automatic response choice.
+
 ## Age
 
 `age` parses a singleton HTTP `Age` field as non-negative `1*DIGIT`
@@ -34,6 +70,43 @@ signed or plus-prefixed numbers, fractions, comma-lists, non-digits, overflow
 beyond `u64::MAX`, and forbidden ASCII control bytes are errors. This parser
 reports declared metadata only; it does not calculate freshness, adjust age
 over elapsed time, store cache entries, or apply cache policy.
+
+## Max-Forwards
+
+`max_forwards` parses a singleton HTTP `Max-Forwards` request field as
+non-negative `1*DIGIT` hop counts that fit in `u32`. Each field value is
+bounded to 64 KiB. A second field is rejected after every supplied field is
+bound-checked. Surrounding SP and HTAB are trimmed as optional whitespace.
+Empty values, signed or plus-prefixed numbers, fractions, comma-lists,
+non-digits, overflow beyond `u32::MAX`, oversized values, and forbidden ASCII
+control bytes are errors. `header_value()` emits the accepted count in
+canonical decimal form. This parser reports declared metadata only; it does
+not decrement the hop count, route through proxies, select TRACE or OPTIONS,
+or apply forwarding policy.
+
+## If-Modified-Since
+
+`if_modified_since` parses a singleton HTTP `If-Modified-Since` request field
+as one HTTP-date instant through `httpdate`. Each field value is bounded to
+64 KiB. A second field is rejected after every supplied field is
+bound-checked. Surrounding SP and HTAB are trimmed as optional whitespace.
+Empty values, malformed dates, forbidden ASCII control bytes, and oversized
+values are errors. `header_value()` formats the accepted instant as
+IMF-fixdate. This parser reports declared request metadata only; it does not
+compare `Last-Modified`, evaluate conditional precedence, serve a
+representation, or apply cache policy.
+
+## If-Unmodified-Since
+
+`if_unmodified_since` parses a singleton HTTP `If-Unmodified-Since` request
+field as one HTTP-date instant through `httpdate`. Each field value is bounded
+to 64 KiB. A second field is rejected after every supplied field is
+bound-checked. Surrounding SP and HTAB are trimmed as optional whitespace.
+Empty values, malformed dates, forbidden ASCII control bytes, and oversized
+values are errors. `header_value()` formats the accepted instant as
+IMF-fixdate. This parser reports declared request metadata only; it does not
+compare `Last-Modified`, evaluate conditional precedence, reject a
+representation, or apply cache policy.
 
 ## Content-DPR
 
@@ -72,6 +145,26 @@ that cannot be represented as `SystemTime` are errors. This parser reports
 declared metadata only; it does not compare `Sunset`, follow `Link`
 `rel=deprecation`, decide whether a resource is already deprecated, retry
 requests, or select another endpoint.
+
+## Content-Disposition
+
+`content_disposition` parses a singleton response `Content-Disposition` field
+as one disposition type plus an ordered list of parameters. Each field value
+is bounded to 64 KiB, the parameter count is bounded to 256, and each
+parameter value is bounded to 64 KiB. A second field is rejected after every
+supplied field is bound-checked. Surrounding SP and HTAB are treated as
+optional whitespace around separators. Quoted-strings are unescaped, including
+obs-text, and the stored parameter value is the logical value rather than the
+wire quoting. Parameter names are compared case-insensitively for duplicates,
+and both the disposition type and parameter names are stored in lowercase.
+`filename` and `filename*` remain independent parameters; `filename*` must be
+an unquoted RFC 5987 ext-value and is preserved without decoding. Empty
+values, empty parameter values, malformed quoted-strings, ASCII controls other
+than HTAB, duplicate parameters, invalid tokens, and unparsable input are
+errors. This parser never fails open to `inline` or an empty parameter list.
+It reports declared metadata only: callers own download handling, filesystem
+paths, filename precedence, RFC 5987 decoding, MIME sniffing, cache behavior,
+redirects, retries, negotiation, and status policy.
 
 ## Content-Location
 
@@ -460,6 +553,26 @@ valued flags, malformed tokens or quoted-strings, missing `max-age`, and other
 unparsable input are errors. The parser reports declared metadata only; it does
 not pin TLS, store hosts, consult a preload list, or apply HTTPS-only policy.
 `max-age=0` is returned as data and does not delete stored HSTS hosts.
+
+## TE
+
+`te` parses one or more RFC 9110 `TE` field values into an ordered list of
+transfer codings with optional q-values. Each field value is bounded to
+64 KiB, and the cumulative coding count across all supplied fields is bounded
+to 32 codings.
+
+Codings are split on commas with SP and HTAB accepted only as optional
+whitespace around each coding. Each coding must be an RFC 9110 token;
+`chunked` is rejected because request framing remains owned by the HTTP/1
+implementation. `trailers` is accepted only without a parameter and carries no
+q-value. Other codings accept one optional `q` parameter whose value is a
+weight from `0` through `1` with at most three fractional digits, stored as
+thousandths. Empty members, forbidden ASCII control bytes, malformed tokens,
+multiple parameters, non-`q` parameter names, invalid q-values,
+case-insensitive duplicate codings across all supplied fields, over-limit
+coding lists, and empty present field sets are errors. This parser never fails
+open and does not enable a transfer-coding engine, negotiate trailers, or
+apply compression or proxy behavior.
 
 ## X-Frame-Options
 

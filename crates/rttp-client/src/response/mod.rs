@@ -21,6 +21,9 @@
 
 pub use self::response::*;
 
+pub use rttp_protocol::accept_encoding::{
+  AcceptEncoding, AcceptEncodingCoding, AcceptEncodingParseError,
+};
 pub use rttp_protocol::accept_ranges::{AcceptRanges, AcceptRangesParseError};
 pub use rttp_protocol::access_control_allow_credentials::{
   AccessControlAllowCredentials, AccessControlAllowCredentialsParseError,
@@ -52,6 +55,9 @@ pub use rttp_protocol::clear_site_data::{
 };
 pub use rttp_protocol::client_hints::{
   AcceptCh, AcceptChParseError, CriticalCh, CriticalChParseError,
+};
+pub use rttp_protocol::content_disposition::{
+  ContentDisposition, ContentDispositionParameter, ContentDispositionParseError,
 };
 pub use rttp_protocol::content_dpr::{ContentDpr, ContentDprParseError};
 pub use rttp_protocol::content_length::HttpContentLength;
