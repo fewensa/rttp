@@ -4,6 +4,7 @@ use rttp_protocol::age::Age;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::connection::Connection;
 use rttp_protocol::content_encoding::ContentEncoding;
+use rttp_protocol::content_language::ContentLanguage;
 use rttp_protocol::content_location::ContentLocation;
 use rttp_protocol::content_type::ContentType;
 use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
@@ -76,6 +77,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
     .expect("Content-Location should parse");
   let connection = Connection::parse("keep-alive, TE").expect("Connection should parse");
   let content_encoding = ContentEncoding::parse("gzip, br").expect("Content-Encoding should parse");
+  let content_language =
+    ContentLanguage::parse("fr-CA, es-419").expect("Content-Language should parse");
   let accept_ranges = AcceptRanges::parse("bytes, pages").expect("Accept-Ranges should parse");
   let transfer_encoding =
     TransferEncoding::parse("chunked").expect("Transfer-Encoding should parse");
@@ -141,6 +144,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(connection.header_value(), "keep-alive, TE");
   assert_eq!(content_encoding.codings(), ["gzip", "br"]);
   assert_eq!(content_encoding.header_value(), "gzip, br");
+  assert_eq!(content_language.tags(), ["fr-CA", "es-419"]);
+  assert_eq!(content_language.header_value(), "fr-CA, es-419");
   assert_eq!(accept_ranges.units(), ["bytes", "pages"]);
   assert_eq!(accept_ranges.header_value(), "bytes, pages");
   assert_eq!(transfer_encoding.codings(), ["chunked"]);

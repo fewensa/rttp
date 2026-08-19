@@ -22,6 +22,7 @@ fn package_includes_protocol_metadata_facade_test() {
     "tests/location.rs",
     "tests/package_list.rs",
     "tests/metadata_facade.rs",
+    "tests/content_language.rs",
     "tests/no_vary_search.rs",
   ] {
     assert!(
