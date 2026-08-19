@@ -20,7 +20,7 @@ use rttp_client::response::{
 use rttp_client::response::{
   ContentDigest, ContentLocation, ContentLocationParseError, ReprDigest,
 };
-use rttp_client::{HttpClient, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
+use rttp_client::{HttpClient, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose};
 use rttp_test_support as support;
 
 #[test]
@@ -109,6 +109,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
   let fetch_user = SecFetchUser::parse("?1").expect("Sec-Fetch-User should parse");
+  let sec_purpose = SecPurpose::parse("prefetch, vendor-ext").expect("Sec-Purpose should parse");
   let cross_origin_resource_policy =
     CrossOriginResourcePolicy::parse("same-origin").expect("CORP should parse");
   let cross_origin_embedder_policy =
@@ -205,6 +206,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_mode.header_value(), "navigate");
   assert_eq!(fetch_dest.header_value(), "document");
   assert_eq!(fetch_user.header_value(), "?1");
+  assert_eq!(sec_purpose.tokens(), ["prefetch", "vendor-ext"]);
+  assert!(sec_purpose.contains_prefetch());
   assert_eq!(cross_origin_resource_policy.header_value(), "same-origin");
   assert_eq!(cross_origin_embedder_policy.header_value(), "require-corp");
   assert_eq!(
