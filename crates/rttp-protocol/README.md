@@ -287,6 +287,22 @@ policy names remain forward-compatible within the same validation and count
 bounds. A present header set that yields no recognized token still fails as
 invalid.
 
+## Link
+
+`link` parses one or more RFC 8288 `Link` field values into ordered `LinkValues`
+and `LinkValue` metadata. Each value retains its target URI-reference and its
+ordered parameters, including unknown extension parameters alongside `rel`.
+Targets are validated structurally as RFC 3986 URI-references and stored as raw
+text, never resolved, normalized, fetched, or preloaded; fragments are allowed.
+Each field value is bounded to 64 KiB, the cumulative value count is bounded to
+256, each value holds at most 256 parameters, and each parameter value is
+bounded to 64 KiB. Parameter names are matched case-insensitively, stored
+lowercase, and must be unique within a value. Quoted parameter values are
+unescaped and valueless parameters are preserved with an empty value. Empty
+input, empty members, malformed syntax, and duplicate parameter names are
+rejected. This parser does not preload, schedule fetches, redirect, apply cache
+policy, or generate routes.
+
 ## Strict-Transport-Security
 
 `strict_transport_security` parses a singleton `Strict-Transport-Security`

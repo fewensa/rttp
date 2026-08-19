@@ -183,6 +183,22 @@ metadata does not trigger automatic preload execution, cache policy, redirect,
 retry, replay, route generation, streaming early-write behavior, TLS/ALPN
 behavior, or status-policy behavior.
 
+## Bounded HTTP/1.1 Link response metadata
+
+`Response::links()` parses one or more final-response `Link` fields into
+ordered `LinkValues` and `LinkValue` metadata. It returns `Ok(None)` when the
+header is absent. Each value retains its target URI/reference and ordered
+parameters, including unknown parameters such as extensions alongside `rel`.
+Parsing is on demand, so malformed or oversized metadata returns an error
+without discarding raw response headers. Fields and parameter values are
+limited to 64 KiB, with at most 256 link-values and 256 parameters per value;
+the original `Link` fields remain available through `Response::header_value()`
+and `Response::header_values()`.
+
+The helper is metadata-only and shares Early Hints' bounded metadata posture:
+it does not preload, resolve, schedule fetches, redirect, apply cache policy,
+or generate routes from `Link`.
+
 ## Bounded Cache-Control request metadata
 
 `HttpClient::cache_control_no_cache()`, `cache_control_no_store()`, and
