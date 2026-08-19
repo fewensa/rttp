@@ -755,6 +755,24 @@ without policy semantics. Absent optional members keep their W3C defaults
 `1.0`) but are not re-emitted by `header_value()`. This parser does not send
 reports, persist policy, or configure Reporting endpoint groups.
 
+## Reporting-Endpoints
+
+`reporting_endpoints` parses one or more `Reporting-Endpoints` dictionary
+field values into an ordered list of endpoint-name to quoted-URL members.
+Each field value is bounded to 64 KiB, the combined raw field-value bytes
+across all supplied fields are bounded to 64 KiB, and the combined member
+count is bounded to 32. Endpoint names start with lowercase ASCII or `*` and
+continue with lowercase ASCII, digits, `_`, `-`, `.`, or `*`. Each member
+must use `name="url"` form. Quoted URLs unescape only `\\` and `\"` and
+reject ASCII controls and obs-text. Duplicate names across all supplied
+fields, empty dictionaries, unquoted URLs, malformed escapes, oversized
+values, oversized cumulative input, and too many members are errors.
+`from_endpoints()` constructs the same dictionary and `header_value()`
+re-emits escaped `name="url"` members joined with `", "`. This type is the
+shared authority for endpoint-name, quoted URL, duplicate, member-count, and
+size validation. It reports declared response metadata only; it does not
+schedule, send, persist, retry, or route reports.
+
 ## Keep-Alive
 
 `keep_alive` parses RFC 2068 `Keep-Alive` fields as a comma-separated list of
@@ -776,3 +794,23 @@ formats a normalized header value. Each field value is limited to 64 KiB,
 parameter lists are limited to 256 strings, and extension members are limited
 to 64. The parser does not implement cache storage, cache-key matching, URL
 normalization, navigation behavior, request replay, or shared-cache policy.
+
+## Pragma
+
+`pragma` parses RFC 9111 `Pragma` fields as a comma-separated list of
+`pragma-directive` members: the defined valueless `no-cache` token or an
+`extension-pragma` token with an optional token or quoted-string value. Each
+field value is bounded to 64 KiB, combined field values are bounded to 64 KiB
+including `", "` separator overhead, and the combined directive count is
+bounded to 256; each directive value is bounded to 64 KiB. Directive names are
+matched case-insensitively, duplicate names across combined fields are rejected,
+and multiple `Pragma` fields are combined in wire order, matching the RFC 9111
+list rule. Surrounding SP and HTAB are trimmed as optional whitespace.
+Quoted-string values are unescaped on parse and re-escaped on emit, while
+unquoted values must be tokens. Empty or whitespace-only fields, empty list
+members, leading or trailing commas, malformed tokens, unparsable
+quoted-strings, forbidden ASCII control bytes, valued `no-cache` forms, and
+bound violations are errors. Extensions preserve their first-seen spelling and
+wire order. This parser reports declared metadata only; it does not translate
+`Pragma` into `Cache-Control`, store cache entries, or apply cache,
+intermediary, or HTTP/1.0 compatibility policy.

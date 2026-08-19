@@ -1087,6 +1087,128 @@ fn sync_client_and_server_exchange_alt_used_metadata_without_connection_policy()
 }
 
 #[test]
+fn sync_client_and_server_exchange_reporting_endpoints_metadata_without_scheduling_reports() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Reporting-Endpoints server");
+  let addr = server
+    .local_addr()
+    .expect("Reporting-Endpoints server addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        HttpResponse::ok("OK")
+          .with_reporting_endpoints([
+            ("default", r#"https://reports.example/a"b\c"#),
+            ("csp", "https://reports.example/csp"),
+          ])
+          .expect("Reporting-Endpoints should be accepted")
+      })
+      .expect("serve Reporting-Endpoints response");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/reporting-endpoints"))
+    .emit()
+    .expect("Reporting-Endpoints response should parse without scheduling reports");
+  let endpoints = response
+    .reporting_endpoints()
+    .expect("Reporting-Endpoints should parse")
+    .expect("Reporting-Endpoints should be present");
+
+  assert_eq!(200, response.code());
+  assert_eq!("OK", response.body().string().unwrap());
+  assert_eq!(
+    vec![
+      ("default", r#"https://reports.example/a"b\c"#),
+      ("csp", "https://reports.example/csp"),
+    ],
+    endpoints.endpoints()
+  );
+  assert_eq!(
+    Some(
+      &r#"default="https://reports.example/a\"b\\c", csp="https://reports.example/csp""#
+        .to_string()
+    ),
+    response.header_value("Reporting-Endpoints")
+  );
+  handle.join().expect("Reporting-Endpoints server thread");
+}
+
+#[test]
+fn sync_client_preserves_malformed_and_duplicate_reporting_endpoints_without_scheduling_reports() {
+  const HEADERS: &[(&str, &str)] = &[
+    (
+      "Reporting-Endpoints",
+      r#"default="https://reports.example/default""#,
+    ),
+    (
+      "Reporting-Endpoints",
+      r#"default="https://reports.example/other""#,
+    ),
+  ];
+  let (addr, handle) = spawn_metadata_response_server(HEADERS);
+
+  let response = client()
+    .get()
+    .url(format!(
+      "http://{addr}/matrix/reporting-endpoints-duplicate"
+    ))
+    .emit()
+    .expect("duplicate Reporting-Endpoints should not prevent response parsing");
+
+  assert_eq!(200, response.code());
+  assert_eq!("OK", response.body().string().unwrap());
+  assert_eq!(
+    vec![
+      r#"default="https://reports.example/default""#,
+      r#"default="https://reports.example/other""#,
+    ],
+    response
+      .header_values("Reporting-Endpoints")
+      .iter()
+      .map(|value| value.as_str())
+      .collect::<Vec<_>>()
+  );
+  assert!(
+    response.reporting_endpoints().is_err(),
+    "duplicate endpoint names must produce the typed parse error"
+  );
+
+  handle.join().expect("metadata response server thread");
+}
+
+#[test]
+fn sync_client_preserves_malformed_reporting_endpoints_without_scheduling_reports() {
+  const HEADERS: &[(&str, &str)] = &[(
+    "Reporting-Endpoints",
+    "default=https://reports.example/default",
+  )];
+  let (addr, handle) = spawn_metadata_response_server(HEADERS);
+
+  let response = client()
+    .get()
+    .url(format!(
+      "http://{addr}/matrix/reporting-endpoints-malformed"
+    ))
+    .emit()
+    .expect("malformed Reporting-Endpoints should not prevent response parsing");
+
+  assert_eq!(200, response.code());
+  assert_eq!("OK", response.body().string().unwrap());
+  assert_eq!(
+    Some(&"default=https://reports.example/default".to_string()),
+    response.header_value("Reporting-Endpoints")
+  );
+  assert!(
+    response.reporting_endpoints().is_err(),
+    "unquoted Reporting-Endpoints URLs must produce the typed parse error"
+  );
+
+  handle.join().expect("metadata response server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_nel_metadata_without_report_policy() {
   let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind NEL server");
   let addr = server.local_addr().expect("NEL server addr");
@@ -2583,6 +2705,131 @@ fn sync_client_and_server_exchange_bounded_idempotency_key_metadata_without_poli
   assert_eq!(Some("charge-2026-08-19-9f3c".to_string()), raw);
   assert_eq!(201, response.code());
   handle.join().expect("idempotency server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_bounded_pragma_metadata_without_policy() {
+  const PRAGMA_REQUEST: &str = "no-cache, community=private";
+  const PRAGMA_RESPONSE: &str = "no-cache, vendor=private";
+
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind pragma server");
+  let addr = server.local_addr().expect("pragma server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request
+            .pragma()
+            .expect("Pragma should parse")
+            .map(|pragma| pragma.header_value()),
+          request.header("Pragma").map(str::to_string),
+          request.header("Cache-Control").map(str::to_string),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed pragma metadata");
+        HttpResponse::new(200, "OK")
+          .with_pragma(PRAGMA_RESPONSE)
+          .expect("Pragma should be accepted")
+      })
+      .expect("serve pragma request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/asset"))
+    .pragma(PRAGMA_REQUEST)
+    .expect("Pragma should be accepted")
+    .emit()
+    .expect("pragma response should parse");
+
+  let (typed, raw, cache_control) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe pragma metadata");
+  assert_eq!(Some(PRAGMA_REQUEST.to_string()), typed);
+  assert_eq!(Some(PRAGMA_REQUEST.to_string()), raw);
+  assert_eq!(None, cache_control, "Pragma must not invent Cache-Control");
+
+  let pragma = response
+    .pragma()
+    .expect("response Pragma should parse")
+    .expect("response Pragma should be present");
+  assert!(pragma.no_cache());
+  assert_eq!(1, pragma.extensions().len());
+  assert_eq!("vendor", pragma.extensions()[0].name());
+  assert_eq!(Some("private"), pragma.extensions()[0].value());
+  assert_eq!(
+    PRAGMA_RESPONSE,
+    response
+      .header_value("Pragma")
+      .map(String::as_str)
+      .unwrap_or_default()
+  );
+  assert_eq!(200, response.code());
+  handle.join().expect("pragma server thread");
+}
+
+#[test]
+fn sync_client_and_server_observe_pragma_and_cache_control_independently() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind pragma/cache server");
+  let addr = server.local_addr().expect("pragma/cache server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request
+            .pragma()
+            .expect("Pragma should parse")
+            .map(|pragma| pragma.header_value()),
+          request
+            .cache_control()
+            .expect("Cache-Control should parse")
+            .map(|cache_control| cache_control.max_age()),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed pragma/cache metadata");
+        HttpResponse::new(200, "OK")
+          .with_pragma("no-cache")
+          .expect("Pragma should be accepted")
+          .header("Cache-Control", "max-age=60")
+      })
+      .expect("serve pragma/cache request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/asset"))
+    .pragma("no-cache")
+    .expect("Pragma should be accepted")
+    .header(("Cache-Control", "max-age=60"))
+    .emit()
+    .expect("pragma/cache response should parse");
+
+  let (pragma, cache_control) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe pragma/cache metadata");
+  assert_eq!(Some("no-cache".to_string()), pragma);
+  assert_eq!(Some(Some(60)), cache_control);
+
+  let response_pragma = response
+    .pragma()
+    .expect("response Pragma should parse")
+    .expect("response Pragma should be present");
+  assert!(response_pragma.no_cache());
+  assert_eq!(
+    Some("max-age=60"),
+    response.header_value("Cache-Control").map(String::as_str),
+    "response Pragma helpers must leave Cache-Control untouched"
+  );
+  assert_eq!(
+    Some("no-cache"),
+    response.header_value("Pragma").map(String::as_str)
+  );
+  handle.join().expect("pragma/cache server thread");
 }
 
 #[test]

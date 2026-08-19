@@ -421,6 +421,103 @@ fn request_sec_gpc_parses_request_metadata_without_policy() {
 }
 
 #[test]
+fn request_pragma_parses_request_metadata_without_policy() {
+  let absent_raw = "GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n";
+  let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
+  let absent = Request::read_next_from(&mut absent_reader)
+    .expect("absent request should parse")
+    .expect("absent request should be present");
+  assert_eq!(
+    None,
+    absent
+      .pragma()
+      .expect("missing Pragma should be accepted")
+  );
+  assert_eq!(None, absent.header("Pragma"));
+
+  let valid_raw = concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Pragma: no-cache\r\n",
+    "Pragma: community=private, example=\"quoted, value\"\r\n",
+    "\r\n"
+  );
+  let mut valid_reader = BufReader::new(Cursor::new(valid_raw.as_bytes()));
+  let valid = Request::read_next_from(&mut valid_reader)
+    .expect("valid request should parse")
+    .expect("valid request should be present");
+  let pragma = valid
+    .pragma()
+    .expect("Pragma should parse")
+    .expect("Pragma should be present");
+  assert!(pragma.no_cache());
+  assert_eq!(2, pragma.extensions().len());
+  assert_eq!("community", pragma.extensions()[0].name());
+  assert_eq!(Some("private"), pragma.extensions()[0].value());
+  assert_eq!(
+    "no-cache, community=private, example=\"quoted, value\"",
+    pragma.header_value()
+  );
+
+  let malformed_raw = concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Pragma: no-cache=\r\n",
+    "\r\n"
+  );
+  let mut malformed_reader = BufReader::new(Cursor::new(malformed_raw.as_bytes()));
+  let malformed = Request::read_next_from(&mut malformed_reader)
+    .expect("malformed metadata should not reject the request frame")
+    .expect("malformed request should be present");
+  assert!(malformed.pragma().is_err());
+  assert_eq!(Some("no-cache="), malformed.header("Pragma"));
+
+  let duplicate_raw = concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Pragma: no-cache\r\n",
+    "pragma: no-cache\r\n",
+    "\r\n"
+  );
+  let mut duplicate_reader = BufReader::new(Cursor::new(duplicate_raw.as_bytes()));
+  let duplicate = Request::read_next_from(&mut duplicate_reader)
+    .expect("duplicate metadata should not reject the request frame")
+    .expect("duplicate request should be present");
+  assert!(duplicate.pragma().is_err());
+  assert_eq!(Some("no-cache"), duplicate.header("Pragma"));
+
+  let oversized_value = "x".repeat(rttp_protocol::pragma::MAX_PRAGMA_VALUE_BYTES + 1);
+  let oversized = HttpRequest {
+    method: "GET".to_string(),
+    path: "/asset".to_string(),
+    query: None,
+    version: "HTTP/1.1".to_string(),
+    headers: vec![HttpHeader::new("Pragma", oversized_value)],
+    body: Vec::new(),
+    content_length: None,
+  };
+  assert!(oversized.pragma().is_err());
+  assert!(oversized.header("Pragma").is_some());
+
+  let first = "a".repeat(rttp_protocol::pragma::MAX_PRAGMA_VALUE_BYTES / 2);
+  let second = "b".repeat(rttp_protocol::pragma::MAX_PRAGMA_VALUE_BYTES / 2);
+  let combined = HttpRequest {
+    method: "GET".to_string(),
+    path: "/asset".to_string(),
+    query: None,
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      HttpHeader::new("Pragma", first),
+      HttpHeader::new("Pragma", second),
+    ],
+    body: Vec::new(),
+    content_length: None,
+  };
+  assert!(combined.pragma().is_err());
+  assert!(combined.header("Pragma").is_some());
+}
+
+#[test]
 fn request_upgrade_insecure_requests_parses_request_metadata_without_policy() {
   let absent_raw = "GET /page HTTP/1.1\r\nHost: example.test\r\n\r\n";
   let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));

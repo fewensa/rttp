@@ -1197,6 +1197,78 @@ fn request_max_forwards_is_optional_and_rejects_invalid_metadata() {
 }
 
 #[test]
+fn request_pragma_parses_bounded_metadata_without_cache_policy() {
+  let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent.pragma().expect("missing Pragma should be valid")
+  );
+
+  let valid = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Pragma: no-cache\r\n",
+    "Pragma: community=private, example=\"quoted, value\"\r\n",
+    "\r\n"
+  ));
+  let pragma = valid
+    .pragma()
+    .expect("Pragma should parse")
+    .expect("Pragma should be present");
+  assert!(pragma.no_cache());
+  assert_eq!(2, pragma.extensions().len());
+  assert_eq!("community", pragma.extensions()[0].name());
+  assert_eq!(Some("private"), pragma.extensions()[0].value());
+  assert_eq!(
+    "no-cache, community=private, example=\"quoted, value\"",
+    pragma.header_value()
+  );
+
+  for value in [
+    "no-cache,",
+    "no-cache=value",
+    "no-cache, no-cache",
+    "bad name",
+  ] {
+    let request = parse_request(&format!(
+      "GET /asset HTTP/1.1\r\nHost: example.test\r\nPragma: {value}\r\n\r\n"
+    ));
+    assert!(request.pragma().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Pragma"));
+  }
+
+  assert!(rttp::server::HttpPragma::parse("x".repeat(64 * 1024 + 1)).is_err());
+
+  let duplicate = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Pragma: no-cache\r\n",
+    "pragma: no-cache\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.pragma().is_err());
+  assert_eq!(Some("no-cache"), duplicate.header("Pragma"));
+
+  let cache_control = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Pragma: no-cache\r\n",
+    "Cache-Control: max-age=60\r\n",
+    "\r\n"
+  ));
+  let pragma = cache_control
+    .pragma()
+    .expect("Pragma should parse")
+    .expect("Pragma should be present");
+  assert!(pragma.no_cache());
+  assert_eq!(
+    Some("max-age=60"),
+    cache_control.header("Cache-Control"),
+    "Pragma parsing must leave Cache-Control untouched"
+  );
+}
+
+#[test]
 fn request_idempotency_key_is_optional_and_rejects_invalid_metadata() {
   let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
   assert_eq!(
@@ -2303,6 +2375,41 @@ fn reporting_endpoints_helpers_parse_and_build_bounded_metadata() {
       "should reject {value:?}"
     );
   }
+
+  let escaped = HttpResponse::ok("body")
+    .with_reporting_endpoints([("default", r#"https://reports.example/a"b\c"#)])
+    .expect("escaped Reporting-Endpoints URL should be accepted");
+  let serialized = String::from_utf8(escaped.to_bytes()).expect("response is UTF-8");
+  assert!(serialized.contains(r#"default="https://reports.example/a\"b\\c""#));
+  assert_eq!(
+    Some(r#"https://reports.example/a"b\c"#),
+    escaped
+      .reporting_endpoints()
+      .expect("escaped Reporting-Endpoints should parse")
+      .expect("Reporting-Endpoints should be present")
+      .endpoint("default")
+  );
+
+  let malformed = HttpResponse::ok("body").header(
+    "Reporting-Endpoints",
+    "default=https://reports.example/default",
+  );
+  let malformed_serialized = String::from_utf8(malformed.to_bytes()).expect("response is UTF-8");
+  assert!(malformed_serialized
+    .contains("\r\nReporting-Endpoints: default=https://reports.example/default\r\n"));
+  assert!(
+    malformed.reporting_endpoints().is_err(),
+    "typed Reporting-Endpoints parser should reject malformed raw values"
+  );
+
+  assert!(
+    HttpReportingEndpoints::from_endpoints([
+      ("default", "https://reports.example/default"),
+      ("default", "https://reports.example/other"),
+    ])
+    .is_err(),
+    "builder should reject duplicate endpoint names"
+  );
 }
 
 #[test]
