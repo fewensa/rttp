@@ -125,6 +125,7 @@ fn is_sensitive_debug_header(name: &str) -> bool {
     || name.eq_ignore_ascii_case("proxy-authorization")
     || name.eq_ignore_ascii_case("sec-websocket-key")
     || name.eq_ignore_ascii_case("set-cookie")
+    || name.eq_ignore_ascii_case("speculation-rules")
     || name.eq_ignore_ascii_case("traceparent")
     || name.eq_ignore_ascii_case("tracestate")
     || name.eq_ignore_ascii_case("baggage")
@@ -294,6 +295,10 @@ mod tests {
       ("Idempotency-Key", "charge-2026-08-19-9f3c"),
       ("Origin-Trial", "secret-origin-trial-token"),
       ("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ=="),
+      (
+        "Speculation-Rules",
+        "https://example.test/speculation-rules.json",
+      ),
     ] {
       let debug = format!("{:?}", Header::new(name, secret));
       assert!(debug.contains(name));

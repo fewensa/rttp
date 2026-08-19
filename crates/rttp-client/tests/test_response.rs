@@ -1468,6 +1468,9 @@ fn test_parse_speculation_rules_response_metadata_preserves_singleton_value() {
     response.header_value("Speculation-Rules")
   );
   assert!(!format!("{rules:?}").contains(value));
+  let headers_debug = format!("{:?}", response.headers());
+  assert!(headers_debug.contains("[REDACTED]"));
+  assert!(!headers_debug.contains(value));
 }
 
 #[test]
@@ -1509,6 +1512,9 @@ fn test_parse_speculation_rules_rejects_duplicate_and_unsafe_values_without_hidi
     Some(&oversized_value),
     oversized.header_value("Speculation-Rules")
   );
+  let headers_debug = format!("{:?}", oversized.headers());
+  assert!(headers_debug.contains("[REDACTED]"));
+  assert!(!headers_debug.contains(&oversized_value));
 }
 
 #[test]
