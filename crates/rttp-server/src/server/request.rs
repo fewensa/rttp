@@ -55,6 +55,7 @@ pub use rttp_protocol::prefer::{
 pub use rttp_protocol::save_data::{
   SaveData as HttpSaveData, SaveDataParseError as HttpSaveDataParseError,
 };
+pub use rttp_protocol::sec_gpc::{SecGpc as HttpSecGpc, SecGpcParseError as HttpSecGpcParseError};
 pub use rttp_protocol::signature::{
   Signature as HttpSignature, SignatureEntry as HttpSignatureEntry,
   SignatureParseError as HttpSignatureParseError,
@@ -505,6 +506,16 @@ impl Request {
       return Ok(None);
     }
     HttpSaveData::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Sec-GPC` request metadata without applying consent,
+  /// tracking, legal, or serving policy.
+  pub fn sec_gpc(&self) -> Result<Option<HttpSecGpc>, HttpSecGpcParseError> {
+    let values: Vec<&str> = self.headers_named("Sec-GPC").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecGpc::parse_values(values).map(Some)
   }
 
   /// Parses received `Host` request authority without applying virtual-host
@@ -2287,6 +2298,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpSaveData::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Sec-GPC` request metadata without applying consent,
+  /// tracking, legal, or serving policy.
+  pub fn sec_gpc(&self) -> Result<Option<HttpSecGpc>, HttpSecGpcParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-GPC"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecGpc::parse_values(values).map(Some)
   }
 
   /// Parses received `Accept-Encoding` request metadata without enabling

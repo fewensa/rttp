@@ -31,6 +31,7 @@ fn package_includes_protocol_metadata_facade_test() {
     "tests/no_vary_search.rs",
     "tests/upgrade.rs",
     "tests/accept_language.rs",
+    "tests/sec_gpc.rs",
   ] {
     assert!(
       package_files.lines().any(|path| path == expected),

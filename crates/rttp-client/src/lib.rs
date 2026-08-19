@@ -132,6 +132,7 @@ pub use self::connection::{ConnectionReader, ResponseBodyReader, StreamingRespon
 pub use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
+pub use rttp_protocol::sec_gpc::{SecGpc, SecGpcParseError};
 
 mod client;
 mod config;

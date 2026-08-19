@@ -351,6 +351,76 @@ fn request_save_data_parses_request_metadata_without_policy() {
 }
 
 #[test]
+fn request_sec_gpc_parses_request_metadata_without_policy() {
+  let absent_raw = "GET /privacy HTTP/1.1\r\nHost: example.test\r\n\r\n";
+  let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
+  let absent = Request::read_next_from(&mut absent_reader)
+    .expect("absent request should parse")
+    .expect("absent request should be present");
+  assert_eq!(None, absent.sec_gpc().expect("missing Sec-GPC should be accepted"));
+  assert_eq!(None, absent.header("Sec-GPC"));
+
+  let valid_raw = concat!(
+    "GET /privacy HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Sec-GPC: 1\r\n",
+    "\r\n"
+  );
+  let mut valid_reader = BufReader::new(Cursor::new(valid_raw.as_bytes()));
+  let valid = Request::read_next_from(&mut valid_reader)
+    .expect("valid request should parse")
+    .expect("valid request should be present");
+  assert_eq!(
+    "1",
+    valid
+      .sec_gpc()
+      .expect("Sec-GPC should parse")
+      .expect("Sec-GPC should be present")
+      .header_value()
+  );
+
+  let malformed_raw = concat!(
+    "GET /privacy HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Sec-GPC: 0\r\n",
+    "\r\n"
+  );
+  let mut malformed_reader = BufReader::new(Cursor::new(malformed_raw.as_bytes()));
+  let malformed = Request::read_next_from(&mut malformed_reader)
+    .expect("malformed metadata should not reject the request frame")
+    .expect("malformed request should be present");
+  assert!(malformed.sec_gpc().is_err());
+  assert_eq!(Some("0"), malformed.header("Sec-GPC"));
+
+  let duplicate_raw = concat!(
+    "GET /privacy HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Sec-GPC: 1\r\n",
+    "sec-gpc: 1\r\n",
+    "\r\n"
+  );
+  let mut duplicate_reader = BufReader::new(Cursor::new(duplicate_raw.as_bytes()));
+  let duplicate = Request::read_next_from(&mut duplicate_reader)
+    .expect("duplicate metadata should not reject the request frame")
+    .expect("duplicate request should be present");
+  assert!(duplicate.sec_gpc().is_err());
+  assert_eq!(Some("1"), duplicate.header("Sec-GPC"));
+
+  let oversized_value = "1".repeat(rttp_protocol::sec_gpc::MAX_SEC_GPC_VALUE_BYTES + 1);
+  let oversized = HttpRequest {
+    method: "GET".to_string(),
+    path: "/privacy".to_string(),
+    query: None,
+    version: "HTTP/1.1".to_string(),
+    headers: vec![HttpHeader::new("Sec-GPC", oversized_value)],
+    body: Vec::new(),
+    content_length: None,
+  };
+  assert!(oversized.sec_gpc().is_err());
+  assert!(oversized.header("Sec-GPC").is_some());
+}
+
+#[test]
 fn request_representation_metadata_parses_without_applying_policy() {
   let absent_raw = "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n";
   let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
