@@ -2887,6 +2887,22 @@ fn save_data_helper_emits_on_request_token() {
 }
 
 #[test]
+fn sec_gpc_helper_emits_one_request_signal() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/privacy", base_url))
+      .sec_gpc()
+      .expect("Sec-GPC should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("1"), header_value(&request, "Sec-GPC"));
+}
+
+#[test]
 fn upgrade_insecure_requests_helper_emits_signal_value_without_rewriting_target() {
   let request = capture_request(|base_url| {
     client()

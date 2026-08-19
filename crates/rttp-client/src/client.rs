@@ -25,6 +25,7 @@ use rttp_protocol::max_forwards::MaxForwards;
 use rttp_protocol::origin::Origin;
 use rttp_protocol::priority::Priority;
 use rttp_protocol::save_data::SaveData;
+use rttp_protocol::sec_gpc::SecGpc;
 use rttp_protocol::signature::Signature;
 use rttp_protocol::signature_input::SignatureInput;
 use rttp_protocol::te::{Te, MAX_TE_CODINGS, MAX_TE_VALUE_BYTES};
@@ -426,6 +427,16 @@ impl HttpClient {
     let save_data =
       SaveData::parse("on").map_err(|error| error::builder_with_message(error.to_string()))?;
     Ok(self.header(Header::new("Save-Data", save_data.header_value())))
+  }
+
+  /// Set `Sec-GPC: 1` request metadata.
+  ///
+  /// This declares the valid Global Privacy Control request signal only; it
+  /// does not infer consent, tracking, legal, or serving policy.
+  pub fn sec_gpc(&mut self) -> error::Result<&mut Self> {
+    let sec_gpc =
+      SecGpc::parse("1").map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("Sec-GPC", sec_gpc.header_value())))
   }
 
   /// Set `Upgrade-Insecure-Requests: 1` request metadata.
