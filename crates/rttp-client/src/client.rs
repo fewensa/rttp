@@ -9,6 +9,7 @@ use crate::{error, Config, H2cClientPolicy};
 use futures::io::AsyncRead;
 use rttp_protocol::access_control_request_headers::AccessControlRequestHeaders;
 use rttp_protocol::access_control_request_method::AccessControlRequestMethod;
+use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
 use rttp_protocol::fetch_metadata::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 use rttp_protocol::forwarded::{Forwarded, MAX_FORWARDED_VALUE_BYTES};
 use rttp_protocol::origin::Origin;
@@ -16,6 +17,7 @@ use rttp_protocol::priority::Priority;
 use rttp_protocol::signature::Signature;
 use rttp_protocol::signature_input::SignatureInput;
 use rttp_protocol::trailer::Trailer;
+use rttp_protocol::upgrade::Upgrade;
 use std::io;
 
 #[derive(Debug)]
@@ -262,6 +264,22 @@ impl HttpClient {
     Ok(self.header(Header::new("Trailer", trailer.header_value())))
   }
 
+  /// Set bounded `Upgrade` protocol metadata without changing connection
+  /// handoff behavior or adding `Connection: Upgrade`.
+  pub fn upgrade_protocols<I, S>(&mut self, protocols: I) -> error::Result<&mut Self>
+  where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+  {
+    let protocols: Vec<String> = protocols
+      .into_iter()
+      .map(|protocol| protocol.as_ref().to_string())
+      .collect();
+    let upgrade = Upgrade::parse_values(protocols.iter().map(String::as_str))
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("Upgrade", upgrade.header_value())))
+  }
+
   /// Add request cookie
   pub fn cookie<S: AsRef<str>>(&mut self, cookie: S) -> &mut Self {
     self.header(("Cookie", cookie.as_ref()))
@@ -380,6 +398,19 @@ impl HttpClient {
     Ok(self.header(Header::new(
       "Access-Control-Request-Headers",
       request_headers.header_value(),
+    )))
+  }
+
+  /// Set `Access-Control-Request-Private-Network: true` request metadata.
+  ///
+  /// This declares the valid private-network preflight request form only; it
+  /// does not decide whether a preflight is needed or apply browser policy.
+  pub fn access_control_request_private_network(&mut self) -> error::Result<&mut Self> {
+    let request_private_network = AccessControlRequestPrivateNetwork::parse("true")
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Access-Control-Request-Private-Network",
+      request_private_network.header_value(),
     )))
   }
 

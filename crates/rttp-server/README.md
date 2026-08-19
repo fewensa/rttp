@@ -18,6 +18,21 @@ fields, preserves the request for handler-defined error policy, and returns an
 error for malformed values, values larger than 64 KiB, or more than 256
 directives. It only parses metadata; it does not apply caching behavior.
 
+## Response CDN-Cache-Control metadata
+
+`HttpResponse::cdn_cache_control()` parses attached `CDN-Cache-Control`
+response fields into `HttpCdnCacheControl`. The helper preserves CDN-specific
+extension directives in order with each directive token name and optional
+parsed value. It applies the shared cache-directive bounds: 64 KiB per field
+value, at most 256 directives, valid HTTP tokens for directive names and
+unquoted values, and well-formed quoted strings.
+
+Malformed CDN metadata returns `HttpCdnCacheControlParseError` while leaving
+the raw response headers in place. The helper only exposes metadata for
+handler-owned policy; it does not create or manage a CDN cache, compute
+freshness, evaluate surrogate keys, revalidate automatically, enforce
+shared-cache policy, retry, replay, redirect, or choose status behavior.
+
 ## Authentication metadata
 
 `Request::authorization()` / `HttpRequest::authorization()` and
@@ -68,6 +83,42 @@ time.
 These helpers parse HTTP/1 header metadata only. They do not change
 keep-alive, hop-by-hop stripping, upgrade/h2c handoff, or HTTP/2 rejection.
 
+## Request and response Upgrade metadata
+
+Handlers can call `Request::upgrade()`, `HttpRequest::upgrade()`, and
+`HttpResponse::upgrade()` to observe bounded typed `Upgrade` metadata from
+already-retained HTTP/1 fields. `HttpResponse::with_upgrade()` validates and
+replaces attached response `Upgrade` metadata. The helpers combine fields in
+wire order into `HttpUpgrade`, preserve protocol spelling, and return
+`Ok(None)` when the header is absent.
+
+Each field value is limited to 64 KiB. Parsing accepts at most 32 protocols.
+Each protocol must be an HTTP token, optionally followed by `/` and a token
+protocol version. Empty members, malformed protocols, control bytes,
+oversized values, and too many protocols return a parser error while raw
+request or response headers remain available.
+
+These helpers parse or declare HTTP/1 header metadata only. They do not add
+`Connection: Upgrade`, select h2c, change CONNECT handling, transfer sockets
+to `handoff`, or implement the upgraded protocol.
+
+## Response Keep-Alive metadata
+
+Handlers can call `HttpResponse::keep_alive()` to observe bounded typed
+`Keep-Alive` response metadata and `HttpResponse::with_keep_alive(value)` to
+validate and replace the `Keep-Alive` response field. The helpers parse
+RFC 2068 `Keep-Alive` fields in wire order into `HttpKeepAlive`; the optional
+`timeout` delta-seconds and optional `max` `1*DIGIT` values are parsed as
+checked unsigned integers, and unrecognized `name=token` parameters are
+preserved as bounded `HttpKeepAliveExtension` metadata. Absent fields return
+`Ok(None)`. Duplicate recognized parameters, malformed values, overflow,
+oversized values, or over-limit values return a parser error while
+`HttpResponse` raw headers continue to expose the original fields.
+
+These helpers expose Keep-Alive as metadata only. They do not change
+connection lifetime, connection pooling, keep-alive timers, or HTTP/2
+behavior.
+
 ## Request Transfer-Encoding framing metadata
 
 Handlers can call `Request::transfer_encoding()` and
@@ -117,6 +168,22 @@ without changing those raw fields.
 
 These helpers only declare and parse metadata. They do not calculate hashes,
 verify bodies, canonicalize representations, sign values, or enforce integrity.
+
+## NEL response metadata
+
+`HttpResponse::with_nel(value)` validates one `NEL` field as bounded W3C
+Network Error Logging policy JSON and replaces any existing `NEL` fields with
+one normalized value. `HttpResponse::nel()` parses attached raw fields into
+`HttpNel` metadata, returning parser errors without changing those raw fields.
+The policy exposes its required non-negative `max_age` as `u64`, optional
+`report_to` name, `include_subdomains` flag, and `success_fraction`/
+`failure_fraction` values as checked members; unknown JSON members are
+preserved verbatim without policy semantics. Field values are bounded to
+64 KiB, member counts to 256 per object, nesting depth to 64, and each decoded
+string to 64 KiB.
+
+These helpers only declare and parse metadata. The server does not send
+network error reports, persist policy, or configure Reporting endpoint groups.
 
 ## Accept-Ranges response metadata
 

@@ -119,6 +119,73 @@ fn request_access_control_request_headers_parses_preflight_metadata_without_poli
 }
 
 #[test]
+fn request_access_control_request_private_network_parses_preflight_metadata_without_policy() {
+  let absent_raw = "OPTIONS /widgets HTTP/1.1\r\nHost: example.test\r\n\r\n";
+  let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
+  let absent = Request::read_next_from(&mut absent_reader)
+    .expect("absent request should parse")
+    .expect("absent request should be present");
+  assert_eq!(
+    None,
+    absent
+      .access_control_request_private_network()
+      .expect("missing Access-Control-Request-Private-Network should be accepted")
+  );
+
+  let valid_raw = concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Private-Network: true\r\n",
+    "\r\n"
+  );
+  let mut valid_reader = BufReader::new(Cursor::new(valid_raw.as_bytes()));
+  let valid = Request::read_next_from(&mut valid_reader)
+    .expect("valid request should parse")
+    .expect("valid request should be present");
+  assert_eq!(
+    "true",
+    valid
+      .access_control_request_private_network()
+      .expect("Access-Control-Request-Private-Network should parse")
+      .expect("Access-Control-Request-Private-Network should be present")
+      .header_value()
+  );
+
+  let malformed_raw = concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Private-Network: false\r\n",
+    "\r\n"
+  );
+  let mut malformed_reader = BufReader::new(Cursor::new(malformed_raw.as_bytes()));
+  let malformed = Request::read_next_from(&mut malformed_reader)
+    .expect("malformed metadata should not reject the request frame")
+    .expect("malformed request should be present");
+  assert!(malformed.access_control_request_private_network().is_err());
+  assert_eq!(
+    Some("false"),
+    malformed.header("Access-Control-Request-Private-Network")
+  );
+
+  let duplicate_raw = concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Private-Network: true\r\n",
+    "access-control-request-private-network: true\r\n",
+    "\r\n"
+  );
+  let mut duplicate_reader = BufReader::new(Cursor::new(duplicate_raw.as_bytes()));
+  let duplicate = Request::read_next_from(&mut duplicate_reader)
+    .expect("duplicate metadata should not reject the request frame")
+    .expect("duplicate request should be present");
+  assert!(duplicate.access_control_request_private_network().is_err());
+  assert_eq!(
+    Some("true"),
+    duplicate.header("Access-Control-Request-Private-Network")
+  );
+}
+
+#[test]
 fn request_representation_metadata_parses_without_applying_policy() {
   let absent_raw = "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n";
   let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
@@ -725,6 +792,80 @@ fn request_cache_control_rejects_directive_counts_across_header_fields() {
     .expect_err("too many Cache-Control directives should be rejected");
 
   assert_eq!("too many Cache-Control directives", error.to_string());
+}
+
+#[test]
+fn etag_response_helpers_validate_replace_and_parse_singleton_metadata() {
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .etag()
+      .expect("absent ETag should parse")
+  );
+
+  let response = HttpResponse::ok([])
+    .header("ETag", "\"old\"")
+    .header("etag", "W/\"older\"")
+    .with_etag(HttpEntityTag::weak("asset-v7"));
+  assert_eq!(
+    Some(HttpEntityTag::weak("asset-v7")),
+    response.etag().expect("ETag should parse")
+  );
+  assert_eq!(
+    vec![("ETag", "W/\"asset-v7\"")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let strong = HttpResponse::ok([]).header("ETag", "\"asset-v7\"");
+  assert_eq!(
+    Some(HttpEntityTag::strong("asset-v7")),
+    strong.etag().expect("strong ETag should parse")
+  );
+}
+
+#[test]
+fn etag_response_helper_rejects_malformed_duplicate_and_oversized_raw_headers() {
+  for value in ["abc", "W/abc", "\"bad space\"", "\"bad\"value\""] {
+    let response = HttpResponse::ok([]).header("ETag", value);
+    assert!(response.etag().is_err(), "ETag should reject {value:?}");
+    assert_eq!(
+      vec![("ETag", value)],
+      response
+        .headers
+        .iter()
+        .map(|header| (header.name.as_str(), header.value.as_str()))
+        .collect::<Vec<_>>()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("ETag", "\"one\"")
+    .header("etag", "W/\"two\"");
+  assert!(duplicate.etag().is_err());
+  assert_eq!(
+    vec![("ETag", "\"one\""), ("etag", "W/\"two\"")],
+    duplicate
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let oversized = format!("\"{}\"", "a".repeat(64 * 1024));
+  let response = HttpResponse::ok([]).header("ETag", &oversized);
+  assert!(response.etag().is_err());
+  assert_eq!(
+    vec![("ETag", oversized.as_str())],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
 }
 
 #[test]
@@ -2503,4 +2644,197 @@ hello\r\n\
       .expect("clear should parse")
       .expect("clear should be present")
       .is_clear());
+  }
+
+  #[test]
+  fn nel_helpers_reject_raw_crlf_and_serialize_a_single_header_line() {
+    assert!(
+      HttpResponse::ok([])
+        .with_nel("{\"max_age\":1,\"x\":{ \"a\":\r\n1 }}")
+        .is_err(),
+      "raw CR/LF in a NEL field value must be rejected"
+    );
+
+    let response = HttpResponse::ok([])
+      .with_nel(r#"{"report_to":"errors","max_age":60,"x":{"a":[1,2]}}"#)
+      .expect("valid NEL policy should be accepted");
+    let bytes = response.to_bytes();
+    let head = std::str::from_utf8(&bytes).expect("serialized head should be UTF-8");
+    let nel_start = head
+      .find("NEL:")
+      .expect("serialized head should contain a NEL header");
+    let nel_line_end = head[nel_start..]
+      .find("\r\n")
+      .expect("NEL header line should end with CRLF");
+    let nel_line = &head[nel_start..nel_start + nel_line_end];
+    assert!(
+      !nel_line.contains('\r') && !nel_line.contains('\n'),
+      "serialized NEL header line must not contain raw CR or LF: {nel_line:?}"
+    );
+    assert_eq!(
+      "NEL: {\"max_age\":60,\"report_to\":\"errors\",\"x\":{\"a\":[1,2]}}",
+      nel_line
+    );
+
+    let parsed = response
+      .nel()
+      .expect("response NEL should parse")
+      .expect("response NEL should be present");
+    assert_eq!(60, parsed.max_age());
+    assert_eq!(Some("errors"), parsed.report_to());
+  }
+
+  #[test]
+  fn nel_helper_escapes_del_so_the_wire_header_has_no_raw_0x7f() {
+    let response = HttpResponse::ok([])
+      .with_nel(r#"{"report_to":"a\u007fb","max_age":1}"#)
+      .expect("valid NEL policy with a \\u007f escape should be accepted");
+    let bytes = response.to_bytes();
+    assert!(
+      !bytes.contains(&0x7f),
+      "serialized response must not contain a raw DEL byte"
+    );
+
+    let head = std::str::from_utf8(&bytes).expect("serialized head should be UTF-8");
+    let nel_start = head
+      .find("NEL:")
+      .expect("serialized head should contain a NEL header");
+    let nel_line_end = head[nel_start..]
+      .find("\r\n")
+      .expect("NEL header line should end with CRLF");
+    let nel_line = &head[nel_start..nel_start + nel_line_end];
+    assert_eq!(
+      r#"NEL: {"max_age":1,"report_to":"a\u007fb"}"#,
+      nel_line
+    );
+
+    let parsed = response
+      .nel()
+      .expect("response NEL should parse")
+      .expect("response NEL should be present");
+    assert_eq!(Some("a\u{7f}b"), parsed.report_to());
+  }
+
+  #[test]
+  fn keep_alive_helpers_combine_fields_preserve_extensions_and_build_responses() {
+    let combined = HttpResponse::ok([])
+      .header("Keep-Alive", "timeout=5")
+      .header("Keep-Alive", "max=100, vendor=1");
+    let keep_alive = combined
+      .keep_alive()
+      .expect("Keep-Alive should parse")
+      .expect("Keep-Alive should be present");
+
+    assert_eq!(Some(5), keep_alive.timeout());
+    assert_eq!(Some(100), keep_alive.max());
+    assert_eq!(1, keep_alive.extensions().len());
+    assert_eq!("vendor", keep_alive.extensions()[0].name());
+    assert_eq!("1", keep_alive.extensions()[0].value());
+    assert_eq!(
+      "timeout=5, max=100, vendor=1",
+      keep_alive.header_value(),
+      "recognized parameters are emitted before preserved extensions"
+    );
+
+    let built = HttpResponse::ok([])
+      .with_keep_alive("timeout=5, max=100, vendor=1")
+      .expect("Keep-Alive should be accepted");
+    assert_eq!(
+      vec![("Keep-Alive", "timeout=5, max=100, vendor=1")],
+      built
+        .headers
+        .iter()
+        .map(|header| (header.name.as_str(), header.value.as_str()))
+        .collect::<Vec<_>>()
+    );
+    let parsed = built
+      .keep_alive()
+      .expect("built Keep-Alive should parse")
+      .expect("built Keep-Alive should be present");
+    assert_eq!(Some(5), parsed.timeout());
+    assert_eq!(Some(100), parsed.max());
+    assert_eq!("vendor", parsed.extensions()[0].name());
+
+    let replaced = HttpResponse::ok([])
+      .header("Keep-Alive", "timeout=1")
+      .with_keep_alive("max=2")
+      .expect("replacement should be accepted");
+    assert_eq!(
+      vec![("Keep-Alive", "max=2")],
+      replaced
+        .headers
+        .iter()
+        .map(|header| (header.name.as_str(), header.value.as_str()))
+        .collect::<Vec<_>>()
+    );
+    let replaced_parsed = replaced
+      .keep_alive()
+      .expect("replaced Keep-Alive should parse")
+      .expect("replaced Keep-Alive should be present");
+    assert_eq!(None, replaced_parsed.timeout());
+    assert_eq!(Some(2), replaced_parsed.max());
+    assert_eq!(
+      "max=2",
+      HttpKeepAlive::parse("max=2")
+        .expect("max-only should parse")
+        .header_value()
+    );
+  }
+
+  #[test]
+  fn keep_alive_helpers_return_none_when_absent() {
+    assert_eq!(
+      None,
+      HttpResponse::ok([])
+        .keep_alive()
+        .expect("absent Keep-Alive should parse")
+    );
+  }
+
+  #[test]
+  fn keep_alive_rejects_malformed_duplicate_and_bounds_without_hiding_headers() {
+    for value in [
+      "timeout=abc",
+      "timeout=5, timeout=6",
+      "timeout=5, max=100, max=200",
+      "timeout=18446744073709551616",
+      "",
+    ] {
+      let response = HttpResponse::ok([]).header("Keep-Alive", value);
+      assert!(response.keep_alive().is_err(), "should reject {value:?}");
+      assert_eq!(
+        Some(value),
+        response
+          .headers
+          .iter()
+          .find(|header| header.name.eq_ignore_ascii_case("Keep-Alive"))
+          .map(|header| header.value.as_str())
+      );
+    }
+
+    let oversized = "x".repeat(64 * 1024 + 1);
+    let oversized_response = HttpResponse::ok([]).header("Keep-Alive", oversized.as_str());
+    assert!(oversized_response.keep_alive().is_err());
+    assert_eq!(
+      Some(oversized.as_str()),
+      oversized_response
+        .headers
+        .iter()
+        .find(|header| header.name.eq_ignore_ascii_case("Keep-Alive"))
+        .map(|header| header.value.as_str())
+    );
+    assert!(HttpKeepAlive::parse(
+      (0..257)
+        .map(|index| {
+          if index % 2 == 0 {
+            "timeout=1".to_string()
+          } else {
+            "max=2".to_string()
+          }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+    )
+    .is_err());
+    assert!(HttpResponse::ok([]).with_keep_alive("timeout=abc").is_err());
   }

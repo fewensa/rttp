@@ -62,6 +62,21 @@ present header set that yields no token still fails as invalid. This parser
 never fails open and does not apply keep-alive, hop-by-hop stripping, upgrade,
 or HTTP/2 rejection policy.
 
+## Upgrade
+
+`upgrade` parses one or more HTTP/1 `Upgrade` field values into an ordered
+list of protocol names. This is header-field metadata, not a socket handoff
+type. Each field value is bounded to 64 KiB, and the cumulative protocol count
+across all supplied fields is bounded to 32 protocols.
+
+Protocols are split on commas with SP and HTAB accepted only as optional
+whitespace around each protocol. A protocol is an RFC 9110 token, optionally
+followed by `/` and a token protocol version. Empty members, forbidden ASCII
+control bytes, malformed tokens, empty versions, nested `/` versions, and
+over-limit protocol lists are rejected. This parser validates declared
+metadata only; callers own `Connection: Upgrade`, h2c negotiation, socket
+handoff, and any upgraded protocol bytes.
+
 ## Content-Encoding
 
 `content_encoding` parses one or more `Content-Encoding` field values into an
@@ -165,10 +180,11 @@ and 256 member parameters, and each component may carry at most 256
 parameters. Members must be dictionary keys mapped to inner lists of strings.
 Well-formed member parameters (`created`, `keyid`, `alg`, `nonce`, `tag`, and
 unknown names) and well-formed component parameters are retained as opaque
-data and are not interpreted. Duplicate labels, non-inner-list members,
-non-string components, empty present fields, and other unparsable input are
-errors. This parser does not sign, verify, look up keys, canonicalize covered
-components, or apply cryptographic policy.
+data and are not interpreted. Duplicate labels keep the later value.
+Non-inner-list members, non-string components, empty covered-component lists,
+empty present fields, and other unparsable input are errors. This parser does
+not sign, verify, look up keys, canonicalize covered components, or apply
+cryptographic policy.
 
 ## Cross-Origin-Opener-Policy
 
@@ -198,6 +214,20 @@ Protocol helpers define and bound wire metadata for the client and server
 crates. They do not add higher-level runtime policy such as caching,
 authentication, retries, representation selection, or body transformation.
 
+## CDN-Cache-Control
+
+`cdn_cache_control` parses one or more `CDN-Cache-Control` response field
+values into ordered directive metadata. It preserves CDN-specific extension
+directives with each directive token name and optional parsed value. Each field
+value is bounded to 64 KiB, the combined directive count is bounded to 256, and
+directive names and unquoted values must be valid HTTP tokens. Quoted strings
+must be well formed and are exposed as parsed values.
+
+The parser only reports bounded wire metadata. It does not create a CDN cache,
+compute freshness, evaluate surrogate keys, revalidate automatically, enforce
+shared-cache policy, retry, replay, redirect, or choose response-acceptance
+behavior.
+
 ## Authentication-Info
 
 `authentication_info` parses `#auth-param` lists from `Authentication-Info`
@@ -216,6 +246,24 @@ bounded to 64 KiB. Parameter names are matched case-insensitively and must be
 unique across the combined field set. Empty input, empty members, malformed
 syntax, and duplicate names are rejected. This parser does not implement
 authentication policy.
+
+## Proxy-Authenticate
+
+`proxy_authenticate` parses one or more `Proxy-Authenticate` field values into
+bounded proxy authentication challenge metadata. Each field value is bounded to
+64 KiB, the combined challenge count is bounded to 256, each challenge keeps
+its scheme, optional token68 value, and ordered auth-parameters. Each
+challenge's parameter count is bounded to 256. Parameter values are bounded to
+64 KiB, quoted-string values are unescaped, and duplicate parameter names
+within a challenge are rejected case-insensitively.
+
+`ProxyAuthenticate::parse()` validates a single field value, and
+`ProxyAuthenticate::parse_values()` preserves challenges across multiple field
+values. Empty input, empty members, malformed syntax, invalid tokens,
+oversized values, excessive challenges or parameters, and duplicate parameter
+names are rejected. This parser exposes proxy authentication challenges as
+metadata only; it does not select credentials, retry requests, generate
+`Proxy-Authorization`, or implement proxy authentication policy.
 
 ## Cross-Origin-Embedder-Policy
 
@@ -270,6 +318,22 @@ policy names remain forward-compatible within the same validation and count
 bounds. A present header set that yields no recognized token still fails as
 invalid.
 
+## Link
+
+`link` parses one or more RFC 8288 `Link` field values into ordered `LinkValues`
+and `LinkValue` metadata. Each value retains its target URI-reference and its
+ordered parameters, including unknown extension parameters alongside `rel`.
+Targets are validated structurally as RFC 3986 URI-references and stored as raw
+text, never resolved, normalized, fetched, or preloaded; fragments are allowed.
+Each field value is bounded to 64 KiB, the cumulative value count is bounded to
+256, each value holds at most 256 parameters, and each parameter value is
+bounded to 64 KiB. Parameter names are matched case-insensitively, stored
+lowercase, and must be unique within a value. Quoted parameter values are
+unescaped and valueless parameters are preserved with an empty value. Empty
+input, empty members, malformed syntax, and duplicate parameter names are
+rejected. This parser does not preload, schedule fetches, redirect, apply cache
+policy, or generate routes.
+
 ## Strict-Transport-Security
 
 `strict_transport_security` parses a singleton `Strict-Transport-Security`
@@ -308,6 +372,37 @@ quoted-string; an optional quoted HTTP-date is parsed with the same
 `httpdate` helper as Sunset. Empty input, empty members, malformed quoting,
 invalid codes, and bound violations are rejected. This parser does not
 implement cache, freshness, stale-response, or response-acceptance policy.
+
+## NEL
+
+`nel` parses one `NEL` response field as a bounded JSON object exposing the W3C
+Network Error Logging policy members `report_to`, `max_age`,
+`include_subdomains`, `success_fraction`, and `failure_fraction` with checked
+types. Each field value is bounded to 64 KiB, member counts are bounded to 256
+per object, nesting depth is bounded to 64, and each decoded string is bounded
+to 64 KiB. A second field is rejected after every supplied field is
+bound-checked. `max_age` is required and must be a non-negative JSON integer
+literal that fits in `u64`; fraction and exponent forms are rejected for this
+member. Fractions must parse as finite doubles in the inclusive range `0.0` to
+`1.0`. Malformed JSON, invalid member types, duplicate singleton members,
+non-finite or out-of-range fractions, missing `max_age`, and bound violations
+are errors. Unknown JSON members are preserved verbatim as raw metadata
+without policy semantics. Absent optional members keep their W3C defaults
+(`include_subdomains` `false`, `success_fraction` `0.0`, `failure_fraction`
+`1.0`) but are not re-emitted by `header_value()`. This parser does not send
+reports, persist policy, or configure Reporting endpoint groups.
+
+## Keep-Alive
+
+`keep_alive` parses RFC 2068 `Keep-Alive` fields as a comma-separated list of
+`timeout=delta-seconds` and `max=1*DIGIT` parameters (both optional) with
+case-insensitive parameter names and optional whitespace around separators.
+Each field value is bounded to 64 KiB and the combined parameter count is
+bounded to 256. Values are parsed as checked unsigned 64-bit integers;
+unrecognized `name=token` parameters are preserved as bounded extension
+metadata. Empty input, missing `=`, duplicate recognized parameters, malformed
+tokens, overflow, and bound violations are rejected. This parser does not
+change connection lifetime, connection pooling, or HTTP/2 behavior.
 
 ## No-Vary-Search
 

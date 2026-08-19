@@ -48,7 +48,7 @@ pub type IfMatchParseError = ConditionalEntityTagParseError;
 pub type IfNoneMatchParseError = ConditionalEntityTagParseError;
 
 impl EntityTagParseError {
-  fn new(message: impl Into<String>) -> Self {
+  pub fn new(message: impl Into<String>) -> Self {
     Self {
       message: message.into(),
     }
@@ -79,6 +79,14 @@ impl Error for EntityTagParseError {}
 impl Error for ConditionalEntityTagParseError {}
 
 impl EntityTag {
+  pub fn strong(value: impl AsRef<str>) -> Self {
+    Self::new(false, value)
+  }
+
+  pub fn weak(value: impl AsRef<str>) -> Self {
+    Self::new(true, value)
+  }
+
   pub fn parse(value: impl AsRef<str>) -> Result<Self, EntityTagParseError> {
     let value = value.as_ref();
     validate_length(value, MAX_ENTITY_TAG_VALUE_BYTES, "entity tag")
@@ -99,6 +107,30 @@ impl EntityTag {
       format!("W/\"{}\"", self.opaque_tag)
     } else {
       format!("\"{}\"", self.opaque_tag)
+    }
+  }
+
+  pub fn strong_matches(&self, other: &Self) -> bool {
+    !self.weak && !other.weak && self.opaque_tag == other.opaque_tag
+  }
+
+  pub fn weak_matches(&self, other: &Self) -> bool {
+    self.opaque_tag == other.opaque_tag
+  }
+
+  fn new(weak: bool, opaque_tag: impl AsRef<str>) -> Self {
+    let opaque_tag = opaque_tag.as_ref();
+    assert!(
+      is_valid_entity_tag_opaque_tag(opaque_tag),
+      "entity tag opaque value must be valid for an HTTP ETag header"
+    );
+    assert!(
+      serialized_entity_tag_len(weak, opaque_tag) <= MAX_ENTITY_TAG_VALUE_BYTES,
+      "entity tag header value must not exceed the maximum ETag header length"
+    );
+    Self {
+      opaque_tag: opaque_tag.to_string(),
+      weak,
     }
   }
 }
@@ -297,6 +329,16 @@ fn parse_entity_tag_at(value: &str, position: &mut usize) -> Result<EntityTag, S
     }
   }
   Err("invalid entity tag".to_string())
+}
+
+fn is_valid_entity_tag_opaque_tag(opaque_tag: &str) -> bool {
+  opaque_tag
+    .bytes()
+    .all(|byte| matches!(byte, b'\x21' | b'\x23'..=b'\x7e' | b'\x80'..=b'\xff'))
+}
+
+fn serialized_entity_tag_len(weak: bool, opaque_tag: &str) -> usize {
+  opaque_tag.len() + if weak { b"W/\"\"".len() } else { b"\"\"".len() }
 }
 
 fn validate_length(value: &str, maximum_length: usize, name: &str) -> Result<(), String> {

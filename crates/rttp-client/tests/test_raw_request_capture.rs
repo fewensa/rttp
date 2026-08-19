@@ -162,6 +162,37 @@ fn outbound_trailers_reject_untrimmed_invalid_bytes() {
   }
 }
 
+#[test]
+fn outbound_upgrade_protocols_emit_validated_upgrade_metadata() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/upgrade", base_url))
+      .upgrade_protocols(["websocket", "h2c"])
+      .expect("valid Upgrade protocols should be accepted")
+      .emit()
+      .expect("request should be sent");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(header_value(&request, "Upgrade"), Some("websocket, h2c"));
+  assert_ne!(header_value(&request, "Connection"), Some("Upgrade"));
+}
+
+#[test]
+fn outbound_upgrade_protocols_reject_invalid_values_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let error = client()
+      .get()
+      .url(format!("{}/invalid-upgrade", base_url))
+      .upgrade_protocols(["web socket"])
+      .expect_err("invalid Upgrade protocol must be rejected");
+    assert!(error.is_builder());
+  });
+
+  assert!(request.is_empty(), "invalid Upgrade must not open a socket");
+}
+
 #[cfg(feature = "async")]
 #[test]
 fn async_outbound_headers_are_rejected_before_connecting() {
@@ -699,14 +730,15 @@ fn raw_want_digest_headers_remain_available_for_extended_syntax() {
       .emit()
       .expect("request should succeed");
   });
+  let request = request_text(&request);
 
   assert_eq!(
     Some("sha-256;example=custom"),
-    header_value(&request_text(&request), "Want-Content-Digest")
+    header_value(&request, "Want-Content-Digest")
   );
   assert_eq!(
     Some("sha-512;example=custom"),
-    header_value(&request_text(&request), "Want-Repr-Digest")
+    header_value(&request, "Want-Repr-Digest")
   );
 }
 
@@ -2288,6 +2320,8 @@ fn preflight_metadata_helpers_emit_validated_request_headers() {
       .expect("preflight method should be accepted")
       .access_control_request_headers(["X-Request-Id", "Content-Type"])
       .expect("preflight field names should be accepted")
+      .access_control_request_private_network()
+      .expect("private-network preflight metadata should be accepted")
       .emit()
       .expect("request should succeed");
   });
@@ -2304,6 +2338,10 @@ fn preflight_metadata_helpers_emit_validated_request_headers() {
   assert_eq!(
     Some("x-request-id, content-type"),
     header_value(&request, "Access-Control-Request-Headers")
+  );
+  assert_eq!(
+    Some("true"),
+    header_value(&request, "Access-Control-Request-Private-Network")
   );
 }
 

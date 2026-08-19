@@ -26,6 +26,10 @@ pub use rttp_protocol::authentication_info::{
   AuthenticationInfo as HttpAuthenticationInfo,
   AuthenticationInfoParseError as HttpAuthenticationInfoParseError,
 };
+pub use rttp_protocol::cdn_cache_control::{
+  CdnCacheControl as HttpCdnCacheControl,
+  CdnCacheControlParseError as HttpCdnCacheControlParseError,
+};
 pub use rttp_protocol::clear_site_data::{
   ClearSiteData as HttpClearSiteData, ClearSiteDataDirective as HttpClearSiteDataDirective,
   ClearSiteDataParseError as HttpClearSiteDataParseError,
@@ -58,6 +62,13 @@ pub use rttp_protocol::digest::{
   Digest as HttpDigest, DigestEntry as HttpDigestEntry, DigestParseError as HttpDigestParseError,
   ReprDigest as HttpReprDigest, ReprDigestEntry as HttpReprDigestEntry,
 };
+pub use rttp_protocol::keep_alive::{
+  KeepAlive as HttpKeepAlive, KeepAliveExtension as HttpKeepAliveExtension,
+  KeepAliveParseError as HttpKeepAliveParseError,
+};
+pub use rttp_protocol::nel::{
+  Nel as HttpNel, NelParseError as HttpNelParseError, NelUnknownMember as HttpNelUnknownMember,
+};
 pub use rttp_protocol::no_vary_search::{
   NoVarySearch as HttpNoVarySearch, NoVarySearchExtension as HttpNoVarySearchExtension,
   NoVarySearchParams as HttpNoVarySearchParams,
@@ -71,16 +82,25 @@ pub use rttp_protocol::proxy_authentication_info::{
   ProxyAuthenticationInfo as HttpProxyAuthenticationInfo,
   ProxyAuthenticationInfoParseError as HttpProxyAuthenticationInfoParseError,
 };
+pub use rttp_protocol::range::{
+  ContentRange as HttpContentRange, ContentRangeParseError as HttpContentRangeParseError,
+};
 pub use rttp_protocol::server_timing::{
   ServerTiming as HttpServerTiming, ServerTimingMetric as HttpServerTimingMetric,
   ServerTimingParameter as HttpServerTimingParameter,
   ServerTimingParseError as HttpServerTimingParseError,
+};
+pub use rttp_protocol::signature_input::{
+  SignatureInput as HttpSignatureInput, SignatureInputParseError as HttpSignatureInputParseError,
 };
 pub use rttp_protocol::strict_transport_security::{
   StrictTransportSecurity as HttpStrictTransportSecurity,
   StrictTransportSecurityParseError as HttpStrictTransportSecurityParseError,
 };
 pub use rttp_protocol::sunset::SunsetParseError as HttpSunsetParseError;
+pub use rttp_protocol::upgrade::{
+  Upgrade as HttpUpgrade, UpgradeParseError as HttpUpgradeParseError,
+};
 pub use rttp_protocol::www_authenticate::{
   WwwAuthenticate as HttpWwwAuthenticate, WwwAuthenticateChallenge as HttpWwwAuthenticateChallenge,
   WwwAuthenticateParameter as HttpWwwAuthenticateParameter,
@@ -473,9 +493,8 @@ impl Error for HttpLinkParseError {}
 
 fn validate_http_link_target(target: &str) -> Result<(), HttpLinkParseError> {
   if target.is_empty()
-    || target
-      .bytes()
-      .any(|byte| byte.is_ascii_control() || matches!(byte, b'<' | b'>'))
+    || target.bytes().any(|byte| !is_uri_reference_byte(byte))
+    || !has_valid_percent_escapes(target)
   {
     return Err(HttpLinkParseError::new("invalid Link target"));
   }
@@ -485,6 +504,59 @@ fn validate_http_link_target(target: &str) -> Result<(), HttpLinkParseError> {
     .parse(target)
     .map_err(|_| HttpLinkParseError::new("invalid Link target"))?;
   Ok(())
+}
+
+/// Whether `byte` is permitted raw in an RFC 3986 URI-reference.
+fn is_uri_reference_byte(byte: u8) -> bool {
+  matches!(
+    byte,
+    b'%'
+      | b':'
+      | b'/'
+      | b'?'
+      | b'#'
+      | b'['
+      | b']'
+      | b'@'
+      | b'!'
+      | b'$'
+      | b'&'
+      | b'\''
+      | b'('
+      | b')'
+      | b'*'
+      | b'+'
+      | b','
+      | b';'
+      | b'='
+      | b'-'
+      | b'.'
+      | b'_'
+      | b'~'
+      | b'0'..=b'9'
+      | b'A'..=b'Z'
+      | b'a'..=b'z'
+  )
+}
+
+/// Whether every `%` in `target` starts a well-formed percent-encoding.
+fn has_valid_percent_escapes(target: &str) -> bool {
+  let mut bytes = target.bytes();
+  while let Some(byte) = bytes.next() {
+    if byte != b'%' {
+      continue;
+    }
+    let Some(high) = bytes.next() else {
+      return false;
+    };
+    let Some(low) = bytes.next() else {
+      return false;
+    };
+    if !high.is_ascii_hexdigit() || !low.is_ascii_hexdigit() {
+      return false;
+    }
+  }
+  true
 }
 
 fn split_http_link_members(value: &str, delimiter: u8) -> Result<Vec<String>, HttpLinkParseError> {
@@ -526,23 +598,31 @@ fn split_http_link_members(value: &str, delimiter: u8) -> Result<Vec<String>, Ht
 }
 
 fn parse_http_link_parameter(value: &str) -> Result<(String, String), HttpLinkParseError> {
-  let (name, value) = value.split_once('=').unwrap_or((value, ""));
+  let (name, value) = match value.split_once('=') {
+    Some((name, value)) => (name, Some(value.trim())),
+    None => (value, None),
+  };
   let name = name.trim();
-  let value = value.trim();
   if !is_http_token(name) {
     return Err(HttpLinkParseError::new("invalid Link parameter name"));
   }
-  if value.len() > MAX_LINK_PARAMETER_VALUE_BYTES {
-    return Err(HttpLinkParseError::new("Link parameter value is too large"));
-  }
-  let value = if value.is_empty() {
-    String::new()
-  } else if value.starts_with('"') {
-    parse_http_link_quoted_string(value)?
-  } else if value.contains('"') || !is_http_token(value) {
-    return Err(HttpLinkParseError::new("invalid Link parameter value"));
-  } else {
-    value.to_string()
+  let value = match value {
+    Some("") => {
+      return Err(HttpLinkParseError::new("invalid Link parameter value"));
+    }
+    Some(value) => {
+      if value.len() > MAX_LINK_PARAMETER_VALUE_BYTES {
+        return Err(HttpLinkParseError::new("Link parameter value is too large"));
+      }
+      if value.starts_with('"') {
+        parse_http_link_quoted_string(value)?
+      } else if value.contains('"') || !is_http_token(value) {
+        return Err(HttpLinkParseError::new("invalid Link parameter value"));
+      } else {
+        value.to_string()
+      }
+    }
+    None => String::new(),
   };
   Ok((name.to_ascii_lowercase(), value))
 }
@@ -555,19 +635,19 @@ fn parse_http_link_quoted_string(value: &str) -> Result<String, HttpLinkParseErr
   let inner = &value[1..value.len() - 1];
   let mut parsed = String::new();
   let mut escaped = false;
-  for byte in inner.bytes() {
+  for ch in inner.chars() {
     if escaped {
-      if !is_content_disposition_quoted_pair_byte(byte) {
+      if !is_content_disposition_quoted_pair_char(ch) {
         return Err(HttpLinkParseError::new("invalid Link quoted-string"));
       }
-      parsed.push(byte as char);
+      parsed.push(ch);
       escaped = false;
-    } else if byte == b'\\' {
+    } else if ch == '\\' {
       escaped = true;
-    } else if byte == b'"' || !is_content_disposition_quoted_text_byte(byte) {
+    } else if ch == '"' || !is_content_disposition_quoted_text_char(ch) {
       return Err(HttpLinkParseError::new("invalid Link quoted-string"));
     } else {
-      parsed.push(byte as char);
+      parsed.push(ch);
     }
   }
 
@@ -610,14 +690,24 @@ impl HttpResponse {
     Self::new(206, "Partial Content")
       .header(
         "Content-Range",
-        format!("bytes {}-{}/{}", range.start(), range.end(), body.len()),
+        HttpContentRange::Bytes {
+          start: range.start() as u64,
+          end: range.end() as u64,
+          complete_length: Some(body.len() as u64),
+        }
+        .header_value(),
       )
       .body(partial)
   }
 
   pub fn range_not_satisfiable(entity_length: usize) -> Self {
-    Self::new(416, "Range Not Satisfiable")
-      .header("Content-Range", format!("bytes */{entity_length}"))
+    Self::new(416, "Range Not Satisfiable").header(
+      "Content-Range",
+      HttpContentRange::Unsatisfied {
+        complete_length: entity_length as u64,
+      }
+      .header_value(),
+    )
   }
 
   pub fn not_modified(metadata: &HttpConditionalMetadata) -> Self {
@@ -717,6 +807,27 @@ impl HttpResponse {
       "No-Vary-Search",
       no_vary_search.header_value(),
     ));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Upgrade` response metadata without changing
+  /// handoff behavior or adding `Connection: Upgrade`.
+  pub fn with_upgrade<I, P>(mut self, protocols: I) -> Result<Self, HttpUpgradeParseError>
+  where
+    I: IntoIterator<Item = P>,
+    P: AsRef<str>,
+  {
+    let protocols: Vec<String> = protocols
+      .into_iter()
+      .map(|protocol| protocol.as_ref().to_string())
+      .collect();
+    let upgrade = HttpUpgrade::parse_values(protocols.iter().map(String::as_str))?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Upgrade"));
+    self
+      .headers
+      .push(HttpHeader::new("Upgrade", upgrade.header_value()));
     Ok(self)
   }
 
@@ -821,6 +932,19 @@ impl HttpResponse {
       "Cross-Origin-Resource-Policy",
       policy.header_value(),
     ));
+    Ok(self)
+  }
+
+  /// Validates and replaces `NEL` response metadata without sending reports
+  /// or persisting policy.
+  pub fn with_nel(mut self, value: impl AsRef<str>) -> Result<Self, HttpNelParseError> {
+    let nel = HttpNel::parse(value)?;
+    let header_value = nel.header_value();
+    assert_valid_header_component(&header_value);
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("NEL"));
+    self.headers.push(HttpHeader::new("NEL", header_value));
     Ok(self)
   }
 
@@ -1145,6 +1269,22 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Keep-Alive` response metadata without changing
+  /// connection lifetime.
+  pub fn with_keep_alive(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpKeepAliveParseError> {
+    let keep_alive = HttpKeepAlive::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Keep-Alive"));
+    self
+      .headers
+      .push(HttpHeader::new("Keep-Alive", keep_alive.header_value()));
+    Ok(self)
+  }
+
   /// Validates and replaces `Clear-Site-Data` metadata without clearing server state.
   pub fn with_clear_site_data(
     mut self,
@@ -1174,6 +1314,16 @@ impl HttpResponse {
       content_location.header_value(),
     ));
     Ok(self)
+  }
+
+  pub fn with_etag(mut self, entity_tag: HttpEntityTag) -> Self {
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("ETag"));
+    self
+      .headers
+      .push(HttpHeader::new("ETag", entity_tag.header_value()));
+    self
   }
 
   pub fn with_content_disposition<D>(
@@ -1395,6 +1545,22 @@ impl HttpResponse {
     HttpResponseCacheControl::parse_values(values).map(Some)
   }
 
+  /// Parses attached `CDN-Cache-Control` response metadata without applying CDN cache policy.
+  pub fn cdn_cache_control(
+    &self,
+  ) -> Result<Option<HttpCdnCacheControl>, HttpCdnCacheControlParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("CDN-Cache-Control"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpCdnCacheControl::parse_values(values).map(Some)
+  }
+
   pub fn vary(&self) -> Result<Option<HttpVary>, HttpVaryParseError> {
     let values: Vec<&str> = self
       .headers
@@ -1421,6 +1587,21 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpNoVarySearch::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Upgrade` response metadata without changing socket
+  /// handoff behavior or interpreting the upgraded protocol.
+  pub fn upgrade(&self) -> Result<Option<HttpUpgrade>, HttpUpgradeParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Upgrade"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpUpgrade::parse_values(values).map(Some)
   }
 
   /// Parses `Link` response metadata without enabling preload, redirects,
@@ -1916,6 +2097,34 @@ impl HttpResponse {
     HttpAltSvc::parse_values(values).map(Some)
   }
 
+  /// Parses attached `NEL` metadata without sending reports or persisting policy.
+  pub fn nel(&self) -> Result<Option<HttpNel>, HttpNelParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("NEL"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpNel::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Keep-Alive` metadata without changing connection lifetime.
+  pub fn keep_alive(&self) -> Result<Option<HttpKeepAlive>, HttpKeepAliveParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Keep-Alive"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpKeepAlive::parse_values(values).map(Some)
+  }
+
   /// Parses attached `Clear-Site-Data` metadata without changing server state.
   pub fn clear_site_data(&self) -> Result<Option<HttpClearSiteData>, HttpClearSiteDataParseError> {
     let values: Vec<&str> = self
@@ -1943,6 +2152,17 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpContentLocation::parse_values(values).map(Some)
+  }
+
+  pub fn etag(&self) -> Result<Option<HttpEntityTag>, HttpEntityTagParseError> {
+    let Some(value) = self.single_header_value(
+      "ETag",
+      HttpEntityTagParseError::new("multiple ETag headers"),
+    )?
+    else {
+      return Ok(None);
+    };
+    HttpEntityTag::parse(value).map(Some)
   }
 
   pub fn content_disposition(
@@ -2034,6 +2254,19 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpAcceptRanges::parse_values(values).map(Some)
+  }
+
+  pub fn content_range(&self) -> Result<Option<HttpContentRange>, HttpContentRangeParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Content-Range"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpContentRange::parse_values(values).map(Some)
   }
 
   pub fn age(&self) -> Result<Option<u64>, HttpAgeParseError> {
@@ -3630,9 +3863,9 @@ pub(crate) fn split_content_disposition_parts(
   let mut escaped = false;
   let mut start = 0usize;
 
-  for (index, byte) in value.bytes().enumerate() {
+  for (index, ch) in value.char_indices() {
     if escaped {
-      if !is_content_disposition_quoted_pair_byte(byte) {
+      if !is_content_disposition_quoted_pair_char(ch) {
         return Err(HttpContentDispositionParseError::new(
           "invalid Content-Disposition quoted-string",
         ));
@@ -3641,10 +3874,10 @@ pub(crate) fn split_content_disposition_parts(
       continue;
     }
 
-    match byte {
-      b'\\' if quoted => escaped = true,
-      b'"' => quoted = !quoted,
-      b';' if !quoted => {
+    match ch {
+      '\\' if quoted => escaped = true,
+      '"' => quoted = !quoted,
+      ';' if !quoted => {
         parts.push(&value[start..index]);
         start = index + 1;
       }
@@ -3693,23 +3926,23 @@ pub(crate) fn parse_content_disposition_quoted_string(
   let inner = &value[1..value.len() - 1];
   let mut parsed = String::new();
   let mut escaped = false;
-  for byte in inner.bytes() {
+  for ch in inner.chars() {
     if escaped {
-      if !is_content_disposition_quoted_pair_byte(byte) {
+      if !is_content_disposition_quoted_pair_char(ch) {
         return Err(HttpContentDispositionParseError::new(
           "invalid Content-Disposition quoted-string",
         ));
       }
-      parsed.push(byte as char);
+      parsed.push(ch);
       escaped = false;
-    } else if byte == b'\\' {
+    } else if ch == '\\' {
       escaped = true;
-    } else if byte == b'"' || !is_content_disposition_quoted_text_byte(byte) {
+    } else if ch == '"' || !is_content_disposition_quoted_text_char(ch) {
       return Err(HttpContentDispositionParseError::new(
         "invalid Content-Disposition quoted-string",
       ));
     } else {
-      parsed.push(byte as char);
+      parsed.push(ch);
     }
   }
 
@@ -3722,12 +3955,12 @@ pub(crate) fn parse_content_disposition_quoted_string(
   Ok(parsed)
 }
 
-pub(crate) fn is_content_disposition_quoted_text_byte(byte: u8) -> bool {
-  byte == b'\t' || matches!(byte, 0x20..=0x21 | 0x23..=0x5b | 0x5d..=0x7e)
+pub(crate) fn is_content_disposition_quoted_text_char(ch: char) -> bool {
+  matches!(ch, '\t' | ' ' | '!' | '#'..='[' | ']'..='~') || ('\u{80}'..='\u{ff}').contains(&ch)
 }
 
-pub(crate) fn is_content_disposition_quoted_pair_byte(byte: u8) -> bool {
-  byte == b'\t' || matches!(byte, 0x20..=0x7e)
+pub(crate) fn is_content_disposition_quoted_pair_char(ch: char) -> bool {
+  matches!(ch, '\t' | ' '..='~') || ('\u{80}'..='\u{ff}').contains(&ch)
 }
 
 pub(crate) fn serialize_content_disposition_parameter_value(value: &str) -> String {
@@ -3736,11 +3969,11 @@ pub(crate) fn serialize_content_disposition_parameter_value(value: &str) -> Stri
   }
 
   let mut quoted = String::from("\"");
-  for byte in value.bytes() {
-    if matches!(byte, b'\\' | b'"') {
+  for ch in value.chars() {
+    if matches!(ch, '\\' | '"') {
       quoted.push('\\');
     }
-    quoted.push(byte as char);
+    quoted.push(ch);
   }
   quoted.push('"');
   quoted

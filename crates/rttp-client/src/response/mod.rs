@@ -38,6 +38,7 @@ pub use rttp_protocol::access_control_max_age::{
   AccessControlMaxAge, AccessControlMaxAgeParseError,
 };
 pub use rttp_protocol::age::{Age, AgeParseError};
+pub use rttp_protocol::cdn_cache_control::{CdnCacheControl, CdnCacheControlParseError};
 pub use rttp_protocol::clear_site_data::{
   ClearSiteData as HttpClearSiteData, ClearSiteDataDirective as HttpClearSiteDataDirective,
   ClearSiteDataParseError as HttpClearSiteDataParseError,
@@ -61,17 +62,24 @@ pub use rttp_protocol::cross_origin_opener_policy::{
 pub use rttp_protocol::cross_origin_resource_policy::{
   CrossOriginResourcePolicy, CrossOriginResourcePolicyParseError,
 };
+pub use rttp_protocol::nel::{Nel, NelParseError, NelUnknownMember};
 
 mod raw_response;
 mod response;
 
 pub use rttp_protocol::alt_svc::{AltSvc, AltSvcAlternative, AltSvcParameter, AltSvcParseError};
+pub use rttp_protocol::authentication_info::{
+  AuthenticationInfo, AuthenticationInfoParameter, AuthenticationInfoParseError,
+};
 pub use rttp_protocol::connection::{Connection, ConnectionParseError};
 pub use rttp_protocol::content_location::{ContentLocation, ContentLocationParseError};
 pub use rttp_protocol::digest::{
   ContentDigest, ContentDigestEntry, Digest, DigestEntry, DigestParseError, ReprDigest,
   ReprDigestEntry,
 };
+pub use rttp_protocol::entity_tag::{EntityTag, EntityTagParseError};
+pub use rttp_protocol::keep_alive::{KeepAlive, KeepAliveExtension, KeepAliveParseError};
+pub use rttp_protocol::link::{LinkParameter, LinkParseError, LinkValue, LinkValues};
 pub use rttp_protocol::location::{Location, LocationParseError};
 pub use rttp_protocol::no_vary_search::{
   NoVarySearch, NoVarySearchExtension, NoVarySearchParams, NoVarySearchParseError,
@@ -81,9 +89,14 @@ pub use rttp_protocol::prefer::{
   PreferenceParameter,
 };
 pub use rttp_protocol::priority::{Priority, PriorityExtension, PriorityParseError};
+pub use rttp_protocol::proxy_authenticate::{
+  ProxyAuthenticate, ProxyAuthenticateChallenge, ProxyAuthenticateParameter,
+  ProxyAuthenticateParseError,
+};
 pub use rttp_protocol::proxy_authentication_info::{
   ProxyAuthenticationInfo, ProxyAuthenticationInfoParameter, ProxyAuthenticationInfoParseError,
 };
+pub use rttp_protocol::range::{ContentRange, ContentRangeParseError};
 pub use rttp_protocol::referrer_policy::{
   ReferrerPolicy, ReferrerPolicyParseError, ReferrerPolicyToken,
 };
@@ -92,8 +105,11 @@ pub use rttp_protocol::server_timing::{
 };
 pub use rttp_protocol::signature::{Signature, SignatureEntry, SignatureParseError};
 pub use rttp_protocol::signature_input::{
-  SignatureInput, SignatureInputBareItem, SignatureInputComponent, SignatureInputEntry,
-  SignatureInputParameter, SignatureInputParseError,
+  SignatureCoveredComponent, SignatureDecimal, SignatureInput, SignatureInputMember,
+  SignatureInputParseError, SignatureParameter, SignatureParameterValue,
+};
+pub use rttp_protocol::signature_input::{
+  SignatureInputBareItem, SignatureInputComponent, SignatureInputEntry, SignatureInputParameter,
 };
 pub use rttp_protocol::strict_transport_security::{
   StrictTransportSecurity, StrictTransportSecurityParseError,
@@ -101,6 +117,7 @@ pub use rttp_protocol::strict_transport_security::{
 pub use rttp_protocol::timing_allow_origin::{TimingAllowOrigin, TimingAllowOriginParseError};
 pub use rttp_protocol::trailer::{Trailer, TrailerParseError};
 pub use rttp_protocol::transfer_encoding::{TransferEncoding, TransferEncodingParseError};
+pub use rttp_protocol::upgrade::{Upgrade, UpgradeParseError};
 pub use rttp_protocol::vary::{Vary, VaryParseError};
 pub use rttp_protocol::want_content_digest::{
   WantContentDigest, WantContentDigestEntry, WantContentDigestParseError,

@@ -1,19 +1,21 @@
 use rttp_client::response::{
   AcceptCh, AccessControlAllowHeaders, AccessControlAllowHeadersParseError,
   AccessControlAllowMethods, AccessControlAllowMethodsParseError, AccessControlExposeHeaders,
-  AccessControlMaxAge, AccessControlMaxAgeParseError, Age, AgeParseError, AltSvc, Connection,
-  ConnectionParseError, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly,
-  CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest, HttpClearSiteData, Location,
-  LocationParseError, NoVarySearch, NoVarySearchParams, NoVarySearchParseError, PreferenceApplied,
-  Priority, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ReferrerPolicy,
-  ReferrerPolicyToken, ServerTiming, Signature, SignatureInput, SignatureInputParseError,
-  SignatureParseError, StrictTransportSecurity, StrictTransportSecurityParseError, Trailer,
-  TransferEncoding, TransferEncodingParseError, Vary, VaryParseError, WantContentDigest,
-  WantReprDigest, Warning, XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions,
-  XFrameOptionsParseError,
+  AccessControlMaxAge, AccessControlMaxAgeParseError, Age, AgeParseError, AltSvc,
+  AuthenticationInfo, AuthenticationInfoParseError, Connection, ConnectionParseError, ContentRange,
+  ContentRangeParseError, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly,
+  CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest, EntityTag, HttpClearSiteData,
+  HttpContentLength, KeepAlive, LinkValues, Location, LocationParseError, Nel, NoVarySearch,
+  NoVarySearchParams, NoVarySearchParseError, PreferenceApplied, Priority, ProxyAuthenticate,
+  ProxyAuthenticateParseError, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError,
+  ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Signature, SignatureInput,
+  SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
+  StrictTransportSecurityParseError, Trailer, TransferEncoding, TransferEncodingParseError,
+  Upgrade, UpgradeParseError, Vary, VaryParseError, WantContentDigest, WantReprDigest, Warning,
+  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
-  ContentDigest, ContentLocation, ContentLocationParseError, HttpContentLength, ReprDigest,
+  ContentDigest, ContentLocation, ContentLocationParseError, ReprDigest,
 };
 use rttp_client::{HttpClient, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 use rttp_test_support as support;
@@ -38,11 +40,13 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .expect("Access-Control-Expose-Headers should parse");
   let clear_site_data =
     HttpClearSiteData::parse("\"cache\"").expect("Clear-Site-Data should parse");
+  let content_length = HttpContentLength::new(123);
   let content_location = ContentLocation::parse("../representations/current.json")
     .expect("Content-Location should parse");
   let _: ContentLocationParseError =
     ContentLocation::parse("not valid").expect_err("invalid Content-Location should be rejected");
   let digest = Digest::parse("sha-256=:YWJj:").expect("Digest should parse");
+  let etag = EntityTag::parse("\"asset-v7\"").expect("ETag should parse");
   let location = Location::parse("/next").expect("Location should parse");
   let _: LocationParseError = Location::parse("").expect_err("empty Location should be rejected");
   let no_vary_search =
@@ -54,7 +58,12 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let want_repr_digest =
     WantReprDigest::parse("sha-256=10").expect("Want-Repr-Digest should parse");
   let priority = Priority::parse("u=1, i").expect("Priority should parse");
+  let _signature_input = SignatureInput::parse(r#"sig1=("@method");created=1700000000"#)
+    .expect("Signature-Input should parse");
+  let _: SignatureInputParseError =
+    SignatureInput::parse("").expect_err("empty Signature-Input should be rejected");
   let server_timing = ServerTiming::parse("db;dur=53").expect("Server-Timing should parse");
+  let keep_alive = KeepAlive::parse("timeout=5, max=100").expect("Keep-Alive should parse");
   let strict_transport_security =
     StrictTransportSecurity::parse("max-age=31536000; includeSubDomains")
       .expect("Strict-Transport-Security should parse");
@@ -68,6 +77,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let _: XFrameOptionsParseError = XFrameOptions::parse("ALLOW-FROM https://example.test")
     .expect_err("deprecated X-Frame-Options ALLOW-FROM should be rejected");
   let warning = Warning::parse(r#"110 - "Response is Stale""#).expect("Warning should parse");
+  let nel =
+    Nel::parse(r#"{"report_to":"network-errors","max_age":2592000}"#).expect("NEL should parse");
   let trailer = Trailer::parse("X-Trace").expect("Trailer should parse");
   let connection = Connection::parse("close").expect("Connection should parse");
   let _: ConnectionParseError =
@@ -76,7 +87,12 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     TransferEncoding::parse("chunked").expect("Transfer-Encoding should parse");
   let _: TransferEncodingParseError = TransferEncoding::parse("gzip, chunked")
     .expect_err("non-sole chunked Transfer-Encoding should be rejected");
+  let upgrade = Upgrade::parse("websocket").expect("Upgrade should parse");
+  let _: UpgradeParseError = Upgrade::parse("").expect_err("empty Upgrade should be rejected");
   let alt_svc = AltSvc::parse("h3=\":443\"").expect("Alt-Svc should parse");
+  let content_range = ContentRange::parse("bytes 3-6/10").expect("Content-Range should parse");
+  let _: ContentRangeParseError =
+    ContentRange::parse("bytes */*").expect_err("invalid Content-Range should be rejected");
   let fetch_site = SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
@@ -90,11 +106,20 @@ fn response_facade_exports_representative_bounded_metadata_types() {
       .expect("COEP-Report-Only should parse");
   let cross_origin_opener_policy =
     CrossOriginOpenerPolicy::parse("noopener-allow-popups").expect("COOP should parse");
+  let authentication_info =
+    AuthenticationInfo::parse(r#"nextnonce="6629fae49393a05397450978507c4ef1", qop=auth"#)
+      .expect("Authentication-Info should parse");
+  let _: AuthenticationInfoParseError =
+    AuthenticationInfo::parse("").expect_err("empty Authentication-Info should be rejected");
   let proxy_authentication_info =
     ProxyAuthenticationInfo::parse(r#"nextnonce="6629fae49393a05397450978507c4ef1", qop=auth"#)
       .expect("Proxy-Authentication-Info should parse");
   let _: ProxyAuthenticationInfoParseError = ProxyAuthenticationInfo::parse("")
     .expect_err("empty Proxy-Authentication-Info should be rejected");
+  let proxy_authenticate =
+    ProxyAuthenticate::parse(r#"Basic realm="corp""#).expect("Proxy-Authenticate should parse");
+  let _: ProxyAuthenticateParseError =
+    ProxyAuthenticate::parse("").expect_err("empty Proxy-Authenticate should be rejected");
   let vary = Vary::parse("Accept-Encoding, User-Agent").expect("Vary should parse");
   let _: VaryParseError = Vary::parse("").expect_err("empty Vary should be rejected");
   let signature = Signature::parse("sig1=:YWJj:").expect("Signature should parse");
@@ -113,12 +138,14 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(max_age.seconds(), 60);
   assert_eq!(age.seconds(), 60);
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
+  assert_eq!(content_length.len(), 123);
   assert_eq!(clear_site_data.directives().len(), 1);
   assert_eq!(
     content_location.header_value(),
     "../representations/current.json"
   );
   assert_eq!(digest.entries().len(), 1);
+  assert_eq!(etag, EntityTag::strong("asset-v7"));
   assert_eq!(location.as_str(), "/next");
   assert_eq!(
     no_vary_search.params(),
@@ -127,6 +154,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(want_content_digest.entries()[0].preference(), 10);
   assert_eq!(want_repr_digest.entries()[0].preference(), 10);
   assert_eq!(priority.urgency(), Some(1));
+  assert_eq!(signature_input.members()[0].label(), "sig1");
   assert_eq!(server_timing.metrics().len(), 1);
   assert_eq!(strict_transport_security.max_age(), 31_536_000);
   assert!(strict_transport_security.include_sub_domains());
@@ -135,10 +163,23 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(x_frame_options, XFrameOptions::Deny);
   assert_eq!(x_frame_options.header_value(), "DENY");
   assert_eq!(warning.items()[0].code(), 110);
+  assert_eq!(nel.max_age(), 2592000);
+  assert_eq!(nel.report_to(), Some("network-errors"));
+  assert_eq!(keep_alive.timeout(), Some(5));
+  assert_eq!(keep_alive.max(), Some(100));
   assert_eq!(trailer.field_names(), ["x-trace"]);
   assert_eq!(connection.tokens(), ["close"]);
   assert_eq!(transfer_encoding.codings(), ["chunked"]);
+  assert_eq!(upgrade.protocols(), ["websocket"]);
   assert_eq!(alt_svc.alternatives().len(), 1);
+  assert_eq!(
+    ContentRange::Bytes {
+      start: 3,
+      end: 6,
+      complete_length: Some(10),
+    },
+    content_range
+  );
   assert_eq!(fetch_site.header_value(), "same-origin");
   assert_eq!(fetch_mode.header_value(), "navigate");
   assert_eq!(fetch_dest.header_value(), "document");
@@ -153,9 +194,19 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     cross_origin_opener_policy.header_value(),
     "noopener-allow-popups"
   );
+  assert_eq!(x_content_type_options.header_value(), "nosniff");
+  assert_eq!(x_frame_options.header_value(), "DENY");
+  assert_eq!(
+    authentication_info.parameter("nextnonce"),
+    Some("6629fae49393a05397450978507c4ef1")
+  );
   assert_eq!(
     proxy_authentication_info.parameter("nextnonce"),
     Some("6629fae49393a05397450978507c4ef1")
+  );
+  assert_eq!(
+    proxy_authenticate.challenges()[0].parameter("realm"),
+    Some("corp")
   );
   assert_eq!(vary.field_names(), ["accept-encoding", "user-agent"]);
   assert_eq!(signature.header_value(), "sig1=:YWJj:");
@@ -205,6 +256,29 @@ fn response_facade_exports_repr_digest_metadata() {
     repr_digest.entry("sha-512").map(|entry| entry.value()),
     Some(&b"def"[..])
   );
+}
+
+#[test]
+fn response_facade_parses_upgrade_metadata() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 101 Switching Protocols\r\n",
+      "Upgrade: websocket\r\n",
+      "Upgrade: HTTP/2.0, custom\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let upgrade = response
+    .upgrade()
+    .expect("Upgrade should parse")
+    .expect("Upgrade should be present");
+
+  assert_eq!(upgrade.protocols(), ["websocket", "HTTP/2.0", "custom"]);
 }
 
 #[test]
@@ -293,6 +367,37 @@ fn response_facade_parses_preference_applied_metadata() {
   assert_eq!(applied.preferences()[0].name(), "return");
   assert_eq!(applied.preferences()[0].value(), Some("minimal"));
   assert_eq!(applied.preferences()[0].parameters()[0].name(), "source");
+}
+
+#[test]
+fn response_facade_parses_link_metadata() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Link: </style.css>; rel=preload; as=style\r\n",
+      "Link: <https://cdn.example.test/app.js>; rel=modulepreload\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let links: LinkValues = response
+    .links()
+    .expect("Link should parse")
+    .expect("Link should be present");
+
+  assert_eq!(2, links.len());
+  assert_eq!("/style.css", links.values()[0].target());
+  assert_eq!(Some("preload"), links.values()[0].parameter("rel"));
+  assert_eq!(Some("style"), links.values()[0].parameter("as"));
+  assert_eq!(
+    "https://cdn.example.test/app.js",
+    links.values()[1].target()
+  );
+  assert_eq!(Some("modulepreload"), links.values()[1].parameter("rel"));
 }
 
 #[test]

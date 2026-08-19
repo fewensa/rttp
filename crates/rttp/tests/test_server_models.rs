@@ -5,12 +5,12 @@ use rttp::server::{
   HttpAccessControlAllowMethods, HttpAccessControlAllowOrigin, HttpAccessControlRequestHeaders,
   HttpAccessControlRequestMethod, HttpAllowedMethods, HttpAuthorization, HttpByteRange,
   HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata, HttpContentDisposition,
-  HttpContentLanguages, HttpContentSecurityPolicy, HttpContentType, HttpCriticalCh, HttpEntityTag,
-  HttpExpectations, HttpHost, HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome,
-  HttpLinkValues, HttpPermissionsPolicy, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
-  HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
-  HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming,
-  HttpVary,
+  HttpContentLanguages, HttpContentRange, HttpContentSecurityPolicy, HttpContentType,
+  HttpCriticalCh, HttpEntityTag, HttpExpectations, HttpHost, HttpIfNoneMatch, HttpIfRange,
+  HttpIfRangeRequestOutcome, HttpLinkValues, HttpNel, HttpPermissionsPolicy, HttpReferrerPolicy,
+  HttpReportingEndpoints, HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl,
+  HttpRequestTe, HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings,
+  HttpRetryAfter, HttpServerTiming, HttpVary,
 };
 
 #[test]
@@ -151,6 +151,54 @@ fn request_access_control_request_headers_preserves_absent_valid_and_malformed_m
   assert_eq!(
     Some("X-Request Id"),
     malformed.header("Access-Control-Request-Headers")
+  );
+}
+
+#[test]
+fn request_access_control_request_private_network_preserves_absent_valid_and_malformed_metadata() {
+  let absent = parse_request("OPTIONS /widgets HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .access_control_request_private_network()
+      .expect("missing Access-Control-Request-Private-Network should be accepted")
+  );
+
+  let request = parse_request(concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Private-Network: true\r\n",
+    "\r\n"
+  ));
+  let private_network = request
+    .access_control_request_private_network()
+    .expect("Access-Control-Request-Private-Network should parse")
+    .expect("Access-Control-Request-Private-Network should be present");
+  assert_eq!("true", private_network.header_value());
+
+  let malformed = parse_request(concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Private-Network: false\r\n",
+    "\r\n"
+  ));
+  assert!(malformed.access_control_request_private_network().is_err());
+  assert_eq!(
+    Some("false"),
+    malformed.header("Access-Control-Request-Private-Network")
+  );
+
+  let duplicate = parse_request(concat!(
+    "OPTIONS /widgets HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Access-Control-Request-Private-Network: true\r\n",
+    "access-control-request-private-network: true\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.access_control_request_private_network().is_err());
+  assert_eq!(
+    Some("true"),
+    duplicate.header("Access-Control-Request-Private-Network")
   );
 }
 
@@ -612,6 +660,47 @@ fn response_server_timing_helper_validates_formats_and_preserves_raw_headers() {
     .contains("\r\nServer-Timing: db;dur=not-a-number\r\n"));
 
   assert!(HttpServerTiming::parse(format!("db;desc=\"{}\"", "a".repeat(64 * 1024))).is_err());
+}
+
+#[test]
+fn response_nel_helper_validates_replaces_and_preserves_raw_headers() {
+  let response = HttpResponse::ok("body")
+    .header("NEL", r#"{"max_age":1}"#)
+    .header("nel", r#"{"max_age":2}"#)
+    .with_nel(
+      r#"{"report_to":"network-errors","max_age":2592000,"include_subdomains":true,"success_fraction":0.1}"#,
+    )
+    .expect("valid NEL policy should be accepted");
+
+  let nel: HttpNel = response
+    .nel()
+    .expect("attached NEL should parse")
+    .expect("NEL should be present");
+  assert_eq!(2592000, nel.max_age());
+  assert_eq!(Some("network-errors"), nel.report_to());
+  assert_eq!(Some(true), nel.include_subdomains());
+  assert_eq!(Some(0.1), nel.success_fraction());
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert_eq!(1, serialized.matches("\r\nNEL: ").count());
+  assert!(serialized.contains(
+    "\r\nNEL: {\"max_age\":2592000,\"report_to\":\"network-errors\",\"include_subdomains\":true,\"success_fraction\":0.1}\r\n"
+  ));
+
+  assert!(HttpResponse::ok("body").with_nel("{bad").is_err());
+  assert!(HttpResponse::ok("body")
+    .with_nel(r#"{"max_age":"1"}"#)
+    .is_err());
+  let raw = HttpResponse::ok("body").header("NEL", r#"{"max_age":"1"}"#);
+  assert!(raw.nel().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nNEL: {\"max_age\":\"1\"}\r\n"));
+  assert_eq!(
+    None,
+    HttpResponse::ok("body")
+      .nel()
+      .expect("absent NEL should parse")
+  );
 }
 
 fn parse_request(raw: &str) -> HttpRequest {
@@ -1930,6 +2019,73 @@ fn response_content_location_helper_parses_attached_singleton_header() {
 }
 
 #[test]
+fn response_etag_helper_declares_and_parses_singleton_metadata() {
+  let absent = HttpResponse::ok("body");
+  assert_eq!(None, absent.etag().expect("absent ETag should parse"));
+
+  let response = HttpResponse::ok("body")
+    .header("ETag", "\"old\"")
+    .with_etag(HttpEntityTag::weak("asset-v7"));
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nETag: W/\"asset-v7\"\r\n"));
+  assert_eq!(1, serialized.matches("\r\nETag: ").count());
+  assert_eq!(
+    Some(HttpEntityTag::weak("asset-v7")),
+    response.etag().expect("ETag should parse")
+  );
+
+  let response = HttpResponse::ok("body").header("ETag", "\"asset-v7\"");
+  assert_eq!(
+    Some(HttpEntityTag::strong("asset-v7")),
+    response.etag().expect("ETag should parse")
+  );
+}
+
+#[test]
+fn response_etag_helper_rejects_malformed_duplicate_and_oversized_values_without_losing_raw_headers(
+) {
+  for value in ["abc", "W/abc", "\"bad space\""] {
+    let response = HttpResponse::ok("body").header("ETag", value);
+    let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+    assert!(
+      response.etag().is_err(),
+      "ETag helper should reject {value:?}"
+    );
+    assert!(
+      serialized.contains(&format!("\r\nETag: {value}\r\n")),
+      "raw ETag header should be preserved"
+    );
+  }
+
+  let duplicate = HttpResponse::ok("body")
+    .header("ETag", "\"one\"")
+    .header("etag", "W/\"two\"");
+  let serialized = String::from_utf8(duplicate.to_bytes()).expect("response is UTF-8");
+
+  assert!(
+    duplicate.etag().is_err(),
+    "ETag helper should reject duplicate singleton headers"
+  );
+  assert!(serialized.contains("\r\nETag: \"one\"\r\n"));
+  assert!(serialized.contains("\r\netag: W/\"two\"\r\n"));
+
+  let oversized = format!("\"{}\"", "a".repeat(64 * 1024));
+  let response = HttpResponse::ok("body").header("ETag", &oversized);
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(
+    response.etag().is_err(),
+    "ETag helper should reject oversized values"
+  );
+  assert!(
+    serialized.contains(&format!("\r\nETag: {oversized}\r\n")),
+    "raw oversized ETag header should be preserved"
+  );
+}
+
+#[test]
 fn content_location_helper_rejects_empty_control_duplicate_and_oversized_values() {
   for value in [
     "",
@@ -2061,6 +2217,18 @@ fn response_link_metadata_preserves_valueless_extensions_and_empty_quoted_values
 }
 
 #[test]
+fn response_link_metadata_accepts_obs_text_in_quoted_parameter_values() {
+  let response = HttpResponse::ok("body").header("Link", r#"</style.css>; title="\é""#);
+
+  let links = response
+    .links()
+    .expect("Link metadata should parse")
+    .expect("Link metadata should be present");
+
+  assert_eq!(Some("é"), links.values()[0].parameter("title"));
+}
+
+#[test]
 fn response_link_metadata_rejects_invalid_and_bounded_values_without_losing_headers() {
   for value in [
     "style.css; rel=preload",
@@ -2069,6 +2237,21 @@ fn response_link_metadata_rejects_invalid_and_bounded_values_without_losing_head
     "</style.css>; =preload",
     "</style.css>; bad name=value",
     "</style.css>; rel=\"unterminated",
+    "<foo bar>",
+    "<foo\tbar>",
+    r"<foo\bar>",
+    "<a%zz>",
+    "<a%2>",
+    "<a%>",
+    "<foo\"bar>",
+    "<foo^bar>",
+    "<foo`bar>",
+    "<foo|bar>",
+    "<caf\u{e9}>",
+    "</style.css>; rel=",
+    "</style.css>; rel= ",
+    "</style.css>; rel =",
+    "</style.css>; rel = ",
   ] {
     let response = HttpResponse::ok("body").header("Link", value);
     assert!(
@@ -3151,6 +3334,16 @@ fn serializes_partial_content_response_for_parsed_byte_range() {
   let response = HttpResponse::partial_content(body, range);
 
   assert_eq!(
+    Some(HttpContentRange::Bytes {
+      start: 3,
+      end: 6,
+      complete_length: Some(10),
+    }),
+    response
+      .content_range()
+      .expect("Content-Range should parse")
+  );
+  assert_eq!(
     concat!(
       "HTTP/1.1 206 Partial Content\r\n",
       "Content-Range: bytes 3-6/10\r\n",
@@ -3167,6 +3360,14 @@ fn serializes_partial_content_response_for_parsed_byte_range() {
 fn serializes_range_not_satisfiable_response() {
   let response = HttpResponse::range_not_satisfiable(10);
 
+  assert_eq!(
+    Some(HttpContentRange::Unsatisfied {
+      complete_length: 10,
+    }),
+    response
+      .content_range()
+      .expect("Content-Range should parse")
+  );
   assert_eq!(
     concat!(
       "HTTP/1.1 416 Range Not Satisfiable\r\n",
@@ -3546,4 +3747,35 @@ fn early_hints_rejects_invalid_injected_forbidden_and_oversized_headers() {
     [("X-Trace", "x".repeat(64 * 1024 + 1))]
   )
   .is_err());
+}
+
+#[test]
+fn early_hints_rejects_links_that_links_parser_rejects() {
+  for value in [
+    "style.css; rel=preload",
+    "<foo bar>",
+    "<foo\tbar>",
+    "<a%zz>",
+    "<a%2>",
+    "<a%>",
+    "<foo\"bar>",
+    "<caf\u{e9}>",
+    "</style.css>; rel=",
+    "</style.css>; rel= ",
+  ] {
+    assert!(
+      HttpResponse::early_hints([value]).is_err(),
+      "early_hints should reject {value:?}"
+    );
+  }
+
+  let response = HttpResponse::early_hints([r#"</style.css>; rel=preload; as=style"#])
+    .expect("valid RFC 8288 link should build");
+  let links = response
+    .links()
+    .expect("early-hints Link should parse")
+    .expect("Link metadata should be present");
+  assert_eq!(1, links.len());
+  assert_eq!("/style.css", links.values()[0].target());
+  assert_eq!(Some("preload"), links.values()[0].parameter("rel"));
 }

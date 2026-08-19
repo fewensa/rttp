@@ -8,11 +8,18 @@ pub use rttp_protocol::access_control_request_method::{
   AccessControlRequestMethod as HttpAccessControlRequestMethod,
   AccessControlRequestMethodParseError as HttpAccessControlRequestMethodParseError,
 };
+pub use rttp_protocol::access_control_request_private_network::{
+  AccessControlRequestPrivateNetwork as HttpAccessControlRequestPrivateNetwork,
+  AccessControlRequestPrivateNetworkParseError as HttpAccessControlRequestPrivateNetworkParseError,
+};
 pub use rttp_protocol::connection::{
   Connection as HttpConnection, ConnectionParseError as HttpConnectionParseError,
 };
 pub use rttp_protocol::content_length::HttpContentLength;
 pub use rttp_protocol::cookie::{HttpCookiePair, HttpCookieParseError, HttpCookies};
+pub use rttp_protocol::entity_tag::{
+  EntityTag as HttpEntityTag, EntityTagParseError as HttpEntityTagParseError,
+};
 pub use rttp_protocol::fetch_metadata::{
   FetchMetadataParseError as HttpFetchMetadataParseError, SecFetchDest, SecFetchMode, SecFetchSite,
   SecFetchUser,
@@ -32,11 +39,18 @@ pub use rttp_protocol::signature::{
   SignatureParseError as HttpSignatureParseError,
 };
 pub use rttp_protocol::signature_input::{
-  SignatureInput as HttpSignatureInput, SignatureInputBareItem as HttpSignatureInputBareItem,
+  SignatureCoveredComponent as HttpSignatureCoveredComponent,
+  SignatureDecimal as HttpSignatureDecimal, SignatureInput as HttpSignatureInput,
+  SignatureInputMember as HttpSignatureInputMember,
+  SignatureInputParseError as HttpSignatureInputParseError,
+  SignatureParameter as HttpSignatureParameter,
+  SignatureParameterValue as HttpSignatureParameterValue,
+};
+pub use rttp_protocol::signature_input::{
+  SignatureInputBareItem as HttpSignatureInputBareItem,
   SignatureInputComponent as HttpSignatureInputComponent,
   SignatureInputEntry as HttpSignatureInputEntry,
   SignatureInputParameter as HttpSignatureInputParameter,
-  SignatureInputParseError as HttpSignatureInputParseError,
 };
 pub use rttp_protocol::trailer::{
   Trailer as HttpTrailer, TrailerParseError as HttpTrailerParseError,
@@ -44,6 +58,9 @@ pub use rttp_protocol::trailer::{
 pub use rttp_protocol::transfer_encoding::{
   TransferEncoding as HttpTransferEncoding,
   TransferEncodingParseError as HttpTransferEncodingParseError,
+};
+pub use rttp_protocol::upgrade::{
+  Upgrade as HttpUpgrade, UpgradeParseError as HttpUpgradeParseError,
 };
 pub use rttp_protocol::want_content_digest::{
   WantContentDigest as HttpWantContentDigest, WantContentDigestEntry as HttpWantContentDigestEntry,
@@ -413,6 +430,23 @@ impl Request {
     HttpAccessControlRequestHeaders::parse_values(values).map(Some)
   }
 
+  /// Parses received `Access-Control-Request-Private-Network` preflight
+  /// metadata without applying Private Network Access or CORS policy.
+  pub fn access_control_request_private_network(
+    &self,
+  ) -> Result<
+    Option<HttpAccessControlRequestPrivateNetwork>,
+    HttpAccessControlRequestPrivateNetworkParseError,
+  > {
+    let values: Vec<&str> = self
+      .headers_named("Access-Control-Request-Private-Network")
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAccessControlRequestPrivateNetwork::parse_values(values).map(Some)
+  }
+
   /// Parses received `Host` request authority without applying virtual-host
   /// routing or scheme defaults.
   pub fn host(&self) -> Result<Option<HttpHost>, HttpHostParseError> {
@@ -514,6 +548,16 @@ impl Request {
     &self,
   ) -> Result<Option<HttpSignatureInput>, HttpSignatureInputParseError> {
     parse_signature_input_values(self.headers_named("Signature-Input"))
+  }
+
+  /// Parses received `Upgrade` protocol metadata without changing handoff
+  /// validation or interpreting the upgraded protocol.
+  pub fn upgrade(&self) -> Result<Option<HttpUpgrade>, HttpUpgradeParseError> {
+    let values: Vec<&str> = self.headers_named("Upgrade").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpUpgrade::parse_values(values).map(Some)
   }
 
   /// Parses received `Content-Type` representation metadata without sniffing
@@ -1664,73 +1708,6 @@ impl HttpConditionalMetadata {
   }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HttpEntityTag {
-  pub(crate) weak: bool,
-  pub(crate) opaque_tag: String,
-}
-
-impl HttpEntityTag {
-  pub fn strong<S: AsRef<str>>(opaque_tag: S) -> Self {
-    Self::new(false, opaque_tag)
-  }
-
-  pub fn weak<S: AsRef<str>>(opaque_tag: S) -> Self {
-    Self::new(true, opaque_tag)
-  }
-
-  pub fn parse<S: AsRef<str>>(value: S) -> Result<Self, HttpEntityTagParseError> {
-    parse_entity_tag(value.as_ref().trim()).ok_or(HttpEntityTagParseError)
-  }
-
-  pub fn is_weak(&self) -> bool {
-    self.weak
-  }
-
-  pub fn opaque_tag(&self) -> &str {
-    &self.opaque_tag
-  }
-
-  pub fn header_value(&self) -> String {
-    let mut value = String::new();
-    if self.weak {
-      value.push_str("W/");
-    }
-    value.push('"');
-    value.push_str(&self.opaque_tag);
-    value.push('"');
-    value
-  }
-
-  pub(crate) fn new<S: AsRef<str>>(weak: bool, opaque_tag: S) -> Self {
-    let opaque_tag = opaque_tag.as_ref();
-    assert_valid_entity_tag_opaque_tag(opaque_tag);
-    Self {
-      weak,
-      opaque_tag: opaque_tag.to_string(),
-    }
-  }
-
-  pub(crate) fn strong_matches(&self, other: &Self) -> bool {
-    !self.weak && !other.weak && self.opaque_tag == other.opaque_tag
-  }
-
-  pub(crate) fn weak_matches(&self, other: &Self) -> bool {
-    self.opaque_tag == other.opaque_tag
-  }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct HttpEntityTagParseError;
-
-impl fmt::Display for HttpEntityTagParseError {
-  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    formatter.write_str("invalid entity tag")
-  }
-}
-
-impl Error for HttpEntityTagParseError {}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HttpConditionalRequestOutcome {
   Proceed,
@@ -1949,7 +1926,9 @@ impl EntityTagValidatorList {
 
     let mut validators = Vec::new();
     for part in value.split(',') {
-      validators.push(EntityTagValidator::Tag(parse_entity_tag(part.trim())?));
+      validators.push(EntityTagValidator::Tag(
+        HttpEntityTag::parse(part.trim()).ok()?,
+      ));
     }
     if validators.is_empty() {
       None
@@ -1966,35 +1945,6 @@ impl IntoIterator for EntityTagValidatorList {
   fn into_iter(self) -> Self::IntoIter {
     self.validators.into_iter()
   }
-}
-
-pub(crate) fn parse_entity_tag(value: &str) -> Option<HttpEntityTag> {
-  let (weak, value) = if let Some(rest) = value.strip_prefix("W/") {
-    (true, rest)
-  } else {
-    (false, value)
-  };
-  let opaque_tag = value.strip_prefix('"')?.strip_suffix('"')?;
-  if !is_valid_entity_tag_opaque_tag(opaque_tag) {
-    return None;
-  }
-  Some(HttpEntityTag {
-    weak,
-    opaque_tag: opaque_tag.to_string(),
-  })
-}
-
-pub(crate) fn assert_valid_entity_tag_opaque_tag(opaque_tag: &str) {
-  assert!(
-    is_valid_entity_tag_opaque_tag(opaque_tag),
-    "entity tag opaque value must be valid for an HTTP ETag header"
-  );
-}
-
-pub(crate) fn is_valid_entity_tag_opaque_tag(opaque_tag: &str) -> bool {
-  opaque_tag
-    .bytes()
-    .all(|byte| matches!(byte, b'\x21' | b'\x23'..=b'\x7e' | b'\x80'..=b'\xff'))
 }
 
 const MAX_ACCEPT_LANGUAGE_VALUE_BYTES: usize = 64 * 1024;
@@ -2461,6 +2411,30 @@ impl HttpRequest {
     HttpAccessControlRequestHeaders::parse_values(values).map(Some)
   }
 
+  /// Parses received `Access-Control-Request-Private-Network` preflight
+  /// metadata without applying Private Network Access or CORS policy.
+  pub fn access_control_request_private_network(
+    &self,
+  ) -> Result<
+    Option<HttpAccessControlRequestPrivateNetwork>,
+    HttpAccessControlRequestPrivateNetworkParseError,
+  > {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Access-Control-Request-Private-Network")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAccessControlRequestPrivateNetwork::parse_values(values).map(Some)
+  }
+
   /// Parses received `Accept-Encoding` request metadata without enabling
   /// automatic compression, decompression, or content negotiation.
   pub fn accept_encoding(
@@ -2530,6 +2504,21 @@ impl HttpRequest {
         .filter(|header| header.name.eq_ignore_ascii_case("Signature-Input"))
         .map(|header| header.value.as_str()),
     )
+  }
+
+  /// Parses received `Upgrade` protocol metadata without changing handoff
+  /// validation or interpreting the upgraded protocol.
+  pub fn upgrade(&self) -> Result<Option<HttpUpgrade>, HttpUpgradeParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Upgrade"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpUpgrade::parse_values(values).map(Some)
   }
 
   /// Parses received `Content-Type` representation metadata without sniffing
