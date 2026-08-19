@@ -15,6 +15,9 @@ pub use rttp_protocol::access_control_allow_origin::{
   AccessControlAllowOrigin as HttpAccessControlAllowOrigin,
   AccessControlAllowOriginParseError as HttpAccessControlAllowOriginParseError,
 };
+pub use rttp_protocol::allow::{
+  Allow as HttpAllowedMethods, AllowParseError as HttpAllowParseError,
+};
 pub use rttp_protocol::alt_svc::{
   AltSvc as HttpAltSvc, AltSvcAlternative as HttpAltSvcAlternative,
   AltSvcParameter as HttpAltSvcParameter, AltSvcParseError as HttpAltSvcParseError,
@@ -31,9 +34,17 @@ pub use rttp_protocol::client_hints::{
   AcceptCh as HttpAcceptCh, AcceptChParseError as HttpAcceptChParseError,
   CriticalCh as HttpCriticalCh, CriticalChParseError as HttpCriticalChParseError,
 };
+pub use rttp_protocol::content_location::{
+  ContentLocation as HttpContentLocation,
+  ContentLocationParseError as HttpContentLocationParseError,
+};
 pub use rttp_protocol::cross_origin_embedder_policy::{
   CrossOriginEmbedderPolicy as HttpCrossOriginEmbedderPolicy,
   CrossOriginEmbedderPolicyParseError as HttpCrossOriginEmbedderPolicyParseError,
+};
+pub use rttp_protocol::cross_origin_embedder_policy_report_only::{
+  CrossOriginEmbedderPolicyReportOnly as HttpCrossOriginEmbedderPolicyReportOnly,
+  CrossOriginEmbedderPolicyReportOnlyParseError as HttpCrossOriginEmbedderPolicyReportOnlyParseError,
 };
 pub use rttp_protocol::cross_origin_opener_policy::{
   CrossOriginOpenerPolicy as HttpCrossOriginOpenerPolicy,
@@ -46,6 +57,11 @@ pub use rttp_protocol::cross_origin_resource_policy::{
 pub use rttp_protocol::digest::{
   Digest as HttpDigest, DigestEntry as HttpDigestEntry, DigestParseError as HttpDigestParseError,
   ReprDigest as HttpReprDigest, ReprDigestEntry as HttpReprDigestEntry,
+};
+pub use rttp_protocol::no_vary_search::{
+  NoVarySearch as HttpNoVarySearch, NoVarySearchExtension as HttpNoVarySearchExtension,
+  NoVarySearchParams as HttpNoVarySearchParams,
+  NoVarySearchParseError as HttpNoVarySearchParseError,
 };
 pub use rttp_protocol::priority::{
   Priority as HttpPriority, PriorityExtension as HttpPriorityExtension,
@@ -82,8 +98,6 @@ pub(crate) const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
 pub(crate) const MAX_VARY_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_VARY_FIELDS: usize = 256;
-pub(crate) const MAX_ALLOW_VALUE_BYTES: usize = 64 * 1024;
-pub(crate) const MAX_ALLOW_METHODS: usize = 32;
 pub(crate) const MAX_CONTENT_LANGUAGE_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_CONTENT_LANGUAGES: usize = 32;
 pub(crate) const MAX_CONTENT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
@@ -92,7 +106,6 @@ pub(crate) const MAX_ACCEPT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_ACCEPT_ENCODINGS: usize = 32;
 pub(crate) const MAX_TE_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_TE_CODINGS: usize = 32;
-pub(crate) const MAX_CONTENT_LOCATION_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_CONTENT_DISPOSITION_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_CONTENT_DISPOSITION_PARAMETERS: usize = 32;
 pub(crate) const MAX_CONTENT_TYPE_VALUE_BYTES: usize = 64 * 1024;
@@ -690,6 +703,23 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `No-Vary-Search` response metadata without applying
+  /// cache-key or URL-normalization policy.
+  pub fn with_no_vary_search<V: AsRef<str>>(
+    mut self,
+    value: V,
+  ) -> Result<Self, HttpNoVarySearchParseError> {
+    let no_vary_search = HttpNoVarySearch::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("No-Vary-Search"));
+    self.headers.push(HttpHeader::new(
+      "No-Vary-Search",
+      no_vary_search.header_value(),
+    ));
+    Ok(self)
+  }
+
   pub fn with_allow<I, M>(mut self, methods: I) -> Result<Self, HttpAllowParseError>
   where
     I: IntoIterator<Item = M>,
@@ -808,6 +838,25 @@ impl HttpResponse {
     });
     self.headers.push(HttpHeader::new(
       "Cross-Origin-Embedder-Policy",
+      policy.header_value(),
+    ));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Cross-Origin-Embedder-Policy-Report-Only`
+  /// response metadata without applying embedder policy or scheduling reports.
+  pub fn with_cross_origin_embedder_policy_report_only(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpCrossOriginEmbedderPolicyReportOnlyParseError> {
+    let policy = HttpCrossOriginEmbedderPolicyReportOnly::parse(value)?;
+    self.headers.retain(|header| {
+      !header
+        .name
+        .eq_ignore_ascii_case("Cross-Origin-Embedder-Policy-Report-Only")
+    });
+    self.headers.push(HttpHeader::new(
+      "Cross-Origin-Embedder-Policy-Report-Only",
       policy.header_value(),
     ));
     Ok(self)
@@ -1027,6 +1076,36 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces RFC 9421 `Signature` response metadata without
+  /// signing or verifying.
+  pub fn with_signature(mut self, value: impl AsRef<str>) -> Result<Self, HttpSignatureParseError> {
+    let signature = HttpSignature::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Signature"));
+    self
+      .headers
+      .push(HttpHeader::new("Signature", signature.header_value()));
+    Ok(self)
+  }
+
+  /// Validates and replaces RFC 9421 `Signature-Input` response metadata
+  /// without signing, verifying, or applying cryptographic policy.
+  pub fn with_signature_input(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpSignatureInputParseError> {
+    let signature_input = HttpSignatureInput::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Signature-Input"));
+    self.headers.push(HttpHeader::new(
+      "Signature-Input",
+      signature_input.header_value(),
+    ));
+    Ok(self)
+  }
+
   /// Validates and replaces HTTP `Priority` response metadata.
   pub fn with_priority(mut self, value: impl AsRef<str>) -> Result<Self, HttpPriorityParseError> {
     let priority = HttpPriority::parse(value)?;
@@ -1086,13 +1165,14 @@ impl HttpResponse {
     mut self,
     value: V,
   ) -> Result<Self, HttpContentLocationParseError> {
-    let value = parse_http_content_location(value.as_ref())?;
+    let content_location = HttpContentLocation::parse(value.as_ref())?;
     self
       .headers
       .retain(|header| !header.name.eq_ignore_ascii_case("Content-Location"));
-    self
-      .headers
-      .push(HttpHeader::new("Content-Location", value));
+    self.headers.push(HttpHeader::new(
+      "Content-Location",
+      content_location.header_value(),
+    ));
     Ok(self)
   }
 
@@ -1328,6 +1408,21 @@ impl HttpResponse {
     HttpVary::parse_values(values).map(Some)
   }
 
+  /// Parses attached `No-Vary-Search` metadata without changing raw headers,
+  /// cache keys, URLs, or response selection policy.
+  pub fn no_vary_search(&self) -> Result<Option<HttpNoVarySearch>, HttpNoVarySearchParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("No-Vary-Search"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpNoVarySearch::parse_values(values).map(Some)
+  }
+
   /// Parses `Link` response metadata without enabling preload, redirects,
   /// caching, or fetch scheduling.
   pub fn links(&self) -> Result<Option<HttpLinkValues>, HttpLinkParseError> {
@@ -1354,6 +1449,21 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpAllowedMethods::parse_values(values).map(Some)
+  }
+
+  /// Parses attached HTTP/1 `Connection` header metadata without changing
+  /// keep-alive, hop-by-hop stripping, or HTTP/2 rejection.
+  pub fn connection(&self) -> Result<Option<HttpConnection>, HttpConnectionParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Connection"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpConnection::parse_values(values).map(Some)
   }
 
   pub fn content_language(
@@ -1474,6 +1584,30 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpCrossOriginEmbedderPolicy::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Cross-Origin-Embedder-Policy-Report-Only` response
+  /// metadata without enforcing embedder policy or scheduling reports.
+  pub fn cross_origin_embedder_policy_report_only(
+    &self,
+  ) -> Result<
+    Option<HttpCrossOriginEmbedderPolicyReportOnly>,
+    HttpCrossOriginEmbedderPolicyReportOnlyParseError,
+  > {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Cross-Origin-Embedder-Policy-Report-Only")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpCrossOriginEmbedderPolicyReportOnly::parse_values(values).map(Some)
   }
 
   /// Parses attached `Cross-Origin-Opener-Policy` response metadata without
@@ -1668,6 +1802,38 @@ impl HttpResponse {
     self.digest_field("Repr-Digest")
   }
 
+  /// Parses attached RFC 9421 `Signature` metadata without changing raw
+  /// headers or verifying signatures.
+  pub fn signature(&self) -> Result<Option<HttpSignature>, HttpSignatureParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Signature"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSignature::parse_values(values).map(Some)
+  }
+
+  /// Parses attached RFC 9421 `Signature-Input` metadata without changing raw
+  /// headers or applying cryptographic policy.
+  pub fn signature_input(
+    &self,
+  ) -> Result<Option<HttpSignatureInput>, HttpSignatureInputParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Signature-Input"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSignatureInput::parse_values(values).map(Some)
+  }
+
   fn digest_field(&self, name: &str) -> Result<Option<HttpDigest>, HttpDigestParseError> {
     let values: Vec<&str> = self
       .headers
@@ -1764,15 +1930,19 @@ impl HttpResponse {
     HttpClearSiteData::parse_values(values).map(Some)
   }
 
-  pub fn content_location(&self) -> Result<Option<&str>, HttpContentLocationParseError> {
-    let Some(value) = self.single_header_value(
-      "Content-Location",
-      HttpContentLocationParseError::new("multiple Content-Location headers"),
-    )?
-    else {
+  pub fn content_location(
+    &self,
+  ) -> Result<Option<HttpContentLocation>, HttpContentLocationParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Content-Location"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
       return Ok(None);
-    };
-    parse_http_content_location(value).map(Some)
+    }
+    HttpContentLocation::parse_values(values).map(Some)
   }
 
   pub fn content_disposition(
@@ -2450,99 +2620,6 @@ impl fmt::Display for HttpVaryParseError {
 }
 
 impl Error for HttpVaryParseError {}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpAllowedMethods {
-  pub(crate) methods: Vec<String>,
-}
-
-impl HttpAllowedMethods {
-  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpAllowParseError> {
-    Self::parse_values([value.as_ref()])
-  }
-
-  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpAllowParseError>
-  where
-    I: IntoIterator<Item = &'a str>,
-  {
-    let mut methods = Vec::new();
-
-    for value in values {
-      if value.len() > MAX_ALLOW_VALUE_BYTES {
-        return Err(HttpAllowParseError::new("Allow header value is too large"));
-      }
-
-      for method in value.split(',') {
-        let method = method.trim();
-        if method.is_empty() || !is_http_token(method) {
-          return Err(HttpAllowParseError::new("invalid Allow method"));
-        }
-        if methods.iter().any(|known| known == method) {
-          return Err(HttpAllowParseError::new("duplicate Allow method"));
-        }
-        if methods.len() >= MAX_ALLOW_METHODS {
-          return Err(HttpAllowParseError::new("too many Allow methods"));
-        }
-        methods.push(method.to_string());
-      }
-    }
-
-    if methods.is_empty() {
-      return Err(HttpAllowParseError::new("invalid Allow method"));
-    }
-
-    Ok(Self { methods })
-  }
-
-  pub fn from_methods<I, M>(methods: I) -> Result<Self, HttpAllowParseError>
-  where
-    I: IntoIterator<Item = M>,
-    M: AsRef<str>,
-  {
-    let mut value = String::new();
-
-    for (index, method) in methods.into_iter().enumerate() {
-      if index > 0 {
-        value.push_str(", ");
-      }
-      value.push_str(method.as_ref());
-      if value.len() > MAX_ALLOW_VALUE_BYTES {
-        return Err(HttpAllowParseError::new("Allow header value is too large"));
-      }
-    }
-
-    Self::parse(value)
-  }
-
-  pub fn methods(&self) -> Vec<&str> {
-    self.methods.iter().map(String::as_str).collect()
-  }
-
-  pub fn header_value(&self) -> String {
-    self.methods.join(", ")
-  }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpAllowParseError {
-  pub(crate) message: String,
-}
-
-impl HttpAllowParseError {
-  pub(crate) fn new<S: AsRef<str>>(message: S) -> Self {
-    Self {
-      message: message.as_ref().to_string(),
-    }
-  }
-}
-
-impl fmt::Display for HttpAllowParseError {
-  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    formatter.write_str(&self.message)
-  }
-}
-
-impl Error for HttpAllowParseError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HttpContentLanguages {
@@ -3281,51 +3358,6 @@ fn parse_accept_encoding_qvalue(qvalue: &str) -> Result<u16, HttpAcceptEncodingP
   } else {
     fractional * 10_u16.pow(3 - fraction.len() as u32)
   })
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpContentLocationParseError {
-  pub(crate) message: String,
-}
-
-impl HttpContentLocationParseError {
-  pub(crate) fn new<S: AsRef<str>>(message: S) -> Self {
-    Self {
-      message: message.as_ref().to_string(),
-    }
-  }
-}
-
-impl fmt::Display for HttpContentLocationParseError {
-  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    formatter.write_str(&self.message)
-  }
-}
-
-impl Error for HttpContentLocationParseError {}
-
-pub(crate) fn parse_http_content_location(
-  value: &str,
-) -> Result<&str, HttpContentLocationParseError> {
-  if value.len() > MAX_CONTENT_LOCATION_VALUE_BYTES {
-    return Err(HttpContentLocationParseError::new(
-      "Content-Location header value is too large",
-    ));
-  }
-
-  let value = value.trim();
-  if value.is_empty() {
-    return Err(HttpContentLocationParseError::new(
-      "invalid Content-Location value",
-    ));
-  }
-  if value.bytes().any(|byte| byte.is_ascii_control()) {
-    return Err(HttpContentLocationParseError::new(
-      "invalid Content-Location value",
-    ));
-  }
-
-  Ok(value)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
