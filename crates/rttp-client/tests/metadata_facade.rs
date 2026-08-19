@@ -7,10 +7,13 @@ use rttp_client::response::{
   NoVarySearchParams, NoVarySearchParseError, PreferenceApplied, Priority, ProxyAuthenticationInfo,
   ProxyAuthenticationInfoParseError, ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Signature,
   SignatureInput, SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
-  StrictTransportSecurityParseError, Trailer, TransferEncoding, TransferEncodingParseError,
-  WantContentDigest, WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError,
+  StrictTransportSecurityParseError, Trailer, TransferEncoding, TransferEncodingParseError, Vary,
+  VaryParseError, WantContentDigest, WantReprDigest, Warning, WwwAuthenticate,
+  WwwAuthenticateParseError,
 };
-use rttp_client::response::{ContentDigest, ReprDigest};
+use rttp_client::response::{
+  ContentDigest, ContentLocation, ContentLocationParseError, ReprDigest,
+};
 use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
 
 #[test]
@@ -31,6 +34,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .expect("Access-Control-Expose-Headers should parse");
   let clear_site_data =
     HttpClearSiteData::parse("\"cache\"").expect("Clear-Site-Data should parse");
+  let content_location = ContentLocation::parse("../representations/current.json")
+    .expect("Content-Location should parse");
+  let _: ContentLocationParseError =
+    ContentLocation::parse("not valid").expect_err("invalid Content-Location should be rejected");
   let digest = Digest::parse("sha-256=:YWJj:").expect("Digest should parse");
   let location = Location::parse("/next").expect("Location should parse");
   let _: LocationParseError = Location::parse("").expect_err("empty Location should be rejected");
@@ -81,6 +88,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     WwwAuthenticate::parse("Basic realm=\"users\"").expect("WWW-Authenticate should parse");
   let _: WwwAuthenticateParseError = WwwAuthenticate::parse("Basic realm=")
     .expect_err("malformed WWW-Authenticate should be rejected");
+  let vary = Vary::parse("Accept-Encoding, User-Agent").expect("Vary should parse");
+  let _: VaryParseError = Vary::parse("").expect_err("empty Vary should be rejected");
   let signature = Signature::parse("sig1=:YWJj:").expect("Signature should parse");
   let _: SignatureParseError =
     Signature::parse("").expect_err("empty Signature should be rejected");
@@ -97,6 +106,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(max_age.seconds(), 60);
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
   assert_eq!(clear_site_data.directives().len(), 1);
+  assert_eq!(
+    content_location.header_value(),
+    "../representations/current.json"
+  );
   assert_eq!(digest.entries().len(), 1);
   assert_eq!(location.as_str(), "/next");
   assert_eq!(
@@ -136,6 +149,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     www_authenticate.challenges()[0].parameter("realm"),
     Some("users")
   );
+  assert_eq!(vary.field_names(), ["accept-encoding", "user-agent"]);
   assert_eq!(signature.header_value(), "sig1=:YWJj:");
   assert_eq!(
     signature_input.header_value(),
