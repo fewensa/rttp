@@ -8,6 +8,46 @@ and server crates.
 
 This crate supports rttp's implementation; its public API is not a standalone
 application-level HTTP interface.
+
+## Accept-Ranges
+
+`accept_ranges` parses one or more `Accept-Ranges` field values into an ordered
+list of range-unit tokens, preserving each unit's spelling and wire order. Each
+field value is bounded to 64 KiB, and the cumulative unit count across all
+supplied fields is bounded to 256 units. Units are split on commas with SP and
+HTAB accepted only as optional whitespace around each unit; empty members,
+members containing forbidden ASCII control bytes, and units that are not RFC
+9110 tokens are rejected. Duplicate units are rejected case-insensitively while
+the first-seen spelling is retained. The `none` sentinel is accepted only alone
+and is represented as an empty unit list; `none` combined with any unit fails
+as invalid. A present header set that yields no unit still fails as invalid.
+The server facade aliases this type as `HttpAcceptRanges` and reuses
+`from_units`/`none` for its declaration helpers.
+
+## Age
+
+`age` parses a singleton HTTP `Age` field as non-negative `1*DIGIT`
+delta-seconds that fit in `u64`. Each field value is bounded to 64 KiB. A
+second field is rejected after every supplied field is bound-checked.
+Surrounding SP and HTAB are trimmed as optional whitespace. Empty values,
+signed or plus-prefixed numbers, fractions, comma-lists, non-digits, overflow
+beyond `u64::MAX`, and forbidden ASCII control bytes are errors. This parser
+reports declared metadata only; it does not calculate freshness, adjust age
+over elapsed time, store cache entries, or apply cache policy.
+
+## Content-Location
+
+`content_location` parses a singleton response `Content-Location` field as one
+bounded URI reference. Each field value is bounded to 64 KiB. A second field is
+rejected after every supplied field is bound-checked. Surrounding SP and HTAB
+are trimmed as optional whitespace, and the trimmed reference text is preserved
+through `as_str()` and `header_value()` without resolution against any request
+or response URL. Empty values, ASCII controls, interior whitespace, unsafe
+field-value characters, malformed absolute URIs, malformed relative
+references, and broken percent-encoding are errors. This is syntax validation
+only: callers own redirect handling, cache variant selection, representation
+replacement, route generation, retries, and status policy.
+
 ## Connection
 
 `connection` parses one or more RFC 9110 `Connection` field values into an
@@ -21,6 +61,21 @@ repeated tokens are retained in wire order with their original spelling. A
 present header set that yields no token still fails as invalid. This parser
 never fails open and does not apply keep-alive, hop-by-hop stripping, upgrade,
 or HTTP/2 rejection policy.
+
+## Upgrade
+
+`upgrade` parses one or more HTTP/1 `Upgrade` field values into an ordered
+list of protocol names. This is header-field metadata, not a socket handoff
+type. Each field value is bounded to 64 KiB, and the cumulative protocol count
+across all supplied fields is bounded to 32 protocols.
+
+Protocols are split on commas with SP and HTAB accepted only as optional
+whitespace around each protocol. A protocol is an RFC 9110 token, optionally
+followed by `/` and a token protocol version. Empty members, forbidden ASCII
+control bytes, malformed tokens, empty versions, nested `/` versions, and
+over-limit protocol lists are rejected. This parser validates declared
+metadata only; callers own `Connection: Upgrade`, h2c negotiation, socket
+handoff, and any upgraded protocol bytes.
 
 ## Content-Encoding
 

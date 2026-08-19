@@ -1,7 +1,10 @@
+use rttp_protocol::accept_ranges::AcceptRanges;
 use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
+use rttp_protocol::age::Age;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::connection::Connection;
 use rttp_protocol::content_encoding::ContentEncoding;
+use rttp_protocol::content_location::ContentLocation;
 use rttp_protocol::content_type::ContentType;
 use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
 use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedderPolicyReportOnly;
@@ -31,6 +34,7 @@ use rttp_protocol::x_frame_options::XFrameOptions;
 
 #[test]
 fn protocol_exports_representative_bounded_metadata_types() {
+  let age = Age::parse("60").expect("Age should parse");
   let accept_ch = AcceptCh::parse("Sec-CH-UA, DPR").expect("Accept-CH should parse");
   let expose_headers = AccessControlExposeHeaders::parse("X-Request-Id")
     .expect("Access-Control-Expose-Headers should parse");
@@ -69,8 +73,11 @@ fn protocol_exports_representative_bounded_metadata_types() {
       .expect("Strict-Transport-Security should parse");
   let content_type =
     ContentType::parse("text/plain; charset=utf-8").expect("Content-Type should parse");
+  let content_location = ContentLocation::parse("../representations/current.json")
+    .expect("Content-Location should parse");
   let connection = Connection::parse("keep-alive, TE").expect("Connection should parse");
   let content_encoding = ContentEncoding::parse("gzip, br").expect("Content-Encoding should parse");
+  let accept_ranges = AcceptRanges::parse("bytes, pages").expect("Accept-Ranges should parse");
   let transfer_encoding =
     TransferEncoding::parse("chunked").expect("Transfer-Encoding should parse");
   let upgrade = Upgrade::parse("websocket").expect("Upgrade should parse");
@@ -87,6 +94,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let _: SignatureInputParseError =
     SignatureInput::parse("").expect_err("empty Signature-Input should be rejected");
 
+  assert_eq!(age.seconds(), 60);
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
@@ -128,10 +136,16 @@ fn protocol_exports_representative_bounded_metadata_types() {
     "max-age=31536000; includeSubDomains; preload"
   );
   assert_eq!(content_type.header_value(), "text/plain; charset=utf-8");
+  assert_eq!(
+    content_location.header_value(),
+    "../representations/current.json"
+  );
   assert_eq!(connection.tokens(), ["keep-alive", "TE"]);
   assert_eq!(connection.header_value(), "keep-alive, TE");
   assert_eq!(content_encoding.codings(), ["gzip", "br"]);
   assert_eq!(content_encoding.header_value(), "gzip, br");
+  assert_eq!(accept_ranges.units(), ["bytes", "pages"]);
+  assert_eq!(accept_ranges.header_value(), "bytes, pages");
   assert_eq!(transfer_encoding.codings(), ["chunked"]);
   assert_eq!(transfer_encoding.header_value(), "chunked");
   assert_eq!(upgrade.protocols(), ["websocket"]);

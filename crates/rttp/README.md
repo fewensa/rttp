@@ -85,12 +85,13 @@ attached `HttpResponse::header("Accept-Ranges", ...)` fields remain preserved
 until the typed parser is requested.
 
 The helper is bounded and validation-oriented. Each header field value is
-limited to 64 KiB, the parsed header set is limited to 32 range units, range
+limited to 64 KiB, the parsed header set is limited to 256 range units, range
 units must be valid HTTP tokens, malformed or empty values are rejected,
 duplicates are rejected case-insensitively across all parsed header fields, and
-`none` is accepted only as the exclusive sentinel through
-`with_accept_ranges_none()` or a parsed raw `Accept-Ranges: none` field. These
-helpers interoperate with adjacent response metadata helpers such as
+the `none` sentinel is represented as an empty unit list through
+`with_accept_ranges_none()` or a parsed raw `Accept-Ranges: none` field. The
+underlying parser is shared with the client facade through `rttp-protocol`.
+These helpers interoperate with adjacent response metadata helpers such as
 `HttpResponse::cache_control()`, `HttpResponse::vary()`,
 `HttpResponse::allow()`, and `HttpResponse::content_language()` by preserving
 raw headers and parsing only when requested.
@@ -374,22 +375,25 @@ redirect, retry, or select representations from `Content-Language`.
 ## Bounded HTTP/1.1 Content-Location behavior
 
 Server-side `Content-Location` helpers expose response metadata declaration and
-parsing without implementing redirect handling, cache selection, or route
-policy. `HttpResponse::with_content_location(value)` validates one
-`Content-Location` field value, trims outer whitespace, removes any existing
-raw `Content-Location` fields, and adds a single validated
-`Content-Location` header. `HttpResponse::content_location()` parses any
-attached `Content-Location` header and returns `Ok(None)` when the header is
-absent.
+parsing through the shared protocol-owned `HttpContentLocation` type without
+implementing redirect handling, cache selection, or route policy.
+`HttpResponse::with_content_location(value)` validates one `Content-Location`
+URI-reference field value, trims outer whitespace, removes any existing raw
+`Content-Location` fields, and adds a single validated `Content-Location`
+header. `HttpResponse::content_location()` parses any attached
+`Content-Location` header into `HttpContentLocation` and returns `Ok(None)`
+when the header is absent.
 
 Parsing is bounded and validation-oriented. The field value is limited to
-64 KiB, must be non-empty after trimming, and must not contain control
-characters. Duplicate `Content-Location` fields are rejected because the helper
-treats the header as singleton response metadata. Malformed values, duplicated
-singleton fields, and oversized values return `HttpContentLocationParseError`
-from the helper. Raw `HttpResponse::header("Content-Location", ...)` values
-remain preserved exactly as ordinary response headers until a typed declaration
-helper replaces them or the typed parser is requested.
+64 KiB and must be a non-empty absolute URI or relative URI reference without
+control characters, interior whitespace, unsafe field-value characters,
+malformed URI syntax, or broken percent-encoding. Duplicate
+`Content-Location` fields are rejected because the helper treats the header as
+singleton response metadata. Malformed values, duplicated singleton fields, and
+oversized values return `HttpContentLocationParseError` from the helper. Raw
+`HttpResponse::header("Content-Location", ...)` values remain preserved exactly
+as ordinary response headers until a typed declaration helper replaces them or
+the typed parser is requested.
 
 These helpers interoperate with adjacent response metadata helpers such as
 `HttpResponse::cache_control()`, `HttpResponse::allow()`,
@@ -514,6 +518,27 @@ spelling, including duplicates. Parse errors leave raw headers unchanged.
 HTTP/2 continues to reject inbound `Connection` at decode time. These helpers
 do not change keep-alive, hop-by-hop stripping, upgrade/h2c, or HTTP/2
 rejection.
+
+## Bounded Upgrade metadata
+
+`HttpClient::upgrade_protocols()` validates and replaces request `Upgrade`
+metadata without changing request method, socket handoff, or `Connection`
+handling. `Response::upgrade()`, `Request::upgrade()`,
+`HttpRequest::upgrade()`, and `HttpResponse::upgrade()` parse retained HTTP/1
+`Upgrade` fields into `Upgrade`/`HttpUpgrade` metadata. They return
+`Ok(None)` when the header is absent. `HttpResponse::with_upgrade()` validates
+and replaces attached response `Upgrade` metadata.
+
+Each field value is limited to 64 KiB. Parsing accepts at most 32 protocols.
+Each protocol must be an HTTP token, optionally followed by `/` and a token
+protocol version. Empty members, malformed protocols, control bytes,
+oversized values, and too many protocols return a parser error while raw
+headers remain available.
+
+These helpers expose HTTP/1 header metadata only. They do not add
+`Connection: Upgrade`, select h2c, perform client `upgrade()` handoff, change
+server `HttpResponse::upgrade` socket handoff, or implement the upgraded
+protocol.
 
 ## Bounded Transfer-Encoding framing metadata
 
@@ -756,6 +781,7 @@ scheduling, or async accept loops.
 | Content-Type and Content-Encoding | `HttpContentType`, `Request::content_type`, `HttpRequest::content_type`, `HttpResponse::with_content_type`, `content_type`, `HttpResponseContentEncodings`, `Request::content_encoding`, `HttpRequest::content_encoding`, `HttpResponse::with_content_encoding`, and `content_encoding` parse or declare bounded representation metadata while preserving raw headers on parse failures and replacing raw response duplicates on typed declaration | No MIME sniffing, body decoding, charset transcoding, compression/decompression, negotiation, cache policy, redirects, retry/replay, or filesystem serving |
 | Connection | `HttpConnection`, `Request::connection`, `HttpRequest::connection`, and `HttpResponse::connection` parse bounded HTTP/1 `Connection` tokens, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to hop-by-hop stripping, keep-alive/close, upgrade/h2c, or HTTP/2 rejection |
 | Transfer-Encoding | `HttpTransferEncoding`, `Request::transfer_encoding`, and `HttpRequest::transfer_encoding` parse bounded HTTP/1 `Transfer-Encoding` fields that must be sole `chunked`, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to `request_body_kind`, `TE`, Content-Length, or HTTP/2 decode rejection |
+| Upgrade metadata | `Upgrade`, `HttpUpgrade`, `HttpClient::upgrade_protocols`, `Response::upgrade`, `Request::upgrade`, `HttpRequest::upgrade`, `HttpResponse::with_upgrade`, and `HttpResponse::upgrade` validate, declare, or parse bounded HTTP/1 `Upgrade` protocol metadata while preserving raw headers on parse failures | No automatic `Connection: Upgrade`, h2c selection, client/server socket handoff, ALPN negotiation, or upgraded protocol implementation |
 | Content-Disposition | `HttpContentDisposition`, `HttpResponse::with_content_disposition`, `with_attachment_filename`, and `content_disposition` declare and parse bounded singleton `Content-Disposition` response metadata, preserve parsed `filename` and `filename*` parameter values, preserve raw headers on parse failures, and replace raw duplicates on typed declaration | No automatic download, filesystem path handling, MIME sniffing, cache behavior, redirect behavior, retry/replay, negotiation, or status-policy behavior |
 | Upgrade and tunnel targets | `CONNECT` authority-form requests are accepted as HTTP requests; `HttpResponse::upgrade` can hand an upgraded socket to caller code after a matching request | The server does not implement the upgraded protocol after handoff |
 | Trailers | Chunked request trailers are preserved on `Request`; malformed, oversized, forbidden, and pseudo-header trailers are rejected; response trailers can be serialized for chunked responses | Application metadata trailers are allowed; trailer names that affect connection state, routing, authentication/cookies, framing, or payload processing are rejected |

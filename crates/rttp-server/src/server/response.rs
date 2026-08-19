@@ -1,5 +1,8 @@
 use super::*;
 
+pub use rttp_protocol::accept_ranges::{
+  AcceptRanges as HttpAcceptRanges, AcceptRangesParseError as HttpAcceptRangesParseError,
+};
 pub use rttp_protocol::access_control_allow_headers::{
   AccessControlAllowHeaders as HttpAccessControlAllowHeaders,
   AccessControlAllowHeadersParseError as HttpAccessControlAllowHeadersParseError,
@@ -30,6 +33,10 @@ pub use rttp_protocol::clear_site_data::{
 pub use rttp_protocol::client_hints::{
   AcceptCh as HttpAcceptCh, AcceptChParseError as HttpAcceptChParseError,
   CriticalCh as HttpCriticalCh, CriticalChParseError as HttpCriticalChParseError,
+};
+pub use rttp_protocol::content_location::{
+  ContentLocation as HttpContentLocation,
+  ContentLocationParseError as HttpContentLocationParseError,
 };
 pub use rttp_protocol::cross_origin_embedder_policy::{
   CrossOriginEmbedderPolicy as HttpCrossOriginEmbedderPolicy,
@@ -102,7 +109,6 @@ pub(crate) const MAX_ACCEPT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_ACCEPT_ENCODINGS: usize = 32;
 pub(crate) const MAX_TE_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_TE_CODINGS: usize = 32;
-pub(crate) const MAX_CONTENT_LOCATION_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_CONTENT_DISPOSITION_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_CONTENT_DISPOSITION_PARAMETERS: usize = 32;
 pub(crate) const MAX_CONTENT_TYPE_VALUE_BYTES: usize = 64 * 1024;
@@ -111,8 +117,6 @@ pub(crate) const MAX_ACCEPT_PATCH_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_ACCEPT_PATCH_MEDIA_TYPES: usize = 32;
 pub(crate) const MAX_ACCEPT_POST_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_ACCEPT_POST_MEDIA_TYPES: usize = 32;
-pub(crate) const MAX_ACCEPT_RANGES_VALUE_BYTES: usize = 64 * 1024;
-pub(crate) const MAX_ACCEPT_RANGES_UNITS: usize = 32;
 pub(crate) const MAX_RETRY_AFTER_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_EARLY_HINTS_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_LINK_VALUE_BYTES: usize = 64 * 1024;
@@ -1185,13 +1189,14 @@ impl HttpResponse {
     mut self,
     value: V,
   ) -> Result<Self, HttpContentLocationParseError> {
-    let value = parse_http_content_location(value.as_ref())?;
+    let content_location = HttpContentLocation::parse(value.as_ref())?;
     self
       .headers
       .retain(|header| !header.name.eq_ignore_ascii_case("Content-Location"));
-    self
-      .headers
-      .push(HttpHeader::new("Content-Location", value));
+    self.headers.push(HttpHeader::new(
+      "Content-Location",
+      content_location.header_value(),
+    ));
     Ok(self)
   }
 
@@ -1964,15 +1969,19 @@ impl HttpResponse {
     HttpClearSiteData::parse_values(values).map(Some)
   }
 
-  pub fn content_location(&self) -> Result<Option<&str>, HttpContentLocationParseError> {
-    let Some(value) = self.single_header_value(
-      "Content-Location",
-      HttpContentLocationParseError::new("multiple Content-Location headers"),
-    )?
-    else {
+  pub fn content_location(
+    &self,
+  ) -> Result<Option<HttpContentLocation>, HttpContentLocationParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Content-Location"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
       return Ok(None);
-    };
-    parse_http_content_location(value).map(Some)
+    }
+    HttpContentLocation::parse_values(values).map(Some)
   }
 
   pub fn content_disposition(
@@ -3391,51 +3400,6 @@ fn parse_accept_encoding_qvalue(qvalue: &str) -> Result<u16, HttpAcceptEncodingP
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpContentLocationParseError {
-  pub(crate) message: String,
-}
-
-impl HttpContentLocationParseError {
-  pub(crate) fn new<S: AsRef<str>>(message: S) -> Self {
-    Self {
-      message: message.as_ref().to_string(),
-    }
-  }
-}
-
-impl fmt::Display for HttpContentLocationParseError {
-  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    formatter.write_str(&self.message)
-  }
-}
-
-impl Error for HttpContentLocationParseError {}
-
-pub(crate) fn parse_http_content_location(
-  value: &str,
-) -> Result<&str, HttpContentLocationParseError> {
-  if value.len() > MAX_CONTENT_LOCATION_VALUE_BYTES {
-    return Err(HttpContentLocationParseError::new(
-      "Content-Location header value is too large",
-    ));
-  }
-
-  let value = value.trim();
-  if value.is_empty() {
-    return Err(HttpContentLocationParseError::new(
-      "invalid Content-Location value",
-    ));
-  }
-  if value.bytes().any(|byte| byte.is_ascii_control()) {
-    return Err(HttpContentLocationParseError::new(
-      "invalid Content-Location value",
-    ));
-  }
-
-  Ok(value)
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HttpContentDisposition {
   pub(crate) disposition_type: String,
   pub(crate) parameters: Vec<(String, String)>,
@@ -4457,149 +4421,6 @@ pub(crate) fn is_valid_content_language_tag(value: &str) -> bool {
       && subtag.bytes().all(|byte| byte.is_ascii_alphanumeric())
   })
 }
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpAcceptRanges {
-  pub(crate) none: bool,
-  pub(crate) units: Vec<String>,
-}
-
-impl HttpAcceptRanges {
-  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpAcceptRangesParseError> {
-    Self::parse_values([value.as_ref()])
-  }
-
-  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpAcceptRangesParseError>
-  where
-    I: IntoIterator<Item = &'a str>,
-  {
-    let mut units = Vec::new();
-    let mut none = false;
-
-    for value in values {
-      if value.len() > MAX_ACCEPT_RANGES_VALUE_BYTES {
-        return Err(HttpAcceptRangesParseError::new(
-          "Accept-Ranges header value is too large",
-        ));
-      }
-
-      for unit in value.split(',') {
-        let unit = unit.trim();
-        if unit.is_empty() || !is_http_token(unit) {
-          return Err(HttpAcceptRangesParseError::new(
-            "invalid Accept-Ranges range unit",
-          ));
-        }
-        if unit.eq_ignore_ascii_case("none") {
-          none = true;
-          continue;
-        }
-        if units
-          .iter()
-          .any(|known: &String| known.eq_ignore_ascii_case(unit))
-        {
-          return Err(HttpAcceptRangesParseError::new(
-            "duplicate Accept-Ranges range unit",
-          ));
-        }
-        if units.len() >= MAX_ACCEPT_RANGES_UNITS {
-          return Err(HttpAcceptRangesParseError::new(
-            "too many Accept-Ranges range units",
-          ));
-        }
-        units.push(unit.to_string());
-      }
-    }
-
-    if none && !units.is_empty() {
-      return Err(HttpAcceptRangesParseError::new(
-        "Accept-Ranges none cannot be combined with range units",
-      ));
-    }
-    if none {
-      return Ok(Self::none());
-    }
-    if units.is_empty() {
-      return Err(HttpAcceptRangesParseError::new(
-        "invalid Accept-Ranges range unit",
-      ));
-    }
-
-    Ok(Self { none: false, units })
-  }
-
-  pub fn from_units<I, U>(units: I) -> Result<Self, HttpAcceptRangesParseError>
-  where
-    I: IntoIterator<Item = U>,
-    U: AsRef<str>,
-  {
-    let mut value = String::new();
-
-    for (index, unit) in units.into_iter().enumerate() {
-      let unit = unit.as_ref();
-      if unit.trim().eq_ignore_ascii_case("none") {
-        return Err(HttpAcceptRangesParseError::new(
-          "Accept-Ranges none must use the none helper",
-        ));
-      }
-      if index > 0 {
-        value.push_str(", ");
-      }
-      value.push_str(unit);
-      if value.len() > MAX_ACCEPT_RANGES_VALUE_BYTES {
-        return Err(HttpAcceptRangesParseError::new(
-          "Accept-Ranges header value is too large",
-        ));
-      }
-    }
-
-    Self::parse(value)
-  }
-
-  pub fn none() -> Self {
-    Self {
-      none: true,
-      units: Vec::new(),
-    }
-  }
-
-  pub fn is_none(&self) -> bool {
-    self.none
-  }
-
-  pub fn units(&self) -> Vec<&str> {
-    self.units.iter().map(String::as_str).collect()
-  }
-
-  pub fn header_value(&self) -> String {
-    if self.none {
-      "none".to_string()
-    } else {
-      self.units.join(", ")
-    }
-  }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpAcceptRangesParseError {
-  pub(crate) message: String,
-}
-
-impl HttpAcceptRangesParseError {
-  pub(crate) fn new<S: AsRef<str>>(message: S) -> Self {
-    Self {
-      message: message.as_ref().to_string(),
-    }
-  }
-}
-
-impl fmt::Display for HttpAcceptRangesParseError {
-  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    formatter.write_str(&self.message)
-  }
-}
-
-impl Error for HttpAcceptRangesParseError {}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct HttpRequestCacheControl {

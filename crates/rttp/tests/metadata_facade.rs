@@ -1,10 +1,10 @@
 use rttp::server::{
-  HttpAcceptCh, HttpConditionalMetadata, HttpCrossOriginEmbedderPolicy,
-  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
-  HttpCrossOriginResourcePolicy, HttpEntityTag, HttpResponse, HttpSignature, HttpSignatureInput,
-  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
-  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
-  HttpSunsetParseError, HttpUpgrade, HttpUpgradeParseError,
+  HttpAcceptCh, HttpConditionalMetadata, HttpContentLocation, HttpContentLocationParseError,
+  HttpCrossOriginEmbedderPolicy, HttpCrossOriginEmbedderPolicyReportOnly,
+  HttpCrossOriginOpenerPolicy, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpResponse,
+  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpSunsetParseError, HttpUpgrade, HttpUpgradeParseError,
 };
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -20,6 +20,14 @@ fn compatibility_facade_exports_client_metadata_types() {
       .expect("Accept-Patch should parse");
   let accept_post: rttp::AcceptPost =
     rttp_client::response::AcceptPost::parse("application/json").expect("Accept-Post should parse");
+  let accept_ranges: rttp::AcceptRanges =
+    rttp_client::response::AcceptRanges::parse("bytes, pages").expect("Accept-Ranges should parse");
+  let content_location: rttp::ContentLocation =
+    rttp_client::response::ContentLocation::parse("../representations/current.json")
+      .expect("Content-Location should parse");
+  let _: rttp::ContentLocationParseError =
+    rttp_client::response::ContentLocation::parse("not valid")
+      .expect_err("invalid Content-Location should be rejected");
   let alt_svc: rttp::AltSvc =
     rttp_client::response::AltSvc::parse("h3=\":443\"; ma=60").expect("Alt-Svc should parse");
   let no_vary_search: rttp::NoVarySearch =
@@ -50,6 +58,17 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp_client::response::Upgrade::parse("websocket").expect("Upgrade should parse");
   let _: rttp::UpgradeParseError =
     rttp_client::response::Upgrade::parse("").expect_err("empty Upgrade should fail");
+  let x_content_type_options: rttp::XContentTypeOptions =
+    rttp_client::response::XContentTypeOptions::parse("NoSniff")
+      .expect("X-Content-Type-Options should parse");
+  let _: rttp::XContentTypeOptionsParseError =
+    rttp_client::response::XContentTypeOptions::parse("unknown")
+      .expect_err("unknown X-Content-Type-Options should be rejected");
+  let x_frame_options: rttp::XFrameOptions =
+    rttp_client::response::XFrameOptions::parse("deny").expect("X-Frame-Options should parse");
+  let _: rttp::XFrameOptionsParseError =
+    rttp_client::response::XFrameOptions::parse("ALLOW-FROM https://example.test")
+      .expect_err("deprecated X-Frame-Options ALLOW-FROM should be rejected");
   let fetch_site: rttp::SecFetchSite =
     rttp_client::SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let location: rttp::Location =
@@ -61,6 +80,12 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
   assert_eq!(accept_patch.media_types().len(), 1);
   assert_eq!(accept_post.media_types().len(), 1);
+  assert_eq!(accept_ranges.units(), ["bytes", "pages"]);
+  assert_eq!(accept_ranges.header_value(), "bytes, pages");
+  assert_eq!(
+    content_location.header_value(),
+    "../representations/current.json"
+  );
   assert_eq!(alt_svc.alternatives()[0].protocol_id(), "h3");
   assert_eq!(alt_svc.alternatives()[0].max_age(), Some(60));
   assert_eq!(
@@ -75,8 +100,21 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(strict_transport_security.max_age(), 31_536_000);
   assert!(strict_transport_security.include_sub_domains());
   assert_eq!(upgrade.protocols(), ["websocket"]);
+  assert_eq!(x_content_type_options, rttp::XContentTypeOptions::Nosniff);
+  assert_eq!(x_content_type_options.header_value(), "nosniff");
+  assert_eq!(x_frame_options, rttp::XFrameOptions::Deny);
+  assert_eq!(x_frame_options.header_value(), "DENY");
   assert_eq!(fetch_site.header_value(), "same-origin");
   assert_eq!(location.as_str(), "/next");
+}
+
+#[test]
+#[cfg(feature = "client")]
+fn compatibility_facade_exports_content_length_metadata_type() {
+  let content_length: rttp::HttpContentLength = rttp::HttpContentLength::new(2);
+
+  assert_eq!(2, content_length.len());
+  assert_eq!("2", content_length.header_value());
 }
 
 #[test]
@@ -96,8 +134,17 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
       .expect("Cross-Origin-Opener-Policy should parse");
   let upgrade: HttpUpgrade = HttpUpgrade::parse("websocket").expect("Upgrade should parse");
   let _: HttpUpgradeParseError = HttpUpgrade::parse("").expect_err("empty Upgrade should fail");
+  let content_location: HttpContentLocation =
+    HttpContentLocation::parse("../representations/current.json")
+      .expect("Content-Location should parse");
+  let _: HttpContentLocationParseError = HttpContentLocation::parse("not valid")
+    .expect_err("invalid Content-Location should be rejected");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA"]);
+  assert_eq!(
+    content_location.header_value(),
+    "../representations/current.json"
+  );
   assert_eq!(policy.header_value(), "same-origin");
   assert_eq!(embedder_policy.header_value(), "require-corp");
   assert_eq!(embedder_policy_report_only.header_value(), "require-corp");

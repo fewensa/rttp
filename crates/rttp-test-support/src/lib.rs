@@ -1076,8 +1076,7 @@ pub mod allow {
 
 pub mod accept_ranges {
   pub const MAX_VALUE_BYTES: usize = 64 * 1024;
-  pub const SERVER_MAX_UNITS: usize = 32;
-  pub const CLIENT_MAX_UNITS: usize = 256;
+  pub const MAX_UNITS: usize = 256;
 
   pub struct ResponseCase {
     pub name: &'static str,
@@ -1121,7 +1120,7 @@ pub mod accept_ranges {
     ResponseCase {
       name: "none sentinel",
       values: &["none"],
-      units: &["none"],
+      units: &[],
       header_value: "none",
       none: true,
       accepts_bytes: false,
@@ -1176,11 +1175,11 @@ pub mod accept_ranges {
   }
 
   pub fn too_many_server_units_value() -> String {
-    too_many_units_value(SERVER_MAX_UNITS)
+    too_many_units_value(MAX_UNITS)
   }
 
   pub fn too_many_client_units_value() -> String {
-    too_many_units_value(CLIENT_MAX_UNITS)
+    too_many_units_value(MAX_UNITS)
   }
 
   pub fn oversized_value() -> String {
@@ -1386,6 +1385,13 @@ pub mod content_location {
       normalized_value: "../current?variant=full#metadata",
       declaration_value: "../current?variant=full#metadata",
     },
+    ResponseCase {
+      name: "network-path reference with IPv6 authority",
+      values: &["//[2001:db8::1]/representation"],
+      raw_value: "//[2001:db8::1]/representation",
+      normalized_value: "//[2001:db8::1]/representation",
+      declaration_value: "//[2001:db8::1]/representation",
+    },
   ];
 
   const INVALID_CASES: &[InvalidCase] = &[
@@ -1404,6 +1410,18 @@ pub mod content_location {
     InvalidCase {
       name: "unit separator control character",
       value: "/safe\u{1f}",
+    },
+    InvalidCase {
+      name: "malformed absolute URI",
+      value: "http://[::1",
+    },
+    InvalidCase {
+      name: "relative reference with space",
+      value: "/bad path",
+    },
+    InvalidCase {
+      name: "reference with embedded space",
+      value: "not valid",
     },
   ];
 
