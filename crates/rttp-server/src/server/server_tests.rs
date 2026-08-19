@@ -2504,3 +2504,41 @@ hello\r\n\
       .expect("clear should be present")
       .is_clear());
   }
+
+  #[test]
+  fn nel_helpers_reject_raw_crlf_and_serialize_a_single_header_line() {
+    assert!(
+      HttpResponse::ok([])
+        .with_nel("{\"max_age\":1,\"x\":{ \"a\":\r\n1 }}")
+        .is_err(),
+      "raw CR/LF in a NEL field value must be rejected"
+    );
+
+    let response = HttpResponse::ok([])
+      .with_nel(r#"{"report_to":"errors","max_age":60,"x":{"a":[1,2]}}"#)
+      .expect("valid NEL policy should be accepted");
+    let bytes = response.to_bytes();
+    let head = std::str::from_utf8(&bytes).expect("serialized head should be UTF-8");
+    let nel_start = head
+      .find("NEL:")
+      .expect("serialized head should contain a NEL header");
+    let nel_line_end = head[nel_start..]
+      .find("\r\n")
+      .expect("NEL header line should end with CRLF");
+    let nel_line = &head[nel_start..nel_start + nel_line_end];
+    assert!(
+      !nel_line.contains('\r') && !nel_line.contains('\n'),
+      "serialized NEL header line must not contain raw CR or LF: {nel_line:?}"
+    );
+    assert_eq!(
+      "NEL: {\"max_age\":60,\"report_to\":\"errors\",\"x\":{\"a\":[1,2]}}",
+      nel_line
+    );
+
+    let parsed = response
+      .nel()
+      .expect("response NEL should parse")
+      .expect("response NEL should be present");
+    assert_eq!(60, parsed.max_age());
+    assert_eq!(Some("errors"), parsed.report_to());
+  }

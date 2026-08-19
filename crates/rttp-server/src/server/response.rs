@@ -830,12 +830,12 @@ impl HttpResponse {
   /// or persisting policy.
   pub fn with_nel(mut self, value: impl AsRef<str>) -> Result<Self, HttpNelParseError> {
     let nel = HttpNel::parse(value)?;
+    let header_value = nel.header_value();
+    assert_valid_header_component(&header_value);
     self
       .headers
       .retain(|header| !header.name.eq_ignore_ascii_case("NEL"));
-    self
-      .headers
-      .push(HttpHeader::new("NEL", nel.header_value()));
+    self.headers.push(HttpHeader::new("NEL", header_value));
     Ok(self)
   }
 

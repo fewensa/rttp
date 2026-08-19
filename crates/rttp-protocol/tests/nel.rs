@@ -118,9 +118,36 @@ fn nel_rejects_malformed_json() {
     r#"{"max_age":1,"a":"\udc00"}"#,
     r#"{"max_age":1,"a":"\ud800\u0041"}"#,
     r#"{"max_age":1,"a":"tab	control"}"#,
+    "{\"max_age\":1,\"x\":{ \"a\":\r\n1 }}",
+    "{\"max_age\":1,\"x\":[1,\r\n2]}",
+    "{\"max_age\":1}\r\n",
+    "{\"max_age\":1}\n",
+    "{\r\n\"max_age\":1}",
   ] {
     assert!(Nel::parse(value).is_err(), "{value:?} must be rejected");
   }
+}
+
+#[test]
+fn nel_rejects_raw_crlf_in_field_value_and_header_value_stays_clean() {
+  for value in [
+    "{\"max_age\":1,\"x\":{ \"a\":\r\n1 }}",
+    "{\"max_age\":1,\"x\":[1,\r\n2]}",
+    "{\"max_age\":1}\r\n",
+    "{\"max_age\":1}\n",
+    "{\"max_age\":1,\"x\":1}\r",
+    "{\r\n\"max_age\":1}",
+  ] {
+    assert!(Nel::parse(value).is_err(), "{value:?} must be rejected");
+  }
+
+  let nel = Nel::parse(r#"{"max_age":1,"x":{"a":[1,2],"b":null},"y":"ok"}"#)
+    .expect("valid policy with unknown members should parse");
+  let header_value = nel.header_value();
+  assert!(
+    !header_value.contains('\r') && !header_value.contains('\n'),
+    "header_value must not contain raw CR or LF: {header_value:?}"
+  );
 }
 
 #[test]

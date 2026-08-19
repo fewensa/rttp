@@ -196,7 +196,16 @@ fn validate_value_bound(value: &str) -> Result<(), NelParseError> {
   if value.len() > MAX_NEL_VALUE_BYTES {
     return Err(NelParseError::new("NEL header value is too large"));
   }
+  if value.bytes().any(is_invalid_control_byte) {
+    return Err(NelParseError::new(
+      "NEL header value contains an invalid control byte",
+    ));
+  }
   Ok(())
+}
+
+fn is_invalid_control_byte(byte: u8) -> bool {
+  byte != b'\t' && (byte <= 0x1f || byte == 0x7f)
 }
 
 fn parse_policy(value: &str) -> Result<Nel, NelParseError> {
