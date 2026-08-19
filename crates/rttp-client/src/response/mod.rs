@@ -38,6 +38,7 @@ pub use rttp_protocol::access_control_max_age::{
   AccessControlMaxAge, AccessControlMaxAgeParseError,
 };
 pub use rttp_protocol::age::{Age, AgeParseError};
+pub use rttp_protocol::cdn_cache_control::{CdnCacheControl, CdnCacheControlParseError};
 pub use rttp_protocol::clear_site_data::{
   ClearSiteData as HttpClearSiteData, ClearSiteDataDirective as HttpClearSiteDataDirective,
   ClearSiteDataParseError as HttpClearSiteDataParseError,
@@ -67,12 +68,16 @@ mod raw_response;
 mod response;
 
 pub use rttp_protocol::alt_svc::{AltSvc, AltSvcAlternative, AltSvcParameter, AltSvcParseError};
+pub use rttp_protocol::authentication_info::{
+  AuthenticationInfo, AuthenticationInfoParameter, AuthenticationInfoParseError,
+};
 pub use rttp_protocol::connection::{Connection, ConnectionParseError};
 pub use rttp_protocol::content_location::{ContentLocation, ContentLocationParseError};
 pub use rttp_protocol::digest::{
   ContentDigest, ContentDigestEntry, Digest, DigestEntry, DigestParseError, ReprDigest,
   ReprDigestEntry,
 };
+pub use rttp_protocol::entity_tag::{EntityTag, EntityTagParseError};
 pub use rttp_protocol::keep_alive::{KeepAlive, KeepAliveExtension, KeepAliveParseError};
 pub use rttp_protocol::link::{LinkParameter, LinkParseError, LinkValue, LinkValues};
 pub use rttp_protocol::location::{Location, LocationParseError};

@@ -16,6 +16,12 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp_client::response::AcceptCh::parse("Sec-CH-UA, DPR").expect("Accept-CH should parse");
   let critical_ch: rttp::CriticalCh =
     rttp_client::response::CriticalCh::parse("Sec-CH-UA").expect("Critical-CH should parse");
+  let cdn_cache_control: rttp::CdnCacheControl =
+    rttp_client::response::CdnCacheControl::parse("max-age=600, cdn-example=\"a, b\"")
+      .expect("CDN-Cache-Control should parse");
+  let _: rttp::CdnCacheControlParseError =
+    rttp_client::response::CdnCacheControl::parse("max-age=")
+      .expect_err("invalid CDN-Cache-Control should fail");
   let accept_patch: rttp::AcceptPatch =
     rttp_client::response::AcceptPatch::parse("application/json")
       .expect("Accept-Patch should parse");
@@ -35,6 +41,11 @@ fn compatibility_facade_exports_client_metadata_types() {
       .expect_err("invalid Content-Location should be rejected");
   let alt_svc: rttp::AltSvc =
     rttp_client::response::AltSvc::parse("h3=\":443\"; ma=60").expect("Alt-Svc should parse");
+  let authentication_info: rttp::AuthenticationInfo =
+    rttp_client::response::AuthenticationInfo::parse("nextnonce=\"n-2\"")
+      .expect("Authentication-Info should parse");
+  let _: rttp::AuthenticationInfoParseError = rttp_client::response::AuthenticationInfo::parse("")
+    .expect_err("empty Authentication-Info should be rejected");
   let no_vary_search: rttp::NoVarySearch =
     rttp_client::response::NoVarySearch::parse(r#"params=("utm_source")"#)
       .expect("No-Vary-Search should parse");
@@ -75,13 +86,17 @@ fn compatibility_facade_exports_client_metadata_types() {
       .expect_err("deprecated X-Frame-Options ALLOW-FROM should be rejected");
   let fetch_site: rttp::SecFetchSite =
     rttp_client::SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
+  let etag: rttp::EntityTag =
+    rttp_client::response::EntityTag::parse("\"asset-v7\"").expect("ETag should parse");
   let location: rttp::Location =
     rttp_client::response::Location::parse("/next").expect("Location should parse");
   let _: rttp::LocationParseError =
     rttp_client::response::Location::parse("").expect_err("empty Location should be rejected");
+  let content_length = rttp::HttpContentLength::new(123);
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
+  assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
   assert_eq!(accept_patch.media_types().len(), 1);
   assert_eq!(accept_post.media_types().len(), 1);
   assert_eq!(content_range.header_value(), "bytes 3-6/10");
@@ -93,6 +108,7 @@ fn compatibility_facade_exports_client_metadata_types() {
   );
   assert_eq!(alt_svc.alternatives()[0].protocol_id(), "h3");
   assert_eq!(alt_svc.alternatives()[0].max_age(), Some(60));
+  assert_eq!(authentication_info.parameter("nextnonce"), Some("n-2"));
   assert_eq!(nel.max_age(), 2592000);
   assert_eq!(nel.report_to(), Some("network-errors"));
   assert_eq!(
@@ -111,7 +127,9 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(x_frame_options, rttp::XFrameOptions::Deny);
   assert_eq!(x_frame_options.header_value(), "DENY");
   assert_eq!(fetch_site.header_value(), "same-origin");
+  assert_eq!(etag, rttp::EntityTag::strong("asset-v7"));
   assert_eq!(location.as_str(), "/next");
+  assert_eq!(content_length.len(), 123);
 }
 
 #[test]
@@ -127,6 +145,7 @@ fn compatibility_facade_exports_content_length_metadata_type() {
 fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let accept_ch: HttpAcceptCh = HttpAcceptCh::parse("Sec-CH-UA").expect("Accept-CH should parse");
   let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("revision-42"));
+  let response = HttpResponse::ok("").with_etag(HttpEntityTag::weak("revision-42"));
   let private_network: HttpAccessControlRequestPrivateNetwork =
     HttpAccessControlRequestPrivateNetwork::parse("true")
       .expect("Access-Control-Request-Private-Network should parse");
@@ -172,6 +191,10 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
       .expect("entity tag should be retained")
       .header_value(),
     "\"revision-42\""
+  );
+  assert_eq!(
+    response.etag().expect("ETag should parse"),
+    Some(HttpEntityTag::weak("revision-42"))
   );
 }
 

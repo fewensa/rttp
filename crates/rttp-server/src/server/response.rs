@@ -26,6 +26,10 @@ pub use rttp_protocol::authentication_info::{
   AuthenticationInfo as HttpAuthenticationInfo,
   AuthenticationInfoParseError as HttpAuthenticationInfoParseError,
 };
+pub use rttp_protocol::cdn_cache_control::{
+  CdnCacheControl as HttpCdnCacheControl,
+  CdnCacheControlParseError as HttpCdnCacheControlParseError,
+};
 pub use rttp_protocol::clear_site_data::{
   ClearSiteData as HttpClearSiteData, ClearSiteDataDirective as HttpClearSiteDataDirective,
   ClearSiteDataParseError as HttpClearSiteDataParseError,
@@ -1288,6 +1292,16 @@ impl HttpResponse {
     Ok(self)
   }
 
+  pub fn with_etag(mut self, entity_tag: HttpEntityTag) -> Self {
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("ETag"));
+    self
+      .headers
+      .push(HttpHeader::new("ETag", entity_tag.header_value()));
+    self
+  }
+
   pub fn with_content_disposition<D>(
     mut self,
     disposition: D,
@@ -1505,6 +1519,22 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpResponseCacheControl::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `CDN-Cache-Control` response metadata without applying CDN cache policy.
+  pub fn cdn_cache_control(
+    &self,
+  ) -> Result<Option<HttpCdnCacheControl>, HttpCdnCacheControlParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("CDN-Cache-Control"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpCdnCacheControl::parse_values(values).map(Some)
   }
 
   pub fn vary(&self) -> Result<Option<HttpVary>, HttpVaryParseError> {
@@ -2083,6 +2113,17 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpContentLocation::parse_values(values).map(Some)
+  }
+
+  pub fn etag(&self) -> Result<Option<HttpEntityTag>, HttpEntityTagParseError> {
+    let Some(value) = self.single_header_value(
+      "ETag",
+      HttpEntityTagParseError::new("multiple ETag headers"),
+    )?
+    else {
+      return Ok(None);
+    };
+    HttpEntityTag::parse(value).map(Some)
   }
 
   pub fn content_disposition(

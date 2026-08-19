@@ -208,6 +208,17 @@ fn cache_control_response(values: &[&str]) -> Vec<u8> {
   response.into_bytes()
 }
 
+fn cdn_cache_control_response(values: &[&str]) -> Vec<u8> {
+  let mut response = String::from("HTTP/1.1 200 OK\r\n");
+  for value in values {
+    response.push_str("CDN-Cache-Control: ");
+    response.push_str(value);
+    response.push_str("\r\n");
+  }
+  response.push_str("Content-Length: 2\r\n\r\nOK");
+  response.into_bytes()
+}
+
 fn vary_response(values: &[&str]) -> Vec<u8> {
   let mut response = String::from("HTTP/1.1 200 OK\r\n");
   for value in values {
@@ -238,6 +249,25 @@ fn allow_response(values: &[&str]) -> Vec<u8> {
     response.push_str("\r\n");
   }
   response.push_str("Content-Length: 0\r\n\r\n");
+  response.into_bytes()
+}
+
+fn authentication_info_response(
+  authentication_info: Option<&str>,
+  proxy_authentication_info: Option<&str>,
+) -> Vec<u8> {
+  let mut response = String::from("HTTP/1.1 200 OK\r\n");
+  if let Some(value) = authentication_info {
+    response.push_str("Authentication-Info: ");
+    response.push_str(value);
+    response.push_str("\r\n");
+  }
+  if let Some(value) = proxy_authentication_info {
+    response.push_str("Proxy-Authentication-Info: ");
+    response.push_str(value);
+    response.push_str("\r\n");
+  }
+  response.push_str("Content-Length: 2\r\n\r\nOK");
   response.into_bytes()
 }
 
@@ -1819,6 +1849,149 @@ fn sync_client_and_server_exchange_bounded_authentication_metadata() {
 }
 
 #[test]
+fn sync_client_and_server_exchange_authentication_info_response_metadata_without_policy() {
+  const AUTHENTICATION_INFO: &str =
+    r#"nextnonce="n-2", qop=auth, rspauth="origin-rsp", cnonce="c-1", nc=00000001"#;
+  const PROXY_AUTHENTICATION_INFO: &str =
+    r#"nextnonce="p-2", qop=auth, rspauth="proxy-rsp", cnonce="pc-1", nc=00000001"#;
+  const AUTHENTICATION_INFO_CANONICAL: &str =
+    "nextnonce=n-2, qop=auth, rspauth=origin-rsp, cnonce=c-1, nc=00000001";
+  const PROXY_AUTHENTICATION_INFO_CANONICAL: &str =
+    "nextnonce=p-2, qop=auth, rspauth=proxy-rsp, cnonce=pc-1, nc=00000001";
+
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind Authentication-Info response server");
+  let addr = server
+    .local_addr()
+    .expect("Authentication-Info response server addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        HttpResponse::ok("OK")
+          .with_authentication_info(AUTHENTICATION_INFO)
+          .expect("Authentication-Info should be accepted")
+          .with_proxy_authentication_info(PROXY_AUTHENTICATION_INFO)
+          .expect("Proxy-Authentication-Info should be accepted")
+      })
+      .expect("serve Authentication-Info response");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/authentication-info"))
+    .emit()
+    .expect("Authentication-Info response should parse");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    Some(&AUTHENTICATION_INFO_CANONICAL.to_string()),
+    response.header_value("Authentication-Info")
+  );
+  assert_eq!(
+    Some(&PROXY_AUTHENTICATION_INFO_CANONICAL.to_string()),
+    response.header_value("Proxy-Authentication-Info")
+  );
+
+  let authentication_info = response
+    .authentication_info()
+    .expect("Authentication-Info should parse")
+    .expect("Authentication-Info should be present");
+  assert_eq!(Some("n-2"), authentication_info.parameter("nextnonce"));
+  assert_eq!(Some("auth"), authentication_info.parameter("qop"));
+  assert_eq!(Some("origin-rsp"), authentication_info.parameter("rspauth"));
+  assert_eq!(
+    AUTHENTICATION_INFO_CANONICAL,
+    authentication_info.header_value()
+  );
+
+  let proxy_authentication_info = response
+    .proxy_authentication_info()
+    .expect("Proxy-Authentication-Info should parse")
+    .expect("Proxy-Authentication-Info should be present");
+  assert_eq!(
+    Some("p-2"),
+    proxy_authentication_info.parameter("nextnonce")
+  );
+  assert_eq!(Some("auth"), proxy_authentication_info.parameter("qop"));
+  assert_eq!(
+    Some("proxy-rsp"),
+    proxy_authentication_info.parameter("rspauth")
+  );
+  assert_eq!(
+    PROXY_AUTHENTICATION_INFO_CANONICAL,
+    proxy_authentication_info.header_value()
+  );
+
+  handle
+    .join()
+    .expect("Authentication-Info response server thread");
+}
+
+#[test]
+fn sync_client_reports_absent_authentication_info_response_metadata() {
+  let (addr, handle) = spawn_metadata_response_server(&[]);
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/authentication-info-absent"))
+    .emit()
+    .expect("response without Authentication-Info should parse");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert!(response
+    .authentication_info()
+    .expect("absent Authentication-Info should parse")
+    .is_none());
+  assert!(response
+    .proxy_authentication_info()
+    .expect("absent Proxy-Authentication-Info should parse")
+    .is_none());
+
+  handle
+    .join()
+    .expect("absent Authentication-Info response server thread");
+}
+
+#[test]
+fn sync_client_authentication_info_helpers_reject_malformed_metadata_without_losing_response() {
+  const AUTHENTICATION_INFO: &str = "nextnonce";
+  const PROXY_AUTHENTICATION_INFO: &str = "rspauth";
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(
+    authentication_info_response(Some(AUTHENTICATION_INFO), Some(PROXY_AUTHENTICATION_INFO)),
+  );
+
+  let response = client()
+    .get()
+    .url(format!(
+      "http://{addr}/matrix/authentication-info-malformed"
+    ))
+    .emit()
+    .expect("malformed Authentication-Info response should remain parseable");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    Some(&AUTHENTICATION_INFO.to_string()),
+    response.header_value("Authentication-Info")
+  );
+  assert_eq!(
+    Some(&PROXY_AUTHENTICATION_INFO.to_string()),
+    response.header_value("Proxy-Authentication-Info")
+  );
+  assert!(
+    response.authentication_info().is_err(),
+    "Authentication-Info helper should reject malformed metadata"
+  );
+  assert!(
+    response.proxy_authentication_info().is_err(),
+    "Proxy-Authentication-Info helper should reject malformed metadata"
+  );
+
+  handle
+    .join()
+    .expect("malformed Authentication-Info response server thread");
+}
+
+#[test]
 fn server_sec_fetch_helpers_reject_malformed_values_without_losing_raw_headers() {
   let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
     .expect("bind malformed Sec-Fetch metadata server");
@@ -2251,6 +2424,27 @@ fn assert_cache_control_helper_rejects_but_preserves_response(name: &str, raw_re
   assert!(
     response.cache_control().is_err(),
     "{name} helper should reject invalid Cache-Control"
+  );
+  assert_eq!("OK", response.body().string().unwrap(), "{name}");
+
+  handle.join().expect("raw response server thread");
+}
+
+fn assert_cdn_cache_control_helper_rejects_but_preserves_response(
+  name: &str,
+  raw_response: Vec<u8>,
+) {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/cdn-cache-control-invalid", addr))
+    .emit()
+    .unwrap_or_else(|err| panic!("{name} response should remain parseable: {err}"));
+
+  assert!(
+    response.cdn_cache_control().is_err(),
+    "{name} helper should reject invalid CDN-Cache-Control"
   );
   assert_eq!("OK", response.body().string().unwrap(), "{name}");
 
@@ -3994,6 +4188,55 @@ fn sync_client_cache_control_matrix_keeps_cache_engine_non_goals_explicit() {
   assert_eq!("OK", response.body().string().unwrap());
 
   handle.join().expect("raw response server thread");
+}
+
+#[test]
+fn sync_client_parses_cdn_cache_control_response_metadata_without_policy() {
+  const HEADERS: &[(&str, &str)] = &[
+    (
+      "CDN-Cache-Control",
+      "max-age=600, stale-while-revalidate=30, cdn-example=\"a, b\"",
+    ),
+    ("cdn-cache-control", "immutable"),
+  ];
+  let (addr, handle) = spawn_metadata_response_server(HEADERS);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/cdn-cache-control", addr))
+    .emit()
+    .expect("CDN-Cache-Control response should parse");
+
+  let metadata = response
+    .cdn_cache_control()
+    .expect("CDN-Cache-Control metadata should parse")
+    .expect("CDN-Cache-Control should be present");
+
+  assert_eq!(metadata.len(), 4);
+  assert_eq!(metadata.directives()[0].name(), "max-age");
+  assert_eq!(metadata.directives()[0].value(), Some("600"));
+  assert_eq!(metadata.directives()[2].name(), "cdn-example");
+  assert_eq!(metadata.directives()[2].value(), Some("a, b"));
+  assert_eq!(metadata.directives()[3].name(), "immutable");
+  assert_eq!("OK", response.body().string().unwrap());
+
+  handle.join().expect("metadata response server thread");
+}
+
+#[test]
+fn sync_client_cdn_cache_control_helper_rejects_invalid_and_bounded_metadata() {
+  assert_cdn_cache_control_helper_rejects_but_preserves_response(
+    "invalid CDN-Cache-Control directive",
+    cdn_cache_control_response(&["max-age="]),
+  );
+  assert_cdn_cache_control_helper_rejects_but_preserves_response(
+    "too many CDN-Cache-Control directives",
+    cdn_cache_control_response(&[&fixtures::cache_control::too_many_directives_value()]),
+  );
+  assert_cdn_cache_control_helper_rejects_but_preserves_response(
+    "oversized CDN-Cache-Control value",
+    cdn_cache_control_response(&[&fixtures::cache_control::oversized_value()]),
+  );
 }
 
 #[test]
