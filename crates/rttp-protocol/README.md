@@ -136,6 +136,18 @@ returns the stored key and `header_value()` emits it unchanged. This parser
 reports declared request metadata only; it does not retry requests, store
 keys, compare keys across requests, or apply application idempotency policy.
 
+## W3C Baggage
+
+`baggage` parses bounded W3C `baggage` request metadata. `Baggage` preserves
+wire order while validating HTTP token keys, baggage-octet values, optional
+properties, duplicate member keys, at most 180 members, at most 8192 combined
+bytes, and 4096-byte per-member bounds. Values and property values are treated
+as opaque application data and are not decoded or interpreted. Typed `Debug`
+redacts member and property values, and parse errors describe validation
+categories without echoing supplied values. These parsers report declared
+request metadata only; they do not store request context, select a tracing
+backend, or propagate baggage automatically.
+
 ## W3C Trace Context
 
 `trace_context` parses bounded W3C `traceparent` and `tracestate` request
@@ -795,6 +807,23 @@ formats a normalized header value. Each field value is limited to 64 KiB,
 parameter lists are limited to 256 strings, and extension members are limited
 to 64. The parser does not implement cache storage, cache-key matching, URL
 normalization, navigation behavior, request replay, or shared-cache policy.
+
+## Permissions-Policy
+
+`permissions_policy` parses bounded W3C Permissions Policy response metadata
+as a Structured Fields dictionary. Each field value is bounded to 64 KiB, the
+cumulative directive count across all supplied fields is bounded to 256, and
+each allowlist is bounded to 256 members. Feature names are opaque tokens and
+are not looked up against a browser feature list. Allowlists are the `*`
+token, the `self` token, quoted serialized HTTP(S) origins, or inner lists of
+`self` and quoted origins, including the empty inner list `()`. `*` is the
+whole allowlist and `()` disables the feature; mixing `*` with other members
+is rejected. Duplicate feature keys, including across fields, and duplicate
+allowlist members are errors. The HTML-attribute tokens `src` and `'none'`
+are rejected, and a well-formed `report-to` string parameter is accepted and
+dropped. The parser reports declared metadata only: it does not compare
+origins, resolve `self`, grant or deny browser permissions, or enforce origin
+policy.
 
 ## Pragma
 

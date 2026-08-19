@@ -2132,6 +2132,93 @@ fn x_frame_options_helpers_preserve_raw_metadata_and_report_parse_errors() {
 }
 
 #[test]
+fn permissions_policy_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Permissions-Policy", "geolocation=(self)")
+    .header("permissions-policy", "camera=()")
+    .with_permissions_policy(r#"geolocation=(self "https://maps.example.test"), camera=()"#)
+    .expect("Permissions-Policy should be accepted");
+
+  let policy = response
+    .permissions_policy()
+    .expect("Permissions-Policy should parse")
+    .expect("Permissions-Policy should be present");
+  assert_eq!(
+    r#"geolocation=(self "https://maps.example.test"), camera=()"#,
+    policy.header_value()
+  );
+  assert_eq!(2, policy.directives().len());
+  assert!(policy.directive("camera").unwrap().allowlist().is_empty());
+  assert_eq!(
+    vec![("Permissions-Policy", r#"geolocation=(self "https://maps.example.test"), camera=()"#)],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn permissions_policy_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::ok([]).header(
+    "Permissions-Policy",
+    r#"geolocation=(self "https://maps.example.test");report-to="rp""#,
+  );
+  let policy = raw
+    .permissions_policy()
+    .expect("raw Permissions-Policy should parse")
+    .expect("Permissions-Policy should be present");
+  assert_eq!(
+    r#"geolocation=(self "https://maps.example.test")"#,
+    policy.header_value()
+  );
+  assert_eq!(
+    Some(r#"geolocation=(self "https://maps.example.test");report-to="rp""#),
+    raw
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Permissions-Policy"))
+      .map(|header| header.value.as_str())
+  );
+
+  for value in [
+    "",
+    "geolocation=src",
+    "geolocation=('none')",
+    "geolocation=*;unknown=1",
+    "geolocation=(* \"https://example.test\")",
+    "geolocation=5",
+  ] {
+    let malformed = HttpResponse::ok([]).header("Permissions-Policy", value);
+    assert!(malformed.permissions_policy().is_err(), "should reject {value:?}");
+    assert!(
+      HttpResponse::ok([])
+        .with_permissions_policy(value)
+        .is_err(),
+      "should reject {value:?}"
+    );
+  }
+
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .permissions_policy()
+      .expect("absent Permissions-Policy should parse")
+  );
+
+  let duplicate = HttpResponse::ok([])
+    .header("Permissions-Policy", "geolocation=(self)")
+    .header("permissions-policy", "geolocation=(self)");
+  assert!(duplicate.permissions_policy().is_err());
+  assert!(HttpResponse::ok([])
+    .with_permissions_policy(
+      format!("geolocation=(\"{}\")", "https://example.test/".repeat(64 * 1024))
+    )
+    .is_err());
+}
+
+#[test]
 fn authentication_info_helpers_validate_replace_and_parse_response_metadata() {
   let response = HttpResponse::ok([])
     .header("Authentication-Info", "qop=auth")
@@ -2733,6 +2820,53 @@ fn request_trace_context_is_optional_bounded_and_preserves_invalid_headers() {
   )
   .expect("request should retain duplicate traceparent metadata");
   assert!(duplicate.traceparent().is_err());
+}
+
+#[test]
+fn request_baggage_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(None, absent.baggage().expect("missing baggage"));
+
+  let request = Request::from_raw_frame(
+    b"GET /baggage HTTP/1.1\r\nHost: example.test\r\nbaggage: tenant=acme;source=gateway\r\nbaggage: release=2026-08-19\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let baggage = request
+    .baggage()
+    .expect("baggage should parse")
+    .expect("baggage should be present");
+  assert_eq!(2, baggage.members().len());
+  assert_eq!("tenant", baggage.members()[0].key());
+  assert_eq!("acme", baggage.members()[0].value());
+  assert_eq!("source", baggage.members()[0].properties()[0].key());
+  assert_eq!("release", baggage.members()[1].key());
+  assert_eq!(
+    Some("tenant=acme;source=gateway"),
+    request.header("baggage")
+  );
+
+  let invalid = Request::from_raw_frame(
+    b"GET /baggage HTTP/1.1\r\nHost: example.test\r\nbaggage: tenant=secret,tenant=other\r\n\r\n",
+  )
+  .expect("request should retain invalid baggage metadata");
+  assert!(invalid.baggage().is_err());
+  assert_eq!(
+    Some("tenant=secret,tenant=other"),
+    invalid.header("baggage")
+  );
+
+  let oversized = Request::from_raw_frame(
+    format!(
+      "GET /baggage HTTP/1.1\r\nHost: example.test\r\nbaggage: k={}\r\n\r\n",
+      "v".repeat(8193)
+    )
+    .as_bytes(),
+  )
+  .expect("request should retain oversized baggage metadata");
+  assert!(oversized.baggage().is_err());
+  assert!(oversized.header("baggage").is_some());
 }
 
 #[test]
@@ -3514,6 +3648,36 @@ hello\r\n\
     assert!(trace_header_debug.contains("[REDACTED]"));
     assert!(!trace_header_debug.contains("4bf92f3577b34da6a3ce929d0e0e4736"));
     assert!(!trace_header_debug.contains("00f067aa0ba902b7"));
+
+    let baggage_raw = concat!(
+      "GET /baggage HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "baggage: tenant=acme-secret;source=gateway\r\n",
+      "\r\n"
+    );
+    let baggage_request =
+      Request::from_raw_frame(baggage_raw.as_bytes()).expect("baggage request should parse");
+    let baggage = baggage_request
+      .baggage()
+      .expect("baggage should parse")
+      .expect("baggage should be present");
+    assert_eq!("acme-secret", baggage.members()[0].value());
+    let baggage_debug = format!(
+      "{baggage_request:?} {:?} {:?}",
+      baggage,
+      baggage.members()[0]
+    );
+    assert!(!baggage_debug.contains("acme-secret"));
+    assert!(!baggage_debug.contains("gateway"));
+
+    let baggage_http_request =
+      HttpRequest::parse(baggage_raw.as_bytes()).expect("baggage HttpRequest should parse");
+    let baggage_http_request_debug = format!("{baggage_http_request:?}");
+    assert!(!baggage_http_request_debug.contains("acme-secret"));
+    assert!(!baggage_http_request_debug.contains("gateway"));
+    let baggage_header_debug = format!("{:?}", HttpHeader::new("baggage", "tenant=acme-secret"));
+    assert!(baggage_header_debug.contains("[REDACTED]"));
+    assert!(!baggage_header_debug.contains("acme-secret"));
 
     let response = HttpResponse::new(401, "Unauthorized")
       .header("WWW-Authenticate", "Broken")

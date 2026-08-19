@@ -2945,6 +2945,79 @@ fn sync_client_and_server_exchange_w3c_trace_context_metadata_without_policy() {
 }
 
 #[test]
+fn sync_client_and_server_exchange_w3c_baggage_metadata_without_policy() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind baggage server");
+  let addr = server.local_addr().expect("baggage server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let baggage = request
+          .baggage()
+          .expect("baggage should parse")
+          .expect("baggage should be present");
+        let observed = (
+          baggage
+            .members()
+            .iter()
+            .map(|member| {
+              (
+                member.key().to_string(),
+                member.value().to_string(),
+                member
+                  .properties()
+                  .iter()
+                  .map(|property| {
+                    (
+                      property.key().to_string(),
+                      property.value().map(str::to_string),
+                    )
+                  })
+                  .collect::<Vec<_>>(),
+              )
+            })
+            .collect::<Vec<_>>(),
+          request.header("baggage").map(str::to_string),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed baggage metadata");
+        HttpResponse::new(204, "No Content")
+      })
+      .expect("serve baggage request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/baggage"))
+    .baggage("tenant=acme;source=gateway,release=2026-08-19")
+    .expect("baggage should be accepted")
+    .emit()
+    .expect("baggage response should parse");
+
+  let (members, raw_baggage) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe baggage metadata");
+  assert_eq!(
+    vec![
+      (
+        "tenant".to_string(),
+        "acme".to_string(),
+        vec![("source".to_string(), Some("gateway".to_string()))]
+      ),
+      ("release".to_string(), "2026-08-19".to_string(), vec![])
+    ],
+    members
+  );
+  assert_eq!(
+    Some("tenant=acme;source=gateway,release=2026-08-19".to_string()),
+    raw_baggage
+  );
+  assert_eq!(204, response.code());
+  handle.join().expect("baggage server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_authentication_info_response_metadata_without_policy() {
   const AUTHENTICATION_INFO: &str =
     r#"nextnonce="n-2", qop=auth, rspauth="origin-rsp", cnonce="c-1", nc=00000001"#;

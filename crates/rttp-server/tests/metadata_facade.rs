@@ -6,25 +6,28 @@ use rttp_server::server::{
   HttpAccessControlRequestHeadersParseError, HttpAccessControlRequestMethod,
   HttpAccessControlRequestMethodParseError, HttpAccessControlRequestPrivateNetwork,
   HttpAccessControlRequestPrivateNetworkParseError, HttpAuthorization, HttpAuthorizationParseError,
-  HttpCacheStatus, HttpCacheStatusParseError, HttpCdnCacheControl, HttpConditionalMetadata,
-  HttpConnection, HttpConnectionParseError, HttpContentDisposition,
-  HttpContentDispositionParseError, HttpContentDpr, HttpContentDprParseError, HttpContentLength,
-  HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
+  HttpBaggage, HttpBaggageMember, HttpBaggageParseError, HttpBaggageProperty, HttpCacheStatus,
+  HttpCacheStatusParseError, HttpCdnCacheControl, HttpConditionalMetadata, HttpConnection,
+  HttpConnectionParseError, HttpContentDisposition, HttpContentDispositionParseError,
+  HttpContentDpr, HttpContentDprParseError, HttpContentLength, HttpContentLocation,
+  HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
   HttpContentSecurityPolicyReportOnly, HttpContentSecurityPolicyReportOnlyParseError,
   HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeprecation,
   HttpDeprecationParseError, HttpEntityTag, HttpExpectParseError, HttpExpectations, HttpHost,
   HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince,
   HttpIfModifiedSinceParseError, HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError,
   HttpKeepAlive, HttpMaxForwards, HttpMaxForwardsParseError, HttpMementoDatetime,
-  HttpMementoDatetimeParseError, HttpNoVarySearch, HttpNoVarySearchParams, HttpPragma,
-  HttpPragmaDirective, HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthorization,
-  HttpProxyStatus, HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptCharsets,
-  HttpRequestAcceptEncodings, HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSecGpc,
-  HttpSecGpcParseError, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
-  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpTraceParent,
-  HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError,
-  HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpMementoDatetimeParseError, HttpNoVarySearch, HttpNoVarySearchParams, HttpPermissionsPolicy,
+  HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
+  HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective,
+  HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus,
+  HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
+  HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSecGpc, HttpSecGpcParseError,
+  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpTraceParent, HttpTraceParentParseError, HttpTraceState,
+  HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
+  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
   HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpWantContentDigest,
   HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
@@ -176,6 +179,14 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let proxy_status_response = HttpResponse::ok("")
     .with_proxy_status("ExampleCDN; error=connection_timeout")
     .expect("Proxy-Status should be accepted");
+  let permissions_policy: HttpPermissionsPolicy =
+    HttpPermissionsPolicy::parse(r#"geolocation=(self "https://maps.example.test"), camera=()"#)
+      .expect("Permissions-Policy should parse");
+  let _: HttpPermissionsPolicyParseError =
+    HttpPermissionsPolicy::parse("geolocation=src").expect_err("src should be rejected");
+  let permissions_policy_response = HttpResponse::ok("")
+    .with_permissions_policy(r#"geolocation=(self "https://maps.example.test"), camera=()"#)
+    .expect("Permissions-Policy should be accepted");
   let fetch_site = SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
@@ -340,6 +351,25 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .members()[0]
       .identifier()
       .as_str()
+  );
+  let geolocation: &HttpPermissionsPolicyDirective =
+    permissions_policy.directive("geolocation").unwrap();
+  assert_eq!(geolocation.feature(), "geolocation");
+  let geolocation_allowlist: &HttpPermissionsPolicyAllowlist = geolocation.allowlist();
+  assert!(!geolocation_allowlist.is_all_origins());
+  let first_member: &HttpPermissionsPolicyAllowlistMember = &geolocation_allowlist.members()[0];
+  assert!(first_member.is_self());
+  assert_eq!(
+    permissions_policy.header_value(),
+    r#"geolocation=(self "https://maps.example.test"), camera=()"#
+  );
+  assert_eq!(
+    r#"geolocation=(self "https://maps.example.test"), camera=()"#,
+    permissions_policy_response
+      .permissions_policy()
+      .expect("Permissions-Policy should parse")
+      .expect("Permissions-Policy should be present")
+      .header_value()
   );
   assert_eq!(fetch_site.header_value(), "same-origin");
   assert_eq!(fetch_mode.header_value(), "navigate");
@@ -852,6 +882,45 @@ fn request_facade_parses_trace_context_metadata_without_policy() {
     HttpTraceState::parse("rojo=1,rojo=2");
   assert!(traceparent_error.is_err());
   assert!(tracestate_error.is_err());
+}
+
+#[test]
+fn request_facade_parses_baggage_metadata_without_policy() {
+  let request = HttpRequest::parse(
+    b"GET /baggage HTTP/1.1\r\nHost: example.test\r\nbaggage: tenant=acme;source=gateway,release=2026-08-19\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let baggage: HttpBaggage = request
+    .baggage()
+    .expect("baggage should parse")
+    .expect("baggage should be present");
+  let member: &HttpBaggageMember = &baggage.members()[0];
+  let property: &HttpBaggageProperty = &member.properties()[0];
+
+  assert_eq!("tenant", member.key());
+  assert_eq!("acme", member.value());
+  assert_eq!("source", property.key());
+  assert_eq!(Some("gateway"), property.value());
+  assert_eq!("release", baggage.members()[1].key());
+
+  let absent = HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(None, absent.baggage().expect("missing baggage"));
+
+  let malformed = HttpRequest::parse(
+    b"GET /baggage HTTP/1.1\r\nHost: example.test\r\nbaggage: tenant=secret,tenant=other\r\n\r\n",
+  )
+  .expect("malformed metadata should not reject raw request parsing");
+  assert!(malformed.baggage().is_err());
+  assert_eq!(
+    Some("tenant=secret,tenant=other"),
+    malformed.header("baggage")
+  );
+
+  let baggage_error: Result<HttpBaggage, HttpBaggageParseError> =
+    HttpBaggage::parse("tenant=1,tenant=2");
+  assert!(baggage_error.is_err());
 }
 
 #[test]

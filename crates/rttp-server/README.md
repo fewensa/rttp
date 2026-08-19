@@ -420,6 +420,25 @@ deprecated, retry requests, or select another endpoint.
 These helpers do not store responses, match cache keys, normalize URLs, replay
 requests, apply browser navigation behavior, or enforce shared-cache policy.
 
+## Permissions-Policy response metadata
+
+`HttpResponse::with_permissions_policy(value)` validates one W3C Permissions
+Policy Structured Fields dictionary and replaces any existing raw
+`Permissions-Policy` fields with one canonical value from the shared protocol
+parser. `HttpResponse::permissions_policy()` parses attached raw fields into
+`HttpPermissionsPolicy` metadata, returning `Ok(None)` when absent and parser
+errors without changing raw fields. Directives expose the feature token and
+allowlist: `*` as the whole allowlist, the `self` token, quoted serialized
+HTTP(S) origins, and inner lists including the empty `()`. Field values are
+bounded to 64 KiB, directives to 256 per header set, and allowlist members to
+256 per directive. Duplicate feature keys, duplicate allowlist members, the
+HTML-attribute tokens `src` and `'none'`, and unparsable input are rejected; a
+well-formed `report-to` parameter is accepted and dropped.
+
+These helpers only declare and parse metadata. RTTP does not grant or deny
+browser permissions, compare origins, resolve `self`, or enforce origin
+policy, and it does not send reports.
+
 ## Want-Content-Digest request metadata
 
 Handlers can call `Request::want_content_digest()` and
@@ -586,6 +605,21 @@ key/value accessors. Trace context propagation values are redacted from typed
 `Debug`. These helpers parse request metadata only; they do not create trace
 identifiers, decide sampling, select a tracing backend, or automatically
 propagate context.
+
+## W3C Baggage request metadata
+
+Handlers can call `Request::baggage()` and the matching `HttpRequest` helper
+to observe bounded W3C Baggage request metadata through the shared protocol
+`HttpBaggage` type. Absent fields return `Ok(None)`. Malformed, oversized,
+duplicate-key, or over-limit values return parser errors while
+`Request::header()` and `HttpRequest::header()` continue to expose the
+original raw fields.
+
+`HttpBaggage` preserves ordered members with key, value, and property
+accessors. Member and property values are redacted from typed `Debug`. These
+helpers parse request metadata only; they do not interpret application data,
+store request context, select a tracing backend, or automatically propagate
+baggage.
 
 ## Conditional HTTP-date request metadata
 

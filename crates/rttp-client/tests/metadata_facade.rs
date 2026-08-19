@@ -11,23 +11,25 @@ use rttp_client::response::{
   CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest,
   EntityTag, HttpClearSiteData, HttpContentLength, KeepAlive, LinkValues, Location,
   LocationParseError, MementoDatetime, MementoDatetimeParseError, Nel, NoVarySearch,
-  NoVarySearchParams, NoVarySearchParseError, Pragma, PragmaParseError, PreferenceApplied,
-  Priority, ProxyAuthenticate, ProxyAuthenticateParseError, ProxyAuthenticationInfo,
-  ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError, ReferrerPolicy,
-  ReferrerPolicyToken, ServerTiming, Signature, SignatureInput, SignatureInputParseError,
-  SignatureParseError, StrictTransportSecurity, StrictTransportSecurityParseError, Trailer,
-  TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError,
-  WantContentDigest, WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError,
-  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  NoVarySearchParams, NoVarySearchParseError, PermissionsPolicy, PermissionsPolicyParseError,
+  Pragma, PragmaParseError, PreferenceApplied, Priority, ProxyAuthenticate,
+  ProxyAuthenticateParseError, ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError,
+  ProxyStatus, ProxyStatusParseError, ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Signature,
+  SignatureInput, SignatureInputParseError, SignatureParseError, StrictTransportSecurity,
+  StrictTransportSecurityParseError, Trailer, TransferEncoding, TransferEncodingParseError,
+  Upgrade, UpgradeParseError, Vary, VaryParseError, WantContentDigest, WantReprDigest, Warning,
+  WwwAuthenticate, WwwAuthenticateParseError, XContentTypeOptions, XContentTypeOptionsParseError,
+  XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentDisposition, ContentDispositionParseError, ContentLocation,
   ContentLocationParseError, Deprecation, DeprecationParseError, ReprDigest,
 };
 use rttp_client::{
-  HttpClient, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecGpc, SecGpcParseError,
-  SecPurpose, TraceParent, TraceParentParseError, TraceState, TraceStateMember,
-  TraceStateParseError, UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
+  Baggage, BaggageMember, BaggageParseError, BaggageProperty, HttpClient, SecFetchDest,
+  SecFetchMode, SecFetchSite, SecFetchUser, SecGpc, SecGpcParseError, SecPurpose, TraceParent,
+  TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError,
+  UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
 };
 use rttp_protocol::expect::Expect;
 use rttp_test_support as support;
@@ -125,6 +127,11 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let x_frame_options = XFrameOptions::parse("deny").expect("X-Frame-Options should parse");
   let _: XFrameOptionsParseError = XFrameOptions::parse("ALLOW-FROM https://example.test")
     .expect_err("deprecated X-Frame-Options ALLOW-FROM should be rejected");
+  let permissions_policy =
+    PermissionsPolicy::parse(r#"geolocation=(self "https://maps.example.test"), camera=()"#)
+      .expect("Permissions-Policy should parse");
+  let _: PermissionsPolicyParseError =
+    PermissionsPolicy::parse("geolocation=src").expect_err("src should be rejected");
   let warning = Warning::parse(r#"110 - "Response is Stale""#).expect("Warning should parse");
   let nel =
     Nel::parse(r#"{"report_to":"network-errors","max_age":2592000}"#).expect("NEL should parse");
@@ -152,6 +159,11 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let sec_gpc = SecGpc::parse("1").expect("Sec-GPC should parse");
   let _: SecGpcParseError = SecGpc::parse("0").expect_err("invalid Sec-GPC should be rejected");
   let sec_purpose = SecPurpose::parse("prefetch, vendor-ext").expect("Sec-Purpose should parse");
+  let baggage = Baggage::parse("tenant=acme;source=gateway").expect("baggage should parse");
+  let _: BaggageParseError =
+    Baggage::parse("tenant=1,tenant=2").expect_err("duplicate baggage should be rejected");
+  let baggage_member: &BaggageMember = &baggage.members()[0];
+  let baggage_property: &BaggageProperty = &baggage_member.properties()[0];
   let traceparent = TraceParent::parse("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
     .expect("traceparent should parse");
   let _: TraceParentParseError =
@@ -269,6 +281,16 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(x_content_type_options.header_value(), "nosniff");
   assert_eq!(x_frame_options, XFrameOptions::Deny);
   assert_eq!(x_frame_options.header_value(), "DENY");
+  assert_eq!(
+    permissions_policy.header_value(),
+    r#"geolocation=(self "https://maps.example.test"), camera=()"#
+  );
+  assert_eq!(permissions_policy.directives().len(), 2);
+  assert!(permissions_policy
+    .directive("camera")
+    .unwrap()
+    .allowlist()
+    .is_empty());
   assert_eq!(warning.items()[0].code(), 110);
   assert_eq!(nel.max_age(), 2592000);
   assert_eq!(nel.report_to(), Some("network-errors"));
@@ -298,6 +320,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(sec_gpc.header_value(), "1");
   assert_eq!(sec_purpose.tokens(), ["prefetch", "vendor-ext"]);
   assert!(sec_purpose.contains_prefetch());
+  assert_eq!("tenant", baggage_member.key());
+  assert_eq!("source", baggage_property.key());
   assert_eq!("00", traceparent.version());
   assert_eq!("rojo", member.key());
   assert_eq!(upgrade_insecure_requests.header_value(), "1");
@@ -492,6 +516,50 @@ fn response_facade_parses_preference_applied_metadata() {
   assert_eq!(applied.preferences()[0].name(), "return");
   assert_eq!(applied.preferences()[0].value(), Some("minimal"));
   assert_eq!(applied.preferences()[0].parameters()[0].name(), "source");
+}
+
+#[test]
+fn response_facade_parses_permissions_policy_metadata() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Permissions-Policy: geolocation=(self \"https://maps.example.test\");report-to=\"rp\"\r\n",
+      "Permissions-Policy: camera=()\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let policy: PermissionsPolicy = response
+    .permissions_policy()
+    .expect("Permissions-Policy should parse")
+    .expect("Permissions-Policy should be present");
+
+  assert_eq!(policy.directives().len(), 2);
+  assert_eq!(
+    policy
+      .directive("geolocation")
+      .unwrap()
+      .allowlist()
+      .members()
+      .len(),
+    2
+  );
+  assert!(policy.directive("camera").unwrap().allowlist().is_empty());
+  assert_eq!(
+    policy.header_value(),
+    r#"geolocation=(self "https://maps.example.test"), camera=()"#
+  );
+  assert_eq!(
+    response.header_values("Permissions-Policy"),
+    [
+      &"geolocation=(self \"https://maps.example.test\");report-to=\"rp\"".to_string(),
+      &"camera=()".to_string()
+    ]
+  );
 }
 
 #[test]

@@ -14,6 +14,7 @@ use rttp_protocol::access_control_request_headers::AccessControlRequestHeaders;
 use rttp_protocol::access_control_request_method::AccessControlRequestMethod;
 use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
 use rttp_protocol::authorization::Authorization;
+use rttp_protocol::baggage::Baggage;
 use rttp_protocol::expect::Expect;
 use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
@@ -732,6 +733,18 @@ impl HttpClient {
     let tracestate = TraceState::parse(value.as_ref())
       .map_err(|error| error::builder_with_message(error.to_string()))?;
     Ok(self.header(Header::new("tracestate", tracestate.header_value())))
+  }
+
+  /// Set bounded W3C `baggage` request metadata.
+  ///
+  /// This validates member keys, values, properties, duplicate keys, ordering,
+  /// count, and size bounds before connecting and replaces any existing
+  /// `baggage` field. It does not interpret application data, store request
+  /// context, or automatically propagate metadata between requests.
+  pub fn baggage<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let baggage = Baggage::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("baggage", baggage.header_value())))
   }
 
   /// Append a validated `Accept-Encoding` coding with the default quality of

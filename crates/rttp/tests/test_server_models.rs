@@ -540,7 +540,8 @@ fn response_browser_policy_helpers_preserve_metadata_without_enforcing_it() {
       .permissions_policy()
       .expect("Permissions-Policy metadata should parse")
       .as_ref()
-      .map(HttpPermissionsPolicy::as_str)
+      .map(HttpPermissionsPolicy::header_value)
+      .as_deref()
   );
   assert_eq!(
     Some("strict-origin-when-cross-origin"),
@@ -1358,6 +1359,40 @@ fn request_trace_context_is_optional_and_rejects_invalid_metadata() {
   assert!(malformed.tracestate().is_err());
   assert_eq!(Some("invalid"), malformed.header("traceparent"));
   assert_eq!(Some("rojo=1,rojo=2"), malformed.header("tracestate"));
+}
+
+#[test]
+fn request_baggage_is_optional_and_rejects_invalid_metadata() {
+  let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(None, absent.baggage().expect("missing baggage"));
+
+  let request = parse_request(concat!(
+    "GET /baggage HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "baggage: tenant=acme;source=gateway,release=2026-08-19\r\n",
+    "\r\n"
+  ));
+  let baggage = request
+    .baggage()
+    .expect("baggage should parse")
+    .expect("baggage should be present");
+  assert_eq!("tenant", baggage.members()[0].key());
+  assert_eq!("acme", baggage.members()[0].value());
+  assert_eq!("source", baggage.members()[0].properties()[0].key());
+
+  assert!(rttp::server::HttpBaggage::parse("tenant=1,tenant=2").is_err());
+
+  let malformed = parse_request(concat!(
+    "GET /baggage HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "baggage: tenant=secret,tenant=other\r\n",
+    "\r\n"
+  ));
+  assert!(malformed.baggage().is_err());
+  assert_eq!(
+    Some("tenant=secret,tenant=other"),
+    malformed.header("baggage")
+  );
 }
 
 #[test]
