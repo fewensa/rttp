@@ -804,6 +804,26 @@ fn accept_charset_helpers_reject_invalid_members_before_connecting() {
 }
 
 #[test]
+fn raw_expect_extension_header_remains_an_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .post()
+      .url(format!("{}/upload", base_url))
+      .header(("Expect", "preview=sha256; chunk=1"))
+      .raw("request body")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("preview=sha256; chunk=1"),
+    header_value(&request, "Expect")
+  );
+  assert!(request.ends_with("request body"));
+}
+
+#[test]
 fn accept_encoding_helpers_reject_invalid_members_before_connecting() {
   let request = capture_optional_request(|base_url| {
     let mut client = client();
