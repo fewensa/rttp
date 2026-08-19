@@ -32,6 +32,9 @@ pub use rttp_protocol::dnt::{Dnt as HttpDnt, DntParseError as HttpDntParseError}
 pub use rttp_protocol::entity_tag::{
   EntityTag as HttpEntityTag, EntityTagParseError as HttpEntityTagParseError,
 };
+pub use rttp_protocol::expect::{
+  Expect as HttpExpectations, ExpectParseError as HttpExpectParseError,
+};
 pub use rttp_protocol::fetch_metadata::{
   FetchMetadataParseError as HttpFetchMetadataParseError, SecFetchDest, SecFetchMode, SecFetchSite,
   SecFetchUser, SecPurpose,
@@ -63,6 +66,7 @@ pub use rttp_protocol::prefer::{
 pub use rttp_protocol::save_data::{
   SaveData as HttpSaveData, SaveDataParseError as HttpSaveDataParseError,
 };
+pub use rttp_protocol::sec_gpc::{SecGpc as HttpSecGpc, SecGpcParseError as HttpSecGpcParseError};
 pub use rttp_protocol::signature::{
   Signature as HttpSignature, SignatureEntry as HttpSignatureEntry,
   SignatureParseError as HttpSignatureParseError,
@@ -111,103 +115,8 @@ pub(crate) const MAX_REQUEST_HEAD_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 pub(crate) const MAX_ACCEPT_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_ACCEPT_MEDIA_RANGES: usize = 256;
-const MAX_EXPECT_VALUE_BYTES: usize = 64 * 1024;
-const MAX_EXPECTATIONS: usize = 32;
 const MAX_CONDITIONAL_VALUE_BYTES: usize = 64 * 1024;
 const MAX_IF_NONE_MATCH_TAGS: usize = 32;
-
-/// Bounded `Expect` request metadata.
-///
-/// The standardized `100-continue` expectation is exposed separately from
-/// unsupported extension expectations so handlers can make their own policy.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HttpExpectations {
-  expects_continue: bool,
-  unsupported: Vec<String>,
-}
-
-impl HttpExpectations {
-  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpExpectParseError> {
-    Self::parse_values([value.as_ref()])
-  }
-
-  pub fn expects_continue(&self) -> bool {
-    self.expects_continue
-  }
-
-  pub fn unsupported(&self) -> &[String] {
-    &self.unsupported
-  }
-
-  fn parse_values<'a, I>(values: I) -> Result<Self, HttpExpectParseError>
-  where
-    I: IntoIterator<Item = &'a str>,
-  {
-    let mut expects_continue = false;
-    let mut unsupported = Vec::new();
-    let mut seen = Vec::<String>::new();
-
-    for value in values {
-      if value.len() > MAX_EXPECT_VALUE_BYTES {
-        return Err(HttpExpectParseError::new(
-          "Expect header value is too large",
-        ));
-      }
-      for member in value.split(',') {
-        let expectation = member.trim();
-        let name = expectation
-          .split(['=', ';'])
-          .next()
-          .unwrap_or_default()
-          .trim();
-        if !is_http_token(name) {
-          return Err(HttpExpectParseError::new("invalid Expect expectation"));
-        }
-        if seen.iter().any(|known| known.eq_ignore_ascii_case(name)) {
-          return Err(HttpExpectParseError::new("duplicate Expect expectation"));
-        }
-        if seen.len() >= MAX_EXPECTATIONS {
-          return Err(HttpExpectParseError::new("too many Expect expectations"));
-        }
-        seen.push(name.to_string());
-        if name.eq_ignore_ascii_case("100-continue") {
-          expects_continue = true;
-        } else {
-          unsupported.push(name.to_string());
-        }
-      }
-    }
-
-    if seen.is_empty() {
-      return Err(HttpExpectParseError::new("invalid Expect expectation"));
-    }
-    Ok(Self {
-      expects_continue,
-      unsupported,
-    })
-  }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HttpExpectParseError {
-  message: String,
-}
-
-impl HttpExpectParseError {
-  fn new(message: impl Into<String>) -> Self {
-    Self {
-      message: message.into(),
-    }
-  }
-}
-
-impl fmt::Display for HttpExpectParseError {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.write_str(&self.message)
-  }
-}
-
-impl Error for HttpExpectParseError {}
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct Request {
@@ -517,6 +426,16 @@ impl Request {
       return Ok(None);
     }
     HttpDnt::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Sec-GPC` request metadata without applying consent,
+  /// tracking, legal, or serving policy.
+  pub fn sec_gpc(&self) -> Result<Option<HttpSecGpc>, HttpSecGpcParseError> {
+    let values: Vec<&str> = self.headers_named("Sec-GPC").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecGpc::parse_values(values).map(Some)
   }
 
   /// Parses received `Upgrade-Insecure-Requests` request metadata without
@@ -2356,6 +2275,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpDnt::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Sec-GPC` request metadata without applying consent,
+  /// tracking, legal, or serving policy.
+  pub fn sec_gpc(&self) -> Result<Option<HttpSecGpc>, HttpSecGpcParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-GPC"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecGpc::parse_values(values).map(Some)
   }
 
   /// Parses received `Upgrade-Insecure-Requests` request metadata without

@@ -603,19 +603,21 @@ representation selection, retries, redirects, caching, or server policy from
 
 ### Bounded `Expect: 100-continue` request metadata
 
-`HttpClient::expect_continue()` emits the validated standardized
-`Expect: 100-continue` field. It is metadata only: the client does not delay
-the request body or wait for an interim response. `Response::informational_responses()`
-continues to expose a received `100 Continue` alongside other bounded
-informational responses.
+`HttpClient::expect_continue()` formats the protocol-owned `Expect` singleton
+as `Expect: 100-continue`. It is metadata only: the client does not delay
+the request body or wait for an interim response. Raw
+`header(("Expect", value))` remains available for extension values outside
+the typed helper. `Response::informational_responses()` continues to expose a
+received `100 Continue` alongside other bounded informational responses.
 
 On the server, `Request::expectations()` and `HttpRequest::expectations()`
-return bounded `HttpExpectations` metadata. `expects_continue()` identifies
-the standardized expectation, while `unsupported()` preserves extension names
-for handler policy. Absent fields return `Ok(None)`; malformed, duplicate,
-oversized, or excessive values return `HttpExpectParseError` without changing
-the raw request. The server does not automatically send `100 Continue` or
-reject unsupported expectations.
+delegate to the shared protocol type and return bounded `HttpExpectations`
+aliases. `expects_continue()` identifies the standardized expectation, while
+`unsupported()` preserves extension names for handler policy. Absent fields
+return `Ok(None)`; malformed, duplicate, oversized, or excessive values
+return `HttpExpectParseError` without changing the raw request. The server
+does not automatically send `100 Continue` or reject unsupported
+expectations.
 
 ### Bounded Authorization request metadata
 
@@ -965,6 +967,18 @@ response field, or enforce tracking policy. Related privacy-preference headers
 should reuse this same bounded singleton contract rather than inventing policy
 behavior.
 
+### Bounded Sec-GPC request metadata
+
+`HttpClient::sec_gpc()` emits `Sec-GPC: 1`. On the server,
+`Request::sec_gpc()` and `HttpRequest::sec_gpc()` parse the same bounded
+singleton `1` signal through the shared protocol representation, returning
+`Ok(None)` when the field is absent and a parser error for malformed,
+oversized, duplicate, or control-byte values while leaving the raw `Sec-GPC`
+field available.
+
+These helpers only declare or parse request metadata. RTTP does not infer or
+enforce consent, tracking, legal, or serving policy.
+
 ### Bounded Upgrade-Insecure-Requests request metadata
 
 `HttpClient::upgrade_insecure_requests()` emits `Upgrade-Insecure-Requests: 1`.
@@ -1078,10 +1092,11 @@ gain additional HTTP/2 header-block handling.
 | area | tested coverage | limits |
 |------|-----------------|--------|
 | HTTP/1.1 response parsing | `Content-Length`, chunked transfer coding, chunk extensions, informational responses, `Response::is_informational`, `is_redirection`, `is_error`, bodyless `204`/`304`, duplicate `Set-Cookie`, and framing ambiguity rejection | Not a complete RFC conformance suite |
-| HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and explicit `Expect: 100-continue` metadata | Expect metadata does not gate body transmission; SOCKS handshakes are delegated to the `socks` crate |
+| HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and explicit `Expect: 100-continue` metadata through the shared protocol type | Expect metadata does not gate body transmission; raw `header(("Expect", value))` remains an escape hatch; SOCKS handshakes are delegated to the `socks` crate |
 | Fetch Metadata | Client `sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, `sec_fetch_user`, and `sec_purpose` emit bounded `Sec-Fetch-*`/`Sec-Purpose` fields; server `Request` helpers parse typed received values while preserving raw headers on errors | No browser security policy, request blocking, origin validation, navigation policy, automatic header generation, prefetch execution, or cache behavior |
 | Save-Data | Client `save_data` emits bounded `Save-Data: on` request metadata; server `Request::save_data()` and `HttpRequest::save_data()` parse typed received values while preserving raw headers on errors | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |
 | DNT | Client `dnt` emits bounded `DNT: 0`/`DNT: 1` request metadata through the shared protocol `Dnt` type and rejects invalid input before connecting | No tracking enforcement, cookie changes, `Referer` stripping, analytics or advertising behavior, `Tk` emission, retries, or privacy-preference policy |
+| Sec-GPC | Client `sec_gpc` emits bounded `Sec-GPC: 1` request metadata; server `Request::sec_gpc()` and `HttpRequest::sec_gpc()` parse typed received values while preserving raw headers on errors | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
 | Upgrade-Insecure-Requests | Client `upgrade_insecure_requests` emits bounded singleton `Upgrade-Insecure-Requests: 1` request metadata; server `Request::upgrade_insecure_requests()` and `HttpRequest::upgrade_insecure_requests()` parse typed received values while preserving raw headers on errors | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Idempotency-Key | Client `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field; server `Request::idempotency_key()` and `HttpRequest::idempotency_key()` parse typed received values while preserving raw headers on errors, and the key is redacted from typed debug output | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | Accept-Language | Client `accept_language` emits bounded `Accept-Language` request metadata through the protocol `AcceptLanguage` type; server `Request::accept_language()` and `HttpRequest::accept_language()` parse typed received values as `HttpAcceptLanguages` while preserving raw headers on errors | No locale matching, fallback selection, translation lookup, routing, or automatic response choice |
@@ -2008,7 +2023,7 @@ TLS or async accept loops.
 
 | area | tested coverage | limits |
 |------|-----------------|--------|
-| HTTP/1.1 request parsing | Required `Host` validation, origin-form, absolute-form, asterisk-form `OPTIONS`, authority-form `CONNECT`, fixed and chunked bodies, chunk extensions, `Expect: 100-continue`, and obsolete line folding rejection | Intended for local tests and simple embedded use, not full RFC coverage |
+| HTTP/1.1 request parsing | Required `Host` validation, origin-form, absolute-form, asterisk-form `OPTIONS`, authority-form `CONNECT`, fixed and chunked bodies, chunk extensions, protocol-owned `Expect` metadata including `100-continue`, and obsolete line folding rejection | Expect metadata does not send `100 Continue` or reject unsupported extensions; intended for local tests and simple embedded use, not full RFC coverage |
 | HTTP/1.1 connection handling | Bounded sequential `serve_requests`, keep-alive and close behavior for HTTP/1.1 and HTTP/1.0, pipelined request boundaries, malformed request rejection before handler dispatch | Blocking listener only; no async accept loop |
 | HTTP/1.1 response framing | Automatic `Content-Length`, explicit chunked responses, bodyless `HEAD`, `101`, `204`, and `304`, response trailers after the terminating chunk | No server TLS |
 | Byte ranges | `HttpByteRange` parses one `bytes` range, `Request::evaluate_if_range` gates it with caller-provided strong ETag or exact HTTP-date metadata, `HttpResponse::partial_content`/`range_not_satisfiable` serialize `206`/`416` with `Content-Range`, and `HttpAcceptRanges` plus `HttpResponse::with_accept_ranges`/`with_accept_ranges_none`/`accept_ranges` declare and parse bounded `Accept-Ranges` metadata while preserving raw headers | No Range request generation, multipart range serialization, partial response engine, automatic retry/replay, redirect behavior, cache storage or policy, filesystem serving, MIME detection, automatic cache validation, automatic static-file policy, automatic byte serving, content slicing, download resume, or status-policy behavior |
@@ -2019,6 +2034,7 @@ TLS or async accept loops.
 | Fetch Metadata | `Request::sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, `sec_fetch_user`, and `sec_purpose` parse bounded typed `Sec-Fetch-*`/`Sec-Purpose` request fields and preserve raw values on errors | No browser security policy, request blocking, origin validation, navigation policy, automatic header generation, prefetch execution, or cache behavior |
 | Save-Data | `Request::save_data` and `HttpRequest::save_data` parse bounded singleton `Save-Data` `on`-token metadata and preserve raw values on errors | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |
 | DNT | `Request::dnt` and `HttpRequest::dnt` parse bounded singleton `DNT` `0`/`1` preference metadata through `HttpDnt` and preserve raw values on errors | No tracking enforcement, cookie changes, `Referer` stripping, analytics or advertising behavior, `Tk` synthesis, retries, or privacy-preference policy |
+| Sec-GPC | `Request::sec_gpc` and `HttpRequest::sec_gpc` parse bounded singleton `Sec-GPC` `1`-signal metadata and preserve raw values on errors | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
 | Upgrade-Insecure-Requests | `Request::upgrade_insecure_requests` and `HttpRequest::upgrade_insecure_requests` parse bounded singleton `Upgrade-Insecure-Requests` `1`-token metadata and preserve raw values on errors | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Idempotency-Key | `Request::idempotency_key` and `HttpRequest::idempotency_key` parse bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, preserve raw values on errors, and redact the key from typed debug output | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | Accept-Language | `HttpAcceptLanguages`, `Request::accept_language`, and `HttpRequest::accept_language` parse bounded ordered `Accept-Language` ranges and q-values through the protocol `AcceptLanguage` type and preserve raw values on errors | No locale matching, fallback selection, translation lookup, routing, or automatic response choice |

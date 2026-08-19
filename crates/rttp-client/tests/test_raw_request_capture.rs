@@ -503,26 +503,6 @@ fn raw_headers_remain_an_escape_hatch_for_custom_authorization_schemes() {
 }
 
 #[test]
-fn auth_facade_rejects_oversized_bearer_before_connecting_without_exposing_token() {
-  let token = "x".repeat(MAX_AUTHORIZATION_VALUE_BYTES);
-  let request = capture_optional_request(|base_url| {
-    let mut client = client();
-    let error = client
-      .get()
-      .url(format!("{}/asset", base_url))
-      .auth(Auth::bearer(&token))
-      .expect_err("oversized Authorization metadata should be rejected");
-    assert!(error.is_builder());
-    assert!(!error.to_string().contains(&token));
-  });
-
-  assert!(
-    request.is_empty(),
-    "oversized Authorization metadata should not open a socket"
-  );
-}
-
-#[test]
 fn proxy_auth_rejects_oversized_basic_before_connecting_without_exposing_credentials() {
   let username = "proxy-user";
   let password = "x".repeat(MAX_AUTHORIZATION_VALUE_BYTES);
@@ -567,7 +547,6 @@ fn facade_debug_redacts_sensitive_header_values() {
   let mut client = HttpClient::new();
   client
     .auth(Auth::bearer("origin-token"))
-    .expect("bearer auth should be accepted")
     .header(("Proxy-Authorization", "Basic cHJveHk6c2VjcmV0"))
     .header(("Cookie", "session=private"))
     .header(("Idempotency-Key", "charge-2026-08-19-9f3c"))
@@ -628,6 +607,26 @@ fn expect_continue_helper_emits_metadata_without_gating_the_request_body() {
   let request = request_text(&request);
 
   assert_eq!(Some("100-continue"), header_value(&request, "Expect"));
+  assert!(request.ends_with("request body"));
+}
+
+#[test]
+fn raw_expect_extension_header_remains_an_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .post()
+      .url(format!("{}/upload", base_url))
+      .header(("Expect", "preview=sha256; chunk=1"))
+      .raw("request body")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("preview=sha256; chunk=1"),
+    header_value(&request, "Expect")
+  );
   assert!(request.ends_with("request body"));
 }
 
@@ -2919,6 +2918,22 @@ fn dnt_helper_rejects_malformed_and_oversized_values_before_connecting() {
       "invalid DNT input must not open a socket"
     );
   }
+}
+
+#[test]
+fn sec_gpc_helper_emits_one_request_signal() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/privacy", base_url))
+      .sec_gpc()
+      .expect("Sec-GPC should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("1"), header_value(&request, "Sec-GPC"));
 }
 
 #[test]

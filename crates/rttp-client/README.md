@@ -600,6 +600,14 @@ The helpers emit one comma-separated `Accept` field and do not choose a
 response representation. `header(("Accept", value))` remains available for
 media ranges or extensions outside this bounded helper API.
 
+## Bounded Expect request metadata
+
+`rttp-protocol` owns the shared `Expect` primitive. `HttpClient::expect_continue()`
+formats that type's standardized singleton as `Expect: 100-continue`. It is
+metadata only: the client does not delay the request body or wait for an
+interim response. Raw `header(("Expect", value))` remains available for
+extension values outside the typed helper.
+
 ## Bounded Authorization request metadata
 
 `HttpClient::authorization(scheme, credentials)` emits one `Authorization`
@@ -756,6 +764,15 @@ This helper only declares request metadata. RTTP does not disable cookies,
 strip `Referer`, change analytics or advertising behavior, or enforce tracking
 policy. Callers that need values outside the helper can retain raw-header
 control with `header(("DNT", "..."))`.
+
+## Bounded Sec-GPC request metadata
+
+`HttpClient::sec_gpc()` emits `Sec-GPC: 1` through the shared protocol
+`SecGpc` representation.
+
+This helper only declares request metadata. RTTP does not infer or enforce
+consent, tracking, legal, or serving policy. Callers that need values outside
+the helper can retain raw-header control with `header(("Sec-GPC", "..."))`.
 
 ## Bounded Upgrade-Insecure-Requests request metadata
 
@@ -930,10 +947,11 @@ header-block model.
 | area | tested coverage | limits |
 |------|-----------------|--------|
 | HTTP/1.1 response parsing | `Content-Length`, chunked transfer coding, chunk extensions, informational responses, bodyless `204`/`304`, duplicate `Set-Cookie`, and framing ambiguity rejection | Not a complete RFC conformance suite |
-| HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and `Expect: 100-continue` | SOCKS handshakes are delegated to the `socks` crate |
+| HTTP/1.1 request emission | Origin-form requests, absolute-form proxy requests, `CONNECT`, `HEAD`, fixed bodies, streaming chunked uploads, and explicit `Expect: 100-continue` metadata through the shared protocol type | Expect metadata does not gate body transmission; raw `header(("Expect", value))` remains an escape hatch; SOCKS handshakes are delegated to the `socks` crate |
 | Fetch Metadata | `sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, `sec_fetch_user`, and `sec_purpose` emit bounded `Sec-Fetch-*`/`Sec-Purpose` request metadata | No browser security policy, automatic header generation, origin validation, navigation policy, request blocking, prefetch execution, or cache behavior |
 | Save-Data | `save_data` emits bounded `Save-Data: on` request metadata | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |
 | DNT | `dnt` emits bounded `DNT: 0`/`DNT: 1` request metadata through the shared protocol `Dnt` type and rejects malformed or oversized input before connecting | No tracking enforcement, cookie changes, `Referer` stripping, analytics or advertising behavior, `Tk` emission, retries, or privacy-preference policy |
+| Sec-GPC | `sec_gpc` emits bounded `Sec-GPC: 1` request metadata through the shared protocol type | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
 | Upgrade-Insecure-Requests | `upgrade_insecure_requests` emits bounded singleton `Upgrade-Insecure-Requests: 1` request metadata | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Max-Forwards | `max_forwards` emits bounded singleton `Max-Forwards` request metadata through the shared protocol type | No hop decrement, proxy routing, TRACE/OPTIONS selection, retry, or forwarding policy |
 | Idempotency-Key | `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |

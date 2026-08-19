@@ -24,6 +24,7 @@ use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::deprecation::Deprecation;
 use rttp_protocol::dnt::Dnt;
 use rttp_protocol::entity_tag::{EntityTag, IfMatch};
+use rttp_protocol::expect::Expect;
 use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
@@ -46,6 +47,7 @@ use rttp_protocol::proxy_status::{ProxyStatus, ProxyStatusParseError};
 use rttp_protocol::referer::Referer;
 use rttp_protocol::referrer_policy::{ReferrerPolicy, ReferrerPolicyToken};
 use rttp_protocol::save_data::SaveData;
+use rttp_protocol::sec_gpc::SecGpc;
 use rttp_protocol::signature::{Signature, SignatureParseError};
 use rttp_protocol::signature_input::{SignatureInput, SignatureInputParseError};
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
@@ -76,10 +78,12 @@ fn protocol_exports_representative_bounded_metadata_types() {
     .expect("Access-Control-Request-Private-Network should parse");
   let save_data = SaveData::parse("on").expect("Save-Data should parse");
   let dnt = Dnt::parse("1").expect("DNT should parse");
+  let sec_gpc = SecGpc::parse("1").expect("Sec-GPC should parse");
   let upgrade_insecure_requests =
     UpgradeInsecureRequests::parse("1").expect("Upgrade-Insecure-Requests should parse");
   let critical_ch = CriticalCh::parse("Sec-CH-UA").expect("Critical-CH should parse");
   let entity_tag = EntityTag::parse("\"revision-42\"").expect("entity tag should parse");
+  let expect = Expect::parse("100-continue, preview").expect("Expect should parse");
   let if_match = IfMatch::parse("\"revision-42\"").expect("If-Match should parse");
   let fetch_site = SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
@@ -189,9 +193,14 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(request_private_network.header_value(), "true");
   assert_eq!(save_data.header_value(), "on");
   assert_eq!(dnt.header_value(), "1");
+  assert_eq!(sec_gpc.header_value(), "1");
   assert_eq!(upgrade_insecure_requests.header_value(), "1");
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
   assert_eq!(entity_tag.opaque_tag(), "revision-42");
+  assert!(expect.expects_continue());
+  assert_eq!(["preview"], expect.unsupported());
+  assert_eq!(expect.header_value(), "100-continue, preview");
+  assert_eq!(Expect::expect_continue().header_value(), "100-continue");
   assert_eq!(
     if_match.entity_tags()[0].header_value(),
     entity_tag.header_value()

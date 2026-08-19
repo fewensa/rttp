@@ -442,6 +442,34 @@ These helpers parse request metadata only. They do not disable cookies, strip
 `Referer`, change analytics or advertising behavior, synthesize a `Tk`
 response field, or enforce tracking policy.
 
+## Expect request metadata
+
+Handlers can call `Request::expectations()` and `HttpRequest::expectations()`
+to observe bounded typed `Expect` request metadata through the shared
+protocol type, re-exported as `HttpExpectations`. Absent fields return
+`Ok(None)`. `expects_continue()` identifies the standardized `100-continue`
+expectation, while `unsupported()` preserves well-formed extension names for
+handler policy. Malformed, duplicate, oversized, or excessive values return
+`HttpExpectParseError` while `Request::header()` and `HttpRequest::header()`
+continue to expose the original raw field.
+
+These helpers parse request metadata only. They do not send `100 Continue`,
+wait for an interim response, reject unsupported extensions, or change body
+framing.
+
+## Sec-GPC request metadata
+
+Handlers can call `Request::sec_gpc()` and `HttpRequest::sec_gpc()` to observe
+bounded typed `Sec-GPC` request metadata through the shared protocol
+`HttpSecGpc` representation. Absent fields return `Ok(None)`. The recognized
+value is the case-sensitive `1` signal with optional surrounding SP or HTAB.
+Malformed, oversized, duplicate, or control-byte values return a parser error
+while `Request::header()` and `HttpRequest::header()` continue to expose the
+original raw field.
+
+These helpers parse request metadata only. They do not infer or enforce
+consent, tracking, legal, or serving policy.
+
 ## Upgrade-Insecure-Requests request metadata
 
 Handlers can call `Request::upgrade_insecure_requests()` and

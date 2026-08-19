@@ -1714,6 +1714,12 @@ fn request_expectations_reject_duplicate_and_oversized_values() {
   ));
   assert!(duplicate.expectations().is_err());
 
+  let malformed = parse_request(concat!(
+    "POST / HTTP/1.1\r\nHost: example.test\r\n",
+    "Expect: not a token\r\n\r\n"
+  ));
+  assert!(malformed.expectations().is_err());
+
   assert!(HttpExpectations::parse("a".repeat(64 * 1024 + 1)).is_err());
 }
 

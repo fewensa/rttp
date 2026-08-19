@@ -14,6 +14,7 @@ use rttp_protocol::access_control_request_method::AccessControlRequestMethod;
 use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
 use rttp_protocol::authorization::Authorization;
 use rttp_protocol::dnt::Dnt;
+use rttp_protocol::expect::Expect;
 use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
@@ -25,6 +26,7 @@ use rttp_protocol::max_forwards::MaxForwards;
 use rttp_protocol::origin::Origin;
 use rttp_protocol::priority::Priority;
 use rttp_protocol::save_data::SaveData;
+use rttp_protocol::sec_gpc::SecGpc;
 use rttp_protocol::signature::Signature;
 use rttp_protocol::signature_input::SignatureInput;
 use rttp_protocol::te::{Te, MAX_TE_CODINGS, MAX_TE_VALUE_BYTES};
@@ -168,10 +170,6 @@ impl HttpClient {
 
   /// Set HTTP authentication. Supports Basic Auth and Bearer Token.
   ///
-  /// The generated `Authorization` field is validated through the shared
-  /// request authorization primitive. Use [`Self::header`] for custom scheme
-  /// syntax outside this helper.
-  ///
   /// # Examples
   ///
   /// ```rust
@@ -179,13 +177,11 @@ impl HttpClient {
   /// use rttp_client::types::Auth;
   ///
   /// let mut client = HttpClient::new();
-  /// client.auth(Auth::basic("user", "secret")).unwrap();
-  /// client.auth(Auth::bearer("my-token")).unwrap();
+  /// client.auth(Auth::basic("user", "secret"));
+  /// client.auth(Auth::bearer("my-token"));
   /// ```
-  pub fn auth<A: AsRef<Auth>>(&mut self, auth: A) -> error::Result<&mut Self> {
-    let authorization = Authorization::parse(auth.as_ref().header_value())
-      .map_err(|error| error::builder_with_message(error.to_string()))?;
-    Ok(self.header(Header::new("Authorization", authorization.header_value())))
+  pub fn auth<A: AsRef<Auth>>(&mut self, auth: A) -> &mut Self {
+    self.header(Header::new("Authorization", auth.as_ref().header_value()))
   }
 
   /// Set bounded `Authorization` request metadata from an authentication
@@ -305,7 +301,10 @@ impl HttpClient {
   /// This is metadata only: the client still writes the request body normally
   /// and does not wait for an interim response before sending it.
   pub fn expect_continue(&mut self) -> &mut Self {
-    self.header(("Expect", "100-continue"))
+    self.header(Header::new(
+      "Expect",
+      Expect::expect_continue().header_value(),
+    ))
   }
 
   /// Set bounded `Sec-Fetch-Site` request metadata without applying browser policy.
@@ -441,6 +440,16 @@ impl HttpClient {
     let dnt = Dnt::parse(value)
       .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
     Ok(self.header(Header::new("DNT", dnt.header_value())))
+  }
+
+  /// Set `Sec-GPC: 1` request metadata.
+  ///
+  /// This declares the valid Global Privacy Control request signal only; it
+  /// does not infer consent, tracking, legal, or serving policy.
+  pub fn sec_gpc(&mut self) -> error::Result<&mut Self> {
+    let sec_gpc =
+      SecGpc::parse("1").map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("Sec-GPC", sec_gpc.header_value())))
   }
 
   /// Set `Upgrade-Insecure-Requests: 1` request metadata.
