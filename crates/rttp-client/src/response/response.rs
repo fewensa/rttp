@@ -8,13 +8,19 @@ use url::Url;
 use crate::error;
 use crate::response::raw_response::RawResponse;
 use crate::response::AltSvc;
+use crate::response::Connection;
+use crate::response::ContentDigest;
 use crate::response::Digest;
 use crate::response::Nel;
+use crate::response::NoVarySearch;
 use crate::response::Priority;
 use crate::response::ProxyAuthenticationInfo;
 use crate::response::ReprDigest;
 use crate::response::ServerTiming;
+use crate::response::Signature;
+use crate::response::SignatureInput;
 use crate::response::Trailer;
+use crate::response::TransferEncoding;
 use crate::response::Warning;
 use crate::response::WwwAuthenticate;
 use crate::types::{Cookie, Header, RoUrl, StatusCode};
@@ -23,28 +29,32 @@ use rttp_protocol::access_control_allow_methods::AccessControlAllowMethods;
 use rttp_protocol::access_control_allow_origin::AccessControlAllowOrigin;
 use rttp_protocol::access_control_expose_headers::AccessControlExposeHeaders;
 use rttp_protocol::access_control_max_age::AccessControlMaxAge;
+use rttp_protocol::allow as protocol_allow;
 use rttp_protocol::clear_site_data::ClearSiteData;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
+use rttp_protocol::content_location::ContentLocation;
 use rttp_protocol::cookie::HttpSetCookies;
 use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
+use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedderPolicyReportOnly;
 use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::cross_origin_resource_policy::CrossOriginResourcePolicy;
+use rttp_protocol::location::Location;
 use rttp_protocol::prefer::PreferenceApplied;
 use rttp_protocol::referrer_policy::ReferrerPolicy;
+use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::sunset::parse_sunset_values;
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
+use rttp_protocol::vary::Vary;
 
 const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
-const MAX_ALLOW_VALUE_BYTES: usize = 64 * 1024;
-const MAX_ALLOW_METHODS: usize = 256;
 const MAX_ACCEPT_RANGES_VALUE_BYTES: usize = 64 * 1024;
 const MAX_ACCEPT_RANGE_UNITS: usize = 256;
 const MAX_ACCEPT_MEDIA_TYPES: usize = 256;
+const MAX_DATE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_RETRY_AFTER_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_TYPE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_TYPE_PARAMETERS: usize = 256;
-const MAX_CONTENT_LOCATION_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_DISPOSITION_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_DISPOSITION_PARAMETER_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_DISPOSITION_PARAMETERS: usize = 256;
@@ -52,8 +62,6 @@ const MAX_CONTENT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_ENCODINGS: usize = 256;
 const MAX_CONTENT_LANGUAGE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_LANGUAGE_TAGS: usize = 256;
-const MAX_VARY_VALUE_BYTES: usize = 64 * 1024;
-const MAX_VARY_FIELD_NAMES: usize = 256;
 const MAX_LINK_VALUE_BYTES: usize = 64 * 1024;
 const MAX_LINK_VALUES: usize = 256;
 const MAX_LINK_PARAMETERS: usize = 256;
@@ -293,8 +301,15 @@ impl Response {
     self.raw.binary_get()
   }
 
-  pub fn location(&self) -> Option<&String> {
-    self.header_value("location")
+  pub fn location(&self) -> error::Result<Option<Location>> {
+    let values = self.header_values("location");
+    match values.as_slice() {
+      [] => Ok(None),
+      [value] => Location::parse(value)
+        .map(Some)
+        .map_err(|parse_error| error::bad_response(parse_error.to_string())),
+      _ => Err(error::bad_response("Duplicate Location header values")),
+    }
   }
 
   pub fn etag(&self) -> Option<&String> {
@@ -303,6 +318,40 @@ impl Response {
 
   pub fn last_modified(&self) -> Option<&String> {
     self.header_value("last-modified")
+  }
+
+  /// Parses the response `Last-Modified` field as an HTTP-date.
+  ///
+  /// Returns `Ok(None)` when the header is absent, `Ok(Some(SystemTime))` for
+  /// a valid HTTP-date singleton, and an error for malformed or duplicate
+  /// values. This exposes metadata only; it does not apply cache policy or
+  /// trigger revalidation, and the raw field stays available through
+  /// `last_modified()` and `header_value()`.
+  pub fn last_modified_date(&self) -> error::Result<Option<SystemTime>> {
+    let values = self.header_values("last-modified");
+    match values.as_slice() {
+      [] => Ok(None),
+      [value] => parse_http_date(value)
+        .map(Some)
+        .map_err(|_| error::bad_response("Invalid Last-Modified HTTP-date")),
+      _ => Err(error::bad_response("Duplicate Last-Modified header values")),
+    }
+  }
+
+  pub fn date(&self) -> error::Result<Option<SystemTime>> {
+    let values = self.header_values("date");
+    match values.as_slice() {
+      [] => Ok(None),
+      [value] => {
+        if value.len() > MAX_DATE_VALUE_BYTES {
+          return Err(error::bad_response("Date header value is too large"));
+        }
+        parse_http_date(value)
+          .map(Some)
+          .map_err(|_| error::bad_response("Invalid Date HTTP-date"))
+      }
+      _ => Err(error::bad_response("Duplicate Date header values")),
+    }
   }
 
   pub fn age(&self) -> error::Result<Option<u64>> {
@@ -492,6 +541,17 @@ impl Response {
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
+  /// Parses bounded `Strict-Transport-Security` response metadata without applying HSTS policy.
+  pub fn strict_transport_security(&self) -> error::Result<Option<StrictTransportSecurity>> {
+    let values = self.header_values("strict-transport-security");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    StrictTransportSecurity::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
   pub fn content_range(&self) -> Option<ContentRange> {
     self
       .header_value("content-range")
@@ -509,13 +569,12 @@ impl Response {
 
   pub fn content_location(&self) -> error::Result<Option<ContentLocation>> {
     let values = self.header_values("content-location");
-    match values.as_slice() {
-      [] => Ok(None),
-      [value] => ContentLocation::parse(value).map(Some),
-      _ => Err(error::bad_response(
-        "Duplicate Content-Location header values",
-      )),
+    if values.is_empty() {
+      return Ok(None);
     }
+    ContentLocation::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   pub fn content_disposition(&self) -> error::Result<Option<ContentDisposition>> {
@@ -566,6 +625,30 @@ impl Response {
     ContentEncoding::parse_values(values.into_iter().map(String::as_str)).map(Some)
   }
 
+  /// Parses retained HTTP/1 `Connection` header metadata without changing
+  /// keep-alive, hop-by-hop stripping, or HTTP/2 rejection.
+  pub fn connection(&self) -> error::Result<Option<Connection>> {
+    let values = self.header_values("connection");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Connection::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses retained `Transfer-Encoding` framing metadata without changing
+  /// HTTP/1 body framing or HTTP/2 decode.
+  pub fn transfer_encoding(&self) -> error::Result<Option<TransferEncoding>> {
+    let values = self.header_values("transfer-encoding");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    TransferEncoding::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
   /// Parses all `WWW-Authenticate` fields as bounded authentication challenge metadata.
   pub fn www_authenticate(&self) -> error::Result<Option<WwwAuthenticate>> {
     let values = self.header_values("www-authenticate");
@@ -594,9 +677,39 @@ impl Response {
     self.digest_field("content-digest")
   }
 
+  /// Parses all `Content-Digest` fields as bounded response metadata without
+  /// verifying hashes or selecting an algorithm.
+  pub fn content_digest(&self) -> error::Result<Option<ContentDigest>> {
+    self.digest_field("content-digest")
+  }
+
   /// Parses all `Repr-Digest` fields as bounded response metadata.
   pub fn repr_digest(&self) -> error::Result<Option<ReprDigest>> {
     self.digest_field("repr-digest")
+  }
+
+  /// Parses all `Signature` fields as bounded RFC 9421 metadata without
+  /// verifying signatures or looking up keys.
+  pub fn signature(&self) -> error::Result<Option<Signature>> {
+    let values = self.header_values("signature");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Signature::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses all `Signature-Input` fields as bounded RFC 9421 metadata without
+  /// verifying signatures or applying cryptographic policy.
+  pub fn signature_input(&self) -> error::Result<Option<SignatureInput>> {
+    let values = self.header_values("signature-input");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    SignatureInput::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   fn digest_field(&self, name: &str) -> error::Result<Option<Digest>> {
@@ -627,6 +740,18 @@ impl Response {
       return Ok(None);
     }
     ServerTiming::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses `No-Vary-Search` response metadata without changing cache keys,
+  /// normalizing URLs, or applying navigation/cache policy.
+  pub fn no_vary_search(&self) -> error::Result<Option<NoVarySearch>> {
+    let values = self.header_values("no-vary-search");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    NoVarySearch::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
@@ -697,6 +822,20 @@ impl Response {
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
+  /// Parses `Cross-Origin-Embedder-Policy-Report-Only` response metadata without
+  /// enforcing embedder policy or scheduling reports.
+  pub fn cross_origin_embedder_policy_report_only(
+    &self,
+  ) -> error::Result<Option<CrossOriginEmbedderPolicyReportOnly>> {
+    let values = self.header_values("cross-origin-embedder-policy-report-only");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    CrossOriginEmbedderPolicyReportOnly::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
   /// Parses `Cross-Origin-Opener-Policy` response metadata without enforcing opener policy.
   pub fn cross_origin_opener_policy(&self) -> error::Result<Option<CrossOriginOpenerPolicy>> {
     let values = self.header_values("cross-origin-opener-policy");
@@ -713,7 +852,9 @@ impl Response {
     if values.is_empty() {
       return Ok(None);
     }
-    Vary::parse_values(values.into_iter().map(String::as_str)).map(Some)
+    Vary::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   /// Parses announced trailer field names without waiting for or exposing a
@@ -854,7 +995,7 @@ impl fmt::Display for Response {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Allow {
-  methods: Vec<String>,
+  inner: protocol_allow::Allow,
 }
 
 impl Allow {
@@ -866,48 +1007,17 @@ impl Allow {
   where
     I: IntoIterator<Item = &'a str>,
   {
-    let mut methods = Vec::new();
-    let mut seen = HashSet::new();
-
-    for value in values {
-      if value.len() > MAX_ALLOW_VALUE_BYTES {
-        return Err(error::bad_response("Allow header value is too large"));
-      }
-
-      for method in value.split(',') {
-        let method = method.trim();
-        if method.is_empty() {
-          return Err(error::bad_response("Invalid Allow method"));
-        }
-        if !is_token(method) {
-          return Err(error::bad_response("Invalid Allow method"));
-        }
-        if methods.len() >= MAX_ALLOW_METHODS {
-          return Err(error::bad_response("Too many Allow methods"));
-        }
-        if !seen.insert(method.to_string()) {
-          return Err(error::bad_response("Duplicate Allow method"));
-        }
-        methods.push(method.to_string());
-      }
-    }
-
-    if methods.is_empty() {
-      return Err(error::bad_response("Invalid Allow method"));
-    }
-
-    Ok(Self { methods })
+    protocol_allow::Allow::parse_values(values)
+      .map(|inner| Self { inner })
+      .map_err(|err| error::bad_response(err.to_string()))
   }
 
   pub fn methods(&self) -> Vec<&str> {
-    self.methods.iter().map(String::as_str).collect()
+    self.inner.methods()
   }
 
   pub fn contains_method(&self, method: impl AsRef<str>) -> bool {
-    self
-      .methods
-      .iter()
-      .any(|candidate| candidate == method.as_ref())
+    self.inner.contains_method(method)
   }
 }
 
@@ -1416,53 +1526,6 @@ fn parse_content_type_quoted_string(value: &str) -> error::Result<String> {
     return Err(error::bad_response("Malformed Content-Type quoted-string"));
   }
   Ok(parsed)
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ContentLocation {
-  value: String,
-}
-
-impl ContentLocation {
-  pub fn parse(value: impl AsRef<str>) -> error::Result<Self> {
-    let value = value.as_ref();
-    if value.len() > MAX_CONTENT_LOCATION_VALUE_BYTES {
-      return Err(error::bad_response(
-        "Content-Location header value is too large",
-      ));
-    }
-
-    let value = trim_http_optional_whitespace(value);
-    if value.is_empty() {
-      return Err(error::bad_response("Invalid Content-Location value"));
-    }
-    if !is_content_location_field_value(value) {
-      return Err(error::bad_response("Invalid Content-Location value"));
-    }
-
-    if Url::parse(value).is_ok() {
-      return Ok(Self {
-        value: value.to_string(),
-      });
-    }
-
-    let base = Url::parse("http://example.invalid/").expect("valid internal base URL");
-    if !is_relative_uri_reference_field_value(value) {
-      return Err(error::bad_response("Invalid Content-Location value"));
-    }
-    Url::options()
-      .base_url(Some(&base))
-      .parse(value)
-      .map_err(|_| error::bad_response("Invalid Content-Location value"))?;
-
-    Ok(Self {
-      value: value.to_string(),
-    })
-  }
-
-  pub fn as_str(&self) -> &str {
-    &self.value
-  }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2233,93 +2296,6 @@ impl ContentEncoding {
   }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Vary {
-  any: bool,
-  field_names: Vec<String>,
-}
-
-impl Vary {
-  pub fn parse(value: impl AsRef<str>) -> error::Result<Self> {
-    Self::parse_values([value.as_ref()])
-  }
-
-  fn parse_values<'a, I>(values: I) -> error::Result<Self>
-  where
-    I: IntoIterator<Item = &'a str>,
-  {
-    let mut any = false;
-    let mut field_names = Vec::new();
-    let mut seen = HashSet::new();
-    let mut field_name_count = 0usize;
-
-    for value in values {
-      if value.len() > MAX_VARY_VALUE_BYTES {
-        return Err(error::bad_response("Vary header value is too large"));
-      }
-
-      for member in value.split(',') {
-        let member = member.trim();
-        if member.is_empty() {
-          return Err(error::bad_response("Invalid Vary field name"));
-        }
-
-        if member == "*" {
-          if any || field_names.is_empty() {
-            any = true;
-            continue;
-          }
-          return Err(error::bad_response(
-            "Vary wildcard cannot be combined with field names",
-          ));
-        }
-
-        if any {
-          return Err(error::bad_response(
-            "Vary wildcard cannot be combined with field names",
-          ));
-        }
-        if !is_token(member) {
-          return Err(error::bad_response("Invalid Vary field name"));
-        }
-
-        field_name_count += 1;
-        if field_name_count > MAX_VARY_FIELD_NAMES {
-          return Err(error::bad_response("Too many Vary field names"));
-        }
-
-        let normalized = member.to_ascii_lowercase();
-        if seen.insert(normalized.clone()) {
-          field_names.push(normalized);
-        }
-      }
-    }
-
-    if !any && field_names.is_empty() {
-      return Err(error::bad_response("Invalid Vary field name"));
-    }
-
-    Ok(Self { any, field_names })
-  }
-
-  pub fn is_any(&self) -> bool {
-    self.any
-  }
-
-  pub fn field_names(&self) -> Vec<&str> {
-    self.field_names.iter().map(String::as_str).collect()
-  }
-
-  pub fn contains_field_name(&self, field_name: impl AsRef<str>) -> bool {
-    let field_name = field_name.as_ref();
-    if !is_token(field_name) {
-      return false;
-    }
-    let field_name = field_name.to_ascii_lowercase();
-    self.field_names.iter().any(|name| name == &field_name)
-  }
-}
-
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CacheControl {
   no_cache: bool,
@@ -2642,100 +2618,6 @@ fn split_field_names(value: &str) -> Vec<String> {
     .filter(|field| !field.is_empty())
     .map(ToString::to_string)
     .collect()
-}
-
-fn trim_http_optional_whitespace(value: &str) -> &str {
-  value.trim_matches(|ch| matches!(ch, ' ' | '\t'))
-}
-
-fn is_content_location_field_value(value: &str) -> bool {
-  value.bytes().all(|byte| {
-    byte.is_ascii_graphic() && byte != b'"' && byte != b'<' && byte != b'>' && byte != b'\\'
-  })
-}
-
-fn is_relative_uri_reference_field_value(value: &str) -> bool {
-  let mut fragment_seen = false;
-  let mut query_seen = false;
-  let mut bytes = value.bytes().peekable();
-
-  while let Some(byte) = bytes.next() {
-    match byte {
-      b'%' => {
-        let Some(first) = bytes.next() else {
-          return false;
-        };
-        let Some(second) = bytes.next() else {
-          return false;
-        };
-        if !first.is_ascii_hexdigit() || !second.is_ascii_hexdigit() {
-          return false;
-        }
-      }
-      b'#' => {
-        if fragment_seen {
-          return false;
-        }
-        fragment_seen = true;
-      }
-      b'?' => {
-        if !fragment_seen {
-          query_seen = true;
-        }
-      }
-      _ => {
-        if fragment_seen {
-          if !is_fragment_char(byte) {
-            return false;
-          }
-        } else if query_seen {
-          if !is_query_char(byte) {
-            return false;
-          }
-        } else if !is_uri_path_char(byte) {
-          return false;
-        }
-      }
-    }
-  }
-
-  true
-}
-
-fn is_uri_path_char(byte: u8) -> bool {
-  is_uri_pchar(byte) || byte == b'/'
-}
-
-fn is_query_char(byte: u8) -> bool {
-  is_uri_pchar(byte) || matches!(byte, b'/' | b'?')
-}
-
-fn is_fragment_char(byte: u8) -> bool {
-  is_query_char(byte)
-}
-
-fn is_uri_pchar(byte: u8) -> bool {
-  byte.is_ascii_alphanumeric()
-    || matches!(
-      byte,
-      b'-'
-        | b'.'
-        | b'_'
-        | b'~'
-        | b'!'
-        | b'$'
-        | b'&'
-        | b'\''
-        | b'('
-        | b')'
-        | b'*'
-        | b'+'
-        | b','
-        | b';'
-        | b'='
-        | b':'
-        | b'@'
-    )
 }
 
 fn is_language_range(value: &str) -> bool {

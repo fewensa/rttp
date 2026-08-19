@@ -1,7 +1,10 @@
 use rttp::server::{
-  HttpAcceptCh, HttpConditionalMetadata, HttpCrossOriginEmbedderPolicy,
+  HttpAcceptCh, HttpConditionalMetadata, HttpContentLocation, HttpContentLocationParseError,
+  HttpCrossOriginEmbedderPolicy, HttpCrossOriginEmbedderPolicyReportOnly,
   HttpCrossOriginOpenerPolicy, HttpCrossOriginResourcePolicy, HttpEntityTag, HttpNel, HttpResponse,
-  HttpSunsetParseError,
+  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpSunsetParseError,
 };
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -17,8 +20,17 @@ fn compatibility_facade_exports_client_metadata_types() {
       .expect("Accept-Patch should parse");
   let accept_post: rttp::AcceptPost =
     rttp_client::response::AcceptPost::parse("application/json").expect("Accept-Post should parse");
+  let content_location: rttp::ContentLocation =
+    rttp_client::response::ContentLocation::parse("../representations/current.json")
+      .expect("Content-Location should parse");
+  let _: rttp::ContentLocationParseError =
+    rttp_client::response::ContentLocation::parse("not valid")
+      .expect_err("invalid Content-Location should be rejected");
   let alt_svc: rttp::AltSvc =
     rttp_client::response::AltSvc::parse("h3=\":443\"; ma=60").expect("Alt-Svc should parse");
+  let no_vary_search: rttp::NoVarySearch =
+    rttp_client::response::NoVarySearch::parse(r#"params=("utm_source")"#)
+      .expect("No-Vary-Search should parse");
   let _: rttp::AltSvcParseError =
     rttp_client::response::AltSvc::parse("h3=:443").expect_err("invalid Alt-Svc should fail");
   let nel: rttp::Nel =
@@ -27,25 +39,54 @@ fn compatibility_facade_exports_client_metadata_types() {
   let embedder_policy: rttp::CrossOriginEmbedderPolicy =
     rttp_client::response::CrossOriginEmbedderPolicy::parse("require-corp; report-to=\"coep\"")
       .expect("Cross-Origin-Embedder-Policy should parse");
+  let embedder_policy_report_only: rttp::CrossOriginEmbedderPolicyReportOnly =
+    rttp_client::response::CrossOriginEmbedderPolicyReportOnly::parse(
+      "require-corp; report-to=\"coep\"",
+    )
+    .expect("Cross-Origin-Embedder-Policy-Report-Only should parse");
   let opener_policy: rttp::CrossOriginOpenerPolicy =
     rttp_client::response::CrossOriginOpenerPolicy::parse(
       "noopener-allow-popups; report-to=\"coop\"",
     )
     .expect("Cross-Origin-Opener-Policy should parse");
+  let strict_transport_security: rttp::StrictTransportSecurity =
+    rttp_client::response::StrictTransportSecurity::parse("max-age=31536000; includeSubDomains")
+      .expect("Strict-Transport-Security should parse");
+  let _: rttp::StrictTransportSecurityParseError =
+    rttp_client::response::StrictTransportSecurity::parse("includeSubDomains")
+      .expect_err("Strict-Transport-Security without max-age should be rejected");
   let fetch_site: rttp::SecFetchSite =
     rttp_client::SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
+  let location: rttp::Location =
+    rttp_client::response::Location::parse("/next").expect("Location should parse");
+  let _: rttp::LocationParseError =
+    rttp_client::response::Location::parse("").expect_err("empty Location should be rejected");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
   assert_eq!(accept_patch.media_types().len(), 1);
   assert_eq!(accept_post.media_types().len(), 1);
+  assert_eq!(
+    content_location.header_value(),
+    "../representations/current.json"
+  );
   assert_eq!(alt_svc.alternatives()[0].protocol_id(), "h3");
   assert_eq!(alt_svc.alternatives()[0].max_age(), Some(60));
   assert_eq!(nel.max_age(), 2592000);
   assert_eq!(nel.report_to(), Some("network-errors"));
+  assert_eq!(
+    no_vary_search.params(),
+    Some(&rttp::NoVarySearchParams::Names(vec![
+      "utm_source".to_owned()
+    ]))
+  );
   assert_eq!(embedder_policy.header_value(), "require-corp");
+  assert_eq!(embedder_policy_report_only.header_value(), "require-corp");
   assert_eq!(opener_policy.header_value(), "noopener-allow-popups");
+  assert_eq!(strict_transport_security.max_age(), 31_536_000);
+  assert!(strict_transport_security.include_sub_domains());
   assert_eq!(fetch_site.header_value(), "same-origin");
+  assert_eq!(location.as_str(), "/next");
 }
 
 #[test]
@@ -57,15 +98,28 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let embedder_policy: HttpCrossOriginEmbedderPolicy =
     HttpCrossOriginEmbedderPolicy::parse("require-corp; report-to=\"coep\"")
       .expect("Cross-Origin-Embedder-Policy should parse");
+  let embedder_policy_report_only: HttpCrossOriginEmbedderPolicyReportOnly =
+    HttpCrossOriginEmbedderPolicyReportOnly::parse("require-corp; report-to=\"coep\"")
+      .expect("Cross-Origin-Embedder-Policy-Report-Only should parse");
   let opener_policy: HttpCrossOriginOpenerPolicy =
     HttpCrossOriginOpenerPolicy::parse("noopener-allow-popups; report-to=\"coop\"")
       .expect("Cross-Origin-Opener-Policy should parse");
   let nel: HttpNel = HttpNel::parse(r#"{"report_to":"network-errors","max_age":2592000}"#)
     .expect("NEL should parse");
+  let content_location: HttpContentLocation =
+    HttpContentLocation::parse("../representations/current.json")
+      .expect("Content-Location should parse");
+  let _: HttpContentLocationParseError = HttpContentLocation::parse("not valid")
+    .expect_err("invalid Content-Location should be rejected");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA"]);
+  assert_eq!(
+    content_location.header_value(),
+    "../representations/current.json"
+  );
   assert_eq!(policy.header_value(), "same-origin");
   assert_eq!(embedder_policy.header_value(), "require-corp");
+  assert_eq!(embedder_policy_report_only.header_value(), "require-corp");
   assert_eq!(opener_policy.header_value(), "noopener-allow-popups");
   assert_eq!(nel.max_age(), 2592000);
   assert_eq!(nel.report_to(), Some("network-errors"));
@@ -87,5 +141,47 @@ fn compatibility_facade_exposes_sunset_response_metadata() {
   assert_eq!(
     Some(sunset),
     response.sunset().expect("Sunset should parse")
+  );
+}
+
+#[test]
+fn compatibility_facade_keeps_signature_metadata_in_the_server_module() {
+  let signature: HttpSignature =
+    HttpSignature::parse("sig1=:YWJj:").expect("Signature should parse");
+  let signature_input: HttpSignatureInput =
+    HttpSignatureInput::parse(r#"sig1=("@method" "@path");created=1618884473;keyid="test-key""#)
+      .expect("Signature-Input should parse");
+  let _: HttpSignatureParseError =
+    HttpSignature::parse("").expect_err("empty Signature should be rejected");
+  let _: HttpSignatureInputParseError =
+    HttpSignatureInput::parse("").expect_err("empty Signature-Input should be rejected");
+  let response = HttpResponse::ok("")
+    .with_signature("sig1=:YWJj:")
+    .expect("Signature should be accepted")
+    .with_signature_input(r#"sig1=("@method")"#)
+    .expect("Signature-Input should be accepted");
+
+  let entry: &HttpSignatureInputEntry = &signature_input.entries()[0];
+  let _: &[HttpSignatureInputComponent] = entry.components();
+  let _: &[HttpSignatureInputParameter] = entry.parameters();
+
+  assert_eq!(signature.header_value(), "sig1=:YWJj:");
+  assert_eq!(
+    signature_input.header_value(),
+    r#"sig1=("@method" "@path");created=1618884473;keyid="test-key""#
+  );
+  assert!(matches!(
+    entry
+      .parameter("created")
+      .map(HttpSignatureInputParameter::value),
+    Some(HttpSignatureInputBareItem::Integer(1_618_884_473))
+  ));
+  assert_eq!(
+    response
+      .signature()
+      .expect("Signature should parse")
+      .expect("Signature should be present")
+      .header_value(),
+    "sig1=:YWJj:"
   );
 }

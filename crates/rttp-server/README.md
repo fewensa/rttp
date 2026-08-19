@@ -53,6 +53,37 @@ expose the original request.
 These helpers parse request metadata only; they do not sniff, decode,
 negotiate, cache, redirect, retry, or select representations.
 
+## Request and response Connection metadata
+
+Handlers can call `Request::connection()`, `HttpRequest::connection()`, and
+`HttpResponse::connection()` to observe bounded typed `Connection` header
+metadata from already-retained HTTP/1 fields. The helpers combine
+case-insensitive fields in wire order into `HttpConnection` and preserve token
+spelling, including duplicates. Absent fields return `Ok(None)`. Malformed,
+empty, oversized, or over-limit values return a parser error while
+`Request::header()` and `HttpResponse` raw headers continue to expose the
+original fields. HTTP/2 continues to reject inbound `Connection` at decode
+time.
+
+These helpers parse HTTP/1 header metadata only. They do not change
+keep-alive, hop-by-hop stripping, upgrade/h2c handoff, or HTTP/2 rejection.
+
+## Request Transfer-Encoding framing metadata
+
+Handlers can call `Request::transfer_encoding()` and
+`HttpRequest::transfer_encoding()` to observe bounded typed
+`Transfer-Encoding` framing metadata from already-validated HTTP/1 state.
+The helpers combine case-insensitive fields in wire order into
+`HttpTransferEncoding` and require a sole `chunked` coding, matching existing
+HTTP/1 framing. Absent fields return `Ok(None)`. Malformed, stacked,
+duplicate, oversized, or over-limit values return a parser error while
+`Request::header()` and `Request::body()` continue to expose the original
+request. HTTP/2 continues to reject `Transfer-Encoding` at decode time.
+
+These helpers parse framing metadata only. They do not change
+`request_body_kind`, decode a chunked body, negotiate `TE`, or alter
+Content-Length handling.
+
 ## Fetch Metadata request metadata
 
 Handlers can call `Request::sec_fetch_site()`, `sec_fetch_mode()`,
@@ -102,3 +133,99 @@ string to 64 KiB.
 
 These helpers only declare and parse metadata. The server does not send
 network error reports, persist policy, or configure Reporting endpoint groups.
+
+## Content-Location response metadata
+
+`HttpResponse::with_content_location(value)` validates one
+`Content-Location` URI-reference field value with the shared protocol-owned
+`HttpContentLocation` type, trims outer whitespace, removes any existing raw
+`Content-Location` fields, and adds a single validated `Content-Location`
+header. `HttpResponse::content_location()` parses attached raw fields into
+`HttpContentLocation`, returns `Ok(None)` when absent, and preserves invalid
+raw fields until typed parsing is requested.
+
+The helper is bounded and validation-oriented. The field value is limited to
+64 KiB and must be a non-empty absolute URI or relative URI reference without
+control characters, interior whitespace, unsafe field-value characters,
+malformed URI syntax, or broken percent-encoding. Duplicate fields are rejected
+because `Content-Location` is singleton response metadata. The preserved
+trimmed reference is available through `as_str()` and `header_value()`.
+
+These helpers only declare and parse metadata. RTTP does not resolve relative
+references against a response URL, follow redirects, select cache variants,
+replace representations, generate routes, trigger retries, or alter status
+policy from `Content-Location`.
+
+## No-Vary-Search response metadata
+
+`HttpResponse::with_no_vary_search(value)` validates and replaces attached
+`No-Vary-Search` fields with one normalized response declaration.
+`HttpResponse::no_vary_search()` parses attached raw fields into
+`HttpNoVarySearch` metadata. The typed value exposes recognized `key-order`,
+`params`, and `except` members while keeping the behavior metadata-only.
+
+These helpers do not store responses, match cache keys, normalize URLs, replay
+requests, apply browser navigation behavior, or enforce shared-cache policy.
+
+## Want-Content-Digest request metadata
+
+Handlers can call `Request::want_content_digest()` and
+`HttpRequest::want_content_digest()` to observe bounded typed
+`Want-Content-Digest` algorithm preferences. The helpers combine
+case-insensitive fields in wire order into `HttpWantContentDigest`. Each entry
+exposes `algorithm()` and `preference()` (`0` through `10`). Absent metadata
+returns `Ok(None)`. Malformed, oversized, duplicate, empty, or over-limit
+values return a parse error while `Request::header()` and `Request::body()`
+continue to expose the original request.
+
+These helpers parse request metadata only. They do not select an algorithm,
+compute or verify content digests, attach `Content-Digest`, or negotiate
+content.
+
+## Want-Repr-Digest request metadata
+
+Handlers can call `Request::want_repr_digest()` and
+`HttpRequest::want_repr_digest()` to observe bounded typed `Want-Repr-Digest`
+algorithm preferences. The helpers combine case-insensitive fields in wire
+order into `HttpWantReprDigest`. Each entry exposes `algorithm()` and
+`preference()` (`0` through `10`). Absent metadata returns `Ok(None)`.
+Malformed, oversized, duplicate, empty, or over-limit values return a parse
+error while `Request::header()` and `Request::body()` continue to expose the
+original request.
+
+These helpers parse request metadata only. They do not select an algorithm,
+compute or verify representation digests, attach `Repr-Digest`, or negotiate a
+representation.
+
+## Host request authority
+
+Handlers can call `Request::host()` and `HttpRequest::host()` to observe the
+effective `Host` authority as bounded `HttpHost` metadata. The helpers parse
+the stored case-insensitive `Host` field as `host[:port]`, including bracketed
+IPv6, using the inbound Host grammar. Absent metadata returns `Ok(None)`.
+Duplicate or malformed values return a parse error while `Request::header()`
+and `Request::body()` continue to expose the original request. HTTP/2
+`:authority` remains mapped onto `header("host")`; `host()` then parses that
+single mapped value.
+
+These helpers parse request metadata only. They do not select a virtual host,
+compare origins, apply scheme defaults, or change HTTP/1 decode or HTTP/2
+request-target handling.
+
+## HTTP message signature metadata
+
+`Request::signature()` / `signature_input()` and the same methods on
+`HttpRequest` parse received RFC 9421 `Signature` and `Signature-Input`
+fields into `HttpSignature` and `HttpSignatureInput`. Absent field sets
+return `Ok(None)`. Present malformed fields return a parse error while
+`Request::header()` continues to expose the original values. The two
+fields are parsed independently.
+
+`HttpResponse::with_signature()` and `with_signature_input()` validate and
+replace existing same-name fields with one canonical value.
+`HttpResponse::signature()` and `signature_input()` parse attached raw
+fields without changing them.
+
+These helpers only declare and parse metadata. They do not sign, verify,
+look up keys, canonicalize covered components, or apply cryptographic
+policy.
