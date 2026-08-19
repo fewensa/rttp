@@ -86,6 +86,26 @@ declared metadata only; it does not compare `Sunset`, follow `Link`
 `rel=deprecation`, decide whether a resource is already deprecated, retry
 requests, or select another endpoint.
 
+## Content-Disposition
+
+`content_disposition` parses a singleton response `Content-Disposition` field
+as one disposition type plus an ordered list of parameters. Each field value
+is bounded to 64 KiB, the parameter count is bounded to 256, and each
+parameter value is bounded to 64 KiB. A second field is rejected after every
+supplied field is bound-checked. Surrounding SP and HTAB are treated as
+optional whitespace around separators. Quoted-strings are unescaped, including
+obs-text, and the stored parameter value is the logical value rather than the
+wire quoting. Parameter names are compared case-insensitively for duplicates,
+and both the disposition type and parameter names are stored in lowercase.
+`filename` and `filename*` remain independent parameters; `filename*` must be
+an unquoted RFC 5987 ext-value and is preserved without decoding. Empty
+values, empty parameter values, malformed quoted-strings, ASCII controls other
+than HTAB, duplicate parameters, invalid tokens, and unparsable input are
+errors. This parser never fails open to `inline` or an empty parameter list.
+It reports declared metadata only: callers own download handling, filesystem
+paths, filename precedence, RFC 5987 decoding, MIME sniffing, cache behavior,
+redirects, retries, negotiation, and status policy.
+
 ## Content-Location
 
 `content_location` parses a singleton response `Content-Location` field as one

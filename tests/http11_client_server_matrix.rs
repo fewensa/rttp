@@ -4147,7 +4147,7 @@ fn sync_client_content_disposition_helper_rejects_duplicates_and_enforces_shared
     &[&oversized],
   );
 
-  let too_many = fixtures::content_disposition::too_many_client_parameters_value();
+  let too_many = fixtures::content_disposition::too_many_parameters_value();
   assert_content_disposition_helper_rejects_but_preserves_response(
     "too many Content-Disposition parameters",
     content_disposition_response(&[&too_many]),

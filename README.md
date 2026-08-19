@@ -1033,7 +1033,7 @@ gain additional HTTP/2 header-block handling.
 | Content-Type and Content-Encoding | `Response::content_type`/`ContentType::parse` parse bounded singleton `Content-Type` metadata, and `Response::content_encoding`/`ContentEncoding::parse` parse bounded ordered `Content-Encoding` codings while preserving raw headers on parse failures | No MIME sniffing, body decoding, charset transcoding, compression/decompression policy, negotiation, cache policy, redirects, retry/replay, or filesystem serving |
 | Connection | `Response::connection`/`Connection::parse` parse bounded HTTP/1 `Connection` tokens, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to keep-alive, `auto_add_connection`, hop-by-hop stripping, or HTTP/2 rejection |
 | Transfer-Encoding | `Response::transfer_encoding`/`TransferEncoding::parse` parse bounded HTTP/1 `Transfer-Encoding` fields that must be sole `chunked`, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to HTTP/1 framing decoders, `TE`, Content-Length, chunked body decoding policy, or HTTP/2 decode rejection |
-| Content-Disposition | Client `Response::content_disposition` and server `HttpContentDisposition`, `HttpResponse::with_content_disposition`, `with_attachment_filename`, and `content_disposition` parse or declare bounded singleton response `Content-Disposition` metadata, preserve raw headers on parse failures, and preserve parsed `filename` plus `filename*` parameter values as metadata | No automatic download, filesystem path handling, MIME sniffing, cache behavior, redirect behavior, retry/replay, negotiation, or status-policy behavior |
+| Content-Disposition | Client `Response::content_disposition` and protocol-backed server `HttpContentDisposition`, `HttpResponse::with_content_disposition`, `with_attachment_filename`, and `content_disposition` parse or declare bounded singleton response `Content-Disposition` metadata, preserve raw headers on parse failures, and preserve parsed `filename` plus `filename*` parameter values as metadata | No automatic download, filesystem path handling, MIME sniffing, cache behavior, redirect behavior, retry/replay, negotiation, or status-policy behavior |
 | WWW-Authenticate | Client `Response::www_authenticate` and server `HttpWwwAuthenticate`, `HttpResponse::with_www_authenticate`, and `HttpResponse::www_authenticate` parse or declare bounded response authentication challenges while preserving raw headers on parse failures | No credential storage, authentication policy, retry, automatic `Authorization` generation, Basic/Bearer implementation, redirect behavior, or status-policy behavior |
 | Proxy-Authenticate | Client `Response::proxy_authenticate` and protocol `ProxyAuthenticate::parse`/`parse_values` parse bounded proxy authentication challenges across one or more response fields while preserving raw headers on parse failures | No credential storage, proxy authentication policy, retry, automatic `Proxy-Authorization` generation, Basic/Bearer implementation, redirect behavior, or status-policy behavior |
 | Proxy-Status | Client `Response::proxy_status` and server `HttpProxyStatus`, `HttpResponse::with_proxy_status`, and `HttpResponse::proxy_status` parse or declare bounded RFC 9209 Token/String proxy identifiers with opaque parameters while preserving raw headers on parse failures | No proxy health checks, retries, trailer promotion, or origin-generation policy |
@@ -1606,6 +1606,7 @@ from `Content-DPR`.
 Server-side `Content-Disposition` helpers expose response metadata declaration
 and parsing without implementing download policy, filesystem handling, MIME
 sniffing, cache behavior, redirect handling, retry, or negotiation.
+`HttpContentDisposition` is backed by the shared protocol primitive.
 `HttpContentDisposition::parse(value)` validates one field value, including a
 token disposition type and bounded parameters. `HttpContentDisposition::inline()`
 and `HttpContentDisposition::attachment()` construct common dispositions, and
@@ -1619,11 +1620,12 @@ is a convenience helper for `attachment; filename=...`.
 returns `Ok(None)` when the header is absent.
 
 Parsing is bounded and validation-oriented. The field value is limited to
-64 KiB, parameter count is limited to 32, token positions must be valid HTTP
-tokens, quoted-string input must be well formed, and CR/LF or other control
-characters are rejected. Duplicate parameters and duplicate
-`Content-Disposition` fields are rejected by the typed parser. Raw
-`HttpResponse::header("Content-Disposition", ...)` values remain preserved
+64 KiB, parameter count is limited to 256, each parameter value is limited to
+64 KiB, token positions must be valid HTTP tokens, quoted-string input must be
+well formed, `filename*` must be an unquoted RFC 5987 ext-value, and CR/LF or
+other control characters other than HTAB are rejected. Duplicate parameters
+and duplicate `Content-Disposition` fields are rejected by the typed parser.
+Raw `HttpResponse::header("Content-Disposition", ...)` values remain preserved
 exactly as ordinary response headers until a typed declaration helper replaces
 them or the typed parser is requested.
 
@@ -1923,7 +1925,7 @@ TLS or async accept loops.
 | Connection | `HttpConnection`, `Request::connection`, `HttpRequest::connection`, and `HttpResponse::connection` parse bounded HTTP/1 `Connection` tokens, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to hop-by-hop stripping, keep-alive/close, upgrade/h2c, or HTTP/2 rejection |
 | Transfer-Encoding | `HttpTransferEncoding`, `Request::transfer_encoding`, and `HttpRequest::transfer_encoding` parse bounded HTTP/1 `Transfer-Encoding` fields that must be sole `chunked`, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to `request_body_kind`, `TE`, Content-Length, or HTTP/2 decode rejection |
 | Upgrade metadata | `Upgrade`, `HttpUpgrade`, `HttpClient::upgrade_protocols`, `Response::upgrade`, `Request::upgrade`, `HttpRequest::upgrade`, `HttpResponse::with_upgrade`, and `HttpResponse::upgrade` validate, declare, or parse bounded HTTP/1 `Upgrade` protocol metadata while preserving raw headers on parse failures | No automatic `Connection: Upgrade`, h2c selection, client/server socket handoff, ALPN negotiation, or upgraded protocol implementation |
-| Content-Disposition | `HttpContentDisposition`, `HttpResponse::with_content_disposition`, `with_attachment_filename`, and `content_disposition` declare and parse bounded singleton `Content-Disposition` response metadata, preserve parsed `filename` and `filename*` parameter values, preserve raw headers on parse failures, and replace raw duplicates on typed declaration | No automatic download, filesystem path handling, MIME sniffing, cache behavior, redirect behavior, retry/replay, negotiation, or status-policy behavior |
+| Content-Disposition | Protocol-backed `HttpContentDisposition`, `HttpResponse::with_content_disposition`, `with_attachment_filename`, and `content_disposition` declare and parse bounded singleton `Content-Disposition` response metadata, preserve parsed `filename` and `filename*` parameter values, preserve raw headers on parse failures, and replace raw duplicates on typed declaration | No automatic download, filesystem path handling, MIME sniffing, cache behavior, redirect behavior, retry/replay, negotiation, or status-policy behavior |
 | WWW-Authenticate | `HttpWwwAuthenticate`, `HttpResponse::with_www_authenticate`, and `HttpResponse::www_authenticate` declare or parse bounded response authentication challenge metadata while preserving raw headers on parse failures | No credential storage, authentication policy, retry, automatic `Authorization` generation, Basic/Bearer implementation, redirect behavior, or status-policy behavior |
 | Proxy-Status | `HttpProxyStatus`, `HttpResponse::with_proxy_status`, and `HttpResponse::proxy_status` declare or parse bounded RFC 9209 Token/String proxy identifiers with opaque parameters while preserving raw headers on parse failures | No proxy health checks, retries, trailer promotion, or origin-generation policy |
 | Server-Timing | `HttpServerTiming`, `HttpResponse::with_server_timing`, and `HttpResponse::server_timing` declare or parse bounded response timing metadata while preserving raw headers on parse failures | No metric collection, measurement, telemetry export, metrics backend integration, retry, redirect behavior, or status-policy behavior |

@@ -8,6 +8,7 @@ use rttp_protocol::cache_status::CacheStatus;
 use rttp_protocol::cdn_cache_control::CdnCacheControl;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::connection::Connection;
+use rttp_protocol::content_disposition::ContentDisposition;
 use rttp_protocol::content_dpr::ContentDpr;
 use rttp_protocol::content_encoding::ContentEncoding;
 use rttp_protocol::content_language::ContentLanguage;
@@ -112,6 +113,9 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let content_type =
     ContentType::parse("text/plain; charset=utf-8").expect("Content-Type should parse");
   let content_dpr = ContentDpr::parse("1.5").expect("Content-DPR should parse");
+  let content_disposition =
+    ContentDisposition::parse("attachment; filename=\"report.txt\"; filename*=UTF-8''report.txt")
+      .expect("Content-Disposition should parse");
   let content_location = ContentLocation::parse("../representations/current.json")
     .expect("Content-Location should parse");
   let deprecation = Deprecation::parse("?1").expect("Deprecation should parse");
@@ -216,6 +220,16 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(content_type.header_value(), "text/plain; charset=utf-8");
   assert_eq!(content_dpr.ratio(), 1.5);
   assert_eq!(content_dpr.header_value(), "1.5");
+  assert_eq!(content_disposition.disposition_type(), "attachment");
+  assert_eq!(content_disposition.filename(), Some("report.txt"));
+  assert_eq!(
+    content_disposition.filename_ext(),
+    Some("UTF-8''report.txt")
+  );
+  assert_eq!(
+    content_disposition.header_value(),
+    "attachment; filename=report.txt; filename*=UTF-8''report.txt"
+  );
   assert_eq!(
     content_location.header_value(),
     "../representations/current.json"
