@@ -16,6 +16,7 @@ use rttp_protocol::fetch_metadata::{
 use rttp_protocol::forwarded::{Forwarded, MAX_FORWARDED_VALUE_BYTES};
 use rttp_protocol::origin::Origin;
 use rttp_protocol::priority::Priority;
+use rttp_protocol::save_data::SaveData;
 use rttp_protocol::signature::Signature;
 use rttp_protocol::signature_input::SignatureInput;
 use rttp_protocol::trailer::Trailer;
@@ -420,6 +421,16 @@ impl HttpClient {
       "Access-Control-Request-Private-Network",
       request_private_network.header_value(),
     )))
+  }
+
+  /// Set `Save-Data: on` request metadata.
+  ///
+  /// This declares the valid reduced-data request form only; it does not
+  /// select a representation or apply browser data-saver policy.
+  pub fn save_data(&mut self) -> error::Result<&mut Self> {
+    let save_data =
+      SaveData::parse("on").map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("Save-Data", save_data.header_value())))
   }
 
   /// Append a validated `Accept` media range with its supplied quality value.

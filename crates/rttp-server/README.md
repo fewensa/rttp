@@ -284,6 +284,19 @@ These helpers parse request metadata only. They do not select a virtual host,
 compare origins, apply scheme defaults, or change HTTP/1 decode or HTTP/2
 request-target handling.
 
+## Save-Data request metadata
+
+Handlers can call `Request::save_data()` and `HttpRequest::save_data()` to
+observe bounded typed `Save-Data` request metadata. Absent fields return
+`Ok(None)`. The recognized value is the case-sensitive `on` token with
+optional surrounding SP or HTAB. Malformed, oversized, duplicate, or
+control-byte values return a parser error while `Request::header()` and
+`HttpRequest::header()` continue to expose the original raw field.
+
+These helpers parse request metadata only. They do not select a
+representation, compress a body, advertise Client Hints, or apply browser
+data-saver policy.
+
 ## HTTP message signature metadata
 
 `Request::signature()` / `signature_input()` and the same methods on
