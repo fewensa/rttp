@@ -10,7 +10,6 @@ use crate::response::raw_response::RawResponse;
 use crate::response::AltSvc;
 use crate::response::Digest;
 use crate::response::Priority;
-use crate::response::ProxyAuthenticationInfo;
 use crate::response::ReprDigest;
 use crate::response::ServerTiming;
 use crate::response::Trailer;
@@ -25,7 +24,6 @@ use rttp_protocol::clear_site_data::ClearSiteData;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::cookie::HttpSetCookies;
 use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
-use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::cross_origin_resource_policy::CrossOriginResourcePolicy;
 use rttp_protocol::prefer::PreferenceApplied;
 use rttp_protocol::referrer_policy::ReferrerPolicy;
@@ -563,18 +561,6 @@ impl Response {
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
-  /// Parses all `Proxy-Authentication-Info` fields as bounded auth-param
-  /// metadata without verifying `rspauth` or generating `Proxy-Authorization`.
-  pub fn proxy_authentication_info(&self) -> error::Result<Option<ProxyAuthenticationInfo>> {
-    let values = self.header_values("proxy-authentication-info");
-    if values.is_empty() {
-      return Ok(None);
-    }
-    ProxyAuthenticationInfo::parse_values(values.into_iter().map(String::as_str))
-      .map(Some)
-      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
-  }
-
   /// Parses all `Content-Digest` fields as bounded response metadata.
   pub fn digest(&self) -> error::Result<Option<Digest>> {
     self.digest_field("content-digest")
@@ -666,17 +652,6 @@ impl Response {
       return Ok(None);
     }
     CrossOriginEmbedderPolicy::parse_values(values.into_iter().map(String::as_str))
-      .map(Some)
-      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
-  }
-
-  /// Parses `Cross-Origin-Opener-Policy` response metadata without enforcing opener policy.
-  pub fn cross_origin_opener_policy(&self) -> error::Result<Option<CrossOriginOpenerPolicy>> {
-    let values = self.header_values("cross-origin-opener-policy");
-    if values.is_empty() {
-      return Ok(None);
-    }
-    CrossOriginOpenerPolicy::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
