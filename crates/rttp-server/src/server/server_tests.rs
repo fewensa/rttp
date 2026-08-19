@@ -1960,6 +1960,93 @@ fn x_frame_options_helpers_preserve_raw_metadata_and_report_parse_errors() {
 }
 
 #[test]
+fn permissions_policy_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Permissions-Policy", "geolocation=(self)")
+    .header("permissions-policy", "camera=()")
+    .with_permissions_policy(r#"geolocation=(self "https://maps.example.test"), camera=()"#)
+    .expect("Permissions-Policy should be accepted");
+
+  let policy = response
+    .permissions_policy()
+    .expect("Permissions-Policy should parse")
+    .expect("Permissions-Policy should be present");
+  assert_eq!(
+    r#"geolocation=(self "https://maps.example.test"), camera=()"#,
+    policy.header_value()
+  );
+  assert_eq!(2, policy.directives().len());
+  assert!(policy.directive("camera").unwrap().allowlist().is_empty());
+  assert_eq!(
+    vec![("Permissions-Policy", r#"geolocation=(self "https://maps.example.test"), camera=()"#)],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn permissions_policy_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::ok([]).header(
+    "Permissions-Policy",
+    r#"geolocation=(self "https://maps.example.test");report-to="rp""#,
+  );
+  let policy = raw
+    .permissions_policy()
+    .expect("raw Permissions-Policy should parse")
+    .expect("Permissions-Policy should be present");
+  assert_eq!(
+    r#"geolocation=(self "https://maps.example.test")"#,
+    policy.header_value()
+  );
+  assert_eq!(
+    Some(r#"geolocation=(self "https://maps.example.test");report-to="rp""#),
+    raw
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Permissions-Policy"))
+      .map(|header| header.value.as_str())
+  );
+
+  for value in [
+    "",
+    "geolocation=src",
+    "geolocation=('none')",
+    "geolocation=*;unknown=1",
+    "geolocation=(* \"https://example.test\")",
+    "geolocation=5",
+  ] {
+    let malformed = HttpResponse::ok([]).header("Permissions-Policy", value);
+    assert!(malformed.permissions_policy().is_err(), "should reject {value:?}");
+    assert!(
+      HttpResponse::ok([])
+        .with_permissions_policy(value)
+        .is_err(),
+      "should reject {value:?}"
+    );
+  }
+
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .permissions_policy()
+      .expect("absent Permissions-Policy should parse")
+  );
+
+  let duplicate = HttpResponse::ok([])
+    .header("Permissions-Policy", "geolocation=(self)")
+    .header("permissions-policy", "geolocation=(self)");
+  assert!(duplicate.permissions_policy().is_err());
+  assert!(HttpResponse::ok([])
+    .with_permissions_policy(
+      format!("geolocation=(\"{}\")", "https://example.test/".repeat(64 * 1024))
+    )
+    .is_err());
+}
+
+#[test]
 fn authentication_info_helpers_validate_replace_and_parse_response_metadata() {
   let response = HttpResponse::ok([])
     .header("Authentication-Info", "qop=auth")

@@ -539,7 +539,8 @@ fn response_browser_policy_helpers_preserve_metadata_without_enforcing_it() {
       .permissions_policy()
       .expect("Permissions-Policy metadata should parse")
       .as_ref()
-      .map(HttpPermissionsPolicy::as_str)
+      .map(HttpPermissionsPolicy::header_value)
+      .as_deref()
   );
   assert_eq!(
     Some("strict-origin-when-cross-origin"),

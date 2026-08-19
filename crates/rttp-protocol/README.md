@@ -763,3 +763,20 @@ formats a normalized header value. Each field value is limited to 64 KiB,
 parameter lists are limited to 256 strings, and extension members are limited
 to 64. The parser does not implement cache storage, cache-key matching, URL
 normalization, navigation behavior, request replay, or shared-cache policy.
+
+## Permissions-Policy
+
+`permissions_policy` parses bounded W3C Permissions Policy response metadata
+as a Structured Fields dictionary. Each field value is bounded to 64 KiB, the
+cumulative directive count across all supplied fields is bounded to 256, and
+each allowlist is bounded to 256 members. Feature names are opaque tokens and
+are not looked up against a browser feature list. Allowlists are the `*`
+token, the `self` token, quoted serialized HTTP(S) origins, or inner lists of
+`self` and quoted origins, including the empty inner list `()`. `*` is the
+whole allowlist and `()` disables the feature; mixing `*` with other members
+is rejected. Duplicate feature keys, including across fields, and duplicate
+allowlist members are errors. The HTML-attribute tokens `src` and `'none'`
+are rejected, and a well-formed `report-to` string parameter is accepted and
+dropped. The parser reports declared metadata only: it does not compare
+origins, resolve `self`, grant or deny browser permissions, or enforce origin
+policy.
