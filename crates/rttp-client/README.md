@@ -59,6 +59,23 @@ requests, or apply application idempotency policy. The key is redacted from
 typed `Debug` and builder error text. Callers needing an unusual value can
 retain full raw-header control with `header(("Idempotency-Key", "..."))`.
 
+## Bounded W3C Trace Context metadata
+
+`HttpClient::traceparent(value)` and `HttpClient::tracestate(value)` validate
+and emit W3C Trace Context request metadata through the shared protocol
+`TraceParent` and `TraceState` types, replacing existing same-name fields
+before a socket is opened. `traceparent` accepts version `00` fixed-width
+lowercase identifiers and flags, rejects unsupported versions, version `ff`,
+malformed fields, duplicate fields, and all-zero trace or parent identifiers.
+`tracestate` preserves member order while rejecting malformed members,
+duplicate keys, more than 32 members, values over 512 bytes, and oversized
+keys or member values.
+
+Trace context fields are redacted from typed `Debug` and builder error text.
+These helpers only declare request metadata: RTTP does not create trace
+identifiers, decide sampling, select a tracing backend, or automatically
+propagate context between requests.
+
 ## Bounded HTTP/1.1 byte ranges
 
 `HttpClient` includes helpers for the single-range `bytes` forms RTTP keeps
@@ -956,6 +973,7 @@ header-block model.
 | Upgrade-Insecure-Requests | `upgrade_insecure_requests` emits bounded singleton `Upgrade-Insecure-Requests: 1` request metadata | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Max-Forwards | `max_forwards` emits bounded singleton `Max-Forwards` request metadata through the shared protocol type | No hop decrement, proxy routing, TRACE/OPTIONS selection, retry, or forwarding policy |
 | Idempotency-Key | `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
+| W3C Trace Context | `traceparent` and `tracestate` validate and emit bounded W3C Trace Context request metadata through shared protocol types, replacing existing same-name fields and redacting propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |
 | Preflight request metadata | `origin`, `access_control_request_method`, `access_control_request_headers`, and `access_control_request_private_network` emit bounded `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`, and `Access-Control-Request-Private-Network` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, CORS policy, or Private Network Access policy |
 | Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_content_digest()`, `HttpRequest::want_content_digest()`, `Request::want_repr_digest()`, and `HttpRequest::want_repr_digest()` parse received preference fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |
 | Accept-Charset | `accept_charset` and `accept_charset_with_q` format bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |

@@ -136,6 +136,22 @@ returns the stored key and `header_value()` emits it unchanged. This parser
 reports declared request metadata only; it does not retry requests, store
 keys, compare keys across requests, or apply application idempotency policy.
 
+## W3C Trace Context
+
+`trace_context` parses bounded W3C `traceparent` and `tracestate` request
+metadata. `TraceParent` accepts only version `00`, lowercase fixed-width
+trace-id, parent-id, and flags fields, rejects version `ff`, unsupported
+versions, malformed flags, duplicate fields, and all-zero trace or parent
+identifiers, and exposes `version()`, `trace_id()`, `parent_id()`, `flags()`,
+`sampled()`, and `header_value()`.
+
+`TraceState` preserves wire order while validating list-member grammar,
+duplicate keys, at most 32 members, at most 512 combined bytes, and 256-byte
+per-key/per-value bounds. Typed `Debug` redacts propagation values and parse
+errors describe validation categories without echoing supplied values. These
+parsers report declared request metadata only; they do not create identifiers,
+decide sampling, select a tracing backend, or propagate context automatically.
+
 ## If-Modified-Since
 
 `if_modified_since` parses a singleton HTTP `If-Modified-Since` request field

@@ -21,9 +21,11 @@ use rttp_server::server::{
   HttpSaveDataParseError, HttpSecGpc, HttpSecGpcParseError, HttpSignature, HttpSignatureInput,
   HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
   HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
-  HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
-  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpWantContentDigest,
-  HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
+  HttpTraceParent, HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember,
+  HttpTraceStateParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
+  HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
+  HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite,
+  SecFetchUser, SecPurpose,
 };
 
 #[test]
@@ -795,6 +797,50 @@ fn request_facade_parses_idempotency_key_metadata_without_policy() {
     HttpIdempotencyKey::parse(oversized.as_str());
   assert!(oversized_error.is_err());
   assert!(!format!("{:?}", oversized_error.as_ref().unwrap_err()).contains(&oversized[..16]));
+}
+
+#[test]
+fn request_facade_parses_trace_context_metadata_without_policy() {
+  let request = HttpRequest::parse(
+    b"GET /trace HTTP/1.1\r\nHost: example.test\r\ntraceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\r\ntracestate: rojo=00f067aa0ba902b7\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let traceparent: HttpTraceParent = request
+    .traceparent()
+    .expect("traceparent should parse")
+    .expect("traceparent should be present");
+  let tracestate: HttpTraceState = request
+    .tracestate()
+    .expect("tracestate should parse")
+    .expect("tracestate should be present");
+  let member: &HttpTraceStateMember = &tracestate.members()[0];
+
+  assert_eq!("00", traceparent.version());
+  assert_eq!("4bf92f3577b34da6a3ce929d0e0e4736", traceparent.trace_id());
+  assert_eq!("rojo", member.key());
+  assert_eq!("00f067aa0ba902b7", member.value());
+
+  let absent = HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(None, absent.traceparent().expect("missing traceparent"));
+  assert_eq!(None, absent.tracestate().expect("missing tracestate"));
+
+  let malformed = HttpRequest::parse(
+    b"GET /trace HTTP/1.1\r\nHost: example.test\r\ntraceparent: invalid\r\ntracestate: rojo=1,rojo=2\r\n\r\n",
+  )
+  .expect("malformed metadata should not reject raw request parsing");
+  assert!(malformed.traceparent().is_err());
+  assert!(malformed.tracestate().is_err());
+  assert_eq!(Some("invalid"), malformed.header("traceparent"));
+  assert_eq!(Some("rojo=1,rojo=2"), malformed.header("tracestate"));
+
+  let traceparent_error: Result<HttpTraceParent, HttpTraceParentParseError> =
+    HttpTraceParent::parse("invalid");
+  let tracestate_error: Result<HttpTraceState, HttpTraceStateParseError> =
+    HttpTraceState::parse("rojo=1,rojo=2");
+  assert!(traceparent_error.is_err());
+  assert!(tracestate_error.is_err());
 }
 
 #[test]
