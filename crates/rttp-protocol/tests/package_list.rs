@@ -23,6 +23,7 @@ fn package_includes_protocol_metadata_facade_test() {
     "tests/link.rs",
     "tests/location.rs",
     "tests/max_forwards.rs",
+    "tests/idempotency_key.rs",
     "tests/if_modified_since.rs",
     "tests/if_unmodified_since.rs",
     "tests/package_list.rs",

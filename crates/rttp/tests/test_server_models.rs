@@ -1143,6 +1143,56 @@ fn request_max_forwards_is_optional_and_rejects_invalid_metadata() {
 }
 
 #[test]
+fn request_idempotency_key_is_optional_and_rejects_invalid_metadata() {
+  let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .idempotency_key()
+      .expect("missing Idempotency-Key should be valid")
+  );
+
+  for value in [
+    "charge-2026-08-19-9f3c",
+    "urn:uuid:6e7bc004-2445-45a3-8d16-392b33764f00",
+    "A",
+  ] {
+    let valid = parse_request(&format!(
+      "POST /charges HTTP/1.1\r\nHost: example.test\r\nIdempotency-Key: {value}\r\n\r\n"
+    ));
+    let parsed = valid
+      .idempotency_key()
+      .expect("value should parse")
+      .expect("Idempotency-Key should be present");
+    assert_eq!(value, parsed.as_str());
+    assert_eq!(value, parsed.header_value());
+  }
+
+  for value in ["", "key with space"] {
+    let request = parse_request(&format!(
+      "POST /charges HTTP/1.1\r\nHost: example.test\r\nIdempotency-Key: {value}\r\n\r\n"
+    ));
+    assert!(
+      request.idempotency_key().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(Some(value), request.header("Idempotency-Key"));
+  }
+
+  assert!(rttp::server::HttpIdempotencyKey::parse("x".repeat(64 * 1024 + 1)).is_err());
+
+  let duplicate = parse_request(concat!(
+    "POST /charges HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Idempotency-Key: first\r\n",
+    "idempotency-key: second\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.idempotency_key().is_err());
+  assert_eq!(Some("first"), duplicate.header("Idempotency-Key"));
+}
+
+#[test]
 fn request_te_and_prefer_parse_bounded_metadata_without_enabling_behavior() {
   let request = parse_request(concat!(
     "GET /metadata HTTP/1.1\r\n",

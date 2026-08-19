@@ -17,6 +17,7 @@ use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
 use rttp_protocol::forwarded::{Forwarded, MAX_FORWARDED_VALUE_BYTES};
+use rttp_protocol::idempotency_key::IdempotencyKey;
 use rttp_protocol::if_modified_since::IfModifiedSince;
 use rttp_protocol::if_unmodified_since::IfUnmodifiedSince;
 use rttp_protocol::max_forwards::MaxForwards;
@@ -618,6 +619,23 @@ impl HttpClient {
     let max_forwards = MaxForwards::parse(value.as_ref())
       .map_err(|error| error::builder_with_message(error.to_string()))?;
     Ok(self.header(Header::new("Max-Forwards", max_forwards.header_value())))
+  }
+
+  /// Set a bounded `Idempotency-Key` request header as opaque metadata.
+  ///
+  /// The key must be one or more visible ASCII bytes after HTTP optional
+  /// whitespace is trimmed, and is limited to 64 KiB. CR, LF, NUL, other
+  /// control bytes, and obs-text are rejected before a socket is opened. This
+  /// only validates and emits the header; it does not retry requests, store
+  /// keys, compare keys across requests, or apply application idempotency
+  /// policy. Use `header` directly for unusual values.
+  pub fn idempotency_key<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let idempotency_key = IdempotencyKey::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Idempotency-Key",
+      idempotency_key.header_value(),
+    )))
   }
 
   /// Append a validated `Accept-Encoding` coding with the default quality of

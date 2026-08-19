@@ -240,6 +240,7 @@ impl fmt::Debug for RedactedHeaderBlock<'_> {
 fn is_sensitive_debug_header(name: &str) -> bool {
   name.eq_ignore_ascii_case("authorization")
     || name.eq_ignore_ascii_case("cookie")
+    || name.eq_ignore_ascii_case("idempotency-key")
     || name.eq_ignore_ascii_case("proxy-authorization")
     || name.eq_ignore_ascii_case("set-cookie")
 }
@@ -258,14 +259,19 @@ mod tests {
     request
       .headers_mut()
       .push(Header::new("Proxy-Authorization", "Basic cHJveHktc2VjcmV0"));
+    request
+      .headers_mut()
+      .push(Header::new("Idempotency-Key", "charge-2026-08-19-9f3c"));
 
     let raw_request = RawRequest::block_new(&mut request).expect("raw request should build");
     let debug = format!("{raw_request:?}");
 
     assert!(debug.contains("Authorization"));
     assert!(debug.contains("Proxy-Authorization"));
+    assert!(debug.contains("Idempotency-Key"));
     assert!(debug.contains("[REDACTED]"));
     assert!(!debug.contains("origin-secret-token"));
     assert!(!debug.contains("cHJveHktc2VjcmV0"));
+    assert!(!debug.contains("charge-2026-08-19-9f3c"));
   }
 }

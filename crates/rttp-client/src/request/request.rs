@@ -432,6 +432,9 @@ mod tests {
       .headers_mut()
       .push(Header::new("Cookie", "session=private"));
     request
+      .headers_mut()
+      .push(Header::new("Idempotency-Key", "charge-2026-08-19-9f3c"));
+    request
       .trailers_mut()
       .push(Header::new("Proxy-Authorization", "Basic cHJveHk6c2VjcmV0"));
     request
@@ -444,6 +447,7 @@ mod tests {
       "session=private",
       "cHJveHk6c2VjcmV0",
       "raw-token",
+      "charge-2026-08-19-9f3c",
     ] {
       assert!(!debug.contains(secret));
     }

@@ -40,6 +40,9 @@ pub use rttp_protocol::forwarded::{
   ForwardedParameter as HttpForwardedParameter, ForwardedParseError as HttpForwardedParseError,
 };
 pub use rttp_protocol::host::{Host as HttpHost, HostParseError as HttpHostParseError};
+pub use rttp_protocol::idempotency_key::{
+  IdempotencyKey as HttpIdempotencyKey, IdempotencyKeyParseError as HttpIdempotencyKeyParseError,
+};
 pub use rttp_protocol::if_modified_since::{
   IfModifiedSince as HttpIfModifiedSince,
   IfModifiedSinceParseError as HttpIfModifiedSinceParseError,
@@ -287,6 +290,7 @@ impl fmt::Debug for DebugHeaderValue<'_> {
 fn is_sensitive_debug_header(name: &str) -> bool {
   name.eq_ignore_ascii_case("authorization")
     || name.eq_ignore_ascii_case("cookie")
+    || name.eq_ignore_ascii_case("idempotency-key")
     || name.eq_ignore_ascii_case("proxy-authorization")
     || name.eq_ignore_ascii_case("set-cookie")
 }
@@ -562,6 +566,20 @@ impl Request {
       return Ok(None);
     }
     HttpMaxForwards::parse_values(values).map(Some)
+  }
+
+  /// Parses exactly one opaque, bounded `Idempotency-Key` field as typed
+  /// metadata. Duplicate fields are rejected to avoid ambiguous keys. This
+  /// accessor does not retry requests, store keys, or apply idempotency
+  /// policy.
+  pub fn idempotency_key(
+    &self,
+  ) -> Result<Option<HttpIdempotencyKey>, HttpIdempotencyKeyParseError> {
+    let values: Vec<&str> = self.headers_named("Idempotency-Key").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpIdempotencyKey::parse_values(values).map(Some)
   }
 
   /// Parses received `Prefer` request metadata without applying preferences.
@@ -2200,6 +2218,25 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpMaxForwards::parse_values(values).map(Some)
+  }
+
+  /// Parses exactly one opaque, bounded `Idempotency-Key` field as typed
+  /// metadata. Duplicate fields are rejected to avoid ambiguous keys. This
+  /// accessor does not retry requests, store keys, or apply idempotency
+  /// policy.
+  pub fn idempotency_key(
+    &self,
+  ) -> Result<Option<HttpIdempotencyKey>, HttpIdempotencyKeyParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Idempotency-Key"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpIdempotencyKey::parse_values(values).map(Some)
   }
 
   /// Parses received `Prefer` request metadata without applying preferences.

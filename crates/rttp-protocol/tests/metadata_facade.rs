@@ -28,6 +28,7 @@ use rttp_protocol::fetch_metadata::{
 };
 use rttp_protocol::from::From;
 use rttp_protocol::host::Host;
+use rttp_protocol::idempotency_key::IdempotencyKey;
 use rttp_protocol::if_modified_since::IfModifiedSince;
 use rttp_protocol::if_unmodified_since::IfUnmodifiedSince;
 use rttp_protocol::keep_alive::KeepAlive;
@@ -89,6 +90,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let keep_alive = KeepAlive::parse("timeout=5, max=100").expect("Keep-Alive should parse");
   let location = Location::parse("../login?next=%2Fdashboard").expect("Location should parse");
   let max_forwards = MaxForwards::parse("0").expect("Max-Forwards should parse");
+  let idempotency_key = IdempotencyKey::parse("charge-2026-08-19-9f3c")
+    .expect("Idempotency-Key request metadata should parse");
   let if_modified_since = IfModifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
     .expect("If-Modified-Since should parse");
   let if_unmodified_since = IfUnmodifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
@@ -207,6 +210,9 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(location.as_str(), "../login?next=%2Fdashboard");
   assert_eq!(max_forwards.value(), 0);
   assert_eq!(max_forwards.header_value(), "0");
+  assert_eq!(idempotency_key.as_str(), "charge-2026-08-19-9f3c");
+  assert_eq!(idempotency_key.header_value(), "charge-2026-08-19-9f3c");
+  assert!(!format!("{idempotency_key:?}").contains("charge-2026-08-19-9f3c"));
   assert_eq!(
     if_modified_since.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"

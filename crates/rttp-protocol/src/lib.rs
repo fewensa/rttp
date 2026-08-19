@@ -53,6 +53,7 @@ pub mod forwarded;
 pub mod from;
 pub mod host;
 pub mod http1;
+pub mod idempotency_key;
 pub mod if_modified_since;
 pub mod if_unmodified_since;
 pub mod keep_alive;

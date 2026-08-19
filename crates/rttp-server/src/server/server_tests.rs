@@ -2279,6 +2279,114 @@ fn request_max_forwards_is_optional_bounded_and_preserves_invalid_headers() {
 }
 
 #[test]
+fn request_idempotency_key_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .idempotency_key()
+      .expect("missing value should be valid")
+  );
+
+  for value in [
+    "charge-2026-08-19-9f3c",
+    "urn:uuid:6e7bc004-2445-45a3-8d16-392b33764f00",
+    "A",
+  ] {
+    let valid = Request::from_raw_frame(
+      format!(
+        "POST /charges HTTP/1.1\r\nHost: example.test\r\nIdempotency-Key: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should parse");
+    let parsed = valid
+      .idempotency_key()
+      .expect("value should parse")
+      .expect("Idempotency-Key should be present");
+    assert_eq!(value, parsed.as_str());
+    assert_eq!(value, parsed.header_value());
+  }
+  let redacted = Request::from_raw_frame(
+    b"POST /charges HTTP/1.1\r\nHost: example.test\r\nIdempotency-Key: charge-2026-08-19-9f3c\r\n\r\n",
+  )
+  .expect("request should parse")
+  .idempotency_key()
+  .expect("value should parse")
+  .expect("Idempotency-Key should be present");
+  assert!(!format!("{redacted:?}").contains("charge-2026-08-19-9f3c"));
+
+  for value in ["", "key with space"] {
+    let request = Request::from_raw_frame(
+      format!(
+        "POST /charges HTTP/1.1\r\nHost: example.test\r\nIdempotency-Key: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should retain malformed metadata");
+    assert!(request.idempotency_key().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Idempotency-Key"));
+  }
+
+  let obs_text = Request::from_raw_frame(
+    b"POST /charges HTTP/1.1\r\nHost: example.test\r\nIdempotency-Key: key\xC3\xA9\r\n\r\n",
+  )
+  .expect("request should retain obs-text metadata");
+  assert!(obs_text.idempotency_key().is_err());
+  assert!(obs_text.header("Idempotency-Key").is_some());
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_request = Request {
+    method: "POST".to_string(),
+    target: "/charges".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("Idempotency-Key".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.idempotency_key().is_err());
+  assert_eq!(
+    Some(oversized.as_str()),
+    oversized_request.header("Idempotency-Key")
+  );
+
+  let injected_request = Request {
+    method: "POST".to_string(),
+    target: "/charges".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      (
+        "Idempotency-Key".to_string(),
+        "key\r\nX-Injected: 1".to_string(),
+      ),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(injected_request.idempotency_key().is_err());
+  assert_eq!(
+    Some("key\r\nX-Injected: 1"),
+    injected_request.header("Idempotency-Key")
+  );
+
+  let duplicate = Request::from_raw_frame(
+    b"POST /charges HTTP/1.1\r\nHost: example.test\r\nIdempotency-Key: first\r\nidempotency-key: second\r\n\r\n",
+  )
+  .expect("request should retain duplicate metadata");
+  assert!(duplicate.idempotency_key().is_err());
+  assert_eq!(Some("first"), duplicate.header("Idempotency-Key"));
+}
+
+#[test]
 fn request_cookies_are_bounded_and_preserve_pairs() {
   let request = Request::from_raw_frame(
     b"GET / HTTP/1.1\r\nHost: example.test\r\nCookie: session=abc; theme=dark\r\nCookie: flag=\r\n\r\n",
@@ -3044,6 +3152,43 @@ hello\r\n\
       Some("invalid"),
       malformed.header("Proxy-Authorization")
     );
+  }
+
+  #[test]
+  fn idempotency_key_debug_redacts_values_in_request_and_http_request() {
+    let raw = concat!(
+      "POST /charges HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Idempotency-Key: charge-2026-08-19-9f3c\r\n",
+      "\r\n"
+    );
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+    let request = Request::read_next_from(&mut reader)
+      .expect("request should parse")
+      .expect("request should be present");
+
+    let idempotency_key = request
+      .idempotency_key()
+      .expect("Idempotency-Key should parse")
+      .expect("Idempotency-Key should be present");
+    assert_eq!("charge-2026-08-19-9f3c", idempotency_key.as_str());
+    assert!(!format!("{idempotency_key:?}").contains("charge-2026-08-19-9f3c"));
+    let request_debug = format!("{request:?}");
+    assert!(request_debug.contains("Idempotency-Key"));
+    assert!(request_debug.contains("[REDACTED]"));
+    assert!(!request_debug.contains("charge-2026-08-19-9f3c"));
+
+    let http_request = HttpRequest::parse(raw.as_bytes()).expect("request should parse");
+    let http_request_debug = format!("{http_request:?}");
+    assert!(http_request_debug.contains("Idempotency-Key"));
+    assert!(http_request_debug.contains("[REDACTED]"));
+    assert!(!http_request_debug.contains("charge-2026-08-19-9f3c"));
+
+    let header_debug =
+      format!("{:?}", HttpHeader::new("Idempotency-Key", "charge-2026-08-19-9f3c"));
+    assert!(header_debug.contains("Idempotency-Key"));
+    assert!(header_debug.contains("[REDACTED]"));
+    assert!(!header_debug.contains("charge-2026-08-19-9f3c"));
   }
 
   #[test]

@@ -109,6 +109,7 @@ impl fmt::Debug for DebugHeaderValue<'_> {
 fn is_sensitive_debug_header(name: &str) -> bool {
   name.eq_ignore_ascii_case("authorization")
     || name.eq_ignore_ascii_case("cookie")
+    || name.eq_ignore_ascii_case("idempotency-key")
     || name.eq_ignore_ascii_case("proxy-authorization")
     || name.eq_ignore_ascii_case("set-cookie")
 }
@@ -274,6 +275,7 @@ mod tests {
       ("Proxy-Authorization", "Basic cHJveHk6c2VjcmV0"),
       ("Cookie", "session=private"),
       ("Set-Cookie", "session=private"),
+      ("Idempotency-Key", "charge-2026-08-19-9f3c"),
     ] {
       let debug = format!("{:?}", Header::new(name, secret));
       assert!(debug.contains(name));
