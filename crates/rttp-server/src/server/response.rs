@@ -24,14 +24,6 @@ pub use rttp_protocol::client_hints::{
   AcceptCh as HttpAcceptCh, AcceptChParseError as HttpAcceptChParseError,
   CriticalCh as HttpCriticalCh, CriticalChParseError as HttpCriticalChParseError,
 };
-pub use rttp_protocol::cross_origin_embedder_policy::{
-  CrossOriginEmbedderPolicy as HttpCrossOriginEmbedderPolicy,
-  CrossOriginEmbedderPolicyParseError as HttpCrossOriginEmbedderPolicyParseError,
-};
-pub use rttp_protocol::cross_origin_opener_policy::{
-  CrossOriginOpenerPolicy as HttpCrossOriginOpenerPolicy,
-  CrossOriginOpenerPolicyParseError as HttpCrossOriginOpenerPolicyParseError,
-};
 pub use rttp_protocol::cross_origin_resource_policy::{
   CrossOriginResourcePolicy as HttpCrossOriginResourcePolicy,
   CrossOriginResourcePolicyParseError as HttpCrossOriginResourcePolicyParseError,
