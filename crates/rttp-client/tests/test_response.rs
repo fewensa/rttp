@@ -6,8 +6,8 @@ use rttp_client::response::{
   DocumentPolicyValue, EntityTag, HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues,
   Location, MementoDatetime, OriginTrials, PermissionsPolicy, ProxyAuthenticate,
   ProxyAuthenticationInfo, ProxyStatus, ProxyStatusBareItem, ReferrerPolicy, ReferrerPolicyToken,
-  Response, RetryAfter, ServerTiming, SignatureInput, StrictTransportSecurity, Warning,
-  XContentTypeOptions, XFrameOptions,
+  Response, RetryAfter, ServerTiming, SignatureInput, StrictTransportSecurity, SupportsLoadingMode,
+  Warning, XContentTypeOptions, XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -954,6 +954,154 @@ fn document_policy_metadata_is_absent_without_a_header() {
 
   assert_eq!(response.document_policy().expect("header is absent"), None);
   let _: Option<DocumentPolicy> = response.document_policy().expect("header is absent");
+}
+
+#[test]
+fn supports_loading_mode_metadata_parses_tokens_without_applying_loading_policy() {
+  let value = "fenced-frame, credentialed-prerender";
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!("HTTP/1.1 200 OK\r\nSupports-Loading-Mode: {value}\r\nContent-Length: 0\r\n\r\n")
+      .into_bytes(),
+  )
+  .expect("response should parse");
+
+  let metadata = response
+    .supports_loading_mode()
+    .expect("Supports-Loading-Mode should parse")
+    .expect("Supports-Loading-Mode should be present");
+
+  assert_eq!(
+    metadata.tokens(),
+    ["fenced-frame", "credentialed-prerender"]
+  );
+  assert!(metadata.contains_fenced_frame());
+  assert!(metadata.contains_credentialed_prerender());
+  assert!(!metadata.contains_prerender_cross_origin_frames());
+  assert!(metadata.contains("CREDENTIALED-PRERENDER"));
+  assert_eq!(metadata.header_value(), value);
+  assert_eq!(
+    response.header_value("Supports-Loading-Mode"),
+    Some(&value.to_string())
+  );
+}
+
+#[test]
+fn supports_loading_mode_metadata_retains_unknown_tokens_and_combines_fields() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Supports-Loading-Mode: uncredentialed-prerender\r\n",
+      "Supports-Loading-Mode: fenced-frame\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let metadata = response
+    .supports_loading_mode()
+    .expect("Supports-Loading-Mode should parse")
+    .expect("Supports-Loading-Mode should be present");
+
+  assert_eq!(
+    metadata.tokens(),
+    ["uncredentialed-prerender", "fenced-frame"]
+  );
+  assert_eq!(
+    metadata.header_value(),
+    "uncredentialed-prerender, fenced-frame"
+  );
+  assert_eq!(
+    response.header_values("Supports-Loading-Mode"),
+    [
+      &"uncredentialed-prerender".to_string(),
+      &"fenced-frame".to_string()
+    ]
+  );
+}
+
+#[test]
+fn supports_loading_mode_metadata_rejects_invalid_values_without_hiding_raw_headers() {
+  for value in [
+    "",
+    "fenced-frame credentialed-prerender",
+    "fenced-frame,,credentialed-prerender",
+    "?1",
+    "\"fenced-frame\"",
+    "(fenced-frame)",
+    "fenced-frame;foo=bar",
+    "fenced-frame, fenced-frame",
+  ] {
+    let response = Response::new(
+      RoUrl::with("https://example.test"),
+      format!("HTTP/1.1 200 OK\r\nSupports-Loading-Mode: {value}\r\nContent-Length: 0\r\n\r\n")
+        .into_bytes(),
+    )
+    .expect("response should parse");
+
+    assert!(
+      response.supports_loading_mode().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      response.header_value("Supports-Loading-Mode"),
+      Some(&value.to_string())
+    );
+  }
+
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Supports-Loading-Mode: fenced-frame\r\n",
+      "Supports-Loading-Mode: Fenced-Frame\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  assert!(response.supports_loading_mode().is_err());
+  assert_eq!(
+    response.header_values("Supports-Loading-Mode"),
+    [&"fenced-frame".to_string(), &"Fenced-Frame".to_string()]
+  );
+}
+
+#[test]
+fn supports_loading_mode_metadata_rejects_oversized_values_without_hiding_raw_headers() {
+  let oversized = format!("fenced-frame{}", "x".repeat(64 * 1024));
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!("HTTP/1.1 200 OK\r\nSupports-Loading-Mode: {oversized}\r\nContent-Length: 0\r\n\r\n")
+      .into_bytes(),
+  )
+  .expect("response should parse");
+
+  assert!(response.supports_loading_mode().is_err());
+  assert_eq!(
+    response.header_value("Supports-Loading-Mode"),
+    Some(&oversized)
+  );
+}
+
+#[test]
+fn supports_loading_mode_metadata_is_absent_without_a_header() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(
+    response.supports_loading_mode().expect("header is absent"),
+    None
+  );
+  let _: Option<SupportsLoadingMode> = response.supports_loading_mode().expect("header is absent");
 }
 
 #[test]

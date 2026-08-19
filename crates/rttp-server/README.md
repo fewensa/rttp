@@ -511,6 +511,26 @@ These helpers only declare and parse metadata. RTTP does not execute
 configuration points, block document loads, compare required policies, echo
 `Sec-Required-Document-Policy`, or send reports.
 
+## Supports-Loading-Mode response metadata
+
+`HttpResponse::with_supports_loading_mode(tokens)` validates a declared token
+list through the shared protocol parser and replaces any existing raw
+`Supports-Loading-Mode` fields with one canonical comma-separated value.
+`HttpResponse::supports_loading_mode()` parses attached raw fields into
+`HttpSupportsLoadingMode` metadata, returning `Ok(None)` when absent and
+parser errors without changing raw fields. The typed value exposes the
+ordered tokens with `tokens()`, membership checks with `contains(token)`, and
+exact predicates for the defined `fenced-frame`,
+`credentialed-prerender`, and `prerender-cross-origin-frames` tokens;
+well-formed unknown tokens such as `uncredentialed-prerender` are retained.
+Field values are bounded to 64 KiB, the combined raw bytes across fields to
+64 KiB, and tokens to 256 per header set. Empty members, strings, integers,
+inner lists, parameterized items, duplicate tokens, non-token members, and
+oversized values are rejected.
+
+These helpers only declare and parse metadata. RTTP does not prerender
+documents, admit fenced frames, change navigation, or alter resource loading.
+
 ## Want-Content-Digest request metadata
 
 Handlers can call `Request::want_content_digest()` and

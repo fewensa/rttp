@@ -27,10 +27,10 @@ pub use rttp_client::response::{
   NoVarySearchParams, NoVarySearchParseError, OriginTrialParseError, OriginTrials,
   PermissionsPolicy, PermissionsPolicyAllowlist, PermissionsPolicyAllowlistMember,
   PermissionsPolicyDirective, PermissionsPolicyParseError, Pragma, PragmaParseError, ReprDigest,
-  StrictTransportSecurity, StrictTransportSecurityParseError, Upgrade, UpgradeParseError,
-  WantContentDigest, WantReprDigest, WwwAuthenticate, WwwAuthenticateChallenge,
-  WwwAuthenticateParameter, WwwAuthenticateParseError, XContentTypeOptions,
-  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  StrictTransportSecurity, StrictTransportSecurityParseError, SupportsLoadingMode,
+  SupportsLoadingModeParseError, Upgrade, UpgradeParseError, WantContentDigest, WantReprDigest,
+  WwwAuthenticate, WwwAuthenticateChallenge, WwwAuthenticateParameter, WwwAuthenticateParseError,
+  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 #[cfg(feature = "client")]
 pub use rttp_client::{

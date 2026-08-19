@@ -60,6 +60,7 @@ use rttp_protocol::sec_gpc::SecGpc;
 use rttp_protocol::signature::{Signature, SignatureParseError};
 use rttp_protocol::signature_input::{SignatureInput, SignatureInputParseError};
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
+use rttp_protocol::supports_loading_mode::SupportsLoadingMode;
 use rttp_protocol::te::Te;
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
 use rttp_protocol::trace_context::{TraceParent, TraceState};
@@ -123,6 +124,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let permissions_policy =
     PermissionsPolicy::parse(r#"geolocation=(self "https://maps.example.test"), camera=()"#)
       .expect("Permissions-Policy should parse");
+  let supports_loading_mode = SupportsLoadingMode::parse("fenced-frame, credentialed-prerender")
+    .expect("Supports-Loading-Mode should parse");
   let proxy_authentication_info = ProxyAuthenticationInfo::parse(
     "nextnonce=\"xyz789\", qop=auth, rspauth=\"...\", cnonce=\"c\", nc=00000001",
   )
@@ -308,6 +311,16 @@ fn protocol_exports_representative_bounded_metadata_types() {
     .unwrap()
     .allowlist()
     .is_empty());
+  assert_eq!(
+    supports_loading_mode.tokens(),
+    ["fenced-frame", "credentialed-prerender"]
+  );
+  assert!(supports_loading_mode.contains_fenced_frame());
+  assert!(supports_loading_mode.contains_credentialed_prerender());
+  assert_eq!(
+    supports_loading_mode.header_value(),
+    "fenced-frame, credentialed-prerender"
+  );
   assert_eq!(
     no_vary_search.params(),
     Some(&NoVarySearchParams::Names(vec!["utm_source".to_owned()]))

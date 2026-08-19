@@ -158,6 +158,9 @@ pub use rttp_protocol::signature_input::{
 pub use rttp_protocol::strict_transport_security::{
   StrictTransportSecurity, StrictTransportSecurityParseError,
 };
+pub use rttp_protocol::supports_loading_mode::{
+  SupportsLoadingMode, SupportsLoadingModeParseError,
+};
 pub use rttp_protocol::timing_allow_origin::{TimingAllowOrigin, TimingAllowOriginParseError};
 pub use rttp_protocol::trailer::{Trailer, TrailerParseError};
 pub use rttp_protocol::transfer_encoding::{TransferEncoding, TransferEncodingParseError};

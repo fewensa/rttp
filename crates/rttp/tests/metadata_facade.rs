@@ -15,8 +15,8 @@ use rttp::server::{
   HttpSaveData, HttpSecGpc, HttpSecGpcParseError, HttpSignature, HttpSignatureInput,
   HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
   HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
-  HttpSunsetParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
-  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
+  HttpSunsetParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpUpgrade,
+  HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
 };
 use std::io::Write;
 use std::net::SocketAddr;
@@ -231,6 +231,12 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::DocumentPolicyParseError =
     rttp_client::response::DocumentPolicy::parse("unsized-media=src;foo=bar")
       .expect_err("unknown Document-Policy parameter should be rejected");
+  let supports_loading_mode: rttp::SupportsLoadingMode =
+    rttp_client::response::SupportsLoadingMode::parse("fenced-frame, credentialed-prerender")
+      .expect("Supports-Loading-Mode should parse");
+  let _: rttp::SupportsLoadingModeParseError =
+    rttp_client::response::SupportsLoadingMode::parse("?1")
+      .expect_err("non-token should be rejected");
   let fetch_site: rttp::SecFetchSite =
     rttp_client::SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let sec_purpose: rttp::SecPurpose =
@@ -363,6 +369,16 @@ fn compatibility_facade_exports_client_metadata_types() {
       .unwrap()
       .value(),
     &rttp::DocumentPolicyValue::Decimal("2.0".to_string())
+  );
+  assert_eq!(
+    supports_loading_mode.tokens(),
+    ["fenced-frame", "credentialed-prerender"]
+  );
+  assert!(supports_loading_mode.contains_fenced_frame());
+  assert!(supports_loading_mode.contains_credentialed_prerender());
+  assert_eq!(
+    supports_loading_mode.header_value(),
+    "fenced-frame, credentialed-prerender"
   );
   assert_eq!("tenant", baggage_member.key());
   assert_eq!("source", baggage_property.key());
@@ -895,6 +911,11 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
       .expect("Permissions-Policy should parse");
   let _: HttpPermissionsPolicyParseError =
     HttpPermissionsPolicy::parse("geolocation=src").expect_err("src should be rejected");
+  let supports_loading_mode: HttpSupportsLoadingMode =
+    HttpSupportsLoadingMode::parse("fenced-frame, credentialed-prerender")
+      .expect("Supports-Loading-Mode should parse");
+  let _: HttpSupportsLoadingModeParseError =
+    HttpSupportsLoadingMode::parse("?1").expect_err("non-token should be rejected");
   let content_location: HttpContentLocation =
     HttpContentLocation::parse("../representations/current.json")
       .expect("Content-Location should parse");
@@ -990,6 +1011,16 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     .unwrap()
     .allowlist()
     .is_empty());
+  assert_eq!(
+    supports_loading_mode.tokens(),
+    ["fenced-frame", "credentialed-prerender"]
+  );
+  assert!(supports_loading_mode.contains_fenced_frame());
+  assert!(supports_loading_mode.contains_credentialed_prerender());
+  assert_eq!(
+    supports_loading_mode.header_value(),
+    "fenced-frame, credentialed-prerender"
+  );
   assert_eq!(
     metadata
       .entity_tag_value()

@@ -17,10 +17,11 @@ use rttp_client::response::{
   Priority, ProxyAuthenticate, ProxyAuthenticateParseError, ProxyAuthenticationInfo,
   ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError, ReferrerPolicy,
   ReferrerPolicyToken, ServerTiming, Signature, SignatureInput, SignatureInputParseError,
-  SignatureParseError, StrictTransportSecurity, StrictTransportSecurityParseError, Trailer,
-  TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError,
-  WantContentDigest, WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError,
-  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  SignatureParseError, StrictTransportSecurity, StrictTransportSecurityParseError,
+  SupportsLoadingMode, SupportsLoadingModeParseError, Trailer, TransferEncoding,
+  TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError, WantContentDigest,
+  WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError, XContentTypeOptions,
+  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentDisposition, ContentDispositionParseError, ContentLocation,
@@ -138,6 +139,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
       .expect("Document-Policy should parse");
   let _: DocumentPolicyParseError = DocumentPolicy::parse("unsized-media=src;foo=bar")
     .expect_err("unknown Document-Policy parameter should be rejected");
+  let supports_loading_mode = SupportsLoadingMode::parse("fenced-frame, credentialed-prerender")
+    .expect("Supports-Loading-Mode should parse");
+  let _: SupportsLoadingModeParseError =
+    SupportsLoadingMode::parse("?1").expect_err("non-token should be rejected");
   let warning = Warning::parse(r#"110 - "Response is Stale""#).expect("Warning should parse");
   let nel =
     Nel::parse(r#"{"report_to":"network-errors","max_age":2592000}"#).expect("NEL should parse");
@@ -315,6 +320,16 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(
     Some("default"),
     document_policy.directive("*").unwrap().report_to()
+  );
+  assert_eq!(
+    supports_loading_mode.tokens(),
+    ["fenced-frame", "credentialed-prerender"]
+  );
+  assert!(supports_loading_mode.contains_fenced_frame());
+  assert!(supports_loading_mode.contains_credentialed_prerender());
+  assert_eq!(
+    supports_loading_mode.header_value(),
+    "fenced-frame, credentialed-prerender"
   );
   assert_eq!(warning.items()[0].code(), 110);
   assert_eq!(nel.max_age(), 2592000);
@@ -638,6 +653,50 @@ fn response_facade_parses_document_policy_metadata() {
     [
       &"oversized-images=2.0, unsized-media=?0".to_string(),
       &"*;report-to=default".to_string()
+    ]
+  );
+}
+
+#[test]
+fn response_facade_parses_supports_loading_mode_metadata() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Supports-Loading-Mode: fenced-frame, uncredentialed-prerender\r\n",
+      "Supports-Loading-Mode: credentialed-prerender\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let modes: SupportsLoadingMode = response
+    .supports_loading_mode()
+    .expect("Supports-Loading-Mode should parse")
+    .expect("Supports-Loading-Mode should be present");
+
+  assert_eq!(
+    modes.tokens(),
+    [
+      "fenced-frame",
+      "uncredentialed-prerender",
+      "credentialed-prerender"
+    ]
+  );
+  assert!(modes.contains_fenced_frame());
+  assert!(modes.contains_credentialed_prerender());
+  assert!(modes.contains("uncredentialed-prerender"));
+  assert_eq!(
+    modes.header_value(),
+    "fenced-frame, uncredentialed-prerender, credentialed-prerender"
+  );
+  assert_eq!(
+    response.header_values("Supports-Loading-Mode"),
+    [
+      &"fenced-frame, uncredentialed-prerender".to_string(),
+      &"credentialed-prerender".to_string()
     ]
   );
 }
