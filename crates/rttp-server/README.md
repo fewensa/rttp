@@ -693,6 +693,25 @@ helpers parse request metadata only; they do not interpret application data,
 store request context, select a tracing backend, or automatically propagate
 baggage.
 
+## CDN-Loop request metadata
+
+Handlers can call `Request::cdn_loop()` and the matching `HttpRequest` helper
+to observe bounded RFC 8586 `CDN-Loop` request metadata through the shared
+protocol `HttpCdnLoop` type. Absent fields return `Ok(None)`. Malformed,
+oversized, duplicate-parameter, or over-limit values return parser errors
+while `Request::header()` and `HttpRequest::header()` continue to expose the
+original raw fields.
+
+`HttpCdnLoop` preserves ordered members with an opaque CDN identifier
+(`uri-host` with optional port or an RFC 7230 token pseudonym) and optional
+HTTP parameter accessors. Each field value and the combined serialized value
+are bounded to 64 KiB, the combined member count is bounded to 256, and each
+member is bounded to 32 parameters. Repeated `CDN-Loop` fields are combined in
+wire order, and repeated CDN identifiers are valid loop-visible metadata.
+These helpers expose loop metadata only; they do not detect or break loops,
+reject requests because an identifier is already present, or forward the
+field automatically.
+
 ## Conditional HTTP-date request metadata
 
 Handlers can call `Request::if_modified_since()`,

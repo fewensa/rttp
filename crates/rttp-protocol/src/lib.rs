@@ -32,6 +32,7 @@ pub mod baggage;
 pub mod cache_control;
 pub mod cache_status;
 pub mod cdn_cache_control;
+pub mod cdn_loop;
 pub mod clear_site_data;
 pub mod client_hints;
 pub mod connection;

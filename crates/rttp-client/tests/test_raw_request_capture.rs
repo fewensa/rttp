@@ -1947,6 +1947,106 @@ fn forwarded_helper_rejects_duplicate_or_excessive_metadata_before_connecting() 
 }
 
 #[test]
+fn cdn_loop_helper_emits_bounded_forwarding_metadata() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .cdn_loop(r#"foo123.foocdn.example, barcdn.example; trace="abcdef""#)
+      .expect("first CDN-Loop value should be accepted")
+      .cdn_loop(r#"AnotherCDN; abc=123; def="456""#)
+      .expect("second CDN-Loop value should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+
+  assert_eq!(
+    Some("foo123.foocdn.example, barcdn.example; trace=abcdef, AnotherCDN; abc=123; def=456"),
+    header_value(&request_text(&request), "CDN-Loop")
+  );
+}
+
+#[test]
+fn cdn_loop_helper_rejects_malformed_or_excessive_metadata_before_connecting() {
+  for value in [
+    "not valid",
+    "cdn; trace",
+    "cdn; trace=1; TRACE=2",
+    "cdn,",
+    "cdn\r\nX-Injected: 1",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .cdn_loop(value)
+        .expect_err("invalid CDN-Loop metadata should be rejected");
+
+      assert!(error.is_builder());
+    });
+
+    assert!(
+      request.is_empty(),
+      "invalid CDN-Loop input should not open a socket"
+    );
+  }
+
+  let excessive = (0..257)
+    .map(|index| format!("cdn{index}.example"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .cdn_loop(excessive.as_str())
+      .expect_err("too many CDN-Loop members should be rejected");
+
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "excessive CDN-Loop input should not open a socket"
+  );
+
+  let oversized = format!("cdn; trace=\"{}\"", "a".repeat(64 * 1024));
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .cdn_loop(oversized.as_str())
+      .expect_err("oversized CDN-Loop metadata should be rejected");
+
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "oversized CDN-Loop input should not open a socket"
+  );
+
+  let first = "a".repeat(64 * 1024 - 4);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .cdn_loop(first.as_str())
+      .expect("a bounded first CDN-Loop value should be accepted")
+      .cdn_loop("other.example")
+      .expect_err("combined CDN-Loop metadata should remain bounded");
+
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "oversized combined CDN-Loop output should not open a socket"
+  );
+}
+
+#[test]
 fn manual_range_header_remains_available_as_escape_hatch() {
   let request = capture_request(|base_url| {
     client()

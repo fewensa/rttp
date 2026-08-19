@@ -8,18 +8,19 @@ use rttp_server::server::{
   HttpAccessControlRequestPrivateNetworkParseError, HttpAltUsed, HttpAltUsedParseError,
   HttpAuthorization, HttpAuthorizationParseError, HttpBaggage, HttpBaggageMember,
   HttpBaggageParseError, HttpBaggageProperty, HttpCacheStatus, HttpCacheStatusParseError,
-  HttpCdnCacheControl, HttpConditionalMetadata, HttpConnection, HttpConnectionParseError,
-  HttpContentDisposition, HttpContentDispositionParseError, HttpContentDpr,
-  HttpContentDprParseError, HttpContentLength, HttpContentLocation, HttpContentLocationParseError,
-  HttpContentRange, HttpContentRangeParseError, HttpContentSecurityPolicyReportOnly,
-  HttpContentSecurityPolicyReportOnlyParseError, HttpCrossOriginEmbedderPolicyReportOnly,
-  HttpCrossOriginOpenerPolicy, HttpCrossOriginOpenerPolicyReportOnly,
-  HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpEntityTag,
-  HttpExpectParseError, HttpExpectations, HttpHost, HttpIdempotencyKey,
-  HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfModifiedSinceParseError,
-  HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError, HttpKeepAlive, HttpMaxForwards,
-  HttpMaxForwardsParseError, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNoVarySearch,
-  HttpNoVarySearchParams, HttpOriginTrialParseError, HttpOriginTrials, HttpPermissionsPolicy,
+  HttpCdnCacheControl, HttpCdnLoop, HttpCdnLoopMember, HttpCdnLoopParseError,
+  HttpConditionalMetadata, HttpConnection, HttpConnectionParseError, HttpContentDisposition,
+  HttpContentDispositionParseError, HttpContentDpr, HttpContentDprParseError, HttpContentLength,
+  HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
+  HttpContentSecurityPolicyReportOnly, HttpContentSecurityPolicyReportOnlyParseError,
+  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
+  HttpCrossOriginOpenerPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeprecation,
+  HttpDeprecationParseError, HttpEntityTag, HttpExpectParseError, HttpExpectations, HttpHost,
+  HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince,
+  HttpIfModifiedSinceParseError, HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError,
+  HttpKeepAlive, HttpMaxForwards, HttpMaxForwardsParseError, HttpMementoDatetime,
+  HttpMementoDatetimeParseError, HttpNoVarySearch, HttpNoVarySearchParams,
+  HttpOriginTrialParseError, HttpOriginTrials, HttpPermissionsPolicy,
   HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
   HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective,
   HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus,
@@ -133,6 +134,11 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let cdn_cache_control: HttpCdnCacheControl =
     HttpCdnCacheControl::parse("max-age=600, cdn-example=\"a, b\"")
       .expect("CDN-Cache-Control should parse");
+  let cdn_loop: HttpCdnLoop =
+    HttpCdnLoop::parse(r#"foo123.foocdn.example, barcdn.example; trace="abcdef""#)
+      .expect("CDN-Loop should parse");
+  let _: HttpCdnLoopParseError =
+    HttpCdnLoop::parse("cdn; trace").expect_err("valueless CDN-Loop parameter should be rejected");
   let content_range = HttpContentRange::parse("bytes */10").expect("Content-Range should parse");
   let content_range_error: Result<HttpContentRange, HttpContentRangeParseError> =
     HttpContentRange::parse("bytes */*");
@@ -282,6 +288,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(cache_status.members()[0].ttl(), Some(1100));
   assert_eq!(cdn_cache_control.directives()[1].name(), "cdn-example");
   assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
+  assert_eq!(cdn_loop.members()[0].identifier(), "foo123.foocdn.example");
+  assert_eq!(cdn_loop.members()[1].parameter("trace"), Some("abcdef"));
   assert_eq!(report_only_policy.header_value(), "require-corp");
   assert_eq!(
     HttpCrossOriginOpenerPolicy::SameOrigin,
@@ -970,6 +978,40 @@ fn request_facade_parses_baggage_metadata_without_policy() {
   let baggage_error: Result<HttpBaggage, HttpBaggageParseError> =
     HttpBaggage::parse("tenant=1,tenant=2");
   assert!(baggage_error.is_err());
+}
+
+#[test]
+fn request_facade_parses_cdn_loop_metadata_without_policy() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nCDN-Loop: foo123.foocdn.example, barcdn.example; trace=\"abcdef\"\r\nCDN-Loop: AnotherCDN; abc=123\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let cdn_loop: HttpCdnLoop = request
+    .cdn_loop()
+    .expect("CDN-Loop should parse")
+    .expect("CDN-Loop should be present");
+  let member: &HttpCdnLoopMember = &cdn_loop.members()[1];
+
+  assert_eq!(3, cdn_loop.len());
+  assert_eq!("foo123.foocdn.example", cdn_loop.members()[0].identifier());
+  assert_eq!(Some("abcdef"), member.parameter("trace"));
+  assert_eq!("AnotherCDN", cdn_loop.members()[2].identifier());
+
+  let absent = HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(None, absent.cdn_loop().expect("missing CDN-Loop"));
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nCDN-Loop: cdn; trace\r\n\r\n",
+  )
+  .expect("malformed metadata should not reject raw request parsing");
+  assert!(malformed.cdn_loop().is_err());
+  assert_eq!(Some("cdn; trace"), malformed.header("CDN-Loop"));
+
+  let cdn_loop_error: Result<HttpCdnLoop, HttpCdnLoopParseError> =
+    HttpCdnLoop::parse("cdn; trace=1; TRACE=2");
+  assert!(cdn_loop_error.is_err());
 }
 
 #[test]

@@ -429,6 +429,24 @@ request metadata only: RTTP does not interpret application baggage data,
 store request context, select a tracing backend, or automatically propagate
 baggage.
 
+## Bounded CDN-Loop request metadata
+
+`HttpClient::cdn_loop()` validates and emits bounded RFC 8586 `CDN-Loop`
+request metadata through the shared `rttp_protocol` `CdnLoop` type, combining
+any existing `CDN-Loop` field with the new member in wire order before a
+socket is opened. `Request::cdn_loop()` / `HttpRequest::cdn_loop()` parse
+received fields into `HttpCdnLoop`, returning `Ok(None)` when absent and
+preserving raw headers on parse errors.
+
+`CdnLoop` validates opaque CDN identifiers (`uri-host` with optional port or
+an RFC 7230 token pseudonym), optional HTTP parameters, and bounds: 64 KiB per
+field value and per combined serialized value, 256 combined members, and 32
+parameters per member. Duplicate parameter names are rejected; repeated CDN
+identifiers are valid loop-visible metadata. These helpers expose loop
+metadata only: RTTP does not detect or break loops, reject requests because an
+identifier is already present, insert a local CDN identifier, forward the
+field automatically, or treat `CDN-Loop` as hop-by-hop.
+
 ## Bounded HTTP/1.1 Allow behavior
 
 Server-side `Allow` helpers expose response declaration and method-list parsing
@@ -1095,6 +1113,7 @@ scheduling, or async accept loops.
 | Idempotency-Key | `HttpClient::idempotency_key` validates and emits one bounded opaque `Idempotency-Key` request field through the shared protocol type, and `Request::idempotency_key`/`HttpRequest::idempotency_key` parse received fields into the same representation while preserving raw headers on errors and redacting the key from typed debug output | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | W3C Trace Context | `HttpClient::traceparent`/`tracestate` validate and emit bounded W3C Trace Context request metadata, and `Request::traceparent`/`tracestate` plus `HttpRequest` helpers parse received fields while preserving raw headers on errors and redacting propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |
 | W3C Baggage | `HttpClient::baggage` validates and emits bounded W3C Baggage request metadata, and `Request::baggage` plus `HttpRequest` helpers parse received fields while preserving raw headers on errors and redacting member and property values from typed debug output | No application-data interpretation, request-context storage, tracing backend, span model, or automatic propagation |
+| CDN-Loop | `HttpClient::cdn_loop` validates and emits bounded RFC 8586 `CDN-Loop` request metadata, combining an existing same-name field with the new member in wire order, and `Request::cdn_loop` plus `HttpRequest` helpers parse received fields into `HttpCdnLoop` while preserving raw headers on errors | No CDN identifier insertion, loop detection or rejection, automatic forwarding, or hop-by-hop handling |
 | No-Vary-Search | `NoVarySearch`, `HttpNoVarySearch`, `Response::no_vary_search`, `HttpResponse::with_no_vary_search`, and `HttpResponse::no_vary_search` parse and declare bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
 | Allow | `HttpAllowedMethods`, `HttpResponse::with_allow`, and `HttpResponse::allow` declare and parse bounded `Allow` method-list metadata | No route dispatch, automatic `405` generation, `OPTIONS` policy, fallback method selection, retry/replay, or status-code policy engine |
 | Client Hints | `HttpAcceptCh`/`HttpCriticalCh`, `HttpResponse::with_accept_ch`/`with_critical_ch`, and `accept_ch`/`critical_ch` declare and parse bounded Client Hints opt-in metadata; `Response::accept_ch` and `critical_ch` expose it to clients | No browser opt-in state, request-header generation, automatic retry, persistence, or Client Hints policy |
