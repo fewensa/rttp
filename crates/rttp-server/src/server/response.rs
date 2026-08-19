@@ -300,8 +300,6 @@ pub(crate) const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
 pub(crate) const MAX_VARY_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_VARY_FIELDS: usize = 256;
-pub(crate) const MAX_ACCEPT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
-pub(crate) const MAX_ACCEPT_ENCODINGS: usize = 32;
 pub(crate) const MAX_TE_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_TE_CODINGS: usize = 32;
 pub(crate) const MAX_CONTENT_DISPOSITION_VALUE_BYTES: usize = 64 * 1024;
@@ -3397,111 +3395,6 @@ impl fmt::Display for HttpReportingEndpointsParseError {
 }
 impl Error for HttpReportingEndpointsParseError {}
 
-/// A validated `Accept-Encoding` coding received on an HTTP request.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpAcceptEncoding {
-  coding: String,
-  quality: u16,
-}
-
-impl HttpAcceptEncoding {
-  pub fn coding(&self) -> &str {
-    &self.coding
-  }
-
-  /// Returns the q-value as thousandths, where `1000` is the default quality
-  /// of `1` and `0` means not acceptable.
-  pub fn quality(&self) -> u16 {
-    self.quality
-  }
-}
-
-/// Bounded `Accept-Encoding` request metadata.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpRequestAcceptEncodings {
-  codings: Vec<HttpAcceptEncoding>,
-}
-
-impl HttpRequestAcceptEncodings {
-  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpAcceptEncodingParseError> {
-    Self::parse_values([value.as_ref()])
-  }
-
-  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpAcceptEncodingParseError>
-  where
-    I: IntoIterator<Item = &'a str>,
-  {
-    let mut codings = Vec::new();
-    for value in values {
-      if value.len() > MAX_ACCEPT_ENCODING_VALUE_BYTES {
-        return Err(HttpAcceptEncodingParseError::new(
-          "Accept-Encoding header value is too large",
-        ));
-      }
-      for member in value.split(',') {
-        let (coding, quality) = parse_accept_encoding_member(member)?;
-        if codings
-          .iter()
-          .any(|known: &HttpAcceptEncoding| known.coding.eq_ignore_ascii_case(coding))
-        {
-          return Err(HttpAcceptEncodingParseError::new(
-            "duplicate Accept-Encoding coding",
-          ));
-        }
-        if codings.len() >= MAX_ACCEPT_ENCODINGS {
-          return Err(HttpAcceptEncodingParseError::new(
-            "too many Accept-Encoding codings",
-          ));
-        }
-        codings.push(HttpAcceptEncoding {
-          coding: coding.to_string(),
-          quality,
-        });
-      }
-    }
-
-    if codings.is_empty() {
-      return Err(HttpAcceptEncodingParseError::new(
-        "invalid Accept-Encoding coding",
-      ));
-    }
-    Ok(Self { codings })
-  }
-
-  pub fn codings(&self) -> &[HttpAcceptEncoding] {
-    &self.codings
-  }
-
-  pub fn len(&self) -> usize {
-    self.codings.len()
-  }
-
-  pub fn is_empty(&self) -> bool {
-    self.codings.is_empty()
-  }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpAcceptEncodingParseError {
-  pub(crate) message: String,
-}
-
-impl HttpAcceptEncodingParseError {
-  pub(crate) fn new<S: AsRef<str>>(message: S) -> Self {
-    Self {
-      message: message.as_ref().to_string(),
-    }
-  }
-}
-
-impl fmt::Display for HttpAcceptEncodingParseError {
-  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    formatter.write_str(&self.message)
-  }
-}
-
-impl Error for HttpAcceptEncodingParseError {}
-
 /// A validated `TE` coding received on an HTTP request.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HttpTe {
@@ -3642,66 +3535,6 @@ fn parse_te_qvalue(qvalue: &str) -> Result<u16, HttpTeParseError> {
     || (whole == "1" && !fraction.bytes().all(|byte| byte == b'0'))
   {
     return Err(HttpTeParseError::new("invalid TE q-value"));
-  }
-  let fractional = if fraction.is_empty() {
-    0
-  } else {
-    fraction.parse::<u16>().expect("validated q-value digits")
-  };
-  Ok(if whole == "1" {
-    1000
-  } else {
-    fractional * 10_u16.pow(3 - fraction.len() as u32)
-  })
-}
-
-fn parse_accept_encoding_member(member: &str) -> Result<(&str, u16), HttpAcceptEncodingParseError> {
-  let mut parts = member.split(';');
-  let coding = parts.next().unwrap_or_default().trim();
-  if coding.is_empty() || !is_http_token(coding) {
-    return Err(HttpAcceptEncodingParseError::new(
-      "invalid Accept-Encoding coding",
-    ));
-  }
-  let Some(parameter) = parts.next() else {
-    return Ok((coding, 1000));
-  };
-  if parts.next().is_some() {
-    return Err(HttpAcceptEncodingParseError::new(
-      "invalid Accept-Encoding q-value",
-    ));
-  }
-  let Some((name, qvalue)) = parameter.trim().split_once('=') else {
-    return Err(HttpAcceptEncodingParseError::new(
-      "invalid Accept-Encoding q-value",
-    ));
-  };
-  if !name.trim().eq_ignore_ascii_case("q") {
-    return Err(HttpAcceptEncodingParseError::new(
-      "invalid Accept-Encoding q-value",
-    ));
-  }
-  Ok((coding, parse_accept_encoding_qvalue(qvalue.trim())?))
-}
-
-fn parse_accept_encoding_qvalue(qvalue: &str) -> Result<u16, HttpAcceptEncodingParseError> {
-  let Some((whole, fraction)) = qvalue.split_once('.') else {
-    return match qvalue {
-      "0" => Ok(0),
-      "1" => Ok(1000),
-      _ => Err(HttpAcceptEncodingParseError::new(
-        "invalid Accept-Encoding q-value",
-      )),
-    };
-  };
-  if !matches!(whole, "0" | "1")
-    || fraction.len() > 3
-    || !fraction.bytes().all(|byte| byte.is_ascii_digit())
-    || (whole == "1" && !fraction.bytes().all(|byte| byte == b'0'))
-  {
-    return Err(HttpAcceptEncodingParseError::new(
-      "invalid Accept-Encoding q-value",
-    ));
   }
   let fractional = if fraction.is_empty() {
     0

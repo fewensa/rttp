@@ -84,6 +84,23 @@ expose the original request.
 These helpers parse request metadata only; they do not sniff, decode,
 negotiate, cache, redirect, retry, or select representations.
 
+## Accept-Encoding request metadata
+
+Handlers can call `Request::accept_encoding()` and
+`HttpRequest::accept_encoding()` to observe bounded typed `Accept-Encoding`
+request metadata through the shared `rttp-protocol` primitive. The helpers
+combine case-insensitive fields in wire order into
+`HttpRequestAcceptEncodings`. Each entry exposes `coding()` and q-value
+`quality()` in thousandths (`1000` is the default quality of `1`). The shared
+protocol type is the authority for coding-token, wildcard, q-value, duplicate,
+member-count, and size validation. Absent metadata returns `Ok(None)`.
+Malformed, oversized, duplicate, empty, or over-limit values return a parse
+error while `Request::header()` and `Request::body()` continue to expose the
+original request.
+
+These helpers parse request metadata only. They do not enable automatic
+compression, decompression, or content negotiation.
+
 ## Request and response Connection metadata
 
 Handlers can call `Request::connection()`, `HttpRequest::connection()`, and

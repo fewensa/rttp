@@ -1,5 +1,9 @@
 use super::*;
 
+pub use rttp_protocol::accept_encoding::{
+  AcceptEncoding as HttpRequestAcceptEncodings, AcceptEncodingCoding as HttpAcceptEncoding,
+  AcceptEncodingParseError as HttpAcceptEncodingParseError,
+};
 pub use rttp_protocol::access_control_request_headers::{
   AccessControlRequestHeaders as HttpAccessControlRequestHeaders,
   AccessControlRequestHeadersParseError as HttpAccessControlRequestHeadersParseError,

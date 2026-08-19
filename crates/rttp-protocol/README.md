@@ -9,6 +9,24 @@ and server crates.
 This crate supports rttp's implementation; its public API is not a standalone
 application-level HTTP interface.
 
+## Accept-Encoding
+
+`accept_encoding` parses one or more RFC 9110 `Accept-Encoding` field values
+into an ordered list of coding tokens with optional quality weights. Each
+field value is bounded to 64 KiB, and the combined member count across all
+supplied fields is bounded to 32. Codings are RFC 9110 tokens, including
+`identity` and the `*` wildcard. Duplicate codings are rejected
+case-insensitively while the first-seen spelling is retained. Each member may
+carry a single `q` parameter; the default quality is `1000` thousandths. Empty
+members, invalid tokens, invalid q-values, extra parameters, forbidden ASCII
+control bytes other than HTAB, oversized values, too many members, and a
+present header set that yields no member are errors. `header_value()` joins
+members with `", "`, omits quality when no `q` parameter was present, and
+otherwise emits the original q-text. This type is the shared authority for
+coding-token, wildcard, q-value, duplicate, member-count, and size validation.
+It reports declared request metadata only; it does not compress, decompress,
+or negotiate content.
+
 ## Accept-Ranges
 
 `accept_ranges` parses one or more `Accept-Ranges` field values into an ordered

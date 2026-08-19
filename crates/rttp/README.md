@@ -417,6 +417,30 @@ helpers such as `Request::accept_language()`, `HttpResponse::cache_control()`,
 and parsing only when requested. They do not sniff, decode, negotiate, cache,
 redirect, retry, or select representations from `Content-Language`.
 
+## Bounded Accept-Encoding request metadata
+
+Server-side `Accept-Encoding` helpers expose request metadata through the
+shared `rttp-protocol` primitive. `Request::accept_encoding()` and
+`HttpRequest::accept_encoding()` parse all received `Accept-Encoding` fields
+in wire order into `HttpRequestAcceptEncodings` and return `Ok(None)` when
+the header is absent. HTTP/1.1 and HTTP/2 share the same `Request` helpers.
+Each entry provides its `coding()` and q-value `quality()` in thousandths
+(`1000` is the default quality of `1`). The shared protocol type is the
+authority for coding-token, wildcard, q-value, duplicate, member-count, and
+size validation.
+
+Parsing is bounded and validation-oriented. Each `Accept-Encoding` field value
+is limited to 64 KiB, the combined list is limited to 32 members, and each
+coding must be an RFC 9110 token, including `identity` and `*`. Empty members,
+malformed tokens or q-values, duplicates across one or more helper-parsed
+header fields, oversized values, and too many members return
+`HttpAcceptEncodingParseError` from the helper. Raw
+`Request::header("Accept-Encoding", ...)` values remain preserved exactly as
+ordinary headers; helper parse errors do not remove existing headers.
+
+These helpers parse request metadata only. They do not enable automatic
+compression, decompression, or content negotiation.
+
 ## Bounded HTTP/1.1 Content-Location behavior
 
 Server-side `Content-Location` helpers expose response metadata declaration and
@@ -870,6 +894,7 @@ scheduling, or async accept loops.
 | Allow | `HttpAllowedMethods`, `HttpResponse::with_allow`, and `HttpResponse::allow` declare and parse bounded `Allow` method-list metadata | No route dispatch, automatic `405` generation, `OPTIONS` policy, fallback method selection, retry/replay, or status-code policy engine |
 | Client Hints | `HttpAcceptCh`/`HttpCriticalCh`, `HttpResponse::with_accept_ch`/`with_critical_ch`, and `accept_ch`/`critical_ch` declare and parse bounded Client Hints opt-in metadata; `Response::accept_ch` and `critical_ch` expose it to clients | No browser opt-in state, request-header generation, automatic retry, persistence, or Client Hints policy |
 | Content-Language | `HttpContentLanguages`, `Request::content_language`, `HttpRequest::content_language`, `HttpResponse::with_content_language`, and `HttpResponse::content_language` parse or declare bounded `Content-Language` metadata | No automatic language negotiation, route selection, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
+| Accept-Encoding | `HttpRequestAcceptEncodings`, `Request::accept_encoding`, and `HttpRequest::accept_encoding` parse bounded `Accept-Encoding` request metadata through the shared `rttp-protocol` type | No compression, decompression, content negotiation, retries, or transport changes |
 | Content-Location | `HttpResponse::with_content_location` declares one bounded singleton `Content-Location` header, and `HttpResponse::content_location` parses attached singleton response metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |
 | Content-DPR | `HttpResponse::with_content_dpr` declares one bounded singleton `Content-DPR` header, and `HttpResponse::content_dpr` plus client `Response::content_dpr` parse attached singleton decimal-ratio metadata while preserving raw headers | No image rescaling, request DPR emission, Client Hints policy, retry, or transport changes |
 | Content-Type and Content-Encoding | `HttpContentType`, `Request::content_type`, `HttpRequest::content_type`, `HttpResponse::with_content_type`, `content_type`, `HttpResponseContentEncodings`, `Request::content_encoding`, `HttpRequest::content_encoding`, `HttpResponse::with_content_encoding`, and `content_encoding` parse or declare bounded representation metadata while preserving raw headers on parse failures and replacing raw response duplicates on typed declaration | No MIME sniffing, body decoding, charset transcoding, compression/decompression, negotiation, cache policy, redirects, retry/replay, or filesystem serving |

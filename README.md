@@ -523,6 +523,10 @@ retry/replay, or filesystem serving from `Content-Type` or
 
 ### Bounded Accept-Encoding request metadata
 
+`rttp-protocol` owns the shared `Accept-Encoding` primitive. Client helpers
+format through that type, and server `Request` / `HttpRequest` helpers parse
+with the same rules.
+
 `HttpClient::accept_encoding()` appends a validated request coding, while
 `accept_encoding_with_q()` accepts an HTTP q-value from `0` through `1` with
 at most three fractional digits. Convenience helpers cover `gzip`, `deflate`,
@@ -533,11 +537,11 @@ connection is opened.
 
 On the server, `Request::accept_encoding()` and
 `HttpRequest::accept_encoding()` parse all received `Accept-Encoding` fields
-in wire order into `HttpRequestAcceptEncodings`. Each entry provides its
-`coding()` and q-value `quality()` in thousandths (`1000` is the default
-quality of `1`). Absent metadata returns `Ok(None)`; malformed, duplicate,
-empty, oversized, or excessive entries return a parse error without changing
-the request itself.
+in wire order into `HttpRequestAcceptEncodings`, an alias of the shared
+protocol type. Each entry provides its `coding()` and q-value `quality()` in
+thousandths (`1000` is the default quality of `1`). Absent metadata returns
+`Ok(None)`; malformed, duplicate, empty, oversized, or excessive entries
+return a parse error without changing the request itself.
 
 These helpers declare and parse metadata only. They do not enable automatic
 compression, decompression, or content negotiation.
@@ -1015,6 +1019,7 @@ gain additional HTTP/2 header-block handling.
 | Preflight request metadata | Client `origin`, `access_control_request_method`, `access_control_request_headers`, and `access_control_request_private_network` emit bounded `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`, and `Access-Control-Request-Private-Network` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, CORS policy, or Private Network Access policy |
 | Access-Control-Allow-Credentials | Client `Response::access_control_allow_credentials` and server `HttpAccessControlAllowCredentials`, `HttpResponse::with_access_control_allow_credentials`, and `HttpResponse::access_control_allow_credentials` parse or declare bounded singleton `Access-Control-Allow-Credentials` `true`-token metadata while preserving raw headers on parse failures | No CORS request evaluation, automatic credential attachment, or automatic credentials granting |
 | Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_content_digest()`, `HttpRequest::want_content_digest()`, `Request::want_repr_digest()`, and `HttpRequest::want_repr_digest()` parse received preference fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |
+| Accept-Encoding | Client `accept_encoding`, `accept_encoding_with_q`, and gzip/deflate/br/identity helpers format bounded `Accept-Encoding` request metadata through the shared `rttp-protocol` type; server `Request::accept_encoding()` and `HttpRequest::accept_encoding()` parse received fields into `HttpRequestAcceptEncodings` | No compression, decompression, content negotiation, retries, or transport changes |
 | Upgrade and tunnel handoff | `CONNECT` returns the tunnel socket after a successful `200`; `upgrade()` returns the socket after `101 Switching Protocols` and skips interim `1xx` responses | Upgraded protocols are handed to the caller and are not parsed by `rttp_client` |
 | Redirects | Auto-redirect covers 301, 302, 303, 307, and 308 method/body behavior, relative and absolute `Location` resolution, same- and cross-authority header handling, loop detection, and redirect bounds | Redirects are HTTP client behavior, not a browser policy implementation |
 | Byte ranges | `range`, `range_from`, `range_suffix`, `if_range_etag`, and `if_range_date` emit bounded HTTP/1.1 range request metadata; `Response::content_range`, `accept_ranges`, `is_partial_content`, and `is_range_not_satisfiable` expose `Content-Range`, `Accept-Ranges`, `206`, and `416` metadata while preserving raw headers | No Range request generation from `Accept-Ranges`, client-side `If-Range` evaluation, partial response engine, byte serving, content slicing, download resume, automatic retry/replay, cache storage, redirect handling, status-policy behavior, multipart range generation, or automatic cache validation policy |
@@ -1539,6 +1544,30 @@ helpers such as `Request::accept_language()`, `HttpResponse::cache_control()`,
 and parsing only when requested. They do not sniff, decode, negotiate, cache,
 redirect, retry, or select representations from `Content-Language`.
 
+### Bounded Accept-Encoding request metadata
+
+Server-side `Accept-Encoding` helpers expose request metadata through the
+shared `rttp-protocol` primitive. `Request::accept_encoding()` and
+`HttpRequest::accept_encoding()` parse all received `Accept-Encoding` fields
+in wire order into `HttpRequestAcceptEncodings` and return `Ok(None)` when
+the header is absent. HTTP/1.1 and HTTP/2 share the same `Request` helpers.
+Each entry provides its `coding()` and q-value `quality()` in thousandths
+(`1000` is the default quality of `1`). The shared protocol type is the
+authority for coding-token, wildcard, q-value, duplicate, member-count, and
+size validation.
+
+Parsing is bounded and validation-oriented. Each `Accept-Encoding` field value
+is limited to 64 KiB, the combined list is limited to 32 members, and each
+coding must be an RFC 9110 token, including `identity` and `*`. Empty members,
+malformed tokens or q-values, duplicates across one or more helper-parsed
+header fields, oversized values, and too many members return
+`HttpAcceptEncodingParseError` from the helper. Raw
+`Request::header("Accept-Encoding", ...)` values remain preserved exactly as
+ordinary headers; helper parse errors do not remove existing headers.
+
+These helpers parse request metadata only. They do not enable automatic
+compression, decompression, or content negotiation.
+
 ### Bounded HTTP/1.1 Content-Location behavior
 
 Server-side `Content-Location` helpers expose response metadata declaration and
@@ -1912,6 +1941,7 @@ TLS or async accept loops.
 | No-Vary-Search | `HttpNoVarySearch`, `HttpResponse::with_no_vary_search`, and `HttpResponse::no_vary_search` parse and declare bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
 | Allow | `HttpAllowedMethods`, `HttpResponse::with_allow`, and `HttpResponse::allow` declare and parse bounded `Allow` method-list metadata | No route dispatch, automatic `405` generation, `OPTIONS` policy, fallback method selection, retry/replay, or status-code policy engine |
 | Content-Language | `HttpContentLanguages`, `Request::content_language`, `HttpRequest::content_language`, `HttpResponse::with_content_language`, and `HttpResponse::content_language` parse or declare bounded `Content-Language` metadata | No automatic language negotiation, route selection, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
+| Accept-Encoding | `HttpRequestAcceptEncodings`, `Request::accept_encoding`, and `HttpRequest::accept_encoding` parse bounded `Accept-Encoding` request metadata through the shared `rttp-protocol` type | No compression, decompression, content negotiation, retries, or transport changes |
 | Content-Location | `HttpResponse::with_content_location` declares one bounded singleton `Content-Location` header, and `HttpResponse::content_location` parses attached singleton response metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |
 | Content-DPR | `HttpResponse::with_content_dpr` declares one bounded singleton `Content-DPR` header, and `HttpResponse::content_dpr` plus client `Response::content_dpr` parse attached singleton decimal-ratio metadata while preserving raw headers | No image rescaling, request DPR emission, Client Hints policy, retry, or transport changes |
 | Content-Type and Content-Encoding | `HttpContentType`, `Request::content_type`, `HttpRequest::content_type`, `HttpResponse::with_content_type`, `content_type`, `HttpResponseContentEncodings`, `Request::content_encoding`, `HttpRequest::content_encoding`, `HttpResponse::with_content_encoding`, and `content_encoding` parse or declare bounded representation metadata while preserving raw headers on parse failures and replacing raw response duplicates on typed declaration | No MIME sniffing, body decoding, charset transcoding, compression/decompression, negotiation, cache policy, redirects, retry/replay, or filesystem serving |
