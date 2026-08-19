@@ -21,6 +21,7 @@ fn package_includes_protocol_metadata_facade_test() {
     "README.md",
     "tests/package_list.rs",
     "tests/metadata_facade.rs",
+    "tests/no_vary_search.rs",
   ] {
     assert!(
       package_files.lines().any(|path| path == expected),
