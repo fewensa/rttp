@@ -637,6 +637,58 @@ fn want_digest_helpers_reject_invalid_or_excessive_values_before_connecting() {
 }
 
 #[test]
+fn signature_helpers_emit_canonical_fields_and_reject_malformed_input_before_connecting() {
+  let request = capture_request(|base_url| {
+    client()
+      .post()
+      .url(format!("{}/signed", base_url))
+      .signature_input(
+        r#"sig1=("@method" "@authority" "@path");created=1618884473;keyid="test-key""#,
+      )
+      .expect("Signature-Input should be accepted")
+      .signature("sig1=:YWJj:")
+      .expect("Signature should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some(r#"sig1=("@method" "@authority" "@path");created=1618884473;keyid="test-key""#),
+    header_value(&request, "Signature-Input")
+  );
+  assert_eq!(Some("sig1=:YWJj:"), header_value(&request, "Signature"));
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    assert!(client
+      .post()
+      .url(format!("{}/signed", base_url))
+      .signature("not-a-signature")
+      .expect_err("malformed Signature should be rejected")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "malformed Signature helper input should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    assert!(client
+      .post()
+      .url(format!("{}/signed", base_url))
+      .signature_input("not-an-input")
+      .expect_err("malformed Signature-Input should be rejected")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "malformed Signature-Input helper input should not open a socket"
+  );
+}
+
+#[test]
 fn raw_want_digest_headers_remain_available_for_extended_syntax() {
   let request = capture_request(|base_url| {
     client()
