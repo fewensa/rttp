@@ -3548,6 +3548,74 @@ fn test_parse_cdn_cache_control_response_metadata() {
 }
 
 #[test]
+fn test_parse_cache_status_response_metadata() {
+  let s = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Cache-Status: OriginCache; hit; ttl=1100\r\n",
+    "cache-status: \"CDN Company Here\"; hit; ttl=545\r\n",
+    "Content-Length: 2\r\n",
+    "\r\n",
+    "OK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), s.as_bytes().to_vec())
+    .expect("parse Cache-Status response");
+
+  let metadata = response
+    .cache_status()
+    .expect("valid Cache-Status should parse")
+    .expect("Cache-Status should be present");
+
+  assert_eq!(metadata.len(), 2);
+  assert_eq!(metadata.members()[0].identifier().as_str(), "OriginCache");
+  assert_eq!(metadata.members()[0].hit(), Some(true));
+  assert_eq!(metadata.members()[0].ttl(), Some(1100));
+  assert_eq!(
+    metadata.members()[1].identifier().as_str(),
+    "CDN Company Here"
+  );
+  assert!(metadata.members()[1].identifier().is_string());
+  assert_eq!(metadata.members()[1].ttl(), Some(545));
+  assert_eq!(
+    Some(&"OriginCache; hit; ttl=1100".to_string()),
+    response.header_value("Cache-Status")
+  );
+  assert_eq!("OK", response.body().string().unwrap());
+}
+
+#[test]
+fn test_parse_cache_status_rejects_invalid_helper_values_without_rejecting_response() {
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let invalid_values = ["OriginCache; hit=yes", "OriginCache,", oversized.as_str()];
+
+  for value in invalid_values {
+    let raw = format!("HTTP/1.1 200 OK\r\nCache-Status: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response remains usable");
+
+    assert!(
+      response.cache_status().is_err(),
+      "Cache-Status helper should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Cache-Status")
+    );
+    assert_eq!("OK", response.body().string().unwrap());
+  }
+
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK".to_vec(),
+  )
+  .expect("raw response without Cache-Status remains usable");
+
+  assert!(response
+    .cache_status()
+    .expect("missing header should be valid")
+    .is_none());
+}
+
+#[test]
 fn test_parse_cdn_cache_control_rejects_invalid_helper_values_without_rejecting_response() {
   let oversized = "x".repeat(64 * 1024 + 1);
   let invalid_values = [

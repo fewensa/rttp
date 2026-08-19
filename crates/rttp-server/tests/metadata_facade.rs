@@ -3,18 +3,18 @@ use rttp_server::server::{
   HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods, HttpAccessControlRequestHeaders,
   HttpAccessControlRequestHeadersParseError, HttpAccessControlRequestMethod,
   HttpAccessControlRequestMethodParseError, HttpAccessControlRequestPrivateNetwork,
-  HttpAccessControlRequestPrivateNetworkParseError, HttpCdnCacheControl, HttpConditionalMetadata,
-  HttpConnection, HttpConnectionParseError, HttpContentDisposition, HttpContentDpr,
-  HttpContentDprParseError, HttpContentLength, HttpContentLocation, HttpContentLocationParseError,
-  HttpContentRange, HttpContentRangeParseError, HttpCrossOriginEmbedderPolicyReportOnly,
-  HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpEntityTag,
-  HttpHost, HttpKeepAlive, HttpNoVarySearch, HttpNoVarySearchParams, HttpPreferenceKind,
-  HttpRequest, HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSignature,
-  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
-  HttpUpgradeParseError, HttpWantContentDigest, HttpWantReprDigest, SecFetchDest, SecFetchMode,
-  SecFetchSite, SecFetchUser, SecPurpose,
+  HttpAccessControlRequestPrivateNetworkParseError, HttpCacheStatus, HttpCacheStatusParseError,
+  HttpCdnCacheControl, HttpConditionalMetadata, HttpConnection, HttpConnectionParseError,
+  HttpContentDisposition, HttpContentDpr, HttpContentDprParseError, HttpContentLength,
+  HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
+  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeprecation,
+  HttpDeprecationParseError, HttpEntityTag, HttpHost, HttpKeepAlive, HttpNoVarySearch,
+  HttpNoVarySearchParams, HttpPreferenceKind, HttpRequest, HttpResponse, HttpSaveData,
+  HttpSaveDataParseError, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
+  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
+  HttpSignatureInputParseError, HttpSignatureParseError, HttpTransferEncoding,
+  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeParseError, HttpWantContentDigest,
+  HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
 
 #[test]
@@ -58,6 +58,10 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpNoVarySearch::parse(r#"params=("utm_source")"#).expect("No-Vary-Search should parse");
   let policy: HttpCrossOriginResourcePolicy = HttpCrossOriginResourcePolicy::parse("same-origin")
     .expect("Cross-Origin-Resource-Policy should parse");
+  let cache_status: HttpCacheStatus =
+    HttpCacheStatus::parse("OriginCache; hit; ttl=1100").expect("Cache-Status should parse");
+  let _: HttpCacheStatusParseError = HttpCacheStatus::parse("OriginCache; hit=yes")
+    .expect_err("invalid Cache-Status should be rejected");
   let cdn_cache_control: HttpCdnCacheControl =
     HttpCdnCacheControl::parse("max-age=600, cdn-example=\"a, b\"")
       .expect("CDN-Cache-Control should parse");
@@ -116,6 +120,11 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(save_data.header_value(), "on");
   assert!(save_data_error.is_err());
   assert_eq!(policy.header_value(), "same-origin");
+  assert_eq!(
+    cache_status.members()[0].identifier().as_str(),
+    "OriginCache"
+  );
+  assert_eq!(cache_status.members()[0].ttl(), Some(1100));
   assert_eq!(cdn_cache_control.directives()[1].name(), "cdn-example");
   assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
   assert_eq!(report_only_policy.header_value(), "require-corp");
@@ -194,6 +203,39 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(sec_purpose.tokens(), ["prefetch", "vendor-ext"]);
   assert!(sec_purpose.contains_prefetch());
   assert_eq!(upgrade.protocols(), ["websocket"]);
+}
+
+#[test]
+fn response_facade_parses_cache_status_and_absent_metadata() {
+  let response = HttpResponse::ok("")
+    .header("Cache-Status", "OriginCache; hit; ttl=1100")
+    .header("cache-status", r#""CDN Company Here"; hit; ttl=545"#);
+
+  let metadata = response
+    .cache_status()
+    .expect("Cache-Status should parse")
+    .expect("Cache-Status should be present");
+
+  assert_eq!(metadata.len(), 2);
+  assert_eq!(metadata.members()[0].identifier().as_str(), "OriginCache");
+  assert_eq!(
+    metadata.members()[1].identifier().as_str(),
+    "CDN Company Here"
+  );
+  let malformed = HttpResponse::ok("").header("Cache-Status", "OriginCache; hit=yes");
+  assert!(malformed.cache_status().is_err());
+  let mut serialized = Vec::new();
+  malformed
+    .write_to(&mut serialized)
+    .expect("malformed Cache-Status response still writes");
+  let serialized = String::from_utf8(serialized).expect("response is utf8");
+  assert!(serialized.contains("\r\nCache-Status: OriginCache; hit=yes\r\n"));
+
+  let absent = HttpResponse::ok("");
+  assert!(absent
+    .cache_status()
+    .expect("missing header should be valid")
+    .is_none());
 }
 
 #[test]
