@@ -20,6 +20,10 @@ fn content_location_accepts_absolute_and_relative_uri_references() {
       "../representations/current.json",
     ),
     ("//example.test/current", "//example.test/current"),
+    (
+      "//[2001:db8::1]/representation",
+      "//[2001:db8::1]/representation",
+    ),
   ] {
     let content_location = ContentLocation::parse(value).expect("Content-Location should parse");
 

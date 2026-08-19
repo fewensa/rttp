@@ -136,6 +136,7 @@ fn is_content_location_field_value(value: &str) -> bool {
 }
 
 fn is_relative_uri_reference_field_value(value: &str) -> bool {
+  let value = strip_network_path_authority(value);
   let mut fragment_seen = false;
   let mut query_seen = false;
   let mut bytes = value.bytes().peekable();
@@ -181,6 +182,16 @@ fn is_relative_uri_reference_field_value(value: &str) -> bool {
   }
 
   true
+}
+
+fn strip_network_path_authority(value: &str) -> &str {
+  let Some(remainder) = value.strip_prefix("//") else {
+    return value;
+  };
+  let Some(authority_end) = remainder.find(['/', '?', '#']) else {
+    return "";
+  };
+  &remainder[authority_end..]
 }
 
 fn is_uri_path_char(byte: u8) -> bool {

@@ -1386,6 +1386,13 @@ pub mod content_location {
       normalized_value: "../current?variant=full#metadata",
       declaration_value: "../current?variant=full#metadata",
     },
+    ResponseCase {
+      name: "network-path reference with IPv6 authority",
+      values: &["//[2001:db8::1]/representation"],
+      raw_value: "//[2001:db8::1]/representation",
+      normalized_value: "//[2001:db8::1]/representation",
+      declaration_value: "//[2001:db8::1]/representation",
+    },
   ];
 
   const INVALID_CASES: &[InvalidCase] = &[
