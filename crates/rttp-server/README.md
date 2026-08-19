@@ -368,6 +368,22 @@ These helpers parse request metadata only. They do not select a
 representation, compress a body, advertise Client Hints, or apply browser
 data-saver policy.
 
+## Bounded Accept request metadata
+
+`Request::accept()` and `HttpRequest::accept()` parse received `Accept` fields
+in wire order into `HttpAccept`, whose media ranges expose `media_type()`,
+`parameters()`, `parameter(name)`, and `quality()` as thousandths from `0`
+through `1000`. The underlying parser, bounds, q-value validation, duplicate
+parameter checks, and header formatting live in `rttp-protocol`, with server
+facade aliases preserving the existing `HttpAccept`, `HttpMediaRange`, and
+`HttpAcceptParseError` names.
+
+Absent metadata returns `Ok(None)`. Malformed media ranges, duplicate
+parameters or q-values, invalid q-values, oversized fields, or more than 256
+media ranges return a parse error without removing or changing raw `Accept`
+headers. These helpers parse request metadata only; they do not select response
+representations or apply negotiation policy.
+
 ## HTTP message signature metadata
 
 `Request::signature()` / `signature_input()` and the same methods on

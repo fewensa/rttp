@@ -885,6 +885,7 @@ fn cache_control_helpers_reject_invalid_or_excessive_values_before_connecting() 
 fn accept_helpers_reject_invalid_values_before_connecting() {
   for value in [
     "text",
+    "text/html; charset=utf-8; charset=utf-16",
     "text/html; q=0.8; q=0.5",
     "text/html; q=1.001",
     "text/html\n;level=1",

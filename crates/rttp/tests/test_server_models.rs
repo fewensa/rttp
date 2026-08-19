@@ -1183,6 +1183,8 @@ fn request_accept_helper_is_optional_and_keeps_raw_invalid_headers() {
   assert_eq!(Some("text/plain; q=1.001"), malformed.header("Accept"));
 
   assert!(HttpAccept::parse("*/json").is_err());
+  assert!(HttpAccept::parse("text/plain; charset=utf-8; charset=utf-16").is_err());
+  assert!(HttpAccept::parse("text/plain; q=0.8; ext=1; q=0.7").is_err());
   let oversized = "text/plain,".repeat(257);
   assert!(HttpAccept::parse(&oversized).is_err());
   assert!(HttpAccept::parse("a".repeat(64 * 1024 + 1)).is_err());

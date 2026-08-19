@@ -583,11 +583,20 @@ algorithm, compute digests, verify response body hashes, attach
 `HttpClient::accept()` appends one validated media range, while
 `accept_with_q()` adds a q-value from `0` through `1` with at most three
 fractional digits. Convenience helpers cover `*/*`, JSON, HTML, XML, and plain
-text, including q-value variants. The client rejects malformed media types or
-parameters, duplicate parameters, invalid q-values, oversized fields, and more
-than 32 media ranges before opening a connection. Raw
+text, including q-value variants. The shared `rttp-protocol` Accept primitive
+owns media-range parsing, q-value validation, bounds, and header formatting.
+The client reuses it while keeping the existing 32-helper-range limit, rejecting
+malformed media types or parameters, duplicate parameters or q-values, invalid
+q-values, oversized fields, and more than 32 media ranges before opening a
+connection. Raw
 `header(("Accept", value))` remains available for values outside the bounded
 helper API.
+
+On the server, `Request::accept()` and `HttpRequest::accept()` parse received
+fields in wire order into the same protocol-owned representation exposed as
+`HttpAccept` and `HttpMediaRange`. Absent metadata returns `Ok(None)`;
+malformed, duplicate, oversized, or excessive values return
+`HttpAcceptParseError` without changing the raw headers.
 
 These helpers only declare request metadata. RTTP does not perform automatic
 representation selection, retries, redirects, caching, or server policy from

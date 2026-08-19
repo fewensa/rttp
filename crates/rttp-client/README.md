@@ -573,8 +573,10 @@ up keys, canonicalize covered components, or apply cryptographic policy.
 `accept_with_q()` adds a q-value from `0` through `1` with at most three
 fractional digits. Convenience helpers cover `*/*`, JSON, HTML, XML, and plain
 text, including q-value variants. Media types, parameter names, parameter
-values, and q-values are validated; duplicate parameters, oversized values,
-and more than 32 media ranges are rejected before a connection is opened.
+values, q-values, duplicate parameters, duplicate q-values, bounds, and header
+formatting are validated by the shared `rttp-protocol` Accept primitive; the
+client keeps the existing 32-helper-range limit and rejects oversized values or
+excessive media ranges before a connection is opened.
 
 The helpers emit one comma-separated `Accept` field and do not choose a
 response representation. `header(("Accept", value))` remains available for

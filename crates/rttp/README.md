@@ -417,6 +417,20 @@ helpers such as `Request::accept_language()`, `HttpResponse::cache_control()`,
 and parsing only when requested. They do not sniff, decode, negotiate, cache,
 redirect, retry, or select representations from `Content-Language`.
 
+## Bounded Accept request metadata
+
+`HttpClient::accept()` and `accept_with_q()` validate helper-built request
+media ranges through the shared `rttp-protocol` Accept primitive while keeping
+the client facade's existing 32-helper-range limit and raw
+`header(("Accept", value))` escape hatch. `Request::accept()` and
+`HttpRequest::accept()` expose the same protocol representation as
+`HttpAccept`/`HttpMediaRange`, returning `Ok(None)` when absent and preserving
+raw headers when malformed, duplicate, oversized, or excessive values fail typed
+parsing.
+
+These helpers declare and parse metadata only. They do not select response
+representations, retry, redirect, cache, or apply server negotiation policy.
+
 ## Bounded HTTP/1.1 Content-Location behavior
 
 Server-side `Content-Location` helpers expose response metadata declaration and

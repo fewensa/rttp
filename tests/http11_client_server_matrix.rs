@@ -2,7 +2,7 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 #[cfg(feature = "async")]
 use futures::executor::block_on;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::mpsc;
 use std::thread;
@@ -18,9 +18,35 @@ use rttp_test_support as fixtures;
 
 type ObservedIfRangeHeaders = (Option<String>, Option<String>);
 type ObservedIfRangeHandle = thread::JoinHandle<ObservedIfRangeHeaders>;
+type ObservedAcceptRanges = Vec<(String, Option<u16>)>;
+type ObservedAcceptParse = Result<Option<ObservedAcceptRanges>, String>;
 
 fn client() -> HttpClient {
   HttpClient::new()
+}
+
+#[derive(Debug, PartialEq)]
+struct ObservedAcceptMetadata {
+  raw_accept: Option<String>,
+  accept: ObservedAcceptParse,
+}
+
+fn observe_accept_metadata(request: &Request) -> ObservedAcceptMetadata {
+  ObservedAcceptMetadata {
+    raw_accept: request.header("Accept").map(str::to_string),
+    accept: request
+      .accept()
+      .map(|accept| {
+        accept.map(|accept| {
+          accept
+            .media_ranges()
+            .iter()
+            .map(|range| (range.media_type().to_string(), range.quality()))
+            .collect()
+        })
+      })
+      .map_err(|error| error.to_string()),
+  }
 }
 
 #[derive(Debug, PartialEq)]
@@ -33,6 +59,86 @@ struct ObservedCorsPreflight {
   request_method: Result<Option<String>, String>,
   request_headers: Result<Option<Vec<String>>, String>,
   request_private_network: Result<Option<String>, String>,
+}
+
+#[test]
+fn sync_client_accept_helpers_reach_server_accept_accessor() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Accept server");
+  let addr = server.local_addr().expect("Accept server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send(observe_accept_metadata(&request))
+          .expect("send observed Accept metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve Accept request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/accept", addr))
+    .accept_json()
+    .expect("JSON Accept should be accepted")
+    .accept_html_with_q("0.8")
+    .expect("HTML Accept q should be accepted")
+    .emit()
+    .expect("Accept response should parse");
+
+  assert_eq!(200, response.code());
+  assert_eq!(
+    ObservedAcceptMetadata {
+      raw_accept: Some("application/json, text/html;q=0.8".to_string()),
+      accept: Ok(Some(vec![
+        ("application/json".to_string(), None),
+        ("text/html".to_string(), Some(800)),
+      ])),
+    },
+    observed_rx
+      .recv()
+      .expect("receive observed Accept metadata")
+  );
+  handle.join().expect("Accept server thread");
+}
+
+#[test]
+fn sync_raw_malformed_accept_reaches_server_until_typed_accessor() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Accept server");
+  let addr = server.local_addr().expect("Accept server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send(observe_accept_metadata(&request))
+          .expect("send observed malformed Accept metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve raw Accept request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect Accept server");
+  stream
+    .write_all(
+      b"GET /matrix/accept HTTP/1.1\r\nHost: example.test\r\nAccept: text/plain; q=1.001\r\n\r\n",
+    )
+    .expect("write raw Accept request");
+  let mut response = Vec::new();
+  stream
+    .read_to_end(&mut response)
+    .expect("read raw Accept response");
+
+  let observed = observed_rx
+    .recv()
+    .expect("receive observed Accept metadata");
+  assert_eq!(Some("text/plain; q=1.001".to_string()), observed.raw_accept);
+  assert_eq!(
+    Err("invalid Accept quality value".to_string()),
+    observed.accept
+  );
+  handle.join().expect("Accept server thread");
 }
 
 fn observe_cors_preflight(request: Request) -> ObservedCorsPreflight {

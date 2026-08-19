@@ -1,6 +1,7 @@
 use rttp_server::server::{
-  HttpAcceptCh, HttpAccessControlAllowCredentials, HttpAccessControlAllowCredentialsParseError,
-  HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods, HttpAccessControlRequestHeaders,
+  HttpAccept, HttpAcceptCh, HttpAcceptParseError, HttpAccessControlAllowCredentials,
+  HttpAccessControlAllowCredentialsParseError, HttpAccessControlAllowHeaders,
+  HttpAccessControlAllowMethods, HttpAccessControlRequestHeaders,
   HttpAccessControlRequestHeadersParseError, HttpAccessControlRequestMethod,
   HttpAccessControlRequestMethodParseError, HttpAccessControlRequestPrivateNetwork,
   HttpAccessControlRequestPrivateNetworkParseError, HttpCacheStatus, HttpCacheStatusParseError,
@@ -21,6 +22,10 @@ use rttp_server::server::{
 #[test]
 fn server_facade_exports_representative_bounded_metadata_types() {
   let accept_ch: HttpAcceptCh = HttpAcceptCh::parse("Sec-CH-UA").expect("Accept-CH should parse");
+  let accept: HttpAccept =
+    HttpAccept::parse("text/html; level=1; q=0.8").expect("Accept should parse");
+  let _: HttpAcceptParseError =
+    HttpAccept::parse("*/json").expect_err("invalid Accept should fail");
   let allow_credentials: HttpAccessControlAllowCredentials =
     HttpAccessControlAllowCredentials::parse("true")
       .expect("Access-Control-Allow-Credentials should parse");
@@ -120,6 +125,9 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let _: HttpUpgradeParseError = HttpUpgrade::parse("").expect_err("empty Upgrade should fail");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA"]);
+  assert_eq!("text/html", accept.media_ranges()[0].media_type());
+  assert_eq!(Some(800), accept.media_ranges()[0].quality());
+  assert_eq!(Some("1"), accept.media_ranges()[0].parameter("level"));
   assert_eq!(allow_credentials.header_value(), "true");
   assert_eq!(allow_methods.methods(), ["GET"]);
   assert_eq!(allow_headers.field_names(), ["x-request-id"]);

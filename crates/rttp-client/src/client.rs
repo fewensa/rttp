@@ -7,6 +7,9 @@ use crate::types::{Auth, Header, IntoHeader, IntoPara, Proxy, ToFormData, ToRoUr
 use crate::{error, Config, H2cClientPolicy};
 #[cfg(feature = "async")]
 use futures::io::AsyncRead;
+use rttp_protocol::accept::{
+  Accept, AcceptMediaRange, MAX_ACCEPT_VALUE_BYTES, MAX_CLIENT_ACCEPT_MEDIA_RANGES,
+};
 use rttp_protocol::access_control_request_headers::AccessControlRequestHeaders;
 use rttp_protocol::access_control_request_method::AccessControlRequestMethod;
 use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
@@ -992,34 +995,18 @@ impl HttpClient {
   }
 
   fn accept_member(&mut self, media_range: &str, qvalue: Option<&str>) -> error::Result<&mut Self> {
-    if media_range.bytes().any(|byte| byte.is_ascii_control()) {
-      return Err(error::builder_with_message("invalid Accept media range"));
-    }
-    let media_range = media_range.trim();
-    let has_quality = validate_accept_media_range(media_range)?;
-    let qvalue = qvalue.map(validate_accept_qvalue).transpose()?;
-    if has_quality && qvalue.is_some() {
-      return Err(error::builder_with_message(
-        "duplicate Accept quality value",
-      ));
-    }
-    let member = qvalue.map_or_else(
-      || media_range.to_string(),
-      |qvalue| format!("{media_range};q={qvalue}"),
-    );
-    if member.len() > MAX_ACCEPT_VALUE_BYTES {
-      return Err(error::builder_with_message(
-        "Accept header value is too large",
-      ));
-    }
+    let member = AcceptMediaRange::request_builder_member(media_range, qvalue)
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
 
     let headers = self.request.headers_mut();
     let existing = headers
       .iter_mut()
       .find(|header| header.name().eq_ignore_ascii_case("Accept"));
     if let Some(header) = existing {
-      let existing_ranges = parse_accept_media_ranges(header.value())?;
-      if existing_ranges >= MAX_ACCEPT_MEDIA_RANGES {
+      let existing =
+        Accept::parse_values_with_limit([header.value().as_str()], MAX_CLIENT_ACCEPT_MEDIA_RANGES)
+          .map_err(|error| error::builder_with_message(error.to_string()))?;
+      if existing.len() >= MAX_CLIENT_ACCEPT_MEDIA_RANGES {
         return Err(error::builder_with_message("too many Accept media ranges"));
       }
       let value = format!("{}, {member}", header.value());
@@ -1533,8 +1520,6 @@ fn parse_metadata_members<'a>(
   Ok(members)
 }
 
-const MAX_ACCEPT_VALUE_BYTES: usize = 64 * 1024;
-const MAX_ACCEPT_MEDIA_RANGES: usize = 32;
 const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
 
@@ -1573,146 +1558,6 @@ fn parse_cache_control_directive_names(value: &str) -> error::Result<Vec<&str>> 
     names.push(name);
   }
   Ok(names)
-}
-
-fn parse_accept_media_ranges(value: &str) -> error::Result<usize> {
-  if value.len() > MAX_ACCEPT_VALUE_BYTES {
-    return Err(error::builder_with_message(
-      "Accept header value is too large",
-    ));
-  }
-  let members = split_accept_delimited(value, b',')?;
-  if members.len() > MAX_ACCEPT_MEDIA_RANGES {
-    return Err(error::builder_with_message("too many Accept media ranges"));
-  }
-  for member in &members {
-    validate_accept_media_range(member)?;
-  }
-  Ok(members.len())
-}
-
-fn validate_accept_media_range(value: &str) -> error::Result<bool> {
-  let parts = split_accept_delimited(value, b';')?;
-  let Some(media_type) = parts.first() else {
-    return Err(error::builder_with_message("invalid Accept media range"));
-  };
-  validate_accept_media_type(media_type.trim())?;
-
-  let mut names = Vec::new();
-  let mut has_quality = false;
-  for parameter in parts.iter().skip(1) {
-    let Some((name, value)) = parameter.trim().split_once('=') else {
-      return Err(error::builder_with_message("invalid Accept parameter"));
-    };
-    let name = name.trim();
-    let value = value.trim();
-    if !is_http_token(name) || !is_accept_parameter_value(value) {
-      return Err(error::builder_with_message("invalid Accept parameter"));
-    }
-    if names
-      .iter()
-      .any(|known: &&str| known.eq_ignore_ascii_case(name))
-    {
-      return Err(error::builder_with_message("duplicate Accept parameter"));
-    }
-    if name.eq_ignore_ascii_case("q") {
-      validate_accept_qvalue(value)?;
-      has_quality = true;
-    }
-    names.push(name);
-  }
-  Ok(has_quality)
-}
-
-fn validate_accept_media_type(value: &str) -> error::Result<()> {
-  let Some((type_name, subtype)) = value.split_once('/') else {
-    return Err(error::builder_with_message("invalid Accept media range"));
-  };
-  if subtype.contains('/') {
-    return Err(error::builder_with_message("invalid Accept media range"));
-  }
-  let type_name = type_name.trim();
-  let subtype = subtype.trim();
-  if (type_name == "*" && subtype != "*")
-    || !(type_name == "*" || is_http_token(type_name))
-    || !(subtype == "*" || is_http_token(subtype))
-  {
-    return Err(error::builder_with_message("invalid Accept media range"));
-  }
-  Ok(())
-}
-
-fn validate_accept_qvalue(qvalue: &str) -> error::Result<&str> {
-  if is_qvalue(qvalue) {
-    Ok(qvalue)
-  } else {
-    Err(error::builder_with_message("invalid Accept quality value"))
-  }
-}
-
-fn split_accept_delimited(value: &str, delimiter: u8) -> error::Result<Vec<&str>> {
-  let mut members = Vec::new();
-  let mut quoted = false;
-  let mut escaped = false;
-  let mut start = 0usize;
-  for (index, byte) in value.bytes().enumerate() {
-    if escaped {
-      if byte.is_ascii_control() {
-        return Err(error::builder_with_message("invalid Accept parameter"));
-      }
-      escaped = false;
-      continue;
-    }
-    match byte {
-      b'\\' if quoted => escaped = true,
-      b'"' => quoted = !quoted,
-      byte if byte == delimiter && !quoted => {
-        let member = value[start..index].trim();
-        if member.is_empty() {
-          return Err(error::builder_with_message("invalid Accept media range"));
-        }
-        members.push(member);
-        start = index + 1;
-      }
-      _ => {}
-    }
-  }
-  if quoted || escaped {
-    return Err(error::builder_with_message("invalid Accept parameter"));
-  }
-  let member = value[start..].trim();
-  if member.is_empty() {
-    return Err(error::builder_with_message("invalid Accept media range"));
-  }
-  members.push(member);
-  Ok(members)
-}
-
-fn is_accept_parameter_value(value: &str) -> bool {
-  is_http_token(value) || is_accept_quoted_string(value)
-}
-
-fn is_accept_quoted_string(value: &str) -> bool {
-  let Some(value) = value
-    .strip_prefix('"')
-    .and_then(|value| value.strip_suffix('"'))
-  else {
-    return false;
-  };
-  let mut escaped = false;
-  for byte in value.bytes() {
-    if escaped {
-      if byte.is_ascii_control() {
-        return false;
-      }
-      escaped = false;
-    } else if byte == b'\\' {
-      escaped = true;
-    } else if byte == b'"' || byte.is_ascii_control() && byte != b'\t' {
-      return false;
-    }
-  }
-  !escaped
 }
 
 fn parse_accept_encoding_codings(value: &str) -> error::Result<Vec<&str>> {

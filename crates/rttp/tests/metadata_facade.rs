@@ -1,14 +1,15 @@
 use rttp::server::{
-  HttpAcceptCh, HttpAccessControlRequestMethod, HttpAccessControlRequestPrivateNetwork,
-  HttpConditionalMetadata, HttpContentDpr, HttpContentDprParseError, HttpContentLocation,
-  HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
-  HttpCrossOriginEmbedderPolicy, HttpCrossOriginEmbedderPolicyReportOnly,
-  HttpCrossOriginOpenerPolicy, HttpCrossOriginResourcePolicy, HttpDeprecation,
-  HttpDeprecationParseError, HttpEntityTag, HttpMementoDatetime, HttpMementoDatetimeParseError,
-  HttpNel, HttpProxyStatus, HttpProxyStatusParseError, HttpResponse, HttpSaveData, HttpSignature,
-  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpSunsetParseError, HttpUpgrade, HttpUpgradeParseError,
+  HttpAccept, HttpAcceptCh, HttpAcceptParseError, HttpAccessControlRequestMethod,
+  HttpAccessControlRequestPrivateNetwork, HttpConditionalMetadata, HttpContentDpr,
+  HttpContentDprParseError, HttpContentLocation, HttpContentLocationParseError, HttpContentRange,
+  HttpContentRangeParseError, HttpCrossOriginEmbedderPolicy,
+  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
+  HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpEntityTag,
+  HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNel, HttpProxyStatus,
+  HttpProxyStatusParseError, HttpResponse, HttpSaveData, HttpSignature, HttpSignatureInput,
+  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
+  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
+  HttpSunsetParseError, HttpUpgrade, HttpUpgradeParseError,
 };
 use std::io::Write;
 use std::net::SocketAddr;
@@ -264,6 +265,18 @@ fn compatibility_facade_exports_content_length_metadata_type() {
 
   assert_eq!(2, content_length.len());
   assert_eq!("2", content_length.header_value());
+}
+
+#[test]
+fn compatibility_facade_exports_server_accept_metadata_types() {
+  let accept: HttpAccept =
+    HttpAccept::parse("text/html; level=1; q=0.8").expect("Accept should parse");
+  let _: HttpAcceptParseError =
+    HttpAccept::parse("*/json").expect_err("invalid Accept should fail");
+
+  assert_eq!("text/html", accept.media_ranges()[0].media_type());
+  assert_eq!(Some(800), accept.media_ranges()[0].quality());
+  assert_eq!(Some("1"), accept.media_ranges()[0].parameter("level"));
 }
 
 #[test]
