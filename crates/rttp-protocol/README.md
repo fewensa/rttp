@@ -183,6 +183,20 @@ Protocol helpers define and bound wire metadata for the client and server
 crates. They do not add higher-level runtime policy such as caching,
 authentication, retries, representation selection, or body transformation.
 
+## CDN-Cache-Control
+
+`cdn_cache_control` parses one or more `CDN-Cache-Control` response field
+values into ordered directive metadata. It preserves CDN-specific extension
+directives with each directive token name and optional parsed value. Each field
+value is bounded to 64 KiB, the combined directive count is bounded to 256, and
+directive names and unquoted values must be valid HTTP tokens. Quoted strings
+must be well formed and are exposed as parsed values.
+
+The parser only reports bounded wire metadata. It does not create a CDN cache,
+compute freshness, evaluate surrogate keys, revalidate automatically, enforce
+shared-cache policy, retry, replay, redirect, or choose response-acceptance
+behavior.
+
 ## Authentication-Info
 
 `authentication_info` parses `#auth-param` lists from `Authentication-Info`
