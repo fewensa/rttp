@@ -4,7 +4,7 @@ use rttp_client::response::{
   AccessControlMaxAge, AccessControlMaxAgeParseError, Age, AgeParseError, AltSvc, Connection,
   ConnectionParseError, ContentRange, ContentRangeParseError, CrossOriginEmbedderPolicy,
   CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Digest,
-  EntityTag, HttpClearSiteData, HttpContentLength, KeepAlive, Location, LocationParseError,
+  EntityTag, HttpClearSiteData, HttpContentLength, KeepAlive, Location, LocationParseError, Nel,
   NoVarySearch, NoVarySearchParams, NoVarySearchParseError, PreferenceApplied, Priority,
   ProxyAuthenticate, ProxyAuthenticateParseError, ProxyAuthenticationInfo,
   ProxyAuthenticationInfoParseError, ReferrerPolicy, ReferrerPolicyToken, ServerTiming, Signature,
@@ -76,6 +76,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let _: XFrameOptionsParseError = XFrameOptions::parse("ALLOW-FROM https://example.test")
     .expect_err("deprecated X-Frame-Options ALLOW-FROM should be rejected");
   let warning = Warning::parse(r#"110 - "Response is Stale""#).expect("Warning should parse");
+  let nel =
+    Nel::parse(r#"{"report_to":"network-errors","max_age":2592000}"#).expect("NEL should parse");
   let trailer = Trailer::parse("X-Trace").expect("Trailer should parse");
   let connection = Connection::parse("close").expect("Connection should parse");
   let _: ConnectionParseError =
@@ -153,6 +155,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(x_frame_options, XFrameOptions::Deny);
   assert_eq!(x_frame_options.header_value(), "DENY");
   assert_eq!(warning.items()[0].code(), 110);
+  assert_eq!(nel.max_age(), 2592000);
+  assert_eq!(nel.report_to(), Some("network-errors"));
   assert_eq!(keep_alive.timeout(), Some(5));
   assert_eq!(keep_alive.max(), Some(100));
   assert_eq!(trailer.field_names(), ["x-trace"]);
