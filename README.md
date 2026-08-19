@@ -46,6 +46,16 @@ as syntax and normalized away by typed builders. RTTP exposes these values for
 application use only: it does not enforce browser embedder policy, retain
 reporting metadata, deliver reports, or schedule report delivery.
 
+Typed response metadata also includes `Cross-Origin-Opener-Policy` and
+`Cross-Origin-Opener-Policy-Report-Only`. Both accept the directives
+`unsafe-none`, `same-origin-allow-popups`, `same-origin`, and
+`noopener-allow-popups` as singleton bounded structured-field items. Enforcing
+COOP accepts well-formed parameters such as `report-to` as syntax and discards
+them. Report-only COOP retains reporting parameters, including `report-to`, as
+metadata and does not validate those names against `Reporting-Endpoints`. RTTP
+exposes these values for application use only: it does not enforce
+browsing-context isolation, deliver reports, or schedule report delivery.
+
 ## Local verification
 
 Run the same checks as GitHub CI from the repository root before opening a pull request:
@@ -833,6 +843,29 @@ without changing them.
 These helpers expose Reporting-Endpoints as metadata only. RTTP does not
 schedule, send, persist, retry, or route reports.
 
+### Bounded Cross-Origin-Opener-Policy-Report-Only response metadata
+
+`Response::cross_origin_opener_policy_report_only()` parses retained
+`Cross-Origin-Opener-Policy-Report-Only` fields through the shared protocol
+type. Present values must be a singleton structured-field item using the
+canonical COOP directives `unsafe-none`, `same-origin-allow-popups`,
+`same-origin`, or `noopener-allow-popups`. Well-formed parameters are retained;
+`report-to` is exposed as a reporting-endpoint name when present. Each field
+value is bounded to 64 KiB. Absent metadata returns `Ok(None)`; duplicate
+fields, duplicate parameter names, unknown directives, malformed structured
+fields, and oversized values return an error while the raw response headers
+remain available.
+
+On the server, `HttpCrossOriginOpenerPolicyReportOnly::parse()` validates the
+same syntax and `HttpResponse::with_cross_origin_opener_policy_report_only()`
+replaces raw `Cross-Origin-Opener-Policy-Report-Only` fields with one
+validated value. `HttpResponse::cross_origin_opener_policy_report_only()`
+parses raw response fields on demand without changing them.
+
+These helpers expose COOP Report-Only as metadata only. RTTP does not isolate
+browsing contexts, validate `Reporting-Endpoints` members, deliver reports, or
+schedule report delivery.
+
 ### Bounded Keep-Alive response metadata
 
 Client `Response::keep_alive()` and server `HttpResponse::keep_alive()` parse
@@ -1223,6 +1256,7 @@ gain additional HTTP/2 header-block handling.
 | Warning | Client `Response::warning` parses bounded RFC 7234 `Warning` warning-value lists while preserving raw headers on parse failures | No cache storage, freshness calculation, stale-response handling, warn-code policy, retry, redirect behavior, or response-acceptance changes |
 | NEL | Client `Response::nel` and server `HttpNel`, `HttpResponse::with_nel`, and `HttpResponse::nel` parse or declare bounded W3C Network Error Logging policy JSON while preserving raw headers on parse failures | No network error report sending, policy persistence, Reporting endpoint group configuration, retry, redirect behavior, or status-policy behavior |
 | Reporting-Endpoints | Client `Response::reporting_endpoints` and server `HttpReportingEndpoints`, `HttpResponse::with_reporting_endpoints`, and `HttpResponse::reporting_endpoints` parse or declare bounded endpoint-name to quoted-URL dictionaries through the shared protocol type while preserving raw headers on parse failures | No report scheduling, sending, persistence, retry, routing, or endpoint policy behavior |
+| Cross-Origin-Opener-Policy-Report-Only | Client `Response::cross_origin_opener_policy_report_only` and server `HttpCrossOriginOpenerPolicyReportOnly`, `HttpResponse::with_cross_origin_opener_policy_report_only`, and `HttpResponse::cross_origin_opener_policy_report_only` parse or declare bounded singleton COOP Report-Only metadata, reuse the canonical COOP directives, retain reporting parameters including `report-to`, and preserve raw headers on parse failures | No browsing-context isolation, report scheduling, sending, persistence, retry, routing, or `Reporting-Endpoints` validation |
 | Keep-Alive | Client `Response::keep_alive` and server `HttpKeepAlive`, `HttpResponse::with_keep_alive`, and `HttpResponse::keep_alive` parse or declare bounded RFC 2068 `Keep-Alive` `timeout` and `max` parameters as checked unsigned integers while preserving raw headers on parse failures | No connection lifetime management, connection pooling, keep-alive timers, or HTTP/2 behavior changes |
 | Vary | `Response::vary` parses bounded response `Vary` fields into wildcard or normalized case-insensitive field-name metadata | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | No-Vary-Search | `Response::no_vary_search` parses bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
@@ -2223,6 +2257,7 @@ TLS or async accept loops.
 | WWW-Authenticate | `HttpWwwAuthenticate`, `HttpResponse::with_www_authenticate`, and `HttpResponse::www_authenticate` declare or parse bounded response authentication challenge metadata while preserving raw headers on parse failures | No credential storage, authentication policy, retry, automatic `Authorization` generation, Basic/Bearer implementation, redirect behavior, or status-policy behavior |
 | Authorization and Proxy-Authorization | `HttpAuthorization`, `HttpProxyAuthorization`, `Request::authorization`, and `Request::proxy_authorization` expose shared bounded request authorization metadata, reject duplicate parsed inbound fields, and redact credentials from typed debug output | No credential storage, authentication policy, challenge processing, retry, Basic/Bearer implementation, redirect policy changes, or automatic credential forwarding |
 | Proxy-Status | `HttpProxyStatus`, `HttpResponse::with_proxy_status`, and `HttpResponse::proxy_status` declare or parse bounded RFC 9209 Token/String proxy identifiers with opaque parameters while preserving raw headers on parse failures | No proxy health checks, retries, trailer promotion, or origin-generation policy |
+| Cross-Origin-Opener-Policy-Report-Only | `HttpCrossOriginOpenerPolicyReportOnly`, `HttpResponse::with_cross_origin_opener_policy_report_only`, and `HttpResponse::cross_origin_opener_policy_report_only` declare or parse bounded singleton COOP Report-Only metadata, reuse the canonical COOP directives, retain reporting parameters including `report-to`, and preserve raw headers on parse failures | No browsing-context isolation, report scheduling, sending, persistence, retry, routing, or `Reporting-Endpoints` validation |
 | Server-Timing | `HttpServerTiming`, `HttpResponse::with_server_timing`, and `HttpResponse::server_timing` declare or parse bounded response timing metadata while preserving raw headers on parse failures | No metric collection, measurement, telemetry export, metrics backend integration, retry, redirect behavior, or status-policy behavior |
 | Upgrade and tunnel targets | `CONNECT` authority-form requests are accepted as HTTP requests; `HttpHandoff::upgrade` can hand an upgraded socket to caller code after a matching request | The server does not implement the upgraded protocol after handoff |
 | Trailers | Chunked request trailers are preserved on `Request`; malformed, oversized, forbidden, and pseudo-header trailers are rejected; response trailers can be serialized for chunked responses | Application metadata trailers are allowed; trailer names that affect connection state, routing, authentication/cookies, framing, or payload processing are rejected |
