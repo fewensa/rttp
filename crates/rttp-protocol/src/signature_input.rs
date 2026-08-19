@@ -106,13 +106,14 @@ impl SignatureInput {
     I: IntoIterator<Item = &'a str>,
   {
     let mut entries = Vec::new();
+    let mut member_count = 0usize;
     for value in values {
       if value.len() > MAX_SIGNATURE_INPUT_VALUE_BYTES {
         return Err(SignatureInputParseError::new(
           "Signature-Input field value is too large",
         ));
       }
-      parse_field(value, &mut entries)?;
+      parse_field(value, &mut entries, &mut member_count)?;
     }
     if entries.is_empty() {
       return Err(SignatureInputParseError::new(
@@ -237,6 +238,7 @@ impl SignatureInputParameter {
 fn parse_field(
   value: &str,
   entries: &mut Vec<SignatureInputEntry>,
+  member_count: &mut usize,
 ) -> Result<(), SignatureInputParseError> {
   let dictionary = Parser::new(value)
     .parse::<Dictionary>()
@@ -248,16 +250,17 @@ fn parse_field(
   }
 
   for (key, member) in dictionary {
-    let ListEntry::InnerList(inner_list) = member else {
-      return Err(invalid_member());
-    };
-    let label = key.as_str().to_owned();
-    let replacing_existing = entries.iter().any(|entry| entry.label == label);
-    if !replacing_existing && entries.len() >= MAX_SIGNATURE_INPUT_ENTRIES {
+    if *member_count >= MAX_SIGNATURE_INPUT_ENTRIES {
       return Err(SignatureInputParseError::new(
         "too many Signature-Input field entries",
       ));
     }
+    *member_count += 1;
+
+    let ListEntry::InnerList(inner_list) = member else {
+      return Err(invalid_member());
+    };
+    let label = key.as_str().to_owned();
     if inner_list.items.is_empty() {
       return Err(invalid_member());
     }
