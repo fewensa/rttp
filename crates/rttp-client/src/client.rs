@@ -19,7 +19,7 @@ use rttp_protocol::priority::Priority;
 use rttp_protocol::save_data::SaveData;
 use rttp_protocol::signature::Signature;
 use rttp_protocol::signature_input::SignatureInput;
-use rttp_protocol::te::Te;
+use rttp_protocol::te::{Te, MAX_TE_CODINGS, MAX_TE_VALUE_BYTES};
 use rttp_protocol::trailer::Trailer;
 use rttp_protocol::upgrade::Upgrade;
 use std::io;
@@ -882,7 +882,7 @@ impl HttpClient {
       || coding.to_string(),
       |qvalue| format!("{coding};q={qvalue}"),
     );
-    Te::parse_values([member.as_str()])
+    let incoming = Te::parse_values([member.as_str()])
       .map_err(|error| error::builder_with_message(error.to_string()))?;
     let headers = self.request.headers_mut();
     if let Some(header) = headers
@@ -891,18 +891,19 @@ impl HttpClient {
     {
       let known = Te::parse_values([header.value().as_str()])
         .map_err(|_| error::builder_with_message("invalid TE coding"))?;
-      if known
-        .codings()
-        .iter()
-        .any(|known| known.coding().eq_ignore_ascii_case(coding))
-      {
+      if incoming.codings().iter().any(|incoming| {
+        known
+          .codings()
+          .iter()
+          .any(|known| known.coding().eq_ignore_ascii_case(incoming.coding()))
+      }) {
         return Err(error::builder_with_message("duplicate TE coding"));
       }
-      if known.len() >= MAX_REQUEST_METADATA_MEMBERS {
+      if known.len() + incoming.len() > MAX_TE_CODINGS {
         return Err(error::builder_with_message("too many TE codings"));
       }
       let value = format!("{}, {member}", header.value());
-      if value.len() > MAX_REQUEST_METADATA_VALUE_BYTES {
+      if value.len() > MAX_TE_VALUE_BYTES {
         return Err(error::builder_with_message("TE header value is too large"));
       }
       header.replace(Header::new("TE", value));

@@ -1372,6 +1372,55 @@ fn te_helpers_reject_duplicate_overflow_and_oversized_values_before_connecting()
 }
 
 #[test]
+fn te_helpers_reject_cross_call_duplicates_across_inline_and_multi_coding_forms() {
+  for values in [
+    ["gzip", "gzip;q=0.5"],
+    ["gzip;q=0.5", "GZIP"],
+    ["gzip, deflate", "gzip"],
+    ["gzip, deflate", "deflate;q=0.5"],
+    ["gzip, deflate", "gzip, deflate"],
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      client
+        .get()
+        .url(format!("{}/metadata", base_url))
+        .te(values[0])
+        .expect("first TE call should be accepted");
+      assert!(client
+        .te(values[1])
+        .expect_err("cross-call duplicate TE coding should be rejected")
+        .is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "cross-call duplicate TE input should not open a socket"
+    );
+  }
+}
+
+#[test]
+fn te_helpers_reject_multi_coding_overflow_beyond_the_member_bound() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    client.get().url(format!("{}/metadata", base_url));
+    for index in 0..31 {
+      client
+        .te(format!("coding-{index}"))
+        .expect("TE coding within the limit should be accepted");
+    }
+    assert!(client
+      .te("final-a, final-b")
+      .expect_err("31 codings plus two more must exceed the 32-member bound")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "TE member overflow input should not open a socket"
+  );
+}
+
+#[test]
 fn prefer_helpers_reject_invalid_wait_and_bound_values_before_connecting() {
   let request = capture_optional_request(|base_url| {
     let mut client = client();
