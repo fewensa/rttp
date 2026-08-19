@@ -1,16 +1,16 @@
 use rttp::server::{
-  HttpAcceptCh, HttpAcceptLanguageParseError, HttpAcceptLanguages, HttpAccessControlRequestMethod,
-  HttpAccessControlRequestPrivateNetwork, HttpConditionalMetadata, HttpContentDpr,
-  HttpContentDprParseError, HttpContentLocation, HttpContentLocationParseError, HttpContentRange,
-  HttpContentRangeParseError, HttpCrossOriginEmbedderPolicy,
+  HttpAcceptCh, HttpAcceptCharsetParseError, HttpAcceptLanguageParseError, HttpAcceptLanguages,
+  HttpAccessControlRequestMethod, HttpAccessControlRequestPrivateNetwork, HttpConditionalMetadata,
+  HttpContentDpr, HttpContentDprParseError, HttpContentLocation, HttpContentLocationParseError,
+  HttpContentRange, HttpContentRangeParseError, HttpCrossOriginEmbedderPolicy,
   HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
   HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpEntityTag,
   HttpIfModifiedSince, HttpIfUnmodifiedSince, HttpMaxForwards, HttpMementoDatetime,
-  HttpMementoDatetimeParseError, HttpNel, HttpProxyStatus, HttpProxyStatusParseError, HttpResponse,
-  HttpSaveData, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
-  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
-  HttpSignatureInputParseError, HttpSignatureParseError, HttpSunsetParseError, HttpUpgrade,
-  HttpUpgradeParseError,
+  HttpMementoDatetimeParseError, HttpNel, HttpProxyStatus, HttpProxyStatusParseError,
+  HttpRequestAcceptCharsets, HttpResponse, HttpSaveData, HttpSignature, HttpSignatureInput,
+  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
+  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
+  HttpSunsetParseError, HttpUpgrade, HttpUpgradeParseError,
 };
 use std::io::Write;
 use std::net::SocketAddr;
@@ -87,6 +87,9 @@ fn compatibility_facade_exports_client_metadata_types() {
     .expect_err("invalid Content-Range should be rejected");
   let accept_ranges: rttp::AcceptRanges =
     rttp_client::response::AcceptRanges::parse("bytes, pages").expect("Accept-Ranges should parse");
+  let accept_charset: rttp::AcceptCharset =
+    rttp_client::response::AcceptCharset::parse("utf-8, iso-8859-1;q=0.5, *;q=0")
+      .expect("Accept-Charset should parse");
   let accept_encoding: rttp::AcceptEncoding =
     rttp_client::response::AcceptEncoding::parse("gzip, br;q=0.8, identity;q=0")
       .expect("Accept-Encoding should parse");
@@ -204,6 +207,10 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(content_range_window.header_value(), "bytes 3-6/10");
   assert_eq!(accept_ranges.units(), ["bytes", "pages"]);
   assert_eq!(accept_ranges.header_value(), "bytes, pages");
+  assert_eq!(
+    accept_charset.header_value(),
+    "utf-8, iso-8859-1;q=0.5, *;q=0"
+  );
   assert_eq!(
     accept_encoding.header_value(),
     "gzip, br;q=0.8, identity;q=0"
@@ -528,6 +535,74 @@ fn compatibility_facade_roundtrips_representation_metadata_matrix() {
 
 #[test]
 #[cfg(feature = "client")]
+fn client_accept_charset_helpers_parse_through_shared_server_type() {
+  let (addr, handle) = spawn_representation_metadata_response_server(
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  );
+  rttp::Http::client()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .accept_charset("utf-8")
+    .expect("utf-8 should be accepted")
+    .accept_charset_with_q("iso-8859-1", "0.5")
+    .expect("iso-8859-1 quality should be accepted")
+    .accept_charset_with_q("*", "0")
+    .expect("wildcard quality should be accepted")
+    .emit()
+    .expect("client request should complete");
+  let captured_request = handle
+    .join()
+    .expect("Accept-Charset capture server should join");
+  let captured_request_text =
+    String::from_utf8(captured_request.clone()).expect("request should be utf-8");
+
+  assert_eq!(
+    Some("utf-8, iso-8859-1;q=0.5, *;q=0"),
+    header_value(&captured_request_text, "Accept-Charset")
+  );
+
+  let server_request =
+    rttp::server::HttpRequest::parse(&captured_request).expect("server request should parse");
+  let charsets: rttp::AcceptCharset = server_request
+    .accept_charset()
+    .expect("server Accept-Charset should parse")
+    .expect("server Accept-Charset should be present");
+
+  assert_eq!(charsets.len(), 3);
+  assert_eq!(charsets.charsets()[0].charset(), "utf-8");
+  assert_eq!(charsets.charsets()[0].quality(), 1000);
+  assert_eq!(charsets.charsets()[1].charset(), "iso-8859-1");
+  assert_eq!(charsets.charsets()[1].quality(), 500);
+  assert_eq!(charsets.charsets()[2].charset(), "*");
+  assert_eq!(charsets.charsets()[2].quality(), 0);
+  assert_eq!(charsets.header_value(), "utf-8, iso-8859-1;q=0.5, *;q=0");
+
+  let malformed = rttp::server::HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nAccept-Charset: utf-8, UTF-8\r\n\r\n",
+  )
+  .expect("malformed Accept-Charset request should still parse");
+  assert_eq!(malformed.header("Accept-Charset"), Some("utf-8, UTF-8"));
+  assert!(
+    malformed.accept_charset().is_err(),
+    "duplicate Accept-Charset members must fail closed"
+  );
+
+  assert!(
+    rttp::AcceptCharset::parse("utf-8".repeat(64 * 1024 + 1)).is_err(),
+    "oversized Accept-Charset values must fail closed"
+  );
+  let too_many = (0..33)
+    .map(|index| format!("charset{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  assert!(
+    rttp::server::HttpRequestAcceptCharsets::parse(too_many).is_err(),
+    "more than 32 Accept-Charset members must fail closed"
+  );
+}
+
+#[test]
+#[cfg(feature = "client")]
 fn client_accept_encoding_helpers_parse_through_shared_server_type() {
   let (addr, handle) = spawn_representation_metadata_response_server(
     b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
@@ -596,6 +671,11 @@ fn client_accept_encoding_helpers_parse_through_shared_server_type() {
 #[test]
 fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let accept_ch: HttpAcceptCh = HttpAcceptCh::parse("Sec-CH-UA").expect("Accept-CH should parse");
+  let accept_charsets: HttpRequestAcceptCharsets =
+    HttpRequestAcceptCharsets::parse("utf-8, iso-8859-1;q=0.5")
+      .expect("Accept-Charset should parse");
+  let _: HttpAcceptCharsetParseError = HttpRequestAcceptCharsets::parse("utf-8, UTF-8")
+    .expect_err("malformed Accept-Charset should be rejected");
   let accept_languages: HttpAcceptLanguages =
     HttpAcceptLanguages::parse("en-US, fr-CA; q=0.8").expect("Accept-Language should parse");
   let _: HttpAcceptLanguageParseError = HttpAcceptLanguages::parse("en; q=1.001")
@@ -655,6 +735,9 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpContentRange::parse("bytes */*").expect_err("invalid Content-Range should be rejected");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA"]);
+  assert_eq!(accept_charsets.charsets()[0].charset(), "utf-8");
+  assert_eq!(accept_charsets.charsets()[1].quality(), 500);
+  assert_eq!(accept_charsets.header_value(), "utf-8, iso-8859-1;q=0.5");
   assert_eq!(accept_languages.ranges(), ["en-US", "fr-CA"]);
   assert_eq!(accept_languages.qualities(), [None, Some("0.8")]);
   assert_eq!(accept_languages.header_value(), "en-US, fr-CA; q=0.8");

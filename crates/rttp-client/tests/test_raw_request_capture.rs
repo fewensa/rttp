@@ -473,6 +473,29 @@ fn raw_headers_remain_an_escape_hatch_for_custom_authorization_schemes() {
 }
 
 #[test]
+fn accept_charset_helpers_emit_validated_ranges_and_quality_values() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/localized", base_url))
+      .accept_charset("utf-8")
+      .expect("utf-8 should be accepted")
+      .accept_charset_with_q("iso-8859-1", "0.5")
+      .expect("iso-8859-1 quality should be accepted")
+      .accept_charset_with_q("*", "0")
+      .expect("wildcard quality should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("utf-8, iso-8859-1;q=0.5, *;q=0"),
+    header_value(&request, "Accept-Charset")
+  );
+}
+
+#[test]
 fn accept_encoding_helpers_emit_validated_codings_and_quality_values() {
   let request = capture_request(|base_url| {
     client()
@@ -510,6 +533,162 @@ fn expect_continue_helper_emits_metadata_without_gating_the_request_body() {
 
   assert_eq!(Some("100-continue"), header_value(&request, "Expect"));
   assert!(request.ends_with("request body"));
+}
+
+#[test]
+fn accept_charset_helpers_reject_invalid_members_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/localized", base_url))
+      .accept_charset_with_q("utf 8", "1.1")
+      .expect_err("invalid charset should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "invalid Accept-Charset helper input should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/localized", base_url))
+      .accept_charset_with_q("utf-8", "1.1")
+      .expect_err("invalid q-value should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "invalid Accept-Charset q-value should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/localized", base_url))
+      .accept_charset("utf-8")
+      .expect("first charset should be accepted")
+      .accept_charset("UTF-8")
+      .expect_err("duplicate charset should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "duplicate Accept-Charset helper input should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/localized", base_url))
+      .accept_charset("*")
+      .expect("first wildcard should be accepted")
+      .accept_charset_with_q("*", "0")
+      .expect_err("duplicate wildcard should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "duplicate Accept-Charset wildcard should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let oversized_charset = "a".repeat(64 * 1024 + 1);
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/localized", base_url))
+      .accept_charset(&oversized_charset)
+      .expect_err("oversized first charset should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized first Accept-Charset range should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/localized", base_url))
+      .accept_charset("utf-8, iso-8859-1")
+      .expect_err("comma-bearing charset should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "comma-bearing Accept-Charset range should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/localized", base_url))
+      .accept_charset("utf-8;q=0")
+      .expect_err("parameterized charset should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "parameterized Accept-Charset range should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/localized", base_url))
+      .accept_charset_with_q("utf-8", "0.5, iso-8859-1")
+      .expect_err("comma-bearing q-value should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "comma-bearing Accept-Charset q-value should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let builder = client.get().url(format!("{}/localized", base_url));
+    for index in 0..32 {
+      builder
+        .accept_charset(format!("c{index}"))
+        .expect("charset at the bound should be accepted");
+    }
+    let error = builder
+      .accept_charset("c32")
+      .expect_err("too many charsets should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "too many Accept-Charset members should not open a socket"
+  );
 }
 
 #[test]

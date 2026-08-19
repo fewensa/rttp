@@ -1,5 +1,9 @@
 use super::*;
 
+pub use rttp_protocol::accept_charset::{
+  AcceptCharset as HttpRequestAcceptCharsets,
+  AcceptCharsetParseError as HttpAcceptCharsetParseError, AcceptCharsetRange as HttpAcceptCharset,
+};
 pub use rttp_protocol::accept_encoding::{
   AcceptEncoding as HttpRequestAcceptEncodings, AcceptEncodingCoding as HttpAcceptEncoding,
   AcceptEncodingParseError as HttpAcceptEncodingParseError,
@@ -569,6 +573,18 @@ impl Request {
   pub fn prefer(&self) -> Result<Option<HttpRequestPreferences>, HttpPreferParseError> {
     parse_prefer_values(self.headers_named("Prefer"))
   }
+  /// Parses received `Accept-Charset` request metadata without negotiating,
+  /// transcoding, or selecting a response charset.
+  pub fn accept_charset(
+    &self,
+  ) -> Result<Option<HttpRequestAcceptCharsets>, HttpAcceptCharsetParseError> {
+    let values: Vec<&str> = self.headers_named("Accept-Charset").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpRequestAcceptCharsets::parse_values(values).map(Some)
+  }
+
   /// Parses received `Accept-Encoding` request metadata without enabling
   /// automatic compression, decompression, or content negotiation.
   pub fn accept_encoding(
@@ -2287,6 +2303,23 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpSaveData::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Accept-Charset` request metadata without negotiating,
+  /// transcoding, or selecting a response charset.
+  pub fn accept_charset(
+    &self,
+  ) -> Result<Option<HttpRequestAcceptCharsets>, HttpAcceptCharsetParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Accept-Charset"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpRequestAcceptCharsets::parse_values(values).map(Some)
   }
 
   /// Parses received `Accept-Encoding` request metadata without enabling

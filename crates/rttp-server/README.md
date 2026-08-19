@@ -84,6 +84,23 @@ expose the original request.
 These helpers parse request metadata only; they do not sniff, decode,
 negotiate, cache, redirect, retry, or select representations.
 
+## Accept-Charset request metadata
+
+Handlers can call `Request::accept_charset()` and
+`HttpRequest::accept_charset()` to observe bounded typed `Accept-Charset`
+request metadata through the shared `rttp-protocol` primitive. The helpers
+combine case-insensitive fields in wire order into
+`HttpRequestAcceptCharsets`. Each entry exposes `charset()` and q-value
+`quality()` in thousandths (`1000` is the default quality of `1`). The shared
+protocol type is the authority for charset-range, wildcard, q-value,
+duplicate, member-count, and size validation. Absent metadata returns
+`Ok(None)`. Malformed, oversized, duplicate, empty, or over-limit values
+return a parse error while `Request::header()` and `Request::body()` continue
+to expose the original request.
+
+These helpers parse request metadata only. They do not negotiate, transcode,
+decode bodies, sniff MIME types, or select a response charset.
+
 ## Accept-Encoding request metadata
 
 Handlers can call `Request::accept_encoding()` and

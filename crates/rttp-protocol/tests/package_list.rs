@@ -30,6 +30,7 @@ fn package_includes_protocol_metadata_facade_test() {
     "tests/content_language.rs",
     "tests/no_vary_search.rs",
     "tests/upgrade.rs",
+    "tests/accept_charset.rs",
     "tests/accept_language.rs",
   ] {
     assert!(
