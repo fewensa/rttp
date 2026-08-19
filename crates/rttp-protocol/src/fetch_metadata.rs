@@ -1,7 +1,8 @@
-//! Bounded, policy-free `Sec-Fetch-*` request metadata parsing.
+//! Bounded, policy-free Fetch Metadata request metadata parsing.
 //!
 //! This module validates Fetch Metadata values only. Callers decide whether to
-//! enforce any request policy; parsing never applies browser security policy.
+//! enforce any request policy; parsing never applies browser security policy,
+//! starts prefetches, or changes cache behavior.
 
 use std::error::Error;
 use std::fmt;
@@ -11,6 +12,7 @@ pub const MAX_SEC_FETCH_SITE_VALUE_BYTES: usize = MAX_FETCH_METADATA_VALUE_BYTES
 pub const MAX_SEC_FETCH_MODE_VALUE_BYTES: usize = MAX_FETCH_METADATA_VALUE_BYTES;
 pub const MAX_SEC_FETCH_DEST_VALUE_BYTES: usize = MAX_FETCH_METADATA_VALUE_BYTES;
 pub const MAX_SEC_FETCH_USER_VALUE_BYTES: usize = MAX_FETCH_METADATA_VALUE_BYTES;
+pub const MAX_SEC_PURPOSE_VALUE_BYTES: usize = MAX_FETCH_METADATA_VALUE_BYTES;
 
 macro_rules! fetch_metadata_enum {
   ($doc:literal, $name:ident, $header_name:literal, $max_value_bytes:ident { $($variant:ident => $value:literal),+ $(,)? }) => {
@@ -115,6 +117,81 @@ impl SecFetchUser {
   }
 }
 
+/// Token-list request purpose metadata declared by `Sec-Purpose`.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct SecPurpose {
+  tokens: Vec<String>,
+}
+
+impl SecPurpose {
+  pub fn parse(value: impl AsRef<str>) -> Result<Self, FetchMetadataParseError> {
+    Self::parse_values([value.as_ref()])
+  }
+
+  pub fn parse_values<'a, I>(values: I) -> Result<Self, FetchMetadataParseError>
+  where
+    I: IntoIterator<Item = &'a str>,
+  {
+    let value = parse_singleton(values, "Sec-Purpose", MAX_SEC_PURPOSE_VALUE_BYTES)?;
+    let tokens = value
+      .split(',')
+      .map(trim_ows)
+      .map(str::to_string)
+      .collect::<Vec<_>>();
+    Self::from_tokens(tokens)
+  }
+
+  pub fn prefetch() -> Self {
+    Self {
+      tokens: vec!["prefetch".to_string()],
+    }
+  }
+
+  pub fn from_tokens<I, S>(tokens: I) -> Result<Self, FetchMetadataParseError>
+  where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+  {
+    let mut parsed_tokens = Vec::new();
+    for token in tokens {
+      let token = token.as_ref();
+      if !is_http_token(token) {
+        return Err(invalid_value("Sec-Purpose"));
+      }
+      if parsed_tokens
+        .iter()
+        .any(|known: &String| known.eq_ignore_ascii_case(token))
+      {
+        return Err(FetchMetadataParseError::new("duplicate Sec-Purpose token"));
+      }
+      parsed_tokens.push(token.to_string());
+    }
+    if parsed_tokens.is_empty() {
+      return Err(invalid_value("Sec-Purpose"));
+    }
+    let header_value = parsed_tokens.join(", ");
+    validate_bounded_value(&header_value, "Sec-Purpose", MAX_SEC_PURPOSE_VALUE_BYTES)?;
+    Ok(Self {
+      tokens: parsed_tokens,
+    })
+  }
+
+  pub fn tokens(&self) -> &[String] {
+    &self.tokens
+  }
+
+  pub fn contains_prefetch(&self) -> bool {
+    self
+      .tokens
+      .iter()
+      .any(|token| token.eq_ignore_ascii_case("prefetch"))
+  }
+
+  pub fn header_value(&self) -> String {
+    self.tokens.join(", ")
+  }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FetchMetadataParseError {
   message: String,
@@ -124,6 +201,7 @@ pub type SecFetchSiteParseError = FetchMetadataParseError;
 pub type SecFetchModeParseError = FetchMetadataParseError;
 pub type SecFetchDestParseError = FetchMetadataParseError;
 pub type SecFetchUserParseError = FetchMetadataParseError;
+pub type SecPurposeParseError = FetchMetadataParseError;
 
 impl FetchMetadataParseError {
   fn new(message: impl Into<String>) -> Self {
@@ -176,7 +254,13 @@ macro_rules! impl_fetch_metadata_value {
   };
 }
 
-impl_fetch_metadata_value!(SecFetchSite, SecFetchMode, SecFetchDest, SecFetchUser);
+impl_fetch_metadata_value!(
+  SecFetchSite,
+  SecFetchMode,
+  SecFetchDest,
+  SecFetchUser,
+  SecPurpose,
+);
 
 fn parse_singleton<'a, I>(
   values: I,
@@ -230,4 +314,31 @@ fn invalid_value(header_name: &str) -> FetchMetadataParseError {
 
 fn trim_ows(value: &str) -> &str {
   value.trim_matches([' ', '\t'])
+}
+
+fn is_http_token(value: &str) -> bool {
+  !value.is_empty() && value.bytes().all(is_http_token_byte)
+}
+
+fn is_http_token_byte(byte: u8) -> bool {
+  matches!(
+    byte,
+    b'!' | b'#'
+      | b'$'
+      | b'%'
+      | b'&'
+      | b'\''
+      | b'*'
+      | b'+'
+      | b'-'
+      | b'.'
+      | b'^'
+      | b'_'
+      | b'`'
+      | b'|'
+      | b'~'
+      | b'0'..=b'9'
+      | b'A'..=b'Z'
+      | b'a'..=b'z'
+  )
 }

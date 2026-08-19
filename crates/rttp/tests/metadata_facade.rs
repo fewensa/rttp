@@ -148,6 +148,8 @@ fn compatibility_facade_exports_client_metadata_types() {
       .expect_err("deprecated X-Frame-Options ALLOW-FROM should be rejected");
   let fetch_site: rttp::SecFetchSite =
     rttp_client::SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
+  let sec_purpose: rttp::SecPurpose =
+    rttp_client::SecPurpose::parse("prefetch, vendor-ext").expect("Sec-Purpose should parse");
   let etag: rttp::EntityTag =
     rttp_client::response::EntityTag::parse("\"asset-v7\"").expect("ETag should parse");
   let location: rttp::Location =
@@ -204,6 +206,8 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(x_frame_options, rttp::XFrameOptions::Deny);
   assert_eq!(x_frame_options.header_value(), "DENY");
   assert_eq!(fetch_site.header_value(), "same-origin");
+  assert_eq!(sec_purpose.tokens(), ["prefetch", "vendor-ext"]);
+  assert!(sec_purpose.contains_prefetch());
   assert_eq!(etag, rttp::EntityTag::strong("asset-v7"));
   assert_eq!(location.as_str(), "/next");
   assert_eq!(content_length.len(), 123);

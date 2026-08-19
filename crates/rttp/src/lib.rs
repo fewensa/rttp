@@ -22,7 +22,7 @@ pub use rttp_client::response::{
   XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 #[cfg(feature = "client")]
-pub use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser};
+pub use rttp_client::{SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose};
 
 impl Http {
   #[cfg(feature = "client")]
