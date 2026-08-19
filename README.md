@@ -38,6 +38,14 @@ parse, validate, normalize, and expose bounded protocol metadata; they do not
 imply cache engines, browser policy, authentication decisions, retries,
 representation selection, or body transformation.
 
+Typed response metadata includes `Cross-Origin-Embedder-Policy` and
+`Cross-Origin-Embedder-Policy-Report-Only`. Both accept the directives
+`unsafe-none`, `require-corp`, and `credentialless` as singleton bounded
+structured-field items; well-formed parameters such as `report-to` are accepted
+as syntax and normalized away by typed builders. RTTP exposes these values for
+application use only: it does not enforce browser embedder policy, retain
+reporting metadata, deliver reports, or schedule report delivery.
+
 ## Local verification
 
 Run the same checks as GitHub CI from the repository root before opening a pull request:
@@ -245,7 +253,12 @@ policy enforcement, or automatic conditional requests. Directives such as
 `max-age`, `s-maxage`, `no-cache`, `must-revalidate`, and extension directives
 are exposed as parsed metadata only.
 
-### Bounded HTTP/1.1 Age and Expires behavior
+### Bounded HTTP/1.1 Date, Age, and Expires behavior
+
+`Response::date()` parses the response `Date` header as singleton HTTP-date
+metadata. The helper returns `Ok(None)` when the header is absent, returns
+`SystemTime` when the value is present and valid, and returns an error for
+malformed or duplicate values.
 
 `Response::age()` parses the response `Age` header as HTTP/1.1 delta-seconds
 metadata. The helper returns `Ok(None)` when the header is absent, returns the
@@ -260,12 +273,13 @@ the same HTTP-date parser used by the client date helpers. It returns
 values including the standard IMF-fixdate and obsolete HTTP-date forms accepted
 by the parser, and returns an error for malformed or non-date values.
 
-Malformed helper values do not reject the raw response. The original `Age` and
-`Expires` fields remain available through `header_value`, `header_values`, and
-the other raw header accessors. These helpers expose metadata only; RTTP does
-not calculate freshness, validate cache state against wall-clock time, store
-responses, match stored responses, revalidate responses, apply shared-cache
-policy, or issue automatic conditional requests.
+Malformed helper values do not reject the raw response. The original `Date`,
+`Age`, and `Expires` fields remain available through `header_value`,
+`header_values`, and the other raw header accessors. These helpers expose
+metadata only; RTTP does not calculate freshness, correct clock skew, validate
+cache state against wall-clock time, store responses, match stored responses,
+revalidate responses, apply shared-cache policy, issue automatic conditional
+requests, retry, redirect, schedule work, or choose status policy.
 
 ### Bounded HTTP/1.1 Retry-After behavior
 
@@ -355,16 +369,18 @@ from `Accept-Language`.
 ### Bounded HTTP/1.1 Content-Location behavior
 
 `Response::content_location()` parses a response `Content-Location` header into
-`ContentLocation` metadata. It returns `Ok(None)` when the header is absent and
-rejects duplicate header fields because `Content-Location` is handled as a
-singleton response metadata field. `ContentLocation::parse(value)` is available
-when callers want to validate one raw field value directly; it trims outer HTTP
-optional whitespace and exposes the validated value with
-`ContentLocation::as_str()`.
+the shared protocol-owned `ContentLocation` metadata type. It returns
+`Ok(None)` when the header is absent and rejects duplicate header fields
+because `Content-Location` is handled as a singleton response metadata field.
+`ContentLocation::parse(value)` is available when callers want to validate one
+raw field value directly; it trims outer HTTP optional whitespace and exposes
+the preserved reference text with `ContentLocation::as_str()` and
+`ContentLocation::header_value()`.
 
 The helper is bounded and validation-oriented. The field value is limited to
 64 KiB and must be a non-empty absolute URI or relative URI reference that can
-be parsed without control characters or unsafe field-value characters.
+be parsed without control characters, interior whitespace, unsafe field-value
+characters, malformed URI syntax, or broken percent-encoding.
 Malformed values, duplicated singleton fields, and oversized values make
 `Response::content_location()` return an error while leaving the original
 response headers and body available through `Response::header_value()`,
@@ -467,8 +483,18 @@ and more than 32 algorithms before opening a connection. Raw
 `header(("Want-Repr-Digest", value))` remain available for syntax outside the
 bounded helper API.
 
-These helpers declare preferences only. RTTP does not compute digests, verify
-response body hashes, retry requests, or sign messages.
+On the server, `Request::want_content_digest()` and
+`HttpRequest::want_content_digest()` parse received `Want-Content-Digest`
+fields in wire order into `HttpWantContentDigest`. `Request::want_repr_digest()`
+and `HttpRequest::want_repr_digest()` do the same for `Want-Repr-Digest` into
+`HttpWantReprDigest`. Each entry exposes `algorithm()` and `preference()` (`0`
+through `10`). Absent metadata returns `Ok(None)`; malformed, duplicate, empty,
+oversized, or excessive entries return a parse error without changing the
+request itself.
+
+These helpers declare and parse preferences only. They do not select an
+algorithm, compute digests, verify response body hashes, attach
+`Content-Digest` or `Repr-Digest`, retry requests, or sign messages.
 
 ### Bounded Accept request metadata
 
@@ -632,6 +658,46 @@ These APIs only declare or parse HTTP/1.1 metadata. They do not add transfer
 coding engines, trailer scheduling, proxy routing, automatic retries,
 automatic preference handling, cache policy, or forwarding behavior.
 
+### Bounded Connection metadata
+
+`Response::connection()` parses retained HTTP/1 `Connection` fields into
+`Connection` header metadata. It returns `Ok(None)` when the header is absent.
+Present values combine case-insensitive fields in wire order and preserve
+token spelling, including duplicates. `Connection::parse(value)` is available
+when callers want to validate one raw field value directly.
+
+On the server, `Request::connection()`, `HttpRequest::connection()`, and
+`HttpResponse::connection()` parse the same bounded token list from already
+retained HTTP/1 headers. Absent fields return `Ok(None)`.
+
+Each field value is limited to 64 KiB. Parsing accepts at most 256 tokens and
+rejects empty members, malformed tokens, parameters, oversized values, and too
+many tokens. Parse errors do not reject the raw message: original headers
+remain available. HTTP/2 continues to reject inbound `Connection` at decode
+time. These helpers do not change keep-alive, hop-by-hop stripping,
+upgrade/h2c, or HTTP/2 rejection.
+
+### Bounded Transfer-Encoding framing metadata
+
+`Response::transfer_encoding()` parses retained HTTP/1 `Transfer-Encoding`
+fields into `TransferEncoding` metadata. It returns `Ok(None)` when the header
+is absent. Present values combine case-insensitive fields in wire order and
+must yield a sole `chunked` coding, matching existing HTTP/1 framing.
+`TransferEncoding::parse(value)` is available when callers want to validate
+one raw field value directly.
+
+On the server, `Request::transfer_encoding()` and
+`HttpRequest::transfer_encoding()` parse the same sole-`chunked` metadata from
+already-validated HTTP/1 request headers. Absent fields return `Ok(None)`.
+
+Each field value is limited to 64 KiB. Parsing accepts at most 256 tokens and
+rejects empty members, malformed tokens, stacked or non-final `chunked`
+codings, combined duplicate fields that are no longer sole `chunked`,
+oversized values, and too many tokens. Parse errors do not reject the raw
+message: original headers remain available. HTTP/2 continues to reject
+`Transfer-Encoding` at decode time. These helpers do not change HTTP/1
+framing decoders, `TE`, Content-Length, or HTTP/2 decode.
+
 ### Bounded preflight request metadata
 
 `HttpClient::origin(value)` emits one validated `Origin` field, accepting
@@ -675,6 +741,18 @@ headers and body available through the ordinary response APIs.
 The helper is metadata-only. RTTP does not store cache entries, match stored
 responses, persist cache keys, replay requests, enforce shared-cache policy, or
 issue automatic conditional requests based on `Vary`.
+
+### Bounded No-Vary-Search metadata
+
+`Response::no_vary_search()` parses one or more `No-Vary-Search` response
+fields as bounded Structured Fields dictionary metadata. The typed value
+exposes recognized `key-order`, `params`, and `except` members and keeps
+extension dictionary members as metadata. Parse errors are returned by the
+typed helper while raw headers remain available.
+
+This helper does not create cache storage, match cache keys, normalize URLs,
+replay requests, apply browser navigation behavior, or enforce shared-cache
+policy.
 
 ### Bounded trailer behavior
 
@@ -746,21 +824,24 @@ gain additional HTTP/2 header-block handling.
 | Fetch Metadata | Client `sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, and `sec_fetch_user` emit bounded `Sec-Fetch-*` fields; server `Request` helpers parse typed received values while preserving raw headers on errors | No browser security policy, request blocking, origin validation, navigation policy, or automatic header generation |
 | Preflight request metadata | Client `origin`, `access_control_request_method`, and `access_control_request_headers` emit bounded `Origin`, `Access-Control-Request-Method`, and `Access-Control-Request-Headers` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, or CORS policy |
 | Access-Control-Allow-Credentials | Client `Response::access_control_allow_credentials` and server `HttpAccessControlAllowCredentials`, `HttpResponse::with_access_control_allow_credentials`, and `HttpResponse::access_control_allow_credentials` parse or declare bounded singleton `Access-Control-Allow-Credentials` `true`-token metadata while preserving raw headers on parse failures | No CORS request evaluation, automatic credential attachment, or automatic credentials granting |
-| Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata | No digest computation, response body hash validation, retries, or signing |
+| Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_content_digest()`, `HttpRequest::want_content_digest()`, `Request::want_repr_digest()`, and `HttpRequest::want_repr_digest()` parse received preference fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |
 | Upgrade and tunnel handoff | `CONNECT` returns the tunnel socket after a successful `200`; `upgrade()` returns the socket after `101 Switching Protocols` and skips interim `1xx` responses | Upgraded protocols are handed to the caller and are not parsed by `rttp_client` |
 | Redirects | Auto-redirect covers 301, 302, 303, 307, and 308 method/body behavior, relative and absolute `Location` resolution, same- and cross-authority header handling, loop detection, and redirect bounds | Redirects are HTTP client behavior, not a browser policy implementation |
 | Byte ranges | `range`, `range_from`, `range_suffix`, `if_range_etag`, and `if_range_date` emit bounded HTTP/1.1 range request metadata; `Response::content_range`, `accept_ranges`, `is_partial_content`, and `is_range_not_satisfiable` expose `Content-Range`, `Accept-Ranges`, `206`, and `416` metadata while preserving raw headers | No Range request generation from `Accept-Ranges`, client-side `If-Range` evaluation, partial response engine, byte serving, content slicing, download resume, automatic retry/replay, cache storage, redirect handling, status-policy behavior, multipart range generation, or automatic cache validation policy |
 | Conditional requests | `if_none_match`, `if_match`, `if_modified_since`, and `if_unmodified_since` emit bounded HTTP/1.1 validators; `Response::is_not_modified`, `is_precondition_failed`, `etag`, and `last_modified` expose `304`/`412` metadata | One ETag validator per helper call, `If-Range` is range-scoped, no cache storage, no automatic revalidation, and no cache-control engine |
 | Informational responses and Early Hints | `Response::informational_responses` exposes skipped bounded HTTP/1.1 `1xx` heads, including `103 Early Hints`, with preserved raw headers; server `HttpResponse::early_hints`/`early_hints_with_headers` construct validated bodyless `103` metadata | `101 Switching Protocols` remains terminal for upgrade handoff; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
-| Cache-Control, Age, Expires, Retry-After, and Allow | `Response::cache_control` parses bounded response directives, numeric freshness fields, quoted field-name lists, and extension directives; `Response::age` parses bounded delta-seconds; `Response::expires` parses bounded HTTP-date metadata; `Response::retry_after` parses bounded delta-seconds or HTTP-date metadata; `Response::allow` parses bounded ordered method metadata | No cache storage, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, automatic conditional requests, automatic sleep, retry, replay, backoff, scheduler integration, fallback method selection, or status-code policy engine |
+| Cache-Control, Date, Age, Expires, Retry-After, and Allow | `Response::cache_control` parses bounded response directives, numeric freshness fields, quoted field-name lists, and extension directives; `Response::date` parses singleton HTTP-date metadata; `Response::age` parses bounded delta-seconds; `Response::expires` parses bounded HTTP-date metadata; `Response::retry_after` parses bounded delta-seconds or HTTP-date metadata; `Response::allow` parses bounded ordered method metadata | No cache storage, automatic revalidation, wall-clock freshness calculation, clock-skew correction, `Vary` matching, shared-cache policy enforcement, automatic conditional requests, automatic sleep, retry, replay, redirect, backoff, scheduler integration, fallback method selection, or status-code policy engine |
 | Content-Language | `Response::content_language` parses bounded response `Content-Language` fields into ordered language metadata while preserving raw headers | No automatic language negotiation, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
 | Content-Location | `Response::content_location` and `ContentLocation::parse` parse bounded singleton response `Content-Location` metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |
 | Content-Type and Content-Encoding | `Response::content_type`/`ContentType::parse` parse bounded singleton `Content-Type` metadata, and `Response::content_encoding`/`ContentEncoding::parse` parse bounded ordered `Content-Encoding` codings while preserving raw headers on parse failures | No MIME sniffing, body decoding, charset transcoding, compression/decompression policy, negotiation, cache policy, redirects, retry/replay, or filesystem serving |
+| Connection | `Response::connection`/`Connection::parse` parse bounded HTTP/1 `Connection` tokens, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to keep-alive, `auto_add_connection`, hop-by-hop stripping, or HTTP/2 rejection |
+| Transfer-Encoding | `Response::transfer_encoding`/`TransferEncoding::parse` parse bounded HTTP/1 `Transfer-Encoding` fields that must be sole `chunked`, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to HTTP/1 framing decoders, `TE`, Content-Length, chunked body decoding policy, or HTTP/2 decode rejection |
 | Content-Disposition | Client `Response::content_disposition` and server `HttpContentDisposition`, `HttpResponse::with_content_disposition`, `with_attachment_filename`, and `content_disposition` parse or declare bounded singleton response `Content-Disposition` metadata, preserve raw headers on parse failures, and preserve parsed `filename` plus `filename*` parameter values as metadata | No automatic download, filesystem path handling, MIME sniffing, cache behavior, redirect behavior, retry/replay, negotiation, or status-policy behavior |
 | WWW-Authenticate | Client `Response::www_authenticate` and server `HttpWwwAuthenticate`, `HttpResponse::with_www_authenticate`, and `HttpResponse::www_authenticate` parse or declare bounded response authentication challenges while preserving raw headers on parse failures | No credential storage, authentication policy, retry, automatic `Authorization` generation, Basic/Bearer implementation, redirect behavior, or status-policy behavior |
 | Server-Timing | Client `Response::server_timing` and server `HttpServerTiming`, `HttpResponse::with_server_timing`, and `HttpResponse::server_timing` parse or declare bounded response timing metadata while preserving raw headers on parse failures | No metric collection, measurement, telemetry export, metrics backend integration, retry, redirect behavior, or status-policy behavior |
 | Warning | Client `Response::warning` parses bounded RFC 7234 `Warning` warning-value lists while preserving raw headers on parse failures | No cache storage, freshness calculation, stale-response handling, warn-code policy, retry, redirect behavior, or response-acceptance changes |
 | Vary | `Response::vary` parses bounded response `Vary` fields into wildcard or normalized case-insensitive field-name metadata | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
+| No-Vary-Search | `Response::no_vary_search` parses bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
 | Trailers | Chunked response trailers are exposed for blocking and async APIs; streaming chunked uploads can send declared request trailers | Application metadata trailers such as `X-Trace` are allowed; pseudo-header, connection-specific, routing, authentication/cookie, and framing trailer fields are rejected |
 | Bounded h2c client | With `http2`, direct `socket2` h2c sends GET, HEAD, bodyless DELETE, OPTIONS, or TRACE, buffered POST, PUT, or PATCH requests, and opt-in RFC 8441 extended CONNECT request HEADERS via `http2_extended_connect`, opens at most one request stream, supports prior-knowledge with `emit_http2_prior_knowledge`, supports explicit HTTP/1.1 `Upgrade: h2c` negotiation with `emit_http2_upgrade`, advertises `SETTINGS_ENABLE_PUSH = 0`, advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1` only for the explicit extended CONNECT path, validates received `SETTINGS_ENABLE_PUSH` values as only `0` or `1`, honors initial peer `SETTINGS_MAX_CONCURRENT_STREAMS` by failing before request HEADERS when the peer allows zero streams, honors peer-advertised `SETTINGS_MAX_HEADER_LIST_SIZE` request metadata limits, accepts only legal `SETTINGS_MAX_FRAME_SIZE` values from 16,384 through 16,777,215 bytes, splits outbound HEADERS, DATA, and trailers to the active peer frame-size limit, rejects oversized inbound frames when a configured local frame-size limit is exceeded, bounds HPACK dynamic table use with `SETTINGS_HEADER_TABLE_SIZE`, strips HTTP/1.x connection-specific request fields before emission, rejects connection-specific peer response fields, suppresses HEAD response bodies, treats `RST_STREAM` on the active stream as a bounded reset/cancellation signal, acknowledges inbound PING without ACK on stream 0 and exactly 8 octets with matching opaque data, ignores inbound PING ACK, rejects malformed PING frames, DATA bodies, trailers, HPACK static Huffman strings, bounded large header blocks, padded incoming frames, `GOAWAY` shutdown boundaries, PRIORITY metadata validation without scheduling, HTTP/2-allowed unknown/extension frame ignoring inside this bounded path, reserved stream-id high-bit normalization, and conservative DATA flow control | Ordinary `CONNECT`, header-configured `:protocol` metadata, non-h2c HTTP/1.1 `Upgrade` handoff requests, and proxies are rejected deterministically, and `PUSH_PROMISE`/server push is rejected instead of managed; bounded direct h2c only, with no keepalive timers, no automatic client/server initiated PING policy, no public cancellation callback API, no dynamic policy API, no extension callback API, no full extension negotiation, TLS ALPN, external h2 integration, proxy tunneling to h2, proxy h2, tunnel handoff, connection pooling, persistent HTTP/2 session management, automatic retry/replay, server push, full session manager, full stream state machine, full multiplex scheduler, unbounded multiplex scheduling, general multiplexing, priority scheduling, request bodies or trailers for extended CONNECT, or request bodies for GET, HEAD, DELETE, OPTIONS, or TRACE |
 
@@ -1221,22 +1302,25 @@ redirect, retry, or select representations from `Content-Language`.
 ### Bounded HTTP/1.1 Content-Location behavior
 
 Server-side `Content-Location` helpers expose response metadata declaration and
-parsing without implementing redirect handling, cache selection, or route
-policy. `HttpResponse::with_content_location(value)` validates one
-`Content-Location` field value, trims outer whitespace, removes any existing
-raw `Content-Location` fields, and adds a single validated
-`Content-Location` header. `HttpResponse::content_location()` parses any
-attached `Content-Location` header and returns `Ok(None)` when the header is
-absent.
+parsing through the shared protocol-owned `HttpContentLocation` type without
+implementing redirect handling, cache selection, or route policy.
+`HttpResponse::with_content_location(value)` validates one `Content-Location`
+URI-reference field value, trims outer whitespace, removes any existing raw
+`Content-Location` fields, and adds a single validated `Content-Location`
+header. `HttpResponse::content_location()` parses any attached
+`Content-Location` header into `HttpContentLocation` and returns `Ok(None)`
+when the header is absent.
 
 Parsing is bounded and validation-oriented. The field value is limited to
-64 KiB, must be non-empty after trimming, and must not contain control
-characters. Duplicate `Content-Location` fields are rejected because the helper
-treats the header as singleton response metadata. Malformed values, duplicated
-singleton fields, and oversized values return `HttpContentLocationParseError`
-from the helper. Raw `HttpResponse::header("Content-Location", ...)` values
-remain preserved exactly as ordinary response headers until a typed declaration
-helper replaces them or the typed parser is requested.
+64 KiB and must be a non-empty absolute URI or relative URI reference without
+control characters, interior whitespace, unsafe field-value characters,
+malformed URI syntax, or broken percent-encoding. Duplicate
+`Content-Location` fields are rejected because the helper treats the header as
+singleton response metadata. Malformed values, duplicated singleton fields, and
+oversized values return `HttpContentLocationParseError` from the helper. Raw
+`HttpResponse::header("Content-Location", ...)` values remain preserved exactly
+as ordinary response headers until a typed declaration helper replaces them or
+the typed parser is requested.
 
 These helpers interoperate with adjacent response metadata helpers such as
 `HttpResponse::cache_control()`, `HttpResponse::allow()`,
@@ -1380,6 +1464,19 @@ cache key persistence, automatic request replay, shared-cache policy
 enforcement, or automatic conditional requests. Applications that build a
 cache must persist any selected request metadata and enforce their own cache
 policy around these helpers.
+
+### Bounded No-Vary-Search metadata
+
+Server-side `No-Vary-Search` helpers expose response declaration metadata
+without implementing a cache. `HttpResponse::with_no_vary_search(value)`
+parses and normalizes a declaration before replacing any existing
+`No-Vary-Search` response fields, while `HttpResponse::no_vary_search()`
+parses attached raw fields into `HttpNoVarySearch` metadata.
+
+The helpers expose recognized `key-order`, `params`, and `except` members and
+keep extension dictionary members as metadata. They do not create cache
+storage, match cache keys, normalize URLs, replay requests, apply browser
+navigation behavior, or enforce shared-cache policy.
 
 The server is intentionally small: it handles blocking HTTP/1.x request parsing
 for local tests and simple embedded use. It accepts fixed `Content-Length` and
@@ -1544,10 +1641,13 @@ TLS or async accept loops.
 | Cache-Control | `Request::cache_control`, `HttpRequest::cache_control`, and `HttpResponse::cache_control` parse bounded request/response directives, numeric freshness fields, quoted field-name lists, and extension directives; `HttpResponse::with_age`/`age`, `with_expires`/`expires`, and `with_retry_after_delta`/`with_retry_after_date`/`retry_after` declare and parse response `Age`, `Expires`, and `Retry-After` metadata | No cache storage, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, automatic conditional requests, directive-based validator evaluation, automatic sleep, retry, replay, backoff, scheduler integration, or status-code policy engine |
 | Fetch Metadata | `Request::sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, and `sec_fetch_user` parse bounded typed `Sec-Fetch-*` request fields and preserve raw values on errors | No browser security policy, request blocking, origin validation, navigation policy, or automatic header generation |
 | Vary | `HttpVary`, `HttpResponse::with_vary`, `HttpResponse::vary`, `Request::vary_selection`, and `HttpRequest::vary_selection` parse, declare, and select bounded `Vary` metadata with case-insensitive field-name handling | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
+| No-Vary-Search | `HttpNoVarySearch`, `HttpResponse::with_no_vary_search`, and `HttpResponse::no_vary_search` parse and declare bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
 | Allow | `HttpAllowedMethods`, `HttpResponse::with_allow`, and `HttpResponse::allow` declare and parse bounded `Allow` method-list metadata | No route dispatch, automatic `405` generation, `OPTIONS` policy, fallback method selection, retry/replay, or status-code policy engine |
 | Content-Language | `HttpContentLanguages`, `Request::content_language`, `HttpRequest::content_language`, `HttpResponse::with_content_language`, and `HttpResponse::content_language` parse or declare bounded `Content-Language` metadata | No automatic language negotiation, route selection, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
 | Content-Location | `HttpResponse::with_content_location` declares one bounded singleton `Content-Location` header, and `HttpResponse::content_location` parses attached singleton response metadata while preserving raw headers | No redirect behavior, cache variant selection, representation replacement, retry/replay, route generation, or status-policy behavior |
 | Content-Type and Content-Encoding | `HttpContentType`, `Request::content_type`, `HttpRequest::content_type`, `HttpResponse::with_content_type`, `content_type`, `HttpResponseContentEncodings`, `Request::content_encoding`, `HttpRequest::content_encoding`, `HttpResponse::with_content_encoding`, and `content_encoding` parse or declare bounded representation metadata while preserving raw headers on parse failures and replacing raw response duplicates on typed declaration | No MIME sniffing, body decoding, charset transcoding, compression/decompression, negotiation, cache policy, redirects, retry/replay, or filesystem serving |
+| Connection | `HttpConnection`, `Request::connection`, `HttpRequest::connection`, and `HttpResponse::connection` parse bounded HTTP/1 `Connection` tokens, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to hop-by-hop stripping, keep-alive/close, upgrade/h2c, or HTTP/2 rejection |
+| Transfer-Encoding | `HttpTransferEncoding`, `Request::transfer_encoding`, and `HttpRequest::transfer_encoding` parse bounded HTTP/1 `Transfer-Encoding` fields that must be sole `chunked`, combining duplicate fields in wire order while preserving raw headers on parse failures | No change to `request_body_kind`, `TE`, Content-Length, or HTTP/2 decode rejection |
 | Content-Disposition | `HttpContentDisposition`, `HttpResponse::with_content_disposition`, `with_attachment_filename`, and `content_disposition` declare and parse bounded singleton `Content-Disposition` response metadata, preserve parsed `filename` and `filename*` parameter values, preserve raw headers on parse failures, and replace raw duplicates on typed declaration | No automatic download, filesystem path handling, MIME sniffing, cache behavior, redirect behavior, retry/replay, negotiation, or status-policy behavior |
 | WWW-Authenticate | `HttpWwwAuthenticate`, `HttpResponse::with_www_authenticate`, and `HttpResponse::www_authenticate` declare or parse bounded response authentication challenge metadata while preserving raw headers on parse failures | No credential storage, authentication policy, retry, automatic `Authorization` generation, Basic/Bearer implementation, redirect behavior, or status-policy behavior |
 | Server-Timing | `HttpServerTiming`, `HttpResponse::with_server_timing`, and `HttpResponse::server_timing` declare or parse bounded response timing metadata while preserving raw headers on parse failures | No metric collection, measurement, telemetry export, metrics backend integration, retry, redirect behavior, or status-policy behavior |

@@ -8,6 +8,34 @@ and server crates.
 
 This crate supports rttp's implementation; its public API is not a standalone
 application-level HTTP interface.
+
+## Content-Location
+
+`content_location` parses a singleton response `Content-Location` field as one
+bounded URI reference. Each field value is bounded to 64 KiB. A second field is
+rejected after every supplied field is bound-checked. Surrounding SP and HTAB
+are trimmed as optional whitespace, and the trimmed reference text is preserved
+through `as_str()` and `header_value()` without resolution against any request
+or response URL. Empty values, ASCII controls, interior whitespace, unsafe
+field-value characters, malformed absolute URIs, malformed relative
+references, and broken percent-encoding are errors. This is syntax validation
+only: callers own redirect handling, cache variant selection, representation
+replacement, route generation, retries, and status policy.
+
+## Connection
+
+`connection` parses one or more RFC 9110 `Connection` field values into an
+ordered list of connection-option tokens. This is header-field metadata, not a
+transport socket type. Each field value is bounded to 64 KiB, and the
+cumulative token count across all supplied fields is bounded to 256 tokens.
+Tokens are split on commas with SP and HTAB accepted only as optional
+whitespace around each token; empty members and members containing forbidden
+ASCII control bytes are rejected. Each token must be an RFC 9110 token, and
+repeated tokens are retained in wire order with their original spelling. A
+present header set that yields no token still fails as invalid. This parser
+never fails open and does not apply keep-alive, hop-by-hop stripping, upgrade,
+or HTTP/2 rejection policy.
+
 ## Content-Encoding
 
 `content_encoding` parses one or more `Content-Encoding` field values into an
@@ -19,6 +47,86 @@ ASCII control bytes are rejected. Each coding must be an RFC 9110 token, and
 repeated codings are retained in wire order so callers can inspect the full
 encoding stack. A present header set that yields no coding still fails as
 invalid.
+
+## Transfer-Encoding
+
+`transfer_encoding` parses one or more `Transfer-Encoding` field values into
+an ordered list of transfer-coding tokens. Each field value is bounded to
+64 KiB, and the cumulative coding count across all supplied fields is bounded
+to 256 codings. Codings are split on commas with SP and HTAB accepted only as
+optional whitespace around each coding; empty members and members containing
+forbidden ASCII control bytes are rejected. Each coding must be an RFC 9110
+token. Combined fields are validated in wire order and must yield a sole
+`chunked` coding, matched case-insensitively, as the last and only token so
+the type matches existing HTTP/1 framing. Duplicate fields, stacked codings,
+`chunked` that is not last, and other unparsable input are errors. This
+parser never fails open and does not decode a chunked body, negotiate `TE`,
+or change Content-Length or HTTP/2 decode.
+
+## Want-Content-Digest
+
+`want_content_digest` parses one or more RFC 9530 `Want-Content-Digest` field
+values into an ordered dictionary of algorithm keys and integer preferences.
+Each field value is bounded to 64 KiB, and the combined algorithm count across
+all supplied fields is bounded to 32. Members must be parameter-free Structured
+Fields items whose values are Integers in `0` through `10` inclusive. Unknown
+well-formed algorithm keys are retained as opaque data. Duplicate keys, bare
+Boolean members, parameterized members, inner lists, decimals, negatives,
+out-of-range integers, empty present fields, and other unparsable input are
+errors. This parser never fails open to an empty preference set and does not
+select an algorithm, compute a digest, or attach `Content-Digest`.
+
+## Want-Repr-Digest
+
+`want_repr_digest` parses one or more RFC 9530 `Want-Repr-Digest` field values
+into an ordered dictionary of algorithm keys and integer preferences. Each
+field value is bounded to 64 KiB, and the combined algorithm count across all
+supplied fields is bounded to 32. Members must be parameter-free Structured
+Fields items whose values are Integers in `0` through `10` inclusive. Unknown
+well-formed algorithm keys are retained as opaque data. Duplicate keys, bare
+Boolean members, parameterized members, inner lists, decimals, negatives,
+out-of-range integers, empty present fields, and other unparsable input are
+errors. This parser never fails open to an empty preference set and does not
+select an algorithm, compute a digest, or attach `Repr-Digest`.
+
+## Host
+
+`host` parses a singleton HTTP `Host` request field as one inbound authority
+(`uri-host` plus optional port). Each field value is bounded to 64 KiB. A
+second field is rejected after every supplied field is bound-checked.
+Surrounding SP and HTAB are trimmed as optional whitespace. The parser
+preserves the trimmed host and port spelling and does not canonicalize names,
+IPv6 text, or default ports. Empty values, userinfo, path, query, fragment,
+unbracketed IPv6, empty ports, ASCII controls, and other values outside the
+inbound Host grammar are errors. This is syntax validation only: callers own
+virtual-host routing and scheme defaults.
+
+## Signature
+
+`signature` parses one or more RFC 9421 `Signature` field values into an
+ordered dictionary of labels and byte sequences. Each field value is bounded
+to 64 KiB, the combined entry count is bounded to 256, each entry value is
+bounded to 64 KiB, and each entry may carry at most 256 Structured Fields
+parameters. Members must be dictionary keys mapped to byte sequences.
+Well-formed item parameters are accepted as syntax and discarded. Duplicate
+labels, non-byte-sequence values, empty present fields, and other unparsable
+input are errors. This parser does not sign, verify, look up keys, or parse
+`Signature-Input`.
+
+## Signature-Input
+
+`signature_input` parses one or more RFC 9421 `Signature-Input` field values
+into an ordered dictionary of labels, covered-component identifiers, and
+opaque parameters. Each field value is bounded to 64 KiB, the combined entry
+count is bounded to 256, each entry may carry at most 256 covered components
+and 256 member parameters, and each component may carry at most 256
+parameters. Members must be dictionary keys mapped to inner lists of strings.
+Well-formed member parameters (`created`, `keyid`, `alg`, `nonce`, `tag`, and
+unknown names) and well-formed component parameters are retained as opaque
+data and are not interpreted. Duplicate labels, non-inner-list members,
+non-string components, empty present fields, and other unparsable input are
+errors. This parser does not sign, verify, look up keys, canonicalize covered
+components, or apply cryptographic policy.
 
 ## Cross-Origin-Opener-Policy
 
@@ -78,6 +186,20 @@ discarded; this parser does not retain reporting metadata or enforce embedder
 policy. Case variants, lists, quoted values, unknown tokens, empty values, and
 other unparsable input are errors. The parser never fails open to `unsafe-none`.
 
+## Cross-Origin-Embedder-Policy-Report-Only
+
+`cross_origin_embedder_policy_report_only` parses a singleton
+`Cross-Origin-Embedder-Policy-Report-Only` structured-field item with the same
+directive grammar as `Cross-Origin-Embedder-Policy`. Each field value is
+bounded to 64 KiB. A second field is rejected after every supplied field is
+bound-checked. The bare item must be exactly one of the tokens `unsafe-none`,
+`require-corp`, or `credentialless`. Well-formed parameters, including
+`report-to`, are accepted as syntax and discarded; this parser does not retain
+reporting metadata, enforce embedder policy, deliver reports, or schedule
+report delivery. Case variants, lists, quoted values, unknown tokens, empty
+values, and other unparsable input are errors. The parser never fails open to
+`unsafe-none`.
+
 ## Referer
 
 `referer` parses a singleton HTTP `Referer` request field as one RFC 9110 URI
@@ -124,13 +246,15 @@ not pin TLS, store hosts, consult a preload list, or apply HTTPS-only policy.
 
 ## X-Frame-Options
 
-`x_frame_options` parses a singleton `X-Frame-Options` field. Each field value
-is bounded to 64 KiB. A second field is rejected after every supplied field is
-bound-checked. The field value must be exactly one of the tokens `DENY` or
-`SAMEORIGIN`, matched case-insensitively and returned in canonical uppercase
-wire form. The deprecated `ALLOW-FROM` directive, unknown tokens, lists,
-quoted values, empty values, and other unparsable input are errors. This
-parser does not enforce clickjacking protection or frame-embedding policy.
+`x_frame_options` parses a singleton `X-Frame-Options` response field. Each
+field value is bounded to 64 KiB. A second field is rejected after every
+supplied field is bound-checked. Surrounding SP and HTAB are trimmed as
+optional whitespace. The value must be exactly `DENY` or `SAMEORIGIN`, matched
+case-insensitively and formatted canonically in uppercase. Empty values,
+comma-joined values, semicolon parameters, quoted values, `ALLOW-FROM`,
+unsupported tokens, ASCII controls, and other ambiguous input are errors. This
+parser reports declared metadata only; it does not decide whether a response
+may be framed.
 
 ## Warning
 
@@ -154,3 +278,13 @@ lowercase wire form. Surrounding SP and HTAB are trimmed as optional
 whitespace. Unknown tokens, lists, quoted
 values, empty values, control bytes, and other unparsable input are errors.
 This parser does not evaluate CORS requests or grant credentials automatically.
+
+## No-Vary-Search
+
+`no_vary_search` parses bounded Structured Fields dictionary metadata for the
+`No-Vary-Search` response field. It exposes recognized `key-order`, `params`,
+and `except` members, keeps extension dictionary members as metadata, and
+formats a normalized header value. Each field value is limited to 64 KiB,
+parameter lists are limited to 256 strings, and extension members are limited
+to 64. The parser does not implement cache storage, cache-key matching, URL
+normalization, navigation behavior, request replay, or shared-cache policy.
