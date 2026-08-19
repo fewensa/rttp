@@ -2356,6 +2356,109 @@ fn raw_pragma_header_remains_available_as_escape_hatch() {
 }
 
 #[test]
+fn trace_context_helpers_emit_and_replace_bounded_metadata() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/trace", base_url))
+      .header((
+        "traceparent",
+        "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-00",
+      ))
+      .header(("tracestate", "old=value"))
+      .traceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+      .expect("traceparent should be accepted")
+      .tracestate("rojo=00f067aa0ba902b7,congo=t61rcWkgMzE")
+      .expect("tracestate should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"),
+    header_value(&request, "traceparent")
+  );
+  assert_eq!(
+    Some("rojo=00f067aa0ba902b7,congo=t61rcWkgMzE"),
+    header_value(&request, "tracestate")
+  );
+  assert!(!request.contains("old=value"));
+}
+
+#[test]
+fn trace_context_helpers_reject_invalid_values_before_connecting_without_echoing_values() {
+  for (name, value) in [
+    (
+      "traceparent",
+      "00-00000000000000000000000000000000-00f067aa0ba902b7-01",
+    ),
+    ("tracestate", "rojo=1,rojo=2"),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = if name == "traceparent" {
+        client
+          .get()
+          .url(format!("{}/trace", base_url))
+          .traceparent(value)
+          .expect_err("invalid traceparent should be rejected")
+      } else {
+        client
+          .get()
+          .url(format!("{}/trace", base_url))
+          .tracestate(value)
+          .expect_err("invalid tracestate should be rejected")
+      };
+      assert!(error.is_builder());
+      assert!(!error.to_string().contains(value));
+    });
+    assert!(request.is_empty(), "invalid {name} must not open a socket");
+  }
+}
+
+#[test]
+fn raw_trace_context_headers_are_validated_and_redacted() {
+  let traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+  let tracestate = "rojo=00f067aa0ba902b7";
+
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/trace", base_url))
+      .header(("traceparent", traceparent))
+      .header(("tracestate", tracestate))
+      .emit()
+      .expect("manual valid trace context headers should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(Some(traceparent), header_value(&request, "traceparent"));
+  assert_eq!(Some(tracestate), header_value(&request, "tracestate"));
+
+  let debug = format!(
+    "{:?}",
+    client()
+      .get()
+      .url("http://127.0.0.1/trace")
+      .header(("traceparent", traceparent))
+      .header(("tracestate", tracestate))
+  );
+  assert!(!debug.contains(traceparent));
+  assert!(!debug.contains(tracestate));
+
+  let rejected = capture_optional_request(|base_url| {
+    let error = client()
+      .get()
+      .url(format!("{}/trace", base_url))
+      .header(("traceparent", "invalid"))
+      .emit()
+      .expect_err("invalid raw traceparent should be rejected before connect");
+    assert!(error.is_builder());
+  });
+  assert!(rejected.is_empty());
+}
+
+#[test]
 fn conditional_request_helpers_emit_validator_headers() {
   let request = capture_request(|base_url| {
     client()

@@ -857,6 +857,91 @@ fn test_parse_reporting_endpoints_response_metadata() {
   )
   .expect("raw response should remain inspectable");
   assert!(invalid.reporting_endpoints().is_err());
+  assert_eq!(
+    Some(&r#"Default="https://reports.example/default""#.to_string()),
+    invalid.header_value("Reporting-Endpoints")
+  );
+}
+
+#[test]
+fn test_parse_reporting_endpoints_escaped_duplicate_and_bounded_metadata() {
+  let escaped = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Reporting-Endpoints: default=\"https://reports.example/a\\\"b\\\\c\"\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("escaped Reporting-Endpoints response should parse");
+  let endpoints = escaped
+    .reporting_endpoints()
+    .expect("escaped Reporting-Endpoints should parse")
+    .expect("Reporting-Endpoints should be present");
+  assert_eq!(
+    Some(r#"https://reports.example/a"b\c"#),
+    endpoints.endpoint("default")
+  );
+
+  let duplicate = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Reporting-Endpoints: default=\"https://reports.example/default\"\r\n",
+      "Reporting-Endpoints: default=\"https://reports.example/other\"\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("raw response should remain inspectable");
+  assert!(duplicate.reporting_endpoints().is_err());
+  assert_eq!(
+    vec![
+      r#"default="https://reports.example/default""#,
+      r#"default="https://reports.example/other""#,
+    ],
+    duplicate
+      .header_values("Reporting-Endpoints")
+      .iter()
+      .map(|value| value.as_str())
+      .collect::<Vec<_>>()
+  );
+
+  let oversized_value = format!(r#"default="{}""#, "x".repeat(64 * 1024));
+  let oversized = Response::new(
+    RoUrl::with("https://example.test"),
+    format!(
+      "HTTP/1.1 200 OK\r\nReporting-Endpoints: {oversized_value}\r\nContent-Length: 0\r\n\r\n"
+    )
+    .into_bytes(),
+  )
+  .expect("raw response should remain inspectable");
+  assert!(oversized.reporting_endpoints().is_err());
+  assert_eq!(
+    Some(&oversized_value),
+    oversized.header_value("Reporting-Endpoints")
+  );
+
+  let excessive_value = (0..33)
+    .map(|index| format!(r#"endpoint{index}="https://reports.example/""#))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let excessive = Response::new(
+    RoUrl::with("https://example.test"),
+    format!(
+      "HTTP/1.1 200 OK\r\nReporting-Endpoints: {excessive_value}\r\nContent-Length: 0\r\n\r\n"
+    )
+    .into_bytes(),
+  )
+  .expect("raw response should remain inspectable");
+  assert!(excessive.reporting_endpoints().is_err());
+  assert_eq!(
+    Some(&excessive_value),
+    excessive.header_value("Reporting-Endpoints")
+  );
 }
 
 #[test]

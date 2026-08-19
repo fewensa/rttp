@@ -1059,6 +1059,128 @@ fn sync_client_and_server_exchange_alt_svc_metadata_without_connection_policy() 
 }
 
 #[test]
+fn sync_client_and_server_exchange_reporting_endpoints_metadata_without_scheduling_reports() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Reporting-Endpoints server");
+  let addr = server
+    .local_addr()
+    .expect("Reporting-Endpoints server addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        HttpResponse::ok("OK")
+          .with_reporting_endpoints([
+            ("default", r#"https://reports.example/a"b\c"#),
+            ("csp", "https://reports.example/csp"),
+          ])
+          .expect("Reporting-Endpoints should be accepted")
+      })
+      .expect("serve Reporting-Endpoints response");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/reporting-endpoints"))
+    .emit()
+    .expect("Reporting-Endpoints response should parse without scheduling reports");
+  let endpoints = response
+    .reporting_endpoints()
+    .expect("Reporting-Endpoints should parse")
+    .expect("Reporting-Endpoints should be present");
+
+  assert_eq!(200, response.code());
+  assert_eq!("OK", response.body().string().unwrap());
+  assert_eq!(
+    vec![
+      ("default", r#"https://reports.example/a"b\c"#),
+      ("csp", "https://reports.example/csp"),
+    ],
+    endpoints.endpoints()
+  );
+  assert_eq!(
+    Some(
+      &r#"default="https://reports.example/a\"b\\c", csp="https://reports.example/csp""#
+        .to_string()
+    ),
+    response.header_value("Reporting-Endpoints")
+  );
+  handle.join().expect("Reporting-Endpoints server thread");
+}
+
+#[test]
+fn sync_client_preserves_malformed_and_duplicate_reporting_endpoints_without_scheduling_reports() {
+  const HEADERS: &[(&str, &str)] = &[
+    (
+      "Reporting-Endpoints",
+      r#"default="https://reports.example/default""#,
+    ),
+    (
+      "Reporting-Endpoints",
+      r#"default="https://reports.example/other""#,
+    ),
+  ];
+  let (addr, handle) = spawn_metadata_response_server(HEADERS);
+
+  let response = client()
+    .get()
+    .url(format!(
+      "http://{addr}/matrix/reporting-endpoints-duplicate"
+    ))
+    .emit()
+    .expect("duplicate Reporting-Endpoints should not prevent response parsing");
+
+  assert_eq!(200, response.code());
+  assert_eq!("OK", response.body().string().unwrap());
+  assert_eq!(
+    vec![
+      r#"default="https://reports.example/default""#,
+      r#"default="https://reports.example/other""#,
+    ],
+    response
+      .header_values("Reporting-Endpoints")
+      .iter()
+      .map(|value| value.as_str())
+      .collect::<Vec<_>>()
+  );
+  assert!(
+    response.reporting_endpoints().is_err(),
+    "duplicate endpoint names must produce the typed parse error"
+  );
+
+  handle.join().expect("metadata response server thread");
+}
+
+#[test]
+fn sync_client_preserves_malformed_reporting_endpoints_without_scheduling_reports() {
+  const HEADERS: &[(&str, &str)] = &[(
+    "Reporting-Endpoints",
+    "default=https://reports.example/default",
+  )];
+  let (addr, handle) = spawn_metadata_response_server(HEADERS);
+
+  let response = client()
+    .get()
+    .url(format!(
+      "http://{addr}/matrix/reporting-endpoints-malformed"
+    ))
+    .emit()
+    .expect("malformed Reporting-Endpoints should not prevent response parsing");
+
+  assert_eq!(200, response.code());
+  assert_eq!("OK", response.body().string().unwrap());
+  assert_eq!(
+    Some(&"default=https://reports.example/default".to_string()),
+    response.header_value("Reporting-Endpoints")
+  );
+  assert!(
+    response.reporting_endpoints().is_err(),
+    "unquoted Reporting-Endpoints URLs must produce the typed parse error"
+  );
+
+  handle.join().expect("metadata response server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_nel_metadata_without_report_policy() {
   let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind NEL server");
   let addr = server.local_addr().expect("NEL server addr");
@@ -2680,6 +2802,81 @@ fn sync_client_and_server_observe_pragma_and_cache_control_independently() {
     response.header_value("Pragma").map(String::as_str)
   );
   handle.join().expect("pragma/cache server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_w3c_trace_context_metadata_without_policy() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind trace context server");
+  let addr = server.local_addr().expect("trace context server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let traceparent = request
+          .traceparent()
+          .expect("traceparent should parse")
+          .expect("traceparent should be present");
+        let tracestate = request
+          .tracestate()
+          .expect("tracestate should parse")
+          .expect("tracestate should be present");
+        let observed = (
+          traceparent.version().to_string(),
+          traceparent.trace_id().to_string(),
+          traceparent.parent_id().to_string(),
+          traceparent.sampled(),
+          tracestate
+            .members()
+            .iter()
+            .map(|member| (member.key().to_string(), member.value().to_string()))
+            .collect::<Vec<_>>(),
+          request.header("traceparent").map(str::to_string),
+          request.header("tracestate").map(str::to_string),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed trace context metadata");
+        HttpResponse::new(204, "No Content")
+      })
+      .expect("serve trace context request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/trace"))
+    .traceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+    .expect("traceparent should be accepted")
+    .tracestate("rojo=00f067aa0ba902b7,congo=t61rcWkgMzE")
+    .expect("tracestate should be accepted")
+    .emit()
+    .expect("trace context response should parse");
+
+  let (version, trace_id, parent_id, sampled, members, raw_traceparent, raw_tracestate) =
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe trace context metadata");
+  assert_eq!("00", version);
+  assert_eq!("4bf92f3577b34da6a3ce929d0e0e4736", trace_id);
+  assert_eq!("00f067aa0ba902b7", parent_id);
+  assert!(sampled);
+  assert_eq!(
+    vec![
+      ("rojo".to_string(), "00f067aa0ba902b7".to_string()),
+      ("congo".to_string(), "t61rcWkgMzE".to_string())
+    ],
+    members
+  );
+  assert_eq!(
+    Some("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01".to_string()),
+    raw_traceparent
+  );
+  assert_eq!(
+    Some("rojo=00f067aa0ba902b7,congo=t61rcWkgMzE".to_string()),
+    raw_tracestate
+  );
+  assert_eq!(204, response.code());
+  handle.join().expect("trace context server thread");
 }
 
 #[test]

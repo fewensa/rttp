@@ -1271,6 +1271,47 @@ fn request_idempotency_key_is_optional_and_rejects_invalid_metadata() {
 }
 
 #[test]
+fn request_trace_context_is_optional_and_rejects_invalid_metadata() {
+  let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(None, absent.traceparent().expect("missing traceparent"));
+  assert_eq!(None, absent.tracestate().expect("missing tracestate"));
+
+  let request = parse_request(concat!(
+    "GET /trace HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\r\n",
+    "tracestate: rojo=00f067aa0ba902b7\r\n",
+    "\r\n"
+  ));
+  let traceparent = request
+    .traceparent()
+    .expect("traceparent should parse")
+    .expect("traceparent should be present");
+  let tracestate = request
+    .tracestate()
+    .expect("tracestate should parse")
+    .expect("tracestate should be present");
+  assert_eq!("00", traceparent.version());
+  assert_eq!("4bf92f3577b34da6a3ce929d0e0e4736", traceparent.trace_id());
+  assert_eq!("rojo", tracestate.members()[0].key());
+
+  assert!(rttp::server::HttpTraceParent::parse("invalid").is_err());
+  assert!(rttp::server::HttpTraceState::parse("rojo=1,rojo=2").is_err());
+
+  let malformed = parse_request(concat!(
+    "GET /trace HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "traceparent: invalid\r\n",
+    "tracestate: rojo=1,rojo=2\r\n",
+    "\r\n"
+  ));
+  assert!(malformed.traceparent().is_err());
+  assert!(malformed.tracestate().is_err());
+  assert_eq!(Some("invalid"), malformed.header("traceparent"));
+  assert_eq!(Some("rojo=1,rojo=2"), malformed.header("tracestate"));
+}
+
+#[test]
 fn request_te_and_prefer_parse_bounded_metadata_without_enabling_behavior() {
   let request = parse_request(concat!(
     "GET /metadata HTTP/1.1\r\n",
@@ -2286,6 +2327,41 @@ fn reporting_endpoints_helpers_parse_and_build_bounded_metadata() {
       "should reject {value:?}"
     );
   }
+
+  let escaped = HttpResponse::ok("body")
+    .with_reporting_endpoints([("default", r#"https://reports.example/a"b\c"#)])
+    .expect("escaped Reporting-Endpoints URL should be accepted");
+  let serialized = String::from_utf8(escaped.to_bytes()).expect("response is UTF-8");
+  assert!(serialized.contains(r#"default="https://reports.example/a\"b\\c""#));
+  assert_eq!(
+    Some(r#"https://reports.example/a"b\c"#),
+    escaped
+      .reporting_endpoints()
+      .expect("escaped Reporting-Endpoints should parse")
+      .expect("Reporting-Endpoints should be present")
+      .endpoint("default")
+  );
+
+  let malformed = HttpResponse::ok("body").header(
+    "Reporting-Endpoints",
+    "default=https://reports.example/default",
+  );
+  let malformed_serialized = String::from_utf8(malformed.to_bytes()).expect("response is UTF-8");
+  assert!(malformed_serialized
+    .contains("\r\nReporting-Endpoints: default=https://reports.example/default\r\n"));
+  assert!(
+    malformed.reporting_endpoints().is_err(),
+    "typed Reporting-Endpoints parser should reject malformed raw values"
+  );
+
+  assert!(
+    HttpReportingEndpoints::from_endpoints([
+      ("default", "https://reports.example/default"),
+      ("default", "https://reports.example/other"),
+    ])
+    .is_err(),
+    "builder should reject duplicate endpoint names"
+  );
 }
 
 #[test]

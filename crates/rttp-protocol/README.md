@@ -136,6 +136,22 @@ returns the stored key and `header_value()` emits it unchanged. This parser
 reports declared request metadata only; it does not retry requests, store
 keys, compare keys across requests, or apply application idempotency policy.
 
+## W3C Trace Context
+
+`trace_context` parses bounded W3C `traceparent` and `tracestate` request
+metadata. `TraceParent` accepts only version `00`, lowercase fixed-width
+trace-id, parent-id, and flags fields, rejects version `ff`, unsupported
+versions, malformed flags, duplicate fields, and all-zero trace or parent
+identifiers, and exposes `version()`, `trace_id()`, `parent_id()`, `flags()`,
+`sampled()`, and `header_value()`.
+
+`TraceState` preserves wire order while validating list-member grammar,
+duplicate keys, at most 32 members, at most 512 combined bytes, and 256-byte
+per-key/per-value bounds. Typed `Debug` redacts propagation values and parse
+errors describe validation categories without echoing supplied values. These
+parsers report declared request metadata only; they do not create identifiers,
+decide sampling, select a tracing backend, or propagate context automatically.
+
 ## If-Modified-Since
 
 `if_modified_since` parses a singleton HTTP `If-Modified-Since` request field
@@ -725,6 +741,24 @@ without policy semantics. Absent optional members keep their W3C defaults
 (`include_subdomains` `false`, `success_fraction` `0.0`, `failure_fraction`
 `1.0`) but are not re-emitted by `header_value()`. This parser does not send
 reports, persist policy, or configure Reporting endpoint groups.
+
+## Reporting-Endpoints
+
+`reporting_endpoints` parses one or more `Reporting-Endpoints` dictionary
+field values into an ordered list of endpoint-name to quoted-URL members.
+Each field value is bounded to 64 KiB, the combined raw field-value bytes
+across all supplied fields are bounded to 64 KiB, and the combined member
+count is bounded to 32. Endpoint names start with lowercase ASCII or `*` and
+continue with lowercase ASCII, digits, `_`, `-`, `.`, or `*`. Each member
+must use `name="url"` form. Quoted URLs unescape only `\\` and `\"` and
+reject ASCII controls and obs-text. Duplicate names across all supplied
+fields, empty dictionaries, unquoted URLs, malformed escapes, oversized
+values, oversized cumulative input, and too many members are errors.
+`from_endpoints()` constructs the same dictionary and `header_value()`
+re-emits escaped `name="url"` members joined with `", "`. This type is the
+shared authority for endpoint-name, quoted URL, duplicate, member-count, and
+size validation. It reports declared response metadata only; it does not
+schedule, send, persist, retry, or route reports.
 
 ## Keep-Alive
 

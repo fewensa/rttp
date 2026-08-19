@@ -59,6 +59,23 @@ requests, or apply application idempotency policy. The key is redacted from
 typed `Debug` and builder error text. Callers needing an unusual value can
 retain full raw-header control with `header(("Idempotency-Key", "..."))`.
 
+## Bounded W3C Trace Context metadata
+
+`HttpClient::traceparent(value)` and `HttpClient::tracestate(value)` validate
+and emit W3C Trace Context request metadata through the shared protocol
+`TraceParent` and `TraceState` types, replacing existing same-name fields
+before a socket is opened. `traceparent` accepts version `00` fixed-width
+lowercase identifiers and flags, rejects unsupported versions, version `ff`,
+malformed fields, duplicate fields, and all-zero trace or parent identifiers.
+`tracestate` preserves member order while rejecting malformed members,
+duplicate keys, more than 32 members, values over 512 bytes, and oversized
+keys or member values.
+
+Trace context fields are redacted from typed `Debug` and builder error text.
+These helpers only declare request metadata: RTTP does not create trace
+identifiers, decide sampling, select a tracing backend, or automatically
+propagate context between requests.
+
 ## Bounded HTTP/1.1 byte ranges
 
 `HttpClient` includes helpers for the single-range `bytes` forms RTTP keeps
@@ -873,6 +890,21 @@ The helper is metadata-only. `rttp_client` does not send network error
 reports, persist policy, configure Reporting endpoint groups, or attach
 status-code policy from `NEL`.
 
+## Bounded Reporting-Endpoints response metadata
+
+`Response::reporting_endpoints()` parses retained `Reporting-Endpoints`
+dictionary fields through the shared protocol type. It returns `Ok(None)`
+when the header is absent. Present values combine all fields in wire order
+into at most 32 endpoint-name to quoted-URL members. Each field value is
+limited to 64 KiB, and the combined raw field-value bytes are limited to
+64 KiB. Invalid names, unquoted URLs, malformed quoted strings, duplicate
+names, oversized input, and too many members return an error while the raw
+response headers remain available through `Response::header_value()` and
+`Response::header_values()`.
+
+The helper is metadata-only. `rttp_client` does not schedule, send, persist,
+retry, or route reports.
+
 ## Bounded Proxy-Status response metadata
 
 `Response::proxy_status()` parses retained RFC 9209 `Proxy-Status` fields into
@@ -973,6 +1005,7 @@ header-block model.
 | Max-Forwards | `max_forwards` emits bounded singleton `Max-Forwards` request metadata through the shared protocol type | No hop decrement, proxy routing, TRACE/OPTIONS selection, retry, or forwarding policy |
 | Idempotency-Key | `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | Pragma | `pragma` and `pragma_no_cache` emit bounded RFC 9111 `Pragma` request metadata through the shared protocol type, combining and replacing existing same-name fields | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |
+| W3C Trace Context | `traceparent` and `tracestate` validate and emit bounded W3C Trace Context request metadata through shared protocol types, replacing existing same-name fields and redacting propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |
 | Preflight request metadata | `origin`, `access_control_request_method`, `access_control_request_headers`, and `access_control_request_private_network` emit bounded `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`, and `Access-Control-Request-Private-Network` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, CORS policy, or Private Network Access policy |
 | Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_content_digest()`, `HttpRequest::want_content_digest()`, `Request::want_repr_digest()`, and `HttpRequest::want_repr_digest()` parse received preference fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |
 | Accept-Charset | `accept_charset` and `accept_charset_with_q` format bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |
@@ -998,6 +1031,7 @@ header-block model.
 | Content-Disposition | `Response::content_disposition` and the protocol-owned `ContentDisposition::parse` parse bounded singleton response `Content-Disposition` metadata into disposition type plus ordered parameters, including preserved `filename` and `filename*` values, while preserving raw headers on parse failures | No automatic download, filesystem path handling, MIME sniffing, redirect behavior, retry/replay, cache behavior, negotiation behavior, or status-policy behavior |
 | Vary | `Response::vary` parses bounded response `Vary` fields into wildcard or normalized case-insensitive field-name metadata | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | NEL | `Response::nel` parses the bounded singleton `NEL` field as W3C Network Error Logging policy metadata while preserving raw headers | No network error report sending, policy persistence, Reporting endpoint group configuration, or status-policy behavior |
+| Reporting-Endpoints | `Response::reporting_endpoints` parses bounded endpoint-name to quoted-URL dictionaries through the shared protocol type while preserving raw headers | No report scheduling, sending, persistence, retry, routing, or endpoint policy behavior |
 | Proxy-Status | `Response::proxy_status` parses bounded RFC 9209 Token/String proxy identifiers with opaque parameters while preserving raw headers on parse failures | No proxy health checks, retries, trailer promotion, or origin-generation policy |
 | No-Vary-Search | `Response::no_vary_search` parses bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
 | Trailers | Chunked response trailers are exposed for blocking and async APIs; streaming chunked uploads can send declared request trailers | Application metadata trailers such as `X-Trace` are allowed; pseudo-header, connection-specific, routing, authentication/cookie, and framing trailer fields are rejected |

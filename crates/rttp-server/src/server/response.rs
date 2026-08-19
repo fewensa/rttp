@@ -118,6 +118,10 @@ pub use rttp_protocol::proxy_status::{
 pub use rttp_protocol::range::{
   ContentRange as HttpContentRange, ContentRangeParseError as HttpContentRangeParseError,
 };
+pub use rttp_protocol::reporting_endpoints::{
+  ReportingEndpoints as HttpReportingEndpoints,
+  ReportingEndpointsParseError as HttpReportingEndpointsParseError,
+};
 pub use rttp_protocol::server_timing::{
   ServerTiming as HttpServerTiming, ServerTimingMetric as HttpServerTimingMetric,
   ServerTimingParameter as HttpServerTimingParameter,
@@ -312,8 +316,6 @@ pub(crate) const MAX_LINK_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_LINK_VALUES: usize = 256;
 pub(crate) const MAX_LINK_PARAMETERS: usize = 256;
 pub(crate) const MAX_LINK_PARAMETER_VALUE_BYTES: usize = 64 * 1024;
-pub(crate) const MAX_REPORTING_ENDPOINTS_VALUE_BYTES: usize = 64 * 1024;
-pub(crate) const MAX_REPORTING_ENDPOINTS: usize = 32;
 pub(crate) const MAX_BROWSER_POLICY_VALUE_BYTES: usize = 64 * 1024;
 
 macro_rules! browser_policy_metadata {
@@ -3226,211 +3228,6 @@ impl fmt::Display for HttpVaryParseError {
 
 impl Error for HttpVaryParseError {}
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpReportingEndpoints {
-  endpoints: Vec<(String, String)>,
-}
-
-impl HttpReportingEndpoints {
-  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpReportingEndpointsParseError> {
-    Self::parse_values([value.as_ref()])
-  }
-
-  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpReportingEndpointsParseError>
-  where
-    I: IntoIterator<Item = &'a str>,
-  {
-    let mut endpoints = Vec::new();
-    for value in values {
-      if value.len() > MAX_REPORTING_ENDPOINTS_VALUE_BYTES {
-        return Err(HttpReportingEndpointsParseError::new(
-          "Reporting-Endpoints header value is too large",
-        ));
-      }
-      parse_reporting_endpoints_value(value, &mut endpoints)?;
-    }
-    if endpoints.is_empty() {
-      return Err(HttpReportingEndpointsParseError::new(
-        "invalid Reporting-Endpoints dictionary",
-      ));
-    }
-    Ok(Self { endpoints })
-  }
-
-  pub fn from_endpoints<I, N, U>(endpoints: I) -> Result<Self, HttpReportingEndpointsParseError>
-  where
-    I: IntoIterator<Item = (N, U)>,
-    N: AsRef<str>,
-    U: AsRef<str>,
-  {
-    let value = endpoints
-      .into_iter()
-      .map(|(name, url)| {
-        format!(
-          "{}=\"{}\"",
-          name.as_ref(),
-          escape_reporting_endpoint_url(url.as_ref())
-        )
-      })
-      .collect::<Vec<_>>()
-      .join(", ");
-    Self::parse(value)
-  }
-
-  pub fn endpoints(&self) -> Vec<(&str, &str)> {
-    self
-      .endpoints
-      .iter()
-      .map(|(name, url)| (name.as_str(), url.as_str()))
-      .collect()
-  }
-
-  pub fn endpoint(&self, name: impl AsRef<str>) -> Option<&str> {
-    self
-      .endpoints
-      .iter()
-      .find(|(known, _)| known == name.as_ref())
-      .map(|(_, url)| url.as_str())
-  }
-
-  pub fn header_value(&self) -> String {
-    self
-      .endpoints
-      .iter()
-      .map(|(name, url)| format!("{name}=\"{}\"", escape_reporting_endpoint_url(url)))
-      .collect::<Vec<_>>()
-      .join(", ")
-  }
-}
-
-fn parse_reporting_endpoints_value(
-  value: &str,
-  endpoints: &mut Vec<(String, String)>,
-) -> Result<(), HttpReportingEndpointsParseError> {
-  let bytes = value.as_bytes();
-  let mut position = 0;
-  while position < bytes.len() {
-    while position < bytes.len() && bytes[position].is_ascii_whitespace() {
-      position += 1;
-    }
-    let name_start = position;
-    while position < bytes.len()
-      && is_reporting_endpoint_key_byte(bytes[position], position == name_start)
-    {
-      position += 1;
-    }
-    if position == name_start {
-      return Err(HttpReportingEndpointsParseError::new(
-        "invalid Reporting-Endpoints endpoint name",
-      ));
-    }
-    let name = &value[name_start..position];
-    if position >= bytes.len() || bytes[position] != b'=' {
-      return Err(HttpReportingEndpointsParseError::new(
-        "invalid Reporting-Endpoints dictionary",
-      ));
-    }
-    position += 1;
-    if position >= bytes.len() || bytes[position] != b'\"' {
-      return Err(HttpReportingEndpointsParseError::new(
-        "Reporting-Endpoints URL must be a quoted string",
-      ));
-    }
-    position += 1;
-    let mut url = String::new();
-    loop {
-      let Some(&byte) = bytes.get(position) else {
-        return Err(HttpReportingEndpointsParseError::new(
-          "malformed Reporting-Endpoints quoted string",
-        ));
-      };
-      position += 1;
-      match byte {
-        b'\"' => break,
-        b'\\' => {
-          let Some(&escaped) = bytes.get(position) else {
-            return Err(HttpReportingEndpointsParseError::new(
-              "malformed Reporting-Endpoints quoted string",
-            ));
-          };
-          if !matches!(escaped, b'\"' | b'\\') {
-            return Err(HttpReportingEndpointsParseError::new(
-              "malformed Reporting-Endpoints quoted string",
-            ));
-          }
-          position += 1;
-          url.push(escaped as char);
-        }
-        0..=31 | 127..=u8::MAX => {
-          return Err(HttpReportingEndpointsParseError::new(
-            "malformed Reporting-Endpoints quoted string",
-          ))
-        }
-        _ => url.push(byte as char),
-      }
-    }
-    if endpoints.iter().any(|(known, _)| known == name) {
-      return Err(HttpReportingEndpointsParseError::new(
-        "duplicate Reporting-Endpoints endpoint name",
-      ));
-    }
-    if endpoints.len() >= MAX_REPORTING_ENDPOINTS {
-      return Err(HttpReportingEndpointsParseError::new(
-        "too many Reporting-Endpoints endpoints",
-      ));
-    }
-    endpoints.push((name.to_string(), url));
-    while position < bytes.len() && bytes[position].is_ascii_whitespace() {
-      position += 1;
-    }
-    if position == bytes.len() {
-      break;
-    }
-    if bytes[position] != b',' {
-      return Err(HttpReportingEndpointsParseError::new(
-        "invalid Reporting-Endpoints dictionary",
-      ));
-    }
-    position += 1;
-    if position == bytes.len() {
-      return Err(HttpReportingEndpointsParseError::new(
-        "invalid Reporting-Endpoints dictionary",
-      ));
-    }
-  }
-  Ok(())
-}
-
-fn is_reporting_endpoint_key_byte(byte: u8, first: bool) -> bool {
-  if first {
-    byte.is_ascii_lowercase() || byte == b'*'
-  } else {
-    byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-' | b'.' | b'*')
-  }
-}
-
-fn escape_reporting_endpoint_url(url: &str) -> String {
-  url.replace('\\', "\\\\").replace('\"', "\\\"")
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpReportingEndpointsParseError {
-  pub(crate) message: String,
-}
-impl HttpReportingEndpointsParseError {
-  pub(crate) fn new(message: impl AsRef<str>) -> Self {
-    Self {
-      message: message.as_ref().to_string(),
-    }
-  }
-}
-impl fmt::Display for HttpReportingEndpointsParseError {
-  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    formatter.write_str(&self.message)
-  }
-}
-impl Error for HttpReportingEndpointsParseError {}
-
 /// Server `Content-Disposition` response metadata backed by the shared
 /// protocol parser, preserving the server facade accessor surface.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -4467,6 +4264,8 @@ fn is_sensitive_debug_header(name: &str) -> bool {
     || name.eq_ignore_ascii_case("idempotency-key")
     || name.eq_ignore_ascii_case("proxy-authorization")
     || name.eq_ignore_ascii_case("set-cookie")
+    || name.eq_ignore_ascii_case("traceparent")
+    || name.eq_ignore_ascii_case("tracestate")
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

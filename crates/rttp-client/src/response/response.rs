@@ -61,6 +61,7 @@ use rttp_protocol::memento_datetime::MementoDatetime;
 use rttp_protocol::prefer::PreferenceApplied;
 use rttp_protocol::range::ContentRange;
 use rttp_protocol::referrer_policy::ReferrerPolicy;
+use rttp_protocol::reporting_endpoints::ReportingEndpoints;
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::sunset::parse_sunset_values;
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
@@ -79,9 +80,6 @@ const MAX_CONTENT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_ENCODINGS: usize = 256;
 const MAX_CONTENT_LANGUAGE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_LANGUAGE_TAGS: usize = 256;
-
-const MAX_REPORTING_ENDPOINTS_VALUE_BYTES: usize = 64 * 1024;
-const MAX_REPORTING_ENDPOINTS: usize = 256;
 
 #[derive(Clone)]
 pub struct Response {
@@ -731,7 +729,9 @@ impl Response {
     if values.is_empty() {
       return Ok(None);
     }
-    ReportingEndpoints::parse_values(values.into_iter().map(String::as_str)).map(Some)
+    ReportingEndpoints::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   /// Parses the `NEL` response field as bounded W3C Network Error Logging
@@ -1621,160 +1621,6 @@ fn parse_content_type_quoted_string(value: &str) -> error::Result<String> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContentLanguage {
   tags: Vec<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ReportingEndpoints {
-  endpoints: Vec<(String, String)>,
-}
-
-impl ReportingEndpoints {
-  pub fn parse(value: impl AsRef<str>) -> error::Result<Self> {
-    Self::parse_values([value.as_ref()])
-  }
-
-  fn parse_values<'a, I>(values: I) -> error::Result<Self>
-  where
-    I: IntoIterator<Item = &'a str>,
-  {
-    let mut endpoints = Vec::new();
-    for value in values {
-      if value.len() > MAX_REPORTING_ENDPOINTS_VALUE_BYTES {
-        return Err(error::bad_response(
-          "Reporting-Endpoints header value is too large",
-        ));
-      }
-      parse_reporting_endpoints_value(value, &mut endpoints)?;
-    }
-    if endpoints.is_empty() {
-      return Err(error::bad_response(
-        "Invalid Reporting-Endpoints dictionary",
-      ));
-    }
-    Ok(Self { endpoints })
-  }
-
-  pub fn endpoints(&self) -> Vec<(&str, &str)> {
-    self
-      .endpoints
-      .iter()
-      .map(|(name, url)| (name.as_str(), url.as_str()))
-      .collect()
-  }
-
-  pub fn endpoint(&self, name: impl AsRef<str>) -> Option<&str> {
-    self
-      .endpoints
-      .iter()
-      .find(|(known, _)| known == name.as_ref())
-      .map(|(_, url)| url.as_str())
-  }
-}
-
-fn parse_reporting_endpoints_value(
-  value: &str,
-  endpoints: &mut Vec<(String, String)>,
-) -> error::Result<()> {
-  let bytes = value.as_bytes();
-  let mut position = 0;
-  while position < bytes.len() {
-    while position < bytes.len() && bytes[position].is_ascii_whitespace() {
-      position += 1;
-    }
-    let name_start = position;
-    while position < bytes.len()
-      && is_reporting_endpoint_key_byte(bytes[position], position == name_start)
-    {
-      position += 1;
-    }
-    if position == name_start {
-      return Err(error::bad_response(
-        "Invalid Reporting-Endpoints endpoint name",
-      ));
-    }
-    let name = &value[name_start..position];
-    if position >= bytes.len() || bytes[position] != b'=' {
-      return Err(error::bad_response(
-        "Invalid Reporting-Endpoints dictionary",
-      ));
-    }
-    position += 1;
-    if position >= bytes.len() || bytes[position] != b'\"' {
-      return Err(error::bad_response(
-        "Reporting-Endpoints URL must be a quoted string",
-      ));
-    }
-    position += 1;
-    let mut url = String::new();
-    loop {
-      let Some(&byte) = bytes.get(position) else {
-        return Err(error::bad_response(
-          "Malformed Reporting-Endpoints quoted string",
-        ));
-      };
-      position += 1;
-      match byte {
-        b'\"' => break,
-        b'\\' => {
-          let Some(&escaped) = bytes.get(position) else {
-            return Err(error::bad_response(
-              "Malformed Reporting-Endpoints quoted string",
-            ));
-          };
-          if !matches!(escaped, b'\"' | b'\\') {
-            return Err(error::bad_response(
-              "Malformed Reporting-Endpoints quoted string",
-            ));
-          }
-          position += 1;
-          url.push(escaped as char);
-        }
-        0..=31 | 127..=u8::MAX => {
-          return Err(error::bad_response(
-            "Malformed Reporting-Endpoints quoted string",
-          ))
-        }
-        _ => url.push(byte as char),
-      }
-    }
-    if endpoints.iter().any(|(known, _)| known == name) {
-      return Err(error::bad_response(
-        "Duplicate Reporting-Endpoints endpoint name",
-      ));
-    }
-    if endpoints.len() >= MAX_REPORTING_ENDPOINTS {
-      return Err(error::bad_response(
-        "Too many Reporting-Endpoints endpoints",
-      ));
-    }
-    endpoints.push((name.to_string(), url));
-    while position < bytes.len() && bytes[position].is_ascii_whitespace() {
-      position += 1;
-    }
-    if position == bytes.len() {
-      break;
-    }
-    if bytes[position] != b',' {
-      return Err(error::bad_response(
-        "Invalid Reporting-Endpoints dictionary",
-      ));
-    }
-    position += 1;
-    if position == bytes.len() {
-      return Err(error::bad_response(
-        "Invalid Reporting-Endpoints dictionary",
-      ));
-    }
-  }
-  Ok(())
-}
-
-fn is_reporting_endpoint_key_byte(byte: u8, first: bool) -> bool {
-  if first {
-    byte.is_ascii_lowercase() || byte == b'*'
-  } else {
-    byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-' | b'.' | b'*')
-  }
 }
 
 impl ContentLanguage {

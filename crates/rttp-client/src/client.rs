@@ -31,6 +31,7 @@ use rttp_protocol::sec_gpc::SecGpc;
 use rttp_protocol::signature::Signature;
 use rttp_protocol::signature_input::SignatureInput;
 use rttp_protocol::te::{Te, MAX_TE_CODINGS, MAX_TE_VALUE_BYTES};
+use rttp_protocol::trace_context::{TraceParent, TraceState};
 use rttp_protocol::trailer::Trailer;
 use rttp_protocol::upgrade::Upgrade;
 use rttp_protocol::upgrade_insecure_requests::UpgradeInsecureRequests;
@@ -708,6 +709,29 @@ impl HttpClient {
       "Idempotency-Key",
       idempotency_key.header_value(),
     )))
+  }
+
+  /// Set bounded W3C `traceparent` request metadata.
+  ///
+  /// This validates the version 00 wire value before connecting and replaces
+  /// any existing `traceparent` field. It does not create trace identifiers,
+  /// decide sampling, install a tracing backend, or automatically propagate
+  /// metadata between requests.
+  pub fn traceparent<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let traceparent = TraceParent::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("traceparent", traceparent.header_value())))
+  }
+
+  /// Set bounded W3C `tracestate` request metadata.
+  ///
+  /// This validates member grammar, duplicate keys, ordering, count, and size
+  /// bounds before connecting and replaces any existing `tracestate` field. It
+  /// does not configure or invoke a tracing backend.
+  pub fn tracestate<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let tracestate = TraceState::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("tracestate", tracestate.header_value())))
   }
 
   /// Append a validated `Accept-Encoding` coding with the default quality of

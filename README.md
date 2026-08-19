@@ -811,6 +811,28 @@ These helpers expose NEL as metadata only. RTTP does not send network error
 reports, persist policy, configure Reporting endpoint groups, or change
 redirect behavior.
 
+### Bounded Reporting-Endpoints response metadata
+
+`Response::reporting_endpoints()` parses retained `Reporting-Endpoints`
+dictionary fields through the shared protocol type. Present values combine
+all fields in wire order into at most 32 endpoint-name to quoted-URL
+members. Each field value is bounded to 64 KiB, and the combined raw
+field-value bytes are bounded to 64 KiB. Endpoint names are lowercase tokens
+that may start with `*`; URLs must be quoted and unescape only `\\` and
+`\"`. Absent metadata returns `Ok(None)`; invalid names, unquoted URLs,
+malformed quoted strings, duplicate names, oversized input, and too many
+members return an error while the raw response headers remain available.
+
+On the server, `HttpReportingEndpoints::parse()` and
+`HttpReportingEndpoints::from_endpoints()` validate the same dictionary and
+`HttpResponse::with_reporting_endpoints()` replaces raw
+`Reporting-Endpoints` fields with one validated value.
+`HttpResponse::reporting_endpoints()` parses raw response fields on demand
+without changing them.
+
+These helpers expose Reporting-Endpoints as metadata only. RTTP does not
+schedule, send, persist, retry, or route reports.
+
 ### Bounded Keep-Alive response metadata
 
 Client `Response::keep_alive()` and server `HttpResponse::keep_alive()` parse
@@ -851,6 +873,21 @@ remain available when the typed parser reports an error. These helpers declare
 and observe request metadata only: RTTP does not retry requests, store or
 compare keys across requests, deduplicate requests, or apply application
 idempotency policy.
+
+`HttpClient::traceparent()` and `HttpClient::tracestate()` validate and emit
+bounded W3C Trace Context request metadata through shared protocol types,
+replacing existing same-name fields before a socket is opened.
+`Request::traceparent()` / `HttpRequest::traceparent()` and
+`Request::tracestate()` / `HttpRequest::tracestate()` parse received fields,
+returning `Ok(None)` when absent and preserving raw headers on parse errors.
+Traceparent validation checks version `00`, rejects version `ff` and
+unsupported versions, malformed or uppercase identifiers, malformed flags,
+duplicates, and all-zero trace or parent identifiers. Tracestate validation
+preserves member order while bounding total size, member count, key/value size,
+member grammar, and duplicate keys. Typed `Debug` redacts propagation values.
+These helpers declare and observe request metadata only: RTTP does not create
+trace identifiers, decide sampling, select a tracing backend, or automatically
+propagate context.
 
 `HttpClient::te()`, `te_with_q()`, and `te_trailers()` build a single bounded
 `TE` field validated through the shared protocol-owned `rttp-protocol` `Te`
@@ -1130,6 +1167,7 @@ gain additional HTTP/2 header-block handling.
 | Upgrade-Insecure-Requests | Client `upgrade_insecure_requests` emits bounded singleton `Upgrade-Insecure-Requests: 1` request metadata; server `Request::upgrade_insecure_requests()` and `HttpRequest::upgrade_insecure_requests()` parse typed received values while preserving raw headers on errors | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Idempotency-Key | Client `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field; server `Request::idempotency_key()` and `HttpRequest::idempotency_key()` parse typed received values while preserving raw headers on errors, and the key is redacted from typed debug output | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | Pragma | Client `pragma`/`pragma_no_cache` and `Response::pragma` share the bounded protocol `Pragma` representation with server `Request::pragma`, `HttpRequest::pragma`, `HttpResponse::with_pragma`, and `HttpResponse::pragma` across client construction, server request access, server response construction, and client response access, combining fields in wire order and preserving raw headers on errors | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |
+| W3C Trace Context | Client `traceparent`/`tracestate` validate and emit bounded W3C Trace Context request metadata through shared protocol types; server `Request`/`HttpRequest` helpers parse received fields, preserve raw headers on errors, preserve tracestate ordering, and redact propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |
 | Accept-Language | Client `accept_language` emits bounded `Accept-Language` request metadata through the protocol `AcceptLanguage` type; server `Request::accept_language()` and `HttpRequest::accept_language()` parse typed received values as `HttpAcceptLanguages` while preserving raw headers on errors | No locale matching, fallback selection, translation lookup, routing, or automatic response choice |
 | Preflight request metadata | Client `origin`, `access_control_request_method`, `access_control_request_headers`, and `access_control_request_private_network` emit bounded `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`, and `Access-Control-Request-Private-Network` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, CORS policy, or Private Network Access policy |
 | Access-Control-Allow-Credentials | Client `Response::access_control_allow_credentials` and server `HttpAccessControlAllowCredentials`, `HttpResponse::with_access_control_allow_credentials`, and `HttpResponse::access_control_allow_credentials` parse or declare bounded singleton `Access-Control-Allow-Credentials` `true`-token metadata while preserving raw headers on parse failures | No CORS request evaluation, automatic credential attachment, or automatic credentials granting |
@@ -1156,6 +1194,7 @@ gain additional HTTP/2 header-block handling.
 | Server-Timing | Client `Response::server_timing` and server `HttpServerTiming`, `HttpResponse::with_server_timing`, and `HttpResponse::server_timing` parse or declare bounded response timing metadata while preserving raw headers on parse failures | No metric collection, measurement, telemetry export, metrics backend integration, retry, redirect behavior, or status-policy behavior |
 | Warning | Client `Response::warning` parses bounded RFC 7234 `Warning` warning-value lists while preserving raw headers on parse failures | No cache storage, freshness calculation, stale-response handling, warn-code policy, retry, redirect behavior, or response-acceptance changes |
 | NEL | Client `Response::nel` and server `HttpNel`, `HttpResponse::with_nel`, and `HttpResponse::nel` parse or declare bounded W3C Network Error Logging policy JSON while preserving raw headers on parse failures | No network error report sending, policy persistence, Reporting endpoint group configuration, retry, redirect behavior, or status-policy behavior |
+| Reporting-Endpoints | Client `Response::reporting_endpoints` and server `HttpReportingEndpoints`, `HttpResponse::with_reporting_endpoints`, and `HttpResponse::reporting_endpoints` parse or declare bounded endpoint-name to quoted-URL dictionaries through the shared protocol type while preserving raw headers on parse failures | No report scheduling, sending, persistence, retry, routing, or endpoint policy behavior |
 | Keep-Alive | Client `Response::keep_alive` and server `HttpKeepAlive`, `HttpResponse::with_keep_alive`, and `HttpResponse::keep_alive` parse or declare bounded RFC 2068 `Keep-Alive` `timeout` and `max` parameters as checked unsigned integers while preserving raw headers on parse failures | No connection lifetime management, connection pooling, keep-alive timers, or HTTP/2 behavior changes |
 | Vary | `Response::vary` parses bounded response `Vary` fields into wildcard or normalized case-insensitive field-name metadata | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | No-Vary-Search | `Response::no_vary_search` parses bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
@@ -2117,6 +2156,7 @@ TLS or async accept loops.
 | Upgrade-Insecure-Requests | `Request::upgrade_insecure_requests` and `HttpRequest::upgrade_insecure_requests` parse bounded singleton `Upgrade-Insecure-Requests` `1`-token metadata and preserve raw values on errors | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Idempotency-Key | `Request::idempotency_key` and `HttpRequest::idempotency_key` parse bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, preserve raw values on errors, and redact the key from typed debug output | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | Pragma | `HttpPragma`, `Request::pragma`, `HttpRequest::pragma`, `HttpResponse::with_pragma`, and `HttpResponse::pragma` share the bounded protocol `Pragma` representation for server request access and server response construction, combining fields in wire order and preserving raw headers on errors | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |
+| W3C Trace Context | `Request::traceparent`/`tracestate` and `HttpRequest` helpers parse bounded W3C Trace Context request metadata, preserve raw values on errors, preserve tracestate ordering, and redact propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |
 | Accept-Language | `HttpAcceptLanguages`, `Request::accept_language`, and `HttpRequest::accept_language` parse bounded ordered `Accept-Language` ranges and q-values through the protocol `AcceptLanguage` type and preserve raw values on errors | No locale matching, fallback selection, translation lookup, routing, or automatic response choice |
 | Vary | `HttpVary`, `HttpResponse::with_vary`, `HttpResponse::vary`, `Request::vary_selection`, and `HttpRequest::vary_selection` parse, declare, and select bounded `Vary` metadata with case-insensitive field-name handling | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |
 | No-Vary-Search | `HttpNoVarySearch`, `HttpResponse::with_no_vary_search`, and `HttpResponse::no_vary_search` parse and declare bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
