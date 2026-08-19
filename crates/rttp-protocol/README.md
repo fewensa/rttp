@@ -837,8 +837,8 @@ boolean (including a bare `?1`), integer, decimal, or token; inner lists,
 strings, byte sequences, dates, and display strings are rejected. A
 well-formed `report-to` parameter is accepted as a token or a quoted string
 and retained on the directive; any other parameter name is rejected. Empty
-dictionaries, duplicate directive names including across fields, and bound
-violations are errors. The parser reports declared metadata only: it does not
+dictionaries, duplicate directive names including across fields, duplicate
+parameters, and bound violations are errors. The parser reports declared metadata only: it does not
 execute configuration points, block document loads, compare required
 policies, echo `Sec-Required-Document-Policy`, or send reports.
 

@@ -2271,6 +2271,7 @@ fn document_policy_helpers_preserve_raw_metadata_and_report_parse_errors() {
     "=()",
     "=1.2345",
     "unsized-media=src;foo=bar",
+    "oversized-images=1;report-to=first;report-to=second",
     "oversized-images=1.0, oversized-images=2.0",
   ] {
     let malformed = HttpResponse::ok([]).header("Document-Policy", value);

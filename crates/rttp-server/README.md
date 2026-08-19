@@ -452,8 +452,8 @@ name, typed value (boolean, integer, decimal, or token), and the retained
 and are not looked up against a browser configuration-point list. Field
 values are bounded to 64 KiB, the cumulative raw bytes across all supplied
 fields to 64 KiB, and directives to 256 per header set. Empty dictionaries,
-duplicate directive names, unknown parameters, and unparsable input are
-rejected.
+duplicate directive names, duplicate parameters, unknown parameters, and
+unparsable input are rejected.
 
 These helpers only declare and parse metadata. RTTP does not execute
 configuration points, block document loads, compare required policies, echo

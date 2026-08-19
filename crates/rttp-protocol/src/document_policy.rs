@@ -13,10 +13,10 @@
 //! decimal, or token. Inner lists, strings, byte sequences, dates, and
 //! display strings are rejected. A well-formed `report-to` parameter is
 //! accepted as a token or a quoted string and retained on the directive;
-//! any other parameter name is rejected. Duplicate directive names, empty
-//! dictionaries, too many directives, oversized field values, and oversized
-//! cumulative input are errors. Unparsable input is an error; this parser
-//! never fails open to an empty policy.
+//! any other parameter name is rejected. Duplicate directive names, duplicate
+//! parameters, empty dictionaries, too many directives, oversized field
+//! values, and oversized cumulative input are errors. Unparsable input is an
+//! error; this parser never fails open to an empty policy.
 //!
 //! ```
 //! use rttp_protocol::document_policy::DocumentPolicy;
@@ -226,6 +226,7 @@ fn parse_field(
       "duplicate Document-Policy directive name",
     ));
   }
+  reject_duplicate_parameters(value)?;
 
   for (key, member) in dictionary {
     let name = key.as_str().to_owned();
@@ -278,6 +279,80 @@ fn parse_report_to(
     });
   }
   Ok(report_to)
+}
+
+fn reject_duplicate_parameters(value: &str) -> Result<(), DocumentPolicyParseError> {
+  let bytes = value.as_bytes();
+  let mut index = 0usize;
+  while index < bytes.len() {
+    skip_until_unquoted(bytes, &mut index, |byte| byte == b';' || byte == b',');
+    let mut seen = Vec::new();
+    while index < bytes.len() && bytes[index] == b';' {
+      index += 1;
+      skip_sp(bytes, &mut index);
+      let start = index;
+      while index < bytes.len() && is_sf_key_char(bytes[index]) {
+        index += 1;
+      }
+      if start == index {
+        return Err(invalid_member());
+      }
+      let name = &value[start..index];
+      if seen.contains(&name) {
+        return Err(DocumentPolicyParseError::new(
+          "duplicate Document-Policy parameter",
+        ));
+      }
+      seen.push(name);
+      skip_sp(bytes, &mut index);
+      if index < bytes.len() && bytes[index] == b'=' {
+        index += 1;
+        skip_until_unquoted(bytes, &mut index, |byte| byte == b';' || byte == b',');
+      }
+    }
+    if index < bytes.len() && bytes[index] == b',' {
+      index += 1;
+    }
+  }
+  Ok(())
+}
+
+fn skip_until_unquoted(bytes: &[u8], index: &mut usize, stop: impl Fn(u8) -> bool) {
+  let mut quoted = false;
+  let mut escaped = false;
+  while *index < bytes.len() {
+    let byte = bytes[*index];
+    if quoted {
+      if escaped {
+        escaped = false;
+      } else if byte == b'\\' {
+        escaped = true;
+      } else if byte == b'"' {
+        quoted = false;
+      }
+      *index += 1;
+      continue;
+    }
+    if byte == b'"' {
+      quoted = true;
+      *index += 1;
+      continue;
+    }
+    if stop(byte) {
+      return;
+    }
+    *index += 1;
+  }
+}
+
+fn skip_sp(bytes: &[u8], index: &mut usize) {
+  while bytes.get(*index) == Some(&b' ') {
+    *index += 1;
+  }
+}
+
+fn is_sf_key_char(byte: u8) -> bool {
+  matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-' | b'.' | b'*')
 }
 
 fn top_level_member_count(value: &str) -> usize {

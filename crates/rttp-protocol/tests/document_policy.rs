@@ -105,6 +105,34 @@ fn document_policy_accepts_token_and_string_report_to() {
     none.directive("oversized-images").unwrap().report_to(),
     Some("none")
   );
+
+  let quoted_semicolon = DocumentPolicy::parse(r#"oversized-images=1;report-to="first;second""#)
+    .expect("quoted report-to may contain a semicolon");
+  assert_eq!(
+    quoted_semicolon
+      .directive("oversized-images")
+      .unwrap()
+      .report_to(),
+    Some("first;second")
+  );
+
+  let per_directive =
+    DocumentPolicy::parse("oversized-images=1;report-to=first, unsized-media=?0;report-to=second")
+      .expect("the same parameter name on different directives should parse");
+  assert_eq!(
+    per_directive
+      .directive("oversized-images")
+      .unwrap()
+      .report_to(),
+    Some("first")
+  );
+  assert_eq!(
+    per_directive
+      .directive("unsized-media")
+      .unwrap()
+      .report_to(),
+    Some("second")
+  );
 }
 
 #[test]
@@ -144,6 +172,9 @@ fn document_policy_rejects_invalid_members() {
     "oversized-images=1;report-to=?0",
     "oversized-images=1;report-to=:YWJj:",
     "oversized-images=1;report-to=\"a\";foo=1",
+    "oversized-images=1;report-to=first;report-to=second",
+    "oversized-images=1;report-to=\"first\";report-to=\"second\"",
+    "*;report-to=first;report-to=second",
     "Oversized-Images=2.0",
     "oversized-images=2.0, oversized-images=3.0",
     "oversized-images=2.0,, unsized-media=?0",

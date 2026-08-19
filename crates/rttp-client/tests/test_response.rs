@@ -879,6 +879,7 @@ fn document_policy_metadata_rejects_invalid_values_without_hiding_raw_headers() 
     "=+2.0",
     "=1.2345",
     "unsized-media=src;foo=bar",
+    "oversized-images=1;report-to=first;report-to=second",
     "oversized-images=1.0, oversized-images=2.0",
     "UnSized-Media=?0",
   ] {

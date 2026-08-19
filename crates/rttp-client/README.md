@@ -901,9 +901,10 @@ string and retained on the directive.
 The helper is bounded and validation-oriented. Each field value is limited to
 64 KiB, the cumulative raw bytes across all supplied fields are limited to
 64 KiB, and the combined directive count is limited to 256. Duplicate
-directive names, empty dictionaries, and unparsable input make
-`Response::document_policy()` return an error while leaving the original
-response headers and body available through the ordinary response APIs.
+directive names, duplicate parameters, empty dictionaries, and unparsable
+input make `Response::document_policy()` return an error while leaving the
+original response headers and body available through the ordinary response
+APIs.
 
 The helper is metadata-only. `rttp_client` does not execute configuration
 points, block document loads, compare required policies, echo
