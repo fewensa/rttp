@@ -487,12 +487,18 @@ fn raw_headers_remain_an_escape_hatch_for_custom_authorization_schemes() {
         "Authorization",
         "Signature keyId=\"client\",algorithm=\"hs2019\"",
       ))
+      .header(("Proxy-Authorization", "Negotiate"))
       .emit()
       .expect("request should succeed");
   });
+  let request = request_text(&request);
   assert_eq!(
     Some("Signature keyId=\"client\",algorithm=\"hs2019\""),
-    header_value(&request_text(&request), "Authorization")
+    header_value(&request, "Authorization")
+  );
+  assert_eq!(
+    Some("Negotiate"),
+    header_value(&request, "Proxy-Authorization")
   );
 }
 
@@ -500,11 +506,11 @@ fn raw_headers_remain_an_escape_hatch_for_custom_authorization_schemes() {
 fn auth_facade_rejects_oversized_bearer_before_connecting_without_exposing_token() {
   let token = "x".repeat(MAX_AUTHORIZATION_VALUE_BYTES);
   let request = capture_optional_request(|base_url| {
-    let error = client()
+    let mut client = client();
+    let error = client
       .get()
       .url(format!("{}/asset", base_url))
       .auth(Auth::bearer(&token))
-      .emit()
       .expect_err("oversized Authorization metadata should be rejected");
     assert!(error.is_builder());
     assert!(!error.to_string().contains(&token));
@@ -561,6 +567,7 @@ fn facade_debug_redacts_sensitive_header_values() {
   let mut client = HttpClient::new();
   client
     .auth(Auth::bearer("origin-token"))
+    .expect("bearer auth should be accepted")
     .header(("Proxy-Authorization", "Basic cHJveHk6c2VjcmV0"))
     .header(("Cookie", "session=private"))
     .header(("Idempotency-Key", "charge-2026-08-19-9f3c"))

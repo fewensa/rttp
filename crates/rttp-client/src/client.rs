@@ -168,6 +168,10 @@ impl HttpClient {
 
   /// Set HTTP authentication. Supports Basic Auth and Bearer Token.
   ///
+  /// The generated `Authorization` field is validated through the shared
+  /// request authorization primitive. Use [`Self::header`] for custom scheme
+  /// syntax outside this helper.
+  ///
   /// # Examples
   ///
   /// ```rust
@@ -175,11 +179,13 @@ impl HttpClient {
   /// use rttp_client::types::Auth;
   ///
   /// let mut client = HttpClient::new();
-  /// client.auth(Auth::basic("user", "secret"));
-  /// client.auth(Auth::bearer("my-token"));
+  /// client.auth(Auth::basic("user", "secret")).unwrap();
+  /// client.auth(Auth::bearer("my-token")).unwrap();
   /// ```
-  pub fn auth<A: AsRef<Auth>>(&mut self, auth: A) -> &mut Self {
-    self.header(Header::new("Authorization", auth.as_ref().header_value()))
+  pub fn auth<A: AsRef<Auth>>(&mut self, auth: A) -> error::Result<&mut Self> {
+    let authorization = Authorization::parse(auth.as_ref().header_value())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("Authorization", authorization.header_value())))
   }
 
   /// Set bounded `Authorization` request metadata from an authentication

@@ -2253,6 +2253,7 @@ fn test_basic_auth() {
     .get()
     .url(format!("http://{}/", addr))
     .auth(Auth::basic("user", "secret"))
+    .expect("basic auth should be accepted")
     .emit();
   assert!(response.is_ok());
   let response = response.unwrap();
@@ -2267,6 +2268,7 @@ fn test_bearer_auth() {
     .get()
     .url(format!("http://{}/", addr))
     .auth(Auth::bearer("my-token-abc"))
+    .expect("bearer auth should be accepted")
     .emit();
   assert!(response.is_ok());
   let response = response.unwrap();
