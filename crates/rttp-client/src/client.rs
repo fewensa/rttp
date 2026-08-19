@@ -19,6 +19,7 @@ use rttp_protocol::priority::Priority;
 use rttp_protocol::save_data::SaveData;
 use rttp_protocol::signature::Signature;
 use rttp_protocol::signature_input::SignatureInput;
+use rttp_protocol::te::Te;
 use rttp_protocol::trailer::Trailer;
 use rttp_protocol::upgrade::Upgrade;
 use std::io;
@@ -874,30 +875,38 @@ impl HttpClient {
 
   fn te_member(&mut self, coding: &str, qvalue: Option<&str>) -> error::Result<&mut Self> {
     let coding = coding.trim();
-    if !is_http_token(coding) || coding.eq_ignore_ascii_case("chunked") {
-      return Err(error::builder_with_message("invalid TE coding"));
-    }
-    if coding.eq_ignore_ascii_case("trailers") && qvalue.is_some() {
-      return Err(error::builder_with_message(
-        "TE trailers cannot carry a q-value",
-      ));
-    }
-    let qvalue = qvalue.map(validate_te_qvalue).transpose()?;
+    let qvalue = qvalue.map(str::trim);
     let member = qvalue.map_or_else(
       || coding.to_string(),
       |qvalue| format!("{coding};q={qvalue}"),
     );
-    append_unique_metadata_member(
-      self.request.headers_mut(),
-      "TE",
-      coding,
-      member,
-      "invalid TE coding",
-      "duplicate TE coding",
-      "too many TE codings",
-      "TE header value is too large",
-      parse_te_codings,
-    )?;
+    Te::parse_values([member.as_str()])
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    let headers = self.request.headers_mut();
+    if let Some(header) = headers
+      .iter_mut()
+      .find(|header| header.name().eq_ignore_ascii_case("TE"))
+    {
+      let known = Te::parse_values([header.value().as_str()])
+        .map_err(|_| error::builder_with_message("invalid TE coding"))?;
+      if known
+        .codings()
+        .iter()
+        .any(|known| known.coding().eq_ignore_ascii_case(coding))
+      {
+        return Err(error::builder_with_message("duplicate TE coding"));
+      }
+      if known.len() >= MAX_REQUEST_METADATA_MEMBERS {
+        return Err(error::builder_with_message("too many TE codings"));
+      }
+      let value = format!("{}, {member}", header.value());
+      if value.len() > MAX_REQUEST_METADATA_VALUE_BYTES {
+        return Err(error::builder_with_message("TE header value is too large"));
+      }
+      header.replace(Header::new("TE", value));
+    } else {
+      headers.push(Header::new("TE", member));
+    }
     self.ensure_connection_te_token();
     Ok(self)
   }
@@ -1409,44 +1418,6 @@ fn append_unique_metadata_member(
     headers.push(Header::new(header_name, member));
   }
   Ok(())
-}
-
-fn parse_te_codings(value: &str) -> error::Result<Vec<&str>> {
-  parse_metadata_members(value, "invalid TE coding", |member| {
-    let mut parts = member.split(';');
-    let coding = parts.next().unwrap_or_default().trim();
-    if !is_http_token(coding) || coding.eq_ignore_ascii_case("chunked") {
-      return None;
-    }
-    match parts.next() {
-      None => Some(coding),
-      Some(parameter) if parts.next().is_none() => {
-        let (name, value) = parameter.trim().split_once('=')?;
-        (!coding.eq_ignore_ascii_case("trailers")
-          && name.trim().eq_ignore_ascii_case("q")
-          && validate_te_qvalue(value.trim()).is_ok())
-        .then_some(coding)
-      }
-      Some(_) => None,
-    }
-  })
-}
-
-fn validate_te_qvalue(qvalue: &str) -> error::Result<&str> {
-  let valid = match qvalue.split_once('.') {
-    Some((whole, fraction)) => {
-      fraction.len() <= 3
-        && fraction.bytes().all(|byte| byte.is_ascii_digit())
-        && matches!(whole, "0" | "1")
-        && (whole == "0" || fraction.bytes().all(|byte| byte == b'0'))
-    }
-    None => matches!(qvalue, "0" | "1"),
-  };
-  if valid {
-    Ok(qvalue)
-  } else {
-    Err(error::builder_with_message("invalid TE q-value"))
-  }
 }
 
 fn parse_digest_algorithms(value: &str) -> error::Result<Vec<&str>> {

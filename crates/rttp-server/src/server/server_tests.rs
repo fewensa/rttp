@@ -186,6 +186,109 @@ fn request_access_control_request_private_network_parses_preflight_metadata_with
 }
 
 #[test]
+fn request_te_parses_bounded_codings_without_policy() {
+  let absent_raw = "GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n";
+  let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
+  let absent = Request::read_next_from(&mut absent_reader)
+    .expect("absent request should parse")
+    .expect("absent request should be present");
+  assert_eq!(
+    None,
+    absent.te().expect("missing TE should be accepted")
+  );
+
+  let valid_raw = concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "TE: gzip, deflate;q=0.5, trailers\r\n",
+    "\r\n"
+  );
+  let mut valid_reader = BufReader::new(Cursor::new(valid_raw.as_bytes()));
+  let valid = Request::read_next_from(&mut valid_reader)
+    .expect("valid request should parse")
+    .expect("valid request should be present");
+  let te = valid
+    .te()
+    .expect("TE should parse")
+    .expect("TE should be present");
+  assert_eq!(3, te.len());
+  assert_eq!("gzip", te.codings()[0].coding());
+  assert_eq!(Some(1000), te.codings()[0].quality());
+  assert_eq!("deflate", te.codings()[1].coding());
+  assert_eq!(Some(500), te.codings()[1].quality());
+  assert_eq!("trailers", te.codings()[2].coding());
+  assert_eq!(None, te.codings()[2].quality());
+  assert!(te.codings()[2].is_trailers());
+}
+
+#[test]
+fn request_te_rejects_malformed_or_duplicate_values_while_preserving_raw_headers() {
+  for value in ["gzip;q=1.1", "trailers,, deflate", "trailers;q=0.5", "chunked"] {
+    let request = Request::from_raw_frame(
+      format!(
+        "GET /asset HTTP/1.1\r\nHost: example.test\r\nTE: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("malformed TE should not reject the request frame");
+    assert!(request.te().is_err(), "TE should reject {value:?}");
+    assert_eq!(Some(value), request.header("TE"));
+  }
+
+  let duplicate = Request::from_raw_frame(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nTE: trailers\r\nte: TRAILERS;q=0.5\r\n\r\n",
+  )
+  .expect("duplicate TE should not reject the request frame");
+  assert!(duplicate.te().is_err());
+}
+
+#[test]
+fn request_te_enforces_member_and_value_bounds() {
+  let at_limit = (0..32)
+    .map(|index| format!("coding-{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let at_limit_request = Request::from_raw_frame(
+    format!(
+      "GET /asset HTTP/1.1\r\nHost: example.test\r\nTE: {at_limit}\r\n\r\n"
+    )
+    .as_bytes(),
+  )
+  .expect("32 codings should not reject the request frame");
+  assert_eq!(
+    32,
+    at_limit_request
+      .te()
+      .expect("TE should parse")
+      .expect("TE should be present")
+      .len()
+  );
+
+  let too_many = (0..=32)
+    .map(|index| format!("coding-{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let too_many_request = Request::from_raw_frame(
+    format!(
+      "GET /asset HTTP/1.1\r\nHost: example.test\r\nTE: {too_many}\r\n\r\n"
+    )
+    .as_bytes(),
+  )
+  .expect("33 codings should not reject the request frame");
+  assert!(too_many_request.te().is_err());
+
+  let oversized_value = "x".repeat(64 * 1024 + 1);
+  assert!(
+    HttpRequestTe::parse(&oversized_value).is_err(),
+    "oversized TE values must be rejected"
+  );
+  assert!(
+    HttpRequestTe::parse_values(["gzip", oversized_value.as_str()]).is_err(),
+    "an oversized duplicate field must not bypass validation"
+  );
+}
+
+#[test]
 fn request_save_data_parses_request_metadata_without_policy() {
   let absent_raw = "GET /catalog HTTP/1.1\r\nHost: example.test\r\n\r\n";
   let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));

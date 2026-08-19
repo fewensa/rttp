@@ -1510,6 +1510,153 @@ fn facade_server_parses_signature_input_independently_when_signature_is_valid() 
     .expect("reverse independent signature facade server thread");
 }
 
+type ObservedTeCodings = Result<Option<Vec<(String, Option<u16>)>>, String>;
+
+#[derive(Debug, PartialEq)]
+struct ObservedTeMetadata {
+  raw_te: Option<String>,
+  raw_connection: Option<String>,
+  connection_tokens: Result<Option<Vec<String>>, String>,
+  te: ObservedTeCodings,
+}
+
+fn observe_te_metadata(request: &Request) -> ObservedTeMetadata {
+  ObservedTeMetadata {
+    raw_te: request.header("TE").map(str::to_string),
+    raw_connection: request.header("Connection").map(str::to_string),
+    connection_tokens: request
+      .connection()
+      .map(|connection| {
+        connection.map(|connection| {
+          connection
+            .tokens()
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+        })
+      })
+      .map_err(|error| error.to_string()),
+    te: request
+      .te()
+      .map(|te| {
+        te.map(|te| {
+          te.codings()
+            .iter()
+            .map(|coding| (coding.coding().to_string(), coding.quality()))
+            .collect()
+        })
+      })
+      .map_err(|error| error.to_string()),
+  }
+}
+
+fn spawn_facade_te_observer() -> (
+  std::net::SocketAddr,
+  mpsc::Receiver<ObservedTeMetadata>,
+  thread::JoinHandle<()>,
+) {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind TE facade server");
+  let addr = server.local_addr().expect("TE facade addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send(observe_te_metadata(&request))
+          .expect("send observed TE metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve TE facade request");
+  });
+
+  (addr, observed_rx, handle)
+}
+
+#[test]
+fn sync_client_and_server_exchange_te_metadata_with_connection_te_preserved() {
+  let (addr, observed_rx, handle) = spawn_facade_te_observer();
+
+  let response = rttp::Http::client()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .te("gzip")
+    .expect("transfer coding should be accepted")
+    .te_with_q("deflate", "0.5")
+    .expect("transfer coding quality should be accepted")
+    .te_trailers()
+    .expect("trailers should be accepted")
+    .emit()
+    .expect("TE request should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    ObservedTeMetadata {
+      raw_te: Some("gzip, deflate;q=0.5, trailers".to_string()),
+      raw_connection: Some("Close, TE".to_string()),
+      connection_tokens: Ok(Some(vec!["Close".to_string(), "TE".to_string()])),
+      te: Ok(Some(vec![
+        ("gzip".to_string(), Some(1000)),
+        ("deflate".to_string(), Some(500)),
+        ("trailers".to_string(), None),
+      ])),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe valid TE metadata")
+  );
+  handle.join().expect("valid TE facade server thread");
+}
+
+#[test]
+fn facade_server_reports_absent_te_metadata_without_policy() {
+  let (addr, observed_rx, handle) = spawn_facade_te_observer();
+
+  let response = rttp::Http::client()
+    .get()
+    .url(format!("http://{addr}/asset-absent"))
+    .emit()
+    .expect("request without TE metadata should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    ObservedTeMetadata {
+      raw_te: None,
+      raw_connection: Some("Close".to_string()),
+      connection_tokens: Ok(Some(vec!["Close".to_string()])),
+      te: Ok(None),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe absent TE metadata")
+  );
+  handle.join().expect("absent TE facade server thread");
+}
+
+#[test]
+fn facade_server_rejects_malformed_te_metadata_without_losing_raw_headers() {
+  let (addr, observed_rx, handle) = spawn_facade_te_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect malformed TE request");
+  stream
+    .write_all(
+      b"GET /asset-malformed HTTP/1.1\r\nHost: 127.0.0.1\r\nTE: gzip;q=1.1\r\nConnection: close, TE\r\n\r\n",
+    )
+    .expect("write malformed TE request");
+
+  let observed = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe malformed TE metadata");
+  assert_eq!(Some("gzip;q=1.1".to_string()), observed.raw_te);
+  assert_eq!(Some("close, TE".to_string()), observed.raw_connection);
+  assert_eq!(
+    Ok(Some(vec!["close".to_string(), "TE".to_string()])),
+    observed.connection_tokens
+  );
+  assert!(observed.te.is_err());
+
+  handle.join().expect("malformed TE facade server thread");
+}
+
 #[test]
 fn facade_client_and_server_exchange_valid_digest_metadata_without_policy() {
   let (addr, observed_rx, handle) = spawn_facade_digest_observer();

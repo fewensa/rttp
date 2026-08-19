@@ -592,7 +592,9 @@ credentials, process challenges, retry, or forward credentials on redirects.
 ## Bounded HTTP request control metadata
 
 `HttpClient::te()`, `te_with_q()`, and `te_trailers()` build a bounded `TE`
-field. `HttpClient::prefer()` and `prefer_with_value()` build a bounded
+field, validating each member and the combined field through the shared
+protocol-owned `rttp-protocol` `Te` type. `HttpClient::prefer()` and
+`prefer_with_value()` build a bounded
 `Prefer` field with token-only values. `Prefer` values are limited to 8 KiB and
 `wait` accepts only unsigned decimal integers. Both helpers reject malformed
 tokens, invalid q-values, duplicates, oversized values, and more than 32

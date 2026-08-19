@@ -630,18 +630,22 @@ challenges, retry requests, or forward credentials across redirects.
 
 `HttpClient::te()` appends a validated transfer coding, `te_with_q()` accepts
 an HTTP q-value from `0` through `1` with at most three fractional digits, and
-`te_trailers()` declares support for trailers. The helpers emit one
-comma-separated `TE` field and reject invalid tokens, q-values, duplicates,
+`te_trailers()` declares support for trailers. The helpers validate each
+member and the combined field through the shared protocol-owned `rttp-protocol`
+`Te` type, which owns coding tokens, the `chunked` rejection, the
+`trailers`-without-q-value rule, q-value thousandths, case-insensitive
+duplicates, the 32-coding member bound, and the 64 KiB value bound. They emit
+one comma-separated `TE` field and reject invalid tokens, q-values, duplicates,
 oversized values, and more than 32 codings before a connection is opened.
 `trailers` cannot carry a q-value.
 
 On the server, `Request::te()` and `HttpRequest::te()` parse received fields in
-wire order into `HttpRequestTe`; each `HttpTe` exposes `coding()`, optional
-thousandths `quality()`, and `is_trailers()`. This is metadata parsing only:
-it does not implement transfer coding, trailer negotiation, compression, or
-proxy behavior. Bounded h2c remains conservative: it emits only an exact
-`TE: trailers` field and strips every other `TE` value with HTTP/1.x
-connection-specific request metadata.
+wire order through the same protocol type into `HttpRequestTe`; each `HttpTe`
+exposes `coding()`, optional thousandths `quality()`, and `is_trailers()`. This
+is metadata parsing only: it does not implement transfer coding, trailer
+negotiation, compression, or proxy behavior. Bounded h2c remains conservative:
+it emits only an exact `TE: trailers` field and strips every other `TE` value
+with HTTP/1.x connection-specific request metadata.
 
 ### Bounded WWW-Authenticate response metadata
 
@@ -791,7 +795,8 @@ and reject duplicate, empty, signed, non-decimal, or out-of-range values. RTTP
 does not decrement the value, route the request, or infer forwarding behavior.
 
 `HttpClient::te()`, `te_with_q()`, and `te_trailers()` build a single bounded
-`TE` field. `HttpClient::prefer()` and `prefer_with_value()` build a single
+`TE` field validated through the shared protocol-owned `rttp-protocol` `Te`
+type. `HttpClient::prefer()` and `prefer_with_value()` build a single
 bounded `Prefer` field. `Prefer` values are limited to 8 KiB and `wait` accepts
 only unsigned decimal integers. Both client helpers reject malformed tokens,
 invalid q-values, duplicates, oversized field values, and more than 32 members

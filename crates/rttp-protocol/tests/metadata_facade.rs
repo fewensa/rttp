@@ -40,6 +40,7 @@ use rttp_protocol::save_data::SaveData;
 use rttp_protocol::signature::{Signature, SignatureParseError};
 use rttp_protocol::signature_input::{SignatureInput, SignatureInputParseError};
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
+use rttp_protocol::te::Te;
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
 use rttp_protocol::transfer_encoding::TransferEncoding;
 use rttp_protocol::upgrade::{Upgrade, UpgradeParseError};
@@ -127,6 +128,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let accept_ranges = AcceptRanges::parse("bytes, pages").expect("Accept-Ranges should parse");
   let transfer_encoding =
     TransferEncoding::parse("chunked").expect("Transfer-Encoding should parse");
+  let te = Te::parse("gzip;q=0.5, trailers").expect("TE should parse");
   let upgrade = Upgrade::parse("websocket").expect("Upgrade should parse");
   let _: UpgradeParseError = Upgrade::parse("").expect_err("empty Upgrade should be rejected");
   let want_content_digest =
@@ -237,6 +239,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(accept_ranges.header_value(), "bytes, pages");
   assert_eq!(transfer_encoding.codings(), ["chunked"]);
   assert_eq!(transfer_encoding.header_value(), "chunked");
+  assert_eq!(te.codings()[0].coding(), "gzip");
+  assert_eq!(te.codings()[0].quality(), Some(500));
+  assert_eq!(te.codings()[1].coding(), "trailers");
+  assert!(te.codings()[1].is_trailers());
   assert_eq!(upgrade.protocols(), ["websocket"]);
   assert_eq!(upgrade.header_value(), "websocket");
   assert_eq!(want_content_digest.entries()[0].algorithm(), "sha-256");

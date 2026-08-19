@@ -1277,6 +1277,59 @@ fn te_and_prefer_helpers_reject_invalid_values_before_connecting() {
 }
 
 #[test]
+fn te_helpers_reject_duplicate_overflow_and_oversized_values_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    client
+      .get()
+      .url(format!("{}/metadata", base_url))
+      .te("gzip")
+      .expect("first TE coding should be accepted");
+    assert!(client
+      .te("GZIP")
+      .expect_err("duplicate TE coding should be rejected")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "duplicate TE input should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    client.get().url(format!("{}/metadata", base_url));
+    for index in 0..32 {
+      client
+        .te(format!("coding-{index}"))
+        .expect("TE coding within the limit should be accepted");
+    }
+    assert!(client
+      .te("coding-33")
+      .expect_err("the 33rd TE coding should be rejected")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "33rd TE member should not open a socket"
+  );
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    assert!(client
+      .get()
+      .url(format!("{}/metadata", base_url))
+      .te(oversized)
+      .expect_err("oversized TE coding should be rejected")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "oversized TE input should not open a socket"
+  );
+}
+
+#[test]
 fn prefer_helpers_reject_invalid_wait_and_bound_values_before_connecting() {
   let request = capture_optional_request(|base_url| {
     let mut client = client();
