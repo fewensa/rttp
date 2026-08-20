@@ -2277,6 +2277,13 @@ fn set_cookie_metadata_reuses_protocol_type_and_redacts_values() {
       .cookie("session")
       .map(|cookie| cookie.value().as_str())
   );
+  assert_eq!(
+    Some("csrf=token; path=/form; max-age=60"),
+    response
+      .cookie("csrf")
+      .map(|cookie| cookie.string())
+      .as_deref()
+  );
 
   let invalid = Response::new(
     RoUrl::with("https://example.test"),

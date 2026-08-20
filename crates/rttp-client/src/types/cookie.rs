@@ -12,6 +12,7 @@ pub struct Cookie {
   expires: Option<SystemTime>,
   path: Option<String>,
   domain: Option<String>,
+  max_age: Option<u64>,
   secure: bool,
   http_only: bool,
   persistent: bool,
@@ -63,6 +64,8 @@ impl Cookie {
       if let Some(expires) = self.expires {
         let http_date = httpdate::fmt_http_date(expires);
         text.push_str(&format!("; expires={}", http_date));
+      } else if let Some(max_age) = self.max_age {
+        text.push_str(&format!("; max-age={}", max_age));
       } else {
         text.push_str("; max-age=0")
       }
@@ -98,6 +101,7 @@ impl Cookie {
       expires,
       path: cookie.path().map(str::to_owned),
       domain: cookie.domain().map(str::to_owned),
+      max_age: cookie.max_age(),
       secure: cookie.secure(),
       http_only: cookie.http_only(),
       persistent: expires.is_some() || cookie.max_age().is_some(),
@@ -204,6 +208,7 @@ impl fmt::Debug for Cookie {
       .field("expires", &self.expires.as_ref().map(|_| "[REDACTED]"))
       .field("path", &self.path.as_ref().map(|_| "[REDACTED]"))
       .field("domain", &self.domain.as_ref().map(|_| "[REDACTED]"))
+      .field("max_age", &self.max_age)
       .field("secure", &self.secure)
       .field("http_only", &self.http_only)
       .field("persistent", &self.persistent)
@@ -258,6 +263,7 @@ impl CookieBuilder {
         expires: None,
         path: None,
         domain: None,
+        max_age: None,
         secure: false,
         http_only: false,
         persistent: false,
