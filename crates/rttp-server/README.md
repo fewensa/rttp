@@ -118,6 +118,24 @@ to expose the original request.
 These helpers parse request metadata only. They do not negotiate, transcode,
 decode bodies, sniff MIME types, or select a response charset.
 
+## A-IM request metadata
+
+Handlers can call `Request::a_im()` and `HttpRequest::a_im()` to observe
+bounded typed `A-IM` request metadata through the shared `rttp-protocol`
+primitive. The helpers combine case-insensitive fields in wire order into
+`HttpAIm`. Each entry exposes `token()`, q-value `quality()` in thousandths
+(`1000` is the default quality of `1`), and ordered `parameters()`. The
+shared protocol type is the authority for token, q-value, parameter,
+duplicate, member-count, and size validation. Each field value and the
+combined raw field set are limited to 64 KiB, the combined list is limited to
+32 members, and each member is limited to 16 parameters. Absent metadata
+returns `Ok(None)`. Malformed, oversized, duplicate, empty, or over-limit
+values return a parse error while `Request::header()` and `Request::body()`
+continue to expose the original request.
+
+These helpers parse request metadata only. They do not select a preferred
+instance manipulation or apply delta encodings.
+
 ## Accept-Encoding request metadata
 
 Handlers can call `Request::accept_encoding()` and

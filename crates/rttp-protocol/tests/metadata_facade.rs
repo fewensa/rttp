@@ -1,3 +1,4 @@
+use rttp_protocol::a_im::AIm;
 use rttp_protocol::accept_charset::AcceptCharset;
 use rttp_protocol::accept_encoding::AcceptEncoding;
 use rttp_protocol::accept_language::AcceptLanguage;
@@ -274,6 +275,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let transfer_encoding =
     TransferEncoding::parse("chunked").expect("Transfer-Encoding should parse");
   let te = Te::parse("gzip;q=0.5, trailers").expect("TE should parse");
+  let a_im = AIm::parse("diffe, gzip;q=0.3;profile=compact").expect("A-IM should parse");
   let baggage =
     Baggage::parse("tenant=acme;source=gateway,release=2026-08-19").expect("baggage should parse");
   let traceparent = TraceParent::parse("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
@@ -559,6 +561,9 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(te.codings()[0].quality(), Some(500));
   assert_eq!(te.codings()[1].coding(), "trailers");
   assert!(te.codings()[1].is_trailers());
+  assert_eq!(a_im.members()[0].token(), "diffe");
+  assert_eq!(a_im.members()[1].quality(), 300);
+  assert_eq!(a_im.header_value(), "diffe, gzip;q=0.3;profile=compact");
   assert_eq!(2, baggage.members().len());
   assert_eq!("tenant", baggage.members()[0].key());
   assert_eq!("acme", baggage.members()[0].value());

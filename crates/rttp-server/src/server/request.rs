@@ -1,5 +1,9 @@
 use super::*;
 
+pub use rttp_protocol::a_im::{
+  AIm as HttpAIm, AImMember as HttpAImMember, AImParameter as HttpAImParameter,
+  AImParseError as HttpAImParseError,
+};
 pub use rttp_protocol::accept_charset::{
   AcceptCharset as HttpRequestAcceptCharsets,
   AcceptCharsetParseError as HttpAcceptCharsetParseError, AcceptCharsetRange as HttpAcceptCharset,
@@ -690,6 +694,16 @@ impl Request {
       return Ok(None);
     }
     HttpRequestAcceptCharsets::parse_values(values).map(Some)
+  }
+
+  /// Parses received `A-IM` request metadata without selecting or applying a
+  /// delta encoding.
+  pub fn a_im(&self) -> Result<Option<HttpAIm>, HttpAImParseError> {
+    let values: Vec<&str> = self.headers_named("A-IM").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAIm::parse_values(values).map(Some)
   }
 
   /// Parses received `Accept-Encoding` request metadata without enabling
@@ -2714,6 +2728,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpUpgradeInsecureRequests::parse_values(values).map(Some)
+  }
+
+  /// Parses received `A-IM` request metadata without selecting or applying a
+  /// delta encoding.
+  pub fn a_im(&self) -> Result<Option<HttpAIm>, HttpAImParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("A-IM"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAIm::parse_values(values).map(Some)
   }
 
   /// Parses received `Accept-Encoding` request metadata without enabling

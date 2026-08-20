@@ -702,6 +702,29 @@ ordinary headers; helper parse errors do not remove existing headers.
 These helpers parse request metadata only. They do not negotiate, transcode,
 decode bodies, sniff MIME types, or select a response charset.
 
+## Bounded A-IM request metadata
+
+`HttpClient::a_im()`, `a_im_with_q()`, and `a_im_value()` emit bounded `A-IM`
+request metadata through the shared `rttp-protocol` primitive. Server-side
+`Request::a_im()` and `HttpRequest::a_im()` parse all received `A-IM` fields
+in wire order into `HttpAIm` and return `Ok(None)` when the header is absent.
+Each entry provides its `token()`, q-value `quality()` in thousandths
+(`1000` is the default quality of `1`), and ordered `parameters()`. The
+shared protocol type is the authority for token, q-value, parameter,
+duplicate, member-count, and size validation.
+
+Parsing is bounded and validation-oriented. Each `A-IM` field value and the
+combined raw field set are limited to 64 KiB, the combined list is limited to
+32 members, and each member is limited to 16 parameters. Empty members,
+malformed tokens, q-values, or parameters, duplicates across one or more
+helper-parsed header fields, oversized values, and too many members return
+`HttpAImParseError` from the helper. Raw `Request::header("A-IM", ...)`
+values remain preserved exactly as ordinary headers; helper parse errors do
+not remove existing headers.
+
+These helpers declare and parse request metadata only. They do not select a
+preferred instance manipulation or apply delta encodings.
+
 ## Bounded Accept-Encoding request metadata
 
 Server-side `Accept-Encoding` helpers expose request metadata through the
@@ -1331,6 +1354,7 @@ scheduling, or async accept loops.
 | Client Hints | `HttpAcceptCh`/`HttpCriticalCh`, `HttpResponse::with_accept_ch`/`with_critical_ch`, and `accept_ch`/`critical_ch` declare and parse bounded Client Hints opt-in metadata; `Response::accept_ch` and `critical_ch` expose it to clients | No browser opt-in state, request-header generation, automatic retry, persistence, or Client Hints policy |
 | Content-Language | `HttpContentLanguages`, `Request::content_language`, `HttpRequest::content_language`, `HttpResponse::with_content_language`, and `HttpResponse::content_language` parse or declare bounded `Content-Language` metadata | No automatic language negotiation, route selection, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
 | Accept-Charset | `HttpRequestAcceptCharsets`, `Request::accept_charset`, and `HttpRequest::accept_charset` parse bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |
+| A-IM | `HttpClient::a_im`/`a_im_with_q`/`a_im_value` emit bounded `A-IM` request metadata through the shared protocol type, and `Request::a_im`/`HttpRequest::a_im` parse received fields into `HttpAIm` while preserving raw headers on errors | No automatic delta-encoding selection, application, compression, or response transformation |
 | Accept-Encoding | `HttpRequestAcceptEncodings`, `Request::accept_encoding`, and `HttpRequest::accept_encoding` parse bounded `Accept-Encoding` request metadata through the shared `rttp-protocol` type | No compression, decompression, content negotiation, retries, or transport changes |
 | Sec-GPC | `HttpClient::sec_gpc`, `Request::sec_gpc`, and `HttpRequest::sec_gpc` share the bounded protocol `Sec-GPC` `1`-signal representation and preserve raw values on errors | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
 | Pragma | `HttpClient::pragma`/`pragma_no_cache`, `Request::pragma`, `HttpRequest::pragma`, `HttpResponse::with_pragma`, and `HttpResponse::pragma` share the bounded protocol `Pragma` representation across client construction, server access, server response declaration, and client response access, combining fields in wire order and preserving raw headers on errors | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |

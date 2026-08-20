@@ -27,6 +27,28 @@ wildcard, q-value, duplicate, member-count, and size validation. It reports
 declared request metadata only; it does not negotiate, transcode, decode
 bodies, sniff MIME types, or select a response charset.
 
+## A-IM
+
+`a_im` parses one or more `A-IM` field values into an ordered list of
+instance-manipulation tokens with optional quality weights and extension
+parameters. Each field value is bounded to 64 KiB, the combined raw field set
+is bounded to 64 KiB, the combined member count is bounded to 32, and each
+member is bounded to 16 parameters. Tokens are RFC 9110 tokens and are
+retained with their accepted spelling. Duplicate tokens are rejected
+case-insensitively while the first-seen spelling is retained. Each member may
+carry an optional `q` parameter with HTTP q-value semantics and additional
+parameters whose names are tokens and whose values are tokens or
+quoted-strings. Duplicate parameter names on one member are rejected
+case-insensitively. Empty members, invalid tokens, invalid q-values, invalid
+parameter names or values, forbidden ASCII control bytes other than HTAB,
+oversized values, oversized combined input, too many members or parameters,
+and a present header set that yields no member are errors. `header_value()`
+joins members with `", "`, omits quality when no `q` parameter was present,
+and otherwise emits the original q-text and accepted parameter spelling. This
+type is the shared authority for token, q-value, parameter, duplicate,
+member-count, and size validation. It reports declared request metadata only;
+it does not select a preferred instance manipulation or apply delta encodings.
+
 ## Accept-Encoding
 
 `accept_encoding` parses one or more RFC 9110 `Accept-Encoding` field values
