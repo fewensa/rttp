@@ -17,14 +17,15 @@ use rttp_client::response::{
   PermissionsPolicy, PermissionsPolicyParseError, Pragma, PragmaParseError, PreferenceApplied,
   Priority, ProxyAuthenticate, ProxyAuthenticateParseError, ProxyAuthenticationInfo,
   ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError, ReferrerPolicy,
-  ReferrerPolicyToken, SecWebSocketAccept, SecWebSocketAcceptParseError, SecWebSocketProtocol,
-  SecWebSocketProtocolParseError, SecWebSocketVersion, SecWebSocketVersionParseError, ServerTiming,
-  Signature, SignatureInput, SignatureInputParseError, SignatureParseError, SpeculationRules,
-  SpeculationRulesParseError, StrictTransportSecurity, StrictTransportSecurityParseError,
-  SupportsLoadingMode, SupportsLoadingModeParseError, Trailer, TransferEncoding,
-  TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError, Via, ViaParseError,
-  WantContentDigest, WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError,
-  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  ReferrerPolicyToken, SecWebSocketAccept, SecWebSocketAcceptParseError, SecWebSocketExtensions,
+  SecWebSocketExtensionsParseError, SecWebSocketProtocol, SecWebSocketProtocolParseError,
+  SecWebSocketVersion, SecWebSocketVersionParseError, ServerTiming, Signature, SignatureInput,
+  SignatureInputParseError, SignatureParseError, SpeculationRules, SpeculationRulesParseError,
+  StrictTransportSecurity, StrictTransportSecurityParseError, SupportsLoadingMode,
+  SupportsLoadingModeParseError, Trailer, TransferEncoding, TransferEncodingParseError, Upgrade,
+  UpgradeParseError, Vary, VaryParseError, Via, ViaParseError, WantContentDigest, WantReprDigest,
+  Warning, WwwAuthenticate, WwwAuthenticateParseError, XContentTypeOptions,
+  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentDisposition, ContentDispositionParseError, ContentLocation,
@@ -201,6 +202,15 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .expect_err("multi-token selection should be rejected");
   let sec_websocket_protocol_selection = SecWebSocketProtocol::from_selection("graphql-ws")
     .expect("Sec-WebSocket-Protocol should select");
+  let sec_websocket_extensions =
+    SecWebSocketExtensions::parse(r#"permessage-deflate; client_max_window_bits; mode="safe""#)
+      .expect("Sec-WebSocket-Extensions offers should parse");
+  let _: SecWebSocketExtensionsParseError =
+    SecWebSocketExtensions::parse_selection("permessage-deflate, x-test")
+      .expect_err("multi-extension selection should be rejected");
+  let sec_websocket_extensions_selection =
+    SecWebSocketExtensions::parse_selection("permessage-deflate; server_max_window_bits=15")
+      .expect("Sec-WebSocket-Extensions should select");
   let warning = Warning::parse(r#"110 - "Response is Stale""#).expect("Warning should parse");
   let nel =
     Nel::parse(r#"{"report_to":"network-errors","max_age":2592000}"#).expect("NEL should parse");
@@ -442,6 +452,21 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(
     sec_websocket_protocol_selection.selected(),
     Some("graphql-ws")
+  );
+  assert_eq!(
+    sec_websocket_extensions.header_value(),
+    r#"permessage-deflate; client_max_window_bits; mode="safe""#
+  );
+  assert_eq!(
+    sec_websocket_extensions.extensions()[0].token(),
+    "permessage-deflate"
+  );
+  assert_eq!(
+    sec_websocket_extensions_selection
+      .selected()
+      .expect("selected extension")
+      .token(),
+    "permessage-deflate"
   );
   assert_eq!(warning.items()[0].code(), 110);
   assert_eq!(nel.max_age(), 2592000);
@@ -924,6 +949,54 @@ fn response_facade_parses_sec_websocket_protocol_selection_metadata() {
   assert_eq!(
     multi_token.header_value("Sec-WebSocket-Protocol"),
     Some(&"chat, superchat".to_string())
+  );
+}
+
+#[test]
+fn response_facade_parses_sec_websocket_extensions_selection_metadata() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 101 Switching Protocols\r\n",
+      "Sec-WebSocket-Extensions: permessage-deflate; client_no_context_takeover\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let extensions: SecWebSocketExtensions = response
+    .sec_websocket_extensions()
+    .expect("Sec-WebSocket-Extensions should parse")
+    .expect("Sec-WebSocket-Extensions should be present");
+
+  assert_eq!(
+    extensions.selected().expect("selected extension").token(),
+    "permessage-deflate"
+  );
+  assert_eq!(
+    extensions.header_value(),
+    "permessage-deflate; client_no_context_takeover"
+  );
+  assert_eq!(response.header_value("Connection"), None);
+  assert_eq!(response.header_value("Upgrade"), None);
+
+  let multi_extension = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 101 Switching Protocols\r\n",
+      "Sec-WebSocket-Extensions: permessage-deflate, x-test\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+  assert!(multi_extension.sec_websocket_extensions().is_err());
+  assert_eq!(
+    multi_extension.header_value("Sec-WebSocket-Extensions"),
+    Some(&"permessage-deflate, x-test".to_string())
   );
 }
 

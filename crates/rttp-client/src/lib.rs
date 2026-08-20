@@ -136,6 +136,10 @@ pub use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
 pub use rttp_protocol::sec_gpc::{SecGpc, SecGpcParseError};
+pub use rttp_protocol::sec_websocket_extensions::{
+  SecWebSocketExtension, SecWebSocketExtensionParameter, SecWebSocketExtensionParameterValue,
+  SecWebSocketExtensions, SecWebSocketExtensionsParseError,
+};
 pub use rttp_protocol::sec_websocket_protocol::{
   SecWebSocketProtocol, SecWebSocketProtocolParseError,
 };

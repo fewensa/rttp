@@ -14,17 +14,17 @@ use rttp::server::{
   HttpOriginTrials, HttpPermissionsPolicy, HttpPermissionsPolicyParseError, HttpPragma,
   HttpPragmaParseError, HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError,
   HttpRequestAcceptCharsets, HttpResponse, HttpSaveData, HttpSecGpc, HttpSecGpcParseError,
-  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketKey,
-  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
-  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
-  HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
-  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
-  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
-  HttpSpeculationRules, HttpSpeculationRulesParseError, HttpSunsetParseError,
-  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTimeout, HttpTimeoutParseError,
-  HttpTimeoutType, HttpUpgrade, HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError,
-  HttpUpgradeParseError, HttpVia, HttpViaParseError, HttpXForwardedFor,
-  HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
+  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
+  HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
+  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
+  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
+  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
+  HttpSunsetParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTimeout,
+  HttpTimeoutParseError, HttpTimeoutType, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpVia, HttpViaParseError,
+  HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
   HttpXForwardedProto, HttpXForwardedProtoParseError,
 };
 use std::io::Write;
@@ -84,6 +84,14 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::SecWebSocketAcceptParseError =
     rttp_client::response::SecWebSocketAccept::parse("the accept value")
       .expect_err("invalid Sec-WebSocket-Accept should fail");
+  let client_sec_websocket_extensions: rttp::SecWebSocketExtensions =
+    rttp_client::response::SecWebSocketExtensions::parse(
+      r#"permessage-deflate; client_max_window_bits; mode="safe""#,
+    )
+    .expect("Sec-WebSocket-Extensions should parse");
+  let _: rttp::SecWebSocketExtensionsParseError =
+    rttp_client::response::SecWebSocketExtensions::parse_selection("permessage-deflate, x-test")
+      .expect_err("multi-extension Sec-WebSocket-Extensions selection should fail");
   let critical_ch: rttp::CriticalCh =
     rttp_client::response::CriticalCh::parse("Sec-CH-UA").expect("Critical-CH should parse");
   let cache_status: rttp::CacheStatus =
@@ -340,6 +348,10 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(
     client_sec_websocket_accept.as_str(),
     "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
+  );
+  assert_eq!(
+    client_sec_websocket_extensions.header_value(),
+    r#"permessage-deflate; client_max_window_bits; mode="safe""#
   );
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
   assert_eq!(
@@ -1205,6 +1217,9 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let sec_websocket_protocol: HttpSecWebSocketProtocol =
     HttpSecWebSocketProtocol::parse("chat, superchat")
       .expect("Sec-WebSocket-Protocol offers should parse");
+  let sec_websocket_extensions: HttpSecWebSocketExtensions =
+    HttpSecWebSocketExtensions::parse(r#"permessage-deflate; client_max_window_bits; mode="safe""#)
+      .expect("Sec-WebSocket-Extensions offers should parse");
   let sec_websocket_accept = HttpSecWebSocketAccept::derive_from_key(&sec_websocket_key);
   let baggage: HttpBaggage =
     HttpBaggage::parse("tenant=acme;source=gateway").expect("baggage should parse");
@@ -1241,6 +1256,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpSecWebSocketVersion::parse("8, 13");
   let _: Result<HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError> =
     HttpSecWebSocketProtocol::parse_selection("chat, superchat");
+  let _: Result<HttpSecWebSocketExtensions, HttpSecWebSocketExtensionsParseError> =
+    HttpSecWebSocketExtensions::parse_selection("permessage-deflate, x-test");
   let _: Result<HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError> =
     HttpSecWebSocketAccept::parse("the accept value");
   let if_modified_since: HttpIfModifiedSince =
@@ -1373,6 +1390,14 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert!(sec_websocket_protocol.contains("chat"));
   assert_eq!(sec_websocket_protocol.header_value(), "chat, superchat");
   assert_eq!(sec_websocket_protocol.selected(), None);
+  assert_eq!(
+    sec_websocket_extensions.header_value(),
+    r#"permessage-deflate; client_max_window_bits; mode="safe""#
+  );
+  assert_eq!(
+    sec_websocket_extensions.extensions()[0].token(),
+    "permessage-deflate"
+  );
   assert_eq!(
     "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=",
     sec_websocket_accept.as_str()

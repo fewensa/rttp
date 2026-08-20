@@ -960,6 +960,25 @@ reports declared request or response metadata only; it does not perform a
 WebSocket handshake, emit `Connection: Upgrade`, choose an application
 subprotocol, or implement WebSocket frames.
 
+## Sec-WebSocket-Extensions
+
+`sec_websocket_extensions` parses one or more HTTP
+`Sec-WebSocket-Extensions` fields as RFC 6455 extension-list metadata.
+Request offers preserve extension member order and ordered parameters.
+Response selections use the same grammar through `parse_selection` and
+`parse_selection_values`, which require exactly one selected extension member.
+Each field value and the combined raw or canonical serialized field set is
+bounded to 64 KiB, and the combined extension member count is bounded to 32.
+Extension tokens and parameter names follow the HTTP `token` grammar.
+Parameter values may be tokens or quoted strings with quoted-pair unescaping,
+and serialization preserves quoted values. Duplicate extension tokens and
+duplicate parameter names within one extension are rejected. Empty members,
+malformed tokens, malformed quoted strings, forbidden ASCII control bytes
+(including CR, LF, NUL, DEL, and obs-text), over-limit member counts, and
+oversized fields are errors. This parser reports declared request or response
+metadata only; it does not activate compression, negotiate extensions, emit
+`Connection: Upgrade`, switch protocols, or implement WebSocket frames.
+
 ## Upgrade-Insecure-Requests
 
 `upgrade_insecure_requests` parses a singleton `Upgrade-Insecure-Requests`

@@ -29,19 +29,20 @@ use rttp_server::server::{
   HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus,
   HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
   HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSecGpc, HttpSecGpcParseError,
-  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketKey,
-  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
-  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
-  HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
-  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
-  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
-  HttpSpeculationRules, HttpSpeculationRulesParseError, HttpSupportsLoadingMode,
-  HttpSupportsLoadingModeParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType,
-  HttpTraceParent, HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember,
-  HttpTraceStateParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
-  HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
-  HttpVia, HttpViaMember, HttpViaParseError, HttpWantContentDigest, HttpWantReprDigest,
-  HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
+  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
+  HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
+  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
+  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
+  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
+  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTimeout, HttpTimeoutParseError,
+  HttpTimeoutType, HttpTraceParent, HttpTraceParentParseError, HttpTraceState,
+  HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
+  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpVia, HttpViaMember,
+  HttpViaParseError, HttpWantContentDigest, HttpWantReprDigest, HttpXForwardedFor,
+  HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
   HttpXForwardedProto, HttpXForwardedProtoParseError, SecFetchDest, SecFetchMode, SecFetchSite,
   SecFetchUser, SecPurpose,
 };
@@ -296,6 +297,15 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let sec_websocket_protocol_response = HttpResponse::new(400, "Bad Request")
     .with_sec_websocket_protocol("graphql-transport-ws")
     .expect("Sec-WebSocket-Protocol should be accepted");
+  let sec_websocket_extensions: HttpSecWebSocketExtensions =
+    HttpSecWebSocketExtensions::parse(r#"permessage-deflate; client_max_window_bits; mode="safe""#)
+      .expect("Sec-WebSocket-Extensions should parse");
+  let _: HttpSecWebSocketExtensionsParseError =
+    HttpSecWebSocketExtensions::parse_selection("permessage-deflate, x-test")
+      .expect_err("multi-extension Sec-WebSocket-Extensions selection should be rejected");
+  let sec_websocket_extensions_response = HttpResponse::new(101, "Switching Protocols")
+    .with_sec_websocket_extensions("permessage-deflate; server_max_window_bits=15")
+    .expect("Sec-WebSocket-Extensions should be accepted");
   let fetch_site = SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
@@ -590,6 +600,22 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .sec_websocket_protocol()
       .expect("Sec-WebSocket-Protocol should parse")
       .expect("Sec-WebSocket-Protocol should be present")
+      .header_value()
+  );
+  assert_eq!(
+    sec_websocket_extensions.header_value(),
+    r#"permessage-deflate; client_max_window_bits; mode="safe""#
+  );
+  assert_eq!(
+    sec_websocket_extensions.extensions()[0].token(),
+    "permessage-deflate"
+  );
+  assert_eq!(
+    "permessage-deflate; server_max_window_bits=15",
+    sec_websocket_extensions_response
+      .sec_websocket_extensions()
+      .expect("Sec-WebSocket-Extensions should parse")
+      .expect("Sec-WebSocket-Extensions should be present")
       .header_value()
   );
   assert_eq!(fetch_site.header_value(), "same-origin");

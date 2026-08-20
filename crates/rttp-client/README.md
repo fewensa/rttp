@@ -154,6 +154,25 @@ protocols. Applications own the selection decision. Callers needing an
 unusual value can retain full raw-header control with
 `header(("Sec-WebSocket-Protocol", "..."))`.
 
+## Bounded Sec-WebSocket-Extensions metadata
+
+`HttpClient::sec_websocket_extensions(value)` sets a
+`Sec-WebSocket-Extensions` request header through the shared protocol
+`SecWebSocketExtensions` type. The helper accepts ordered RFC 6455 extension
+offers such as `permessage-deflate; client_max_window_bits, x-test`, preserves
+ordered parameters, supports token and quoted-string parameter values, rejects
+duplicate extension tokens and duplicate parameter names, and enforces the
+64 KiB and 32-member bounds before a socket is opened. It replaces any
+existing same-name field with the canonical value.
+`Response::sec_websocket_extensions()` parses received responses as a
+selection singleton: a successful response carries exactly one extension
+member, and a multi-extension value returns a parse error while raw headers
+remain available. These helpers only declare or parse metadata: RTTP does not
+activate compression, negotiate extensions, emit `Connection: Upgrade`, or
+switch protocols. Applications own all extension behavior. Callers needing an
+unusual value can retain full raw-header control with
+`header(("Sec-WebSocket-Extensions", "..."))`.
+
 ## Bounded W3C Trace Context metadata
 
 `HttpClient::traceparent(value)` and `HttpClient::tracestate(value)` validate
@@ -1351,6 +1370,7 @@ header-block model.
 | WebSocket handshake metadata | `sec_websocket_key` emits bounded singleton `Sec-WebSocket-Key` request metadata through the shared protocol type, replacing an existing same-name field and redacting the nonce from typed debug output; `Response::sec_websocket_accept` parses bounded singleton response metadata and `verify_sec_websocket_accept` checks the RFC GUID plus SHA-1/base64 derivation against a validated key | No HTTP upgrade, random nonce generation, WebSocket frames, or handshake policy |
 | Sec-WebSocket-Version | `sec_websocket_version` emits bounded `Sec-WebSocket-Version` request metadata through the shared protocol type, replacing an existing same-name field, and `Response::sec_websocket_version` parses received fields including rejection-response version lists | No WebSocket handshake, `Connection: Upgrade` emission, `Sec-WebSocket-Accept` computation, version negotiation, protocol switch, or frames |
 | Sec-WebSocket-Protocol | `sec_websocket_protocol` emits bounded `Sec-WebSocket-Protocol` offer metadata in preference order through the shared protocol type, replacing an existing same-name field, and `Response::sec_websocket_protocol` parses received fields as a selection singleton | No WebSocket handshake, `Connection: Upgrade` emission, automatic subprotocol choice, protocol switch, or frames |
+| Sec-WebSocket-Extensions | `sec_websocket_extensions` emits bounded ordered `Sec-WebSocket-Extensions` offer metadata through the shared protocol type, replacing an existing same-name field, and `Response::sec_websocket_extensions` parses received fields as a one-extension selection singleton while preserving raw headers on errors | No WebSocket handshake, `Connection: Upgrade` emission, compression activation, extension negotiation, protocol switch, or frames |
 | Pragma | `pragma` and `pragma_no_cache` emit bounded RFC 9111 `Pragma` request metadata through the shared protocol type, combining and replacing existing same-name fields | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |
 | W3C Trace Context | `traceparent` and `tracestate` validate and emit bounded W3C Trace Context request metadata through shared protocol types, replacing existing same-name fields and redacting propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |
 | W3C Baggage | `baggage` validates and emits bounded W3C Baggage request metadata through the shared protocol type, replacing an existing same-name field and redacting member and property values from typed debug output | No application-data interpretation, request-context storage, tracing backend, span model, or automatic propagation |

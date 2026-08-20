@@ -836,6 +836,30 @@ WebSocket handshake, emit `Connection: Upgrade` or `Upgrade: websocket`,
 choose an application subprotocol, or switch protocols. Applications own the
 selection decision; RTTP never picks a token from the offer list.
 
+## Sec-WebSocket-Extensions request and response metadata
+
+Handlers can call `Request::sec_websocket_extensions()` and
+`HttpRequest::sec_websocket_extensions()` to observe bounded typed
+`Sec-WebSocket-Extensions` request metadata as ordered offers through the
+shared protocol `HttpSecWebSocketExtensions` type. Absent fields return
+`Ok(None)`. `HttpResponse::with_sec_websocket_extensions(value)` declares
+validated response metadata for one selected extension member that replaces
+attached same-name fields, and `HttpResponse::sec_websocket_extensions()`
+parses attached response fields as a selection singleton. Extension tokens and
+parameter names use the HTTP token grammar; parameter values may be tokens or
+quoted strings. Multiple request fields are combined in wire order, each
+field value and the combined raw or canonical serialized field set is bounded
+to 64 KiB, and the combined extension member count is bounded to 32.
+Duplicate extension tokens, duplicate parameter names within one extension,
+malformed quoted strings, control-byte values, and bound violations return a
+parser error while raw headers remain available; a multi-extension response
+value fails the singleton selection parse.
+
+These helpers declare and parse metadata only. They do not perform a
+WebSocket handshake, emit `Connection: Upgrade` or `Upgrade: websocket`,
+activate compression, negotiate extensions, or switch protocols. Applications
+own all extension behavior.
+
 ## Pragma request and response metadata
 
 Handlers can call `Request::pragma()` and `HttpRequest::pragma()` to observe

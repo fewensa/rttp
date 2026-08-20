@@ -7,8 +7,8 @@ use rttp_client::response::{
   HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues, Location, MementoDatetime,
   OriginTrials, PermissionsPolicy, ProxyAuthenticate, ProxyAuthenticationInfo, ProxyStatus,
   ProxyStatusBareItem, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter,
-  SecWebSocketAccept, SecWebSocketProtocol, SecWebSocketVersion, ServerTiming,
-  ServiceWorkerAllowed, SignatureInput, SpeculationRules, StrictTransportSecurity,
+  SecWebSocketAccept, SecWebSocketExtensions, SecWebSocketProtocol, SecWebSocketVersion,
+  ServerTiming, ServiceWorkerAllowed, SignatureInput, SpeculationRules, StrictTransportSecurity,
   SupportsLoadingMode, Via, Warning, XContentTypeOptions, XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
@@ -1540,6 +1540,127 @@ fn sec_websocket_protocol_metadata_is_absent_without_a_header() {
   );
   let _: Option<SecWebSocketProtocol> =
     response.sec_websocket_protocol().expect("header is absent");
+}
+
+#[test]
+fn sec_websocket_extensions_metadata_parses_selected_extension_without_switching_protocols() {
+  let value = r#"permessage-deflate; client_no_context_takeover; mode="safe""#;
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!(
+      "HTTP/1.1 101 Switching Protocols\r\nSec-WebSocket-Extensions: {value}\r\nContent-Length: 0\r\n\r\n"
+    )
+    .into_bytes(),
+  )
+  .expect("response should parse");
+
+  let metadata = response
+    .sec_websocket_extensions()
+    .expect("Sec-WebSocket-Extensions should parse")
+    .expect("Sec-WebSocket-Extensions should be present");
+  let selected = metadata.selected().expect("selected extension");
+
+  assert_eq!(selected.token(), "permessage-deflate");
+  assert_eq!(selected.parameters().len(), 2);
+  assert_eq!(metadata.header_value(), value);
+  assert_eq!(
+    response.header_value("Sec-WebSocket-Extensions"),
+    Some(&value.to_string())
+  );
+  assert_eq!(response.header_value("Connection"), None);
+  assert_eq!(response.header_value("Upgrade"), None);
+}
+
+#[test]
+fn sec_websocket_extensions_metadata_rejects_multi_extension_selections() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 101 Switching Protocols\r\n",
+      "Sec-WebSocket-Extensions: permessage-deflate, x-test\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  assert!(
+    response.sec_websocket_extensions().is_err(),
+    "a response selection must be a singleton extension"
+  );
+  assert_eq!(
+    response.header_value("Sec-WebSocket-Extensions"),
+    Some(&"permessage-deflate, x-test".to_string())
+  );
+}
+
+#[test]
+fn sec_websocket_extensions_metadata_rejects_invalid_values_without_hiding_raw_headers() {
+  for value in [
+    "",
+    ",",
+    "permessage deflate",
+    "permessage-deflate;",
+    "permessage-deflate; p=",
+    "permessage-deflate; p=1; p=2",
+  ] {
+    let response = Response::new(
+      RoUrl::with("https://example.test"),
+      format!(
+        "HTTP/1.1 400 Bad Request\r\nSec-WebSocket-Extensions: {value}\r\nContent-Length: 0\r\n\r\n"
+      )
+      .into_bytes(),
+    )
+    .expect("response should parse");
+
+    assert!(
+      response.sec_websocket_extensions().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      response.header_value("Sec-WebSocket-Extensions"),
+      Some(&value.to_string())
+    );
+  }
+}
+
+#[test]
+fn sec_websocket_extensions_metadata_rejects_oversized_values_without_hiding_raw_headers() {
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!(
+      "HTTP/1.1 400 Bad Request\r\nSec-WebSocket-Extensions: {oversized}\r\nContent-Length: 0\r\n\r\n"
+    )
+    .into_bytes(),
+  )
+  .expect("response should parse");
+
+  assert!(response.sec_websocket_extensions().is_err());
+  assert_eq!(
+    response.header_value("Sec-WebSocket-Extensions"),
+    Some(&oversized)
+  );
+}
+
+#[test]
+fn sec_websocket_extensions_metadata_is_absent_without_a_header() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(
+    response
+      .sec_websocket_extensions()
+      .expect("header is absent"),
+    None
+  );
+  let _: Option<SecWebSocketExtensions> = response
+    .sec_websocket_extensions()
+    .expect("header is absent");
 }
 
 #[test]
