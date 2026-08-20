@@ -3174,6 +3174,75 @@ fn sync_client_and_server_exchange_bounded_depth_metadata_without_policy() {
 }
 
 #[test]
+fn sync_client_and_server_exchange_bounded_sec_websocket_version_metadata_without_upgrade() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind sec websocket version server");
+  let addr = server
+    .local_addr()
+    .expect("sec websocket version server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request
+            .sec_websocket_version()
+            .expect("Sec-WebSocket-Version should parse")
+            .map(|versions| versions.header_value()),
+          request.header("Sec-WebSocket-Version").map(str::to_string),
+          request.header("Upgrade").map(str::to_string),
+          request.header("Connection").map(str::to_string),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed sec websocket version metadata");
+        HttpResponse::new(400, "Bad Request")
+          .with_sec_websocket_version(["13"])
+          .expect("rejection Sec-WebSocket-Version should be accepted")
+      })
+      .expect("serve sec websocket version request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/chat"))
+    .sec_websocket_version("12")
+    .expect("Sec-WebSocket-Version should be accepted")
+    .emit()
+    .expect("sec websocket version response should parse");
+
+  let (typed, raw, upgrade, connection) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe sec websocket version metadata");
+  assert_eq!(Some("12".to_string()), typed);
+  assert_eq!(Some("12".to_string()), raw);
+  assert_eq!(
+    None, upgrade,
+    "typed Sec-WebSocket-Version metadata must not set an Upgrade field"
+  );
+  assert_ne!(
+    Some("Upgrade".to_string()),
+    connection,
+    "typed Sec-WebSocket-Version metadata must not set Connection: Upgrade"
+  );
+  assert_eq!(400, response.code());
+  let declared = response
+    .sec_websocket_version()
+    .expect("rejection Sec-WebSocket-Version should parse")
+    .expect("rejection Sec-WebSocket-Version should be present");
+  assert_eq!(declared.versions(), ["13"]);
+  assert!(declared.contains("13"));
+  assert_eq!(declared.header_value(), "13");
+  assert_eq!(response.header_value("Upgrade"), None);
+  assert_ne!(
+    response.header_value("Connection").map(String::as_str),
+    Some("Upgrade"),
+    "rejection Sec-WebSocket-Version must not emit Connection: Upgrade"
+  );
+  handle.join().expect("sec websocket version server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_bounded_sec_websocket_key_metadata_without_handshake() {
   let server =
     rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind sec websocket key server");

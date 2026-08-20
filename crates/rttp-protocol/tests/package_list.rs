@@ -55,6 +55,7 @@ fn package_includes_protocol_metadata_facade_test() {
     "tests/sec_gpc.rs",
     "tests/sec_websocket_accept.rs",
     "tests/sec_websocket_key.rs",
+    "tests/sec_websocket_version.rs",
     "tests/service_worker_allowed.rs",
   ] {
     assert!(

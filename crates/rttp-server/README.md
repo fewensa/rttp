@@ -765,6 +765,28 @@ inspection. The derived value for the RFC example key
 These helpers parse and emit handshake metadata only. They do not perform an
 HTTP upgrade, generate a random nonce, or implement WebSocket frames.
 
+## Sec-WebSocket-Version request and response metadata
+
+Handlers can call `Request::sec_websocket_version()` and
+`HttpRequest::sec_websocket_version()` to observe bounded typed
+`Sec-WebSocket-Version` request metadata through the shared protocol
+`HttpSecWebSocketVersion` type. Absent fields return `Ok(None)`.
+`HttpResponse::with_sec_websocket_version(versions)` declares validated
+response metadata that replaces attached same-name fields, and
+`HttpResponse::sec_websocket_version()` parses attached response fields.
+Recognized values are RFC 6455 version tokens (`0` through `299` without
+leading zeros) in numeric descending order, such as `13` or `13, 8, 7`.
+Multiple fields are combined in wire order, each field value and the combined
+raw or canonical serialized field set is bounded to 64 KiB, and the combined
+member count is bounded to 32. Empty members, non-decimal tokens, leading-zero
+multi-digit tokens, duplicates, unordered lists, control-byte values, and
+bound violations return a parser error while `Request::header()` and
+`HttpRequest::header()` continue to expose the original raw fields.
+
+These helpers declare and parse metadata only. They do not perform a
+WebSocket handshake, emit `Connection: Upgrade` or `Upgrade: websocket`,
+compute `Sec-WebSocket-Accept`, negotiate versions, or switch protocols.
+
 ## Pragma request and response metadata
 
 Handlers can call `Request::pragma()` and `HttpRequest::pragma()` to observe

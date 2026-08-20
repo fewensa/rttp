@@ -90,6 +90,10 @@ pub use rttp_protocol::sec_websocket_key::{
   SecWebSocketKey as HttpSecWebSocketKey,
   SecWebSocketKeyParseError as HttpSecWebSocketKeyParseError,
 };
+pub use rttp_protocol::sec_websocket_version::{
+  SecWebSocketVersion as HttpSecWebSocketVersion,
+  SecWebSocketVersionParseError as HttpSecWebSocketVersionParseError,
+};
 pub use rttp_protocol::signature::{
   Signature as HttpSignature, SignatureEntry as HttpSignatureEntry,
   SignatureParseError as HttpSignatureParseError,
@@ -581,6 +585,19 @@ impl Request {
       return Ok(None);
     }
     HttpSecWebSocketKey::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `Sec-WebSocket-Version` request metadata without
+  /// negotiating versions or switching protocols. Malformed fields return a
+  /// parser error while raw headers remain available.
+  pub fn sec_websocket_version(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketVersion>, HttpSecWebSocketVersionParseError> {
+    let values: Vec<&str> = self.headers_named("Sec-WebSocket-Version").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketVersion::parse_values(values).map(Some)
   }
 
   /// Parses received W3C `traceparent` request metadata without creating
@@ -2384,6 +2401,24 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpSecWebSocketKey::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `Sec-WebSocket-Version` request metadata without
+  /// negotiating versions or switching protocols. Malformed fields return a
+  /// parser error while raw headers remain available.
+  pub fn sec_websocket_version(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketVersion>, HttpSecWebSocketVersionParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Version"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketVersion::parse_values(values).map(Some)
   }
 
   /// Parses received W3C `traceparent` request metadata without creating

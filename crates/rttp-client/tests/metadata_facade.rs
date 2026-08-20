@@ -18,12 +18,13 @@ use rttp_client::response::{
   PragmaParseError, PreferenceApplied, Priority, ProxyAuthenticate, ProxyAuthenticateParseError,
   ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError,
   ReferrerPolicy, ReferrerPolicyToken, SecWebSocketAccept, SecWebSocketAcceptParseError,
-  ServerTiming, Signature, SignatureInput, SignatureInputParseError, SignatureParseError,
-  SpeculationRules, SpeculationRulesParseError, StrictTransportSecurity,
-  StrictTransportSecurityParseError, SupportsLoadingMode, SupportsLoadingModeParseError, Trailer,
-  TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError,
-  WantContentDigest, WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError,
-  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  SecWebSocketVersion, SecWebSocketVersionParseError, ServerTiming, Signature, SignatureInput,
+  SignatureInputParseError, SignatureParseError, SpeculationRules, SpeculationRulesParseError,
+  StrictTransportSecurity, StrictTransportSecurityParseError, SupportsLoadingMode,
+  SupportsLoadingModeParseError, Trailer, TransferEncoding, TransferEncodingParseError, Upgrade,
+  UpgradeParseError, Vary, VaryParseError, WantContentDigest, WantReprDigest, Warning,
+  WwwAuthenticate, WwwAuthenticateParseError, XContentTypeOptions, XContentTypeOptionsParseError,
+  XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentDisposition, ContentDispositionParseError, ContentLocation,
@@ -184,6 +185,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .expect("Supports-Loading-Mode should parse");
   let _: SupportsLoadingModeParseError =
     SupportsLoadingMode::parse("?1").expect_err("non-token should be rejected");
+  let sec_websocket_version =
+    SecWebSocketVersion::parse("13").expect("Sec-WebSocket-Version should parse");
+  let _: SecWebSocketVersionParseError =
+    SecWebSocketVersion::parse("8, 13").expect_err("unordered versions should be rejected");
   let warning = Warning::parse(r#"110 - "Response is Stale""#).expect("Warning should parse");
   let nel =
     Nel::parse(r#"{"report_to":"network-errors","max_age":2592000}"#).expect("NEL should parse");
@@ -406,6 +411,9 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     supports_loading_mode.header_value(),
     "fenced-frame, credentialed-prerender"
   );
+  assert_eq!(sec_websocket_version.versions(), ["13"]);
+  assert!(sec_websocket_version.contains("13"));
+  assert_eq!(sec_websocket_version.header_value(), "13");
   assert_eq!(warning.items()[0].code(), 110);
   assert_eq!(nel.max_age(), 2592000);
   assert_eq!(nel.report_to(), Some("network-errors"));
@@ -818,6 +826,33 @@ fn response_facade_parses_supports_loading_mode_metadata() {
       &"credentialed-prerender".to_string()
     ]
   );
+}
+
+#[test]
+fn response_facade_parses_sec_websocket_version_metadata() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 400 Bad Request\r\n",
+      "Sec-WebSocket-Version: 13\r\n",
+      "Sec-WebSocket-Version: 8, 7\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let versions: SecWebSocketVersion = response
+    .sec_websocket_version()
+    .expect("Sec-WebSocket-Version should parse")
+    .expect("Sec-WebSocket-Version should be present");
+
+  assert_eq!(versions.versions(), ["13", "8", "7"]);
+  assert!(versions.contains("13"));
+  assert_eq!(versions.header_value(), "13, 8, 7");
+  assert_eq!(response.header_value("Connection"), None);
+  assert_eq!(response.header_value("Upgrade"), None);
 }
 
 #[test]

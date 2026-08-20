@@ -65,6 +65,7 @@ use rttp_protocol::save_data::SaveData;
 use rttp_protocol::sec_gpc::SecGpc;
 use rttp_protocol::sec_websocket_accept::SecWebSocketAccept;
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
+use rttp_protocol::sec_websocket_version::SecWebSocketVersion;
 use rttp_protocol::service_worker_allowed::ServiceWorkerAllowed;
 use rttp_protocol::signature::{Signature, SignatureParseError};
 use rttp_protocol::signature_input::{SignatureInput, SignatureInputParseError};
@@ -125,6 +126,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
     .expect("Idempotency-Key request metadata should parse");
   let sec_websocket_key = SecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==")
     .expect("Sec-WebSocket-Key request metadata should parse");
+  let sec_websocket_version =
+    SecWebSocketVersion::parse("13").expect("Sec-WebSocket-Version metadata should parse");
   let sec_websocket_accept = SecWebSocketAccept::derive_from_key(&sec_websocket_key);
   let if_modified_since = IfModifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
     .expect("If-Modified-Since should parse");
@@ -348,6 +351,9 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(sec_websocket_key.as_str(), "dGhlIHNhbXBsZSBub25jZQ==");
   assert_eq!(sec_websocket_key.header_value(), "dGhlIHNhbXBsZSBub25jZQ==");
   assert!(!format!("{sec_websocket_key:?}").contains("dGhlIHNhbXBsZSBub25jZQ=="));
+  assert_eq!(sec_websocket_version.versions(), ["13"]);
+  assert!(sec_websocket_version.contains("13"));
+  assert_eq!(sec_websocket_version.header_value(), "13");
   assert_eq!(
     sec_websocket_accept.as_str(),
     "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="

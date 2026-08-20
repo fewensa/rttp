@@ -136,6 +136,9 @@ pub use rttp_protocol::fetch_metadata::{
 };
 pub use rttp_protocol::lock_token::{LockToken, LockTokenParseError};
 pub use rttp_protocol::sec_gpc::{SecGpc, SecGpcParseError};
+pub use rttp_protocol::sec_websocket_version::{
+  SecWebSocketVersion, SecWebSocketVersionParseError,
+};
 pub use rttp_protocol::trace_context::{
   TraceParent, TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError,
 };

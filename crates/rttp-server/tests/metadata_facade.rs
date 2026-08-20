@@ -30,13 +30,14 @@ use rttp_server::server::{
   HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
   HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSecGpc, HttpSecGpcParseError,
   HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketKey,
-  HttpSecWebSocketKeyParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
-  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
-  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTraceParent,
-  HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError,
-  HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpSecWebSocketKeyParseError, HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError,
+  HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
+  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
+  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
+  HttpSpeculationRules, HttpSpeculationRulesParseError, HttpSupportsLoadingMode,
+  HttpSupportsLoadingModeParseError, HttpTraceParent, HttpTraceParentParseError, HttpTraceState,
+  HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
+  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
   HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpWantContentDigest,
   HttpWantReprDigest, HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost,
   HttpXForwardedHostParseError, HttpXForwardedProto, HttpXForwardedProtoParseError, SecFetchDest,
@@ -271,6 +272,13 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let supports_loading_mode_response = HttpResponse::ok("")
     .with_supports_loading_mode(["fenced-frame", "credentialed-prerender"])
     .expect("Supports-Loading-Mode should be accepted");
+  let sec_websocket_version: HttpSecWebSocketVersion =
+    HttpSecWebSocketVersion::parse("13").expect("Sec-WebSocket-Version should parse");
+  let _: HttpSecWebSocketVersionParseError = HttpSecWebSocketVersion::parse("8, 13")
+    .expect_err("unordered Sec-WebSocket-Version should be rejected");
+  let sec_websocket_version_response = HttpResponse::new(400, "Bad Request")
+    .with_sec_websocket_version(["13"])
+    .expect("Sec-WebSocket-Version should be accepted");
   let fetch_site = SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
@@ -533,6 +541,17 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .supports_loading_mode()
       .expect("Supports-Loading-Mode should parse")
       .expect("Supports-Loading-Mode should be present")
+      .header_value()
+  );
+  assert_eq!(sec_websocket_version.versions(), ["13"]);
+  assert!(sec_websocket_version.contains("13"));
+  assert_eq!(sec_websocket_version.header_value(), "13");
+  assert_eq!(
+    "13",
+    sec_websocket_version_response
+      .sec_websocket_version()
+      .expect("Sec-WebSocket-Version should parse")
+      .expect("Sec-WebSocket-Version should be present")
       .header_value()
   );
   assert_eq!(fetch_site.header_value(), "same-origin");
