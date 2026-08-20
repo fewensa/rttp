@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::error;
+use rttp_protocol::authorization::{Authorization, ProxyAuthorization};
+use rttp_protocol::baggage::Baggage;
 use rttp_protocol::trace_context::{TraceParent, TraceState};
 
 #[derive(Clone, Eq, PartialEq)]
@@ -34,11 +36,20 @@ impl Header {
         "Invalid outbound HTTP header value",
       ));
     }
-    if self.name.eq_ignore_ascii_case("traceparent") {
+    if self.name.eq_ignore_ascii_case("Authorization") {
+      Authorization::parse(&self.value)
+        .map_err(|error| error::builder_with_message(error.to_string()))?;
+    } else if self.name.eq_ignore_ascii_case("Proxy-Authorization") {
+      ProxyAuthorization::parse(&self.value)
+        .map_err(|error| error::builder_with_message(error.to_string()))?;
+    } else if self.name.eq_ignore_ascii_case("traceparent") {
       TraceParent::parse(&self.value)
         .map_err(|error| error::builder_with_message(error.to_string()))?;
     } else if self.name.eq_ignore_ascii_case("tracestate") {
       TraceState::parse(&self.value)
+        .map_err(|error| error::builder_with_message(error.to_string()))?;
+    } else if self.name.eq_ignore_ascii_case("baggage") {
+      Baggage::parse(&self.value)
         .map_err(|error| error::builder_with_message(error.to_string()))?;
     }
     Ok(())
@@ -106,14 +117,21 @@ impl fmt::Debug for DebugHeaderValue<'_> {
   }
 }
 
-fn is_sensitive_debug_header(name: &str) -> bool {
+pub(crate) fn is_sensitive_debug_header(name: &str) -> bool {
   name.eq_ignore_ascii_case("authorization")
     || name.eq_ignore_ascii_case("cookie")
     || name.eq_ignore_ascii_case("idempotency-key")
+    || name.eq_ignore_ascii_case("if")
+    || name.eq_ignore_ascii_case("lock-token")
+    || name.eq_ignore_ascii_case("origin-trial")
     || name.eq_ignore_ascii_case("proxy-authorization")
+    || name.eq_ignore_ascii_case("sec-websocket-accept")
+    || name.eq_ignore_ascii_case("sec-websocket-key")
     || name.eq_ignore_ascii_case("set-cookie")
+    || name.eq_ignore_ascii_case("speculation-rules")
     || name.eq_ignore_ascii_case("traceparent")
     || name.eq_ignore_ascii_case("tracestate")
+    || name.eq_ignore_ascii_case("baggage")
 }
 
 impl IntoHeader for &str {
@@ -278,6 +296,21 @@ mod tests {
       ("Cookie", "session=private"),
       ("Set-Cookie", "session=private"),
       ("Idempotency-Key", "charge-2026-08-19-9f3c"),
+      (
+        "Lock-Token",
+        "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+      ),
+      (
+        "If",
+        "(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)",
+      ),
+      ("Origin-Trial", "secret-origin-trial-token"),
+      ("Sec-WebSocket-Accept", "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="),
+      ("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ=="),
+      (
+        "Speculation-Rules",
+        "https://example.test/speculation-rules.json",
+      ),
     ] {
       let debug = format!("{:?}", Header::new(name, secret));
       assert!(debug.contains(name));
@@ -291,5 +324,9 @@ mod tests {
     let debug = format!("{:?}", Header::new("Accept", "application/json"));
     assert!(debug.contains("Accept"));
     assert!(debug.contains("application/json"));
+
+    let if_match = format!("{:?}", Header::new("If-Match", "\"revision-42\""));
+    assert!(if_match.contains("If-Match"));
+    assert!(if_match.contains("revision-42"));
   }
 }

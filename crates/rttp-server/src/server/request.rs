@@ -1,5 +1,9 @@
 use super::*;
 
+pub use rttp_protocol::a_im::{
+  AIm as HttpAIm, AImMember as HttpAImMember, AImParameter as HttpAImParameter,
+  AImParseError as HttpAImParseError,
+};
 pub use rttp_protocol::accept_charset::{
   AcceptCharset as HttpRequestAcceptCharsets,
   AcceptCharsetParseError as HttpAcceptCharsetParseError, AcceptCharsetRange as HttpAcceptCharset,
@@ -27,11 +31,23 @@ pub use rttp_protocol::authorization::{
   Authorization as HttpAuthorization, AuthorizationParseError as HttpAuthorizationParseError,
   ProxyAuthorization as HttpProxyAuthorization,
 };
+pub use rttp_protocol::baggage::{
+  Baggage as HttpBaggage, BaggageMember as HttpBaggageMember,
+  BaggageParseError as HttpBaggageParseError, BaggageProperty as HttpBaggageProperty,
+};
+pub use rttp_protocol::cdn_loop::{
+  CdnLoop as HttpCdnLoop, CdnLoopMember as HttpCdnLoopMember,
+  CdnLoopParameter as HttpCdnLoopParameter, CdnLoopParseError as HttpCdnLoopParseError,
+};
 pub use rttp_protocol::connection::{
   Connection as HttpConnection, ConnectionParseError as HttpConnectionParseError,
 };
 pub use rttp_protocol::content_length::HttpContentLength;
 pub use rttp_protocol::cookie::{HttpCookiePair, HttpCookieParseError, HttpCookies};
+pub use rttp_protocol::depth::{Depth as HttpDepth, DepthParseError as HttpDepthParseError};
+pub use rttp_protocol::destination::{
+  Destination as HttpDestination, DestinationParseError as HttpDestinationParseError,
+};
 pub use rttp_protocol::dnt::{Dnt as HttpDnt, DntParseError as HttpDntParseError};
 pub use rttp_protocol::entity_tag::{
   EntityTag as HttpEntityTag, EntityTagParseError as HttpEntityTagParseError,
@@ -51,16 +67,39 @@ pub use rttp_protocol::host::{Host as HttpHost, HostParseError as HttpHostParseE
 pub use rttp_protocol::idempotency_key::{
   IdempotencyKey as HttpIdempotencyKey, IdempotencyKeyParseError as HttpIdempotencyKeyParseError,
 };
+pub use rttp_protocol::if_header::{
+  If as HttpIf, IfCondition as HttpIfCondition, IfList as HttpIfList,
+  IfParseError as HttpIfParseError, IfPredicate as HttpIfPredicate,
+  IfResourceTag as HttpIfResourceTag, IfStateToken as HttpIfStateToken,
+};
 pub use rttp_protocol::if_modified_since::{
   IfModifiedSince as HttpIfModifiedSince,
   IfModifiedSinceParseError as HttpIfModifiedSinceParseError,
+};
+pub use rttp_protocol::if_schedule_tag_match::{
+  IfScheduleTagMatch as HttpIfScheduleTagMatch,
+  IfScheduleTagMatchParseError as HttpIfScheduleTagMatchParseError,
 };
 pub use rttp_protocol::if_unmodified_since::{
   IfUnmodifiedSince as HttpIfUnmodifiedSince,
   IfUnmodifiedSinceParseError as HttpIfUnmodifiedSinceParseError,
 };
+pub use rttp_protocol::lock_token::{
+  LockToken as HttpLockToken, LockTokenParseError as HttpLockTokenParseError,
+};
 pub use rttp_protocol::max_forwards::{
   MaxForwards as HttpMaxForwards, MaxForwardsParseError as HttpMaxForwardsParseError,
+};
+pub use rttp_protocol::negotiate::{
+  Negotiate as HttpNegotiate, NegotiateDirective as HttpNegotiateDirective,
+  NegotiateParseError as HttpNegotiateParseError,
+};
+pub use rttp_protocol::overwrite::{
+  Overwrite as HttpOverwrite, OverwriteParseError as HttpOverwriteParseError,
+};
+pub use rttp_protocol::pragma::{
+  Pragma as HttpPragma, PragmaDirective as HttpPragmaDirective,
+  PragmaParseError as HttpPragmaParseError,
 };
 pub use rttp_protocol::prefer::{
   Prefer as HttpRequestPreferences, PreferParseError as HttpPreferParseError,
@@ -71,6 +110,25 @@ pub use rttp_protocol::save_data::{
   SaveData as HttpSaveData, SaveDataParseError as HttpSaveDataParseError,
 };
 pub use rttp_protocol::sec_gpc::{SecGpc as HttpSecGpc, SecGpcParseError as HttpSecGpcParseError};
+pub use rttp_protocol::sec_websocket_extensions::{
+  SecWebSocketExtension as HttpSecWebSocketExtension,
+  SecWebSocketExtensionParameter as HttpSecWebSocketExtensionParameter,
+  SecWebSocketExtensionParameterValue as HttpSecWebSocketExtensionParameterValue,
+  SecWebSocketExtensions as HttpSecWebSocketExtensions,
+  SecWebSocketExtensionsParseError as HttpSecWebSocketExtensionsParseError,
+};
+pub use rttp_protocol::sec_websocket_key::{
+  SecWebSocketKey as HttpSecWebSocketKey,
+  SecWebSocketKeyParseError as HttpSecWebSocketKeyParseError,
+};
+pub use rttp_protocol::sec_websocket_protocol::{
+  SecWebSocketProtocol as HttpSecWebSocketProtocol,
+  SecWebSocketProtocolParseError as HttpSecWebSocketProtocolParseError,
+};
+pub use rttp_protocol::sec_websocket_version::{
+  SecWebSocketVersion as HttpSecWebSocketVersion,
+  SecWebSocketVersionParseError as HttpSecWebSocketVersionParseError,
+};
 pub use rttp_protocol::signature::{
   Signature as HttpSignature, SignatureEntry as HttpSignatureEntry,
   SignatureParseError as HttpSignatureParseError,
@@ -92,6 +150,10 @@ pub use rttp_protocol::signature_input::{
 pub use rttp_protocol::te::{
   Te as HttpRequestTe, TeCoding as HttpTe, TeParseError as HttpTeParseError,
 };
+pub use rttp_protocol::timeout::{
+  Timeout as HttpTimeout, TimeoutParseError as HttpTimeoutParseError,
+  TimeoutType as HttpTimeoutType,
+};
 pub use rttp_protocol::trace_context::{
   TraceParent as HttpTraceParent, TraceParentParseError as HttpTraceParentParseError,
   TraceState as HttpTraceState, TraceStateMember as HttpTraceStateMember,
@@ -111,6 +173,9 @@ pub use rttp_protocol::upgrade_insecure_requests::{
   UpgradeInsecureRequests as HttpUpgradeInsecureRequests,
   UpgradeInsecureRequestsParseError as HttpUpgradeInsecureRequestsParseError,
 };
+pub use rttp_protocol::via::{
+  Via as HttpVia, ViaMember as HttpViaMember, ViaParseError as HttpViaParseError,
+};
 pub use rttp_protocol::want_content_digest::{
   WantContentDigest as HttpWantContentDigest, WantContentDigestEntry as HttpWantContentDigestEntry,
   WantContentDigestParseError as HttpWantContentDigestParseError,
@@ -118,6 +183,18 @@ pub use rttp_protocol::want_content_digest::{
 pub use rttp_protocol::want_repr_digest::{
   WantReprDigest as HttpWantReprDigest, WantReprDigestEntry as HttpWantReprDigestEntry,
   WantReprDigestParseError as HttpWantReprDigestParseError,
+};
+pub use rttp_protocol::x_forwarded_for::{
+  XForwardedFor as HttpXForwardedFor, XForwardedForNode as HttpXForwardedForNode,
+  XForwardedForNodeKind as HttpXForwardedForNodeKind,
+  XForwardedForParseError as HttpXForwardedForParseError,
+};
+pub use rttp_protocol::x_forwarded_host::{
+  XForwardedHost as HttpXForwardedHost, XForwardedHostParseError as HttpXForwardedHostParseError,
+};
+pub use rttp_protocol::x_forwarded_proto::{
+  XForwardedProto as HttpXForwardedProto,
+  XForwardedProtoParseError as HttpXForwardedProtoParseError,
 };
 
 pub(crate) const MAX_REQUEST_HEAD_BYTES: usize = 64 * 1024;
@@ -210,10 +287,15 @@ fn is_sensitive_debug_header(name: &str) -> bool {
   name.eq_ignore_ascii_case("authorization")
     || name.eq_ignore_ascii_case("cookie")
     || name.eq_ignore_ascii_case("idempotency-key")
+    || name.eq_ignore_ascii_case("if")
+    || name.eq_ignore_ascii_case("lock-token")
     || name.eq_ignore_ascii_case("proxy-authorization")
+    || name.eq_ignore_ascii_case("sec-websocket-accept")
+    || name.eq_ignore_ascii_case("sec-websocket-key")
     || name.eq_ignore_ascii_case("set-cookie")
     || name.eq_ignore_ascii_case("traceparent")
     || name.eq_ignore_ascii_case("tracestate")
+    || name.eq_ignore_ascii_case("baggage")
 }
 
 impl Request {
@@ -309,6 +391,35 @@ impl Request {
       return Ok(None);
     }
     HttpIfModifiedSince::parse_values(values).map(Some)
+  }
+
+  /// Parses one entity-tag-shaped `If-Schedule-Tag-Match` validator without
+  /// comparing it to stored calendar state or applying scheduling policy.
+  pub fn if_schedule_tag_match(
+    &self,
+  ) -> Result<Option<HttpIfScheduleTagMatch>, HttpIfScheduleTagMatchParseError> {
+    let values: Vec<&str> = self.headers_named("If-Schedule-Tag-Match").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpIfScheduleTagMatch::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded WebDAV `If` request metadata without evaluating locks,
+  /// entity tags, or other resource state.
+  ///
+  /// The value must be one or more RFC 4918 condition lists, either entirely
+  /// untagged or entirely tagged, and is limited to 64 KiB with at most 32
+  /// lists and 256 conditions. Mixed tagged and untagged productions and
+  /// duplicate fields are rejected. A successful parse does not imply that a
+  /// precondition is satisfied; callers decide how to apply the declared
+  /// conditions. The raw `If` field remains available through `header`.
+  pub fn if_header(&self) -> Result<Option<HttpIf>, HttpIfParseError> {
+    let values: Vec<&str> = self.headers_named("If").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpIf::parse_values(values).map(Some)
   }
 
   /// Parses one HTTP-date `If-Unmodified-Since` validator without evaluating it.
@@ -509,6 +620,68 @@ impl Request {
     HttpMaxForwards::parse_values(values).map(Some)
   }
 
+  /// Parses received WebDAV `Depth` request metadata without traversing
+  /// resources or enforcing method policy.
+  pub fn depth(&self) -> Result<Option<HttpDepth>, HttpDepthParseError> {
+    let values: Vec<&str> = self.headers_named("Depth").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDepth::parse_values(values).map(Some)
+  }
+
+  /// Parses received WebDAV `Destination` request metadata without resolving,
+  /// authorizing, or moving application resources.
+  pub fn destination(&self) -> Result<Option<HttpDestination>, HttpDestinationParseError> {
+    let values: Vec<&str> = self.headers_named("Destination").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDestination::parse_values(values).map(Some)
+  }
+
+  /// Parses exactly one bounded WebDAV `Lock-Token` field as typed metadata.
+  /// Duplicate fields are rejected to avoid ambiguous tokens. This accessor
+  /// does not create, refresh, release, persist, or enforce locks.
+  pub fn lock_token(&self) -> Result<Option<HttpLockToken>, HttpLockTokenParseError> {
+    let values: Vec<&str> = self.headers_named("Lock-Token").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpLockToken::parse_values(values).map(Some)
+  }
+
+  /// Parses received WebDAV `Timeout` request metadata without creating locks,
+  /// refreshing locks, or selecting an application timeout.
+  pub fn timeout(&self) -> Result<Option<HttpTimeout>, HttpTimeoutParseError> {
+    let values: Vec<&str> = self.headers_named("Timeout").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpTimeout::parse_values(values).map(Some)
+  }
+
+  /// Parses received RFC 2295 `Negotiate` request metadata without selecting
+  /// a variant, running transparent content negotiation, or changing cache
+  /// selection.
+  pub fn negotiate(&self) -> Result<Option<HttpNegotiate>, HttpNegotiateParseError> {
+    let values: Vec<&str> = self.headers_named("Negotiate").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpNegotiate::parse_values(values).map(Some)
+  }
+
+  /// Parses received WebDAV `Overwrite` request metadata without overwriting
+  /// destination resources or applying the RFC 4918 default `T`.
+  pub fn overwrite(&self) -> Result<Option<HttpOverwrite>, HttpOverwriteParseError> {
+    let values: Vec<&str> = self.headers_named("Overwrite").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpOverwrite::parse_values(values).map(Some)
+  }
+
   /// Parses exactly one opaque, bounded `Idempotency-Key` field as typed
   /// metadata. Duplicate fields are rejected to avoid ambiguous keys. This
   /// accessor does not retry requests, store keys, or apply idempotency
@@ -521,6 +694,61 @@ impl Request {
       return Ok(None);
     }
     HttpIdempotencyKey::parse_values(values).map(Some)
+  }
+
+  /// Parses exactly one bounded `Sec-WebSocket-Key` field as typed nonce
+  /// metadata. Duplicate fields are rejected to avoid ambiguous nonces. This
+  /// accessor does not perform an HTTP upgrade, compute
+  /// `Sec-WebSocket-Accept`, or implement WebSocket frames.
+  pub fn sec_websocket_key(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketKey>, HttpSecWebSocketKeyParseError> {
+    let values: Vec<&str> = self.headers_named("Sec-WebSocket-Key").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketKey::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `Sec-WebSocket-Version` request metadata without
+  /// negotiating versions or switching protocols. Malformed fields return a
+  /// parser error while raw headers remain available.
+  pub fn sec_websocket_version(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketVersion>, HttpSecWebSocketVersionParseError> {
+    let values: Vec<&str> = self.headers_named("Sec-WebSocket-Version").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketVersion::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `Sec-WebSocket-Protocol` request metadata as offers in
+  /// preference order without choosing an application subprotocol or
+  /// switching protocols. Malformed fields return a parser error while raw
+  /// headers remain available.
+  pub fn sec_websocket_protocol(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketProtocol>, HttpSecWebSocketProtocolParseError> {
+    let values: Vec<&str> = self.headers_named("Sec-WebSocket-Protocol").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketProtocol::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `Sec-WebSocket-Extensions` request metadata as ordered
+  /// offers without activating compression, negotiating extensions, or
+  /// switching protocols. Malformed fields return a parser error while raw
+  /// headers remain available.
+  pub fn sec_websocket_extensions(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketExtensions>, HttpSecWebSocketExtensionsParseError> {
+    let values: Vec<&str> = self.headers_named("Sec-WebSocket-Extensions").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketExtensions::parse_values(values).map(Some)
   }
 
   /// Parses received W3C `traceparent` request metadata without creating
@@ -543,6 +771,16 @@ impl Request {
     HttpTraceState::parse_values(values).map(Some)
   }
 
+  /// Parses received W3C `baggage` request metadata without interpreting
+  /// application values or automatically propagating metadata.
+  pub fn baggage(&self) -> Result<Option<HttpBaggage>, HttpBaggageParseError> {
+    let values: Vec<&str> = self.headers_named("baggage").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpBaggage::parse_values(values).map(Some)
+  }
+
   /// Parses received `Prefer` request metadata without applying preferences.
   pub fn prefer(&self) -> Result<Option<HttpRequestPreferences>, HttpPreferParseError> {
     parse_prefer_values(self.headers_named("Prefer"))
@@ -557,6 +795,16 @@ impl Request {
       return Ok(None);
     }
     HttpRequestAcceptCharsets::parse_values(values).map(Some)
+  }
+
+  /// Parses received `A-IM` request metadata without selecting or applying a
+  /// delta encoding.
+  pub fn a_im(&self) -> Result<Option<HttpAIm>, HttpAImParseError> {
+    let values: Vec<&str> = self.headers_named("A-IM").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAIm::parse_values(values).map(Some)
   }
 
   /// Parses received `Accept-Encoding` request metadata without enabling
@@ -609,6 +857,16 @@ impl Request {
       return Ok(None);
     }
     HttpUpgrade::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Pragma` request metadata without applying cache,
+  /// intermediary, or HTTP/1.0 compatibility policy.
+  pub fn pragma(&self) -> Result<Option<HttpPragma>, HttpPragmaParseError> {
+    let values: Vec<&str> = self.headers_named("Pragma").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpPragma::parse_values(values).map(Some)
   }
 
   /// Parses received `Content-Type` representation metadata without sniffing
@@ -737,6 +995,60 @@ impl Request {
       return Ok(None);
     }
     HttpForwarded::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded RFC 8586 `CDN-Loop` request metadata without detecting
+  /// loops, rejecting the request, or inserting a local CDN identifier.
+  pub fn cdn_loop(&self) -> Result<Option<HttpCdnLoop>, HttpCdnLoopParseError> {
+    let values: Vec<&str> = self.headers_named("CDN-Loop").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpCdnLoop::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded HTTP `Via` request metadata without appending or removing
+  /// hops or applying proxy policy.
+  pub fn via(&self) -> Result<Option<HttpVia>, HttpViaParseError> {
+    let values: Vec<&str> = self.headers_named("Via").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpVia::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `X-Forwarded-For` request metadata without applying a
+  /// trusted-proxy policy, deriving identity, or rewriting request addresses.
+  pub fn x_forwarded_for(&self) -> Result<Option<HttpXForwardedFor>, HttpXForwardedForParseError> {
+    let values: Vec<&str> = self.headers_named("X-Forwarded-For").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpXForwardedFor::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `X-Forwarded-Host` request metadata without applying a
+  /// trusted-proxy policy, changing routing, or rewriting request authority.
+  pub fn x_forwarded_host(
+    &self,
+  ) -> Result<Option<HttpXForwardedHost>, HttpXForwardedHostParseError> {
+    let values: Vec<&str> = self.headers_named("X-Forwarded-Host").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpXForwardedHost::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `X-Forwarded-Proto` request metadata without applying a
+  /// trusted-proxy policy, upgrading, redirecting, or rewriting schemes.
+  pub fn x_forwarded_proto(
+    &self,
+  ) -> Result<Option<HttpXForwardedProto>, HttpXForwardedProtoParseError> {
+    let values: Vec<&str> = self.headers_named("X-Forwarded-Proto").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpXForwardedProto::parse_values(values).map(Some)
   }
 
   pub fn vary_selection(&self, vary: &HttpVary) -> HttpVarySelection {
@@ -2075,6 +2387,45 @@ impl HttpRequest {
     HttpIfModifiedSince::parse_values(values).map(Some)
   }
 
+  /// Parses one entity-tag-shaped `If-Schedule-Tag-Match` validator without
+  /// comparing it to stored calendar state or applying scheduling policy.
+  pub fn if_schedule_tag_match(
+    &self,
+  ) -> Result<Option<HttpIfScheduleTagMatch>, HttpIfScheduleTagMatchParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("If-Schedule-Tag-Match"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpIfScheduleTagMatch::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded WebDAV `If` request metadata without evaluating locks,
+  /// entity tags, or other resource state.
+  ///
+  /// The value must be one or more RFC 4918 condition lists, either entirely
+  /// untagged or entirely tagged, and is limited to 64 KiB with at most 32
+  /// lists and 256 conditions. Mixed tagged and untagged productions and
+  /// duplicate fields are rejected. A successful parse does not imply that a
+  /// precondition is satisfied; callers decide how to apply the declared
+  /// conditions. The raw `If` field remains available through `header`.
+  pub fn if_header(&self) -> Result<Option<HttpIf>, HttpIfParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("If"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpIf::parse_values(values).map(Some)
+  }
+
   /// Parses one HTTP-date `If-Unmodified-Since` validator without evaluating it.
   pub fn if_unmodified_since(
     &self,
@@ -2193,6 +2544,98 @@ impl HttpRequest {
     HttpMaxForwards::parse_values(values).map(Some)
   }
 
+  /// Parses received WebDAV `Depth` request metadata without traversing
+  /// resources or enforcing method policy.
+  pub fn depth(&self) -> Result<Option<HttpDepth>, HttpDepthParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Depth"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDepth::parse_values(values).map(Some)
+  }
+
+  /// Parses received WebDAV `Destination` request metadata without resolving,
+  /// authorizing, or moving application resources.
+  pub fn destination(&self) -> Result<Option<HttpDestination>, HttpDestinationParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Destination"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDestination::parse_values(values).map(Some)
+  }
+
+  /// Parses exactly one bounded WebDAV `Lock-Token` field as typed metadata.
+  /// Duplicate fields are rejected to avoid ambiguous tokens. This accessor
+  /// does not create, refresh, release, persist, or enforce locks.
+  pub fn lock_token(&self) -> Result<Option<HttpLockToken>, HttpLockTokenParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Lock-Token"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpLockToken::parse_values(values).map(Some)
+  }
+
+  /// Parses received WebDAV `Timeout` request metadata without creating locks,
+  /// refreshing locks, or selecting an application timeout.
+  pub fn timeout(&self) -> Result<Option<HttpTimeout>, HttpTimeoutParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Timeout"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpTimeout::parse_values(values).map(Some)
+  }
+
+  /// Parses received RFC 2295 `Negotiate` request metadata without selecting
+  /// a variant, running transparent content negotiation, or changing cache
+  /// selection.
+  pub fn negotiate(&self) -> Result<Option<HttpNegotiate>, HttpNegotiateParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Negotiate"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpNegotiate::parse_values(values).map(Some)
+  }
+
+  /// Parses received WebDAV `Overwrite` request metadata without overwriting
+  /// destination resources or applying the RFC 4918 default `T`.
+  pub fn overwrite(&self) -> Result<Option<HttpOverwrite>, HttpOverwriteParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Overwrite"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpOverwrite::parse_values(values).map(Some)
+  }
+
   /// Parses exactly one opaque, bounded `Idempotency-Key` field as typed
   /// metadata. Duplicate fields are rejected to avoid ambiguous keys. This
   /// accessor does not retry requests, store keys, or apply idempotency
@@ -2210,6 +2653,81 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpIdempotencyKey::parse_values(values).map(Some)
+  }
+
+  /// Parses exactly one bounded `Sec-WebSocket-Key` field as typed nonce
+  /// metadata. Duplicate fields are rejected to avoid ambiguous nonces. This
+  /// accessor does not perform an HTTP upgrade, compute
+  /// `Sec-WebSocket-Accept`, or implement WebSocket frames.
+  pub fn sec_websocket_key(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketKey>, HttpSecWebSocketKeyParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Key"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketKey::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `Sec-WebSocket-Version` request metadata without
+  /// negotiating versions or switching protocols. Malformed fields return a
+  /// parser error while raw headers remain available.
+  pub fn sec_websocket_version(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketVersion>, HttpSecWebSocketVersionParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Version"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketVersion::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `Sec-WebSocket-Protocol` request metadata as offers in
+  /// preference order without choosing an application subprotocol or
+  /// switching protocols. Malformed fields return a parser error while raw
+  /// headers remain available.
+  pub fn sec_websocket_protocol(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketProtocol>, HttpSecWebSocketProtocolParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Protocol"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketProtocol::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `Sec-WebSocket-Extensions` request metadata as ordered
+  /// offers without activating compression, negotiating extensions, or
+  /// switching protocols. Malformed fields return a parser error while raw
+  /// headers remain available.
+  pub fn sec_websocket_extensions(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketExtensions>, HttpSecWebSocketExtensionsParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Extensions"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketExtensions::parse_values(values).map(Some)
   }
 
   /// Parses received W3C `traceparent` request metadata without creating
@@ -2240,6 +2758,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpTraceState::parse_values(values).map(Some)
+  }
+
+  /// Parses received W3C `baggage` request metadata without interpreting
+  /// application values or automatically propagating metadata.
+  pub fn baggage(&self) -> Result<Option<HttpBaggage>, HttpBaggageParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("baggage"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpBaggage::parse_values(values).map(Some)
   }
 
   /// Parses received `Prefer` request metadata without applying preferences.
@@ -2403,6 +2936,21 @@ impl HttpRequest {
     HttpUpgradeInsecureRequests::parse_values(values).map(Some)
   }
 
+  /// Parses received `A-IM` request metadata without selecting or applying a
+  /// delta encoding.
+  pub fn a_im(&self) -> Result<Option<HttpAIm>, HttpAImParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("A-IM"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAIm::parse_values(values).map(Some)
+  }
+
   /// Parses received `Accept-Encoding` request metadata without enabling
   /// automatic compression, decompression, or content negotiation.
   pub fn accept_encoding(
@@ -2487,6 +3035,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpUpgrade::parse_values(values).map(Some)
+  }
+
+  /// Parses received `Pragma` request metadata without applying cache,
+  /// intermediary, or HTTP/1.0 compatibility policy.
+  pub fn pragma(&self) -> Result<Option<HttpPragma>, HttpPragmaParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Pragma"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpPragma::parse_values(values).map(Some)
   }
 
   /// Parses received `Content-Type` representation metadata without sniffing
@@ -2661,6 +3224,85 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpForwarded::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded RFC 8586 `CDN-Loop` request metadata without detecting
+  /// loops, rejecting the request, or inserting a local CDN identifier.
+  pub fn cdn_loop(&self) -> Result<Option<HttpCdnLoop>, HttpCdnLoopParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("CDN-Loop"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpCdnLoop::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded HTTP `Via` request metadata without appending or removing
+  /// hops or applying proxy policy.
+  pub fn via(&self) -> Result<Option<HttpVia>, HttpViaParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Via"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpVia::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `X-Forwarded-For` request metadata without applying a
+  /// trusted-proxy policy, deriving identity, or rewriting request addresses.
+  pub fn x_forwarded_for(&self) -> Result<Option<HttpXForwardedFor>, HttpXForwardedForParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("X-Forwarded-For"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpXForwardedFor::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `X-Forwarded-Host` request metadata without applying a
+  /// trusted-proxy policy, changing routing, or rewriting request authority.
+  pub fn x_forwarded_host(
+    &self,
+  ) -> Result<Option<HttpXForwardedHost>, HttpXForwardedHostParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("X-Forwarded-Host"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpXForwardedHost::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `X-Forwarded-Proto` request metadata without applying a
+  /// trusted-proxy policy, upgrading, redirecting, or rewriting schemes.
+  pub fn x_forwarded_proto(
+    &self,
+  ) -> Result<Option<HttpXForwardedProto>, HttpXForwardedProtoParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("X-Forwarded-Proto"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpXForwardedProto::parse_values(values).map(Some)
   }
 
   pub fn vary_selection(&self, vary: &HttpVary) -> HttpVarySelection {

@@ -26,6 +26,13 @@ pub use rttp_protocol::alt_svc::{
   AltSvc as HttpAltSvc, AltSvcAlternative as HttpAltSvcAlternative,
   AltSvcParameter as HttpAltSvcParameter, AltSvcParseError as HttpAltSvcParseError,
 };
+pub use rttp_protocol::alt_used::{
+  AltUsed as HttpAltUsed, AltUsedParseError as HttpAltUsedParseError,
+};
+pub use rttp_protocol::alternates::{
+  AlternateAttribute as HttpAlternateAttribute, AlternateVariant as HttpAlternateVariant,
+  Alternates as HttpAlternates, AlternatesParseError as HttpAlternatesParseError,
+};
 pub use rttp_protocol::authentication_info::{
   AuthenticationInfo as HttpAuthenticationInfo,
   AuthenticationInfoParseError as HttpAuthenticationInfoParseError,
@@ -60,6 +67,10 @@ pub use rttp_protocol::content_location::{
   ContentLocation as HttpContentLocation,
   ContentLocationParseError as HttpContentLocationParseError,
 };
+pub use rttp_protocol::content_security_policy_report_only::{
+  ContentSecurityPolicyReportOnly as HttpContentSecurityPolicyReportOnly,
+  ContentSecurityPolicyReportOnlyParseError as HttpContentSecurityPolicyReportOnlyParseError,
+};
 pub use rttp_protocol::content_type::ContentTypeParseError as HttpContentTypeParseError;
 pub use rttp_protocol::cross_origin_embedder_policy::{
   CrossOriginEmbedderPolicy as HttpCrossOriginEmbedderPolicy,
@@ -73,9 +84,21 @@ pub use rttp_protocol::cross_origin_opener_policy::{
   CrossOriginOpenerPolicy as HttpCrossOriginOpenerPolicy,
   CrossOriginOpenerPolicyParseError as HttpCrossOriginOpenerPolicyParseError,
 };
+pub use rttp_protocol::cross_origin_opener_policy_report_only::{
+  CrossOriginOpenerPolicyReportOnly as HttpCrossOriginOpenerPolicyReportOnly,
+  CrossOriginOpenerPolicyReportOnlyBareItem as HttpCrossOriginOpenerPolicyReportOnlyBareItem,
+  CrossOriginOpenerPolicyReportOnlyParameter as HttpCrossOriginOpenerPolicyReportOnlyParameter,
+  CrossOriginOpenerPolicyReportOnlyParseError as HttpCrossOriginOpenerPolicyReportOnlyParseError,
+};
 pub use rttp_protocol::cross_origin_resource_policy::{
   CrossOriginResourcePolicy as HttpCrossOriginResourcePolicy,
   CrossOriginResourcePolicyParseError as HttpCrossOriginResourcePolicyParseError,
+};
+pub use rttp_protocol::dav::{
+  Dav as HttpDav, DavClass as HttpDavClass, DavParseError as HttpDavParseError,
+};
+pub use rttp_protocol::delta_base::{
+  DeltaBase as HttpDeltaBase, DeltaBaseParseError as HttpDeltaBaseParseError,
 };
 pub use rttp_protocol::deprecation::{
   Deprecation as HttpDeprecation, DeprecationParseError as HttpDeprecationParseError,
@@ -84,9 +107,27 @@ pub use rttp_protocol::digest::{
   Digest as HttpDigest, DigestEntry as HttpDigestEntry, DigestParseError as HttpDigestParseError,
   ReprDigest as HttpReprDigest, ReprDigestEntry as HttpReprDigestEntry,
 };
+pub use rttp_protocol::document_policy::{
+  DocumentPolicy as HttpDocumentPolicy, DocumentPolicyDirective as HttpDocumentPolicyDirective,
+  DocumentPolicyParseError as HttpDocumentPolicyParseError,
+  DocumentPolicyValue as HttpDocumentPolicyValue,
+};
+pub use rttp_protocol::document_policy_report_only::{
+  DocumentPolicyReportOnly as HttpDocumentPolicyReportOnly,
+  DocumentPolicyReportOnlyDirective as HttpDocumentPolicyReportOnlyDirective,
+  DocumentPolicyReportOnlyParseError as HttpDocumentPolicyReportOnlyParseError,
+  DocumentPolicyReportOnlyValue as HttpDocumentPolicyReportOnlyValue,
+};
+pub use rttp_protocol::im::{
+  Im as HttpIm, ImMember as HttpImMember, ImParameter as HttpImParameter,
+  ImParseError as HttpImParseError,
+};
 pub use rttp_protocol::keep_alive::{
   KeepAlive as HttpKeepAlive, KeepAliveExtension as HttpKeepAliveExtension,
   KeepAliveParseError as HttpKeepAliveParseError,
+};
+pub use rttp_protocol::lock_token::{
+  LockToken as HttpLockToken, LockTokenParseError as HttpLockTokenParseError,
 };
 pub use rttp_protocol::memento_datetime::{
   MementoDatetime as HttpMementoDatetime,
@@ -100,6 +141,17 @@ pub use rttp_protocol::no_vary_search::{
   NoVarySearchParams as HttpNoVarySearchParams,
   NoVarySearchParseError as HttpNoVarySearchParseError,
 };
+pub use rttp_protocol::origin_trial::{
+  OriginTrialParseError as HttpOriginTrialParseError, OriginTrials as HttpOriginTrials,
+};
+pub use rttp_protocol::permissions_policy::{
+  PermissionsPolicy as HttpPermissionsPolicy,
+  PermissionsPolicyAllowlist as HttpPermissionsPolicyAllowlist,
+  PermissionsPolicyAllowlistMember as HttpPermissionsPolicyAllowlistMember,
+  PermissionsPolicyDirective as HttpPermissionsPolicyDirective,
+  PermissionsPolicyParseError as HttpPermissionsPolicyParseError,
+};
+pub use rttp_protocol::pragma::{Pragma as HttpPragma, PragmaParseError as HttpPragmaParseError};
 pub use rttp_protocol::priority::{
   Priority as HttpPriority, PriorityExtension as HttpPriorityExtension,
   PriorityParseError as HttpPriorityParseError,
@@ -117,22 +169,68 @@ pub use rttp_protocol::proxy_status::{
 pub use rttp_protocol::range::{
   ContentRange as HttpContentRange, ContentRangeParseError as HttpContentRangeParseError,
 };
+pub use rttp_protocol::reporting_endpoints::{
+  ReportingEndpoints as HttpReportingEndpoints,
+  ReportingEndpointsParseError as HttpReportingEndpointsParseError,
+};
+pub use rttp_protocol::schedule_tag::{
+  ScheduleTag as HttpScheduleTag, ScheduleTagParseError as HttpScheduleTagParseError,
+};
+pub use rttp_protocol::sec_websocket_accept::{
+  SecWebSocketAccept as HttpSecWebSocketAccept,
+  SecWebSocketAcceptParseError as HttpSecWebSocketAcceptParseError,
+};
+pub use rttp_protocol::sec_websocket_extensions::{
+  SecWebSocketExtensions as HttpSecWebSocketExtensions,
+  SecWebSocketExtensionsParseError as HttpSecWebSocketExtensionsParseError,
+};
+pub use rttp_protocol::sec_websocket_protocol::{
+  SecWebSocketProtocol as HttpSecWebSocketProtocol,
+  SecWebSocketProtocolParseError as HttpSecWebSocketProtocolParseError,
+};
+pub use rttp_protocol::sec_websocket_version::{
+  SecWebSocketVersion as HttpSecWebSocketVersion,
+  SecWebSocketVersionParseError as HttpSecWebSocketVersionParseError,
+};
 pub use rttp_protocol::server_timing::{
   ServerTiming as HttpServerTiming, ServerTimingMetric as HttpServerTimingMetric,
   ServerTimingParameter as HttpServerTimingParameter,
   ServerTimingParseError as HttpServerTimingParseError,
 };
+pub use rttp_protocol::service_worker_allowed::{
+  ServiceWorkerAllowed as HttpServiceWorkerAllowed,
+  ServiceWorkerAllowedParseError as HttpServiceWorkerAllowedParseError,
+};
 pub use rttp_protocol::signature_input::{
   SignatureInput as HttpSignatureInput, SignatureInputParseError as HttpSignatureInputParseError,
+};
+pub use rttp_protocol::speculation_rules::{
+  SpeculationRules as HttpSpeculationRules,
+  SpeculationRulesParseError as HttpSpeculationRulesParseError,
 };
 pub use rttp_protocol::strict_transport_security::{
   StrictTransportSecurity as HttpStrictTransportSecurity,
   StrictTransportSecurityParseError as HttpStrictTransportSecurityParseError,
 };
 pub use rttp_protocol::sunset::SunsetParseError as HttpSunsetParseError;
+pub use rttp_protocol::supports_loading_mode::{
+  SupportsLoadingMode as HttpSupportsLoadingMode,
+  SupportsLoadingModeParseError as HttpSupportsLoadingModeParseError,
+};
+pub use rttp_protocol::surrogate_control::{
+  SurrogateControl as HttpSurrogateControl,
+  SurrogateControlParseError as HttpSurrogateControlParseError,
+};
+pub use rttp_protocol::tcn::{
+  Tcn as HttpTcn, TcnDirective as HttpTcnDirective, TcnParseError as HttpTcnParseError,
+};
 pub use rttp_protocol::upgrade::{
   Upgrade as HttpUpgrade, UpgradeParseError as HttpUpgradeParseError,
 };
+pub use rttp_protocol::variant_vary::{
+  VariantVary as HttpVariantVary, VariantVaryParseError as HttpVariantVaryParseError,
+};
+pub use rttp_protocol::via::{Via as HttpVia, ViaParseError as HttpViaParseError};
 pub use rttp_protocol::www_authenticate::{
   WwwAuthenticate as HttpWwwAuthenticate, WwwAuthenticateChallenge as HttpWwwAuthenticateChallenge,
   WwwAuthenticateParameter as HttpWwwAuthenticateParameter,
@@ -311,8 +409,6 @@ pub(crate) const MAX_LINK_VALUE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_LINK_VALUES: usize = 256;
 pub(crate) const MAX_LINK_PARAMETERS: usize = 256;
 pub(crate) const MAX_LINK_PARAMETER_VALUE_BYTES: usize = 64 * 1024;
-pub(crate) const MAX_REPORTING_ENDPOINTS_VALUE_BYTES: usize = 64 * 1024;
-pub(crate) const MAX_REPORTING_ENDPOINTS: usize = 32;
 pub(crate) const MAX_BROWSER_POLICY_VALUE_BYTES: usize = 64 * 1024;
 
 macro_rules! browser_policy_metadata {
@@ -346,7 +442,6 @@ macro_rules! browser_policy_metadata {
 }
 
 browser_policy_metadata!(HttpContentSecurityPolicy, "Content-Security-Policy");
-browser_policy_metadata!(HttpPermissionsPolicy, "Permissions-Policy");
 browser_policy_metadata!(HttpReferrerPolicy, "Referrer-Policy");
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1010,6 +1105,57 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Sec-WebSocket-Accept` response metadata without
+  /// performing an HTTP upgrade or adding WebSocket framing.
+  pub fn with_sec_websocket_accept<V: AsRef<str>>(
+    mut self,
+    value: V,
+  ) -> Result<Self, HttpSecWebSocketAcceptParseError> {
+    let accept = HttpSecWebSocketAccept::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Sec-WebSocket-Accept"));
+    self.headers.push(HttpHeader::new(
+      "Sec-WebSocket-Accept",
+      accept.header_value(),
+    ));
+    Ok(self)
+  }
+
+  /// Derives and replaces `Sec-WebSocket-Accept` response metadata from a
+  /// validated request key. This does not perform an HTTP upgrade or implement
+  /// WebSocket frames.
+  pub fn with_sec_websocket_accept_for_key(
+    mut self,
+    key: &rttp_protocol::sec_websocket_key::SecWebSocketKey,
+  ) -> Self {
+    let accept = HttpSecWebSocketAccept::derive_from_key(key);
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Sec-WebSocket-Accept"));
+    self.headers.push(HttpHeader::new(
+      "Sec-WebSocket-Accept",
+      accept.header_value(),
+    ));
+    self
+  }
+
+  /// Validates and replaces `Lock-Token` response metadata without creating,
+  /// refreshing, releasing, or enforcing WebDAV locks.
+  pub fn with_lock_token<V: AsRef<str>>(
+    mut self,
+    value: V,
+  ) -> Result<Self, HttpLockTokenParseError> {
+    let lock_token = HttpLockToken::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Lock-Token"));
+    self
+      .headers
+      .push(HttpHeader::new("Lock-Token", lock_token.header_value()));
+    Ok(self)
+  }
+
   pub fn with_allow<I, M>(mut self, methods: I) -> Result<Self, HttpAllowParseError>
   where
     I: IntoIterator<Item = M>,
@@ -1019,6 +1165,21 @@ impl HttpResponse {
     self
       .headers
       .push(HttpHeader::new("Allow", allow.header_value()));
+    Ok(self)
+  }
+
+  /// Replaces `DAV` response metadata with bounded WebDAV compliance classes.
+  ///
+  /// This declares metadata only; it does not infer or enforce WebDAV feature
+  /// support.
+  pub fn with_dav(mut self, value: impl AsRef<str>) -> Result<Self, HttpDavParseError> {
+    let dav = HttpDav::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("DAV"));
+    self
+      .headers
+      .push(HttpHeader::new("DAV", dav.header_value()));
     Ok(self)
   }
 
@@ -1146,6 +1307,22 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces opaque `Speculation-Rules` response metadata
+  /// without fetching, parsing, or executing speculation rule resources.
+  pub fn with_speculation_rules(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpSpeculationRulesParseError> {
+    let rules = HttpSpeculationRules::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Speculation-Rules"));
+    self
+      .headers
+      .push(HttpHeader::new("Speculation-Rules", rules.header_value()));
+    Ok(self)
+  }
+
   /// Validates and replaces `Cross-Origin-Embedder-Policy` response metadata
   /// without applying embedder policy.
   pub fn with_cross_origin_embedder_policy(
@@ -1198,6 +1375,25 @@ impl HttpResponse {
     });
     self.headers.push(HttpHeader::new(
       "Cross-Origin-Opener-Policy",
+      policy.header_value(),
+    ));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Cross-Origin-Opener-Policy-Report-Only`
+  /// response metadata without applying opener policy or sending reports.
+  pub fn with_cross_origin_opener_policy_report_only(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpCrossOriginOpenerPolicyReportOnlyParseError> {
+    let policy = HttpCrossOriginOpenerPolicyReportOnly::parse(value)?;
+    self.headers.retain(|header| {
+      !header
+        .name
+        .eq_ignore_ascii_case("Cross-Origin-Opener-Policy-Report-Only")
+    });
+    self.headers.push(HttpHeader::new(
+      "Cross-Origin-Opener-Policy-Report-Only",
       policy.header_value(),
     ));
     Ok(self)
@@ -1286,13 +1482,47 @@ impl HttpResponse {
     Ok(self)
   }
 
-  /// Validates and replaces `Permissions-Policy` metadata without enforcing it.
+  /// Validates and replaces `Content-Security-Policy-Report-Only` metadata without
+  /// enforcing CSP or sending reports.
+  pub fn with_content_security_policy_report_only(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpContentSecurityPolicyReportOnlyParseError> {
+    let policy = HttpContentSecurityPolicyReportOnly::parse(value)?;
+    self.set_browser_policy_header("Content-Security-Policy-Report-Only", policy.header_value());
+    Ok(self)
+  }
+
+  /// Validates and replaces `Document-Policy` metadata without enforcing
+  /// document policy in the HTTP layer.
+  pub fn with_document_policy(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpDocumentPolicyParseError> {
+    let policy = HttpDocumentPolicy::parse(value)?;
+    self.set_browser_policy_header("Document-Policy", &policy.header_value());
+    Ok(self)
+  }
+
+  /// Validates and replaces `Document-Policy-Report-Only` metadata without
+  /// enforcing document policy or sending reports.
+  pub fn with_document_policy_report_only(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpDocumentPolicyReportOnlyParseError> {
+    let policy = HttpDocumentPolicyReportOnly::parse(value)?;
+    self.set_browser_policy_header("Document-Policy-Report-Only", &policy.header_value());
+    Ok(self)
+  }
+
+  /// Validates and replaces `Permissions-Policy` metadata without enforcing
+  /// browser permissions or origin policy.
   pub fn with_permissions_policy(
     mut self,
     value: impl AsRef<str>,
-  ) -> Result<Self, HttpBrowserPolicyParseError> {
+  ) -> Result<Self, HttpPermissionsPolicyParseError> {
     let policy = HttpPermissionsPolicy::parse(value)?;
-    self.set_browser_policy_header("Permissions-Policy", policy.header_value());
+    self.set_browser_policy_header("Permissions-Policy", &policy.header_value());
     Ok(self)
   }
 
@@ -1303,6 +1533,88 @@ impl HttpResponse {
   ) -> Result<Self, HttpBrowserPolicyParseError> {
     let policy = HttpReferrerPolicy::parse(value)?;
     self.set_browser_policy_header("Referrer-Policy", policy.header_value());
+    Ok(self)
+  }
+
+  /// Validates and replaces `Sec-WebSocket-Version` response metadata without
+  /// negotiating versions, emitting `Connection` or `Upgrade`, or switching
+  /// protocols. Intended for application-owned rejection responses.
+  pub fn with_sec_websocket_version<I, V>(
+    mut self,
+    versions: I,
+  ) -> Result<Self, HttpSecWebSocketVersionParseError>
+  where
+    I: IntoIterator<Item = V>,
+    V: AsRef<str>,
+  {
+    let versions = HttpSecWebSocketVersion::from_versions(versions)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Sec-WebSocket-Version"));
+    self.headers.push(HttpHeader::new(
+      "Sec-WebSocket-Version",
+      versions.header_value(),
+    ));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Sec-WebSocket-Protocol` response metadata
+  /// without choosing an application subprotocol, emitting `Connection` or
+  /// `Upgrade`, or switching protocols. The value is one selected token, not
+  /// an offer list; applications own the selection decision.
+  pub fn with_sec_websocket_protocol(
+    mut self,
+    token: impl AsRef<str>,
+  ) -> Result<Self, HttpSecWebSocketProtocolParseError> {
+    let protocol = HttpSecWebSocketProtocol::from_selection(token)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Sec-WebSocket-Protocol"));
+    self.headers.push(HttpHeader::new(
+      "Sec-WebSocket-Protocol",
+      protocol.header_value(),
+    ));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Sec-WebSocket-Extensions` response metadata
+  /// without activating compression, negotiating extensions, emitting
+  /// `Connection` or `Upgrade`, or switching protocols. The value is one
+  /// selected extension member, not an offer list; applications own the
+  /// selection decision.
+  pub fn with_sec_websocket_extensions(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpSecWebSocketExtensionsParseError> {
+    let extensions = HttpSecWebSocketExtensions::parse_selection(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Sec-WebSocket-Extensions"));
+    self.headers.push(HttpHeader::new(
+      "Sec-WebSocket-Extensions",
+      extensions.header_value(),
+    ));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Supports-Loading-Mode` response metadata without
+  /// applying prerender or fenced-frame loading policy.
+  pub fn with_supports_loading_mode<I, H>(
+    mut self,
+    tokens: I,
+  ) -> Result<Self, HttpSupportsLoadingModeParseError>
+  where
+    I: IntoIterator<Item = H>,
+    H: AsRef<str>,
+  {
+    let modes = HttpSupportsLoadingMode::from_tokens(tokens)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Supports-Loading-Mode"));
+    self.headers.push(HttpHeader::new(
+      "Supports-Loading-Mode",
+      modes.header_value(),
+    ));
     Ok(self)
   }
 
@@ -1428,6 +1740,19 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces HTTP `Via` response metadata with the
+  /// caller-supplied hop chain without appending a local hop.
+  pub fn with_via(mut self, value: impl AsRef<str>) -> Result<Self, HttpViaParseError> {
+    let via = HttpVia::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Via"));
+    self
+      .headers
+      .push(HttpHeader::new("Via", via.header_value()));
+    Ok(self)
+  }
+
   /// Validates and replaces RFC 9209 `Proxy-Status` response metadata
   /// without generating origin proxy status or applying health policy.
   pub fn with_proxy_status(
@@ -1483,6 +1808,84 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Alternates` response metadata without selecting
+  /// or fetching a variant.
+  pub fn with_alternates(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpAlternatesParseError> {
+    let alternates = HttpAlternates::parse(value)?;
+    let header_value = alternates.header_value();
+    HttpAlternates::parse(&header_value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Alternates"));
+    self
+      .headers
+      .push(HttpHeader::new("Alternates", header_value));
+    Ok(self)
+  }
+
+  /// Validates and replaces `TCN` response metadata without selecting a
+  /// variant or changing cache behavior.
+  pub fn with_tcn(mut self, value: impl AsRef<str>) -> Result<Self, HttpTcnParseError> {
+    let tcn = HttpTcn::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("TCN"));
+    self
+      .headers
+      .push(HttpHeader::new("TCN", tcn.header_value()));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Variant-Vary` response metadata without
+  /// constructing a cache key or selecting a variant.
+  pub fn with_variant_vary(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpVariantVaryParseError> {
+    let variant_vary = HttpVariantVary::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Variant-Vary"));
+    self
+      .headers
+      .push(HttpHeader::new("Variant-Vary", variant_vary.header_value()));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Alt-Used` response metadata without selecting an
+  /// alternative service or changing connection policy.
+  pub fn with_alt_used(mut self, value: impl AsRef<str>) -> Result<Self, HttpAltUsedParseError> {
+    let alt_used = HttpAltUsed::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Alt-Used"));
+    self
+      .headers
+      .push(HttpHeader::new("Alt-Used", alt_used.header_value()));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Origin-Trial` response metadata without
+  /// validating token signatures or activating browser trials.
+  pub fn with_origin_trials<I, V>(mut self, values: I) -> Result<Self, HttpOriginTrialParseError>
+  where
+    I: IntoIterator<Item = V>,
+    V: AsRef<str>,
+  {
+    let collected: Vec<V> = values.into_iter().collect();
+    let origin_trials = HttpOriginTrials::parse_values(collected.iter().map(AsRef::as_ref))?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Origin-Trial"));
+    for value in origin_trials.header_values() {
+      self.headers.push(HttpHeader::new("Origin-Trial", value));
+    }
+    Ok(self)
+  }
+
   /// Validates and replaces `Keep-Alive` response metadata without changing
   /// connection lifetime.
   pub fn with_keep_alive(
@@ -1496,6 +1899,36 @@ impl HttpResponse {
     self
       .headers
       .push(HttpHeader::new("Keep-Alive", keep_alive.header_value()));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Pragma` response metadata without applying cache
+  /// or intermediary policy.
+  pub fn with_pragma(mut self, value: impl AsRef<str>) -> Result<Self, HttpPragmaParseError> {
+    let pragma = HttpPragma::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Pragma"));
+    self
+      .headers
+      .push(HttpHeader::new("Pragma", pragma.header_value()));
+    Ok(self)
+  }
+
+  /// Validates and replaces `Surrogate-Control` response metadata without
+  /// applying CDN cache policy or translating directives into `Cache-Control`.
+  pub fn with_surrogate_control(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpSurrogateControlParseError> {
+    let surrogate_control = HttpSurrogateControl::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Surrogate-Control"));
+    self.headers.push(HttpHeader::new(
+      "Surrogate-Control",
+      surrogate_control.header_value(),
+    ));
     Ok(self)
   }
 
@@ -1530,6 +1963,21 @@ impl HttpResponse {
     Ok(self)
   }
 
+  pub fn with_service_worker_allowed<V: AsRef<str>>(
+    mut self,
+    value: V,
+  ) -> Result<Self, HttpServiceWorkerAllowedParseError> {
+    let service_worker_allowed = HttpServiceWorkerAllowed::parse(value.as_ref())?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Service-Worker-Allowed"));
+    self.headers.push(HttpHeader::new(
+      "Service-Worker-Allowed",
+      service_worker_allowed.header_value(),
+    ));
+    Ok(self)
+  }
+
   pub fn with_content_dpr<V: AsRef<str>>(
     mut self,
     value: V,
@@ -1551,6 +1999,26 @@ impl HttpResponse {
     self
       .headers
       .push(HttpHeader::new("ETag", entity_tag.header_value()));
+    self
+  }
+
+  pub fn with_delta_base(mut self, delta_base: HttpDeltaBase) -> Self {
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Delta-Base"));
+    self
+      .headers
+      .push(HttpHeader::new("Delta-Base", delta_base.header_value()));
+    self
+  }
+
+  pub fn with_schedule_tag(mut self, schedule_tag: HttpScheduleTag) -> Self {
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Schedule-Tag"));
+    self
+      .headers
+      .push(HttpHeader::new("Schedule-Tag", schedule_tag.header_value()));
     self
   }
 
@@ -1705,6 +2173,23 @@ impl HttpResponse {
     self
   }
 
+  /// Validates and replaces `IM` response metadata.
+  ///
+  /// This helper only declares metadata: it does not decode or apply instance
+  /// manipulations and does not change the response status.
+  pub fn with_im<I, M>(mut self, members: I) -> Result<Self, HttpImParseError>
+  where
+    I: IntoIterator<Item = M>,
+    M: AsRef<str>,
+  {
+    let im = HttpIm::from_members(members)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("IM"));
+    self.headers.push(HttpHeader::new("IM", im.header_value()));
+    Ok(self)
+  }
+
   pub fn with_age(mut self, delta_seconds: u64) -> Self {
     self
       .headers
@@ -1810,6 +2295,23 @@ impl HttpResponse {
     HttpCdnCacheControl::parse_values(values).map(Some)
   }
 
+  /// Parses attached `Surrogate-Control` response metadata without applying
+  /// CDN cache policy or translating directives into `Cache-Control`.
+  pub fn surrogate_control(
+    &self,
+  ) -> Result<Option<HttpSurrogateControl>, HttpSurrogateControlParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Surrogate-Control"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSurrogateControl::parse_values(values).map(Some)
+  }
+
   /// Parses attached `Cache-Status` response metadata without applying cache policy.
   pub fn cache_status(&self) -> Result<Option<HttpCacheStatus>, HttpCacheStatusParseError> {
     let values: Vec<&str> = self
@@ -1867,6 +2369,53 @@ impl HttpResponse {
     HttpUpgrade::parse_values(values).map(Some)
   }
 
+  /// Parses attached `Sec-WebSocket-Accept` response metadata without changing
+  /// socket handoff behavior or interpreting WebSocket frames.
+  pub fn sec_websocket_accept(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketAccept>, HttpSecWebSocketAcceptParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Accept"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketAccept::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Lock-Token` response metadata without creating,
+  /// refreshing, releasing, or enforcing WebDAV locks.
+  pub fn lock_token(&self) -> Result<Option<HttpLockToken>, HttpLockTokenParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Lock-Token"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpLockToken::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Pragma` response metadata without applying cache or
+  /// intermediary policy.
+  pub fn pragma(&self) -> Result<Option<HttpPragma>, HttpPragmaParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Pragma"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpPragma::parse_values(values).map(Some)
+  }
+
   /// Parses `Link` response metadata without enabling preload, redirects,
   /// caching, or fetch scheduling.
   pub fn links(&self) -> Result<Option<HttpLinkValues>, HttpLinkParseError> {
@@ -1893,6 +2442,21 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpAllowedMethods::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `DAV` response metadata without inferring or enforcing
+  /// WebDAV feature support.
+  pub fn dav(&self) -> Result<Option<HttpDav>, HttpDavParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("DAV"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDav::parse_values(values).map(Some)
   }
 
   /// Parses attached HTTP/1 `Connection` header metadata without changing
@@ -2097,6 +2661,30 @@ impl HttpResponse {
     HttpCrossOriginOpenerPolicy::parse_values(values).map(Some)
   }
 
+  /// Parses attached `Cross-Origin-Opener-Policy-Report-Only` response
+  /// metadata without enforcing opener policy or sending reports.
+  pub fn cross_origin_opener_policy_report_only(
+    &self,
+  ) -> Result<
+    Option<HttpCrossOriginOpenerPolicyReportOnly>,
+    HttpCrossOriginOpenerPolicyReportOnlyParseError,
+  > {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Cross-Origin-Opener-Policy-Report-Only")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpCrossOriginOpenerPolicyReportOnly::parse_values(values).map(Some)
+  }
+
   /// Parses attached `Strict-Transport-Security` response metadata without
   /// applying HTTPS-only policy.
   pub fn strict_transport_security(
@@ -2175,13 +2763,155 @@ impl HttpResponse {
     })
   }
 
-  /// Returns attached `Permissions-Policy` metadata without enforcing it.
+  /// Returns attached `Content-Security-Policy-Report-Only` metadata without
+  /// enforcing CSP or sending reports.
+  pub fn content_security_policy_report_only(
+    &self,
+  ) -> Result<
+    Option<HttpContentSecurityPolicyReportOnly>,
+    HttpContentSecurityPolicyReportOnlyParseError,
+  > {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Content-Security-Policy-Report-Only")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpContentSecurityPolicyReportOnly::parse_values(values).map(Some)
+  }
+
+  /// Returns attached `Document-Policy` metadata without enforcing document
+  /// policy in the HTTP layer.
+  pub fn document_policy(
+    &self,
+  ) -> Result<Option<HttpDocumentPolicy>, HttpDocumentPolicyParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Document-Policy"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDocumentPolicy::parse_values(values).map(Some)
+  }
+
+  /// Returns attached `Document-Policy-Report-Only` metadata without enforcing
+  /// document policy or sending reports.
+  pub fn document_policy_report_only(
+    &self,
+  ) -> Result<Option<HttpDocumentPolicyReportOnly>, HttpDocumentPolicyReportOnlyParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Document-Policy-Report-Only")
+      })
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDocumentPolicyReportOnly::parse_values(values).map(Some)
+  }
+
+  /// Returns attached `Permissions-Policy` metadata without enforcing browser
+  /// permissions or origin policy.
   pub fn permissions_policy(
     &self,
-  ) -> Result<Option<HttpPermissionsPolicy>, HttpBrowserPolicyParseError> {
-    self.browser_policy_value("Permissions-Policy", |value| {
-      HttpPermissionsPolicy::parse(value)
-    })
+  ) -> Result<Option<HttpPermissionsPolicy>, HttpPermissionsPolicyParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Permissions-Policy"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpPermissionsPolicy::parse_values(values).map(Some)
+  }
+
+  /// Returns attached `Sec-WebSocket-Version` response metadata without
+  /// negotiating versions or switching protocols.
+  pub fn sec_websocket_version(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketVersion>, HttpSecWebSocketVersionParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Version"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketVersion::parse_values(values).map(Some)
+  }
+
+  /// Returns attached `Sec-WebSocket-Protocol` response metadata as a
+  /// selection singleton without choosing an application subprotocol or
+  /// switching protocols. A multi-token value returns a parser error while
+  /// raw headers remain available.
+  pub fn sec_websocket_protocol(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketProtocol>, HttpSecWebSocketProtocolParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Protocol"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketProtocol::parse_selection_values(values).map(Some)
+  }
+
+  /// Returns attached `Sec-WebSocket-Extensions` response metadata as a
+  /// selection singleton without activating compression, negotiating
+  /// extensions, or switching protocols. A multi-extension value returns a
+  /// parser error while raw headers remain available.
+  pub fn sec_websocket_extensions(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketExtensions>, HttpSecWebSocketExtensionsParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Extensions"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketExtensions::parse_selection_values(values).map(Some)
+  }
+
+  /// Returns attached `Supports-Loading-Mode` response metadata without
+  /// applying prerender or fenced-frame loading policy.
+  pub fn supports_loading_mode(
+    &self,
+  ) -> Result<Option<HttpSupportsLoadingMode>, HttpSupportsLoadingModeParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Supports-Loading-Mode"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSupportsLoadingMode::parse_values(values).map(Some)
   }
 
   /// Returns attached `Referrer-Policy` metadata without altering requests.
@@ -2340,6 +3070,21 @@ impl HttpResponse {
     }
   }
 
+  /// Parses attached `Via` metadata without changing raw headers or
+  /// appending or removing hops.
+  pub fn via(&self) -> Result<Option<HttpVia>, HttpViaParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Via"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpVia::parse_values(values).map(Some)
+  }
+
   /// Parses attached `Proxy-Status` metadata without changing raw headers
   /// or applying proxy health, retry, trailer, or origin-generation policy.
   pub fn proxy_status(&self) -> Result<Option<HttpProxyStatus>, HttpProxyStatusParseError> {
@@ -2397,6 +3142,81 @@ impl HttpResponse {
     HttpAltSvc::parse_values(values).map(Some)
   }
 
+  /// Parses attached `Alternates` metadata without changing raw headers,
+  /// selecting a variant, or fetching a variant URI.
+  pub fn alternates(&self) -> Result<Option<HttpAlternates>, HttpAlternatesParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Alternates"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAlternates::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `TCN` metadata without changing raw headers, selecting a
+  /// variant, or changing cache behavior.
+  pub fn tcn(&self) -> Result<Option<HttpTcn>, HttpTcnParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("TCN"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpTcn::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Variant-Vary` metadata without changing raw headers,
+  /// constructing a cache key, or selecting a variant.
+  pub fn variant_vary(&self) -> Result<Option<HttpVariantVary>, HttpVariantVaryParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Variant-Vary"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpVariantVary::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Alt-Used` metadata without changing raw headers,
+  /// alternative service selection, origins, or connections.
+  pub fn alt_used(&self) -> Result<Option<HttpAltUsed>, HttpAltUsedParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Alt-Used"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpAltUsed::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Origin-Trial` metadata without validating tokens or
+  /// activating browser trials.
+  pub fn origin_trials(&self) -> Result<Option<HttpOriginTrials>, HttpOriginTrialParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Origin-Trial"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpOriginTrials::parse_values(values).map(Some)
+  }
+
   /// Parses attached `NEL` metadata without sending reports or persisting policy.
   pub fn nel(&self) -> Result<Option<HttpNel>, HttpNelParseError> {
     let values: Vec<&str> = self
@@ -2409,6 +3229,23 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpNel::parse_values(values).map(Some)
+  }
+
+  /// Parses attached opaque `Speculation-Rules` metadata without fetching,
+  /// parsing, or executing speculation rule resources.
+  pub fn speculation_rules(
+    &self,
+  ) -> Result<Option<HttpSpeculationRules>, HttpSpeculationRulesParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Speculation-Rules"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSpeculationRules::parse_values(values).map(Some)
   }
 
   /// Parses attached `Keep-Alive` metadata without changing connection lifetime.
@@ -2454,6 +3291,21 @@ impl HttpResponse {
     HttpContentLocation::parse_values(values).map(Some)
   }
 
+  pub fn service_worker_allowed(
+    &self,
+  ) -> Result<Option<HttpServiceWorkerAllowed>, HttpServiceWorkerAllowedParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Service-Worker-Allowed"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpServiceWorkerAllowed::parse_values(values).map(Some)
+  }
+
   pub fn content_dpr(&self) -> Result<Option<HttpContentDpr>, HttpContentDprParseError> {
     let values: Vec<&str> = self
       .headers
@@ -2476,6 +3328,32 @@ impl HttpResponse {
       return Ok(None);
     };
     HttpEntityTag::parse(value).map(Some)
+  }
+
+  pub fn delta_base(&self) -> Result<Option<HttpDeltaBase>, HttpDeltaBaseParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Delta-Base"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDeltaBase::parse_values(values).map(Some)
+  }
+
+  pub fn schedule_tag(&self) -> Result<Option<HttpScheduleTag>, HttpScheduleTagParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Schedule-Tag"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpScheduleTag::parse_values(values).map(Some)
   }
 
   pub fn content_disposition(
@@ -2569,6 +3447,23 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpAcceptRanges::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `IM` response metadata without changing raw headers.
+  ///
+  /// This helper only exposes metadata: it does not decode or apply instance
+  /// manipulations and does not change the response status.
+  pub fn im(&self) -> Result<Option<HttpIm>, HttpImParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("IM"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpIm::parse_values(values).map(Some)
   }
 
   pub fn content_range(&self) -> Result<Option<HttpContentRange>, HttpContentRangeParseError> {
@@ -3196,211 +4091,6 @@ impl fmt::Display for HttpVaryParseError {
 }
 
 impl Error for HttpVaryParseError {}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpReportingEndpoints {
-  endpoints: Vec<(String, String)>,
-}
-
-impl HttpReportingEndpoints {
-  pub fn parse(value: impl AsRef<str>) -> Result<Self, HttpReportingEndpointsParseError> {
-    Self::parse_values([value.as_ref()])
-  }
-
-  pub fn parse_values<'a, I>(values: I) -> Result<Self, HttpReportingEndpointsParseError>
-  where
-    I: IntoIterator<Item = &'a str>,
-  {
-    let mut endpoints = Vec::new();
-    for value in values {
-      if value.len() > MAX_REPORTING_ENDPOINTS_VALUE_BYTES {
-        return Err(HttpReportingEndpointsParseError::new(
-          "Reporting-Endpoints header value is too large",
-        ));
-      }
-      parse_reporting_endpoints_value(value, &mut endpoints)?;
-    }
-    if endpoints.is_empty() {
-      return Err(HttpReportingEndpointsParseError::new(
-        "invalid Reporting-Endpoints dictionary",
-      ));
-    }
-    Ok(Self { endpoints })
-  }
-
-  pub fn from_endpoints<I, N, U>(endpoints: I) -> Result<Self, HttpReportingEndpointsParseError>
-  where
-    I: IntoIterator<Item = (N, U)>,
-    N: AsRef<str>,
-    U: AsRef<str>,
-  {
-    let value = endpoints
-      .into_iter()
-      .map(|(name, url)| {
-        format!(
-          "{}=\"{}\"",
-          name.as_ref(),
-          escape_reporting_endpoint_url(url.as_ref())
-        )
-      })
-      .collect::<Vec<_>>()
-      .join(", ");
-    Self::parse(value)
-  }
-
-  pub fn endpoints(&self) -> Vec<(&str, &str)> {
-    self
-      .endpoints
-      .iter()
-      .map(|(name, url)| (name.as_str(), url.as_str()))
-      .collect()
-  }
-
-  pub fn endpoint(&self, name: impl AsRef<str>) -> Option<&str> {
-    self
-      .endpoints
-      .iter()
-      .find(|(known, _)| known == name.as_ref())
-      .map(|(_, url)| url.as_str())
-  }
-
-  pub fn header_value(&self) -> String {
-    self
-      .endpoints
-      .iter()
-      .map(|(name, url)| format!("{name}=\"{}\"", escape_reporting_endpoint_url(url)))
-      .collect::<Vec<_>>()
-      .join(", ")
-  }
-}
-
-fn parse_reporting_endpoints_value(
-  value: &str,
-  endpoints: &mut Vec<(String, String)>,
-) -> Result<(), HttpReportingEndpointsParseError> {
-  let bytes = value.as_bytes();
-  let mut position = 0;
-  while position < bytes.len() {
-    while position < bytes.len() && bytes[position].is_ascii_whitespace() {
-      position += 1;
-    }
-    let name_start = position;
-    while position < bytes.len()
-      && is_reporting_endpoint_key_byte(bytes[position], position == name_start)
-    {
-      position += 1;
-    }
-    if position == name_start {
-      return Err(HttpReportingEndpointsParseError::new(
-        "invalid Reporting-Endpoints endpoint name",
-      ));
-    }
-    let name = &value[name_start..position];
-    if position >= bytes.len() || bytes[position] != b'=' {
-      return Err(HttpReportingEndpointsParseError::new(
-        "invalid Reporting-Endpoints dictionary",
-      ));
-    }
-    position += 1;
-    if position >= bytes.len() || bytes[position] != b'\"' {
-      return Err(HttpReportingEndpointsParseError::new(
-        "Reporting-Endpoints URL must be a quoted string",
-      ));
-    }
-    position += 1;
-    let mut url = String::new();
-    loop {
-      let Some(&byte) = bytes.get(position) else {
-        return Err(HttpReportingEndpointsParseError::new(
-          "malformed Reporting-Endpoints quoted string",
-        ));
-      };
-      position += 1;
-      match byte {
-        b'\"' => break,
-        b'\\' => {
-          let Some(&escaped) = bytes.get(position) else {
-            return Err(HttpReportingEndpointsParseError::new(
-              "malformed Reporting-Endpoints quoted string",
-            ));
-          };
-          if !matches!(escaped, b'\"' | b'\\') {
-            return Err(HttpReportingEndpointsParseError::new(
-              "malformed Reporting-Endpoints quoted string",
-            ));
-          }
-          position += 1;
-          url.push(escaped as char);
-        }
-        0..=31 | 127..=u8::MAX => {
-          return Err(HttpReportingEndpointsParseError::new(
-            "malformed Reporting-Endpoints quoted string",
-          ))
-        }
-        _ => url.push(byte as char),
-      }
-    }
-    if endpoints.iter().any(|(known, _)| known == name) {
-      return Err(HttpReportingEndpointsParseError::new(
-        "duplicate Reporting-Endpoints endpoint name",
-      ));
-    }
-    if endpoints.len() >= MAX_REPORTING_ENDPOINTS {
-      return Err(HttpReportingEndpointsParseError::new(
-        "too many Reporting-Endpoints endpoints",
-      ));
-    }
-    endpoints.push((name.to_string(), url));
-    while position < bytes.len() && bytes[position].is_ascii_whitespace() {
-      position += 1;
-    }
-    if position == bytes.len() {
-      break;
-    }
-    if bytes[position] != b',' {
-      return Err(HttpReportingEndpointsParseError::new(
-        "invalid Reporting-Endpoints dictionary",
-      ));
-    }
-    position += 1;
-    if position == bytes.len() {
-      return Err(HttpReportingEndpointsParseError::new(
-        "invalid Reporting-Endpoints dictionary",
-      ));
-    }
-  }
-  Ok(())
-}
-
-fn is_reporting_endpoint_key_byte(byte: u8, first: bool) -> bool {
-  if first {
-    byte.is_ascii_lowercase() || byte == b'*'
-  } else {
-    byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-' | b'.' | b'*')
-  }
-}
-
-fn escape_reporting_endpoint_url(url: &str) -> String {
-  url.replace('\\', "\\\\").replace('\"', "\\\"")
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpReportingEndpointsParseError {
-  pub(crate) message: String,
-}
-impl HttpReportingEndpointsParseError {
-  pub(crate) fn new(message: impl AsRef<str>) -> Self {
-    Self {
-      message: message.as_ref().to_string(),
-    }
-  }
-}
-impl fmt::Display for HttpReportingEndpointsParseError {
-  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    formatter.write_str(&self.message)
-  }
-}
-impl Error for HttpReportingEndpointsParseError {}
 
 /// Server `Content-Disposition` response metadata backed by the shared
 /// protocol parser, preserving the server facade accessor surface.
@@ -4436,10 +5126,17 @@ fn is_sensitive_debug_header(name: &str) -> bool {
   name.eq_ignore_ascii_case("authorization")
     || name.eq_ignore_ascii_case("cookie")
     || name.eq_ignore_ascii_case("idempotency-key")
+    || name.eq_ignore_ascii_case("if")
+    || name.eq_ignore_ascii_case("lock-token")
+    || name.eq_ignore_ascii_case("origin-trial")
     || name.eq_ignore_ascii_case("proxy-authorization")
+    || name.eq_ignore_ascii_case("sec-websocket-accept")
+    || name.eq_ignore_ascii_case("sec-websocket-key")
     || name.eq_ignore_ascii_case("set-cookie")
+    || name.eq_ignore_ascii_case("speculation-rules")
     || name.eq_ignore_ascii_case("traceparent")
     || name.eq_ignore_ascii_case("tracestate")
+    || name.eq_ignore_ascii_case("baggage")
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
