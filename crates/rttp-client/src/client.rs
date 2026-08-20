@@ -7,21 +7,53 @@ use crate::types::{Auth, Header, IntoHeader, IntoPara, Proxy, ToFormData, ToRoUr
 use crate::{error, Config, H2cClientPolicy};
 #[cfg(feature = "async")]
 use futures::io::AsyncRead;
+use rttp_protocol::a_im::AIm;
+use rttp_protocol::accept_charset::AcceptCharset;
+use rttp_protocol::accept_encoding::AcceptEncoding;
+use rttp_protocol::accept_language::{AcceptLanguage, MAX_ACCEPT_LANGUAGE_VALUE_BYTES};
 use rttp_protocol::access_control_request_headers::AccessControlRequestHeaders;
 use rttp_protocol::access_control_request_method::AccessControlRequestMethod;
 use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
+use rttp_protocol::authorization::Authorization;
+use rttp_protocol::baggage::Baggage;
+use rttp_protocol::cdn_loop::{CdnLoop, MAX_CDN_LOOP_VALUE_BYTES};
+use rttp_protocol::depth::Depth;
+use rttp_protocol::destination::Destination;
+use rttp_protocol::expect::Expect;
 use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
 use rttp_protocol::forwarded::{Forwarded, MAX_FORWARDED_VALUE_BYTES};
+use rttp_protocol::idempotency_key::IdempotencyKey;
+use rttp_protocol::if_header::If;
+use rttp_protocol::if_modified_since::IfModifiedSince;
+use rttp_protocol::if_schedule_tag_match::IfScheduleTagMatch;
+use rttp_protocol::if_unmodified_since::IfUnmodifiedSince;
+use rttp_protocol::lock_token::LockToken;
 use rttp_protocol::max_forwards::MaxForwards;
+use rttp_protocol::negotiate::Negotiate;
 use rttp_protocol::origin::Origin;
+use rttp_protocol::overwrite::Overwrite;
+use rttp_protocol::pragma::Pragma;
 use rttp_protocol::priority::Priority;
 use rttp_protocol::save_data::SaveData;
+use rttp_protocol::sec_gpc::SecGpc;
+use rttp_protocol::sec_websocket_extensions::SecWebSocketExtensions;
+use rttp_protocol::sec_websocket_key::SecWebSocketKey;
+use rttp_protocol::sec_websocket_protocol::SecWebSocketProtocol;
+use rttp_protocol::sec_websocket_version::SecWebSocketVersion;
 use rttp_protocol::signature::Signature;
 use rttp_protocol::signature_input::SignatureInput;
+use rttp_protocol::te::{Te, MAX_TE_CODINGS, MAX_TE_VALUE_BYTES};
+use rttp_protocol::timeout::Timeout;
+use rttp_protocol::trace_context::{TraceParent, TraceState};
 use rttp_protocol::trailer::Trailer;
 use rttp_protocol::upgrade::Upgrade;
+use rttp_protocol::upgrade_insecure_requests::UpgradeInsecureRequests;
+use rttp_protocol::via::{Via, MAX_VIA_VALUE_BYTES};
+use rttp_protocol::x_forwarded_for::{XForwardedFor, MAX_X_FORWARDED_FOR_VALUE_BYTES};
+use rttp_protocol::x_forwarded_host::{XForwardedHost, MAX_X_FORWARDED_HOST_VALUE_BYTES};
+use rttp_protocol::x_forwarded_proto::{XForwardedProto, MAX_X_FORWARDED_PROTO_VALUE_BYTES};
 use std::io;
 
 #[derive(Debug)]
@@ -170,7 +202,7 @@ impl HttpClient {
   /// client.auth(Auth::bearer("my-token"));
   /// ```
   pub fn auth<A: AsRef<Auth>>(&mut self, auth: A) -> &mut Self {
-    self.header(("Authorization", auth.as_ref().header_value().as_str()))
+    self.header(Header::new("Authorization", auth.as_ref().header_value()))
   }
 
   /// Set bounded `Authorization` request metadata from an authentication
@@ -185,28 +217,9 @@ impl HttpClient {
     scheme: S,
     credentials: C,
   ) -> error::Result<&mut Self> {
-    let scheme = scheme.as_ref().trim();
-    let credentials = credentials.as_ref();
-    if !is_http_token(scheme) {
-      return Err(error::builder_with_message(
-        "invalid Authorization authentication scheme",
-      ));
-    }
-    if credentials.is_empty()
-      || credentials.bytes().all(|byte| matches!(byte, b' ' | b'\t'))
-      || !credentials.bytes().all(is_header_value_byte)
-    {
-      return Err(error::builder_with_message(
-        "invalid Authorization credentials",
-      ));
-    }
-    let value = format!("{scheme} {credentials}");
-    if value.len() > MAX_AUTHORIZATION_VALUE_BYTES {
-      return Err(error::builder_with_message(
-        "Authorization header value is too large",
-      ));
-    }
-    Ok(self.header(Header::new("Authorization", value)))
+    let authorization = Authorization::new(scheme, credentials)
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("Authorization", authorization.header_value())))
   }
 
   ///  Add request header
@@ -292,8 +305,9 @@ impl HttpClient {
   /// Set bounded `Accept-Language` request metadata.
   ///
   /// Each supplied item is a language range, optionally followed by a `q`
-  /// weight such as `fr-CA; q=0.8`. This validates metadata only; it does not
-  /// perform locale matching or choose a response language.
+  /// weight such as `fr-CA; q=0.8`. Validation is delegated to the shared
+  /// protocol-owned `AcceptLanguage` type. This validates metadata only; it
+  /// does not perform locale matching or choose a response language.
   pub fn accept_language<I, L>(&mut self, ranges: I) -> error::Result<&mut Self>
   where
     I: IntoIterator<Item = L>,
@@ -308,7 +322,10 @@ impl HttpClient {
   /// This is metadata only: the client still writes the request body normally
   /// and does not wait for an interim response before sending it.
   pub fn expect_continue(&mut self) -> &mut Self {
-    self.header(("Expect", "100-continue"))
+    self.header(Header::new(
+      "Expect",
+      Expect::expect_continue().header_value(),
+    ))
   }
 
   /// Set bounded `Sec-Fetch-Site` request metadata without applying browser policy.
@@ -432,6 +449,64 @@ impl HttpClient {
     let save_data =
       SaveData::parse("on").map_err(|error| error::builder_with_message(error.to_string()))?;
     Ok(self.header(Header::new("Save-Data", save_data.header_value())))
+  }
+
+  /// Set `Sec-GPC: 1` request metadata.
+  ///
+  /// This declares the valid Global Privacy Control request signal only; it
+  /// does not infer consent, tracking, legal, or serving policy.
+  pub fn sec_gpc(&mut self) -> error::Result<&mut Self> {
+    let sec_gpc =
+      SecGpc::parse("1").map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("Sec-GPC", sec_gpc.header_value())))
+  }
+
+  /// Set `Upgrade-Insecure-Requests: 1` request metadata.
+  ///
+  /// This declares the valid upgrade-insecure-requests form only; it does not
+  /// rewrite URLs, redirect requests, or enforce Content-Security-Policy.
+  pub fn upgrade_insecure_requests(&mut self) -> error::Result<&mut Self> {
+    let metadata = UpgradeInsecureRequests::parse("1")
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Upgrade-Insecure-Requests",
+      metadata.header_value(),
+    )))
+  }
+
+  /// Set bounded `Pragma` request metadata from an RFC 9111 directive list.
+  ///
+  /// The value is validated through the shared protocol `Pragma` type: each
+  /// directive name must be an HTTP token, optional values must be tokens or
+  /// quoted-strings, `no-cache` must appear without a value, duplicate
+  /// directive names are rejected case-insensitively, and combined fields are
+  /// bounded to 256 directives with 64 KiB per field and per value. Any
+  /// already-attached `Pragma` fields are combined in wire order and replaced
+  /// by one normalized field. This declares request metadata only; it does
+  /// not translate `Pragma` into `Cache-Control`, store cache entries, or
+  /// apply cache or intermediary policy. Use `header` directly for unusual
+  /// values.
+  pub fn pragma<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let mut values: Vec<String> = self
+      .request
+      .headers()
+      .iter()
+      .filter(|header| header.name().eq_ignore_ascii_case("Pragma"))
+      .map(|header| header.value().clone())
+      .collect();
+    values.push(value.as_ref().to_string());
+    let pragma = Pragma::parse_values(values.iter().map(String::as_str))
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("Pragma", pragma.header_value())))
+  }
+
+  /// Set `Pragma: no-cache` request metadata.
+  ///
+  /// This is a convenience for [`Self::pragma`] with the defined valueless
+  /// `no-cache` directive. It declares request metadata only; it does not
+  /// translate `Pragma` into `Cache-Control` or apply cache policy.
+  pub fn pragma_no_cache(&mut self) -> error::Result<&mut Self> {
+    self.pragma("no-cache")
   }
 
   /// Append a validated `Accept` media range with its supplied quality value.
@@ -581,6 +656,139 @@ impl HttpClient {
     Ok(self)
   }
 
+  /// Append bounded RFC 8586 `CDN-Loop` request metadata.
+  ///
+  /// This validates and preserves CDN identifiers and optional parameters,
+  /// combining with any existing validated `CDN-Loop` field before a socket
+  /// is opened. It only emits caller-supplied metadata: it does not invent a
+  /// local CDN identifier, append on every request, or treat a repeated
+  /// identifier as a transport failure.
+  pub fn cdn_loop<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let cdn_loop = CdnLoop::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    let headers = self.request.headers_mut();
+    if let Some(header) = headers
+      .iter_mut()
+      .find(|header| header.name().eq_ignore_ascii_case("CDN-Loop"))
+    {
+      let combined = CdnLoop::parse_values([header.value().as_str(), value.as_ref()])
+        .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+      let value = bounded_cdn_loop_header_value(combined)?;
+      header.replace(Header::new("CDN-Loop", value));
+    } else {
+      headers.push(Header::new(
+        "CDN-Loop",
+        bounded_cdn_loop_header_value(cdn_loop)?,
+      ));
+    }
+    Ok(self)
+  }
+
+  /// Append bounded HTTP `Via` request metadata.
+  ///
+  /// This validates and preserves received-protocol, received-by, and comment
+  /// hops, combining with any existing validated `Via` field before a socket
+  /// is opened. It only emits caller-supplied metadata: it does not append a
+  /// local hop, remove existing hops, or change proxy or tunnel policy.
+  pub fn via<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let via = Via::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    let headers = self.request.headers_mut();
+    if let Some(header) = headers
+      .iter_mut()
+      .find(|header| header.name().eq_ignore_ascii_case("Via"))
+    {
+      let combined = Via::parse_values([header.value().as_str(), value.as_ref()])
+        .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+      let value = bounded_via_header_value(combined)?;
+      header.replace(Header::new("Via", value));
+    } else {
+      headers.push(Header::new("Via", bounded_via_header_value(via)?));
+    }
+    Ok(self)
+  }
+
+  /// Append bounded `X-Forwarded-For` request metadata.
+  ///
+  /// This validates ordered IP and `unknown` node values and combines with any
+  /// existing validated field before a socket is opened. It only emits
+  /// caller-supplied metadata: it does not establish proxy trust, derive a
+  /// client address, or rewrite identity.
+  pub fn x_forwarded_for<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let forwarded_for = XForwardedFor::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    let headers = self.request.headers_mut();
+    if let Some(header) = headers
+      .iter_mut()
+      .find(|header| header.name().eq_ignore_ascii_case("X-Forwarded-For"))
+    {
+      let combined = XForwardedFor::parse_values([header.value().as_str(), value.as_ref()])
+        .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+      let value = bounded_x_forwarded_for_header_value(combined)?;
+      header.replace(Header::new("X-Forwarded-For", value));
+    } else {
+      headers.push(Header::new(
+        "X-Forwarded-For",
+        bounded_x_forwarded_for_header_value(forwarded_for)?,
+      ));
+    }
+    Ok(self)
+  }
+
+  /// Append bounded `X-Forwarded-Host` request metadata.
+  ///
+  /// This validates ordered host authority values and combines with any
+  /// existing validated field before a socket is opened. It only emits
+  /// caller-supplied metadata: it does not establish proxy trust, change
+  /// virtual-host routing, or rewrite authority.
+  pub fn x_forwarded_host<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let forwarded_host = XForwardedHost::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    let headers = self.request.headers_mut();
+    if let Some(header) = headers
+      .iter_mut()
+      .find(|header| header.name().eq_ignore_ascii_case("X-Forwarded-Host"))
+    {
+      let combined = XForwardedHost::parse_values([header.value().as_str(), value.as_ref()])
+        .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+      let value = bounded_x_forwarded_host_header_value(combined)?;
+      header.replace(Header::new("X-Forwarded-Host", value));
+    } else {
+      headers.push(Header::new(
+        "X-Forwarded-Host",
+        bounded_x_forwarded_host_header_value(forwarded_host)?,
+      ));
+    }
+    Ok(self)
+  }
+
+  /// Append bounded `X-Forwarded-Proto` request metadata.
+  ///
+  /// This validates ordered scheme tokens and combines with any existing
+  /// validated field before a socket is opened. It only emits caller-supplied
+  /// metadata: it does not establish proxy trust, upgrade requests, redirect
+  /// clients, or rewrite URL schemes.
+  pub fn x_forwarded_proto<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let forwarded_proto = XForwardedProto::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    let headers = self.request.headers_mut();
+    if let Some(header) = headers
+      .iter_mut()
+      .find(|header| header.name().eq_ignore_ascii_case("X-Forwarded-Proto"))
+    {
+      let combined = XForwardedProto::parse_values([header.value().as_str(), value.as_ref()])
+        .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+      let value = bounded_x_forwarded_proto_header_value(combined)?;
+      header.replace(Header::new("X-Forwarded-Proto", value));
+    } else {
+      headers.push(Header::new(
+        "X-Forwarded-Proto",
+        bounded_x_forwarded_proto_header_value(forwarded_proto)?,
+      ));
+    }
+    Ok(self)
+  }
+
   /// Set a single bounded byte range request header, `Range: bytes=start-end`.
   pub fn range(&mut self, start: u64, end: u64) -> error::Result<&mut Self> {
     if start > end {
@@ -616,6 +824,298 @@ impl HttpClient {
     let max_forwards = MaxForwards::parse(value.as_ref())
       .map_err(|error| error::builder_with_message(error.to_string()))?;
     Ok(self.header(Header::new("Max-Forwards", max_forwards.header_value())))
+  }
+
+  /// Set bounded WebDAV `Depth` request metadata.
+  ///
+  /// The value must be the singleton value `0`, `1`, or `infinity`, with
+  /// optional whitespace trimmed and `infinity` normalized to lowercase. This
+  /// only validates and emits the header; it does not traverse resources,
+  /// choose methods, or enforce WebDAV policy. Use `header` directly for
+  /// unusual values.
+  pub fn depth<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let depth = Depth::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("Depth", depth.header_value())))
+  }
+
+  /// Set bounded WebDAV `Destination` request metadata.
+  ///
+  /// The value must be one absolute URI, with optional surrounding SP or HTAB
+  /// trimmed. This only validates and emits the preserved URI string; it does
+  /// not resolve the destination, normalize URI components, authorize access,
+  /// or copy or move resources. Use `header` directly for unusual values.
+  pub fn destination<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let destination = Destination::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("Destination", destination.header_value())))
+  }
+
+  /// Set bounded WebDAV `Lock-Token` request metadata.
+  ///
+  /// The value must be exactly one angle-bracketed absolute URI after HTTP
+  /// optional whitespace is trimmed, and is limited to 64 KiB. CR, LF, NUL,
+  /// other control bytes, obs-text, comma lists, extra brackets, relative
+  /// URIs, and trailing data are rejected before a socket is opened. This
+  /// only validates and emits the header; it does not create, refresh,
+  /// release, persist, or enforce locks. Use `header` directly for unusual
+  /// values.
+  pub fn lock_token<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let lock_token = LockToken::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("Lock-Token", lock_token.header_value())))
+  }
+
+  /// Set bounded WebDAV `Timeout` request metadata.
+  ///
+  /// The value must be an ordered list of `Second-n` and `Infinite`
+  /// alternatives. Members are normalized to lowercase, duplicate alternatives
+  /// are rejected, and size and count bounds are enforced before connecting.
+  /// This only validates and emits the header; it does not create locks,
+  /// refresh locks, or select an application timeout. Use `header` directly for
+  /// unusual values.
+  pub fn timeout<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let timeout = Timeout::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("Timeout", timeout.header_value())))
+  }
+
+  /// Set bounded RFC 2295 `Negotiate` request metadata.
+  ///
+  /// The value must be an ordered list of `trans`, `vlist`, `guess-small`,
+  /// `*`, `major.minor` remote variant selection algorithm versions, and
+  /// `token[=token]` extension directives. Members are normalized, duplicate
+  /// directives are rejected, and size and count bounds are enforced before
+  /// connecting. This only validates and emits the header; it does not select
+  /// a variant, run transparent content negotiation, or change cache
+  /// selection. Use `header` directly for unusual values.
+  pub fn negotiate<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let negotiate = Negotiate::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("Negotiate", negotiate.header_value())))
+  }
+
+  /// Set bounded `If-Schedule-Tag-Match` request metadata.
+  ///
+  /// The value must be one entity-tag-shaped schedule validator such as
+  /// `"sched-17"` or `W/"sched-17"`, with optional surrounding SP or HTAB
+  /// trimmed. This only validates and emits the canonical entity tag; it does
+  /// not compare the tag to stored calendar state, inspect calendars, or
+  /// apply scheduling policy. Use `header` directly for unusual values.
+  pub fn if_schedule_tag_match<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let validator = IfScheduleTagMatch::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "If-Schedule-Tag-Match",
+      validator.header_value(),
+    )))
+  }
+
+  /// Set bounded WebDAV `If` request metadata.
+  ///
+  /// The value must be one or more RFC 4918 condition lists, either entirely
+  /// untagged like `(<opaquelocktoken:...>) (Not <DAV:no-lock>)` or entirely
+  /// tagged like `<http://example.test/src> (<opaquelocktoken:...>)`. State
+  /// tokens, entity tags, `Not`, resource tags, list order, and repeated
+  /// lists are validated and preserved, and the whole value is limited to
+  /// 64 KiB with at most 32 lists and 256 conditions. Mixed tagged and
+  /// untagged productions, duplicate fields, CR, LF, NUL, other control
+  /// bytes, and obs-text are rejected before a socket is opened. This only
+  /// validates and emits the header; it does not evaluate locks, entity tags,
+  /// or other resource state, and it does not generate precondition
+  /// outcomes such as 412 Precondition Failed. Use `header` directly for
+  /// unusual values.
+  pub fn if_header<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let if_header =
+      If::parse(value.as_ref()).map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("If", if_header.header_value())))
+  }
+
+  /// Set bounded WebDAV `Overwrite` request metadata.
+  ///
+  /// The value must be the singleton `T` or `F` token, with optional
+  /// surrounding SP or HTAB trimmed. This only validates and emits the header;
+  /// it does not overwrite destination resources, apply the RFC 4918 default
+  /// `T` when the header is absent, or enforce WebDAV policy. Use `header`
+  /// directly for unusual values.
+  pub fn overwrite<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let overwrite = Overwrite::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("Overwrite", overwrite.header_value())))
+  }
+
+  /// Append a validated `Accept-Charset` range with the default quality of
+  /// `1`. This declares request metadata only; it does not negotiate,
+  /// transcode, or select a response charset.
+  pub fn accept_charset<S: AsRef<str>>(&mut self, charset: S) -> error::Result<&mut Self> {
+    self.accept_charset_member(charset.as_ref(), None)
+  }
+
+  /// Append a validated `Accept-Charset` range with an HTTP q-value.
+  ///
+  /// The q-value must be between `0` and `1` with at most three fractional
+  /// digits. This declares request metadata only; it does not negotiate,
+  /// transcode, or select a response charset.
+  pub fn accept_charset_with_q<C: AsRef<str>, Q: AsRef<str>>(
+    &mut self,
+    charset: C,
+    qvalue: Q,
+  ) -> error::Result<&mut Self> {
+    self.accept_charset_member(charset.as_ref(), Some(qvalue.as_ref()))
+  }
+
+  /// Set a bounded `Idempotency-Key` request header as opaque metadata.
+  ///
+  /// The key must be one or more visible ASCII bytes after HTTP optional
+  /// whitespace is trimmed, and is limited to 64 KiB. CR, LF, NUL, other
+  /// control bytes, and obs-text are rejected before a socket is opened. This
+  /// only validates and emits the header; it does not retry requests, store
+  /// keys, compare keys across requests, or apply application idempotency
+  /// policy. Use `header` directly for unusual values.
+  pub fn idempotency_key<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let idempotency_key = IdempotencyKey::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Idempotency-Key",
+      idempotency_key.header_value(),
+    )))
+  }
+
+  /// Set a bounded `Sec-WebSocket-Key` request header as typed nonce metadata.
+  ///
+  /// The value must be one RFC 4648 section 4 base64 encoding of exactly 16
+  /// nonce bytes, and is limited to 64 KiB. CR, LF, NUL, other control bytes,
+  /// and obs-text are rejected before a socket is opened. This only validates
+  /// and emits the header; it does not perform an HTTP upgrade, compute
+  /// `Sec-WebSocket-Accept`, generate a random nonce, or implement WebSocket
+  /// frames. Use `header` directly for unusual values.
+  pub fn sec_websocket_key<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let sec_websocket_key = SecWebSocketKey::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Sec-WebSocket-Key",
+      sec_websocket_key.header_value(),
+    )))
+  }
+
+  /// Set bounded `Sec-WebSocket-Version` request metadata.
+  ///
+  /// This validates version tokens, duplicates, member count, canonical
+  /// descending order, and size bounds before connecting and replaces any
+  /// existing `Sec-WebSocket-Version` field. It does not perform a WebSocket
+  /// handshake, emit `Connection: Upgrade`, compute `Sec-WebSocket-Accept`,
+  /// negotiate versions, or switch protocols. Use `header` directly for
+  /// unusual values.
+  pub fn sec_websocket_version<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let sec_websocket_version = SecWebSocketVersion::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Sec-WebSocket-Version",
+      sec_websocket_version.header_value(),
+    )))
+  }
+
+  /// Set bounded `Sec-WebSocket-Protocol` request metadata as offers in
+  /// preference order.
+  ///
+  /// This validates RFC 6455 protocol tokens, case-sensitive duplicates,
+  /// member count, and size bounds before connecting and replaces any
+  /// existing `Sec-WebSocket-Protocol` field. It does not perform a WebSocket
+  /// handshake, emit `Connection: Upgrade`, choose an application
+  /// subprotocol, or switch protocols. Use `header` directly for unusual
+  /// values.
+  pub fn sec_websocket_protocol<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let sec_websocket_protocol = SecWebSocketProtocol::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Sec-WebSocket-Protocol",
+      sec_websocket_protocol.header_value(),
+    )))
+  }
+
+  /// Set bounded `Sec-WebSocket-Extensions` request metadata as ordered
+  /// offers.
+  ///
+  /// This validates RFC 6455 extension tokens, ordered parameters,
+  /// token/quoted-string parameter values, duplicates, member count, and size
+  /// bounds before connecting and replaces any existing
+  /// `Sec-WebSocket-Extensions` field. It does not activate compression,
+  /// negotiate extensions, emit `Connection: Upgrade`, or switch protocols.
+  /// Use `header` directly for unusual values.
+  pub fn sec_websocket_extensions<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let sec_websocket_extensions = SecWebSocketExtensions::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Sec-WebSocket-Extensions",
+      sec_websocket_extensions.header_value(),
+    )))
+  }
+
+  /// Set bounded W3C `traceparent` request metadata.
+  ///
+  /// This validates the version 00 wire value before connecting and replaces
+  /// any existing `traceparent` field. It does not create trace identifiers,
+  /// decide sampling, install a tracing backend, or automatically propagate
+  /// metadata between requests.
+  pub fn traceparent<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let traceparent = TraceParent::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("traceparent", traceparent.header_value())))
+  }
+
+  /// Set bounded W3C `tracestate` request metadata.
+  ///
+  /// This validates member grammar, duplicate keys, ordering, count, and size
+  /// bounds before connecting and replaces any existing `tracestate` field. It
+  /// does not configure or invoke a tracing backend.
+  pub fn tracestate<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let tracestate = TraceState::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("tracestate", tracestate.header_value())))
+  }
+
+  /// Set bounded W3C `baggage` request metadata.
+  ///
+  /// This validates member keys, values, properties, duplicate keys, ordering,
+  /// count, and size bounds before connecting and replaces any existing
+  /// `baggage` field. It does not interpret application data, store request
+  /// context, or automatically propagate metadata between requests.
+  pub fn baggage<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let baggage = Baggage::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("baggage", baggage.header_value())))
+  }
+
+  /// Append a validated `A-IM` instance-manipulation token with the default
+  /// quality of `1`. This declares request metadata only; it does not select
+  /// or apply a delta encoding.
+  pub fn a_im<S: AsRef<str>>(&mut self, token: S) -> error::Result<&mut Self> {
+    self.a_im_member(token.as_ref(), None)
+  }
+
+  /// Append a validated `A-IM` instance-manipulation token with an HTTP
+  /// q-value.
+  ///
+  /// The q-value must be between `0` and `1` with at most three fractional
+  /// digits. This declares request metadata only; it does not select or apply
+  /// a delta encoding.
+  pub fn a_im_with_q<T: AsRef<str>, Q: AsRef<str>>(
+    &mut self,
+    token: T,
+    qvalue: Q,
+  ) -> error::Result<&mut Self> {
+    self.a_im_member(token.as_ref(), Some(qvalue.as_ref()))
+  }
+
+  /// Append a validated `A-IM` field value, including optional q-values and
+  /// extension parameters.
+  ///
+  /// This declares request metadata only; it does not select or apply a delta
+  /// encoding.
+  pub fn a_im_value<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let parsed =
+      AIm::parse(value.as_ref()).map_err(|error| error::builder_with_message(error.to_string()))?;
+    self.append_a_im(&parsed.header_value())
   }
 
   /// Append a validated `Accept-Encoding` coding with the default quality of
@@ -724,8 +1224,10 @@ impl HttpClient {
     )
   }
 
-  /// Append a validated `TE` transfer coding. This declares request metadata
-  /// only; it does not enable a transfer-coding engine.
+  /// Append validated `TE` transfer codings. A single call may carry one
+  /// coding or several comma-separated codings, and a coding may include an
+  /// inline `;q=` value. This declares request metadata only; it does not
+  /// enable a transfer-coding engine.
   pub fn te<S: AsRef<str>>(&mut self, coding: S) -> error::Result<&mut Self> {
     self.te_member(coding.as_ref(), None)
   }
@@ -805,19 +1307,116 @@ impl HttpClient {
 
   /// Set an HTTP-date modification validator, `If-Modified-Since: <http-date>`.
   pub fn if_modified_since<S: AsRef<str>>(&mut self, http_date: S) -> error::Result<&mut Self> {
-    let http_date = validate_http_date(http_date.as_ref())?;
-    Ok(self.header(Header::new("If-Modified-Since", http_date)))
+    let if_modified_since = IfModifiedSince::parse(http_date.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "If-Modified-Since",
+      if_modified_since.header_value(),
+    )))
   }
 
   /// Set an HTTP-date modification validator, `If-Unmodified-Since: <http-date>`.
   pub fn if_unmodified_since<S: AsRef<str>>(&mut self, http_date: S) -> error::Result<&mut Self> {
-    let http_date = validate_http_date(http_date.as_ref())?;
-    Ok(self.header(Header::new("If-Unmodified-Since", http_date)))
+    let if_unmodified_since = IfUnmodifiedSince::parse(http_date.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "If-Unmodified-Since",
+      if_unmodified_since.header_value(),
+    )))
   }
 
   /// Set request content type
   pub fn content_type<S: AsRef<str>>(&mut self, content_type: S) -> &mut Self {
     self.header(("Content-Type", content_type.as_ref()))
+  }
+
+  fn accept_charset_member(
+    &mut self,
+    charset: &str,
+    qvalue: Option<&str>,
+  ) -> error::Result<&mut Self> {
+    let charset = charset.trim();
+    if !is_http_token(charset) {
+      return Err(error::builder_with_message("invalid Accept-Charset range"));
+    }
+    let member = qvalue.map_or_else(
+      || charset.to_string(),
+      |qvalue| format!("{charset};q={qvalue}"),
+    );
+    let parsed_member = AcceptCharset::parse(&member)
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    if parsed_member.len() != 1 {
+      return Err(error::builder_with_message(if qvalue.is_some() {
+        "invalid Accept-Charset q-value"
+      } else {
+        "invalid Accept-Charset range"
+      }));
+    }
+    let headers = self.request.headers_mut();
+    let candidate = match headers
+      .iter()
+      .find(|header| header.name().eq_ignore_ascii_case("Accept-Charset"))
+    {
+      Some(header) => format!("{}, {member}", header.value()),
+      None => member,
+    };
+    let charsets = AcceptCharset::parse(&candidate)
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    let value = charsets.header_value();
+    if let Some(header) = headers
+      .iter_mut()
+      .find(|header| header.name().eq_ignore_ascii_case("Accept-Charset"))
+    {
+      header.replace(Header::new("Accept-Charset", value));
+    } else {
+      headers.push(Header::new("Accept-Charset", value));
+    }
+    Ok(self)
+  }
+
+  fn a_im_member(&mut self, token: &str, qvalue: Option<&str>) -> error::Result<&mut Self> {
+    let token = token.trim();
+    if !is_http_token(token) {
+      return Err(error::builder_with_message("invalid A-IM token"));
+    }
+    let qvalue = qvalue.map(str::trim);
+    if let Some(qvalue) = qvalue {
+      validate_a_im_qvalue(qvalue)?;
+    }
+    let member = qvalue.map_or_else(|| token.to_string(), |qvalue| format!("{token};q={qvalue}"));
+    let parsed_member =
+      AIm::parse(&member).map_err(|error| error::builder_with_message(error.to_string()))?;
+    if parsed_member.len() != 1 {
+      return Err(error::builder_with_message(if qvalue.is_some() {
+        "invalid A-IM q-value"
+      } else {
+        "invalid A-IM token"
+      }));
+    }
+    self.append_a_im(&member)
+  }
+
+  fn append_a_im(&mut self, member: &str) -> error::Result<&mut Self> {
+    let headers = self.request.headers_mut();
+    let candidate = match headers
+      .iter()
+      .find(|header| header.name().eq_ignore_ascii_case("A-IM"))
+    {
+      Some(header) => format!("{}, {member}", header.value()),
+      None => member.to_string(),
+    };
+    let a_im =
+      AIm::parse(&candidate).map_err(|error| error::builder_with_message(error.to_string()))?;
+    let value = a_im.header_value();
+    if let Some(header) = headers
+      .iter_mut()
+      .find(|header| header.name().eq_ignore_ascii_case("A-IM"))
+    {
+      header.replace(Header::new("A-IM", value));
+    } else {
+      headers.push(Header::new("A-IM", value));
+    }
+    Ok(self)
   }
 
   fn accept_encoding_member(
@@ -831,75 +1430,76 @@ impl HttpClient {
         "invalid Accept-Encoding coding",
       ));
     }
-    let qvalue = qvalue.map(validate_accept_encoding_qvalue).transpose()?;
     let member = qvalue.map_or_else(
       || coding.to_string(),
       |qvalue| format!("{coding};q={qvalue}"),
     );
-    if member.len() > MAX_ACCEPT_ENCODING_VALUE_BYTES {
-      return Err(error::builder_with_message(
-        "Accept-Encoding header value is too large",
-      ));
+    let parsed_member = AcceptEncoding::parse(&member)
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    if parsed_member.len() != 1 {
+      return Err(error::builder_with_message(if qvalue.is_some() {
+        "invalid Accept-Encoding q-value"
+      } else {
+        "invalid Accept-Encoding coding"
+      }));
     }
-
     let headers = self.request.headers_mut();
-    let existing = headers
+    let candidate = match headers
+      .iter()
+      .find(|header| header.name().eq_ignore_ascii_case("Accept-Encoding"))
+    {
+      Some(header) => format!("{}, {member}", header.value()),
+      None => member,
+    };
+    let encodings = AcceptEncoding::parse(&candidate)
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    let value = encodings.header_value();
+    if let Some(header) = headers
       .iter_mut()
-      .find(|header| header.name().eq_ignore_ascii_case("Accept-Encoding"));
-    if let Some(header) = existing {
-      let existing_codings = parse_accept_encoding_codings(header.value())?;
-      if existing_codings
-        .iter()
-        .any(|known| known.eq_ignore_ascii_case(coding))
-      {
-        return Err(error::builder_with_message(
-          "duplicate Accept-Encoding coding",
-        ));
-      }
-      if existing_codings.len() >= MAX_ACCEPT_ENCODINGS {
-        return Err(error::builder_with_message(
-          "too many Accept-Encoding codings",
-        ));
-      }
-      let value = format!("{}, {member}", header.value());
-      if value.len() > MAX_ACCEPT_ENCODING_VALUE_BYTES {
-        return Err(error::builder_with_message(
-          "Accept-Encoding header value is too large",
-        ));
-      }
+      .find(|header| header.name().eq_ignore_ascii_case("Accept-Encoding"))
+    {
       header.replace(Header::new("Accept-Encoding", value));
     } else {
-      headers.push(Header::new("Accept-Encoding", member));
+      headers.push(Header::new("Accept-Encoding", value));
     }
     Ok(self)
   }
 
   fn te_member(&mut self, coding: &str, qvalue: Option<&str>) -> error::Result<&mut Self> {
     let coding = coding.trim();
-    if !is_http_token(coding) || coding.eq_ignore_ascii_case("chunked") {
-      return Err(error::builder_with_message("invalid TE coding"));
-    }
-    if coding.eq_ignore_ascii_case("trailers") && qvalue.is_some() {
-      return Err(error::builder_with_message(
-        "TE trailers cannot carry a q-value",
-      ));
-    }
-    let qvalue = qvalue.map(validate_te_qvalue).transpose()?;
+    let qvalue = qvalue.map(str::trim);
     let member = qvalue.map_or_else(
       || coding.to_string(),
       |qvalue| format!("{coding};q={qvalue}"),
     );
-    append_unique_metadata_member(
-      self.request.headers_mut(),
-      "TE",
-      coding,
-      member,
-      "invalid TE coding",
-      "duplicate TE coding",
-      "too many TE codings",
-      "TE header value is too large",
-      parse_te_codings,
-    )?;
+    let incoming = Te::parse_values([member.as_str()])
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    let headers = self.request.headers_mut();
+    if let Some(header) = headers
+      .iter_mut()
+      .find(|header| header.name().eq_ignore_ascii_case("TE"))
+    {
+      let known = Te::parse_values([header.value().as_str()])
+        .map_err(|_| error::builder_with_message("invalid TE coding"))?;
+      if incoming.codings().iter().any(|incoming| {
+        known
+          .codings()
+          .iter()
+          .any(|known| known.coding().eq_ignore_ascii_case(incoming.coding()))
+      }) {
+        return Err(error::builder_with_message("duplicate TE coding"));
+      }
+      if known.len() + incoming.len() > MAX_TE_CODINGS {
+        return Err(error::builder_with_message("too many TE codings"));
+      }
+      let value = format!("{}, {member}", header.value());
+      if value.len() > MAX_TE_VALUE_BYTES {
+        return Err(error::builder_with_message("TE header value is too large"));
+      }
+      header.replace(Header::new("TE", value));
+    } else {
+      headers.push(Header::new("TE", member));
+    }
     self.ensure_connection_te_token();
     Ok(self)
   }
@@ -1350,9 +1950,56 @@ fn bounded_forwarded_header_value(forwarded: Forwarded) -> error::Result<String>
   Ok(value)
 }
 
-const MAX_ACCEPT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
-const MAX_ACCEPT_ENCODINGS: usize = 32;
-const MAX_AUTHORIZATION_VALUE_BYTES: usize = 64 * 1024;
+fn bounded_cdn_loop_header_value(cdn_loop: CdnLoop) -> error::Result<String> {
+  let value = cdn_loop.header_value();
+  if value.len() > MAX_CDN_LOOP_VALUE_BYTES {
+    return Err(error::builder_with_message(
+      "CDN-Loop header value is too large",
+    ));
+  }
+  Ok(value)
+}
+
+fn bounded_via_header_value(via: Via) -> error::Result<String> {
+  let value = via.header_value();
+  if value.len() > MAX_VIA_VALUE_BYTES {
+    return Err(error::builder_with_message("Via header value is too large"));
+  }
+  Ok(value)
+}
+
+fn bounded_x_forwarded_for_header_value(forwarded_for: XForwardedFor) -> error::Result<String> {
+  let value = forwarded_for.header_value();
+  if value.len() > MAX_X_FORWARDED_FOR_VALUE_BYTES {
+    return Err(error::builder_with_message(
+      "X-Forwarded-For header value is too large",
+    ));
+  }
+  Ok(value)
+}
+
+fn bounded_x_forwarded_host_header_value(forwarded_host: XForwardedHost) -> error::Result<String> {
+  let value = forwarded_host.header_value();
+  if value.len() > MAX_X_FORWARDED_HOST_VALUE_BYTES {
+    return Err(error::builder_with_message(
+      "X-Forwarded-Host header value is too large",
+    ));
+  }
+  Ok(value)
+}
+
+fn bounded_x_forwarded_proto_header_value(
+  forwarded_proto: XForwardedProto,
+) -> error::Result<String> {
+  let value = forwarded_proto.header_value();
+  if value.len() > MAX_X_FORWARDED_PROTO_VALUE_BYTES {
+    return Err(error::builder_with_message(
+      "X-Forwarded-Proto header value is too large",
+    ));
+  }
+  Ok(value)
+}
+
 const MAX_REQUEST_METADATA_VALUE_BYTES: usize = 64 * 1024;
 const MAX_REQUEST_METADATA_MEMBERS: usize = 32;
 const MAX_PREFER_FIELD_BYTES: usize = 64 * 1024;
@@ -1395,44 +2042,6 @@ fn append_unique_metadata_member(
     headers.push(Header::new(header_name, member));
   }
   Ok(())
-}
-
-fn parse_te_codings(value: &str) -> error::Result<Vec<&str>> {
-  parse_metadata_members(value, "invalid TE coding", |member| {
-    let mut parts = member.split(';');
-    let coding = parts.next().unwrap_or_default().trim();
-    if !is_http_token(coding) || coding.eq_ignore_ascii_case("chunked") {
-      return None;
-    }
-    match parts.next() {
-      None => Some(coding),
-      Some(parameter) if parts.next().is_none() => {
-        let (name, value) = parameter.trim().split_once('=')?;
-        (!coding.eq_ignore_ascii_case("trailers")
-          && name.trim().eq_ignore_ascii_case("q")
-          && validate_te_qvalue(value.trim()).is_ok())
-        .then_some(coding)
-      }
-      Some(_) => None,
-    }
-  })
-}
-
-fn validate_te_qvalue(qvalue: &str) -> error::Result<&str> {
-  let valid = match qvalue.split_once('.') {
-    Some((whole, fraction)) => {
-      fraction.len() <= 3
-        && fraction.bytes().all(|byte| byte.is_ascii_digit())
-        && matches!(whole, "0" | "1")
-        && (whole == "0" || fraction.bytes().all(|byte| byte == b'0'))
-    }
-    None => matches!(qvalue, "0" | "1"),
-  };
-  if valid {
-    Ok(qvalue)
-  } else {
-    Err(error::builder_with_message("invalid TE q-value"))
-  }
 }
 
 fn parse_digest_algorithms(value: &str) -> error::Result<Vec<&str>> {
@@ -1636,6 +2245,14 @@ fn validate_accept_qvalue(qvalue: &str) -> error::Result<&str> {
   }
 }
 
+fn validate_a_im_qvalue(qvalue: &str) -> error::Result<&str> {
+  if is_qvalue(qvalue) {
+    Ok(qvalue)
+  } else {
+    Err(error::builder_with_message("invalid A-IM q-value"))
+  }
+}
+
 fn split_accept_delimited(value: &str, delimiter: u8) -> error::Result<Vec<&str>> {
   let mut members = Vec::new();
   let mut quoted = false;
@@ -1699,83 +2316,6 @@ fn is_accept_quoted_string(value: &str) -> bool {
     }
   }
   !escaped
-}
-
-fn parse_accept_encoding_codings(value: &str) -> error::Result<Vec<&str>> {
-  if value.len() > MAX_ACCEPT_ENCODING_VALUE_BYTES {
-    return Err(error::builder_with_message(
-      "Accept-Encoding header value is too large",
-    ));
-  }
-
-  let mut codings = Vec::new();
-  for member in value.split(',') {
-    let (coding, _) = split_accept_encoding_member(member)?;
-    if codings
-      .iter()
-      .any(|known: &&str| known.eq_ignore_ascii_case(coding))
-    {
-      return Err(error::builder_with_message(
-        "duplicate Accept-Encoding coding",
-      ));
-    }
-    if codings.len() >= MAX_ACCEPT_ENCODINGS {
-      return Err(error::builder_with_message(
-        "too many Accept-Encoding codings",
-      ));
-    }
-    codings.push(coding);
-  }
-  Ok(codings)
-}
-
-fn split_accept_encoding_member(member: &str) -> error::Result<(&str, Option<&str>)> {
-  let mut parts = member.split(';');
-  let coding = parts.next().unwrap_or_default().trim();
-  if !is_http_token(coding) {
-    return Err(error::builder_with_message(
-      "invalid Accept-Encoding coding",
-    ));
-  }
-  let Some(parameter) = parts.next() else {
-    return Ok((coding, None));
-  };
-  if parts.next().is_some() {
-    return Err(error::builder_with_message(
-      "invalid Accept-Encoding q-value",
-    ));
-  }
-  let Some((name, qvalue)) = parameter.trim().split_once('=') else {
-    return Err(error::builder_with_message(
-      "invalid Accept-Encoding q-value",
-    ));
-  };
-  if !name.trim().eq_ignore_ascii_case("q") {
-    return Err(error::builder_with_message(
-      "invalid Accept-Encoding q-value",
-    ));
-  }
-  let qvalue = validate_accept_encoding_qvalue(qvalue.trim())?;
-  Ok((coding, Some(qvalue)))
-}
-
-fn validate_accept_encoding_qvalue(qvalue: &str) -> error::Result<&str> {
-  let valid = match qvalue.split_once('.') {
-    Some((whole, fraction)) => {
-      fraction.len() <= 3
-        && fraction.bytes().all(|byte| byte.is_ascii_digit())
-        && matches!(whole, "0" | "1")
-        && (whole == "0" || fraction.bytes().all(|byte| byte == b'0'))
-    }
-    None => matches!(qvalue, "0" | "1"),
-  };
-  if valid {
-    Ok(qvalue)
-  } else {
-    Err(error::builder_with_message(
-      "invalid Accept-Encoding q-value",
-    ))
-  }
 }
 
 fn validate_request_trailer_header(name: &str, value: &str) -> error::Result<()> {
@@ -1851,105 +2391,20 @@ fn validate_http_date(http_date: &str) -> error::Result<&str> {
   Ok(http_date)
 }
 
-const MAX_ACCEPT_LANGUAGE_VALUE_BYTES: usize = 64 * 1024;
-const MAX_ACCEPT_LANGUAGE_RANGES: usize = 32;
-
 fn build_accept_language_value<I, L>(ranges: I) -> error::Result<String>
 where
   I: IntoIterator<Item = L>,
   L: AsRef<str>,
 {
-  let mut parsed = Vec::new();
-
-  for value in ranges {
-    if value.as_ref().len() > MAX_ACCEPT_LANGUAGE_VALUE_BYTES {
-      return Err(error::builder_with_message(
-        "Accept-Language header value is too large",
-      ));
-    }
-    for range in value.as_ref().split(',') {
-      let range = range.trim();
-      let (language_range, quality) = parse_accept_language_item(range)?;
-      if parsed.len() >= MAX_ACCEPT_LANGUAGE_RANGES {
-        return Err(error::builder_with_message(
-          "too many Accept-Language ranges",
-        ));
-      }
-      if parsed
-        .iter()
-        .any(|(known, _): &(String, Option<String>)| known.eq_ignore_ascii_case(language_range))
-      {
-        return Err(error::builder_with_message(
-          "duplicate Accept-Language range",
-        ));
-      }
-      parsed.push((language_range.to_string(), quality.map(ToString::to_string)));
-    }
-  }
-
-  if parsed.is_empty() {
-    return Err(error::builder_with_message("invalid Accept-Language range"));
-  }
-
-  let value = parsed
-    .into_iter()
-    .map(|(range, quality)| match quality {
-      Some(quality) => format!("{range}; q={quality}"),
-      None => range,
-    })
-    .collect::<Vec<_>>()
-    .join(", ");
+  let accept_language = AcceptLanguage::from_ranges(ranges)
+    .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+  let value = accept_language.header_value();
   if value.len() > MAX_ACCEPT_LANGUAGE_VALUE_BYTES {
     return Err(error::builder_with_message(
       "Accept-Language header value is too large",
     ));
   }
   Ok(value)
-}
-
-fn parse_accept_language_item(value: &str) -> error::Result<(&str, Option<&str>)> {
-  let mut parts = value.split(';');
-  let range = parts.next().unwrap_or_default().trim();
-  if !is_language_range(range) {
-    return Err(error::builder_with_message("invalid Accept-Language range"));
-  }
-
-  let Some(parameter) = parts.next() else {
-    return Ok((range, None));
-  };
-  if parts.next().is_some() {
-    return Err(error::builder_with_message(
-      "invalid Accept-Language q-value",
-    ));
-  }
-  let Some((name, quality)) = parameter.trim().split_once('=') else {
-    return Err(error::builder_with_message(
-      "invalid Accept-Language q-value",
-    ));
-  };
-  let quality = quality.trim();
-  if !name.trim().eq_ignore_ascii_case("q") || !is_qvalue(quality) {
-    return Err(error::builder_with_message(
-      "invalid Accept-Language q-value",
-    ));
-  }
-  Ok((range, Some(quality)))
-}
-
-fn is_language_range(value: &str) -> bool {
-  if value == "*" {
-    return true;
-  }
-
-  let mut subtags = value.split('-');
-  let Some(primary) = subtags.next() else {
-    return false;
-  };
-  (1..=8).contains(&primary.len())
-    && primary.bytes().all(|byte| byte.is_ascii_alphabetic())
-    && subtags.all(|subtag| {
-      (1..=8).contains(&subtag.len()) && subtag.bytes().all(|byte| byte.is_ascii_alphanumeric())
-    })
 }
 
 fn is_qvalue(value: &str) -> bool {

@@ -7,9 +7,14 @@ pub(crate) fn is_sensitive_redirect_header(name: &str) -> bool {
   name.eq_ignore_ascii_case("authorization")
     || name.eq_ignore_ascii_case("cookie")
     || name.eq_ignore_ascii_case("proxy-authorization")
+    || name.eq_ignore_ascii_case("lock-token")
+    || name.eq_ignore_ascii_case("if")
+    || name.eq_ignore_ascii_case("traceparent")
+    || name.eq_ignore_ascii_case("tracestate")
+    || name.eq_ignore_ascii_case("baggage")
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Request {
   closed: bool,
   count: u32,
@@ -27,6 +32,71 @@ pub struct Request {
   binary: Vec<u8>,
   proxy: Option<Proxy>,
   http2_extended_connect_protocol: Option<String>,
+}
+
+impl fmt::Debug for Request {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter
+      .debug_struct("Request")
+      .field("closed", &self.closed)
+      .field("count", &self.count)
+      .field("config", &self.config)
+      .field("url", &self.url)
+      .field("method", &self.method)
+      .field("paths", &self.paths)
+      .field("paras", &self.paras)
+      .field("formdatas", &self.formdatas)
+      .field("headers", &self.headers)
+      .field("trailers", &self.trailers)
+      .field("traditional", &self.traditional)
+      .field("encode", &self.encode)
+      .field("raw", &debug_raw_request(&self.raw))
+      .field("binary", &self.binary)
+      .field("proxy", &self.proxy)
+      .field(
+        "http2_extended_connect_protocol",
+        &self.http2_extended_connect_protocol,
+      )
+      .finish()
+  }
+}
+
+fn debug_raw_request(raw: &Option<String>) -> DebugRawRequest<'_> {
+  match raw {
+    Some(value) if raw_request_has_sensitive_header(value) => DebugRawRequest::Redacted,
+    Some(value) => DebugRawRequest::Visible(value),
+    None => DebugRawRequest::None,
+  }
+}
+
+enum DebugRawRequest<'a> {
+  None,
+  Redacted,
+  Visible(&'a str),
+}
+
+impl fmt::Debug for DebugRawRequest<'_> {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      Self::None => formatter.write_str("None"),
+      Self::Redacted => formatter.write_str("Some(\"[REDACTED]\")"),
+      Self::Visible(value) => formatter.debug_tuple("Some").field(value).finish(),
+    }
+  }
+}
+
+fn raw_request_has_sensitive_header(raw: &str) -> bool {
+  raw.lines().any(|line| {
+    let Some((name, _)) = line.split_once(':') else {
+      return false;
+    };
+    is_sensitive_redirect_header(name.trim())
+      || name.trim().eq_ignore_ascii_case("set-cookie")
+      || name.trim().eq_ignore_ascii_case("sec-websocket-accept")
+      || name.trim().eq_ignore_ascii_case("sec-websocket-key")
+      || name.trim().eq_ignore_ascii_case("lock-token")
+      || name.trim().eq_ignore_ascii_case("if")
+  })
 }
 
 #[allow(dead_code)]
@@ -354,5 +424,49 @@ impl fmt::Debug for RequestBody {
   fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
     let text = self.string().unwrap_or_default();
     fmt::Debug::fmt(&text, formatter)
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::Request;
+  use crate::types::Header;
+
+  #[test]
+  fn request_debug_redacts_sensitive_headers_and_raw_request() {
+    let mut request = Request::new();
+    request
+      .headers_mut()
+      .push(Header::new("Authorization", "Bearer origin-token"));
+    request
+      .headers_mut()
+      .push(Header::new("Cookie", "session=private"));
+    request
+      .headers_mut()
+      .push(Header::new("Idempotency-Key", "charge-2026-08-19-9f3c"));
+    request.headers_mut().push(Header::new(
+      "Lock-Token",
+      "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+    ));
+    request
+      .trailers_mut()
+      .push(Header::new("Proxy-Authorization", "Basic cHJveHk6c2VjcmV0"));
+    request.raw_set(
+      "GET / HTTP/1.1\r\nAuthorization: Bearer raw-token\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nLock-Token: <opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\r\nHost: example.test\r\n\r\n",
+    );
+
+    let debug = format!("{request:?}");
+    assert!(debug.contains("[REDACTED]"));
+    for secret in [
+      "origin-token",
+      "session=private",
+      "cHJveHk6c2VjcmV0",
+      "raw-token",
+      "charge-2026-08-19-9f3c",
+      "550e8400-e29b-41d4-a716-446655440000",
+      "dGhlIHNhbXBsZSBub25jZQ==",
+    ] {
+      assert!(!debug.contains(secret));
+    }
   }
 }
