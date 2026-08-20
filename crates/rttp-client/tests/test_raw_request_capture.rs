@@ -2784,6 +2784,147 @@ fn raw_sec_websocket_version_header_remains_available_as_escape_hatch() {
 }
 
 #[test]
+fn sec_websocket_protocol_helper_emits_canonical_metadata() {
+  for (value, expected) in [
+    ("chat", "chat"),
+    (" \tchat\t ", "chat"),
+    ("chat, superchat", "chat, superchat"),
+    (
+      " \tchat\t , superchat , graphql-ws\t ",
+      "chat, superchat, graphql-ws",
+    ),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .get()
+        .url(format!("{}/chat", base_url))
+        .sec_websocket_protocol(value)
+        .expect("sec websocket protocol should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+    assert_eq!(
+      Some(expected),
+      header_value(&request, "Sec-WebSocket-Protocol")
+    );
+    assert_eq!(None, header_value(&request, "Upgrade"));
+    assert_ne!(
+      Some("Upgrade"),
+      header_value(&request, "Connection"),
+      "typed Sec-WebSocket-Protocol must not emit Connection: Upgrade"
+    );
+  }
+}
+
+#[test]
+fn sec_websocket_protocol_helper_replaces_existing_fields() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/chat", base_url))
+      .header(("Sec-WebSocket-Protocol", "legacy"))
+      .sec_websocket_protocol("chat, superchat")
+      .expect("sec websocket protocol should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("chat, superchat"),
+    header_value(&request, "Sec-WebSocket-Protocol")
+  );
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| line
+        .to_ascii_lowercase()
+        .starts_with("sec-websocket-protocol:"))
+      .count(),
+    "the typed helper must replace an existing same-name field"
+  );
+  assert_eq!(None, header_value(&request, "Upgrade"));
+  assert_ne!(
+    Some("Upgrade"),
+    header_value(&request, "Connection"),
+    "typed Sec-WebSocket-Protocol must not emit Connection: Upgrade"
+  );
+}
+
+#[test]
+fn sec_websocket_protocol_helper_rejects_invalid_values_before_connecting() {
+  for value in [
+    "",
+    " ",
+    ",",
+    "chat,",
+    "chat,,superchat",
+    "not a token",
+    "chat;foo",
+    "chat/1",
+    "chat, chat",
+    "chat\r\nX-Injected: 1",
+    "chat\0value",
+    "chat\u{7f}value",
+    "chat\u{80}value",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/chat", base_url))
+        .sec_websocket_protocol(value)
+        .expect_err("invalid sec websocket protocol should be rejected");
+      assert!(error.is_builder());
+      if !value.trim().is_empty() {
+        assert!(!error.to_string().contains(value));
+      }
+    });
+    assert!(
+      request.is_empty(),
+      "invalid sec websocket protocol must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn sec_websocket_protocol_helper_rejects_oversized_values_before_connecting() {
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/chat", base_url))
+      .sec_websocket_protocol(oversized.as_str())
+      .expect_err("oversized sec websocket protocol should be rejected");
+    assert!(error.is_builder());
+    assert!(!error.to_string().contains(&oversized[..64]));
+  });
+  assert!(
+    request.is_empty(),
+    "oversized sec websocket protocol must not open a socket"
+  );
+}
+
+#[test]
+fn raw_sec_websocket_protocol_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/chat", base_url))
+      .header(("Sec-WebSocket-Protocol", "opaque custom value"))
+      .emit()
+      .expect("manual Sec-WebSocket-Protocol header should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("opaque custom value"),
+    header_value(&request, "Sec-WebSocket-Protocol")
+  );
+}
+
+#[test]
 fn raw_sec_websocket_key_header_remains_available_as_escape_hatch() {
   let request = capture_request(|base_url| {
     client()

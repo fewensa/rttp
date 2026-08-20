@@ -29,12 +29,13 @@ pub use rttp_client::response::{
   OriginTrialParseError, OriginTrials, PermissionsPolicy, PermissionsPolicyAllowlist,
   PermissionsPolicyAllowlistMember, PermissionsPolicyDirective, PermissionsPolicyParseError,
   Pragma, PragmaParseError, ReprDigest, SecWebSocketAccept, SecWebSocketAcceptParseError,
-  SecWebSocketVersion, SecWebSocketVersionParseError, ServiceWorkerAllowed,
-  ServiceWorkerAllowedParseError, SpeculationRules, SpeculationRulesParseError,
-  StrictTransportSecurity, StrictTransportSecurityParseError, SupportsLoadingMode,
-  SupportsLoadingModeParseError, Upgrade, UpgradeParseError, WantContentDigest, WantReprDigest,
-  WwwAuthenticate, WwwAuthenticateChallenge, WwwAuthenticateParameter, WwwAuthenticateParseError,
-  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  SecWebSocketProtocol, SecWebSocketProtocolParseError, SecWebSocketVersion,
+  SecWebSocketVersionParseError, ServiceWorkerAllowed, ServiceWorkerAllowedParseError,
+  SpeculationRules, SpeculationRulesParseError, StrictTransportSecurity,
+  StrictTransportSecurityParseError, SupportsLoadingMode, SupportsLoadingModeParseError, Upgrade,
+  UpgradeParseError, WantContentDigest, WantReprDigest, WwwAuthenticate, WwwAuthenticateChallenge,
+  WwwAuthenticateParameter, WwwAuthenticateParseError, XContentTypeOptions,
+  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 #[cfg(feature = "client")]
 pub use rttp_client::{

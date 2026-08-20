@@ -33,6 +33,7 @@ use rttp_protocol::priority::Priority;
 use rttp_protocol::save_data::SaveData;
 use rttp_protocol::sec_gpc::SecGpc;
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
+use rttp_protocol::sec_websocket_protocol::SecWebSocketProtocol;
 use rttp_protocol::sec_websocket_version::SecWebSocketVersion;
 use rttp_protocol::signature::Signature;
 use rttp_protocol::signature_input::SignatureInput;
@@ -885,6 +886,24 @@ impl HttpClient {
     Ok(self.header(Header::new(
       "Sec-WebSocket-Version",
       sec_websocket_version.header_value(),
+    )))
+  }
+
+  /// Set bounded `Sec-WebSocket-Protocol` request metadata as offers in
+  /// preference order.
+  ///
+  /// This validates RFC 6455 protocol tokens, case-sensitive duplicates,
+  /// member count, and size bounds before connecting and replaces any
+  /// existing `Sec-WebSocket-Protocol` field. It does not perform a WebSocket
+  /// handshake, emit `Connection: Upgrade`, choose an application
+  /// subprotocol, or switch protocols. Use `header` directly for unusual
+  /// values.
+  pub fn sec_websocket_protocol<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let sec_websocket_protocol = SecWebSocketProtocol::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Sec-WebSocket-Protocol",
+      sec_websocket_protocol.header_value(),
     )))
   }
 

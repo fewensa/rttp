@@ -65,6 +65,7 @@ use rttp_protocol::save_data::SaveData;
 use rttp_protocol::sec_gpc::SecGpc;
 use rttp_protocol::sec_websocket_accept::SecWebSocketAccept;
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
+use rttp_protocol::sec_websocket_protocol::{SecWebSocketProtocol, SecWebSocketProtocolParseError};
 use rttp_protocol::sec_websocket_version::SecWebSocketVersion;
 use rttp_protocol::service_worker_allowed::ServiceWorkerAllowed;
 use rttp_protocol::signature::{Signature, SignatureParseError};
@@ -129,6 +130,12 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let sec_websocket_version =
     SecWebSocketVersion::parse("13").expect("Sec-WebSocket-Version metadata should parse");
   let sec_websocket_accept = SecWebSocketAccept::derive_from_key(&sec_websocket_key);
+  let sec_websocket_protocol = SecWebSocketProtocol::parse("chat, superchat")
+    .expect("Sec-WebSocket-Protocol offers should parse");
+  let sec_websocket_protocol_selection =
+    SecWebSocketProtocol::from_selection("chat").expect("Sec-WebSocket-Protocol should select");
+  let _: SecWebSocketProtocolParseError = SecWebSocketProtocol::parse_selection("chat, superchat")
+    .expect_err("multi-token Sec-WebSocket-Protocol selection should be rejected");
   let if_modified_since = IfModifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
     .expect("If-Modified-Since should parse");
   let if_unmodified_since = IfUnmodifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
@@ -353,6 +360,11 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(sec_websocket_version.versions(), ["13"]);
   assert!(sec_websocket_version.contains("13"));
   assert_eq!(sec_websocket_version.header_value(), "13");
+  assert_eq!(sec_websocket_protocol.protocols(), ["chat", "superchat"]);
+  assert!(sec_websocket_protocol.contains("chat"));
+  assert_eq!(sec_websocket_protocol.header_value(), "chat, superchat");
+  assert_eq!(sec_websocket_protocol_selection.selected(), Some("chat"));
+  assert_eq!(sec_websocket_protocol_selection.header_value(), "chat");
   assert_eq!(
     sec_websocket_accept.as_str(),
     "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="

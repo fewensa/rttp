@@ -90,6 +90,10 @@ pub use rttp_protocol::sec_websocket_key::{
   SecWebSocketKey as HttpSecWebSocketKey,
   SecWebSocketKeyParseError as HttpSecWebSocketKeyParseError,
 };
+pub use rttp_protocol::sec_websocket_protocol::{
+  SecWebSocketProtocol as HttpSecWebSocketProtocol,
+  SecWebSocketProtocolParseError as HttpSecWebSocketProtocolParseError,
+};
 pub use rttp_protocol::sec_websocket_version::{
   SecWebSocketVersion as HttpSecWebSocketVersion,
   SecWebSocketVersionParseError as HttpSecWebSocketVersionParseError,
@@ -596,6 +600,20 @@ impl Request {
       return Ok(None);
     }
     HttpSecWebSocketVersion::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `Sec-WebSocket-Protocol` request metadata as offers in
+  /// preference order without choosing an application subprotocol or
+  /// switching protocols. Malformed fields return a parser error while raw
+  /// headers remain available.
+  pub fn sec_websocket_protocol(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketProtocol>, HttpSecWebSocketProtocolParseError> {
+    let values: Vec<&str> = self.headers_named("Sec-WebSocket-Protocol").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketProtocol::parse_values(values).map(Some)
   }
 
   /// Parses received W3C `traceparent` request metadata without creating
@@ -2416,6 +2434,25 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpSecWebSocketVersion::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `Sec-WebSocket-Protocol` request metadata as offers in
+  /// preference order without choosing an application subprotocol or
+  /// switching protocols. Malformed fields return a parser error while raw
+  /// headers remain available.
+  pub fn sec_websocket_protocol(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketProtocol>, HttpSecWebSocketProtocolParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Protocol"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketProtocol::parse_values(values).map(Some)
   }
 
   /// Parses received W3C `traceparent` request metadata without creating

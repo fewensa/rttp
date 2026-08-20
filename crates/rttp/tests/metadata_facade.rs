@@ -15,8 +15,9 @@ use rttp::server::{
   HttpPragmaParseError, HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError,
   HttpRequestAcceptCharsets, HttpResponse, HttpSaveData, HttpSecGpc, HttpSecGpcParseError,
   HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketKey,
-  HttpSecWebSocketKeyParseError, HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError,
-  HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
+  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
+  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
+  HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
   HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
   HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
   HttpSpeculationRules, HttpSpeculationRulesParseError, HttpSunsetParseError,
@@ -298,6 +299,15 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::SecWebSocketVersionParseError =
     rttp_client::response::SecWebSocketVersion::parse("8, 13")
       .expect_err("unordered Sec-WebSocket-Version should be rejected");
+  let sec_websocket_protocol: rttp::SecWebSocketProtocol =
+    rttp_client::response::SecWebSocketProtocol::parse("chat, superchat")
+      .expect("Sec-WebSocket-Protocol offers should parse");
+  let _: rttp::SecWebSocketProtocolParseError =
+    rttp_client::response::SecWebSocketProtocol::parse_selection("chat, superchat")
+      .expect_err("multi-token Sec-WebSocket-Protocol selection should be rejected");
+  let sec_websocket_protocol_selection: rttp::SecWebSocketProtocol =
+    rttp_client::response::SecWebSocketProtocol::from_selection("graphql-ws")
+      .expect("Sec-WebSocket-Protocol should select");
   let fetch_site: rttp::SecFetchSite =
     rttp_client::SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let sec_purpose: rttp::SecPurpose =
@@ -476,6 +486,13 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(sec_websocket_version.versions(), ["13"]);
   assert!(sec_websocket_version.contains("13"));
   assert_eq!(sec_websocket_version.header_value(), "13");
+  assert_eq!(sec_websocket_protocol.protocols(), ["chat", "superchat"]);
+  assert!(sec_websocket_protocol.contains("chat"));
+  assert_eq!(sec_websocket_protocol.header_value(), "chat, superchat");
+  assert_eq!(
+    sec_websocket_protocol_selection.selected(),
+    Some("graphql-ws")
+  );
   assert_eq!("tenant", baggage_member.key());
   assert_eq!("source", baggage_property.key());
   assert_eq!(fetch_site.header_value(), "same-origin");
@@ -1103,6 +1120,9 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpSecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==").expect("Sec-WebSocket-Key should parse");
   let sec_websocket_version: HttpSecWebSocketVersion =
     HttpSecWebSocketVersion::parse("13").expect("Sec-WebSocket-Version should parse");
+  let sec_websocket_protocol: HttpSecWebSocketProtocol =
+    HttpSecWebSocketProtocol::parse("chat, superchat")
+      .expect("Sec-WebSocket-Protocol offers should parse");
   let sec_websocket_accept = HttpSecWebSocketAccept::derive_from_key(&sec_websocket_key);
   let baggage: HttpBaggage =
     HttpBaggage::parse("tenant=acme;source=gateway").expect("baggage should parse");
@@ -1133,6 +1153,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpSecWebSocketKey::parse("the sample nonce");
   let _: Result<HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError> =
     HttpSecWebSocketVersion::parse("8, 13");
+  let _: Result<HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError> =
+    HttpSecWebSocketProtocol::parse_selection("chat, superchat");
   let _: Result<HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError> =
     HttpSecWebSocketAccept::parse("the accept value");
   let if_modified_since: HttpIfModifiedSince =
@@ -1255,6 +1277,10 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(sec_websocket_version.versions(), ["13"]);
   assert!(sec_websocket_version.contains("13"));
   assert_eq!(sec_websocket_version.header_value(), "13");
+  assert_eq!(sec_websocket_protocol.protocols(), ["chat", "superchat"]);
+  assert!(sec_websocket_protocol.contains("chat"));
+  assert_eq!(sec_websocket_protocol.header_value(), "chat, superchat");
+  assert_eq!(sec_websocket_protocol.selected(), None);
   assert_eq!(
     "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=",
     sec_websocket_accept.as_str()

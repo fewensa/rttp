@@ -783,6 +783,31 @@ These helpers declare and parse metadata only. They do not perform a
 WebSocket handshake, emit `Connection: Upgrade` or `Upgrade: websocket`,
 compute `Sec-WebSocket-Accept`, negotiate versions, or switch protocols.
 
+## Sec-WebSocket-Protocol request and response metadata
+
+Handlers can call `Request::sec_websocket_protocol()` and
+`HttpRequest::sec_websocket_protocol()` to observe bounded typed
+`Sec-WebSocket-Protocol` request metadata as offers in preference order
+through the shared protocol `HttpSecWebSocketProtocol` type. Absent fields
+return `Ok(None)`.
+`HttpResponse::with_sec_websocket_protocol(token)` declares validated
+response metadata for one selected token that replaces attached same-name
+fields, and `HttpResponse::sec_websocket_protocol()` parses attached response
+fields as a selection singleton. Recognized members are RFC 6455 section
+11.3.4 `token` values such as `chat`, `superchat`, or `graphql-transport-ws`,
+compared case-sensitively. Multiple request fields are combined in wire
+order, each field value and the combined raw or canonical serialized field
+set is bounded to 64 KiB, and the combined member count is bounded to 32.
+Empty members, malformed tokens, parameters, slashes, duplicates, control-byte
+values, and bound violations return a parser error while `Request::header()`
+and `HttpRequest::header()` continue to expose the original raw fields; a
+multi-token response value fails the singleton selection parse.
+
+These helpers declare and parse metadata only. They do not perform a
+WebSocket handshake, emit `Connection: Upgrade` or `Upgrade: websocket`,
+choose an application subprotocol, or switch protocols. Applications own the
+selection decision; RTTP never picks a token from the offer list.
+
 ## Pragma request and response metadata
 
 Handlers can call `Request::pragma()` and `HttpRequest::pragma()` to observe

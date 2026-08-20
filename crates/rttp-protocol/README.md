@@ -908,6 +908,25 @@ WebSocket handshake, emit `Connection: Upgrade`, compute
 `Sec-WebSocket-Accept`, negotiate versions, switch protocols, or implement
 WebSocket frames.
 
+## Sec-WebSocket-Protocol
+
+`sec_websocket_protocol` parses one or more HTTP `Sec-WebSocket-Protocol`
+fields as RFC 6455 protocol tokens. Request offers are an ordered `1#token`
+list in client preference order through `parse`, `parse_values`, and
+`from_protocols`; a successful handshake selection is a singleton token
+through `from_selection` and `parse_selection`, which reject any list. Each
+field value and the combined raw or canonical serialized field set is bounded
+to 64 KiB, and the combined member count is bounded to 32. Surrounding SP and
+HTAB are trimmed as optional whitespace. Repeated fields are combined in wire
+order. Members follow the RFC 6455 section 11.3.4 `token` production and
+compare case-sensitively, so `chat` and `Chat` are distinct tokens. Empty
+members, malformed tokens, parameters, slashes, quoted strings, duplicates,
+forbidden ASCII control bytes (including CR, LF, NUL, and obs-text),
+over-limit member counts, and oversized fields are errors. This parser
+reports declared request or response metadata only; it does not perform a
+WebSocket handshake, emit `Connection: Upgrade`, choose an application
+subprotocol, or implement WebSocket frames.
+
 ## Upgrade-Insecure-Requests
 
 `upgrade_insecure_requests` parses a singleton `Upgrade-Insecure-Requests`
