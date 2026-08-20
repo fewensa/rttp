@@ -38,11 +38,11 @@ use rttp_client::{
   BaggageProperty, Depth, DepthParseError, Destination, DestinationParseError, HttpClient,
   IfScheduleTagMatch, IfScheduleTagMatchParseError, Negotiate, NegotiateDirective,
   NegotiateParseError, Overwrite, OverwriteParseError, SecFetchDest, SecFetchMode, SecFetchSite,
-  SecFetchUser, SecGpc, SecGpcParseError, SecPurpose, Timeout, TimeoutParseError, TimeoutType,
-  TraceParent, TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError,
-  UpgradeInsecureRequests, UpgradeInsecureRequestsParseError, Via as ClientVia,
-  ViaParseError as ClientViaParseError, XForwardedFor, XForwardedForParseError, XForwardedHost,
-  XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
+  SecFetchUser, SecGpc, SecGpcParseError, SecPurpose, Tcn, TcnDirective, TcnParseError, Timeout,
+  TimeoutParseError, TimeoutType, TraceParent, TraceParentParseError, TraceState, TraceStateMember,
+  TraceStateParseError, UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
+  Via as ClientVia, ViaParseError as ClientViaParseError, XForwardedFor, XForwardedForParseError,
+  XForwardedHost, XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
 };
 use rttp_protocol::expect::Expect;
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
@@ -178,6 +178,9 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let _: NegotiateParseError =
     Negotiate::parse("trans, TRANS").expect_err("duplicate Negotiate should be rejected");
   let _: &[NegotiateDirective] = negotiate.members();
+  let tcn: Tcn = Tcn::parse("list, choice").expect("TCN should parse");
+  let _: TcnParseError = Tcn::parse("list, LIST").expect_err("duplicate TCN should be rejected");
+  let _: &[TcnDirective] = tcn.members();
   let want_repr_digest =
     WantReprDigest::parse("sha-256=10").expect("Want-Repr-Digest should parse");
   let priority = Priority::parse("u=1, i").expect("Priority should parse");

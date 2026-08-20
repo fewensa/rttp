@@ -38,10 +38,10 @@ use rttp_server::server::{
   HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
   HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
   HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
-  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTimeout, HttpTimeoutParseError,
-  HttpTimeoutType, HttpTraceParent, HttpTraceParentParseError, HttpTraceState,
-  HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
-  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTcn, HttpTcnDirective,
+  HttpTcnParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent,
+  HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError,
+  HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
   HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpVia, HttpViaMember,
   HttpViaParseError, HttpWantContentDigest, HttpWantReprDigest, HttpXForwardedFor,
   HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
@@ -98,6 +98,10 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let _: HttpNegotiateParseError =
     HttpNegotiate::parse("trans, TRANS").expect_err("duplicate Negotiate should be rejected");
   let _: &[HttpNegotiateDirective] = negotiate.members();
+  let tcn: HttpTcn = HttpTcn::parse("list, choice").expect("TCN should parse");
+  let _: HttpTcnParseError =
+    HttpTcn::parse("list, LIST").expect_err("duplicate TCN should be rejected");
+  let _: &[HttpTcnDirective] = tcn.members();
   let accept_charsets: HttpRequestAcceptCharsets =
     HttpRequestAcceptCharsets::parse("utf-8, iso-8859-1;q=0.5, *;q=0")
       .expect("Accept-Charset should parse");

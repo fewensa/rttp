@@ -153,6 +153,7 @@ pub use rttp_protocol::sec_websocket_protocol::{
 pub use rttp_protocol::sec_websocket_version::{
   SecWebSocketVersion, SecWebSocketVersionParseError,
 };
+pub use rttp_protocol::tcn::{Tcn, TcnDirective, TcnParseError};
 pub use rttp_protocol::timeout::{Timeout, TimeoutParseError, TimeoutType};
 pub use rttp_protocol::trace_context::{
   TraceParent, TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError,

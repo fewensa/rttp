@@ -1056,6 +1056,22 @@ These helpers are metadata-only: RTTP does not select a variant, fetch a
 variant URI, replay requests, resolve URIs against the response URL, apply
 `Vary` matching, or change representation policy from `Alternates`.
 
+## Bounded TCN response metadata
+
+`Tcn` and `HttpTcn` share the protocol parser for bounded RFC 2295 `TCN`
+response metadata. Client responses can call `Response::tcn()` to parse
+attached fields, and server responses can call `HttpResponse::with_tcn(value)`
+or `HttpResponse::tcn()` to declare or observe the same metadata. Valid
+metadata is a singleton response field containing `list`, `choice`, `adhoc`,
+`re-choose`, or `keep` tokens, normalized to lowercase in wire order.
+Duplicate fields, duplicate tokens, malformed or unknown tokens, empty
+members, oversized values, and control-byte injection are rejected while raw
+headers remain available on accessor failures.
+
+These helpers are metadata-only: RTTP does not select a variant, synthesize
+`Alternates` or `Vary`, apply transparent content negotiation, or change cache
+behavior from `TCN`.
+
 ## Bounded Origin-Trial response metadata
 
 `OriginTrials` and `HttpOriginTrials` share the protocol parser for bounded
@@ -1475,6 +1491,7 @@ scheduling, or async accept loops.
 | Accept-Charset | `HttpRequestAcceptCharsets`, `Request::accept_charset`, and `HttpRequest::accept_charset` parse bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |
 | A-IM | `HttpClient::a_im`/`a_im_with_q`/`a_im_value` emit bounded `A-IM` request metadata through the shared protocol type, and `Request::a_im`/`HttpRequest::a_im` parse received fields into `HttpAIm` while preserving raw headers on errors | No automatic delta-encoding selection, application, compression, or response transformation |
 | Negotiate | `HttpClient::negotiate` emits bounded RFC 2295 `Negotiate` request metadata through the shared protocol type, and `Request::negotiate`/`HttpRequest::negotiate` parse received fields into `HttpNegotiate` while preserving raw headers on errors | No variant selection, transparent content negotiation, `Alternates`/`TCN` synthesis, or automatic cache selection |
+| TCN | `Response::tcn()` and `HttpResponse::with_tcn()`/`tcn()` share bounded RFC 2295 `TCN` response metadata through `Tcn`/`HttpTcn` while preserving raw headers on accessor errors | No variant selection, `Alternates`/`Vary` synthesis, transparent content negotiation, or cache behavior |
 | Accept-Encoding | `HttpRequestAcceptEncodings`, `Request::accept_encoding`, and `HttpRequest::accept_encoding` parse bounded `Accept-Encoding` request metadata through the shared `rttp-protocol` type | No compression, decompression, content negotiation, retries, or transport changes |
 | Sec-GPC | `HttpClient::sec_gpc`, `Request::sec_gpc`, and `HttpRequest::sec_gpc` share the bounded protocol `Sec-GPC` `1`-signal representation and preserve raw values on errors | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
 | Pragma | `HttpClient::pragma`/`pragma_no_cache`, `Request::pragma`, `HttpRequest::pragma`, `HttpResponse::with_pragma`, and `HttpResponse::pragma` share the bounded protocol `Pragma` representation across client construction, server access, server response declaration, and client response access, combining fields in wire order and preserving raw headers on errors | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |

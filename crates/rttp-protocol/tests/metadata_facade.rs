@@ -83,6 +83,7 @@ use rttp_protocol::signature::{Signature, SignatureParseError};
 use rttp_protocol::signature_input::{SignatureInput, SignatureInputParseError};
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::supports_loading_mode::SupportsLoadingMode;
+use rttp_protocol::tcn::{Tcn, TcnDirective, TcnParseError};
 use rttp_protocol::te::Te;
 use rttp_protocol::timeout::{Timeout, TimeoutType};
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
@@ -306,6 +307,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let a_im = AIm::parse("diffe, gzip;q=0.3;profile=compact").expect("A-IM should parse");
   let negotiate =
     Negotiate::parse("trans, 1.0, feature-x=preview, *").expect("Negotiate should parse");
+  let tcn = Tcn::parse("list, choice").expect("TCN should parse");
+  let _: TcnParseError = Tcn::parse("list, LIST").expect_err("duplicate TCN should be rejected");
   let baggage =
     Baggage::parse("tenant=acme;source=gateway,release=2026-08-19").expect("baggage should parse");
   let traceparent = TraceParent::parse("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
@@ -639,6 +642,9 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(negotiate.members()[0], NegotiateDirective::Trans);
   assert_eq!(negotiate.members()[3], NegotiateDirective::Any);
   assert_eq!("trans, 1.0, feature-x=preview, *", negotiate.header_value());
+  assert_eq!(tcn.members()[0], TcnDirective::List);
+  assert_eq!(tcn.members()[1], TcnDirective::Choice);
+  assert_eq!("list, choice", tcn.header_value());
   assert_eq!(2, baggage.members().len());
   assert_eq!("tenant", baggage.members()[0].key());
   assert_eq!("acme", baggage.members()[0].value());

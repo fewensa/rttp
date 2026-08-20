@@ -5584,6 +5584,49 @@ hello\r\n\
   }
 
   #[test]
+  fn tcn_helpers_validate_replace_and_parse_response_metadata() {
+    let response = HttpResponse::ok([])
+      .header("TCN", "list")
+      .with_tcn("Choice, keep")
+      .expect("TCN should be accepted");
+    let tcn = response
+      .tcn()
+      .expect("response TCN should parse")
+      .expect("response TCN should be present");
+
+    assert_eq!(
+      &[HttpTcnDirective::Choice, HttpTcnDirective::Keep],
+      tcn.members()
+    );
+    assert_eq!("choice, keep", tcn.header_value());
+    let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+    assert_eq!(1, serialized.matches("\r\nTCN: ").count());
+    assert!(serialized.contains("\r\nTCN: choice, keep\r\n"));
+    assert!(!serialized.contains("\r\nTCN: list\r\n"));
+
+    let duplicate_fields = HttpResponse::ok([])
+      .header("TCN", "list")
+      .header("tcn", "choice");
+    assert!(duplicate_fields.tcn().is_err());
+    assert!(String::from_utf8(duplicate_fields.to_bytes())
+      .expect("response should serialize")
+      .contains("\r\nTCN: list\r\n"));
+
+    let malformed = HttpResponse::ok([]).header("TCN", "variant");
+    assert!(malformed.tcn().is_err());
+    assert!(String::from_utf8(malformed.to_bytes())
+      .expect("response should serialize")
+      .contains("\r\nTCN: variant\r\n"));
+
+    let absent = HttpResponse::ok([]);
+    assert_eq!(None, absent.tcn().expect("absent TCN is Ok(None)"));
+    assert!(HttpResponse::ok([]).with_tcn("list, LIST").is_err());
+
+    let oversized = format!("list{}", "x".repeat(64 * 1024));
+    assert!(HttpResponse::ok([]).with_tcn(&oversized).is_err());
+  }
+
+  #[test]
   fn origin_trial_helpers_declare_parse_and_redact_response_metadata() {
     let response = HttpResponse::ok([])
       .header("Origin-Trial", "stale-token")

@@ -25,10 +25,11 @@ use rttp::server::{
   HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
   HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
   HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
-  HttpSunsetParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTimeout,
-  HttpTimeoutParseError, HttpTimeoutType, HttpUpgrade, HttpUpgradeInsecureRequests,
-  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpVia, HttpViaParseError,
-  HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
+  HttpSunsetParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTcn,
+  HttpTcnDirective, HttpTcnParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType,
+  HttpUpgrade, HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError,
+  HttpUpgradeParseError, HttpVia, HttpViaParseError, HttpXForwardedFor,
+  HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
   HttpXForwardedProto, HttpXForwardedProtoParseError,
 };
 use std::io::Write;
@@ -379,6 +380,10 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::NegotiateParseError =
     rttp::Negotiate::parse("trans, TRANS").expect_err("duplicate Negotiate should be rejected");
   let _: &rttp::NegotiateDirective = &negotiate.members()[0];
+  let tcn: rttp::Tcn = rttp::Tcn::parse("list, choice").expect("TCN should parse");
+  let _: rttp::TcnParseError =
+    rttp::Tcn::parse("list, LIST").expect_err("duplicate TCN should be rejected");
+  let _: &rttp::TcnDirective = &tcn.members()[0];
   let baggage: rttp::Baggage =
     rttp_client::Baggage::parse("tenant=acme;source=gateway").expect("baggage should parse");
   let _: rttp::BaggageParseError = rttp_client::Baggage::parse("tenant=1,tenant=2")
@@ -1587,6 +1592,10 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let _: HttpNegotiateParseError =
     HttpNegotiate::parse("trans, TRANS").expect_err("duplicate Negotiate should be rejected");
   let _: HttpNegotiateDirective = negotiate.members()[0].clone();
+  let tcn: HttpTcn = HttpTcn::parse("list, choice").expect("TCN should parse");
+  let _: HttpTcnParseError =
+    HttpTcn::parse("list, LIST").expect_err("duplicate TCN should be rejected");
+  let _: HttpTcnDirective = tcn.members()[0].clone();
   let accept_charsets: HttpRequestAcceptCharsets =
     HttpRequestAcceptCharsets::parse("utf-8, iso-8859-1;q=0.5")
       .expect("Accept-Charset should parse");
