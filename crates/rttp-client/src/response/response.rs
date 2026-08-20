@@ -4,6 +4,7 @@ use std::time::SystemTime;
 
 use httpdate::parse_http_date;
 use rttp_protocol::content_length::HttpContentLength;
+use rttp_protocol::delta_base::DeltaBaseParseError;
 use url::Url;
 
 use crate::error;
@@ -15,6 +16,7 @@ use crate::response::AuthenticationInfo;
 use crate::response::Connection;
 use crate::response::ContentDigest;
 use crate::response::Dav;
+use crate::response::DeltaBase;
 use crate::response::Digest;
 use crate::response::KeepAlive;
 use crate::response::Nel;
@@ -369,6 +371,18 @@ impl Response {
       [value] => EntityTag::parse(value).map(Some),
       _ => Err(EntityTagParseError::new("Duplicate ETag header values")),
     }
+  }
+
+  pub fn delta_base_value(&self) -> Option<&String> {
+    self.header_value("delta-base")
+  }
+
+  pub fn delta_base(&self) -> Result<Option<DeltaBase>, DeltaBaseParseError> {
+    let values = self.header_values("delta-base");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    DeltaBase::parse_values(values.into_iter().map(String::as_str)).map(Some)
   }
 
   pub fn schedule_tag_value(&self) -> Option<&String> {

@@ -30,6 +30,7 @@ use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedder
 use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::cross_origin_opener_policy_report_only::CrossOriginOpenerPolicyReportOnly;
 use rttp_protocol::dav::{Dav, DavClass, DavParseError};
+use rttp_protocol::delta_base::{DeltaBase, DeltaBaseParseError};
 use rttp_protocol::deprecation::Deprecation;
 use rttp_protocol::depth::Depth;
 use rttp_protocol::destination::Destination;
@@ -141,6 +142,9 @@ fn protocol_exports_representative_bounded_metadata_types() {
     UpgradeInsecureRequests::parse("1").expect("Upgrade-Insecure-Requests should parse");
   let critical_ch = CriticalCh::parse("Sec-CH-UA").expect("Critical-CH should parse");
   let entity_tag = EntityTag::parse("\"revision-42\"").expect("entity tag should parse");
+  let delta_base = DeltaBase::parse("\"revision-42\"").expect("Delta-Base should parse");
+  let _: DeltaBaseParseError =
+    DeltaBase::parse("\"one\", \"two\"").expect_err("Delta-Base list should fail");
   let expect = Expect::parse("100-continue, preview").expect("Expect should parse");
   let if_match = IfMatch::parse("\"revision-42\"").expect("If-Match should parse");
   let fetch_site = SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
@@ -366,6 +370,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(upgrade_insecure_requests.header_value(), "1");
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
   assert_eq!(entity_tag.opaque_tag(), "revision-42");
+  assert_eq!(entity_tag, *delta_base.entity_tag());
   assert!(expect.expects_continue());
   assert_eq!(["preview"], expect.unsupported());
   assert_eq!(expect.header_value(), "100-continue, preview");

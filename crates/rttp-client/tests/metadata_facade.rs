@@ -9,25 +9,26 @@ use rttp_client::response::{
   ContentSecurityPolicy, ContentSecurityPolicyParseError, ContentSecurityPolicyReportOnly,
   ContentSecurityPolicyReportOnlyParseError, CrossOriginEmbedderPolicy,
   CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginOpenerPolicyReportOnly,
-  CrossOriginResourcePolicy, Digest, DocumentPolicy, DocumentPolicyParseError,
-  DocumentPolicyReportOnly, DocumentPolicyReportOnlyParseError, DocumentPolicyReportOnlyValue,
-  DocumentPolicyValue, EntityTag, HttpClearSiteData, HttpContentLength, Im, ImMember, ImParameter,
-  ImParseError, KeepAlive, LinkValues, Location, LocationParseError, LockToken,
-  LockTokenParseError, MementoDatetime, MementoDatetimeParseError, Nel, NoVarySearch,
-  NoVarySearchParams, NoVarySearchParseError, OriginTrialParseError, OriginTrials,
-  PermissionsPolicy, PermissionsPolicyParseError, Pragma, PragmaParseError, PreferenceApplied,
-  Priority, ProxyAuthenticate, ProxyAuthenticateParseError, ProxyAuthenticationInfo,
-  ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError, ReferrerPolicy,
-  ReferrerPolicyToken, ScheduleTag, SecWebSocketAccept, SecWebSocketAcceptParseError,
-  SecWebSocketExtensions, SecWebSocketExtensionsParseError, SecWebSocketProtocol,
-  SecWebSocketProtocolParseError, SecWebSocketVersion, SecWebSocketVersionParseError, ServerTiming,
-  Signature, SignatureInput, SignatureInputParseError, SignatureParseError, SpeculationRules,
-  SpeculationRulesParseError, StrictTransportSecurity, StrictTransportSecurityParseError,
-  SupportsLoadingMode, SupportsLoadingModeParseError, SurrogateControl, SurrogateControlParseError,
-  Trailer, TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError, VariantVary,
-  VariantVaryParseError, Vary, VaryParseError, Via, ViaParseError, WantContentDigest,
-  WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError, XContentTypeOptions,
-  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  CrossOriginResourcePolicy, DeltaBase, DeltaBaseParseError, Digest, DocumentPolicy,
+  DocumentPolicyParseError, DocumentPolicyReportOnly, DocumentPolicyReportOnlyParseError,
+  DocumentPolicyReportOnlyValue, DocumentPolicyValue, EntityTag, HttpClearSiteData,
+  HttpContentLength, Im, ImMember, ImParameter, ImParseError, KeepAlive, LinkValues, Location,
+  LocationParseError, LockToken, LockTokenParseError, MementoDatetime, MementoDatetimeParseError,
+  Nel, NoVarySearch, NoVarySearchParams, NoVarySearchParseError, OriginTrialParseError,
+  OriginTrials, PermissionsPolicy, PermissionsPolicyParseError, Pragma, PragmaParseError,
+  PreferenceApplied, Priority, ProxyAuthenticate, ProxyAuthenticateParseError,
+  ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError,
+  ReferrerPolicy, ReferrerPolicyToken, ScheduleTag, SecWebSocketAccept,
+  SecWebSocketAcceptParseError, SecWebSocketExtensions, SecWebSocketExtensionsParseError,
+  SecWebSocketProtocol, SecWebSocketProtocolParseError, SecWebSocketVersion,
+  SecWebSocketVersionParseError, ServerTiming, Signature, SignatureInput, SignatureInputParseError,
+  SignatureParseError, SpeculationRules, SpeculationRulesParseError, StrictTransportSecurity,
+  StrictTransportSecurityParseError, SupportsLoadingMode, SupportsLoadingModeParseError,
+  SurrogateControl, SurrogateControlParseError, Trailer, TransferEncoding,
+  TransferEncodingParseError, Upgrade, UpgradeParseError, VariantVary, VariantVaryParseError, Vary,
+  VaryParseError, Via, ViaParseError, WantContentDigest, WantReprDigest, Warning, WwwAuthenticate,
+  WwwAuthenticateParseError, XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions,
+  XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentDisposition, ContentDispositionParseError, ContentLocation,
@@ -178,6 +179,9 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .expect_err("empty Content-Security-Policy-Report-Only should be rejected");
   let digest = Digest::parse("sha-256=:YWJj:").expect("Digest should parse");
   let etag = EntityTag::parse("\"asset-v7\"").expect("ETag should parse");
+  let delta_base = DeltaBase::parse("\"asset-v7\"").expect("Delta-Base should parse");
+  let _: DeltaBaseParseError =
+    DeltaBase::parse("\"one\", \"two\"").expect_err("Delta-Base list should fail");
   let schedule_tag = ScheduleTag::parse("\"sched-17\"").expect("Schedule-Tag should parse");
   let location = Location::parse("/next").expect("Location should parse");
   let _: LocationParseError = Location::parse("").expect_err("empty Location should be rejected");
@@ -477,6 +481,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   );
   assert_eq!(digest.entries().len(), 1);
   assert_eq!(etag, EntityTag::strong("asset-v7"));
+  assert_eq!(etag, *delta_base.entity_tag());
   assert_eq!(schedule_tag.header_value(), "\"sched-17\"");
   assert_eq!(location.as_str(), "/next");
   assert_eq!(

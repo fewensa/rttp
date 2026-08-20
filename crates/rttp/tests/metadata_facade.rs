@@ -8,16 +8,17 @@ use rttp::server::{
   HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
   HttpCrossOriginEmbedderPolicy, HttpCrossOriginEmbedderPolicyReportOnly,
   HttpCrossOriginOpenerPolicy, HttpCrossOriginOpenerPolicyReportOnly,
-  HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpDepth,
-  HttpDepthParseError, HttpDestination, HttpDestinationParseError, HttpEntityTag, HttpExpectations,
-  HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIf, HttpIfModifiedSince,
-  HttpIfScheduleTagMatch, HttpIfScheduleTagMatchParseError, HttpIfUnmodifiedSince, HttpLockToken,
-  HttpLockTokenParseError, HttpMaxForwards, HttpMementoDatetime, HttpMementoDatetimeParseError,
-  HttpNegotiate, HttpNegotiateDirective, HttpNegotiateParseError, HttpNel,
-  HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy,
-  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization,
-  HttpProxyStatus, HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse,
-  HttpSaveData, HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept,
+  HttpCrossOriginResourcePolicy, HttpDeltaBase, HttpDeltaBaseParseError, HttpDeprecation,
+  HttpDeprecationParseError, HttpDepth, HttpDepthParseError, HttpDestination,
+  HttpDestinationParseError, HttpEntityTag, HttpExpectations, HttpIdempotencyKey,
+  HttpIdempotencyKeyParseError, HttpIf, HttpIfModifiedSince, HttpIfScheduleTagMatch,
+  HttpIfScheduleTagMatchParseError, HttpIfUnmodifiedSince, HttpLockToken, HttpLockTokenParseError,
+  HttpMaxForwards, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNegotiate,
+  HttpNegotiateDirective, HttpNegotiateParseError, HttpNel, HttpOriginTrialParseError,
+  HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy, HttpPermissionsPolicyParseError,
+  HttpPragma, HttpPragmaParseError, HttpProxyAuthorization, HttpProxyStatus,
+  HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse, HttpSaveData,
+  HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept,
   HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
   HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
   HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
@@ -409,6 +410,10 @@ fn compatibility_facade_exports_client_metadata_types() {
   let baggage_property: &rttp::BaggageProperty = &baggage_member.properties()[0];
   let etag: rttp::EntityTag =
     rttp_client::response::EntityTag::parse("\"asset-v7\"").expect("ETag should parse");
+  let delta_base: rttp::DeltaBase =
+    rttp_client::response::DeltaBase::parse("\"asset-v7\"").expect("Delta-Base should parse");
+  let _: rttp::DeltaBaseParseError = rttp_client::response::DeltaBase::parse("\"one\", \"two\"")
+    .expect_err("Delta-Base list should fail");
   let schedule_tag: rttp::ScheduleTag =
     rttp_client::response::ScheduleTag::parse("\"sched-17\"").expect("Schedule-Tag should parse");
   let location: rttp::Location =
@@ -627,6 +632,7 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(sec_purpose.tokens(), ["prefetch", "vendor-ext"]);
   assert!(sec_purpose.contains_prefetch());
   assert_eq!(etag, rttp::EntityTag::strong("asset-v7"));
+  assert_eq!(etag, *delta_base.entity_tag());
   assert_eq!(location.as_str(), "/next");
   assert_eq!(content_length.len(), 123);
 }
@@ -1762,8 +1768,12 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let _: HttpAcceptLanguageParseError = HttpAcceptLanguages::parse("en; q=1.001")
     .expect_err("malformed Accept-Language should be rejected");
   let metadata = HttpConditionalMetadata::new().entity_tag(HttpEntityTag::strong("revision-42"));
+  let delta_base = HttpDeltaBase::parse("\"revision-42\"").expect("Delta-Base should parse");
+  let _: HttpDeltaBaseParseError =
+    HttpDeltaBase::parse("\"one\", \"two\"").expect_err("Delta-Base list should be rejected");
   let response = HttpResponse::ok("")
     .with_etag(HttpEntityTag::weak("revision-42"))
+    .with_delta_base(delta_base)
     .with_schedule_tag(HttpScheduleTag::parse("\"sched-17\"").expect("Schedule-Tag should parse"));
   let request_method: HttpAccessControlRequestMethod =
     HttpAccessControlRequestMethod::parse("patch")
@@ -2110,6 +2120,14 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(
     response.etag().expect("ETag should parse"),
     Some(HttpEntityTag::weak("revision-42"))
+  );
+  assert_eq!(
+    response
+      .delta_base()
+      .expect("Delta-Base should parse")
+      .expect("Delta-Base should be present")
+      .entity_tag(),
+    &HttpEntityTag::strong("revision-42")
   );
   assert_eq!(
     response.schedule_tag().expect("Schedule-Tag should parse"),

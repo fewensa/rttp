@@ -74,6 +74,18 @@ on `IM`. It reports declared response metadata only; it does not select,
 invert, decode, or apply instance manipulations and does not impose a
 `226 IM Used` status policy.
 
+## Delta-Base
+
+`delta_base` parses a singleton RFC 3229 `Delta-Base` response field into one
+entity-tag base validator. It reuses the shared `EntityTag` representation and
+therefore accepts strong and weak entity tags, trims optional OWS, serializes
+canonically through `header_value()`, and exposes the validator through
+`entity_tag()`. Missing values, duplicate fields, wildcard values, comma-lists,
+malformed entity tags, forbidden control bytes, and values over 64 KiB are
+errors. This type reports response metadata only; it does not locate cached
+entities, compare validators, apply deltas, decode instance manipulations, or
+impose a `226 IM Used` status policy.
+
 ## Negotiate
 
 `negotiate` parses one or more RFC 2295 `Negotiate` field values into an
