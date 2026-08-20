@@ -1290,6 +1290,10 @@ impl HttpClient {
     if !is_http_token(token) {
       return Err(error::builder_with_message("invalid A-IM token"));
     }
+    let qvalue = qvalue.map(str::trim);
+    if let Some(qvalue) = qvalue {
+      validate_a_im_qvalue(qvalue)?;
+    }
     let member = qvalue.map_or_else(|| token.to_string(), |qvalue| format!("{token};q={qvalue}"));
     let parsed_member =
       AIm::parse(&member).map_err(|error| error::builder_with_message(error.to_string()))?;
@@ -2149,6 +2153,14 @@ fn validate_accept_qvalue(qvalue: &str) -> error::Result<&str> {
     Ok(qvalue)
   } else {
     Err(error::builder_with_message("invalid Accept quality value"))
+  }
+}
+
+fn validate_a_im_qvalue(qvalue: &str) -> error::Result<&str> {
+  if is_qvalue(qvalue) {
+    Ok(qvalue)
+  } else {
+    Err(error::builder_with_message("invalid A-IM q-value"))
   }
 }
 

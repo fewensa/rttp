@@ -672,6 +672,22 @@ fn a_im_helpers_reject_invalid_members_before_connecting() {
     let error = client
       .get()
       .url(format!("{}/asset", base_url))
+      .a_im_with_q("gzip", "0.3;profile=compact")
+      .expect_err("parameter-bearing q-value should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "parameter-bearing A-IM q-value should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
       .a_im("diffe")
       .expect("first token should be accepted")
       .a_im("DIFFE")

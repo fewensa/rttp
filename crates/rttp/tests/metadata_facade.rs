@@ -1227,6 +1227,7 @@ fn client_a_im_helpers_parse_through_shared_server_type() {
 }
 
 #[test]
+#[cfg(feature = "client")]
 fn client_accept_encoding_helpers_parse_through_shared_server_type() {
   let (addr, handle) = spawn_representation_metadata_response_server(
     b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
