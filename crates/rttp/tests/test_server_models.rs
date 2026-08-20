@@ -1,18 +1,45 @@
 use std::time::{Duration, UNIX_EPOCH};
 
 use rttp::server::{
-  HttpAccept, HttpAcceptCh, HttpAcceptRanges, HttpAccessControlAllowHeaders,
-  HttpAccessControlAllowMethods, HttpAccessControlAllowOrigin, HttpAccessControlRequestHeaders,
-  HttpAccessControlRequestMethod, HttpAllowedMethods, HttpAuthorization, HttpByteRange,
-  HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata, HttpContentDisposition,
-  HttpContentLanguages, HttpContentRange, HttpContentSecurityPolicy, HttpContentType,
-  HttpCriticalCh, HttpDeprecation, HttpEntityTag, HttpExpectations, HttpHost, HttpIfNoneMatch,
-  HttpIfRange, HttpIfRangeRequestOutcome, HttpLinkValues, HttpMementoDatetime, HttpNel,
-  HttpPermissionsPolicy, HttpProxyStatus, HttpProxyStatusBareItem, HttpReferrerPolicy,
-  HttpReportingEndpoints, HttpRequest, HttpRequestAcceptEncodings, HttpRequestCacheControl,
-  HttpRequestTe, HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings,
-  HttpRetryAfter, HttpServerTiming, HttpVary,
+  HttpAccept, HttpAcceptCh, HttpAcceptDatetime, HttpAcceptDatetimeParseError, HttpAcceptRanges,
+  HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods, HttpAccessControlAllowOrigin,
+  HttpAccessControlRequestHeaders, HttpAccessControlRequestMethod, HttpAllowedMethods, HttpAltUsed,
+  HttpAlternates, HttpAuthorization, HttpByteRange, HttpByteRangeError, HttpClearSiteData,
+  HttpConditionalMetadata, HttpContentDisposition, HttpContentLanguages, HttpContentRange,
+  HttpContentSecurityPolicy, HttpContentSecurityPolicyReportOnly, HttpContentType, HttpCriticalCh,
+  HttpDeltaBase, HttpDeprecation, HttpDepth, HttpDocumentPolicy, HttpDocumentPolicyReportOnly,
+  HttpEntityTag, HttpExpectations, HttpHost, HttpIfNoneMatch, HttpIfRange,
+  HttpIfRangeRequestOutcome, HttpLinkValues, HttpMementoDatetime, HttpNel, HttpOriginTrials,
+  HttpOverwrite, HttpPermissionsPolicy, HttpProxyStatus, HttpProxyStatusBareItem,
+  HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest, HttpRequestAcceptCharsets,
+  HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
+  HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpScheduleTag,
+  HttpServerTiming, HttpTcn, HttpTcnDirective, HttpTimeoutType, HttpVary, HttpVia,
 };
+
+#[test]
+fn response_schedule_tag_helper_validates_and_preserves_raw_headers() {
+  let schedule_tag = HttpScheduleTag::parse("\"sched-17\"").expect("Schedule-Tag should parse");
+  let response = HttpResponse::ok("body")
+    .header("Schedule-Tag", "\"old\"")
+    .with_schedule_tag(schedule_tag.clone());
+
+  assert_eq!(
+    Some(schedule_tag),
+    response
+      .schedule_tag()
+      .expect("attached Schedule-Tag should parse")
+  );
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert_eq!(1, serialized.matches("\r\nSchedule-Tag: ").count());
+  assert!(serialized.contains("\r\nSchedule-Tag: \"sched-17\"\r\n"));
+
+  let raw = HttpResponse::ok("body").header("Schedule-Tag", "sched-17");
+  assert!(raw.schedule_tag().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nSchedule-Tag: sched-17\r\n"));
+}
 
 #[test]
 fn response_access_control_allow_origin_helper_validates_and_preserves_raw_headers() {
@@ -247,6 +274,86 @@ fn request_save_data_preserves_absent_valid_and_malformed_metadata() {
 }
 
 #[test]
+fn request_dnt_preserves_absent_valid_and_malformed_metadata() {
+  let absent = parse_request("GET /catalog HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(None, absent.dnt().expect("missing DNT should be accepted"));
+  assert_eq!(None, absent.header("DNT"));
+
+  for (value, expected) in [("0", "0"), ("1", "1")] {
+    let request = parse_request(&format!(
+      "GET /catalog HTTP/1.1\r\nHost: example.test\r\nDNT: {value}\r\n\r\n"
+    ));
+    let dnt = request
+      .dnt()
+      .expect("DNT should parse")
+      .expect("DNT should be present");
+    assert_eq!(expected, dnt.header_value());
+  }
+
+  let malformed = parse_request(concat!(
+    "GET /catalog HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "DNT: ?1\r\n",
+    "\r\n"
+  ));
+  assert!(malformed.dnt().is_err());
+  assert_eq!(Some("?1"), malformed.header("DNT"));
+
+  let duplicate = parse_request(concat!(
+    "GET /catalog HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "DNT: 1\r\n",
+    "dnt: 0\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.dnt().is_err());
+  assert_eq!(Some("1"), duplicate.header("DNT"));
+}
+
+#[test]
+fn request_upgrade_insecure_requests_preserves_absent_valid_and_malformed_metadata() {
+  let absent = parse_request("GET /page HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .upgrade_insecure_requests()
+      .expect("missing Upgrade-Insecure-Requests should be accepted")
+  );
+  assert_eq!(None, absent.header("Upgrade-Insecure-Requests"));
+
+  let request = parse_request(concat!(
+    "GET /page HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Upgrade-Insecure-Requests: 1\r\n",
+    "\r\n"
+  ));
+  let metadata = request
+    .upgrade_insecure_requests()
+    .expect("Upgrade-Insecure-Requests should parse")
+    .expect("Upgrade-Insecure-Requests should be present");
+  assert_eq!("1", metadata.header_value());
+
+  let malformed = parse_request(concat!(
+    "GET /page HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Upgrade-Insecure-Requests: 0\r\n",
+    "\r\n"
+  ));
+  assert!(malformed.upgrade_insecure_requests().is_err());
+  assert_eq!(Some("0"), malformed.header("Upgrade-Insecure-Requests"));
+
+  let duplicate = parse_request(concat!(
+    "GET /page HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Upgrade-Insecure-Requests: 1\r\n",
+    "upgrade-insecure-requests: 1\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.upgrade_insecure_requests().is_err());
+  assert_eq!(Some("1"), duplicate.header("Upgrade-Insecure-Requests"));
+}
+
+#[test]
 fn request_representation_metadata_parses_without_applying_policy() {
   let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
   assert_eq!(
@@ -276,6 +383,7 @@ fn request_representation_metadata_parses_without_applying_policy() {
     "content-encoding: zstd\r\n",
     "Content-Language: fr-CA, es-419\r\n",
     "content-language: en\r\n",
+    "Accept-Charset: utf-8\r\n",
     "Accept-Encoding: gzip\r\n",
     "Accept-Language: en\r\n",
     "Content-Length: 4\r\n",
@@ -302,6 +410,11 @@ fn request_representation_metadata_parses_without_applying_policy() {
     .expect("Content-Language should be present");
   assert_eq!(vec!["fr-CA", "es-419", "en"], languages.languages());
 
+  let accept_charset = request
+    .accept_charset()
+    .expect("Accept-Charset should parse")
+    .expect("Accept-Charset should be present");
+  assert_eq!("utf-8", accept_charset.charsets()[0].charset());
   let accept_encoding = request
     .accept_encoding()
     .expect("Accept-Encoding should parse")
@@ -473,6 +586,10 @@ fn response_browser_policy_helpers_preserve_metadata_without_enforcing_it() {
     .expect("Content-Security-Policy metadata should be accepted")
     .with_permissions_policy("geolocation=(), camera=()")
     .expect("Permissions-Policy metadata should be accepted")
+    .with_document_policy("oversized-images=2.0, unsized-media=?0, *;report-to=default")
+    .expect("Document-Policy metadata should be accepted")
+    .with_document_policy_report_only("oversized-images=2.0, unsized-media=?0, *;report-to=default")
+    .expect("Document-Policy-Report-Only metadata should be accepted")
     .with_referrer_policy("strict-origin-when-cross-origin")
     .expect("Referrer-Policy metadata should be accepted");
 
@@ -490,7 +607,8 @@ fn response_browser_policy_helpers_preserve_metadata_without_enforcing_it() {
       .permissions_policy()
       .expect("Permissions-Policy metadata should parse")
       .as_ref()
-      .map(HttpPermissionsPolicy::as_str)
+      .map(HttpPermissionsPolicy::header_value)
+      .as_deref()
   );
   assert_eq!(
     Some("strict-origin-when-cross-origin"),
@@ -500,13 +618,83 @@ fn response_browser_policy_helpers_preserve_metadata_without_enforcing_it() {
       .as_ref()
       .map(HttpReferrerPolicy::as_str)
   );
+  assert_eq!(
+    Some("oversized-images=2.0, unsized-media=?0, *;report-to=default"),
+    response
+      .document_policy()
+      .expect("Document-Policy metadata should parse")
+      .as_ref()
+      .map(HttpDocumentPolicy::header_value)
+      .as_deref()
+  );
+  assert_eq!(
+    Some("oversized-images=2.0, unsized-media=?0, *;report-to=default"),
+    response
+      .document_policy_report_only()
+      .expect("Document-Policy-Report-Only metadata should parse")
+      .as_ref()
+      .map(HttpDocumentPolicyReportOnly::header_value)
+      .as_deref()
+  );
   assert!(String::from_utf8(response.to_bytes())
     .expect("response should serialize")
     .contains("\r\nContent-Security-Policy: default-src 'none'\r\n"));
 
   assert!(HttpContentSecurityPolicy::parse("default-src\r\nblocked").is_err());
   assert!(HttpPermissionsPolicy::parse("").is_err());
+  assert!(HttpDocumentPolicy::parse("oversized-images=1.0, oversized-images=2.0").is_err());
+  assert!(
+    HttpDocumentPolicyReportOnly::parse("oversized-images=1.0, oversized-images=2.0").is_err()
+  );
   assert!(HttpReferrerPolicy::parse("origin\0").is_err());
+}
+
+#[test]
+fn response_content_security_policy_report_only_helpers_preserve_order_and_raw_headers() {
+  let response = HttpResponse::ok("body")
+    .header("Content-Security-Policy-Report-Only", "default-src 'self'")
+    .header("content-security-policy-report-only", "object-src 'none'");
+
+  let metadata = response
+    .content_security_policy_report_only()
+    .expect("Content-Security-Policy-Report-Only metadata should parse")
+    .expect("Content-Security-Policy-Report-Only metadata should be present");
+
+  assert_eq!(metadata.as_str(), "default-src 'self'");
+  assert_eq!(
+    metadata.header_values(),
+    ["default-src 'self'", "object-src 'none'"]
+  );
+
+  let replaced = response
+    .with_content_security_policy_report_only("script-src 'none'")
+    .expect("Content-Security-Policy-Report-Only metadata should be accepted");
+
+  let metadata = replaced
+    .content_security_policy_report_only()
+    .expect("Content-Security-Policy-Report-Only metadata should parse")
+    .expect("Content-Security-Policy-Report-Only metadata should be present");
+  assert_eq!(metadata.header_values(), ["script-src 'none'"]);
+  assert!(String::from_utf8(replaced.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nContent-Security-Policy-Report-Only: script-src 'none'\r\n"));
+
+  let invalid = HttpResponse::ok("body").header(
+    "Content-Security-Policy-Report-Only",
+    "default-src 'self'\u{7f}",
+  );
+  assert!(invalid.content_security_policy_report_only().is_err());
+  assert!(String::from_utf8(invalid.to_bytes())
+    .expect("response should serialize")
+    .contains("Content-Security-Policy-Report-Only: default-src 'self'"));
+
+  let mut too_many = HttpResponse::ok("body");
+  for _ in 0..=256 {
+    too_many = too_many.header("Content-Security-Policy-Report-Only", "default-src 'self'");
+  }
+  assert!(too_many.content_security_policy_report_only().is_err());
+
+  assert!(HttpContentSecurityPolicyReportOnly::parse("default-src\r\nblocked").is_err());
 }
 
 #[test]
@@ -733,6 +921,239 @@ fn response_server_timing_helper_validates_formats_and_preserves_raw_headers() {
 }
 
 #[test]
+fn response_alt_used_helper_declares_replaces_and_parses_authority_metadata() {
+  let response = HttpResponse::ok("body")
+    .header("Alt-Used", "old.example:443")
+    .header("alt-used", "older.example:443")
+    .with_alt_used("[2001:db8::1]:8443")
+    .expect("valid Alt-Used metadata should be accepted");
+  let alt_used: HttpAltUsed = response
+    .alt_used()
+    .expect("attached Alt-Used should parse")
+    .expect("Alt-Used should be present");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+
+  assert_eq!("[2001:db8::1]", alt_used.host());
+  assert_eq!(Some("8443"), alt_used.port());
+  assert_eq!("[2001:db8::1]:8443", alt_used.header_value());
+  assert_eq!(1, serialized.matches("\r\nAlt-Used: ").count());
+  assert!(serialized.contains("\r\nAlt-Used: [2001:db8::1]:8443\r\n"));
+}
+
+#[test]
+fn response_alt_used_helper_rejects_invalid_duplicates_and_bounds_without_hiding_headers() {
+  assert!(HttpResponse::ok("body")
+    .with_alt_used("https://alt.example")
+    .is_err());
+
+  let duplicate = HttpResponse::ok("body")
+    .header("Alt-Used", "alt.example:443")
+    .header("alt-used", "other.example:443");
+  assert!(duplicate.alt_used().is_err());
+  assert!(String::from_utf8(duplicate.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nAlt-Used: alt.example:443\r\nalt-used: other.example:443\r\n"));
+
+  let malformed = HttpResponse::ok("body").header("Alt-Used", "2001:db8::1");
+  assert!(malformed.alt_used().is_err());
+  assert!(String::from_utf8(malformed.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nAlt-Used: 2001:db8::1\r\n"));
+
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let raw = HttpResponse::ok("body").header("Alt-Used", &oversized);
+  assert!(raw.alt_used().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains(&format!("\r\nAlt-Used: {oversized}\r\n")));
+}
+
+#[test]
+fn response_alternates_helper_declares_replaces_and_parses_variant_metadata() {
+  let response = HttpResponse::ok("body")
+    .header("Alternates", r#"{ "/stale" 1 }"#)
+    .header("alternates", r#"{ "/older" 0.1 }"#)
+    .with_alternates(
+      r#"{ "/resource.en.html" 1.0 {type text/html} {language en} {length 1234} }, { "/resource.fr.html" 0.8 {language fr} }"#,
+    )
+    .expect("valid Alternates metadata should be accepted");
+  let alternates: HttpAlternates = response
+    .alternates()
+    .expect("attached Alternates should parse")
+    .expect("Alternates should be present");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+
+  assert_eq!(2, alternates.len());
+  assert_eq!("/resource.en.html", alternates.variants()[0].uri());
+  assert_eq!(
+    Some("text/html"),
+    alternates.variants()[0].attribute("type")
+  );
+  assert_eq!(Some("fr"), alternates.variants()[1].attribute("language"));
+  assert_eq!(1, serialized.matches("\r\nAlternates: ").count());
+  assert!(serialized.contains("\r\nAlternates: { \"/resource.en.html\" 1.0"));
+  assert!(!serialized.contains("/stale"));
+  assert!(!serialized.contains("/older"));
+}
+
+#[test]
+fn response_alternates_helper_rejects_invalid_duplicates_and_bounds_without_hiding_headers() {
+  assert!(HttpResponse::ok("body")
+    .with_alternates(r#"{ "/broken" 1.001 }"#)
+    .is_err());
+  assert!(HttpResponse::ok("body")
+    .with_alternates(r#"{ "/a" 1 }, { "/a" 1 }"#)
+    .is_err());
+
+  let malformed = HttpResponse::ok("body").header("Alternates", r#"{ "/broken" 1.001 }"#);
+  assert!(malformed.alternates().is_err());
+  assert!(String::from_utf8(malformed.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nAlternates: { \"/broken\" 1.001 }\r\n"));
+
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let raw = HttpResponse::ok("body").header("Alternates", &oversized);
+  assert!(raw.alternates().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains(&format!("\r\nAlternates: {oversized}\r\n")));
+}
+
+#[test]
+fn response_tcn_helper_declares_replaces_and_parses_metadata_only_tokens() {
+  let response = HttpResponse::ok("body")
+    .header("TCN", "list")
+    .with_tcn("Choice, keep")
+    .expect("valid TCN metadata should be accepted");
+  let tcn: HttpTcn = response
+    .tcn()
+    .expect("attached TCN should parse")
+    .expect("TCN should be present");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+
+  assert_eq!(
+    &[HttpTcnDirective::Choice, HttpTcnDirective::Keep],
+    tcn.members()
+  );
+  assert_eq!("choice, keep", tcn.header_value());
+  assert_eq!(1, serialized.matches("\r\nTCN: ").count());
+  assert!(serialized.contains("\r\nTCN: choice, keep\r\n"));
+  assert!(!serialized.contains("\r\nTCN: list\r\n"));
+}
+
+#[test]
+fn response_tcn_helper_rejects_invalid_duplicates_and_bounds_without_hiding_headers() {
+  assert!(HttpResponse::ok("body").with_tcn("variant").is_err());
+  assert!(HttpResponse::ok("body").with_tcn("list, LIST").is_err());
+
+  let duplicate_fields = HttpResponse::ok("body")
+    .header("TCN", "list")
+    .header("tcn", "choice");
+  assert!(duplicate_fields.tcn().is_err());
+  assert!(String::from_utf8(duplicate_fields.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nTCN: list\r\n"));
+
+  let malformed = HttpResponse::ok("body").header("TCN", "variant");
+  assert!(malformed.tcn().is_err());
+  assert!(String::from_utf8(malformed.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nTCN: variant\r\n"));
+
+  let oversized = format!("list{}", "x".repeat(64 * 1024));
+  let raw = HttpResponse::ok("body").header("TCN", &oversized);
+  assert!(raw.tcn().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains(&format!("\r\nTCN: {oversized}\r\n")));
+}
+
+#[test]
+fn response_origin_trial_helper_declares_replaces_and_parses_opaque_tokens() {
+  let response = HttpResponse::ok("body")
+    .header("Origin-Trial", "stale-token")
+    .header("origin-trial", "older-token")
+    .with_origin_trials(["token-one", "token-one", "token-two"])
+    .expect("valid Origin-Trial metadata should be accepted");
+  let origin_trials: HttpOriginTrials = response
+    .origin_trials()
+    .expect("attached Origin-Trial should parse")
+    .expect("Origin-Trial should be present");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+
+  assert_eq!(
+    origin_trials.tokens(),
+    ["token-one", "token-one", "token-two"]
+  );
+  assert_eq!(3, serialized.matches("\r\nOrigin-Trial: ").count());
+  assert!(serialized.contains("\r\nOrigin-Trial: token-one\r\n"));
+  assert!(serialized.contains("\r\nOrigin-Trial: token-two\r\n"));
+  assert!(!serialized.contains("stale-token"));
+  assert!(!format!("{origin_trials:?}").contains("token-one"));
+}
+
+#[test]
+fn response_origin_trial_helper_rejects_invalid_and_bounds_without_hiding_headers() {
+  assert!(HttpResponse::ok("body")
+    .with_origin_trials(["token\r\nX-Injected: 1"])
+    .is_err());
+
+  let malformed = HttpResponse::ok("body").header("Origin-Trial", "token\twith-tab");
+  assert!(malformed.origin_trials().is_err());
+  assert!(String::from_utf8(malformed.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nOrigin-Trial: token\twith-tab\r\n"));
+
+  let oversized = "x".repeat(8 * 1024 + 1);
+  let raw = HttpResponse::ok("body").header("Origin-Trial", &oversized);
+  assert!(raw.origin_trials().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains(&format!("\r\nOrigin-Trial: {oversized}\r\n")));
+
+  let too_many: Vec<String> = (0..=64).map(|index| format!("token-{index}")).collect();
+  assert!(HttpResponse::ok("body")
+    .with_origin_trials(too_many.iter().map(String::as_str))
+    .is_err());
+}
+
+#[test]
+fn response_via_helper_validates_replaces_and_preserves_raw_headers() {
+  let response = HttpResponse::ok("body")
+    .header("Via", "1.0 legacy")
+    .header("via", "1.1 old-edge")
+    .with_via("1.1 edge-a (TLS terminator), HTTP/2 upstream")
+    .expect("valid Via should be accepted");
+  let via = response
+    .via()
+    .expect("attached Via should parse")
+    .expect("Via should be present");
+  assert_eq!(2, via.len());
+  assert_eq!("edge-a", via.members()[0].received_by());
+  assert_eq!(Some("TLS terminator"), via.members()[0].comment());
+  assert_eq!(Some("HTTP"), via.members()[1].protocol_name());
+  assert_eq!("2", via.members()[1].protocol_version());
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert_eq!(1, serialized.matches("\r\nVia: ").count());
+  assert!(serialized.contains("\r\nVia: 1.1 edge-a (TLS terminator), HTTP/2 upstream\r\n"));
+
+  assert!(HttpResponse::ok("body").with_via("1.1").is_err());
+  assert!(HttpResponse::ok("body").with_via("1.1 hop extra").is_err());
+  let raw = HttpResponse::ok("body").header("Via", "1.1 hop extra");
+  assert!(raw.via().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nVia: 1.1 hop extra\r\n"));
+  assert_eq!(
+    None,
+    HttpResponse::ok("body")
+      .via()
+      .expect("absent Via should parse")
+  );
+  assert!(HttpVia::parse("1.1 ".to_string() + &"a".repeat(64 * 1024)).is_err());
+}
+
+#[test]
 fn response_proxy_status_helper_validates_replaces_and_preserves_raw_headers() {
   let response = HttpResponse::ok("body")
     .header("Proxy-Status", "OldProxy")
@@ -856,6 +1277,7 @@ fn request_parses_bounded_range_and_conditional_metadata() {
     request
       .if_modified_since()
       .expect("If-Modified-Since should parse")
+      .map(|value| value.datetime())
   );
 }
 
@@ -882,6 +1304,12 @@ fn request_conditional_metadata_helpers_preserve_absent_and_invalid_headers() {
       .if_modified_since()
       .expect("missing If-Modified-Since should be valid")
   );
+  assert_eq!(
+    None,
+    absent
+      .if_unmodified_since()
+      .expect("missing If-Unmodified-Since should be valid")
+  );
 
   let invalid = parse_request(concat!(
     "GET /asset HTTP/1.1\r\n",
@@ -890,6 +1318,7 @@ fn request_conditional_metadata_helpers_preserve_absent_and_invalid_headers() {
     "If-Range: W/\"weak\"\r\n",
     "If-None-Match: *, \"version-7\"\r\n",
     "If-Modified-Since: not-a-date\r\n",
+    "If-Unmodified-Since: not-a-date\r\n",
     "\r\n"
   ));
   assert_eq!(Some("bytes=9-2"), invalid.header("Range"));
@@ -900,6 +1329,118 @@ fn request_conditional_metadata_helpers_preserve_absent_and_invalid_headers() {
   assert!(invalid.if_none_match().is_err());
   assert_eq!(Some("not-a-date"), invalid.header("If-Modified-Since"));
   assert!(invalid.if_modified_since().is_err());
+  assert_eq!(Some("not-a-date"), invalid.header("If-Unmodified-Since"));
+  assert!(invalid.if_unmodified_since().is_err());
+}
+
+#[test]
+fn request_conditional_http_date_metadata_is_bounded_and_rejects_duplicates() {
+  let modified = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "If-Modified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+    "\r\n"
+  ));
+  let parsed = modified
+    .if_modified_since()
+    .expect("If-Modified-Since should parse")
+    .expect("If-Modified-Since should be present");
+  assert_eq!("Sun, 06 Nov 1994 08:49:37 GMT", parsed.header_value());
+
+  let unmodified = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "If-Unmodified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+    "\r\n"
+  ));
+  let parsed = unmodified
+    .if_unmodified_since()
+    .expect("If-Unmodified-Since should parse")
+    .expect("If-Unmodified-Since should be present");
+  assert_eq!("Sun, 06 Nov 1994 08:49:37 GMT", parsed.header_value());
+
+  assert!(rttp::server::HttpIfModifiedSince::parse("0".repeat(64 * 1024 + 1)).is_err());
+  assert!(rttp::server::HttpIfUnmodifiedSince::parse("0".repeat(64 * 1024 + 1)).is_err());
+
+  let duplicate = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "If-Modified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+    "if-modified-since: Sun, 06 Nov 1994 08:49:38 GMT\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.if_modified_since().is_err());
+
+  let duplicate_unmodified = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "If-Unmodified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+    "if-unmodified-since: Sun, 06 Nov 1994 08:49:38 GMT\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate_unmodified.if_unmodified_since().is_err());
+}
+
+#[test]
+fn request_accept_datetime_metadata_is_bounded_and_interoperates_with_memento_datetime() {
+  let absent = parse_request("GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .accept_datetime()
+      .expect("absent value should be valid")
+  );
+
+  for value in [
+    "Sun, 06 Nov 1994 08:49:37 GMT",
+    "Sunday, 06-Nov-94 08:49:37 GMT",
+    "Sun Nov  6 08:49:37 1994",
+  ] {
+    let request = parse_request(&format!(
+      "GET /asset HTTP/1.1\r\nHost: example.test\r\nAccept-Datetime: {value}\r\n\r\n"
+    ));
+    let parsed = request
+      .accept_datetime()
+      .expect("Accept-Datetime should parse")
+      .expect("Accept-Datetime should be present");
+    assert_eq!(
+      "Sun, 06 Nov 1994 08:49:37 GMT",
+      parsed.header_value(),
+      "obsolete HTTP-date forms must canonicalize to IMF-fixdate"
+    );
+    assert_eq!(
+      HttpMementoDatetime::new(parsed.datetime()).header_value(),
+      parsed.header_value(),
+      "Accept-Datetime and Memento-Datetime must share the same instant"
+    );
+  }
+
+  let invalid = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Accept-Datetime: not-a-date\r\n",
+    "\r\n"
+  ));
+  assert!(invalid.accept_datetime().is_err());
+  assert_eq!(
+    Some("not-a-date"),
+    invalid.header("Accept-Datetime"),
+    "raw headers must remain inspectable after a parse error"
+  );
+
+  let oversized = "0".repeat(64 * 1024 + 1);
+  assert!(HttpAcceptDatetime::parse(oversized.as_str()).is_err());
+  let _: HttpAcceptDatetimeParseError =
+    HttpAcceptDatetime::parse("").expect_err("empty Accept-Datetime should be rejected");
+
+  let duplicate = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Accept-Datetime: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+    "accept-datetime: Sun, 06 Nov 1994 08:49:38 GMT\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.accept_datetime().is_err());
 }
 
 #[test]
@@ -1005,23 +1546,30 @@ fn request_max_forwards_is_optional_and_rejects_invalid_metadata() {
       .expect("missing Max-Forwards should be valid")
   );
 
-  for value in ["0", "256", "999999999999999999999"] {
+  for value in ["0", "256", "4294967295"] {
     let valid = parse_request(&format!(
       "OPTIONS / HTTP/1.1\r\nHost: example.test\r\nMax-Forwards: {value}\r\n\r\n"
     ));
+    let parsed = valid
+      .max_forwards()
+      .expect("value should parse")
+      .expect("Max-Forwards should be present");
     assert_eq!(
-      Some(value.to_owned()),
-      valid.max_forwards().expect("value should parse")
+      value.parse::<u32>().expect("fixture is a u32"),
+      parsed.value()
     );
+    assert_eq!(value, parsed.header_value());
   }
 
-  for value in ["abc", "1.0"] {
+  for value in ["abc", "1.0", "4294967296", "999999999999999999999"] {
     let request = parse_request(&format!(
       "OPTIONS / HTTP/1.1\r\nHost: example.test\r\nMax-Forwards: {value}\r\n\r\n"
     ));
     assert!(request.max_forwards().is_err(), "should reject {value:?}");
     assert_eq!(Some(value), request.header("Max-Forwards"));
   }
+
+  assert!(rttp::server::HttpMaxForwards::parse("0".repeat(64 * 1024 + 1)).is_err());
 
   let duplicate = parse_request(concat!(
     "OPTIONS / HTTP/1.1\r\n",
@@ -1032,6 +1580,726 @@ fn request_max_forwards_is_optional_and_rejects_invalid_metadata() {
   ));
   assert!(duplicate.max_forwards().is_err());
   assert_eq!(Some("1"), duplicate.header("Max-Forwards"));
+}
+
+#[test]
+fn request_depth_is_optional_and_rejects_invalid_metadata() {
+  let absent = parse_request("PROPFIND / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(None, absent.depth().expect("missing Depth should be valid"));
+
+  for (value, expected) in [
+    ("0", HttpDepth::Zero),
+    ("1", HttpDepth::One),
+    ("infinity", HttpDepth::Infinity),
+    ("INFINITY", HttpDepth::Infinity),
+  ] {
+    let valid = parse_request(&format!(
+      "PROPFIND / HTTP/1.1\r\nHost: example.test\r\nDepth: {value}\r\n\r\n"
+    ));
+    let parsed = valid
+      .depth()
+      .expect("value should parse")
+      .expect("Depth should be present");
+    assert_eq!(expected, parsed);
+    assert_eq!(expected.header_value(), parsed.header_value());
+  }
+
+  for value in ["", "2", "-1", "1.0", "0, 1", "infinite"] {
+    let request = parse_request(&format!(
+      "PROPFIND / HTTP/1.1\r\nHost: example.test\r\nDepth: {value}\r\n\r\n"
+    ));
+    assert!(request.depth().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Depth"));
+  }
+
+  assert!(rttp::server::HttpDepth::parse("0".repeat(64 * 1024 + 1)).is_err());
+
+  let duplicate = parse_request(concat!(
+    "PROPFIND / HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Depth: 0\r\n",
+    "depth: 1\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.depth().is_err());
+  assert_eq!(Some("0"), duplicate.header("Depth"));
+}
+
+#[test]
+fn request_timeout_is_optional_and_rejects_invalid_metadata() {
+  let absent = parse_request("LOCK / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent.timeout().expect("missing Timeout should be valid")
+  );
+
+  let valid =
+    parse_request("LOCK / HTTP/1.1\r\nHost: example.test\r\nTimeout: Second-60, Infinite\r\n\r\n");
+  let timeout = valid
+    .timeout()
+    .expect("Timeout should parse")
+    .expect("Timeout should be present");
+  assert_eq!(
+    &[HttpTimeoutType::Second(60), HttpTimeoutType::Infinite],
+    timeout.members()
+  );
+  assert_eq!("second-60, infinite", timeout.header_value());
+
+  for value in [
+    "",
+    "Second-",
+    "Second--1",
+    "Second-1.0",
+    "Second-18446744073709551616",
+    "Second-60, second-60",
+    "Infinite, infinite",
+  ] {
+    let request = parse_request(&format!(
+      "LOCK / HTTP/1.1\r\nHost: example.test\r\nTimeout: {value}\r\n\r\n"
+    ));
+    assert!(request.timeout().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Timeout"));
+  }
+
+  assert!(
+    rttp::server::HttpTimeout::parse(format!("{}Second-1", " ".repeat(64 * 1024 + 1))).is_err()
+  );
+
+  let split = parse_request(concat!(
+    "LOCK / HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Timeout: Second-60\r\n",
+    "timeout: Infinite\r\n",
+    "\r\n"
+  ));
+  let split_timeout = split
+    .timeout()
+    .expect("split Timeout should parse")
+    .expect("Timeout should be present");
+  assert_eq!(
+    &[HttpTimeoutType::Second(60), HttpTimeoutType::Infinite],
+    split_timeout.members()
+  );
+}
+
+#[test]
+fn request_overwrite_is_optional_and_rejects_invalid_metadata() {
+  let absent = parse_request("COPY / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .overwrite()
+      .expect("missing Overwrite should be valid")
+  );
+
+  for (value, expected) in [("T", HttpOverwrite::T), ("F", HttpOverwrite::F)] {
+    let valid = parse_request(&format!(
+      "COPY / HTTP/1.1\r\nHost: example.test\r\nOverwrite: {value}\r\n\r\n"
+    ));
+    let parsed = valid
+      .overwrite()
+      .expect("value should parse")
+      .expect("Overwrite should be present");
+    assert_eq!(expected, parsed);
+    assert_eq!(expected.header_value(), parsed.header_value());
+  }
+
+  for value in ["", "t", "f", "true", "false", "T, F", "0", "1", "TF"] {
+    let request = parse_request(&format!(
+      "COPY / HTTP/1.1\r\nHost: example.test\r\nOverwrite: {value}\r\n\r\n"
+    ));
+    assert!(request.overwrite().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Overwrite"));
+  }
+
+  assert!(rttp::server::HttpOverwrite::parse("T".repeat(64 * 1024 + 1)).is_err());
+
+  let duplicate = parse_request(concat!(
+    "COPY / HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Overwrite: T\r\n",
+    "overwrite: F\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.overwrite().is_err());
+  assert_eq!(Some("T"), duplicate.header("Overwrite"));
+}
+
+#[test]
+fn request_pragma_parses_bounded_metadata_without_cache_policy() {
+  let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent.pragma().expect("missing Pragma should be valid")
+  );
+
+  let valid = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Pragma: no-cache\r\n",
+    "Pragma: community=private, example=\"quoted, value\"\r\n",
+    "\r\n"
+  ));
+  let pragma = valid
+    .pragma()
+    .expect("Pragma should parse")
+    .expect("Pragma should be present");
+  assert!(pragma.no_cache());
+  assert_eq!(2, pragma.extensions().len());
+  assert_eq!("community", pragma.extensions()[0].name());
+  assert_eq!(Some("private"), pragma.extensions()[0].value());
+  assert_eq!(
+    "no-cache, community=private, example=\"quoted, value\"",
+    pragma.header_value()
+  );
+
+  for value in [
+    "no-cache,",
+    "no-cache=value",
+    "no-cache, no-cache",
+    "bad name",
+  ] {
+    let request = parse_request(&format!(
+      "GET /asset HTTP/1.1\r\nHost: example.test\r\nPragma: {value}\r\n\r\n"
+    ));
+    assert!(request.pragma().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Pragma"));
+  }
+
+  assert!(rttp::server::HttpPragma::parse("x".repeat(64 * 1024 + 1)).is_err());
+
+  let duplicate = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Pragma: no-cache\r\n",
+    "pragma: no-cache\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.pragma().is_err());
+  assert_eq!(Some("no-cache"), duplicate.header("Pragma"));
+
+  let cache_control = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Pragma: no-cache\r\n",
+    "Cache-Control: max-age=60\r\n",
+    "\r\n"
+  ));
+  let pragma = cache_control
+    .pragma()
+    .expect("Pragma should parse")
+    .expect("Pragma should be present");
+  assert!(pragma.no_cache());
+  assert_eq!(
+    Some("max-age=60"),
+    cache_control.header("Cache-Control"),
+    "Pragma parsing must leave Cache-Control untouched"
+  );
+}
+
+#[test]
+fn request_idempotency_key_is_optional_and_rejects_invalid_metadata() {
+  let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .idempotency_key()
+      .expect("missing Idempotency-Key should be valid")
+  );
+
+  for value in [
+    "charge-2026-08-19-9f3c",
+    "urn:uuid:6e7bc004-2445-45a3-8d16-392b33764f00",
+    "A",
+  ] {
+    let valid = parse_request(&format!(
+      "POST /charges HTTP/1.1\r\nHost: example.test\r\nIdempotency-Key: {value}\r\n\r\n"
+    ));
+    let parsed = valid
+      .idempotency_key()
+      .expect("value should parse")
+      .expect("Idempotency-Key should be present");
+    assert_eq!(value, parsed.as_str());
+    assert_eq!(value, parsed.header_value());
+  }
+
+  for value in ["", "key with space"] {
+    let request = parse_request(&format!(
+      "POST /charges HTTP/1.1\r\nHost: example.test\r\nIdempotency-Key: {value}\r\n\r\n"
+    ));
+    assert!(
+      request.idempotency_key().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(Some(value), request.header("Idempotency-Key"));
+  }
+
+  assert!(rttp::server::HttpIdempotencyKey::parse("x".repeat(64 * 1024 + 1)).is_err());
+
+  let duplicate = parse_request(concat!(
+    "POST /charges HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Idempotency-Key: first\r\n",
+    "idempotency-key: second\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.idempotency_key().is_err());
+  assert_eq!(Some("first"), duplicate.header("Idempotency-Key"));
+}
+
+#[test]
+fn request_sec_websocket_version_is_optional_and_rejects_invalid_metadata() {
+  let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .sec_websocket_version()
+      .expect("missing Sec-WebSocket-Version should be valid")
+  );
+
+  for value in ["13", "13, 8, 7"] {
+    let valid = parse_request(&format!(
+      "GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Version: {value}\r\n\r\n"
+    ));
+    let parsed = valid
+      .sec_websocket_version()
+      .expect("value should parse")
+      .expect("Sec-WebSocket-Version should be present");
+    assert_eq!(value, parsed.header_value());
+    assert!(parsed.contains("13"));
+  }
+
+  for value in ["", "v13", "013", "8, 13", "13, 13", "300"] {
+    let request = parse_request(&format!(
+      "GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Version: {value}\r\n\r\n"
+    ));
+    assert!(
+      request.sec_websocket_version().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(Some(value), request.header("Sec-WebSocket-Version"));
+  }
+
+  assert!(rttp::server::HttpSecWebSocketVersion::parse("1".repeat(64 * 1024 + 1)).is_err());
+
+  let duplicate = parse_request(concat!(
+    "GET /chat HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Sec-WebSocket-Version: 13\r\n",
+    "sec-websocket-version: 13\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.sec_websocket_version().is_err());
+  assert_eq!(Some("13"), duplicate.header("Sec-WebSocket-Version"));
+}
+
+#[test]
+fn request_sec_websocket_protocol_is_optional_and_rejects_invalid_metadata() {
+  let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .sec_websocket_protocol()
+      .expect("missing Sec-WebSocket-Protocol should be valid")
+  );
+
+  for value in ["chat", "chat, superchat"] {
+    let valid = parse_request(&format!(
+      "GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Protocol: {value}\r\n\r\n"
+    ));
+    let parsed = valid
+      .sec_websocket_protocol()
+      .expect("value should parse")
+      .expect("Sec-WebSocket-Protocol should be present");
+    assert_eq!(value, parsed.header_value());
+    assert!(parsed.contains("chat"));
+  }
+
+  let multi_token = parse_request(concat!(
+    "GET /chat HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Sec-WebSocket-Protocol: chat, superchat\r\n",
+    "\r\n"
+  ));
+  assert_eq!(
+    None,
+    multi_token
+      .sec_websocket_protocol()
+      .expect("offers should parse")
+      .expect("offers should be present")
+      .selected(),
+    "a multi-token offer is not a selection"
+  );
+
+  for value in ["", ",", "not a token", "chat;foo", "chat, chat"] {
+    let request = parse_request(&format!(
+      "GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Protocol: {value}\r\n\r\n"
+    ));
+    assert!(
+      request.sec_websocket_protocol().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(Some(value), request.header("Sec-WebSocket-Protocol"));
+  }
+
+  assert!(rttp::server::HttpSecWebSocketProtocol::parse("a".repeat(64 * 1024 + 1)).is_err());
+
+  let duplicate = parse_request(concat!(
+    "GET /chat HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Sec-WebSocket-Protocol: chat\r\n",
+    "sec-websocket-protocol: chat\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.sec_websocket_protocol().is_err());
+  assert_eq!(Some("chat"), duplicate.header("Sec-WebSocket-Protocol"));
+}
+
+#[test]
+fn request_sec_websocket_key_is_optional_and_rejects_invalid_metadata() {
+  let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .sec_websocket_key()
+      .expect("missing Sec-WebSocket-Key should be valid")
+  );
+
+  for value in ["dGhlIHNhbXBsZSBub25jZQ==", "AAAAAAAAAAAAAAAAAAAAAA=="] {
+    let valid = parse_request(&format!(
+      "GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Key: {value}\r\n\r\n"
+    ));
+    let parsed = valid
+      .sec_websocket_key()
+      .expect("value should parse")
+      .expect("Sec-WebSocket-Key should be present");
+    assert_eq!(value, parsed.as_str());
+    assert_eq!(value, parsed.header_value());
+    assert!(!format!("{parsed:?}").contains(value));
+  }
+
+  for value in ["", "the sample nonce", "dGhlIHNhbXBsZSBub25jZQ"] {
+    let request = parse_request(&format!(
+      "GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Key: {value}\r\n\r\n"
+    ));
+    assert!(
+      request.sec_websocket_key().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(Some(value), request.header("Sec-WebSocket-Key"));
+  }
+
+  assert!(rttp::server::HttpSecWebSocketKey::parse("A".repeat(64 * 1024 + 1)).is_err());
+
+  let duplicate = parse_request(concat!(
+    "GET /chat HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n",
+    "sec-websocket-key: AAAAAAAAAAAAAAAAAAAAAA==\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.sec_websocket_key().is_err());
+  assert_eq!(
+    Some("dGhlIHNhbXBsZSBub25jZQ=="),
+    duplicate.header("Sec-WebSocket-Key")
+  );
+}
+
+#[test]
+fn request_trace_context_is_optional_and_rejects_invalid_metadata() {
+  let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(None, absent.traceparent().expect("missing traceparent"));
+  assert_eq!(None, absent.tracestate().expect("missing tracestate"));
+
+  let request = parse_request(concat!(
+    "GET /trace HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\r\n",
+    "tracestate: rojo=00f067aa0ba902b7\r\n",
+    "\r\n"
+  ));
+  let traceparent = request
+    .traceparent()
+    .expect("traceparent should parse")
+    .expect("traceparent should be present");
+  let tracestate = request
+    .tracestate()
+    .expect("tracestate should parse")
+    .expect("tracestate should be present");
+  assert_eq!("00", traceparent.version());
+  assert_eq!("4bf92f3577b34da6a3ce929d0e0e4736", traceparent.trace_id());
+  assert_eq!("rojo", tracestate.members()[0].key());
+
+  assert!(rttp::server::HttpTraceParent::parse("invalid").is_err());
+  assert!(rttp::server::HttpTraceState::parse("rojo=1,rojo=2").is_err());
+
+  let malformed = parse_request(concat!(
+    "GET /trace HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "traceparent: invalid\r\n",
+    "tracestate: rojo=1,rojo=2\r\n",
+    "\r\n"
+  ));
+  assert!(malformed.traceparent().is_err());
+  assert!(malformed.tracestate().is_err());
+  assert_eq!(Some("invalid"), malformed.header("traceparent"));
+  assert_eq!(Some("rojo=1,rojo=2"), malformed.header("tracestate"));
+}
+
+#[test]
+fn request_baggage_is_optional_and_rejects_invalid_metadata() {
+  let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(None, absent.baggage().expect("missing baggage"));
+
+  let request = parse_request(concat!(
+    "GET /baggage HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "baggage: tenant=acme;source=gateway,release=2026-08-19\r\n",
+    "\r\n"
+  ));
+  let baggage = request
+    .baggage()
+    .expect("baggage should parse")
+    .expect("baggage should be present");
+  assert_eq!("tenant", baggage.members()[0].key());
+  assert_eq!("acme", baggage.members()[0].value());
+  assert_eq!("source", baggage.members()[0].properties()[0].key());
+
+  assert!(rttp::server::HttpBaggage::parse("tenant=1,tenant=2").is_err());
+
+  let malformed = parse_request(concat!(
+    "GET /baggage HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "baggage: tenant=secret,tenant=other\r\n",
+    "\r\n"
+  ));
+  assert!(malformed.baggage().is_err());
+  assert_eq!(
+    Some("tenant=secret,tenant=other"),
+    malformed.header("baggage")
+  );
+}
+
+#[test]
+fn request_cdn_loop_parses_standard_members_and_parameters() {
+  let request = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: internal.test\r\n",
+    "CDN-Loop: foo123.foocdn.example, barcdn.example; trace=\"abcdef\"\r\n",
+    "CDN-Loop: AnotherCDN; abc=123; def=\"456\"\r\n",
+    "\r\n"
+  ));
+
+  let cdn_loop = request
+    .cdn_loop()
+    .expect("CDN-Loop should parse")
+    .expect("CDN-Loop should be present");
+
+  assert_eq!(3, cdn_loop.len());
+  assert_eq!("foo123.foocdn.example", cdn_loop.members()[0].identifier());
+  assert!(cdn_loop.members()[0].parameters().is_empty());
+  assert_eq!("barcdn.example", cdn_loop.members()[1].identifier());
+  assert_eq!(Some("abcdef"), cdn_loop.members()[1].parameter("trace"));
+  assert_eq!("AnotherCDN", cdn_loop.members()[2].identifier());
+  assert_eq!(Some("123"), cdn_loop.members()[2].parameter("abc"));
+  assert_eq!(Some("456"), cdn_loop.members()[2].parameter("def"));
+  assert_eq!(
+    "foo123.foocdn.example, barcdn.example; trace=abcdef, AnotherCDN; abc=123; def=456",
+    cdn_loop.header_value()
+  );
+}
+
+#[test]
+fn request_cdn_loop_is_optional_and_rejects_invalid_metadata() {
+  assert_eq!(
+    None,
+    parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .cdn_loop()
+      .expect("absent CDN-Loop should be accepted")
+  );
+
+  let duplicate = parse_request(concat!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\n",
+    "CDN-Loop: cdn; trace=1; TRACE=2\r\n\r\n"
+  ));
+  assert!(duplicate.cdn_loop().is_err());
+  assert_eq!(Some("cdn; trace=1; TRACE=2"), duplicate.header("CDN-Loop"));
+
+  let malformed = parse_request(concat!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\n",
+    "CDN-Loop: cdn; trace\r\n\r\n"
+  ));
+  assert!(malformed.cdn_loop().is_err());
+  assert_eq!(Some("cdn; trace"), malformed.header("CDN-Loop"));
+
+  let excessive = (0..257)
+    .map(|index| format!("cdn{index}.example"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let request = parse_request(&format!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\nCDN-Loop: {excessive}\r\n\r\n"
+  ));
+  assert!(request.cdn_loop().is_err());
+  assert_eq!(Some(excessive.as_str()), request.header("CDN-Loop"));
+
+  let repeated = parse_request(concat!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\n",
+    "CDN-Loop: edge.example, edge.example; hop=1\r\n\r\n"
+  ));
+  let repeated = repeated
+    .cdn_loop()
+    .expect("repeated CDN identifiers should parse")
+    .expect("CDN-Loop should be present");
+  assert_eq!(2, repeated.len());
+  assert_eq!("edge.example", repeated.members()[0].identifier());
+  assert_eq!("edge.example", repeated.members()[1].identifier());
+}
+
+#[test]
+fn request_via_parses_repeated_hops_and_comments() {
+  let request = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: internal.test\r\n",
+    "Via: 1.1 edge-a (TLS terminator)\r\n",
+    "Via: HTTP/2 upstream\r\n",
+    "\r\n"
+  ));
+
+  let via = request
+    .via()
+    .expect("Via should parse")
+    .expect("Via should be present");
+
+  assert_eq!(2, via.len());
+  assert_eq!("1.1", via.members()[0].protocol_version());
+  assert_eq!("edge-a", via.members()[0].received_by());
+  assert_eq!(Some("TLS terminator"), via.members()[0].comment());
+  assert_eq!(Some("HTTP"), via.members()[1].protocol_name());
+  assert_eq!("2", via.members()[1].protocol_version());
+  assert_eq!("upstream", via.members()[1].received_by());
+  assert_eq!(
+    "1.1 edge-a (TLS terminator), HTTP/2 upstream",
+    via.header_value()
+  );
+}
+
+#[test]
+fn request_via_is_optional_and_rejects_invalid_metadata() {
+  assert_eq!(
+    None,
+    parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .via()
+      .expect("absent Via should be accepted")
+  );
+
+  let malformed = parse_request(concat!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\n",
+    "Via: 1.1 hop extra\r\n\r\n"
+  ));
+  assert!(malformed.via().is_err());
+  assert_eq!(Some("1.1 hop extra"), malformed.header("Via"));
+
+  let excessive = (0..257)
+    .map(|index| format!("1.1 hop{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let request = parse_request(&format!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\nVia: {excessive}\r\n\r\n"
+  ));
+  assert!(request.via().is_err());
+  assert_eq!(Some(excessive.as_str()), request.header("Via"));
+
+  let repeated = parse_request(concat!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\n",
+    "Via: 1.1 edge-a, 1.1 edge-a\r\n\r\n"
+  ));
+  let repeated = repeated
+    .via()
+    .expect("duplicate Via hops should parse")
+    .expect("Via should be present");
+  assert_eq!(2, repeated.len());
+  assert_eq!("edge-a", repeated.members()[0].received_by());
+  assert_eq!("edge-a", repeated.members()[1].received_by());
+}
+
+#[test]
+fn request_x_forwarded_metadata_parses_ordered_values() {
+  let request = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: internal.test\r\n",
+    "X-Forwarded-For: 192.0.2.60, unknown\r\n",
+    "X-Forwarded-For: [2001:db8:cafe::17]\r\n",
+    "X-Forwarded-Host: example.test:443\r\n",
+    "X-Forwarded-Host: [2001:db8::1]:8443\r\n",
+    "X-Forwarded-Proto: https\r\n",
+    "X-Forwarded-Proto: http\r\n",
+    "\r\n"
+  ));
+
+  let forwarded_for = request
+    .x_forwarded_for()
+    .expect("X-Forwarded-For should parse")
+    .expect("X-Forwarded-For should be present");
+  let forwarded_host = request
+    .x_forwarded_host()
+    .expect("X-Forwarded-Host should parse")
+    .expect("X-Forwarded-Host should be present");
+  let forwarded_proto = request
+    .x_forwarded_proto()
+    .expect("X-Forwarded-Proto should parse")
+    .expect("X-Forwarded-Proto should be present");
+
+  assert_eq!(3, forwarded_for.len());
+  assert_eq!("192.0.2.60", forwarded_for.nodes()[0].value());
+  assert!(forwarded_for.nodes()[1].is_unknown());
+  assert_eq!("[2001:db8:cafe::17]", forwarded_for.nodes()[2].value());
+  assert_eq!(2, forwarded_host.len());
+  assert_eq!("example.test", forwarded_host.hosts()[0].host());
+  assert_eq!(Some("443"), forwarded_host.hosts()[0].port());
+  assert_eq!("[2001:db8::1]", forwarded_host.hosts()[1].host());
+  assert_eq!(
+    ["https".to_string(), "http".to_string()],
+    forwarded_proto.schemes()
+  );
+}
+
+#[test]
+fn request_x_forwarded_metadata_is_optional_and_preserves_invalid_raw_headers() {
+  let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .x_forwarded_for()
+      .expect("absent X-Forwarded-For should be accepted")
+  );
+  assert_eq!(
+    None,
+    absent
+      .x_forwarded_host()
+      .expect("absent X-Forwarded-Host should be accepted")
+  );
+  assert_eq!(
+    None,
+    absent
+      .x_forwarded_proto()
+      .expect("absent X-Forwarded-Proto should be accepted")
+  );
+
+  let malformed = parse_request(concat!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\n",
+    "X-Forwarded-For: client.example\r\n",
+    "X-Forwarded-Host: https://example.test\r\n",
+    "X-Forwarded-Proto: https://\r\n\r\n"
+  ));
+  assert!(malformed.x_forwarded_for().is_err());
+  assert!(malformed.x_forwarded_host().is_err());
+  assert!(malformed.x_forwarded_proto().is_err());
+  assert_eq!(Some("client.example"), malformed.header("X-Forwarded-For"));
+  assert_eq!(
+    Some("https://example.test"),
+    malformed.header("X-Forwarded-Host")
+  );
+  assert_eq!(Some("https://"), malformed.header("X-Forwarded-Proto"));
 }
 
 #[test]
@@ -1277,6 +2545,30 @@ fn parses_request_cache_control_directives() {
 }
 
 #[test]
+fn request_accept_charset_parses_ranges_and_quality_values() {
+  let request = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Accept-Charset: utf-8, iso-8859-1;q=0.5\r\n",
+    "accept-charset: *; q=0\r\n",
+    "\r\n"
+  ));
+
+  let charsets = request
+    .accept_charset()
+    .expect("Accept-Charset should parse")
+    .expect("Accept-Charset should be present");
+
+  assert_eq!(3, charsets.len());
+  assert_eq!("utf-8", charsets.charsets()[0].charset());
+  assert_eq!(1000, charsets.charsets()[0].quality());
+  assert_eq!("iso-8859-1", charsets.charsets()[1].charset());
+  assert_eq!(500, charsets.charsets()[1].quality());
+  assert_eq!("*", charsets.charsets()[2].charset());
+  assert_eq!(0, charsets.charsets()[2].quality());
+}
+
+#[test]
 fn request_accept_encoding_parses_codings_and_quality_values() {
   let request = parse_request(concat!(
     "GET /asset HTTP/1.1\r\n",
@@ -1298,6 +2590,47 @@ fn request_accept_encoding_parses_codings_and_quality_values() {
   assert_eq!(800, encodings.codings()[1].quality());
   assert_eq!("identity", encodings.codings()[2].coding());
   assert_eq!(0, encodings.codings()[2].quality());
+}
+
+#[test]
+fn request_accept_charset_rejects_duplicate_invalid_and_oversized_values() {
+  assert_eq!(
+    None,
+    parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .accept_charset()
+      .expect("absent Accept-Charset should be accepted")
+  );
+
+  for value in [
+    "",
+    "utf-8,",
+    ", utf-8",
+    "utf-8,,iso-8859-1",
+    "utf 8",
+    "utf-8;q=1.1",
+  ] {
+    let request = parse_request(&format!(
+      "GET / HTTP/1.1\r\nHost: example.test\r\nAccept-Charset: {value}\r\n\r\n"
+    ));
+    assert!(request.accept_charset().is_err(), "should reject {value:?}");
+    assert_eq!(request.header("Accept-Charset"), Some(value));
+  }
+
+  let duplicate = parse_request(concat!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\n",
+    "Accept-Charset: utf-8\r\naccept-charset: UTF-8;q=0.5\r\n\r\n"
+  ));
+  assert!(duplicate.accept_charset().is_err());
+  assert_eq!(duplicate.header("Accept-Charset"), Some("utf-8"));
+
+  let oversized = "utf-8".repeat(64 * 1024);
+  assert!(HttpRequestAcceptCharsets::parse(oversized).is_err());
+
+  let too_many = (0..33)
+    .map(|index| format!("charset{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  assert!(HttpRequestAcceptCharsets::parse(too_many).is_err());
 }
 
 #[test]
@@ -1518,6 +2851,12 @@ fn request_expectations_reject_duplicate_and_oversized_values() {
     "Expect: 100-continue\r\nExpect: 100-CONTINUE\r\n\r\n"
   ));
   assert!(duplicate.expectations().is_err());
+
+  let malformed = parse_request(concat!(
+    "POST / HTTP/1.1\r\nHost: example.test\r\n",
+    "Expect: not a token\r\n\r\n"
+  ));
+  assert!(malformed.expectations().is_err());
 
   assert!(HttpExpectations::parse("a".repeat(64 * 1024 + 1)).is_err());
 }
@@ -1979,6 +3318,41 @@ fn reporting_endpoints_helpers_parse_and_build_bounded_metadata() {
       "should reject {value:?}"
     );
   }
+
+  let escaped = HttpResponse::ok("body")
+    .with_reporting_endpoints([("default", r#"https://reports.example/a"b\c"#)])
+    .expect("escaped Reporting-Endpoints URL should be accepted");
+  let serialized = String::from_utf8(escaped.to_bytes()).expect("response is UTF-8");
+  assert!(serialized.contains(r#"default="https://reports.example/a\"b\\c""#));
+  assert_eq!(
+    Some(r#"https://reports.example/a"b\c"#),
+    escaped
+      .reporting_endpoints()
+      .expect("escaped Reporting-Endpoints should parse")
+      .expect("Reporting-Endpoints should be present")
+      .endpoint("default")
+  );
+
+  let malformed = HttpResponse::ok("body").header(
+    "Reporting-Endpoints",
+    "default=https://reports.example/default",
+  );
+  let malformed_serialized = String::from_utf8(malformed.to_bytes()).expect("response is UTF-8");
+  assert!(malformed_serialized
+    .contains("\r\nReporting-Endpoints: default=https://reports.example/default\r\n"));
+  assert!(
+    malformed.reporting_endpoints().is_err(),
+    "typed Reporting-Endpoints parser should reject malformed raw values"
+  );
+
+  assert!(
+    HttpReportingEndpoints::from_endpoints([
+      ("default", "https://reports.example/default"),
+      ("default", "https://reports.example/other"),
+    ])
+    .is_err(),
+    "builder should reject duplicate endpoint names"
+  );
 }
 
 #[test]
@@ -2197,6 +3571,132 @@ fn response_etag_helper_rejects_malformed_duplicate_and_oversized_values_without
   assert!(
     serialized.contains(&format!("\r\nETag: {oversized}\r\n")),
     "raw oversized ETag header should be preserved"
+  );
+}
+
+#[test]
+fn response_delta_base_helper_declares_and_parses_metadata_without_delta_application() {
+  let absent = HttpResponse::ok("body");
+  assert_eq!(
+    None,
+    absent.delta_base().expect("absent Delta-Base should parse")
+  );
+
+  let response = HttpResponse::ok("body")
+    .header("Delta-Base", "\"old\"")
+    .with_delta_base(HttpDeltaBase::new(HttpEntityTag::weak("asset-v7")));
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nDelta-Base: W/\"asset-v7\"\r\n"));
+  assert_eq!(1, serialized.matches("\r\nDelta-Base: ").count());
+  assert_eq!(
+    Some(HttpDeltaBase::new(HttpEntityTag::weak("asset-v7"))),
+    response.delta_base().expect("Delta-Base should parse")
+  );
+  assert!(serialized.ends_with("\r\n\r\nbody"));
+
+  let duplicate = HttpResponse::ok("body")
+    .header("Delta-Base", "\"one\"")
+    .header("delta-base", "W/\"two\"");
+  assert!(
+    duplicate.delta_base().is_err(),
+    "Delta-Base helper should reject duplicate singleton headers"
+  );
+
+  let oversized = format!("\"{}\"", "a".repeat(64 * 1024));
+  let response = HttpResponse::ok("body").header("Delta-Base", &oversized);
+  assert!(
+    response.delta_base().is_err(),
+    "Delta-Base helper should reject oversized values"
+  );
+}
+
+#[test]
+fn response_service_worker_allowed_helper_declares_single_header_value() {
+  let response = HttpResponse::ok("body")
+    .header("Service-Worker-Allowed", "/old")
+    .with_service_worker_allowed(" / ")
+    .expect("valid Service-Worker-Allowed should be accepted");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
+
+  assert!(serialized.contains("\r\nService-Worker-Allowed: /\r\n"));
+  assert_eq!(
+    1,
+    serialized.matches("\r\nService-Worker-Allowed: ").count()
+  );
+  assert_eq!(
+    "/",
+    response
+      .service_worker_allowed()
+      .expect("Service-Worker-Allowed should parse")
+      .expect("Service-Worker-Allowed should be present")
+      .as_str()
+  );
+}
+
+#[test]
+fn response_service_worker_allowed_helper_parses_attached_singleton_header() {
+  let response = HttpResponse::ok("body").header("Service-Worker-Allowed", "../scope");
+
+  assert_eq!(
+    "../scope",
+    response
+      .service_worker_allowed()
+      .expect("Service-Worker-Allowed should parse")
+      .expect("Service-Worker-Allowed should be present")
+      .as_str()
+  );
+}
+
+#[test]
+fn service_worker_allowed_helper_rejects_empty_control_duplicate_and_oversized_values() {
+  for value in [
+    "",
+    " ",
+    "/bad path",
+    "/bad%zz",
+    "http://example.test/scope",
+    "//example.test/scope",
+    "/safe\u{7f}",
+    "/safe\u{1f}",
+    "/safe\r\nX-Evil: true",
+  ] {
+    assert!(
+      HttpResponse::ok("body")
+        .with_service_worker_allowed(value)
+        .is_err(),
+      "Service-Worker-Allowed helper should reject {value:?}"
+    );
+  }
+
+  for value in ["", " ", "/safe\u{7f}", "/safe\u{1f}", "/bad path"] {
+    let response = HttpResponse::ok("body").header("Service-Worker-Allowed", value);
+    assert!(
+      response.service_worker_allowed().is_err(),
+      "Service-Worker-Allowed parser should reject {value:?}"
+    );
+  }
+
+  let response = HttpResponse::ok("body")
+    .header("Service-Worker-Allowed", "/")
+    .header("Service-Worker-Allowed", "/app/");
+  assert!(
+    response.service_worker_allowed().is_err(),
+    "Service-Worker-Allowed parser should reject duplicate header fields"
+  );
+
+  let oversized = format!("/{}", "a".repeat(64 * 1024 + 1));
+  assert!(
+    HttpResponse::ok("body")
+      .with_service_worker_allowed(&oversized)
+      .is_err(),
+    "Service-Worker-Allowed helper should reject oversized values"
+  );
+
+  let response = HttpResponse::ok("body").header("Service-Worker-Allowed", oversized);
+  assert!(
+    response.service_worker_allowed().is_err(),
+    "Service-Worker-Allowed parser should reject oversized raw values"
   );
 }
 
@@ -2466,12 +3966,7 @@ fn content_disposition_helpers_reject_malformed_duplicate_oversized_and_excessiv
     "Content-Disposition helper should reject oversized values"
   );
 
-  let too_many = format!(
-    "attachment{}",
-    (0..33)
-      .map(|index| format!("; p{index}=v"))
-      .collect::<String>()
-  );
+  let too_many = rttp_test_support::content_disposition::too_many_parameters_value();
   assert!(
     HttpContentDisposition::parse(too_many).is_err(),
     "Content-Disposition helper should reject too many parameters"
@@ -2810,17 +4305,64 @@ fn raw_content_type_headers_are_preserved_without_helper_validation() {
 #[test]
 fn response_age_and_expires_helpers_declare_metadata_headers() {
   let expires = UNIX_EPOCH + Duration::from_secs(784_111_777);
-  let response = HttpResponse::ok("body").with_age(60).with_expires(expires);
+  let response = HttpResponse::ok("body")
+    .with_age(60)
+    .with_date(expires)
+    .with_expires(expires)
+    .with_last_modified(expires);
 
   let serialized = String::from_utf8(response.to_bytes()).expect("response is UTF-8");
 
   assert!(serialized.contains("\r\nAge: 60\r\n"));
+  assert!(serialized.contains("\r\nDate: Sun, 06 Nov 1994 08:49:37 GMT\r\n"));
   assert!(serialized.contains("\r\nExpires: Sun, 06 Nov 1994 08:49:37 GMT\r\n"));
+  assert!(serialized.contains("\r\nLast-Modified: Sun, 06 Nov 1994 08:49:37 GMT\r\n"));
   assert_eq!(Some(60), response.age().expect("Age should parse"));
+  assert_eq!(Some(expires), response.date().expect("Date should parse"));
   assert_eq!(
     Some(expires),
     response.expires().expect("Expires should parse")
   );
+  assert_eq!(
+    Some(expires),
+    response
+      .last_modified_date()
+      .expect("Last-Modified should parse")
+  );
+}
+
+#[test]
+fn response_http_date_helpers_reject_malformed_duplicate_and_oversized_raw_headers() {
+  let malformed = HttpResponse::ok("body")
+    .header("Date", "not a date")
+    .header("Expires", "Sun, 06 Nov 1994 08:49:37 PST")
+    .header("Last-Modified", "");
+
+  assert!(malformed.date().is_err());
+  assert!(malformed.expires().is_err());
+  assert!(malformed.last_modified_date().is_err());
+
+  let duplicate = HttpResponse::ok("body")
+    .header("Date", "Sun, 06 Nov 1994 08:49:37 GMT")
+    .header("date", "Sun, 06 Nov 1994 08:49:38 GMT")
+    .header("Expires", "Sun, 06 Nov 1994 08:49:37 GMT")
+    .header("expires", "Sun, 06 Nov 1994 08:49:38 GMT")
+    .header("Last-Modified", "Sun, 06 Nov 1994 08:49:37 GMT")
+    .header("last-modified", "Sun, 06 Nov 1994 08:49:38 GMT");
+
+  assert!(duplicate.date().is_err());
+  assert!(duplicate.expires().is_err());
+  assert!(duplicate.last_modified_date().is_err());
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_response = HttpResponse::ok("body")
+    .header("Date", &oversized)
+    .header("Expires", &oversized)
+    .header("Last-Modified", &oversized);
+
+  assert!(oversized_response.date().is_err());
+  assert!(oversized_response.expires().is_err());
+  assert!(oversized_response.last_modified_date().is_err());
 }
 
 #[test]

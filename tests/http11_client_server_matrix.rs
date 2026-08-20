@@ -2,17 +2,20 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 #[cfg(feature = "async")]
 use futures::executor::block_on;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, UNIX_EPOCH};
 
+use rttp_client::DavClass;
 use rttp_client::HttpClient;
 use rttp_server::server::{
   HttpByteRange, HttpByteRangeError, HttpConditionalMetadata, HttpConditionalRequestOutcome,
-  HttpContentDisposition, HttpContentType, HttpEntityTag, HttpIfRangeRequestOutcome, HttpResponse,
-  Request, SecFetchDest, SecFetchMode, SecFetchSite, SecPurpose,
+  HttpContentDisposition, HttpContentType, HttpDav, HttpDepth, HttpDestination, HttpEntityTag,
+  HttpIf, HttpIfRangeRequestOutcome, HttpIfScheduleTagMatch, HttpLockToken, HttpOverwrite,
+  HttpResponse, HttpScheduleTag, HttpTimeout, Request, SecFetchDest, SecFetchMode, SecFetchSite,
+  SecPurpose,
 };
 use rttp_test_support as fixtures;
 
@@ -21,6 +24,49 @@ type ObservedIfRangeHandle = thread::JoinHandle<ObservedIfRangeHeaders>;
 
 fn client() -> HttpClient {
   HttpClient::new()
+}
+
+fn spawn_dav_metadata_response_server() -> (std::net::SocketAddr, thread::JoinHandle<()>) {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind DAV facade server");
+  let addr = server.local_addr().expect("DAV facade addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        HttpResponse::ok("OK")
+          .with_dav("1, 2, extended-mkcol, <https://dav.example.test/ns>")
+          .expect("DAV metadata should be accepted")
+      })
+      .expect("serve DAV facade request");
+  });
+
+  (addr, handle)
+}
+
+#[test]
+fn http11_client_and_server_exchange_dav_metadata_without_policy() {
+  let (addr, handle) = spawn_dav_metadata_response_server();
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/collection"))
+    .emit()
+    .expect("request should complete");
+  let dav = response
+    .dav()
+    .expect("DAV response metadata should parse")
+    .expect("DAV response metadata should be present");
+
+  assert_eq!(200, response.code());
+  assert_eq!(
+    &[
+      DavClass::One,
+      DavClass::Two,
+      DavClass::ExtensionToken("extended-mkcol".to_string()),
+      DavClass::CodedUrl("https://dav.example.test/ns".to_string()),
+    ],
+    dav.classes()
+  );
+  handle.join().expect("DAV server thread");
 }
 
 #[derive(Debug, PartialEq)]
@@ -84,6 +130,166 @@ fn observe_signature_metadata(request: &Request) -> ObservedSignatureMetadata {
       .map(|signature_input| signature_input.map(|signature_input| signature_input.header_value()))
       .map_err(|error| error.to_string()),
   }
+}
+
+#[derive(Debug, PartialEq)]
+struct ObservedAcceptLanguageMetadata {
+  ranges: Result<Option<Vec<String>>, String>,
+  qualities: Result<Option<Vec<Option<String>>>, String>,
+}
+
+fn observe_accept_language_metadata(request: &Request) -> ObservedAcceptLanguageMetadata {
+  ObservedAcceptLanguageMetadata {
+    ranges: request
+      .accept_language()
+      .map(|languages| {
+        languages.map(|languages| languages.ranges().into_iter().map(str::to_owned).collect())
+      })
+      .map_err(|error| error.to_string()),
+    qualities: request
+      .accept_language()
+      .map(|languages| {
+        languages.map(|languages| {
+          languages
+            .qualities()
+            .into_iter()
+            .map(|quality| quality.map(str::to_owned))
+            .collect()
+        })
+      })
+      .map_err(|error| error.to_string()),
+  }
+}
+
+#[derive(Debug, PartialEq)]
+struct ObservedAcceptCharsetMetadata {
+  ranges: Result<Option<Vec<(String, u16)>>, String>,
+  raw: Option<String>,
+}
+
+#[derive(Debug, PartialEq)]
+struct ObservedTimeoutMetadata {
+  raw: Option<String>,
+  typed: Result<Option<String>, String>,
+}
+
+fn observe_timeout_metadata(request: &Request) -> ObservedTimeoutMetadata {
+  ObservedTimeoutMetadata {
+    raw: request.header("Timeout").map(str::to_owned),
+    typed: request
+      .timeout()
+      .map(|timeout| timeout.map(|timeout| timeout.header_value()))
+      .map_err(|error| error.to_string()),
+  }
+}
+
+fn spawn_timeout_observer() -> (
+  std::net::SocketAddr,
+  mpsc::Receiver<ObservedTimeoutMetadata>,
+  thread::JoinHandle<()>,
+) {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind Timeout facade server");
+  let addr = server.local_addr().expect("Timeout facade addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send(observe_timeout_metadata(&request))
+          .expect("send observed Timeout metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve Timeout facade request");
+  });
+
+  (addr, observed_rx, handle)
+}
+
+fn observe_accept_charset_metadata(request: &Request) -> ObservedAcceptCharsetMetadata {
+  ObservedAcceptCharsetMetadata {
+    ranges: request
+      .accept_charset()
+      .map(|charsets| {
+        charsets.map(|charsets| {
+          charsets
+            .charsets()
+            .iter()
+            .map(|range| (range.charset().to_owned(), range.quality()))
+            .collect()
+        })
+      })
+      .map_err(|error| error.to_string()),
+    raw: request.header("Accept-Charset").map(str::to_owned),
+  }
+}
+
+fn spawn_facade_accept_charset_observer() -> (
+  std::net::SocketAddr,
+  mpsc::Receiver<ObservedAcceptCharsetMetadata>,
+  thread::JoinHandle<()>,
+) {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind Accept-Charset facade server");
+  let addr = server.local_addr().expect("Accept-Charset facade addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send(observe_accept_charset_metadata(&request))
+          .expect("send observed Accept-Charset metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve Accept-Charset facade request");
+  });
+
+  (addr, observed_rx, handle)
+}
+
+#[test]
+fn http11_client_and_server_exchange_timeout_metadata_without_policy() {
+  let (addr, observed_rx, handle) = spawn_timeout_observer();
+
+  let response = client()
+    .method("LOCK")
+    .url(format!("http://{addr}/collection"))
+    .timeout("Second-60, Infinite")
+    .expect("Timeout should be accepted")
+    .emit()
+    .expect("request should complete");
+
+  assert_eq!(200, response.code());
+  assert_eq!(
+    ObservedTimeoutMetadata {
+      raw: Some("second-60, infinite".to_string()),
+      typed: Ok(Some("second-60, infinite".to_string())),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(5))
+      .expect("observe Timeout metadata")
+  );
+  handle.join().expect("Timeout observer thread");
+}
+
+fn spawn_facade_accept_language_observer() -> (
+  std::net::SocketAddr,
+  mpsc::Receiver<ObservedAcceptLanguageMetadata>,
+  thread::JoinHandle<()>,
+) {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind Accept-Language facade server");
+  let addr = server.local_addr().expect("Accept-Language facade addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send(observe_accept_language_metadata(&request))
+          .expect("send observed Accept-Language metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve Accept-Language facade request");
+  });
+
+  (addr, observed_rx, handle)
 }
 
 fn spawn_facade_signature_observer() -> (
@@ -230,6 +436,17 @@ fn cdn_cache_control_response(values: &[&str]) -> Vec<u8> {
   response.into_bytes()
 }
 
+fn surrogate_control_response(values: &[&str]) -> Vec<u8> {
+  let mut response = String::from("HTTP/1.1 200 OK\r\n");
+  for value in values {
+    response.push_str("Surrogate-Control: ");
+    response.push_str(value);
+    response.push_str("\r\n");
+  }
+  response.push_str("Content-Length: 2\r\n\r\nOK");
+  response.into_bytes()
+}
+
 fn vary_response(values: &[&str]) -> Vec<u8> {
   let mut response = String::from("HTTP/1.1 200 OK\r\n");
   for value in values {
@@ -316,6 +533,17 @@ fn content_language_response(values: &[&str], include_adjacent_metadata: bool) -
     response.push_str("Vary: Accept-Encoding\r\n");
     response.push_str("Retry-After: 30\r\n");
     response.push_str("Allow: GET, HEAD\r\n");
+  }
+  response.push_str("Content-Length: 2\r\n\r\nOK");
+  response.into_bytes()
+}
+
+fn service_worker_allowed_response(values: &[&str]) -> Vec<u8> {
+  let mut response = String::from("HTTP/1.1 200 OK\r\n");
+  for value in values {
+    response.push_str("Service-Worker-Allowed: ");
+    response.push_str(value);
+    response.push_str("\r\n");
   }
   response.push_str("Content-Length: 2\r\n\r\nOK");
   response.into_bytes()
@@ -423,7 +651,11 @@ fn age_expires_response(age: &str, expires: &str, include_cache_metadata: bool) 
   let mut response = String::from("HTTP/1.1 200 OK\r\n");
   response.push_str("Age: ");
   response.push_str(age);
+  response.push_str("\r\nDate: ");
+  response.push_str(expires);
   response.push_str("\r\nExpires: ");
+  response.push_str(expires);
+  response.push_str("\r\nLast-Modified: ");
   response.push_str(expires);
   response.push_str("\r\n");
   if include_cache_metadata {
@@ -841,6 +1073,71 @@ fn sync_client_and_server_exchange_cross_origin_resource_policy_metadata_without
 }
 
 #[test]
+fn sync_client_and_server_exchange_content_security_policy_report_only_metadata_without_policy() {
+  let (addr, handle) = spawn_metadata_response_server(&[
+    ("Content-Security-Policy-Report-Only", "default-src 'self'"),
+    (
+      "content-security-policy-report-only",
+      "object-src 'none'; report-to csp-endpoint",
+    ),
+  ]);
+
+  let response = client()
+    .get()
+    .url(format!(
+      "http://{addr}/matrix/content-security-policy-report-only"
+    ))
+    .emit()
+    .expect("Content-Security-Policy-Report-Only response should parse");
+
+  let metadata = response
+    .content_security_policy_report_only()
+    .expect("Content-Security-Policy-Report-Only should parse")
+    .expect("Content-Security-Policy-Report-Only should be present");
+  assert_eq!(metadata.as_str(), "default-src 'self'");
+  assert_eq!(
+    metadata.header_values(),
+    [
+      "default-src 'self'",
+      "object-src 'none'; report-to csp-endpoint"
+    ]
+  );
+  assert_eq!(
+    response
+      .header_values("Content-Security-Policy-Report-Only")
+      .into_iter()
+      .map(String::as_str)
+      .collect::<Vec<_>>(),
+    [
+      "default-src 'self'",
+      "object-src 'none'; report-to csp-endpoint"
+    ]
+  );
+
+  handle
+    .join()
+    .expect("Content-Security-Policy-Report-Only server thread");
+
+  let raw_response = b"HTTP/1.1 200 OK\r\nContent-Security-Policy-Report-Only: default-src 'self'\x7f\r\nContent-Length: 2\r\n\r\nOK";
+  let (addr, handle) = fixtures::spawn_socket2_raw_response_server(raw_response);
+  let response = client()
+    .get()
+    .url(format!(
+      "http://{addr}/matrix/content-security-policy-report-only-invalid"
+    ))
+    .emit()
+    .expect("malformed Content-Security-Policy-Report-Only response should remain parseable");
+  assert!(response.content_security_policy_report_only().is_err());
+  assert_eq!(
+    Some(&"default-src 'self'\u{7f}".to_string()),
+    response.header_value("Content-Security-Policy-Report-Only")
+  );
+  handle
+    .join()
+    .expect("raw Content-Security-Policy-Report-Only server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_cross_origin_embedder_policy_metadata_without_policy() {
   let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
     .expect("bind Cross-Origin-Embedder-Policy server");
@@ -919,6 +1216,53 @@ fn sync_client_and_server_exchange_cross_origin_opener_policy_metadata_without_p
 }
 
 #[test]
+fn sync_client_and_server_exchange_cross_origin_opener_policy_report_only_metadata_without_policy()
+{
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind Cross-Origin-Opener-Policy-Report-Only server");
+  let addr = server
+    .local_addr()
+    .expect("Cross-Origin-Opener-Policy-Report-Only server addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        HttpResponse::ok("OK")
+          .with_cross_origin_opener_policy_report_only("same-origin; report-to=\"coop-reporting\"")
+          .expect("Cross-Origin-Opener-Policy-Report-Only should be accepted")
+      })
+      .expect("serve Cross-Origin-Opener-Policy-Report-Only response");
+  });
+
+  let response = client()
+    .get()
+    .url(format!(
+      "http://{addr}/matrix/cross-origin-opener-policy-report-only"
+    ))
+    .emit()
+    .expect("Cross-Origin-Opener-Policy-Report-Only response should parse");
+  let policy = response
+    .cross_origin_opener_policy_report_only()
+    .expect("Cross-Origin-Opener-Policy-Report-Only should parse")
+    .expect("Cross-Origin-Opener-Policy-Report-Only should be present");
+  assert_eq!(
+    rttp_client::response::CrossOriginOpenerPolicy::SameOrigin,
+    policy.policy()
+  );
+  assert_eq!(Some("coop-reporting"), policy.report_to());
+  assert_eq!(
+    r#"same-origin; report-to="coop-reporting""#,
+    policy.header_value()
+  );
+  assert_eq!(
+    Some(&r#"same-origin; report-to="coop-reporting""#.to_string()),
+    response.header_value("Cross-Origin-Opener-Policy-Report-Only")
+  );
+  handle
+    .join()
+    .expect("Cross-Origin-Opener-Policy-Report-Only server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_alt_svc_metadata_without_connection_policy() {
   const HEADERS: &[(&str, &str)] = &[(
     "Alt-Svc",
@@ -959,6 +1303,199 @@ fn sync_client_and_server_exchange_alt_svc_metadata_without_connection_policy() 
   );
 
   handle.join().expect("Alt-Svc server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_alt_used_metadata_without_connection_policy() {
+  const HEADERS: &[(&str, &str)] = &[("Alt-Used", "alt.example:8443")];
+  let (addr, handle) = spawn_metadata_response_server(HEADERS);
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/alt-used"))
+    .emit()
+    .expect("Alt-Used response should parse without connection policy");
+  let alt_used = response
+    .alt_used()
+    .expect("Alt-Used should parse")
+    .expect("Alt-Used should be present");
+
+  assert_eq!(200, response.code());
+  assert_eq!("OK", response.body().string().unwrap());
+  assert_eq!(
+    Some(&"alt.example:8443".to_string()),
+    response.header_value("Alt-Used")
+  );
+  assert_eq!("alt.example", alt_used.host());
+  assert_eq!(Some("8443"), alt_used.port());
+  assert_eq!("alt.example:8443", alt_used.header_value());
+
+  handle.join().expect("Alt-Used server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_origin_trial_metadata_without_activation() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Origin-Trial server");
+  let addr = server.local_addr().expect("Origin-Trial server addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        HttpResponse::ok("OK")
+          .with_origin_trials(["token-one", "token-one", "token-two"])
+          .expect("Origin-Trial should be accepted")
+      })
+      .expect("serve Origin-Trial response");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/origin-trial"))
+    .emit()
+    .expect("Origin-Trial response should parse without activating trials");
+  let origin_trials = response
+    .origin_trials()
+    .expect("Origin-Trial should parse")
+    .expect("Origin-Trial should be present");
+
+  assert_eq!(200, response.code());
+  assert_eq!("OK", response.body().string().unwrap());
+  assert_eq!(
+    origin_trials.tokens(),
+    ["token-one", "token-one", "token-two"]
+  );
+  assert_eq!(
+    vec![
+      &"token-one".to_string(),
+      &"token-one".to_string(),
+      &"token-two".to_string()
+    ],
+    response.header_values("Origin-Trial")
+  );
+
+  handle.join().expect("Origin-Trial server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_reporting_endpoints_metadata_without_scheduling_reports() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Reporting-Endpoints server");
+  let addr = server
+    .local_addr()
+    .expect("Reporting-Endpoints server addr");
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_| {
+        HttpResponse::ok("OK")
+          .with_reporting_endpoints([
+            ("default", r#"https://reports.example/a"b\c"#),
+            ("csp", "https://reports.example/csp"),
+          ])
+          .expect("Reporting-Endpoints should be accepted")
+      })
+      .expect("serve Reporting-Endpoints response");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/reporting-endpoints"))
+    .emit()
+    .expect("Reporting-Endpoints response should parse without scheduling reports");
+  let endpoints = response
+    .reporting_endpoints()
+    .expect("Reporting-Endpoints should parse")
+    .expect("Reporting-Endpoints should be present");
+
+  assert_eq!(200, response.code());
+  assert_eq!("OK", response.body().string().unwrap());
+  assert_eq!(
+    vec![
+      ("default", r#"https://reports.example/a"b\c"#),
+      ("csp", "https://reports.example/csp"),
+    ],
+    endpoints.endpoints()
+  );
+  assert_eq!(
+    Some(
+      &r#"default="https://reports.example/a\"b\\c", csp="https://reports.example/csp""#
+        .to_string()
+    ),
+    response.header_value("Reporting-Endpoints")
+  );
+  handle.join().expect("Reporting-Endpoints server thread");
+}
+
+#[test]
+fn sync_client_preserves_malformed_and_duplicate_reporting_endpoints_without_scheduling_reports() {
+  const HEADERS: &[(&str, &str)] = &[
+    (
+      "Reporting-Endpoints",
+      r#"default="https://reports.example/default""#,
+    ),
+    (
+      "Reporting-Endpoints",
+      r#"default="https://reports.example/other""#,
+    ),
+  ];
+  let (addr, handle) = spawn_metadata_response_server(HEADERS);
+
+  let response = client()
+    .get()
+    .url(format!(
+      "http://{addr}/matrix/reporting-endpoints-duplicate"
+    ))
+    .emit()
+    .expect("duplicate Reporting-Endpoints should not prevent response parsing");
+
+  assert_eq!(200, response.code());
+  assert_eq!("OK", response.body().string().unwrap());
+  assert_eq!(
+    vec![
+      r#"default="https://reports.example/default""#,
+      r#"default="https://reports.example/other""#,
+    ],
+    response
+      .header_values("Reporting-Endpoints")
+      .iter()
+      .map(|value| value.as_str())
+      .collect::<Vec<_>>()
+  );
+  assert!(
+    response.reporting_endpoints().is_err(),
+    "duplicate endpoint names must produce the typed parse error"
+  );
+
+  handle.join().expect("metadata response server thread");
+}
+
+#[test]
+fn sync_client_preserves_malformed_reporting_endpoints_without_scheduling_reports() {
+  const HEADERS: &[(&str, &str)] = &[(
+    "Reporting-Endpoints",
+    "default=https://reports.example/default",
+  )];
+  let (addr, handle) = spawn_metadata_response_server(HEADERS);
+
+  let response = client()
+    .get()
+    .url(format!(
+      "http://{addr}/matrix/reporting-endpoints-malformed"
+    ))
+    .emit()
+    .expect("malformed Reporting-Endpoints should not prevent response parsing");
+
+  assert_eq!(200, response.code());
+  assert_eq!("OK", response.body().string().unwrap());
+  assert_eq!(
+    Some(&"default=https://reports.example/default".to_string()),
+    response.header_value("Reporting-Endpoints")
+  );
+  assert!(
+    response.reporting_endpoints().is_err(),
+    "unquoted Reporting-Endpoints URLs must produce the typed parse error"
+  );
+
+  handle.join().expect("metadata response server thread");
 }
 
 #[test]
@@ -1148,6 +1685,374 @@ fn sync_client_sec_fetch_metadata_is_observed_by_server_helpers() {
   assert!(purpose.contains_prefetch());
 
   handle.join().expect("Sec-Fetch metadata server thread");
+}
+
+#[derive(Debug, PartialEq)]
+struct ObservedUpgradeInsecureRequests {
+  target: String,
+  raw: Option<String>,
+  parsed: Result<Option<String>, String>,
+}
+
+fn observe_upgrade_insecure_requests(request: &Request) -> ObservedUpgradeInsecureRequests {
+  ObservedUpgradeInsecureRequests {
+    target: request.target().to_string(),
+    raw: request
+      .header("Upgrade-Insecure-Requests")
+      .map(str::to_string),
+    parsed: request
+      .upgrade_insecure_requests()
+      .map(|metadata| metadata.map(|metadata| metadata.header_value().to_string()))
+      .map_err(|error| error.to_string()),
+  }
+}
+
+fn spawn_upgrade_insecure_requests_observer() -> (
+  std::net::SocketAddr,
+  mpsc::Receiver<ObservedUpgradeInsecureRequests>,
+  thread::JoinHandle<()>,
+) {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind Upgrade-Insecure-Requests metadata server");
+  let addr = server
+    .local_addr()
+    .expect("Upgrade-Insecure-Requests metadata server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send(observe_upgrade_insecure_requests(&request))
+          .expect("send observed Upgrade-Insecure-Requests metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve Upgrade-Insecure-Requests request");
+  });
+
+  (addr, observed_rx, handle)
+}
+
+#[test]
+fn sync_client_upgrade_insecure_requests_is_observed_by_server_helpers() {
+  let (addr, observed_rx, handle) = spawn_upgrade_insecure_requests_observer();
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/page"))
+    .upgrade_insecure_requests()
+    .expect("Upgrade-Insecure-Requests should be accepted")
+    .emit()
+    .expect("Upgrade-Insecure-Requests request should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    ObservedUpgradeInsecureRequests {
+      target: "/page".to_string(),
+      raw: Some("1".to_string()),
+      parsed: Ok(Some("1".to_string())),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe Upgrade-Insecure-Requests metadata")
+  );
+  handle
+    .join()
+    .expect("Upgrade-Insecure-Requests server thread");
+}
+
+#[test]
+fn facade_server_reports_absent_upgrade_insecure_requests_without_policy() {
+  let (addr, observed_rx, handle) = spawn_upgrade_insecure_requests_observer();
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/page"))
+    .emit()
+    .expect("request without Upgrade-Insecure-Requests should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    ObservedUpgradeInsecureRequests {
+      target: "/page".to_string(),
+      raw: None,
+      parsed: Ok(None),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe absent Upgrade-Insecure-Requests")
+  );
+  handle
+    .join()
+    .expect("absent Upgrade-Insecure-Requests server thread");
+}
+
+#[test]
+fn facade_server_rejects_malformed_upgrade_insecure_requests_without_losing_raw_headers() {
+  let (addr, observed_rx, handle) = spawn_upgrade_insecure_requests_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect malformed Upgrade-Insecure-Requests");
+  stream
+    .write_all(
+      b"GET /page HTTP/1.1\r\nHost: example.test\r\nUpgrade-Insecure-Requests: 0\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write malformed Upgrade-Insecure-Requests request");
+
+  assert_eq!(
+    ObservedUpgradeInsecureRequests {
+      target: "/page".to_string(),
+      raw: Some("0".to_string()),
+      parsed: Err("invalid Upgrade-Insecure-Requests header value".to_string()),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe malformed Upgrade-Insecure-Requests")
+  );
+  handle
+    .join()
+    .expect("malformed Upgrade-Insecure-Requests server thread");
+}
+
+#[test]
+fn facade_server_rejects_duplicate_upgrade_insecure_requests_without_losing_raw_headers() {
+  let (addr, observed_rx, handle) = spawn_upgrade_insecure_requests_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect duplicate Upgrade-Insecure-Requests");
+  stream
+    .write_all(
+      b"GET /page HTTP/1.1\r\nHost: example.test\r\nUpgrade-Insecure-Requests: 1\r\nupgrade-insecure-requests: 1\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write duplicate Upgrade-Insecure-Requests request");
+
+  assert_eq!(
+    ObservedUpgradeInsecureRequests {
+      target: "/page".to_string(),
+      raw: Some("1".to_string()),
+      parsed: Err("duplicate Upgrade-Insecure-Requests header fields".to_string()),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe duplicate Upgrade-Insecure-Requests")
+  );
+  handle
+    .join()
+    .expect("duplicate Upgrade-Insecure-Requests server thread");
+}
+
+#[test]
+fn facade_server_rejects_oversized_upgrade_insecure_requests_request_head() {
+  // A 64 KiB + 1 field value plus the request line exceeds the shared HTTP/1.1
+  // request-head bound, so the request is rejected as 400 before handler
+  // dispatch. Oversized accessor parsing without losing raw access is covered
+  // by protocol and server unit tests plus the raised-limit h2c facade test.
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind oversized Upgrade-Insecure-Requests server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server
+    .local_addr()
+    .expect("oversized Upgrade-Insecure-Requests server addr");
+  let (observed_tx, observed_rx) = mpsc::channel::<()>();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_request| {
+        observed_tx
+          .send(())
+          .expect("handler must not observe oversized request head");
+        HttpResponse::ok("unreachable")
+      })
+      .expect("oversized request head should be answered as 400");
+  });
+
+  let oversized = "1".repeat(64 * 1024 + 1);
+  let request = format!(
+    "GET /page HTTP/1.1\r\nHost: example.test\r\nUpgrade-Insecure-Requests: {oversized}\r\nConnection: close\r\n\r\n"
+  );
+  let mut stream = TcpStream::connect(addr).expect("connect oversized Upgrade-Insecure-Requests");
+  stream
+    .write_all(request.as_bytes())
+    .expect("write oversized Upgrade-Insecure-Requests request");
+  let mut response = Vec::new();
+  stream
+    .read_to_end(&mut response)
+    .expect("read oversized request-head response");
+  let response = String::from_utf8(response).expect("response should be utf-8");
+
+  assert!(
+    response.starts_with("HTTP/1.1 400 "),
+    "oversized request head should be rejected before handler dispatch: {response}"
+  );
+  assert!(
+    observed_rx.try_recv().is_err(),
+    "oversized Upgrade-Insecure-Requests must not reach the handler"
+  );
+  handle
+    .join()
+    .expect("oversized Upgrade-Insecure-Requests server thread");
+}
+
+#[derive(Debug, PartialEq)]
+struct ObservedDnt {
+  target: String,
+  raw: Option<String>,
+  parsed: Result<Option<String>, String>,
+}
+
+fn observe_dnt(request: &Request) -> ObservedDnt {
+  ObservedDnt {
+    target: request.target().to_string(),
+    raw: request.header("DNT").map(str::to_string),
+    parsed: request
+      .dnt()
+      .map(|metadata| metadata.map(|metadata| metadata.header_value().to_string()))
+      .map_err(|error| error.to_string()),
+  }
+}
+
+fn spawn_dnt_observer() -> (
+  std::net::SocketAddr,
+  mpsc::Receiver<ObservedDnt>,
+  thread::JoinHandle<()>,
+) {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind DNT metadata server");
+  let addr = server.local_addr().expect("DNT metadata server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send(observe_dnt(&request))
+          .expect("send observed DNT metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve DNT request");
+  });
+
+  (addr, observed_rx, handle)
+}
+
+#[test]
+fn sync_client_dnt_is_observed_by_server_helpers() {
+  for value in ["0", "1"] {
+    let (addr, observed_rx, handle) = spawn_dnt_observer();
+
+    let response = client()
+      .get()
+      .url(format!("http://{addr}/catalog"))
+      .dnt(value)
+      .expect("DNT should be accepted")
+      .emit()
+      .expect("DNT request should succeed");
+
+    assert_eq!("OK", response.body().string().expect("response body"));
+    assert_eq!(
+      ObservedDnt {
+        target: "/catalog".to_string(),
+        raw: Some(value.to_string()),
+        parsed: Ok(Some(value.to_string())),
+      },
+      observed_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("server should observe DNT metadata")
+    );
+    handle.join().expect("DNT server thread");
+  }
+}
+
+#[test]
+fn facade_server_rejects_malformed_dnt_without_losing_raw_headers() {
+  let (addr, observed_rx, handle) = spawn_dnt_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect malformed DNT");
+  stream
+    .write_all(
+      b"GET /catalog HTTP/1.1\r\nHost: example.test\r\nDNT: ?1\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write malformed DNT request");
+
+  assert_eq!(
+    ObservedDnt {
+      target: "/catalog".to_string(),
+      raw: Some("?1".to_string()),
+      parsed: Err("invalid DNT header value".to_string()),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe malformed DNT")
+  );
+  handle.join().expect("malformed DNT server thread");
+}
+
+#[test]
+fn facade_server_rejects_duplicate_dnt_without_losing_raw_headers() {
+  let (addr, observed_rx, handle) = spawn_dnt_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect duplicate DNT");
+  stream
+    .write_all(
+      b"GET /catalog HTTP/1.1\r\nHost: example.test\r\nDNT: 1\r\ndnt: 0\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write duplicate DNT request");
+
+  assert_eq!(
+    ObservedDnt {
+      target: "/catalog".to_string(),
+      raw: Some("1".to_string()),
+      parsed: Err("duplicate DNT header fields".to_string()),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe duplicate DNT")
+  );
+  handle.join().expect("duplicate DNT server thread");
+}
+
+#[test]
+fn facade_server_rejects_oversized_dnt_request_head() {
+  // A 64 KiB + 1 field value plus the request line exceeds the shared HTTP/1.1
+  // request-head bound, so the request is rejected as 400 before handler
+  // dispatch. Oversized accessor parsing without losing raw access is covered
+  // by protocol and server unit tests plus the raised-limit h2c facade test.
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind oversized DNT server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("oversized DNT server addr");
+  let (observed_tx, observed_rx) = mpsc::channel::<()>();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_request| {
+        observed_tx
+          .send(())
+          .expect("handler must not observe oversized request head");
+        HttpResponse::ok("unreachable")
+      })
+      .expect("oversized request head should be answered as 400");
+  });
+
+  let oversized = "1".repeat(64 * 1024 + 1);
+  let request = format!(
+    "GET /catalog HTTP/1.1\r\nHost: example.test\r\nDNT: {oversized}\r\nConnection: close\r\n\r\n"
+  );
+  let mut stream = TcpStream::connect(addr).expect("connect oversized DNT");
+  stream
+    .write_all(request.as_bytes())
+    .expect("write oversized DNT request");
+  let mut response = Vec::new();
+  stream
+    .read_to_end(&mut response)
+    .expect("read oversized request-head response");
+  let response = String::from_utf8(response).expect("response should be utf-8");
+
+  assert!(
+    response.starts_with("HTTP/1.1 400 "),
+    "oversized request head should be rejected before handler dispatch: {response}"
+  );
+  assert!(
+    observed_rx.try_recv().is_err(),
+    "oversized DNT must not reach the handler"
+  );
+  handle.join().expect("oversized DNT server thread");
 }
 
 #[test]
@@ -1390,6 +2295,166 @@ fn facade_server_reports_absent_signature_metadata_without_policy() {
 }
 
 #[test]
+fn facade_client_and_server_exchange_accept_charset_request_metadata() {
+  let (addr, observed_rx, handle) = spawn_facade_accept_charset_observer();
+
+  let response = rttp::Http::client()
+    .get()
+    .url(format!("http://{addr}/localized"))
+    .accept_charset("utf-8")
+    .expect("utf-8 should be accepted")
+    .accept_charset_with_q("iso-8859-1", "0.5")
+    .expect("iso-8859-1 quality should be accepted")
+    .accept_charset_with_q("*", "0")
+    .expect("wildcard quality should be accepted")
+    .emit()
+    .expect("Accept-Charset request should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    ObservedAcceptCharsetMetadata {
+      ranges: Ok(Some(vec![
+        ("utf-8".to_owned(), 1000),
+        ("iso-8859-1".to_owned(), 500),
+        ("*".to_owned(), 0),
+      ])),
+      raw: Some("utf-8, iso-8859-1;q=0.5, *;q=0".to_owned()),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe valid Accept-Charset metadata")
+  );
+  handle
+    .join()
+    .expect("valid Accept-Charset facade server thread");
+}
+
+#[test]
+fn facade_server_rejects_malformed_accept_charset_metadata_without_losing_raw_headers() {
+  let (addr, observed_rx, handle) = spawn_facade_accept_charset_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect malformed Accept-Charset request");
+  stream
+    .write_all(
+      b"GET /localized HTTP/1.1\r\nHost: 127.0.0.1\r\nAccept-Charset: utf-8, UTF-8\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write malformed Accept-Charset request");
+
+  let observed = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe malformed Accept-Charset metadata");
+  assert!(observed.ranges.is_err());
+  assert_eq!(observed.raw.as_deref(), Some("utf-8, UTF-8"));
+
+  handle
+    .join()
+    .expect("malformed Accept-Charset facade server thread");
+}
+
+#[test]
+fn facade_server_reports_absent_accept_charset_metadata() {
+  let (addr, observed_rx, handle) = spawn_facade_accept_charset_observer();
+
+  let response = rttp::Http::client()
+    .get()
+    .url(format!("http://{addr}/plain"))
+    .emit()
+    .expect("request without Accept-Charset metadata should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    ObservedAcceptCharsetMetadata {
+      ranges: Ok(None),
+      raw: None,
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe absent Accept-Charset metadata")
+  );
+  handle
+    .join()
+    .expect("absent Accept-Charset facade server thread");
+}
+
+#[test]
+fn facade_client_and_server_exchange_accept_language_request_metadata() {
+  let (addr, observed_rx, handle) = spawn_facade_accept_language_observer();
+
+  let response = rttp::Http::client()
+    .get()
+    .url(format!("http://{addr}/localized"))
+    .accept_language(["en-US", "fr-CA; q=0.8", "*"])
+    .expect("language ranges should be accepted")
+    .emit()
+    .expect("Accept-Language request should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    ObservedAcceptLanguageMetadata {
+      ranges: Ok(Some(vec![
+        "en-US".to_owned(),
+        "fr-CA".to_owned(),
+        "*".to_owned()
+      ])),
+      qualities: Ok(Some(vec![None, Some("0.8".to_owned()), None])),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe valid Accept-Language metadata")
+  );
+  handle
+    .join()
+    .expect("valid Accept-Language facade server thread");
+}
+
+#[test]
+fn facade_server_rejects_malformed_accept_language_metadata_without_losing_raw_headers() {
+  let (addr, observed_rx, handle) = spawn_facade_accept_language_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect malformed Accept-Language request");
+  stream
+    .write_all(
+      b"GET /localized HTTP/1.1\r\nHost: 127.0.0.1\r\nAccept-Language: en; q=1.001, EN\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write malformed Accept-Language request");
+
+  let observed = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe malformed Accept-Language metadata");
+  assert!(observed.ranges.is_err());
+  assert!(observed.qualities.is_err());
+
+  handle
+    .join()
+    .expect("malformed Accept-Language facade server thread");
+}
+
+#[test]
+fn facade_server_reports_absent_accept_language_metadata() {
+  let (addr, observed_rx, handle) = spawn_facade_accept_language_observer();
+
+  let response = rttp::Http::client()
+    .get()
+    .url(format!("http://{addr}/plain"))
+    .emit()
+    .expect("request without Accept-Language metadata should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    ObservedAcceptLanguageMetadata {
+      ranges: Ok(None),
+      qualities: Ok(None),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe absent Accept-Language metadata")
+  );
+  handle
+    .join()
+    .expect("absent Accept-Language facade server thread");
+}
+
+#[test]
 fn facade_server_rejects_malformed_signature_metadata_without_losing_raw_headers() {
   let (addr, observed_rx, handle) = spawn_facade_signature_observer();
 
@@ -1508,6 +2573,153 @@ fn facade_server_parses_signature_input_independently_when_signature_is_valid() 
   handle
     .join()
     .expect("reverse independent signature facade server thread");
+}
+
+type ObservedTeCodings = Result<Option<Vec<(String, Option<u16>)>>, String>;
+
+#[derive(Debug, PartialEq)]
+struct ObservedTeMetadata {
+  raw_te: Option<String>,
+  raw_connection: Option<String>,
+  connection_tokens: Result<Option<Vec<String>>, String>,
+  te: ObservedTeCodings,
+}
+
+fn observe_te_metadata(request: &Request) -> ObservedTeMetadata {
+  ObservedTeMetadata {
+    raw_te: request.header("TE").map(str::to_string),
+    raw_connection: request.header("Connection").map(str::to_string),
+    connection_tokens: request
+      .connection()
+      .map(|connection| {
+        connection.map(|connection| {
+          connection
+            .tokens()
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+        })
+      })
+      .map_err(|error| error.to_string()),
+    te: request
+      .te()
+      .map(|te| {
+        te.map(|te| {
+          te.codings()
+            .iter()
+            .map(|coding| (coding.coding().to_string(), coding.quality()))
+            .collect()
+        })
+      })
+      .map_err(|error| error.to_string()),
+  }
+}
+
+fn spawn_facade_te_observer() -> (
+  std::net::SocketAddr,
+  mpsc::Receiver<ObservedTeMetadata>,
+  thread::JoinHandle<()>,
+) {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind TE facade server");
+  let addr = server.local_addr().expect("TE facade addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send(observe_te_metadata(&request))
+          .expect("send observed TE metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve TE facade request");
+  });
+
+  (addr, observed_rx, handle)
+}
+
+#[test]
+fn sync_client_and_server_exchange_te_metadata_with_connection_te_preserved() {
+  let (addr, observed_rx, handle) = spawn_facade_te_observer();
+
+  let response = rttp::Http::client()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .te("gzip")
+    .expect("transfer coding should be accepted")
+    .te_with_q("deflate", "0.5")
+    .expect("transfer coding quality should be accepted")
+    .te_trailers()
+    .expect("trailers should be accepted")
+    .emit()
+    .expect("TE request should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    ObservedTeMetadata {
+      raw_te: Some("gzip, deflate;q=0.5, trailers".to_string()),
+      raw_connection: Some("Close, TE".to_string()),
+      connection_tokens: Ok(Some(vec!["Close".to_string(), "TE".to_string()])),
+      te: Ok(Some(vec![
+        ("gzip".to_string(), Some(1000)),
+        ("deflate".to_string(), Some(500)),
+        ("trailers".to_string(), None),
+      ])),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe valid TE metadata")
+  );
+  handle.join().expect("valid TE facade server thread");
+}
+
+#[test]
+fn facade_server_reports_absent_te_metadata_without_policy() {
+  let (addr, observed_rx, handle) = spawn_facade_te_observer();
+
+  let response = rttp::Http::client()
+    .get()
+    .url(format!("http://{addr}/asset-absent"))
+    .emit()
+    .expect("request without TE metadata should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  assert_eq!(
+    ObservedTeMetadata {
+      raw_te: None,
+      raw_connection: Some("Close".to_string()),
+      connection_tokens: Ok(Some(vec!["Close".to_string()])),
+      te: Ok(None),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe absent TE metadata")
+  );
+  handle.join().expect("absent TE facade server thread");
+}
+
+#[test]
+fn facade_server_rejects_malformed_te_metadata_without_losing_raw_headers() {
+  let (addr, observed_rx, handle) = spawn_facade_te_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect malformed TE request");
+  stream
+    .write_all(
+      b"GET /asset-malformed HTTP/1.1\r\nHost: 127.0.0.1\r\nTE: gzip;q=1.1\r\nConnection: close, TE\r\n\r\n",
+    )
+    .expect("write malformed TE request");
+
+  let observed = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe malformed TE metadata");
+  assert_eq!(Some("gzip;q=1.1".to_string()), observed.raw_te);
+  assert_eq!(Some("close, TE".to_string()), observed.raw_connection);
+  assert_eq!(
+    Ok(Some(vec!["close".to_string(), "TE".to_string()])),
+    observed.connection_tokens
+  );
+  assert!(observed.te.is_err());
+
+  handle.join().expect("malformed TE facade server thread");
 }
 
 #[test]
@@ -1848,6 +3060,266 @@ fn server_forwarded_helper_rejects_malformed_values_without_losing_raw_headers()
 }
 
 #[test]
+fn sync_client_and_server_exchange_cdn_loop_metadata_without_policy() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind CDN-Loop metadata server");
+  let addr = server.local_addr().expect("CDN-Loop metadata server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let cdn_loop = request
+          .cdn_loop()
+          .expect("CDN-Loop should parse")
+          .expect("CDN-Loop should be present");
+        observed_tx
+          .send((
+            request.header("CDN-Loop").map(str::to_string),
+            cdn_loop
+              .members()
+              .iter()
+              .map(|member| {
+                (
+                  member.identifier().to_string(),
+                  member.parameter("trace").map(str::to_string),
+                )
+              })
+              .collect::<Vec<_>>(),
+          ))
+          .expect("send observed CDN-Loop metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve CDN-Loop metadata request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/cdn-loop-metadata"))
+    .cdn_loop(r#"foo123.foocdn.example, barcdn.example; trace="abcdef""#)
+    .expect("first CDN-Loop value should be accepted")
+    .cdn_loop(r#"AnotherCDN; abc=123; def="456""#)
+    .expect("second CDN-Loop value should be accepted")
+    .emit()
+    .expect("CDN-Loop metadata request should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  let (raw_header, cdn_loop) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe CDN-Loop metadata");
+  assert_eq!(
+    Some(
+      "foo123.foocdn.example, barcdn.example; trace=abcdef, AnotherCDN; abc=123; def=456"
+        .to_string()
+    ),
+    raw_header
+  );
+  assert_eq!(
+    vec![
+      ("foo123.foocdn.example".to_string(), None),
+      ("barcdn.example".to_string(), Some("abcdef".to_string())),
+      ("AnotherCDN".to_string(), None),
+    ],
+    cdn_loop
+  );
+  handle.join().expect("CDN-Loop metadata server thread");
+}
+
+#[test]
+fn server_cdn_loop_helper_rejects_malformed_values_without_losing_raw_headers() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind malformed CDN-Loop metadata server");
+  let addr = server
+    .local_addr()
+    .expect("malformed CDN-Loop metadata server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send((
+            request.header("CDN-Loop").map(str::to_string),
+            request.header("Host").map(str::to_string),
+            request.cdn_loop().is_err(),
+          ))
+          .expect("send malformed CDN-Loop observation");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve malformed CDN-Loop request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect malformed CDN-Loop request");
+  stream
+    .write_all(
+      b"GET /matrix/malformed-cdn-loop HTTP/1.1\r\nHost: example.test\r\nCDN-Loop: edge.example; trace\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write malformed CDN-Loop request");
+
+  assert_eq!(
+    (
+      Some("edge.example; trace".to_string()),
+      Some("example.test".to_string()),
+      true,
+    ),
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe malformed CDN-Loop metadata"),
+  );
+  handle
+    .join()
+    .expect("malformed CDN-Loop metadata server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_x_forwarded_metadata_without_trust_policy() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind X-Forwarded metadata server");
+  let addr = server
+    .local_addr()
+    .expect("X-Forwarded metadata server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let forwarded_for = request
+          .x_forwarded_for()
+          .expect("X-Forwarded-For should parse")
+          .expect("X-Forwarded-For should be present");
+        let forwarded_host = request
+          .x_forwarded_host()
+          .expect("X-Forwarded-Host should parse")
+          .expect("X-Forwarded-Host should be present");
+        let forwarded_proto = request
+          .x_forwarded_proto()
+          .expect("X-Forwarded-Proto should parse")
+          .expect("X-Forwarded-Proto should be present");
+        observed_tx
+          .send((
+            request.header("X-Forwarded-For").map(str::to_string),
+            request.header("X-Forwarded-Host").map(str::to_string),
+            request.header("X-Forwarded-Proto").map(str::to_string),
+            forwarded_for
+              .nodes()
+              .iter()
+              .map(|node| (node.value().to_string(), node.is_unknown()))
+              .collect::<Vec<_>>(),
+            forwarded_host
+              .hosts()
+              .iter()
+              .map(|host| (host.host().to_string(), host.port().map(str::to_string)))
+              .collect::<Vec<_>>(),
+            forwarded_proto.schemes().to_vec(),
+          ))
+          .expect("send observed X-Forwarded metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve X-Forwarded metadata request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/x-forwarded-metadata"))
+    .x_forwarded_for("192.0.2.60, unknown")
+    .expect("first X-Forwarded-For value should be accepted")
+    .x_forwarded_for("[2001:db8:cafe::17]")
+    .expect("second X-Forwarded-For value should be accepted")
+    .x_forwarded_host("example.test:443")
+    .expect("first X-Forwarded-Host value should be accepted")
+    .x_forwarded_host("[2001:db8::1]:8443")
+    .expect("second X-Forwarded-Host value should be accepted")
+    .x_forwarded_proto("https")
+    .expect("first X-Forwarded-Proto value should be accepted")
+    .x_forwarded_proto("http")
+    .expect("second X-Forwarded-Proto value should be accepted")
+    .emit()
+    .expect("X-Forwarded metadata request should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  let (raw_for, raw_host, raw_proto, forwarded_for, forwarded_host, forwarded_proto) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe X-Forwarded metadata");
+  assert_eq!(
+    Some("192.0.2.60, unknown, [2001:db8:cafe::17]".to_string()),
+    raw_for
+  );
+  assert_eq!(
+    Some("example.test:443, [2001:db8::1]:8443".to_string()),
+    raw_host
+  );
+  assert_eq!(Some("https, http".to_string()), raw_proto);
+  assert_eq!(
+    vec![
+      ("192.0.2.60".to_string(), false),
+      ("unknown".to_string(), true),
+      ("[2001:db8:cafe::17]".to_string(), false),
+    ],
+    forwarded_for
+  );
+  assert_eq!(
+    vec![
+      ("example.test".to_string(), Some("443".to_string())),
+      ("[2001:db8::1]".to_string(), Some("8443".to_string())),
+    ],
+    forwarded_host
+  );
+  assert_eq!(
+    vec!["https".to_string(), "http".to_string()],
+    forwarded_proto
+  );
+  handle.join().expect("X-Forwarded metadata server thread");
+}
+
+#[test]
+fn server_x_forwarded_helpers_reject_malformed_values_without_losing_raw_headers() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind malformed X-Forwarded metadata server");
+  let addr = server
+    .local_addr()
+    .expect("malformed X-Forwarded metadata server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send((
+            request.header("X-Forwarded-For").map(str::to_string),
+            request.header("X-Forwarded-Host").map(str::to_string),
+            request.header("X-Forwarded-Proto").map(str::to_string),
+            request.x_forwarded_for().is_err(),
+            request.x_forwarded_host().is_err(),
+            request.x_forwarded_proto().is_err(),
+          ))
+          .expect("send malformed X-Forwarded observation");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve malformed X-Forwarded request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect malformed X-Forwarded request");
+  stream
+    .write_all(
+      b"GET /matrix/malformed-x-forwarded HTTP/1.1\r\nHost: example.test\r\nX-Forwarded-For: client.example\r\nX-Forwarded-Host: https://example.test\r\nX-Forwarded-Proto: https://\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write malformed X-Forwarded request");
+
+  assert_eq!(
+    (
+      Some("client.example".to_string()),
+      Some("https://example.test".to_string()),
+      Some("https://".to_string()),
+      true,
+      true,
+      true,
+    ),
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe malformed X-Forwarded metadata"),
+  );
+  handle
+    .join()
+    .expect("malformed X-Forwarded metadata server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_bounded_authentication_metadata() {
   let server =
     rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind authentication server");
@@ -1907,6 +3379,1248 @@ fn sync_client_and_server_exchange_bounded_authentication_metadata() {
     response.header_value("WWW-Authenticate")
   );
   handle.join().expect("authentication server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_bounded_idempotency_key_metadata_without_policy() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind idempotency server");
+  let addr = server.local_addr().expect("idempotency server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request
+            .idempotency_key()
+            .expect("Idempotency-Key should parse")
+            .map(|key| key.as_str().to_string()),
+          request.header("Idempotency-Key").map(str::to_string),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed idempotency metadata");
+        HttpResponse::new(201, "Created")
+      })
+      .expect("serve idempotency request");
+  });
+
+  let response = client()
+    .post()
+    .url(format!("http://{addr}/matrix/charges"))
+    .idempotency_key("charge-2026-08-19-9f3c")
+    .expect("Idempotency-Key should be accepted")
+    .emit()
+    .expect("idempotency response should parse");
+
+  let (typed, raw) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe idempotency metadata");
+  assert_eq!(Some("charge-2026-08-19-9f3c".to_string()), typed);
+  assert_eq!(Some("charge-2026-08-19-9f3c".to_string()), raw);
+  assert_eq!(201, response.code());
+  handle.join().expect("idempotency server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_bounded_depth_metadata_without_policy() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Depth server");
+  let addr = server.local_addr().expect("Depth server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request
+            .depth()
+            .expect("Depth should parse")
+            .map(|depth| depth.header_value().to_string()),
+          request.header("Depth").map(str::to_string),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed Depth metadata");
+        HttpResponse::new(207, "Multi-Status")
+      })
+      .expect("serve Depth request");
+  });
+
+  let response = client()
+    .method("PROPFIND")
+    .url(format!("http://{addr}/matrix/collection"))
+    .depth("INFINITY")
+    .expect("Depth should be accepted")
+    .emit()
+    .expect("Depth response should parse");
+
+  let (typed, raw) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe Depth metadata");
+  assert_eq!(Some("infinity".to_string()), typed);
+  assert_eq!(Some("infinity".to_string()), raw);
+  assert_eq!(207, response.code());
+  handle.join().expect("Depth server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_bounded_destination_metadata_without_policy() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Destination server");
+  let addr = server.local_addr().expect("Destination server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request
+            .destination()
+            .expect("Destination should parse")
+            .map(|destination| destination.header_value()),
+          request.header("Destination").map(str::to_string),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed Destination metadata");
+        HttpResponse::new(201, "Created")
+      })
+      .expect("serve Destination request");
+  });
+
+  let response = client()
+    .method("COPY")
+    .url(format!("http://{addr}/documents/source.txt"))
+    .destination("https://dav.example.test/archive/source.txt")
+    .expect("Destination should be accepted")
+    .emit()
+    .expect("Destination response should parse");
+
+  let (typed, raw) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe Destination metadata");
+  assert_eq!(
+    Some("https://dav.example.test/archive/source.txt".to_string()),
+    typed
+  );
+  assert_eq!(
+    Some("https://dav.example.test/archive/source.txt".to_string()),
+    raw
+  );
+  assert_eq!(201, response.code());
+  handle.join().expect("Destination server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_bounded_overwrite_metadata_without_policy() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Overwrite server");
+  let addr = server.local_addr().expect("Overwrite server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request
+            .overwrite()
+            .expect("Overwrite should parse")
+            .map(|overwrite| overwrite.header_value().to_string()),
+          request.header("Overwrite").map(str::to_string),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed Overwrite metadata");
+        HttpResponse::new(204, "No Content")
+      })
+      .expect("serve Overwrite request");
+  });
+
+  let response = client()
+    .method("COPY")
+    .url(format!("http://{addr}/documents/source.txt"))
+    .overwrite("F")
+    .expect("Overwrite should be accepted")
+    .emit()
+    .expect("Overwrite response should parse");
+
+  let (typed, raw) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe Overwrite metadata");
+  assert_eq!(Some("F".to_string()), typed);
+  assert_eq!(Some("F".to_string()), raw);
+  assert_eq!(204, response.code());
+  handle.join().expect("Overwrite server thread");
+}
+
+type ObservedWebDavField = (Option<String>, bool);
+
+const WEBDAV_LOCK_TOKEN: &str = "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>";
+const WEBDAV_LOCK_TOKEN_MATERIAL: &str = "550e8400-e29b-41d4-a716-446655440000";
+const WEBDAV_IF: &str = "(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)";
+const WEBDAV_DESTINATION: &str = "https://dav.example.test/archive/source.txt";
+const WEBDAV_SCHEDULE_TAG: &str = "\"sched-17\"";
+const WEBDAV_DAV: &str = "1, 2, extended-mkcol, <https://dav.example.test/ns>";
+
+#[derive(Debug, PartialEq)]
+struct ObservedWebDavRequestMetadata {
+  depth: Result<Option<String>, String>,
+  raw_depth: Option<String>,
+  destination: Result<Option<String>, String>,
+  raw_destination: Option<String>,
+  overwrite: Result<Option<String>, String>,
+  raw_overwrite: Option<String>,
+  timeout: Result<Option<String>, String>,
+  raw_timeout: Option<String>,
+  lock_token: Result<Option<String>, String>,
+  raw_lock_token: Option<String>,
+  if_header: Result<Option<String>, String>,
+  raw_if: Option<String>,
+  if_schedule_tag_match: Result<Option<String>, String>,
+  raw_if_schedule_tag_match: Option<String>,
+  request_debug: String,
+  lock_token_debug: String,
+  if_debug: String,
+}
+
+fn observe_webdav_request_metadata(request: &Request) -> ObservedWebDavRequestMetadata {
+  let lock_token = request.lock_token();
+  let if_header = request.if_header();
+  ObservedWebDavRequestMetadata {
+    depth: request
+      .depth()
+      .map(|depth| depth.map(|depth| depth.header_value().to_string()))
+      .map_err(|error| error.to_string()),
+    raw_depth: request.header("Depth").map(str::to_string),
+    destination: request
+      .destination()
+      .map(|destination| destination.map(|destination| destination.header_value()))
+      .map_err(|error| error.to_string()),
+    raw_destination: request.header("Destination").map(str::to_string),
+    overwrite: request
+      .overwrite()
+      .map(|overwrite| overwrite.map(|overwrite| overwrite.header_value().to_string()))
+      .map_err(|error| error.to_string()),
+    raw_overwrite: request.header("Overwrite").map(str::to_string),
+    timeout: request
+      .timeout()
+      .map(|timeout| timeout.map(|timeout| timeout.header_value()))
+      .map_err(|error| error.to_string()),
+    raw_timeout: request.header("Timeout").map(str::to_string),
+    lock_token: lock_token
+      .as_ref()
+      .map(|token| token.as_ref().map(|token| token.header_value().to_string()))
+      .map_err(|error| error.to_string()),
+    raw_lock_token: request.header("Lock-Token").map(str::to_string),
+    if_header: if_header
+      .as_ref()
+      .map(|value| value.as_ref().map(|value| value.header_value()))
+      .map_err(|error| error.to_string()),
+    raw_if: request.header("If").map(str::to_string),
+    if_schedule_tag_match: request
+      .if_schedule_tag_match()
+      .map(|tag| tag.map(|tag| tag.header_value().to_string()))
+      .map_err(|error| error.to_string()),
+    raw_if_schedule_tag_match: request.header("If-Schedule-Tag-Match").map(str::to_string),
+    request_debug: format!("{request:?}"),
+    lock_token_debug: match &lock_token {
+      Ok(Some(token)) => format!("{token:?}"),
+      other => format!("{other:?}"),
+    },
+    if_debug: match &if_header {
+      Ok(Some(value)) => format!("{value:?}"),
+      other => format!("{other:?}"),
+    },
+  }
+}
+
+fn webdav_field_parse_failed(request: &Request, name: &str) -> bool {
+  match name {
+    "Depth" => request.depth().is_err(),
+    "Destination" => request.destination().is_err(),
+    "Overwrite" => request.overwrite().is_err(),
+    "Timeout" => request.timeout().is_err(),
+    "Lock-Token" => request.lock_token().is_err(),
+    "If" => request.if_header().is_err(),
+    "If-Schedule-Tag-Match" => request.if_schedule_tag_match().is_err(),
+    other => panic!("unexpected WebDAV request field {other}"),
+  }
+}
+
+fn spawn_webdav_metadata_observer() -> (
+  std::net::SocketAddr,
+  mpsc::Receiver<ObservedWebDavRequestMetadata>,
+  thread::JoinHandle<()>,
+) {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind WebDAV metadata server");
+  let addr = server.local_addr().expect("WebDAV metadata server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send(observe_webdav_request_metadata(&request))
+          .expect("send observed WebDAV metadata");
+        HttpResponse::new(207, "Multi-Status")
+          .with_dav(WEBDAV_DAV)
+          .expect("DAV should be accepted")
+          .with_schedule_tag(
+            HttpScheduleTag::parse(WEBDAV_SCHEDULE_TAG).expect("Schedule-Tag should parse"),
+          )
+          .with_lock_token(WEBDAV_LOCK_TOKEN)
+          .expect("response Lock-Token should be accepted")
+      })
+      .expect("serve WebDAV metadata request");
+  });
+  (addr, observed_rx, handle)
+}
+
+fn spawn_webdav_field_observer(
+  field: &'static str,
+) -> (
+  std::net::SocketAddr,
+  mpsc::Receiver<ObservedWebDavField>,
+  thread::JoinHandle<()>,
+) {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind WebDAV field server");
+  let addr = server.local_addr().expect("WebDAV field server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send((
+            request.header(field).map(str::to_string),
+            webdav_field_parse_failed(&request, field),
+          ))
+          .expect("send observed WebDAV field");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve WebDAV field request");
+  });
+  (addr, observed_rx, handle)
+}
+
+#[test]
+fn sync_client_and_server_exchange_webdav_metadata_matrix_without_policy() {
+  let (addr, observed_rx, handle) = spawn_webdav_metadata_observer();
+
+  let response = client()
+    .method("COPY")
+    .url(format!("http://{addr}/documents/source.txt"))
+    .depth("INFINITY")
+    .expect("Depth should be accepted")
+    .destination(WEBDAV_DESTINATION)
+    .expect("Destination should be accepted")
+    .overwrite("F")
+    .expect("Overwrite should be accepted")
+    .timeout("Second-60, Infinite")
+    .expect("Timeout should be accepted")
+    .lock_token(WEBDAV_LOCK_TOKEN)
+    .expect("Lock-Token should be accepted")
+    .if_header(WEBDAV_IF)
+    .expect("If should be accepted")
+    .if_schedule_tag_match(WEBDAV_SCHEDULE_TAG)
+    .expect("If-Schedule-Tag-Match should be accepted")
+    .emit()
+    .expect("WebDAV metadata response should parse");
+
+  let observed = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe WebDAV metadata");
+  assert_eq!(Ok(Some("infinity".to_string())), observed.depth);
+  assert_eq!(Some("infinity".to_string()), observed.raw_depth);
+  assert_eq!(
+    Ok(Some(WEBDAV_DESTINATION.to_string())),
+    observed.destination
+  );
+  assert_eq!(
+    Some(WEBDAV_DESTINATION.to_string()),
+    observed.raw_destination
+  );
+  assert_eq!(Ok(Some("F".to_string())), observed.overwrite);
+  assert_eq!(Some("F".to_string()), observed.raw_overwrite);
+  assert_eq!(
+    Ok(Some("second-60, infinite".to_string())),
+    observed.timeout
+  );
+  assert_eq!(
+    Some("second-60, infinite".to_string()),
+    observed.raw_timeout
+  );
+  assert_eq!(Ok(Some(WEBDAV_LOCK_TOKEN.to_string())), observed.lock_token);
+  assert_eq!(Some(WEBDAV_LOCK_TOKEN.to_string()), observed.raw_lock_token);
+  assert_eq!(Ok(Some(WEBDAV_IF.to_string())), observed.if_header);
+  assert_eq!(Some(WEBDAV_IF.to_string()), observed.raw_if);
+  assert_eq!(
+    Ok(Some(WEBDAV_SCHEDULE_TAG.to_string())),
+    observed.if_schedule_tag_match
+  );
+  assert_eq!(
+    Some(WEBDAV_SCHEDULE_TAG.to_string()),
+    observed.raw_if_schedule_tag_match
+  );
+  assert!(observed.request_debug.contains("Lock-Token"));
+  assert!(observed.request_debug.contains("If"));
+  assert!(observed.request_debug.contains("[REDACTED]"));
+  assert!(!observed.request_debug.contains(WEBDAV_LOCK_TOKEN_MATERIAL));
+  assert!(!observed
+    .lock_token_debug
+    .contains(WEBDAV_LOCK_TOKEN_MATERIAL));
+  assert!(!observed.if_debug.contains(WEBDAV_LOCK_TOKEN_MATERIAL));
+
+  assert_eq!(207, response.code());
+  let dav = response
+    .dav()
+    .expect("DAV should parse")
+    .expect("DAV should be present");
+  assert_eq!(
+    &[
+      DavClass::One,
+      DavClass::Two,
+      DavClass::ExtensionToken("extended-mkcol".to_string()),
+      DavClass::CodedUrl("https://dav.example.test/ns".to_string()),
+    ],
+    dav.classes()
+  );
+  let schedule_tag = response
+    .schedule_tag()
+    .expect("Schedule-Tag should parse")
+    .expect("Schedule-Tag should be present");
+  assert_eq!(WEBDAV_SCHEDULE_TAG, schedule_tag.header_value());
+  let lock_token = response
+    .lock_token()
+    .expect("response Lock-Token should parse")
+    .expect("response Lock-Token should be present");
+  assert_eq!(WEBDAV_LOCK_TOKEN, lock_token.as_str());
+  assert!(!format!("{lock_token:?}").contains(WEBDAV_LOCK_TOKEN_MATERIAL));
+  handle.join().expect("WebDAV metadata server thread");
+}
+
+#[test]
+fn facade_server_rejects_malformed_webdav_metadata_without_losing_raw_headers() {
+  for (name, value) in [
+    ("Depth", "2"),
+    ("Destination", "/relative"),
+    ("Overwrite", "true"),
+    ("Timeout", "Second-"),
+    ("Lock-Token", "<relative>"),
+    ("If", "(junk)"),
+    ("If-Schedule-Tag-Match", "*"),
+  ] {
+    let (addr, observed_rx, handle) = spawn_webdav_field_observer(name);
+    let response = client()
+      .method("COPY")
+      .url(format!("http://{addr}/matrix/webdav-malformed"))
+      .header((name, value))
+      .emit()
+      .expect("malformed WebDAV request should still complete");
+    let (raw, failed) = observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .unwrap_or_else(|_| panic!("server should observe malformed {name}"));
+    assert_eq!(
+      Some(value.to_string()),
+      raw,
+      "raw {name} must remain visible"
+    );
+    assert!(failed, "malformed {name} must fail closed");
+    assert_eq!(200, response.code());
+    handle
+      .join()
+      .unwrap_or_else(|_| panic!("malformed {name} server thread"));
+  }
+}
+
+#[test]
+fn facade_server_rejects_duplicate_webdav_metadata_without_losing_raw_headers() {
+  for (name, first, second) in [
+    ("Depth", "0", "1"),
+    (
+      "Destination",
+      WEBDAV_DESTINATION,
+      "https://dav.example.test/other.txt",
+    ),
+    ("Overwrite", "T", "F"),
+    ("Timeout", "Second-60", "second-60"),
+    (
+      "Lock-Token",
+      WEBDAV_LOCK_TOKEN,
+      "<http://example.test/locks/2>",
+    ),
+    ("If", "(<a:b>)", "(<b:c>)"),
+    ("If-Schedule-Tag-Match", "\"sched-16\"", WEBDAV_SCHEDULE_TAG),
+  ] {
+    let (addr, observed_rx, handle) = spawn_webdav_field_observer(name);
+    let mut stream =
+      TcpStream::connect(addr).unwrap_or_else(|_| panic!("connect duplicate {name}"));
+    stream
+      .write_all(
+        format!(
+          "COPY /matrix/webdav-duplicate HTTP/1.1\r\nHost: example.test\r\n{name}: {first}\r\n{name}: {second}\r\nConnection: close\r\n\r\n"
+        )
+        .as_bytes(),
+      )
+      .unwrap_or_else(|_| panic!("write duplicate {name}"));
+    let (raw, failed) = observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .unwrap_or_else(|_| panic!("server should observe duplicate {name}"));
+    assert_eq!(
+      Some(first.to_string()),
+      raw,
+      "raw {name} must remain visible"
+    );
+    assert!(failed, "duplicate {name} must fail closed");
+    handle
+      .join()
+      .unwrap_or_else(|_| panic!("duplicate {name} server thread"));
+  }
+}
+
+#[test]
+fn webdav_metadata_helpers_reject_oversized_values_without_losing_raw_headers() {
+  let oversized = "x".repeat(64 * 1024 + 1);
+  assert!(
+    HttpDepth::parse(&oversized).is_err(),
+    "oversized Depth must fail closed"
+  );
+  assert!(
+    HttpDestination::parse(&oversized).is_err(),
+    "oversized Destination must fail closed"
+  );
+  assert!(
+    HttpOverwrite::parse(&oversized).is_err(),
+    "oversized Overwrite must fail closed"
+  );
+  assert!(
+    HttpTimeout::parse(&oversized).is_err(),
+    "oversized Timeout must fail closed"
+  );
+  assert!(
+    HttpLockToken::parse(&oversized).is_err(),
+    "oversized Lock-Token must fail closed"
+  );
+  assert!(
+    HttpIf::parse(&oversized).is_err(),
+    "oversized If must fail closed"
+  );
+  assert!(
+    HttpIfScheduleTagMatch::parse(&oversized).is_err(),
+    "oversized If-Schedule-Tag-Match must fail closed"
+  );
+  assert!(
+    HttpDav::parse(&oversized).is_err(),
+    "oversized DAV must fail closed"
+  );
+  assert!(
+    HttpScheduleTag::parse(&oversized).is_err(),
+    "oversized Schedule-Tag must fail closed"
+  );
+
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind oversized WebDAV server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("oversized WebDAV server addr");
+  let (observed_tx, observed_rx) = mpsc::channel::<()>();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_request| {
+        observed_tx
+          .send(())
+          .expect("handler must not observe oversized request head");
+        HttpResponse::ok("unreachable")
+      })
+      .expect("oversized request head should be answered as 400");
+  });
+
+  let request = format!(
+    "COPY /matrix/webdav-bounds HTTP/1.1\r\nHost: example.test\r\nDepth: {oversized}\r\nConnection: close\r\n\r\n"
+  );
+  let mut stream = TcpStream::connect(addr).expect("connect oversized WebDAV request");
+  stream
+    .write_all(request.as_bytes())
+    .expect("write oversized WebDAV request");
+  let mut response = Vec::new();
+  stream
+    .read_to_end(&mut response)
+    .expect("read oversized WebDAV response");
+  let response = String::from_utf8(response).expect("response should be utf-8");
+  assert!(
+    response.starts_with("HTTP/1.1 400 "),
+    "oversized WebDAV request head should be rejected before handler dispatch: {response}"
+  );
+  assert!(
+    observed_rx.try_recv().is_err(),
+    "oversized WebDAV metadata must not reach the handler"
+  );
+  handle.join().expect("oversized WebDAV server thread");
+}
+
+#[test]
+fn sync_client_rejects_malformed_and_duplicate_webdav_response_metadata_without_losing_raw_headers()
+{
+  const MALFORMED_DAV: &[(&str, &str)] = &[("DAV", "1, 1")];
+  const MALFORMED_SCHEDULE_TAG: &[(&str, &str)] = &[("Schedule-Tag", "*")];
+  const MALFORMED_LOCK_TOKEN: &[(&str, &str)] = &[("Lock-Token", "<relative>")];
+  const DUPLICATE_DAV: &[(&str, &str)] = &[("DAV", "1"), ("dav", "1")];
+  const DUPLICATE_SCHEDULE_TAG: &[(&str, &str)] = &[
+    ("Schedule-Tag", WEBDAV_SCHEDULE_TAG),
+    ("schedule-tag", "\"sched-16\""),
+  ];
+  const DUPLICATE_LOCK_TOKEN: &[(&str, &str)] = &[
+    ("Lock-Token", WEBDAV_LOCK_TOKEN),
+    ("lock-token", "<http://example.test/locks/2>"),
+  ];
+
+  for (headers, name) in [
+    (MALFORMED_DAV, "DAV"),
+    (MALFORMED_SCHEDULE_TAG, "Schedule-Tag"),
+    (MALFORMED_LOCK_TOKEN, "Lock-Token"),
+    (DUPLICATE_DAV, "DAV"),
+    (DUPLICATE_SCHEDULE_TAG, "Schedule-Tag"),
+    (DUPLICATE_LOCK_TOKEN, "Lock-Token"),
+  ] {
+    let (addr, handle) = spawn_metadata_response_server(headers);
+    let response = client()
+      .get()
+      .url(format!("http://{addr}/matrix/webdav-response-{name}"))
+      .emit()
+      .expect("malformed or duplicate WebDAV response should remain parseable");
+    assert_eq!(
+      Some(&headers[0].1.to_string()),
+      response.header_value(name),
+      "raw {name} must remain visible"
+    );
+    let failed = match name {
+      "DAV" => response.dav().is_err(),
+      "Schedule-Tag" => response.schedule_tag().is_err(),
+      "Lock-Token" => response.lock_token().is_err(),
+      other => panic!("unexpected WebDAV response field {other}"),
+    };
+    assert!(failed, "{name} helper must fail closed");
+    handle
+      .join()
+      .unwrap_or_else(|_| panic!("{name} response server thread"));
+  }
+}
+
+#[test]
+fn sync_client_and_server_exchange_bounded_sec_websocket_version_metadata_without_upgrade() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind sec websocket version server");
+  let addr = server
+    .local_addr()
+    .expect("sec websocket version server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request
+            .sec_websocket_version()
+            .expect("Sec-WebSocket-Version should parse")
+            .map(|versions| versions.header_value()),
+          request.header("Sec-WebSocket-Version").map(str::to_string),
+          request.header("Upgrade").map(str::to_string),
+          request.header("Connection").map(str::to_string),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed sec websocket version metadata");
+        HttpResponse::new(400, "Bad Request")
+          .with_sec_websocket_version(["13"])
+          .expect("rejection Sec-WebSocket-Version should be accepted")
+      })
+      .expect("serve sec websocket version request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/chat"))
+    .sec_websocket_version("12")
+    .expect("Sec-WebSocket-Version should be accepted")
+    .emit()
+    .expect("sec websocket version response should parse");
+
+  let (typed, raw, upgrade, connection) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe sec websocket version metadata");
+  assert_eq!(Some("12".to_string()), typed);
+  assert_eq!(Some("12".to_string()), raw);
+  assert_eq!(
+    None, upgrade,
+    "typed Sec-WebSocket-Version metadata must not set an Upgrade field"
+  );
+  assert_ne!(
+    Some("Upgrade".to_string()),
+    connection,
+    "typed Sec-WebSocket-Version metadata must not set Connection: Upgrade"
+  );
+  assert_eq!(400, response.code());
+  let declared = response
+    .sec_websocket_version()
+    .expect("rejection Sec-WebSocket-Version should parse")
+    .expect("rejection Sec-WebSocket-Version should be present");
+  assert_eq!(declared.versions(), ["13"]);
+  assert!(declared.contains("13"));
+  assert_eq!(declared.header_value(), "13");
+  assert_eq!(response.header_value("Upgrade"), None);
+  assert_ne!(
+    response.header_value("Connection").map(String::as_str),
+    Some("Upgrade"),
+    "rejection Sec-WebSocket-Version must not emit Connection: Upgrade"
+  );
+  handle.join().expect("sec websocket version server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_bounded_sec_websocket_protocol_metadata_without_upgrade() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind sec websocket protocol server");
+  let addr = server
+    .local_addr()
+    .expect("sec websocket protocol server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = {
+          let offers = request
+            .sec_websocket_protocol()
+            .expect("Sec-WebSocket-Protocol should parse");
+          (
+            offers.as_ref().map(|offers| offers.header_value()),
+            offers.as_ref().map(|offers| offers.protocols().to_vec()),
+            request.header("Sec-WebSocket-Protocol").map(str::to_string),
+            request.header("Upgrade").map(str::to_string),
+            request.header("Connection").map(str::to_string),
+          )
+        };
+        observed_tx
+          .send(observed)
+          .expect("send observed sec websocket protocol metadata");
+        HttpResponse::new(101, "Switching Protocols")
+          .with_sec_websocket_protocol("chat")
+          .expect("selected Sec-WebSocket-Protocol should be accepted")
+      })
+      .expect("serve sec websocket protocol request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/chat"))
+    .sec_websocket_protocol("chat, superchat")
+    .expect("Sec-WebSocket-Protocol should be accepted")
+    .emit()
+    .expect("sec websocket protocol response should parse");
+
+  let (typed, protocols, raw, upgrade, connection) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe sec websocket protocol metadata");
+  assert_eq!(Some("chat, superchat".to_string()), typed);
+  assert_eq!(
+    Some(vec!["chat".to_string(), "superchat".to_string()]),
+    protocols
+  );
+  assert_eq!(Some("chat, superchat".to_string()), raw);
+  assert_eq!(
+    None, upgrade,
+    "typed Sec-WebSocket-Protocol metadata must not set an Upgrade field"
+  );
+  assert_ne!(
+    Some("Upgrade".to_string()),
+    connection,
+    "typed Sec-WebSocket-Protocol metadata must not set Connection: Upgrade"
+  );
+  assert_eq!(101, response.code());
+  let selected = response
+    .sec_websocket_protocol()
+    .expect("selected Sec-WebSocket-Protocol should parse")
+    .expect("selected Sec-WebSocket-Protocol should be present");
+  assert_eq!(selected.protocols(), ["chat"]);
+  assert_eq!(selected.selected(), Some("chat"));
+  assert_eq!(selected.header_value(), "chat");
+  assert_eq!(response.header_value("Upgrade"), None);
+  assert_ne!(
+    response.header_value("Connection").map(String::as_str),
+    Some("Upgrade"),
+    "selected Sec-WebSocket-Protocol must not emit Connection: Upgrade"
+  );
+  handle.join().expect("sec websocket protocol server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_bounded_sec_websocket_extensions_metadata_without_upgrade() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind sec websocket extensions server");
+  let addr = server
+    .local_addr()
+    .expect("sec websocket extensions server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = {
+          let offers = request
+            .sec_websocket_extensions()
+            .expect("Sec-WebSocket-Extensions should parse");
+          (
+            offers.as_ref().map(|offers| offers.header_value()),
+            offers.as_ref().map(|offers| {
+              offers
+                .extensions()
+                .iter()
+                .map(|extension| extension.token().to_string())
+                .collect::<Vec<_>>()
+            }),
+            request
+              .header("Sec-WebSocket-Extensions")
+              .map(str::to_string),
+            request.header("Upgrade").map(str::to_string),
+            request.header("Connection").map(str::to_string),
+          )
+        };
+        observed_tx
+          .send(observed)
+          .expect("send observed sec websocket extensions metadata");
+        HttpResponse::new(101, "Switching Protocols")
+          .with_sec_websocket_extensions("permessage-deflate; server_max_window_bits=15")
+          .expect("selected Sec-WebSocket-Extensions should be accepted")
+      })
+      .expect("serve sec websocket extensions request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/chat"))
+    .sec_websocket_extensions(
+      r#"permessage-deflate; client_max_window_bits, x-test; quoted="a,b;c""#,
+    )
+    .expect("Sec-WebSocket-Extensions should be accepted")
+    .emit()
+    .expect("sec websocket extensions response should parse");
+
+  let (typed, extension_tokens, raw, upgrade, connection) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe sec websocket extensions metadata");
+  assert_eq!(
+    Some(r#"permessage-deflate; client_max_window_bits, x-test; quoted="a,b;c""#.to_string()),
+    typed
+  );
+  assert_eq!(
+    Some(vec!["permessage-deflate".to_string(), "x-test".to_string()]),
+    extension_tokens
+  );
+  assert_eq!(
+    Some(r#"permessage-deflate; client_max_window_bits, x-test; quoted="a,b;c""#.to_string()),
+    raw
+  );
+  assert_eq!(
+    None, upgrade,
+    "typed Sec-WebSocket-Extensions metadata must not set an Upgrade field"
+  );
+  assert_ne!(
+    Some("Upgrade".to_string()),
+    connection,
+    "typed Sec-WebSocket-Extensions metadata must not set Connection: Upgrade"
+  );
+  assert_eq!(101, response.code());
+  let selected = response
+    .sec_websocket_extensions()
+    .expect("selected Sec-WebSocket-Extensions should parse")
+    .expect("selected Sec-WebSocket-Extensions should be present");
+  let extension = selected.selected().expect("selected extension");
+  assert_eq!(extension.token(), "permessage-deflate");
+  assert_eq!(
+    selected.header_value(),
+    "permessage-deflate; server_max_window_bits=15"
+  );
+  assert_eq!(response.header_value("Upgrade"), None);
+  assert_ne!(
+    response.header_value("Connection").map(String::as_str),
+    Some("Upgrade"),
+    "selected Sec-WebSocket-Extensions must not emit Connection: Upgrade"
+  );
+  handle
+    .join()
+    .expect("sec websocket extensions server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_bounded_sec_websocket_key_metadata_without_handshake() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind sec websocket key server");
+  let addr = server.local_addr().expect("sec websocket key server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request
+            .sec_websocket_key()
+            .expect("Sec-WebSocket-Key should parse")
+            .map(|key| key.as_str().to_string()),
+          request.header("Sec-WebSocket-Key").map(str::to_string),
+          request.header("Upgrade").map(str::to_string),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed sec websocket key metadata");
+        HttpResponse::new(200, "OK")
+      })
+      .expect("serve sec websocket key request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/chat"))
+    .sec_websocket_key("dGhlIHNhbXBsZSBub25jZQ==")
+    .expect("Sec-WebSocket-Key should be accepted")
+    .emit()
+    .expect("sec websocket key response should parse");
+
+  let (typed, raw, upgrade) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe sec websocket key metadata");
+  assert_eq!(Some("dGhlIHNhbXBsZSBub25jZQ==".to_string()), typed);
+  assert_eq!(Some("dGhlIHNhbXBsZSBub25jZQ==".to_string()), raw);
+  assert_eq!(
+    None, upgrade,
+    "typed Sec-WebSocket-Key metadata must not set Connection: Upgrade or an Upgrade field"
+  );
+  assert_eq!(200, response.code());
+  handle.join().expect("sec websocket key server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_sec_websocket_accept_metadata_without_framing() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind sec websocket accept server");
+  let addr = server
+    .local_addr()
+    .expect("sec websocket accept server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let key = request
+          .sec_websocket_key()
+          .expect("Sec-WebSocket-Key should parse")
+          .expect("Sec-WebSocket-Key should be present");
+        let observed = (
+          key.as_str().to_string(),
+          request.header("Upgrade").map(str::to_string),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed sec websocket accept metadata");
+        HttpResponse::new(101, "Switching Protocols").with_sec_websocket_accept_for_key(&key)
+      })
+      .expect("serve sec websocket accept request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/chat"))
+    .sec_websocket_key("dGhlIHNhbXBsZSBub25jZQ==")
+    .expect("Sec-WebSocket-Key should be accepted")
+    .emit()
+    .expect("sec websocket accept response should parse");
+
+  let key = rttp_server::server::HttpSecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==")
+    .expect("Sec-WebSocket-Key should parse");
+  let accept = response
+    .sec_websocket_accept()
+    .expect("Sec-WebSocket-Accept should parse")
+    .expect("Sec-WebSocket-Accept should be present");
+  assert_eq!("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", accept.as_str());
+  assert!(response
+    .verify_sec_websocket_accept(&key)
+    .expect("Sec-WebSocket-Accept should verify"));
+  assert!(!format!("{accept:?}").contains("dGhlIHNhbXBsZSBub25jZQ=="));
+  assert!(!format!("{accept:?}").contains("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
+
+  let (typed_key, upgrade) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe sec websocket key metadata");
+  assert_eq!("dGhlIHNhbXBsZSBub25jZQ==", typed_key);
+  assert_eq!(
+    None, upgrade,
+    "typed WebSocket handshake metadata must not set an Upgrade field"
+  );
+  assert_eq!(101, response.code());
+  handle.join().expect("sec websocket accept server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_bounded_pragma_metadata_without_policy() {
+  const PRAGMA_REQUEST: &str = "no-cache, community=private";
+  const PRAGMA_RESPONSE: &str = "no-cache, vendor=private";
+
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind pragma server");
+  let addr = server.local_addr().expect("pragma server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request
+            .pragma()
+            .expect("Pragma should parse")
+            .map(|pragma| pragma.header_value()),
+          request.header("Pragma").map(str::to_string),
+          request.header("Cache-Control").map(str::to_string),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed pragma metadata");
+        HttpResponse::new(200, "OK")
+          .with_pragma(PRAGMA_RESPONSE)
+          .expect("Pragma should be accepted")
+      })
+      .expect("serve pragma request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/asset"))
+    .pragma(PRAGMA_REQUEST)
+    .expect("Pragma should be accepted")
+    .emit()
+    .expect("pragma response should parse");
+
+  let (typed, raw, cache_control) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe pragma metadata");
+  assert_eq!(Some(PRAGMA_REQUEST.to_string()), typed);
+  assert_eq!(Some(PRAGMA_REQUEST.to_string()), raw);
+  assert_eq!(None, cache_control, "Pragma must not invent Cache-Control");
+
+  let pragma = response
+    .pragma()
+    .expect("response Pragma should parse")
+    .expect("response Pragma should be present");
+  assert!(pragma.no_cache());
+  assert_eq!(1, pragma.extensions().len());
+  assert_eq!("vendor", pragma.extensions()[0].name());
+  assert_eq!(Some("private"), pragma.extensions()[0].value());
+  assert_eq!(
+    PRAGMA_RESPONSE,
+    response
+      .header_value("Pragma")
+      .map(String::as_str)
+      .unwrap_or_default()
+  );
+  assert_eq!(200, response.code());
+  handle.join().expect("pragma server thread");
+}
+
+#[test]
+fn sync_client_and_server_observe_pragma_and_cache_control_independently() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind pragma/cache server");
+  let addr = server.local_addr().expect("pragma/cache server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request
+            .pragma()
+            .expect("Pragma should parse")
+            .map(|pragma| pragma.header_value()),
+          request
+            .cache_control()
+            .expect("Cache-Control should parse")
+            .map(|cache_control| cache_control.max_age()),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed pragma/cache metadata");
+        HttpResponse::new(200, "OK")
+          .with_pragma("no-cache")
+          .expect("Pragma should be accepted")
+          .header("Cache-Control", "max-age=60")
+      })
+      .expect("serve pragma/cache request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/asset"))
+    .pragma("no-cache")
+    .expect("Pragma should be accepted")
+    .header(("Cache-Control", "max-age=60"))
+    .emit()
+    .expect("pragma/cache response should parse");
+
+  let (pragma, cache_control) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe pragma/cache metadata");
+  assert_eq!(Some("no-cache".to_string()), pragma);
+  assert_eq!(Some(Some(60)), cache_control);
+
+  let response_pragma = response
+    .pragma()
+    .expect("response Pragma should parse")
+    .expect("response Pragma should be present");
+  assert!(response_pragma.no_cache());
+  assert_eq!(
+    Some("max-age=60"),
+    response.header_value("Cache-Control").map(String::as_str),
+    "response Pragma helpers must leave Cache-Control untouched"
+  );
+  assert_eq!(
+    Some("no-cache"),
+    response.header_value("Pragma").map(String::as_str)
+  );
+  handle.join().expect("pragma/cache server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_w3c_trace_context_metadata_without_policy() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind trace context server");
+  let addr = server.local_addr().expect("trace context server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let traceparent = request
+          .traceparent()
+          .expect("traceparent should parse")
+          .expect("traceparent should be present");
+        let tracestate = request
+          .tracestate()
+          .expect("tracestate should parse")
+          .expect("tracestate should be present");
+        let observed = (
+          traceparent.version().to_string(),
+          traceparent.trace_id().to_string(),
+          traceparent.parent_id().to_string(),
+          traceparent.sampled(),
+          tracestate
+            .members()
+            .iter()
+            .map(|member| (member.key().to_string(), member.value().to_string()))
+            .collect::<Vec<_>>(),
+          request.header("traceparent").map(str::to_string),
+          request.header("tracestate").map(str::to_string),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed trace context metadata");
+        HttpResponse::new(204, "No Content")
+      })
+      .expect("serve trace context request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/trace"))
+    .traceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+    .expect("traceparent should be accepted")
+    .tracestate("rojo=00f067aa0ba902b7,congo=t61rcWkgMzE")
+    .expect("tracestate should be accepted")
+    .emit()
+    .expect("trace context response should parse");
+
+  let (version, trace_id, parent_id, sampled, members, raw_traceparent, raw_tracestate) =
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe trace context metadata");
+  assert_eq!("00", version);
+  assert_eq!("4bf92f3577b34da6a3ce929d0e0e4736", trace_id);
+  assert_eq!("00f067aa0ba902b7", parent_id);
+  assert!(sampled);
+  assert_eq!(
+    vec![
+      ("rojo".to_string(), "00f067aa0ba902b7".to_string()),
+      ("congo".to_string(), "t61rcWkgMzE".to_string())
+    ],
+    members
+  );
+  assert_eq!(
+    Some("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01".to_string()),
+    raw_traceparent
+  );
+  assert_eq!(
+    Some("rojo=00f067aa0ba902b7,congo=t61rcWkgMzE".to_string()),
+    raw_tracestate
+  );
+  assert_eq!(204, response.code());
+  handle.join().expect("trace context server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_w3c_baggage_metadata_without_policy() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind baggage server");
+  let addr = server.local_addr().expect("baggage server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let baggage = request
+          .baggage()
+          .expect("baggage should parse")
+          .expect("baggage should be present");
+        let observed = (
+          baggage
+            .members()
+            .iter()
+            .map(|member| {
+              (
+                member.key().to_string(),
+                member.value().to_string(),
+                member
+                  .properties()
+                  .iter()
+                  .map(|property| {
+                    (
+                      property.key().to_string(),
+                      property.value().map(str::to_string),
+                    )
+                  })
+                  .collect::<Vec<_>>(),
+              )
+            })
+            .collect::<Vec<_>>(),
+          request.header("baggage").map(str::to_string),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed baggage metadata");
+        HttpResponse::new(204, "No Content")
+      })
+      .expect("serve baggage request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/baggage"))
+    .baggage("tenant=acme;source=gateway,release=2026-08-19")
+    .expect("baggage should be accepted")
+    .emit()
+    .expect("baggage response should parse");
+
+  let (members, raw_baggage) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe baggage metadata");
+  assert_eq!(
+    vec![
+      (
+        "tenant".to_string(),
+        "acme".to_string(),
+        vec![("source".to_string(), Some("gateway".to_string()))]
+      ),
+      ("release".to_string(), "2026-08-19".to_string(), vec![])
+    ],
+    members
+  );
+  assert_eq!(
+    Some("tenant=acme;source=gateway,release=2026-08-19".to_string()),
+    raw_baggage
+  );
+  assert_eq!(204, response.code());
+  handle.join().expect("baggage server thread");
 }
 
 #[test]
@@ -2570,6 +5284,27 @@ fn assert_cdn_cache_control_helper_rejects_but_preserves_response(
   handle.join().expect("raw response server thread");
 }
 
+fn assert_surrogate_control_helper_rejects_but_preserves_response(
+  name: &str,
+  raw_response: Vec<u8>,
+) {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/surrogate-control-invalid", addr))
+    .emit()
+    .unwrap_or_else(|err| panic!("{name} response should remain parseable: {err}"));
+
+  assert!(
+    response.surrogate_control().is_err(),
+    "{name} helper should reject invalid Surrogate-Control"
+  );
+  assert_eq!("OK", response.body().string().unwrap(), "{name}");
+
+  handle.join().expect("raw response server thread");
+}
+
 fn assert_vary_helper_rejects_but_preserves_response(name: &str, raw_response: Vec<u8>) {
   let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
 
@@ -2618,6 +5353,14 @@ fn assert_expires_helper_rejects_but_preserves_response(name: &str, raw_response
   assert!(
     response.expires().is_err(),
     "{name} helper should reject invalid Expires"
+  );
+  assert!(
+    response.date().is_err(),
+    "{name} helper should reject invalid Date"
+  );
+  assert!(
+    response.last_modified_date().is_err(),
+    "{name} helper should reject invalid Last-Modified"
   );
   assert_eq!("OK", response.body().string().unwrap(), "{name}");
 
@@ -2696,6 +5439,37 @@ fn assert_content_language_helper_rejects_but_preserves_response(
     "{name} helper should reject invalid Content-Language"
   );
   assert_eq!(expected_body, response.body().string().unwrap(), "{name}");
+
+  handle.join().expect("raw response server thread");
+}
+
+fn assert_service_worker_allowed_helper_rejects_but_preserves_response(
+  name: &str,
+  raw_response: Vec<u8>,
+  expected_values: &[&str],
+) {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!(
+      "http://{}/matrix/service-worker-allowed-invalid",
+      addr
+    ))
+    .emit()
+    .unwrap_or_else(|err| panic!("{name} response should remain parseable: {err}"));
+
+  assert!(
+    response.service_worker_allowed().is_err(),
+    "{name} helper should reject invalid Service-Worker-Allowed"
+  );
+  let raw_values: Vec<&str> = response
+    .header_values("Service-Worker-Allowed")
+    .into_iter()
+    .map(String::as_str)
+    .collect();
+  assert_eq!(expected_values, raw_values.as_slice(), "{name}");
+  assert_eq!("OK", response.body().string().unwrap(), "{name}");
 
   handle.join().expect("raw response server thread");
 }
@@ -3071,6 +5845,66 @@ fn sync_client_parses_shared_content_language_response_matrix() {
 }
 
 #[test]
+fn sync_client_parses_service_worker_allowed_from_server_declaration() {
+  let server_response = HttpResponse::ok("OK")
+    .with_service_worker_allowed("/")
+    .expect("Service-Worker-Allowed declaration should parse");
+  let raw_response = server_response.to_bytes();
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/service-worker-allowed", addr))
+    .emit()
+    .expect("Service-Worker-Allowed response should parse");
+
+  assert_eq!(
+    "/",
+    response
+      .service_worker_allowed()
+      .expect("Service-Worker-Allowed should parse")
+      .expect("Service-Worker-Allowed should be present")
+      .as_str()
+  );
+  assert_eq!(
+    Some(&"/".to_string()),
+    response.header_value("Service-Worker-Allowed")
+  );
+  assert_eq!("OK", response.body().string().unwrap());
+  handle.join().expect("raw response server thread");
+}
+
+#[test]
+fn sync_client_service_worker_allowed_helper_rejects_malformed_duplicate_and_oversized_values() {
+  for value in [
+    "",
+    "/bad path",
+    "/bad%zz",
+    "http://example.test/scope",
+    "//example.test/scope",
+  ] {
+    assert_service_worker_allowed_helper_rejects_but_preserves_response(
+      "malformed Service-Worker-Allowed value",
+      service_worker_allowed_response(&[value]),
+      &[value.trim()],
+    );
+  }
+
+  assert_service_worker_allowed_helper_rejects_but_preserves_response(
+    "duplicate Service-Worker-Allowed header fields",
+    service_worker_allowed_response(&["/", "/app/"]),
+    &["/", "/app/"],
+  );
+
+  let oversized = format!("/{}", "a".repeat(64 * 1024));
+  assert_service_worker_allowed_helper_rejects_but_preserves_response(
+    "oversized Service-Worker-Allowed value",
+    service_worker_allowed_response(&[&oversized]),
+    &[&oversized],
+  );
+}
+
+#[test]
 fn sync_client_parses_shared_content_location_response_matrix() {
   for case in fixtures::content_location::response_cases() {
     let raw_response = content_location_response(case.values, false);
@@ -3213,7 +6047,7 @@ fn sync_client_parses_shared_age_response_matrix() {
 
 #[test]
 fn sync_client_parses_shared_expires_response_matrix() {
-  for case in fixtures::age_expires::expires_cases() {
+  for case in fixtures::response_http_date::valid_cases() {
     let raw_response = age_expires_response("0", case.value, false);
     let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
 
@@ -3226,14 +6060,42 @@ fn sync_client_parses_shared_expires_response_matrix() {
     assert_eq!(
       Some(std::time::UNIX_EPOCH + Duration::from_secs(case.unix_seconds)),
       response
+        .date()
+        .unwrap_or_else(|err| panic!("{} Date should parse: {err}", case.name)),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      Some(std::time::UNIX_EPOCH + Duration::from_secs(case.unix_seconds)),
+      response
         .expires()
         .unwrap_or_else(|err| panic!("{} Expires should parse: {err}", case.name)),
       "{}",
       case.name
     );
     assert_eq!(
+      Some(std::time::UNIX_EPOCH + Duration::from_secs(case.unix_seconds)),
+      response
+        .last_modified_date()
+        .unwrap_or_else(|err| panic!("{} Last-Modified should parse: {err}", case.name)),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      Some(&case.value.to_string()),
+      response.header_value("Date"),
+      "{}",
+      case.name
+    );
+    assert_eq!(
       Some(&case.value.to_string()),
       response.header_value("Expires"),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      Some(&case.value.to_string()),
+      response.header_value("Last-Modified"),
       "{}",
       case.name
     );
@@ -4015,12 +6877,63 @@ fn sync_client_age_and_expires_helpers_reject_shared_invalid_matrix() {
     );
   }
 
-  for case in fixtures::age_expires::invalid_expires_cases() {
+  for case in fixtures::response_http_date::invalid_cases() {
     assert_expires_helper_rejects_but_preserves_response(
       case.name,
       age_expires_response("0", case.value, false),
     );
   }
+}
+
+#[test]
+fn sync_client_http_date_helpers_reject_duplicate_and_oversized_shared_matrix() {
+  let raw_response = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Date: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+    "Date: Sun, 06 Nov 1994 08:49:38 GMT\r\n",
+    "Expires: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+    "Expires: Sun, 06 Nov 1994 08:49:38 GMT\r\n",
+    "Last-Modified: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+    "Last-Modified: Sun, 06 Nov 1994 08:49:38 GMT\r\n",
+    "Content-Length: 2\r\n\r\nOK"
+  )
+  .as_bytes()
+  .to_vec();
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/http-date-duplicate"))
+    .emit()
+    .expect("duplicate HTTP-date response remains parseable");
+
+  assert!(response.date().is_err());
+  assert!(response.expires().is_err());
+  assert!(response.last_modified_date().is_err());
+  assert_eq!("OK", response.body().string().unwrap());
+  handle.join().expect("raw response server thread");
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let raw_response = format!(
+    "HTTP/1.1 200 OK\r\nDate: {oversized}\r\nExpires: {oversized}\r\nLast-Modified: {oversized}\r\nContent-Length: 2\r\n\r\nOK"
+  )
+  .into_bytes();
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/http-date-oversized"))
+    .emit()
+    .expect("oversized HTTP-date response remains parseable");
+
+  assert!(response.date().is_err());
+  assert!(response.expires().is_err());
+  assert!(response.last_modified_date().is_err());
+  assert_eq!(Some(&oversized), response.header_value("Date"));
+  assert_eq!(Some(&oversized), response.header_value("Expires"));
+  assert_eq!(Some(&oversized), response.header_value("Last-Modified"));
+  assert_eq!("OK", response.body().string().unwrap());
+  handle.join().expect("raw response server thread");
 }
 
 #[test]
@@ -4147,7 +7060,7 @@ fn sync_client_content_disposition_helper_rejects_duplicates_and_enforces_shared
     &[&oversized],
   );
 
-  let too_many = fixtures::content_disposition::too_many_client_parameters_value();
+  let too_many = fixtures::content_disposition::too_many_parameters_value();
   assert_content_disposition_helper_rejects_but_preserves_response(
     "too many Content-Disposition parameters",
     content_disposition_response(&[&too_many]),
@@ -4406,6 +7319,72 @@ fn sync_client_cdn_cache_control_helper_rejects_invalid_and_bounded_metadata() {
   assert_cdn_cache_control_helper_rejects_but_preserves_response(
     "oversized CDN-Cache-Control value",
     cdn_cache_control_response(&[&fixtures::cache_control::oversized_value()]),
+  );
+}
+
+#[test]
+fn sync_client_parses_surrogate_control_response_metadata_without_policy() {
+  const HEADERS: &[(&str, &str)] = &[
+    ("Surrogate-Control", "max-age=600, content=\"ESI/1.0\""),
+    ("surrogate-control", "surrogate-key=\"article 42\""),
+    ("Cache-Control", "max-age=1"),
+  ];
+  let (addr, handle) = spawn_metadata_response_server(HEADERS);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/surrogate-control", addr))
+    .emit()
+    .expect("Surrogate-Control response should parse");
+
+  let metadata = response
+    .surrogate_control()
+    .expect("Surrogate-Control metadata should parse")
+    .expect("Surrogate-Control should be present");
+
+  assert_eq!(metadata.len(), 3);
+  assert_eq!(metadata.directives()[0].name(), "max-age");
+  assert_eq!(metadata.directives()[0].value(), Some("600"));
+  assert_eq!(metadata.directives()[1].name(), "content");
+  assert_eq!(metadata.directives()[1].value(), Some("ESI/1.0"));
+  assert_eq!(metadata.directives()[2].value(), Some("article 42"));
+  assert_eq!(
+    response
+      .cache_control()
+      .expect("Cache-Control remains independent")
+      .expect("Cache-Control should be present")
+      .max_age(),
+    Some(1)
+  );
+  assert_eq!("OK", response.body().string().unwrap());
+
+  handle.join().expect("metadata response server thread");
+}
+
+#[test]
+fn sync_client_surrogate_control_helper_rejects_invalid_duplicate_and_bounded_metadata() {
+  assert_surrogate_control_helper_rejects_but_preserves_response(
+    "invalid Surrogate-Control directive",
+    surrogate_control_response(&["max-age="]),
+  );
+  assert_surrogate_control_helper_rejects_but_preserves_response(
+    "duplicate Surrogate-Control directive",
+    surrogate_control_response(&["max-age=60, Max-Age=120"]),
+  );
+  assert_surrogate_control_helper_rejects_but_preserves_response(
+    "too many Surrogate-Control directives",
+    surrogate_control_response(&[&fixtures::cache_control::too_many_directives_value()]),
+  );
+  assert_surrogate_control_helper_rejects_but_preserves_response(
+    "oversized Surrogate-Control value",
+    surrogate_control_response(&[&fixtures::cache_control::oversized_value()]),
+  );
+
+  let first = format!("a={}", "x".repeat((64 * 1024 / 2) - 2));
+  let second = format!("b={}", "x".repeat((64 * 1024 / 2) - 1));
+  assert_surrogate_control_helper_rejects_but_preserves_response(
+    "oversized Surrogate-Control aggregate",
+    surrogate_control_response(&[first.as_str(), second.as_str()]),
   );
 }
 

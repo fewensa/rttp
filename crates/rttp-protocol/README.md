@@ -9,6 +9,175 @@ and server crates.
 This crate supports rttp's implementation; its public API is not a standalone
 application-level HTTP interface.
 
+## Accept-Charset
+
+`accept_charset` parses one or more RFC 9110 `Accept-Charset` field values
+into an ordered list of charset-range tokens with optional quality weights.
+Each field value is bounded to 64 KiB, and the combined member count across
+all supplied fields is bounded to 32. Ranges are RFC 9110 tokens, including
+the `*` wildcard. Duplicate ranges are rejected case-insensitively while the
+first-seen spelling is retained. Each member may carry a single `q`
+parameter; the default quality is `1000` thousandths. Empty members, invalid
+tokens, invalid q-values, extra parameters, forbidden ASCII control bytes
+other than HTAB, oversized values, too many members, and a present header set
+that yields no member are errors. `header_value()` joins members with `", "`,
+omits quality when no `q` parameter was present, and otherwise emits the
+original q-text. This type is the shared authority for charset-range,
+wildcard, q-value, duplicate, member-count, and size validation. It reports
+declared request metadata only; it does not negotiate, transcode, decode
+bodies, sniff MIME types, or select a response charset.
+
+## A-IM
+
+`a_im` parses one or more `A-IM` field values into an ordered list of
+instance-manipulation tokens with optional quality weights and extension
+parameters. Each field value is bounded to 64 KiB, the combined raw field set
+is bounded to 64 KiB, the combined member count is bounded to 32, and each
+member is bounded to 16 parameters. Tokens are RFC 9110 tokens and are
+retained with their accepted spelling. Duplicate tokens are rejected
+case-insensitively while the first-seen spelling is retained. Each member may
+carry an optional `q` parameter with HTTP q-value semantics and additional
+parameters whose names are tokens and whose values are tokens or
+quoted-strings. Duplicate parameter names on one member are rejected
+case-insensitively. Empty members, invalid tokens, invalid q-values, invalid
+parameter names or values, forbidden ASCII control bytes other than HTAB,
+oversized values, oversized combined input, too many members or parameters,
+and a present header set that yields no member are errors. `header_value()`
+joins members with `", "`, omits quality when no `q` parameter was present,
+and otherwise emits the original q-text and accepted parameter spelling. This
+type owns `A-IM` q-value policy and reuses the canonical
+instance-manipulation token, parameter, ordering, duplicate, member-count,
+and size validator shared with `IM`. It reports declared request metadata
+only; it does not select a preferred instance manipulation or apply delta
+encodings.
+
+## IM
+
+`im` parses one or more RFC 3229 `IM` field values into an ordered list of
+instance-manipulation tokens with optional extension parameters. Each field
+value is bounded to 64 KiB, the combined raw field set is bounded to 64 KiB,
+the combined member count is bounded to 32, and each member is bounded to 16
+parameters. Tokens are RFC 9110 tokens and are retained with their accepted
+spelling. Duplicate tokens are rejected case-insensitively across one or more
+fields while the first-seen spelling is retained. Each member may carry
+parameters whose names are tokens and whose values are tokens or
+quoted-strings. Duplicate parameter names on one member are rejected
+case-insensitively. Empty members, invalid tokens, invalid parameter names or
+values, forbidden ASCII control bytes other than HTAB, oversized values,
+oversized combined input, too many members or parameters, and a present
+header set that yields no member are errors. `header_value()` joins members
+with `", "` and emits the accepted token and parameter spelling, preserving
+original quoted-string quoting. Token, parameter, ordering, duplicate,
+member-count, and size validation reuse the canonical instance-manipulation
+rules also used by `A-IM`. `q` remains an ordinary extension parameter name
+on `IM`. It reports declared response metadata only; it does not select,
+invert, decode, or apply instance manipulations and does not impose a
+`226 IM Used` status policy.
+
+## Delta-Base
+
+`delta_base` parses a singleton RFC 3229 `Delta-Base` response field into one
+entity-tag base validator. It reuses the shared `EntityTag` representation and
+therefore accepts strong and weak entity tags, trims optional OWS, serializes
+canonically through `header_value()`, and exposes the validator through
+`entity_tag()`. Missing values, duplicate fields, wildcard values, comma-lists,
+malformed entity tags, forbidden control bytes, and values over 64 KiB are
+errors. This type reports response metadata only; it does not locate cached
+entities, compare validators, apply deltas, decode instance manipulations, or
+impose a `226 IM Used` status policy.
+
+## Negotiate
+
+`negotiate` parses one or more RFC 2295 `Negotiate` field values into an
+ordered list of negotiate-directives. Each field value is bounded to 64 KiB,
+the combined raw field set is bounded to 64 KiB, and the combined member
+count is bounded to 32. The valueless `trans`, `vlist`, and `guess-small`
+flags match case-insensitively and emit lowercase; `*` matches exactly.
+`rvsa-version` is `1*DIGIT "." 1*DIGIT`, parsed into `u64` major and minor
+parts with overflow rejected and leading zeros normalized away, so `01.00`
+equals `1.0`. Extensions are RFC 9110 `token` or `token=token` pairs whose
+spelling is preserved; a known flag, `*`, or version-shaped name rejects a
+`=value`. Duplicate directives are rejected: at most one of each flag and
+`*`, one occurrence of each numeric version pair, and one extension per name
+compared case-insensitively, so `1.0, 2.5` is valid while `trans, TRANS` and
+`feature-x=a, FEATURE-X=b` are not. Empty members, empty or trailing comma
+lists, invalid tokens, forbidden ASCII control bytes other than HTAB,
+oversized values, oversized combined input, too many members, and a present
+header set that yields no member are errors. `header_value()` joins members
+with `", "` and emits canonical flags, versions, and accepted extension
+spelling. This type is the shared authority for token, version, feature
+value, duplicate, member-count, and size validation. It reports declared
+request metadata only; it does not select a variant, run transparent content
+negotiation, or change cache selection.
+
+## TCN
+
+`tcn` parses a singleton RFC 2295 `TCN` response field into an ordered list
+of negotiation result tokens. Each field value is bounded to 64 KiB, the raw
+field set is bounded to 64 KiB, and the member list is bounded to 32. The
+defined tokens are `list`, `choice`, `adhoc`, `re-choose`, and `keep`; they
+match case-insensitively and emit lowercase. Duplicate tokens, duplicate
+header fields, empty members, empty or trailing comma lists, unknown tokens,
+forbidden ASCII control bytes other than HTAB, oversized values, and a
+present header set that yields no member are errors. `header_value()` joins
+members with `", "`. This type is the shared authority for TCN token,
+singleton, duplicate, member-count, and size validation. It reports response
+metadata only; it does not select variants, synthesize `Alternates` or `Vary`,
+or change cache selection.
+
+## Set-Cookie
+
+`cookie` parses request `Cookie` pairs and response `Set-Cookie` fields as
+bounded, policy-free metadata. Each `Set-Cookie` field remains one field line
+and is never comma-combined. A field value is bounded to 64 KiB, a cookie or
+attribute value is bounded to 4 KiB, a field may hold at most 64 attributes,
+a collection may hold at most 256 fields, and the combined raw field bytes are
+bounded to 64 KiB. Cookie names are RFC 9110 tokens. Cookie values may be
+quoted; the quoted state is retained and `header_value()` round-trips it.
+Standard attributes (`Expires`, `Max-Age`, `Domain`, `Path`, `Secure`,
+`HttpOnly`, `SameSite`, `Partitioned`, and `Priority`) have typed accessors.
+Extension attributes are retained in wire order. Duplicate attributes are
+rejected case-insensitively. Typed `Debug` output redacts cookie and attribute
+values. This type is the shared authority for name/value, attribute,
+quoted-value, duplicate, count, and size validation. It reports response
+metadata only; it does not implement a cookie jar, persistence, domain/path
+matching, expiry enforcement, SameSite or partitioning policy, or automatic
+request `Cookie` emission.
+
+## Variant-Vary
+
+`variant_vary` parses one or more RFC 2295 `Variant-Vary` response fields into
+either the exclusive `*` wildcard or an ordered list of HTTP field-name
+tokens. Each field value is bounded to 64 KiB, the canonical serialized form
+is bounded to 64 KiB, and the named-field list is bounded to 256 entries.
+Field names match case-insensitively, reject duplicates, and emit lowercase
+in first-seen order. Wildcard values cannot be mixed with named fields or
+repeated. Empty members, non-token members, forbidden ASCII control bytes
+other than HTAB, oversized values, and a present header set that yields no
+member are errors. `header_value()` emits `*` or joins names with `", "`.
+This type is the shared authority for Variant-Vary token, wildcard,
+duplicate, member-count, ordering, and size validation. It reports response
+metadata only; it does not construct cache keys, select variants, synthesize
+`Alternates`, `TCN`, or `Vary`, or change cache selection.
+
+## Accept-Encoding
+
+`accept_encoding` parses one or more RFC 9110 `Accept-Encoding` field values
+into an ordered list of coding tokens with optional quality weights. Each
+field value is bounded to 64 KiB, and the combined member count across all
+supplied fields is bounded to 32. Codings are RFC 9110 tokens, including
+`identity` and the `*` wildcard. Duplicate codings are rejected
+case-insensitively while the first-seen spelling is retained. Each member may
+carry a single `q` parameter; the default quality is `1000` thousandths. Empty
+members, invalid tokens, invalid q-values, extra parameters, forbidden ASCII
+control bytes other than HTAB, oversized values, too many members, and a
+present header set that yields no member are errors. `header_value()` joins
+members with `", "`, omits quality when no `q` parameter was present, and
+otherwise emits the original q-text. This type is the shared authority for
+coding-token, wildcard, q-value, duplicate, member-count, and size validation.
+It reports declared request metadata only; it does not compress, decompress,
+or negotiate content.
+
 ## Accept-Ranges
 
 `accept_ranges` parses one or more `Accept-Ranges` field values into an ordered
@@ -23,6 +192,24 @@ and is represented as an empty unit list; `none` combined with any unit fails
 as invalid. A present header set that yields no unit still fails as invalid.
 The server facade aliases this type as `HttpAcceptRanges` and reuses
 `from_units`/`none` for its declaration helpers.
+
+## Accept-Language
+
+`accept_language` parses one or more RFC 9110 `Accept-Language` field values
+into an ordered list of language ranges with optional q-values. Each field
+value is bounded to 64 KiB, and the cumulative range count across all supplied
+fields is bounded to 32 ranges. Items are split on commas with surrounding
+whitespace trimmed from each item; empty members and malformed ranges are
+errors. A range is `*` or a primary subtag of 1-8 ASCII letters followed by
+any number of 1-8 character ASCII alphanumeric subtags separated by hyphens.
+Each range may carry one `q` parameter whose value is `0` or `1`, optionally
+with up to three fractional digits and with a `1` integer part requiring an
+all-zero fraction. Case-insensitive duplicate ranges are rejected while the
+first-seen spelling is retained. `from_ranges` validates supplied ranges for
+client construction and `header_value()` re-emits them normalized as
+`range; q=quality`. This parser reports declared metadata only; it does not
+perform locale matching, fallback selection, translation lookup, routing, or
+automatic response choice.
 
 ## Age
 
@@ -48,6 +235,269 @@ dates, unsupported time zones, and forbidden ASCII control bytes are errors.
 The client and server facades reuse this shared primitive as metadata only;
 they do not sleep, retry, replay, back off, schedule work, calculate cache
 freshness, or decide status-code retry policy.
+## Response HTTP-date metadata
+
+`http_date` parses singleton `Date`, `Expires`, and `Last-Modified` response
+fields through `ResponseDate`, `ResponseExpires`, and
+`ResponseLastModified`. Each field value is bounded to 64 KiB, a second field
+is rejected after every supplied field is bound-checked, and surrounding SP and
+HTAB are trimmed as optional whitespace. Supported HTTP-date forms are the
+forms accepted by `httpdate`: IMF-fixdate, obsolete RFC 850 dates, and
+asctime dates. Empty values, malformed dates, unsupported time zones,
+forbidden ASCII control bytes, and oversized values are errors.
+`header_value()` formats accepted instants as canonical IMF-fixdate.
+
+These parsers report response metadata only. They do not calculate freshness,
+correct clock skew, store responses, generate conditional requests, or replace
+validator comparison policy.
+
+## Expect
+
+`expect` parses one or more HTTP `Expect` request field values into bounded
+expectation metadata. Each field value is bounded to 64 KiB, and the combined
+expectation count across all supplied fields is bounded to 32. Members are
+split on commas with surrounding whitespace trimmed from each member. The
+standardized `100-continue` expectation is represented by a canonical
+singleton constructor and `expects_continue()`; unknown well-formed extension
+names are retained by `unsupported()` with their original spelling. Duplicate
+expectation names are rejected case-insensitively. Empty members, invalid
+tokens, oversized values, too many members, and a present header set that
+yields no member are errors. `Expect::expect_continue()` constructs the
+standardized singleton, and `header_value()` emits `100-continue` plus any
+retained extension names. This type is the shared authority for singleton
+construction, token validation, duplicate detection, malformed members, and
+size bounds. It reports declared request metadata only; it does not wait for
+an interim response, send `100 Continue`, reject unsupported extensions, or
+change body framing.
+
+## Max-Forwards
+
+`max_forwards` parses a singleton HTTP `Max-Forwards` request field as
+non-negative `1*DIGIT` hop counts that fit in `u32`. Each field value is
+bounded to 64 KiB. A second field is rejected after every supplied field is
+bound-checked. Surrounding SP and HTAB are trimmed as optional whitespace.
+Empty values, signed or plus-prefixed numbers, fractions, comma-lists,
+non-digits, overflow beyond `u32::MAX`, oversized values, and forbidden ASCII
+control bytes are errors. `header_value()` emits the accepted count in
+canonical decimal form. This parser reports declared metadata only; it does
+not decrement the hop count, route through proxies, select TRACE or OPTIONS,
+or apply forwarding policy.
+
+## Depth
+
+`depth` parses a singleton WebDAV `Depth` request field as one of `0`, `1`,
+or `infinity`. Each field value is bounded to 64 KiB. A second field is
+rejected after every supplied field is bound-checked. Surrounding SP and HTAB
+are trimmed as optional whitespace, and `infinity` is accepted
+case-insensitively but emitted in lowercase. Empty values, unsupported depth
+tokens, comma-lists, oversized values, and forbidden ASCII control bytes are
+errors. `header_value()` emits the canonical singleton value. This parser
+reports declared request metadata only; it does not traverse resources,
+select WebDAV methods, or enforce method policy.
+
+## Lock-Token
+
+`lock_token` parses a singleton WebDAV `Lock-Token` request or response field
+as exactly one angle-bracketed absolute URI. Each field value is bounded to
+64 KiB. A second field is rejected after every supplied field is
+bound-checked. Surrounding SP and HTAB are trimmed as optional whitespace.
+The stored value is the OWS-trimmed coded URL, including `<` and `>`. Empty
+values, missing or extra angle brackets, comma lists, relative URIs, nested
+brackets, trailing data, oversized values, and forbidden ASCII control bytes
+(including CR, LF, NUL, and obs-text) are errors. The URI inside the brackets
+must parse as an absolute URI. The token is redacted from typed `Debug`, and
+parse errors describe only the header and validation category. `as_str()`
+returns the stored coded URL and `header_value()` emits it unchanged. This
+parser reports declared metadata only; it does not create, refresh, release,
+persist, compare ownership of, or enforce WebDAV locks.
+
+## DAV
+
+`dav` parses one or more WebDAV `DAV` response fields into an ordered list of
+compliance classes. Recognized standard classes are `1`, `2`, and `3`;
+well-formed HTTP tokens are retained as extension classes, and `<absolute-URI>`
+Coded-URLs are retained without URI normalization. Each field value and the
+aggregate input are bounded to 64 KiB, and the combined list is bounded to 32
+members. Empty members, malformed tokens, malformed or relative Coded-URLs,
+duplicates, oversized input, too many members, and forbidden ASCII control
+bytes are errors. This parser reports declared response metadata only; it does
+not infer, negotiate, or enforce WebDAV feature support.
+
+## Destination
+
+`destination` parses a singleton WebDAV `Destination` request field as one
+RFC 3986 `absolute-URI`. Each field value is bounded to 64 KiB. A second
+field is rejected after every supplied field is bound-checked. Surrounding SP
+and HTAB are trimmed as optional whitespace. The stored value is the
+OWS-trimmed URI string; `as_str()` and `header_value()` return that same
+text without resolving it against a request target or normalizing scheme,
+host, path, query, or fragment. Empty values, relative references,
+scheme-relative network paths, interior whitespace, non-URI bytes, broken
+percent-encoding, malformed structural URLs, oversized values, and forbidden
+ASCII control bytes (including CR, LF, and NUL) are errors. This parser
+reports declared request metadata only; it does not authorize the target
+URI, compare source and destination resources, select WebDAV methods, or
+copy, move, or delete application resources.
+
+## Timeout
+
+`timeout` parses WebDAV `Timeout` request fields as an ordered list of
+`Second-n` and `Infinite` alternatives. Each field value and the aggregate
+input are bounded to 64 KiB, and the combined list is bounded to 32 members.
+Surrounding SP and HTAB are trimmed as optional whitespace. `Second-n` values
+must fit in `u64`; `Infinite` and `Second-` prefixes are accepted
+case-insensitively and emitted in lowercase. Empty members, overflow,
+duplicates, too many members, oversized input, and forbidden ASCII control
+bytes are errors. This parser reports declared request metadata only; it does
+not create locks, refresh locks, or select an application timeout.
+
+## Overwrite
+
+`overwrite` parses a singleton WebDAV `Overwrite` request field as the token
+`T` or `F`. Each field value is bounded to 64 KiB. A second field is rejected
+after every supplied field is bound-checked. Surrounding SP and HTAB are
+trimmed as optional whitespace; the tokens are matched case-sensitively.
+Empty values, lowercase or other tokens, comma-lists, oversized values, and
+forbidden ASCII control bytes are errors. `header_value()` emits the accepted
+token unchanged. This parser reports declared request metadata only; it does
+not overwrite destination resources, apply the RFC 4918 default `T` when the
+field is absent, or enforce WebDAV policy.
+
+## If
+
+`if_header` parses RFC 4918 section 10.4 WebDAV `If` request fields as typed,
+bounded condition lists. A value is either entirely untagged
+(`(<opaquelocktoken:...>) (Not <DAV:no-lock>)`) or entirely tagged
+(`<http://example.test/src> (<opaquelocktoken:...>) </dst> (Not <DAV:no-lock>)`);
+mixed productions are rejected. Each field value and the aggregate input are
+bounded to 64 KiB, the combined value is bounded to 32 lists, and the
+combined value is bounded to 256 conditions. Resource tags accept an RFC 3986
+`Simple-ref`: an absolute-URI or a path-absolute with optional query, wrapped
+in `<` and `>`. State tokens are absolute coded URLs, including
+`<DAV:no-lock>`. Conditions accept the case-sensitive `Not` token only when it
+is followed by SP or HTAB and then a state token or a bracketed entity tag
+(`[W/"etag"]`). Surrounding SP and
+HTAB are trimmed as optional whitespace; list order, repeated lists, and
+resource tags are preserved, and `header_value()` re-emits the canonical
+field text with single SP separators and the tag repeated before each of its
+lists. Empty values, empty or unterminated lists, a resource tag with no
+list, invalid state tokens or resource tags, malformed entity tags, relative
+or fragment-bearing URIs, duplicates across fields, oversized input, too many
+lists or conditions, and forbidden ASCII control bytes (including CR, LF,
+NUL, and obs-text) are errors. State tokens are redacted from typed `Debug`,
+and parse errors describe only the header and validation category. This
+parser reports declared request metadata only; it does not evaluate locks,
+entity tags, or other resource state, and it does not generate precondition
+outcomes such as 412 Precondition Failed.
+
+## Idempotency-Key
+
+`idempotency_key` parses a singleton HTTP `Idempotency-Key` request field as
+an opaque, bounded key. Each field value is bounded to 64 KiB, and a second
+field is rejected after every supplied field is bound-checked. Surrounding SP
+and HTAB are trimmed as optional whitespace. The stored value is the
+OWS-trimmed key; quotes, backslashes, and punctuation remain part of the
+opaque key when they are visible ASCII. Empty values, embedded spaces,
+forbidden ASCII control bytes (including CR, LF, NUL, and obs-text), and
+oversized values are errors. The key is redacted from typed `Debug`, and
+parse errors describe only the header and validation category. `as_str()`
+returns the stored key and `header_value()` emits it unchanged. This parser
+reports declared request metadata only; it does not retry requests, store
+keys, compare keys across requests, or apply application idempotency policy.
+
+## If-Schedule-Tag-Match
+
+`if_schedule_tag_match` parses a singleton `If-Schedule-Tag-Match` request
+field as one RFC 9110 entity-tag-shaped schedule validator such as
+`"sched-17"` or `W/"sched-17"`. Each field value is bounded to 64 KiB. A
+second field is rejected after every supplied field is bound-checked.
+Surrounding SP and HTAB are trimmed as optional whitespace. The stored value
+is the shared `EntityTag` representation; `entity_tag()`, `is_weak()`, and
+`opaque_tag()` expose it, and `header_value()` emits it canonically. Empty
+values, wildcards, comma-lists, malformed quotes, leftover text, oversized
+values, and forbidden ASCII control bytes are errors. This parser reports
+declared request metadata only; it does not compare the validator to stored
+calendar state, inspect calendars, or apply scheduling policy.
+
+## Schedule-Tag
+
+`schedule_tag` parses a singleton `Schedule-Tag` response field as one
+RFC 9110 entity-tag-shaped schedule validator such as `"sched-17"` or
+`W/"sched-17"`. Each field value is bounded to 64 KiB. A second field is
+rejected after every supplied field is bound-checked. Surrounding SP and HTAB
+are trimmed as optional whitespace. The stored value is the shared `EntityTag`
+representation; `entity_tag()`, `is_weak()`, and `opaque_tag()` expose it, and
+`header_value()` emits it canonically. Empty values, wildcards, comma-lists,
+malformed quotes, leftover text, oversized values, and forbidden ASCII control
+bytes are errors. This parser reports declared response metadata only; it does
+not generate calendar versions, compare validators, inspect calendars, or apply
+scheduling policy.
+
+## W3C Baggage
+
+`baggage` parses bounded W3C `baggage` request metadata. `Baggage` preserves
+wire order while validating HTTP token keys, baggage-octet values, optional
+properties, duplicate member keys, at most 180 members, at most 8192 combined
+bytes, and 4096-byte per-member bounds. Values and property values are treated
+as opaque application data and are not decoded or interpreted. Typed `Debug`
+redacts member and property values, and parse errors describe validation
+categories without echoing supplied values. These parsers report declared
+request metadata only; they do not store request context, select a tracing
+backend, or propagate baggage automatically.
+
+## W3C Trace Context
+
+`trace_context` parses bounded W3C `traceparent` and `tracestate` request
+metadata. `TraceParent` accepts only version `00`, lowercase fixed-width
+trace-id, parent-id, and flags fields, rejects version `ff`, unsupported
+versions, malformed flags, duplicate fields, and all-zero trace or parent
+identifiers, and exposes `version()`, `trace_id()`, `parent_id()`, `flags()`,
+`sampled()`, and `header_value()`.
+
+`TraceState` preserves wire order while validating list-member grammar,
+duplicate keys, at most 32 members, at most 512 combined bytes, and 256-byte
+per-key/per-value bounds. Typed `Debug` redacts propagation values and parse
+errors describe validation categories without echoing supplied values. These
+parsers report declared request metadata only; they do not create identifiers,
+decide sampling, select a tracing backend, or propagate context automatically.
+
+## Accept-Datetime
+
+`accept_datetime` parses a singleton HTTP `Accept-Datetime` request field as
+one HTTP-date instant through `httpdate`. Each field value is bounded to
+64 KiB. A second field is rejected after every supplied field is
+bound-checked. Surrounding SP and HTAB are trimmed as optional whitespace.
+Empty values, malformed dates, forbidden ASCII control bytes, and oversized
+values are errors. `header_value()` formats the accepted instant as
+IMF-fixdate. The accepted instant matches what `memento_datetime` parses for
+the same HTTP-date, so the request helper and the response helper interoperate
+without negotiating with each other. This parser reports declared request
+metadata only; it does not select an archived representation, implement
+TimeGate behavior, or alter cache policy.
+
+## If-Modified-Since
+
+`if_modified_since` parses a singleton HTTP `If-Modified-Since` request field
+as one HTTP-date instant through `httpdate`. Each field value is bounded to
+64 KiB. A second field is rejected after every supplied field is
+bound-checked. Surrounding SP and HTAB are trimmed as optional whitespace.
+Empty values, malformed dates, forbidden ASCII control bytes, and oversized
+values are errors. `header_value()` formats the accepted instant as
+IMF-fixdate. This parser reports declared request metadata only; it does not
+compare `Last-Modified`, evaluate conditional precedence, serve a
+representation, or apply cache policy.
+
+## If-Unmodified-Since
+
+`if_unmodified_since` parses a singleton HTTP `If-Unmodified-Since` request
+field as one HTTP-date instant through `httpdate`. Each field value is bounded
+to 64 KiB. A second field is rejected after every supplied field is
+bound-checked. Surrounding SP and HTAB are trimmed as optional whitespace.
+Empty values, malformed dates, forbidden ASCII control bytes, and oversized
+values are errors. `header_value()` formats the accepted instant as
+IMF-fixdate. This parser reports declared request metadata only; it does not
+compare `Last-Modified`, evaluate conditional precedence, reject a
+representation, or apply cache policy.
 
 ## Content-DPR
 
@@ -68,9 +518,12 @@ IMF-fixdate through `httpdate`. Each field value is bounded to 64 KiB. A
 second field is rejected after every supplied field is bound-checked.
 Surrounding SP and HTAB are trimmed as optional whitespace. Empty values,
 malformed dates, forbidden ASCII control bytes, and oversized values are
-errors. `header_value()` formats the accepted instant as IMF-fixdate. This
-parser reports declared metadata only; it does not select an archival
-representation, negotiate `Accept-Datetime`, or implement TimeGate behavior.
+errors. `header_value()` formats the accepted instant as IMF-fixdate. The
+matching request metadata helper is `Accept-Datetime`, which parses the same
+HTTP-date instants and formats the same IMF-fixdate; the two helpers still do
+not negotiate with each other. This parser reports declared metadata only; it
+does not select an archival representation, negotiate `Accept-Datetime`, or
+implement TimeGate behavior.
 
 ## Deprecation
 
@@ -87,6 +540,26 @@ declared metadata only; it does not compare `Sunset`, follow `Link`
 `rel=deprecation`, decide whether a resource is already deprecated, retry
 requests, or select another endpoint.
 
+## Content-Disposition
+
+`content_disposition` parses a singleton response `Content-Disposition` field
+as one disposition type plus an ordered list of parameters. Each field value
+is bounded to 64 KiB, the parameter count is bounded to 256, and each
+parameter value is bounded to 64 KiB. A second field is rejected after every
+supplied field is bound-checked. Surrounding SP and HTAB are treated as
+optional whitespace around separators. Quoted-strings are unescaped, including
+obs-text, and the stored parameter value is the logical value rather than the
+wire quoting. Parameter names are compared case-insensitively for duplicates,
+and both the disposition type and parameter names are stored in lowercase.
+`filename` and `filename*` remain independent parameters; `filename*` must be
+an unquoted RFC 5987 ext-value and is preserved without decoding. Empty
+values, empty parameter values, malformed quoted-strings, ASCII controls other
+than HTAB, duplicate parameters, invalid tokens, and unparsable input are
+errors. This parser never fails open to `inline` or an empty parameter list.
+It reports declared metadata only: callers own download handling, filesystem
+paths, filename precedence, RFC 5987 decoding, MIME sniffing, cache behavior,
+redirects, retries, negotiation, and status policy.
+
 ## Content-Location
 
 `content_location` parses a singleton response `Content-Location` field as one
@@ -99,6 +572,19 @@ field-value characters, malformed absolute URIs, malformed relative
 references, and broken percent-encoding are errors. This is syntax validation
 only: callers own redirect handling, cache variant selection, representation
 replacement, route generation, retries, and status policy.
+
+## Service-Worker-Allowed
+
+`service_worker_allowed` parses a singleton response `Service-Worker-Allowed`
+field as one bounded origin-relative or absolute path value. Each field value
+is bounded to 64 KiB. A second field is rejected after every supplied field is
+bound-checked. Surrounding SP and HTAB are trimmed as optional whitespace, and
+the trimmed path text is preserved through `as_str()` and `header_value()`
+without resolving scope against a script URL. Empty values, ASCII controls,
+interior whitespace, unsafe field-value characters, broken percent-encoding,
+absolute URIs, and network-path authority forms are errors. This is syntax
+validation only: callers own service-worker registration, scope evaluation,
+and application routing policy.
 
 ## Connection
 
@@ -162,6 +648,20 @@ values are errors. Valid values are preserved exactly in wire order for
 `header_values()`, with `as_str()` and `header_value()` returning the first
 policy value. This parser does not evaluate directives, enforce browser
 security policy, deliver violation reports, or change raw header availability.
+
+## Content-Security-Policy-Report-Only
+
+`content_security_policy_report_only` parses one or more
+`Content-Security-Policy-Report-Only` field values as opaque response metadata
+using the same bounded CSP field validation: each field value is bounded to 64
+KiB, and at most 256 fields are accepted. Empty values, ASCII control bytes
+other than HTAB, and oversized values are errors. Valid values are preserved in
+wire order for `header_values()`, while `as_str()` and `header_value()` return
+the first policy value.
+
+The report-only metadata type, constants, and parse error are distinct from
+`Content-Security-Policy`. This parser does not evaluate directives, enforce
+CSP, send reports, or change raw header availability.
 
 ## Content-Language
 
@@ -232,6 +732,54 @@ unbracketed IPv6, empty ports, ASCII controls, and other values outside the
 inbound Host grammar are errors. This is syntax validation only: callers own
 virtual-host routing and scheme defaults.
 
+## Alt-Used
+
+`alt_used` parses a singleton HTTP `Alt-Used` response field as one authority
+(`uri-host` plus optional port) using the same bounded grammar as `Host`.
+Each field value is bounded to 64 KiB. A second field is rejected after every
+supplied field is bound-checked. Surrounding SP and HTAB are trimmed as
+optional whitespace. The parser preserves the trimmed host and port spelling,
+including bracketed IPv6 literal form, and does not canonicalize names, IPv6
+text, or default ports. Empty values, userinfo, path, query, fragment,
+unbracketed IPv6, empty ports, ASCII controls, and other values outside the
+authority grammar are errors. This is response metadata only: callers own
+alternative-service selection, origin handling, and connection policy.
+
+## Alternates
+
+`alternates` parses one or more RFC 2295-style `Alternates` field values into
+ordered variant metadata. Each variant retains its quoted URI-reference, the
+original accepted source-quality text, and ordered attributes. The quoted URI
+is unescaped and then validated structurally as an RFC 3986 URI-reference; it
+is stored as raw text and is never resolved, fetched, ranked, or selected.
+Each field value is bounded to 64 KiB, the combined field bytes are bounded
+to 64 KiB, the variant count is bounded to 256, each variant holds at most
+256 attributes, and each quoted URI or attribute value is bounded to 64 KiB.
+Quality values must be HTTP qvalue grammar (`0`, `1`, `0.xxx`, or `1.000`
+with at most three fractional digits). Standard attribute names `type`,
+`language`, `encoding`, and `length` are recognized alongside extension
+attribute tokens. Attribute names are matched case-insensitively, stored
+lowercase, and must be unique within a variant. `length` must be an unsigned
+decimal that fits in `u64`. Duplicate variants are rejected by exact stored
+URI, quality text, and normalized attributes. Quoted attribute values are
+unescaped and re-escaped on formatting. Empty input, malformed members,
+invalid URIs, invalid qvalues, and oversized values are rejected. This parser
+does not implement transparent content negotiation, variant selection,
+request replay, redirects, automatic retrieval, cache storage, `Vary`
+matching, or quality ranking.
+
+## Origin-Trial
+
+`origin_trial` parses one or more HTTP `Origin-Trial` response fields as
+opaque trial tokens in wire order. Surrounding SP and HTAB are trimmed as
+optional whitespace. Each trimmed token must be non-empty, free of CR, LF,
+NUL, other C0 controls, DEL, and obs-text, and at most 8 KiB. The collection
+accepts at most 64 tokens and at most 64 KiB of combined token bytes.
+Duplicate token strings are preserved. Parse errors name only the validation
+category and never echo token material. `Debug` reports the type name and
+token count only. This parser does not validate token signatures, expiration,
+origin applicability, feature activation, browser behavior, or trial policy.
+
 ## Signature
 
 `signature` parses one or more RFC 9421 `Signature` field values into an
@@ -272,17 +820,22 @@ reporting metadata or enforce opener policy. Case variants, lists, quoted
 values, unknown tokens, empty values, and other unparsable input are errors.
 The parser never fails open to `unsafe-none`.
 
-## Cross-Origin-Opener-Policy
+## Cross-Origin-Opener-Policy-Report-Only
 
-`cross_origin_opener_policy` parses a singleton `Cross-Origin-Opener-Policy`
-structured-field item. Each field value is bounded to 64 KiB. A second field is
-rejected after every supplied field is bound-checked. The bare item must be
-exactly one of the tokens `unsafe-none`, `same-origin-allow-popups`,
-`same-origin`, or `noopener-allow-popups`. Well-formed parameters, including
-`report-to`, are accepted as syntax and discarded; this parser does not retain
-reporting metadata or enforce opener policy. Case variants, lists, quoted
-values, unknown tokens, empty values, and other unparsable input are errors.
-The parser never fails open to `unsafe-none`.
+`cross_origin_opener_policy_report_only` parses a singleton
+`Cross-Origin-Opener-Policy-Report-Only` structured-field item with the same
+canonical directive vocabulary as `Cross-Origin-Opener-Policy`. Each field
+value is bounded to 64 KiB. A second field is rejected after every supplied
+field is bound-checked. The bare item must be exactly one of the tokens
+`unsafe-none`, `same-origin-allow-popups`, `same-origin`, or
+`noopener-allow-popups`. Well-formed parameters are retained as opaque
+metadata; `report-to` is exposed as a reporting-endpoint name when present.
+Parameter count is bounded to 256, and each parameter value is bounded to
+64 KiB. Duplicate parameter names are rejected. This parser does not enforce
+opener policy, isolate browsing contexts, validate `Reporting-Endpoints`
+members, deliver reports, or schedule report delivery. Case variants, lists,
+quoted values, unknown tokens, empty values, and other unparsable input are
+errors. The parser never fails open to `unsafe-none`.
 
 Protocol helpers define and bound wire metadata for the client and server
 crates. They do not add higher-level runtime policy such as caching,
@@ -324,6 +877,89 @@ compute freshness, evaluate surrogate keys, revalidate automatically, enforce
 shared-cache policy, retry, replay, redirect, or choose response-acceptance
 behavior.
 
+## Surrogate-Control
+
+`surrogate_control` parses one or more `Surrogate-Control` response field
+values into ordered directive metadata. It preserves extension directives with
+each directive token name and optional parsed value, including well-formed
+quoted-string values.
+
+Each field value is bounded to 64 KiB, the aggregate parsed header set is
+bounded to 64 KiB, and the directive count is bounded to 256. Directive names
+and unquoted values must be valid HTTP tokens. Duplicate directive names are
+rejected case-insensitively across all parsed fields.
+
+The parser only reports bounded wire metadata. It does not create a CDN cache,
+compute freshness, evaluate surrogate keys, translate directives into
+`Cache-Control`, revalidate automatically, enforce shared-cache policy, retry,
+replay, redirect, or choose response-acceptance behavior.
+
+## CDN-Loop
+
+`cdn_loop` parses one or more RFC 8586 `CDN-Loop` request field values into
+ordered `cdn-info` members, each with an opaque CDN identifier and optional
+HTTP parameters. An identifier is a `uri-host` with optional port (including
+bracketed IP-literals) or an RFC 7230 token pseudonym, and its accepted wire
+spelling is preserved. Each field value is bounded to 64 KiB, combined field
+values are bounded to 64 KiB including `", "` separator overhead, the combined
+serialized value is bounded to 64 KiB, the combined member count is bounded to
+256, and each member is bounded to 32 parameters. Parameter names are stored
+lowercase and matched case-insensitively; duplicate parameter names on one
+member are rejected. Quoted parameter values are unquoted, and token values
+are retained verbatim.
+
+Repeated `CDN-Loop` fields are concatenated in wire order into one list.
+Repeated CDN identifiers are valid loop-visible metadata. Empty members,
+leading or trailing commas, valueless parameters, malformed identifiers,
+control bytes other than HTAB, and bound violations are rejected. A present
+field set that yields no member is an error.
+
+The parser only reports bounded loop metadata. It does not detect or break
+loops, reject requests because an identifier is already present, insert a
+local CDN identifier, forward the field automatically, or treat
+`CDN-Loop` as hop-by-hop.
+
+## Via
+
+`via` parses one or more HTTP `Via` field values into an ordered hop chain.
+Each member preserves an optional protocol name, a protocol version,
+received-by, and an optional comment. Repeated fields are combined in wire
+order. Duplicate received-by values are valid chain metadata and are not
+rejected.
+
+Each field value is bounded to 64 KiB, combined field values are bounded to
+64 KiB including `", "` separator overhead, the combined serialized value is
+bounded to 64 KiB, the combined member count is bounded to 256, and comment
+nesting depth is bounded to 128. Empty members, invalid received-protocol,
+invalid received-by, malformed comments, control bytes other than HTAB, and
+bound violations are rejected. Formatting normalizes optional whitespace to
+`protocol received-by` plus ` (comment)` when a comment is present, while
+preserving accepted token spelling and comment content.
+
+The parser only reports bounded hop metadata. It does not append or remove
+hops, infer trusted proxies, rewrite identity, or change HTTP/1.1 or HTTP/2
+proxy policy.
+
+## X-Forwarded compatibility metadata
+
+`x_forwarded_for`, `x_forwarded_host`, and `x_forwarded_proto` parse
+compatibility forwarding metadata into ordered protocol-owned representations.
+`XForwardedFor` accepts IP node values and `unknown`; `XForwardedHost` accepts
+host authorities using the same authority validation as `Host`;
+`XForwardedProto` accepts URI scheme tokens. Repeated fields are combined in
+wire order.
+
+Each family bounds every field value, the combined raw field set including
+`", "` separator overhead, and the serialized output to 64 KiB. Each parsed
+member list is bounded to 256 entries. Empty members, malformed node,
+authority, or scheme values, forbidden control bytes, and bound violations are
+errors.
+
+These parsers report compatibility metadata only. They do not trust, rewrite,
+or enforce forwarded identity, select a client address, change authority or
+scheme, or choose trusted proxies. Applications that use these fields must
+choose and enforce their own trusted proxies.
+
 ## Authentication-Info
 
 `authentication_info` parses `#auth-param` lists from `Authentication-Info`
@@ -342,6 +978,21 @@ bounded to 64 KiB. Parameter names are matched case-insensitively and must be
 unique across the combined field set. Empty input, empty members, malformed
 syntax, and duplicate names are rejected. This parser does not implement
 authentication policy.
+
+## Authorization and Proxy-Authorization
+
+`authorization` parses or constructs bounded `Authorization` and
+`Proxy-Authorization` request metadata. `Authorization::new()` /
+`ProxyAuthorization::new()` validate an HTTP-token scheme and a non-empty
+opaque credential value before formatting `scheme credentials`. `parse()` and
+`parse_values()` validate singleton inbound field values and reject duplicates
+to avoid ambiguous credentials. The full serialized field value is bounded to
+64 KiB, and credentials reject CR, LF, NUL, and other control-byte injection.
+
+Credential values are redacted from typed `Debug`, and parse errors describe
+only the header and validation category. These primitives do not store
+credentials, implement Basic or Bearer authentication, process challenges,
+retry requests, or decide redirect forwarding.
 
 ## Proxy-Authenticate
 
@@ -460,6 +1111,26 @@ unparsable input are errors. The parser reports declared metadata only; it does
 not pin TLS, store hosts, consult a preload list, or apply HTTPS-only policy.
 `max-age=0` is returned as data and does not delete stored HSTS hosts.
 
+## TE
+
+`te` parses one or more RFC 9110 `TE` field values into an ordered list of
+transfer codings with optional q-values. Each field value is bounded to
+64 KiB, and the cumulative coding count across all supplied fields is bounded
+to 32 codings.
+
+Codings are split on commas with SP and HTAB accepted only as optional
+whitespace around each coding. Each coding must be an RFC 9110 token;
+`chunked` is rejected because request framing remains owned by the HTTP/1
+implementation. `trailers` is accepted only without a parameter and carries no
+q-value. Other codings accept one optional `q` parameter whose value is a
+weight from `0` through `1` with at most three fractional digits, stored as
+thousandths. Empty members, forbidden ASCII control bytes, malformed tokens,
+multiple parameters, non-`q` parameter names, invalid q-values,
+case-insensitive duplicate codings across all supplied fields, over-limit
+coding lists, and empty present field sets are errors. This parser never fails
+open and does not enable a transfer-coding engine, negotiate trailers, or
+apply compression or proxy behavior.
+
 ## X-Frame-Options
 
 `x_frame_options` parses a singleton `X-Frame-Options` response field. Each
@@ -519,6 +1190,137 @@ unparsable input are errors.
 This parser does not apply reduced-data serving, content adaptation, or
 browser data-saver policy.
 
+## DNT
+
+`dnt` parses a singleton `DNT` request field as the first shared
+privacy-preference primitive. Each field value is bounded to 64 KiB. A second
+field is rejected after every supplied field is bound-checked. The field value
+must be exactly one of the W3C Tracking Preference Expression preference
+tokens `0` (allow tracking) or `1` (do not track), matched case-sensitively
+and returned in canonical wire form. Surrounding SP and HTAB are trimmed as
+optional whitespace. Unknown tokens, aliases (`on`, `off`, `true`, `false`,
+`?1`), lists, parameterized values, `DNT-extension` suffixes, quoted values,
+empty values, control bytes, and other unparsable input are errors.
+This parser exposes declared metadata only: it does not disable cookies, strip
+`Referer`, change analytics or advertising behavior, or enforce tracking
+policy. Related privacy-preference headers should reuse this same bounded
+singleton contract rather than inventing policy behavior.
+
+## Sec-GPC
+
+`sec_gpc` parses a singleton `Sec-GPC` request field. Each field value is
+bounded to 64 KiB. A second field is rejected after every supplied field is
+bound-checked. The field value must be exactly the standards-defined `1`
+signal and is returned in canonical wire form. Surrounding SP and HTAB are
+trimmed as optional whitespace. Unknown tokens, lists, parameterized values,
+empty values, control bytes, and other unparsable input are errors.
+This parser does not infer consent, tracking, legal, or serving policy.
+
+## Sec-WebSocket-Key
+
+`sec_websocket_key` parses a singleton HTTP `Sec-WebSocket-Key` request field
+as a base64-encoded handshake nonce. Each field value is bounded to 64 KiB,
+and a second field is rejected after every supplied field is bound-checked.
+Surrounding SP and HTAB are trimmed as optional whitespace. The stored value
+is the OWS-trimmed RFC 4648 section 4 base64 text, returned by `as_str()` and
+`header_value()`; the RFC 6455 example
+`dGhlIHNhbXBsZSBub25jZQ==` decodes to the 16-byte sample nonce. Empty values,
+interior whitespace, non-base64 input, URL-safe or unpadded encodings,
+decoded nonces whose length is not exactly 16 bytes, duplicate fields,
+forbidden ASCII control bytes (including CR, LF, NUL, and obs-text), and
+oversized values are errors. The nonce is redacted from typed `Debug`, and
+parse errors describe only the header and validation category. This parser
+reports declared request metadata only; it does not perform an HTTP upgrade,
+generate a random nonce, or implement WebSocket frames.
+
+## Sec-WebSocket-Accept
+
+`sec_websocket_accept` parses a singleton HTTP `Sec-WebSocket-Accept`
+response field as the base64-encoded 20-byte SHA-1 WebSocket handshake
+digest. Each field value is bounded to 64 KiB, and a second field is rejected
+after every supplied field is bound-checked. Surrounding SP and HTAB are
+trimmed as optional whitespace. `SecWebSocketAccept::derive_from_key()`
+implements the RFC 6455 transform
+`base64(SHA-1(Sec-WebSocket-Key || 258EAFA5-E914-47DA-95CA-C5AB0DC85B11))`
+from a validated `SecWebSocketKey`; the RFC example key
+`dGhlIHNhbXBsZSBub25jZQ==` derives `s3pPLMBiTxaQ9kYGzzhZRbK+xOo=`.
+`verify_key()` compares a parsed response value to that deterministic
+derivation. Empty values, interior whitespace, non-base64 input, decoded
+digests whose length is not exactly 20 bytes, duplicate fields, forbidden
+ASCII control bytes, obs-text, and oversized values are errors. The value is
+redacted from typed `Debug`, and parse errors describe only the header and
+validation category. These helpers do not perform an HTTP upgrade, generate a
+random nonce, or implement WebSocket frames.
+
+## Sec-WebSocket-Version
+
+`sec_websocket_version` parses one or more HTTP `Sec-WebSocket-Version` fields
+as an ordered list of RFC 6455 version tokens. Each field value and the
+combined raw or canonical serialized field set is bounded to 64 KiB, and the
+combined member count is bounded to 32. Surrounding SP and HTAB are trimmed as
+optional whitespace. Members follow the RFC 6455 section 4.3 `version`
+production: canonical decimal `0` through `299` without leading zeros.
+Repeated fields are combined in wire order. Multi-member lists must appear in
+numeric descending order, matching the common rejection response shape
+`13, 8, 7`. Empty members, non-decimal tokens, leading-zero multi-digit
+tokens, values outside the RFC production, duplicates, unordered lists,
+forbidden ASCII control bytes (including CR, LF, NUL, and obs-text),
+over-limit member counts, and oversized fields are errors. This parser
+reports declared request or response metadata only; it does not perform a
+WebSocket handshake, emit `Connection: Upgrade`, compute
+`Sec-WebSocket-Accept`, negotiate versions, switch protocols, or implement
+WebSocket frames.
+
+## Sec-WebSocket-Protocol
+
+`sec_websocket_protocol` parses one or more HTTP `Sec-WebSocket-Protocol`
+fields as RFC 6455 protocol tokens. Request offers are an ordered `1#token`
+list in client preference order through `parse`, `parse_values`, and
+`from_protocols`; a successful handshake selection is a singleton token
+through `from_selection` and `parse_selection`, which reject any list. Each
+field value and the combined raw or canonical serialized field set is bounded
+to 64 KiB, and the combined member count is bounded to 32. Surrounding SP and
+HTAB are trimmed as optional whitespace. Repeated fields are combined in wire
+order. Members follow the RFC 6455 section 11.3.4 `token` production and
+compare case-sensitively, so `chat` and `Chat` are distinct tokens. Empty
+members, malformed tokens, parameters, slashes, quoted strings, duplicates,
+forbidden ASCII control bytes (including CR, LF, NUL, and obs-text),
+over-limit member counts, and oversized fields are errors. This parser
+reports declared request or response metadata only; it does not perform a
+WebSocket handshake, emit `Connection: Upgrade`, choose an application
+subprotocol, or implement WebSocket frames.
+
+## Sec-WebSocket-Extensions
+
+`sec_websocket_extensions` parses one or more HTTP
+`Sec-WebSocket-Extensions` fields as RFC 6455 extension-list metadata.
+Request offers preserve extension member order and ordered parameters.
+Response selections use the same grammar through `parse_selection` and
+`parse_selection_values`, which require exactly one selected extension member.
+Each field value and the combined raw or canonical serialized field set is
+bounded to 64 KiB, and the combined extension member count is bounded to 32.
+Extension tokens and parameter names follow the HTTP `token` grammar.
+Parameter values may be tokens or quoted strings with quoted-pair unescaping,
+and serialization preserves quoted values. Duplicate extension tokens and
+duplicate parameter names within one extension are rejected. Empty members,
+malformed tokens, malformed quoted strings, forbidden ASCII control bytes
+(including CR, LF, NUL, DEL, and obs-text), over-limit member counts, and
+oversized fields are errors. This parser reports declared request or response
+metadata only; it does not activate compression, negotiate extensions, emit
+`Connection: Upgrade`, switch protocols, or implement WebSocket frames.
+
+## Upgrade-Insecure-Requests
+
+`upgrade_insecure_requests` parses a singleton `Upgrade-Insecure-Requests`
+request field. Each field value is bounded to 64 KiB. A second field is
+rejected after every supplied field is bound-checked. The field value must be
+exactly the standards-defined `1` token, matched case-sensitively and returned
+in canonical wire form. Surrounding SP and HTAB are trimmed as optional
+whitespace. Unknown tokens, lists, parameterized values, empty values, control
+bytes, and other unparsable input are errors.
+This parser does not rewrite `http://` URLs to `https://`, redirect requests,
+or enforce Content-Security-Policy.
+
 ## NEL
 
 `nel` parses one `NEL` response field as a bounded JSON object exposing the W3C
@@ -537,6 +1339,24 @@ without policy semantics. Absent optional members keep their W3C defaults
 (`include_subdomains` `false`, `success_fraction` `0.0`, `failure_fraction`
 `1.0`) but are not re-emitted by `header_value()`. This parser does not send
 reports, persist policy, or configure Reporting endpoint groups.
+
+## Reporting-Endpoints
+
+`reporting_endpoints` parses one or more `Reporting-Endpoints` dictionary
+field values into an ordered list of endpoint-name to quoted-URL members.
+Each field value is bounded to 64 KiB, the combined raw field-value bytes
+across all supplied fields are bounded to 64 KiB, and the combined member
+count is bounded to 32. Endpoint names start with lowercase ASCII or `*` and
+continue with lowercase ASCII, digits, `_`, `-`, `.`, or `*`. Each member
+must use `name="url"` form. Quoted URLs unescape only `\\` and `\"` and
+reject ASCII controls and obs-text. Duplicate names across all supplied
+fields, empty dictionaries, unquoted URLs, malformed escapes, oversized
+values, oversized cumulative input, and too many members are errors.
+`from_endpoints()` constructs the same dictionary and `header_value()`
+re-emits escaped `name="url"` members joined with `", "`. This type is the
+shared authority for endpoint-name, quoted URL, duplicate, member-count, and
+size validation. It reports declared response metadata only; it does not
+schedule, send, persist, retry, or route reports.
 
 ## Keep-Alive
 
@@ -559,3 +1379,88 @@ formats a normalized header value. Each field value is limited to 64 KiB,
 parameter lists are limited to 256 strings, and extension members are limited
 to 64. The parser does not implement cache storage, cache-key matching, URL
 normalization, navigation behavior, request replay, or shared-cache policy.
+
+## Permissions-Policy
+
+`permissions_policy` parses bounded W3C Permissions Policy response metadata
+as a Structured Fields dictionary. Each field value is bounded to 64 KiB, the
+cumulative directive count across all supplied fields is bounded to 256, and
+each allowlist is bounded to 256 members. Feature names are opaque tokens and
+are not looked up against a browser feature list. Allowlists are the `*`
+token, the `self` token, quoted serialized HTTP(S) origins, or inner lists of
+`self` and quoted origins, including the empty inner list `()`. `*` is the
+whole allowlist and `()` disables the feature; mixing `*` with other members
+is rejected. Duplicate feature keys, including across fields, and duplicate
+allowlist members are errors. The HTML-attribute tokens `src` and `'none'`
+are rejected, and a well-formed `report-to` string parameter is accepted and
+dropped. The parser reports declared metadata only: it does not compare
+origins, resolve `self`, grant or deny browser permissions, or enforce origin
+policy.
+
+## Document-Policy
+
+`document_policy` parses bounded WICG Document Policy response metadata as a
+Structured Fields dictionary. Each field value is bounded to 64 KiB, the
+cumulative raw bytes across all supplied fields are bounded to 64 KiB, and
+the combined directive count is bounded to 256. Directive names are opaque
+lowercase tokens or `*` and are not looked up against a browser
+configuration-point list. A member value is one Structured Fields item of
+boolean (including a bare `?1`), integer, decimal, or token; inner lists,
+strings, byte sequences, dates, and display strings are rejected. A
+well-formed `report-to` parameter is accepted as a token or a quoted string
+and retained on the directive; any other parameter name is rejected. Empty
+dictionaries, duplicate directive names including across fields, duplicate
+parameters, and bound violations are errors. The parser reports declared metadata only: it does not
+execute configuration points, block document loads, compare required
+policies, echo `Sec-Required-Document-Policy`, or send reports.
+
+`document_policy_report_only` parses `Document-Policy-Report-Only` with the
+same directive model, parser, formatter, and bounds while exposing distinct
+report-only types and parse errors. It is also metadata-only: it does not
+enforce policy or deliver reports.
+
+## Supports-Loading-Mode
+
+`supports_loading_mode` parses bounded `Supports-Loading-Mode` response
+metadata as a Structured Fields list of tokens, combining fields in wire
+order. Each field value is bounded to 64 KiB, the combined raw bytes across
+all supplied fields are bounded to 64 KiB, and the cumulative token count is
+bounded to 256. Tokens are opaque and are retained with their wire spelling;
+well-formed tokens that are not part of the defined set, such as
+`uncredentialed-prerender`, are preserved. The exact `fenced-frame`,
+`credentialed-prerender`, and `prerender-cross-origin-frames` tokens are
+exposed through predicates, and `from_tokens` builds metadata from declared
+tokens. Duplicate tokens, including across fields, are rejected with ASCII
+case-insensitive comparison. Empty members, strings, integers, inner lists,
+parameterized items, non-token members, and oversized values are rejected.
+The parser reports declared metadata only: it does not prerender documents,
+admit fenced frames, change navigation, or alter resource loading.
+
+## Speculation-Rules
+
+`speculation_rules` preserves one bounded `Speculation-Rules` response field
+value as opaque metadata. The value is limited to 64 KiB, duplicate fields are
+rejected, and control bytes that could inject response fields are rejected.
+Typed `Debug` reports only the byte length, and parse errors do not echo the
+field value. The parser does not fetch, parse, validate, or execute
+speculation rule resources.
+
+## Pragma
+
+`pragma` parses RFC 9111 `Pragma` fields as a comma-separated list of
+`pragma-directive` members: the defined valueless `no-cache` token or an
+`extension-pragma` token with an optional token or quoted-string value. Each
+field value is bounded to 64 KiB, combined field values are bounded to 64 KiB
+including `", "` separator overhead, and the combined directive count is
+bounded to 256; each directive value is bounded to 64 KiB. Directive names are
+matched case-insensitively, duplicate names across combined fields are rejected,
+and multiple `Pragma` fields are combined in wire order, matching the RFC 9111
+list rule. Surrounding SP and HTAB are trimmed as optional whitespace.
+Quoted-string values are unescaped on parse and re-escaped on emit, while
+unquoted values must be tokens. Empty or whitespace-only fields, empty list
+members, leading or trailing commas, malformed tokens, unparsable
+quoted-strings, forbidden ASCII control bytes, valued `no-cache` forms, and
+bound violations are errors. Extensions preserve their first-seen spelling and
+wire order. This parser reports declared metadata only; it does not translate
+`Pragma` into `Cache-Control`, store cache entries, or apply cache,
+intermediary, or HTTP/1.0 compatibility policy.

@@ -2,8 +2,9 @@ use rttp_test_support as support;
 
 #[cfg(feature = "async")]
 use futures::executor::block_on;
-use rttp_client::types::{Header, Proxy};
+use rttp_client::types::{Auth, Header, Proxy};
 use rttp_client::{HttpClient, SecPurpose};
+use rttp_protocol::authorization::MAX_AUTHORIZATION_VALUE_BYTES;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::thread;
@@ -31,6 +32,14 @@ fn capture_proxy_request(request: impl FnOnce(Proxy)) -> Vec<u8> {
   handle.join().expect("raw proxy request capture server")
 }
 
+fn capture_optional_proxy_request(request: impl FnOnce(Proxy)) -> Vec<u8> {
+  let (addr, handle) = support::capture_optional_raw_http_request(Duration::from_millis(250));
+  request(Proxy::http("127.0.0.1", u32::from(addr.port())));
+  handle
+    .join()
+    .expect("optional raw proxy request capture server")
+}
+
 fn request_text(request: &[u8]) -> String {
   String::from_utf8(request.to_vec()).expect("request should be utf-8")
 }
@@ -53,6 +62,15 @@ fn request_body(request: &[u8]) -> &[u8] {
     .map(|position| position + 4)
     .expect("request should contain header terminator");
   &request[body_start..]
+}
+
+fn request_head_text(request: &[u8]) -> String {
+  let head_end = request
+    .windows(4)
+    .position(|window| window == b"\r\n\r\n")
+    .map(|position| position + 4)
+    .expect("request should contain header terminator");
+  request_text(&request[..head_end])
 }
 
 #[test]
@@ -435,6 +453,9 @@ fn authorization_helper_rejects_invalid_or_oversized_metadata_before_connecting(
     ("bad scheme", "token".to_string()),
     ("Bearer", "".to_string()),
     ("Bearer", " \t ".to_string()),
+    ("Bearer", "token\rnext".to_string()),
+    ("Bearer", "token\nnext".to_string()),
+    ("Bearer", "token\0next".to_string()),
     ("Bearer", "x".repeat(64 * 1024 + 1)),
   ] {
     let request = capture_optional_request(|base_url| {
@@ -445,6 +466,9 @@ fn authorization_helper_rejects_invalid_or_oversized_metadata_before_connecting(
         .authorization(scheme, &credentials)
         .expect_err("invalid authorization metadata should be rejected");
       assert!(error.is_builder());
+      if !credentials.is_empty() {
+        assert!(!error.to_string().contains(&credentials));
+      }
     });
     assert!(
       request.is_empty(),
@@ -469,6 +493,323 @@ fn raw_headers_remain_an_escape_hatch_for_custom_authorization_schemes() {
   assert_eq!(
     Some("Signature keyId=\"client\",algorithm=\"hs2019\""),
     header_value(&request_text(&request), "Authorization")
+  );
+}
+
+#[test]
+fn accept_charset_helpers_emit_validated_ranges_and_quality_values() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/localized", base_url))
+      .accept_charset("utf-8")
+      .expect("utf-8 should be accepted")
+      .accept_charset_with_q("iso-8859-1", "0.5")
+      .expect("iso-8859-1 quality should be accepted")
+      .accept_charset_with_q("*", "0")
+      .expect("wildcard quality should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("utf-8, iso-8859-1;q=0.5, *;q=0"),
+    header_value(&request, "Accept-Charset")
+  );
+}
+
+#[test]
+fn auth_facade_rejects_oversized_bearer_before_connecting_without_exposing_token() {
+  let token = "x".repeat(MAX_AUTHORIZATION_VALUE_BYTES);
+  let request = capture_optional_request(|base_url| {
+    let error = client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .authorization("Bearer", &token)
+      .expect_err("oversized Authorization metadata should be rejected");
+    assert!(error.is_builder());
+    assert!(!error.to_string().contains(&token));
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized Authorization metadata should not open a socket"
+  );
+}
+
+#[test]
+fn proxy_auth_rejects_oversized_basic_before_connecting_without_exposing_credentials() {
+  let username = "proxy-user";
+  let password = "x".repeat(MAX_AUTHORIZATION_VALUE_BYTES);
+  let request = capture_optional_proxy_request(|proxy| {
+    let error = client()
+      .get()
+      .url("http://example.test/asset")
+      .proxy(
+        Proxy::builder(proxy.type_().clone())
+          .host(proxy.host())
+          .port(proxy.port())
+          .username(username)
+          .password(&password),
+      )
+      .emit()
+      .expect_err("oversized Proxy-Authorization metadata should be rejected");
+    assert!(error.is_builder());
+    let message = error.to_string();
+    assert!(!message.contains(username));
+    assert!(!message.contains(&password));
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized Proxy-Authorization metadata should not open a proxy socket"
+  );
+}
+
+#[test]
+fn proxy_debug_redacts_credentials() {
+  let proxy = Proxy::http_with_authorization("127.0.0.1", 8080, "proxy-user", "proxy-secret");
+  let debug = format!("{proxy:?}");
+
+  assert!(debug.contains("127.0.0.1"));
+  assert!(!debug.contains("proxy-user"));
+  assert!(!debug.contains("proxy-secret"));
+  assert!(debug.contains("[REDACTED]"));
+}
+
+#[test]
+fn facade_debug_redacts_sensitive_header_values() {
+  let mut client = HttpClient::new();
+  client
+    .auth(Auth::bearer("origin-token"))
+    .header(("Proxy-Authorization", "Basic cHJveHk6c2VjcmV0"))
+    .header(("Cookie", "session=private"))
+    .header(("Idempotency-Key", "charge-2026-08-19-9f3c"))
+    .header(Header::new(
+      "Lock-Token",
+      "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+    ))
+    .header(("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ=="))
+    .header(("Accept", "application/json"));
+
+  let debug = format!("{client:?}");
+  assert!(debug.contains("Authorization"));
+  assert!(debug.contains("Proxy-Authorization"));
+  assert!(debug.contains("Cookie"));
+  assert!(debug.contains("Idempotency-Key"));
+  assert!(debug.contains("Lock-Token"));
+  assert!(debug.contains("Sec-WebSocket-Key"));
+  assert!(debug.contains("Accept"));
+  assert!(debug.contains("application/json"));
+  assert!(debug.contains("[REDACTED]"));
+  for secret in [
+    "origin-token",
+    "cHJveHk6c2VjcmV0",
+    "session=private",
+    "charge-2026-08-19-9f3c",
+    "550e8400-e29b-41d4-a716-446655440000",
+    "dGhlIHNhbXBsZSBub25jZQ==",
+  ] {
+    assert!(!debug.contains(secret));
+  }
+}
+
+#[test]
+fn a_im_helpers_emit_validated_tokens_q_values_and_parameters() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .a_im("diffe")
+      .expect("diffe should be accepted")
+      .a_im_with_q("gzip", "0.3")
+      .expect("gzip quality should be accepted")
+      .a_im_value("identity;q=0;profile=compact")
+      .expect("parameterized A-IM should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("diffe, gzip;q=0.3, identity;q=0;profile=compact"),
+    header_value(&request, "A-IM")
+  );
+}
+
+#[test]
+fn a_im_helpers_reject_invalid_members_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .a_im_with_q("bad token", "1.1")
+      .expect_err("invalid token should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "invalid A-IM helper input should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .a_im_with_q("gzip", "1.1")
+      .expect_err("invalid q-value should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "invalid A-IM q-value should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .a_im_with_q("gzip", "0.3;profile=compact")
+      .expect_err("parameter-bearing q-value should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "parameter-bearing A-IM q-value should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .a_im("diffe")
+      .expect("first token should be accepted")
+      .a_im("DIFFE")
+      .expect_err("duplicate token should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "duplicate A-IM helper input should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let oversized_token = "a".repeat(64 * 1024 + 1);
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .a_im(&oversized_token)
+      .expect_err("oversized first token should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized first A-IM token should not open a socket"
+  );
+}
+
+#[test]
+fn negotiate_helpers_emit_validated_directives() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .negotiate("Trans, 1.0, feature-x=preview, *")
+      .expect("Negotiate directives should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("trans, 1.0, feature-x=preview, *"),
+    header_value(&request, "Negotiate")
+  );
+}
+
+#[test]
+fn negotiate_helpers_replace_existing_fields_with_canonical_values() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .negotiate("1.0")
+      .expect("first Negotiate value should be accepted")
+      .negotiate("vlist, 2.5")
+      .expect("replacement Negotiate value should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("vlist, 2.5"), header_value(&request, "Negotiate"));
+}
+
+#[test]
+fn negotiate_helpers_reject_invalid_directives_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .negotiate("trans, TRANS")
+      .expect_err("duplicate directives should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "invalid Negotiate helper input should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .negotiate("1.0=value")
+      .expect_err("valued version should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "valued Negotiate version should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let oversized = format!("feature-x={}", "a".repeat(64 * 1024 + 1));
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .negotiate(&oversized)
+      .expect_err("oversized Negotiate value should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized Negotiate value should not open a socket"
   );
 }
 
@@ -509,6 +850,182 @@ fn expect_continue_helper_emits_metadata_without_gating_the_request_body() {
   let request = request_text(&request);
 
   assert_eq!(Some("100-continue"), header_value(&request, "Expect"));
+  assert!(request.ends_with("request body"));
+}
+
+#[test]
+fn accept_charset_helpers_reject_invalid_members_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/localized", base_url))
+      .accept_charset_with_q("utf 8", "1.1")
+      .expect_err("invalid charset should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "invalid Accept-Charset helper input should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/localized", base_url))
+      .accept_charset_with_q("utf-8", "1.1")
+      .expect_err("invalid q-value should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "invalid Accept-Charset q-value should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/localized", base_url))
+      .accept_charset("utf-8")
+      .expect("first charset should be accepted")
+      .accept_charset("UTF-8")
+      .expect_err("duplicate charset should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "duplicate Accept-Charset helper input should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/localized", base_url))
+      .accept_charset("*")
+      .expect("first wildcard should be accepted")
+      .accept_charset_with_q("*", "0")
+      .expect_err("duplicate wildcard should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "duplicate Accept-Charset wildcard should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let oversized_charset = "a".repeat(64 * 1024 + 1);
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/localized", base_url))
+      .accept_charset(&oversized_charset)
+      .expect_err("oversized first charset should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized first Accept-Charset range should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/localized", base_url))
+      .accept_charset("utf-8, iso-8859-1")
+      .expect_err("comma-bearing charset should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "comma-bearing Accept-Charset range should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/localized", base_url))
+      .accept_charset("utf-8;q=0")
+      .expect_err("parameterized charset should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "parameterized Accept-Charset range should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/localized", base_url))
+      .accept_charset_with_q("utf-8", "0.5, iso-8859-1")
+      .expect_err("comma-bearing q-value should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "comma-bearing Accept-Charset q-value should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let builder = client.get().url(format!("{}/localized", base_url));
+    for index in 0..32 {
+      builder
+        .accept_charset(format!("c{index}"))
+        .expect("charset at the bound should be accepted");
+    }
+    let error = builder
+      .accept_charset("c32")
+      .expect_err("too many charsets should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "too many Accept-Charset members should not open a socket"
+  );
+}
+
+#[test]
+fn raw_expect_extension_header_remains_an_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .post()
+      .url(format!("{}/upload", base_url))
+      .header(("Expect", "preview=sha256; chunk=1"))
+      .raw("request body")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("preview=sha256; chunk=1"),
+    header_value(&request, "Expect")
+  );
   assert!(request.ends_with("request body"));
 }
 
@@ -561,6 +1078,70 @@ fn accept_encoding_helpers_reject_invalid_members_before_connecting() {
   assert!(
     request.is_empty(),
     "oversized first Accept-Encoding coding should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .accept_encoding("gzip, br")
+      .expect_err("comma-bearing coding should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "comma-bearing Accept-Encoding coding should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .accept_encoding("gzip;q=0")
+      .expect_err("parameterized coding should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "parameterized Accept-Encoding coding should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .accept_encoding_with_q("gzip", "0.8, br")
+      .expect_err("comma-bearing q-value should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "comma-bearing Accept-Encoding q-value should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .accept_gzip_with_q("0.8, br")
+      .expect_err("comma-bearing gzip q-value should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "comma-bearing gzip Accept-Encoding q-value should not open a socket"
   );
 }
 
@@ -988,6 +1569,48 @@ fn te_helpers_emit_validated_codings_and_trailers() {
 }
 
 #[test]
+fn te_helpers_accept_multiple_codings_and_inline_qvalues_in_one_call() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .te("gzip;q=0.5")
+      .expect("inline q-value should be accepted")
+      .te("deflate, br")
+      .expect("comma-separated codings should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("gzip;q=0.5, deflate, br"),
+    header_value(&request, "TE")
+  );
+  assert_eq!(Some("Close, TE"), header_value(&request, "Connection"));
+}
+
+#[test]
+fn te_helpers_reject_duplicate_codings_within_one_call_before_connecting() {
+  for value in ["gzip, GZIP", "gzip, gzip;q=0.5"] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .te(value)
+        .expect_err("duplicate codings in one call should be rejected");
+
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "duplicate TE input should not open a socket"
+    );
+  }
+}
+
+#[test]
 fn te_helpers_reject_invalid_members_before_connecting() {
   let request = capture_optional_request(|base_url| {
     let mut client = client();
@@ -1277,6 +1900,108 @@ fn te_and_prefer_helpers_reject_invalid_values_before_connecting() {
 }
 
 #[test]
+fn te_helpers_reject_duplicate_overflow_and_oversized_values_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    client
+      .get()
+      .url(format!("{}/metadata", base_url))
+      .te("gzip")
+      .expect("first TE coding should be accepted");
+    assert!(client
+      .te("GZIP")
+      .expect_err("duplicate TE coding should be rejected")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "duplicate TE input should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    client.get().url(format!("{}/metadata", base_url));
+    for index in 0..32 {
+      client
+        .te(format!("coding-{index}"))
+        .expect("TE coding within the limit should be accepted");
+    }
+    assert!(client
+      .te("coding-33")
+      .expect_err("the 33rd TE coding should be rejected")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "33rd TE member should not open a socket"
+  );
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    assert!(client
+      .get()
+      .url(format!("{}/metadata", base_url))
+      .te(oversized)
+      .expect_err("oversized TE coding should be rejected")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "oversized TE input should not open a socket"
+  );
+}
+
+#[test]
+fn te_helpers_reject_cross_call_duplicates_across_inline_and_multi_coding_forms() {
+  for values in [
+    ["gzip", "gzip;q=0.5"],
+    ["gzip;q=0.5", "GZIP"],
+    ["gzip, deflate", "gzip"],
+    ["gzip, deflate", "deflate;q=0.5"],
+    ["gzip, deflate", "gzip, deflate"],
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      client
+        .get()
+        .url(format!("{}/metadata", base_url))
+        .te(values[0])
+        .expect("first TE call should be accepted");
+      assert!(client
+        .te(values[1])
+        .expect_err("cross-call duplicate TE coding should be rejected")
+        .is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "cross-call duplicate TE input should not open a socket"
+    );
+  }
+}
+
+#[test]
+fn te_helpers_reject_multi_coding_overflow_beyond_the_member_bound() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    client.get().url(format!("{}/metadata", base_url));
+    for index in 0..31 {
+      client
+        .te(format!("coding-{index}"))
+        .expect("TE coding within the limit should be accepted");
+    }
+    assert!(client
+      .te("final-a, final-b")
+      .expect_err("31 codings plus two more must exceed the 32-member bound")
+      .is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "TE member overflow input should not open a socket"
+  );
+}
+
+#[test]
 fn prefer_helpers_reject_invalid_wait_and_bound_values_before_connecting() {
   let request = capture_optional_request(|base_url| {
     let mut client = client();
@@ -1428,6 +2153,306 @@ fn forwarded_helper_rejects_duplicate_or_excessive_metadata_before_connecting() 
 }
 
 #[test]
+fn cdn_loop_helper_emits_bounded_forwarding_metadata() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .cdn_loop(r#"foo123.foocdn.example, barcdn.example; trace="abcdef""#)
+      .expect("first CDN-Loop value should be accepted")
+      .cdn_loop(r#"AnotherCDN; abc=123; def="456""#)
+      .expect("second CDN-Loop value should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+
+  assert_eq!(
+    Some("foo123.foocdn.example, barcdn.example; trace=abcdef, AnotherCDN; abc=123; def=456"),
+    header_value(&request_text(&request), "CDN-Loop")
+  );
+}
+
+#[test]
+fn cdn_loop_helper_rejects_malformed_or_excessive_metadata_before_connecting() {
+  for value in [
+    "not valid",
+    "cdn; trace",
+    "cdn; trace=1; TRACE=2",
+    "cdn,",
+    "cdn\r\nX-Injected: 1",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .cdn_loop(value)
+        .expect_err("invalid CDN-Loop metadata should be rejected");
+
+      assert!(error.is_builder());
+    });
+
+    assert!(
+      request.is_empty(),
+      "invalid CDN-Loop input should not open a socket"
+    );
+  }
+
+  let excessive = (0..257)
+    .map(|index| format!("cdn{index}.example"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .cdn_loop(excessive.as_str())
+      .expect_err("too many CDN-Loop members should be rejected");
+
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "excessive CDN-Loop input should not open a socket"
+  );
+
+  let oversized = format!("cdn; trace=\"{}\"", "a".repeat(64 * 1024));
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .cdn_loop(oversized.as_str())
+      .expect_err("oversized CDN-Loop metadata should be rejected");
+
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "oversized CDN-Loop input should not open a socket"
+  );
+
+  let first = "a".repeat(64 * 1024 - 4);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .cdn_loop(first.as_str())
+      .expect("a bounded first CDN-Loop value should be accepted")
+      .cdn_loop("other.example")
+      .expect_err("combined CDN-Loop metadata should remain bounded");
+
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "oversized combined CDN-Loop output should not open a socket"
+  );
+}
+
+#[test]
+fn via_helper_emits_bounded_forwarding_metadata() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .via("1.1 edge-a (TLS terminator)")
+      .expect("first Via hop should be accepted")
+      .via("HTTP/2 upstream")
+      .expect("second Via hop should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+
+  assert_eq!(
+    Some("1.1 edge-a (TLS terminator), HTTP/2 upstream"),
+    header_value(&request_text(&request), "Via")
+  );
+}
+
+#[test]
+fn via_helper_rejects_malformed_or_excessive_metadata_before_connecting() {
+  for value in [
+    "1.1",
+    "1.1 hop extra",
+    "1.1 hop(",
+    "1.1 hop,",
+    "1.1 hop\r\nX-Injected: 1",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .via(value)
+        .expect_err("invalid Via metadata should be rejected");
+
+      assert!(error.is_builder());
+    });
+
+    assert!(
+      request.is_empty(),
+      "invalid Via input should not open a socket"
+    );
+  }
+
+  let excessive = (0..257)
+    .map(|index| format!("1.1 hop{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .via(excessive.as_str())
+      .expect_err("too many Via members should be rejected");
+
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "excessive Via input should not open a socket"
+  );
+
+  let first = format!("1.1 {}", "a".repeat(64 * 1024 - 8));
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .via(first.as_str())
+      .expect("a bounded first hop should be accepted")
+      .via("1.1 second")
+      .expect_err("combined Via metadata should remain bounded");
+
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "oversized Via output should not open a socket"
+  );
+}
+
+#[test]
+fn x_forwarded_helpers_emit_bounded_compatibility_metadata() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .x_forwarded_for("192.0.2.60, unknown")
+      .expect("first X-Forwarded-For value should be accepted")
+      .x_forwarded_for("[2001:db8:cafe::17]")
+      .expect("second X-Forwarded-For value should be accepted")
+      .x_forwarded_host("example.test:443")
+      .expect("first X-Forwarded-Host value should be accepted")
+      .x_forwarded_host("[2001:db8::1]:8443")
+      .expect("second X-Forwarded-Host value should be accepted")
+      .x_forwarded_proto("https")
+      .expect("first X-Forwarded-Proto value should be accepted")
+      .x_forwarded_proto("http")
+      .expect("second X-Forwarded-Proto value should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("192.0.2.60, unknown, [2001:db8:cafe::17]"),
+    header_value(&request, "X-Forwarded-For")
+  );
+  assert_eq!(
+    Some("example.test:443, [2001:db8::1]:8443"),
+    header_value(&request, "X-Forwarded-Host")
+  );
+  assert_eq!(
+    Some("https, http"),
+    header_value(&request, "X-Forwarded-Proto")
+  );
+}
+
+#[test]
+fn x_forwarded_helpers_reject_malformed_or_excessive_metadata_before_connecting() {
+  for (name, value) in [
+    ("X-Forwarded-For", "client.example"),
+    ("X-Forwarded-For", "192.0.2.60\r\nX-Injected: 1"),
+    ("X-Forwarded-Host", "https://example.test"),
+    ("X-Forwarded-Host", "example.test\r\nX-Injected: 1"),
+    ("X-Forwarded-Proto", "https://"),
+    ("X-Forwarded-Proto", "https\r\nX-Injected: 1"),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = match name {
+        "X-Forwarded-For" => client
+          .get()
+          .url(format!("{}/asset", base_url))
+          .x_forwarded_for(value)
+          .expect_err("invalid X-Forwarded-For metadata should be rejected"),
+        "X-Forwarded-Host" => client
+          .get()
+          .url(format!("{}/asset", base_url))
+          .x_forwarded_host(value)
+          .expect_err("invalid X-Forwarded-Host metadata should be rejected"),
+        _ => client
+          .get()
+          .url(format!("{}/asset", base_url))
+          .x_forwarded_proto(value)
+          .expect_err("invalid X-Forwarded-Proto metadata should be rejected"),
+      };
+      assert!(error.is_builder());
+    });
+    assert!(request.is_empty(), "invalid {name} must not open a socket");
+  }
+
+  let too_many_for = (0..257)
+    .map(|index| format!("192.0.2.{}", index % 255))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let too_many_host = (0..257)
+    .map(|index| format!("h{index}.example"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let too_many_proto = (0..257)
+    .map(|index| format!("s{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  for (name, value) in [
+    ("X-Forwarded-For", too_many_for.as_str()),
+    ("X-Forwarded-Host", too_many_host.as_str()),
+    ("X-Forwarded-Proto", too_many_proto.as_str()),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = match name {
+        "X-Forwarded-For" => client
+          .get()
+          .url(format!("{}/asset", base_url))
+          .x_forwarded_for(value)
+          .expect_err("excessive X-Forwarded-For metadata should be rejected"),
+        "X-Forwarded-Host" => client
+          .get()
+          .url(format!("{}/asset", base_url))
+          .x_forwarded_host(value)
+          .expect_err("excessive X-Forwarded-Host metadata should be rejected"),
+        _ => client
+          .get()
+          .url(format!("{}/asset", base_url))
+          .x_forwarded_proto(value)
+          .expect_err("excessive X-Forwarded-Proto metadata should be rejected"),
+      };
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "excessive {name} must not open a socket"
+    );
+  }
+}
+
+#[test]
 fn manual_range_header_remains_available_as_escape_hatch() {
   let request = capture_request(|base_url| {
     client()
@@ -1525,6 +2550,1753 @@ fn manual_max_forwards_header_remains_available_as_escape_hatch() {
     Some("unusual-value"),
     header_value(&request, "Max-Forwards")
   );
+}
+
+#[test]
+fn depth_helper_emits_canonical_webdav_metadata() {
+  for (value, expected) in [
+    ("0", "0"),
+    ("1", "1"),
+    ("infinity", "infinity"),
+    ("INFINITY", "infinity"),
+    (" \t1\t ", "1"),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .method("PROPFIND")
+        .url(format!("{}/collection", base_url))
+        .depth(value)
+        .expect("Depth should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+    assert_eq!(Some(expected), header_value(&request, "Depth"));
+  }
+}
+
+#[test]
+fn depth_helper_replaces_existing_fields() {
+  let request = capture_request(|base_url| {
+    client()
+      .method("PROPFIND")
+      .url(format!("{}/collection", base_url))
+      .header(("Depth", "0"))
+      .depth("infinity")
+      .expect("Depth should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(Some("infinity"), header_value(&request, "Depth"));
+}
+
+#[test]
+fn destination_helper_emits_canonical_webdav_metadata() {
+  for (value, expected) in [
+    (
+      "https://dav.example.test/archive/report.txt",
+      "https://dav.example.test/archive/report.txt",
+    ),
+    (
+      "http://example.test/collection/%E2%82%AC?copy=1",
+      "http://example.test/collection/%E2%82%AC?copy=1",
+    ),
+    (
+      " \thttps://dav.example.test/archive/report.txt\t ",
+      "https://dav.example.test/archive/report.txt",
+    ),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .method("COPY")
+        .url(format!("{}/documents/source.txt", base_url))
+        .destination(value)
+        .expect("Destination should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+    assert_eq!(Some(expected), header_value(&request, "Destination"));
+  }
+}
+
+#[test]
+fn destination_helper_replaces_existing_fields() {
+  let request = capture_request(|base_url| {
+    client()
+      .method("COPY")
+      .url(format!("{}/documents/source.txt", base_url))
+      .header(("Destination", "https://dav.example.test/old.txt"))
+      .destination("https://dav.example.test/archive/report.txt")
+      .expect("Destination should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("https://dav.example.test/archive/report.txt"),
+    header_value(&request, "Destination")
+  );
+}
+
+#[test]
+fn destination_helper_rejects_invalid_values_before_connecting() {
+  for value in [
+    "",
+    "/relative",
+    "../path",
+    "//example.test/path",
+    "https://example.test/a b",
+    "https://example.test/%zz",
+    "https://example.test/a\r\nX: y",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .method("COPY")
+        .url(format!("{}/documents/source.txt", base_url))
+        .destination(value)
+        .expect_err("invalid Destination should be rejected");
+
+      assert!(error.is_builder());
+    });
+
+    assert!(
+      request.is_empty(),
+      "invalid Destination helper input should not open a socket"
+    );
+  }
+
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .method("COPY")
+      .url(format!("{}/documents/source.txt", base_url))
+      .destination(oversized.as_str())
+      .expect_err("oversized Destination should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized Destination helper input should not open a socket"
+  );
+}
+
+#[test]
+fn lock_token_helper_emits_canonical_metadata() {
+  for (value, expected) in [
+    (
+      "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+      "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+    ),
+    (
+      "<http://example.test/locks/1>",
+      "<http://example.test/locks/1>",
+    ),
+    (
+      " \t<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\t ",
+      "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+    ),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .method("UNLOCK")
+        .url(format!("{}/resource", base_url))
+        .lock_token(value)
+        .expect("Lock-Token should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+    assert_eq!(Some(expected), header_value(&request, "Lock-Token"));
+  }
+}
+
+#[test]
+fn lock_token_helper_replaces_existing_fields() {
+  let request = capture_request(|base_url| {
+    client()
+      .method("UNLOCK")
+      .url(format!("{}/resource", base_url))
+      .header(("Lock-Token", "legacy-token"))
+      .lock_token("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>")
+      .expect("Lock-Token should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>"),
+    header_value(&request, "Lock-Token")
+  );
+  assert!(
+    !request.contains("legacy"),
+    "the typed helper must replace an existing same-name field"
+  );
+}
+
+#[test]
+fn lock_token_helper_rejects_invalid_values_before_connecting() {
+  for value in [
+    "",
+    " ",
+    "opaquelocktoken:550e8400-e29b-41d4-a716-446655440000",
+    "<>",
+    "<relative>",
+    "</locks/1>",
+    "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>, <http://example.test/locks/2>",
+    "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\r\nX-Injected: 1",
+    "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\0value",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .method("UNLOCK")
+        .url(format!("{}/resource", base_url))
+        .lock_token(value)
+        .expect_err("invalid Lock-Token should be rejected");
+
+      assert!(error.is_builder());
+      if !value.trim().is_empty() {
+        assert!(!error.to_string().contains(value));
+      }
+    });
+
+    assert!(
+      request.is_empty(),
+      "invalid Lock-Token helper input should not open a socket"
+    );
+  }
+}
+
+#[test]
+fn lock_token_helper_rejects_oversized_values_before_connecting() {
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .method("UNLOCK")
+      .url(format!("{}/resource", base_url))
+      .lock_token(oversized.as_str())
+      .expect_err("oversized Lock-Token should be rejected");
+
+    assert!(error.is_builder());
+    assert!(!error.to_string().contains(&oversized[..64]));
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized Lock-Token helper input should not open a socket"
+  );
+}
+
+#[test]
+fn raw_lock_token_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .method("UNLOCK")
+      .url(format!("{}/resource", base_url))
+      .header(("Lock-Token", "opaque custom value"))
+      .emit()
+      .expect("manual Lock-Token header should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("opaque custom value"),
+    header_value(&request, "Lock-Token")
+  );
+}
+
+#[test]
+fn if_header_helper_emits_canonical_metadata() {
+  for (value, expected) in [
+    (
+      "(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)",
+      "(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)",
+    ),
+    (
+      "<http://example.test/src> (<opaquelocktoken:11111111-1111-1111-1111-111111111111>) \
+       </dst> (Not <DAV:no-lock>)",
+      "<http://example.test/src> (<opaquelocktoken:11111111-1111-1111-1111-111111111111>) \
+       </dst> (Not <DAV:no-lock>)",
+    ),
+    (
+      " \t(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) \t(Not  [W/\"etag-one\"])",
+      "(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) (Not [W/\"etag-one\"])",
+    ),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .method("UNLOCK")
+        .url(format!("{}/resource", base_url))
+        .if_header(value)
+        .expect("WebDAV If should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+    assert_eq!(Some(expected), header_value(&request, "If"));
+  }
+}
+
+#[test]
+fn if_header_helper_replaces_existing_fields_without_touching_if_match() {
+  let request = capture_request(|base_url| {
+    client()
+      .method("COPY")
+      .url(format!("{}/resource", base_url))
+      .header(("If", "legacy condition"))
+      .if_match("\"revision-42\"")
+      .expect("If-Match should be accepted")
+      .if_header("(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)")
+      .expect("WebDAV If should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)"),
+    header_value(&request, "If")
+  );
+  assert!(
+    !request.contains("legacy"),
+    "the typed helper must replace an existing same-name field"
+  );
+  assert_eq!(
+    Some("\"revision-42\""),
+    header_value(&request, "If-Match"),
+    "the WebDAV If helper must not overwrite If-Match"
+  );
+}
+
+#[test]
+fn if_header_helper_rejects_invalid_values_before_connecting() {
+  for value in [
+    "",
+    " ",
+    "()",
+    "(<a>)",
+    "(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) <http://example.test/src> (Not <DAV:no-lock>)",
+    "(junk)",
+    "(Not)",
+    "(Not<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)",
+    r#"(Not["etag"])"#,
+    "(</relative>)",
+    "<relative> (<a:b>)",
+    "(<a:b>)\r\nX-Injected: 1",
+    "(<a:b>)\0value",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .method("UNLOCK")
+        .url(format!("{}/resource", base_url))
+        .if_header(value)
+        .expect_err("invalid WebDAV If should be rejected");
+
+      assert!(error.is_builder());
+      if !value.trim().is_empty() {
+        assert!(!error.to_string().contains(value));
+      }
+    });
+
+    assert!(
+      request.is_empty(),
+      "invalid WebDAV If helper input should not open a socket"
+    );
+  }
+}
+
+#[test]
+fn if_header_helper_rejects_oversized_values_before_connecting() {
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .method("UNLOCK")
+      .url(format!("{}/resource", base_url))
+      .if_header(oversized.as_str())
+      .expect_err("oversized WebDAV If should be rejected");
+
+    assert!(error.is_builder());
+    assert!(!error.to_string().contains(&oversized[..64]));
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized WebDAV If helper input should not open a socket"
+  );
+}
+
+#[test]
+fn raw_if_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .method("UNLOCK")
+      .url(format!("{}/resource", base_url))
+      .header(("If", "opaque custom condition"))
+      .emit()
+      .expect("manual If header should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("opaque custom condition"),
+    header_value(&request, "If")
+  );
+}
+
+#[test]
+fn depth_helper_rejects_invalid_values_before_connecting() {
+  for value in ["", "2", "-1", "1.0", "0, 1", "infinite", "1\r\nX: y"] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .method("PROPFIND")
+        .url(format!("{}/collection", base_url))
+        .depth(value)
+        .expect_err("invalid Depth should be rejected");
+
+      assert!(error.is_builder());
+    });
+
+    assert!(
+      request.is_empty(),
+      "invalid Depth helper input should not open a socket"
+    );
+  }
+
+  let oversized = "0".repeat(64 * 1024 + 1);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .method("PROPFIND")
+      .url(format!("{}/collection", base_url))
+      .depth(oversized.as_str())
+      .expect_err("oversized Depth should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized Depth helper input should not open a socket"
+  );
+}
+
+#[test]
+fn timeout_helper_emits_canonical_webdav_metadata() {
+  for (value, expected) in [
+    ("Second-60", "second-60"),
+    ("Infinite", "infinite"),
+    (
+      " Second-60,\tInfinite, second-120 ",
+      "second-60, infinite, second-120",
+    ),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .method("LOCK")
+        .url(format!("{}/collection", base_url))
+        .timeout(value)
+        .expect("Timeout should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+    assert_eq!(Some(expected), header_value(&request, "Timeout"));
+  }
+}
+
+#[test]
+fn timeout_helper_replaces_existing_fields() {
+  let request = capture_request(|base_url| {
+    client()
+      .method("LOCK")
+      .url(format!("{}/collection", base_url))
+      .header(("Timeout", "Second-30"))
+      .timeout("Infinite")
+      .expect("Timeout should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(Some("infinite"), header_value(&request, "Timeout"));
+}
+
+#[test]
+fn timeout_helper_rejects_invalid_values_before_connecting() {
+  for value in [
+    "",
+    "Second-",
+    "Second--1",
+    "Second-1.0",
+    "Second-18446744073709551616",
+    "Second-60, second-60",
+    "Second-1\r\nX: y",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .method("LOCK")
+        .url(format!("{}/collection", base_url))
+        .timeout(value)
+        .expect_err("invalid Timeout should be rejected");
+
+      assert!(error.is_builder());
+    });
+
+    assert!(
+      request.is_empty(),
+      "invalid Timeout helper input should not open a socket"
+    );
+  }
+
+  let oversized = format!("{}Second-1", " ".repeat(64 * 1024 + 1));
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .method("LOCK")
+      .url(format!("{}/collection", base_url))
+      .timeout(oversized.as_str())
+      .expect_err("oversized Timeout should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized Timeout helper input should not open a socket"
+  );
+}
+
+#[test]
+fn manual_timeout_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .method("LOCK")
+      .url(format!("{}/collection", base_url))
+      .header(("Timeout", "unusual-value"))
+      .emit()
+      .expect("manual Timeout header should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("unusual-value"), header_value(&request, "Timeout"));
+}
+
+#[test]
+fn if_schedule_tag_match_helper_emits_canonical_metadata() {
+  for (value, expected) in [
+    ("\"sched-17\"", "\"sched-17\""),
+    ("W/\"sched-17\"", "W/\"sched-17\""),
+    (" \t\"sched-17\"\t ", "\"sched-17\""),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .method("PUT")
+        .url(format!("{}/calendars/alice/inbox/invite.ics", base_url))
+        .if_schedule_tag_match(value)
+        .expect("If-Schedule-Tag-Match should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+    assert_eq!(
+      Some(expected),
+      header_value(&request, "If-Schedule-Tag-Match")
+    );
+  }
+}
+
+#[test]
+fn if_schedule_tag_match_helper_replaces_existing_fields() {
+  let request = capture_request(|base_url| {
+    client()
+      .method("PUT")
+      .url(format!("{}/calendars/alice/inbox/invite.ics", base_url))
+      .header(("If-Schedule-Tag-Match", "\"sched-16\""))
+      .if_schedule_tag_match("\"sched-17\"")
+      .expect("If-Schedule-Tag-Match should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("\"sched-17\""),
+    header_value(&request, "If-Schedule-Tag-Match")
+  );
+}
+
+#[test]
+fn if_schedule_tag_match_helper_rejects_invalid_values_before_connecting() {
+  for value in [
+    "",
+    " \t ",
+    "sched-17",
+    "\"unterminated",
+    "*",
+    "\"one\", \"two\"",
+    "\"sched-17\"\r\nX: y",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .method("PUT")
+        .url(format!("{}/calendars/alice/inbox/invite.ics", base_url))
+        .if_schedule_tag_match(value)
+        .expect_err("invalid If-Schedule-Tag-Match should be rejected");
+
+      assert!(error.is_builder());
+    });
+
+    assert!(
+      request.is_empty(),
+      "invalid If-Schedule-Tag-Match helper input should not open a socket"
+    );
+  }
+
+  let oversized = format!("\"{}\"", "a".repeat(64 * 1024 - 1));
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .method("PUT")
+      .url(format!("{}/calendars/alice/inbox/invite.ics", base_url))
+      .if_schedule_tag_match(oversized.as_str())
+      .expect_err("oversized If-Schedule-Tag-Match should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized If-Schedule-Tag-Match helper input should not open a socket"
+  );
+}
+
+#[test]
+fn manual_if_schedule_tag_match_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .method("PUT")
+      .url(format!("{}/calendars/alice/inbox/invite.ics", base_url))
+      .header(("If-Schedule-Tag-Match", "unusual-value"))
+      .emit()
+      .expect("manual If-Schedule-Tag-Match header should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("unusual-value"),
+    header_value(&request, "If-Schedule-Tag-Match")
+  );
+}
+
+#[test]
+fn overwrite_helper_emits_canonical_webdav_metadata() {
+  for (value, expected) in [("T", "T"), ("F", "F"), (" \tT\t ", "T"), (" \tF\t ", "F")] {
+    let request = capture_request(|base_url| {
+      client()
+        .method("COPY")
+        .url(format!("{}/documents/source.txt", base_url))
+        .overwrite(value)
+        .expect("Overwrite should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+    assert_eq!(Some(expected), header_value(&request, "Overwrite"));
+  }
+}
+
+#[test]
+fn overwrite_helper_replaces_existing_fields() {
+  let request = capture_request(|base_url| {
+    client()
+      .method("COPY")
+      .url(format!("{}/documents/source.txt", base_url))
+      .header(("Overwrite", "T"))
+      .overwrite("F")
+      .expect("Overwrite should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(Some("F"), header_value(&request, "Overwrite"));
+}
+
+#[test]
+fn overwrite_helper_rejects_invalid_values_before_connecting() {
+  for value in [
+    "",
+    "t",
+    "f",
+    "true",
+    "false",
+    "T, F",
+    "0",
+    "1",
+    "TF",
+    "T\r\nX: y",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .method("COPY")
+        .url(format!("{}/documents/source.txt", base_url))
+        .overwrite(value)
+        .expect_err("invalid Overwrite should be rejected");
+
+      assert!(error.is_builder());
+    });
+
+    assert!(
+      request.is_empty(),
+      "invalid Overwrite helper input should not open a socket"
+    );
+  }
+
+  let oversized = "T".repeat(64 * 1024 + 1);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .method("COPY")
+      .url(format!("{}/documents/source.txt", base_url))
+      .overwrite(oversized.as_str())
+      .expect_err("oversized Overwrite should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized Overwrite helper input should not open a socket"
+  );
+}
+
+#[test]
+fn manual_overwrite_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .method("COPY")
+      .url(format!("{}/documents/source.txt", base_url))
+      .header(("Overwrite", "unusual-value"))
+      .emit()
+      .expect("manual Overwrite header should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("unusual-value"), header_value(&request, "Overwrite"));
+}
+
+#[test]
+fn idempotency_key_helper_emits_canonical_metadata() {
+  for (value, expected) in [
+    ("charge-2026-08-19-9f3c", "charge-2026-08-19-9f3c"),
+    (
+      "urn:uuid:6e7bc004-2445-45a3-8d16-392b33764f00",
+      "urn:uuid:6e7bc004-2445-45a3-8d16-392b33764f00",
+    ),
+    (" \tcharge-2026-08-19-9f3c\t ", "charge-2026-08-19-9f3c"),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .post()
+        .url(format!("{}/charges", base_url))
+        .idempotency_key(value)
+        .expect("idempotency key should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+    assert_eq!(Some(expected), header_value(&request, "Idempotency-Key"));
+  }
+}
+
+#[test]
+fn idempotency_key_helper_replaces_existing_fields() {
+  let request = capture_request(|base_url| {
+    client()
+      .post()
+      .url(format!("{}/charges", base_url))
+      .header(("Idempotency-Key", "legacy-key"))
+      .idempotency_key("charge-2026-08-19-9f3c")
+      .expect("idempotency key should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("charge-2026-08-19-9f3c"),
+    header_value(&request, "Idempotency-Key")
+  );
+  assert!(
+    !request.contains("legacy-key"),
+    "the typed helper must replace an existing same-name field"
+  );
+}
+
+#[test]
+fn idempotency_key_helper_rejects_invalid_values_before_connecting() {
+  for value in [
+    "",
+    " ",
+    "key with space",
+    "key\r\nX-Injected: 1",
+    "key\rX: y",
+    "key\nX: y",
+    "key\0value",
+    "key\u{7f}value",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .post()
+        .url(format!("{}/charges", base_url))
+        .idempotency_key(value)
+        .expect_err("invalid idempotency key should be rejected");
+      assert!(error.is_builder());
+      if !value.trim().is_empty() {
+        assert!(!error.to_string().contains(value));
+      }
+    });
+    assert!(
+      request.is_empty(),
+      "invalid idempotency key must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn idempotency_key_helper_rejects_oversized_values_before_connecting() {
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .post()
+      .url(format!("{}/charges", base_url))
+      .idempotency_key(oversized.as_str())
+      .expect_err("oversized idempotency key should be rejected");
+    assert!(error.is_builder());
+    assert!(!error.to_string().contains(&oversized[..64]));
+  });
+  assert!(
+    request.is_empty(),
+    "oversized idempotency key must not open a socket"
+  );
+}
+
+#[test]
+fn raw_idempotency_key_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .post()
+      .url(format!("{}/charges", base_url))
+      .header(("Idempotency-Key", "opaque custom value"))
+      .emit()
+      .expect("manual Idempotency-Key header should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("opaque custom value"),
+    header_value(&request, "Idempotency-Key")
+  );
+}
+
+#[test]
+fn sec_websocket_key_helper_emits_canonical_metadata() {
+  for (value, expected) in [
+    ("dGhlIHNhbXBsZSBub25jZQ==", "dGhlIHNhbXBsZSBub25jZQ=="),
+    ("AAAAAAAAAAAAAAAAAAAAAA==", "AAAAAAAAAAAAAAAAAAAAAA=="),
+    (" \t+/z9/v8AAQIDBAUGBwgJCg==\t ", "+/z9/v8AAQIDBAUGBwgJCg=="),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .get()
+        .url(format!("{}/chat", base_url))
+        .sec_websocket_key(value)
+        .expect("sec websocket key should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+    assert_eq!(Some(expected), header_value(&request, "Sec-WebSocket-Key"));
+  }
+}
+
+#[test]
+fn sec_websocket_key_helper_replaces_existing_fields() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/chat", base_url))
+      .header(("Sec-WebSocket-Key", "legacy-key"))
+      .sec_websocket_key("dGhlIHNhbXBsZSBub25jZQ==")
+      .expect("sec websocket key should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("dGhlIHNhbXBsZSBub25jZQ=="),
+    header_value(&request, "Sec-WebSocket-Key")
+  );
+  assert!(
+    !request.contains("legacy-key"),
+    "the typed helper must replace an existing same-name field"
+  );
+}
+
+#[test]
+fn sec_websocket_key_helper_rejects_invalid_values_before_connecting() {
+  for value in [
+    "",
+    " ",
+    "the sample nonce",
+    "dGhlIHNhbXBsZSBub25jZQ==\r\nX-Injected: 1",
+    "dGhlIHNhbXBsZSBub25jZQ==\rX: y",
+    "dGhlIHNhbXBsZSBub25jZQ==\nX: y",
+    "dGhlIHNhbXBsZSBub25jZQ==\0value",
+    "dGhlIHNhbXBsZSBub25jZQ==\u{7f}value",
+    "dGhlIHNhbXBsZSBub25jZQ",
+    "_z9/v8AAQIDBAUGBwgJCg==",
+    "AAAAAAAAAAAAAAAAAAAA",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/chat", base_url))
+        .sec_websocket_key(value)
+        .expect_err("invalid sec websocket key should be rejected");
+      assert!(error.is_builder());
+      if !value.trim().is_empty() {
+        assert!(!error.to_string().contains(value));
+      }
+    });
+    assert!(
+      request.is_empty(),
+      "invalid sec websocket key must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn sec_websocket_key_helper_rejects_oversized_values_before_connecting() {
+  let oversized = "A".repeat(64 * 1024 + 1);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/chat", base_url))
+      .sec_websocket_key(oversized.as_str())
+      .expect_err("oversized sec websocket key should be rejected");
+    assert!(error.is_builder());
+    assert!(!error.to_string().contains(&oversized[..64]));
+  });
+  assert!(
+    request.is_empty(),
+    "oversized sec websocket key must not open a socket"
+  );
+}
+
+#[test]
+fn sec_websocket_version_helper_emits_canonical_metadata() {
+  for (value, expected) in [
+    ("13", "13"),
+    (" \t13\t ", "13"),
+    ("13, 8, 7", "13, 8, 7"),
+    (" \t13\t , 8 , 7\t ", "13, 8, 7"),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .get()
+        .url(format!("{}/chat", base_url))
+        .sec_websocket_version(value)
+        .expect("sec websocket version should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+    assert_eq!(
+      Some(expected),
+      header_value(&request, "Sec-WebSocket-Version")
+    );
+    assert_eq!(None, header_value(&request, "Upgrade"));
+    assert_ne!(
+      Some("Upgrade"),
+      header_value(&request, "Connection"),
+      "typed Sec-WebSocket-Version must not emit Connection: Upgrade"
+    );
+  }
+}
+
+#[test]
+fn sec_websocket_version_helper_replaces_existing_fields() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/chat", base_url))
+      .header(("Sec-WebSocket-Version", "12"))
+      .sec_websocket_version("13")
+      .expect("sec websocket version should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(Some("13"), header_value(&request, "Sec-WebSocket-Version"));
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| line
+        .to_ascii_lowercase()
+        .starts_with("sec-websocket-version:"))
+      .count(),
+    "the typed helper must replace an existing same-name field"
+  );
+  assert_eq!(None, header_value(&request, "Upgrade"));
+  assert_ne!(
+    Some("Upgrade"),
+    header_value(&request, "Connection"),
+    "typed Sec-WebSocket-Version must not emit Connection: Upgrade"
+  );
+}
+
+#[test]
+fn sec_websocket_version_helper_rejects_invalid_values_before_connecting() {
+  for value in [
+    "",
+    " ",
+    "13,",
+    "13,,8",
+    "v13",
+    "013",
+    "8, 13",
+    "13, 13",
+    "300",
+    "13\r\nX-Injected: 1",
+    "13\0value",
+    "13\u{7f}value",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/chat", base_url))
+        .sec_websocket_version(value)
+        .expect_err("invalid sec websocket version should be rejected");
+      assert!(error.is_builder());
+      if !value.trim().is_empty() {
+        assert!(!error.to_string().contains(value));
+      }
+    });
+    assert!(
+      request.is_empty(),
+      "invalid sec websocket version must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn sec_websocket_version_helper_rejects_oversized_values_before_connecting() {
+  let oversized = "1".repeat(64 * 1024 + 1);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/chat", base_url))
+      .sec_websocket_version(oversized.as_str())
+      .expect_err("oversized sec websocket version should be rejected");
+    assert!(error.is_builder());
+    assert!(!error.to_string().contains(&oversized[..64]));
+  });
+  assert!(
+    request.is_empty(),
+    "oversized sec websocket version must not open a socket"
+  );
+}
+
+#[test]
+fn raw_sec_websocket_version_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/chat", base_url))
+      .header(("Sec-WebSocket-Version", "opaque custom value"))
+      .emit()
+      .expect("manual Sec-WebSocket-Version header should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("opaque custom value"),
+    header_value(&request, "Sec-WebSocket-Version")
+  );
+}
+
+#[test]
+fn sec_websocket_protocol_helper_emits_canonical_metadata() {
+  for (value, expected) in [
+    ("chat", "chat"),
+    (" \tchat\t ", "chat"),
+    ("chat, superchat", "chat, superchat"),
+    (
+      " \tchat\t , superchat , graphql-ws\t ",
+      "chat, superchat, graphql-ws",
+    ),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .get()
+        .url(format!("{}/chat", base_url))
+        .sec_websocket_protocol(value)
+        .expect("sec websocket protocol should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+    assert_eq!(
+      Some(expected),
+      header_value(&request, "Sec-WebSocket-Protocol")
+    );
+    assert_eq!(None, header_value(&request, "Upgrade"));
+    assert_ne!(
+      Some("Upgrade"),
+      header_value(&request, "Connection"),
+      "typed Sec-WebSocket-Protocol must not emit Connection: Upgrade"
+    );
+  }
+}
+
+#[test]
+fn sec_websocket_protocol_helper_replaces_existing_fields() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/chat", base_url))
+      .header(("Sec-WebSocket-Protocol", "legacy"))
+      .sec_websocket_protocol("chat, superchat")
+      .expect("sec websocket protocol should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("chat, superchat"),
+    header_value(&request, "Sec-WebSocket-Protocol")
+  );
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| line
+        .to_ascii_lowercase()
+        .starts_with("sec-websocket-protocol:"))
+      .count(),
+    "the typed helper must replace an existing same-name field"
+  );
+  assert_eq!(None, header_value(&request, "Upgrade"));
+  assert_ne!(
+    Some("Upgrade"),
+    header_value(&request, "Connection"),
+    "typed Sec-WebSocket-Protocol must not emit Connection: Upgrade"
+  );
+}
+
+#[test]
+fn sec_websocket_protocol_helper_rejects_invalid_values_before_connecting() {
+  for value in [
+    "",
+    " ",
+    ",",
+    "chat,",
+    "chat,,superchat",
+    "not a token",
+    "chat;foo",
+    "chat/1",
+    "chat, chat",
+    "chat\r\nX-Injected: 1",
+    "chat\0value",
+    "chat\u{7f}value",
+    "chat\u{80}value",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/chat", base_url))
+        .sec_websocket_protocol(value)
+        .expect_err("invalid sec websocket protocol should be rejected");
+      assert!(error.is_builder());
+      if !value.trim().is_empty() {
+        assert!(!error.to_string().contains(value));
+      }
+    });
+    assert!(
+      request.is_empty(),
+      "invalid sec websocket protocol must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn sec_websocket_protocol_helper_rejects_oversized_values_before_connecting() {
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/chat", base_url))
+      .sec_websocket_protocol(oversized.as_str())
+      .expect_err("oversized sec websocket protocol should be rejected");
+    assert!(error.is_builder());
+    assert!(!error.to_string().contains(&oversized[..64]));
+  });
+  assert!(
+    request.is_empty(),
+    "oversized sec websocket protocol must not open a socket"
+  );
+}
+
+#[test]
+fn raw_sec_websocket_protocol_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/chat", base_url))
+      .header(("Sec-WebSocket-Protocol", "opaque custom value"))
+      .emit()
+      .expect("manual Sec-WebSocket-Protocol header should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("opaque custom value"),
+    header_value(&request, "Sec-WebSocket-Protocol")
+  );
+}
+
+#[test]
+fn sec_websocket_extensions_helper_emits_canonical_metadata() {
+  for (value, expected) in [
+    ("permessage-deflate", "permessage-deflate"),
+    (
+      " \tpermessage-deflate\t ; client_max_window_bits = 15 ; mode = \"safe\"\t ",
+      r#"permessage-deflate; client_max_window_bits=15; mode="safe""#,
+    ),
+    (
+      r#"permessage-deflate; client_no_context_takeover, x-test; quoted="a,b;c""#,
+      r#"permessage-deflate; client_no_context_takeover, x-test; quoted="a,b;c""#,
+    ),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .get()
+        .url(format!("{}/chat", base_url))
+        .sec_websocket_extensions(value)
+        .expect("sec websocket extensions should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+    assert_eq!(
+      Some(expected),
+      header_value(&request, "Sec-WebSocket-Extensions")
+    );
+    assert_eq!(None, header_value(&request, "Upgrade"));
+    assert_ne!(
+      Some("Upgrade"),
+      header_value(&request, "Connection"),
+      "typed Sec-WebSocket-Extensions must not emit Connection: Upgrade"
+    );
+  }
+}
+
+#[test]
+fn sec_websocket_extensions_helper_replaces_existing_fields() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/chat", base_url))
+      .header(("Sec-WebSocket-Extensions", "legacy"))
+      .sec_websocket_extensions("permessage-deflate; client_max_window_bits")
+      .expect("sec websocket extensions should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("permessage-deflate; client_max_window_bits"),
+    header_value(&request, "Sec-WebSocket-Extensions")
+  );
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| line
+        .to_ascii_lowercase()
+        .starts_with("sec-websocket-extensions:"))
+      .count(),
+    "the typed helper must replace an existing same-name field"
+  );
+}
+
+#[test]
+fn sec_websocket_extensions_helper_rejects_invalid_values_before_connecting() {
+  for value in [
+    "",
+    " ",
+    ",",
+    "permessage deflate",
+    "permessage-deflate;",
+    "permessage-deflate; bad param",
+    "permessage-deflate; p=",
+    "permessage-deflate; p=\"unterminated",
+    "permessage-deflate; p=bad/value",
+    "permessage-deflate, permessage-deflate",
+    "permessage-deflate; p=1; p=2",
+    "permessage-deflate\r\nX-Injected: 1",
+    "permessage-deflate\0",
+    "permessage-deflate\u{7f}",
+    "permessage-deflate\u{80}",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/chat", base_url))
+        .sec_websocket_extensions(value)
+        .expect_err("invalid sec websocket extensions should be rejected");
+      assert!(error.is_builder());
+      if !value.trim().is_empty() {
+        assert!(!error.to_string().contains(value));
+      }
+    });
+    assert!(
+      request.is_empty(),
+      "invalid sec websocket extensions must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn sec_websocket_extensions_helper_rejects_oversized_values_before_connecting() {
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/chat", base_url))
+      .sec_websocket_extensions(oversized.as_str())
+      .expect_err("oversized sec websocket extensions should be rejected");
+    assert!(error.is_builder());
+    assert!(!error.to_string().contains(&oversized[..64]));
+  });
+  assert!(
+    request.is_empty(),
+    "oversized sec websocket extensions must not open a socket"
+  );
+}
+
+#[test]
+fn raw_sec_websocket_extensions_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/chat", base_url))
+      .header(("Sec-WebSocket-Extensions", "opaque custom value"))
+      .emit()
+      .expect("manual Sec-WebSocket-Extensions header should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("opaque custom value"),
+    header_value(&request, "Sec-WebSocket-Extensions")
+  );
+}
+
+#[test]
+fn raw_sec_websocket_key_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/chat", base_url))
+      .header(("Sec-WebSocket-Key", "opaque custom value"))
+      .emit()
+      .expect("manual Sec-WebSocket-Key header should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("opaque custom value"),
+    header_value(&request, "Sec-WebSocket-Key")
+  );
+}
+
+#[test]
+fn pragma_helper_emits_canonical_metadata() {
+  for (value, expected) in [
+    ("no-cache", "no-cache"),
+    ("no-cache, community=private", "no-cache, community=private"),
+    (
+      " \tcommunity=\"quoted, value\"\t ",
+      "community=\"quoted, value\"",
+    ),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .pragma(value)
+        .expect("Pragma should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+    assert_eq!(Some(expected), header_value(&request, "Pragma"));
+  }
+}
+
+#[test]
+fn pragma_helper_combines_existing_fields_and_replaces_them() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .pragma("community=private")
+      .expect("first Pragma should be accepted")
+      .pragma("example=\"quoted, value\"")
+      .expect("second Pragma should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("community=private, example=\"quoted, value\""),
+    header_value(&request, "Pragma")
+  );
+}
+
+#[test]
+fn pragma_helper_combines_existing_raw_fields_into_one_field() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Pragma", "legacy"))
+      .pragma("no-cache")
+      .expect("Pragma should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("legacy, no-cache"),
+    header_value(&request, "Pragma"),
+    "the typed helper must combine existing same-name fields with the new value"
+  );
+  assert_eq!(
+    1,
+    request.matches("Pragma:").count(),
+    "combined Pragma fields must be replaced by one field"
+  );
+}
+
+#[test]
+fn pragma_no_cache_helper_emits_defined_directive_without_cache_control() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .pragma_no_cache()
+      .expect("Pragma no-cache should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(Some("no-cache"), header_value(&request, "Pragma"));
+  assert!(
+    header_value(&request, "Cache-Control").is_none(),
+    "the Pragma helper must not emit Cache-Control"
+  );
+}
+
+#[test]
+fn pragma_helper_rejects_invalid_values_before_connecting() {
+  for value in [
+    "",
+    " ",
+    ",",
+    "no-cache,",
+    ",no-cache",
+    "no-cache=value",
+    "no-cache=\"value\"",
+    "no-cache, no-cache",
+    "community=private, COMMUNITY=public",
+    "bad name",
+    "x=\"unterminated",
+    "x=value\r\nX-Injected: 1",
+    "x=\u{1}",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .pragma(value)
+        .expect_err("invalid Pragma should be rejected");
+      assert!(error.is_builder());
+      if !value.trim().is_empty() {
+        assert!(!error.to_string().contains(value));
+      }
+    });
+    assert!(request.is_empty(), "invalid Pragma must not open a socket");
+  }
+}
+
+#[test]
+fn pragma_helper_rejects_invalid_existing_fields_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Pragma", "legacy value"))
+      .pragma("no-cache")
+      .expect_err("combined invalid Pragma should be rejected");
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "invalid combined Pragma must not open a socket"
+  );
+}
+
+#[test]
+fn pragma_helper_rejects_oversized_values_before_connecting() {
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .pragma(oversized.as_str())
+      .expect_err("oversized Pragma should be rejected");
+    assert!(error.is_builder());
+    assert!(!error.to_string().contains(&oversized[..64]));
+  });
+  assert!(
+    request.is_empty(),
+    "oversized Pragma must not open a socket"
+  );
+}
+
+#[test]
+fn pragma_helper_rejects_combined_fields_that_exceed_total_size() {
+  let first = "a".repeat(32 * 1024);
+  let second = "b".repeat(32 * 1024);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Pragma", first.as_str()))
+      .pragma(second.as_str())
+      .expect_err("combined oversized Pragma should be rejected");
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "combined oversized Pragma must not open a socket"
+  );
+}
+
+#[test]
+fn raw_pragma_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .header(("Pragma", "opaque custom value"))
+      .emit()
+      .expect("manual Pragma header should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("opaque custom value"),
+    header_value(&request, "Pragma")
+  );
+}
+
+#[test]
+fn trace_context_helpers_emit_and_replace_bounded_metadata() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/trace", base_url))
+      .header((
+        "traceparent",
+        "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-00",
+      ))
+      .header(("tracestate", "old=value"))
+      .traceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+      .expect("traceparent should be accepted")
+      .tracestate("rojo=00f067aa0ba902b7,congo=t61rcWkgMzE")
+      .expect("tracestate should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"),
+    header_value(&request, "traceparent")
+  );
+  assert_eq!(
+    Some("rojo=00f067aa0ba902b7,congo=t61rcWkgMzE"),
+    header_value(&request, "tracestate")
+  );
+  assert!(!request.contains("old=value"));
+}
+
+#[test]
+fn baggage_helper_emits_and_replaces_bounded_metadata() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/baggage", base_url))
+      .header(("baggage", "old=value"))
+      .baggage("tenant=acme;source=gateway,release=2026-08-19")
+      .expect("baggage should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("tenant=acme;source=gateway,release=2026-08-19"),
+    header_value(&request, "baggage")
+  );
+  assert!(!request.contains("old=value"));
+}
+
+#[test]
+fn trace_context_helpers_reject_invalid_values_before_connecting_without_echoing_values() {
+  for (name, value) in [
+    (
+      "traceparent",
+      "00-00000000000000000000000000000000-00f067aa0ba902b7-01",
+    ),
+    ("tracestate", "rojo=1,rojo=2"),
+    ("baggage", "tenant=secret,tenant=other"),
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = if name == "traceparent" {
+        client
+          .get()
+          .url(format!("{}/trace", base_url))
+          .traceparent(value)
+          .expect_err("invalid traceparent should be rejected")
+      } else if name == "tracestate" {
+        client
+          .get()
+          .url(format!("{}/trace", base_url))
+          .tracestate(value)
+          .expect_err("invalid tracestate should be rejected")
+      } else {
+        client
+          .get()
+          .url(format!("{}/baggage", base_url))
+          .baggage(value)
+          .expect_err("invalid baggage should be rejected")
+      };
+      assert!(error.is_builder());
+      assert!(!error.to_string().contains(value));
+    });
+    assert!(request.is_empty(), "invalid {name} must not open a socket");
+  }
+}
+
+#[test]
+fn raw_trace_context_headers_are_validated_and_redacted() {
+  let traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+  let tracestate = "rojo=00f067aa0ba902b7";
+
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/trace", base_url))
+      .header(("traceparent", traceparent))
+      .header(("tracestate", tracestate))
+      .emit()
+      .expect("manual valid trace context headers should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(Some(traceparent), header_value(&request, "traceparent"));
+  assert_eq!(Some(tracestate), header_value(&request, "tracestate"));
+
+  let debug = format!(
+    "{:?}",
+    client()
+      .get()
+      .url("http://127.0.0.1/trace")
+      .header(("traceparent", traceparent))
+      .header(("tracestate", tracestate))
+  );
+  assert!(!debug.contains(traceparent));
+  assert!(!debug.contains(tracestate));
+
+  let rejected = capture_optional_request(|base_url| {
+    let error = client()
+      .get()
+      .url(format!("{}/trace", base_url))
+      .header(("traceparent", "invalid"))
+      .emit()
+      .expect_err("invalid raw traceparent should be rejected before connect");
+    assert!(error.is_builder());
+  });
+  assert!(rejected.is_empty());
+}
+
+#[test]
+fn raw_baggage_headers_are_validated_and_redacted() {
+  let baggage = "tenant=acme-secret;source=gateway";
+
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/baggage", base_url))
+      .header(("baggage", baggage))
+      .emit()
+      .expect("manual valid baggage header should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(Some(baggage), header_value(&request, "baggage"));
+
+  let debug = format!(
+    "{:?}",
+    client()
+      .get()
+      .url("http://127.0.0.1/baggage")
+      .header(("baggage", baggage))
+  );
+  assert!(!debug.contains("acme-secret"));
+  assert!(!debug.contains("gateway"));
+
+  let rejected = capture_optional_request(|base_url| {
+    let error = client()
+      .get()
+      .url(format!("{}/baggage", base_url))
+      .header(("baggage", "tenant=secret,tenant=other"))
+      .emit()
+      .expect_err("invalid raw baggage should be rejected before connect");
+    assert!(error.is_builder());
+    assert!(!error.to_string().contains("secret"));
+  });
+  assert!(rejected.is_empty());
 }
 
 #[test]
@@ -1728,6 +4500,103 @@ fn conditional_etag_helpers_reject_oversized_validators_before_connecting() {
 }
 
 #[test]
+fn conditional_http_date_helpers_reject_oversized_and_duplicate_dates_before_connecting() {
+  let oversized = "0".repeat(64 * 1024 + 1);
+
+  for helper in ["If-Modified-Since", "If-Unmodified-Since"] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let request = client.get().url(format!("{}/asset", base_url));
+      let error = match helper {
+        "If-Modified-Since" => request.if_modified_since(&oversized),
+        "If-Unmodified-Since" => request.if_unmodified_since(&oversized),
+        _ => unreachable!("test helper names are exhaustive"),
+      }
+      .expect_err("oversized http date should be rejected");
+
+      assert!(error.is_builder());
+    });
+
+    assert!(
+      request.is_empty(),
+      "oversized {helper} helper input should not open a socket"
+    );
+  }
+}
+
+#[test]
+fn accept_datetime_helper_emits_canonical_imf_fixdate() {
+  for http_date in [
+    "Sun, 06 Nov 1994 08:49:37 GMT",
+    "Sunday, 06-Nov-94 08:49:37 GMT",
+    "Sun Nov  6 08:49:37 1994",
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .accept_datetime(http_date)
+        .expect("http date should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+
+    assert_eq!(
+      Some("Sun, 06 Nov 1994 08:49:37 GMT"),
+      header_value(&request, "Accept-Datetime"),
+      "obsolete HTTP-date forms must be canonicalized to IMF-fixdate on the wire"
+    );
+  }
+}
+
+#[test]
+fn accept_datetime_helper_rejects_malformed_and_oversized_dates_before_connecting() {
+  let oversized = "0".repeat(64 * 1024 + 1);
+
+  for http_date in ["not a date", "08:49:37 06 Nov 1994", oversized.as_str()] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .accept_datetime(http_date)
+        .expect_err("invalid http date should be rejected");
+
+      assert!(error.is_builder());
+    });
+
+    assert!(
+      request.is_empty(),
+      "malformed Accept-Datetime helper input should not open a socket"
+    );
+  }
+}
+
+#[test]
+fn accept_datetime_helper_replaces_an_existing_field() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .accept_datetime("Sun, 06 Nov 1994 08:49:37 GMT")
+      .expect("first http date should be accepted")
+      .accept_datetime("Sun, 06 Nov 1994 08:49:38 GMT")
+      .expect("second http date should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(1, request.matches("Accept-Datetime:").count());
+  assert_eq!(
+    Some("Sun, 06 Nov 1994 08:49:38 GMT"),
+    header_value(&request, "Accept-Datetime"),
+    "a second accept_datetime call must replace the same-name field"
+  );
+}
+
+#[test]
 fn manual_conditional_headers_remain_available_as_escape_hatch() {
   let request = capture_request(|base_url| {
     client()
@@ -1895,6 +4764,32 @@ fn http_proxy_request_sends_absolute_form_request_target() {
   let request_line = text.lines().next().expect("request line");
 
   assert_eq!("GET http://example.test/path?x=1 HTTP/1.1", request_line);
+}
+
+#[test]
+fn http_proxy_request_sends_proxy_authorization_in_header_block() {
+  let request = capture_proxy_request(|proxy| {
+    client()
+      .post()
+      .url("http://example.test/path?x=1")
+      .proxy(
+        Proxy::builder(proxy.type_().clone())
+          .host(proxy.host())
+          .port(proxy.port())
+          .username("proxy-user")
+          .password("proxy-secret"),
+      )
+      .raw("Proxy-Authorization: body-value")
+      .emit()
+      .expect("request should succeed");
+  });
+
+  let head = request_head_text(&request);
+  assert_eq!(
+    Some("Basic cHJveHktdXNlcjpwcm94eS1zZWNyZXQ="),
+    header_value(&head, "Proxy-Authorization")
+  );
+  assert_eq!(b"Proxy-Authorization: body-value", request_body(&request));
 }
 
 #[test]
@@ -2379,6 +5274,104 @@ fn save_data_helper_emits_on_request_token() {
   let request = request_text(&request);
 
   assert_eq!(Some("on"), header_value(&request, "Save-Data"));
+}
+
+#[test]
+fn dnt_helper_emits_defined_preference_tokens() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/catalog", base_url))
+      .dnt("1")
+      .expect("DNT should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("1"), header_value(&request, "DNT"));
+
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/catalog", base_url))
+      .dnt("0")
+      .expect("DNT should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("0"), header_value(&request, "DNT"));
+}
+
+#[test]
+fn dnt_helper_rejects_malformed_and_oversized_values_before_connecting() {
+  let oversized = "0".repeat(64 * 1024 + 1);
+  for value in ["on", "true", "1abc", "1, 0", oversized.as_str()] {
+    let request = capture_optional_request(|base_url| {
+      let error = client()
+        .get()
+        .url(format!("{}/catalog", base_url))
+        .dnt(value)
+        .expect_err("invalid DNT input must be rejected");
+      assert!(error.is_builder());
+    });
+    assert!(
+      request.is_empty(),
+      "invalid DNT input must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn sec_gpc_helper_emits_one_request_signal() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/privacy", base_url))
+      .sec_gpc()
+      .expect("Sec-GPC should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("1"), header_value(&request, "Sec-GPC"));
+}
+
+#[test]
+fn upgrade_insecure_requests_helper_emits_signal_value_without_rewriting_target() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/page", base_url))
+      .upgrade_insecure_requests()
+      .expect("Upgrade-Insecure-Requests should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  let request_line = request.lines().next().expect("request line");
+
+  assert!(
+    request_line.starts_with("GET /page HTTP/1.1"),
+    "helper must keep the original origin-form target: {request_line}"
+  );
+  assert_eq!(
+    Some("1"),
+    header_value(&request, "Upgrade-Insecure-Requests")
+  );
+  assert!(header_value(&request, "Host").is_some());
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| line
+        .to_ascii_lowercase()
+        .starts_with("upgrade-insecure-requests:"))
+      .count()
+  );
 }
 
 #[test]

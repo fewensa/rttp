@@ -873,6 +873,65 @@ pub mod age_expires {
   }
 }
 
+pub mod response_http_date {
+  pub const UNIX_SECONDS: u64 = 784_111_777;
+  pub const IMF_FIXDATE: &str = "Sun, 06 Nov 1994 08:49:37 GMT";
+  pub const OBSOLETE_RFC_850: &str = "Sunday, 06-Nov-94 08:49:37 GMT";
+  pub const ASCTIME: &str = "Sun Nov  6 08:49:37 1994";
+
+  pub struct ValidCase {
+    pub name: &'static str,
+    pub value: &'static str,
+    pub unix_seconds: u64,
+  }
+
+  pub struct InvalidCase {
+    pub name: &'static str,
+    pub value: &'static str,
+  }
+
+  const VALID_CASES: &[ValidCase] = &[
+    ValidCase {
+      name: "HTTP-date IMF-fixdate",
+      value: IMF_FIXDATE,
+      unix_seconds: UNIX_SECONDS,
+    },
+    ValidCase {
+      name: "HTTP-date obsolete RFC 850 date",
+      value: OBSOLETE_RFC_850,
+      unix_seconds: UNIX_SECONDS,
+    },
+    ValidCase {
+      name: "HTTP-date asctime date",
+      value: ASCTIME,
+      unix_seconds: UNIX_SECONDS,
+    },
+  ];
+
+  const INVALID_CASES: &[InvalidCase] = &[
+    InvalidCase {
+      name: "HTTP-date empty value",
+      value: "",
+    },
+    InvalidCase {
+      name: "HTTP-date non-date value",
+      value: "not a date",
+    },
+    InvalidCase {
+      name: "HTTP-date unsupported timezone",
+      value: "Sun, 06 Nov 1994 08:49:37 PST",
+    },
+  ];
+
+  pub fn valid_cases() -> &'static [ValidCase] {
+    VALID_CASES
+  }
+
+  pub fn invalid_cases() -> &'static [InvalidCase] {
+    INVALID_CASES
+  }
+}
+
 pub mod retry_after {
   pub const RETRY_AFTER_UNIX_SECONDS: u64 = 784_111_777;
   pub const RETRY_AFTER_IMF_FIXDATE: &str = "Sun, 06 Nov 1994 08:49:37 GMT";
@@ -1440,8 +1499,7 @@ pub mod content_location {
 
 pub mod content_disposition {
   pub const MAX_VALUE_BYTES: usize = 64 * 1024;
-  pub const SERVER_MAX_PARAMETERS: usize = 32;
-  pub const CLIENT_MAX_PARAMETERS: usize = 256;
+  pub const MAX_PARAMETERS: usize = 256;
 
   pub struct ResponseCase {
     pub name: &'static str,
@@ -1518,6 +1576,14 @@ pub mod content_disposition {
       name: "control character in quoted value",
       value: "attachment; filename=\"bad\u{7f}\"",
     },
+    InvalidCase {
+      name: "invalid filename-star percent encoding",
+      value: "attachment; filename*=UTF-8''bad%ZZname",
+    },
+    InvalidCase {
+      name: "quoted filename-star",
+      value: "attachment; filename*=\"UTF-8''report.txt\"",
+    },
   ];
 
   pub fn response_cases() -> &'static [ResponseCase] {
@@ -1536,19 +1602,10 @@ pub mod content_disposition {
     format!("attachment; filename=\"{}\"", "a".repeat(MAX_VALUE_BYTES))
   }
 
-  pub fn too_many_server_parameters_value() -> String {
+  pub fn too_many_parameters_value() -> String {
     format!(
       "attachment{}",
-      (0..=SERVER_MAX_PARAMETERS)
-        .map(|index| format!("; p{index}=v"))
-        .collect::<String>()
-    )
-  }
-
-  pub fn too_many_client_parameters_value() -> String {
-    format!(
-      "attachment{}",
-      (0..=CLIENT_MAX_PARAMETERS)
+      (0..=MAX_PARAMETERS)
         .map(|index| format!("; p{index}=v"))
         .collect::<String>()
     )

@@ -2,20 +2,26 @@ use std::collections::HashSet;
 use std::fmt;
 use std::time::SystemTime;
 
-use httpdate::parse_http_date;
 use rttp_protocol::content_length::HttpContentLength;
+use rttp_protocol::delta_base::DeltaBaseParseError;
 use url::Url;
 
 use crate::error;
 use crate::response::raw_response::RawResponse;
 use crate::response::AltSvc;
+use crate::response::AltUsed;
+use crate::response::Alternates;
 use crate::response::AuthenticationInfo;
 use crate::response::Connection;
 use crate::response::ContentDigest;
+use crate::response::Dav;
+use crate::response::DeltaBase;
 use crate::response::Digest;
 use crate::response::KeepAlive;
 use crate::response::Nel;
 use crate::response::NoVarySearch;
+use crate::response::OriginTrials;
+use crate::response::Pragma;
 use crate::response::Priority;
 use crate::response::ProxyAuthenticate;
 use crate::response::ProxyAuthenticationInfo;
@@ -24,9 +30,11 @@ use crate::response::ReprDigest;
 use crate::response::ServerTiming;
 use crate::response::Signature;
 use crate::response::SignatureInput;
+use crate::response::Tcn;
 use crate::response::Trailer;
 use crate::response::TransferEncoding;
 use crate::response::Upgrade;
+use crate::response::Via;
 use crate::response::Warning;
 use crate::response::WwwAuthenticate;
 use crate::types::{Cookie, Header, RoUrl, StatusCode};
@@ -43,26 +51,47 @@ use rttp_protocol::cache_status::CacheStatus;
 use rttp_protocol::cdn_cache_control::CdnCacheControl;
 use rttp_protocol::clear_site_data::ClearSiteData;
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
+use rttp_protocol::content_disposition::ContentDisposition;
 use rttp_protocol::content_dpr::ContentDpr;
 use rttp_protocol::content_location::ContentLocation;
 use rttp_protocol::content_security_policy::ContentSecurityPolicy;
+use rttp_protocol::content_security_policy_report_only::ContentSecurityPolicyReportOnly;
 use rttp_protocol::cookie::HttpSetCookies;
 use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
 use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedderPolicyReportOnly;
 use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
+use rttp_protocol::cross_origin_opener_policy_report_only::CrossOriginOpenerPolicyReportOnly;
 use rttp_protocol::cross_origin_resource_policy::CrossOriginResourcePolicy;
 use rttp_protocol::deprecation::Deprecation;
+use rttp_protocol::document_policy::DocumentPolicy;
+use rttp_protocol::document_policy_report_only::DocumentPolicyReportOnly;
 use rttp_protocol::entity_tag::{EntityTag, EntityTagParseError};
+use rttp_protocol::http_date::{ResponseDate, ResponseExpires, ResponseLastModified};
+use rttp_protocol::im::Im;
 use rttp_protocol::link::LinkValues;
 use rttp_protocol::location::Location;
+use rttp_protocol::lock_token::LockToken;
 use rttp_protocol::memento_datetime::MementoDatetime;
+use rttp_protocol::permissions_policy::PermissionsPolicy;
 use rttp_protocol::prefer::PreferenceApplied;
 use rttp_protocol::range::ContentRange;
 use rttp_protocol::referrer_policy::ReferrerPolicy;
+use rttp_protocol::reporting_endpoints::ReportingEndpoints;
 use rttp_protocol::retry_after::RetryAfter;
+use rttp_protocol::schedule_tag::{ScheduleTag, ScheduleTagParseError};
+use rttp_protocol::sec_websocket_accept::SecWebSocketAccept;
+use rttp_protocol::sec_websocket_extensions::SecWebSocketExtensions;
+use rttp_protocol::sec_websocket_key::SecWebSocketKey;
+use rttp_protocol::sec_websocket_protocol::SecWebSocketProtocol;
+use rttp_protocol::sec_websocket_version::SecWebSocketVersion;
+use rttp_protocol::service_worker_allowed::ServiceWorkerAllowed;
+use rttp_protocol::speculation_rules::SpeculationRules;
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::sunset::parse_sunset_values;
+use rttp_protocol::supports_loading_mode::SupportsLoadingMode;
+use rttp_protocol::surrogate_control::SurrogateControl;
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
+use rttp_protocol::variant_vary::VariantVary;
 use rttp_protocol::vary::Vary;
 use rttp_protocol::x_content_type_options::XContentTypeOptions;
 use rttp_protocol::x_frame_options::XFrameOptions;
@@ -70,19 +99,12 @@ use rttp_protocol::x_frame_options::XFrameOptions;
 const MAX_CACHE_CONTROL_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CACHE_CONTROL_DIRECTIVES: usize = 256;
 const MAX_ACCEPT_MEDIA_TYPES: usize = 256;
-const MAX_DATE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_TYPE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_TYPE_PARAMETERS: usize = 256;
-const MAX_CONTENT_DISPOSITION_VALUE_BYTES: usize = 64 * 1024;
-const MAX_CONTENT_DISPOSITION_PARAMETER_VALUE_BYTES: usize = 64 * 1024;
-const MAX_CONTENT_DISPOSITION_PARAMETERS: usize = 256;
 const MAX_CONTENT_ENCODING_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_ENCODINGS: usize = 256;
 const MAX_CONTENT_LANGUAGE_VALUE_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_LANGUAGE_TAGS: usize = 256;
-
-const MAX_REPORTING_ENDPOINTS_VALUE_BYTES: usize = 64 * 1024;
-const MAX_REPORTING_ENDPOINTS: usize = 256;
 
 #[derive(Clone)]
 pub struct Response {
@@ -350,6 +372,30 @@ impl Response {
     }
   }
 
+  pub fn delta_base_value(&self) -> Option<&String> {
+    self.header_value("delta-base")
+  }
+
+  pub fn delta_base(&self) -> Result<Option<DeltaBase>, DeltaBaseParseError> {
+    let values = self.header_values("delta-base");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    DeltaBase::parse_values(values.into_iter().map(String::as_str)).map(Some)
+  }
+
+  pub fn schedule_tag_value(&self) -> Option<&String> {
+    self.header_value("schedule-tag")
+  }
+
+  pub fn schedule_tag(&self) -> Result<Option<ScheduleTag>, ScheduleTagParseError> {
+    let values = self.header_values("schedule-tag");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    ScheduleTag::parse_values(values.into_iter().map(String::as_str)).map(Some)
+  }
+
   pub fn last_modified(&self) -> Option<&String> {
     self.header_value("last-modified")
   }
@@ -363,29 +409,22 @@ impl Response {
   /// `last_modified()` and `header_value()`.
   pub fn last_modified_date(&self) -> error::Result<Option<SystemTime>> {
     let values = self.header_values("last-modified");
-    match values.as_slice() {
-      [] => Ok(None),
-      [value] => parse_http_date(value)
-        .map(Some)
-        .map_err(|_| error::bad_response("Invalid Last-Modified HTTP-date")),
-      _ => Err(error::bad_response("Duplicate Last-Modified header values")),
+    if values.is_empty() {
+      return Ok(None);
     }
+    ResponseLastModified::parse_values(values.into_iter().map(String::as_str))
+      .map(|last_modified| Some(last_modified.datetime()))
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   pub fn date(&self) -> error::Result<Option<SystemTime>> {
     let values = self.header_values("date");
-    match values.as_slice() {
-      [] => Ok(None),
-      [value] => {
-        if value.len() > MAX_DATE_VALUE_BYTES {
-          return Err(error::bad_response("Date header value is too large"));
-        }
-        parse_http_date(value)
-          .map(Some)
-          .map_err(|_| error::bad_response("Invalid Date HTTP-date"))
-      }
-      _ => Err(error::bad_response("Duplicate Date header values")),
+    if values.is_empty() {
+      return Ok(None);
     }
+    ResponseDate::parse_values(values.into_iter().map(String::as_str))
+      .map(|date| Some(date.datetime()))
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   /// Parses bounded `Age` response metadata without applying freshness or cache policy.
@@ -400,14 +439,13 @@ impl Response {
   }
 
   pub fn expires(&self) -> error::Result<Option<SystemTime>> {
-    self
-      .header_value("expires")
-      .map(|value| {
-        parse_http_date(value)
-          .map(Some)
-          .map_err(|_| error::bad_response("Invalid Expires HTTP-date"))
-      })
-      .unwrap_or(Ok(None))
+    let values = self.header_values("expires");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    ResponseExpires::parse_values(values.into_iter().map(String::as_str))
+      .map(|expires| Some(expires.datetime()))
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   pub fn sunset_value(&self) -> Option<&String> {
@@ -465,12 +503,36 @@ impl Response {
     Allow::parse_values(values.into_iter().map(String::as_str)).map(Some)
   }
 
+  /// Parses bounded `DAV` response metadata without inferring or enforcing
+  /// WebDAV feature support.
+  pub fn dav(&self) -> error::Result<Option<Dav>> {
+    let values = self.header_values("dav");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Dav::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
   pub fn accept_ranges(&self) -> error::Result<Option<AcceptRanges>> {
     let values = self.header_values("accept-ranges");
     if values.is_empty() {
       return Ok(None);
     }
     AcceptRanges::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `IM` response metadata without decoding or applying
+  /// instance manipulations.
+  pub fn im(&self) -> error::Result<Option<Im>> {
+    let values = self.header_values("im");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Im::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
@@ -601,6 +663,45 @@ impl Response {
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
+  /// Parses bounded `Sec-WebSocket-Accept` response metadata without changing
+  /// socket handoff behavior or interpreting WebSocket frames.
+  pub fn sec_websocket_accept(&self) -> error::Result<Option<SecWebSocketAccept>> {
+    let values = self.header_values("sec-websocket-accept");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    SecWebSocketAccept::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses exactly one bounded WebDAV `Lock-Token` field as typed metadata.
+  ///
+  /// Duplicate fields are rejected to avoid ambiguous tokens. This accessor
+  /// does not create, refresh, release, persist, or enforce locks. Parse
+  /// errors remain response errors and do not expose the token value.
+  pub fn lock_token(&self) -> error::Result<Option<LockToken>> {
+    let values = self.header_values("lock-token");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    LockToken::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Verifies `Sec-WebSocket-Accept` against a validated `Sec-WebSocket-Key`.
+  ///
+  /// `Ok(false)` means the singleton field is absent or does not match. Parse
+  /// errors remain response errors and do not expose the key material.
+  pub fn verify_sec_websocket_accept(&self, key: &SecWebSocketKey) -> error::Result<bool> {
+    Ok(
+      self
+        .sec_websocket_accept()?
+        .is_some_and(|accept| accept.verify_key(key)),
+    )
+  }
+
   /// Parses `Preference-Applied` response metadata without applying preference semantics.
   pub fn preference_applied(&self) -> error::Result<Option<PreferenceApplied>> {
     let values = self.header_values("preference-applied");
@@ -642,6 +743,108 @@ impl Response {
       return Ok(None);
     }
     ContentSecurityPolicy::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Content-Security-Policy-Report-Only` response metadata without
+  /// enforcing CSP or sending reports.
+  pub fn content_security_policy_report_only(
+    &self,
+  ) -> error::Result<Option<ContentSecurityPolicyReportOnly>> {
+    let values = self.header_values("content-security-policy-report-only");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    ContentSecurityPolicyReportOnly::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Permissions-Policy` response metadata without enforcing
+  /// browser permissions or origin policy.
+  pub fn permissions_policy(&self) -> error::Result<Option<PermissionsPolicy>> {
+    let values = self.header_values("permissions-policy");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    PermissionsPolicy::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Document-Policy` response metadata without enforcing
+  /// document policy in the HTTP layer.
+  pub fn document_policy(&self) -> error::Result<Option<DocumentPolicy>> {
+    let values = self.header_values("document-policy");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    DocumentPolicy::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Document-Policy-Report-Only` response metadata without
+  /// enforcing document policy or sending reports.
+  pub fn document_policy_report_only(&self) -> error::Result<Option<DocumentPolicyReportOnly>> {
+    let values = self.header_values("document-policy-report-only");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    DocumentPolicyReportOnly::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Supports-Loading-Mode` response metadata without applying
+  /// prerender or fenced-frame loading policy.
+  pub fn supports_loading_mode(&self) -> error::Result<Option<SupportsLoadingMode>> {
+    let values = self.header_values("supports-loading-mode");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    SupportsLoadingMode::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Sec-WebSocket-Version` response metadata without
+  /// negotiating versions or switching protocols.
+  pub fn sec_websocket_version(&self) -> error::Result<Option<SecWebSocketVersion>> {
+    let values = self.header_values("sec-websocket-version");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    SecWebSocketVersion::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Sec-WebSocket-Protocol` response metadata as a
+  /// selection singleton without choosing an application subprotocol or
+  /// switching protocols. A multi-token value returns a parse error while
+  /// raw headers remain available.
+  pub fn sec_websocket_protocol(&self) -> error::Result<Option<SecWebSocketProtocol>> {
+    let values = self.header_values("sec-websocket-protocol");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    SecWebSocketProtocol::parse_selection_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Sec-WebSocket-Extensions` response metadata as a
+  /// selection singleton without activating compression, negotiating
+  /// extensions, or switching protocols. A multi-extension value returns a
+  /// parse error while raw headers remain available.
+  pub fn sec_websocket_extensions(&self) -> error::Result<Option<SecWebSocketExtensions>> {
+    let values = self.header_values("sec-websocket-extensions");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    SecWebSocketExtensions::parse_selection_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
@@ -697,6 +900,18 @@ impl Response {
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
+  /// Parses bounded `Service-Worker-Allowed` response metadata without
+  /// registering service workers or resolving application routing policy.
+  pub fn service_worker_allowed(&self) -> error::Result<Option<ServiceWorkerAllowed>> {
+    let values = self.header_values("service-worker-allowed");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    ServiceWorkerAllowed::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
   /// Parses bounded `Content-DPR` response metadata without rescaling images
   /// or applying Client Hints policy.
   pub fn content_dpr(&self) -> error::Result<Option<ContentDpr>> {
@@ -711,13 +926,12 @@ impl Response {
 
   pub fn content_disposition(&self) -> error::Result<Option<ContentDisposition>> {
     let values = self.header_values("content-disposition");
-    match values.as_slice() {
-      [] => Ok(None),
-      [value] => ContentDisposition::parse(value).map(Some),
-      _ => Err(error::bad_response(
-        "Duplicate Content-Disposition header values",
-      )),
+    if values.is_empty() {
+      return Ok(None);
     }
+    ContentDisposition::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   pub fn content_language(&self) -> error::Result<Option<ContentLanguage>> {
@@ -734,7 +948,9 @@ impl Response {
     if values.is_empty() {
       return Ok(None);
     }
-    ReportingEndpoints::parse_values(values.into_iter().map(String::as_str)).map(Some)
+    ReportingEndpoints::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
   /// Parses the `NEL` response field as bounded W3C Network Error Logging
@@ -745,6 +961,18 @@ impl Response {
       return Ok(None);
     }
     Nel::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses opaque `Speculation-Rules` response metadata without fetching,
+  /// parsing, or executing speculation rule resources.
+  pub fn speculation_rules(&self) -> error::Result<Option<SpeculationRules>> {
+    let values = self.header_values("speculation-rules");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    SpeculationRules::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
@@ -824,6 +1052,18 @@ impl Response {
       return Ok(None);
     }
     ProxyAuthenticationInfo::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses all `Via` fields as bounded hop-chain metadata without appending
+  /// or removing hops or applying proxy policy.
+  pub fn via(&self) -> error::Result<Option<Via>> {
+    let values = self.header_values("via");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Via::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
@@ -950,6 +1190,31 @@ impl Response {
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
+  /// Parses all `Alternates` fields as bounded transparent-negotiation
+  /// metadata. This does not select a variant, fetch a variant URI, or
+  /// change request handling.
+  pub fn alternates(&self) -> error::Result<Option<Alternates>> {
+    let values = self.header_values("alternates");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Alternates::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses `TCN` as bounded transparent-negotiation result metadata. This
+  /// does not select a variant, request alternates, or change cache behavior.
+  pub fn tcn(&self) -> error::Result<Option<Tcn>> {
+    let values = self.header_values("tcn");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Tcn::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
   /// Parses all `Alt-Svc` fields as bounded alternative-service metadata.
   /// This does not migrate connections or select an alternative endpoint.
   pub fn alt_svc(&self) -> error::Result<Option<AltSvc>> {
@@ -962,6 +1227,32 @@ impl Response {
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
+  /// Parses `Alt-Used` as bounded alternative-service authority metadata.
+  /// This does not migrate connections, rewrite origins, or select an
+  /// alternative endpoint.
+  pub fn alt_used(&self) -> error::Result<Option<AltUsed>> {
+    let values = self.header_values("alt-used");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    AltUsed::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses `Origin-Trial` fields as bounded opaque trial tokens.
+  /// This does not validate token signatures, expiration, origin
+  /// applicability, or activate browser trials.
+  pub fn origin_trials(&self) -> error::Result<Option<OriginTrials>> {
+    let values = self.header_values("origin-trial");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    OriginTrials::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
   /// Parses bounded `Upgrade` response metadata without changing socket
   /// handoff behavior or interpreting the upgraded protocol.
   pub fn upgrade(&self) -> error::Result<Option<Upgrade>> {
@@ -970,6 +1261,18 @@ impl Response {
       return Ok(None);
     }
     Upgrade::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Pragma` response metadata without applying cache or
+  /// intermediary policy.
+  pub fn pragma(&self) -> error::Result<Option<Pragma>> {
+    let values = self.header_values("pragma");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Pragma::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
@@ -989,6 +1292,18 @@ impl Response {
       return Ok(None);
     }
     CdnCacheControl::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Surrogate-Control` response metadata without applying CDN
+  /// cache policy or translating directives into `Cache-Control`.
+  pub fn surrogate_control(&self) -> error::Result<Option<SurrogateControl>> {
+    let values = self.header_values("surrogate-control");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    SurrogateControl::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
@@ -1062,12 +1377,39 @@ impl Response {
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
+  /// Parses `Cross-Origin-Opener-Policy-Report-Only` response metadata without
+  /// enforcing opener policy or sending reports.
+  pub fn cross_origin_opener_policy_report_only(
+    &self,
+  ) -> error::Result<Option<CrossOriginOpenerPolicyReportOnly>> {
+    let values = self.header_values("cross-origin-opener-policy-report-only");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    CrossOriginOpenerPolicyReportOnly::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
   pub fn vary(&self) -> error::Result<Option<Vary>> {
     let values = self.header_values("vary");
     if values.is_empty() {
       return Ok(None);
     }
     Vary::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses `Variant-Vary` as bounded RFC 2295 variant-list metadata. This
+  /// does not construct a cache key, select a variant, or change cache
+  /// behavior.
+  pub fn variant_vary(&self) -> error::Result<Option<VariantVary>> {
+    let values = self.header_values("variant-vary");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    VariantVary::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
@@ -1096,8 +1438,8 @@ impl Response {
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
-  /// Parses response `Set-Cookie` fields as bounded opaque metadata without
-  /// creating a cookie jar or applying storage and matching policy.
+  /// Parses response `Set-Cookie` fields through the shared protocol type
+  /// without creating a cookie jar or applying storage and matching policy.
   pub fn set_cookies(&self) -> error::Result<Option<HttpSetCookies>> {
     let values = self.header_values("set-cookie");
     if values.is_empty() {
@@ -1184,6 +1526,8 @@ impl Response {
     self.trailer(name).map(|header| header.value())
   }
 
+  /// Legacy compatibility view derived from protocol `Set-Cookie` metadata.
+  /// Prefer `set_cookies()` for the canonical representation.
   pub fn cookies(&self) -> &Vec<Cookie> {
     self.raw.cookies_get()
   }
@@ -1568,450 +1912,8 @@ fn parse_content_type_quoted_string(value: &str) -> error::Result<String> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ContentDisposition {
-  disposition_type: String,
-  parameters: Vec<ContentDispositionParameter>,
-}
-
-impl ContentDisposition {
-  pub fn parse(value: impl AsRef<str>) -> error::Result<Self> {
-    let value = value.as_ref();
-    if value.len() > MAX_CONTENT_DISPOSITION_VALUE_BYTES {
-      return Err(error::bad_response(
-        "Content-Disposition header value is too large",
-      ));
-    }
-    if value.contains(['\r', '\n']) {
-      return Err(error::bad_response("Invalid Content-Disposition value"));
-    }
-
-    let members = split_content_disposition_members(value)?;
-    let Some(disposition_type) = members.first().map(|member| member.trim()) else {
-      return Err(error::bad_response(
-        "Invalid Content-Disposition disposition type",
-      ));
-    };
-    if !is_token(disposition_type) {
-      return Err(error::bad_response(
-        "Invalid Content-Disposition disposition type",
-      ));
-    }
-
-    let mut parameters = Vec::new();
-    let mut seen = HashSet::new();
-    for member in members.iter().skip(1) {
-      if parameters.len() >= MAX_CONTENT_DISPOSITION_PARAMETERS {
-        return Err(error::bad_response(
-          "Too many Content-Disposition parameters",
-        ));
-      }
-
-      let parameter = ContentDispositionParameter::parse(member)?;
-      let normalized = parameter.name.to_ascii_lowercase();
-      if !seen.insert(normalized) {
-        return Err(error::bad_response(
-          "Duplicate Content-Disposition parameter",
-        ));
-      }
-      parameters.push(parameter);
-    }
-
-    Ok(Self {
-      disposition_type: disposition_type.to_string(),
-      parameters,
-    })
-  }
-
-  pub fn disposition_type(&self) -> &str {
-    &self.disposition_type
-  }
-
-  pub fn parameters(&self) -> &[ContentDispositionParameter] {
-    &self.parameters
-  }
-
-  pub fn parameter(&self, name: impl AsRef<str>) -> Option<&ContentDispositionParameter> {
-    self
-      .parameters
-      .iter()
-      .find(|parameter| parameter.name.eq_ignore_ascii_case(name.as_ref()))
-  }
-
-  pub fn filename(&self) -> Option<&str> {
-    self
-      .parameter("filename")
-      .map(ContentDispositionParameter::value)
-  }
-
-  pub fn filename_ext(&self) -> Option<&str> {
-    self
-      .parameter("filename*")
-      .map(ContentDispositionParameter::value)
-  }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ContentDispositionParameter {
-  name: String,
-  value: String,
-}
-
-impl ContentDispositionParameter {
-  fn parse(value: &str) -> error::Result<Self> {
-    let (name, raw_value) = value
-      .split_once('=')
-      .ok_or_else(|| error::bad_response("Invalid Content-Disposition parameter"))?;
-    let name = name.trim();
-    let raw_value = raw_value.trim();
-    if !is_token(name) {
-      return Err(error::bad_response(
-        "Invalid Content-Disposition parameter name",
-      ));
-    }
-    if raw_value.len() > MAX_CONTENT_DISPOSITION_PARAMETER_VALUE_BYTES {
-      return Err(error::bad_response(
-        "Content-Disposition parameter value is too large",
-      ));
-    }
-
-    let (parsed_value, value_was_quoted) = parse_content_disposition_parameter_value(raw_value)?;
-    if name.eq_ignore_ascii_case("filename*")
-      && (value_was_quoted || !is_content_disposition_ext_value(&parsed_value))
-    {
-      return Err(error::bad_response(
-        "Invalid Content-Disposition filename* parameter",
-      ));
-    }
-
-    Ok(Self {
-      name: name.to_string(),
-      value: parsed_value,
-    })
-  }
-
-  pub fn name(&self) -> &str {
-    &self.name
-  }
-
-  pub fn value(&self) -> &str {
-    &self.value
-  }
-}
-
-fn split_content_disposition_members(value: &str) -> error::Result<Vec<String>> {
-  let mut members = Vec::new();
-  let mut current = String::new();
-  let mut in_quote = false;
-  let mut escaped = false;
-
-  for ch in value.chars() {
-    if escaped {
-      current.push(ch);
-      escaped = false;
-      continue;
-    }
-
-    match ch {
-      '\\' if in_quote => {
-        current.push(ch);
-        escaped = true;
-      }
-      '"' => {
-        current.push(ch);
-        in_quote = !in_quote;
-      }
-      ';' if !in_quote => {
-        push_content_disposition_member(&mut members, &current)?;
-        current.clear();
-      }
-      _ => current.push(ch),
-    }
-  }
-
-  if in_quote || escaped {
-    return Err(error::bad_response(
-      "Malformed Content-Disposition quoted-string",
-    ));
-  }
-  push_content_disposition_member(&mut members, &current)?;
-  Ok(members)
-}
-
-fn push_content_disposition_member(members: &mut Vec<String>, member: &str) -> error::Result<()> {
-  let member = member.trim();
-  if member.is_empty() {
-    return Err(error::bad_response("Invalid Content-Disposition member"));
-  }
-  members.push(member.to_string());
-  Ok(())
-}
-
-fn parse_content_disposition_parameter_value(value: &str) -> error::Result<(String, bool)> {
-  if value.is_empty() {
-    return Err(error::bad_response(
-      "Invalid Content-Disposition parameter value",
-    ));
-  }
-  if let Some(value) = value.strip_prefix('"') {
-    return parse_content_disposition_quoted_string(value).map(|value| (value, true));
-  }
-  if value.contains('"') || !is_token(value) {
-    return Err(error::bad_response(
-      "Invalid Content-Disposition parameter value",
-    ));
-  }
-  Ok((value.to_string(), false))
-}
-
-fn parse_content_disposition_quoted_string(value: &str) -> error::Result<String> {
-  let mut chars = value.chars();
-  let mut parsed = String::new();
-  let mut closed = false;
-
-  while let Some(ch) = chars.next() {
-    match ch {
-      '"' => {
-        closed = true;
-        break;
-      }
-      '\\' => {
-        let Some(escaped) = chars.next() else {
-          return Err(error::bad_response(
-            "Malformed Content-Disposition quoted-string",
-          ));
-        };
-        if !is_quoted_pair_char(escaped) {
-          return Err(error::bad_response(
-            "Malformed Content-Disposition quoted-string",
-          ));
-        }
-        parsed.push(escaped);
-      }
-      _ if is_qdtext(ch) => parsed.push(ch),
-      _ => {
-        return Err(error::bad_response(
-          "Malformed Content-Disposition quoted-string",
-        ))
-      }
-    }
-  }
-
-  if !closed || chars.any(|ch| !ch.is_ascii_whitespace()) {
-    return Err(error::bad_response(
-      "Malformed Content-Disposition quoted-string",
-    ));
-  }
-  Ok(parsed)
-}
-
-fn is_content_disposition_ext_value(value: &str) -> bool {
-  let mut parts = value.splitn(3, '\'');
-  let Some(charset) = parts.next() else {
-    return false;
-  };
-  let Some(language) = parts.next() else {
-    return false;
-  };
-  let Some(encoded_value) = parts.next() else {
-    return false;
-  };
-
-  !charset.is_empty()
-    && is_token(charset)
-    && language.bytes().all(is_content_disposition_language_byte)
-    && !encoded_value.is_empty()
-    && is_content_disposition_ext_value_chars(encoded_value)
-}
-
-fn is_content_disposition_ext_value_chars(value: &str) -> bool {
-  let mut bytes = value.bytes().peekable();
-  while let Some(byte) = bytes.next() {
-    if byte == b'%' {
-      let Some(first) = bytes.next() else {
-        return false;
-      };
-      let Some(second) = bytes.next() else {
-        return false;
-      };
-      if !first.is_ascii_hexdigit() || !second.is_ascii_hexdigit() {
-        return false;
-      }
-    } else if !is_content_disposition_attr_char(byte) {
-      return false;
-    }
-  }
-  true
-}
-
-fn is_content_disposition_attr_char(byte: u8) -> bool {
-  byte.is_ascii_alphanumeric()
-    || matches!(
-      byte,
-      b'!' | b'#' | b'$' | b'&' | b'+' | b'-' | b'.' | b'^' | b'_' | b'`' | b'|' | b'~'
-    )
-}
-
-fn is_content_disposition_language_byte(byte: u8) -> bool {
-  byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.')
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContentLanguage {
   tags: Vec<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ReportingEndpoints {
-  endpoints: Vec<(String, String)>,
-}
-
-impl ReportingEndpoints {
-  pub fn parse(value: impl AsRef<str>) -> error::Result<Self> {
-    Self::parse_values([value.as_ref()])
-  }
-
-  fn parse_values<'a, I>(values: I) -> error::Result<Self>
-  where
-    I: IntoIterator<Item = &'a str>,
-  {
-    let mut endpoints = Vec::new();
-    for value in values {
-      if value.len() > MAX_REPORTING_ENDPOINTS_VALUE_BYTES {
-        return Err(error::bad_response(
-          "Reporting-Endpoints header value is too large",
-        ));
-      }
-      parse_reporting_endpoints_value(value, &mut endpoints)?;
-    }
-    if endpoints.is_empty() {
-      return Err(error::bad_response(
-        "Invalid Reporting-Endpoints dictionary",
-      ));
-    }
-    Ok(Self { endpoints })
-  }
-
-  pub fn endpoints(&self) -> Vec<(&str, &str)> {
-    self
-      .endpoints
-      .iter()
-      .map(|(name, url)| (name.as_str(), url.as_str()))
-      .collect()
-  }
-
-  pub fn endpoint(&self, name: impl AsRef<str>) -> Option<&str> {
-    self
-      .endpoints
-      .iter()
-      .find(|(known, _)| known == name.as_ref())
-      .map(|(_, url)| url.as_str())
-  }
-}
-
-fn parse_reporting_endpoints_value(
-  value: &str,
-  endpoints: &mut Vec<(String, String)>,
-) -> error::Result<()> {
-  let bytes = value.as_bytes();
-  let mut position = 0;
-  while position < bytes.len() {
-    while position < bytes.len() && bytes[position].is_ascii_whitespace() {
-      position += 1;
-    }
-    let name_start = position;
-    while position < bytes.len()
-      && is_reporting_endpoint_key_byte(bytes[position], position == name_start)
-    {
-      position += 1;
-    }
-    if position == name_start {
-      return Err(error::bad_response(
-        "Invalid Reporting-Endpoints endpoint name",
-      ));
-    }
-    let name = &value[name_start..position];
-    if position >= bytes.len() || bytes[position] != b'=' {
-      return Err(error::bad_response(
-        "Invalid Reporting-Endpoints dictionary",
-      ));
-    }
-    position += 1;
-    if position >= bytes.len() || bytes[position] != b'\"' {
-      return Err(error::bad_response(
-        "Reporting-Endpoints URL must be a quoted string",
-      ));
-    }
-    position += 1;
-    let mut url = String::new();
-    loop {
-      let Some(&byte) = bytes.get(position) else {
-        return Err(error::bad_response(
-          "Malformed Reporting-Endpoints quoted string",
-        ));
-      };
-      position += 1;
-      match byte {
-        b'\"' => break,
-        b'\\' => {
-          let Some(&escaped) = bytes.get(position) else {
-            return Err(error::bad_response(
-              "Malformed Reporting-Endpoints quoted string",
-            ));
-          };
-          if !matches!(escaped, b'\"' | b'\\') {
-            return Err(error::bad_response(
-              "Malformed Reporting-Endpoints quoted string",
-            ));
-          }
-          position += 1;
-          url.push(escaped as char);
-        }
-        0..=31 | 127..=u8::MAX => {
-          return Err(error::bad_response(
-            "Malformed Reporting-Endpoints quoted string",
-          ))
-        }
-        _ => url.push(byte as char),
-      }
-    }
-    if endpoints.iter().any(|(known, _)| known == name) {
-      return Err(error::bad_response(
-        "Duplicate Reporting-Endpoints endpoint name",
-      ));
-    }
-    if endpoints.len() >= MAX_REPORTING_ENDPOINTS {
-      return Err(error::bad_response(
-        "Too many Reporting-Endpoints endpoints",
-      ));
-    }
-    endpoints.push((name.to_string(), url));
-    while position < bytes.len() && bytes[position].is_ascii_whitespace() {
-      position += 1;
-    }
-    if position == bytes.len() {
-      break;
-    }
-    if bytes[position] != b',' {
-      return Err(error::bad_response(
-        "Invalid Reporting-Endpoints dictionary",
-      ));
-    }
-    position += 1;
-    if position == bytes.len() {
-      return Err(error::bad_response(
-        "Invalid Reporting-Endpoints dictionary",
-      ));
-    }
-  }
-  Ok(())
-}
-
-fn is_reporting_endpoint_key_byte(byte: u8, first: bool) -> bool {
-  if first {
-    byte.is_ascii_lowercase() || byte == b'*'
-  } else {
-    byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-' | b'.' | b'*')
-  }
 }
 
 impl ContentLanguage {
