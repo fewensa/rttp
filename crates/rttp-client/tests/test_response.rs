@@ -8122,6 +8122,41 @@ fn test_parse_expires_rejects_invalid_helper_values_without_rejecting_response()
     );
     assert_eq!(Some(&value.to_string()), response.header_value("Expires"));
   }
+
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Expires: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+    "expires: Sun, 06 Nov 1994 08:49:38 GMT\r\n",
+    "Content-Length: 2\r\n\r\nOK"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response with duplicate Expires remains usable");
+
+  assert!(
+    response.expires().is_err(),
+    "Expires helper should reject duplicate singleton fields"
+  );
+  assert_eq!(
+    vec![
+      &"Sun, 06 Nov 1994 08:49:37 GMT".to_string(),
+      &"Sun, 06 Nov 1994 08:49:38 GMT".to_string()
+    ],
+    response.header_values("Expires")
+  );
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let raw = format!("HTTP/1.1 200 OK\r\nExpires: {oversized}\r\nContent-Length: 2\r\n\r\nOK");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response with oversized Expires remains usable");
+
+  assert_eq!(
+    "error receive response: Expires header value is too large",
+    response
+      .expires()
+      .expect_err("Expires helper should reject oversized values")
+      .to_string()
+  );
+  assert_eq!(Some(&oversized), response.header_value("Expires"));
 }
 
 #[test]

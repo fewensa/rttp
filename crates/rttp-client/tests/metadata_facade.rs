@@ -19,13 +19,15 @@ use rttp_client::response::{
   PermissionsPolicy, PermissionsPolicyParseError, Pragma, PragmaParseError, PreferenceApplied,
   Priority, ProxyAuthenticate, ProxyAuthenticateParseError, ProxyAuthenticationInfo,
   ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError, ReferrerPolicy,
-  ReferrerPolicyToken, ScheduleTag, SecWebSocketAccept, SecWebSocketAcceptParseError,
-  SecWebSocketExtensions, SecWebSocketExtensionsParseError, SecWebSocketProtocol,
-  SecWebSocketProtocolParseError, SecWebSocketVersion, SecWebSocketVersionParseError, ServerTiming,
-  Signature, SignatureInput, SignatureInputParseError, SignatureParseError, SpeculationRules,
-  SpeculationRulesParseError, StrictTransportSecurity, StrictTransportSecurityParseError,
-  SupportsLoadingMode, SupportsLoadingModeParseError, SurrogateControl, SurrogateControlParseError,
-  Trailer, TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError, VariantVary,
+  ReferrerPolicyToken, ResponseDate, ResponseDateParseError, ResponseExpires,
+  ResponseExpiresParseError, ResponseLastModified, ResponseLastModifiedParseError, ScheduleTag,
+  SecWebSocketAccept, SecWebSocketAcceptParseError, SecWebSocketExtensions,
+  SecWebSocketExtensionsParseError, SecWebSocketProtocol, SecWebSocketProtocolParseError,
+  SecWebSocketVersion, SecWebSocketVersionParseError, ServerTiming, Signature, SignatureInput,
+  SignatureInputParseError, SignatureParseError, SpeculationRules, SpeculationRulesParseError,
+  StrictTransportSecurity, StrictTransportSecurityParseError, SupportsLoadingMode,
+  SupportsLoadingModeParseError, SurrogateControl, SurrogateControlParseError, Trailer,
+  TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError, VariantVary,
   VariantVaryParseError, Vary, VaryParseError, Via, ViaParseError, WantContentDigest,
   WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError, XContentTypeOptions,
   XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
@@ -189,6 +191,18 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     MementoDatetime::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Memento-Datetime should parse");
   let _: MementoDatetimeParseError =
     MementoDatetime::parse("").expect_err("empty Memento-Datetime should be rejected");
+  let response_date = ResponseDate::parse("Sun, 06 Nov 1994 08:49:37 GMT")
+    .expect("Date response metadata should parse");
+  let _: ResponseDateParseError =
+    ResponseDate::parse("").expect_err("empty Date should be rejected");
+  let response_expires = ResponseExpires::parse("Sun, 06 Nov 1994 08:49:37 GMT")
+    .expect("Expires response metadata should parse");
+  let _: ResponseExpiresParseError =
+    ResponseExpires::parse("").expect_err("empty Expires should be rejected");
+  let response_last_modified = ResponseLastModified::parse("Sun, 06 Nov 1994 08:49:37 GMT")
+    .expect("Last-Modified response metadata should parse");
+  let _: ResponseLastModifiedParseError =
+    ResponseLastModified::parse("").expect_err("empty Last-Modified should be rejected");
   let no_vary_search =
     NoVarySearch::parse(r#"params=("utm_source")"#).expect("No-Vary-Search should parse");
   let _: NoVarySearchParseError =
@@ -494,6 +508,18 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(location.as_str(), "/next");
   assert_eq!(
     memento_datetime.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
+    response_date.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
+    response_expires.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
+    response_last_modified.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
   );
   assert_eq!(
@@ -1419,7 +1445,7 @@ fn response_facade_parses_shared_set_cookie_metadata() {
     rttp_client::types::RoUrl::with("http://example.test/"),
     concat!(
       "HTTP/1.1 200 OK\r\n",
-      "Set-Cookie: session=\"abc def\"; Path=/; HttpOnly; SameSite=Lax; Priority=High; Partitioned\r\n",
+      "Set-Cookie: session=\"abc;def\"; Path=/; HttpOnly; SameSite=Lax; Priority=High; Partitioned\r\n",
       "Set-Cookie: csrf=token; Path=/form; Max-Age=60; Foo=bar\r\n",
       "Content-Length: 0\r\n",
       "\r\n"
@@ -1438,7 +1464,7 @@ fn response_facade_parses_shared_set_cookie_metadata() {
   assert!(cookies.cookies()[0].is_value_quoted());
   assert_eq!(
     vec![
-      r#"session="abc def"; Path=/; HttpOnly; SameSite=Lax; Priority=High; Partitioned"#,
+      r#"session="abc;def"; Path=/; HttpOnly; SameSite=Lax; Priority=High; Partitioned"#,
       "csrf=token; Path=/form; Max-Age=60; Foo=bar"
     ],
     response
@@ -1447,7 +1473,11 @@ fn response_facade_parses_shared_set_cookie_metadata() {
       .map(|value| value.as_str())
       .collect::<Vec<_>>()
   );
-  assert!(!format!("{cookies:?}").contains("abc def"));
+  assert_eq!(
+    r#"session="abc;def"; path=/; httpOnly; SameSite=Lax"#,
+    response.cookie("session").expect("legacy cookie").string()
+  );
+  assert!(!format!("{cookies:?}").contains("abc;def"));
   assert!(!format!("{cookies:?}").contains("token"));
 
   let malformed = rttp_client::response::Response::new(

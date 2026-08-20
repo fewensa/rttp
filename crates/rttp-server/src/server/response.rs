@@ -121,6 +121,12 @@ pub use rttp_protocol::document_policy_report_only::{
   DocumentPolicyReportOnlyParseError as HttpDocumentPolicyReportOnlyParseError,
   DocumentPolicyReportOnlyValue as HttpDocumentPolicyReportOnlyValue,
 };
+pub use rttp_protocol::http_date::{
+  ResponseDate as HttpResponseDate, ResponseDateParseError as HttpResponseDateParseError,
+  ResponseExpires as HttpResponseExpires, ResponseExpiresParseError as HttpExpiresParseError,
+  ResponseLastModified as HttpResponseLastModified,
+  ResponseLastModifiedParseError as HttpResponseLastModifiedParseError,
+};
 pub use rttp_protocol::im::{
   Im as HttpIm, ImMember as HttpImMember, ImParameter as HttpImParameter,
   ImParseError as HttpImParseError,
@@ -993,7 +999,10 @@ impl HttpResponse {
       response = response.header("ETag", entity_tag.header_value());
     }
     if let Some(last_modified) = metadata.last_modified_value() {
-      response = response.header("Last-Modified", httpdate::fmt_http_date(last_modified));
+      response = response.header(
+        "Last-Modified",
+        HttpResponseLastModified::new(last_modified).header_value(),
+      );
     }
     response
   }
@@ -2209,10 +2218,35 @@ impl HttpResponse {
     self
   }
 
+  pub fn with_date(mut self, http_date: SystemTime) -> Self {
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Date"));
+    self.headers.push(HttpHeader::new(
+      "Date",
+      HttpResponseDate::new(http_date).header_value(),
+    ));
+    self
+  }
+
   pub fn with_expires(mut self, http_date: SystemTime) -> Self {
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Expires"));
     self.headers.push(HttpHeader::new(
       "Expires",
-      httpdate::fmt_http_date(http_date),
+      HttpResponseExpires::new(http_date).header_value(),
+    ));
+    self
+  }
+
+  pub fn with_last_modified(mut self, http_date: SystemTime) -> Self {
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Last-Modified"));
+    self.headers.push(HttpHeader::new(
+      "Last-Modified",
+      HttpResponseLastModified::new(http_date).header_value(),
     ));
     self
   }
@@ -3516,16 +3550,45 @@ impl HttpResponse {
   }
 
   pub fn expires(&self) -> Result<Option<SystemTime>, HttpExpiresParseError> {
-    let Some(value) = self.single_header_value(
-      "Expires",
-      HttpExpiresParseError::new("multiple Expires headers"),
-    )?
-    else {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Expires"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
       return Ok(None);
-    };
-    httpdate::parse_http_date(value)
-      .map(Some)
-      .map_err(|_| HttpExpiresParseError::new("invalid Expires HTTP-date"))
+    }
+    HttpResponseExpires::parse_values(values).map(|expires| Some(expires.datetime()))
+  }
+
+  pub fn date(&self) -> Result<Option<SystemTime>, HttpResponseDateParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Date"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpResponseDate::parse_values(values).map(|date| Some(date.datetime()))
+  }
+
+  pub fn last_modified_date(
+    &self,
+  ) -> Result<Option<SystemTime>, HttpResponseLastModifiedParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Last-Modified"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpResponseLastModified::parse_values(values)
+      .map(|last_modified| Some(last_modified.datetime()))
   }
 
   pub fn sunset(&self) -> Result<Option<SystemTime>, HttpSunsetParseError> {
@@ -3828,27 +3891,6 @@ impl fmt::Display for HttpAgeParseError {
 }
 
 impl Error for HttpAgeParseError {}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HttpExpiresParseError {
-  pub(crate) message: String,
-}
-
-impl HttpExpiresParseError {
-  pub(crate) fn new<S: AsRef<str>>(message: S) -> Self {
-    Self {
-      message: message.as_ref().to_string(),
-    }
-  }
-}
-
-impl fmt::Display for HttpExpiresParseError {
-  fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    formatter.write_str(&self.message)
-  }
-}
-
-impl Error for HttpExpiresParseError {}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HttpRetryAfter {

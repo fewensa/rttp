@@ -651,7 +651,11 @@ fn age_expires_response(age: &str, expires: &str, include_cache_metadata: bool) 
   let mut response = String::from("HTTP/1.1 200 OK\r\n");
   response.push_str("Age: ");
   response.push_str(age);
+  response.push_str("\r\nDate: ");
+  response.push_str(expires);
   response.push_str("\r\nExpires: ");
+  response.push_str(expires);
+  response.push_str("\r\nLast-Modified: ");
   response.push_str(expires);
   response.push_str("\r\n");
   if include_cache_metadata {
@@ -5185,6 +5189,14 @@ fn assert_expires_helper_rejects_but_preserves_response(name: &str, raw_response
     response.expires().is_err(),
     "{name} helper should reject invalid Expires"
   );
+  assert!(
+    response.date().is_err(),
+    "{name} helper should reject invalid Date"
+  );
+  assert!(
+    response.last_modified_date().is_err(),
+    "{name} helper should reject invalid Last-Modified"
+  );
   assert_eq!("OK", response.body().string().unwrap(), "{name}");
 
   handle.join().expect("raw response server thread");
@@ -5870,7 +5882,7 @@ fn sync_client_parses_shared_age_response_matrix() {
 
 #[test]
 fn sync_client_parses_shared_expires_response_matrix() {
-  for case in fixtures::age_expires::expires_cases() {
+  for case in fixtures::response_http_date::valid_cases() {
     let raw_response = age_expires_response("0", case.value, false);
     let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
 
@@ -5883,14 +5895,42 @@ fn sync_client_parses_shared_expires_response_matrix() {
     assert_eq!(
       Some(std::time::UNIX_EPOCH + Duration::from_secs(case.unix_seconds)),
       response
+        .date()
+        .unwrap_or_else(|err| panic!("{} Date should parse: {err}", case.name)),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      Some(std::time::UNIX_EPOCH + Duration::from_secs(case.unix_seconds)),
+      response
         .expires()
         .unwrap_or_else(|err| panic!("{} Expires should parse: {err}", case.name)),
       "{}",
       case.name
     );
     assert_eq!(
+      Some(std::time::UNIX_EPOCH + Duration::from_secs(case.unix_seconds)),
+      response
+        .last_modified_date()
+        .unwrap_or_else(|err| panic!("{} Last-Modified should parse: {err}", case.name)),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      Some(&case.value.to_string()),
+      response.header_value("Date"),
+      "{}",
+      case.name
+    );
+    assert_eq!(
       Some(&case.value.to_string()),
       response.header_value("Expires"),
+      "{}",
+      case.name
+    );
+    assert_eq!(
+      Some(&case.value.to_string()),
+      response.header_value("Last-Modified"),
       "{}",
       case.name
     );
@@ -6672,12 +6712,63 @@ fn sync_client_age_and_expires_helpers_reject_shared_invalid_matrix() {
     );
   }
 
-  for case in fixtures::age_expires::invalid_expires_cases() {
+  for case in fixtures::response_http_date::invalid_cases() {
     assert_expires_helper_rejects_but_preserves_response(
       case.name,
       age_expires_response("0", case.value, false),
     );
   }
+}
+
+#[test]
+fn sync_client_http_date_helpers_reject_duplicate_and_oversized_shared_matrix() {
+  let raw_response = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Date: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+    "Date: Sun, 06 Nov 1994 08:49:38 GMT\r\n",
+    "Expires: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+    "Expires: Sun, 06 Nov 1994 08:49:38 GMT\r\n",
+    "Last-Modified: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+    "Last-Modified: Sun, 06 Nov 1994 08:49:38 GMT\r\n",
+    "Content-Length: 2\r\n\r\nOK"
+  )
+  .as_bytes()
+  .to_vec();
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/http-date-duplicate"))
+    .emit()
+    .expect("duplicate HTTP-date response remains parseable");
+
+  assert!(response.date().is_err());
+  assert!(response.expires().is_err());
+  assert!(response.last_modified_date().is_err());
+  assert_eq!("OK", response.body().string().unwrap());
+  handle.join().expect("raw response server thread");
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let raw_response = format!(
+    "HTTP/1.1 200 OK\r\nDate: {oversized}\r\nExpires: {oversized}\r\nLast-Modified: {oversized}\r\nContent-Length: 2\r\n\r\nOK"
+  )
+  .into_bytes();
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/http-date-oversized"))
+    .emit()
+    .expect("oversized HTTP-date response remains parseable");
+
+  assert!(response.date().is_err());
+  assert!(response.expires().is_err());
+  assert!(response.last_modified_date().is_err());
+  assert_eq!(Some(&oversized), response.header_value("Date"));
+  assert_eq!(Some(&oversized), response.header_value("Expires"));
+  assert_eq!(Some(&oversized), response.header_value("Last-Modified"));
+  assert_eq!("OK", response.body().string().unwrap());
+  handle.join().expect("raw response server thread");
 }
 
 #[test]

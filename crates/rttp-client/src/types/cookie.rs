@@ -53,7 +53,7 @@ impl Cookie {
   }
 
   pub fn string(&self) -> String {
-    let mut text = format!("{}={}", self.name, self.value,);
+    let mut text = format!("{}={}", self.name, serialize_cookie_value(&self.value),);
     if let Some(path) = &self.path {
       text.push_str(&format!("; path={}", path));
     }
@@ -84,6 +84,24 @@ impl Cookie {
     }
     text
   }
+}
+
+fn serialize_cookie_value(value: &str) -> String {
+  if value.bytes().all(is_cookie_octet) {
+    return value.to_owned();
+  }
+  if value.bytes().all(is_generated_quoted_cookie_value_byte) {
+    return format!("\"{}\"", value);
+  }
+  value.to_owned()
+}
+
+fn is_cookie_octet(byte: u8) -> bool {
+  matches!(byte, 0x21 | 0x23..=0x2b | 0x2d..=0x3a | 0x3c..=0x5b | 0x5d..=0x7e)
+}
+
+fn is_generated_quoted_cookie_value_byte(byte: u8) -> bool {
+  matches!(byte, 0x20..=0x7e) && byte != b'"' && byte != b'\\'
 }
 
 impl Cookie {

@@ -19,12 +19,13 @@ use rttp_server::server::{
   HttpDepthParseError, HttpDocumentPolicy, HttpDocumentPolicyDirective,
   HttpDocumentPolicyParseError, HttpDocumentPolicyReportOnly,
   HttpDocumentPolicyReportOnlyParseError, HttpDocumentPolicyReportOnlyValue,
-  HttpDocumentPolicyValue, HttpEntityTag, HttpExpectParseError, HttpExpectations, HttpHost,
-  HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIf, HttpIfCondition, HttpIfList,
-  HttpIfModifiedSince, HttpIfModifiedSinceParseError, HttpIfParseError, HttpIfPredicate,
-  HttpIfResourceTag, HttpIfScheduleTagMatch, HttpIfScheduleTagMatchParseError, HttpIfStateToken,
-  HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError, HttpIm, HttpImMember, HttpImParameter,
-  HttpImParseError, HttpKeepAlive, HttpLockToken, HttpLockTokenParseError, HttpMaxForwards,
+  HttpDocumentPolicyValue, HttpEntityTag, HttpExpectParseError, HttpExpectations,
+  HttpExpiresParseError, HttpHost, HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIf,
+  HttpIfCondition, HttpIfList, HttpIfModifiedSince, HttpIfModifiedSinceParseError,
+  HttpIfParseError, HttpIfPredicate, HttpIfResourceTag, HttpIfScheduleTagMatch,
+  HttpIfScheduleTagMatchParseError, HttpIfStateToken, HttpIfUnmodifiedSince,
+  HttpIfUnmodifiedSinceParseError, HttpIm, HttpImMember, HttpImParameter, HttpImParseError,
+  HttpKeepAlive, HttpLockToken, HttpLockTokenParseError, HttpMaxForwards,
   HttpMaxForwardsParseError, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNegotiate,
   HttpNegotiateDirective, HttpNegotiateParseError, HttpNoVarySearch, HttpNoVarySearchParams,
   HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpOverwriteParseError,
@@ -32,20 +33,21 @@ use rttp_server::server::{
   HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective,
   HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus,
   HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
-  HttpResponse, HttpSameSite, HttpSaveData, HttpSaveDataParseError, HttpScheduleTag, HttpSecGpc,
-  HttpSecGpcParseError, HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError,
-  HttpSecWebSocketExtensions, HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey,
-  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
-  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
-  HttpServiceWorkerAllowedParseError, HttpSetCookie, HttpSetCookies, HttpSignature,
-  HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
-  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpSurrogateControl,
-  HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective, HttpTcnParseError, HttpTimeout,
-  HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent, HttpTraceParentParseError,
-  HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
-  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpResponse, HttpResponseDate, HttpResponseDateParseError, HttpResponseExpires,
+  HttpResponseLastModified, HttpResponseLastModifiedParseError, HttpSameSite, HttpSaveData,
+  HttpSaveDataParseError, HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError,
+  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
+  HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
+  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
+  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
+  HttpSetCookie, HttpSetCookies, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
+  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
+  HttpSignatureInputParseError, HttpSignatureParseError, HttpSpeculationRules,
+  HttpSpeculationRulesParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError,
+  HttpSurrogateControl, HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective,
+  HttpTcnParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent,
+  HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError,
+  HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
   HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpVariantVary,
   HttpVariantVaryParseError, HttpVia, HttpViaMember, HttpViaParseError, HttpWantContentDigest,
   HttpWantReprDigest, HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost,
@@ -339,8 +341,24 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     .expect("Memento-Datetime should parse");
   let _: HttpMementoDatetimeParseError =
     HttpMementoDatetime::parse("").expect_err("empty Memento-Datetime should be rejected");
+  let response_date =
+    HttpResponseDate::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Date should parse");
+  let _: HttpResponseDateParseError =
+    HttpResponseDate::parse("").expect_err("empty Date should be rejected");
+  let response_expires =
+    HttpResponseExpires::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Expires should parse");
+  let _: HttpExpiresParseError =
+    HttpResponseExpires::parse("").expect_err("empty Expires should be rejected");
+  let response_last_modified = HttpResponseLastModified::parse("Sun, 06 Nov 1994 08:49:37 GMT")
+    .expect("Last-Modified should parse");
+  let _: HttpResponseLastModifiedParseError =
+    HttpResponseLastModified::parse("").expect_err("empty Last-Modified should be rejected");
   let memento_response = HttpResponse::ok("")
     .with_memento_datetime(std::time::UNIX_EPOCH + std::time::Duration::from_secs(784_111_777));
+  let http_date_response = HttpResponse::ok("")
+    .with_date(std::time::UNIX_EPOCH + std::time::Duration::from_secs(784_111_777))
+    .with_expires(std::time::UNIX_EPOCH + std::time::Duration::from_secs(784_111_777))
+    .with_last_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(784_111_777));
   let keep_alive_response = HttpResponse::ok("")
     .with_keep_alive("timeout=5, max=100")
     .expect("Keep-Alive should be accepted");
@@ -771,12 +789,38 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     "Sun, 06 Nov 1994 08:49:37 GMT"
   );
   assert_eq!(
+    response_date.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
+    response_expires.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
+    response_last_modified.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
     memento_response
       .memento_datetime()
       .expect("Memento-Datetime should parse")
       .expect("Memento-Datetime should be present")
       .header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
+    Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(784_111_777)),
+    http_date_response.date().expect("Date should parse")
+  );
+  assert_eq!(
+    Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(784_111_777)),
+    http_date_response.expires().expect("Expires should parse")
+  );
+  assert_eq!(
+    Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(784_111_777)),
+    http_date_response
+      .last_modified_date()
+      .expect("Last-Modified should parse")
   );
 }
 
@@ -811,6 +855,61 @@ fn response_facade_parses_cache_status_and_absent_metadata() {
     .cache_status()
     .expect("missing header should be valid")
     .is_none());
+}
+
+#[test]
+fn response_http_date_setters_replace_existing_singleton_fields() {
+  let timestamp = std::time::UNIX_EPOCH + std::time::Duration::from_secs(784_111_777);
+  let response = HttpResponse::ok("")
+    .header("Date", "not a date")
+    .header("date", "Sun, 06 Nov 1994 08:49:38 GMT")
+    .header("Expires", "not a date")
+    .header("expires", "Sun, 06 Nov 1994 08:49:38 GMT")
+    .header("Last-Modified", "not a date")
+    .header("last-modified", "Sun, 06 Nov 1994 08:49:38 GMT")
+    .with_date(timestamp)
+    .with_expires(timestamp)
+    .with_last_modified(timestamp);
+
+  assert_eq!(
+    Some(timestamp),
+    response
+      .date()
+      .expect("Date should parse after replacement")
+  );
+  assert_eq!(
+    Some(timestamp),
+    response
+      .expires()
+      .expect("Expires should parse after replacement")
+  );
+  assert_eq!(
+    Some(timestamp),
+    response
+      .last_modified_date()
+      .expect("Last-Modified should parse after replacement")
+  );
+  let mut serialized = Vec::new();
+  response.write_to(&mut serialized).expect("response writes");
+  let serialized = String::from_utf8(serialized).expect("response is utf8");
+  assert_eq!(
+    1,
+    serialized.matches("\r\nDate: ").count(),
+    "Date should be serialized once"
+  );
+  assert_eq!(
+    1,
+    serialized.matches("\r\nExpires: ").count(),
+    "Expires should be serialized once"
+  );
+  assert_eq!(
+    1,
+    serialized.matches("\r\nLast-Modified: ").count(),
+    "Last-Modified should be serialized once"
+  );
+  assert!(serialized.contains("\r\nDate: Sun, 06 Nov 1994 08:49:37 GMT\r\n"));
+  assert!(serialized.contains("\r\nExpires: Sun, 06 Nov 1994 08:49:37 GMT\r\n"));
+  assert!(serialized.contains("\r\nLast-Modified: Sun, 06 Nov 1994 08:49:37 GMT\r\n"));
 }
 
 #[test]
