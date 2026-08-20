@@ -23,8 +23,8 @@ use rttp_server::server::{
   HttpIfModifiedSinceParseError, HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError,
   HttpKeepAlive, HttpMaxForwards, HttpMaxForwardsParseError, HttpMementoDatetime,
   HttpMementoDatetimeParseError, HttpNoVarySearch, HttpNoVarySearchParams,
-  HttpOriginTrialParseError, HttpOriginTrials, HttpPermissionsPolicy,
-  HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
+  HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpOverwriteParseError,
+  HttpPermissionsPolicy, HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
   HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective,
   HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus,
   HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
@@ -46,6 +46,41 @@ use rttp_server::server::{
   HttpXForwardedProto, HttpXForwardedProtoParseError, SecFetchDest, SecFetchMode, SecFetchSite,
   SecFetchUser, SecPurpose,
 };
+
+#[test]
+fn server_dav_response_metadata_uses_protocol_representation() {
+  let response = HttpResponse::ok("")
+    .header("DAV", "legacy")
+    .with_dav("1, 2, extended-mkcol, <https://dav.example.test/ns>")
+    .expect("valid DAV metadata should be accepted");
+  let dav = response
+    .dav()
+    .expect("DAV metadata should parse")
+    .expect("DAV metadata should be present");
+
+  assert_eq!(
+    "1, 2, extended-mkcol, <https://dav.example.test/ns>",
+    dav.header_value()
+  );
+  let rendered = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert!(rendered.contains("\r\nDAV: 1, 2, extended-mkcol, <https://dav.example.test/ns>\r\n"));
+  assert!(!rendered.contains("\r\nDAV: legacy\r\n"));
+
+  let unchanged = HttpResponse::ok("").header("DAV", "1");
+  assert!(unchanged.clone().with_dav("1, 1").is_err());
+  assert_eq!(
+    "1",
+    unchanged
+      .dav()
+      .expect("original DAV should still parse")
+      .expect("original DAV should be present")
+      .header_value()
+  );
+
+  let oversized = format!("x{}", "a".repeat(64 * 1024));
+  let invalid = HttpResponse::ok("").header("DAV", oversized);
+  assert!(invalid.dav().is_err());
+}
 
 #[test]
 fn server_facade_exports_representative_bounded_metadata_types() {
@@ -131,6 +166,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpTimeout::parse("Second-60, Infinite").expect("Timeout should parse");
   let timeout_error: Result<HttpTimeout, HttpTimeoutParseError> =
     HttpTimeout::parse("Second-60, second-60");
+  let overwrite: HttpOverwrite = HttpOverwrite::parse("F").expect("Overwrite should parse");
+  let overwrite_error: Result<HttpOverwrite, HttpOverwriteParseError> = HttpOverwrite::parse("t");
   let expectations: HttpExpectations =
     HttpExpectations::parse("100-continue, preview").expect("Expect should parse");
   let expectations_error: Result<HttpExpectations, HttpExpectParseError> =
@@ -371,6 +408,9 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   );
   assert_eq!("second-60, infinite", timeout.header_value());
   assert!(timeout_error.is_err());
+  assert_eq!(HttpOverwrite::F, overwrite);
+  assert_eq!("F", overwrite.header_value());
+  assert!(overwrite_error.is_err());
   assert!(expectations.expects_continue());
   assert_eq!(["preview"], expectations.unsupported());
   assert_eq!(expectations.header_value(), "100-continue, preview");
@@ -1105,6 +1145,51 @@ fn request_facade_parses_timeout_metadata_without_policy() {
   assert!(
     HttpTimeout::parse(format!("{}Second-1", " ".repeat(64 * 1024 + 1))).is_err(),
     "oversized Timeout values must fail closed"
+  );
+}
+
+#[test]
+fn request_facade_parses_overwrite_metadata_without_policy() {
+  let request = HttpRequest::parse(
+    b"COPY /documents/source.txt HTTP/1.1\r\nHost: example.test\r\nOverwrite: F\r\n\r\n",
+  )
+  .expect("request should parse");
+  let overwrite: HttpOverwrite = request
+    .overwrite()
+    .expect("Overwrite should parse")
+    .expect("Overwrite should be present");
+
+  assert_eq!(HttpOverwrite::F, overwrite);
+  assert_eq!("F", overwrite.header_value());
+  assert_eq!(Some("F"), request.header("Overwrite"));
+
+  let absent =
+    HttpRequest::parse(b"COPY /documents/source.txt HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .overwrite()
+      .expect("missing Overwrite should be accepted")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"COPY /documents/source.txt HTTP/1.1\r\nHost: example.test\r\nOverwrite: true\r\n\r\n",
+  )
+  .expect("malformed Overwrite request should still parse");
+  assert!(malformed.overwrite().is_err());
+  assert_eq!(Some("true"), malformed.header("Overwrite"));
+
+  let duplicate = HttpRequest::parse(
+    b"COPY /documents/source.txt HTTP/1.1\r\nHost: example.test\r\nOverwrite: T\r\noverwrite: F\r\n\r\n",
+  )
+  .expect("duplicate Overwrite request should still parse");
+  assert!(duplicate.overwrite().is_err());
+  assert_eq!(Some("T"), duplicate.header("Overwrite"));
+
+  assert!(
+    HttpOverwrite::parse("T".repeat(64 * 1024 + 1)).is_err(),
+    "oversized Overwrite values must fail closed"
   );
 }
 

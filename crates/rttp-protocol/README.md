@@ -133,6 +133,18 @@ errors. `header_value()` emits the canonical singleton value. This parser
 reports declared request metadata only; it does not traverse resources,
 select WebDAV methods, or enforce method policy.
 
+## DAV
+
+`dav` parses one or more WebDAV `DAV` response fields into an ordered list of
+compliance classes. Recognized standard classes are `1`, `2`, and `3`;
+well-formed HTTP tokens are retained as extension classes, and `<absolute-URI>`
+Coded-URLs are retained without URI normalization. Each field value and the
+aggregate input are bounded to 64 KiB, and the combined list is bounded to 32
+members. Empty members, malformed tokens, malformed or relative Coded-URLs,
+duplicates, oversized input, too many members, and forbidden ASCII control
+bytes are errors. This parser reports declared response metadata only; it does
+not infer, negotiate, or enforce WebDAV feature support.
+
 ## Destination
 
 `destination` parses a singleton WebDAV `Destination` request field as one
@@ -160,6 +172,18 @@ case-insensitively and emitted in lowercase. Empty members, overflow,
 duplicates, too many members, oversized input, and forbidden ASCII control
 bytes are errors. This parser reports declared request metadata only; it does
 not create locks, refresh locks, or select an application timeout.
+
+## Overwrite
+
+`overwrite` parses a singleton WebDAV `Overwrite` request field as the token
+`T` or `F`. Each field value is bounded to 64 KiB. A second field is rejected
+after every supplied field is bound-checked. Surrounding SP and HTAB are
+trimmed as optional whitespace; the tokens are matched case-sensitively.
+Empty values, lowercase or other tokens, comma-lists, oversized values, and
+forbidden ASCII control bytes are errors. `header_value()` emits the accepted
+token unchanged. This parser reports declared request metadata only; it does
+not overwrite destination resources, apply the RFC 4918 default `T` when the
+field is absent, or enforce WebDAV policy.
 
 ## Idempotency-Key
 

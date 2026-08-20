@@ -73,6 +73,9 @@ pub use rttp_protocol::if_unmodified_since::{
 pub use rttp_protocol::max_forwards::{
   MaxForwards as HttpMaxForwards, MaxForwardsParseError as HttpMaxForwardsParseError,
 };
+pub use rttp_protocol::overwrite::{
+  Overwrite as HttpOverwrite, OverwriteParseError as HttpOverwriteParseError,
+};
 pub use rttp_protocol::pragma::{
   Pragma as HttpPragma, PragmaDirective as HttpPragmaDirective,
   PragmaParseError as HttpPragmaParseError,
@@ -583,6 +586,16 @@ impl Request {
       return Ok(None);
     }
     HttpTimeout::parse_values(values).map(Some)
+  }
+
+  /// Parses received WebDAV `Overwrite` request metadata without overwriting
+  /// destination resources or applying the RFC 4918 default `T`.
+  pub fn overwrite(&self) -> Result<Option<HttpOverwrite>, HttpOverwriteParseError> {
+    let values: Vec<&str> = self.headers_named("Overwrite").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpOverwrite::parse_values(values).map(Some)
   }
 
   /// Parses exactly one opaque, bounded `Idempotency-Key` field as typed
@@ -2441,6 +2454,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpTimeout::parse_values(values).map(Some)
+  }
+
+  /// Parses received WebDAV `Overwrite` request metadata without overwriting
+  /// destination resources or applying the RFC 4918 default `T`.
+  pub fn overwrite(&self) -> Result<Option<HttpOverwrite>, HttpOverwriteParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Overwrite"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpOverwrite::parse_values(values).map(Some)
   }
 
   /// Parses exactly one opaque, bounded `Idempotency-Key` field as typed

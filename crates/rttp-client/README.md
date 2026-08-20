@@ -80,6 +80,29 @@ canonical metadata value: RTTP does not create locks, refresh locks, or select
 an application timeout. Callers needing an unusual value can retain full
 raw-header control with `header(("Timeout", "..."))`.
 
+## Bounded WebDAV Overwrite metadata
+
+`HttpClient::overwrite(value)` sets a WebDAV `Overwrite` request header
+through the shared protocol `Overwrite` type. The helper accepts the
+singleton tokens `T` and `F`, trims HTTP OWS, and rejects empty, lowercase,
+comma-list, oversized (over 64 KiB), duplicate, and control-byte values
+before a socket is opened. It only validates and emits the canonical metadata
+value: RTTP does not overwrite destination resources, apply the RFC 4918
+default `T` when the header is absent, or enforce WebDAV policy. Callers
+needing an unusual value can retain full raw-header control with
+`header(("Overwrite", "..."))`.
+
+## Bounded WebDAV DAV response metadata
+
+`Response::dav()` parses WebDAV `DAV` response fields through the shared
+protocol `Dav` type. The helper preserves wire order across repeated fields,
+accepts standard classes `1`, `2`, and `3`, extension tokens, and
+`<absolute-URI>` Coded-URLs, and rejects malformed, duplicate, oversized,
+aggregate-oversized, or over-32-member values while raw response headers remain
+available through the ordinary header accessors. It exposes response metadata
+only: RTTP does not infer, negotiate, or enforce WebDAV feature support from
+the header.
+
 ## Bounded Idempotency-Key metadata
 
 `HttpClient::idempotency_key(value)` sets an `Idempotency-Key` request header
@@ -1366,6 +1389,7 @@ header-block model.
 | Depth | `depth` emits bounded singleton WebDAV `Depth` request metadata through the shared protocol type, normalizing `infinity` to lowercase and replacing an existing same-name field | No resource traversal, WebDAV method selection, method-policy enforcement, retry, or forwarding policy |
 | Destination | `destination` emits bounded singleton WebDAV `Destination` request metadata through the shared protocol type, preserving one absolute URI and replacing an existing same-name field | No destination resolution, URI normalization, authorization, COPY/MOVE execution, or application resource policy |
 | Timeout | `timeout` emits bounded ordered WebDAV `Timeout` request metadata through the shared protocol type, normalizing `Second-n`/`Infinite` alternatives to lowercase and replacing an existing same-name field | No lock creation, lock refresh, application-timeout selection, retry, or forwarding policy |
+| Overwrite | `overwrite` emits bounded singleton WebDAV `Overwrite` request metadata through the shared protocol type, accepting only the tokens `T` and `F` and replacing an existing same-name field | No destination overwrite, RFC 4918 default-`T` synthesis, resource policy, COPY/MOVE execution, retry, or forwarding policy |
 | Idempotency-Key | `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | WebSocket handshake metadata | `sec_websocket_key` emits bounded singleton `Sec-WebSocket-Key` request metadata through the shared protocol type, replacing an existing same-name field and redacting the nonce from typed debug output; `Response::sec_websocket_accept` parses bounded singleton response metadata and `verify_sec_websocket_accept` checks the RFC GUID plus SHA-1/base64 derivation against a validated key | No HTTP upgrade, random nonce generation, WebSocket frames, or handshake policy |
 | Sec-WebSocket-Version | `sec_websocket_version` emits bounded `Sec-WebSocket-Version` request metadata through the shared protocol type, replacing an existing same-name field, and `Response::sec_websocket_version` parses received fields including rejection-response version lists | No WebSocket handshake, `Connection: Upgrade` emission, `Sec-WebSocket-Accept` computation, version negotiation, protocol switch, or frames |

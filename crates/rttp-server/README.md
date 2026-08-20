@@ -718,6 +718,19 @@ original raw field.
 These helpers parse request metadata only. They do not traverse resources,
 select WebDAV methods, or enforce method policy.
 
+## WebDAV DAV response metadata
+
+Handlers can call `HttpResponse::with_dav(value)` to validate and replace
+attached `DAV` response metadata, and `HttpResponse::dav()` to parse attached
+raw `DAV` fields into `HttpDav`. The shared protocol parser preserves wire
+order across fields, accepts standard classes `1`, `2`, and `3`, extension
+tokens, and `<absolute-URI>` Coded-URLs, and rejects malformed, duplicate,
+oversized, aggregate-oversized, or over-32-member values while raw response
+headers remain available on parse failures.
+
+These helpers declare and parse response metadata only. They do not infer,
+negotiate, or enforce WebDAV feature support from the header.
+
 ## WebDAV Destination request metadata
 
 Handlers can call `Request::destination()` and `HttpRequest::destination()`
@@ -747,6 +760,20 @@ original raw field.
 
 These helpers parse request metadata only. They do not create locks, refresh
 locks, or select an application timeout.
+
+## WebDAV Overwrite request metadata
+
+Handlers can call `Request::overwrite()` and `HttpRequest::overwrite()` to
+observe bounded typed WebDAV `Overwrite` request metadata through the shared
+protocol `HttpOverwrite` type. Absent fields return `Ok(None)`. Recognized
+values are the singleton tokens `T` and `F`, with optional surrounding SP or
+HTAB and case-sensitive matching. Malformed, oversized, duplicate, or
+control-byte values return a parser error while `Request::header()` and
+`HttpRequest::header()` continue to expose the original raw field.
+
+These helpers parse request metadata only. They do not overwrite destination
+resources, apply the RFC 4918 default `T` when the field is absent, or
+enforce WebDAV policy.
 
 ## Idempotency-Key request metadata
 

@@ -20,9 +20,9 @@ pub use rttp_client::response::{
   CrossOriginEmbedderPolicyReportOnlyParseError, CrossOriginOpenerPolicy,
   CrossOriginOpenerPolicyParseError, CrossOriginOpenerPolicyReportOnly,
   CrossOriginOpenerPolicyReportOnlyBareItem, CrossOriginOpenerPolicyReportOnlyParameter,
-  CrossOriginOpenerPolicyReportOnlyParseError, Deprecation, DeprecationParseError, DocumentPolicy,
-  DocumentPolicyDirective, DocumentPolicyParseError, DocumentPolicyReportOnly,
-  DocumentPolicyReportOnlyDirective, DocumentPolicyReportOnlyParseError,
+  CrossOriginOpenerPolicyReportOnlyParseError, Dav, DavClass, DavParseError, Deprecation,
+  DeprecationParseError, DocumentPolicy, DocumentPolicyDirective, DocumentPolicyParseError,
+  DocumentPolicyReportOnly, DocumentPolicyReportOnlyDirective, DocumentPolicyReportOnlyParseError,
   DocumentPolicyReportOnlyValue, DocumentPolicyValue, EntityTag, EntityTagParseError,
   HttpContentLength, Location, LocationParseError, MementoDatetime, MementoDatetimeParseError, Nel,
   NelParseError, NelUnknownMember, NoVarySearch, NoVarySearchParams, NoVarySearchParseError,
@@ -42,11 +42,11 @@ pub use rttp_client::response::{
 #[cfg(feature = "client")]
 pub use rttp_client::{
   Baggage, BaggageMember, BaggageParseError, BaggageProperty, Depth, DepthParseError, Destination,
-  DestinationParseError, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
-  Timeout, TimeoutParseError, TimeoutType, TraceParent, TraceParentParseError, TraceState,
-  TraceStateMember, TraceStateParseError, Via, ViaMember, ViaParseError, XForwardedFor,
-  XForwardedForNode, XForwardedForNodeKind, XForwardedForParseError, XForwardedHost,
-  XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
+  DestinationParseError, Overwrite, OverwriteParseError, SecFetchDest, SecFetchMode, SecFetchSite,
+  SecFetchUser, SecPurpose, Timeout, TimeoutParseError, TimeoutType, TraceParent,
+  TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError, Via, ViaMember,
+  ViaParseError, XForwardedFor, XForwardedForNode, XForwardedForNodeKind, XForwardedForParseError,
+  XForwardedHost, XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
 };
 
 impl Http {

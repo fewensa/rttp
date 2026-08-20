@@ -11,20 +11,21 @@ use rttp::server::{
   HttpDestinationParseError, HttpEntityTag, HttpExpectations, HttpIdempotencyKey,
   HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfUnmodifiedSince, HttpMaxForwards,
   HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNel, HttpOriginTrialParseError,
-  HttpOriginTrials, HttpPermissionsPolicy, HttpPermissionsPolicyParseError, HttpPragma,
-  HttpPragmaParseError, HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError,
-  HttpRequestAcceptCharsets, HttpResponse, HttpSaveData, HttpSecGpc, HttpSecGpcParseError,
-  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
-  HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
-  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
-  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
-  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
-  HttpSunsetParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTimeout,
-  HttpTimeoutParseError, HttpTimeoutType, HttpUpgrade, HttpUpgradeInsecureRequests,
-  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpVia, HttpViaParseError,
-  HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
+  HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy, HttpPermissionsPolicyParseError,
+  HttpPragma, HttpPragmaParseError, HttpProxyAuthorization, HttpProxyStatus,
+  HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse, HttpSaveData, HttpSecGpc,
+  HttpSecGpcParseError, HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError,
+  HttpSecWebSocketExtensions, HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey,
+  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
+  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
+  HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
+  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
+  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
+  HttpSpeculationRules, HttpSpeculationRulesParseError, HttpSunsetParseError,
+  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTimeout, HttpTimeoutParseError,
+  HttpTimeoutType, HttpUpgrade, HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError,
+  HttpUpgradeParseError, HttpVia, HttpViaParseError, HttpXForwardedFor,
+  HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
   HttpXForwardedProto, HttpXForwardedProtoParseError,
 };
 use std::io::Write;
@@ -69,6 +70,20 @@ fn spawn_representation_metadata_response_server(
 #[test]
 #[cfg(feature = "client")]
 fn compatibility_facade_exports_client_metadata_types() {
+  let dav: rttp::Dav =
+    rttp_client::response::Dav::parse("1, 2, extended-mkcol, <https://dav.example.test/ns>")
+      .expect("DAV should parse");
+  assert_eq!(
+    &[
+      rttp::DavClass::One,
+      rttp::DavClass::Two,
+      rttp::DavClass::ExtensionToken("extended-mkcol".to_string()),
+      rttp::DavClass::CodedUrl("https://dav.example.test/ns".to_string()),
+    ],
+    dav.classes()
+  );
+  let _: rttp::DavParseError =
+    rttp_client::response::Dav::parse("1, 1").expect_err("duplicate DAV should fail");
   let accept_ch: rttp::AcceptCh =
     rttp_client::response::AcceptCh::parse("Sec-CH-UA, DPR").expect("Accept-CH should parse");
   let allow_credentials: rttp::AccessControlAllowCredentials =
@@ -155,6 +170,9 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp::Timeout::parse("Second-60, Infinite").expect("Timeout should parse");
   let _: rttp::TimeoutParseError =
     rttp::Timeout::parse("Second-60, second-60").expect_err("duplicate Timeout should be rejected");
+  let overwrite: rttp::Overwrite = rttp::Overwrite::parse("F").expect("Overwrite should parse");
+  let _: rttp::OverwriteParseError =
+    rttp::Overwrite::parse("t").expect_err("lowercase Overwrite should be rejected");
   let x_forwarded_for: rttp::XForwardedFor =
     rttp::XForwardedFor::parse("192.0.2.60, unknown").expect("X-Forwarded-For should parse");
   let _: rttp::XForwardedForParseError =
@@ -403,6 +421,8 @@ fn compatibility_facade_exports_client_metadata_types() {
     timeout.members()
   );
   assert_eq!("second-60, infinite", timeout.header_value());
+  assert_eq!(rttp::Overwrite::F, overwrite);
+  assert_eq!("F", overwrite.header_value());
   assert_eq!(
     memento_datetime.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
@@ -1090,6 +1110,56 @@ fn compatibility_facade_roundtrips_destination_request_metadata_without_policy()
   assert!(
     rttp::Destination::parse("a".repeat(64 * 1024 + 1)).is_err(),
     "oversized Destination values must fail closed"
+  );
+}
+
+#[test]
+#[cfg(feature = "client")]
+fn compatibility_facade_roundtrips_overwrite_request_metadata_without_policy() {
+  let (addr, handle) = spawn_representation_metadata_response_server(
+    b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  );
+  let response = rttp::Http::client()
+    .method("COPY")
+    .url(format!("http://{addr}/documents/source.txt"))
+    .overwrite(" F ")
+    .expect("Overwrite should be accepted")
+    .emit()
+    .expect("client request should complete");
+  let captured_request = handle.join().expect("Overwrite capture server should join");
+  let captured_request_text =
+    String::from_utf8(captured_request.clone()).expect("request should be utf-8");
+
+  assert_eq!(Some("F"), header_value(&captured_request_text, "Overwrite"));
+  assert_eq!(204, response.code());
+
+  let server_request =
+    rttp::server::HttpRequest::parse(&captured_request).expect("server request should parse");
+  let overwrite: HttpOverwrite = server_request
+    .overwrite()
+    .expect("server Overwrite should parse")
+    .expect("server Overwrite should be present");
+
+  assert_eq!(HttpOverwrite::F, overwrite);
+  assert_eq!("F", overwrite.header_value());
+
+  let malformed = rttp::server::HttpRequest::parse(
+    b"COPY /documents/source.txt HTTP/1.1\r\nHost: example.test\r\nOverwrite: true\r\n\r\n",
+  )
+  .expect("malformed Overwrite request should still parse");
+  assert!(malformed.overwrite().is_err());
+  assert_eq!(Some("true"), malformed.header("Overwrite"));
+
+  let duplicate = rttp::server::HttpRequest::parse(
+    b"COPY /documents/source.txt HTTP/1.1\r\nHost: example.test\r\nOverwrite: T\r\noverwrite: F\r\n\r\n",
+  )
+  .expect("duplicate Overwrite request should still parse");
+  assert!(duplicate.overwrite().is_err());
+  assert_eq!(Some("T"), duplicate.header("Overwrite"));
+
+  assert!(
+    rttp::Overwrite::parse("T".repeat(64 * 1024 + 1)).is_err(),
+    "oversized Overwrite values must fail closed"
   );
 }
 
