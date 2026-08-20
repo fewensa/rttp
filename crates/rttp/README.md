@@ -420,6 +420,18 @@ are rejected while raw request headers remain available when the typed parser
 reports an error. RTTP does not create locks, refresh locks, or select an
 application timeout.
 
+`HttpClient::overwrite(value)` validates and emits one WebDAV `Overwrite`
+request field through the shared `rttp_protocol` `Overwrite` type, replacing
+any existing same-name field before a socket is opened. `Request::overwrite()`
+and `HttpRequest::overwrite()` parse received fields into the same
+`HttpOverwrite` representation, returning `Ok(None)` when absent. Recognized
+values are the singleton tokens `T` and `F`, bounded to 64 KiB with optional
+surrounding SP or HTAB and case-sensitive matching; malformed, duplicate,
+oversized, and control-byte values are rejected while raw request headers
+remain available when the typed parser reports an error. RTTP does not
+overwrite destination resources, apply the RFC 4918 default `T` when the
+field is absent, or enforce WebDAV policy.
+
 These helpers declare and observe request metadata only. RTTP does not
 traverse resources, select WebDAV methods, or enforce method policy.
 
@@ -1256,6 +1268,7 @@ scheduling, or async accept loops.
 | Depth | `HttpClient::depth` validates and emits bounded singleton WebDAV `Depth` request metadata through the shared protocol type, and `Request::depth`/`HttpRequest::depth` parse received fields into the same representation while preserving raw headers on errors | No resource traversal, WebDAV method selection, method-policy enforcement, retry, or forwarding policy |
 | Destination | `HttpClient::destination` validates and emits bounded singleton WebDAV `Destination` request metadata through the shared protocol type, and `Request::destination`/`HttpRequest::destination` parse received fields into the same representation while preserving raw headers on errors | No destination resolution, URI normalization, authorization, COPY/MOVE execution, or application resource policy |
 | Timeout | `HttpClient::timeout` validates and emits bounded ordered WebDAV `Timeout` request metadata through the shared protocol type, and `Request::timeout`/`HttpRequest::timeout` parse received fields into the same representation while preserving raw headers on errors | No lock creation, lock refresh, application-timeout selection, retry, or forwarding policy |
+| Overwrite | `HttpClient::overwrite` validates and emits bounded singleton WebDAV `Overwrite` request metadata through the shared protocol type, accepting only the tokens `T` and `F`, and `Request::overwrite`/`HttpRequest::overwrite` parse received fields into the same representation while preserving raw headers on errors | No destination overwrite, RFC 4918 default-`T` synthesis, resource policy, COPY/MOVE execution, retry, or forwarding policy |
 | WebSocket handshake metadata | `HttpClient::sec_websocket_key` validates and emits one bounded `Sec-WebSocket-Key` request field through the shared protocol type, and `Request::sec_websocket_key`/`HttpRequest::sec_websocket_key` parse received fields into the same representation while preserving raw headers on errors; server responses can derive `Sec-WebSocket-Accept` with the RFC GUID plus SHA-1/base64 transform, and clients can parse and verify the response against a validated key; typed debug output redacts key and accept material | No HTTP upgrade, random nonce generation, WebSocket frames, or handshake policy |
 | Sec-WebSocket-Version | `HttpClient::sec_websocket_version`, `Request::sec_websocket_version`/`HttpRequest::sec_websocket_version`, `HttpResponse::with_sec_websocket_version`/`sec_websocket_version`, and client `Response::sec_websocket_version` share the bounded protocol version-list representation, requiring canonical descending order and preserving raw headers on errors | No WebSocket handshake, `Connection: Upgrade` emission, `Sec-WebSocket-Accept` computation, version negotiation, protocol switch, or frames |
 | W3C Trace Context | `HttpClient::traceparent`/`tracestate` validate and emit bounded W3C Trace Context request metadata, and `Request::traceparent`/`tracestate` plus `HttpRequest` helpers parse received fields while preserving raw headers on errors and redacting propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |

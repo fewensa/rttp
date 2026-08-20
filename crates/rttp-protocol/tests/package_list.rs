@@ -26,6 +26,7 @@ fn package_includes_protocol_metadata_facade_test() {
     "tests/depth.rs",
     "tests/destination.rs",
     "tests/timeout.rs",
+    "tests/overwrite.rs",
     "tests/idempotency_key.rs",
     "tests/if_modified_since.rs",
     "tests/if_unmodified_since.rs",

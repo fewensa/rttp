@@ -3284,6 +3284,46 @@ fn sync_client_and_server_exchange_bounded_destination_metadata_without_policy()
 }
 
 #[test]
+fn sync_client_and_server_exchange_bounded_overwrite_metadata_without_policy() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Overwrite server");
+  let addr = server.local_addr().expect("Overwrite server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request
+            .overwrite()
+            .expect("Overwrite should parse")
+            .map(|overwrite| overwrite.header_value().to_string()),
+          request.header("Overwrite").map(str::to_string),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed Overwrite metadata");
+        HttpResponse::new(204, "No Content")
+      })
+      .expect("serve Overwrite request");
+  });
+
+  let response = client()
+    .method("COPY")
+    .url(format!("http://{addr}/documents/source.txt"))
+    .overwrite("F")
+    .expect("Overwrite should be accepted")
+    .emit()
+    .expect("Overwrite response should parse");
+
+  let (typed, raw) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe Overwrite metadata");
+  assert_eq!(Some("F".to_string()), typed);
+  assert_eq!(Some("F".to_string()), raw);
+  assert_eq!(204, response.code());
+  handle.join().expect("Overwrite server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_bounded_sec_websocket_version_metadata_without_upgrade() {
   let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
     .expect("bind sec websocket version server");

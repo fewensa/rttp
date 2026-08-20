@@ -9,11 +9,11 @@ use rttp::server::{
   HttpContentSecurityPolicyReportOnly, HttpContentType, HttpCriticalCh, HttpDeprecation, HttpDepth,
   HttpDocumentPolicy, HttpDocumentPolicyReportOnly, HttpEntityTag, HttpExpectations, HttpHost,
   HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome, HttpLinkValues, HttpMementoDatetime,
-  HttpNel, HttpOriginTrials, HttpPermissionsPolicy, HttpProxyStatus, HttpProxyStatusBareItem,
-  HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest, HttpRequestAcceptCharsets,
-  HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
-  HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming,
-  HttpTimeoutType, HttpVary,
+  HttpNel, HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy, HttpProxyStatus,
+  HttpProxyStatusBareItem, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
+  HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe,
+  HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter,
+  HttpServerTiming, HttpTimeoutType, HttpVary,
 };
 
 #[test]
@@ -1420,6 +1420,49 @@ fn request_timeout_is_optional_and_rejects_invalid_metadata() {
     &[HttpTimeoutType::Second(60), HttpTimeoutType::Infinite],
     split_timeout.members()
   );
+}
+
+#[test]
+fn request_overwrite_is_optional_and_rejects_invalid_metadata() {
+  let absent = parse_request("COPY / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .overwrite()
+      .expect("missing Overwrite should be valid")
+  );
+
+  for (value, expected) in [("T", HttpOverwrite::T), ("F", HttpOverwrite::F)] {
+    let valid = parse_request(&format!(
+      "COPY / HTTP/1.1\r\nHost: example.test\r\nOverwrite: {value}\r\n\r\n"
+    ));
+    let parsed = valid
+      .overwrite()
+      .expect("value should parse")
+      .expect("Overwrite should be present");
+    assert_eq!(expected, parsed);
+    assert_eq!(expected.header_value(), parsed.header_value());
+  }
+
+  for value in ["", "t", "f", "true", "false", "T, F", "0", "1", "TF"] {
+    let request = parse_request(&format!(
+      "COPY / HTTP/1.1\r\nHost: example.test\r\nOverwrite: {value}\r\n\r\n"
+    ));
+    assert!(request.overwrite().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Overwrite"));
+  }
+
+  assert!(rttp::server::HttpOverwrite::parse("T".repeat(64 * 1024 + 1)).is_err());
+
+  let duplicate = parse_request(concat!(
+    "COPY / HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Overwrite: T\r\n",
+    "overwrite: F\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.overwrite().is_err());
+  assert_eq!(Some("T"), duplicate.header("Overwrite"));
 }
 
 #[test]
