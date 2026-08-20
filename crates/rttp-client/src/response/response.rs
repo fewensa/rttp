@@ -65,6 +65,7 @@ use rttp_protocol::document_policy_report_only::DocumentPolicyReportOnly;
 use rttp_protocol::entity_tag::{EntityTag, EntityTagParseError};
 use rttp_protocol::link::LinkValues;
 use rttp_protocol::location::Location;
+use rttp_protocol::lock_token::LockToken;
 use rttp_protocol::memento_datetime::MementoDatetime;
 use rttp_protocol::permissions_policy::PermissionsPolicy;
 use rttp_protocol::prefer::PreferenceApplied;
@@ -633,6 +634,21 @@ impl Response {
       return Ok(None);
     }
     SecWebSocketAccept::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses exactly one bounded WebDAV `Lock-Token` field as typed metadata.
+  ///
+  /// Duplicate fields are rejected to avoid ambiguous tokens. This accessor
+  /// does not create, refresh, release, persist, or enforce locks. Parse
+  /// errors remain response errors and do not expose the token value.
+  pub fn lock_token(&self) -> error::Result<Option<LockToken>> {
+    let values = self.header_values("lock-token");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    LockToken::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

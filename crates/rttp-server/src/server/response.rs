@@ -115,6 +115,9 @@ pub use rttp_protocol::keep_alive::{
   KeepAlive as HttpKeepAlive, KeepAliveExtension as HttpKeepAliveExtension,
   KeepAliveParseError as HttpKeepAliveParseError,
 };
+pub use rttp_protocol::lock_token::{
+  LockToken as HttpLockToken, LockTokenParseError as HttpLockTokenParseError,
+};
 pub use rttp_protocol::memento_datetime::{
   MementoDatetime as HttpMementoDatetime,
   MementoDatetimeParseError as HttpMementoDatetimeParseError,
@@ -1107,6 +1110,22 @@ impl HttpResponse {
       accept.header_value(),
     ));
     self
+  }
+
+  /// Validates and replaces `Lock-Token` response metadata without creating,
+  /// refreshing, releasing, or enforcing WebDAV locks.
+  pub fn with_lock_token<V: AsRef<str>>(
+    mut self,
+    value: V,
+  ) -> Result<Self, HttpLockTokenParseError> {
+    let lock_token = HttpLockToken::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Lock-Token"));
+    self
+      .headers
+      .push(HttpHeader::new("Lock-Token", lock_token.header_value()));
+    Ok(self)
   }
 
   pub fn with_allow<I, M>(mut self, methods: I) -> Result<Self, HttpAllowParseError>
@@ -2199,6 +2218,21 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpSecWebSocketAccept::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Lock-Token` response metadata without creating,
+  /// refreshing, releasing, or enforcing WebDAV locks.
+  pub fn lock_token(&self) -> Result<Option<HttpLockToken>, HttpLockTokenParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Lock-Token"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpLockToken::parse_values(values).map(Some)
   }
 
   /// Parses attached `Pragma` response metadata without applying cache or
@@ -4819,6 +4853,7 @@ fn is_sensitive_debug_header(name: &str) -> bool {
   name.eq_ignore_ascii_case("authorization")
     || name.eq_ignore_ascii_case("cookie")
     || name.eq_ignore_ascii_case("idempotency-key")
+    || name.eq_ignore_ascii_case("lock-token")
     || name.eq_ignore_ascii_case("origin-trial")
     || name.eq_ignore_ascii_case("proxy-authorization")
     || name.eq_ignore_ascii_case("sec-websocket-accept")

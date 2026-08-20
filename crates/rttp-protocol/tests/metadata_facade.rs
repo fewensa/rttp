@@ -48,6 +48,7 @@ use rttp_protocol::if_unmodified_since::IfUnmodifiedSince;
 use rttp_protocol::keep_alive::KeepAlive;
 use rttp_protocol::link::LinkValues;
 use rttp_protocol::location::Location;
+use rttp_protocol::lock_token::LockToken;
 use rttp_protocol::max_forwards::MaxForwards;
 use rttp_protocol::memento_datetime::MementoDatetime;
 use rttp_protocol::nel::Nel;
@@ -143,6 +144,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let destination = Destination::parse("https://dav.example.test/archive/report.txt")
     .expect("Destination should parse");
   let depth = Depth::parse("infinity").expect("Depth should parse");
+  let lock_token = LockToken::parse("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>")
+    .expect("Lock-Token metadata should parse");
   let timeout = Timeout::parse("Second-60, Infinite").expect("Timeout should parse");
   let overwrite = Overwrite::parse("F").expect("Overwrite should parse");
   let _: OverwriteParseError =
@@ -378,6 +381,15 @@ fn protocol_exports_representative_bounded_metadata_types() {
   );
   assert_eq!(Depth::Infinity, depth);
   assert_eq!("infinity", depth.header_value());
+  assert_eq!(
+    lock_token.as_str(),
+    "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>"
+  );
+  assert_eq!(
+    lock_token.header_value(),
+    "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>"
+  );
+  assert!(!format!("{lock_token:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
   assert_eq!(
     &[TimeoutType::Second(60), TimeoutType::Infinite],
     timeout.members()

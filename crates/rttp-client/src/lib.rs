@@ -136,6 +136,7 @@ pub use rttp_protocol::destination::{Destination, DestinationParseError};
 pub use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
+pub use rttp_protocol::lock_token::{LockToken, LockTokenParseError};
 pub use rttp_protocol::overwrite::{Overwrite, OverwriteParseError};
 pub use rttp_protocol::sec_gpc::{SecGpc, SecGpcParseError};
 pub use rttp_protocol::sec_websocket_protocol::{
