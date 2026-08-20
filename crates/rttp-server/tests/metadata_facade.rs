@@ -19,8 +19,9 @@ use rttp_server::server::{
   HttpDocumentPolicyDirective, HttpDocumentPolicyParseError, HttpDocumentPolicyReportOnly,
   HttpDocumentPolicyReportOnlyParseError, HttpDocumentPolicyReportOnlyValue,
   HttpDocumentPolicyValue, HttpEntityTag, HttpExpectParseError, HttpExpectations, HttpHost,
-  HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince,
-  HttpIfModifiedSinceParseError, HttpIfScheduleTagMatch, HttpIfScheduleTagMatchParseError,
+  HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIf, HttpIfCondition, HttpIfList,
+  HttpIfModifiedSince, HttpIfModifiedSinceParseError, HttpIfParseError, HttpIfPredicate,
+  HttpIfResourceTag, HttpIfScheduleTagMatch, HttpIfScheduleTagMatchParseError, HttpIfStateToken,
   HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError, HttpKeepAlive, HttpLockToken,
   HttpLockTokenParseError, HttpMaxForwards, HttpMaxForwardsParseError, HttpMementoDatetime,
   HttpMementoDatetimeParseError, HttpNoVarySearch, HttpNoVarySearchParams,
@@ -1173,6 +1174,70 @@ fn request_facade_parses_lock_token_metadata_without_policy() {
     Some("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>"),
     duplicate.header("Lock-Token")
   );
+}
+
+#[test]
+fn request_facade_parses_if_metadata_without_policy() {
+  let request = HttpRequest::parse(
+    b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: <http://example.test/src> (<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) (Not [\"etag-one\"])\r\n\r\n",
+  )
+  .expect("request should parse");
+  let if_header: HttpIf = request
+    .if_header()
+    .expect("WebDAV If should parse")
+    .expect("WebDAV If should be present");
+
+  assert!(if_header.is_tagged());
+  assert_eq!(2, if_header.lists().len());
+  let list: HttpIfList = if_header.lists()[0].clone();
+  let tag: HttpIfResourceTag = list.resource_tag().expect("tagged list").clone();
+  assert_eq!("<http://example.test/src>", tag.as_str());
+  let condition: HttpIfCondition = list.conditions()[0].clone();
+  let predicate: HttpIfPredicate = condition.predicate().clone();
+  let token: HttpIfStateToken = match predicate {
+    HttpIfPredicate::StateToken(token) => token,
+    HttpIfPredicate::EntityTag(_) => panic!("expected a state token"),
+  };
+  assert_eq!(
+    "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+    token.as_str()
+  );
+  assert_eq!(
+    if_header.header_value(),
+    "<http://example.test/src> (<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) \
+     <http://example.test/src> (Not [\"etag-one\"])"
+  );
+  assert!(!format!("{if_header:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
+  assert_eq!(
+    Some(
+      "<http://example.test/src> (<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) \
+       (Not [\"etag-one\"])"
+    ),
+    request.header("If")
+  );
+  let _: HttpIfParseError = HttpIf::parse("(junk)").expect_err("malformed WebDAV If should fail");
+
+  let absent = HttpRequest::parse(b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .if_header()
+      .expect("missing WebDAV If should be accepted")
+  );
+
+  let malformed =
+    HttpRequest::parse(b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: (junk)\r\n\r\n")
+      .expect("request should parse");
+  assert!(malformed.if_header().is_err());
+  assert_eq!(Some("(junk)"), malformed.header("If"));
+
+  let duplicate = HttpRequest::parse(
+    b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: (<a:b>)\r\nIf: (<b:c>)\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert!(duplicate.if_header().is_err());
+  assert_eq!(Some("(<a:b>)"), duplicate.header("If"));
 }
 
 #[test]

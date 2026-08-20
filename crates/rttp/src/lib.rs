@@ -40,12 +40,13 @@ pub use rttp_client::response::{
 #[cfg(feature = "client")]
 pub use rttp_client::{
   Baggage, BaggageMember, BaggageParseError, BaggageProperty, Depth, DepthParseError, Destination,
-  DestinationParseError, IfScheduleTagMatch, IfScheduleTagMatchParseError, LockToken,
-  LockTokenParseError, Overwrite, OverwriteParseError, SecFetchDest, SecFetchMode, SecFetchSite,
-  SecFetchUser, SecPurpose, Timeout, TimeoutParseError, TimeoutType, TraceParent,
-  TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError, Via, ViaMember,
-  ViaParseError, XForwardedFor, XForwardedForNode, XForwardedForNodeKind, XForwardedForParseError,
-  XForwardedHost, XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
+  DestinationParseError, If, IfCondition, IfList, IfParseError, IfPredicate, IfResourceTag,
+  IfScheduleTagMatch, IfScheduleTagMatchParseError, IfStateToken, LockToken, LockTokenParseError,
+  Overwrite, OverwriteParseError, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
+  SecPurpose, Timeout, TimeoutParseError, TimeoutType, TraceParent, TraceParentParseError,
+  TraceState, TraceStateMember, TraceStateParseError, Via, ViaMember, ViaParseError, XForwardedFor,
+  XForwardedForNode, XForwardedForNodeKind, XForwardedForParseError, XForwardedHost,
+  XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
 };
 
 impl Http {

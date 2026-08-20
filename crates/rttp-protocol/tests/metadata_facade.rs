@@ -43,6 +43,7 @@ use rttp_protocol::fetch_metadata::{
 use rttp_protocol::from::From;
 use rttp_protocol::host::Host;
 use rttp_protocol::idempotency_key::IdempotencyKey;
+use rttp_protocol::if_header::{If, IfParseError, IfPredicate};
 use rttp_protocol::if_modified_since::IfModifiedSince;
 use rttp_protocol::if_schedule_tag_match::IfScheduleTagMatch;
 use rttp_protocol::if_unmodified_since::IfUnmodifiedSince;
@@ -172,6 +173,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
     IfScheduleTagMatch::parse("W/\"sched-17\"").expect("weak If-Schedule-Tag-Match should parse");
   let if_unmodified_since = IfUnmodifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
     .expect("If-Unmodified-Since should parse");
+  let if_header = If::parse(
+    "<http://example.test/src> (<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) (Not [\"etag-one\"])",
+  )
+  .expect("WebDAV If request metadata should parse");
   let memento_datetime =
     MementoDatetime::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Memento-Datetime should parse");
   let host = Host::parse("example.test:8443").expect("Host should parse");
@@ -440,6 +445,23 @@ fn protocol_exports_representative_bounded_metadata_types() {
     if_unmodified_since.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
   );
+  assert!(if_header.is_tagged());
+  assert_eq!(2, if_header.lists().len());
+  assert_eq!(
+    if_header.header_value(),
+    "<http://example.test/src> (<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) \
+     <http://example.test/src> (Not [\"etag-one\"])"
+  );
+  assert!(if_header.lists()[1].conditions()[0].is_negated());
+  assert!(if_header.lists()[1].conditions()[0]
+    .predicate()
+    .is_entity_tag());
+  let _request_if_predicate: IfPredicate = if_header.lists()[0].conditions()[0].predicate().clone();
+  let _: IfParseError = If::parse(
+    "(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) <http://example.test/src> (Not <DAV:no-lock>)",
+  )
+  .expect_err("mixed tagged and untagged If should be rejected");
+  assert!(!format!("{if_header:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
   assert_eq!(
     memento_datetime.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"

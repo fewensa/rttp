@@ -241,6 +241,7 @@ fn is_sensitive_debug_header(name: &str) -> bool {
   name.eq_ignore_ascii_case("authorization")
     || name.eq_ignore_ascii_case("cookie")
     || name.eq_ignore_ascii_case("idempotency-key")
+    || name.eq_ignore_ascii_case("if")
     || name.eq_ignore_ascii_case("lock-token")
     || name.eq_ignore_ascii_case("proxy-authorization")
     || name.eq_ignore_ascii_case("sec-websocket-accept")
@@ -286,6 +287,13 @@ mod tests {
     request
       .headers_mut()
       .push(Header::new("baggage", "tenant=acme-secret;source=gateway"));
+    request.headers_mut().push(Header::new(
+      "If",
+      "(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)",
+    ));
+    request
+      .headers_mut()
+      .push(Header::new("If-Match", "\"revision-42\""));
 
     let raw_request = RawRequest::block_new(&mut request).expect("raw request should build");
     let debug = format!("{raw_request:?}");
@@ -294,11 +302,13 @@ mod tests {
     assert!(debug.contains("Proxy-Authorization"));
     assert!(debug.contains("Idempotency-Key"));
     assert!(debug.contains("Lock-Token"));
+    assert!(debug.contains("If"));
     assert!(debug.contains("Sec-WebSocket-Key"));
     assert!(debug.contains("traceparent"));
     assert!(debug.contains("tracestate"));
     assert!(debug.contains("baggage"));
     assert!(debug.contains("[REDACTED]"));
+    assert!(debug.contains("\\\"revision-42\\\""));
     assert!(!debug.contains("origin-secret-token"));
     assert!(!debug.contains("cHJveHktc2VjcmV0"));
     assert!(!debug.contains("charge-2026-08-19-9f3c"));

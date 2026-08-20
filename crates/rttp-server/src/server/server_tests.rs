@@ -3523,6 +3523,123 @@ fn request_lock_token_is_optional_bounded_and_preserves_invalid_headers() {
 }
 
 #[test]
+fn request_if_header_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"UNLOCK / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent.if_header().expect("missing value should be valid")
+  );
+
+  for (value, expected) in [
+    (
+      "(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)",
+      "(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)",
+    ),
+    (
+      "<http://example.test/src> (<opaquelocktoken:11111111-1111-1111-1111-111111111111>) \
+       </dst> (Not <DAV:no-lock>)",
+      "<http://example.test/src> (<opaquelocktoken:11111111-1111-1111-1111-111111111111>) \
+       </dst> (Not <DAV:no-lock>)",
+    ),
+    (
+      " \t(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) \t(Not  [W/\"etag-one\"])",
+      "(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) (Not [W/\"etag-one\"])",
+    ),
+  ] {
+    let valid = Request::from_raw_frame(
+      format!("UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: {value}\r\n\r\n").as_bytes(),
+    )
+    .expect("request should parse");
+    let parsed = valid
+      .if_header()
+      .expect("value should parse")
+      .expect("If should be present");
+    assert_eq!(expected, parsed.header_value());
+  }
+  let redacted = Request::from_raw_frame(
+    b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: (<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)\r\n\r\n",
+  )
+  .expect("request should parse")
+  .if_header()
+  .expect("value should parse")
+  .expect("If should be present");
+  assert!(!format!("{redacted:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
+
+  for value in ["", "()", "(junk)", "(</relative>)", "<relative> (<a:b>)"] {
+    let request = Request::from_raw_frame(
+      format!("UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: {value}\r\n\r\n").as_bytes(),
+    )
+    .expect("request should retain malformed metadata");
+    assert!(request.if_header().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("If"));
+  }
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_request = Request {
+    method: "UNLOCK".to_string(),
+    target: "/resource".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("If".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.if_header().is_err());
+  assert_eq!(
+    Some(oversized.as_str()),
+    oversized_request.header("If")
+  );
+
+  let injected_request = Request {
+    method: "UNLOCK".to_string(),
+    target: "/resource".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      (
+        "If".to_string(),
+        "(<a:b>)\r\nX-Injected: 1".to_string(),
+      ),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(injected_request.if_header().is_err());
+  assert_eq!(
+    Some("(<a:b>)\r\nX-Injected: 1"),
+    injected_request.header("If")
+  );
+
+  let duplicate = Request::from_raw_frame(
+    b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: (<a:b>)\r\nif: (<b:c>)\r\n\r\n",
+  )
+  .expect("request should retain duplicate metadata");
+  assert!(duplicate.if_header().is_err());
+  assert_eq!(Some("(<a:b>)"), duplicate.header("If"));
+}
+
+#[test]
+fn request_if_metadata_does_not_drive_conditional_evaluation() {
+  let request = Request::from_raw_frame(
+    b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: (<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert!(request.if_header().expect("If should parse").is_some());
+  assert_eq!(
+    HttpConditionalRequestOutcome::Proceed,
+    request.evaluate_conditional(&HttpConditionalMetadata::default()),
+    "the WebDAV If header must not drive HTTP conditional evaluation"
+  );
+}
+
+#[test]
 fn request_timeout_is_optional_bounded_and_preserves_invalid_headers() {
   let absent = Request::from_raw_frame(b"LOCK / HTTP/1.1\r\nHost: example.test\r\n\r\n")
     .expect("request should parse");

@@ -136,6 +136,9 @@ pub use rttp_protocol::destination::{Destination, DestinationParseError};
 pub use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
+pub use rttp_protocol::if_header::{
+  If, IfCondition, IfList, IfParseError, IfPredicate, IfResourceTag, IfStateToken,
+};
 pub use rttp_protocol::if_schedule_tag_match::{IfScheduleTagMatch, IfScheduleTagMatchParseError};
 pub use rttp_protocol::lock_token::{LockToken, LockTokenParseError};
 pub use rttp_protocol::overwrite::{Overwrite, OverwriteParseError};

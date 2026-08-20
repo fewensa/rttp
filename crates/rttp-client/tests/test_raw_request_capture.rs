@@ -2615,6 +2615,142 @@ fn raw_lock_token_header_remains_available_as_escape_hatch() {
 }
 
 #[test]
+fn if_header_helper_emits_canonical_metadata() {
+  for (value, expected) in [
+    (
+      "(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)",
+      "(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)",
+    ),
+    (
+      "<http://example.test/src> (<opaquelocktoken:11111111-1111-1111-1111-111111111111>) \
+       </dst> (Not <DAV:no-lock>)",
+      "<http://example.test/src> (<opaquelocktoken:11111111-1111-1111-1111-111111111111>) \
+       </dst> (Not <DAV:no-lock>)",
+    ),
+    (
+      " \t(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) \t(Not  [W/\"etag-one\"])",
+      "(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) (Not [W/\"etag-one\"])",
+    ),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .method("UNLOCK")
+        .url(format!("{}/resource", base_url))
+        .if_header(value)
+        .expect("WebDAV If should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+    assert_eq!(Some(expected), header_value(&request, "If"));
+  }
+}
+
+#[test]
+fn if_header_helper_replaces_existing_fields_without_touching_if_match() {
+  let request = capture_request(|base_url| {
+    client()
+      .method("COPY")
+      .url(format!("{}/resource", base_url))
+      .header(("If", "legacy condition"))
+      .if_match("\"revision-42\"")
+      .expect("If-Match should be accepted")
+      .if_header("(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)")
+      .expect("WebDAV If should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)"),
+    header_value(&request, "If")
+  );
+  assert!(
+    !request.contains("legacy"),
+    "the typed helper must replace an existing same-name field"
+  );
+  assert_eq!(
+    Some("\"revision-42\""),
+    header_value(&request, "If-Match"),
+    "the WebDAV If helper must not overwrite If-Match"
+  );
+}
+
+#[test]
+fn if_header_helper_rejects_invalid_values_before_connecting() {
+  for value in [
+    "",
+    " ",
+    "()",
+    "(<a>)",
+    "(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) <http://example.test/src> (Not <DAV:no-lock>)",
+    "(junk)",
+    "(Not)",
+    "(</relative>)",
+    "<relative> (<a:b>)",
+    "(<a:b>)\r\nX-Injected: 1",
+    "(<a:b>)\0value",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .method("UNLOCK")
+        .url(format!("{}/resource", base_url))
+        .if_header(value)
+        .expect_err("invalid WebDAV If should be rejected");
+
+      assert!(error.is_builder());
+      if !value.trim().is_empty() {
+        assert!(!error.to_string().contains(value));
+      }
+    });
+
+    assert!(
+      request.is_empty(),
+      "invalid WebDAV If helper input should not open a socket"
+    );
+  }
+}
+
+#[test]
+fn if_header_helper_rejects_oversized_values_before_connecting() {
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .method("UNLOCK")
+      .url(format!("{}/resource", base_url))
+      .if_header(oversized.as_str())
+      .expect_err("oversized WebDAV If should be rejected");
+
+    assert!(error.is_builder());
+    assert!(!error.to_string().contains(&oversized[..64]));
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized WebDAV If helper input should not open a socket"
+  );
+}
+
+#[test]
+fn raw_if_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .method("UNLOCK")
+      .url(format!("{}/resource", base_url))
+      .header(("If", "opaque custom condition"))
+      .emit()
+      .expect("manual If header should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("opaque custom condition"),
+    header_value(&request, "If")
+  );
+}
+
+#[test]
 fn depth_helper_rejects_invalid_values_before_connecting() {
   for value in ["", "2", "-1", "1.0", "0, 1", "infinite", "1\r\nX: y"] {
     let request = capture_optional_request(|base_url| {

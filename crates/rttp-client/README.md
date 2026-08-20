@@ -122,6 +122,24 @@ default `T` when the header is absent, or enforce WebDAV policy. Callers
 needing an unusual value can retain full raw-header control with
 `header(("Overwrite", "..."))`.
 
+## Bounded WebDAV If metadata
+
+`HttpClient::if_header(value)` sets an RFC 4918 section 10.4 WebDAV `If`
+request header through the shared protocol `If` type. The helper accepts
+condition lists that are entirely untagged like
+`(<opaquelocktoken:...>) (Not <DAV:no-lock>)` or entirely tagged like
+`<http://example.test/src> (<opaquelocktoken:...>)`, trims HTTP OWS, and
+preserves list order, resource tags, `Not`, state tokens, and entity tags.
+It rejects empty or unterminated lists, mixed tagged and untagged
+productions, relative or fragment-bearing URIs, malformed state tokens,
+resource tags, and entity tags, duplicate fields, control-byte and
+obs-text values, and values over 64 KiB, 32 lists, or 256 conditions before
+a socket is opened. It only validates and emits the canonical field text:
+RTTP does not evaluate locks, entity tags, or other resource state, and it
+does not generate precondition outcomes such as 412 Precondition Failed.
+State tokens are redacted from typed `Debug`. Callers needing an unusual
+value can retain full raw-header control with `header(("If", "..."))`.
+
 ## Bounded WebDAV DAV response metadata
 
 `Response::dav()` parses WebDAV `DAV` response fields through the shared
@@ -1403,6 +1421,7 @@ header-block model.
 | Timeout | `timeout` emits bounded ordered WebDAV `Timeout` request metadata through the shared protocol type, normalizing `Second-n`/`Infinite` alternatives to lowercase and replacing an existing same-name field | No lock creation, lock refresh, application-timeout selection, retry, or forwarding policy |
 | If-Schedule-Tag-Match | `if_schedule_tag_match` emits bounded singleton `If-Schedule-Tag-Match` request metadata through the shared protocol type, reusing the shared `EntityTag` representation for strong and weak validators and replacing an existing same-name field | No schedule-tag comparison, calendar inspection, scheduling policy, retry, or status-policy behavior |
 | Overwrite | `overwrite` emits bounded singleton WebDAV `Overwrite` request metadata through the shared protocol type, accepting only the tokens `T` and `F` and replacing an existing same-name field | No destination overwrite, RFC 4918 default-`T` synthesis, resource policy, COPY/MOVE execution, retry, or forwarding policy |
+| If | `if_header` emits bounded RFC 4918 WebDAV `If` request metadata through the shared protocol type, validating untagged or tagged condition lists, `Not`, state tokens, and bracketed entity tags, preserving order and replacing an existing same-name field without touching `If-Match` | No lock, entity-tag, or resource-state evaluation; no 412 or other precondition outcome; no lock creation, refresh, or release; no COPY/MOVE/UNLOCK execution; no retry, or forwarding policy |
 | Idempotency-Key | `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | WebSocket handshake metadata | `sec_websocket_key` emits bounded singleton `Sec-WebSocket-Key` request metadata through the shared protocol type, replacing an existing same-name field and redacting the nonce from typed debug output; `Response::sec_websocket_accept` parses bounded singleton response metadata and `verify_sec_websocket_accept` checks the RFC GUID plus SHA-1/base64 derivation against a validated key | No HTTP upgrade, random nonce generation, WebSocket frames, or handshake policy |
 | Sec-WebSocket-Version | `sec_websocket_version` emits bounded `Sec-WebSocket-Version` request metadata through the shared protocol type, replacing an existing same-name field, and `Response::sec_websocket_version` parses received fields including rejection-response version lists | No WebSocket handshake, `Connection: Upgrade` emission, `Sec-WebSocket-Accept` computation, version negotiation, protocol switch, or frames |

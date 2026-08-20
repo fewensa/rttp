@@ -62,6 +62,11 @@ pub use rttp_protocol::host::{Host as HttpHost, HostParseError as HttpHostParseE
 pub use rttp_protocol::idempotency_key::{
   IdempotencyKey as HttpIdempotencyKey, IdempotencyKeyParseError as HttpIdempotencyKeyParseError,
 };
+pub use rttp_protocol::if_header::{
+  If as HttpIf, IfCondition as HttpIfCondition, IfList as HttpIfList,
+  IfParseError as HttpIfParseError, IfPredicate as HttpIfPredicate,
+  IfResourceTag as HttpIfResourceTag, IfStateToken as HttpIfStateToken,
+};
 pub use rttp_protocol::if_modified_since::{
   IfModifiedSince as HttpIfModifiedSince,
   IfModifiedSinceParseError as HttpIfModifiedSinceParseError,
@@ -266,6 +271,7 @@ fn is_sensitive_debug_header(name: &str) -> bool {
   name.eq_ignore_ascii_case("authorization")
     || name.eq_ignore_ascii_case("cookie")
     || name.eq_ignore_ascii_case("idempotency-key")
+    || name.eq_ignore_ascii_case("if")
     || name.eq_ignore_ascii_case("lock-token")
     || name.eq_ignore_ascii_case("proxy-authorization")
     || name.eq_ignore_ascii_case("sec-websocket-accept")
@@ -381,6 +387,23 @@ impl Request {
       return Ok(None);
     }
     HttpIfScheduleTagMatch::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded WebDAV `If` request metadata without evaluating locks,
+  /// entity tags, or other resource state.
+  ///
+  /// The value must be one or more RFC 4918 condition lists, either entirely
+  /// untagged or entirely tagged, and is limited to 64 KiB with at most 32
+  /// lists and 256 conditions. Mixed tagged and untagged productions and
+  /// duplicate fields are rejected. A successful parse does not imply that a
+  /// precondition is satisfied; callers decide how to apply the declared
+  /// conditions. The raw `If` field remains available through `header`.
+  pub fn if_header(&self) -> Result<Option<HttpIf>, HttpIfParseError> {
+    let values: Vec<&str> = self.headers_named("If").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpIf::parse_values(values).map(Some)
   }
 
   /// Parses one HTTP-date `If-Unmodified-Since` validator without evaluating it.
@@ -2318,6 +2341,28 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpIfScheduleTagMatch::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded WebDAV `If` request metadata without evaluating locks,
+  /// entity tags, or other resource state.
+  ///
+  /// The value must be one or more RFC 4918 condition lists, either entirely
+  /// untagged or entirely tagged, and is limited to 64 KiB with at most 32
+  /// lists and 256 conditions. Mixed tagged and untagged productions and
+  /// duplicate fields are rejected. A successful parse does not imply that a
+  /// precondition is satisfied; callers decide how to apply the declared
+  /// conditions. The raw `If` field remains available through `header`.
+  pub fn if_header(&self) -> Result<Option<HttpIf>, HttpIfParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("If"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpIf::parse_values(values).map(Some)
   }
 
   /// Parses one HTTP-date `If-Unmodified-Since` validator without evaluating it.
