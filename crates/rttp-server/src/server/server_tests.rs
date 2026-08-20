@@ -3496,6 +3496,59 @@ fn request_timeout_is_optional_bounded_and_preserves_invalid_headers() {
 }
 
 #[test]
+fn request_overwrite_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"COPY / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(None, absent.overwrite().expect("missing value should be valid"));
+
+  for (value, expected) in [("T", HttpOverwrite::T), ("F", HttpOverwrite::F)] {
+    let valid = Request::from_raw_frame(
+      format!("COPY / HTTP/1.1\r\nHost: example.test\r\nOverwrite: {value}\r\n\r\n").as_bytes(),
+    )
+    .expect("request should parse");
+    let parsed = valid
+      .overwrite()
+      .expect("value should parse")
+      .expect("Overwrite should be present");
+    assert_eq!(expected, parsed);
+    assert_eq!(expected.header_value(), parsed.header_value());
+  }
+
+  for value in ["", "t", "f", "true", "false", "T, F", "0", "1", "TF"] {
+    let request = Request::from_raw_frame(
+      format!("COPY / HTTP/1.1\r\nHost: example.test\r\nOverwrite: {value}\r\n\r\n").as_bytes(),
+    )
+    .expect("request should retain malformed metadata");
+    assert!(request.overwrite().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Overwrite"));
+  }
+
+  let oversized = "T".repeat(64 * 1024 + 1);
+  let oversized_request = Request {
+    method: "COPY".to_string(),
+    target: "/".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("Overwrite".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.overwrite().is_err());
+  assert_eq!(Some(oversized.as_str()), oversized_request.header("Overwrite"));
+
+  let duplicate = Request::from_raw_frame(
+    b"COPY / HTTP/1.1\r\nHost: example.test\r\nOverwrite: T\r\noverwrite: F\r\n\r\n",
+  )
+  .expect("request should retain duplicate metadata");
+  assert!(duplicate.overwrite().is_err());
+  assert_eq!(Some("T"), duplicate.header("Overwrite"));
+}
+
+#[test]
 fn request_idempotency_key_is_optional_bounded_and_preserves_invalid_headers() {
   let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
     .expect("request should parse");

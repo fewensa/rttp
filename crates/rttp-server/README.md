@@ -761,6 +761,20 @@ original raw field.
 These helpers parse request metadata only. They do not create locks, refresh
 locks, or select an application timeout.
 
+## WebDAV Overwrite request metadata
+
+Handlers can call `Request::overwrite()` and `HttpRequest::overwrite()` to
+observe bounded typed WebDAV `Overwrite` request metadata through the shared
+protocol `HttpOverwrite` type. Absent fields return `Ok(None)`. Recognized
+values are the singleton tokens `T` and `F`, with optional surrounding SP or
+HTAB and case-sensitive matching. Malformed, oversized, duplicate, or
+control-byte values return a parser error while `Request::header()` and
+`HttpRequest::header()` continue to expose the original raw field.
+
+These helpers parse request metadata only. They do not overwrite destination
+resources, apply the RFC 4918 default `T` when the field is absent, or
+enforce WebDAV policy.
+
 ## Idempotency-Key request metadata
 
 Handlers can call `Request::idempotency_key()` and
