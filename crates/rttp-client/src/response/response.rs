@@ -87,6 +87,7 @@ use rttp_protocol::sunset::parse_sunset_values;
 use rttp_protocol::supports_loading_mode::SupportsLoadingMode;
 use rttp_protocol::surrogate_control::SurrogateControl;
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
+use rttp_protocol::variant_vary::VariantVary;
 use rttp_protocol::vary::Vary;
 use rttp_protocol::x_content_type_options::XContentTypeOptions;
 use rttp_protocol::x_frame_options::XFrameOptions;
@@ -1377,6 +1378,19 @@ impl Response {
       return Ok(None);
     }
     Vary::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses `Variant-Vary` as bounded RFC 2295 variant-list metadata. This
+  /// does not construct a cache key, select a variant, or change cache
+  /// behavior.
+  pub fn variant_vary(&self) -> error::Result<Option<VariantVary>> {
+    let values = self.header_values("variant-vary");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    VariantVary::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

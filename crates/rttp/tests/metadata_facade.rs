@@ -28,8 +28,8 @@ use rttp::server::{
   HttpSunsetParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTcn,
   HttpTcnDirective, HttpTcnParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType,
   HttpUpgrade, HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError,
-  HttpUpgradeParseError, HttpVia, HttpViaParseError, HttpXForwardedFor,
-  HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
+  HttpUpgradeParseError, HttpVariantVary, HttpVariantVaryParseError, HttpVia, HttpViaParseError,
+  HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
   HttpXForwardedProto, HttpXForwardedProtoParseError,
 };
 use std::io::Write;
@@ -390,6 +390,17 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::TcnParseError =
     rttp::Tcn::parse("list, LIST").expect_err("duplicate TCN should be rejected");
   let _: &rttp::TcnDirective = &tcn.members()[0];
+  let variant_vary: rttp::VariantVary =
+    rttp::VariantVary::parse("Accept-Language, Sec-CH-DPR").expect("Variant-Vary should parse");
+  let _: rttp::VariantVaryParseError = rttp::VariantVary::parse("Accept-Language, accept-language")
+    .expect_err("duplicate Variant-Vary should be rejected");
+  let _: rttp::VariantVaryParseError = rttp::VariantVary::parse("a".repeat(64 * 1024 + 1))
+    .expect_err("oversized Variant-Vary should be rejected");
+  assert_eq!(
+    vec!["accept-language", "sec-ch-dpr"],
+    variant_vary.field_names()
+  );
+  assert_eq!("accept-language, sec-ch-dpr", variant_vary.header_value());
   let baggage: rttp::Baggage =
     rttp_client::Baggage::parse("tenant=acme;source=gateway").expect("baggage should parse");
   let _: rttp::BaggageParseError = rttp_client::Baggage::parse("tenant=1,tenant=2")
@@ -1603,6 +1614,17 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let _: HttpTcnParseError =
     HttpTcn::parse("list, LIST").expect_err("duplicate TCN should be rejected");
   let _: HttpTcnDirective = tcn.members()[0].clone();
+  let variant_vary: HttpVariantVary =
+    HttpVariantVary::parse("Accept-Language, Sec-CH-DPR").expect("Variant-Vary should parse");
+  let _: HttpVariantVaryParseError = HttpVariantVary::parse("Accept-Language, accept-language")
+    .expect_err("duplicate Variant-Vary should be rejected");
+  let _: HttpVariantVaryParseError = HttpVariantVary::parse("a".repeat(64 * 1024 + 1))
+    .expect_err("oversized Variant-Vary should be rejected");
+  assert_eq!(
+    vec!["accept-language", "sec-ch-dpr"],
+    variant_vary.field_names()
+  );
+  assert_eq!("accept-language, sec-ch-dpr", variant_vary.header_value());
   let accept_charsets: HttpRequestAcceptCharsets =
     HttpRequestAcceptCharsets::parse("utf-8, iso-8859-1;q=0.5")
       .expect("Accept-Charset should parse");

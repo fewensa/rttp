@@ -889,6 +889,22 @@ replaces existing raw `TCN` fields.
 These helpers expose metadata only. RTTP does not select variants, synthesize
 `Alternates` or `Vary`, or change cache behavior from `TCN`.
 
+### Bounded Variant-Vary response metadata
+
+`Response::variant_vary()` and server `HttpResponse::with_variant_vary()` /
+`HttpResponse::variant_vary()` parse or declare bounded RFC 2295
+`Variant-Vary` response metadata through the shared protocol `VariantVary`
+type. Valid metadata is either the exclusive `*` wildcard or an ordered list
+of HTTP field-name tokens, normalized to lowercase in first-seen order.
+Duplicate names, duplicate or mixed wildcards, malformed or empty members,
+oversized values, and control-byte injection return parse errors while raw
+response headers remain available on accessor failures; typed server
+declaration replaces existing raw `Variant-Vary` fields.
+
+These helpers expose metadata only. RTTP does not construct cache keys,
+select variants, synthesize `Alternates`, `TCN`, or `Vary`, or change cache
+behavior from `Variant-Vary`.
+
 ### Bounded Origin-Trial response metadata
 
 `Response::origin_trials()` and server `HttpResponse::with_origin_trials()` /
@@ -1602,6 +1618,7 @@ gain additional HTTP/2 header-block handling.
 | Accept-Charset | Client `accept_charset` and `accept_charset_with_q` format bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type; server `Request::accept_charset()` and `HttpRequest::accept_charset()` parse received fields into `HttpRequestAcceptCharsets` | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |
 | Negotiate | Client `negotiate` emits bounded RFC 2295 `Negotiate` request metadata through the shared `rttp-protocol` type, replacing an existing same-name field; server `Request::negotiate()` and `HttpRequest::negotiate()` parse received fields into `HttpNegotiate` while preserving raw headers on errors | No variant selection, transparent content negotiation, `Alternates`/`TCN`/`Vary` synthesis, or automatic cache selection |
 | TCN | Client `Response::tcn()` and server `HttpResponse::with_tcn()`/`tcn()` share bounded RFC 2295 `TCN` response metadata through the protocol `Tcn` type while preserving raw headers on accessor errors | No variant selection, `Alternates`/`Vary` synthesis, transparent content negotiation, or cache behavior |
+| Variant-Vary | Client `Response::variant_vary()` and server `HttpResponse::with_variant_vary()`/`variant_vary()` share bounded RFC 2295 `Variant-Vary` response metadata through the protocol `VariantVary` type while preserving raw headers on accessor errors | No cache-key construction, variant selection, `Alternates`/`TCN`/`Vary` synthesis, transparent content negotiation, or cache behavior |
 | Sec-GPC | Client `sec_gpc` emits bounded `Sec-GPC: 1` request metadata; server `Request::sec_gpc()` and `HttpRequest::sec_gpc()` parse typed received values while preserving raw headers on errors | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
 | Upgrade-Insecure-Requests | Client `upgrade_insecure_requests` emits bounded singleton `Upgrade-Insecure-Requests: 1` request metadata; server `Request::upgrade_insecure_requests()` and `HttpRequest::upgrade_insecure_requests()` parse typed received values while preserving raw headers on errors | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Depth | Client `depth` emits bounded singleton WebDAV `Depth` request metadata through the shared protocol type, replacing an existing same-name field; server `Request::depth()` and `HttpRequest::depth()` parse typed received values while preserving raw headers on errors | No resource traversal, WebDAV method selection, method-policy enforcement, retry, or forwarding policy |
@@ -2793,6 +2810,7 @@ TLS or async accept loops.
 | Accept-Charset | `HttpRequestAcceptCharsets`, `Request::accept_charset`, and `HttpRequest::accept_charset` parse bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |
 | Negotiate | `Request::negotiate` and `HttpRequest::negotiate` parse bounded RFC 2295 `Negotiate` request metadata into `HttpNegotiate` through the shared `rttp-protocol` type and preserve raw values on errors | No variant selection, transparent content negotiation, `Alternates`/`TCN`/`Vary` synthesis, or automatic cache selection |
 | TCN | `HttpResponse::with_tcn` and `HttpResponse::tcn` declare or parse bounded RFC 2295 `TCN` response metadata through `HttpTcn` and preserve raw headers on accessor errors | No variant selection, `Alternates`/`Vary` synthesis, transparent content negotiation, or cache behavior |
+| Variant-Vary | `HttpVariantVary`, `HttpResponse::with_variant_vary`, and `HttpResponse::variant_vary` declare or parse bounded RFC 2295 `Variant-Vary` response metadata through the shared protocol type, replacing raw duplicates on declaration and preserving raw headers on accessor errors | No cache-key construction, variant selection, `Alternates`/`TCN`/`Vary` synthesis, transparent content negotiation, or cache behavior |
 | Sec-GPC | `Request::sec_gpc` and `HttpRequest::sec_gpc` parse bounded singleton `Sec-GPC` `1`-signal metadata and preserve raw values on errors | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
 | Upgrade-Insecure-Requests | `Request::upgrade_insecure_requests` and `HttpRequest::upgrade_insecure_requests` parse bounded singleton `Upgrade-Insecure-Requests` `1`-token metadata and preserve raw values on errors | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Depth | `Request::depth` and `HttpRequest::depth` parse bounded singleton WebDAV `Depth` request metadata through the shared protocol type and preserve raw values on errors | No resource traversal, WebDAV method selection, method-policy enforcement, retry, or forwarding policy |

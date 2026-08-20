@@ -220,6 +220,9 @@ pub use rttp_protocol::tcn::{
 pub use rttp_protocol::upgrade::{
   Upgrade as HttpUpgrade, UpgradeParseError as HttpUpgradeParseError,
 };
+pub use rttp_protocol::variant_vary::{
+  VariantVary as HttpVariantVary, VariantVaryParseError as HttpVariantVaryParseError,
+};
 pub use rttp_protocol::via::{Via as HttpVia, ViaParseError as HttpViaParseError};
 pub use rttp_protocol::www_authenticate::{
   WwwAuthenticate as HttpWwwAuthenticate, WwwAuthenticateChallenge as HttpWwwAuthenticateChallenge,
@@ -1829,6 +1832,22 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Variant-Vary` response metadata without
+  /// constructing a cache key or selecting a variant.
+  pub fn with_variant_vary(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpVariantVaryParseError> {
+    let variant_vary = HttpVariantVary::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Variant-Vary"));
+    self
+      .headers
+      .push(HttpHeader::new("Variant-Vary", variant_vary.header_value()));
+    Ok(self)
+  }
+
   /// Validates and replaces `Alt-Used` response metadata without selecting an
   /// alternative service or changing connection policy.
   pub fn with_alt_used(mut self, value: impl AsRef<str>) -> Result<Self, HttpAltUsedParseError> {
@@ -3117,6 +3136,21 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpTcn::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Variant-Vary` metadata without changing raw headers,
+  /// constructing a cache key, or selecting a variant.
+  pub fn variant_vary(&self) -> Result<Option<HttpVariantVary>, HttpVariantVaryParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Variant-Vary"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpVariantVary::parse_values(values).map(Some)
   }
 
   /// Parses attached `Alt-Used` metadata without changing raw headers,

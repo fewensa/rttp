@@ -37,9 +37,9 @@ pub use rttp_client::response::{
   SpeculationRules, SpeculationRulesParseError, StrictTransportSecurity,
   StrictTransportSecurityParseError, SupportsLoadingMode, SupportsLoadingModeParseError,
   SurrogateControl, SurrogateControlParseError, Tcn, TcnDirective, TcnParseError, Upgrade,
-  UpgradeParseError, WantContentDigest, WantReprDigest, WwwAuthenticate, WwwAuthenticateChallenge,
-  WwwAuthenticateParameter, WwwAuthenticateParseError, XContentTypeOptions,
-  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  UpgradeParseError, VariantVary, VariantVaryParseError, WantContentDigest, WantReprDigest,
+  WwwAuthenticate, WwwAuthenticateChallenge, WwwAuthenticateParameter, WwwAuthenticateParseError,
+  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 #[cfg(feature = "client")]
 pub use rttp_client::{

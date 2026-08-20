@@ -24,9 +24,10 @@ use rttp_client::response::{
   SignatureParseError, SpeculationRules, SpeculationRulesParseError, StrictTransportSecurity,
   StrictTransportSecurityParseError, SupportsLoadingMode, SupportsLoadingModeParseError,
   SurrogateControl, SurrogateControlParseError, Trailer, TransferEncoding,
-  TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError, Via, ViaParseError,
-  WantContentDigest, WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError,
-  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  TransferEncodingParseError, Upgrade, UpgradeParseError, VariantVary, VariantVaryParseError, Vary,
+  VaryParseError, Via, ViaParseError, WantContentDigest, WantReprDigest, Warning, WwwAuthenticate,
+  WwwAuthenticateParseError, XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions,
+  XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentDisposition, ContentDispositionParseError, ContentLocation,
@@ -185,6 +186,17 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let tcn: Tcn = Tcn::parse("list, choice").expect("TCN should parse");
   let _: TcnParseError = Tcn::parse("list, LIST").expect_err("duplicate TCN should be rejected");
   let _: &[TcnDirective] = tcn.members();
+  let variant_vary: VariantVary =
+    VariantVary::parse("Accept-Language, Sec-CH-DPR").expect("Variant-Vary should parse");
+  let _: VariantVaryParseError = VariantVary::parse("Accept-Language, accept-language")
+    .expect_err("duplicate Variant-Vary should be rejected");
+  let _: VariantVaryParseError = VariantVary::parse("a".repeat(64 * 1024 + 1))
+    .expect_err("oversized Variant-Vary should be rejected");
+  assert_eq!(
+    vec!["accept-language", "sec-ch-dpr"],
+    variant_vary.field_names()
+  );
+  assert_eq!("accept-language, sec-ch-dpr", variant_vary.header_value());
   let want_repr_digest =
     WantReprDigest::parse("sha-256=10").expect("Want-Repr-Digest should parse");
   let priority = Priority::parse("u=1, i").expect("Priority should parse");
@@ -1346,4 +1358,56 @@ fn via_facade_exports_shared_request_and_response_type() {
   let _: ClientVia = ClientVia::parse("1.1 edge-a").expect("crate-root Via should parse");
   assert_eq!("edge-a", via.members()[0].received_by());
   assert_eq!(Some("HTTP"), via.members()[1].protocol_name());
+}
+
+#[test]
+fn response_facade_parses_variant_vary_metadata() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    b"HTTP/1.1 200 OK\r\nVariant-Vary: Accept-Language\r\nVariant-Vary: Sec-CH-DPR\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+  let variant_vary = response
+    .variant_vary()
+    .expect("Variant-Vary should parse")
+    .expect("Variant-Vary should be present");
+  assert_eq!(
+    vec!["accept-language", "sec-ch-dpr"],
+    variant_vary.field_names()
+  );
+  assert_eq!("accept-language, sec-ch-dpr", variant_vary.header_value());
+
+  let absent = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+  assert!(absent
+    .variant_vary()
+    .expect("missing Variant-Vary should be accepted")
+    .is_none());
+
+  let malformed = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    b"HTTP/1.1 200 OK\r\nVariant-Vary: Accept-Language, accept-language\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("raw response should remain usable");
+  assert!(malformed.variant_vary().is_err());
+  assert_eq!(
+    Some(&"Accept-Language, accept-language".to_string()),
+    malformed.header_value("Variant-Vary")
+  );
+
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let oversized_response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    format!("HTTP/1.1 200 OK\r\nVariant-Vary: {oversized}\r\nContent-Length: 0\r\n\r\n")
+      .into_bytes(),
+  )
+  .expect("oversized Variant-Vary should remain on the raw response");
+  assert!(oversized_response.variant_vary().is_err());
+  assert_eq!(
+    Some(&oversized),
+    oversized_response.header_value("Variant-Vary")
+  );
 }
