@@ -34,10 +34,12 @@ use rttp_protocol::priority::Priority;
 use rttp_protocol::save_data::SaveData;
 use rttp_protocol::sec_gpc::SecGpc;
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
+use rttp_protocol::sec_websocket_protocol::SecWebSocketProtocol;
 use rttp_protocol::sec_websocket_version::SecWebSocketVersion;
 use rttp_protocol::signature::Signature;
 use rttp_protocol::signature_input::SignatureInput;
 use rttp_protocol::te::{Te, MAX_TE_CODINGS, MAX_TE_VALUE_BYTES};
+use rttp_protocol::timeout::Timeout;
 use rttp_protocol::trace_context::{TraceParent, TraceState};
 use rttp_protocol::trailer::Trailer;
 use rttp_protocol::upgrade::Upgrade;
@@ -833,6 +835,20 @@ impl HttpClient {
     Ok(self.header(Header::new("Lock-Token", lock_token.header_value())))
   }
 
+  /// Set bounded WebDAV `Timeout` request metadata.
+  ///
+  /// The value must be an ordered list of `Second-n` and `Infinite`
+  /// alternatives. Members are normalized to lowercase, duplicate alternatives
+  /// are rejected, and size and count bounds are enforced before connecting.
+  /// This only validates and emits the header; it does not create locks,
+  /// refresh locks, or select an application timeout. Use `header` directly for
+  /// unusual values.
+  pub fn timeout<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let timeout = Timeout::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("Timeout", timeout.header_value())))
+  }
+
   /// Append a validated `Accept-Charset` range with the default quality of
   /// `1`. This declares request metadata only; it does not negotiate,
   /// transcode, or select a response charset.
@@ -901,6 +917,24 @@ impl HttpClient {
     Ok(self.header(Header::new(
       "Sec-WebSocket-Version",
       sec_websocket_version.header_value(),
+    )))
+  }
+
+  /// Set bounded `Sec-WebSocket-Protocol` request metadata as offers in
+  /// preference order.
+  ///
+  /// This validates RFC 6455 protocol tokens, case-sensitive duplicates,
+  /// member count, and size bounds before connecting and replaces any
+  /// existing `Sec-WebSocket-Protocol` field. It does not perform a WebSocket
+  /// handshake, emit `Connection: Upgrade`, choose an application
+  /// subprotocol, or switch protocols. Use `header` directly for unusual
+  /// values.
+  pub fn sec_websocket_protocol<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let sec_websocket_protocol = SecWebSocketProtocol::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Sec-WebSocket-Protocol",
+      sec_websocket_protocol.header_value(),
     )))
   }
 

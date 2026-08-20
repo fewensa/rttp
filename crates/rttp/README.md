@@ -408,6 +408,18 @@ optional surrounding SP or HTAB; malformed, duplicate, oversized, and
 control-byte values are rejected while raw request headers remain available
 when the typed parser reports an error.
 
+`HttpClient::timeout(value)` validates and emits one WebDAV `Timeout`
+request field through the shared `rttp_protocol` `Timeout` type, replacing
+any existing same-name field before a socket is opened. `Request::timeout()`
+and `HttpRequest::timeout()` parse received fields into the same
+`HttpTimeout` representation, returning `Ok(None)` when absent. Recognized
+values are ordered `Second-n` and `Infinite` alternatives, bounded to 64 KiB
+per field and 64 KiB aggregate with at most 32 members; malformed,
+overflowing, duplicate, oversized, too-many-member, and control-byte values
+are rejected while raw request headers remain available when the typed parser
+reports an error. RTTP does not create locks, refresh locks, or select an
+application timeout.
+
 These helpers declare and observe request metadata only. RTTP does not
 traverse resources, select WebDAV methods, or enforce method policy.
 
@@ -493,6 +505,30 @@ oversized values are rejected while raw headers remain available.
 These helpers declare and observe metadata only. RTTP does not perform a
 WebSocket handshake, emit `Connection: Upgrade`, compute
 `Sec-WebSocket-Accept`, negotiate versions, or switch protocols.
+
+## Bounded Sec-WebSocket-Protocol request and response metadata
+
+`HttpClient::sec_websocket_protocol(value)` validates and emits
+`Sec-WebSocket-Protocol` request metadata as offers in preference order
+through the shared `rttp_protocol` `SecWebSocketProtocol` type, replacing any
+existing same-name field before a socket is opened. `Request::sec_websocket_protocol()`
+and `HttpRequest::sec_websocket_protocol()` parse received fields into the
+same `HttpSecWebSocketProtocol` representation, returning `Ok(None)` when
+absent. `HttpResponse::with_sec_websocket_protocol(token)` declares validated
+response metadata for one selected token without adding `Connection` or
+`Upgrade`, and `HttpResponse::sec_websocket_protocol()` plus client
+`Response::sec_websocket_protocol()` parse attached or received fields as a
+selection singleton. Recognized members are RFC 6455 section 11.3.4 `token`
+values such as `chat`, `superchat`, or `graphql-transport-ws`, compared
+case-sensitively. Empty members, malformed tokens, parameters, slashes,
+duplicates, control-byte, over-limit, and oversized values are rejected while
+raw headers remain available; a multi-token response value fails the
+singleton selection parse.
+
+These helpers declare and observe metadata only. RTTP does not perform a
+WebSocket handshake, emit `Connection: Upgrade`, choose an application
+subprotocol, or switch protocols. Applications own the selection decision;
+RTTP never picks a token from the offer list.
 
 ## Bounded W3C Trace Context request metadata
 
@@ -1263,8 +1299,10 @@ scheduling, or async accept loops.
 | Depth | `HttpClient::depth` validates and emits bounded singleton WebDAV `Depth` request metadata through the shared protocol type, and `Request::depth`/`HttpRequest::depth` parse received fields into the same representation while preserving raw headers on errors | No resource traversal, WebDAV method selection, method-policy enforcement, retry, or forwarding policy |
 | Lock-Token | `HttpClient::lock_token` validates and emits one bounded WebDAV `Lock-Token` request field through the shared protocol type, `Request::lock_token`/`HttpRequest::lock_token` parse received request fields, and `HttpResponse::with_lock_token`/`lock_token` plus `Response::lock_token` declare or parse response fields while preserving raw headers on errors and redacting the token from typed debug output | No lock creation, refresh, release, persistence, ownership comparison, or WebDAV lock policy |
 | Destination | `HttpClient::destination` validates and emits bounded singleton WebDAV `Destination` request metadata through the shared protocol type, and `Request::destination`/`HttpRequest::destination` parse received fields into the same representation while preserving raw headers on errors | No destination resolution, URI normalization, authorization, COPY/MOVE execution, or application resource policy |
+| Timeout | `HttpClient::timeout` validates and emits bounded ordered WebDAV `Timeout` request metadata through the shared protocol type, and `Request::timeout`/`HttpRequest::timeout` parse received fields into the same representation while preserving raw headers on errors | No lock creation, lock refresh, application-timeout selection, retry, or forwarding policy |
 | WebSocket handshake metadata | `HttpClient::sec_websocket_key` validates and emits one bounded `Sec-WebSocket-Key` request field through the shared protocol type, and `Request::sec_websocket_key`/`HttpRequest::sec_websocket_key` parse received fields into the same representation while preserving raw headers on errors; server responses can derive `Sec-WebSocket-Accept` with the RFC GUID plus SHA-1/base64 transform, and clients can parse and verify the response against a validated key; typed debug output redacts key and accept material | No HTTP upgrade, random nonce generation, WebSocket frames, or handshake policy |
 | Sec-WebSocket-Version | `HttpClient::sec_websocket_version`, `Request::sec_websocket_version`/`HttpRequest::sec_websocket_version`, `HttpResponse::with_sec_websocket_version`/`sec_websocket_version`, and client `Response::sec_websocket_version` share the bounded protocol version-list representation, requiring canonical descending order and preserving raw headers on errors | No WebSocket handshake, `Connection: Upgrade` emission, `Sec-WebSocket-Accept` computation, version negotiation, protocol switch, or frames |
+| Sec-WebSocket-Protocol | `HttpClient::sec_websocket_protocol`, `Request::sec_websocket_protocol`/`HttpRequest::sec_websocket_protocol`, `HttpResponse::with_sec_websocket_protocol`/`sec_websocket_protocol`, and client `Response::sec_websocket_protocol` share the bounded protocol token representation: request offers preserve preference order while response values are selection singletons, with case-sensitive duplicates and raw headers preserved on errors | No WebSocket handshake, `Connection: Upgrade` emission, automatic subprotocol choice, protocol switch, or frames |
 | W3C Trace Context | `HttpClient::traceparent`/`tracestate` validate and emit bounded W3C Trace Context request metadata, and `Request::traceparent`/`tracestate` plus `HttpRequest` helpers parse received fields while preserving raw headers on errors and redacting propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |
 | W3C Baggage | `HttpClient::baggage` validates and emits bounded W3C Baggage request metadata, and `Request::baggage` plus `HttpRequest` helpers parse received fields while preserving raw headers on errors and redacting member and property values from typed debug output | No application-data interpretation, request-context storage, tracing backend, span model, or automatic propagation |
 | X-Forwarded compatibility metadata | `HttpClient::x_forwarded_for`/`x_forwarded_host`/`x_forwarded_proto` emit bounded compatibility request metadata; `Request` and `HttpRequest` helpers parse ordered node, authority, and scheme values while preserving raw headers on errors | No forwarded identity trust, client address selection, routing rewrite, scheme rewrite, redirect, upgrade, enforcement, or trusted-proxy selection; applications must choose trusted proxies |
