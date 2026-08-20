@@ -16,6 +16,7 @@ use rttp_protocol::access_control_request_private_network::AccessControlRequestP
 use rttp_protocol::authorization::Authorization;
 use rttp_protocol::baggage::Baggage;
 use rttp_protocol::cdn_loop::{CdnLoop, MAX_CDN_LOOP_VALUE_BYTES};
+use rttp_protocol::depth::Depth;
 use rttp_protocol::expect::Expect;
 use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
@@ -703,6 +704,19 @@ impl HttpClient {
     let max_forwards = MaxForwards::parse(value.as_ref())
       .map_err(|error| error::builder_with_message(error.to_string()))?;
     Ok(self.header(Header::new("Max-Forwards", max_forwards.header_value())))
+  }
+
+  /// Set bounded WebDAV `Depth` request metadata.
+  ///
+  /// The value must be the singleton value `0`, `1`, or `infinity`, with
+  /// optional whitespace trimmed and `infinity` normalized to lowercase. This
+  /// only validates and emits the header; it does not traverse resources,
+  /// choose methods, or enforce WebDAV policy. Use `header` directly for
+  /// unusual values.
+  pub fn depth<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let depth = Depth::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("Depth", depth.header_value())))
   }
 
   /// Append a validated `Accept-Charset` range with the default quality of

@@ -40,6 +40,7 @@ pub use rttp_protocol::connection::{
 };
 pub use rttp_protocol::content_length::HttpContentLength;
 pub use rttp_protocol::cookie::{HttpCookiePair, HttpCookieParseError, HttpCookies};
+pub use rttp_protocol::depth::{Depth as HttpDepth, DepthParseError as HttpDepthParseError};
 pub use rttp_protocol::entity_tag::{
   EntityTag as HttpEntityTag, EntityTagParseError as HttpEntityTagParseError,
 };
@@ -514,6 +515,16 @@ impl Request {
       return Ok(None);
     }
     HttpMaxForwards::parse_values(values).map(Some)
+  }
+
+  /// Parses received WebDAV `Depth` request metadata without traversing
+  /// resources or enforcing method policy.
+  pub fn depth(&self) -> Result<Option<HttpDepth>, HttpDepthParseError> {
+    let values: Vec<&str> = self.headers_named("Depth").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDepth::parse_values(values).map(Some)
   }
 
   /// Parses exactly one opaque, bounded `Idempotency-Key` field as typed
@@ -2242,6 +2253,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpMaxForwards::parse_values(values).map(Some)
+  }
+
+  /// Parses received WebDAV `Depth` request metadata without traversing
+  /// resources or enforcing method policy.
+  pub fn depth(&self) -> Result<Option<HttpDepth>, HttpDepthParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Depth"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDepth::parse_values(values).map(Some)
   }
 
   /// Parses exactly one opaque, bounded `Idempotency-Key` field as typed

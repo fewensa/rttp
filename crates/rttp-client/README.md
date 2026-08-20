@@ -46,6 +46,17 @@ diagnostic policy, route through proxies, decrement the value, or retry the
 request. Callers needing an unusual value can retain full raw-header control
 with `header(("Max-Forwards", "..."))`.
 
+## Bounded WebDAV Depth metadata
+
+`HttpClient::depth(value)` sets a WebDAV `Depth` request header through the
+shared protocol `Depth` type. The helper accepts the singleton values `0`,
+`1`, and `infinity`, trims HTTP OWS, normalizes `infinity` to lowercase, and
+rejects empty, unsupported, comma-list, oversized (over 64 KiB), duplicate,
+and control-byte values before a socket is opened. It only validates and
+emits the canonical metadata value: RTTP does not traverse resources, select
+WebDAV methods, or enforce method policy. Callers needing an unusual value
+can retain full raw-header control with `header(("Depth", "..."))`.
+
 ## Bounded Idempotency-Key metadata
 
 `HttpClient::idempotency_key(value)` sets an `Idempotency-Key` request header
@@ -1199,6 +1210,7 @@ header-block model.
 | Sec-GPC | `sec_gpc` emits bounded `Sec-GPC: 1` request metadata through the shared protocol type | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
 | Upgrade-Insecure-Requests | `upgrade_insecure_requests` emits bounded singleton `Upgrade-Insecure-Requests: 1` request metadata | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Max-Forwards | `max_forwards` emits bounded singleton `Max-Forwards` request metadata through the shared protocol type | No hop decrement, proxy routing, TRACE/OPTIONS selection, retry, or forwarding policy |
+| Depth | `depth` emits bounded singleton WebDAV `Depth` request metadata through the shared protocol type, normalizing `infinity` to lowercase and replacing an existing same-name field | No resource traversal, WebDAV method selection, method-policy enforcement, retry, or forwarding policy |
 | Idempotency-Key | `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | Sec-WebSocket-Key | `sec_websocket_key` emits bounded singleton `Sec-WebSocket-Key` request metadata through the shared protocol type, replacing an existing same-name field and redacting the nonce from typed debug output | No HTTP upgrade, `Sec-WebSocket-Accept` computation, random nonce generation, WebSocket frames, or handshake policy |
 | Pragma | `pragma` and `pragma_no_cache` emit bounded RFC 9111 `Pragma` request metadata through the shared protocol type, combining and replacing existing same-name fields | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |

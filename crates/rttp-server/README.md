@@ -674,6 +674,20 @@ expose the original raw field.
 These helpers parse request metadata only. They do not decrement the hop
 count, route a request, select TRACE or OPTIONS, or apply forwarding policy.
 
+## WebDAV Depth request metadata
+
+Handlers can call `Request::depth()` and `HttpRequest::depth()` to observe
+bounded typed WebDAV `Depth` request metadata through the shared protocol
+`HttpDepth` type. Absent fields return `Ok(None)`. Recognized values are the
+singleton depth values `0`, `1`, and `infinity`, with optional surrounding SP
+or HTAB and lowercase canonical emission for `infinity`. Malformed,
+oversized, duplicate, or control-byte values return a parser error while
+`Request::header()` and `HttpRequest::header()` continue to expose the
+original raw field.
+
+These helpers parse request metadata only. They do not traverse resources,
+select WebDAV methods, or enforce method policy.
+
 ## Idempotency-Key request metadata
 
 Handlers can call `Request::idempotency_key()` and
