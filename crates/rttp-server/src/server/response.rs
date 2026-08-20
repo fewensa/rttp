@@ -97,6 +97,9 @@ pub use rttp_protocol::cross_origin_resource_policy::{
 pub use rttp_protocol::dav::{
   Dav as HttpDav, DavClass as HttpDavClass, DavParseError as HttpDavParseError,
 };
+pub use rttp_protocol::delta_base::{
+  DeltaBase as HttpDeltaBase, DeltaBaseParseError as HttpDeltaBaseParseError,
+};
 pub use rttp_protocol::deprecation::{
   Deprecation as HttpDeprecation, DeprecationParseError as HttpDeprecationParseError,
 };
@@ -1999,6 +2002,16 @@ impl HttpResponse {
     self
   }
 
+  pub fn with_delta_base(mut self, delta_base: HttpDeltaBase) -> Self {
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Delta-Base"));
+    self
+      .headers
+      .push(HttpHeader::new("Delta-Base", delta_base.header_value()));
+    self
+  }
+
   pub fn with_schedule_tag(mut self, schedule_tag: HttpScheduleTag) -> Self {
     self
       .headers
@@ -3315,6 +3328,19 @@ impl HttpResponse {
       return Ok(None);
     };
     HttpEntityTag::parse(value).map(Some)
+  }
+
+  pub fn delta_base(&self) -> Result<Option<HttpDeltaBase>, HttpDeltaBaseParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Delta-Base"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDeltaBase::parse_values(values).map(Some)
   }
 
   pub fn schedule_tag(&self) -> Result<Option<HttpScheduleTag>, HttpScheduleTagParseError> {

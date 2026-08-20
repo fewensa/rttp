@@ -1345,6 +1345,83 @@ fn etag_response_helper_rejects_malformed_duplicate_and_oversized_raw_headers() 
 }
 
 #[test]
+fn delta_base_response_helpers_validate_replace_and_parse_singleton_metadata() {
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .delta_base()
+      .expect("absent Delta-Base should parse")
+  );
+
+  let response = HttpResponse::ok([])
+    .header("Delta-Base", "\"old\"")
+    .header("delta-base", "W/\"older\"")
+    .with_delta_base(HttpDeltaBase::new(HttpEntityTag::weak("asset-v7")));
+  assert_eq!(
+    Some(HttpDeltaBase::new(HttpEntityTag::weak("asset-v7"))),
+    response.delta_base().expect("Delta-Base should parse")
+  );
+  assert_eq!(
+    vec![("Delta-Base", "W/\"asset-v7\"")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let strong = HttpResponse::ok([]).header("Delta-Base", "\"asset-v7\"");
+  assert_eq!(
+    Some(HttpDeltaBase::new(HttpEntityTag::strong("asset-v7"))),
+    strong.delta_base().expect("strong Delta-Base should parse")
+  );
+}
+
+#[test]
+fn delta_base_response_helper_rejects_malformed_duplicate_and_oversized_raw_headers() {
+  for value in ["abc", "W/abc", "\"bad space\"", "\"one\", \"two\""] {
+    let response = HttpResponse::ok([]).header("Delta-Base", value);
+    assert!(
+      response.delta_base().is_err(),
+      "Delta-Base should reject {value:?}"
+    );
+    assert_eq!(
+      vec![("Delta-Base", value)],
+      response
+        .headers
+        .iter()
+        .map(|header| (header.name.as_str(), header.value.as_str()))
+        .collect::<Vec<_>>()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("Delta-Base", "\"one\"")
+    .header("delta-base", "W/\"two\"");
+  assert!(duplicate.delta_base().is_err());
+  assert_eq!(
+    vec![("Delta-Base", "\"one\""), ("delta-base", "W/\"two\"")],
+    duplicate
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let oversized = format!("\"{}\"", "a".repeat(64 * 1024));
+  let response = HttpResponse::ok([]).header("Delta-Base", &oversized);
+  assert!(response.delta_base().is_err());
+  assert_eq!(
+    vec![("Delta-Base", oversized.as_str())],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
 fn schedule_tag_response_helpers_validate_replace_and_parse_singleton_metadata() {
   assert_eq!(
     None,

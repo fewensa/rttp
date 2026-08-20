@@ -26,6 +26,7 @@ fn package_includes_protocol_metadata_facade_test() {
     "tests/max_forwards.rs",
     "tests/depth.rs",
     "tests/dav.rs",
+    "tests/delta_base.rs",
     "tests/destination.rs",
     "tests/timeout.rs",
     "tests/overwrite.rs",

@@ -14,9 +14,10 @@ use rttp_server::server::{
   HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
   HttpContentSecurityPolicyReportOnly, HttpContentSecurityPolicyReportOnlyParseError,
   HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
-  HttpCrossOriginOpenerPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeprecation,
-  HttpDeprecationParseError, HttpDepth, HttpDepthParseError, HttpDocumentPolicy,
-  HttpDocumentPolicyDirective, HttpDocumentPolicyParseError, HttpDocumentPolicyReportOnly,
+  HttpCrossOriginOpenerPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeltaBase,
+  HttpDeltaBaseParseError, HttpDeprecation, HttpDeprecationParseError, HttpDepth,
+  HttpDepthParseError, HttpDocumentPolicy, HttpDocumentPolicyDirective,
+  HttpDocumentPolicyParseError, HttpDocumentPolicyReportOnly,
   HttpDocumentPolicyReportOnlyParseError, HttpDocumentPolicyReportOnlyValue,
   HttpDocumentPolicyValue, HttpEntityTag, HttpExpectParseError, HttpExpectations, HttpHost,
   HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIf, HttpIfCondition, HttpIfList,
@@ -314,8 +315,12 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let deprecation = HttpDeprecation::parse("?1").expect("Deprecation should parse");
   let _: HttpDeprecationParseError =
     HttpDeprecation::parse("true").expect_err("historical Deprecation token should be rejected");
+  let delta_base = HttpDeltaBase::parse("\"revision-42\"").expect("Delta-Base should parse");
+  let _: HttpDeltaBaseParseError =
+    HttpDeltaBase::parse("\"one\", \"two\"").expect_err("Delta-Base list should be rejected");
   let response = HttpResponse::ok("")
     .with_etag(HttpEntityTag::weak("revision-42"))
+    .with_delta_base(delta_base)
     .with_schedule_tag(HttpScheduleTag::parse("\"sched-17\"").expect("Schedule-Tag should parse"))
     .with_deprecation(HttpDeprecation::Boolean(true))
     .with_accept_ch(["Sec-CH-UA"])
@@ -583,6 +588,14 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(
     response.etag().expect("ETag should parse"),
     Some(HttpEntityTag::weak("revision-42"))
+  );
+  assert_eq!(
+    response
+      .delta_base()
+      .expect("Delta-Base should parse")
+      .expect("Delta-Base should be present")
+      .entity_tag(),
+    &HttpEntityTag::strong("revision-42")
   );
   assert_eq!(
     response.schedule_tag().expect("Schedule-Tag should parse"),

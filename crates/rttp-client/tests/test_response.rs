@@ -2,7 +2,7 @@ use rttp_client::response::{
   AltSvc, AltUsed, Alternates, AuthenticationInfo, ContentDisposition, ContentDpr, ContentEncoding,
   ContentLocation, ContentRange, ContentSecurityPolicy, ContentSecurityPolicyReportOnly,
   ContentType, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly,
-  CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Deprecation, DocumentPolicy,
+  CrossOriginOpenerPolicy, CrossOriginResourcePolicy, DeltaBase, Deprecation, DocumentPolicy,
   DocumentPolicyReportOnly, DocumentPolicyReportOnlyValue, DocumentPolicyValue, EntityTag,
   HttpClearSiteData, HttpSetCookies, Im, ImMember, ImParameter, ImParseError, KeepAlive,
   LinkValues, Location, LockToken, MementoDatetime, OriginTrials, PermissionsPolicy,
@@ -2703,6 +2703,99 @@ fn test_parse_etag_rejects_malformed_duplicate_and_oversized_values_without_losi
     "ETag helper should reject oversized values"
   );
   assert_eq!(Some(&oversized), response.header_value("ETag"));
+}
+
+#[test]
+fn test_parse_delta_base_response_helper_handles_singleton_metadata() {
+  let absent = Response::new(
+    RoUrl::with("https://example.test/asset"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK".to_vec(),
+  )
+  .expect("response without Delta-Base should parse");
+  assert_eq!(
+    None,
+    absent.delta_base().expect("absent Delta-Base should parse")
+  );
+
+  for (value, expected) in [
+    (
+      "\"asset-v7\"",
+      DeltaBase::new(EntityTag::strong("asset-v7")),
+    ),
+    (
+      "W/\"asset-v7\"",
+      DeltaBase::new(EntityTag::weak("asset-v7")),
+    ),
+  ] {
+    let raw = format!("HTTP/1.1 226 IM Used\r\nDelta-Base: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test/asset"), raw.into_bytes())
+      .expect("response with Delta-Base should parse");
+
+    assert_eq!(
+      Some(expected),
+      response.delta_base().expect("Delta-Base should parse")
+    );
+    assert_eq!(Some(&value.to_string()), response.delta_base_value());
+    assert_eq!(
+      vec![&value.to_string()],
+      response.header_values("Delta-Base")
+    );
+  }
+}
+
+#[test]
+fn test_parse_delta_base_rejects_malformed_duplicate_and_oversized_values_without_losing_raw_headers(
+) {
+  for value in ["abc", "W/abc", "\"bad space\"", "\"one\", \"two\""] {
+    let raw = format!("HTTP/1.1 226 IM Used\r\nDelta-Base: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test/asset"), raw.into_bytes())
+      .expect("raw response remains usable");
+
+    assert!(
+      response.delta_base().is_err(),
+      "Delta-Base helper should reject {value:?}"
+    );
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Delta-Base")
+    );
+  }
+
+  let duplicate = Response::new(
+    RoUrl::with("https://example.test/asset"),
+    concat!(
+      "HTTP/1.1 226 IM Used\r\n",
+      "Delta-Base: \"one\"\r\n",
+      "delta-base: W/\"two\"\r\n",
+      "Content-Length: 2\r\n",
+      "\r\n",
+      "OK"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("raw response with duplicate Delta-Base remains usable");
+
+  assert!(
+    duplicate.delta_base().is_err(),
+    "Delta-Base helper should reject duplicate singleton headers"
+  );
+  assert_eq!(
+    vec![&"\"one\"".to_string(), &"W/\"two\"".to_string()],
+    duplicate.header_values("Delta-Base")
+  );
+
+  let oversized = format!("\"{}\"", "a".repeat(64 * 1024));
+  let raw =
+    format!("HTTP/1.1 226 IM Used\r\nDelta-Base: {oversized}\r\nContent-Length: 2\r\n\r\nOK");
+  let response = Response::new(RoUrl::with("https://example.test/asset"), raw.into_bytes())
+    .expect("raw response with oversized Delta-Base remains usable");
+
+  assert!(
+    response.delta_base().is_err(),
+    "Delta-Base helper should reject oversized values"
+  );
+  assert_eq!(Some(&oversized), response.header_value("Delta-Base"));
 }
 
 #[test]

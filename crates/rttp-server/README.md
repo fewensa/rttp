@@ -171,6 +171,22 @@ raw headers continue to expose the original fields.
 These helpers only declare and inspect response metadata. They do not decode
 or apply instance manipulations and do not change the response status.
 
+## Delta-Base response metadata
+
+`HttpResponse::with_delta_base(value)` validates and replaces attached
+`Delta-Base` response metadata with one bounded field. `HttpResponse::delta_base()`
+parses attached raw `Delta-Base` metadata into `HttpDeltaBase`, the shared
+protocol type also used by the client facade, and returns `Ok(None)` when the
+header is absent. The value is one strong or weak entity-tag base validator,
+reusing the shared `HttpEntityTag` primitive and the 64 KiB entity-tag field
+bound. Malformed values, comma-lists, duplicate fields, wildcard values,
+forbidden control bytes, and oversized values return `HttpDeltaBaseParseError`
+while raw response headers continue to expose the original fields.
+
+These helpers only declare and inspect response metadata. They do not locate
+cached entities, compare validators, apply deltas, decode instance
+manipulations, or impose a `226 IM Used` status policy.
+
 ## Negotiate request metadata
 
 Handlers can call `Request::negotiate()` and `HttpRequest::negotiate()` to

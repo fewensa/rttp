@@ -132,6 +132,7 @@ pub use self::connection::{ConnectionReader, ResponseBodyReader, StreamingRespon
 pub use rttp_protocol::a_im::{AIm, AImMember, AImParameter, AImParseError};
 pub use rttp_protocol::baggage::{Baggage, BaggageMember, BaggageParseError, BaggageProperty};
 pub use rttp_protocol::dav::{Dav, DavClass, DavParseError};
+pub use rttp_protocol::delta_base::{DeltaBase, DeltaBaseParseError};
 pub use rttp_protocol::depth::{Depth, DepthParseError};
 pub use rttp_protocol::destination::{Destination, DestinationParseError};
 pub use rttp_protocol::fetch_metadata::{

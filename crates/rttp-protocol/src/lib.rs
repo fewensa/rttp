@@ -55,6 +55,7 @@ pub mod cross_origin_opener_policy_report_only;
 pub mod cross_origin_resource_policy;
 mod csp_policy;
 pub mod dav;
+pub mod delta_base;
 pub mod deprecation;
 pub mod depth;
 pub mod destination;
