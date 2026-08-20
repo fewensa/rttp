@@ -1322,6 +1322,10 @@ fn compatibility_facade_roundtrips_if_metadata_without_policy() {
   .expect("malformed WebDAV If request should still parse");
   assert!(malformed.if_header().is_err());
   assert_eq!(Some("(junk)"), malformed.header("If"));
+  assert!(
+    rttp::If::parse("(Not<DAV:no-lock>)").is_err(),
+    "Not without required whitespace should be rejected"
+  );
 
   let duplicate = rttp::server::HttpRequest::parse(
     b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: (<a:b>)\r\nIf: (<b:c>)\r\n\r\n",

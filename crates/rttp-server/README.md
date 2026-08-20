@@ -824,8 +824,9 @@ mixed productions are rejected. Each field value and the aggregate input are
 bounded to 64 KiB, the combined value is bounded to 32 lists and 256
 conditions. Resource tags accept an RFC 3986 `Simple-ref` (absolute-URI or
 path-absolute with optional query); state tokens are absolute coded URLs,
-including `<DAV:no-lock>`; conditions accept the case-sensitive `Not` prefix
-followed by a state token or a bracketed entity tag (`[W/"etag"]`). List
+including `<DAV:no-lock>`; conditions accept the case-sensitive `Not` token
+only when it is followed by SP or HTAB and then a state token or a bracketed
+entity tag (`[W/"etag"]`). List
 order, repeated lists, and resource tags are preserved, and
 `header_value()` re-emits the canonical field text. Malformed, empty,
 unterminated, mixed, duplicate, oversized, too-many-list, too-many-condition,

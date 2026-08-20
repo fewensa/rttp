@@ -327,6 +327,9 @@ fn parse_condition(value: &str, position: &mut usize) -> Result<IfCondition, IfP
   let negated = value[*position..].starts_with("Not");
   if negated {
     *position += 3;
+    if !matches!(bytes.get(*position).copied(), Some(b' ') | Some(b'\t')) {
+      return Err(IfParseError::new("invalid If condition"));
+    }
     skip_ows(bytes, position);
   }
   let predicate = match bytes.get(*position).copied() {

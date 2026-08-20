@@ -199,6 +199,8 @@ fn if_header_rejects_invalid_conditions() {
     "(NotNot <a:b>)",
     "(not <a:b>)",
     "(NOT <a:b>)",
+    "(Not<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)",
+    r#"(Not["etag"])"#,
     "(<a:b>])",
     "([] )",
     "( [unquoted] )",

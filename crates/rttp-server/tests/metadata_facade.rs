@@ -1216,6 +1216,8 @@ fn request_facade_parses_if_metadata_without_policy() {
     request.header("If")
   );
   let _: HttpIfParseError = HttpIf::parse("(junk)").expect_err("malformed WebDAV If should fail");
+  let _: HttpIfParseError = HttpIf::parse("(Not<DAV:no-lock>)")
+    .expect_err("Not without required whitespace should be rejected");
 
   let absent = HttpRequest::parse(b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\n\r\n")
     .expect("request should parse");

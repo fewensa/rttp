@@ -2686,6 +2686,8 @@ fn if_header_helper_rejects_invalid_values_before_connecting() {
     "(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) <http://example.test/src> (Not <DAV:no-lock>)",
     "(junk)",
     "(Not)",
+    "(Not<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)",
+    r#"(Not["etag"])"#,
     "(</relative>)",
     "<relative> (<a:b>)",
     "(<a:b>)\r\nX-Injected: 1",

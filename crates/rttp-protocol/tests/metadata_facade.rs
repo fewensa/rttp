@@ -461,6 +461,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
     "(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) <http://example.test/src> (Not <DAV:no-lock>)",
   )
   .expect_err("mixed tagged and untagged If should be rejected");
+  let _: IfParseError = If::parse("(Not<DAV:no-lock>)")
+    .expect_err("Not without required whitespace should be rejected");
+  let _: IfParseError =
+    If::parse(r#"(Not["etag"])"#).expect_err("Not without required whitespace should be rejected");
   assert!(!format!("{if_header:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
   assert_eq!(
     memento_datetime.header_value(),

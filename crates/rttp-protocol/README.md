@@ -212,8 +212,9 @@ bounded to 64 KiB, the combined value is bounded to 32 lists, and the
 combined value is bounded to 256 conditions. Resource tags accept an RFC 3986
 `Simple-ref`: an absolute-URI or a path-absolute with optional query, wrapped
 in `<` and `>`. State tokens are absolute coded URLs, including
-`<DAV:no-lock>`. Conditions accept the case-sensitive `Not` prefix followed
-by a state token or a bracketed entity tag (`[W/"etag"]`). Surrounding SP and
+`<DAV:no-lock>`. Conditions accept the case-sensitive `Not` token only when it
+is followed by SP or HTAB and then a state token or a bracketed entity tag
+(`[W/"etag"]`). Surrounding SP and
 HTAB are trimmed as optional whitespace; list order, repeated lists, and
 resource tags are preserved, and `header_value()` re-emits the canonical
 field text with single SP separators and the tag repeated before each of its

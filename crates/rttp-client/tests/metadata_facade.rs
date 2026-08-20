@@ -123,6 +123,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   )
   .expect("WebDAV If should parse");
   let _: IfParseError = If::parse("(junk)").expect_err("malformed WebDAV If should be rejected");
+  let _: IfParseError = If::parse("(Not<DAV:no-lock>)")
+    .expect_err("Not without required whitespace should be rejected");
   let _request_if: If = if_header.clone();
   let _request_if_list: IfList = if_header.lists()[0].clone();
   let _request_if_condition: IfCondition = if_header.lists()[0].conditions()[0].clone();
