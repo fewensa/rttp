@@ -35,6 +35,7 @@ use rttp_protocol::delta_base::{DeltaBase, DeltaBaseParseError};
 use rttp_protocol::deprecation::Deprecation;
 use rttp_protocol::depth::Depth;
 use rttp_protocol::destination::Destination;
+use rttp_protocol::dnt::Dnt;
 use rttp_protocol::document_policy::{DocumentPolicy, DocumentPolicyParseError};
 use rttp_protocol::document_policy_report_only::{
   DocumentPolicyReportOnly, DocumentPolicyReportOnlyParseError,
@@ -139,6 +140,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let request_private_network = AccessControlRequestPrivateNetwork::parse("true")
     .expect("Access-Control-Request-Private-Network should parse");
   let save_data = SaveData::parse("on").expect("Save-Data should parse");
+  let dnt = Dnt::parse("1").expect("DNT should parse");
   let sec_gpc = SecGpc::parse("1").expect("Sec-GPC should parse");
   let upgrade_insecure_requests =
     UpgradeInsecureRequests::parse("1").expect("Upgrade-Insecure-Requests should parse");
@@ -378,6 +380,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(request_method.header_value(), "PATCH");
   assert_eq!(request_private_network.header_value(), "true");
   assert_eq!(save_data.header_value(), "on");
+  assert_eq!(dnt.header_value(), "1");
   assert_eq!(sec_gpc.header_value(), "1");
   assert_eq!(upgrade_insecure_requests.header_value(), "1");
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);

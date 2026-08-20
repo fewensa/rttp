@@ -1890,6 +1890,171 @@ fn facade_server_rejects_oversized_upgrade_insecure_requests_request_head() {
     .expect("oversized Upgrade-Insecure-Requests server thread");
 }
 
+#[derive(Debug, PartialEq)]
+struct ObservedDnt {
+  target: String,
+  raw: Option<String>,
+  parsed: Result<Option<String>, String>,
+}
+
+fn observe_dnt(request: &Request) -> ObservedDnt {
+  ObservedDnt {
+    target: request.target().to_string(),
+    raw: request.header("DNT").map(str::to_string),
+    parsed: request
+      .dnt()
+      .map(|metadata| metadata.map(|metadata| metadata.header_value().to_string()))
+      .map_err(|error| error.to_string()),
+  }
+}
+
+fn spawn_dnt_observer() -> (
+  std::net::SocketAddr,
+  mpsc::Receiver<ObservedDnt>,
+  thread::JoinHandle<()>,
+) {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind DNT metadata server");
+  let addr = server.local_addr().expect("DNT metadata server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send(observe_dnt(&request))
+          .expect("send observed DNT metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve DNT request");
+  });
+
+  (addr, observed_rx, handle)
+}
+
+#[test]
+fn sync_client_dnt_is_observed_by_server_helpers() {
+  for value in ["0", "1"] {
+    let (addr, observed_rx, handle) = spawn_dnt_observer();
+
+    let response = client()
+      .get()
+      .url(format!("http://{addr}/catalog"))
+      .dnt(value)
+      .expect("DNT should be accepted")
+      .emit()
+      .expect("DNT request should succeed");
+
+    assert_eq!("OK", response.body().string().expect("response body"));
+    assert_eq!(
+      ObservedDnt {
+        target: "/catalog".to_string(),
+        raw: Some(value.to_string()),
+        parsed: Ok(Some(value.to_string())),
+      },
+      observed_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("server should observe DNT metadata")
+    );
+    handle.join().expect("DNT server thread");
+  }
+}
+
+#[test]
+fn facade_server_rejects_malformed_dnt_without_losing_raw_headers() {
+  let (addr, observed_rx, handle) = spawn_dnt_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect malformed DNT");
+  stream
+    .write_all(
+      b"GET /catalog HTTP/1.1\r\nHost: example.test\r\nDNT: ?1\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write malformed DNT request");
+
+  assert_eq!(
+    ObservedDnt {
+      target: "/catalog".to_string(),
+      raw: Some("?1".to_string()),
+      parsed: Err("invalid DNT header value".to_string()),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe malformed DNT")
+  );
+  handle.join().expect("malformed DNT server thread");
+}
+
+#[test]
+fn facade_server_rejects_duplicate_dnt_without_losing_raw_headers() {
+  let (addr, observed_rx, handle) = spawn_dnt_observer();
+
+  let mut stream = TcpStream::connect(addr).expect("connect duplicate DNT");
+  stream
+    .write_all(
+      b"GET /catalog HTTP/1.1\r\nHost: example.test\r\nDNT: 1\r\ndnt: 0\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write duplicate DNT request");
+
+  assert_eq!(
+    ObservedDnt {
+      target: "/catalog".to_string(),
+      raw: Some("1".to_string()),
+      parsed: Err("duplicate DNT header fields".to_string()),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe duplicate DNT")
+  );
+  handle.join().expect("duplicate DNT server thread");
+}
+
+#[test]
+fn facade_server_rejects_oversized_dnt_request_head() {
+  // A 64 KiB + 1 field value plus the request line exceeds the shared HTTP/1.1
+  // request-head bound, so the request is rejected as 400 before handler
+  // dispatch. Oversized accessor parsing without losing raw access is covered
+  // by protocol and server unit tests plus the raised-limit h2c facade test.
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind oversized DNT server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("oversized DNT server addr");
+  let (observed_tx, observed_rx) = mpsc::channel::<()>();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_request| {
+        observed_tx
+          .send(())
+          .expect("handler must not observe oversized request head");
+        HttpResponse::ok("unreachable")
+      })
+      .expect("oversized request head should be answered as 400");
+  });
+
+  let oversized = "1".repeat(64 * 1024 + 1);
+  let request = format!(
+    "GET /catalog HTTP/1.1\r\nHost: example.test\r\nDNT: {oversized}\r\nConnection: close\r\n\r\n"
+  );
+  let mut stream = TcpStream::connect(addr).expect("connect oversized DNT");
+  stream
+    .write_all(request.as_bytes())
+    .expect("write oversized DNT request");
+  let mut response = Vec::new();
+  stream
+    .read_to_end(&mut response)
+    .expect("read oversized request-head response");
+  let response = String::from_utf8(response).expect("response should be utf-8");
+
+  assert!(
+    response.starts_with("HTTP/1.1 400 "),
+    "oversized request head should be rejected before handler dispatch: {response}"
+  );
+  assert!(
+    observed_rx.try_recv().is_err(),
+    "oversized DNT must not reach the handler"
+  );
+  handle.join().expect("oversized DNT server thread");
+}
+
 #[test]
 fn facade_client_and_server_exchange_valid_cors_preflight_metadata_without_policy() {
   let (addr, observed_rx, handle) = spawn_facade_cors_preflight_observer();

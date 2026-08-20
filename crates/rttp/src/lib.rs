@@ -48,14 +48,14 @@ pub use rttp_client::response::{
 pub use rttp_client::{
   AIm, AImMember, AImParameter, AImParseError, AcceptDatetime, AcceptDatetimeParseError, Baggage,
   BaggageMember, BaggageParseError, BaggageProperty, Depth, DepthParseError, Destination,
-  DestinationParseError, If, IfCondition, IfList, IfParseError, IfPredicate, IfResourceTag,
-  IfScheduleTagMatch, IfScheduleTagMatchParseError, IfStateToken, LockToken, LockTokenParseError,
-  Negotiate, NegotiateDirective, NegotiateParseError, Overwrite, OverwriteParseError, SecFetchDest,
-  SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose, Timeout, TimeoutParseError, TimeoutType,
-  TraceParent, TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError, Via,
-  ViaMember, ViaParseError, XForwardedFor, XForwardedForNode, XForwardedForNodeKind,
-  XForwardedForParseError, XForwardedHost, XForwardedHostParseError, XForwardedProto,
-  XForwardedProtoParseError,
+  DestinationParseError, Dnt, DntParseError, If, IfCondition, IfList, IfParseError, IfPredicate,
+  IfResourceTag, IfScheduleTagMatch, IfScheduleTagMatchParseError, IfStateToken, LockToken,
+  LockTokenParseError, Negotiate, NegotiateDirective, NegotiateParseError, Overwrite,
+  OverwriteParseError, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose, Timeout,
+  TimeoutParseError, TimeoutType, TraceParent, TraceParentParseError, TraceState, TraceStateMember,
+  TraceStateParseError, Via, ViaMember, ViaParseError, XForwardedFor, XForwardedForNode,
+  XForwardedForNodeKind, XForwardedForParseError, XForwardedHost, XForwardedHostParseError,
+  XForwardedProto, XForwardedProtoParseError,
 };
 
 impl Http {

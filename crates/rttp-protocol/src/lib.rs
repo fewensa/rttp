@@ -61,6 +61,7 @@ pub mod deprecation;
 pub mod depth;
 pub mod destination;
 pub mod digest;
+pub mod dnt;
 pub mod document_policy;
 pub mod document_policy_report_only;
 pub mod entity_tag;

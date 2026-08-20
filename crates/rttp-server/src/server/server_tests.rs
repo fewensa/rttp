@@ -351,6 +351,65 @@ fn request_save_data_parses_request_metadata_without_policy() {
 }
 
 #[test]
+fn request_dnt_parses_tracking_preference_metadata_without_policy() {
+  let absent_raw = "GET /catalog HTTP/1.1\r\nHost: example.test\r\n\r\n";
+  let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
+  let absent = Request::read_next_from(&mut absent_reader)
+    .expect("absent request should parse")
+    .expect("absent request should be present");
+  assert_eq!(
+    None,
+    absent.dnt().expect("missing DNT should be accepted")
+  );
+  assert_eq!(None, absent.header("DNT"));
+
+  for (value, expected) in [("0", "0"), ("1", "1")] {
+    let valid_raw = format!(
+      "GET /catalog HTTP/1.1\r\nHost: example.test\r\nDNT: {value}\r\n\r\n"
+    );
+    let mut valid_reader = BufReader::new(Cursor::new(valid_raw.as_bytes()));
+    let valid = Request::read_next_from(&mut valid_reader)
+      .expect("valid request should parse")
+      .expect("valid request should be present");
+    assert_eq!(
+      expected,
+      valid
+        .dnt()
+        .expect("DNT should parse")
+        .expect("DNT should be present")
+        .header_value()
+    );
+  }
+
+  let malformed_raw = concat!(
+    "GET /catalog HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "DNT: ?1\r\n",
+    "\r\n"
+  );
+  let mut malformed_reader = BufReader::new(Cursor::new(malformed_raw.as_bytes()));
+  let malformed = Request::read_next_from(&mut malformed_reader)
+    .expect("malformed metadata should not reject the request frame")
+    .expect("malformed request should be present");
+  assert!(malformed.dnt().is_err());
+  assert_eq!(Some("?1"), malformed.header("DNT"));
+
+  let duplicate_raw = concat!(
+    "GET /catalog HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "DNT: 1\r\n",
+    "dnt: 0\r\n",
+    "\r\n"
+  );
+  let mut duplicate_reader = BufReader::new(Cursor::new(duplicate_raw.as_bytes()));
+  let duplicate = Request::read_next_from(&mut duplicate_reader)
+    .expect("duplicate metadata should not reject the request frame")
+    .expect("duplicate request should be present");
+  assert!(duplicate.dnt().is_err());
+  assert_eq!(Some("1"), duplicate.header("DNT"));
+}
+
+#[test]
 fn request_sec_gpc_parses_request_metadata_without_policy() {
   let absent_raw = "GET /privacy HTTP/1.1\r\nHost: example.test\r\n\r\n";
   let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));

@@ -39,9 +39,9 @@ use rttp_client::response::{
 use rttp_client::{
   AIm, AImMember, AImParameter, AImParseError, AcceptDatetime, AcceptDatetimeParseError, Baggage,
   BaggageMember, BaggageParseError, BaggageProperty, Depth, DepthParseError, Destination,
-  DestinationParseError, HttpClient, If, IfCondition, IfList, IfParseError, IfPredicate,
-  IfResourceTag, IfScheduleTagMatch, IfScheduleTagMatchParseError, IfStateToken, Negotiate,
-  NegotiateDirective, NegotiateParseError, Overwrite, OverwriteParseError, SecFetchDest,
+  DestinationParseError, Dnt, DntParseError, HttpClient, If, IfCondition, IfList, IfParseError,
+  IfPredicate, IfResourceTag, IfScheduleTagMatch, IfScheduleTagMatchParseError, IfStateToken,
+  Negotiate, NegotiateDirective, NegotiateParseError, Overwrite, OverwriteParseError, SecFetchDest,
   SecFetchMode, SecFetchSite, SecFetchUser, SecGpc, SecGpcParseError, SecPurpose, Tcn,
   TcnDirective, TcnParseError, Timeout, TimeoutParseError, TimeoutType, TraceParent,
   TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError,
@@ -340,6 +340,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
   let fetch_user = SecFetchUser::parse("?1").expect("Sec-Fetch-User should parse");
+  let dnt = Dnt::parse("1").expect("DNT should parse");
+  let _: DntParseError = Dnt::parse("on").expect_err("invalid DNT should be rejected");
   let sec_gpc = SecGpc::parse("1").expect("Sec-GPC should parse");
   let _: SecGpcParseError = SecGpc::parse("0").expect_err("invalid Sec-GPC should be rejected");
   let sec_purpose = SecPurpose::parse("prefetch, vendor-ext").expect("Sec-Purpose should parse");
@@ -652,6 +654,7 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(fetch_mode.header_value(), "navigate");
   assert_eq!(fetch_dest.header_value(), "document");
   assert_eq!(fetch_user.header_value(), "?1");
+  assert_eq!(dnt.header_value(), "1");
   assert_eq!(sec_gpc.header_value(), "1");
   assert_eq!(sec_purpose.tokens(), ["prefetch", "vendor-ext"]);
   assert!(sec_purpose.contains_prefetch());
