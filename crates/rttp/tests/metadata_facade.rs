@@ -13,12 +13,13 @@ use rttp::server::{
   HttpOriginTrialParseError, HttpOriginTrials, HttpPermissionsPolicy,
   HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization,
   HttpProxyStatus, HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse,
-  HttpSaveData, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketKey,
-  HttpSecWebSocketKeyParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
-  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
-  HttpSunsetParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpUpgrade,
+  HttpSaveData, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept,
+  HttpSecWebSocketAcceptParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
+  HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
+  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
+  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
+  HttpSpeculationRules, HttpSpeculationRulesParseError, HttpSunsetParseError,
+  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpUpgrade,
   HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
 };
 use std::io::Write;
@@ -71,6 +72,13 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::AccessControlAllowCredentialsParseError =
     rttp_client::response::AccessControlAllowCredentials::parse("false")
       .expect_err("invalid Access-Control-Allow-Credentials should fail");
+  let client_sec_websocket_key =
+    HttpSecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==").expect("Sec-WebSocket-Key should parse");
+  let client_sec_websocket_accept: rttp::SecWebSocketAccept =
+    rttp_client::response::SecWebSocketAccept::derive_from_key(&client_sec_websocket_key);
+  let _: rttp::SecWebSocketAcceptParseError =
+    rttp_client::response::SecWebSocketAccept::parse("the accept value")
+      .expect_err("invalid Sec-WebSocket-Accept should fail");
   let critical_ch: rttp::CriticalCh =
     rttp_client::response::CriticalCh::parse("Sec-CH-UA").expect("Critical-CH should parse");
   let cache_status: rttp::CacheStatus =
@@ -284,6 +292,10 @@ fn compatibility_facade_exports_client_metadata_types() {
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA", "DPR"]);
   assert_eq!(allow_credentials.header_value(), "true");
+  assert_eq!(
+    client_sec_websocket_accept.as_str(),
+    "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
+  );
   assert_eq!(critical_ch.client_hints(), ["Sec-CH-UA"]);
   assert_eq!(
     cache_status.members()[0].identifier().as_str(),
@@ -980,6 +992,7 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpIdempotencyKey::parse("charge-2026-08-19-9f3c").expect("Idempotency-Key should parse");
   let sec_websocket_key: HttpSecWebSocketKey =
     HttpSecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==").expect("Sec-WebSocket-Key should parse");
+  let sec_websocket_accept = HttpSecWebSocketAccept::derive_from_key(&sec_websocket_key);
   let baggage: HttpBaggage =
     HttpBaggage::parse("tenant=acme;source=gateway").expect("baggage should parse");
   let _: HttpBaggageParseError =
@@ -995,6 +1008,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpIdempotencyKey::parse("key with space");
   let _: Result<HttpSecWebSocketKey, HttpSecWebSocketKeyParseError> =
     HttpSecWebSocketKey::parse("the sample nonce");
+  let _: Result<HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError> =
+    HttpSecWebSocketAccept::parse("the accept value");
   let if_modified_since: HttpIfModifiedSince =
     HttpIfModifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
       .expect("If-Modified-Since should parse");
@@ -1103,6 +1118,12 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!("dGhlIHNhbXBsZSBub25jZQ==", sec_websocket_key.as_str());
   assert_eq!("dGhlIHNhbXBsZSBub25jZQ==", sec_websocket_key.header_value());
   assert!(!format!("{sec_websocket_key:?}").contains("dGhlIHNhbXBsZSBub25jZQ=="));
+  assert_eq!(
+    "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=",
+    sec_websocket_accept.as_str()
+  );
+  assert!(sec_websocket_accept.verify_key(&sec_websocket_key));
+  assert!(!format!("{sec_websocket_accept:?}").contains("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
   assert_eq!("tenant", baggage_member.key());
   assert_eq!("source", baggage_property.key());
   assert!(!format!("{baggage:?}").contains("acme"));

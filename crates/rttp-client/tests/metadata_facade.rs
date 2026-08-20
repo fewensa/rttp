@@ -17,12 +17,13 @@ use rttp_client::response::{
   PermissionsPolicy, PermissionsPolicyParseError, Pragma, PragmaParseError, PreferenceApplied,
   Priority, ProxyAuthenticate, ProxyAuthenticateParseError, ProxyAuthenticationInfo,
   ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError, ReferrerPolicy,
-  ReferrerPolicyToken, ServerTiming, Signature, SignatureInput, SignatureInputParseError,
-  SignatureParseError, SpeculationRules, SpeculationRulesParseError, StrictTransportSecurity,
-  StrictTransportSecurityParseError, SupportsLoadingMode, SupportsLoadingModeParseError, Trailer,
-  TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError,
-  WantContentDigest, WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError,
-  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  ReferrerPolicyToken, SecWebSocketAccept, SecWebSocketAcceptParseError, ServerTiming, Signature,
+  SignatureInput, SignatureInputParseError, SignatureParseError, SpeculationRules,
+  SpeculationRulesParseError, StrictTransportSecurity, StrictTransportSecurityParseError,
+  SupportsLoadingMode, SupportsLoadingModeParseError, Trailer, TransferEncoding,
+  TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError, WantContentDigest,
+  WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError, XContentTypeOptions,
+  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentDisposition, ContentDispositionParseError, ContentLocation,
@@ -36,6 +37,7 @@ use rttp_client::{
   UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
 };
 use rttp_protocol::expect::Expect;
+use rttp_protocol::sec_websocket_key::SecWebSocketKey;
 use rttp_test_support as support;
 
 #[test]
@@ -58,6 +60,11 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     AccessControlMaxAge::parse("").expect_err("empty Access-Control-Max-Age should be rejected");
   let age = Age::parse("60").expect("Age should parse");
   let _: AgeParseError = Age::parse("").expect_err("empty Age should be rejected");
+  let sec_websocket_key =
+    SecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==").expect("Sec-WebSocket-Key should parse");
+  let sec_websocket_accept = SecWebSocketAccept::derive_from_key(&sec_websocket_key);
+  let _: SecWebSocketAcceptParseError =
+    SecWebSocketAccept::parse("the accept value").expect_err("invalid accept should be rejected");
   let cache_status =
     CacheStatus::parse("OriginCache; hit; ttl=1100").expect("Cache-Status should parse");
   let _: CacheStatusParseError = CacheStatus::parse("OriginCache; hit=yes")
@@ -265,6 +272,11 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(allow_headers.field_names(), ["x-request-id", "etag"]);
   assert_eq!(max_age.seconds(), 60);
   assert_eq!(age.seconds(), 60);
+  assert_eq!(
+    sec_websocket_accept.as_str(),
+    "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
+  );
+  assert!(sec_websocket_accept.verify_key(&sec_websocket_key));
   assert_eq!(
     cache_status.members()[0].identifier().as_str(),
     "OriginCache"

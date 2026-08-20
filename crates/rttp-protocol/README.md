@@ -832,8 +832,26 @@ forbidden ASCII control bytes (including CR, LF, NUL, and obs-text), and
 oversized values are errors. The nonce is redacted from typed `Debug`, and
 parse errors describe only the header and validation category. This parser
 reports declared request metadata only; it does not perform an HTTP upgrade,
-compute `Sec-WebSocket-Accept`, generate a random nonce, or implement
-WebSocket frames.
+generate a random nonce, or implement WebSocket frames.
+
+## Sec-WebSocket-Accept
+
+`sec_websocket_accept` parses a singleton HTTP `Sec-WebSocket-Accept`
+response field as the base64-encoded 20-byte SHA-1 WebSocket handshake
+digest. Each field value is bounded to 64 KiB, and a second field is rejected
+after every supplied field is bound-checked. Surrounding SP and HTAB are
+trimmed as optional whitespace. `SecWebSocketAccept::derive_from_key()`
+implements the RFC 6455 transform
+`base64(SHA-1(Sec-WebSocket-Key || 258EAFA5-E914-47DA-95CA-C5AB0DC85B11))`
+from a validated `SecWebSocketKey`; the RFC example key
+`dGhlIHNhbXBsZSBub25jZQ==` derives `s3pPLMBiTxaQ9kYGzzhZRbK+xOo=`.
+`verify_key()` compares a parsed response value to that deterministic
+derivation. Empty values, interior whitespace, non-base64 input, decoded
+digests whose length is not exactly 20 bytes, duplicate fields, forbidden
+ASCII control bytes, obs-text, and oversized values are errors. The value is
+redacted from typed `Debug`, and parse errors describe only the header and
+validation category. These helpers do not perform an HTTP upgrade, generate a
+random nonce, or implement WebSocket frames.
 
 ## Upgrade-Insecure-Requests
 
