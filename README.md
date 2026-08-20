@@ -988,6 +988,25 @@ and observe request metadata only: RTTP does not perform an HTTP upgrade,
 compute `Sec-WebSocket-Accept`, generate a random nonce, or implement
 WebSocket frames.
 
+`HttpClient::sec_websocket_version()` validates and emits
+`Sec-WebSocket-Version` request metadata through the shared protocol
+`SecWebSocketVersion` type, replacing any existing same-name field before a
+socket is opened. `Request::sec_websocket_version()` and
+`HttpRequest::sec_websocket_version()` parse received fields into the same
+representation, returning `Ok(None)` when absent.
+`HttpResponse::with_sec_websocket_version(versions)` declares validated
+rejection-response metadata without adding `Connection` or `Upgrade`, and
+`HttpResponse::sec_websocket_version()` plus client
+`Response::sec_websocket_version()` parse attached or received fields.
+Recognized values are RFC 6455 version tokens (`0` through `299` without
+leading zeros) in numeric descending order, such as `13` or `13, 8, 7`. Empty
+members, non-decimal tokens, leading-zero multi-digit tokens, duplicates,
+unordered lists, control-byte, over-limit, and oversized values are rejected
+while raw headers remain available. These helpers declare and observe
+metadata only: RTTP does not perform a WebSocket handshake, emit
+`Connection: Upgrade`, compute `Sec-WebSocket-Accept`, negotiate versions, or
+switch protocols.
+
 `HttpClient::traceparent()` and `HttpClient::tracestate()` validate and emit
 bounded W3C Trace Context request metadata through shared protocol types,
 replacing existing same-name fields before a socket is opened.
@@ -1341,6 +1360,7 @@ gain additional HTTP/2 header-block handling.
 | Depth | Client `depth` emits bounded singleton WebDAV `Depth` request metadata through the shared protocol type, replacing an existing same-name field; server `Request::depth()` and `HttpRequest::depth()` parse typed received values while preserving raw headers on errors | No resource traversal, WebDAV method selection, method-policy enforcement, retry, or forwarding policy |
 | Idempotency-Key | Client `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field; server `Request::idempotency_key()` and `HttpRequest::idempotency_key()` parse typed received values while preserving raw headers on errors, and the key is redacted from typed debug output | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | Sec-WebSocket-Key | Client `sec_websocket_key` emits bounded singleton `Sec-WebSocket-Key` request metadata through the shared protocol type, replacing an existing same-name field; server `Request::sec_websocket_key()` and `HttpRequest::sec_websocket_key()` parse typed received values while preserving raw headers on errors, and the nonce is redacted from typed debug output | No HTTP upgrade, `Sec-WebSocket-Accept` computation, random nonce generation, WebSocket frames, or handshake policy |
+| Sec-WebSocket-Version | Client `sec_websocket_version` emits bounded `Sec-WebSocket-Version` request metadata through the shared protocol type; server `Request`/`HttpRequest` helpers parse received fields; `HttpResponse::with_sec_websocket_version`/`sec_websocket_version` and client `Response::sec_websocket_version` declare or parse rejection-response version lists while preserving raw headers on errors | No WebSocket handshake, `Connection: Upgrade` emission, `Sec-WebSocket-Accept` computation, version negotiation, protocol switch, or frames |
 | Pragma | Client `pragma`/`pragma_no_cache` and `Response::pragma` share the bounded protocol `Pragma` representation with server `Request::pragma`, `HttpRequest::pragma`, `HttpResponse::with_pragma`, and `HttpResponse::pragma` across client construction, server request access, server response construction, and client response access, combining fields in wire order and preserving raw headers on errors | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |
 | W3C Trace Context | Client `traceparent`/`tracestate` validate and emit bounded W3C Trace Context request metadata through shared protocol types; server `Request`/`HttpRequest` helpers parse received fields, preserve raw headers on errors, preserve tracestate ordering, and redact propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |
 | W3C Baggage | Client `baggage` validates and emits bounded W3C Baggage request metadata through the shared protocol type; server `Request`/`HttpRequest` helpers parse received fields, preserve raw headers on errors, preserve member order, and redact member and property values from typed debug output | No application-data interpretation, request-context storage, tracing backend, span model, or automatic propagation |
@@ -2261,6 +2281,26 @@ the combined raw bytes across fields to 64 KiB, and tokens to 256 per header
 set. They do not prerender documents, admit fenced frames, change navigation,
 or alter resource loading.
 
+### Bounded Sec-WebSocket-Version metadata
+
+Server-side `Sec-WebSocket-Version` helpers expose request access and
+response declaration metadata without negotiating versions or switching
+protocols. `Request::sec_websocket_version()` and
+`HttpRequest::sec_websocket_version()` parse received fields into
+`HttpSecWebSocketVersion`. `HttpResponse::with_sec_websocket_version(versions)`
+validates a declared version list through the shared protocol parser and
+replaces any existing `Sec-WebSocket-Version` response fields with one
+canonical comma-separated value, while `HttpResponse::sec_websocket_version()`
+parses attached raw fields. Recognized values are RFC 6455 version tokens
+(`0` through `299` without leading zeros) in numeric descending order, such as
+`13` or `13, 8, 7`.
+
+The helpers are bounded and metadata-only. Field values are limited to 64 KiB,
+the combined raw or canonical serialized field set to 64 KiB, and members to
+32 per header set. They do not perform a WebSocket handshake, emit
+`Connection: Upgrade` or `Upgrade: websocket`, compute `Sec-WebSocket-Accept`,
+negotiate versions, or switch protocols.
+
 The server is intentionally small: it handles blocking HTTP/1.x request parsing
 for local tests and simple embedded use. It accepts fixed `Content-Length` and
 chunked request bodies, exposes chunked request trailers, applies bounded
@@ -2431,6 +2471,7 @@ TLS or async accept loops.
 | Depth | `Request::depth` and `HttpRequest::depth` parse bounded singleton WebDAV `Depth` request metadata through the shared protocol type and preserve raw values on errors | No resource traversal, WebDAV method selection, method-policy enforcement, retry, or forwarding policy |
 | Idempotency-Key | `Request::idempotency_key` and `HttpRequest::idempotency_key` parse bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, preserve raw values on errors, and redact the key from typed debug output | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | Sec-WebSocket-Key | `Request::sec_websocket_key` and `HttpRequest::sec_websocket_key` parse bounded singleton `Sec-WebSocket-Key` request metadata through the shared protocol type, preserve raw values on errors, and redact the nonce from typed debug output | No HTTP upgrade, `Sec-WebSocket-Accept` computation, random nonce generation, WebSocket frames, or handshake policy |
+| Sec-WebSocket-Version | `HttpSecWebSocketVersion`, `Request::sec_websocket_version`, `HttpRequest::sec_websocket_version`, `HttpResponse::with_sec_websocket_version`, and `HttpResponse::sec_websocket_version` parse and declare bounded version-list metadata through the shared protocol type, requiring canonical descending order, replacing raw duplicates on declaration, and preserving raw headers on parse failures | No WebSocket handshake, `Connection: Upgrade` emission, `Sec-WebSocket-Accept` computation, version negotiation, protocol switch, or frames |
 | Pragma | `HttpPragma`, `Request::pragma`, `HttpRequest::pragma`, `HttpResponse::with_pragma`, and `HttpResponse::pragma` share the bounded protocol `Pragma` representation for server request access and server response construction, combining fields in wire order and preserving raw headers on errors | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |
 | W3C Trace Context | `Request::traceparent`/`tracestate` and `HttpRequest` helpers parse bounded W3C Trace Context request metadata, preserve raw values on errors, preserve tracestate ordering, and redact propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |
 | W3C Baggage | `Request::baggage` and `HttpRequest::baggage` parse bounded W3C Baggage request metadata, preserve raw values on errors, preserve member order, and redact member and property values from typed debug output | No application-data interpretation, request-context storage, tracing backend, span model, or automatic propagation |

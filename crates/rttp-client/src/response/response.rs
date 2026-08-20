@@ -68,6 +68,7 @@ use rttp_protocol::prefer::PreferenceApplied;
 use rttp_protocol::range::ContentRange;
 use rttp_protocol::referrer_policy::ReferrerPolicy;
 use rttp_protocol::reporting_endpoints::ReportingEndpoints;
+use rttp_protocol::sec_websocket_version::SecWebSocketVersion;
 use rttp_protocol::service_worker_allowed::ServiceWorkerAllowed;
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::sunset::parse_sunset_values;
@@ -696,6 +697,18 @@ impl Response {
       return Ok(None);
     }
     SupportsLoadingMode::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Sec-WebSocket-Version` response metadata without
+  /// negotiating versions or switching protocols.
+  pub fn sec_websocket_version(&self) -> error::Result<Option<SecWebSocketVersion>> {
+    let values = self.header_values("sec-websocket-version");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    SecWebSocketVersion::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

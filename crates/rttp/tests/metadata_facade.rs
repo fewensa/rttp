@@ -14,12 +14,12 @@ use rttp::server::{
   HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization,
   HttpProxyStatus, HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse,
   HttpSaveData, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketKey,
-  HttpSecWebSocketKeyParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
-  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpSunsetParseError, HttpSupportsLoadingMode,
-  HttpSupportsLoadingModeParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
-  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
+  HttpSecWebSocketKeyParseError, HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError,
+  HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
+  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
+  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
+  HttpSunsetParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpUpgrade,
+  HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
 };
 use std::io::Write;
 use std::net::SocketAddr;
@@ -249,6 +249,12 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::SupportsLoadingModeParseError =
     rttp_client::response::SupportsLoadingMode::parse("?1")
       .expect_err("non-token should be rejected");
+  let sec_websocket_version: rttp::SecWebSocketVersion =
+    rttp_client::response::SecWebSocketVersion::parse("13")
+      .expect("Sec-WebSocket-Version should parse");
+  let _: rttp::SecWebSocketVersionParseError =
+    rttp_client::response::SecWebSocketVersion::parse("8, 13")
+      .expect_err("unordered Sec-WebSocket-Version should be rejected");
   let fetch_site: rttp::SecFetchSite =
     rttp_client::SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let sec_purpose: rttp::SecPurpose =
@@ -396,6 +402,9 @@ fn compatibility_facade_exports_client_metadata_types() {
     supports_loading_mode.header_value(),
     "fenced-frame, credentialed-prerender"
   );
+  assert_eq!(sec_websocket_version.versions(), ["13"]);
+  assert!(sec_websocket_version.contains("13"));
+  assert_eq!(sec_websocket_version.header_value(), "13");
   assert_eq!("tenant", baggage_member.key());
   assert_eq!("source", baggage_property.key());
   assert_eq!(fetch_site.header_value(), "same-origin");
@@ -952,6 +961,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpIdempotencyKey::parse("charge-2026-08-19-9f3c").expect("Idempotency-Key should parse");
   let sec_websocket_key: HttpSecWebSocketKey =
     HttpSecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==").expect("Sec-WebSocket-Key should parse");
+  let sec_websocket_version: HttpSecWebSocketVersion =
+    HttpSecWebSocketVersion::parse("13").expect("Sec-WebSocket-Version should parse");
   let baggage: HttpBaggage =
     HttpBaggage::parse("tenant=acme;source=gateway").expect("baggage should parse");
   let _: HttpBaggageParseError =
@@ -967,6 +978,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpIdempotencyKey::parse("key with space");
   let _: Result<HttpSecWebSocketKey, HttpSecWebSocketKeyParseError> =
     HttpSecWebSocketKey::parse("the sample nonce");
+  let _: Result<HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError> =
+    HttpSecWebSocketVersion::parse("8, 13");
   let if_modified_since: HttpIfModifiedSince =
     HttpIfModifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
       .expect("If-Modified-Since should parse");
@@ -1069,6 +1082,9 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!("dGhlIHNhbXBsZSBub25jZQ==", sec_websocket_key.as_str());
   assert_eq!("dGhlIHNhbXBsZSBub25jZQ==", sec_websocket_key.header_value());
   assert!(!format!("{sec_websocket_key:?}").contains("dGhlIHNhbXBsZSBub25jZQ=="));
+  assert_eq!(sec_websocket_version.versions(), ["13"]);
+  assert!(sec_websocket_version.contains("13"));
+  assert_eq!(sec_websocket_version.header_value(), "13");
   assert_eq!("tenant", baggage_member.key());
   assert_eq!("source", baggage_property.key());
   assert!(!format!("{baggage:?}").contains("acme"));

@@ -91,6 +91,7 @@ pub mod reporting_endpoints;
 pub mod save_data;
 pub mod sec_gpc;
 pub mod sec_websocket_key;
+pub mod sec_websocket_version;
 pub mod server_timing;
 pub mod service_worker_allowed;
 pub mod signature;

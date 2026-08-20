@@ -835,6 +835,25 @@ reports declared request metadata only; it does not perform an HTTP upgrade,
 compute `Sec-WebSocket-Accept`, generate a random nonce, or implement
 WebSocket frames.
 
+## Sec-WebSocket-Version
+
+`sec_websocket_version` parses one or more HTTP `Sec-WebSocket-Version` fields
+as an ordered list of RFC 6455 version tokens. Each field value and the
+combined raw or canonical serialized field set is bounded to 64 KiB, and the
+combined member count is bounded to 32. Surrounding SP and HTAB are trimmed as
+optional whitespace. Members follow the RFC 6455 section 4.3 `version`
+production: canonical decimal `0` through `299` without leading zeros.
+Repeated fields are combined in wire order. Multi-member lists must appear in
+numeric descending order, matching the common rejection response shape
+`13, 8, 7`. Empty members, non-decimal tokens, leading-zero multi-digit
+tokens, values outside the RFC production, duplicates, unordered lists,
+forbidden ASCII control bytes (including CR, LF, NUL, and obs-text),
+over-limit member counts, and oversized fields are errors. This parser
+reports declared request or response metadata only; it does not perform a
+WebSocket handshake, emit `Connection: Upgrade`, compute
+`Sec-WebSocket-Accept`, negotiate versions, switch protocols, or implement
+WebSocket frames.
+
 ## Upgrade-Insecure-Requests
 
 `upgrade_insecure_requests` parses a singleton `Upgrade-Insecure-Requests`

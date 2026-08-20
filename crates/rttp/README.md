@@ -430,6 +430,27 @@ These helpers declare and observe request metadata only. RTTP does not perform
 an HTTP upgrade, compute `Sec-WebSocket-Accept`, generate a random nonce, or
 implement WebSocket frames.
 
+## Bounded Sec-WebSocket-Version request and response metadata
+
+`HttpClient::sec_websocket_version(value)` validates and emits
+`Sec-WebSocket-Version` request metadata through the shared `rttp_protocol`
+`SecWebSocketVersion` type, replacing any existing same-name field before a
+socket is opened. `Request::sec_websocket_version()` and
+`HttpRequest::sec_websocket_version()` parse received fields into the same
+`HttpSecWebSocketVersion` representation, returning `Ok(None)` when absent.
+`HttpResponse::with_sec_websocket_version(versions)` declares validated
+rejection-response metadata without adding `Connection` or `Upgrade`, and
+`HttpResponse::sec_websocket_version()` plus client `Response::sec_websocket_version()`
+parse attached or received fields. Recognized values are RFC 6455 version
+tokens (`0` through `299` without leading zeros) in numeric descending order,
+such as `13` or `13, 8, 7`. Empty members, non-decimal tokens, leading-zero
+multi-digit tokens, duplicates, unordered lists, control-byte, over-limit, and
+oversized values are rejected while raw headers remain available.
+
+These helpers declare and observe metadata only. RTTP does not perform a
+WebSocket handshake, emit `Connection: Upgrade`, compute
+`Sec-WebSocket-Accept`, negotiate versions, or switch protocols.
+
 ## Bounded W3C Trace Context request metadata
 
 `HttpClient::traceparent()` and `HttpClient::tracestate()` validate and emit
@@ -1177,6 +1198,7 @@ scheduling, or async accept loops.
 | Idempotency-Key | `HttpClient::idempotency_key` validates and emits one bounded opaque `Idempotency-Key` request field through the shared protocol type, and `Request::idempotency_key`/`HttpRequest::idempotency_key` parse received fields into the same representation while preserving raw headers on errors and redacting the key from typed debug output | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | Depth | `HttpClient::depth` validates and emits bounded singleton WebDAV `Depth` request metadata through the shared protocol type, and `Request::depth`/`HttpRequest::depth` parse received fields into the same representation while preserving raw headers on errors | No resource traversal, WebDAV method selection, method-policy enforcement, retry, or forwarding policy |
 | Sec-WebSocket-Key | `HttpClient::sec_websocket_key` validates and emits one bounded `Sec-WebSocket-Key` request field through the shared protocol type, and `Request::sec_websocket_key`/`HttpRequest::sec_websocket_key` parse received fields into the same representation while preserving raw headers on errors and redacting the nonce from typed debug output | No HTTP upgrade, `Sec-WebSocket-Accept` computation, random nonce generation, WebSocket frames, or handshake policy |
+| Sec-WebSocket-Version | `HttpClient::sec_websocket_version`, `Request::sec_websocket_version`/`HttpRequest::sec_websocket_version`, `HttpResponse::with_sec_websocket_version`/`sec_websocket_version`, and client `Response::sec_websocket_version` share the bounded protocol version-list representation, requiring canonical descending order and preserving raw headers on errors | No WebSocket handshake, `Connection: Upgrade` emission, `Sec-WebSocket-Accept` computation, version negotiation, protocol switch, or frames |
 | W3C Trace Context | `HttpClient::traceparent`/`tracestate` validate and emit bounded W3C Trace Context request metadata, and `Request::traceparent`/`tracestate` plus `HttpRequest` helpers parse received fields while preserving raw headers on errors and redacting propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |
 | W3C Baggage | `HttpClient::baggage` validates and emits bounded W3C Baggage request metadata, and `Request::baggage` plus `HttpRequest` helpers parse received fields while preserving raw headers on errors and redacting member and property values from typed debug output | No application-data interpretation, request-context storage, tracing backend, span model, or automatic propagation |
 | CDN-Loop | `HttpClient::cdn_loop` validates and emits bounded RFC 8586 `CDN-Loop` request metadata, combining an existing same-name field with the new member in wire order, and `Request::cdn_loop` plus `HttpRequest` helpers parse received fields into `HttpCdnLoop` while preserving raw headers on errors | No CDN identifier insertion, loop detection or rejection, automatic forwarding, or hop-by-hop handling |
