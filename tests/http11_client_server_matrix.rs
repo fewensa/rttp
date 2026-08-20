@@ -12,8 +12,10 @@ use rttp_client::DavClass;
 use rttp_client::HttpClient;
 use rttp_server::server::{
   HttpByteRange, HttpByteRangeError, HttpConditionalMetadata, HttpConditionalRequestOutcome,
-  HttpContentDisposition, HttpContentType, HttpEntityTag, HttpIfRangeRequestOutcome, HttpResponse,
-  Request, SecFetchDest, SecFetchMode, SecFetchSite, SecPurpose,
+  HttpContentDisposition, HttpContentType, HttpDav, HttpDepth, HttpDestination, HttpEntityTag,
+  HttpIf, HttpIfRangeRequestOutcome, HttpIfScheduleTagMatch, HttpLockToken, HttpOverwrite,
+  HttpResponse, HttpScheduleTag, HttpTimeout, Request, SecFetchDest, SecFetchMode, SecFetchSite,
+  SecPurpose,
 };
 use rttp_test_support as fixtures;
 
@@ -3376,6 +3378,459 @@ fn sync_client_and_server_exchange_bounded_overwrite_metadata_without_policy() {
   assert_eq!(Some("F".to_string()), raw);
   assert_eq!(204, response.code());
   handle.join().expect("Overwrite server thread");
+}
+
+type ObservedWebDavField = (Option<String>, bool);
+
+const WEBDAV_LOCK_TOKEN: &str = "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>";
+const WEBDAV_LOCK_TOKEN_MATERIAL: &str = "550e8400-e29b-41d4-a716-446655440000";
+const WEBDAV_IF: &str = "(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)";
+const WEBDAV_DESTINATION: &str = "https://dav.example.test/archive/source.txt";
+const WEBDAV_SCHEDULE_TAG: &str = "\"sched-17\"";
+const WEBDAV_DAV: &str = "1, 2, extended-mkcol, <https://dav.example.test/ns>";
+
+#[derive(Debug, PartialEq)]
+struct ObservedWebDavRequestMetadata {
+  depth: Result<Option<String>, String>,
+  raw_depth: Option<String>,
+  destination: Result<Option<String>, String>,
+  raw_destination: Option<String>,
+  overwrite: Result<Option<String>, String>,
+  raw_overwrite: Option<String>,
+  timeout: Result<Option<String>, String>,
+  raw_timeout: Option<String>,
+  lock_token: Result<Option<String>, String>,
+  raw_lock_token: Option<String>,
+  if_header: Result<Option<String>, String>,
+  raw_if: Option<String>,
+  if_schedule_tag_match: Result<Option<String>, String>,
+  raw_if_schedule_tag_match: Option<String>,
+  request_debug: String,
+  lock_token_debug: String,
+  if_debug: String,
+}
+
+fn observe_webdav_request_metadata(request: &Request) -> ObservedWebDavRequestMetadata {
+  let lock_token = request.lock_token();
+  let if_header = request.if_header();
+  ObservedWebDavRequestMetadata {
+    depth: request
+      .depth()
+      .map(|depth| depth.map(|depth| depth.header_value().to_string()))
+      .map_err(|error| error.to_string()),
+    raw_depth: request.header("Depth").map(str::to_string),
+    destination: request
+      .destination()
+      .map(|destination| destination.map(|destination| destination.header_value()))
+      .map_err(|error| error.to_string()),
+    raw_destination: request.header("Destination").map(str::to_string),
+    overwrite: request
+      .overwrite()
+      .map(|overwrite| overwrite.map(|overwrite| overwrite.header_value().to_string()))
+      .map_err(|error| error.to_string()),
+    raw_overwrite: request.header("Overwrite").map(str::to_string),
+    timeout: request
+      .timeout()
+      .map(|timeout| timeout.map(|timeout| timeout.header_value()))
+      .map_err(|error| error.to_string()),
+    raw_timeout: request.header("Timeout").map(str::to_string),
+    lock_token: lock_token
+      .as_ref()
+      .map(|token| token.as_ref().map(|token| token.header_value().to_string()))
+      .map_err(|error| error.to_string()),
+    raw_lock_token: request.header("Lock-Token").map(str::to_string),
+    if_header: if_header
+      .as_ref()
+      .map(|value| value.as_ref().map(|value| value.header_value()))
+      .map_err(|error| error.to_string()),
+    raw_if: request.header("If").map(str::to_string),
+    if_schedule_tag_match: request
+      .if_schedule_tag_match()
+      .map(|tag| tag.map(|tag| tag.header_value().to_string()))
+      .map_err(|error| error.to_string()),
+    raw_if_schedule_tag_match: request.header("If-Schedule-Tag-Match").map(str::to_string),
+    request_debug: format!("{request:?}"),
+    lock_token_debug: match &lock_token {
+      Ok(Some(token)) => format!("{token:?}"),
+      other => format!("{other:?}"),
+    },
+    if_debug: match &if_header {
+      Ok(Some(value)) => format!("{value:?}"),
+      other => format!("{other:?}"),
+    },
+  }
+}
+
+fn webdav_field_parse_failed(request: &Request, name: &str) -> bool {
+  match name {
+    "Depth" => request.depth().is_err(),
+    "Destination" => request.destination().is_err(),
+    "Overwrite" => request.overwrite().is_err(),
+    "Timeout" => request.timeout().is_err(),
+    "Lock-Token" => request.lock_token().is_err(),
+    "If" => request.if_header().is_err(),
+    "If-Schedule-Tag-Match" => request.if_schedule_tag_match().is_err(),
+    other => panic!("unexpected WebDAV request field {other}"),
+  }
+}
+
+fn spawn_webdav_metadata_observer() -> (
+  std::net::SocketAddr,
+  mpsc::Receiver<ObservedWebDavRequestMetadata>,
+  thread::JoinHandle<()>,
+) {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind WebDAV metadata server");
+  let addr = server.local_addr().expect("WebDAV metadata server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send(observe_webdav_request_metadata(&request))
+          .expect("send observed WebDAV metadata");
+        HttpResponse::new(207, "Multi-Status")
+          .with_dav(WEBDAV_DAV)
+          .expect("DAV should be accepted")
+          .with_schedule_tag(
+            HttpScheduleTag::parse(WEBDAV_SCHEDULE_TAG).expect("Schedule-Tag should parse"),
+          )
+          .with_lock_token(WEBDAV_LOCK_TOKEN)
+          .expect("response Lock-Token should be accepted")
+      })
+      .expect("serve WebDAV metadata request");
+  });
+  (addr, observed_rx, handle)
+}
+
+fn spawn_webdav_field_observer(
+  field: &'static str,
+) -> (
+  std::net::SocketAddr,
+  mpsc::Receiver<ObservedWebDavField>,
+  thread::JoinHandle<()>,
+) {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind WebDAV field server");
+  let addr = server.local_addr().expect("WebDAV field server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send((
+            request.header(field).map(str::to_string),
+            webdav_field_parse_failed(&request, field),
+          ))
+          .expect("send observed WebDAV field");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve WebDAV field request");
+  });
+  (addr, observed_rx, handle)
+}
+
+#[test]
+fn sync_client_and_server_exchange_webdav_metadata_matrix_without_policy() {
+  let (addr, observed_rx, handle) = spawn_webdav_metadata_observer();
+
+  let response = client()
+    .method("COPY")
+    .url(format!("http://{addr}/documents/source.txt"))
+    .depth("INFINITY")
+    .expect("Depth should be accepted")
+    .destination(WEBDAV_DESTINATION)
+    .expect("Destination should be accepted")
+    .overwrite("F")
+    .expect("Overwrite should be accepted")
+    .timeout("Second-60, Infinite")
+    .expect("Timeout should be accepted")
+    .lock_token(WEBDAV_LOCK_TOKEN)
+    .expect("Lock-Token should be accepted")
+    .if_header(WEBDAV_IF)
+    .expect("If should be accepted")
+    .if_schedule_tag_match(WEBDAV_SCHEDULE_TAG)
+    .expect("If-Schedule-Tag-Match should be accepted")
+    .emit()
+    .expect("WebDAV metadata response should parse");
+
+  let observed = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe WebDAV metadata");
+  assert_eq!(Ok(Some("infinity".to_string())), observed.depth);
+  assert_eq!(Some("infinity".to_string()), observed.raw_depth);
+  assert_eq!(
+    Ok(Some(WEBDAV_DESTINATION.to_string())),
+    observed.destination
+  );
+  assert_eq!(
+    Some(WEBDAV_DESTINATION.to_string()),
+    observed.raw_destination
+  );
+  assert_eq!(Ok(Some("F".to_string())), observed.overwrite);
+  assert_eq!(Some("F".to_string()), observed.raw_overwrite);
+  assert_eq!(
+    Ok(Some("second-60, infinite".to_string())),
+    observed.timeout
+  );
+  assert_eq!(
+    Some("second-60, infinite".to_string()),
+    observed.raw_timeout
+  );
+  assert_eq!(Ok(Some(WEBDAV_LOCK_TOKEN.to_string())), observed.lock_token);
+  assert_eq!(Some(WEBDAV_LOCK_TOKEN.to_string()), observed.raw_lock_token);
+  assert_eq!(Ok(Some(WEBDAV_IF.to_string())), observed.if_header);
+  assert_eq!(Some(WEBDAV_IF.to_string()), observed.raw_if);
+  assert_eq!(
+    Ok(Some(WEBDAV_SCHEDULE_TAG.to_string())),
+    observed.if_schedule_tag_match
+  );
+  assert_eq!(
+    Some(WEBDAV_SCHEDULE_TAG.to_string()),
+    observed.raw_if_schedule_tag_match
+  );
+  assert!(observed.request_debug.contains("Lock-Token"));
+  assert!(observed.request_debug.contains("If"));
+  assert!(observed.request_debug.contains("[REDACTED]"));
+  assert!(!observed.request_debug.contains(WEBDAV_LOCK_TOKEN_MATERIAL));
+  assert!(!observed
+    .lock_token_debug
+    .contains(WEBDAV_LOCK_TOKEN_MATERIAL));
+  assert!(!observed.if_debug.contains(WEBDAV_LOCK_TOKEN_MATERIAL));
+
+  assert_eq!(207, response.code());
+  let dav = response
+    .dav()
+    .expect("DAV should parse")
+    .expect("DAV should be present");
+  assert_eq!(
+    &[
+      DavClass::One,
+      DavClass::Two,
+      DavClass::ExtensionToken("extended-mkcol".to_string()),
+      DavClass::CodedUrl("https://dav.example.test/ns".to_string()),
+    ],
+    dav.classes()
+  );
+  let schedule_tag = response
+    .schedule_tag()
+    .expect("Schedule-Tag should parse")
+    .expect("Schedule-Tag should be present");
+  assert_eq!(WEBDAV_SCHEDULE_TAG, schedule_tag.header_value());
+  let lock_token = response
+    .lock_token()
+    .expect("response Lock-Token should parse")
+    .expect("response Lock-Token should be present");
+  assert_eq!(WEBDAV_LOCK_TOKEN, lock_token.as_str());
+  assert!(!format!("{lock_token:?}").contains(WEBDAV_LOCK_TOKEN_MATERIAL));
+  handle.join().expect("WebDAV metadata server thread");
+}
+
+#[test]
+fn facade_server_rejects_malformed_webdav_metadata_without_losing_raw_headers() {
+  for (name, value) in [
+    ("Depth", "2"),
+    ("Destination", "/relative"),
+    ("Overwrite", "true"),
+    ("Timeout", "Second-"),
+    ("Lock-Token", "<relative>"),
+    ("If", "(junk)"),
+    ("If-Schedule-Tag-Match", "*"),
+  ] {
+    let (addr, observed_rx, handle) = spawn_webdav_field_observer(name);
+    let response = client()
+      .method("COPY")
+      .url(format!("http://{addr}/matrix/webdav-malformed"))
+      .header((name, value))
+      .emit()
+      .expect("malformed WebDAV request should still complete");
+    let (raw, failed) = observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .unwrap_or_else(|_| panic!("server should observe malformed {name}"));
+    assert_eq!(
+      Some(value.to_string()),
+      raw,
+      "raw {name} must remain visible"
+    );
+    assert!(failed, "malformed {name} must fail closed");
+    assert_eq!(200, response.code());
+    handle
+      .join()
+      .unwrap_or_else(|_| panic!("malformed {name} server thread"));
+  }
+}
+
+#[test]
+fn facade_server_rejects_duplicate_webdav_metadata_without_losing_raw_headers() {
+  for (name, first, second) in [
+    ("Depth", "0", "1"),
+    (
+      "Destination",
+      WEBDAV_DESTINATION,
+      "https://dav.example.test/other.txt",
+    ),
+    ("Overwrite", "T", "F"),
+    ("Timeout", "Second-60", "second-60"),
+    (
+      "Lock-Token",
+      WEBDAV_LOCK_TOKEN,
+      "<http://example.test/locks/2>",
+    ),
+    ("If", "(<a:b>)", "(<b:c>)"),
+    ("If-Schedule-Tag-Match", "\"sched-16\"", WEBDAV_SCHEDULE_TAG),
+  ] {
+    let (addr, observed_rx, handle) = spawn_webdav_field_observer(name);
+    let mut stream =
+      TcpStream::connect(addr).unwrap_or_else(|_| panic!("connect duplicate {name}"));
+    stream
+      .write_all(
+        format!(
+          "COPY /matrix/webdav-duplicate HTTP/1.1\r\nHost: example.test\r\n{name}: {first}\r\n{name}: {second}\r\nConnection: close\r\n\r\n"
+        )
+        .as_bytes(),
+      )
+      .unwrap_or_else(|_| panic!("write duplicate {name}"));
+    let (raw, failed) = observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .unwrap_or_else(|_| panic!("server should observe duplicate {name}"));
+    assert_eq!(
+      Some(first.to_string()),
+      raw,
+      "raw {name} must remain visible"
+    );
+    assert!(failed, "duplicate {name} must fail closed");
+    handle
+      .join()
+      .unwrap_or_else(|_| panic!("duplicate {name} server thread"));
+  }
+}
+
+#[test]
+fn webdav_metadata_helpers_reject_oversized_values_without_losing_raw_headers() {
+  let oversized = "x".repeat(64 * 1024 + 1);
+  assert!(
+    HttpDepth::parse(&oversized).is_err(),
+    "oversized Depth must fail closed"
+  );
+  assert!(
+    HttpDestination::parse(&oversized).is_err(),
+    "oversized Destination must fail closed"
+  );
+  assert!(
+    HttpOverwrite::parse(&oversized).is_err(),
+    "oversized Overwrite must fail closed"
+  );
+  assert!(
+    HttpTimeout::parse(&oversized).is_err(),
+    "oversized Timeout must fail closed"
+  );
+  assert!(
+    HttpLockToken::parse(&oversized).is_err(),
+    "oversized Lock-Token must fail closed"
+  );
+  assert!(
+    HttpIf::parse(&oversized).is_err(),
+    "oversized If must fail closed"
+  );
+  assert!(
+    HttpIfScheduleTagMatch::parse(&oversized).is_err(),
+    "oversized If-Schedule-Tag-Match must fail closed"
+  );
+  assert!(
+    HttpDav::parse(&oversized).is_err(),
+    "oversized DAV must fail closed"
+  );
+  assert!(
+    HttpScheduleTag::parse(&oversized).is_err(),
+    "oversized Schedule-Tag must fail closed"
+  );
+
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind oversized WebDAV server")
+    .with_read_timeout(Some(Duration::from_secs(2)))
+    .with_write_timeout(Some(Duration::from_secs(2)));
+  let addr = server.local_addr().expect("oversized WebDAV server addr");
+  let (observed_tx, observed_rx) = mpsc::channel::<()>();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|_request| {
+        observed_tx
+          .send(())
+          .expect("handler must not observe oversized request head");
+        HttpResponse::ok("unreachable")
+      })
+      .expect("oversized request head should be answered as 400");
+  });
+
+  let request = format!(
+    "COPY /matrix/webdav-bounds HTTP/1.1\r\nHost: example.test\r\nDepth: {oversized}\r\nConnection: close\r\n\r\n"
+  );
+  let mut stream = TcpStream::connect(addr).expect("connect oversized WebDAV request");
+  stream
+    .write_all(request.as_bytes())
+    .expect("write oversized WebDAV request");
+  let mut response = Vec::new();
+  stream
+    .read_to_end(&mut response)
+    .expect("read oversized WebDAV response");
+  let response = String::from_utf8(response).expect("response should be utf-8");
+  assert!(
+    response.starts_with("HTTP/1.1 400 "),
+    "oversized WebDAV request head should be rejected before handler dispatch: {response}"
+  );
+  assert!(
+    observed_rx.try_recv().is_err(),
+    "oversized WebDAV metadata must not reach the handler"
+  );
+  handle.join().expect("oversized WebDAV server thread");
+}
+
+#[test]
+fn sync_client_rejects_malformed_and_duplicate_webdav_response_metadata_without_losing_raw_headers()
+{
+  const MALFORMED_DAV: &[(&str, &str)] = &[("DAV", "1, 1")];
+  const MALFORMED_SCHEDULE_TAG: &[(&str, &str)] = &[("Schedule-Tag", "*")];
+  const MALFORMED_LOCK_TOKEN: &[(&str, &str)] = &[("Lock-Token", "<relative>")];
+  const DUPLICATE_DAV: &[(&str, &str)] = &[("DAV", "1"), ("dav", "1")];
+  const DUPLICATE_SCHEDULE_TAG: &[(&str, &str)] = &[
+    ("Schedule-Tag", WEBDAV_SCHEDULE_TAG),
+    ("schedule-tag", "\"sched-16\""),
+  ];
+  const DUPLICATE_LOCK_TOKEN: &[(&str, &str)] = &[
+    ("Lock-Token", WEBDAV_LOCK_TOKEN),
+    ("lock-token", "<http://example.test/locks/2>"),
+  ];
+
+  for (headers, name) in [
+    (MALFORMED_DAV, "DAV"),
+    (MALFORMED_SCHEDULE_TAG, "Schedule-Tag"),
+    (MALFORMED_LOCK_TOKEN, "Lock-Token"),
+    (DUPLICATE_DAV, "DAV"),
+    (DUPLICATE_SCHEDULE_TAG, "Schedule-Tag"),
+    (DUPLICATE_LOCK_TOKEN, "Lock-Token"),
+  ] {
+    let (addr, handle) = spawn_metadata_response_server(headers);
+    let response = client()
+      .get()
+      .url(format!("http://{addr}/matrix/webdav-response-{name}"))
+      .emit()
+      .expect("malformed or duplicate WebDAV response should remain parseable");
+    assert_eq!(
+      Some(&headers[0].1.to_string()),
+      response.header_value(name),
+      "raw {name} must remain visible"
+    );
+    let failed = match name {
+      "DAV" => response.dav().is_err(),
+      "Schedule-Tag" => response.schedule_tag().is_err(),
+      "Lock-Token" => response.lock_token().is_err(),
+      other => panic!("unexpected WebDAV response field {other}"),
+    };
+    assert!(failed, "{name} helper must fail closed");
+    handle
+      .join()
+      .unwrap_or_else(|_| panic!("{name} response server thread"));
+  }
 }
 
 #[test]

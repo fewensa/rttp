@@ -973,6 +973,13 @@ These helpers parse request metadata only. They do not evaluate locks,
 entity tags, or other resource state, and they do not generate precondition
 outcomes such as 412 Precondition Failed.
 
+Workspace HTTP/1.1 and h2c integration tests cover a metadata-only WebDAV
+matrix for `Depth`, `Destination`, `Overwrite`, `Timeout`, `Lock-Token`,
+`If`, `DAV`, `If-Schedule-Tag-Match`, and `Schedule-Tag`, including valid
+roundtrips, malformed and duplicate rejection, bounds, raw-header
+observability, and `Lock-Token`/`If` redaction. Those helpers still do not
+store resources, create locks, or enforce WebDAV method policy.
+
 ## Idempotency-Key request metadata
 
 Handlers can call `Request::idempotency_key()` and
