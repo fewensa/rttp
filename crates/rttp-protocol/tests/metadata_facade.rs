@@ -49,6 +49,7 @@ use rttp_protocol::if_header::{If, IfParseError, IfPredicate};
 use rttp_protocol::if_modified_since::IfModifiedSince;
 use rttp_protocol::if_schedule_tag_match::IfScheduleTagMatch;
 use rttp_protocol::if_unmodified_since::IfUnmodifiedSince;
+use rttp_protocol::im::{Im, ImMember, ImParameter, ImParseError};
 use rttp_protocol::keep_alive::KeepAlive;
 use rttp_protocol::link::LinkValues;
 use rttp_protocol::location::Location;
@@ -314,6 +315,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
     TransferEncoding::parse("chunked").expect("Transfer-Encoding should parse");
   let te = Te::parse("gzip;q=0.5, trailers").expect("TE should parse");
   let a_im = AIm::parse("diffe, gzip;q=0.3;profile=compact").expect("A-IM should parse");
+  let im = Im::parse("diffe, gzip;profile=compact").expect("IM should parse");
+  let _: ImParseError = Im::parse("diffe, DIFFE").expect_err("duplicate IM should be rejected");
   let negotiate =
     Negotiate::parse("trans, 1.0, feature-x=preview, *").expect("Negotiate should parse");
   let tcn = Tcn::parse("list, choice").expect("TCN should parse");
@@ -675,6 +678,11 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(a_im.members()[0].token(), "diffe");
   assert_eq!(a_im.members()[1].quality(), 300);
   assert_eq!(a_im.header_value(), "diffe, gzip;q=0.3;profile=compact");
+  let _: &[ImMember] = im.members();
+  let _: Option<&ImParameter> = im.members()[1].parameters().first();
+  assert_eq!(im.members()[0].token(), "diffe");
+  assert_eq!(im.members()[1].parameters()[0].name(), "profile");
+  assert_eq!(im.header_value(), "diffe, gzip;profile=compact");
   assert_eq!(negotiate.members()[0], NegotiateDirective::Trans);
   assert_eq!(negotiate.members()[3], NegotiateDirective::Any);
   assert_eq!("trans, 1.0, feature-x=preview, *", negotiate.header_value());

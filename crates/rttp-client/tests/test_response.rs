@@ -4,11 +4,12 @@ use rttp_client::response::{
   ContentType, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly,
   CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Deprecation, DocumentPolicy,
   DocumentPolicyReportOnly, DocumentPolicyReportOnlyValue, DocumentPolicyValue, EntityTag,
-  HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues, Location, LockToken, MementoDatetime,
-  OriginTrials, PermissionsPolicy, ProxyAuthenticate, ProxyAuthenticationInfo, ProxyStatus,
-  ProxyStatusBareItem, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ScheduleTag,
-  SecWebSocketAccept, SecWebSocketExtensions, SecWebSocketProtocol, SecWebSocketVersion,
-  ServerTiming, ServiceWorkerAllowed, SignatureInput, SpeculationRules, StrictTransportSecurity,
+  HttpClearSiteData, HttpSetCookies, Im, ImMember, ImParameter, ImParseError, KeepAlive,
+  LinkValues, Location, LockToken, MementoDatetime, OriginTrials, PermissionsPolicy,
+  ProxyAuthenticate, ProxyAuthenticationInfo, ProxyStatus, ProxyStatusBareItem, ReferrerPolicy,
+  ReferrerPolicyToken, Response, RetryAfter, ScheduleTag, SecWebSocketAccept,
+  SecWebSocketExtensions, SecWebSocketProtocol, SecWebSocketVersion, ServerTiming,
+  ServiceWorkerAllowed, SignatureInput, SpeculationRules, StrictTransportSecurity,
   SupportsLoadingMode, Tcn, TcnDirective, Via, Warning, XContentTypeOptions, XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
@@ -4958,6 +4959,102 @@ fn test_parse_content_encoding_rejects_invalid_duplicate_and_excessive_values() 
     ContentEncoding::parse(too_many).is_err(),
     "content-encoding helper should reject excessive codings"
   );
+}
+
+#[test]
+fn test_im_response_helper_preserves_order_across_fields_and_body() {
+  let response = Response::new(
+    RoUrl::with("https://example.test/asset"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Content-Length: 5\r\n",
+      "IM: diffe, gzip;profile=compact\r\n",
+      "IM: identity\r\n",
+      "\r\n",
+      "hello"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let im: Im = response
+    .im()
+    .expect("IM should parse")
+    .expect("IM should be present");
+  assert_eq!(3, im.len());
+  let _: &[ImMember] = im.members();
+  let _: Option<&ImParameter> = im.members()[1].parameters().first();
+  assert_eq!("diffe", im.members()[0].token());
+  assert_eq!("gzip", im.members()[1].token());
+  assert_eq!(Some("compact"), im.members()[1].parameters()[0].value());
+  assert_eq!("identity", im.members()[2].token());
+  assert_eq!(im.header_value(), "diffe, gzip;profile=compact, identity");
+  assert_eq!(2, response.header_values("IM").len());
+  assert_eq!("hello", response.body().string().unwrap());
+}
+
+#[test]
+fn test_im_response_helper_accepts_q_named_extension_parameters() {
+  let response = Response::new(
+    RoUrl::with("https://example.test/asset"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Content-Length: 2\r\n",
+      "IM: gzip;q=0.3\r\n",
+      "\r\n",
+      "OK"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let im: Im = response
+    .im()
+    .expect("q-named IM parameters should parse")
+    .expect("IM should be present");
+  assert_eq!("gzip", im.members()[0].token());
+  assert_eq!("q", im.members()[0].parameters()[0].name());
+  assert_eq!(Some("0.3"), im.members()[0].parameters()[0].value());
+  assert_eq!(im.header_value(), "gzip;q=0.3");
+  assert_eq!("OK", response.body().string().unwrap());
+}
+
+#[test]
+fn test_im_response_helper_fails_closed_without_hiding_raw_headers() {
+  for value in ["diffe, DIFFE", "gzip;q=", "diffe,"] {
+    let raw = format!("HTTP/1.1 200 OK\r\nIM: {value}\r\nContent-Length: 2\r\n\r\nOK");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response remains usable");
+
+    assert!(response.im().is_err(), "IM helper should reject {value:?}");
+    assert_eq!(Some(value), response.header_value("IM").map(String::as_str));
+    assert_eq!("OK", response.body().string().unwrap());
+  }
+
+  let oversized = format!("x{}", "a".repeat(64 * 1024));
+  let raw = format!("HTTP/1.1 200 OK\r\nIM: {oversized}\r\nContent-Length: 2\r\n\r\nOK");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response remains usable");
+  assert!(response.im().is_err());
+  assert_eq!(
+    Some(oversized.as_str()),
+    response.header_value("IM").map(String::as_str)
+  );
+  assert_eq!("OK", response.body().string().unwrap());
+
+  let too_many = (0..=32)
+    .map(|index| format!("c{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let raw = format!("HTTP/1.1 200 OK\r\nIM: {too_many}\r\nContent-Length: 2\r\n\r\nOK");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response remains usable");
+  assert!(response.im().is_err());
+
+  let _: ImParseError = Im::parse("diffe, DIFFE").expect_err("duplicate IM must fail closed");
+  let _: ImParseError = Im::parse(oversized).expect_err("oversized IM must fail closed");
 }
 
 #[test]

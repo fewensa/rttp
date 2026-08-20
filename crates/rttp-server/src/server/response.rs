@@ -115,6 +115,10 @@ pub use rttp_protocol::document_policy_report_only::{
   DocumentPolicyReportOnlyParseError as HttpDocumentPolicyReportOnlyParseError,
   DocumentPolicyReportOnlyValue as HttpDocumentPolicyReportOnlyValue,
 };
+pub use rttp_protocol::im::{
+  Im as HttpIm, ImMember as HttpImMember, ImParameter as HttpImParameter,
+  ImParseError as HttpImParseError,
+};
 pub use rttp_protocol::keep_alive::{
   KeepAlive as HttpKeepAlive, KeepAliveExtension as HttpKeepAliveExtension,
   KeepAliveParseError as HttpKeepAliveParseError,
@@ -2156,6 +2160,23 @@ impl HttpResponse {
     self
   }
 
+  /// Validates and replaces `IM` response metadata.
+  ///
+  /// This helper only declares metadata: it does not decode or apply instance
+  /// manipulations and does not change the response status.
+  pub fn with_im<I, M>(mut self, members: I) -> Result<Self, HttpImParseError>
+  where
+    I: IntoIterator<Item = M>,
+    M: AsRef<str>,
+  {
+    let im = HttpIm::from_members(members)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("IM"));
+    self.headers.push(HttpHeader::new("IM", im.header_value()));
+    Ok(self)
+  }
+
   pub fn with_age(mut self, delta_seconds: u64) -> Self {
     self
       .headers
@@ -3400,6 +3421,23 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpAcceptRanges::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `IM` response metadata without changing raw headers.
+  ///
+  /// This helper only exposes metadata: it does not decode or apply instance
+  /// manipulations and does not change the response status.
+  pub fn im(&self) -> Result<Option<HttpIm>, HttpImParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("IM"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpIm::parse_values(values).map(Some)
   }
 
   pub fn content_range(&self) -> Result<Option<HttpContentRange>, HttpContentRangeParseError> {

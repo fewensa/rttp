@@ -45,9 +45,34 @@ oversized values, oversized combined input, too many members or parameters,
 and a present header set that yields no member are errors. `header_value()`
 joins members with `", "`, omits quality when no `q` parameter was present,
 and otherwise emits the original q-text and accepted parameter spelling. This
-type is the shared authority for token, q-value, parameter, duplicate,
-member-count, and size validation. It reports declared request metadata only;
-it does not select a preferred instance manipulation or apply delta encodings.
+type owns `A-IM` q-value policy and reuses the canonical
+instance-manipulation token, parameter, ordering, duplicate, member-count,
+and size validator shared with `IM`. It reports declared request metadata
+only; it does not select a preferred instance manipulation or apply delta
+encodings.
+
+## IM
+
+`im` parses one or more RFC 3229 `IM` field values into an ordered list of
+instance-manipulation tokens with optional extension parameters. Each field
+value is bounded to 64 KiB, the combined raw field set is bounded to 64 KiB,
+the combined member count is bounded to 32, and each member is bounded to 16
+parameters. Tokens are RFC 9110 tokens and are retained with their accepted
+spelling. Duplicate tokens are rejected case-insensitively across one or more
+fields while the first-seen spelling is retained. Each member may carry
+parameters whose names are tokens and whose values are tokens or
+quoted-strings. Duplicate parameter names on one member are rejected
+case-insensitively. Empty members, invalid tokens, invalid parameter names or
+values, forbidden ASCII control bytes other than HTAB, oversized values,
+oversized combined input, too many members or parameters, and a present
+header set that yields no member are errors. `header_value()` joins members
+with `", "` and emits the accepted token and parameter spelling, preserving
+original quoted-string quoting. Token, parameter, ordering, duplicate,
+member-count, and size validation reuse the canonical instance-manipulation
+rules also used by `A-IM`. `q` remains an ordinary extension parameter name
+on `IM`. It reports declared response metadata only; it does not select,
+invert, decode, or apply instance manipulations and does not impose a
+`226 IM Used` status policy.
 
 ## Negotiate
 

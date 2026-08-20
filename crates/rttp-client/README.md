@@ -880,6 +880,26 @@ than 32 members before a connection is opened.
 These helpers declare request metadata only. They do not select a preferred
 instance manipulation or apply delta encodings.
 
+## Bounded IM response metadata
+
+`Response::im()` parses one or more response `IM` header fields into `Im`
+metadata, the shared protocol parser also used by the server facade. It
+returns `Ok(None)` when the header is absent. Present values expose ordered
+`members()` with `token()` and `parameters()` per member and `header_value()`
+for serialization.
+
+The helper is bounded and validation-oriented. Each header field value is
+limited to 64 KiB, the parsed header set is limited to 32 members, and each
+member is limited to 16 parameters. Empty members, invalid tokens or
+parameters, duplicates across all parsed
+header fields, and oversized or over-limit values return an error while the
+original response remains usable: raw `IM` fields stay available through
+`Response::header_value()`, `Response::header_values()`, and the other
+response metadata helpers.
+
+RTTP does not decode, invert, or apply instance manipulations, and it does
+not require or synthesize the `226 IM Used` status.
+
 ## Bounded Negotiate request metadata
 
 `rttp-protocol` owns the shared RFC 2295 `Negotiate` primitive. Client
@@ -1574,6 +1594,7 @@ header-block model.
 | Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_content_digest()`, `HttpRequest::want_content_digest()`, `Request::want_repr_digest()`, and `HttpRequest::want_repr_digest()` parse received preference fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |
 | Accept-Charset | `accept_charset` and `accept_charset_with_q` format bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |
 | A-IM | `a_im`, `a_im_with_q`, and `a_im_value` format bounded `A-IM` request metadata through the shared `rttp-protocol` type | No automatic delta-encoding selection, application, compression, or response transformation |
+| IM | `Response::im` parses bounded ordered `IM` response metadata through the shared `rttp-protocol` type while preserving raw headers on parse errors | No instance-manipulation decoding, inversion, or application, and no `226 IM Used` status policy |
 | Negotiate | `negotiate` emits bounded RFC 2295 `Negotiate` request metadata through the shared `rttp-protocol` type, replacing an existing same-name field | No variant selection, transparent content negotiation, `Alternates`/`TCN` synthesis, or automatic cache selection |
 | TCN | `Response::tcn()` parses bounded RFC 2295 `TCN` response metadata through the shared `rttp-protocol` type while preserving raw headers on parse errors | No variant selection, `Alternates`/`Vary` synthesis, transparent content negotiation, or cache behavior |
 | Variant-Vary | `Response::variant_vary()` parses bounded RFC 2295 `Variant-Vary` response metadata through the shared `rttp-protocol` type while preserving raw headers on parse errors | No cache-key construction, variant selection, `Alternates`/`TCN`/`Vary` synthesis, transparent content negotiation, or cache behavior |

@@ -834,6 +834,24 @@ not remove existing headers.
 These helpers declare and parse request metadata only. They do not select a
 preferred instance manipulation or apply delta encodings.
 
+## Bounded IM response metadata
+
+`HttpResponse::with_im(members)` validates an ordered list of
+instance-manipulation tokens, replaces any existing raw `IM` fields with one
+validated `IM` header, and returns a parse error for invalid, duplicate,
+empty, oversized, or over-limit members. `HttpResponse::im()` and client
+`Response::im()` parse attached `IM` fields in wire order into the shared
+`rttp-protocol` `Im` type (`HttpIm` on the server), and return `Ok(None)`
+when the header is absent. Present values expose `members()` with `token()`
+and `parameters()` per member. Each field value and the combined raw field
+set are limited to 64 KiB, the combined list is limited to 32 members, and
+each member is limited to 16 parameters. Malformed, duplicate, or over-limit values
+return an error while raw `IM` fields remain observable as ordinary headers.
+
+These helpers only declare and inspect response metadata. They do not decode
+or apply instance manipulations and do not require or synthesize the
+`226 IM Used` status.
+
 ## Bounded Negotiate request metadata
 
 `HttpClient::negotiate(value)` emits one bounded RFC 2295 `Negotiate` request
@@ -1531,6 +1549,7 @@ scheduling, or async accept loops.
 | Content-Language | `HttpContentLanguages`, `Request::content_language`, `HttpRequest::content_language`, `HttpResponse::with_content_language`, and `HttpResponse::content_language` parse or declare bounded `Content-Language` metadata | No automatic language negotiation, route selection, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
 | Accept-Charset | `HttpRequestAcceptCharsets`, `Request::accept_charset`, and `HttpRequest::accept_charset` parse bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |
 | A-IM | `HttpClient::a_im`/`a_im_with_q`/`a_im_value` emit bounded `A-IM` request metadata through the shared protocol type, and `Request::a_im`/`HttpRequest::a_im` parse received fields into `HttpAIm` while preserving raw headers on errors | No automatic delta-encoding selection, application, compression, or response transformation |
+| IM | `HttpResponse::with_im` declares one validated `IM` header replacing raw duplicates, `HttpResponse::im` and client `Response::im` parse attached `IM` fields into the shared protocol `Im` type while preserving raw headers on errors | No instance-manipulation decoding, inversion, or application, and no `226 IM Used` status policy |
 | Negotiate | `HttpClient::negotiate` emits bounded RFC 2295 `Negotiate` request metadata through the shared protocol type, and `Request::negotiate`/`HttpRequest::negotiate` parse received fields into `HttpNegotiate` while preserving raw headers on errors | No variant selection, transparent content negotiation, `Alternates`/`TCN` synthesis, or automatic cache selection |
 | TCN | `Response::tcn()` and `HttpResponse::with_tcn()`/`tcn()` share bounded RFC 2295 `TCN` response metadata through `Tcn`/`HttpTcn` while preserving raw headers on accessor errors | No variant selection, `Alternates`/`Vary` synthesis, transparent content negotiation, or cache behavior |
 | Accept-Encoding | `HttpRequestAcceptEncodings`, `Request::accept_encoding`, and `HttpRequest::accept_encoding` parse bounded `Accept-Encoding` request metadata through the shared `rttp-protocol` type | No compression, decompression, content negotiation, retries, or transport changes |

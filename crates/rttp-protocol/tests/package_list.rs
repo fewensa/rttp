@@ -35,6 +35,7 @@ fn package_includes_protocol_metadata_facade_test() {
     "tests/if_modified_since.rs",
     "tests/if_schedule_tag_match.rs",
     "tests/if_unmodified_since.rs",
+    "tests/im.rs",
     "tests/trace_context.rs",
     "tests/baggage.rs",
     "tests/cdn_loop.rs",
