@@ -940,6 +940,11 @@ parameters, and bound violations are errors. The parser reports declared metadat
 execute configuration points, block document loads, compare required
 policies, echo `Sec-Required-Document-Policy`, or send reports.
 
+`document_policy_report_only` parses `Document-Policy-Report-Only` with the
+same directive model, parser, formatter, and bounds while exposing distinct
+report-only types and parse errors. It is also metadata-only: it does not
+enforce policy or deliver reports.
+
 ## Supports-Loading-Mode
 
 `supports_loading_mode` parses bounded `Supports-Loading-Mode` response

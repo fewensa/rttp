@@ -3,11 +3,12 @@ use rttp_client::response::{
   ContentLocation, ContentRange, ContentSecurityPolicy, ContentSecurityPolicyReportOnly,
   ContentType, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly,
   CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Deprecation, DocumentPolicy,
-  DocumentPolicyValue, EntityTag, HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues,
-  Location, MementoDatetime, OriginTrials, PermissionsPolicy, ProxyAuthenticate,
-  ProxyAuthenticationInfo, ProxyStatus, ProxyStatusBareItem, ReferrerPolicy, ReferrerPolicyToken,
-  Response, RetryAfter, ServerTiming, ServiceWorkerAllowed, SignatureInput, SpeculationRules,
-  StrictTransportSecurity, SupportsLoadingMode, Warning, XContentTypeOptions, XFrameOptions,
+  DocumentPolicyReportOnly, DocumentPolicyReportOnlyValue, DocumentPolicyValue, EntityTag,
+  HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues, Location, MementoDatetime,
+  OriginTrials, PermissionsPolicy, ProxyAuthenticate, ProxyAuthenticationInfo, ProxyStatus,
+  ProxyStatusBareItem, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
+  ServiceWorkerAllowed, SignatureInput, SpeculationRules, StrictTransportSecurity,
+  SupportsLoadingMode, Warning, XContentTypeOptions, XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use std::io::Write;
@@ -954,6 +955,125 @@ fn document_policy_metadata_is_absent_without_a_header() {
 
   assert_eq!(response.document_policy().expect("header is absent"), None);
   let _: Option<DocumentPolicy> = response.document_policy().expect("header is absent");
+}
+
+#[test]
+fn document_policy_report_only_metadata_parses_without_enforcing_or_reporting() {
+  let value = "oversized-images=2.0, unsized-media=?0, *;report-to=default";
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!("HTTP/1.1 200 OK\r\nDocument-Policy-Report-Only: {value}\r\nContent-Length: 0\r\n\r\n")
+      .into_bytes(),
+  )
+  .expect("response should parse");
+
+  let metadata = response
+    .document_policy_report_only()
+    .expect("Document-Policy-Report-Only should parse")
+    .expect("Document-Policy-Report-Only should be present");
+
+  assert_eq!(metadata.directives().len(), 3);
+  assert_eq!(
+    metadata.directive("oversized-images").unwrap().value(),
+    &DocumentPolicyReportOnlyValue::Decimal("2.0".to_string())
+  );
+  assert_eq!(
+    metadata.directive("*").unwrap().report_to(),
+    Some("default")
+  );
+  assert_eq!(metadata.header_value(), value);
+  assert_eq!(
+    response.header_value("Document-Policy-Report-Only"),
+    Some(&value.to_string())
+  );
+}
+
+#[test]
+fn document_policy_report_only_metadata_rejects_invalid_values_without_hiding_raw_headers() {
+  for value in [
+    "",
+    "=()",
+    "=1.2345",
+    "unsized-media=src;foo=bar",
+    "oversized-images=1;report-to=first;report-to=second",
+    "oversized-images=1.0, oversized-images=2.0",
+    "UnSized-Media=?0",
+  ] {
+    let response = Response::new(
+      RoUrl::with("https://example.test"),
+      format!(
+        "HTTP/1.1 200 OK\r\nDocument-Policy-Report-Only: {value}\r\nContent-Length: 0\r\n\r\n"
+      )
+      .into_bytes(),
+    )
+    .expect("response should parse");
+
+    assert!(
+      response.document_policy_report_only().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      response.header_value("Document-Policy-Report-Only"),
+      Some(&value.to_string())
+    );
+  }
+
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Document-Policy-Report-Only: oversized-images=1.0\r\n",
+      "Document-Policy-Report-Only: oversized-images=2.0\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  assert!(response.document_policy_report_only().is_err());
+  assert_eq!(
+    response.header_values("Document-Policy-Report-Only"),
+    [
+      &"oversized-images=1.0".to_string(),
+      &"oversized-images=2.0".to_string()
+    ]
+  );
+}
+
+#[test]
+fn document_policy_report_only_metadata_rejects_oversized_values_and_absent_headers() {
+  let oversized = format!("x={}", "a".repeat(64 * 1024));
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!(
+      "HTTP/1.1 200 OK\r\nDocument-Policy-Report-Only: {oversized}\r\nContent-Length: 0\r\n\r\n"
+    )
+    .into_bytes(),
+  )
+  .expect("response should parse");
+
+  assert!(response.document_policy_report_only().is_err());
+  assert_eq!(
+    response.header_value("Document-Policy-Report-Only"),
+    Some(&oversized)
+  );
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(
+    absent
+      .document_policy_report_only()
+      .expect("header is absent"),
+    None
+  );
+  let _: Option<DocumentPolicyReportOnly> = absent
+    .document_policy_report_only()
+    .expect("header is absent");
 }
 
 #[test]

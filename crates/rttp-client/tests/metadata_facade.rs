@@ -9,9 +9,10 @@ use rttp_client::response::{
   ContentSecurityPolicy, ContentSecurityPolicyParseError, ContentSecurityPolicyReportOnly,
   ContentSecurityPolicyReportOnlyParseError, CrossOriginEmbedderPolicy,
   CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginOpenerPolicyReportOnly,
-  CrossOriginResourcePolicy, Digest, DocumentPolicy, DocumentPolicyParseError, DocumentPolicyValue,
-  EntityTag, HttpClearSiteData, HttpContentLength, KeepAlive, LinkValues, Location,
-  LocationParseError, MementoDatetime, MementoDatetimeParseError, Nel, NoVarySearch,
+  CrossOriginResourcePolicy, Digest, DocumentPolicy, DocumentPolicyParseError,
+  DocumentPolicyReportOnly, DocumentPolicyReportOnlyParseError, DocumentPolicyReportOnlyValue,
+  DocumentPolicyValue, EntityTag, HttpClearSiteData, HttpContentLength, KeepAlive, LinkValues,
+  Location, LocationParseError, MementoDatetime, MementoDatetimeParseError, Nel, NoVarySearch,
   NoVarySearchParams, NoVarySearchParseError, OriginTrialParseError, OriginTrials,
   PermissionsPolicy, PermissionsPolicyParseError, Pragma, PragmaParseError, PreferenceApplied,
   Priority, ProxyAuthenticate, ProxyAuthenticateParseError, ProxyAuthenticationInfo,
@@ -146,6 +147,12 @@ fn response_facade_exports_representative_bounded_metadata_types() {
       .expect("Document-Policy should parse");
   let _: DocumentPolicyParseError = DocumentPolicy::parse("unsized-media=src;foo=bar")
     .expect_err("unknown Document-Policy parameter should be rejected");
+  let document_policy_report_only =
+    DocumentPolicyReportOnly::parse("oversized-images=2.0, unsized-media=?0, *;report-to=default")
+      .expect("Document-Policy-Report-Only should parse");
+  let _: DocumentPolicyReportOnlyParseError =
+    DocumentPolicyReportOnly::parse("unsized-media=src;foo=bar")
+      .expect_err("unknown Document-Policy-Report-Only parameter should be rejected");
   let supports_loading_mode = SupportsLoadingMode::parse("fenced-frame, credentialed-prerender")
     .expect("Supports-Loading-Mode should parse");
   let _: SupportsLoadingModeParseError =
@@ -336,6 +343,18 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(
     Some("default"),
     document_policy.directive("*").unwrap().report_to()
+  );
+  assert_eq!(document_policy_report_only.directives().len(), 3);
+  assert_eq!(
+    document_policy_report_only
+      .directive("oversized-images")
+      .unwrap()
+      .value(),
+    &DocumentPolicyReportOnlyValue::Decimal("2.0".to_string())
+  );
+  assert_eq!(
+    document_policy_report_only.header_value(),
+    "oversized-images=2.0, unsized-media=?0, *;report-to=default"
   );
   assert_eq!(
     supports_loading_mode.tokens(),
@@ -671,6 +690,45 @@ fn response_facade_parses_document_policy_metadata() {
   );
   assert_eq!(
     response.header_values("Document-Policy"),
+    [
+      &"oversized-images=2.0, unsized-media=?0".to_string(),
+      &"*;report-to=default".to_string()
+    ]
+  );
+}
+
+#[test]
+fn response_facade_parses_document_policy_report_only_metadata() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Document-Policy-Report-Only: oversized-images=2.0, unsized-media=?0\r\n",
+      "Document-Policy-Report-Only: *;report-to=default\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let policy: DocumentPolicyReportOnly = response
+    .document_policy_report_only()
+    .expect("Document-Policy-Report-Only should parse")
+    .expect("Document-Policy-Report-Only should be present");
+
+  assert_eq!(policy.directives().len(), 3);
+  assert_eq!(
+    policy.directive("oversized-images").unwrap().value(),
+    &DocumentPolicyReportOnlyValue::Decimal("2.0".to_string())
+  );
+  assert_eq!(policy.directive("*").unwrap().report_to(), Some("default"));
+  assert_eq!(
+    policy.header_value(),
+    "oversized-images=2.0, unsized-media=?0, *;report-to=default"
+  );
+  assert_eq!(
+    response.header_values("Document-Policy-Report-Only"),
     [
       &"oversized-images=2.0, unsized-media=?0".to_string(),
       &"*;report-to=default".to_string()

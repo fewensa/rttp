@@ -30,6 +30,9 @@ use rttp_protocol::cross_origin_opener_policy_report_only::CrossOriginOpenerPoli
 use rttp_protocol::deprecation::Deprecation;
 use rttp_protocol::depth::Depth;
 use rttp_protocol::document_policy::{DocumentPolicy, DocumentPolicyParseError};
+use rttp_protocol::document_policy_report_only::{
+  DocumentPolicyReportOnly, DocumentPolicyReportOnlyParseError,
+};
 use rttp_protocol::entity_tag::{EntityTag, IfMatch};
 use rttp_protocol::expect::Expect;
 use rttp_protocol::fetch_metadata::{
@@ -183,6 +186,12 @@ fn protocol_exports_representative_bounded_metadata_types() {
       .expect("Document-Policy should parse");
   let _: DocumentPolicyParseError = DocumentPolicy::parse("unsized-media=src;foo=bar")
     .expect_err("Document-Policy with an unknown parameter should be rejected");
+  let document_policy_report_only =
+    DocumentPolicyReportOnly::parse("oversized-images=2.0, unsized-media=?0, *;report-to=default")
+      .expect("Document-Policy-Report-Only should parse");
+  let _: DocumentPolicyReportOnlyParseError =
+    DocumentPolicyReportOnly::parse("unsized-media=src;foo=bar")
+      .expect_err("Document-Policy-Report-Only with an unknown parameter should be rejected");
   let connection = Connection::parse("keep-alive, TE").expect("Connection should parse");
   let content_encoding = ContentEncoding::parse("gzip, br").expect("Content-Encoding should parse");
   let content_security_policy =
@@ -286,6 +295,18 @@ fn protocol_exports_representative_bounded_metadata_types() {
   );
   assert_eq!(
     document_policy.directive("*").unwrap().report_to(),
+    Some("default")
+  );
+  assert_eq!(document_policy_report_only.directives().len(), 3);
+  assert_eq!(
+    document_policy_report_only.header_value(),
+    "oversized-images=2.0, unsized-media=?0, *;report-to=default"
+  );
+  assert_eq!(
+    document_policy_report_only
+      .directive("*")
+      .unwrap()
+      .report_to(),
     Some("default")
   );
   assert_eq!(location.as_str(), "../login?next=%2Fdashboard");
