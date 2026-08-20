@@ -9,6 +9,30 @@ and server crates.
 This crate supports rttp's implementation; its public API is not a standalone
 application-level HTTP interface.
 
+## Accept
+
+`accept` parses one or more request `Accept` field values into ordered media
+ranges with media parameters and optional q-values. Each field value is bounded
+to 64 KiB, inbound parsing is bounded to 256 media ranges, and the client
+builder helper path uses the same primitive with its existing 32-range append
+limit. Media types allow `*/*` and `type/*` but reject invalid wildcard forms
+such as `*/json`; q-values must be `0`, `1`, or a valid decimal value with at
+most three fractional digits. Quoted-string media parameter values, including
+empty quoted values, are accepted. Duplicate media parameters and duplicate
+q-values are rejected, while server-side parsing tolerates extension parameters
+after the first q-value without making representation choices.
+
+The client facade reuses this module to validate and format helper-built
+`Accept` request fields. Helper-supplied q-value arguments preserve the client
+facade boundary by accepting legacy empty fractional forms such as `0.` and
+`1.` while rejecting surrounding whitespace. When helper appends inspect an
+existing raw `Accept` field, the protocol primitive also provides the strict
+client-builder parse mode needed to preserve that facade's earlier rejection
+of valueless extension parameters. The server facade aliases the same types as
+`HttpAccept`, `HttpMediaRange`, and `HttpAcceptParseError` for request
+accessors. Raw `Accept` headers remain caller-owned escape hatches outside the
+bounded helper API.
+
 ## Accept-Charset
 
 `accept_charset` parses one or more RFC 9110 `Accept-Charset` field values

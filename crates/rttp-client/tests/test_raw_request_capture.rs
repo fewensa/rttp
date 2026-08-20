@@ -1355,15 +1355,50 @@ fn accept_helpers_emit_validated_media_ranges_and_quality_values() {
       .expect("HTML quality should be accepted")
       .accept("text/plain; charset=utf-8; q=0.5")
       .expect("parameterized media range should be accepted")
+      .accept("application/example; feature=\"\"")
+      .expect("empty quoted parameter should be accepted")
       .emit()
       .expect("request should succeed");
   });
   let request = request_text(&request);
 
   assert_eq!(
-    Some("application/json, text/html;q=0.8, text/plain; charset=utf-8; q=0.5"),
+    Some(
+      "application/json, text/html;q=0.8, text/plain; charset=utf-8; q=0.5, application/example; feature=\"\""
+    ),
     header_value(&request, "Accept")
   );
+}
+
+#[test]
+fn accept_with_q_preserves_raw_client_qvalue_compatibility() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/document", base_url))
+      .accept_plain_text_with_q("0.")
+      .expect("empty fractional zero q-value should remain accepted")
+      .accept_html_with_q("1.")
+      .expect("empty fractional one q-value should remain accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("text/plain;q=0., text/html;q=1."),
+    header_value(&request, "Accept")
+  );
+}
+
+#[test]
+fn accept_with_q_rejects_padded_qvalues_before_connecting() {
+  assert!(client()
+    .get()
+    .url("http://127.0.0.1:9/document")
+    .accept_json_with_q(" 0.8 ")
+    .expect_err("padded q-value should be rejected")
+    .is_builder());
 }
 
 #[test]
@@ -1466,6 +1501,7 @@ fn cache_control_helpers_reject_invalid_or_excessive_values_before_connecting() 
 fn accept_helpers_reject_invalid_values_before_connecting() {
   for value in [
     "text",
+    "text/html; charset=utf-8; charset=utf-16",
     "text/html; q=0.8; q=0.5",
     "text/html; q=1.001",
     "text/html\n;level=1",
@@ -1523,6 +1559,26 @@ fn accept_helpers_reject_invalid_values_before_connecting() {
   assert!(
     request.is_empty(),
     "oversized Accept helper input should not open a socket"
+  );
+}
+
+#[test]
+fn accept_helpers_reject_invalid_existing_header_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/document", base_url))
+      .header(("Accept", "text/html; q=0.8; foo"))
+      .accept_json()
+      .expect_err("invalid existing Accept header should be rejected before append");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "invalid existing Accept metadata should not open a socket"
   );
 }
 

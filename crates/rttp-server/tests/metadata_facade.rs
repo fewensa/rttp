@@ -1,9 +1,9 @@
 use rttp_server::server::{
-  HttpAIm, HttpAImMember, HttpAImParameter, HttpAImParseError, HttpAcceptCh, HttpAcceptCharset,
-  HttpAcceptCharsetParseError, HttpAcceptDatetime, HttpAcceptDatetimeParseError,
-  HttpAcceptLanguageParseError, HttpAcceptLanguages, HttpAccessControlAllowCredentials,
-  HttpAccessControlAllowCredentialsParseError, HttpAccessControlAllowHeaders,
-  HttpAccessControlAllowMethods, HttpAccessControlRequestHeaders,
+  HttpAIm, HttpAImMember, HttpAImParameter, HttpAImParseError, HttpAccept, HttpAcceptCh,
+  HttpAcceptCharset, HttpAcceptCharsetParseError, HttpAcceptDatetime, HttpAcceptDatetimeParseError,
+  HttpAcceptLanguageParseError, HttpAcceptLanguages, HttpAcceptParseError,
+  HttpAccessControlAllowCredentials, HttpAccessControlAllowCredentialsParseError,
+  HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods, HttpAccessControlRequestHeaders,
   HttpAccessControlRequestHeadersParseError, HttpAccessControlRequestMethod,
   HttpAccessControlRequestMethodParseError, HttpAccessControlRequestPrivateNetwork,
   HttpAccessControlRequestPrivateNetworkParseError, HttpAltUsed, HttpAltUsedParseError,
@@ -95,6 +95,10 @@ fn server_dav_response_metadata_uses_protocol_representation() {
 #[test]
 fn server_facade_exports_representative_bounded_metadata_types() {
   let accept_ch: HttpAcceptCh = HttpAcceptCh::parse("Sec-CH-UA").expect("Accept-CH should parse");
+  let accept: HttpAccept =
+    HttpAccept::parse("text/html; level=1; q=0.8").expect("Accept should parse");
+  let _: HttpAcceptParseError =
+    HttpAccept::parse("*/json").expect_err("invalid Accept should fail");
   let a_im: HttpAIm =
     HttpAIm::parse("diffe, gzip;q=0.3;profile=compact").expect("A-IM should parse");
   let _: HttpAImParseError =
@@ -449,6 +453,9 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let _: HttpUpgradeParseError = HttpUpgrade::parse("").expect_err("empty Upgrade should fail");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA"]);
+  assert_eq!("text/html", accept.media_ranges()[0].media_type());
+  assert_eq!(Some(800), accept.media_ranges()[0].quality());
+  assert_eq!(Some("1"), accept.media_ranges()[0].parameter("level"));
   assert_eq!(a_im.members()[0].token(), "diffe");
   assert_eq!(a_im.members()[1].quality(), 300);
   assert_eq!(a_im.header_value(), "diffe, gzip;q=0.3;profile=compact");
@@ -846,6 +853,21 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .last_modified_date()
       .expect("Last-Modified should parse")
   );
+}
+
+#[test]
+fn parsed_request_accept_preserves_utf8_quoted_parameter_values() {
+  let request = HttpRequest::parse(
+    "GET / HTTP/1.1\r\nHost: example.test\r\nAccept: text/plain; title=\"é\"\r\n\r\n".as_bytes(),
+  )
+  .expect("request should parse");
+  let accept = request
+    .accept()
+    .expect("Accept should parse")
+    .expect("Accept should be present");
+
+  assert_eq!(Some("é"), accept.media_ranges()[0].parameter("title"));
+  assert_eq!("text/plain; title=\"é\"", accept.header_value());
 }
 
 #[test]

@@ -1,11 +1,12 @@
 use rttp::server::{
-  HttpAIm, HttpAImParseError, HttpAcceptCh, HttpAcceptCharsetParseError, HttpAcceptDatetime,
-  HttpAcceptDatetimeParseError, HttpAcceptLanguageParseError, HttpAcceptLanguages,
-  HttpAccessControlRequestMethod, HttpAccessControlRequestPrivateNetwork, HttpAltUsed,
-  HttpAltUsedParseError, HttpAlternates, HttpAlternatesParseError, HttpAuthorization, HttpBaggage,
-  HttpBaggageMember, HttpBaggageParseError, HttpBaggageProperty, HttpCdnLoop,
-  HttpCdnLoopParseError, HttpConditionalMetadata, HttpContentDpr, HttpContentDprParseError,
-  HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
+  HttpAIm, HttpAImParseError, HttpAccept, HttpAcceptCh, HttpAcceptCharsetParseError,
+  HttpAcceptDatetime, HttpAcceptDatetimeParseError, HttpAcceptLanguageParseError,
+  HttpAcceptLanguages, HttpAcceptParseError, HttpAccessControlRequestMethod,
+  HttpAccessControlRequestPrivateNetwork, HttpAltUsed, HttpAltUsedParseError, HttpAlternates,
+  HttpAlternatesParseError, HttpAuthorization, HttpBaggage, HttpBaggageMember,
+  HttpBaggageParseError, HttpBaggageProperty, HttpCdnLoop, HttpCdnLoopParseError,
+  HttpConditionalMetadata, HttpContentDpr, HttpContentDprParseError, HttpContentLocation,
+  HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
   HttpCookieParseError, HttpCrossOriginEmbedderPolicy, HttpCrossOriginEmbedderPolicyReportOnly,
   HttpCrossOriginOpenerPolicy, HttpCrossOriginOpenerPolicyReportOnly,
   HttpCrossOriginResourcePolicy, HttpDeltaBase, HttpDeltaBaseParseError, HttpDeprecation,
@@ -699,6 +700,33 @@ fn compatibility_facade_exports_content_length_metadata_type() {
 
   assert_eq!(2, content_length.len());
   assert_eq!("2", content_length.header_value());
+}
+
+#[test]
+fn compatibility_facade_exports_server_accept_metadata_types() {
+  let accept: HttpAccept =
+    HttpAccept::parse("text/html; level=1; q=0.8").expect("Accept should parse");
+  let _: HttpAcceptParseError =
+    HttpAccept::parse("*/json").expect_err("invalid Accept should fail");
+
+  assert_eq!("text/html", accept.media_ranges()[0].media_type());
+  assert_eq!(Some(800), accept.media_ranges()[0].quality());
+  assert_eq!(Some("1"), accept.media_ranges()[0].parameter("level"));
+}
+
+#[test]
+fn compatibility_facade_accept_preserves_utf8_quoted_parameter_values() {
+  let request = rttp::server::HttpRequest::parse(
+    "GET / HTTP/1.1\r\nHost: example.test\r\nAccept: text/plain; title=\"é\"\r\n\r\n".as_bytes(),
+  )
+  .expect("request should parse");
+  let accept = request
+    .accept()
+    .expect("Accept should parse")
+    .expect("Accept should be present");
+
+  assert_eq!(Some("é"), accept.media_ranges()[0].parameter("title"));
+  assert_eq!("text/plain; title=\"é\"", accept.header_value());
 }
 
 #[test]

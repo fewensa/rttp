@@ -8,6 +8,7 @@
 //! the limits and error types that apply to that header.
 
 pub mod a_im;
+pub mod accept;
 pub mod accept_charset;
 pub mod accept_datetime;
 pub mod accept_encoding;

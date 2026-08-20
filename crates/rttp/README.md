@@ -808,6 +808,22 @@ helpers such as `Request::accept_language()`, `HttpResponse::cache_control()`,
 and parsing only when requested. They do not sniff, decode, negotiate, cache,
 redirect, retry, or select representations from `Content-Language`.
 
+## Bounded Accept request metadata
+
+`HttpClient::accept()` and `accept_with_q()` validate helper-built request
+media ranges through the shared `rttp-protocol` Accept primitive while keeping
+the client facade's existing 32-helper-range limit and raw
+`header(("Accept", value))` escape hatch. Helper q-value arguments preserve the
+existing facade boundary by accepting legacy empty fractional forms such as
+`0.` and `1.` while rejecting surrounding whitespace. `Request::accept()` and
+`HttpRequest::accept()` expose the same protocol representation as
+`HttpAccept`/`HttpMediaRange`, returning `Ok(None)` when absent and preserving
+raw headers when malformed, duplicate, oversized, or excessive values fail typed
+parsing.
+
+These helpers declare and parse metadata only. They do not select response
+representations, retry, redirect, cache, or apply server negotiation policy.
+
 ## Bounded Accept-Charset request metadata
 
 Server-side `Accept-Charset` helpers expose request metadata through the
@@ -1588,6 +1604,7 @@ scheduling, or async accept loops.
 | Allow | `HttpAllowedMethods`, `HttpResponse::with_allow`, and `HttpResponse::allow` declare and parse bounded `Allow` method-list metadata | No route dispatch, automatic `405` generation, `OPTIONS` policy, fallback method selection, retry/replay, or status-code policy engine |
 | Client Hints | `HttpAcceptCh`/`HttpCriticalCh`, `HttpResponse::with_accept_ch`/`with_critical_ch`, and `accept_ch`/`critical_ch` declare and parse bounded Client Hints opt-in metadata; `Response::accept_ch` and `critical_ch` expose it to clients | No browser opt-in state, request-header generation, automatic retry, persistence, or Client Hints policy |
 | Content-Language | `HttpContentLanguages`, `Request::content_language`, `HttpRequest::content_language`, `HttpResponse::with_content_language`, and `HttpResponse::content_language` parse or declare bounded `Content-Language` metadata | No automatic language negotiation, route selection, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
+| Accept | `HttpClient::accept`/`accept_with_q`, `HttpAccept`, `Request::accept`, and `HttpRequest::accept` share the bounded `rttp-protocol` `Accept` request metadata primitive while preserving raw-header escape hatches and raw values on parse errors | No content negotiation, representation selection, MIME sniffing, body decoding, cache `Vary` synthesis, or response choice |
 | Accept-Charset | `HttpRequestAcceptCharsets`, `Request::accept_charset`, and `HttpRequest::accept_charset` parse bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |
 | A-IM | `HttpClient::a_im`/`a_im_with_q`/`a_im_value` emit bounded `A-IM` request metadata through the shared protocol type, and `Request::a_im`/`HttpRequest::a_im` parse received fields into `HttpAIm` while preserving raw headers on errors | No automatic delta-encoding selection, application, compression, or response transformation |
 | IM | `HttpResponse::with_im` declares one validated `IM` header replacing raw duplicates, `HttpResponse::im` and client `Response::im` parse attached `IM` fields into the shared protocol `Im` type while preserving raw headers on errors | No instance-manipulation decoding, inversion, or application, and no `226 IM Used` status policy |

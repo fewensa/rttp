@@ -21,6 +21,8 @@ use rttp_test_support as fixtures;
 
 type ObservedIfRangeHeaders = (Option<String>, Option<String>);
 type ObservedIfRangeHandle = thread::JoinHandle<ObservedIfRangeHeaders>;
+type ObservedAcceptRanges = Vec<(String, Option<u16>, Option<String>)>;
+type ObservedAcceptParse = Result<Option<ObservedAcceptRanges>, String>;
 
 fn client() -> HttpClient {
   HttpClient::new()
@@ -70,6 +72,31 @@ fn http11_client_and_server_exchange_dav_metadata_without_policy() {
 }
 
 #[derive(Debug, PartialEq)]
+struct ObservedAcceptMetadata {
+  raw_accept: Option<String>,
+  accept: ObservedAcceptParse,
+}
+
+fn observe_accept_metadata(request: &Request) -> ObservedAcceptMetadata {
+  ObservedAcceptMetadata {
+    raw_accept: request.header("Accept").map(str::to_string),
+    accept: request
+      .accept()
+      .map(|accept| {
+        accept.map(|accept| {
+          accept
+            .media_ranges()
+            .iter()
+            .map(|range| (range.media_type().to_string(), range.quality()))
+            .map(|(media_type, quality)| (media_type, quality, None))
+            .collect()
+        })
+      })
+      .map_err(|error| error.to_string()),
+  }
+}
+
+#[derive(Debug, PartialEq)]
 struct ObservedCorsPreflight {
   method: String,
   origin: Option<String>,
@@ -79,6 +106,255 @@ struct ObservedCorsPreflight {
   request_method: Result<Option<String>, String>,
   request_headers: Result<Option<Vec<String>>, String>,
   request_private_network: Result<Option<String>, String>,
+}
+
+#[test]
+fn sync_client_accept_helpers_reach_server_accept_accessor() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Accept server");
+  let addr = server.local_addr().expect("Accept server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send(observe_accept_metadata(&request))
+          .expect("send observed Accept metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve Accept request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/accept", addr))
+    .accept_json()
+    .expect("JSON Accept should be accepted")
+    .accept_html_with_q("0.8")
+    .expect("HTML Accept q should be accepted")
+    .emit()
+    .expect("Accept response should parse");
+
+  assert_eq!(200, response.code());
+  assert_eq!(
+    ObservedAcceptMetadata {
+      raw_accept: Some("application/json, text/html;q=0.8".to_string()),
+      accept: Ok(Some(vec![
+        ("application/json".to_string(), None, None),
+        ("text/html".to_string(), Some(800), None),
+      ])),
+    },
+    observed_rx
+      .recv()
+      .expect("receive observed Accept metadata")
+  );
+  handle.join().expect("Accept server thread");
+}
+
+#[test]
+fn sync_raw_utf8_accept_parameter_reaches_server_accept_accessor() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Accept server");
+  let addr = server.local_addr().expect("Accept server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let accept = request
+          .accept()
+          .expect("Accept should parse")
+          .expect("Accept should be present");
+        observed_tx
+          .send(
+            accept.media_ranges()[0]
+              .parameter("title")
+              .map(str::to_string),
+          )
+          .expect("send observed Accept metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve raw Accept request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect Accept server");
+  stream
+    .write_all(
+      "GET /matrix/accept HTTP/1.1\r\nHost: example.test\r\nAccept: text/plain; title=\"é\"\r\n\r\n"
+        .as_bytes(),
+    )
+    .expect("write raw Accept request");
+  let mut response = Vec::new();
+  stream
+    .read_to_end(&mut response)
+    .expect("read raw Accept response");
+
+  assert_eq!(
+    Some("é".to_string()),
+    observed_rx
+      .recv()
+      .expect("receive observed Accept parameter")
+  );
+  handle.join().expect("Accept server thread");
+}
+
+#[test]
+fn sync_raw_malformed_accept_reaches_server_until_typed_accessor() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Accept server");
+  let addr = server.local_addr().expect("Accept server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send(observe_accept_metadata(&request))
+          .expect("send observed malformed Accept metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve raw Accept request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect Accept server");
+  stream
+    .write_all(
+      b"GET /matrix/accept HTTP/1.1\r\nHost: example.test\r\nAccept: text/plain; q=1.001\r\n\r\n",
+    )
+    .expect("write raw Accept request");
+  let mut response = Vec::new();
+  stream
+    .read_to_end(&mut response)
+    .expect("read raw Accept response");
+
+  let observed = observed_rx
+    .recv()
+    .expect("receive observed Accept metadata");
+  assert_eq!(Some("text/plain; q=1.001".to_string()), observed.raw_accept);
+  assert_eq!(
+    Err("invalid Accept quality value".to_string()),
+    observed.accept
+  );
+  handle.join().expect("Accept server thread");
+}
+
+#[test]
+fn sync_raw_duplicate_accept_reaches_server_until_typed_accessor() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Accept server");
+  let addr = server.local_addr().expect("Accept server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send(observe_accept_metadata(&request))
+          .expect("send observed duplicate Accept metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve raw Accept request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect Accept server");
+  stream
+    .write_all(
+      b"GET /matrix/accept HTTP/1.1\r\nHost: example.test\r\nAccept: text/plain; charset=utf-8; charset=us-ascii\r\n\r\n",
+    )
+    .expect("write raw Accept request");
+  let mut response = Vec::new();
+  stream
+    .read_to_end(&mut response)
+    .expect("read raw Accept response");
+
+  let observed = observed_rx
+    .recv()
+    .expect("receive observed Accept metadata");
+  assert_eq!(
+    Some("text/plain; charset=utf-8; charset=us-ascii".to_string()),
+    observed.raw_accept
+  );
+  assert_eq!(
+    Err("duplicate Accept parameter".to_string()),
+    observed.accept
+  );
+  handle.join().expect("Accept server thread");
+}
+
+#[test]
+fn sync_raw_too_many_accept_ranges_reach_server_until_typed_accessor() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Accept server");
+  let addr = server.local_addr().expect("Accept server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send(observe_accept_metadata(&request))
+          .expect("send observed oversized Accept metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve raw Accept request");
+  });
+  let accept = (0..=256)
+    .map(|index| format!("application/x-{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+
+  let mut stream = TcpStream::connect(addr).expect("connect Accept server");
+  stream
+    .write_all(
+      format!("GET /matrix/accept HTTP/1.1\r\nHost: example.test\r\nAccept: {accept}\r\n\r\n")
+        .as_bytes(),
+    )
+    .expect("write raw Accept request");
+  let mut response = Vec::new();
+  stream
+    .read_to_end(&mut response)
+    .expect("read raw Accept response");
+
+  let observed = observed_rx
+    .recv()
+    .expect("receive observed Accept metadata");
+  assert_eq!(Some(accept), observed.raw_accept);
+  assert_eq!(
+    Err("too many Accept media ranges".to_string()),
+    observed.accept
+  );
+  handle.join().expect("Accept server thread");
+}
+
+#[test]
+fn sync_raw_oversized_accept_is_rejected_before_handler() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Accept server");
+  let addr = server.local_addr().expect("Accept server addr");
+  let (unexpected_tx, unexpected_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        unexpected_tx
+          .send(observe_accept_metadata(&request))
+          .expect("send unexpected Accept metadata");
+        HttpResponse::ok("unexpected")
+      })
+      .expect("serve oversized Accept request");
+  });
+  let accept = format!("text/plain; p={}", "a".repeat(70 * 1024));
+
+  let mut stream = TcpStream::connect(addr).expect("connect Accept server");
+  stream
+    .write_all(
+      format!("GET /matrix/accept HTTP/1.1\r\nHost: example.test\r\nAccept: {accept}\r\n\r\n")
+        .as_bytes(),
+    )
+    .expect("write raw Accept request");
+  let mut response = String::new();
+  stream
+    .read_to_string(&mut response)
+    .expect("read raw Accept response");
+
+  assert!(
+    unexpected_rx.try_recv().is_err(),
+    "oversized Accept request must not reach handler"
+  );
+  assert_eq!(
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request",
+    response
+  );
+  handle.join().expect("Accept server thread");
 }
 
 fn observe_cors_preflight(request: Request) -> ObservedCorsPreflight {

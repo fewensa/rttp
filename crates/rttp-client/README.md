@@ -1024,8 +1024,13 @@ up keys, canonicalize covered components, or apply cryptographic policy.
 `accept_with_q()` adds a q-value from `0` through `1` with at most three
 fractional digits. Convenience helpers cover `*/*`, JSON, HTML, XML, and plain
 text, including q-value variants. Media types, parameter names, parameter
-values, and q-values are validated; duplicate parameters, oversized values,
-and more than 32 media ranges are rejected before a connection is opened.
+values, q-values, duplicate parameters, duplicate q-values, bounds, and header
+formatting are validated by the shared `rttp-protocol` Accept primitive; the
+client keeps the existing 32-helper-range limit and rejects oversized values,
+excessive media ranges, or invalid existing raw `Accept` fields before a helper
+append opens a connection. Helper q-value arguments preserve the existing
+facade boundary by accepting legacy empty fractional forms such as `0.` and
+`1.` while rejecting surrounding whitespace.
 
 The helpers emit one comma-separated `Accept` field and do not choose a
 response representation. `header(("Accept", value))` remains available for
@@ -1643,6 +1648,7 @@ header-block model.
 | Via | `via` validates and emits bounded HTTP `Via` request metadata through the shared protocol type, combining an existing same-name field with the new hops in wire order and rejecting malformed or oversized values before connecting; `Response::via` parses received hop chains while preserving raw headers on parse failures | No automatic hop insertion or removal, trusted-proxy inference, identity rewrite, or HTTP/1.1 or HTTP/2 proxy-policy changes |
 | Preflight request metadata | `origin`, `access_control_request_method`, `access_control_request_headers`, and `access_control_request_private_network` emit bounded `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`, and `Access-Control-Request-Private-Network` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, CORS policy, or Private Network Access policy |
 | Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_content_digest()`, `HttpRequest::want_content_digest()`, `Request::want_repr_digest()`, and `HttpRequest::want_repr_digest()` parse received preference fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |
+| Accept | `accept` and `accept_with_q` format bounded `Accept` request metadata through the shared `rttp-protocol` type, replacing existing same-name fields after validating helper-built and existing raw values | No content negotiation, representation selection, MIME sniffing, body decoding, cache `Vary` synthesis, or response choice |
 | Accept-Charset | `accept_charset` and `accept_charset_with_q` format bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |
 | A-IM | `a_im`, `a_im_with_q`, and `a_im_value` format bounded `A-IM` request metadata through the shared `rttp-protocol` type | No automatic delta-encoding selection, application, compression, or response transformation |
 | IM | `Response::im` parses bounded ordered `IM` response metadata through the shared `rttp-protocol` type while preserving raw headers on parse errors | No instance-manipulation decoding, inversion, or application, and no `226 IM Used` status policy |

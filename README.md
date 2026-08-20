@@ -733,11 +733,26 @@ algorithm, compute digests, verify response body hashes, attach
 `HttpClient::accept()` appends one validated media range, while
 `accept_with_q()` adds a q-value from `0` through `1` with at most three
 fractional digits. Convenience helpers cover `*/*`, JSON, HTML, XML, and plain
-text, including q-value variants. The client rejects malformed media types or
-parameters, duplicate parameters, invalid q-values, oversized fields, and more
-than 32 media ranges before opening a connection. Raw
-`header(("Accept", value))` remains available for values outside the bounded
-helper API.
+text, including q-value variants. The shared `rttp-protocol` Accept primitive
+owns media-range parsing, quoted-string parameter validation including empty
+quoted values, q-value validation, bounds, and header formatting.
+The client reuses it while keeping the existing 32-helper-range limit, rejecting
+malformed media types or parameters, duplicate parameters or q-values, invalid
+q-values, oversized fields, and more than 32 media ranges before opening a
+connection. Helper q-value arguments preserve the existing facade boundary by
+accepting legacy empty fractional forms such as `0.` and `1.` while rejecting
+surrounding whitespace. Helper appends also validate any existing raw `Accept`
+field with the protocol primitive's strict client-builder mode, preserving the
+facade's earlier rejection of valueless extension parameters before
+connecting. Raw
+`header(("Accept", value))` by itself remains available for values outside the
+bounded helper API.
+
+On the server, `Request::accept()` and `HttpRequest::accept()` parse received
+fields in wire order into the same protocol-owned representation exposed as
+`HttpAccept` and `HttpMediaRange`. Absent metadata returns `Ok(None)`;
+malformed, duplicate, oversized, or excessive values return
+`HttpAcceptParseError` without changing the raw headers.
 
 These helpers only declare request metadata. RTTP does not perform automatic
 representation selection, retries, redirects, caching, or server policy from
@@ -1698,6 +1713,7 @@ gain additional HTTP/2 header-block handling.
 | Fetch Metadata | Client `sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, `sec_fetch_user`, and `sec_purpose` emit bounded `Sec-Fetch-*`/`Sec-Purpose` fields; server `Request` helpers parse typed received values while preserving raw headers on errors | No browser security policy, request blocking, origin validation, navigation policy, automatic header generation, prefetch execution, or cache behavior |
 | Save-Data | Client `save_data` emits bounded `Save-Data: on` request metadata; server `Request::save_data()` and `HttpRequest::save_data()` parse typed received values while preserving raw headers on errors | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |
 | DNT | Client `dnt` emits bounded `DNT: 0`/`DNT: 1` request metadata through the shared protocol `Dnt` type and rejects invalid input before connecting | No tracking enforcement, cookie changes, `Referer` stripping, analytics or advertising behavior, `Tk` emission, retries, or privacy-preference policy |
+| Accept | Client `accept` and `accept_with_q` format bounded `Accept` request metadata through the shared `rttp-protocol` type; server `Request::accept()` and `HttpRequest::accept()` parse received fields into `HttpAccept` while preserving raw headers on errors | No content negotiation, representation selection, MIME sniffing, body decoding, cache `Vary` synthesis, or response choice |
 | Accept-Charset | Client `accept_charset` and `accept_charset_with_q` format bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type; server `Request::accept_charset()` and `HttpRequest::accept_charset()` parse received fields into `HttpRequestAcceptCharsets` | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |
 | Negotiate | Client `negotiate` emits bounded RFC 2295 `Negotiate` request metadata through the shared `rttp-protocol` type, replacing an existing same-name field; server `Request::negotiate()` and `HttpRequest::negotiate()` parse received fields into `HttpNegotiate` while preserving raw headers on errors | No variant selection, transparent content negotiation, `Alternates`/`TCN`/`Vary` synthesis, or automatic cache selection |
 | TCN | Client `Response::tcn()` and server `HttpResponse::with_tcn()`/`tcn()` share bounded RFC 2295 `TCN` response metadata through the protocol `Tcn` type while preserving raw headers on accessor errors | No variant selection, `Alternates`/`Vary` synthesis, transparent content negotiation, or cache behavior |
@@ -2917,6 +2933,7 @@ TLS or async accept loops.
 | Fetch Metadata | `Request::sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, `sec_fetch_user`, and `sec_purpose` parse bounded typed `Sec-Fetch-*`/`Sec-Purpose` request fields and preserve raw values on errors | No browser security policy, request blocking, origin validation, navigation policy, automatic header generation, prefetch execution, or cache behavior |
 | Save-Data | `Request::save_data` and `HttpRequest::save_data` parse bounded singleton `Save-Data` `on`-token metadata and preserve raw values on errors | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |
 | DNT | `Request::dnt` and `HttpRequest::dnt` parse bounded singleton `DNT` `0`/`1` preference metadata through `HttpDnt` and preserve raw values on errors | No tracking enforcement, cookie changes, `Referer` stripping, analytics or advertising behavior, `Tk` synthesis, retries, or privacy-preference policy |
+| Accept | `HttpAccept`, `Request::accept`, and `HttpRequest::accept` parse bounded `Accept` request metadata through the shared `rttp-protocol` type, preserving raw values on errors | No content negotiation, representation selection, MIME sniffing, body decoding, cache `Vary` synthesis, or response choice |
 | Accept-Charset | `HttpRequestAcceptCharsets`, `Request::accept_charset`, and `HttpRequest::accept_charset` parse bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |
 | Negotiate | `Request::negotiate` and `HttpRequest::negotiate` parse bounded RFC 2295 `Negotiate` request metadata into `HttpNegotiate` through the shared `rttp-protocol` type and preserve raw values on errors | No variant selection, transparent content negotiation, `Alternates`/`TCN`/`Vary` synthesis, or automatic cache selection |
 | TCN | `HttpResponse::with_tcn` and `HttpResponse::tcn` declare or parse bounded RFC 2295 `TCN` response metadata through `HttpTcn` and preserve raw headers on accessor errors | No variant selection, `Alternates`/`Vary` synthesis, transparent content negotiation, or cache behavior |

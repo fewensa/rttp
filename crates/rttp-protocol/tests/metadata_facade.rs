@@ -1,4 +1,5 @@
 use rttp_protocol::a_im::AIm;
+use rttp_protocol::accept::{Accept, AcceptMediaRange, AcceptParseError};
 use rttp_protocol::accept_charset::AcceptCharset;
 use rttp_protocol::accept_datetime::{AcceptDatetime, AcceptDatetimeParseError};
 use rttp_protocol::accept_encoding::AcceptEncoding;
@@ -142,6 +143,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let request_private_network = AccessControlRequestPrivateNetwork::parse("true")
     .expect("Access-Control-Request-Private-Network should parse");
   let save_data = SaveData::parse("on").expect("Save-Data should parse");
+  let accept = Accept::parse("text/html; level=1; q=0.8").expect("Accept should parse");
+  let _: AcceptParseError = Accept::parse("*/json").expect_err("invalid Accept should fail");
   let dnt = Dnt::parse("1").expect("DNT should parse");
   let sec_gpc = SecGpc::parse("1").expect("Sec-GPC should parse");
   let upgrade_insecure_requests =
@@ -391,6 +394,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(request_method.header_value(), "PATCH");
   assert_eq!(request_private_network.header_value(), "true");
   assert_eq!(save_data.header_value(), "on");
+  let media_range: &AcceptMediaRange = &accept.media_ranges()[0];
+  assert_eq!("text/html", media_range.media_type());
+  assert_eq!(Some(800), media_range.quality());
+  assert_eq!(Some("1"), media_range.parameter("level"));
   assert_eq!(dnt.header_value(), "1");
   assert_eq!(sec_gpc.header_value(), "1");
   assert_eq!(upgrade_insecure_requests.header_value(), "1");
