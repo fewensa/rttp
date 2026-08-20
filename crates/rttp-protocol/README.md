@@ -587,12 +587,12 @@ rejected.
 
 Each field value is bounded to 64 KiB, combined field values are bounded to
 64 KiB including `", "` separator overhead, the combined serialized value is
-bounded to 64 KiB, and the combined member count is bounded to 256. Empty
-members, invalid received-protocol, invalid received-by, malformed comments,
-control bytes other than HTAB, and bound violations are rejected. Formatting
-normalizes optional whitespace to `protocol received-by` plus ` (comment)`
-when a comment is present, while preserving accepted token spelling and
-comment content.
+bounded to 64 KiB, the combined member count is bounded to 256, and comment
+nesting depth is bounded to 128. Empty members, invalid received-protocol,
+invalid received-by, malformed comments, control bytes other than HTAB, and
+bound violations are rejected. Formatting normalizes optional whitespace to
+`protocol received-by` plus ` (comment)` when a comment is present, while
+preserving accepted token spelling and comment content.
 
 The parser only reports bounded hop metadata. It does not append or remove
 hops, infer trusted proxies, rewrite identity, or change HTTP/1.1 or HTTP/2

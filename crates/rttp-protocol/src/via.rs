@@ -16,6 +16,8 @@ use crate::http1::{is_token, is_token_byte};
 pub const MAX_VIA_VALUE_BYTES: usize = 64 * 1024;
 /// Maximum `Via` list-members accepted across all fields.
 pub const MAX_VIA_MEMBERS: usize = 256;
+/// Maximum nested parenthesized comment depth accepted in a `Via` member.
+pub const MAX_VIA_COMMENT_DEPTH: usize = 128;
 
 /// Parsed, bounded HTTP `Via` hop-chain metadata.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -275,15 +277,22 @@ fn parse_comment(value: &str, position: &mut usize) -> Result<String, ViaParseEr
 
 fn parse_comment_body(value: &str, position: &mut usize) -> Result<(), ViaParseError> {
   let bytes = value.as_bytes();
+  let mut depth = 1usize;
   while let Some(&byte) = bytes.get(*position) {
     match byte {
       b')' => {
         *position += 1;
-        return Ok(());
+        depth -= 1;
+        if depth == 0 {
+          return Ok(());
+        }
       }
       b'(' => {
+        if depth >= MAX_VIA_COMMENT_DEPTH {
+          return Err(ViaParseError::new("invalid Via comment"));
+        }
+        depth += 1;
         *position += 1;
-        parse_comment_body(value, position)?;
       }
       b'\\' => {
         *position += 1;

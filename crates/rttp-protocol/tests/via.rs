@@ -1,4 +1,4 @@
-use rttp_protocol::via::{Via, MAX_VIA_MEMBERS, MAX_VIA_VALUE_BYTES};
+use rttp_protocol::via::{Via, MAX_VIA_COMMENT_DEPTH, MAX_VIA_MEMBERS, MAX_VIA_VALUE_BYTES};
 
 #[test]
 fn via_parses_rfc_examples_and_combined_fields() {
@@ -72,6 +72,31 @@ fn via_normalizes_optional_whitespace_and_nested_comments() {
   assert_eq!(
     "1.1 edge-a (outer (inner) more), HTTP/2 upstream",
     via.header_value()
+  );
+}
+
+#[test]
+fn via_bounds_comment_nesting_without_recursion() {
+  let deepest_comment = format!(
+    "{}{}",
+    "(".repeat(MAX_VIA_COMMENT_DEPTH),
+    ")".repeat(MAX_VIA_COMMENT_DEPTH)
+  );
+  let deepest = format!("1.1 hop {deepest_comment}");
+  assert!(
+    Via::parse(deepest.as_str()).is_ok(),
+    "Via should parse comments at the nesting-depth bound"
+  );
+
+  let too_deep_comment = format!(
+    "{}{}",
+    "(".repeat(MAX_VIA_COMMENT_DEPTH + 1),
+    ")".repeat(MAX_VIA_COMMENT_DEPTH + 1)
+  );
+  let too_deep = format!("1.1 hop {too_deep_comment}");
+  assert!(
+    Via::parse(too_deep.as_str()).is_err(),
+    "Via should reject comments beyond the nesting-depth bound"
   );
 }
 

@@ -1093,9 +1093,9 @@ caller-supplied chain, and `HttpResponse::via()` parses attached raw fields.
 `Via` preserves optional protocol name, protocol version, received-by,
 comments, duplicates, and ordering. Each field family is bounded to 64 KiB
 per field value, 64 KiB for the combined raw field set including `", "`
-separator overhead, 64 KiB for serialized output, and 256 members. Empty
-members, malformed hops, control-byte injection, and bound violations are
-rejected.
+separator overhead, 64 KiB for serialized output, 256 members, and 128
+comment nesting levels. Empty members, malformed hops, control-byte
+injection, and bound violations are rejected.
 
 These helpers are hop metadata only. RTTP does not append or remove hops,
 infer trusted proxies, rewrite identity, or change HTTP/1.1 or HTTP/2 proxy

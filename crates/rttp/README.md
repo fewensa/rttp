@@ -523,10 +523,10 @@ caller-supplied chain, and `HttpResponse::via()` parses attached raw fields.
 
 `Via` validates received-protocol, received-by, comments, and bounds: 64 KiB
 per field value, per combined raw field set including `", "` separator
-overhead, and per combined serialized value, and 256 combined members.
-Duplicate hops are preserved in wire order. These helpers expose hop metadata
-only: RTTP does not append or remove hops, infer trusted proxies, or change
-HTTP/1.1 or HTTP/2 proxy policy.
+overhead, per combined serialized value, 256 combined members, and 128
+comment nesting levels. Duplicate hops are preserved in wire order. These
+helpers expose hop metadata only: RTTP does not append or remove hops, infer
+trusted proxies, or change HTTP/1.1 or HTTP/2 proxy policy.
 
 ## Bounded X-Forwarded compatibility metadata
 

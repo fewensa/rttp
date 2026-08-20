@@ -867,9 +867,10 @@ and `HttpRequest::header()` continue to expose the original raw fields.
 version, received-by, and optional comments. Each field value, the combined
 raw field set including `", "` separator overhead, and the combined
 serialized value are bounded to 64 KiB, and the combined member count is
-bounded to 256. Repeated `Via` fields are combined in wire order, and
-duplicate received-by values are valid chain metadata. These helpers expose
-hop metadata only; they do not append or remove hops or apply proxy policy.
+bounded to 256. Comment nesting depth is bounded to 128. Repeated `Via`
+fields are combined in wire order, and duplicate received-by values are valid
+chain metadata. These helpers expose hop metadata only; they do not append or
+remove hops or apply proxy policy.
 
 ## X-Forwarded compatibility metadata
 
