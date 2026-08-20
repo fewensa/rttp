@@ -239,7 +239,7 @@ impl fmt::Debug for Cookie {
 impl fmt::Display for Cookie {
   #[inline]
   fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    fmt::Debug::fmt(&self.string(), formatter)
+    fmt::Debug::fmt(self, formatter)
   }
 }
 

@@ -2311,6 +2311,7 @@ fn set_cookie_metadata_reuses_protocol_type_and_redacts_values() {
   let cookie_debug = format!("{cookie:?}");
   let cookies_debug = format!("{cookies:?}");
   let legacy_debug = format!("{:?}", response.cookies());
+  let legacy_display = response.cookies()[0].to_string();
   let response_debug = format!("{response:?}");
   assert!(cookie_debug.contains("[REDACTED]"));
   assert!(!cookie_debug.contains("abc def"));
@@ -2318,6 +2319,8 @@ fn set_cookie_metadata_reuses_protocol_type_and_redacts_values() {
   assert!(!cookies_debug.contains("token"));
   assert!(legacy_debug.contains("[REDACTED]"));
   assert!(!legacy_debug.contains("abc def"));
+  assert!(legacy_display.contains("[REDACTED]"));
+  assert!(!legacy_display.contains("abc def"));
   assert!(response_debug.contains("[REDACTED]"));
   assert!(!response_debug.contains("abc def"));
 }
