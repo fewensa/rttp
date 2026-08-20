@@ -245,7 +245,7 @@ impl HttpSetCookie {
       return Err(HttpCookieParseError::new("invalid cookie name"));
     }
     validate_value(value)?;
-    if value.bytes().any(|byte| byte == b'"') {
+    if value.bytes().any(is_invalid_generated_quoted_value_byte) {
       return Err(HttpCookieParseError::new("invalid cookie value"));
     }
     let cookie = Self {
@@ -338,7 +338,7 @@ impl HttpSetCookie {
     let value = match value {
       Some(value) => {
         validate_value(value)?;
-        if value.bytes().any(|byte| byte == b'"') {
+        if value.bytes().any(is_invalid_generated_quoted_value_byte) {
           return Err(HttpCookieParseError::new("invalid Set-Cookie attribute"));
         }
         Some(value.to_owned())
@@ -796,6 +796,10 @@ fn is_invalid_control_byte(byte: u8) -> bool {
   byte != b'\t' && (byte <= 0x1f || byte == 0x7f)
 }
 
+fn is_invalid_generated_quoted_value_byte(byte: u8) -> bool {
+  byte == b'"' || byte == b'\\'
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -819,5 +823,45 @@ mod tests {
   fn cookie_metadata_rejects_non_token_names() {
     assert!(HttpCookies::parse("bad name=value").is_err());
     assert!(HttpSetCookie::parse("bad name=value").is_err());
+  }
+
+  #[test]
+  fn set_cookie_builder_outputs_round_trip_through_parser() {
+    let cookies = [
+      HttpSetCookie::new("session", "abc def")
+        .unwrap()
+        .with_path("/")
+        .unwrap()
+        .with_http_only()
+        .unwrap()
+        .with_same_site(HttpSameSite::Lax)
+        .unwrap(),
+      HttpSetCookie::new("prefs", "a,b")
+        .unwrap()
+        .with_extension("Ext", Some("v w"))
+        .unwrap(),
+      HttpSetCookie::new("flag", "enabled")
+        .unwrap()
+        .with_extension("Flag", None)
+        .unwrap(),
+    ];
+
+    for cookie in cookies {
+      assert_eq!(cookie, HttpSetCookie::parse(cookie.header_value()).unwrap());
+    }
+  }
+
+  #[test]
+  fn set_cookie_builder_rejects_values_that_parser_rejects_when_quoted() {
+    assert!(HttpSetCookie::new("session", "a\\b").is_err());
+    assert!(HttpSetCookie::new("session", "a\"b").is_err());
+    assert!(HttpSetCookie::new("session", "abc")
+      .unwrap()
+      .with_extension("Ext", Some("v\\w"))
+      .is_err());
+    assert!(HttpSetCookie::new("session", "abc")
+      .unwrap()
+      .with_extension("Ext", Some("v\"w"))
+      .is_err());
   }
 }
