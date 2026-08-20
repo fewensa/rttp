@@ -17,7 +17,8 @@ use rttp_client::response::{
   PermissionsPolicy, PermissionsPolicyParseError, Pragma, PragmaParseError, PreferenceApplied,
   Priority, ProxyAuthenticate, ProxyAuthenticateParseError, ProxyAuthenticationInfo,
   ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError, ReferrerPolicy,
-  ReferrerPolicyToken, ServerTiming, Signature, SignatureInput, SignatureInputParseError,
+  ReferrerPolicyToken, SecWebSocketAccept, SecWebSocketAcceptParseError, SecWebSocketVersion,
+  SecWebSocketVersionParseError, ServerTiming, Signature, SignatureInput, SignatureInputParseError,
   SignatureParseError, SpeculationRules, SpeculationRulesParseError, StrictTransportSecurity,
   StrictTransportSecurityParseError, SupportsLoadingMode, SupportsLoadingModeParseError, Trailer,
   TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError,
@@ -34,9 +35,11 @@ use rttp_client::{
   DestinationParseError, HttpClient, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
   SecGpc, SecGpcParseError, SecPurpose, TraceParent, TraceParentParseError, TraceState,
   TraceStateMember, TraceStateParseError, UpgradeInsecureRequests,
-  UpgradeInsecureRequestsParseError,
+  UpgradeInsecureRequestsParseError, XForwardedFor, XForwardedForParseError, XForwardedHost,
+  XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
 };
 use rttp_protocol::expect::Expect;
+use rttp_protocol::sec_websocket_key::SecWebSocketKey;
 use rttp_test_support as support;
 
 #[test]
@@ -59,6 +62,11 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     AccessControlMaxAge::parse("").expect_err("empty Access-Control-Max-Age should be rejected");
   let age = Age::parse("60").expect("Age should parse");
   let _: AgeParseError = Age::parse("").expect_err("empty Age should be rejected");
+  let sec_websocket_key =
+    SecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==").expect("Sec-WebSocket-Key should parse");
+  let sec_websocket_accept = SecWebSocketAccept::derive_from_key(&sec_websocket_key);
+  let _: SecWebSocketAcceptParseError =
+    SecWebSocketAccept::parse("the accept value").expect_err("invalid accept should be rejected");
   let cache_status =
     CacheStatus::parse("OriginCache; hit; ttl=1100").expect("Cache-Status should parse");
   let _: CacheStatusParseError = CacheStatus::parse("OriginCache; hit=yes")
@@ -91,6 +99,17 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     Destination::parse("/relative").expect_err("relative Destination should be rejected");
   let depth = Depth::parse("infinity").expect("Depth should parse");
   let _: DepthParseError = Depth::parse("2").expect_err("malformed Depth should be rejected");
+  let x_forwarded_for =
+    XForwardedFor::parse("192.0.2.60, unknown").expect("X-Forwarded-For should parse");
+  let _: XForwardedForParseError =
+    XForwardedFor::parse("client.example").expect_err("invalid X-Forwarded-For should fail");
+  let x_forwarded_host =
+    XForwardedHost::parse("example.test:443").expect("X-Forwarded-Host should parse");
+  let _: XForwardedHostParseError = XForwardedHost::parse("https://example.test")
+    .expect_err("invalid X-Forwarded-Host should fail");
+  let x_forwarded_proto = XForwardedProto::parse("https").expect("X-Forwarded-Proto should parse");
+  let _: XForwardedProtoParseError =
+    XForwardedProto::parse("https://").expect_err("invalid X-Forwarded-Proto should fail");
   let _: DeprecationParseError =
     Deprecation::parse("true").expect_err("historical Deprecation token should be rejected");
   let content_security_policy =
@@ -162,6 +181,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     .expect("Supports-Loading-Mode should parse");
   let _: SupportsLoadingModeParseError =
     SupportsLoadingMode::parse("?1").expect_err("non-token should be rejected");
+  let sec_websocket_version =
+    SecWebSocketVersion::parse("13").expect("Sec-WebSocket-Version should parse");
+  let _: SecWebSocketVersionParseError =
+    SecWebSocketVersion::parse("8, 13").expect_err("unordered versions should be rejected");
   let warning = Warning::parse(r#"110 - "Response is Stale""#).expect("Warning should parse");
   let nel =
     Nel::parse(r#"{"report_to":"network-errors","max_age":2592000}"#).expect("NEL should parse");
@@ -271,6 +294,11 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(max_age.seconds(), 60);
   assert_eq!(age.seconds(), 60);
   assert_eq!(
+    sec_websocket_accept.as_str(),
+    "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
+  );
+  assert!(sec_websocket_accept.verify_key(&sec_websocket_key));
+  assert_eq!(
     cache_status.members()[0].identifier().as_str(),
     "OriginCache"
   );
@@ -304,6 +332,9 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   );
   assert_eq!(Depth::Infinity, depth);
   assert_eq!("infinity", depth.header_value());
+  assert_eq!("192.0.2.60", x_forwarded_for.nodes()[0].value());
+  assert_eq!("example.test", x_forwarded_host.hosts()[0].host());
+  assert_eq!(["https".to_string()], x_forwarded_proto.schemes());
   assert_eq!(
     content_security_policy.header_value(),
     "default-src 'self'; object-src 'none'"
@@ -379,6 +410,9 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     supports_loading_mode.header_value(),
     "fenced-frame, credentialed-prerender"
   );
+  assert_eq!(sec_websocket_version.versions(), ["13"]);
+  assert!(sec_websocket_version.contains("13"));
+  assert_eq!(sec_websocket_version.header_value(), "13");
   assert_eq!(warning.items()[0].code(), 110);
   assert_eq!(nel.max_age(), 2592000);
   assert_eq!(nel.report_to(), Some("network-errors"));
@@ -791,6 +825,33 @@ fn response_facade_parses_supports_loading_mode_metadata() {
       &"credentialed-prerender".to_string()
     ]
   );
+}
+
+#[test]
+fn response_facade_parses_sec_websocket_version_metadata() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 400 Bad Request\r\n",
+      "Sec-WebSocket-Version: 13\r\n",
+      "Sec-WebSocket-Version: 8, 7\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let versions: SecWebSocketVersion = response
+    .sec_websocket_version()
+    .expect("Sec-WebSocket-Version should parse")
+    .expect("Sec-WebSocket-Version should be present");
+
+  assert_eq!(versions.versions(), ["13", "8", "7"]);
+  assert!(versions.contains("13"));
+  assert_eq!(versions.header_value(), "13, 8, 7");
+  assert_eq!(response.header_value("Connection"), None);
+  assert_eq!(response.header_value("Upgrade"), None);
 }
 
 #[test]

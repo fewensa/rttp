@@ -2523,6 +2523,80 @@ fn document_policy_helpers_preserve_raw_metadata_and_report_parse_errors() {
 }
 
 #[test]
+fn sec_websocket_version_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::new(400, "Bad Request")
+    .header("Sec-WebSocket-Version", "12")
+    .header("sec-websocket-version", "8")
+    .with_sec_websocket_version(["13"])
+    .expect("Sec-WebSocket-Version should be accepted");
+
+  let versions = response
+    .sec_websocket_version()
+    .expect("Sec-WebSocket-Version should parse")
+    .expect("Sec-WebSocket-Version should be present");
+  assert_eq!("13", versions.header_value());
+  assert_eq!(versions.versions(), ["13"]);
+  assert!(versions.contains("13"));
+  assert_eq!(
+    vec![("Sec-WebSocket-Version", "13")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+  assert!(response
+    .headers
+    .iter()
+    .all(|header| !header.name.eq_ignore_ascii_case("Connection")
+      && !header.name.eq_ignore_ascii_case("Upgrade")));
+}
+
+#[test]
+fn sec_websocket_version_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::new(400, "Bad Request")
+    .header("Sec-WebSocket-Version", "13")
+    .header("sec-websocket-version", "8, 7");
+  let versions = raw
+    .sec_websocket_version()
+    .expect("raw Sec-WebSocket-Version should parse")
+    .expect("Sec-WebSocket-Version should be present");
+  assert_eq!("13, 8, 7", versions.header_value());
+
+  for value in ["", "v13", "013", "8, 13", "13, 13", "300"] {
+    let malformed = HttpResponse::new(400, "Bad Request").header("Sec-WebSocket-Version", value);
+    assert!(
+      malformed.sec_websocket_version().is_err(),
+      "should reject {value:?}"
+    );
+    assert!(
+      HttpResponse::new(400, "Bad Request")
+        .with_sec_websocket_version([value])
+        .is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      Some(value),
+      malformed
+        .headers
+        .iter()
+        .find(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Version"))
+        .map(|header| header.value.as_str())
+    );
+  }
+
+  assert!(HttpResponse::new(400, "Bad Request")
+    .with_sec_websocket_version(["13", "13"])
+    .is_err());
+  assert!(HttpResponse::new(400, "Bad Request")
+    .with_sec_websocket_version(["8", "13"])
+    .is_err());
+  assert!(HttpResponse::new(400, "Bad Request")
+    .with_sec_websocket_version(["1".repeat(64 * 1024 + 1)])
+    .is_err());
+}
+
+#[test]
 fn document_policy_report_only_helpers_validate_replace_and_parse_response_metadata() {
   let response = HttpResponse::ok([])
     .header("Document-Policy-Report-Only", "oversized-images=1.0")
@@ -3348,6 +3422,83 @@ fn request_idempotency_key_is_optional_bounded_and_preserves_invalid_headers() {
 }
 
 #[test]
+fn request_sec_websocket_version_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .sec_websocket_version()
+      .expect("missing value should be valid")
+  );
+
+  for value in ["13", " \t13\t ", "13, 8, 7"] {
+    let valid = Request::from_raw_frame(
+      format!(
+        "GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Version: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should parse");
+    let parsed = valid
+      .sec_websocket_version()
+      .expect("value should parse")
+      .expect("Sec-WebSocket-Version should be present");
+    assert_eq!(
+      value
+        .split(',')
+        .map(|member| member.trim_matches([' ', '\t']))
+        .collect::<Vec<_>>()
+        .join(", "),
+      parsed.header_value()
+    );
+    assert!(parsed.contains("13"));
+  }
+
+  for value in ["", "v13", "013", "8, 13", "13, 13", "300"] {
+    let request = Request::from_raw_frame(
+      format!(
+        "GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Version: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should retain malformed metadata");
+    assert!(
+      request.sec_websocket_version().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(Some(value), request.header("Sec-WebSocket-Version"));
+  }
+
+  let oversized = "1".repeat(64 * 1024 + 1);
+  let oversized_request = Request {
+    method: "GET".to_string(),
+    target: "/chat".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("Sec-WebSocket-Version".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.sec_websocket_version().is_err());
+  assert_eq!(
+    Some(oversized.as_str()),
+    oversized_request.header("Sec-WebSocket-Version")
+  );
+
+  let unordered = Request::from_raw_frame(
+    b"GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Version: 13\r\nsec-websocket-version: 8, 13\r\n\r\n",
+  )
+  .expect("request should retain unordered metadata");
+  assert!(unordered.sec_websocket_version().is_err());
+  assert_eq!(Some("13"), unordered.header("Sec-WebSocket-Version"));
+}
+
+#[test]
 fn request_sec_websocket_key_is_optional_bounded_and_preserves_invalid_headers() {
   let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
     .expect("request should parse");
@@ -3456,6 +3607,60 @@ fn request_sec_websocket_key_is_optional_bounded_and_preserves_invalid_headers()
     Some("dGhlIHNhbXBsZSBub25jZQ=="),
     duplicate.header("Sec-WebSocket-Key")
   );
+}
+
+#[test]
+fn response_sec_websocket_accept_can_parse_and_derive_from_validated_key() {
+  let key = rttp_protocol::sec_websocket_key::SecWebSocketKey::parse(
+    "dGhlIHNhbXBsZSBub25jZQ==",
+  )
+  .expect("Sec-WebSocket-Key should parse");
+
+  let response = HttpResponse::new(101, "Switching Protocols")
+    .header("Sec-WebSocket-Accept", "legacy")
+    .with_sec_websocket_accept_for_key(&key);
+  let accept = response
+    .sec_websocket_accept()
+    .expect("Sec-WebSocket-Accept should parse")
+    .expect("Sec-WebSocket-Accept should be present");
+
+  assert_eq!("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", accept.as_str());
+  assert!(accept.verify_key(&key));
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert!(serialized.contains("\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n"));
+  assert!(!serialized.contains("\r\nSec-WebSocket-Accept: legacy\r\n"));
+  assert!(!format!("{accept:?}").contains("dGhlIHNhbXBsZSBub25jZQ=="));
+  assert!(!format!("{accept:?}").contains("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
+
+  let manual = HttpResponse::new(101, "Switching Protocols")
+    .with_sec_websocket_accept(" \ts3pPLMBiTxaQ9kYGzzhZRbK+xOo=\t ")
+    .expect("manual Sec-WebSocket-Accept should parse");
+  assert_eq!(
+    "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=",
+    manual
+      .sec_websocket_accept()
+      .expect("manual accept should parse")
+      .expect("manual accept should be present")
+      .header_value()
+  );
+}
+
+#[test]
+fn response_sec_websocket_accept_preserves_invalid_raw_headers() {
+  let duplicate = HttpResponse::new(101, "Switching Protocols")
+    .header("Sec-WebSocket-Accept", "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=")
+    .header("sec-websocket-accept", "AAAAAAAAAAAAAAAAAAAAAAAAAAA=");
+  assert!(duplicate.sec_websocket_accept().is_err());
+
+  let oversized = "A".repeat(64 * 1024 + 1);
+  let oversized_response =
+    HttpResponse::new(101, "Switching Protocols").header("Sec-WebSocket-Accept", oversized);
+  let error = oversized_response
+    .sec_websocket_accept()
+    .expect_err("oversized Sec-WebSocket-Accept should fail");
+  let message = error.to_string();
+  assert!(message.contains("Sec-WebSocket-Accept"));
+  assert!(!message.contains("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
 }
 
 #[test]
@@ -4473,6 +4678,14 @@ hello\r\n\
     assert!(header_debug.contains("Sec-WebSocket-Key"));
     assert!(header_debug.contains("[REDACTED]"));
     assert!(!header_debug.contains("dGhlIHNhbXBsZSBub25jZQ=="));
+
+    let accept_header_debug = format!(
+      "{:?}",
+      HttpHeader::new("Sec-WebSocket-Accept", "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=")
+    );
+    assert!(accept_header_debug.contains("Sec-WebSocket-Accept"));
+    assert!(accept_header_debug.contains("[REDACTED]"));
+    assert!(!accept_header_debug.contains("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
   }
 
   #[test]

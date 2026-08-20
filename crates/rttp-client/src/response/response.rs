@@ -69,6 +69,9 @@ use rttp_protocol::prefer::PreferenceApplied;
 use rttp_protocol::range::ContentRange;
 use rttp_protocol::referrer_policy::ReferrerPolicy;
 use rttp_protocol::reporting_endpoints::ReportingEndpoints;
+use rttp_protocol::sec_websocket_accept::SecWebSocketAccept;
+use rttp_protocol::sec_websocket_key::SecWebSocketKey;
+use rttp_protocol::sec_websocket_version::SecWebSocketVersion;
 use rttp_protocol::service_worker_allowed::ServiceWorkerAllowed;
 use rttp_protocol::speculation_rules::SpeculationRules;
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
@@ -607,6 +610,30 @@ impl Response {
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
+  /// Parses bounded `Sec-WebSocket-Accept` response metadata without changing
+  /// socket handoff behavior or interpreting WebSocket frames.
+  pub fn sec_websocket_accept(&self) -> error::Result<Option<SecWebSocketAccept>> {
+    let values = self.header_values("sec-websocket-accept");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    SecWebSocketAccept::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Verifies `Sec-WebSocket-Accept` against a validated `Sec-WebSocket-Key`.
+  ///
+  /// `Ok(false)` means the singleton field is absent or does not match. Parse
+  /// errors remain response errors and do not expose the key material.
+  pub fn verify_sec_websocket_accept(&self, key: &SecWebSocketKey) -> error::Result<bool> {
+    Ok(
+      self
+        .sec_websocket_accept()?
+        .is_some_and(|accept| accept.verify_key(key)),
+    )
+  }
+
   /// Parses `Preference-Applied` response metadata without applying preference semantics.
   pub fn preference_applied(&self) -> error::Result<Option<PreferenceApplied>> {
     let values = self.header_values("preference-applied");
@@ -710,6 +737,18 @@ impl Response {
       return Ok(None);
     }
     SupportsLoadingMode::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Sec-WebSocket-Version` response metadata without
+  /// negotiating versions or switching protocols.
+  pub fn sec_websocket_version(&self) -> error::Result<Option<SecWebSocketVersion>> {
+    let values = self.header_values("sec-websocket-version");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    SecWebSocketVersion::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

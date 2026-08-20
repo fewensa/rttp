@@ -29,6 +29,8 @@ use rttp_server::server::{
   HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus,
   HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
   HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSecGpc, HttpSecGpcParseError,
+  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketKey,
+  HttpSecWebSocketKeyParseError, HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError,
   HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
   HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
   HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
@@ -37,7 +39,9 @@ use rttp_server::server::{
   HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
   HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
   HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpWantContentDigest,
-  HttpWantReprDigest, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
+  HttpWantReprDigest, HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost,
+  HttpXForwardedHostParseError, HttpXForwardedProto, HttpXForwardedProtoParseError, SecFetchDest,
+  SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
 
 #[test]
@@ -151,6 +155,18 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .expect("CDN-Loop should parse");
   let _: HttpCdnLoopParseError =
     HttpCdnLoop::parse("cdn; trace").expect_err("valueless CDN-Loop parameter should be rejected");
+  let x_forwarded_for: HttpXForwardedFor =
+    HttpXForwardedFor::parse("192.0.2.60, unknown").expect("X-Forwarded-For should parse");
+  let _: HttpXForwardedForParseError =
+    HttpXForwardedFor::parse("client.example").expect_err("invalid X-Forwarded-For should fail");
+  let x_forwarded_host: HttpXForwardedHost =
+    HttpXForwardedHost::parse("example.test:443").expect("X-Forwarded-Host should parse");
+  let _: HttpXForwardedHostParseError = HttpXForwardedHost::parse("https://example.test")
+    .expect_err("invalid X-Forwarded-Host should fail");
+  let x_forwarded_proto: HttpXForwardedProto =
+    HttpXForwardedProto::parse("https").expect("X-Forwarded-Proto should parse");
+  let _: HttpXForwardedProtoParseError =
+    HttpXForwardedProto::parse("https://").expect_err("invalid X-Forwarded-Proto should fail");
   let content_range = HttpContentRange::parse("bytes */10").expect("Content-Range should parse");
   let content_range_error: Result<HttpContentRange, HttpContentRangeParseError> =
     HttpContentRange::parse("bytes */*");
@@ -251,6 +267,13 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let supports_loading_mode_response = HttpResponse::ok("")
     .with_supports_loading_mode(["fenced-frame", "credentialed-prerender"])
     .expect("Supports-Loading-Mode should be accepted");
+  let sec_websocket_version: HttpSecWebSocketVersion =
+    HttpSecWebSocketVersion::parse("13").expect("Sec-WebSocket-Version should parse");
+  let _: HttpSecWebSocketVersionParseError = HttpSecWebSocketVersion::parse("8, 13")
+    .expect_err("unordered Sec-WebSocket-Version should be rejected");
+  let sec_websocket_version_response = HttpResponse::new(400, "Bad Request")
+    .with_sec_websocket_version(["13"])
+    .expect("Sec-WebSocket-Version should be accepted");
   let fetch_site = SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
@@ -334,6 +357,9 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
   assert_eq!(cdn_loop.members()[0].identifier(), "foo123.foocdn.example");
   assert_eq!(cdn_loop.members()[1].parameter("trace"), Some("abcdef"));
+  assert_eq!("192.0.2.60", x_forwarded_for.nodes()[0].value());
+  assert_eq!("example.test", x_forwarded_host.hosts()[0].host());
+  assert_eq!(["https".to_string()], x_forwarded_proto.schemes());
   assert_eq!(report_only_policy.header_value(), "require-corp");
   assert_eq!(
     HttpCrossOriginOpenerPolicy::SameOrigin,
@@ -504,6 +530,17 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .supports_loading_mode()
       .expect("Supports-Loading-Mode should parse")
       .expect("Supports-Loading-Mode should be present")
+      .header_value()
+  );
+  assert_eq!(sec_websocket_version.versions(), ["13"]);
+  assert!(sec_websocket_version.contains("13"));
+  assert_eq!(sec_websocket_version.header_value(), "13");
+  assert_eq!(
+    "13",
+    sec_websocket_version_response
+      .sec_websocket_version()
+      .expect("Sec-WebSocket-Version should parse")
+      .expect("Sec-WebSocket-Version should be present")
       .header_value()
   );
   assert_eq!(fetch_site.header_value(), "same-origin");
@@ -846,6 +883,34 @@ fn response_facade_builds_and_parses_upgrade_metadata() {
   assert!(serialized.contains("\r\nUpgrade: websocket, TLS/1.3\r\n"));
   assert!(!serialized.contains("\r\nUpgrade: raw\r\n"));
   assert!(!serialized.contains("\r\nContent-Length:"));
+}
+
+#[test]
+fn response_facade_builds_and_parses_sec_websocket_accept_metadata() {
+  let key =
+    HttpSecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==").expect("Sec-WebSocket-Key should parse");
+  let response = HttpResponse::new(101, "Switching Protocols")
+    .header("Sec-WebSocket-Accept", "legacy")
+    .with_sec_websocket_accept_for_key(&key);
+
+  let accept = response
+    .sec_websocket_accept()
+    .expect("Sec-WebSocket-Accept should parse")
+    .expect("Sec-WebSocket-Accept should be present");
+
+  assert_eq!("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", accept.as_str());
+  assert!(accept.verify_key(&key));
+  assert!(!format!("{accept:?}").contains("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
+  let _: Result<HttpSecWebSocketKey, HttpSecWebSocketKeyParseError> =
+    HttpSecWebSocketKey::parse("the sample nonce");
+  let _: Result<HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError> =
+    HttpSecWebSocketAccept::parse("the accept value");
+
+  let mut serialized = Vec::new();
+  response.write_to(&mut serialized).expect("response writes");
+  let serialized = String::from_utf8(serialized).expect("response is utf8");
+  assert!(serialized.contains("\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n"));
+  assert!(!serialized.contains("\r\nSec-WebSocket-Accept: legacy\r\n"));
 }
 
 #[test]

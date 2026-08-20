@@ -4,7 +4,7 @@ use rttp_protocol::destination::{Destination, MAX_DESTINATION_VALUE_BYTES};
 fn parses_valid_absolute_destination_uris() {
   for value in [
     "https://dav.example.test/archive/report.txt",
-    "http://example.test/collection/%E2%82%AC?copy=1#frag",
+    "http://example.test/collection/%E2%82%AC?copy=1",
   ] {
     let destination = Destination::parse(value).expect("Destination should parse");
 
@@ -39,6 +39,7 @@ fn rejects_relative_and_malformed_destination_values() {
     "//example.test/path",
     "https://example.test/a b",
     "https://example.test/%zz",
+    "https://example.test/collection#frag",
   ] {
     assert!(
       Destination::parse(value).is_err(),

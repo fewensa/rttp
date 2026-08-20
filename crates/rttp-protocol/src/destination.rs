@@ -152,7 +152,6 @@ fn is_uri_byte(byte: u8) -> bool {
         | b':'
         | b'/'
         | b'?'
-        | b'#'
         | b'['
         | b']'
         | b'@'

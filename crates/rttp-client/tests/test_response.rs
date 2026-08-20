@@ -6,11 +6,13 @@ use rttp_client::response::{
   DocumentPolicyReportOnly, DocumentPolicyReportOnlyValue, DocumentPolicyValue, EntityTag,
   HttpClearSiteData, HttpSetCookies, KeepAlive, LinkValues, Location, MementoDatetime,
   OriginTrials, PermissionsPolicy, ProxyAuthenticate, ProxyAuthenticationInfo, ProxyStatus,
-  ProxyStatusBareItem, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ServerTiming,
-  ServiceWorkerAllowed, SignatureInput, SpeculationRules, StrictTransportSecurity,
-  SupportsLoadingMode, Warning, XContentTypeOptions, XFrameOptions,
+  ProxyStatusBareItem, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter,
+  SecWebSocketAccept, SecWebSocketVersion, ServerTiming, ServiceWorkerAllowed, SignatureInput,
+  SpeculationRules, StrictTransportSecurity, SupportsLoadingMode, Warning, XContentTypeOptions,
+  XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
+use rttp_protocol::sec_websocket_key::SecWebSocketKey;
 use std::io::Write;
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -31,6 +33,92 @@ fn test_parse_cookie_name_can_match_attribute_name() {
   assert_eq!("Path", path.name());
   assert_eq!("value", path.value());
   assert!(path.http_only());
+}
+
+#[test]
+fn sec_websocket_accept_response_helper_parses_and_verifies_metadata() {
+  let key =
+    SecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==").expect("Sec-WebSocket-Key should parse");
+  let response = Response::new(
+    RoUrl::with("https://example.test/chat"),
+    concat!(
+      "HTTP/1.1 101 Switching Protocols\r\n",
+      "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let accept = response
+    .sec_websocket_accept()
+    .expect("Sec-WebSocket-Accept should parse")
+    .expect("Sec-WebSocket-Accept should be present");
+  assert_eq!("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", accept.as_str());
+  assert_eq!("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", accept.header_value());
+  assert!(accept.verify_key(&key));
+  assert!(response
+    .verify_sec_websocket_accept(&key)
+    .expect("Sec-WebSocket-Accept should verify"));
+  assert!(!format!("{accept:?}").contains("dGhlIHNhbXBsZSBub25jZQ=="));
+  assert!(!format!("{accept:?}").contains("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
+
+  let derived = SecWebSocketAccept::derive_from_key(&key);
+  assert_eq!(derived, accept);
+}
+
+#[test]
+fn sec_websocket_accept_response_helper_handles_absent_mismatch_and_invalid_metadata() {
+  let key =
+    SecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==").expect("Sec-WebSocket-Key should parse");
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test/chat"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+  assert_eq!(
+    None,
+    absent.sec_websocket_accept().expect("absent should parse")
+  );
+  assert!(!absent
+    .verify_sec_websocket_accept(&key)
+    .expect("absent accept should not verify"));
+
+  let mismatch = Response::new(
+    RoUrl::with("https://example.test/chat"),
+    concat!(
+      "HTTP/1.1 101 Switching Protocols\r\n",
+      "Sec-WebSocket-Accept: AAAAAAAAAAAAAAAAAAAAAAAAAAA=\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+  assert!(!mismatch
+    .verify_sec_websocket_accept(&key)
+    .expect("mismatched accept should parse"));
+
+  let duplicate = Response::new(
+    RoUrl::with("https://example.test/chat"),
+    concat!(
+      "HTTP/1.1 101 Switching Protocols\r\n",
+      "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n",
+      "sec-websocket-accept: AAAAAAAAAAAAAAAAAAAAAAAAAAA=\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should preserve duplicate metadata");
+  let error = duplicate
+    .sec_websocket_accept()
+    .expect_err("duplicate Sec-WebSocket-Accept should fail");
+  let message = error.to_string();
+  assert!(message.contains("Sec-WebSocket-Accept"));
+  assert!(!message.contains("dGhlIHNhbXBsZSBub25jZQ=="));
 }
 
 #[test]
@@ -1207,6 +1295,119 @@ fn supports_loading_mode_metadata_rejects_oversized_values_without_hiding_raw_he
     response.header_value("Supports-Loading-Mode"),
     Some(&oversized)
   );
+}
+
+#[test]
+fn sec_websocket_version_metadata_parses_version_13_without_switching_protocols() {
+  let value = "13";
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!(
+      "HTTP/1.1 400 Bad Request\r\nSec-WebSocket-Version: {value}\r\nContent-Length: 0\r\n\r\n"
+    )
+    .into_bytes(),
+  )
+  .expect("response should parse");
+
+  let metadata = response
+    .sec_websocket_version()
+    .expect("Sec-WebSocket-Version should parse")
+    .expect("Sec-WebSocket-Version should be present");
+
+  assert_eq!(metadata.versions(), ["13"]);
+  assert!(metadata.contains("13"));
+  assert_eq!(metadata.header_value(), value);
+  assert_eq!(
+    response.header_value("Sec-WebSocket-Version"),
+    Some(&value.to_string())
+  );
+  assert_eq!(response.header_value("Connection"), None);
+  assert_eq!(response.header_value("Upgrade"), None);
+}
+
+#[test]
+fn sec_websocket_version_metadata_combines_fields_in_wire_order() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 400 Bad Request\r\n",
+      "Sec-WebSocket-Version: 13\r\n",
+      "Sec-WebSocket-Version: 8, 7\r\n",
+      "Content-Length: 0\r\n\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let metadata = response
+    .sec_websocket_version()
+    .expect("Sec-WebSocket-Version should parse")
+    .expect("Sec-WebSocket-Version should be present");
+
+  assert_eq!(metadata.versions(), ["13", "8", "7"]);
+  assert_eq!(metadata.header_value(), "13, 8, 7");
+  assert_eq!(
+    response.header_values("Sec-WebSocket-Version"),
+    [&"13".to_string(), &"8, 7".to_string()]
+  );
+}
+
+#[test]
+fn sec_websocket_version_metadata_rejects_invalid_values_without_hiding_raw_headers() {
+  for value in ["", "13,", "v13", "013", "8, 13", "13, 13", "300"] {
+    let response = Response::new(
+      RoUrl::with("https://example.test"),
+      format!(
+        "HTTP/1.1 400 Bad Request\r\nSec-WebSocket-Version: {value}\r\nContent-Length: 0\r\n\r\n"
+      )
+      .into_bytes(),
+    )
+    .expect("response should parse");
+
+    assert!(
+      response.sec_websocket_version().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      response.header_value("Sec-WebSocket-Version"),
+      Some(&value.to_string())
+    );
+  }
+}
+
+#[test]
+fn sec_websocket_version_metadata_rejects_oversized_values_without_hiding_raw_headers() {
+  let oversized = "1".repeat(64 * 1024 + 1);
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    format!(
+      "HTTP/1.1 400 Bad Request\r\nSec-WebSocket-Version: {oversized}\r\nContent-Length: 0\r\n\r\n"
+    )
+    .into_bytes(),
+  )
+  .expect("response should parse");
+
+  assert!(response.sec_websocket_version().is_err());
+  assert_eq!(
+    response.header_value("Sec-WebSocket-Version"),
+    Some(&oversized)
+  );
+}
+
+#[test]
+fn sec_websocket_version_metadata_is_absent_without_a_header() {
+  let response = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response should parse");
+
+  assert_eq!(
+    response.sec_websocket_version().expect("header is absent"),
+    None
+  );
+  let _: Option<SecWebSocketVersion> = response.sec_websocket_version().expect("header is absent");
 }
 
 #[test]
