@@ -23,8 +23,9 @@ use rttp::server::{
   HttpSpeculationRules, HttpSpeculationRulesParseError, HttpSunsetParseError,
   HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTimeout, HttpTimeoutParseError,
   HttpTimeoutType, HttpUpgrade, HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError,
-  HttpUpgradeParseError, HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost,
-  HttpXForwardedHostParseError, HttpXForwardedProto, HttpXForwardedProtoParseError,
+  HttpUpgradeParseError, HttpVia, HttpViaParseError, HttpXForwardedFor,
+  HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
+  HttpXForwardedProto, HttpXForwardedProtoParseError,
 };
 use std::io::Write;
 use std::net::SocketAddr;
@@ -158,6 +159,10 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp::XForwardedProto::parse("https").expect("X-Forwarded-Proto should parse");
   let _: rttp::XForwardedProtoParseError =
     rttp::XForwardedProto::parse("https://").expect_err("invalid X-Forwarded-Proto should fail");
+  let via: rttp::Via =
+    rttp::Via::parse("1.1 edge-a (TLS terminator), HTTP/2 upstream").expect("Via should parse");
+  let _: rttp::ViaParseError =
+    rttp::Via::parse("1.1").expect_err("incomplete Via hop should be rejected");
   let memento_datetime: rttp::MementoDatetime =
     rttp_client::response::MementoDatetime::parse("Sun, 06 Nov 1994 08:49:37 GMT")
       .expect("Memento-Datetime should parse");
@@ -379,6 +384,8 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!("192.0.2.60", x_forwarded_for.nodes()[0].value());
   assert_eq!("example.test", x_forwarded_host.hosts()[0].host());
   assert_eq!(["https".to_string()], x_forwarded_proto.schemes());
+  assert_eq!("edge-a", via.members()[0].received_by());
+  assert_eq!(Some("HTTP"), via.members()[1].protocol_name());
   assert_eq!(
     &[rttp::TimeoutType::Second(60), rttp::TimeoutType::Infinite],
     timeout.members()
@@ -1222,6 +1229,10 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpXForwardedProto::parse("https").expect("X-Forwarded-Proto should parse");
   let _: HttpXForwardedProtoParseError =
     HttpXForwardedProto::parse("https://").expect_err("invalid X-Forwarded-Proto should fail");
+  let via: HttpVia =
+    HttpVia::parse("1.1 edge-a (TLS terminator), HTTP/2 upstream").expect("Via should parse");
+  let _: HttpViaParseError =
+    HttpVia::parse("1.1").expect_err("incomplete Via hop should be rejected");
   let _: Result<HttpIdempotencyKey, HttpIdempotencyKeyParseError> =
     HttpIdempotencyKey::parse("key with space");
   let _: Result<HttpSecWebSocketKey, HttpSecWebSocketKeyParseError> =
@@ -1376,6 +1387,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!("192.0.2.60", x_forwarded_for.nodes()[0].value());
   assert_eq!("example.test", x_forwarded_host.hosts()[0].host());
   assert_eq!(["https".to_string()], x_forwarded_proto.schemes());
+  assert_eq!("edge-a", via.members()[0].received_by());
+  assert_eq!(Some("HTTP"), via.members()[1].protocol_name());
   assert_eq!(
     if_modified_since.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
@@ -1559,4 +1572,26 @@ fn compatibility_facade_exposes_content_dpr_response_metadata() {
     .header("Content-DPR", "2")
     .content_dpr()
     .is_err());
+}
+
+#[test]
+fn via_facade_exports_shared_request_and_response_type() {
+  let via: HttpVia =
+    HttpVia::parse("1.1 edge-a (TLS terminator), HTTP/2 upstream").expect("Via should parse");
+  let _: HttpViaParseError =
+    HttpVia::parse("1.1").expect_err("incomplete Via hop should be rejected");
+  assert_eq!("edge-a", via.members()[0].received_by());
+  assert_eq!(Some("HTTP"), via.members()[1].protocol_name());
+}
+
+#[cfg(feature = "client")]
+#[test]
+fn via_compatibility_facade_exports_client_type() {
+  let via: rttp::Via =
+    rttp::Via::parse("1.1 edge-a (TLS terminator), HTTP/2 upstream").expect("Via should parse");
+  let _: rttp::ViaParseError =
+    rttp::Via::parse("1.1").expect_err("incomplete Via hop should be rejected");
+  assert_eq!("edge-a", via.members()[0].received_by());
+  let member: rttp::ViaMember = via.members()[1].clone();
+  assert_eq!(Some("HTTP"), member.protocol_name());
 }

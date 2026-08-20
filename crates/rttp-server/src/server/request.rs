@@ -142,6 +142,9 @@ pub use rttp_protocol::upgrade_insecure_requests::{
   UpgradeInsecureRequests as HttpUpgradeInsecureRequests,
   UpgradeInsecureRequestsParseError as HttpUpgradeInsecureRequestsParseError,
 };
+pub use rttp_protocol::via::{
+  Via as HttpVia, ViaMember as HttpViaMember, ViaParseError as HttpViaParseError,
+};
 pub use rttp_protocol::want_content_digest::{
   WantContentDigest as HttpWantContentDigest, WantContentDigestEntry as HttpWantContentDigestEntry,
   WantContentDigestParseError as HttpWantContentDigestParseError,
@@ -874,6 +877,16 @@ impl Request {
       return Ok(None);
     }
     HttpCdnLoop::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded HTTP `Via` request metadata without appending or removing
+  /// hops or applying proxy policy.
+  pub fn via(&self) -> Result<Option<HttpVia>, HttpViaParseError> {
+    let values: Vec<&str> = self.headers_named("Via").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpVia::parse_values(values).map(Some)
   }
 
   /// Parses bounded `X-Forwarded-For` request metadata without applying a
@@ -2963,6 +2976,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpCdnLoop::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded HTTP `Via` request metadata without appending or removing
+  /// hops or applying proxy policy.
+  pub fn via(&self) -> Result<Option<HttpVia>, HttpViaParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Via"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpVia::parse_values(values).map(Some)
   }
 
   /// Parses bounded `X-Forwarded-For` request metadata without applying a

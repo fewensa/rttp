@@ -356,6 +356,20 @@ These helpers expose Proxy-Status as metadata only. They do not interpret
 proxy health, retry requests, promote trailers, or generate origin
 `Proxy-Status` values.
 
+## Via response metadata
+
+`HttpResponse::with_via(value)` validates HTTP `Via` as a bounded hop chain
+and replaces any existing `Via` fields with one normalized caller-supplied
+value. It does not append a local hop. `HttpResponse::via()` parses attached
+raw fields into `HttpVia` metadata, returning parser errors without changing
+those raw fields. Absent fields return `Ok(None)`. Empty members, malformed
+syntax, control bytes, oversized values, and too many members return a parser
+error while `HttpResponse` raw headers continue to expose the original
+fields.
+
+These helpers expose Via as metadata only. They do not append or remove hops
+or change HTTP/1.1 or HTTP/2 proxy policy.
+
 ## Accept-Ranges response metadata
 
 `HttpResponse::with_accept_ranges(units)` declares supported range units with
@@ -895,6 +909,23 @@ wire order, and repeated CDN identifiers are valid loop-visible metadata.
 These helpers expose loop metadata only; they do not detect or break loops,
 reject requests because an identifier is already present, or forward the
 field automatically.
+
+## Via request metadata
+
+Handlers can call `Request::via()` and the matching `HttpRequest` helper to
+observe bounded HTTP `Via` request metadata through the shared protocol
+`HttpVia` type. Absent fields return `Ok(None)`. Malformed, oversized, empty
+member, or over-limit values return parser errors while `Request::header()`
+and `HttpRequest::header()` continue to expose the original raw fields.
+
+`HttpVia` preserves ordered hops with optional protocol name, protocol
+version, received-by, and optional comments. Each field value, the combined
+raw field set including `", "` separator overhead, and the combined
+serialized value are bounded to 64 KiB, and the combined member count is
+bounded to 256. Comment nesting depth is bounded to 128. Repeated `Via`
+fields are combined in wire order, and duplicate received-by values are valid
+chain metadata. These helpers expose hop metadata only; they do not append or
+remove hops or apply proxy policy.
 
 ## X-Forwarded compatibility metadata
 

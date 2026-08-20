@@ -13,7 +13,7 @@ use rttp::server::{
   HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest, HttpRequestAcceptCharsets,
   HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
   HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming,
-  HttpTimeoutType, HttpVary,
+  HttpTimeoutType, HttpVary, HttpVia,
 };
 
 #[test]
@@ -956,6 +956,42 @@ fn response_origin_trial_helper_rejects_invalid_and_bounds_without_hiding_header
 }
 
 #[test]
+fn response_via_helper_validates_replaces_and_preserves_raw_headers() {
+  let response = HttpResponse::ok("body")
+    .header("Via", "1.0 legacy")
+    .header("via", "1.1 old-edge")
+    .with_via("1.1 edge-a (TLS terminator), HTTP/2 upstream")
+    .expect("valid Via should be accepted");
+  let via = response
+    .via()
+    .expect("attached Via should parse")
+    .expect("Via should be present");
+  assert_eq!(2, via.len());
+  assert_eq!("edge-a", via.members()[0].received_by());
+  assert_eq!(Some("TLS terminator"), via.members()[0].comment());
+  assert_eq!(Some("HTTP"), via.members()[1].protocol_name());
+  assert_eq!("2", via.members()[1].protocol_version());
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert_eq!(1, serialized.matches("\r\nVia: ").count());
+  assert!(serialized.contains("\r\nVia: 1.1 edge-a (TLS terminator), HTTP/2 upstream\r\n"));
+
+  assert!(HttpResponse::ok("body").with_via("1.1").is_err());
+  assert!(HttpResponse::ok("body").with_via("1.1 hop extra").is_err());
+  let raw = HttpResponse::ok("body").header("Via", "1.1 hop extra");
+  assert!(raw.via().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nVia: 1.1 hop extra\r\n"));
+  assert_eq!(
+    None,
+    HttpResponse::ok("body")
+      .via()
+      .expect("absent Via should parse")
+  );
+  assert!(HttpVia::parse("1.1 ".to_string() + &"a".repeat(64 * 1024)).is_err());
+}
+
+#[test]
 fn response_proxy_status_helper_validates_replaces_and_preserves_raw_headers() {
   let response = HttpResponse::ok("body")
     .header("Proxy-Status", "OldProxy")
@@ -1850,6 +1886,73 @@ fn request_cdn_loop_is_optional_and_rejects_invalid_metadata() {
   assert_eq!(2, repeated.len());
   assert_eq!("edge.example", repeated.members()[0].identifier());
   assert_eq!("edge.example", repeated.members()[1].identifier());
+}
+
+#[test]
+fn request_via_parses_repeated_hops_and_comments() {
+  let request = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: internal.test\r\n",
+    "Via: 1.1 edge-a (TLS terminator)\r\n",
+    "Via: HTTP/2 upstream\r\n",
+    "\r\n"
+  ));
+
+  let via = request
+    .via()
+    .expect("Via should parse")
+    .expect("Via should be present");
+
+  assert_eq!(2, via.len());
+  assert_eq!("1.1", via.members()[0].protocol_version());
+  assert_eq!("edge-a", via.members()[0].received_by());
+  assert_eq!(Some("TLS terminator"), via.members()[0].comment());
+  assert_eq!(Some("HTTP"), via.members()[1].protocol_name());
+  assert_eq!("2", via.members()[1].protocol_version());
+  assert_eq!("upstream", via.members()[1].received_by());
+  assert_eq!(
+    "1.1 edge-a (TLS terminator), HTTP/2 upstream",
+    via.header_value()
+  );
+}
+
+#[test]
+fn request_via_is_optional_and_rejects_invalid_metadata() {
+  assert_eq!(
+    None,
+    parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .via()
+      .expect("absent Via should be accepted")
+  );
+
+  let malformed = parse_request(concat!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\n",
+    "Via: 1.1 hop extra\r\n\r\n"
+  ));
+  assert!(malformed.via().is_err());
+  assert_eq!(Some("1.1 hop extra"), malformed.header("Via"));
+
+  let excessive = (0..257)
+    .map(|index| format!("1.1 hop{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let request = parse_request(&format!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\nVia: {excessive}\r\n\r\n"
+  ));
+  assert!(request.via().is_err());
+  assert_eq!(Some(excessive.as_str()), request.header("Via"));
+
+  let repeated = parse_request(concat!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\n",
+    "Via: 1.1 edge-a, 1.1 edge-a\r\n\r\n"
+  ));
+  let repeated = repeated
+    .via()
+    .expect("duplicate Via hops should parse")
+    .expect("Via should be present");
+  assert_eq!(2, repeated.len());
+  assert_eq!("edge-a", repeated.members()[0].received_by());
+  assert_eq!("edge-a", repeated.members()[1].received_by());
 }
 
 #[test]

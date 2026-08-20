@@ -2050,6 +2050,90 @@ fn cdn_loop_helper_rejects_malformed_or_excessive_metadata_before_connecting() {
 }
 
 #[test]
+fn via_helper_emits_bounded_forwarding_metadata() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .via("1.1 edge-a (TLS terminator)")
+      .expect("first Via hop should be accepted")
+      .via("HTTP/2 upstream")
+      .expect("second Via hop should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+
+  assert_eq!(
+    Some("1.1 edge-a (TLS terminator), HTTP/2 upstream"),
+    header_value(&request_text(&request), "Via")
+  );
+}
+
+#[test]
+fn via_helper_rejects_malformed_or_excessive_metadata_before_connecting() {
+  for value in [
+    "1.1",
+    "1.1 hop extra",
+    "1.1 hop(",
+    "1.1 hop,",
+    "1.1 hop\r\nX-Injected: 1",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .via(value)
+        .expect_err("invalid Via metadata should be rejected");
+
+      assert!(error.is_builder());
+    });
+
+    assert!(
+      request.is_empty(),
+      "invalid Via input should not open a socket"
+    );
+  }
+
+  let excessive = (0..257)
+    .map(|index| format!("1.1 hop{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .via(excessive.as_str())
+      .expect_err("too many Via members should be rejected");
+
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "excessive Via input should not open a socket"
+  );
+
+  let first = format!("1.1 {}", "a".repeat(64 * 1024 - 8));
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .via(first.as_str())
+      .expect("a bounded first hop should be accepted")
+      .via("1.1 second")
+      .expect_err("combined Via metadata should remain bounded");
+
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "oversized Via output should not open a socket"
+  );
+}
+
+#[test]
 fn x_forwarded_helpers_emit_bounded_compatibility_metadata() {
   let request = capture_request(|base_url| {
     client()

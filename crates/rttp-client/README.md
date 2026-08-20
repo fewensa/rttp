@@ -200,6 +200,20 @@ The helper only declares forwarding metadata: RTTP does not insert a local CDN
 identifier, append the field on every outbound request, reject requests
 because an identifier is already present, or treat `CDN-Loop` as hop-by-hop.
 
+## Bounded Via forwarding metadata
+
+`HttpClient::via(value)` validates and emits HTTP `Via` request metadata
+through the shared protocol `Via` type, combining any existing `Via` field
+with the new hops in wire order before a socket is opened. Each field value,
+the combined raw field set including `", "` separator overhead, and the
+combined serialized value are bounded to 64 KiB, and the combined member
+count is bounded to 256. Malformed received-protocol, received-by, or
+comment syntax, empty members, and bound violations are rejected before
+connecting.
+
+The helper only declares caller-supplied hop metadata: RTTP does not append
+a local hop, remove existing hops, or change proxy or tunnel policy.
+
 ## Bounded X-Forwarded compatibility metadata
 
 `HttpClient::x_forwarded_for(value)`, `x_forwarded_host(value)`, and
@@ -1233,6 +1247,23 @@ return an error while the original headers remain available through
 The helper is metadata-only. `rttp_client` does not interpret proxy health,
 retry requests, promote trailers, or generate origin `Proxy-Status` values.
 
+## Bounded Via response metadata
+
+`Response::via()` parses retained HTTP `Via` fields into `Via` metadata. It
+returns `Ok(None)` when the header is absent. Present values combine all
+`Via` fields in wire order into a bounded hop chain that preserves protocol
+name, protocol version, received-by, comments, duplicates, and ordering.
+`Via::parse(value)` is available when callers want to validate one raw field
+value directly.
+
+Each field value is limited to 64 KiB. Parsing accepts at most 256 members.
+Empty members, malformed syntax, control bytes, oversized values, and too
+many members return an error while the original headers remain available
+through `Response::header_value()` and `Response::header_values()`.
+
+The helper is metadata-only. `rttp_client` does not append or remove hops or
+apply proxy policy.
+
 ## Bounded No-Vary-Search metadata
 
 `Response::no_vary_search()` parses one or more `No-Vary-Search` response
@@ -1324,6 +1355,7 @@ header-block model.
 | W3C Trace Context | `traceparent` and `tracestate` validate and emit bounded W3C Trace Context request metadata through shared protocol types, replacing existing same-name fields and redacting propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |
 | W3C Baggage | `baggage` validates and emits bounded W3C Baggage request metadata through the shared protocol type, replacing an existing same-name field and redacting member and property values from typed debug output | No application-data interpretation, request-context storage, tracing backend, span model, or automatic propagation |
 | CDN-Loop | `cdn_loop` validates and emits bounded RFC 8586 `CDN-Loop` request metadata through the shared protocol type, combining an existing same-name field with the new member in wire order and rejecting malformed or oversized values before connecting | No CDN identifier insertion, loop detection or rejection, automatic forwarding, or hop-by-hop handling |
+| Via | `via` validates and emits bounded HTTP `Via` request metadata through the shared protocol type, combining an existing same-name field with the new hops in wire order and rejecting malformed or oversized values before connecting; `Response::via` parses received hop chains while preserving raw headers on parse failures | No automatic hop insertion or removal, trusted-proxy inference, identity rewrite, or HTTP/1.1 or HTTP/2 proxy-policy changes |
 | Preflight request metadata | `origin`, `access_control_request_method`, `access_control_request_headers`, and `access_control_request_private_network` emit bounded `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`, and `Access-Control-Request-Private-Network` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, CORS policy, or Private Network Access policy |
 | Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_content_digest()`, `HttpRequest::want_content_digest()`, `Request::want_repr_digest()`, and `HttpRequest::want_repr_digest()` parse received preference fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |
 | Accept-Charset | `accept_charset` and `accept_charset_with_q` format bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |

@@ -196,6 +196,7 @@ pub use rttp_protocol::supports_loading_mode::{
 pub use rttp_protocol::upgrade::{
   Upgrade as HttpUpgrade, UpgradeParseError as HttpUpgradeParseError,
 };
+pub use rttp_protocol::via::{Via as HttpVia, ViaParseError as HttpViaParseError};
 pub use rttp_protocol::www_authenticate::{
   WwwAuthenticate as HttpWwwAuthenticate, WwwAuthenticateChallenge as HttpWwwAuthenticateChallenge,
   WwwAuthenticateParameter as HttpWwwAuthenticateParameter,
@@ -1654,6 +1655,19 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces HTTP `Via` response metadata with the
+  /// caller-supplied hop chain without appending a local hop.
+  pub fn with_via(mut self, value: impl AsRef<str>) -> Result<Self, HttpViaParseError> {
+    let via = HttpVia::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Via"));
+    self
+      .headers
+      .push(HttpHeader::new("Via", via.header_value()));
+    Ok(self)
+  }
+
   /// Validates and replaces RFC 9209 `Proxy-Status` response metadata
   /// without generating origin proxy status or applying health policy.
   pub fn with_proxy_status(
@@ -2802,6 +2816,21 @@ impl HttpResponse {
         "multiple {name} headers"
       ))),
     }
+  }
+
+  /// Parses attached `Via` metadata without changing raw headers or
+  /// appending or removing hops.
+  pub fn via(&self) -> Result<Option<HttpVia>, HttpViaParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Via"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpVia::parse_values(values).map(Some)
   }
 
   /// Parses attached `Proxy-Status` metadata without changing raw headers

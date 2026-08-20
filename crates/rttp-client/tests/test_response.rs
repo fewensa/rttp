@@ -9,7 +9,7 @@ use rttp_client::response::{
   ProxyStatusBareItem, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter,
   SecWebSocketAccept, SecWebSocketProtocol, SecWebSocketVersion, ServerTiming,
   ServiceWorkerAllowed, SignatureInput, SpeculationRules, StrictTransportSecurity,
-  SupportsLoadingMode, Warning, XContentTypeOptions, XFrameOptions,
+  SupportsLoadingMode, Via, Warning, XContentTypeOptions, XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
@@ -3108,6 +3108,75 @@ fn test_proxy_authentication_info_response_helper_parses_bounded_auth_params() {
     combined.header_values("Proxy-Authentication-Info"),
     [&"nextnonce=abc".to_string(), &"qop=auth".to_string()]
   );
+}
+
+#[test]
+fn test_via_response_helper_parses_repeated_hops() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Via: 1.1 edge-a (TLS terminator)\r\n",
+    "Via: HTTP/2 upstream\r\n",
+    "Content-Length: 2\r\n\r\nok"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+  let via = response
+    .via()
+    .expect("valid Via should parse")
+    .expect("Via should be present");
+
+  assert_eq!(2, via.len());
+  assert_eq!("edge-a", via.members()[0].received_by());
+  assert_eq!(Some("TLS terminator"), via.members()[0].comment());
+  assert_eq!(Some("HTTP"), via.members()[1].protocol_name());
+  assert_eq!("2", via.members()[1].protocol_version());
+  assert_eq!("upstream", via.members()[1].received_by());
+  assert_eq!(
+    response.header_values("Via"),
+    [
+      &"1.1 edge-a (TLS terminator)".to_string(),
+      &"HTTP/2 upstream".to_string()
+    ]
+  );
+}
+
+#[test]
+fn test_via_response_helper_returns_none_when_absent() {
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("response without Via should parse");
+  assert_eq!(None, absent.via().expect("absent Via should parse"));
+}
+
+#[test]
+fn test_via_rejects_malformed_and_oversized_values_without_hiding_headers() {
+  for value in ["", "1.1", "1.1 hop extra", "1.1 hop("] {
+    let raw = format!("HTTP/1.1 200 OK\r\nVia: {value}\r\nContent-Length: 2\r\n\r\nok");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(response.via().is_err(), "should reject {value:?}");
+    assert_eq!(Some(&value.to_string()), response.header_value("Via"));
+    assert_eq!("ok", response.body().string().unwrap());
+  }
+
+  let oversized = format!("1.1 {}", "a".repeat(64 * 1024));
+  let oversized_raw = format!("HTTP/1.1 200 OK\r\nVia: {oversized}\r\nContent-Length: 0\r\n\r\n");
+  let oversized_response = Response::new(
+    RoUrl::with("https://example.test"),
+    oversized_raw.into_bytes(),
+  )
+  .expect("raw response should remain usable");
+  assert!(oversized_response.via().is_err());
+  assert_eq!(Some(&oversized), oversized_response.header_value("Via"));
+  assert!(Via::parse(
+    (0..257)
+      .map(|index| format!("1.1 hop{index}"))
+      .collect::<Vec<_>>()
+      .join(", ")
+  )
+  .is_err());
 }
 
 #[test]
