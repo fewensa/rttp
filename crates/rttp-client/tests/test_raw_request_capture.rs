@@ -2754,6 +2754,113 @@ fn manual_timeout_header_remains_available_as_escape_hatch() {
 }
 
 #[test]
+fn if_schedule_tag_match_helper_emits_canonical_metadata() {
+  for (value, expected) in [
+    ("\"sched-17\"", "\"sched-17\""),
+    ("W/\"sched-17\"", "W/\"sched-17\""),
+    (" \t\"sched-17\"\t ", "\"sched-17\""),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .method("PUT")
+        .url(format!("{}/calendars/alice/inbox/invite.ics", base_url))
+        .if_schedule_tag_match(value)
+        .expect("If-Schedule-Tag-Match should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+    assert_eq!(
+      Some(expected),
+      header_value(&request, "If-Schedule-Tag-Match")
+    );
+  }
+}
+
+#[test]
+fn if_schedule_tag_match_helper_replaces_existing_fields() {
+  let request = capture_request(|base_url| {
+    client()
+      .method("PUT")
+      .url(format!("{}/calendars/alice/inbox/invite.ics", base_url))
+      .header(("If-Schedule-Tag-Match", "\"sched-16\""))
+      .if_schedule_tag_match("\"sched-17\"")
+      .expect("If-Schedule-Tag-Match should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("\"sched-17\""),
+    header_value(&request, "If-Schedule-Tag-Match")
+  );
+}
+
+#[test]
+fn if_schedule_tag_match_helper_rejects_invalid_values_before_connecting() {
+  for value in [
+    "",
+    " \t ",
+    "sched-17",
+    "\"unterminated",
+    "*",
+    "\"one\", \"two\"",
+    "\"sched-17\"\r\nX: y",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .method("PUT")
+        .url(format!("{}/calendars/alice/inbox/invite.ics", base_url))
+        .if_schedule_tag_match(value)
+        .expect_err("invalid If-Schedule-Tag-Match should be rejected");
+
+      assert!(error.is_builder());
+    });
+
+    assert!(
+      request.is_empty(),
+      "invalid If-Schedule-Tag-Match helper input should not open a socket"
+    );
+  }
+
+  let oversized = format!("\"{}\"", "a".repeat(64 * 1024 - 1));
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .method("PUT")
+      .url(format!("{}/calendars/alice/inbox/invite.ics", base_url))
+      .if_schedule_tag_match(oversized.as_str())
+      .expect_err("oversized If-Schedule-Tag-Match should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized If-Schedule-Tag-Match helper input should not open a socket"
+  );
+}
+
+#[test]
+fn manual_if_schedule_tag_match_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .method("PUT")
+      .url(format!("{}/calendars/alice/inbox/invite.ics", base_url))
+      .header(("If-Schedule-Tag-Match", "unusual-value"))
+      .emit()
+      .expect("manual If-Schedule-Tag-Match header should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("unusual-value"),
+    header_value(&request, "If-Schedule-Tag-Match")
+  );
+}
+
+#[test]
 fn overwrite_helper_emits_canonical_webdav_metadata() {
   for (value, expected) in [("T", "T"), ("F", "F"), (" \tT\t ", "T"), (" \tF\t ", "F")] {
     let request = capture_request(|base_url| {

@@ -9,9 +9,10 @@ use rttp::server::{
   HttpCrossOriginOpenerPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeprecation,
   HttpDeprecationParseError, HttpDepth, HttpDepthParseError, HttpDestination,
   HttpDestinationParseError, HttpEntityTag, HttpExpectations, HttpIdempotencyKey,
-  HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfUnmodifiedSince, HttpLockToken,
-  HttpLockTokenParseError, HttpMaxForwards, HttpMementoDatetime, HttpMementoDatetimeParseError,
-  HttpNel, HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy,
+  HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfScheduleTagMatch,
+  HttpIfScheduleTagMatchParseError, HttpIfUnmodifiedSince, HttpLockToken, HttpLockTokenParseError,
+  HttpMaxForwards, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNel,
+  HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy,
   HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization,
   HttpProxyStatus, HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse,
   HttpSaveData, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept,
@@ -166,6 +167,10 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp::Timeout::parse("Second-60, Infinite").expect("Timeout should parse");
   let _: rttp::TimeoutParseError =
     rttp::Timeout::parse("Second-60, second-60").expect_err("duplicate Timeout should be rejected");
+  let if_schedule_tag_match: rttp::IfScheduleTagMatch =
+    rttp::IfScheduleTagMatch::parse("\"sched-17\"").expect("If-Schedule-Tag-Match should parse");
+  let _: rttp::IfScheduleTagMatchParseError =
+    rttp::IfScheduleTagMatch::parse("*").expect_err("wildcard If-Schedule-Tag-Match should fail");
   let overwrite: rttp::Overwrite = rttp::Overwrite::parse("F").expect("Overwrite should parse");
   let _: rttp::OverwriteParseError =
     rttp::Overwrite::parse("t").expect_err("lowercase Overwrite should be rejected");
@@ -420,6 +425,13 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!("second-60, infinite", timeout.header_value());
   assert_eq!(rttp::Overwrite::F, overwrite);
   assert_eq!("F", overwrite.header_value());
+  assert_eq!(
+    if_schedule_tag_match.entity_tag().header_value(),
+    "\"sched-17\""
+  );
+  assert_eq!(if_schedule_tag_match.opaque_tag(), "sched-17");
+  assert!(!if_schedule_tag_match.is_weak());
+  assert_eq!(if_schedule_tag_match.header_value(), "\"sched-17\"");
   assert_eq!(
     memento_datetime.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
@@ -1107,6 +1119,78 @@ fn compatibility_facade_roundtrips_destination_request_metadata_without_policy()
   assert!(
     rttp::Destination::parse("a".repeat(64 * 1024 + 1)).is_err(),
     "oversized Destination values must fail closed"
+  );
+}
+
+#[test]
+#[cfg(feature = "client")]
+fn compatibility_facade_roundtrips_if_schedule_tag_match_request_metadata_without_policy() {
+  let (addr, handle) = spawn_representation_metadata_response_server(
+    b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  );
+  let response = rttp::Http::client()
+    .method("PUT")
+    .url(format!("http://{addr}/calendars/alice/inbox/invite.ics"))
+    .if_schedule_tag_match(" \"sched-17\" ")
+    .expect("If-Schedule-Tag-Match should be accepted")
+    .emit()
+    .expect("client request should complete");
+  let captured_request = handle
+    .join()
+    .expect("If-Schedule-Tag-Match capture server should join");
+  let captured_request_text =
+    String::from_utf8(captured_request.clone()).expect("request should be utf-8");
+
+  assert_eq!(
+    Some("\"sched-17\""),
+    header_value(&captured_request_text, "If-Schedule-Tag-Match")
+  );
+  assert_eq!(204, response.code());
+
+  let server_request =
+    rttp::server::HttpRequest::parse(&captured_request).expect("server request should parse");
+  let validator: HttpIfScheduleTagMatch = server_request
+    .if_schedule_tag_match()
+    .expect("server If-Schedule-Tag-Match should parse")
+    .expect("server If-Schedule-Tag-Match should be present");
+
+  assert_eq!("\"sched-17\"", validator.header_value());
+  assert_eq!("sched-17", validator.opaque_tag());
+  assert!(!validator.is_weak());
+
+  let weak = rttp::server::HttpRequest::parse(
+    b"PUT /calendars/alice/inbox/invite.ics HTTP/1.1\r\nHost: cal.example.test\r\nIf-Schedule-Tag-Match: W/\"sched-17\"\r\n\r\n",
+  )
+  .expect("weak If-Schedule-Tag-Match request should still parse");
+  let weak_validator: HttpIfScheduleTagMatch = weak
+    .if_schedule_tag_match()
+    .expect("server weak If-Schedule-Tag-Match should parse")
+    .expect("server weak If-Schedule-Tag-Match should be present");
+  assert!(weak_validator.is_weak());
+  assert_eq!("W/\"sched-17\"", weak_validator.header_value());
+
+  let malformed = rttp::server::HttpRequest::parse(
+    b"PUT /calendars/alice/inbox/invite.ics HTTP/1.1\r\nHost: cal.example.test\r\nIf-Schedule-Tag-Match: *\r\n\r\n",
+  )
+  .expect("malformed If-Schedule-Tag-Match request should still parse");
+  let malformed_result: Result<Option<HttpIfScheduleTagMatch>, HttpIfScheduleTagMatchParseError> =
+    malformed.if_schedule_tag_match();
+  assert!(malformed_result.is_err());
+  assert_eq!(Some("*"), malformed.header("If-Schedule-Tag-Match"));
+
+  let duplicate = rttp::server::HttpRequest::parse(
+    b"PUT /calendars/alice/inbox/invite.ics HTTP/1.1\r\nHost: cal.example.test\r\nIf-Schedule-Tag-Match: \"sched-16\"\r\nif-schedule-tag-match: \"sched-17\"\r\n\r\n",
+  )
+  .expect("duplicate If-Schedule-Tag-Match request should still parse");
+  assert!(duplicate.if_schedule_tag_match().is_err());
+  assert_eq!(
+    Some("\"sched-16\""),
+    duplicate.header("If-Schedule-Tag-Match")
+  );
+
+  assert!(
+    rttp::IfScheduleTagMatch::parse(format!("\"{}\"", "a".repeat(64 * 1024 - 1))).is_err(),
+    "oversized If-Schedule-Tag-Match values must fail closed"
   );
 }
 
