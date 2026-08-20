@@ -102,6 +102,7 @@ pub mod strict_transport_security;
 pub mod sunset;
 pub mod supports_loading_mode;
 pub mod te;
+pub mod timeout;
 pub mod timing_allow_origin;
 pub mod trace_context;
 pub mod trailer;

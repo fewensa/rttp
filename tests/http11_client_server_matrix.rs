@@ -121,6 +121,44 @@ struct ObservedAcceptCharsetMetadata {
   raw: Option<String>,
 }
 
+#[derive(Debug, PartialEq)]
+struct ObservedTimeoutMetadata {
+  raw: Option<String>,
+  typed: Result<Option<String>, String>,
+}
+
+fn observe_timeout_metadata(request: &Request) -> ObservedTimeoutMetadata {
+  ObservedTimeoutMetadata {
+    raw: request.header("Timeout").map(str::to_owned),
+    typed: request
+      .timeout()
+      .map(|timeout| timeout.map(|timeout| timeout.header_value()))
+      .map_err(|error| error.to_string()),
+  }
+}
+
+fn spawn_timeout_observer() -> (
+  std::net::SocketAddr,
+  mpsc::Receiver<ObservedTimeoutMetadata>,
+  thread::JoinHandle<()>,
+) {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind Timeout facade server");
+  let addr = server.local_addr().expect("Timeout facade addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send(observe_timeout_metadata(&request))
+          .expect("send observed Timeout metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve Timeout facade request");
+  });
+
+  (addr, observed_rx, handle)
+}
+
 fn observe_accept_charset_metadata(request: &Request) -> ObservedAcceptCharsetMetadata {
   ObservedAcceptCharsetMetadata {
     ranges: request
@@ -159,6 +197,31 @@ fn spawn_facade_accept_charset_observer() -> (
   });
 
   (addr, observed_rx, handle)
+}
+
+#[test]
+fn http11_client_and_server_exchange_timeout_metadata_without_policy() {
+  let (addr, observed_rx, handle) = spawn_timeout_observer();
+
+  let response = client()
+    .method("LOCK")
+    .url(format!("http://{addr}/collection"))
+    .timeout("Second-60, Infinite")
+    .expect("Timeout should be accepted")
+    .emit()
+    .expect("request should complete");
+
+  assert_eq!(200, response.code());
+  assert_eq!(
+    ObservedTimeoutMetadata {
+      raw: Some("second-60, infinite".to_string()),
+      typed: Ok(Some("second-60, infinite".to_string())),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(5))
+      .expect("observe Timeout metadata")
+  );
+  handle.join().expect("Timeout observer thread");
 }
 
 fn spawn_facade_accept_language_observer() -> (

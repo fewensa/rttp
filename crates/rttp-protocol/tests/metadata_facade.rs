@@ -70,6 +70,7 @@ use rttp_protocol::signature_input::{SignatureInput, SignatureInputParseError};
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::supports_loading_mode::SupportsLoadingMode;
 use rttp_protocol::te::Te;
+use rttp_protocol::timeout::{Timeout, TimeoutType};
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
 use rttp_protocol::trace_context::{TraceParent, TraceState};
 use rttp_protocol::transfer_encoding::TransferEncoding;
@@ -115,6 +116,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let location = Location::parse("../login?next=%2Fdashboard").expect("Location should parse");
   let max_forwards = MaxForwards::parse("0").expect("Max-Forwards should parse");
   let depth = Depth::parse("infinity").expect("Depth should parse");
+  let timeout = Timeout::parse("Second-60, Infinite").expect("Timeout should parse");
   let idempotency_key = IdempotencyKey::parse("charge-2026-08-19-9f3c")
     .expect("Idempotency-Key request metadata should parse");
   let sec_websocket_key = SecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==")
@@ -316,6 +318,11 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(max_forwards.header_value(), "0");
   assert_eq!(Depth::Infinity, depth);
   assert_eq!("infinity", depth.header_value());
+  assert_eq!(
+    &[TimeoutType::Second(60), TimeoutType::Infinite],
+    timeout.members()
+  );
+  assert_eq!("second-60, infinite", timeout.header_value());
   assert_eq!(idempotency_key.as_str(), "charge-2026-08-19-9f3c");
   assert_eq!(idempotency_key.header_value(), "charge-2026-08-19-9f3c");
   assert!(!format!("{idempotency_key:?}").contains("charge-2026-08-19-9f3c"));
