@@ -937,6 +937,25 @@ These helpers are metadata-only: RTTP does not select alternative services,
 rewrite origins, migrate sockets, retry, or change connection policy from
 `Alt-Used`.
 
+## Bounded Alternates response metadata
+
+`Alternates` and `HttpAlternates` share the protocol parser for bounded
+RFC 2295-style `Alternates` response metadata. Client responses can call
+`Response::alternates()` to parse attached fields, and server responses can
+call `HttpResponse::with_alternates(value)` or `HttpResponse::alternates()`
+to declare or observe the same metadata. Valid metadata preserves variant
+URI-references, the original accepted source-quality text, and attributes
+such as `type`, `language`, `encoding`, and `length`. Each field value is
+limited to 64 KiB, the combined field bytes are limited to 64 KiB, the
+variant count is limited to 256, and each variant holds at most 256
+attributes. Malformed members, invalid URIs, invalid qvalues, duplicate
+attributes or variants, and oversized values are rejected while raw headers
+remain available on parse failures.
+
+These helpers are metadata-only: RTTP does not select a variant, fetch a
+variant URI, replay requests, resolve URIs against the response URL, apply
+`Vary` matching, or change representation policy from `Alternates`.
+
 ## Bounded Origin-Trial response metadata
 
 `OriginTrials` and `HttpOriginTrials` share the protocol parser for bounded
@@ -1328,6 +1347,7 @@ scheduling, or async accept loops.
 | Informational responses and Early Hints | `HttpResponse::early_hints` and `early_hints_with_headers` construct validated bodyless `103 Early Hints` response metadata with bounded `Link` and safe metadata headers | `101 Switching Protocols` remains a separate terminal handoff response; no automatic preload execution, cache policy, redirect/retry/replay, route generation, streaming early-write API, TLS/ALPN behavior, or status-policy behavior |
 | Cache-Control, CDN-Cache-Control, and Cache-Status | `Request::cache_control`, `HttpRequest::cache_control`, and `HttpResponse::cache_control` parse bounded request/response directives, numeric freshness fields, quoted field-name lists, and extension directives; `HttpResponse::cdn_cache_control` parses bounded response `CDN-Cache-Control` directives and CDN extension metadata while preserving raw response headers on parse errors; `HttpResponse::cache_status` parses bounded RFC 9211 `Cache-Status` list members and parameters while preserving raw response headers on parse errors; `HttpResponse::with_age`/`age`, `with_expires`/`expires`, and `with_retry_after_delta`/`with_retry_after_date`/`retry_after` declare and parse response `Age`, `Expires`, and `Retry-After` metadata | No cache storage, CDN cache, Cache-Status forwarding or freshness policy, automatic revalidation, wall-clock freshness calculation, `Vary` matching, shared-cache policy enforcement, surrogate-key behavior, automatic conditional requests, directive-based validator evaluation, automatic sleep, retry, replay, backoff, scheduler integration, or status-code policy engine |
 | Alt-Used | `AltUsed`, `HttpAltUsed`, `Response::alt_used`, `HttpResponse::with_alt_used`, and `HttpResponse::alt_used` parse or declare bounded singleton response authority metadata while preserving raw headers on parse failures and replacing raw response duplicates on typed declaration | No alternative service selection, origin rewriting, socket migration, retry, or connection-policy behavior |
+| Alternates | `Alternates`, `HttpAlternates`, `Response::alternates`, `HttpResponse::with_alternates`, and `HttpResponse::alternates` parse or declare bounded RFC 2295-style variant metadata, validating URIs, qvalues, attributes, duplicates, member counts, and size bounds while preserving raw headers on parse failures and replacing raw response fields on typed declaration | No transparent content negotiation, variant selection, automatic fetch, request replay, URI resolution, cache storage, `Vary` matching, or quality ranking |
 | Origin-Trial | `OriginTrials`, `HttpOriginTrials`, `Response::origin_trials`, `HttpResponse::with_origin_trials`, and `HttpResponse::origin_trials` parse or declare bounded opaque `Origin-Trial` tokens in wire order, preserve duplicates, redact token material from debug output, and replace raw response fields on typed declaration | No token signature validation, expiration checks, origin applicability, feature activation, or browser trial policy |
 | Memento-Datetime | `HttpResponse::with_memento_datetime`/`memento_datetime` declare and parse bounded singleton `Memento-Datetime` IMF-fixdate metadata while preserving raw headers on parse errors | No archival selection, `Accept-Datetime` negotiation, TimeGate behavior, retry, or transport changes |
 | Vary | `HttpVary`, `HttpResponse::with_vary`, `HttpResponse::vary`, `Request::vary_selection`, and `HttpRequest::vary_selection` parse, declare, and select bounded `Vary` metadata with case-insensitive field-name handling | No cache storage, stored-response matching engine, cache key persistence, automatic request replay, shared-cache policy enforcement, or automatic conditional requests |

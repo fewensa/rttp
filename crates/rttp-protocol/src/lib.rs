@@ -26,6 +26,7 @@ pub mod age;
 pub mod allow;
 pub mod alt_svc;
 pub mod alt_used;
+pub mod alternates;
 pub mod authentication_info;
 pub mod authorization;
 pub mod baggage;

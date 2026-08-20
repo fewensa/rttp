@@ -284,6 +284,24 @@ These helpers only declare and parse metadata. The server does not select
 alternative services, rewrite origins, migrate sockets, retry, or change
 connection policy from `Alt-Used`.
 
+## Alternates response metadata
+
+`HttpResponse::with_alternates(value)` validates bounded `Alternates`
+variant metadata through the shared protocol `HttpAlternates` type and
+replaces any existing `Alternates` fields with one normalized value.
+`HttpResponse::alternates()` parses attached raw fields into the same type,
+returning `Ok(None)` when the header is absent and returning parser errors
+without changing raw fields. Valid metadata preserves variant URIs, source
+quality text, and attributes such as `type`, `language`, `encoding`, and
+`length`. Each field value is limited to 64 KiB, the combined field bytes
+are limited to 64 KiB, the variant count is limited to 256, and each variant
+holds at most 256 attributes. Malformed members, invalid URIs, invalid
+qvalues, duplicate attributes or variants, and oversized values are rejected.
+
+These helpers only declare and parse metadata. The server does not select a
+variant, fetch a variant URI, replay requests, apply `Vary` matching, or
+change representation policy from `Alternates`.
+
 ## Origin-Trial response metadata
 
 `HttpResponse::with_origin_trials(values)` validates a bounded collection of

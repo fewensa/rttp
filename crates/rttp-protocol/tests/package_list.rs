@@ -53,6 +53,7 @@ fn package_includes_protocol_metadata_facade_test() {
     "tests/upgrade_insecure_requests.rs",
     "tests/pragma.rs",
     "tests/accept_language.rs",
+    "tests/alternates.rs",
     "tests/alt_used.rs",
     "tests/origin_trial.rs",
     "tests/speculation_rules.rs",

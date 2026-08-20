@@ -1,30 +1,31 @@
 use rttp::server::{
   HttpAcceptCh, HttpAcceptCharsetParseError, HttpAcceptLanguageParseError, HttpAcceptLanguages,
   HttpAccessControlRequestMethod, HttpAccessControlRequestPrivateNetwork, HttpAltUsed,
-  HttpAltUsedParseError, HttpAuthorization, HttpBaggage, HttpBaggageMember, HttpBaggageParseError,
-  HttpBaggageProperty, HttpCdnLoop, HttpCdnLoopParseError, HttpConditionalMetadata, HttpContentDpr,
-  HttpContentDprParseError, HttpContentLocation, HttpContentLocationParseError, HttpContentRange,
-  HttpContentRangeParseError, HttpCrossOriginEmbedderPolicy,
-  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
-  HttpCrossOriginOpenerPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeprecation,
-  HttpDeprecationParseError, HttpDepth, HttpDepthParseError, HttpDestination,
-  HttpDestinationParseError, HttpEntityTag, HttpExpectations, HttpIdempotencyKey,
-  HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfUnmodifiedSince, HttpLockToken,
-  HttpLockTokenParseError, HttpMaxForwards, HttpMementoDatetime, HttpMementoDatetimeParseError,
-  HttpNel, HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy,
-  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization,
-  HttpProxyStatus, HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse,
-  HttpSaveData, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept,
-  HttpSecWebSocketAcceptParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
-  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
-  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
-  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
-  HttpSunsetParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTimeout,
-  HttpTimeoutParseError, HttpTimeoutType, HttpUpgrade, HttpUpgradeInsecureRequests,
-  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpVia, HttpViaParseError,
-  HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
+  HttpAltUsedParseError, HttpAlternates, HttpAlternatesParseError, HttpAuthorization, HttpBaggage,
+  HttpBaggageMember, HttpBaggageParseError, HttpBaggageProperty, HttpCdnLoop,
+  HttpCdnLoopParseError, HttpConditionalMetadata, HttpContentDpr, HttpContentDprParseError,
+  HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
+  HttpCrossOriginEmbedderPolicy, HttpCrossOriginEmbedderPolicyReportOnly,
+  HttpCrossOriginOpenerPolicy, HttpCrossOriginOpenerPolicyReportOnly,
+  HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpDepth,
+  HttpDepthParseError, HttpDestination, HttpDestinationParseError, HttpEntityTag, HttpExpectations,
+  HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfUnmodifiedSince,
+  HttpLockToken, HttpLockTokenParseError, HttpMaxForwards, HttpMementoDatetime,
+  HttpMementoDatetimeParseError, HttpNel, HttpOriginTrialParseError, HttpOriginTrials,
+  HttpOverwrite, HttpPermissionsPolicy, HttpPermissionsPolicyParseError, HttpPragma,
+  HttpPragmaParseError, HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError,
+  HttpRequestAcceptCharsets, HttpResponse, HttpSaveData, HttpSecGpc, HttpSecGpcParseError,
+  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketKey,
+  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
+  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
+  HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
+  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
+  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
+  HttpSpeculationRules, HttpSpeculationRulesParseError, HttpSunsetParseError,
+  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTimeout, HttpTimeoutParseError,
+  HttpTimeoutType, HttpUpgrade, HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError,
+  HttpUpgradeParseError, HttpVia, HttpViaParseError, HttpXForwardedFor,
+  HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
   HttpXForwardedProto, HttpXForwardedProtoParseError,
 };
 use std::io::Write;
@@ -206,6 +207,15 @@ fn compatibility_facade_exports_client_metadata_types() {
       .expect_err("empty Content-Security-Policy-Report-Only should be rejected");
   let content_range: rttp::ContentRange =
     rttp_client::response::ContentRange::parse("bytes 0-4/10").expect("Content-Range should parse");
+  let alternates: rttp::Alternates = rttp_client::response::Alternates::parse(
+    r#"{ "/resource.en.html" 1.0 {type text/html} {language en} {length 1234} }"#,
+  )
+  .expect("Alternates should parse");
+  let _: rttp::AlternatesParseError =
+    rttp_client::response::Alternates::parse(r#"{ "/broken" 1.001 }"#)
+      .expect_err("invalid Alternates should fail");
+  let _variant: &rttp::AlternateVariant = &alternates.variants()[0];
+  let _attribute: &rttp::AlternateAttribute = &alternates.variants()[0].attributes()[0];
   let alt_svc: rttp::AltSvc =
     rttp_client::response::AltSvc::parse("h3=\":443\"; ma=60").expect("Alt-Svc should parse");
   let alt_used: rttp::AltUsed =
@@ -437,6 +447,12 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(Some(4), content_range.end());
   assert_eq!(Some(10), content_range.complete_length());
   assert!(!content_range.is_unsatisfied());
+  assert_eq!(alternates.variants()[0].uri(), "/resource.en.html");
+  assert_eq!(alternates.variants()[0].quality(), "1.0");
+  assert_eq!(
+    alternates.variants()[0].attribute("type"),
+    Some("text/html")
+  );
   assert_eq!(alt_svc.alternatives()[0].protocol_id(), "h3");
   assert_eq!(alt_svc.alternatives()[0].max_age(), Some(60));
   assert_eq!(alt_used.host(), "alt.example");
@@ -1438,6 +1454,12 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
       .expect("Proxy-Status should parse");
   let _: HttpProxyStatusParseError =
     HttpProxyStatus::parse("").expect_err("empty Proxy-Status should be rejected");
+  let alternates: HttpAlternates = HttpAlternates::parse(
+    r#"{ "/resource.en.html" 1.0 {type text/html} {language en} {length 1234} }"#,
+  )
+  .expect("Alternates should parse");
+  let _: HttpAlternatesParseError =
+    HttpAlternates::parse(r#"{ "/broken" 1.001 }"#).expect_err("invalid Alternates should fail");
   let alt_used: HttpAltUsed =
     HttpAltUsed::parse("[2001:db8::1]:8443").expect("Alt-Used should parse");
   let _: HttpAltUsedParseError =
@@ -1597,6 +1619,11 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(
     proxy_status.members()[0].identifier().as_str(),
     "ExampleCDN"
+  );
+  assert_eq!(alternates.variants()[0].uri(), "/resource.en.html");
+  assert_eq!(
+    alternates.variants()[0].attribute("type"),
+    Some("text/html")
   );
   assert_eq!(alt_used.host(), "[2001:db8::1]");
   assert_eq!(alt_used.port(), Some("8443"));

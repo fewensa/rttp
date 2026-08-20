@@ -8,6 +8,7 @@ use rttp_protocol::access_control_request_method::AccessControlRequestMethod;
 use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
 use rttp_protocol::age::Age;
 use rttp_protocol::alt_used::AltUsed;
+use rttp_protocol::alternates::Alternates;
 use rttp_protocol::authorization::{Authorization, ProxyAuthorization};
 use rttp_protocol::baggage::Baggage;
 use rttp_protocol::cache_status::CacheStatus;
@@ -170,6 +171,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let memento_datetime =
     MementoDatetime::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Memento-Datetime should parse");
   let host = Host::parse("example.test:8443").expect("Host should parse");
+  let alternates = Alternates::parse(
+    r#"{ "/resource.en.html" 1.0 {type text/html} {language en} {length 1234} }"#,
+  )
+  .expect("Alternates should parse");
   let alt_used = AltUsed::parse("[2001:db8::1]:8443").expect("Alt-Used should parse");
   let origin = Origin::parse("https://example.test").expect("Origin should parse");
   let origin_trials = OriginTrials::parse_values(["token-one", "token-two"])
@@ -431,6 +436,12 @@ fn protocol_exports_representative_bounded_metadata_types() {
   );
   assert_eq!(host.host(), "example.test");
   assert_eq!(host.port(), Some("8443"));
+  assert_eq!(alternates.variants()[0].uri(), "/resource.en.html");
+  assert_eq!(alternates.variants()[0].quality(), "1.0");
+  assert_eq!(
+    alternates.variants()[0].attribute("type"),
+    Some("text/html")
+  );
   assert_eq!(alt_used.host(), "[2001:db8::1]");
   assert_eq!(alt_used.port(), Some("8443"));
   assert_eq!(alt_used.header_value(), "[2001:db8::1]:8443");

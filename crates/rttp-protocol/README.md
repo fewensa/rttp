@@ -511,6 +511,29 @@ unbracketed IPv6, empty ports, ASCII controls, and other values outside the
 authority grammar are errors. This is response metadata only: callers own
 alternative-service selection, origin handling, and connection policy.
 
+## Alternates
+
+`alternates` parses one or more RFC 2295-style `Alternates` field values into
+ordered variant metadata. Each variant retains its quoted URI-reference, the
+original accepted source-quality text, and ordered attributes. The quoted URI
+is unescaped and then validated structurally as an RFC 3986 URI-reference; it
+is stored as raw text and is never resolved, fetched, ranked, or selected.
+Each field value is bounded to 64 KiB, the combined field bytes are bounded
+to 64 KiB, the variant count is bounded to 256, each variant holds at most
+256 attributes, and each quoted URI or attribute value is bounded to 64 KiB.
+Quality values must be HTTP qvalue grammar (`0`, `1`, `0.xxx`, or `1.000`
+with at most three fractional digits). Standard attribute names `type`,
+`language`, `encoding`, and `length` are recognized alongside extension
+attribute tokens. Attribute names are matched case-insensitively, stored
+lowercase, and must be unique within a variant. `length` must be an unsigned
+decimal that fits in `u64`. Duplicate variants are rejected by exact stored
+URI, quality text, and normalized attributes. Quoted attribute values are
+unescaped and re-escaped on formatting. Empty input, malformed members,
+invalid URIs, invalid qvalues, and oversized values are rejected. This parser
+does not implement transparent content negotiation, variant selection,
+request replay, redirects, automatic retrieval, cache storage, `Vary`
+matching, or quality ranking.
+
 ## Origin-Trial
 
 `origin_trial` parses one or more HTTP `Origin-Trial` response fields as

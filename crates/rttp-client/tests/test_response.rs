@@ -1,5 +1,5 @@
 use rttp_client::response::{
-  AltSvc, AltUsed, AuthenticationInfo, ContentDisposition, ContentDpr, ContentEncoding,
+  AltSvc, AltUsed, Alternates, AuthenticationInfo, ContentDisposition, ContentDpr, ContentEncoding,
   ContentLocation, ContentRange, ContentSecurityPolicy, ContentSecurityPolicyReportOnly,
   ContentType, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly,
   CrossOriginOpenerPolicy, CrossOriginResourcePolicy, Deprecation, DocumentPolicy,
@@ -3608,6 +3608,91 @@ fn test_server_timing_response_helper_parses_metrics_extensions_and_duplicates()
   assert_eq!(Some(4.0), timing.metrics()[1].duration());
   assert_eq!(Some("render \"home\""), timing.metrics()[2].description());
   assert_eq!("db; dur=53.2; desc=\"primary database\"; region=us-east; cached, db; dur=4, app; desc=\"render \\\"home\\\"\"; build=2026", timing.header_value());
+}
+
+#[test]
+fn test_alternates_response_helper_parses_and_round_trips_variants() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Alternates: { \"/resource.en.html\" 1.0 {type text/html} {language en} {length 1234} }, ",
+    "{ \"/resource.fr.html\" 0.8 {type \"text/html; charset=utf-8\"} {language fr} }\r\n",
+    "Content-Length: 0\r\n\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+  let alternates = response
+    .alternates()
+    .expect("Alternates should parse")
+    .expect("Alternates should be present");
+
+  assert_eq!(2, alternates.len());
+  assert_eq!("/resource.en.html", alternates.variants()[0].uri());
+  assert_eq!("1.0", alternates.variants()[0].quality());
+  assert_eq!(
+    Some("text/html"),
+    alternates.variants()[0].attribute("type")
+  );
+  assert_eq!(Some("en"), alternates.variants()[0].attribute("language"));
+  assert_eq!(Some("1234"), alternates.variants()[0].attribute("length"));
+  assert_eq!(
+    Some("text/html; charset=utf-8"),
+    alternates.variants()[1].attribute("type")
+  );
+  assert_eq!(
+    concat!(
+      r#"{ "/resource.en.html" 1.0 {type text/html} {language en} {length 1234} }, "#,
+      r#"{ "/resource.fr.html" 0.8 {type "text/html; charset=utf-8"} {language fr} }"#
+    ),
+    alternates.header_value()
+  );
+  assert_eq!(
+    alternates,
+    Alternates::parse(alternates.header_value()).expect("round-tripped Alternates should parse")
+  );
+}
+
+#[test]
+fn test_alternates_rejects_invalid_duplicate_or_unbounded_metadata_without_hiding_headers() {
+  for value in [
+    r#"{ "/broken" 1.001 }"#,
+    r#"{ /resource 1 }"#,
+    r#"{ "/a" 1 }, { "/a" 1 }"#,
+    r#"{ "/a" 1 {type text/html} {type application/json} }"#,
+    r#"{ "foo^bar" 1 }"#,
+  ] {
+    let raw = format!("HTTP/1.1 200 OK\r\nAlternates: {value}\r\nContent-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(response.alternates().is_err(), "should reject {value:?}");
+    assert_eq!(
+      Some(&value.to_string()),
+      response.header_value("Alternates")
+    );
+  }
+
+  assert!(
+    Alternates::parse("a".repeat(64 * 1024 + 1)).is_err(),
+    "oversized Alternates must be rejected"
+  );
+  assert!(Alternates::parse(
+    (0..257)
+      .map(|index| format!(r#"{{ "/v{index}" 1 }}"#))
+      .collect::<Vec<_>>()
+      .join(", ")
+  )
+  .is_err());
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("raw response should remain usable");
+  assert_eq!(
+    None,
+    absent
+      .alternates()
+      .expect("absent Alternates should be Ok(None)")
+  );
 }
 
 #[test]
