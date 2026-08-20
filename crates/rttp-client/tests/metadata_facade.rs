@@ -37,16 +37,17 @@ use rttp_client::response::{
   ServiceWorkerAllowedParseError,
 };
 use rttp_client::{
-  AIm, AImMember, AImParameter, AImParseError, Baggage, BaggageMember, BaggageParseError,
-  BaggageProperty, Depth, DepthParseError, Destination, DestinationParseError, HttpClient, If,
-  IfCondition, IfList, IfParseError, IfPredicate, IfResourceTag, IfScheduleTagMatch,
-  IfScheduleTagMatchParseError, IfStateToken, Negotiate, NegotiateDirective, NegotiateParseError,
-  Overwrite, OverwriteParseError, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecGpc,
-  SecGpcParseError, SecPurpose, Tcn, TcnDirective, TcnParseError, Timeout, TimeoutParseError,
-  TimeoutType, TraceParent, TraceParentParseError, TraceState, TraceStateMember,
-  TraceStateParseError, UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
-  Via as ClientVia, ViaParseError as ClientViaParseError, XForwardedFor, XForwardedForParseError,
-  XForwardedHost, XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
+  AIm, AImMember, AImParameter, AImParseError, AcceptDatetime, AcceptDatetimeParseError, Baggage,
+  BaggageMember, BaggageParseError, BaggageProperty, Depth, DepthParseError, Destination,
+  DestinationParseError, HttpClient, If, IfCondition, IfList, IfParseError, IfPredicate,
+  IfResourceTag, IfScheduleTagMatch, IfScheduleTagMatchParseError, IfStateToken, Negotiate,
+  NegotiateDirective, NegotiateParseError, Overwrite, OverwriteParseError, SecFetchDest,
+  SecFetchMode, SecFetchSite, SecFetchUser, SecGpc, SecGpcParseError, SecPurpose, Tcn,
+  TcnDirective, TcnParseError, Timeout, TimeoutParseError, TimeoutType, TraceParent,
+  TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError,
+  UpgradeInsecureRequests, UpgradeInsecureRequestsParseError, Via as ClientVia,
+  ViaParseError as ClientViaParseError, XForwardedFor, XForwardedForParseError, XForwardedHost,
+  XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
 };
 use rttp_protocol::expect::Expect;
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
@@ -190,6 +191,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     MementoDatetime::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Memento-Datetime should parse");
   let _: MementoDatetimeParseError =
     MementoDatetime::parse("").expect_err("empty Memento-Datetime should be rejected");
+  let accept_datetime =
+    AcceptDatetime::parse("Sunday, 06-Nov-94 08:49:37 GMT").expect("Accept-Datetime should parse");
+  let _: AcceptDatetimeParseError =
+    AcceptDatetime::parse("").expect_err("empty Accept-Datetime should be rejected");
   let response_date = ResponseDate::parse("Sun, 06 Nov 1994 08:49:37 GMT")
     .expect("Date response metadata should parse");
   let _: ResponseDateParseError =
@@ -500,6 +505,11 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(
     memento_datetime.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
+    accept_datetime.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT",
+    "obsolete Accept-Datetime forms must canonicalize to IMF-fixdate"
   );
   assert_eq!(
     response_date.header_value(),

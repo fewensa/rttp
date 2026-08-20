@@ -4526,6 +4526,78 @@ fn conditional_http_date_helpers_reject_oversized_and_duplicate_dates_before_con
 }
 
 #[test]
+fn accept_datetime_helper_emits_canonical_imf_fixdate() {
+  for http_date in [
+    "Sun, 06 Nov 1994 08:49:37 GMT",
+    "Sunday, 06-Nov-94 08:49:37 GMT",
+    "Sun Nov  6 08:49:37 1994",
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .get()
+        .url(format!("{}/asset", base_url))
+        .accept_datetime(http_date)
+        .expect("http date should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+
+    assert_eq!(
+      Some("Sun, 06 Nov 1994 08:49:37 GMT"),
+      header_value(&request, "Accept-Datetime"),
+      "obsolete HTTP-date forms must be canonicalized to IMF-fixdate on the wire"
+    );
+  }
+}
+
+#[test]
+fn accept_datetime_helper_rejects_malformed_and_oversized_dates_before_connecting() {
+  let oversized = "0".repeat(64 * 1024 + 1);
+
+  for http_date in ["not a date", "08:49:37 06 Nov 1994", oversized.as_str()] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .accept_datetime(http_date)
+        .expect_err("invalid http date should be rejected");
+
+      assert!(error.is_builder());
+    });
+
+    assert!(
+      request.is_empty(),
+      "malformed Accept-Datetime helper input should not open a socket"
+    );
+  }
+}
+
+#[test]
+fn accept_datetime_helper_replaces_an_existing_field() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .accept_datetime("Sun, 06 Nov 1994 08:49:37 GMT")
+      .expect("first http date should be accepted")
+      .accept_datetime("Sun, 06 Nov 1994 08:49:38 GMT")
+      .expect("second http date should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(1, request.matches("Accept-Datetime:").count());
+  assert_eq!(
+    Some("Sun, 06 Nov 1994 08:49:38 GMT"),
+    header_value(&request, "Accept-Datetime"),
+    "a second accept_datetime call must replace the same-name field"
+  );
+}
+
+#[test]
 fn manual_conditional_headers_remain_available_as_escape_hatch() {
   let request = capture_request(|base_url| {
     client()

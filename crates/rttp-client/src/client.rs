@@ -9,6 +9,7 @@ use crate::{error, Config, H2cClientPolicy};
 use futures::io::AsyncRead;
 use rttp_protocol::a_im::AIm;
 use rttp_protocol::accept_charset::AcceptCharset;
+use rttp_protocol::accept_datetime::AcceptDatetime;
 use rttp_protocol::accept_encoding::AcceptEncoding;
 use rttp_protocol::accept_language::{AcceptLanguage, MAX_ACCEPT_LANGUAGE_VALUE_BYTES};
 use rttp_protocol::access_control_request_headers::AccessControlRequestHeaders;
@@ -1312,6 +1313,22 @@ impl HttpClient {
     Ok(self.header(Header::new(
       "If-Modified-Since",
       if_modified_since.header_value(),
+    )))
+  }
+
+  /// Set one HTTP-date Memento preference, `Accept-Datetime: <http-date>`.
+  ///
+  /// Validates the supplied value as one HTTP-date through the protocol
+  /// `AcceptDatetime` type and emits the canonical IMF-fixdate form. Obsolete
+  /// RFC 850 and asctime dates are accepted and canonicalized. The helper
+  /// declares metadata only; it does not select an archived representation,
+  /// negotiate a Memento time gate, or alter cache policy.
+  pub fn accept_datetime<S: AsRef<str>>(&mut self, http_date: S) -> error::Result<&mut Self> {
+    let accept_datetime = AcceptDatetime::parse(http_date.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Accept-Datetime",
+      accept_datetime.header_value(),
     )))
   }
 

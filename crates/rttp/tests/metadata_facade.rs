@@ -1,11 +1,11 @@
 use rttp::server::{
-  HttpAIm, HttpAImParseError, HttpAcceptCh, HttpAcceptCharsetParseError,
-  HttpAcceptLanguageParseError, HttpAcceptLanguages, HttpAccessControlRequestMethod,
-  HttpAccessControlRequestPrivateNetwork, HttpAltUsed, HttpAltUsedParseError, HttpAlternates,
-  HttpAlternatesParseError, HttpAuthorization, HttpBaggage, HttpBaggageMember,
-  HttpBaggageParseError, HttpBaggageProperty, HttpCdnLoop, HttpCdnLoopParseError,
-  HttpConditionalMetadata, HttpContentDpr, HttpContentDprParseError, HttpContentLocation,
-  HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
+  HttpAIm, HttpAImParseError, HttpAcceptCh, HttpAcceptCharsetParseError, HttpAcceptDatetime,
+  HttpAcceptDatetimeParseError, HttpAcceptLanguageParseError, HttpAcceptLanguages,
+  HttpAccessControlRequestMethod, HttpAccessControlRequestPrivateNetwork, HttpAltUsed,
+  HttpAltUsedParseError, HttpAlternates, HttpAlternatesParseError, HttpAuthorization, HttpBaggage,
+  HttpBaggageMember, HttpBaggageParseError, HttpBaggageProperty, HttpCdnLoop,
+  HttpCdnLoopParseError, HttpConditionalMetadata, HttpContentDpr, HttpContentDprParseError,
+  HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
   HttpCrossOriginEmbedderPolicy, HttpCrossOriginEmbedderPolicyReportOnly,
   HttpCrossOriginOpenerPolicy, HttpCrossOriginOpenerPolicyReportOnly,
   HttpCrossOriginResourcePolicy, HttpDeltaBase, HttpDeltaBaseParseError, HttpDeprecation,
@@ -1900,6 +1900,16 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let if_unmodified_since: HttpIfUnmodifiedSince =
     HttpIfUnmodifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
       .expect("If-Unmodified-Since should parse");
+  let accept_datetime: HttpAcceptDatetime =
+    HttpAcceptDatetime::parse("Sunday, 06-Nov-94 08:49:37 GMT")
+      .expect("Accept-Datetime should parse");
+  let _: HttpAcceptDatetimeParseError =
+    HttpAcceptDatetime::parse("").expect_err("empty Accept-Datetime should be rejected");
+  assert_eq!(
+    HttpMementoDatetime::new(accept_datetime.datetime()).header_value(),
+    accept_datetime.header_value(),
+    "Accept-Datetime and Memento-Datetime must share the same instant and wire form"
+  );
   let policy: HttpCrossOriginResourcePolicy = HttpCrossOriginResourcePolicy::parse("same-origin")
     .expect("Cross-Origin-Resource-Policy should parse");
   let embedder_policy: HttpCrossOriginEmbedderPolicy =

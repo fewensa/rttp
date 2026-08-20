@@ -1,5 +1,6 @@
 use rttp_protocol::a_im::AIm;
 use rttp_protocol::accept_charset::AcceptCharset;
+use rttp_protocol::accept_datetime::{AcceptDatetime, AcceptDatetimeParseError};
 use rttp_protocol::accept_encoding::AcceptEncoding;
 use rttp_protocol::accept_language::AcceptLanguage;
 use rttp_protocol::accept_ranges::AcceptRanges;
@@ -193,6 +194,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
       .expect_err("multi-extension Sec-WebSocket-Extensions selection should be rejected");
   let if_modified_since = IfModifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
     .expect("If-Modified-Since should parse");
+  let accept_datetime =
+    AcceptDatetime::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Accept-Datetime should parse");
+  let _: AcceptDatetimeParseError =
+    AcceptDatetime::parse("").expect_err("empty Accept-Datetime should be rejected");
   let if_schedule_tag_match =
     IfScheduleTagMatch::parse("\"sched-17\"").expect("If-Schedule-Tag-Match should parse");
   let if_schedule_tag_match_weak =
@@ -496,6 +501,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert!(!format!("{sec_websocket_accept:?}").contains("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
   assert_eq!(
     if_modified_since.header_value(),
+    "Sun, 06 Nov 1994 08:49:37 GMT"
+  );
+  assert_eq!(
+    accept_datetime.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
   );
   assert_eq!(

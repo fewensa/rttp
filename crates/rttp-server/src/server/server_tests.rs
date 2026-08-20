@@ -4841,6 +4841,80 @@ fn request_conditional_http_date_metadata_is_optional_bounded_and_rejects_invali
   );
 }
 
+#[test]
+fn request_accept_datetime_metadata_is_optional_bounded_and_rejects_invalid_headers() {
+  let absent = Request::from_raw_frame(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent.accept_datetime().expect("absent should be valid")
+  );
+
+  for value in [
+    "Sun, 06 Nov 1994 08:49:37 GMT",
+    "Sunday, 06-Nov-94 08:49:37 GMT",
+    "Sun Nov  6 08:49:37 1994",
+  ] {
+    let request = Request::from_raw_frame(
+      format!("GET /asset HTTP/1.1\r\nHost: example.test\r\nAccept-Datetime: {value}\r\n\r\n")
+        .as_bytes(),
+    )
+    .expect("request should parse");
+    let parsed = request
+      .accept_datetime()
+      .expect("Accept-Datetime should parse")
+      .expect("Accept-Datetime should be present");
+    assert_eq!("Sun, 06 Nov 1994 08:49:37 GMT", parsed.header_value());
+    assert_eq!(
+      Some(value),
+      request.header("Accept-Datetime"),
+      "the raw field must remain available"
+    );
+  }
+
+  for value in ["not-a-date", "", "08:49:37 06 Nov 1994"] {
+    let request = Request::from_raw_frame(
+      format!(
+        "GET /asset HTTP/1.1\r\nHost: example.test\r\nAccept-Datetime: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should parse");
+    assert!(request.accept_datetime().is_err());
+    assert_eq!(Some(value), request.header("Accept-Datetime"));
+  }
+
+  let oversized = "0".repeat(64 * 1024 + 1);
+  let oversized_request = Request {
+    method: "GET".to_string(),
+    target: "/".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("Accept-Datetime".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.accept_datetime().is_err());
+  assert_eq!(
+    Some(oversized.as_str()),
+    oversized_request.header("Accept-Datetime")
+  );
+
+  let duplicate = Request::from_raw_frame(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nAccept-Datetime: Sun, 06 Nov 1994 08:49:37 GMT\r\naccept-datetime: Sun, 06 Nov 1994 08:49:38 GMT\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert!(duplicate.accept_datetime().is_err());
+  assert_eq!(
+    None,
+    duplicate.if_modified_since().expect("absent should be valid")
+  );
+}
+
   #[test]
   fn http2_huffman_decode_table_resolves_symbols_without_linear_scan() {
     let table = http2_huffman_decode_table();

@@ -130,6 +130,7 @@ pub use self::connection::{
 };
 pub use self::connection::{ConnectionReader, ResponseBodyReader, StreamingResponse};
 pub use rttp_protocol::a_im::{AIm, AImMember, AImParameter, AImParseError};
+pub use rttp_protocol::accept_datetime::{AcceptDatetime, AcceptDatetimeParseError};
 pub use rttp_protocol::baggage::{Baggage, BaggageMember, BaggageParseError, BaggageProperty};
 pub use rttp_protocol::dav::{Dav, DavClass, DavParseError};
 pub use rttp_protocol::delta_base::{DeltaBase, DeltaBaseParseError};

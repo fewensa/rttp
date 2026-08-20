@@ -1,20 +1,20 @@
 use std::time::{Duration, UNIX_EPOCH};
 
 use rttp::server::{
-  HttpAccept, HttpAcceptCh, HttpAcceptRanges, HttpAccessControlAllowHeaders,
-  HttpAccessControlAllowMethods, HttpAccessControlAllowOrigin, HttpAccessControlRequestHeaders,
-  HttpAccessControlRequestMethod, HttpAllowedMethods, HttpAltUsed, HttpAlternates,
-  HttpAuthorization, HttpByteRange, HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata,
-  HttpContentDisposition, HttpContentLanguages, HttpContentRange, HttpContentSecurityPolicy,
-  HttpContentSecurityPolicyReportOnly, HttpContentType, HttpCriticalCh, HttpDeltaBase,
-  HttpDeprecation, HttpDepth, HttpDocumentPolicy, HttpDocumentPolicyReportOnly, HttpEntityTag,
-  HttpExpectations, HttpHost, HttpIfNoneMatch, HttpIfRange, HttpIfRangeRequestOutcome,
-  HttpLinkValues, HttpMementoDatetime, HttpNel, HttpOriginTrials, HttpOverwrite,
-  HttpPermissionsPolicy, HttpProxyStatus, HttpProxyStatusBareItem, HttpReferrerPolicy,
-  HttpReportingEndpoints, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
-  HttpRequestCacheControl, HttpRequestTe, HttpResponse, HttpResponseCacheControl,
-  HttpResponseContentEncodings, HttpRetryAfter, HttpScheduleTag, HttpServerTiming, HttpTcn,
-  HttpTcnDirective, HttpTimeoutType, HttpVary, HttpVia,
+  HttpAccept, HttpAcceptCh, HttpAcceptDatetime, HttpAcceptDatetimeParseError, HttpAcceptRanges,
+  HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods, HttpAccessControlAllowOrigin,
+  HttpAccessControlRequestHeaders, HttpAccessControlRequestMethod, HttpAllowedMethods, HttpAltUsed,
+  HttpAlternates, HttpAuthorization, HttpByteRange, HttpByteRangeError, HttpClearSiteData,
+  HttpConditionalMetadata, HttpContentDisposition, HttpContentLanguages, HttpContentRange,
+  HttpContentSecurityPolicy, HttpContentSecurityPolicyReportOnly, HttpContentType, HttpCriticalCh,
+  HttpDeltaBase, HttpDeprecation, HttpDepth, HttpDocumentPolicy, HttpDocumentPolicyReportOnly,
+  HttpEntityTag, HttpExpectations, HttpHost, HttpIfNoneMatch, HttpIfRange,
+  HttpIfRangeRequestOutcome, HttpLinkValues, HttpMementoDatetime, HttpNel, HttpOriginTrials,
+  HttpOverwrite, HttpPermissionsPolicy, HttpProxyStatus, HttpProxyStatusBareItem,
+  HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest, HttpRequestAcceptCharsets,
+  HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
+  HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpScheduleTag,
+  HttpServerTiming, HttpTcn, HttpTcnDirective, HttpTimeoutType, HttpVary, HttpVia,
 };
 
 #[test]
@@ -1342,6 +1342,68 @@ fn request_conditional_http_date_metadata_is_bounded_and_rejects_duplicates() {
     "\r\n"
   ));
   assert!(duplicate_unmodified.if_unmodified_since().is_err());
+}
+
+#[test]
+fn request_accept_datetime_metadata_is_bounded_and_interoperates_with_memento_datetime() {
+  let absent = parse_request("GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .accept_datetime()
+      .expect("absent value should be valid")
+  );
+
+  for value in [
+    "Sun, 06 Nov 1994 08:49:37 GMT",
+    "Sunday, 06-Nov-94 08:49:37 GMT",
+    "Sun Nov  6 08:49:37 1994",
+  ] {
+    let request = parse_request(&format!(
+      "GET /asset HTTP/1.1\r\nHost: example.test\r\nAccept-Datetime: {value}\r\n\r\n"
+    ));
+    let parsed = request
+      .accept_datetime()
+      .expect("Accept-Datetime should parse")
+      .expect("Accept-Datetime should be present");
+    assert_eq!(
+      "Sun, 06 Nov 1994 08:49:37 GMT",
+      parsed.header_value(),
+      "obsolete HTTP-date forms must canonicalize to IMF-fixdate"
+    );
+    assert_eq!(
+      HttpMementoDatetime::new(parsed.datetime()).header_value(),
+      parsed.header_value(),
+      "Accept-Datetime and Memento-Datetime must share the same instant"
+    );
+  }
+
+  let invalid = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Accept-Datetime: not-a-date\r\n",
+    "\r\n"
+  ));
+  assert!(invalid.accept_datetime().is_err());
+  assert_eq!(
+    Some("not-a-date"),
+    invalid.header("Accept-Datetime"),
+    "raw headers must remain inspectable after a parse error"
+  );
+
+  let oversized = "0".repeat(64 * 1024 + 1);
+  assert!(HttpAcceptDatetime::parse(oversized.as_str()).is_err());
+  let _: HttpAcceptDatetimeParseError =
+    HttpAcceptDatetime::parse("").expect_err("empty Accept-Datetime should be rejected");
+
+  let duplicate = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Accept-Datetime: Sun, 06 Nov 1994 08:49:37 GMT\r\n",
+    "accept-datetime: Sun, 06 Nov 1994 08:49:38 GMT\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.accept_datetime().is_err());
 }
 
 #[test]
