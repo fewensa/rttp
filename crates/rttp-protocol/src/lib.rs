@@ -123,6 +123,7 @@ pub mod trailer;
 pub mod transfer_encoding;
 pub mod upgrade;
 pub mod upgrade_insecure_requests;
+pub mod variant_vary;
 pub mod vary;
 pub mod via;
 pub mod want_content_digest;

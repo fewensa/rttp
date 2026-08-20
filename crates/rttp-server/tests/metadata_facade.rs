@@ -43,11 +43,11 @@ use rttp_server::server::{
   HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent, HttpTraceParentParseError,
   HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
   HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
-  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpVia, HttpViaMember,
-  HttpViaParseError, HttpWantContentDigest, HttpWantReprDigest, HttpXForwardedFor,
-  HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
-  HttpXForwardedProto, HttpXForwardedProtoParseError, SecFetchDest, SecFetchMode, SecFetchSite,
-  SecFetchUser, SecPurpose,
+  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpVariantVary,
+  HttpVariantVaryParseError, HttpVia, HttpViaMember, HttpViaParseError, HttpWantContentDigest,
+  HttpWantReprDigest, HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost,
+  HttpXForwardedHostParseError, HttpXForwardedProto, HttpXForwardedProtoParseError, SecFetchDest,
+  SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
 
 #[test]
@@ -103,6 +103,17 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let _: HttpTcnParseError =
     HttpTcn::parse("list, LIST").expect_err("duplicate TCN should be rejected");
   let _: &[HttpTcnDirective] = tcn.members();
+  let variant_vary: HttpVariantVary =
+    HttpVariantVary::parse("Accept-Language, Sec-CH-DPR").expect("Variant-Vary should parse");
+  let _: HttpVariantVaryParseError = HttpVariantVary::parse("Accept-Language, accept-language")
+    .expect_err("duplicate Variant-Vary should be rejected");
+  let _: HttpVariantVaryParseError = HttpVariantVary::parse("a".repeat(64 * 1024 + 1))
+    .expect_err("oversized Variant-Vary should be rejected");
+  assert_eq!(
+    vec!["accept-language", "sec-ch-dpr"],
+    variant_vary.field_names()
+  );
+  assert_eq!("accept-language, sec-ch-dpr", variant_vary.header_value());
   let accept_charsets: HttpRequestAcceptCharsets =
     HttpRequestAcceptCharsets::parse("utf-8, iso-8859-1;q=0.5, *;q=0")
       .expect("Accept-Charset should parse");
@@ -2410,5 +2421,65 @@ fn response_facade_builds_and_parses_speculation_rules_metadata() {
   assert!(malformed.speculation_rules().is_err());
   assert!(HttpResponse::ok("body")
     .with_speculation_rules("https://example.test/rules.json\r\nX-Injected: 1")
+    .is_err());
+}
+
+#[test]
+fn response_facade_builds_and_parses_variant_vary_metadata() {
+  let response = HttpResponse::ok("body")
+    .header("Variant-Vary", "Accept-Encoding")
+    .with_variant_vary("Accept-Language, Sec-CH-DPR")
+    .expect("valid Variant-Vary should be accepted");
+  let variant_vary: HttpVariantVary = response
+    .variant_vary()
+    .expect("attached Variant-Vary should parse")
+    .expect("Variant-Vary should be present");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+
+  assert_eq!(
+    vec!["accept-language", "sec-ch-dpr"],
+    variant_vary.field_names()
+  );
+  assert_eq!("accept-language, sec-ch-dpr", variant_vary.header_value());
+  assert_eq!(1, serialized.matches("\r\nVariant-Vary: ").count());
+  assert!(serialized.contains("\r\nVariant-Vary: accept-language, sec-ch-dpr\r\n"));
+  assert!(!serialized.contains("\r\nVariant-Vary: Accept-Encoding\r\n"));
+
+  let unchanged = HttpResponse::ok("body").header("Variant-Vary", "Accept-Language");
+  assert!(unchanged
+    .clone()
+    .with_variant_vary("Accept-Language, accept-language")
+    .is_err());
+  assert_eq!(
+    "accept-language",
+    unchanged
+      .variant_vary()
+      .expect("original Variant-Vary should still parse")
+      .expect("original Variant-Vary should be present")
+      .header_value()
+  );
+
+  let absent = HttpResponse::ok("body");
+  assert_eq!(
+    None,
+    absent
+      .variant_vary()
+      .expect("missing Variant-Vary should be accepted")
+  );
+
+  let malformed = HttpResponse::ok("body").header("Variant-Vary", "Accept Language");
+  assert!(malformed.variant_vary().is_err());
+  assert!(String::from_utf8(malformed.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nVariant-Vary: Accept Language\r\n"));
+
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let raw = HttpResponse::ok("body").header("Variant-Vary", &oversized);
+  assert!(raw.variant_vary().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains(&format!("\r\nVariant-Vary: {oversized}\r\n")));
+  assert!(HttpResponse::ok("body")
+    .with_variant_vary(&oversized)
     .is_err());
 }

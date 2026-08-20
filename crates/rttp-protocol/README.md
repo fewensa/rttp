@@ -88,6 +88,22 @@ singleton, duplicate, member-count, and size validation. It reports response
 metadata only; it does not select variants, synthesize `Alternates` or `Vary`,
 or change cache selection.
 
+## Variant-Vary
+
+`variant_vary` parses one or more RFC 2295 `Variant-Vary` response fields into
+either the exclusive `*` wildcard or an ordered list of HTTP field-name
+tokens. Each field value is bounded to 64 KiB, the canonical serialized form
+is bounded to 64 KiB, and the named-field list is bounded to 256 entries.
+Field names match case-insensitively, reject duplicates, and emit lowercase
+in first-seen order. Wildcard values cannot be mixed with named fields or
+repeated. Empty members, non-token members, forbidden ASCII control bytes
+other than HTAB, oversized values, and a present header set that yields no
+member are errors. `header_value()` emits `*` or joins names with `", "`.
+This type is the shared authority for Variant-Vary token, wildcard,
+duplicate, member-count, ordering, and size validation. It reports response
+metadata only; it does not construct cache keys, select variants, synthesize
+`Alternates`, `TCN`, or `Vary`, or change cache selection.
+
 ## Accept-Encoding
 
 `accept_encoding` parses one or more RFC 9110 `Accept-Encoding` field values

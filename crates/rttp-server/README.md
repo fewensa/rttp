@@ -186,6 +186,22 @@ members, oversized values, and control-byte injection return
 These helpers expose response metadata only. They do not select variants,
 synthesize `Alternates`, update `Vary`, or change cache behavior.
 
+## Variant-Vary response metadata
+
+`HttpResponse::with_variant_vary(value)` validates and replaces one bounded
+RFC 2295 `Variant-Vary` response field through the shared `rttp-protocol`
+primitive. `HttpResponse::variant_vary()` parses attached raw `Variant-Vary`
+metadata without changing the response. Valid metadata is either the
+exclusive `*` wildcard or an ordered list of HTTP field-name tokens,
+normalized to lowercase in first-seen order. Duplicate names, duplicate or
+mixed wildcards, malformed or empty members, oversized values, and
+control-byte injection return `HttpVariantVaryParseError` while raw response
+headers remain available.
+
+These helpers expose response metadata only. They do not construct cache
+keys, select variants, synthesize `Alternates`, update `TCN` or `Vary`, or
+change cache behavior.
+
 ## Accept-Encoding request metadata
 
 Handlers can call `Request::accept_encoding()` and

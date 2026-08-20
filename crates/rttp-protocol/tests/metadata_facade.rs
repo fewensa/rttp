@@ -92,6 +92,7 @@ use rttp_protocol::trace_context::{TraceParent, TraceState};
 use rttp_protocol::transfer_encoding::TransferEncoding;
 use rttp_protocol::upgrade::{Upgrade, UpgradeParseError};
 use rttp_protocol::upgrade_insecure_requests::UpgradeInsecureRequests;
+use rttp_protocol::variant_vary::{VariantVary, VariantVaryParseError};
 use rttp_protocol::via::{Via, ViaParseError};
 use rttp_protocol::want_content_digest::WantContentDigest;
 use rttp_protocol::want_repr_digest::WantReprDigest;
@@ -312,6 +313,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
     Negotiate::parse("trans, 1.0, feature-x=preview, *").expect("Negotiate should parse");
   let tcn = Tcn::parse("list, choice").expect("TCN should parse");
   let _: TcnParseError = Tcn::parse("list, LIST").expect_err("duplicate TCN should be rejected");
+  let variant_vary =
+    VariantVary::parse("Accept-Language, Sec-CH-DPR").expect("Variant-Vary should parse");
+  let _: VariantVaryParseError = VariantVary::parse("Accept-Language, accept-language")
+    .expect_err("duplicate Variant-Vary should be rejected");
   let baggage =
     Baggage::parse("tenant=acme;source=gateway,release=2026-08-19").expect("baggage should parse");
   let traceparent = TraceParent::parse("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
@@ -650,6 +655,11 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(tcn.members()[0], TcnDirective::List);
   assert_eq!(tcn.members()[1], TcnDirective::Choice);
   assert_eq!("list, choice", tcn.header_value());
+  assert_eq!(
+    vec!["accept-language", "sec-ch-dpr"],
+    variant_vary.field_names()
+  );
+  assert_eq!("accept-language, sec-ch-dpr", variant_vary.header_value());
   assert_eq!(2, baggage.members().len());
   assert_eq!("tenant", baggage.members()[0].key());
   assert_eq!("acme", baggage.members()[0].value());
