@@ -606,6 +606,36 @@ return a parse error without changing the request itself.
 These helpers declare and parse metadata only. They do not negotiate, transcode,
 decode bodies, sniff MIME types, or select a response charset.
 
+### Bounded Negotiate request metadata
+
+`rttp-protocol` owns the shared RFC 2295 `Negotiate` primitive. Client
+helpers format through that type, and server `Request` / `HttpRequest`
+helpers parse with the same rules.
+
+`HttpClient::negotiate(value)` validates and emits one `Negotiate` field,
+replacing any existing same-name field before a socket is opened. The value
+must be an ordered comma-separated list of `trans`, `vlist`, `guess-small`,
+`*`, `major.minor` remote variant selection algorithm versions, or
+`token[=token]` extension directives. Flags are normalized to lowercase,
+versions are normalized to `major.minor`, and duplicate directives are
+rejected: at most one of each flag and `*`, one occurrence of each version
+pair, and one extension per case-insensitive name. The helper rejects invalid
+tokens, valued flags or versions, empty or trailing comma members,
+duplicates, oversized values, and more than 32 members before a connection is
+opened.
+
+On the server, `Request::negotiate()` and `HttpRequest::negotiate()` parse
+all received `Negotiate` fields in wire order into `HttpNegotiate`, an alias
+of the shared protocol type. Each `HttpNegotiateDirective` is a `trans`,
+`vlist`, `guess-small`, or `*` flag, a `major.minor` version, or a
+`token[=token]` extension. Absent metadata returns `Ok(None)`; malformed,
+duplicate, empty, oversized, or excessive entries return a parse error
+without changing the request itself.
+
+These helpers declare and parse metadata only. They do not select a variant,
+run transparent content negotiation, synthesize `Alternates`, `TCN`,
+`Variant-Vary`, or `Vary`, or change cache selection.
+
 ### Bounded Accept-Encoding request metadata
 
 `rttp-protocol` owns the shared `Accept-Encoding` primitive. Client helpers
@@ -843,6 +873,21 @@ fields.
 
 These helpers are metadata-only. RTTP does not select, rank, fetch, replay,
 redirect to, or cache variants from `Alternates`.
+
+### Bounded TCN response metadata
+
+`Response::tcn()` and server `HttpResponse::with_tcn()` /
+`HttpResponse::tcn()` parse or declare bounded RFC 2295 `TCN` negotiation
+result metadata through the shared protocol `Tcn` type. Valid metadata is a
+singleton response field containing `list`, `choice`, `adhoc`, `re-choose`,
+or `keep` tokens, normalized to lowercase in wire order. Duplicate fields,
+duplicate tokens, malformed or unknown tokens, empty members, oversized
+values, and control-byte injection return parse errors while raw response
+headers remain available on accessor failures; typed server declaration
+replaces existing raw `TCN` fields.
+
+These helpers expose metadata only. RTTP does not select variants, synthesize
+`Alternates` or `Vary`, or change cache behavior from `TCN`.
 
 ### Bounded Origin-Trial response metadata
 
@@ -1555,6 +1600,8 @@ gain additional HTTP/2 header-block handling.
 | Fetch Metadata | Client `sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, `sec_fetch_user`, and `sec_purpose` emit bounded `Sec-Fetch-*`/`Sec-Purpose` fields; server `Request` helpers parse typed received values while preserving raw headers on errors | No browser security policy, request blocking, origin validation, navigation policy, automatic header generation, prefetch execution, or cache behavior |
 | Save-Data | Client `save_data` emits bounded `Save-Data: on` request metadata; server `Request::save_data()` and `HttpRequest::save_data()` parse typed received values while preserving raw headers on errors | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |
 | Accept-Charset | Client `accept_charset` and `accept_charset_with_q` format bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type; server `Request::accept_charset()` and `HttpRequest::accept_charset()` parse received fields into `HttpRequestAcceptCharsets` | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |
+| Negotiate | Client `negotiate` emits bounded RFC 2295 `Negotiate` request metadata through the shared `rttp-protocol` type, replacing an existing same-name field; server `Request::negotiate()` and `HttpRequest::negotiate()` parse received fields into `HttpNegotiate` while preserving raw headers on errors | No variant selection, transparent content negotiation, `Alternates`/`TCN`/`Vary` synthesis, or automatic cache selection |
+| TCN | Client `Response::tcn()` and server `HttpResponse::with_tcn()`/`tcn()` share bounded RFC 2295 `TCN` response metadata through the protocol `Tcn` type while preserving raw headers on accessor errors | No variant selection, `Alternates`/`Vary` synthesis, transparent content negotiation, or cache behavior |
 | Sec-GPC | Client `sec_gpc` emits bounded `Sec-GPC: 1` request metadata; server `Request::sec_gpc()` and `HttpRequest::sec_gpc()` parse typed received values while preserving raw headers on errors | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
 | Upgrade-Insecure-Requests | Client `upgrade_insecure_requests` emits bounded singleton `Upgrade-Insecure-Requests: 1` request metadata; server `Request::upgrade_insecure_requests()` and `HttpRequest::upgrade_insecure_requests()` parse typed received values while preserving raw headers on errors | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Depth | Client `depth` emits bounded singleton WebDAV `Depth` request metadata through the shared protocol type, replacing an existing same-name field; server `Request::depth()` and `HttpRequest::depth()` parse typed received values while preserving raw headers on errors | No resource traversal, WebDAV method selection, method-policy enforcement, retry, or forwarding policy |
@@ -2744,6 +2791,8 @@ TLS or async accept loops.
 | Fetch Metadata | `Request::sec_fetch_site`, `sec_fetch_mode`, `sec_fetch_dest`, `sec_fetch_user`, and `sec_purpose` parse bounded typed `Sec-Fetch-*`/`Sec-Purpose` request fields and preserve raw values on errors | No browser security policy, request blocking, origin validation, navigation policy, automatic header generation, prefetch execution, or cache behavior |
 | Save-Data | `Request::save_data` and `HttpRequest::save_data` parse bounded singleton `Save-Data` `on`-token metadata and preserve raw values on errors | No reduced-data serving, content adaptation, compression, Client Hints advertisement, retries, or browser data-saver policy |
 | Accept-Charset | `HttpRequestAcceptCharsets`, `Request::accept_charset`, and `HttpRequest::accept_charset` parse bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |
+| Negotiate | `Request::negotiate` and `HttpRequest::negotiate` parse bounded RFC 2295 `Negotiate` request metadata into `HttpNegotiate` through the shared `rttp-protocol` type and preserve raw values on errors | No variant selection, transparent content negotiation, `Alternates`/`TCN`/`Vary` synthesis, or automatic cache selection |
+| TCN | `HttpResponse::with_tcn` and `HttpResponse::tcn` declare or parse bounded RFC 2295 `TCN` response metadata through `HttpTcn` and preserve raw headers on accessor errors | No variant selection, `Alternates`/`Vary` synthesis, transparent content negotiation, or cache behavior |
 | Sec-GPC | `Request::sec_gpc` and `HttpRequest::sec_gpc` parse bounded singleton `Sec-GPC` `1`-signal metadata and preserve raw values on errors | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
 | Upgrade-Insecure-Requests | `Request::upgrade_insecure_requests` and `HttpRequest::upgrade_insecure_requests` parse bounded singleton `Upgrade-Insecure-Requests` `1`-token metadata and preserve raw values on errors | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Depth | `Request::depth` and `HttpRequest::depth` parse bounded singleton WebDAV `Depth` request metadata through the shared protocol type and preserve raw values on errors | No resource traversal, WebDAV method selection, method-policy enforcement, retry, or forwarding policy |

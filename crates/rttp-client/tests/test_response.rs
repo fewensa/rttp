@@ -9,7 +9,7 @@ use rttp_client::response::{
   ProxyStatusBareItem, ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ScheduleTag,
   SecWebSocketAccept, SecWebSocketExtensions, SecWebSocketProtocol, SecWebSocketVersion,
   ServerTiming, ServiceWorkerAllowed, SignatureInput, SpeculationRules, StrictTransportSecurity,
-  SupportsLoadingMode, Via, Warning, XContentTypeOptions, XFrameOptions,
+  SupportsLoadingMode, Tcn, TcnDirective, Via, Warning, XContentTypeOptions, XFrameOptions,
 };
 use rttp_client::types::{Cookie, RoUrl};
 use rttp_client::DavClass;
@@ -3917,6 +3917,68 @@ fn test_alternates_rejects_invalid_duplicate_or_unbounded_metadata_without_hidin
       .alternates()
       .expect("absent Alternates should be Ok(None)")
   );
+}
+
+#[test]
+fn test_tcn_response_helper_parses_and_preserves_metadata_only_tokens() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "TCN: Choice, keep\r\n",
+    "Content-Length: 0\r\n\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("raw response should remain usable");
+  let tcn = response
+    .tcn()
+    .expect("TCN should parse")
+    .expect("TCN should be present");
+
+  assert_eq!(&[TcnDirective::Choice, TcnDirective::Keep], tcn.members());
+  assert_eq!("choice, keep", tcn.header_value());
+  assert_eq!(
+    Some(&"Choice, keep".to_string()),
+    response.header_value("TCN")
+  );
+  assert_eq!(
+    tcn,
+    Tcn::parse(tcn.header_value()).expect("round-tripped TCN should parse")
+  );
+
+  let absent = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("raw response should remain usable");
+  assert_eq!(None, absent.tcn().expect("absent TCN should be Ok(None)"));
+}
+
+#[test]
+fn test_tcn_rejects_invalid_duplicate_or_unbounded_metadata_without_hiding_headers() {
+  for value in ["variant", "list, LIST"] {
+    let raw = format!("HTTP/1.1 200 OK\r\nTCN: {value}\r\nContent-Length: 0\r\n\r\n");
+    let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+      .expect("raw response should remain usable");
+    assert!(response.tcn().is_err(), "should reject {value:?}");
+    assert_eq!(Some(&value.to_string()), response.header_value("TCN"));
+  }
+
+  let duplicate_fields = Response::new(
+    RoUrl::with("https://example.test"),
+    b"HTTP/1.1 200 OK\r\nTCN: list\r\ntcn: choice\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("raw response should remain usable");
+  assert!(duplicate_fields.tcn().is_err());
+  assert_eq!(
+    Some(&"list".to_string()),
+    duplicate_fields.header_value("TCN")
+  );
+
+  let oversized = format!("list{}", "x".repeat(64 * 1024));
+  let raw = format!("HTTP/1.1 200 OK\r\nTCN: {oversized}\r\nContent-Length: 0\r\n\r\n");
+  let response = Response::new(RoUrl::with("https://example.test"), raw.into_bytes())
+    .expect("raw response should remain usable");
+  assert!(response.tcn().is_err());
+  assert_eq!(Some(&oversized), response.header_value("TCN"));
 }
 
 #[test]

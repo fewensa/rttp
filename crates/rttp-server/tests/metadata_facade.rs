@@ -23,23 +23,24 @@ use rttp_server::server::{
   HttpIfModifiedSinceParseError, HttpIfScheduleTagMatch, HttpIfScheduleTagMatchParseError,
   HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError, HttpKeepAlive, HttpLockToken,
   HttpLockTokenParseError, HttpMaxForwards, HttpMaxForwardsParseError, HttpMementoDatetime,
-  HttpMementoDatetimeParseError, HttpNoVarySearch, HttpNoVarySearchParams,
-  HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpOverwriteParseError,
-  HttpPermissionsPolicy, HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
-  HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective,
-  HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus,
-  HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
-  HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpScheduleTag, HttpSecGpc,
-  HttpSecGpcParseError, HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError,
-  HttpSecWebSocketExtensions, HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey,
-  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
-  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
-  HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
-  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
-  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
-  HttpSpeculationRules, HttpSpeculationRulesParseError, HttpSupportsLoadingMode,
-  HttpSupportsLoadingModeParseError, HttpSurrogateControl, HttpSurrogateControlParseError,
-  HttpTimeout, HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent, HttpTraceParentParseError,
+  HttpMementoDatetimeParseError, HttpNegotiate, HttpNegotiateDirective, HttpNegotiateParseError,
+  HttpNoVarySearch, HttpNoVarySearchParams, HttpOriginTrialParseError, HttpOriginTrials,
+  HttpOverwrite, HttpOverwriteParseError, HttpPermissionsPolicy, HttpPermissionsPolicyAllowlist,
+  HttpPermissionsPolicyAllowlistMember, HttpPermissionsPolicyDirective,
+  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective, HttpPragmaParseError,
+  HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError,
+  HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpResponse, HttpSaveData,
+  HttpSaveDataParseError, HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError,
+  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
+  HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
+  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
+  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
+  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
+  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpSurrogateControl,
+  HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective, HttpTcnParseError, HttpTimeout,
+  HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent, HttpTraceParentParseError,
   HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
   HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
   HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpVia, HttpViaMember,
@@ -93,6 +94,15 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpAIm::parse("diffe, DIFFE").expect_err("duplicate A-IM should be rejected");
   let _: &[HttpAImMember] = a_im.members();
   let _: Option<&HttpAImParameter> = a_im.members()[1].parameters().first();
+  let negotiate: HttpNegotiate =
+    HttpNegotiate::parse("trans, 1.0, feature-x=preview, *").expect("Negotiate should parse");
+  let _: HttpNegotiateParseError =
+    HttpNegotiate::parse("trans, TRANS").expect_err("duplicate Negotiate should be rejected");
+  let _: &[HttpNegotiateDirective] = negotiate.members();
+  let tcn: HttpTcn = HttpTcn::parse("list, choice").expect("TCN should parse");
+  let _: HttpTcnParseError =
+    HttpTcn::parse("list, LIST").expect_err("duplicate TCN should be rejected");
+  let _: &[HttpTcnDirective] = tcn.members();
   let accept_charsets: HttpRequestAcceptCharsets =
     HttpRequestAcceptCharsets::parse("utf-8, iso-8859-1;q=0.5, *;q=0")
       .expect("Accept-Charset should parse");
@@ -383,6 +393,9 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(a_im.members()[0].token(), "diffe");
   assert_eq!(a_im.members()[1].quality(), 300);
   assert_eq!(a_im.header_value(), "diffe, gzip;q=0.3;profile=compact");
+  assert_eq!(negotiate.members()[0], HttpNegotiateDirective::Trans);
+  assert_eq!(negotiate.members()[3], HttpNegotiateDirective::Any);
+  assert_eq!("trans, 1.0, feature-x=preview, *", negotiate.header_value());
   let first_charset: &HttpAcceptCharset = &accept_charsets.charsets()[0];
   assert_eq!(first_charset.charset(), "utf-8");
   assert_eq!(first_charset.quality(), 1000);
@@ -1099,6 +1112,88 @@ fn request_facade_rejects_oversized_a_im_metadata_without_hiding_headers() {
   let first = "a".repeat(32 * 1024 + 1);
   let second = "b".repeat(32 * 1024 + 1);
   assert!(HttpAIm::parse_values([first.as_str(), second.as_str()]).is_err());
+}
+
+#[test]
+fn request_facade_parses_negotiate_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nNegotiate: trans, 1.0, feature-x=preview\r\nNegotiate: *, 2.5\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let negotiate: HttpNegotiate = request
+    .negotiate()
+    .expect("Negotiate should parse")
+    .expect("Negotiate should be present");
+
+  assert_eq!(negotiate.members()[0], HttpNegotiateDirective::Trans);
+  assert_eq!(
+    negotiate.members()[1],
+    HttpNegotiateDirective::RvsaVersion { major: 1, minor: 0 }
+  );
+  assert_eq!(
+    negotiate.members()[2],
+    HttpNegotiateDirective::Extension {
+      name: "feature-x".to_owned(),
+      value: Some("preview".to_owned()),
+    }
+  );
+  assert_eq!(negotiate.members()[3], HttpNegotiateDirective::Any);
+  assert_eq!(
+    negotiate.members()[4],
+    HttpNegotiateDirective::RvsaVersion { major: 2, minor: 5 }
+  );
+  assert_eq!(
+    negotiate.header_value(),
+    "trans, 1.0, feature-x=preview, *, 2.5"
+  );
+}
+
+#[test]
+fn request_facade_omits_negotiate_metadata_when_header_is_absent() {
+  let request = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+
+  assert_eq!(
+    None,
+    request
+      .negotiate()
+      .expect("missing Negotiate should be accepted")
+  );
+}
+
+#[test]
+fn request_facade_rejects_malformed_negotiate_metadata_without_hiding_headers() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nNegotiate: trans, TRANS\r\n\r\n",
+  )
+  .expect("malformed metadata should not reject raw request parsing");
+
+  assert_eq!(request.header("Negotiate"), Some("trans, TRANS"));
+  assert!(request.negotiate().is_err());
+}
+
+#[test]
+fn request_facade_rejects_oversized_negotiate_metadata_without_hiding_headers() {
+  let too_many = (0..=32)
+    .map(|index| format!("feature-{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let raw = format!("GET /asset HTTP/1.1\r\nHost: example.test\r\nNegotiate: {too_many}\r\n\r\n");
+  let request = HttpRequest::parse(raw.as_bytes())
+    .expect("over-limit typed metadata should not reject raw request parsing");
+
+  assert_eq!(request.header("Negotiate"), Some(too_many.as_str()));
+  assert!(request.negotiate().is_err());
+
+  let oversized = format!("feature-x={}", "a".repeat(64 * 1024 + 1));
+  let oversized_error: Result<HttpNegotiate, HttpNegotiateParseError> =
+    HttpNegotiate::parse(oversized.as_str());
+  assert!(oversized_error.is_err());
+
+  let first = "a".repeat(32 * 1024 + 1);
+  let second = "b".repeat(32 * 1024 + 1);
+  assert!(HttpNegotiate::parse_values([first.as_str(), second.as_str()]).is_err());
 }
 
 #[test]

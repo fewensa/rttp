@@ -36,21 +36,21 @@ pub use rttp_client::response::{
   SecWebSocketVersionParseError, ServiceWorkerAllowed, ServiceWorkerAllowedParseError,
   SpeculationRules, SpeculationRulesParseError, StrictTransportSecurity,
   StrictTransportSecurityParseError, SupportsLoadingMode, SupportsLoadingModeParseError,
-  SurrogateControl, SurrogateControlParseError, Upgrade, UpgradeParseError, WantContentDigest,
-  WantReprDigest, WwwAuthenticate, WwwAuthenticateChallenge, WwwAuthenticateParameter,
-  WwwAuthenticateParseError, XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions,
-  XFrameOptionsParseError,
+  SurrogateControl, SurrogateControlParseError, Tcn, TcnDirective, TcnParseError, Upgrade,
+  UpgradeParseError, WantContentDigest, WantReprDigest, WwwAuthenticate, WwwAuthenticateChallenge,
+  WwwAuthenticateParameter, WwwAuthenticateParseError, XContentTypeOptions,
+  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 #[cfg(feature = "client")]
 pub use rttp_client::{
   AIm, AImMember, AImParameter, AImParseError, Baggage, BaggageMember, BaggageParseError,
   BaggageProperty, Depth, DepthParseError, Destination, DestinationParseError, IfScheduleTagMatch,
-  IfScheduleTagMatchParseError, LockToken, LockTokenParseError, Overwrite, OverwriteParseError,
-  SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose, Timeout, TimeoutParseError,
-  TimeoutType, TraceParent, TraceParentParseError, TraceState, TraceStateMember,
-  TraceStateParseError, Via, ViaMember, ViaParseError, XForwardedFor, XForwardedForNode,
-  XForwardedForNodeKind, XForwardedForParseError, XForwardedHost, XForwardedHostParseError,
-  XForwardedProto, XForwardedProtoParseError,
+  IfScheduleTagMatchParseError, LockToken, LockTokenParseError, Negotiate, NegotiateDirective,
+  NegotiateParseError, Overwrite, OverwriteParseError, SecFetchDest, SecFetchMode, SecFetchSite,
+  SecFetchUser, SecPurpose, Timeout, TimeoutParseError, TimeoutType, TraceParent,
+  TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError, Via, ViaMember,
+  ViaParseError, XForwardedFor, XForwardedForNode, XForwardedForNodeKind, XForwardedForParseError,
+  XForwardedHost, XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
 };
 
 impl Http {

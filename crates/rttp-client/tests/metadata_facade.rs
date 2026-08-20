@@ -36,8 +36,9 @@ use rttp_client::response::{
 use rttp_client::{
   AIm, AImMember, AImParameter, AImParseError, Baggage, BaggageMember, BaggageParseError,
   BaggageProperty, Depth, DepthParseError, Destination, DestinationParseError, HttpClient,
-  IfScheduleTagMatch, IfScheduleTagMatchParseError, Overwrite, OverwriteParseError, SecFetchDest,
-  SecFetchMode, SecFetchSite, SecFetchUser, SecGpc, SecGpcParseError, SecPurpose, Timeout,
+  IfScheduleTagMatch, IfScheduleTagMatchParseError, Negotiate, NegotiateDirective,
+  NegotiateParseError, Overwrite, OverwriteParseError, SecFetchDest, SecFetchMode, SecFetchSite,
+  SecFetchUser, SecGpc, SecGpcParseError, SecPurpose, Tcn, TcnDirective, TcnParseError, Timeout,
   TimeoutParseError, TimeoutType, TraceParent, TraceParentParseError, TraceState, TraceStateMember,
   TraceStateParseError, UpgradeInsecureRequests, UpgradeInsecureRequestsParseError,
   Via as ClientVia, ViaParseError as ClientViaParseError, XForwardedFor, XForwardedForParseError,
@@ -176,6 +177,14 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let _: AImParseError = AIm::parse("diffe, DIFFE").expect_err("duplicate A-IM should be rejected");
   let _: &[AImMember] = a_im.members();
   let _: Option<&AImParameter> = a_im.members()[1].parameters().first();
+  let negotiate: Negotiate =
+    Negotiate::parse("trans, 1.0, feature-x=preview, *").expect("Negotiate should parse");
+  let _: NegotiateParseError =
+    Negotiate::parse("trans, TRANS").expect_err("duplicate Negotiate should be rejected");
+  let _: &[NegotiateDirective] = negotiate.members();
+  let tcn: Tcn = Tcn::parse("list, choice").expect("TCN should parse");
+  let _: TcnParseError = Tcn::parse("list, LIST").expect_err("duplicate TCN should be rejected");
+  let _: &[TcnDirective] = tcn.members();
   let want_repr_digest =
     WantReprDigest::parse("sha-256=10").expect("Want-Repr-Digest should parse");
   let priority = Priority::parse("u=1, i").expect("Priority should parse");
@@ -437,6 +446,9 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(a_im.members()[0].token(), "diffe");
   assert_eq!(a_im.members()[1].quality(), 300);
   assert_eq!(a_im.header_value(), "diffe, gzip;q=0.3;profile=compact");
+  assert_eq!(negotiate.members()[0], NegotiateDirective::Trans);
+  assert_eq!(negotiate.members()[3], NegotiateDirective::Any);
+  assert_eq!("trans, 1.0, feature-x=preview, *", negotiate.header_value());
   assert_eq!(want_repr_digest.entries()[0].preference(), 10);
   assert_eq!(priority.urgency(), Some(1));
   assert_eq!(signature_input.members()[0].label(), "sig1");

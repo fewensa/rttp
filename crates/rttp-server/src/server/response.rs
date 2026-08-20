@@ -214,6 +214,9 @@ pub use rttp_protocol::surrogate_control::{
   SurrogateControl as HttpSurrogateControl,
   SurrogateControlParseError as HttpSurrogateControlParseError,
 };
+pub use rttp_protocol::tcn::{
+  Tcn as HttpTcn, TcnDirective as HttpTcnDirective, TcnParseError as HttpTcnParseError,
+};
 pub use rttp_protocol::upgrade::{
   Upgrade as HttpUpgrade, UpgradeParseError as HttpUpgradeParseError,
 };
@@ -1813,6 +1816,19 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `TCN` response metadata without selecting a
+  /// variant or changing cache behavior.
+  pub fn with_tcn(mut self, value: impl AsRef<str>) -> Result<Self, HttpTcnParseError> {
+    let tcn = HttpTcn::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("TCN"));
+    self
+      .headers
+      .push(HttpHeader::new("TCN", tcn.header_value()));
+    Ok(self)
+  }
+
   /// Validates and replaces `Alt-Used` response metadata without selecting an
   /// alternative service or changing connection policy.
   pub fn with_alt_used(mut self, value: impl AsRef<str>) -> Result<Self, HttpAltUsedParseError> {
@@ -3086,6 +3102,21 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpAlternates::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `TCN` metadata without changing raw headers, selecting a
+  /// variant, or changing cache behavior.
+  pub fn tcn(&self) -> Result<Option<HttpTcn>, HttpTcnParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("TCN"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpTcn::parse_values(values).map(Some)
   }
 
   /// Parses attached `Alt-Used` metadata without changing raw headers,

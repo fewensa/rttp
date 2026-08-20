@@ -862,6 +862,26 @@ than 32 members before a connection is opened.
 These helpers declare request metadata only. They do not select a preferred
 instance manipulation or apply delta encodings.
 
+## Bounded Negotiate request metadata
+
+`rttp-protocol` owns the shared RFC 2295 `Negotiate` primitive. Client
+helpers format through that type.
+
+`HttpClient::negotiate(value)` validates and emits one `Negotiate` field,
+replacing any existing same-name field before a socket is opened. The value
+must be an ordered comma-separated list of `trans`, `vlist`, `guess-small`,
+`*`, `major.minor` remote variant selection algorithm versions, or
+`token[=token]` extension directives. Flags are normalized to lowercase,
+versions are normalized to `major.minor`, and duplicate directives are
+rejected: at most one of each flag and `*`, one occurrence of each version
+pair, and one extension per case-insensitive name. The helper rejects invalid
+tokens, valued flags or versions, empty or trailing comma members,
+duplicates, oversized values, and more than 32 members before a connection is
+opened.
+
+These helpers declare request metadata only. They do not select a variant,
+run transparent content negotiation, or change cache selection.
+
 ## Bounded Accept-Encoding request metadata
 
 `rttp-protocol` owns the shared `Accept-Encoding` primitive. Client helpers
@@ -1307,6 +1327,21 @@ The helper is metadata-only. `rttp_client` does not select a variant, fetch
 a variant URI, replay requests, resolve URIs against the response URL, apply
 `Vary` matching, or change representation policy from `Alternates`.
 
+## Bounded TCN response metadata
+
+`Response::tcn()` parses retained `TCN` fields as bounded RFC 2295
+transparent-negotiation result metadata through the shared protocol `Tcn`
+type. It returns `Ok(None)` when the header is absent. Valid metadata is a
+singleton response field containing `list`, `choice`, `adhoc`, `re-choose`,
+or `keep` tokens, normalized to lowercase in wire order. Duplicate fields,
+duplicate tokens, malformed or unknown tokens, empty members, oversized
+values, and control-byte injection return an error while the raw response
+headers remain available through `Response::header_value()` and
+`Response::header_values()`.
+
+The helper is metadata-only. `rttp_client` does not select a variant, request
+alternates, apply `Vary` matching, or change cache behavior from `TCN`.
+
 ## Bounded Origin-Trial response metadata
 
 `Response::origin_trials()` parses retained `Origin-Trial` fields as an
@@ -1504,6 +1539,8 @@ header-block model.
 | Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_content_digest()`, `HttpRequest::want_content_digest()`, `Request::want_repr_digest()`, and `HttpRequest::want_repr_digest()` parse received preference fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |
 | Accept-Charset | `accept_charset` and `accept_charset_with_q` format bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |
 | A-IM | `a_im`, `a_im_with_q`, and `a_im_value` format bounded `A-IM` request metadata through the shared `rttp-protocol` type | No automatic delta-encoding selection, application, compression, or response transformation |
+| Negotiate | `negotiate` emits bounded RFC 2295 `Negotiate` request metadata through the shared `rttp-protocol` type, replacing an existing same-name field | No variant selection, transparent content negotiation, `Alternates`/`TCN` synthesis, or automatic cache selection |
+| TCN | `Response::tcn()` parses bounded RFC 2295 `TCN` response metadata through the shared `rttp-protocol` type while preserving raw headers on parse errors | No variant selection, `Alternates`/`Vary` synthesis, transparent content negotiation, or cache behavior |
 | Accept-Encoding | `accept_encoding`, `accept_encoding_with_q`, and gzip/deflate/br/identity helpers format bounded `Accept-Encoding` request metadata through the shared `rttp-protocol` type | No compression, decompression, content negotiation, retries, or transport changes |
 | HTTP message signatures | `signature` and `signature_input` emit bounded RFC 9421 request metadata; `Response::signature()` and `signature_input()` parse received fields | No signing, verification, key lookup, covered-component canonicalization, or cryptographic policy |
 | Upgrade and tunnel handoff | `CONNECT` returns the tunnel socket after a successful `200`; `upgrade()` returns the socket after `101 Switching Protocols` and skips interim `1xx` responses | Upgraded protocols are handed to the caller and are not parsed by `rttp_client` |
