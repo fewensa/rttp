@@ -235,6 +235,18 @@ These helpers expose response metadata only. They do not construct cache
 keys, select variants, synthesize `Alternates`, update `TCN` or `Vary`, or
 change cache behavior.
 
+## Transparent negotiation metadata matrix
+
+Workspace integration tests in `tests/transparent_negotiation_metadata_matrix.rs`
+roundtrip `A-IM`, `IM`, `Delta-Base`, `Alternates`, `Negotiate`, `TCN`, and
+`Variant-Vary` metadata together through live HTTP/1.1 and h2c
+client/server/facade exchanges. The matrix covers valid values, malformed
+and duplicate rejection, size and member bounds, raw-header observability,
+and declared-order q-value recording without ranking. It also asserts that
+the metadata helpers only report metadata: they never select a variant,
+fetch an `Alternates` URI, apply or invert a delta, synthesize a `226 IM
+Used` status, or implement cache policy.
+
 ## Accept-Encoding request metadata
 
 Handlers can call `Request::accept_encoding()` and
