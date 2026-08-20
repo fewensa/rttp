@@ -434,6 +434,17 @@ fn cdn_cache_control_response(values: &[&str]) -> Vec<u8> {
   response.into_bytes()
 }
 
+fn surrogate_control_response(values: &[&str]) -> Vec<u8> {
+  let mut response = String::from("HTTP/1.1 200 OK\r\n");
+  for value in values {
+    response.push_str("Surrogate-Control: ");
+    response.push_str(value);
+    response.push_str("\r\n");
+  }
+  response.push_str("Content-Length: 2\r\n\r\nOK");
+  response.into_bytes()
+}
+
 fn vary_response(values: &[&str]) -> Vec<u8> {
   let mut response = String::from("HTTP/1.1 200 OK\r\n");
   for value in values {
@@ -3513,6 +3524,103 @@ fn sync_client_and_server_exchange_bounded_sec_websocket_protocol_metadata_witho
 }
 
 #[test]
+fn sync_client_and_server_exchange_bounded_sec_websocket_extensions_metadata_without_upgrade() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind sec websocket extensions server");
+  let addr = server
+    .local_addr()
+    .expect("sec websocket extensions server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = {
+          let offers = request
+            .sec_websocket_extensions()
+            .expect("Sec-WebSocket-Extensions should parse");
+          (
+            offers.as_ref().map(|offers| offers.header_value()),
+            offers.as_ref().map(|offers| {
+              offers
+                .extensions()
+                .iter()
+                .map(|extension| extension.token().to_string())
+                .collect::<Vec<_>>()
+            }),
+            request
+              .header("Sec-WebSocket-Extensions")
+              .map(str::to_string),
+            request.header("Upgrade").map(str::to_string),
+            request.header("Connection").map(str::to_string),
+          )
+        };
+        observed_tx
+          .send(observed)
+          .expect("send observed sec websocket extensions metadata");
+        HttpResponse::new(101, "Switching Protocols")
+          .with_sec_websocket_extensions("permessage-deflate; server_max_window_bits=15")
+          .expect("selected Sec-WebSocket-Extensions should be accepted")
+      })
+      .expect("serve sec websocket extensions request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/chat"))
+    .sec_websocket_extensions(
+      r#"permessage-deflate; client_max_window_bits, x-test; quoted="a,b;c""#,
+    )
+    .expect("Sec-WebSocket-Extensions should be accepted")
+    .emit()
+    .expect("sec websocket extensions response should parse");
+
+  let (typed, extension_tokens, raw, upgrade, connection) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe sec websocket extensions metadata");
+  assert_eq!(
+    Some(r#"permessage-deflate; client_max_window_bits, x-test; quoted="a,b;c""#.to_string()),
+    typed
+  );
+  assert_eq!(
+    Some(vec!["permessage-deflate".to_string(), "x-test".to_string()]),
+    extension_tokens
+  );
+  assert_eq!(
+    Some(r#"permessage-deflate; client_max_window_bits, x-test; quoted="a,b;c""#.to_string()),
+    raw
+  );
+  assert_eq!(
+    None, upgrade,
+    "typed Sec-WebSocket-Extensions metadata must not set an Upgrade field"
+  );
+  assert_ne!(
+    Some("Upgrade".to_string()),
+    connection,
+    "typed Sec-WebSocket-Extensions metadata must not set Connection: Upgrade"
+  );
+  assert_eq!(101, response.code());
+  let selected = response
+    .sec_websocket_extensions()
+    .expect("selected Sec-WebSocket-Extensions should parse")
+    .expect("selected Sec-WebSocket-Extensions should be present");
+  let extension = selected.selected().expect("selected extension");
+  assert_eq!(extension.token(), "permessage-deflate");
+  assert_eq!(
+    selected.header_value(),
+    "permessage-deflate; server_max_window_bits=15"
+  );
+  assert_eq!(response.header_value("Upgrade"), None);
+  assert_ne!(
+    response.header_value("Connection").map(String::as_str),
+    Some("Upgrade"),
+    "selected Sec-WebSocket-Extensions must not emit Connection: Upgrade"
+  );
+  handle
+    .join()
+    .expect("sec websocket extensions server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_bounded_sec_websocket_key_metadata_without_handshake() {
   let server =
     rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind sec websocket key server");
@@ -4546,6 +4654,27 @@ fn assert_cdn_cache_control_helper_rejects_but_preserves_response(
   assert!(
     response.cdn_cache_control().is_err(),
     "{name} helper should reject invalid CDN-Cache-Control"
+  );
+  assert_eq!("OK", response.body().string().unwrap(), "{name}");
+
+  handle.join().expect("raw response server thread");
+}
+
+fn assert_surrogate_control_helper_rejects_but_preserves_response(
+  name: &str,
+  raw_response: Vec<u8>,
+) {
+  let (addr, handle) = fixtures::spawn_socket2_owned_raw_response_server(raw_response);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/surrogate-control-invalid", addr))
+    .emit()
+    .unwrap_or_else(|err| panic!("{name} response should remain parseable: {err}"));
+
+  assert!(
+    response.surrogate_control().is_err(),
+    "{name} helper should reject invalid Surrogate-Control"
   );
   assert_eq!("OK", response.body().string().unwrap(), "{name}");
 
@@ -6479,6 +6608,72 @@ fn sync_client_cdn_cache_control_helper_rejects_invalid_and_bounded_metadata() {
   assert_cdn_cache_control_helper_rejects_but_preserves_response(
     "oversized CDN-Cache-Control value",
     cdn_cache_control_response(&[&fixtures::cache_control::oversized_value()]),
+  );
+}
+
+#[test]
+fn sync_client_parses_surrogate_control_response_metadata_without_policy() {
+  const HEADERS: &[(&str, &str)] = &[
+    ("Surrogate-Control", "max-age=600, content=\"ESI/1.0\""),
+    ("surrogate-control", "surrogate-key=\"article 42\""),
+    ("Cache-Control", "max-age=1"),
+  ];
+  let (addr, handle) = spawn_metadata_response_server(HEADERS);
+
+  let response = client()
+    .get()
+    .url(format!("http://{}/matrix/surrogate-control", addr))
+    .emit()
+    .expect("Surrogate-Control response should parse");
+
+  let metadata = response
+    .surrogate_control()
+    .expect("Surrogate-Control metadata should parse")
+    .expect("Surrogate-Control should be present");
+
+  assert_eq!(metadata.len(), 3);
+  assert_eq!(metadata.directives()[0].name(), "max-age");
+  assert_eq!(metadata.directives()[0].value(), Some("600"));
+  assert_eq!(metadata.directives()[1].name(), "content");
+  assert_eq!(metadata.directives()[1].value(), Some("ESI/1.0"));
+  assert_eq!(metadata.directives()[2].value(), Some("article 42"));
+  assert_eq!(
+    response
+      .cache_control()
+      .expect("Cache-Control remains independent")
+      .expect("Cache-Control should be present")
+      .max_age(),
+    Some(1)
+  );
+  assert_eq!("OK", response.body().string().unwrap());
+
+  handle.join().expect("metadata response server thread");
+}
+
+#[test]
+fn sync_client_surrogate_control_helper_rejects_invalid_duplicate_and_bounded_metadata() {
+  assert_surrogate_control_helper_rejects_but_preserves_response(
+    "invalid Surrogate-Control directive",
+    surrogate_control_response(&["max-age="]),
+  );
+  assert_surrogate_control_helper_rejects_but_preserves_response(
+    "duplicate Surrogate-Control directive",
+    surrogate_control_response(&["max-age=60, Max-Age=120"]),
+  );
+  assert_surrogate_control_helper_rejects_but_preserves_response(
+    "too many Surrogate-Control directives",
+    surrogate_control_response(&[&fixtures::cache_control::too_many_directives_value()]),
+  );
+  assert_surrogate_control_helper_rejects_but_preserves_response(
+    "oversized Surrogate-Control value",
+    surrogate_control_response(&[&fixtures::cache_control::oversized_value()]),
+  );
+
+  let first = format!("a={}", "x".repeat((64 * 1024 / 2) - 2));
+  let second = format!("b={}", "x".repeat((64 * 1024 / 2) - 1));
+  assert_surrogate_control_helper_rejects_but_preserves_response(
+    "oversized Surrogate-Control aggregate",
+    surrogate_control_response(&[first.as_str(), second.as_str()]),
   );
 }
 

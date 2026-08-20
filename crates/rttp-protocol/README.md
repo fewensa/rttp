@@ -27,6 +27,83 @@ wildcard, q-value, duplicate, member-count, and size validation. It reports
 declared request metadata only; it does not negotiate, transcode, decode
 bodies, sniff MIME types, or select a response charset.
 
+## A-IM
+
+`a_im` parses one or more `A-IM` field values into an ordered list of
+instance-manipulation tokens with optional quality weights and extension
+parameters. Each field value is bounded to 64 KiB, the combined raw field set
+is bounded to 64 KiB, the combined member count is bounded to 32, and each
+member is bounded to 16 parameters. Tokens are RFC 9110 tokens and are
+retained with their accepted spelling. Duplicate tokens are rejected
+case-insensitively while the first-seen spelling is retained. Each member may
+carry an optional `q` parameter with HTTP q-value semantics and additional
+parameters whose names are tokens and whose values are tokens or
+quoted-strings. Duplicate parameter names on one member are rejected
+case-insensitively. Empty members, invalid tokens, invalid q-values, invalid
+parameter names or values, forbidden ASCII control bytes other than HTAB,
+oversized values, oversized combined input, too many members or parameters,
+and a present header set that yields no member are errors. `header_value()`
+joins members with `", "`, omits quality when no `q` parameter was present,
+and otherwise emits the original q-text and accepted parameter spelling. This
+type is the shared authority for token, q-value, parameter, duplicate,
+member-count, and size validation. It reports declared request metadata only;
+it does not select a preferred instance manipulation or apply delta encodings.
+
+## Negotiate
+
+`negotiate` parses one or more RFC 2295 `Negotiate` field values into an
+ordered list of negotiate-directives. Each field value is bounded to 64 KiB,
+the combined raw field set is bounded to 64 KiB, and the combined member
+count is bounded to 32. The valueless `trans`, `vlist`, and `guess-small`
+flags match case-insensitively and emit lowercase; `*` matches exactly.
+`rvsa-version` is `1*DIGIT "." 1*DIGIT`, parsed into `u64` major and minor
+parts with overflow rejected and leading zeros normalized away, so `01.00`
+equals `1.0`. Extensions are RFC 9110 `token` or `token=token` pairs whose
+spelling is preserved; a known flag, `*`, or version-shaped name rejects a
+`=value`. Duplicate directives are rejected: at most one of each flag and
+`*`, one occurrence of each numeric version pair, and one extension per name
+compared case-insensitively, so `1.0, 2.5` is valid while `trans, TRANS` and
+`feature-x=a, FEATURE-X=b` are not. Empty members, empty or trailing comma
+lists, invalid tokens, forbidden ASCII control bytes other than HTAB,
+oversized values, oversized combined input, too many members, and a present
+header set that yields no member are errors. `header_value()` joins members
+with `", "` and emits canonical flags, versions, and accepted extension
+spelling. This type is the shared authority for token, version, feature
+value, duplicate, member-count, and size validation. It reports declared
+request metadata only; it does not select a variant, run transparent content
+negotiation, or change cache selection.
+
+## TCN
+
+`tcn` parses a singleton RFC 2295 `TCN` response field into an ordered list
+of negotiation result tokens. Each field value is bounded to 64 KiB, the raw
+field set is bounded to 64 KiB, and the member list is bounded to 32. The
+defined tokens are `list`, `choice`, `adhoc`, `re-choose`, and `keep`; they
+match case-insensitively and emit lowercase. Duplicate tokens, duplicate
+header fields, empty members, empty or trailing comma lists, unknown tokens,
+forbidden ASCII control bytes other than HTAB, oversized values, and a
+present header set that yields no member are errors. `header_value()` joins
+members with `", "`. This type is the shared authority for TCN token,
+singleton, duplicate, member-count, and size validation. It reports response
+metadata only; it does not select variants, synthesize `Alternates` or `Vary`,
+or change cache selection.
+
+## Variant-Vary
+
+`variant_vary` parses one or more RFC 2295 `Variant-Vary` response fields into
+either the exclusive `*` wildcard or an ordered list of HTTP field-name
+tokens. Each field value is bounded to 64 KiB, the canonical serialized form
+is bounded to 64 KiB, and the named-field list is bounded to 256 entries.
+Field names match case-insensitively, reject duplicates, and emit lowercase
+in first-seen order. Wildcard values cannot be mixed with named fields or
+repeated. Empty members, non-token members, forbidden ASCII control bytes
+other than HTAB, oversized values, and a present header set that yields no
+member are errors. `header_value()` emits `*` or joins names with `", "`.
+This type is the shared authority for Variant-Vary token, wildcard,
+duplicate, member-count, ordering, and size validation. It reports response
+metadata only; it does not construct cache keys, select variants, synthesize
+`Alternates`, `TCN`, or `Vary`, or change cache selection.
+
 ## Accept-Encoding
 
 `accept_encoding` parses one or more RFC 9110 `Accept-Encoding` field values
@@ -256,6 +333,20 @@ values, wildcards, comma-lists, malformed quotes, leftover text, oversized
 values, and forbidden ASCII control bytes are errors. This parser reports
 declared request metadata only; it does not compare the validator to stored
 calendar state, inspect calendars, or apply scheduling policy.
+
+## Schedule-Tag
+
+`schedule_tag` parses a singleton `Schedule-Tag` response field as one
+RFC 9110 entity-tag-shaped schedule validator such as `"sched-17"` or
+`W/"sched-17"`. Each field value is bounded to 64 KiB. A second field is
+rejected after every supplied field is bound-checked. Surrounding SP and HTAB
+are trimmed as optional whitespace. The stored value is the shared `EntityTag`
+representation; `entity_tag()`, `is_weak()`, and `opaque_tag()` expose it, and
+`header_value()` emits it canonically. Empty values, wildcards, comma-lists,
+malformed quotes, leftover text, oversized values, and forbidden ASCII control
+bytes are errors. This parser reports declared response metadata only; it does
+not generate calendar versions, compare validators, inspect calendars, or apply
+scheduling policy.
 
 ## W3C Baggage
 
@@ -552,6 +643,29 @@ unbracketed IPv6, empty ports, ASCII controls, and other values outside the
 authority grammar are errors. This is response metadata only: callers own
 alternative-service selection, origin handling, and connection policy.
 
+## Alternates
+
+`alternates` parses one or more RFC 2295-style `Alternates` field values into
+ordered variant metadata. Each variant retains its quoted URI-reference, the
+original accepted source-quality text, and ordered attributes. The quoted URI
+is unescaped and then validated structurally as an RFC 3986 URI-reference; it
+is stored as raw text and is never resolved, fetched, ranked, or selected.
+Each field value is bounded to 64 KiB, the combined field bytes are bounded
+to 64 KiB, the variant count is bounded to 256, each variant holds at most
+256 attributes, and each quoted URI or attribute value is bounded to 64 KiB.
+Quality values must be HTTP qvalue grammar (`0`, `1`, `0.xxx`, or `1.000`
+with at most three fractional digits). Standard attribute names `type`,
+`language`, `encoding`, and `length` are recognized alongside extension
+attribute tokens. Attribute names are matched case-insensitively, stored
+lowercase, and must be unique within a variant. `length` must be an unsigned
+decimal that fits in `u64`. Duplicate variants are rejected by exact stored
+URI, quality text, and normalized attributes. Quoted attribute values are
+unescaped and re-escaped on formatting. Empty input, malformed members,
+invalid URIs, invalid qvalues, and oversized values are rejected. This parser
+does not implement transparent content negotiation, variant selection,
+request replay, redirects, automatic retrieval, cache storage, `Vary`
+matching, or quality ranking.
+
 ## Origin-Trial
 
 `origin_trial` parses one or more HTTP `Origin-Trial` response fields as
@@ -660,6 +774,23 @@ The parser only reports bounded wire metadata. It does not create a CDN cache,
 compute freshness, evaluate surrogate keys, revalidate automatically, enforce
 shared-cache policy, retry, replay, redirect, or choose response-acceptance
 behavior.
+
+## Surrogate-Control
+
+`surrogate_control` parses one or more `Surrogate-Control` response field
+values into ordered directive metadata. It preserves extension directives with
+each directive token name and optional parsed value, including well-formed
+quoted-string values.
+
+Each field value is bounded to 64 KiB, the aggregate parsed header set is
+bounded to 64 KiB, and the directive count is bounded to 256. Directive names
+and unquoted values must be valid HTTP tokens. Duplicate directive names are
+rejected case-insensitively across all parsed fields.
+
+The parser only reports bounded wire metadata. It does not create a CDN cache,
+compute freshness, evaluate surrogate keys, translate directives into
+`Cache-Control`, revalidate automatically, enforce shared-cache policy, retry,
+replay, redirect, or choose response-acceptance behavior.
 
 ## CDN-Loop
 
@@ -1040,6 +1171,25 @@ over-limit member counts, and oversized fields are errors. This parser
 reports declared request or response metadata only; it does not perform a
 WebSocket handshake, emit `Connection: Upgrade`, choose an application
 subprotocol, or implement WebSocket frames.
+
+## Sec-WebSocket-Extensions
+
+`sec_websocket_extensions` parses one or more HTTP
+`Sec-WebSocket-Extensions` fields as RFC 6455 extension-list metadata.
+Request offers preserve extension member order and ordered parameters.
+Response selections use the same grammar through `parse_selection` and
+`parse_selection_values`, which require exactly one selected extension member.
+Each field value and the combined raw or canonical serialized field set is
+bounded to 64 KiB, and the combined extension member count is bounded to 32.
+Extension tokens and parameter names follow the HTTP `token` grammar.
+Parameter values may be tokens or quoted strings with quoted-pair unescaping,
+and serialization preserves quoted values. Duplicate extension tokens and
+duplicate parameter names within one extension are rejected. Empty members,
+malformed tokens, malformed quoted strings, forbidden ASCII control bytes
+(including CR, LF, NUL, DEL, and obs-text), over-limit member counts, and
+oversized fields are errors. This parser reports declared request or response
+metadata only; it does not activate compression, negotiate extensions, emit
+`Connection: Upgrade`, switch protocols, or implement WebSocket frames.
 
 ## Upgrade-Insecure-Requests
 

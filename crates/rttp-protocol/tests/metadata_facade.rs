@@ -1,3 +1,4 @@
+use rttp_protocol::a_im::AIm;
 use rttp_protocol::accept_charset::AcceptCharset;
 use rttp_protocol::accept_encoding::AcceptEncoding;
 use rttp_protocol::accept_language::AcceptLanguage;
@@ -8,6 +9,7 @@ use rttp_protocol::access_control_request_method::AccessControlRequestMethod;
 use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
 use rttp_protocol::age::Age;
 use rttp_protocol::alt_used::AltUsed;
+use rttp_protocol::alternates::Alternates;
 use rttp_protocol::authorization::{Authorization, ProxyAuthorization};
 use rttp_protocol::baggage::Baggage;
 use rttp_protocol::cache_status::CacheStatus;
@@ -53,6 +55,7 @@ use rttp_protocol::location::Location;
 use rttp_protocol::lock_token::LockToken;
 use rttp_protocol::max_forwards::MaxForwards;
 use rttp_protocol::memento_datetime::MementoDatetime;
+use rttp_protocol::negotiate::{Negotiate, NegotiateDirective};
 use rttp_protocol::nel::Nel;
 use rttp_protocol::no_vary_search::{NoVarySearch, NoVarySearchParams};
 use rttp_protocol::origin::Origin;
@@ -67,8 +70,12 @@ use rttp_protocol::referer::Referer;
 use rttp_protocol::referrer_policy::{ReferrerPolicy, ReferrerPolicyToken};
 use rttp_protocol::reporting_endpoints::ReportingEndpoints;
 use rttp_protocol::save_data::SaveData;
+use rttp_protocol::schedule_tag::ScheduleTag;
 use rttp_protocol::sec_gpc::SecGpc;
 use rttp_protocol::sec_websocket_accept::SecWebSocketAccept;
+use rttp_protocol::sec_websocket_extensions::{
+  SecWebSocketExtensions, SecWebSocketExtensionsParseError,
+};
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
 use rttp_protocol::sec_websocket_protocol::{SecWebSocketProtocol, SecWebSocketProtocolParseError};
 use rttp_protocol::sec_websocket_version::SecWebSocketVersion;
@@ -77,6 +84,8 @@ use rttp_protocol::signature::{Signature, SignatureParseError};
 use rttp_protocol::signature_input::{SignatureInput, SignatureInputParseError};
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::supports_loading_mode::SupportsLoadingMode;
+use rttp_protocol::surrogate_control::SurrogateControl;
+use rttp_protocol::tcn::{Tcn, TcnDirective, TcnParseError};
 use rttp_protocol::te::Te;
 use rttp_protocol::timeout::{Timeout, TimeoutType};
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
@@ -84,6 +93,7 @@ use rttp_protocol::trace_context::{TraceParent, TraceState};
 use rttp_protocol::transfer_encoding::TransferEncoding;
 use rttp_protocol::upgrade::{Upgrade, UpgradeParseError};
 use rttp_protocol::upgrade_insecure_requests::UpgradeInsecureRequests;
+use rttp_protocol::variant_vary::{VariantVary, VariantVaryParseError};
 use rttp_protocol::via::{Via, ViaParseError};
 use rttp_protocol::want_content_digest::WantContentDigest;
 use rttp_protocol::want_repr_digest::WantReprDigest;
@@ -152,6 +162,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let overwrite = Overwrite::parse("F").expect("Overwrite should parse");
   let _: OverwriteParseError =
     Overwrite::parse("t").expect_err("lowercase Overwrite should be rejected");
+  let schedule_tag = ScheduleTag::parse("\"sched-17\"").expect("Schedule-Tag should parse");
   let idempotency_key = IdempotencyKey::parse("charge-2026-08-19-9f3c")
     .expect("Idempotency-Key request metadata should parse");
   let sec_websocket_key = SecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==")
@@ -165,6 +176,15 @@ fn protocol_exports_representative_bounded_metadata_types() {
     SecWebSocketProtocol::from_selection("chat").expect("Sec-WebSocket-Protocol should select");
   let _: SecWebSocketProtocolParseError = SecWebSocketProtocol::parse_selection("chat, superchat")
     .expect_err("multi-token Sec-WebSocket-Protocol selection should be rejected");
+  let sec_websocket_extensions =
+    SecWebSocketExtensions::parse(r#"permessage-deflate; client_max_window_bits; mode="safe""#)
+      .expect("Sec-WebSocket-Extensions offers should parse");
+  let sec_websocket_extensions_selection =
+    SecWebSocketExtensions::parse_selection("permessage-deflate; server_max_window_bits=15")
+      .expect("Sec-WebSocket-Extensions selection should parse");
+  let _: SecWebSocketExtensionsParseError =
+    SecWebSocketExtensions::parse_selection("permessage-deflate, x-test")
+      .expect_err("multi-extension Sec-WebSocket-Extensions selection should be rejected");
   let if_modified_since = IfModifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
     .expect("If-Modified-Since should parse");
   let if_schedule_tag_match =
@@ -180,6 +200,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let memento_datetime =
     MementoDatetime::parse("Sun, 06 Nov 1994 08:49:37 GMT").expect("Memento-Datetime should parse");
   let host = Host::parse("example.test:8443").expect("Host should parse");
+  let alternates = Alternates::parse(
+    r#"{ "/resource.en.html" 1.0 {type text/html} {language en} {length 1234} }"#,
+  )
+  .expect("Alternates should parse");
   let alt_used = AltUsed::parse("[2001:db8::1]:8443").expect("Alt-Used should parse");
   let origin = Origin::parse("https://example.test").expect("Origin should parse");
   let origin_trials = OriginTrials::parse_values(["token-one", "token-two"])
@@ -261,6 +285,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
     CacheStatus::parse("OriginCache; hit; ttl=1100").expect("Cache-Status should parse");
   let cdn_cache_control =
     CdnCacheControl::parse("max-age=600, cdn-example=\"a, b\"").expect("CDN metadata should parse");
+  let surrogate_control = SurrogateControl::parse("max-age=600, content=\"ESI/1.0\"")
+    .expect("Surrogate-Control should parse");
   let cdn_loop = CdnLoop::parse(r#"foo123.foocdn.example, barcdn.example; trace="abcdef""#)
     .expect("CDN-Loop request metadata should parse");
   let _: CdnLoopParseError =
@@ -287,6 +313,15 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let transfer_encoding =
     TransferEncoding::parse("chunked").expect("Transfer-Encoding should parse");
   let te = Te::parse("gzip;q=0.5, trailers").expect("TE should parse");
+  let a_im = AIm::parse("diffe, gzip;q=0.3;profile=compact").expect("A-IM should parse");
+  let negotiate =
+    Negotiate::parse("trans, 1.0, feature-x=preview, *").expect("Negotiate should parse");
+  let tcn = Tcn::parse("list, choice").expect("TCN should parse");
+  let _: TcnParseError = Tcn::parse("list, LIST").expect_err("duplicate TCN should be rejected");
+  let variant_vary =
+    VariantVary::parse("Accept-Language, Sec-CH-DPR").expect("Variant-Vary should parse");
+  let _: VariantVaryParseError = VariantVary::parse("Accept-Language, accept-language")
+    .expect_err("duplicate Variant-Vary should be rejected");
   let baggage =
     Baggage::parse("tenant=acme;source=gateway,release=2026-08-19").expect("baggage should parse");
   let traceparent = TraceParent::parse("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
@@ -407,6 +442,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!("second-60, infinite", timeout.header_value());
   assert_eq!(Overwrite::F, overwrite);
   assert_eq!("F", overwrite.header_value());
+  assert_eq!("sched-17", schedule_tag.opaque_tag());
+  assert_eq!("\"sched-17\"", schedule_tag.header_value());
   assert_eq!(idempotency_key.as_str(), "charge-2026-08-19-9f3c");
   assert_eq!(idempotency_key.header_value(), "charge-2026-08-19-9f3c");
   assert!(!format!("{idempotency_key:?}").contains("charge-2026-08-19-9f3c"));
@@ -419,6 +456,21 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(sec_websocket_protocol.protocols(), ["chat", "superchat"]);
   assert!(sec_websocket_protocol.contains("chat"));
   assert_eq!(sec_websocket_protocol.header_value(), "chat, superchat");
+  assert_eq!(
+    sec_websocket_extensions.header_value(),
+    r#"permessage-deflate; client_max_window_bits; mode="safe""#
+  );
+  assert_eq!(
+    sec_websocket_extensions.extensions()[0].token(),
+    "permessage-deflate"
+  );
+  assert_eq!(
+    sec_websocket_extensions_selection
+      .selected()
+      .expect("selected extension")
+      .token(),
+    "permessage-deflate"
+  );
   assert_eq!(sec_websocket_protocol_selection.selected(), Some("chat"));
   assert_eq!(sec_websocket_protocol_selection.header_value(), "chat");
   assert_eq!(
@@ -472,6 +524,12 @@ fn protocol_exports_representative_bounded_metadata_types() {
   );
   assert_eq!(host.host(), "example.test");
   assert_eq!(host.port(), Some("8443"));
+  assert_eq!(alternates.variants()[0].uri(), "/resource.en.html");
+  assert_eq!(alternates.variants()[0].quality(), "1.0");
+  assert_eq!(
+    alternates.variants()[0].attribute("type"),
+    Some("text/html")
+  );
   assert_eq!(alt_used.host(), "[2001:db8::1]");
   assert_eq!(alt_used.port(), Some("8443"));
   assert_eq!(alt_used.header_value(), "[2001:db8::1]:8443");
@@ -574,6 +632,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(cache_status.members()[0].ttl(), Some(1100));
   assert_eq!(cdn_cache_control.directives()[1].name(), "cdn-example");
   assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
+  assert_eq!(surrogate_control.directives()[1].name(), "content");
+  assert_eq!(surrogate_control.directives()[1].value(), Some("ESI/1.0"));
   assert_eq!(cdn_loop.members()[0].identifier(), "foo123.foocdn.example");
   assert_eq!(cdn_loop.members()[1].parameter("trace"), Some("abcdef"));
   assert_eq!("192.0.2.60", x_forwarded_for.nodes()[0].value());
@@ -612,6 +672,20 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(te.codings()[0].quality(), Some(500));
   assert_eq!(te.codings()[1].coding(), "trailers");
   assert!(te.codings()[1].is_trailers());
+  assert_eq!(a_im.members()[0].token(), "diffe");
+  assert_eq!(a_im.members()[1].quality(), 300);
+  assert_eq!(a_im.header_value(), "diffe, gzip;q=0.3;profile=compact");
+  assert_eq!(negotiate.members()[0], NegotiateDirective::Trans);
+  assert_eq!(negotiate.members()[3], NegotiateDirective::Any);
+  assert_eq!("trans, 1.0, feature-x=preview, *", negotiate.header_value());
+  assert_eq!(tcn.members()[0], TcnDirective::List);
+  assert_eq!(tcn.members()[1], TcnDirective::Choice);
+  assert_eq!("list, choice", tcn.header_value());
+  assert_eq!(
+    vec!["accept-language", "sec-ch-dpr"],
+    variant_vary.field_names()
+  );
+  assert_eq!("accept-language, sec-ch-dpr", variant_vary.header_value());
   assert_eq!(2, baggage.members().len());
   assert_eq!("tenant", baggage.members()[0].key());
   assert_eq!("acme", baggage.members()[0].value());

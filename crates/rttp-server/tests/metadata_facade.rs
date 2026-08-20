@@ -1,8 +1,8 @@
 use rttp_server::server::{
-  HttpAcceptCh, HttpAcceptCharset, HttpAcceptCharsetParseError, HttpAcceptLanguageParseError,
-  HttpAcceptLanguages, HttpAccessControlAllowCredentials,
-  HttpAccessControlAllowCredentialsParseError, HttpAccessControlAllowHeaders,
-  HttpAccessControlAllowMethods, HttpAccessControlRequestHeaders,
+  HttpAIm, HttpAImMember, HttpAImParameter, HttpAImParseError, HttpAcceptCh, HttpAcceptCharset,
+  HttpAcceptCharsetParseError, HttpAcceptLanguageParseError, HttpAcceptLanguages,
+  HttpAccessControlAllowCredentials, HttpAccessControlAllowCredentialsParseError,
+  HttpAccessControlAllowHeaders, HttpAccessControlAllowMethods, HttpAccessControlRequestHeaders,
   HttpAccessControlRequestHeadersParseError, HttpAccessControlRequestMethod,
   HttpAccessControlRequestMethodParseError, HttpAccessControlRequestPrivateNetwork,
   HttpAccessControlRequestPrivateNetworkParseError, HttpAltUsed, HttpAltUsedParseError,
@@ -24,28 +24,31 @@ use rttp_server::server::{
   HttpIfResourceTag, HttpIfScheduleTagMatch, HttpIfScheduleTagMatchParseError, HttpIfStateToken,
   HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError, HttpKeepAlive, HttpLockToken,
   HttpLockTokenParseError, HttpMaxForwards, HttpMaxForwardsParseError, HttpMementoDatetime,
-  HttpMementoDatetimeParseError, HttpNoVarySearch, HttpNoVarySearchParams,
-  HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpOverwriteParseError,
-  HttpPermissionsPolicy, HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
-  HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective,
-  HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus,
-  HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
-  HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSecGpc, HttpSecGpcParseError,
-  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketKey,
-  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
-  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
-  HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
-  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
-  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
-  HttpSpeculationRules, HttpSpeculationRulesParseError, HttpSupportsLoadingMode,
-  HttpSupportsLoadingModeParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType,
-  HttpTraceParent, HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember,
-  HttpTraceStateParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
-  HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
-  HttpVia, HttpViaMember, HttpViaParseError, HttpWantContentDigest, HttpWantReprDigest,
-  HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
-  HttpXForwardedProto, HttpXForwardedProtoParseError, SecFetchDest, SecFetchMode, SecFetchSite,
-  SecFetchUser, SecPurpose,
+  HttpMementoDatetimeParseError, HttpNegotiate, HttpNegotiateDirective, HttpNegotiateParseError,
+  HttpNoVarySearch, HttpNoVarySearchParams, HttpOriginTrialParseError, HttpOriginTrials,
+  HttpOverwrite, HttpOverwriteParseError, HttpPermissionsPolicy, HttpPermissionsPolicyAllowlist,
+  HttpPermissionsPolicyAllowlistMember, HttpPermissionsPolicyDirective,
+  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective, HttpPragmaParseError,
+  HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError,
+  HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpResponse, HttpSaveData,
+  HttpSaveDataParseError, HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError,
+  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
+  HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
+  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
+  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
+  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
+  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpSurrogateControl,
+  HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective, HttpTcnParseError, HttpTimeout,
+  HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent, HttpTraceParentParseError,
+  HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
+  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpVariantVary,
+  HttpVariantVaryParseError, HttpVia, HttpViaMember, HttpViaParseError, HttpWantContentDigest,
+  HttpWantReprDigest, HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost,
+  HttpXForwardedHostParseError, HttpXForwardedProto, HttpXForwardedProtoParseError, SecFetchDest,
+  SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
 
 #[test]
@@ -86,6 +89,32 @@ fn server_dav_response_metadata_uses_protocol_representation() {
 #[test]
 fn server_facade_exports_representative_bounded_metadata_types() {
   let accept_ch: HttpAcceptCh = HttpAcceptCh::parse("Sec-CH-UA").expect("Accept-CH should parse");
+  let a_im: HttpAIm =
+    HttpAIm::parse("diffe, gzip;q=0.3;profile=compact").expect("A-IM should parse");
+  let _: HttpAImParseError =
+    HttpAIm::parse("diffe, DIFFE").expect_err("duplicate A-IM should be rejected");
+  let _: &[HttpAImMember] = a_im.members();
+  let _: Option<&HttpAImParameter> = a_im.members()[1].parameters().first();
+  let negotiate: HttpNegotiate =
+    HttpNegotiate::parse("trans, 1.0, feature-x=preview, *").expect("Negotiate should parse");
+  let _: HttpNegotiateParseError =
+    HttpNegotiate::parse("trans, TRANS").expect_err("duplicate Negotiate should be rejected");
+  let _: &[HttpNegotiateDirective] = negotiate.members();
+  let tcn: HttpTcn = HttpTcn::parse("list, choice").expect("TCN should parse");
+  let _: HttpTcnParseError =
+    HttpTcn::parse("list, LIST").expect_err("duplicate TCN should be rejected");
+  let _: &[HttpTcnDirective] = tcn.members();
+  let variant_vary: HttpVariantVary =
+    HttpVariantVary::parse("Accept-Language, Sec-CH-DPR").expect("Variant-Vary should parse");
+  let _: HttpVariantVaryParseError = HttpVariantVary::parse("Accept-Language, accept-language")
+    .expect_err("duplicate Variant-Vary should be rejected");
+  let _: HttpVariantVaryParseError = HttpVariantVary::parse("a".repeat(64 * 1024 + 1))
+    .expect_err("oversized Variant-Vary should be rejected");
+  assert_eq!(
+    vec!["accept-language", "sec-ch-dpr"],
+    variant_vary.field_names()
+  );
+  assert_eq!("accept-language, sec-ch-dpr", variant_vary.header_value());
   let accept_charsets: HttpRequestAcceptCharsets =
     HttpRequestAcceptCharsets::parse("utf-8, iso-8859-1;q=0.5, *;q=0")
       .expect("Accept-Charset should parse");
@@ -209,6 +238,11 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let cdn_cache_control: HttpCdnCacheControl =
     HttpCdnCacheControl::parse("max-age=600, cdn-example=\"a, b\"")
       .expect("CDN-Cache-Control should parse");
+  let surrogate_control: HttpSurrogateControl =
+    HttpSurrogateControl::parse("max-age=600, content=\"ESI/1.0\"")
+      .expect("Surrogate-Control should parse");
+  let _: HttpSurrogateControlParseError = HttpSurrogateControl::parse("max-age=60, Max-Age=120")
+    .expect_err("duplicate Surrogate-Control directive should be rejected");
   let cdn_loop: HttpCdnLoop =
     HttpCdnLoop::parse(r#"foo123.foocdn.example, barcdn.example; trace="abcdef""#)
       .expect("CDN-Loop should parse");
@@ -276,6 +310,7 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpDeprecation::parse("true").expect_err("historical Deprecation token should be rejected");
   let response = HttpResponse::ok("")
     .with_etag(HttpEntityTag::weak("revision-42"))
+    .with_schedule_tag(HttpScheduleTag::parse("\"sched-17\"").expect("Schedule-Tag should parse"))
     .with_deprecation(HttpDeprecation::Boolean(true))
     .with_accept_ch(["Sec-CH-UA"])
     .expect("Accept-CH should be accepted")
@@ -349,6 +384,15 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let sec_websocket_protocol_response = HttpResponse::new(400, "Bad Request")
     .with_sec_websocket_protocol("graphql-transport-ws")
     .expect("Sec-WebSocket-Protocol should be accepted");
+  let sec_websocket_extensions: HttpSecWebSocketExtensions =
+    HttpSecWebSocketExtensions::parse(r#"permessage-deflate; client_max_window_bits; mode="safe""#)
+      .expect("Sec-WebSocket-Extensions should parse");
+  let _: HttpSecWebSocketExtensionsParseError =
+    HttpSecWebSocketExtensions::parse_selection("permessage-deflate, x-test")
+      .expect_err("multi-extension Sec-WebSocket-Extensions selection should be rejected");
+  let sec_websocket_extensions_response = HttpResponse::new(101, "Switching Protocols")
+    .with_sec_websocket_extensions("permessage-deflate; server_max_window_bits=15")
+    .expect("Sec-WebSocket-Extensions should be accepted");
   let fetch_site = SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let fetch_mode = SecFetchMode::parse("navigate").expect("Sec-Fetch-Mode should parse");
   let fetch_dest = SecFetchDest::parse("document").expect("Sec-Fetch-Dest should parse");
@@ -358,6 +402,12 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let _: HttpUpgradeParseError = HttpUpgrade::parse("").expect_err("empty Upgrade should fail");
 
   assert_eq!(accept_ch.client_hints(), ["Sec-CH-UA"]);
+  assert_eq!(a_im.members()[0].token(), "diffe");
+  assert_eq!(a_im.members()[1].quality(), 300);
+  assert_eq!(a_im.header_value(), "diffe, gzip;q=0.3;profile=compact");
+  assert_eq!(negotiate.members()[0], HttpNegotiateDirective::Trans);
+  assert_eq!(negotiate.members()[3], HttpNegotiateDirective::Any);
+  assert_eq!("trans, 1.0, feature-x=preview, *", negotiate.header_value());
   let first_charset: &HttpAcceptCharset = &accept_charsets.charsets()[0];
   assert_eq!(first_charset.charset(), "utf-8");
   assert_eq!(first_charset.quality(), 1000);
@@ -451,6 +501,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(cache_status.members()[0].ttl(), Some(1100));
   assert_eq!(cdn_cache_control.directives()[1].name(), "cdn-example");
   assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
+  assert_eq!(surrogate_control.directives()[1].name(), "content");
+  assert_eq!(surrogate_control.directives()[1].value(), Some("ESI/1.0"));
   assert_eq!(cdn_loop.members()[0].identifier(), "foo123.foocdn.example");
   assert_eq!(cdn_loop.members()[1].parameter("trace"), Some("abcdef"));
   assert_eq!("192.0.2.60", x_forwarded_for.nodes()[0].value());
@@ -525,6 +577,10 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(
     response.etag().expect("ETag should parse"),
     Some(HttpEntityTag::weak("revision-42"))
+  );
+  assert_eq!(
+    response.schedule_tag().expect("Schedule-Tag should parse"),
+    Some(HttpScheduleTag::parse("\"sched-17\"").expect("Schedule-Tag should parse"))
   );
   assert_eq!(
     no_vary_search.params(),
@@ -660,6 +716,22 @@ fn server_facade_exports_representative_bounded_metadata_types() {
       .expect("Sec-WebSocket-Protocol should be present")
       .header_value()
   );
+  assert_eq!(
+    sec_websocket_extensions.header_value(),
+    r#"permessage-deflate; client_max_window_bits; mode="safe""#
+  );
+  assert_eq!(
+    sec_websocket_extensions.extensions()[0].token(),
+    "permessage-deflate"
+  );
+  assert_eq!(
+    "permessage-deflate; server_max_window_bits=15",
+    sec_websocket_extensions_response
+      .sec_websocket_extensions()
+      .expect("Sec-WebSocket-Extensions should parse")
+      .expect("Sec-WebSocket-Extensions should be present")
+      .header_value()
+  );
   assert_eq!(fetch_site.header_value(), "same-origin");
   assert_eq!(fetch_mode.header_value(), "navigate");
   assert_eq!(fetch_dest.header_value(), "document");
@@ -757,6 +829,48 @@ fn response_facade_parses_cdn_cache_control_and_absent_metadata() {
   let absent = HttpResponse::ok("");
   assert!(absent
     .cdn_cache_control()
+    .expect("missing header should be valid")
+    .is_none());
+}
+
+#[test]
+fn response_facade_declares_and_parses_surrogate_control_without_policy() {
+  let response = HttpResponse::ok("")
+    .header("Cache-Control", "max-age=1")
+    .header("Surrogate-Control", "legacy=1")
+    .with_surrogate_control("max-age=600, content=\"ESI/1.0\"")
+    .expect("valid Surrogate-Control should be accepted");
+
+  let metadata = response
+    .surrogate_control()
+    .expect("Surrogate-Control should parse")
+    .expect("Surrogate-Control should be present");
+
+  assert_eq!(metadata.len(), 2);
+  assert_eq!(metadata.directives()[0].name(), "max-age");
+  assert_eq!(metadata.directives()[0].value(), Some("600"));
+  assert_eq!(metadata.directives()[1].value(), Some("ESI/1.0"));
+  assert_eq!(
+    response
+      .cache_control()
+      .expect("Cache-Control should remain parseable")
+      .expect("Cache-Control should remain present")
+      .max_age(),
+    Some(1)
+  );
+  let rendered = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert!(rendered.contains("\r\nSurrogate-Control: max-age=600, content=\"ESI/1.0\"\r\n"));
+  assert!(!rendered.contains("\r\nSurrogate-Control: legacy=1\r\n"));
+
+  let duplicate = HttpResponse::ok("").header("Surrogate-Control", "max-age=60, Max-Age=120");
+  assert!(duplicate.surrogate_control().is_err());
+  assert!(HttpResponse::ok("")
+    .with_surrogate_control("max-age=60, Max-Age=120")
+    .is_err());
+
+  let absent = HttpResponse::ok("");
+  assert!(absent
+    .surrogate_control()
     .expect("missing header should be valid")
     .is_none());
 }
@@ -943,6 +1057,155 @@ fn request_facade_rejects_malformed_accept_charset_metadata() {
 
   assert_eq!(request.header("Accept-Charset"), Some("utf-8, UTF-8"));
   assert!(request.accept_charset().is_err());
+}
+
+#[test]
+fn request_facade_parses_a_im_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nA-IM: diffe, gzip;q=0.3;profile=compact\r\nA-IM: identity;q=0\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let a_im: HttpAIm = request
+    .a_im()
+    .expect("A-IM should parse")
+    .expect("A-IM should be present");
+
+  assert_eq!(a_im.members()[0].token(), "diffe");
+  assert_eq!(a_im.members()[1].token(), "gzip");
+  assert_eq!(a_im.members()[1].quality(), 300);
+  assert_eq!(Some("compact"), a_im.members()[1].parameters()[1].value());
+  assert_eq!(a_im.members()[2].token(), "identity");
+  assert_eq!(a_im.members()[2].quality(), 0);
+  assert_eq!(
+    a_im.header_value(),
+    "diffe, gzip;q=0.3;profile=compact, identity;q=0"
+  );
+}
+
+#[test]
+fn request_facade_omits_a_im_metadata_when_header_is_absent() {
+  let request = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+
+  assert_eq!(
+    None,
+    request.a_im().expect("missing A-IM should be accepted")
+  );
+}
+
+#[test]
+fn request_facade_rejects_malformed_a_im_metadata_without_hiding_headers() {
+  let request =
+    HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\nA-IM: diffe, DIFFE\r\n\r\n")
+      .expect("malformed metadata should not reject raw request parsing");
+
+  assert_eq!(request.header("A-IM"), Some("diffe, DIFFE"));
+  assert!(request.a_im().is_err());
+}
+
+#[test]
+fn request_facade_rejects_oversized_a_im_metadata_without_hiding_headers() {
+  let too_many = (0..=32)
+    .map(|index| format!("c{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let raw = format!("GET /asset HTTP/1.1\r\nHost: example.test\r\nA-IM: {too_many}\r\n\r\n");
+  let request = HttpRequest::parse(raw.as_bytes())
+    .expect("over-limit typed metadata should not reject raw request parsing");
+
+  assert_eq!(request.header("A-IM"), Some(too_many.as_str()));
+  assert!(request.a_im().is_err());
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_error: Result<HttpAIm, HttpAImParseError> = HttpAIm::parse(oversized.as_str());
+  assert!(oversized_error.is_err());
+
+  let first = "a".repeat(32 * 1024 + 1);
+  let second = "b".repeat(32 * 1024 + 1);
+  assert!(HttpAIm::parse_values([first.as_str(), second.as_str()]).is_err());
+}
+
+#[test]
+fn request_facade_parses_negotiate_metadata() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nNegotiate: trans, 1.0, feature-x=preview\r\nNegotiate: *, 2.5\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let negotiate: HttpNegotiate = request
+    .negotiate()
+    .expect("Negotiate should parse")
+    .expect("Negotiate should be present");
+
+  assert_eq!(negotiate.members()[0], HttpNegotiateDirective::Trans);
+  assert_eq!(
+    negotiate.members()[1],
+    HttpNegotiateDirective::RvsaVersion { major: 1, minor: 0 }
+  );
+  assert_eq!(
+    negotiate.members()[2],
+    HttpNegotiateDirective::Extension {
+      name: "feature-x".to_owned(),
+      value: Some("preview".to_owned()),
+    }
+  );
+  assert_eq!(negotiate.members()[3], HttpNegotiateDirective::Any);
+  assert_eq!(
+    negotiate.members()[4],
+    HttpNegotiateDirective::RvsaVersion { major: 2, minor: 5 }
+  );
+  assert_eq!(
+    negotiate.header_value(),
+    "trans, 1.0, feature-x=preview, *, 2.5"
+  );
+}
+
+#[test]
+fn request_facade_omits_negotiate_metadata_when_header_is_absent() {
+  let request = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+
+  assert_eq!(
+    None,
+    request
+      .negotiate()
+      .expect("missing Negotiate should be accepted")
+  );
+}
+
+#[test]
+fn request_facade_rejects_malformed_negotiate_metadata_without_hiding_headers() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nNegotiate: trans, TRANS\r\n\r\n",
+  )
+  .expect("malformed metadata should not reject raw request parsing");
+
+  assert_eq!(request.header("Negotiate"), Some("trans, TRANS"));
+  assert!(request.negotiate().is_err());
+}
+
+#[test]
+fn request_facade_rejects_oversized_negotiate_metadata_without_hiding_headers() {
+  let too_many = (0..=32)
+    .map(|index| format!("feature-{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let raw = format!("GET /asset HTTP/1.1\r\nHost: example.test\r\nNegotiate: {too_many}\r\n\r\n");
+  let request = HttpRequest::parse(raw.as_bytes())
+    .expect("over-limit typed metadata should not reject raw request parsing");
+
+  assert_eq!(request.header("Negotiate"), Some(too_many.as_str()));
+  assert!(request.negotiate().is_err());
+
+  let oversized = format!("feature-x={}", "a".repeat(64 * 1024 + 1));
+  let oversized_error: Result<HttpNegotiate, HttpNegotiateParseError> =
+    HttpNegotiate::parse(oversized.as_str());
+  assert!(oversized_error.is_err());
+
+  let first = "a".repeat(32 * 1024 + 1);
+  let second = "b".repeat(32 * 1024 + 1);
+  assert!(HttpNegotiate::parse_values([first.as_str(), second.as_str()]).is_err());
 }
 
 #[test]
@@ -2225,5 +2488,65 @@ fn response_facade_builds_and_parses_speculation_rules_metadata() {
   assert!(malformed.speculation_rules().is_err());
   assert!(HttpResponse::ok("body")
     .with_speculation_rules("https://example.test/rules.json\r\nX-Injected: 1")
+    .is_err());
+}
+
+#[test]
+fn response_facade_builds_and_parses_variant_vary_metadata() {
+  let response = HttpResponse::ok("body")
+    .header("Variant-Vary", "Accept-Encoding")
+    .with_variant_vary("Accept-Language, Sec-CH-DPR")
+    .expect("valid Variant-Vary should be accepted");
+  let variant_vary: HttpVariantVary = response
+    .variant_vary()
+    .expect("attached Variant-Vary should parse")
+    .expect("Variant-Vary should be present");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+
+  assert_eq!(
+    vec!["accept-language", "sec-ch-dpr"],
+    variant_vary.field_names()
+  );
+  assert_eq!("accept-language, sec-ch-dpr", variant_vary.header_value());
+  assert_eq!(1, serialized.matches("\r\nVariant-Vary: ").count());
+  assert!(serialized.contains("\r\nVariant-Vary: accept-language, sec-ch-dpr\r\n"));
+  assert!(!serialized.contains("\r\nVariant-Vary: Accept-Encoding\r\n"));
+
+  let unchanged = HttpResponse::ok("body").header("Variant-Vary", "Accept-Language");
+  assert!(unchanged
+    .clone()
+    .with_variant_vary("Accept-Language, accept-language")
+    .is_err());
+  assert_eq!(
+    "accept-language",
+    unchanged
+      .variant_vary()
+      .expect("original Variant-Vary should still parse")
+      .expect("original Variant-Vary should be present")
+      .header_value()
+  );
+
+  let absent = HttpResponse::ok("body");
+  assert_eq!(
+    None,
+    absent
+      .variant_vary()
+      .expect("missing Variant-Vary should be accepted")
+  );
+
+  let malformed = HttpResponse::ok("body").header("Variant-Vary", "Accept Language");
+  assert!(malformed.variant_vary().is_err());
+  assert!(String::from_utf8(malformed.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nVariant-Vary: Accept Language\r\n"));
+
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let raw = HttpResponse::ok("body").header("Variant-Vary", &oversized);
+  assert!(raw.variant_vary().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains(&format!("\r\nVariant-Vary: {oversized}\r\n")));
+  assert!(HttpResponse::ok("body")
+    .with_variant_vary(&oversized)
     .is_err());
 }

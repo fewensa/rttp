@@ -7,6 +7,7 @@ use crate::types::{Auth, Header, IntoHeader, IntoPara, Proxy, ToFormData, ToRoUr
 use crate::{error, Config, H2cClientPolicy};
 #[cfg(feature = "async")]
 use futures::io::AsyncRead;
+use rttp_protocol::a_im::AIm;
 use rttp_protocol::accept_charset::AcceptCharset;
 use rttp_protocol::accept_encoding::AcceptEncoding;
 use rttp_protocol::accept_language::{AcceptLanguage, MAX_ACCEPT_LANGUAGE_VALUE_BYTES};
@@ -30,12 +31,14 @@ use rttp_protocol::if_schedule_tag_match::IfScheduleTagMatch;
 use rttp_protocol::if_unmodified_since::IfUnmodifiedSince;
 use rttp_protocol::lock_token::LockToken;
 use rttp_protocol::max_forwards::MaxForwards;
+use rttp_protocol::negotiate::Negotiate;
 use rttp_protocol::origin::Origin;
 use rttp_protocol::overwrite::Overwrite;
 use rttp_protocol::pragma::Pragma;
 use rttp_protocol::priority::Priority;
 use rttp_protocol::save_data::SaveData;
 use rttp_protocol::sec_gpc::SecGpc;
+use rttp_protocol::sec_websocket_extensions::SecWebSocketExtensions;
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
 use rttp_protocol::sec_websocket_protocol::SecWebSocketProtocol;
 use rttp_protocol::sec_websocket_version::SecWebSocketVersion;
@@ -877,6 +880,21 @@ impl HttpClient {
     Ok(self.header(Header::new("Timeout", timeout.header_value())))
   }
 
+  /// Set bounded RFC 2295 `Negotiate` request metadata.
+  ///
+  /// The value must be an ordered list of `trans`, `vlist`, `guess-small`,
+  /// `*`, `major.minor` remote variant selection algorithm versions, and
+  /// `token[=token]` extension directives. Members are normalized, duplicate
+  /// directives are rejected, and size and count bounds are enforced before
+  /// connecting. This only validates and emits the header; it does not select
+  /// a variant, run transparent content negotiation, or change cache
+  /// selection. Use `header` directly for unusual values.
+  pub fn negotiate<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let negotiate = Negotiate::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("Negotiate", negotiate.header_value())))
+  }
+
   /// Set bounded `If-Schedule-Tag-Match` request metadata.
   ///
   /// The value must be one entity-tag-shaped schedule validator such as
@@ -1015,6 +1033,24 @@ impl HttpClient {
     )))
   }
 
+  /// Set bounded `Sec-WebSocket-Extensions` request metadata as ordered
+  /// offers.
+  ///
+  /// This validates RFC 6455 extension tokens, ordered parameters,
+  /// token/quoted-string parameter values, duplicates, member count, and size
+  /// bounds before connecting and replaces any existing
+  /// `Sec-WebSocket-Extensions` field. It does not activate compression,
+  /// negotiate extensions, emit `Connection: Upgrade`, or switch protocols.
+  /// Use `header` directly for unusual values.
+  pub fn sec_websocket_extensions<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let sec_websocket_extensions = SecWebSocketExtensions::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Sec-WebSocket-Extensions",
+      sec_websocket_extensions.header_value(),
+    )))
+  }
+
   /// Set bounded W3C `traceparent` request metadata.
   ///
   /// This validates the version 00 wire value before connecting and replaces
@@ -1048,6 +1084,38 @@ impl HttpClient {
     let baggage = Baggage::parse(value.as_ref())
       .map_err(|error| error::builder_with_message(error.to_string()))?;
     Ok(self.header(Header::new("baggage", baggage.header_value())))
+  }
+
+  /// Append a validated `A-IM` instance-manipulation token with the default
+  /// quality of `1`. This declares request metadata only; it does not select
+  /// or apply a delta encoding.
+  pub fn a_im<S: AsRef<str>>(&mut self, token: S) -> error::Result<&mut Self> {
+    self.a_im_member(token.as_ref(), None)
+  }
+
+  /// Append a validated `A-IM` instance-manipulation token with an HTTP
+  /// q-value.
+  ///
+  /// The q-value must be between `0` and `1` with at most three fractional
+  /// digits. This declares request metadata only; it does not select or apply
+  /// a delta encoding.
+  pub fn a_im_with_q<T: AsRef<str>, Q: AsRef<str>>(
+    &mut self,
+    token: T,
+    qvalue: Q,
+  ) -> error::Result<&mut Self> {
+    self.a_im_member(token.as_ref(), Some(qvalue.as_ref()))
+  }
+
+  /// Append a validated `A-IM` field value, including optional q-values and
+  /// extension parameters.
+  ///
+  /// This declares request metadata only; it does not select or apply a delta
+  /// encoding.
+  pub fn a_im_value<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let parsed =
+      AIm::parse(value.as_ref()).map_err(|error| error::builder_with_message(error.to_string()))?;
+    self.append_a_im(&parsed.header_value())
   }
 
   /// Append a validated `Accept-Encoding` coding with the default quality of
@@ -1302,6 +1370,51 @@ impl HttpClient {
       header.replace(Header::new("Accept-Charset", value));
     } else {
       headers.push(Header::new("Accept-Charset", value));
+    }
+    Ok(self)
+  }
+
+  fn a_im_member(&mut self, token: &str, qvalue: Option<&str>) -> error::Result<&mut Self> {
+    let token = token.trim();
+    if !is_http_token(token) {
+      return Err(error::builder_with_message("invalid A-IM token"));
+    }
+    let qvalue = qvalue.map(str::trim);
+    if let Some(qvalue) = qvalue {
+      validate_a_im_qvalue(qvalue)?;
+    }
+    let member = qvalue.map_or_else(|| token.to_string(), |qvalue| format!("{token};q={qvalue}"));
+    let parsed_member =
+      AIm::parse(&member).map_err(|error| error::builder_with_message(error.to_string()))?;
+    if parsed_member.len() != 1 {
+      return Err(error::builder_with_message(if qvalue.is_some() {
+        "invalid A-IM q-value"
+      } else {
+        "invalid A-IM token"
+      }));
+    }
+    self.append_a_im(&member)
+  }
+
+  fn append_a_im(&mut self, member: &str) -> error::Result<&mut Self> {
+    let headers = self.request.headers_mut();
+    let candidate = match headers
+      .iter()
+      .find(|header| header.name().eq_ignore_ascii_case("A-IM"))
+    {
+      Some(header) => format!("{}, {member}", header.value()),
+      None => member.to_string(),
+    };
+    let a_im =
+      AIm::parse(&candidate).map_err(|error| error::builder_with_message(error.to_string()))?;
+    let value = a_im.header_value();
+    if let Some(header) = headers
+      .iter_mut()
+      .find(|header| header.name().eq_ignore_ascii_case("A-IM"))
+    {
+      header.replace(Header::new("A-IM", value));
+    } else {
+      headers.push(Header::new("A-IM", value));
     }
     Ok(self)
   }
@@ -2129,6 +2242,14 @@ fn validate_accept_qvalue(qvalue: &str) -> error::Result<&str> {
     Ok(qvalue)
   } else {
     Err(error::builder_with_message("invalid Accept quality value"))
+  }
+}
+
+fn validate_a_im_qvalue(qvalue: &str) -> error::Result<&str> {
+  if is_qvalue(qvalue) {
+    Ok(qvalue)
+  } else {
+    Err(error::builder_with_message("invalid A-IM q-value"))
   }
 }
 

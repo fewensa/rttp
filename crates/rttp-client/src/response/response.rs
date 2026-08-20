@@ -10,6 +10,7 @@ use crate::error;
 use crate::response::raw_response::RawResponse;
 use crate::response::AltSvc;
 use crate::response::AltUsed;
+use crate::response::Alternates;
 use crate::response::AuthenticationInfo;
 use crate::response::Connection;
 use crate::response::ContentDigest;
@@ -28,6 +29,7 @@ use crate::response::ReprDigest;
 use crate::response::ServerTiming;
 use crate::response::Signature;
 use crate::response::SignatureInput;
+use crate::response::Tcn;
 use crate::response::Trailer;
 use crate::response::TransferEncoding;
 use crate::response::Upgrade;
@@ -72,7 +74,9 @@ use rttp_protocol::prefer::PreferenceApplied;
 use rttp_protocol::range::ContentRange;
 use rttp_protocol::referrer_policy::ReferrerPolicy;
 use rttp_protocol::reporting_endpoints::ReportingEndpoints;
+use rttp_protocol::schedule_tag::{ScheduleTag, ScheduleTagParseError};
 use rttp_protocol::sec_websocket_accept::SecWebSocketAccept;
+use rttp_protocol::sec_websocket_extensions::SecWebSocketExtensions;
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
 use rttp_protocol::sec_websocket_protocol::SecWebSocketProtocol;
 use rttp_protocol::sec_websocket_version::SecWebSocketVersion;
@@ -81,7 +85,9 @@ use rttp_protocol::speculation_rules::SpeculationRules;
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::sunset::parse_sunset_values;
 use rttp_protocol::supports_loading_mode::SupportsLoadingMode;
+use rttp_protocol::surrogate_control::SurrogateControl;
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
+use rttp_protocol::variant_vary::VariantVary;
 use rttp_protocol::vary::Vary;
 use rttp_protocol::x_content_type_options::XContentTypeOptions;
 use rttp_protocol::x_frame_options::XFrameOptions;
@@ -362,6 +368,18 @@ impl Response {
       [value] => EntityTag::parse(value).map(Some),
       _ => Err(EntityTagParseError::new("Duplicate ETag header values")),
     }
+  }
+
+  pub fn schedule_tag_value(&self) -> Option<&String> {
+    self.header_value("schedule-tag")
+  }
+
+  pub fn schedule_tag(&self) -> Result<Option<ScheduleTag>, ScheduleTagParseError> {
+    let values = self.header_values("schedule-tag");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    ScheduleTag::parse_values(values.into_iter().map(String::as_str)).map(Some)
   }
 
   pub fn last_modified(&self) -> Option<&String> {
@@ -798,6 +816,20 @@ impl Response {
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
+  /// Parses bounded `Sec-WebSocket-Extensions` response metadata as a
+  /// selection singleton without activating compression, negotiating
+  /// extensions, or switching protocols. A multi-extension value returns a
+  /// parse error while raw headers remain available.
+  pub fn sec_websocket_extensions(&self) -> error::Result<Option<SecWebSocketExtensions>> {
+    let values = self.header_values("sec-websocket-extensions");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    SecWebSocketExtensions::parse_selection_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
   pub fn content_range(&self) -> error::Result<Option<ContentRange>> {
     let values = self.header_values("content-range");
     if values.is_empty() {
@@ -1139,6 +1171,31 @@ impl Response {
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
+  /// Parses all `Alternates` fields as bounded transparent-negotiation
+  /// metadata. This does not select a variant, fetch a variant URI, or
+  /// change request handling.
+  pub fn alternates(&self) -> error::Result<Option<Alternates>> {
+    let values = self.header_values("alternates");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Alternates::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses `TCN` as bounded transparent-negotiation result metadata. This
+  /// does not select a variant, request alternates, or change cache behavior.
+  pub fn tcn(&self) -> error::Result<Option<Tcn>> {
+    let values = self.header_values("tcn");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Tcn::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
   /// Parses all `Alt-Svc` fields as bounded alternative-service metadata.
   /// This does not migrate connections or select an alternative endpoint.
   pub fn alt_svc(&self) -> error::Result<Option<AltSvc>> {
@@ -1216,6 +1273,18 @@ impl Response {
       return Ok(None);
     }
     CdnCacheControl::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Surrogate-Control` response metadata without applying CDN
+  /// cache policy or translating directives into `Cache-Control`.
+  pub fn surrogate_control(&self) -> error::Result<Option<SurrogateControl>> {
+    let values = self.header_values("surrogate-control");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    SurrogateControl::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
@@ -1309,6 +1378,19 @@ impl Response {
       return Ok(None);
     }
     Vary::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses `Variant-Vary` as bounded RFC 2295 variant-list metadata. This
+  /// does not construct a cache key, select a variant, or change cache
+  /// behavior.
+  pub fn variant_vary(&self) -> error::Result<Option<VariantVary>> {
+    let values = self.header_values("variant-vary");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    VariantVary::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

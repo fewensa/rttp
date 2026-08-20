@@ -96,6 +96,9 @@ mod response;
 
 pub use rttp_protocol::alt_svc::{AltSvc, AltSvcAlternative, AltSvcParameter, AltSvcParseError};
 pub use rttp_protocol::alt_used::{AltUsed, AltUsedParseError};
+pub use rttp_protocol::alternates::{
+  AlternateAttribute, AlternateVariant, Alternates, AlternatesParseError,
+};
 pub use rttp_protocol::authentication_info::{
   AuthenticationInfo, AuthenticationInfoParameter, AuthenticationInfoParseError,
 };
@@ -150,7 +153,12 @@ pub use rttp_protocol::referrer_policy::{
   ReferrerPolicy, ReferrerPolicyParseError, ReferrerPolicyToken,
 };
 pub use rttp_protocol::reporting_endpoints::{ReportingEndpoints, ReportingEndpointsParseError};
+pub use rttp_protocol::schedule_tag::{ScheduleTag, ScheduleTagParseError};
 pub use rttp_protocol::sec_websocket_accept::{SecWebSocketAccept, SecWebSocketAcceptParseError};
+pub use rttp_protocol::sec_websocket_extensions::{
+  SecWebSocketExtension, SecWebSocketExtensionParameter, SecWebSocketExtensionParameterValue,
+  SecWebSocketExtensions, SecWebSocketExtensionsParseError,
+};
 pub use rttp_protocol::sec_websocket_protocol::{
   SecWebSocketProtocol, SecWebSocketProtocolParseError,
 };
@@ -178,10 +186,13 @@ pub use rttp_protocol::strict_transport_security::{
 pub use rttp_protocol::supports_loading_mode::{
   SupportsLoadingMode, SupportsLoadingModeParseError,
 };
+pub use rttp_protocol::surrogate_control::{SurrogateControl, SurrogateControlParseError};
+pub use rttp_protocol::tcn::{Tcn, TcnDirective, TcnParseError};
 pub use rttp_protocol::timing_allow_origin::{TimingAllowOrigin, TimingAllowOriginParseError};
 pub use rttp_protocol::trailer::{Trailer, TrailerParseError};
 pub use rttp_protocol::transfer_encoding::{TransferEncoding, TransferEncodingParseError};
 pub use rttp_protocol::upgrade::{Upgrade, UpgradeParseError};
+pub use rttp_protocol::variant_vary::{VariantVary, VariantVaryParseError};
 pub use rttp_protocol::vary::{Vary, VaryParseError};
 pub use rttp_protocol::via::{Via, ViaMember, ViaParseError};
 pub use rttp_protocol::want_content_digest::{

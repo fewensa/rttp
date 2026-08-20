@@ -617,6 +617,204 @@ fn facade_debug_redacts_sensitive_header_values() {
 }
 
 #[test]
+fn a_im_helpers_emit_validated_tokens_q_values_and_parameters() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .a_im("diffe")
+      .expect("diffe should be accepted")
+      .a_im_with_q("gzip", "0.3")
+      .expect("gzip quality should be accepted")
+      .a_im_value("identity;q=0;profile=compact")
+      .expect("parameterized A-IM should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("diffe, gzip;q=0.3, identity;q=0;profile=compact"),
+    header_value(&request, "A-IM")
+  );
+}
+
+#[test]
+fn a_im_helpers_reject_invalid_members_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .a_im_with_q("bad token", "1.1")
+      .expect_err("invalid token should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "invalid A-IM helper input should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .a_im_with_q("gzip", "1.1")
+      .expect_err("invalid q-value should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "invalid A-IM q-value should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .a_im_with_q("gzip", "0.3;profile=compact")
+      .expect_err("parameter-bearing q-value should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "parameter-bearing A-IM q-value should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .a_im("diffe")
+      .expect("first token should be accepted")
+      .a_im("DIFFE")
+      .expect_err("duplicate token should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "duplicate A-IM helper input should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let oversized_token = "a".repeat(64 * 1024 + 1);
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .a_im(&oversized_token)
+      .expect_err("oversized first token should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized first A-IM token should not open a socket"
+  );
+}
+
+#[test]
+fn negotiate_helpers_emit_validated_directives() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .negotiate("Trans, 1.0, feature-x=preview, *")
+      .expect("Negotiate directives should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(
+    Some("trans, 1.0, feature-x=preview, *"),
+    header_value(&request, "Negotiate")
+  );
+}
+
+#[test]
+fn negotiate_helpers_replace_existing_fields_with_canonical_values() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .negotiate("1.0")
+      .expect("first Negotiate value should be accepted")
+      .negotiate("vlist, 2.5")
+      .expect("replacement Negotiate value should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("vlist, 2.5"), header_value(&request, "Negotiate"));
+}
+
+#[test]
+fn negotiate_helpers_reject_invalid_directives_before_connecting() {
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .negotiate("trans, TRANS")
+      .expect_err("duplicate directives should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "invalid Negotiate helper input should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .negotiate("1.0=value")
+      .expect_err("valued version should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "valued Negotiate version should not open a socket"
+  );
+
+  let request = capture_optional_request(|base_url| {
+    let oversized = format!("feature-x={}", "a".repeat(64 * 1024 + 1));
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .negotiate(&oversized)
+      .expect_err("oversized Negotiate value should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized Negotiate value should not open a socket"
+  );
+}
+
+#[test]
 fn accept_encoding_helpers_emit_validated_codings_and_quality_values() {
   let request = capture_request(|base_url| {
     client()
@@ -3579,6 +3777,145 @@ fn raw_sec_websocket_protocol_header_remains_available_as_escape_hatch() {
   assert_eq!(
     Some("opaque custom value"),
     header_value(&request, "Sec-WebSocket-Protocol")
+  );
+}
+
+#[test]
+fn sec_websocket_extensions_helper_emits_canonical_metadata() {
+  for (value, expected) in [
+    ("permessage-deflate", "permessage-deflate"),
+    (
+      " \tpermessage-deflate\t ; client_max_window_bits = 15 ; mode = \"safe\"\t ",
+      r#"permessage-deflate; client_max_window_bits=15; mode="safe""#,
+    ),
+    (
+      r#"permessage-deflate; client_no_context_takeover, x-test; quoted="a,b;c""#,
+      r#"permessage-deflate; client_no_context_takeover, x-test; quoted="a,b;c""#,
+    ),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .get()
+        .url(format!("{}/chat", base_url))
+        .sec_websocket_extensions(value)
+        .expect("sec websocket extensions should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+    assert_eq!(
+      Some(expected),
+      header_value(&request, "Sec-WebSocket-Extensions")
+    );
+    assert_eq!(None, header_value(&request, "Upgrade"));
+    assert_ne!(
+      Some("Upgrade"),
+      header_value(&request, "Connection"),
+      "typed Sec-WebSocket-Extensions must not emit Connection: Upgrade"
+    );
+  }
+}
+
+#[test]
+fn sec_websocket_extensions_helper_replaces_existing_fields() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/chat", base_url))
+      .header(("Sec-WebSocket-Extensions", "legacy"))
+      .sec_websocket_extensions("permessage-deflate; client_max_window_bits")
+      .expect("sec websocket extensions should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("permessage-deflate; client_max_window_bits"),
+    header_value(&request, "Sec-WebSocket-Extensions")
+  );
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| line
+        .to_ascii_lowercase()
+        .starts_with("sec-websocket-extensions:"))
+      .count(),
+    "the typed helper must replace an existing same-name field"
+  );
+}
+
+#[test]
+fn sec_websocket_extensions_helper_rejects_invalid_values_before_connecting() {
+  for value in [
+    "",
+    " ",
+    ",",
+    "permessage deflate",
+    "permessage-deflate;",
+    "permessage-deflate; bad param",
+    "permessage-deflate; p=",
+    "permessage-deflate; p=\"unterminated",
+    "permessage-deflate; p=bad/value",
+    "permessage-deflate, permessage-deflate",
+    "permessage-deflate; p=1; p=2",
+    "permessage-deflate\r\nX-Injected: 1",
+    "permessage-deflate\0",
+    "permessage-deflate\u{7f}",
+    "permessage-deflate\u{80}",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/chat", base_url))
+        .sec_websocket_extensions(value)
+        .expect_err("invalid sec websocket extensions should be rejected");
+      assert!(error.is_builder());
+      if !value.trim().is_empty() {
+        assert!(!error.to_string().contains(value));
+      }
+    });
+    assert!(
+      request.is_empty(),
+      "invalid sec websocket extensions must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn sec_websocket_extensions_helper_rejects_oversized_values_before_connecting() {
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/chat", base_url))
+      .sec_websocket_extensions(oversized.as_str())
+      .expect_err("oversized sec websocket extensions should be rejected");
+    assert!(error.is_builder());
+    assert!(!error.to_string().contains(&oversized[..64]));
+  });
+  assert!(
+    request.is_empty(),
+    "oversized sec websocket extensions must not open a socket"
+  );
+}
+
+#[test]
+fn raw_sec_websocket_extensions_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/chat", base_url))
+      .header(("Sec-WebSocket-Extensions", "opaque custom value"))
+      .emit()
+      .expect("manual Sec-WebSocket-Extensions header should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("opaque custom value"),
+    header_value(&request, "Sec-WebSocket-Extensions")
   );
 }
 

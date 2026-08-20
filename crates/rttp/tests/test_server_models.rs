@@ -3,8 +3,8 @@ use std::time::{Duration, UNIX_EPOCH};
 use rttp::server::{
   HttpAccept, HttpAcceptCh, HttpAcceptRanges, HttpAccessControlAllowHeaders,
   HttpAccessControlAllowMethods, HttpAccessControlAllowOrigin, HttpAccessControlRequestHeaders,
-  HttpAccessControlRequestMethod, HttpAllowedMethods, HttpAltUsed, HttpAuthorization,
-  HttpByteRange, HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata,
+  HttpAccessControlRequestMethod, HttpAllowedMethods, HttpAltUsed, HttpAlternates,
+  HttpAuthorization, HttpByteRange, HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata,
   HttpContentDisposition, HttpContentLanguages, HttpContentRange, HttpContentSecurityPolicy,
   HttpContentSecurityPolicyReportOnly, HttpContentType, HttpCriticalCh, HttpDeprecation, HttpDepth,
   HttpDocumentPolicy, HttpDocumentPolicyReportOnly, HttpEntityTag, HttpExpectations, HttpHost,
@@ -13,8 +13,32 @@ use rttp::server::{
   HttpProxyStatusBareItem, HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest,
   HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe,
   HttpResponse, HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter,
-  HttpServerTiming, HttpTimeoutType, HttpVary, HttpVia,
+  HttpScheduleTag, HttpServerTiming, HttpTcn, HttpTcnDirective, HttpTimeoutType, HttpVary, HttpVia,
 };
+
+#[test]
+fn response_schedule_tag_helper_validates_and_preserves_raw_headers() {
+  let schedule_tag = HttpScheduleTag::parse("\"sched-17\"").expect("Schedule-Tag should parse");
+  let response = HttpResponse::ok("body")
+    .header("Schedule-Tag", "\"old\"")
+    .with_schedule_tag(schedule_tag.clone());
+
+  assert_eq!(
+    Some(schedule_tag),
+    response
+      .schedule_tag()
+      .expect("attached Schedule-Tag should parse")
+  );
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert_eq!(1, serialized.matches("\r\nSchedule-Tag: ").count());
+  assert!(serialized.contains("\r\nSchedule-Tag: \"sched-17\"\r\n"));
+
+  let raw = HttpResponse::ok("body").header("Schedule-Tag", "sched-17");
+  assert!(raw.schedule_tag().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nSchedule-Tag: sched-17\r\n"));
+}
 
 #[test]
 fn response_access_control_allow_origin_helper_validates_and_preserves_raw_headers() {
@@ -904,6 +928,106 @@ fn response_alt_used_helper_rejects_invalid_duplicates_and_bounds_without_hiding
   assert!(String::from_utf8(raw.to_bytes())
     .expect("response should serialize")
     .contains(&format!("\r\nAlt-Used: {oversized}\r\n")));
+}
+
+#[test]
+fn response_alternates_helper_declares_replaces_and_parses_variant_metadata() {
+  let response = HttpResponse::ok("body")
+    .header("Alternates", r#"{ "/stale" 1 }"#)
+    .header("alternates", r#"{ "/older" 0.1 }"#)
+    .with_alternates(
+      r#"{ "/resource.en.html" 1.0 {type text/html} {language en} {length 1234} }, { "/resource.fr.html" 0.8 {language fr} }"#,
+    )
+    .expect("valid Alternates metadata should be accepted");
+  let alternates: HttpAlternates = response
+    .alternates()
+    .expect("attached Alternates should parse")
+    .expect("Alternates should be present");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+
+  assert_eq!(2, alternates.len());
+  assert_eq!("/resource.en.html", alternates.variants()[0].uri());
+  assert_eq!(
+    Some("text/html"),
+    alternates.variants()[0].attribute("type")
+  );
+  assert_eq!(Some("fr"), alternates.variants()[1].attribute("language"));
+  assert_eq!(1, serialized.matches("\r\nAlternates: ").count());
+  assert!(serialized.contains("\r\nAlternates: { \"/resource.en.html\" 1.0"));
+  assert!(!serialized.contains("/stale"));
+  assert!(!serialized.contains("/older"));
+}
+
+#[test]
+fn response_alternates_helper_rejects_invalid_duplicates_and_bounds_without_hiding_headers() {
+  assert!(HttpResponse::ok("body")
+    .with_alternates(r#"{ "/broken" 1.001 }"#)
+    .is_err());
+  assert!(HttpResponse::ok("body")
+    .with_alternates(r#"{ "/a" 1 }, { "/a" 1 }"#)
+    .is_err());
+
+  let malformed = HttpResponse::ok("body").header("Alternates", r#"{ "/broken" 1.001 }"#);
+  assert!(malformed.alternates().is_err());
+  assert!(String::from_utf8(malformed.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nAlternates: { \"/broken\" 1.001 }\r\n"));
+
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let raw = HttpResponse::ok("body").header("Alternates", &oversized);
+  assert!(raw.alternates().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains(&format!("\r\nAlternates: {oversized}\r\n")));
+}
+
+#[test]
+fn response_tcn_helper_declares_replaces_and_parses_metadata_only_tokens() {
+  let response = HttpResponse::ok("body")
+    .header("TCN", "list")
+    .with_tcn("Choice, keep")
+    .expect("valid TCN metadata should be accepted");
+  let tcn: HttpTcn = response
+    .tcn()
+    .expect("attached TCN should parse")
+    .expect("TCN should be present");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+
+  assert_eq!(
+    &[HttpTcnDirective::Choice, HttpTcnDirective::Keep],
+    tcn.members()
+  );
+  assert_eq!("choice, keep", tcn.header_value());
+  assert_eq!(1, serialized.matches("\r\nTCN: ").count());
+  assert!(serialized.contains("\r\nTCN: choice, keep\r\n"));
+  assert!(!serialized.contains("\r\nTCN: list\r\n"));
+}
+
+#[test]
+fn response_tcn_helper_rejects_invalid_duplicates_and_bounds_without_hiding_headers() {
+  assert!(HttpResponse::ok("body").with_tcn("variant").is_err());
+  assert!(HttpResponse::ok("body").with_tcn("list, LIST").is_err());
+
+  let duplicate_fields = HttpResponse::ok("body")
+    .header("TCN", "list")
+    .header("tcn", "choice");
+  assert!(duplicate_fields.tcn().is_err());
+  assert!(String::from_utf8(duplicate_fields.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nTCN: list\r\n"));
+
+  let malformed = HttpResponse::ok("body").header("TCN", "variant");
+  assert!(malformed.tcn().is_err());
+  assert!(String::from_utf8(malformed.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nTCN: variant\r\n"));
+
+  let oversized = format!("list{}", "x".repeat(64 * 1024));
+  let raw = HttpResponse::ok("body").header("TCN", &oversized);
+  assert!(raw.tcn().is_err());
+  assert!(String::from_utf8(raw.to_bytes())
+    .expect("response should serialize")
+    .contains(&format!("\r\nTCN: {oversized}\r\n")));
 }
 
 #[test]

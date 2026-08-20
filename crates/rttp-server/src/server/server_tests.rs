@@ -1345,6 +1345,89 @@ fn etag_response_helper_rejects_malformed_duplicate_and_oversized_raw_headers() 
 }
 
 #[test]
+fn schedule_tag_response_helpers_validate_replace_and_parse_singleton_metadata() {
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .schedule_tag()
+      .expect("absent Schedule-Tag should parse")
+  );
+
+  let schedule_tag = HttpScheduleTag::parse("W/\"sched-17\"")
+    .expect("weak Schedule-Tag should parse");
+  let response = HttpResponse::ok([])
+    .header("Schedule-Tag", "\"old\"")
+    .header("schedule-tag", "W/\"older\"")
+    .with_schedule_tag(schedule_tag.clone());
+  assert_eq!(
+    Some(schedule_tag),
+    response
+      .schedule_tag()
+      .expect("Schedule-Tag should parse")
+  );
+  assert_eq!(
+    vec![("Schedule-Tag", "W/\"sched-17\"")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let strong = HttpResponse::ok([]).header("Schedule-Tag", "\"sched-17\"");
+  assert_eq!(
+    Some(HttpScheduleTag::parse("\"sched-17\"").expect("Schedule-Tag should parse")),
+    strong
+      .schedule_tag()
+      .expect("strong Schedule-Tag should parse")
+  );
+}
+
+#[test]
+fn schedule_tag_response_helper_rejects_malformed_duplicate_and_oversized_raw_headers() {
+  for value in ["abc", "W/abc", "\"bad space\"", "\"bad\"value\""] {
+    let response = HttpResponse::ok([]).header("Schedule-Tag", value);
+    assert!(
+      response.schedule_tag().is_err(),
+      "Schedule-Tag should reject {value:?}"
+    );
+    assert_eq!(
+      vec![("Schedule-Tag", value)],
+      response
+        .headers
+        .iter()
+        .map(|header| (header.name.as_str(), header.value.as_str()))
+        .collect::<Vec<_>>()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("Schedule-Tag", "\"one\"")
+    .header("schedule-tag", "W/\"two\"");
+  assert!(duplicate.schedule_tag().is_err());
+  assert_eq!(
+    vec![("Schedule-Tag", "\"one\""), ("schedule-tag", "W/\"two\"")],
+    duplicate
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let oversized = format!("\"{}\"", "a".repeat(64 * 1024));
+  let response = HttpResponse::ok([]).header("Schedule-Tag", &oversized);
+  assert!(response.schedule_tag().is_err());
+  assert_eq!(
+    vec![("Schedule-Tag", oversized.as_str())],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
 fn service_worker_allowed_response_helpers_validate_replace_and_parse_singleton_metadata() {
   assert_eq!(
     None,
@@ -2704,6 +2787,133 @@ fn sec_websocket_protocol_helpers_preserve_raw_metadata_and_report_parse_errors(
   );
   assert!(HttpResponse::new(400, "Bad Request")
     .with_sec_websocket_protocol("a".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
+fn sec_websocket_extensions_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::new(101, "Switching Protocols")
+    .header("Sec-WebSocket-Extensions", "legacy")
+    .header("sec-websocket-extensions", "x-test")
+    .with_sec_websocket_extensions(r#"permessage-deflate; client_no_context_takeover; mode="safe""#)
+    .expect("Sec-WebSocket-Extensions should be accepted");
+
+  let extensions = response
+    .sec_websocket_extensions()
+    .expect("Sec-WebSocket-Extensions should parse")
+    .expect("Sec-WebSocket-Extensions should be present");
+  let selected = extensions.selected().expect("selected extension");
+  assert_eq!("permessage-deflate", selected.token());
+  assert_eq!(2, selected.parameters().len());
+  assert_eq!(
+    r#"permessage-deflate; client_no_context_takeover; mode="safe""#,
+    extensions.header_value()
+  );
+  assert_eq!(
+    vec![(
+      "Sec-WebSocket-Extensions",
+      r#"permessage-deflate; client_no_context_takeover; mode="safe""#
+    )],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+  assert!(response
+    .headers
+    .iter()
+    .all(|header| !header.name.eq_ignore_ascii_case("Connection")
+      && !header.name.eq_ignore_ascii_case("Upgrade")));
+}
+
+#[test]
+fn sec_websocket_extensions_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::new(101, "Switching Protocols")
+    .header("Sec-WebSocket-Extensions", "permessage-deflate")
+    .header("sec-websocket-extensions", "x-test");
+  assert!(
+    raw.sec_websocket_extensions().is_err(),
+    "combined response fields must still be a selection singleton"
+  );
+  assert_eq!(
+    vec![
+      ("Sec-WebSocket-Extensions", "permessage-deflate"),
+      ("sec-websocket-extensions", "x-test"),
+    ],
+    raw
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let singleton =
+    HttpResponse::new(101, "Switching Protocols").header("Sec-WebSocket-Extensions", "x-test");
+  let extensions = singleton
+    .sec_websocket_extensions()
+    .expect("raw Sec-WebSocket-Extensions should parse")
+    .expect("Sec-WebSocket-Extensions should be present");
+  assert_eq!("x-test", extensions.header_value());
+  assert_eq!(
+    "x-test",
+    extensions.selected().expect("selected extension").token()
+  );
+
+  for value in [
+    "",
+    "permessage-deflate, x-test",
+    "permessage deflate",
+    "permessage-deflate; p=",
+    "permessage-deflate; p=1; p=2",
+    "permessage-deflate\r\nX-Injected: 1",
+  ] {
+    let malformed = HttpResponse {
+      version: "HTTP/1.1".to_string(),
+      status_code: 101,
+      reason: "Switching Protocols".to_string(),
+      headers: vec![HttpHeader::new("Sec-WebSocket-Extensions", value)],
+      trailers: Vec::new(),
+      body: Vec::new(),
+    };
+    assert!(
+      malformed.sec_websocket_extensions().is_err(),
+      "should reject {value:?}"
+    );
+    assert!(
+      HttpResponse::new(101, "Switching Protocols")
+        .with_sec_websocket_extensions(value)
+        .is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      Some(value),
+      malformed
+        .headers
+        .iter()
+        .find(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Extensions"))
+        .map(|header| header.value.as_str())
+    );
+  }
+
+  let legacy =
+    HttpResponse::new(101, "Switching Protocols").header("Sec-WebSocket-Extensions", "legacy");
+  let error = legacy
+    .clone()
+    .with_sec_websocket_extensions("permessage-deflate, x-test")
+    .expect_err("multi-extension selection should be rejected");
+  assert!(error.to_string().contains("Sec-WebSocket-Extensions"));
+  assert_eq!(
+    Some("legacy"),
+    legacy
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Extensions"))
+      .map(|header| header.value.as_str()),
+    "a failed builder must leave the response unchanged"
+  );
+  assert!(HttpResponse::new(101, "Switching Protocols")
+    .with_sec_websocket_extensions("a".repeat(64 * 1024 + 1))
     .is_err());
 }
 
@@ -5436,6 +5646,101 @@ hello\r\n\
       .expect("clear should parse")
       .expect("clear should be present")
       .is_clear());
+  }
+
+  #[test]
+  fn alternates_helpers_validate_replace_and_parse_response_metadata() {
+    let response = HttpResponse::ok([])
+      .header("Alternates", r#"{ "/stale" 1 }"#)
+      .header("alternates", r#"{ "/older" 0.1 }"#)
+      .with_alternates(
+        r#"{ "/resource.en.html" 1.0 {type text/html} {language en} {length 1234} }, { "/resource.fr.html" 0.8 {type "text/html; charset=utf-8"} {language fr} }"#,
+      )
+      .expect("Alternates should be accepted");
+    let alternates = response
+      .alternates()
+      .expect("response Alternates should parse")
+      .expect("response Alternates should be present");
+
+    assert_eq!(2, alternates.len());
+    assert_eq!("/resource.en.html", alternates.variants()[0].uri());
+    assert_eq!("1.0", alternates.variants()[0].quality());
+    assert_eq!(Some("text/html"), alternates.variants()[0].attribute("type"));
+    assert_eq!(Some("fr"), alternates.variants()[1].attribute("language"));
+    let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+    assert_eq!(1, serialized.matches("\r\nAlternates: ").count());
+    assert!(serialized.contains("\r\nAlternates: { \"/resource.en.html\" 1.0"));
+    assert!(!serialized.contains("/stale"));
+    assert!(!serialized.contains("/older"));
+
+    let malformed = HttpResponse::ok([]).header("Alternates", r#"{ "/broken" 1.001 }"#);
+    assert!(malformed.alternates().is_err());
+    assert!(String::from_utf8(malformed.to_bytes())
+      .expect("response should serialize")
+      .contains("\r\nAlternates: { \"/broken\" 1.001 }\r\n"));
+
+    let absent = HttpResponse::ok([]);
+    assert_eq!(None, absent.alternates().expect("absent Alternates is Ok(None)"));
+  }
+
+  #[test]
+  fn alternates_builder_rejects_normalized_values_over_field_limit() {
+    let tight_value = (0..256)
+      .map(|index| {
+        let padding = "a".repeat(234 + usize::from(index < 113));
+        format!(r#"{{ "/v{index}" 1 {{note {padding}}}}}"#)
+      })
+      .collect::<Vec<_>>()
+      .join(",");
+
+    assert!(tight_value.len() <= 64 * 1024);
+    assert!(HttpAlternates::parse(&tight_value).is_ok());
+    assert!(HttpResponse::ok([])
+      .with_alternates(&tight_value)
+      .is_err());
+  }
+
+  #[test]
+  fn tcn_helpers_validate_replace_and_parse_response_metadata() {
+    let response = HttpResponse::ok([])
+      .header("TCN", "list")
+      .with_tcn("Choice, keep")
+      .expect("TCN should be accepted");
+    let tcn = response
+      .tcn()
+      .expect("response TCN should parse")
+      .expect("response TCN should be present");
+
+    assert_eq!(
+      &[HttpTcnDirective::Choice, HttpTcnDirective::Keep],
+      tcn.members()
+    );
+    assert_eq!("choice, keep", tcn.header_value());
+    let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+    assert_eq!(1, serialized.matches("\r\nTCN: ").count());
+    assert!(serialized.contains("\r\nTCN: choice, keep\r\n"));
+    assert!(!serialized.contains("\r\nTCN: list\r\n"));
+
+    let duplicate_fields = HttpResponse::ok([])
+      .header("TCN", "list")
+      .header("tcn", "choice");
+    assert!(duplicate_fields.tcn().is_err());
+    assert!(String::from_utf8(duplicate_fields.to_bytes())
+      .expect("response should serialize")
+      .contains("\r\nTCN: list\r\n"));
+
+    let malformed = HttpResponse::ok([]).header("TCN", "variant");
+    assert!(malformed.tcn().is_err());
+    assert!(String::from_utf8(malformed.to_bytes())
+      .expect("response should serialize")
+      .contains("\r\nTCN: variant\r\n"));
+
+    let absent = HttpResponse::ok([]);
+    assert_eq!(None, absent.tcn().expect("absent TCN is Ok(None)"));
+    assert!(HttpResponse::ok([]).with_tcn("list, LIST").is_err());
+
+    let oversized = format!("list{}", "x".repeat(64 * 1024));
+    assert!(HttpResponse::ok([]).with_tcn(&oversized).is_err());
   }
 
   #[test]

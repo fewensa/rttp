@@ -49,6 +49,24 @@ handler-owned policy; it does not create or manage a CDN cache, compute
 freshness, evaluate surrogate keys, revalidate automatically, enforce
 shared-cache policy, retry, replay, redirect, or choose status behavior.
 
+## Response Surrogate-Control metadata
+
+`HttpResponse::with_surrogate_control()` validates and replaces
+`Surrogate-Control` response metadata through the shared protocol
+`HttpSurrogateControl` type. `HttpResponse::surrogate_control()` parses
+attached raw response fields on demand while preserving the raw headers on
+parse errors.
+
+Validation accepts directive names, optional token values, and well-formed
+quoted extension values. It rejects malformed syntax, duplicate directive
+names case-insensitively across fields, more than 256 directives, values larger
+than 64 KiB, and aggregate parsed header sets larger than 64 KiB.
+
+The helper only exposes metadata for handler-owned policy. It does not create
+or manage a CDN cache, compute freshness, evaluate surrogate keys, translate
+directives into `Cache-Control`, revalidate automatically, enforce shared-cache
+policy, retry, replay, redirect, or choose status behavior.
+
 ## Response Content-Security-Policy-Report-Only metadata
 
 `HttpResponse::with_content_security_policy_report_only(value)` validates and
@@ -117,6 +135,72 @@ to expose the original request.
 
 These helpers parse request metadata only. They do not negotiate, transcode,
 decode bodies, sniff MIME types, or select a response charset.
+
+## A-IM request metadata
+
+Handlers can call `Request::a_im()` and `HttpRequest::a_im()` to observe
+bounded typed `A-IM` request metadata through the shared `rttp-protocol`
+primitive. The helpers combine case-insensitive fields in wire order into
+`HttpAIm`. Each entry exposes `token()`, q-value `quality()` in thousandths
+(`1000` is the default quality of `1`), and ordered `parameters()`. The
+shared protocol type is the authority for token, q-value, parameter,
+duplicate, member-count, and size validation. Each field value and the
+combined raw field set are limited to 64 KiB, the combined list is limited to
+32 members, and each member is limited to 16 parameters. Absent metadata
+returns `Ok(None)`. Malformed, oversized, duplicate, empty, or over-limit
+values return a parse error while `Request::header()` and `Request::body()`
+continue to expose the original request.
+
+These helpers parse request metadata only. They do not select a preferred
+instance manipulation or apply delta encodings.
+
+## Negotiate request metadata
+
+Handlers can call `Request::negotiate()` and `HttpRequest::negotiate()` to
+observe bounded typed RFC 2295 `Negotiate` request metadata through the
+shared `rttp-protocol` primitive. The helpers combine case-insensitive
+fields in wire order into `HttpNegotiate`. Each `HttpNegotiateDirective` is a
+`trans`, `vlist`, `guess-small`, or `*` flag, a `major.minor` remote variant
+selection algorithm version, or a `token[=token]` extension. The shared
+protocol type is the authority for token, version, feature value, duplicate,
+member-count, and size validation. Each field value and the combined raw
+field set are limited to 64 KiB, and the combined list is limited to 32
+members. Absent metadata returns `Ok(None)`. Malformed, oversized, duplicate,
+empty, or over-limit values return a parse error while `Request::header()`
+and `Request::body()` continue to expose the original request.
+
+These helpers parse request metadata only. They do not select a variant, run
+transparent content negotiation, or change cache selection.
+
+## TCN response metadata
+
+`HttpResponse::with_tcn(value)` validates and replaces one bounded RFC 2295
+`TCN` response field through the shared `rttp-protocol` primitive.
+`HttpResponse::tcn()` parses attached raw `TCN` metadata without changing the
+response. Valid metadata is an ordered comma-separated list of `list`,
+`choice`, `adhoc`, `re-choose`, and `keep`, normalized to lowercase.
+Duplicate fields, duplicate tokens, malformed or unknown tokens, empty
+members, oversized values, and control-byte injection return
+`HttpTcnParseError` while raw response headers remain available.
+
+These helpers expose response metadata only. They do not select variants,
+synthesize `Alternates`, update `Vary`, or change cache behavior.
+
+## Variant-Vary response metadata
+
+`HttpResponse::with_variant_vary(value)` validates and replaces one bounded
+RFC 2295 `Variant-Vary` response field through the shared `rttp-protocol`
+primitive. `HttpResponse::variant_vary()` parses attached raw `Variant-Vary`
+metadata without changing the response. Valid metadata is either the
+exclusive `*` wildcard or an ordered list of HTTP field-name tokens,
+normalized to lowercase in first-seen order. Duplicate names, duplicate or
+mixed wildcards, malformed or empty members, oversized values, and
+control-byte injection return `HttpVariantVaryParseError` while raw response
+headers remain available.
+
+These helpers expose response metadata only. They do not construct cache
+keys, select variants, synthesize `Alternates`, update `TCN` or `Vary`, or
+change cache behavior.
 
 ## Accept-Encoding request metadata
 
@@ -283,6 +367,24 @@ values larger than 64 KiB are rejected.
 These helpers only declare and parse metadata. The server does not select
 alternative services, rewrite origins, migrate sockets, retry, or change
 connection policy from `Alt-Used`.
+
+## Alternates response metadata
+
+`HttpResponse::with_alternates(value)` validates bounded `Alternates`
+variant metadata through the shared protocol `HttpAlternates` type and
+replaces any existing `Alternates` fields with one normalized value.
+`HttpResponse::alternates()` parses attached raw fields into the same type,
+returning `Ok(None)` when the header is absent and returning parser errors
+without changing raw fields. Valid metadata preserves variant URIs, source
+quality text, and attributes such as `type`, `language`, `encoding`, and
+`length`. Each field value is limited to 64 KiB, the combined field bytes
+are limited to 64 KiB, the variant count is limited to 256, and each variant
+holds at most 256 attributes. Malformed members, invalid URIs, invalid
+qvalues, duplicate attributes or variants, and oversized values are rejected.
+
+These helpers only declare and parse metadata. The server does not select a
+variant, fetch a variant URI, replay requests, apply `Vary` matching, or
+change representation policy from `Alternates`.
 
 ## Origin-Trial response metadata
 
@@ -798,6 +900,22 @@ These helpers parse request metadata only. They do not compare the validator
 to stored calendar state, inspect calendars, select scheduling behavior, or
 apply 412 or scheduling policy.
 
+## Schedule-Tag response metadata
+
+Handlers can call `HttpResponse::with_schedule_tag(value)` to declare one
+bounded `Schedule-Tag` response field and `HttpResponse::schedule_tag()` to
+parse attached raw `Schedule-Tag` fields through the shared protocol
+`HttpScheduleTag` type, which reuses the shared `HttpEntityTag`
+representation. Absent fields return `Ok(None)`. A recognized value is one
+entity-tag-shaped schedule validator such as `"sched-17"` or `W/"sched-17"`,
+with optional surrounding SP or HTAB trimmed and weak syntax preserved.
+Malformed, wildcard, comma-list, duplicate, oversized, or control-byte values
+return a parser error while raw response headers remain available.
+
+These helpers declare and parse response metadata only. They do not generate
+calendar versions, compare validators, inspect calendars, select scheduling
+behavior, or apply scheduling policy.
+
 ## WebDAV Overwrite request metadata
 
 Handlers can call `Request::overwrite()` and `HttpRequest::overwrite()` to
@@ -925,6 +1043,30 @@ These helpers declare and parse metadata only. They do not perform a
 WebSocket handshake, emit `Connection: Upgrade` or `Upgrade: websocket`,
 choose an application subprotocol, or switch protocols. Applications own the
 selection decision; RTTP never picks a token from the offer list.
+
+## Sec-WebSocket-Extensions request and response metadata
+
+Handlers can call `Request::sec_websocket_extensions()` and
+`HttpRequest::sec_websocket_extensions()` to observe bounded typed
+`Sec-WebSocket-Extensions` request metadata as ordered offers through the
+shared protocol `HttpSecWebSocketExtensions` type. Absent fields return
+`Ok(None)`. `HttpResponse::with_sec_websocket_extensions(value)` declares
+validated response metadata for one selected extension member that replaces
+attached same-name fields, and `HttpResponse::sec_websocket_extensions()`
+parses attached response fields as a selection singleton. Extension tokens and
+parameter names use the HTTP token grammar; parameter values may be tokens or
+quoted strings. Multiple request fields are combined in wire order, each
+field value and the combined raw or canonical serialized field set is bounded
+to 64 KiB, and the combined extension member count is bounded to 32.
+Duplicate extension tokens, duplicate parameter names within one extension,
+malformed quoted strings, control-byte values, and bound violations return a
+parser error while raw headers remain available; a multi-extension response
+value fails the singleton selection parse.
+
+These helpers declare and parse metadata only. They do not perform a
+WebSocket handshake, emit `Connection: Upgrade` or `Upgrade: websocket`,
+activate compression, negotiate extensions, or switch protocols. Applications
+own all extension behavior.
 
 ## Pragma request and response metadata
 
