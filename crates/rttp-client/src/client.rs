@@ -17,6 +17,7 @@ use rttp_protocol::authorization::Authorization;
 use rttp_protocol::baggage::Baggage;
 use rttp_protocol::cdn_loop::{CdnLoop, MAX_CDN_LOOP_VALUE_BYTES};
 use rttp_protocol::depth::Depth;
+use rttp_protocol::destination::Destination;
 use rttp_protocol::expect::Expect;
 use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
@@ -803,6 +804,18 @@ impl HttpClient {
     let depth = Depth::parse(value.as_ref())
       .map_err(|error| error::builder_with_message(error.to_string()))?;
     Ok(self.header(Header::new("Depth", depth.header_value())))
+  }
+
+  /// Set bounded WebDAV `Destination` request metadata.
+  ///
+  /// The value must be one absolute URI, with optional surrounding SP or HTAB
+  /// trimmed. This only validates and emits the preserved URI string; it does
+  /// not resolve the destination, normalize URI components, authorize access,
+  /// or copy or move resources. Use `header` directly for unusual values.
+  pub fn destination<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let destination = Destination::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("Destination", destination.header_value())))
   }
 
   /// Set bounded WebDAV `Lock-Token` request metadata.

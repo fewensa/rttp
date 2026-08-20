@@ -74,6 +74,18 @@ response field. Absent fields return `Ok(None)`. Malformed, duplicate, or
 oversized values return a response error while raw headers remain available.
 Parse errors do not include the token value.
 
+## Bounded WebDAV Destination metadata
+
+`HttpClient::destination(value)` sets a WebDAV `Destination` request header
+through the shared protocol `Destination` type. The helper accepts one
+absolute URI, trims HTTP OWS, preserves the trimmed URI string, and rejects
+empty, relative, scheme-relative, malformed, oversized (over 64 KiB),
+duplicate, injection, and control-byte values before a socket is opened. It
+only validates and emits the preserved metadata value: RTTP does not resolve
+the destination, normalize URI components, authorize access, select WebDAV
+methods, or copy or move resources. Callers needing an unusual value can
+retain full raw-header control with `header(("Destination", "..."))`.
+
 ## Bounded Idempotency-Key metadata
 
 `HttpClient::idempotency_key(value)` sets an `Idempotency-Key` request header
@@ -1289,6 +1301,7 @@ header-block model.
 | Max-Forwards | `max_forwards` emits bounded singleton `Max-Forwards` request metadata through the shared protocol type | No hop decrement, proxy routing, TRACE/OPTIONS selection, retry, or forwarding policy |
 | Depth | `depth` emits bounded singleton WebDAV `Depth` request metadata through the shared protocol type, normalizing `infinity` to lowercase and replacing an existing same-name field | No resource traversal, WebDAV method selection, method-policy enforcement, retry, or forwarding policy |
 | Lock-Token | `lock_token` emits bounded singleton WebDAV `Lock-Token` request metadata through the shared protocol type, replacing an existing same-name field and redacting the token from typed debug output; `Response::lock_token` parses bounded singleton response metadata | No lock creation, refresh, release, persistence, ownership comparison, or WebDAV lock policy |
+| Destination | `destination` emits bounded singleton WebDAV `Destination` request metadata through the shared protocol type, preserving one absolute URI and replacing an existing same-name field | No destination resolution, URI normalization, authorization, COPY/MOVE execution, or application resource policy |
 | Idempotency-Key | `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | WebSocket handshake metadata | `sec_websocket_key` emits bounded singleton `Sec-WebSocket-Key` request metadata through the shared protocol type, replacing an existing same-name field and redacting the nonce from typed debug output; `Response::sec_websocket_accept` parses bounded singleton response metadata and `verify_sec_websocket_accept` checks the RFC GUID plus SHA-1/base64 derivation against a validated key | No HTTP upgrade, random nonce generation, WebSocket frames, or handshake policy |
 | Sec-WebSocket-Version | `sec_websocket_version` emits bounded `Sec-WebSocket-Version` request metadata through the shared protocol type, replacing an existing same-name field, and `Response::sec_websocket_version` parses received fields including rejection-response version lists | No WebSocket handshake, `Connection: Upgrade` emission, `Sec-WebSocket-Accept` computation, version negotiation, protocol switch, or frames |

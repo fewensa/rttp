@@ -149,6 +149,22 @@ returns the stored coded URL and `header_value()` emits it unchanged. This
 parser reports declared metadata only; it does not create, refresh, release,
 persist, compare ownership of, or enforce WebDAV locks.
 
+## Destination
+
+`destination` parses a singleton WebDAV `Destination` request field as one
+RFC 3986 `absolute-URI`. Each field value is bounded to 64 KiB. A second
+field is rejected after every supplied field is bound-checked. Surrounding SP
+and HTAB are trimmed as optional whitespace. The stored value is the
+OWS-trimmed URI string; `as_str()` and `header_value()` return that same
+text without resolving it against a request target or normalizing scheme,
+host, path, query, or fragment. Empty values, relative references,
+scheme-relative network paths, interior whitespace, non-URI bytes, broken
+percent-encoding, malformed structural URLs, oversized values, and forbidden
+ASCII control bytes (including CR, LF, and NUL) are errors. This parser
+reports declared request metadata only; it does not authorize the target
+URI, compare source and destination resources, select WebDAV methods, or
+copy, move, or delete application resources.
+
 ## Idempotency-Key
 
 `idempotency_key` parses a singleton HTTP `Idempotency-Key` request field as

@@ -724,6 +724,22 @@ response metadata for inspection. Unusual values can still be attached with
 These helpers parse and emit metadata only. They do not create, refresh,
 release, persist, compare ownership of, or enforce WebDAV locks.
 
+## WebDAV Destination request metadata
+
+Handlers can call `Request::destination()` and `HttpRequest::destination()`
+to observe bounded typed WebDAV `Destination` request metadata through the
+shared protocol `HttpDestination` type. Absent fields return `Ok(None)`. A
+recognized value is one absolute URI with optional surrounding SP or HTAB,
+bounded to 64 KiB. `as_str()` and `header_value()` return the stored
+OWS-trimmed URI string unchanged. Malformed, relative, duplicate, oversized,
+or control-byte values return a parser error while `Request::header()` and
+`HttpRequest::header()` continue to expose the original raw field.
+
+These helpers parse request metadata only. They do not resolve the
+destination against the request target, normalize URI components, authorize
+access, select WebDAV methods, or copy, move, or delete application
+resources.
+
 ## Idempotency-Key request metadata
 
 Handlers can call `Request::idempotency_key()` and

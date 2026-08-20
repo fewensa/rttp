@@ -29,6 +29,7 @@ use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::cross_origin_opener_policy_report_only::CrossOriginOpenerPolicyReportOnly;
 use rttp_protocol::deprecation::Deprecation;
 use rttp_protocol::depth::Depth;
+use rttp_protocol::destination::Destination;
 use rttp_protocol::document_policy::{DocumentPolicy, DocumentPolicyParseError};
 use rttp_protocol::document_policy_report_only::{
   DocumentPolicyReportOnly, DocumentPolicyReportOnlyParseError,
@@ -119,6 +120,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let keep_alive = KeepAlive::parse("timeout=5, max=100").expect("Keep-Alive should parse");
   let location = Location::parse("../login?next=%2Fdashboard").expect("Location should parse");
   let max_forwards = MaxForwards::parse("0").expect("Max-Forwards should parse");
+  let destination = Destination::parse("https://dav.example.test/archive/report.txt")
+    .expect("Destination should parse");
   let depth = Depth::parse("infinity").expect("Depth should parse");
   let lock_token = LockToken::parse("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>")
     .expect("Lock-Token metadata should parse");
@@ -334,6 +337,14 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(location.as_str(), "../login?next=%2Fdashboard");
   assert_eq!(max_forwards.value(), 0);
   assert_eq!(max_forwards.header_value(), "0");
+  assert_eq!(
+    destination.as_str(),
+    "https://dav.example.test/archive/report.txt"
+  );
+  assert_eq!(
+    destination.header_value(),
+    "https://dav.example.test/archive/report.txt"
+  );
   assert_eq!(Depth::Infinity, depth);
   assert_eq!("infinity", depth.header_value());
   assert_eq!(

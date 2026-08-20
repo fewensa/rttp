@@ -38,11 +38,12 @@ pub use rttp_client::response::{
 };
 #[cfg(feature = "client")]
 pub use rttp_client::{
-  Baggage, BaggageMember, BaggageParseError, BaggageProperty, Depth, DepthParseError, LockToken,
-  LockTokenParseError, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
-  TraceParent, TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError,
-  XForwardedFor, XForwardedForNode, XForwardedForNodeKind, XForwardedForParseError, XForwardedHost,
-  XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
+  Baggage, BaggageMember, BaggageParseError, BaggageProperty, Depth, DepthParseError, Destination,
+  DestinationParseError, LockToken, LockTokenParseError, SecFetchDest, SecFetchMode, SecFetchSite,
+  SecFetchUser, SecPurpose, TraceParent, TraceParentParseError, TraceState, TraceStateMember,
+  TraceStateParseError, XForwardedFor, XForwardedForNode, XForwardedForNodeKind,
+  XForwardedForParseError, XForwardedHost, XForwardedHostParseError, XForwardedProto,
+  XForwardedProtoParseError,
 };
 
 impl Http {

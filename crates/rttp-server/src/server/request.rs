@@ -41,6 +41,9 @@ pub use rttp_protocol::connection::{
 pub use rttp_protocol::content_length::HttpContentLength;
 pub use rttp_protocol::cookie::{HttpCookiePair, HttpCookieParseError, HttpCookies};
 pub use rttp_protocol::depth::{Depth as HttpDepth, DepthParseError as HttpDepthParseError};
+pub use rttp_protocol::destination::{
+  Destination as HttpDestination, DestinationParseError as HttpDestinationParseError,
+};
 pub use rttp_protocol::entity_tag::{
   EntityTag as HttpEntityTag, EntityTagParseError as HttpEntityTagParseError,
 };
@@ -546,6 +549,16 @@ impl Request {
       return Ok(None);
     }
     HttpDepth::parse_values(values).map(Some)
+  }
+
+  /// Parses received WebDAV `Destination` request metadata without resolving,
+  /// authorizing, or moving application resources.
+  pub fn destination(&self) -> Result<Option<HttpDestination>, HttpDestinationParseError> {
+    let values: Vec<&str> = self.headers_named("Destination").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDestination::parse_values(values).map(Some)
   }
 
   /// Parses exactly one bounded WebDAV `Lock-Token` field as typed metadata.
@@ -2347,6 +2360,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpDepth::parse_values(values).map(Some)
+  }
+
+  /// Parses received WebDAV `Destination` request metadata without resolving,
+  /// authorizing, or moving application resources.
+  pub fn destination(&self) -> Result<Option<HttpDestination>, HttpDestinationParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Destination"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDestination::parse_values(values).map(Some)
   }
 
   /// Parses exactly one bounded WebDAV `Lock-Token` field as typed metadata.
