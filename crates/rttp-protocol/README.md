@@ -125,6 +125,25 @@ singleton, duplicate, member-count, and size validation. It reports response
 metadata only; it does not select variants, synthesize `Alternates` or `Vary`,
 or change cache selection.
 
+## Set-Cookie
+
+`cookie` parses request `Cookie` pairs and response `Set-Cookie` fields as
+bounded, policy-free metadata. Each `Set-Cookie` field remains one field line
+and is never comma-combined. A field value is bounded to 64 KiB, a cookie or
+attribute value is bounded to 4 KiB, a field may hold at most 64 attributes,
+a collection may hold at most 256 fields, and the combined raw field bytes are
+bounded to 64 KiB. Cookie names are RFC 9110 tokens. Cookie values may be
+quoted; the quoted state is retained and `header_value()` round-trips it.
+Standard attributes (`Expires`, `Max-Age`, `Domain`, `Path`, `Secure`,
+`HttpOnly`, `SameSite`, `Partitioned`, and `Priority`) have typed accessors.
+Extension attributes are retained in wire order. Duplicate attributes are
+rejected case-insensitively. Typed `Debug` output redacts cookie and attribute
+values. This type is the shared authority for name/value, attribute,
+quoted-value, duplicate, count, and size validation. It reports response
+metadata only; it does not implement a cookie jar, persistence, domain/path
+matching, expiry enforcement, SameSite or partitioning policy, or automatic
+request `Cookie` emission.
+
 ## Variant-Vary
 
 `variant_vary` parses one or more RFC 2295 `Variant-Vary` response fields into

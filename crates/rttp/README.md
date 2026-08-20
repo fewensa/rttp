@@ -1150,6 +1150,24 @@ These helpers are metadata-only: RTTP does not select a variant, synthesize
 `Alternates` or `Vary`, apply transparent content negotiation, or change cache
 behavior from `TCN`.
 
+## Bounded Set-Cookie response metadata
+
+`HttpSetCookie` and `HttpSetCookies` are the shared protocol representation
+for bounded response `Set-Cookie` metadata. Client responses can call
+`Response::set_cookies()` to parse attached fields, and server responses can
+call `HttpResponse::with_set_cookie(cookie)` or `HttpResponse::set_cookies()`
+to declare or observe the same metadata. Valid metadata preserves multiple
+field lines and raw headers, retains quoted cookie-value state, exposes
+standard and extension attributes, and rejects duplicate attributes
+case-insensitively. Per-value, per-field, count, and aggregate-size bounds are
+enforced by the protocol type. Typed debug and error output redacts cookie
+values. Raw `header("Set-Cookie", value)` remains an escape hatch.
+
+These helpers are metadata-only: RTTP does not implement a cookie jar,
+persistence, domain/path matching, expiry enforcement, SameSite or
+partitioning policy, redirect cookie handling, or automatic request `Cookie`
+emission.
+
 ## Bounded Origin-Trial response metadata
 
 `OriginTrials` and `HttpOriginTrials` share the protocol parser for bounded
@@ -1574,6 +1592,7 @@ scheduling, or async accept loops.
 | Delta-Base | `HttpResponse::with_delta_base` declares one validated `Delta-Base` header, and `HttpResponse::delta_base` plus client `Response::delta_base` parse bounded singleton `Delta-Base` response metadata through the shared entity-tag primitive while preserving raw headers on parse errors | No cached-entity lookup, validator comparison, delta application, or cache policy |
 | Negotiate | `HttpClient::negotiate` emits bounded RFC 2295 `Negotiate` request metadata through the shared protocol type, and `Request::negotiate`/`HttpRequest::negotiate` parse received fields into `HttpNegotiate` while preserving raw headers on errors | No variant selection, transparent content negotiation, `Alternates`/`TCN` synthesis, or automatic cache selection |
 | TCN | `Response::tcn()` and `HttpResponse::with_tcn()`/`tcn()` share bounded RFC 2295 `TCN` response metadata through `Tcn`/`HttpTcn` while preserving raw headers on accessor errors | No variant selection, `Alternates`/`Vary` synthesis, transparent content negotiation, or cache behavior |
+| Set-Cookie | `Response::set_cookies()` and `HttpResponse::with_set_cookie()`/`set_cookies()` share bounded protocol `Set-Cookie` response metadata, preserve multiple field lines and raw headers, redact cookie values from typed debug and errors, and reject duplicate attributes | No cookie jar, persistence, domain/path matching, expiry enforcement, SameSite or partitioning policy, or automatic request `Cookie` emission |
 | Variant-Vary | `HttpVariantVary`, `HttpResponse::with_variant_vary`, and `HttpResponse::variant_vary` plus client `Response::variant_vary` declare or parse bounded RFC 2295 `Variant-Vary` response metadata through the shared protocol type, replacing raw duplicates on declaration and preserving raw headers on accessor errors | No cache-key construction, variant selection, `Alternates`/`TCN`/`Vary` synthesis, transparent content negotiation, or cache behavior |
 | Transparent negotiation metadata matrix | Workspace integration tests cover live HTTP/1.1 and h2c client/server/facade roundtrips for `A-IM`, `IM`, `Delta-Base`, `Alternates`, `Negotiate`, `TCN`, and `Variant-Vary`, including valid values, malformed/duplicate/bounds rejection, raw-header observability, and declared-order q-value recording | No variant selection, `Alternates` URI fetching, delta application, `226 IM Used` synthesis, or cache policy |
 | Accept-Encoding | `HttpRequestAcceptEncodings`, `Request::accept_encoding`, and `HttpRequest::accept_encoding` parse bounded `Accept-Encoding` request metadata through the shared `rttp-protocol` type | No compression, decompression, content negotiation, retries, or transport changes |

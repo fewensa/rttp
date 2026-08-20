@@ -4,10 +4,10 @@ use rttp_client::response::{
   ContentType, CrossOriginEmbedderPolicy, CrossOriginEmbedderPolicyReportOnly,
   CrossOriginOpenerPolicy, CrossOriginResourcePolicy, DeltaBase, Deprecation, DocumentPolicy,
   DocumentPolicyReportOnly, DocumentPolicyReportOnlyValue, DocumentPolicyValue, EntityTag,
-  HttpClearSiteData, HttpSetCookies, Im, ImMember, ImParameter, ImParseError, KeepAlive,
-  LinkValues, Location, LockToken, MementoDatetime, OriginTrials, PermissionsPolicy,
-  ProxyAuthenticate, ProxyAuthenticationInfo, ProxyStatus, ProxyStatusBareItem, ReferrerPolicy,
-  ReferrerPolicyToken, Response, RetryAfter, ScheduleTag, SecWebSocketAccept,
+  HttpClearSiteData, HttpSameSite, HttpSetCookie, HttpSetCookies, Im, ImMember, ImParameter,
+  ImParseError, KeepAlive, LinkValues, Location, LockToken, MementoDatetime, OriginTrials,
+  PermissionsPolicy, ProxyAuthenticate, ProxyAuthenticationInfo, ProxyStatus, ProxyStatusBareItem,
+  ReferrerPolicy, ReferrerPolicyToken, Response, RetryAfter, ScheduleTag, SecWebSocketAccept,
   SecWebSocketExtensions, SecWebSocketProtocol, SecWebSocketVersion, ServerTiming,
   ServiceWorkerAllowed, SignatureInput, SpeculationRules, StrictTransportSecurity,
   SupportsLoadingMode, Tcn, TcnDirective, Via, Warning, XContentTypeOptions, XFrameOptions,
@@ -2220,8 +2220,109 @@ fn set_cookie_metadata_is_bounded_and_preserves_unknown_attributes() {
       .map(|attribute| (attribute.name(), attribute.value()))
       .collect::<Vec<_>>()
   );
+  assert_eq!(Some("/"), cookies.cookies()[0].path());
+  assert_eq!(Some("high"), cookies.cookies()[0].priority());
+  assert!(cookies.cookies()[0].partitioned());
+  assert_eq!(Some(HttpSameSite::Lax), cookies.cookies()[1].same_site());
+  assert_eq!(
+    vec![
+      "session=abc; Path=/; Priority=high; Partitioned",
+      "theme=dark; SameSite=Lax"
+    ],
+    response
+      .header_values("set-cookie")
+      .iter()
+      .map(|value| value.as_str())
+      .collect::<Vec<_>>()
+  );
 
   assert!(HttpSetCookies::parse("session=abc\x01").is_err());
+}
+
+#[test]
+fn set_cookie_metadata_reuses_protocol_type_and_redacts_values() {
+  let raw = concat!(
+    "HTTP/1.1 200 OK\r\n",
+    "Set-Cookie: session=\"abc def\"; Path=/; HttpOnly; SameSite=Lax; Priority=High; Partitioned\r\n",
+    "Set-Cookie: csrf=token; Path=/form; Max-Age=60; Foo=bar\r\n",
+    "Content-Length: 0\r\n",
+    "\r\n"
+  );
+  let response = Response::new(RoUrl::with("https://example.test"), raw.as_bytes().to_vec())
+    .expect("response should parse");
+  let cookies = response
+    .set_cookies()
+    .expect("Set-Cookie metadata should parse")
+    .expect("Set-Cookie headers should be present");
+  let protocol = HttpSetCookies::parse_values([
+    r#"session="abc def"; Path=/; HttpOnly; SameSite=Lax; Priority=High; Partitioned"#,
+    "csrf=token; Path=/form; Max-Age=60; Foo=bar",
+  ])
+  .expect("protocol parse should succeed");
+
+  assert_eq!(protocol, cookies);
+  assert!(cookies.cookies()[0].is_value_quoted());
+  assert_eq!("abc def", cookies.cookies()[0].value());
+  assert_eq!(
+    vec![("Foo", Some("bar"))],
+    cookies.cookies()[1]
+      .extension_attributes()
+      .map(|attribute| (attribute.name(), attribute.value()))
+      .collect::<Vec<_>>()
+  );
+  assert_eq!(2, response.cookies().len());
+  assert_eq!(
+    Some("abc def"),
+    response
+      .cookie("session")
+      .map(|cookie| cookie.value().as_str())
+  );
+  assert_eq!(
+    Some("csrf=token; path=/form; max-age=60"),
+    response
+      .cookie("csrf")
+      .map(|cookie| cookie.string())
+      .as_deref()
+  );
+
+  let invalid = Response::new(
+    RoUrl::with("https://example.test"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Set-Cookie: session=super-secret; Path=/; path=/other\r\n",
+      "Content-Length: 0\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("raw response should remain inspectable");
+  let error = invalid
+    .set_cookies()
+    .expect_err("duplicate attributes should fail the typed accessor");
+  assert!(!error.to_string().contains("super-secret"));
+  assert_eq!(
+    Some(&"session=super-secret; Path=/; path=/other".to_string()),
+    invalid.header_value("Set-Cookie")
+  );
+  assert!(invalid.cookies().is_empty());
+
+  let cookie = HttpSetCookie::parse(r#"session="abc def""#).expect("cookie should parse");
+  let cookie_debug = format!("{cookie:?}");
+  let cookies_debug = format!("{cookies:?}");
+  let legacy_debug = format!("{:?}", response.cookies());
+  let legacy_display = response.cookies()[0].to_string();
+  let response_debug = format!("{response:?}");
+  assert!(cookie_debug.contains("[REDACTED]"));
+  assert!(!cookie_debug.contains("abc def"));
+  assert!(!cookies_debug.contains("abc def"));
+  assert!(!cookies_debug.contains("token"));
+  assert!(legacy_debug.contains("[REDACTED]"));
+  assert!(!legacy_debug.contains("abc def"));
+  assert!(legacy_display.contains("[REDACTED]"));
+  assert!(!legacy_display.contains("abc def"));
+  assert!(response_debug.contains("[REDACTED]"));
+  assert!(!response_debug.contains("abc def"));
 }
 
 #[test]

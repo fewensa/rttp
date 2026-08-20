@@ -12,13 +12,14 @@ use rttp_client::response::{
   CrossOriginResourcePolicy, DeltaBase, DeltaBaseParseError, Digest, DocumentPolicy,
   DocumentPolicyParseError, DocumentPolicyReportOnly, DocumentPolicyReportOnlyParseError,
   DocumentPolicyReportOnlyValue, DocumentPolicyValue, EntityTag, HttpClearSiteData,
-  HttpContentLength, Im, ImMember, ImParameter, ImParseError, KeepAlive, LinkValues, Location,
-  LocationParseError, LockToken, LockTokenParseError, MementoDatetime, MementoDatetimeParseError,
-  Nel, NoVarySearch, NoVarySearchParams, NoVarySearchParseError, OriginTrialParseError,
-  OriginTrials, PermissionsPolicy, PermissionsPolicyParseError, Pragma, PragmaParseError,
-  PreferenceApplied, Priority, ProxyAuthenticate, ProxyAuthenticateParseError,
-  ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError,
-  ReferrerPolicy, ReferrerPolicyToken, ResponseDate, ResponseDateParseError, ResponseExpires,
+  HttpContentLength, HttpCookieParseError, HttpSameSite, HttpSetCookie, HttpSetCookies, Im,
+  ImMember, ImParameter, ImParseError, KeepAlive, LinkValues, Location, LocationParseError,
+  LockToken, LockTokenParseError, MementoDatetime, MementoDatetimeParseError, Nel, NoVarySearch,
+  NoVarySearchParams, NoVarySearchParseError, OriginTrialParseError, OriginTrials,
+  PermissionsPolicy, PermissionsPolicyParseError, Pragma, PragmaParseError, PreferenceApplied,
+  Priority, ProxyAuthenticate, ProxyAuthenticateParseError, ProxyAuthenticationInfo,
+  ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError, ReferrerPolicy,
+  ReferrerPolicyToken, ResponseDate, ResponseDateParseError, ResponseExpires,
   ResponseExpiresParseError, ResponseLastModified, ResponseLastModifiedParseError, ScheduleTag,
   SecWebSocketAccept, SecWebSocketAcceptParseError, SecWebSocketExtensions,
   SecWebSocketExtensionsParseError, SecWebSocketProtocol, SecWebSocketProtocolParseError,
@@ -232,6 +233,14 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let _: &[NegotiateDirective] = negotiate.members();
   let tcn: Tcn = Tcn::parse("list, choice").expect("TCN should parse");
   let _: TcnParseError = Tcn::parse("list, LIST").expect_err("duplicate TCN should be rejected");
+  let set_cookie: HttpSetCookie =
+    HttpSetCookie::parse(r#"session="abc def"; Path=/; SameSite=Lax; Foo=bar"#)
+      .expect("Set-Cookie should parse");
+  let _: HttpSameSite = set_cookie.same_site().expect("SameSite should parse");
+  let _: HttpSetCookies = HttpSetCookies::parse_values([set_cookie.header_value().as_str()])
+    .expect("Set-Cookie collection should parse");
+  let _: HttpCookieParseError = HttpSetCookie::parse("session=abc; Path=/; path=/other")
+    .expect_err("duplicate Set-Cookie attributes should be rejected");
   let _: &[TcnDirective] = tcn.members();
   let variant_vary: VariantVary =
     VariantVary::parse("Accept-Language, Sec-CH-DPR").expect("Variant-Vary should parse");
@@ -1441,6 +1450,62 @@ fn via_facade_exports_shared_request_and_response_type() {
   let _: ClientVia = ClientVia::parse("1.1 edge-a").expect("crate-root Via should parse");
   assert_eq!("edge-a", via.members()[0].received_by());
   assert_eq!(Some("HTTP"), via.members()[1].protocol_name());
+}
+
+#[test]
+fn response_facade_parses_shared_set_cookie_metadata() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 200 OK\r\n",
+      "Set-Cookie: session=\"abc;def\"; Path=/; HttpOnly; SameSite=Lax; Priority=High; Partitioned\r\n",
+      "Set-Cookie: csrf=token; Path=/form; Max-Age=60; Foo=bar\r\n",
+      "Content-Length: 0\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+  let cookies = response
+    .set_cookies()
+    .expect("Set-Cookie should parse")
+    .expect("Set-Cookie should be present");
+
+  assert_eq!(2, cookies.len());
+  assert_eq!(Some("/"), cookies.cookies()[0].path());
+  assert!(cookies.cookies()[0].is_value_quoted());
+  assert_eq!(
+    vec![
+      r#"session="abc;def"; Path=/; HttpOnly; SameSite=Lax; Priority=High; Partitioned"#,
+      "csrf=token; Path=/form; Max-Age=60; Foo=bar"
+    ],
+    response
+      .header_values("set-cookie")
+      .iter()
+      .map(|value| value.as_str())
+      .collect::<Vec<_>>()
+  );
+  assert_eq!(
+    r#"session="abc;def"; path=/; httpOnly; SameSite=Lax"#,
+    response.cookie("session").expect("legacy cookie").string()
+  );
+  assert!(!format!("{cookies:?}").contains("abc;def"));
+  assert!(!format!("{cookies:?}").contains("token"));
+
+  let malformed = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    b"HTTP/1.1 200 OK\r\nSet-Cookie: session=super-secret; Path=/; path=/other\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  )
+  .expect("raw response should remain usable");
+  let error = malformed
+    .set_cookies()
+    .expect_err("duplicate attributes should fail");
+  assert!(!error.to_string().contains("super-secret"));
+  assert_eq!(
+    Some(&"session=super-secret; Path=/; path=/other".to_string()),
+    malformed.header_value("Set-Cookie")
+  );
 }
 
 #[test]

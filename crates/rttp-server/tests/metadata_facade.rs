@@ -14,7 +14,7 @@ use rttp_server::server::{
   HttpContentDispositionParseError, HttpContentDpr, HttpContentDprParseError, HttpContentLength,
   HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
   HttpContentSecurityPolicyReportOnly, HttpContentSecurityPolicyReportOnlyParseError,
-  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
+  HttpCookieParseError, HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
   HttpCrossOriginOpenerPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeltaBase,
   HttpDeltaBaseParseError, HttpDeprecation, HttpDeprecationParseError, HttpDepth,
   HttpDepthParseError, HttpDnt, HttpDntParseError, HttpDocumentPolicy, HttpDocumentPolicyDirective,
@@ -35,20 +35,20 @@ use rttp_server::server::{
   HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus,
   HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
   HttpResponse, HttpResponseDate, HttpResponseDateParseError, HttpResponseExpires,
-  HttpResponseLastModified, HttpResponseLastModifiedParseError, HttpSaveData,
+  HttpResponseLastModified, HttpResponseLastModifiedParseError, HttpSameSite, HttpSaveData,
   HttpSaveDataParseError, HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError,
   HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
   HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
   HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
   HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
-  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
-  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpSurrogateControl,
-  HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective, HttpTcnParseError, HttpTimeout,
-  HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent, HttpTraceParentParseError,
-  HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
-  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpSetCookie, HttpSetCookies, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
+  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
+  HttpSignatureInputParseError, HttpSignatureParseError, HttpSpeculationRules,
+  HttpSpeculationRulesParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError,
+  HttpSurrogateControl, HttpSurrogateControlParseError, HttpTcn, HttpTcnDirective,
+  HttpTcnParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent,
+  HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError,
+  HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
   HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpVariantVary,
   HttpVariantVaryParseError, HttpVia, HttpViaMember, HttpViaParseError, HttpWantContentDigest,
   HttpWantReprDigest, HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost,
@@ -114,6 +114,14 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let _: HttpTcnParseError =
     HttpTcn::parse("list, LIST").expect_err("duplicate TCN should be rejected");
   let _: &[HttpTcnDirective] = tcn.members();
+  let set_cookie: HttpSetCookie =
+    HttpSetCookie::parse(r#"session="abc def"; Path=/; SameSite=Lax; Foo=bar"#)
+      .expect("Set-Cookie should parse");
+  let _: HttpSameSite = set_cookie.same_site().expect("SameSite should parse");
+  let _: HttpSetCookies = HttpSetCookies::parse_values([set_cookie.header_value().as_str()])
+    .expect("Set-Cookie collection should parse");
+  let _: HttpCookieParseError = HttpSetCookie::parse("session=abc; Path=/; path=/other")
+    .expect_err("duplicate Set-Cookie attributes should be rejected");
   let variant_vary: HttpVariantVary =
     HttpVariantVary::parse("Accept-Language, Sec-CH-DPR").expect("Variant-Vary should parse");
   let _: HttpVariantVaryParseError = HttpVariantVary::parse("Accept-Language, accept-language")
@@ -2751,6 +2759,70 @@ fn response_facade_builds_and_parses_speculation_rules_metadata() {
   assert!(HttpResponse::ok("body")
     .with_speculation_rules("https://example.test/rules.json\r\nX-Injected: 1")
     .is_err());
+}
+
+#[test]
+fn server_set_cookie_response_metadata_uses_protocol_representation() {
+  let session = HttpSetCookie::new("session", "abc def")
+    .expect("session cookie should be valid")
+    .with_path("/")
+    .expect("path should be accepted")
+    .with_http_only()
+    .expect("HttpOnly should be accepted")
+    .with_same_site(HttpSameSite::Lax)
+    .expect("SameSite should be accepted")
+    .with_priority("High")
+    .expect("Priority should be accepted")
+    .with_partitioned()
+    .expect("Partitioned should be accepted");
+  let csrf = HttpSetCookie::new("csrf", "token")
+    .expect("csrf cookie should be valid")
+    .with_path("/form")
+    .expect("path should be accepted")
+    .with_max_age(60)
+    .expect("Max-Age should be accepted")
+    .with_extension("Foo", Some("bar"))
+    .expect("extension should be accepted");
+  let response = HttpResponse::ok("body")
+    .header("Set-Cookie", "stale=old")
+    .with_set_cookie(session)
+    .with_set_cookie(csrf);
+  let cookies = response
+    .set_cookies()
+    .expect("Set-Cookie metadata should parse")
+    .expect("Set-Cookie metadata should be present");
+
+  assert_eq!(3, cookies.len());
+  assert_eq!("stale", cookies.cookies()[0].name());
+  assert_eq!("session", cookies.cookies()[1].name());
+  assert!(cookies.cookies()[1].is_value_quoted());
+  assert_eq!("csrf", cookies.cookies()[2].name());
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert_eq!(3, serialized.matches("\r\nSet-Cookie: ").count());
+  assert!(serialized.contains("\r\nSet-Cookie: stale=old\r\n"));
+  assert!(serialized.contains(
+    "\r\nSet-Cookie: session=\"abc def\"; Path=/; HttpOnly; SameSite=Lax; Priority=High; Partitioned\r\n"
+  ));
+  assert!(serialized.contains("\r\nSet-Cookie: csrf=token; Path=/form; Max-Age=60; Foo=bar\r\n"));
+  assert!(!format!("{cookies:?}").contains("abc def"));
+  assert!(!format!("{cookies:?}").contains("token"));
+
+  let malformed =
+    HttpResponse::ok("body").header("Set-Cookie", "session=super-secret; Path=/; path=/other");
+  let error = malformed
+    .set_cookies()
+    .expect_err("duplicate attributes should fail");
+  assert!(!error.to_string().contains("super-secret"));
+  assert!(String::from_utf8(malformed.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nSet-Cookie: session=super-secret; Path=/; path=/other\r\n"));
+  let absent = HttpResponse::ok("body");
+  assert_eq!(
+    None,
+    absent
+      .set_cookies()
+      .expect("missing Set-Cookie should be accepted")
+  );
 }
 
 #[test]
