@@ -1688,6 +1688,86 @@ fn request_cdn_loop_is_optional_and_rejects_invalid_metadata() {
 }
 
 #[test]
+fn request_x_forwarded_metadata_parses_ordered_values() {
+  let request = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: internal.test\r\n",
+    "X-Forwarded-For: 192.0.2.60, unknown\r\n",
+    "X-Forwarded-For: [2001:db8:cafe::17]\r\n",
+    "X-Forwarded-Host: example.test:443\r\n",
+    "X-Forwarded-Host: [2001:db8::1]:8443\r\n",
+    "X-Forwarded-Proto: https\r\n",
+    "X-Forwarded-Proto: http\r\n",
+    "\r\n"
+  ));
+
+  let forwarded_for = request
+    .x_forwarded_for()
+    .expect("X-Forwarded-For should parse")
+    .expect("X-Forwarded-For should be present");
+  let forwarded_host = request
+    .x_forwarded_host()
+    .expect("X-Forwarded-Host should parse")
+    .expect("X-Forwarded-Host should be present");
+  let forwarded_proto = request
+    .x_forwarded_proto()
+    .expect("X-Forwarded-Proto should parse")
+    .expect("X-Forwarded-Proto should be present");
+
+  assert_eq!(3, forwarded_for.len());
+  assert_eq!("192.0.2.60", forwarded_for.nodes()[0].value());
+  assert!(forwarded_for.nodes()[1].is_unknown());
+  assert_eq!("[2001:db8:cafe::17]", forwarded_for.nodes()[2].value());
+  assert_eq!(2, forwarded_host.len());
+  assert_eq!("example.test", forwarded_host.hosts()[0].host());
+  assert_eq!(Some("443"), forwarded_host.hosts()[0].port());
+  assert_eq!("[2001:db8::1]", forwarded_host.hosts()[1].host());
+  assert_eq!(
+    ["https".to_string(), "http".to_string()],
+    forwarded_proto.schemes()
+  );
+}
+
+#[test]
+fn request_x_forwarded_metadata_is_optional_and_preserves_invalid_raw_headers() {
+  let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .x_forwarded_for()
+      .expect("absent X-Forwarded-For should be accepted")
+  );
+  assert_eq!(
+    None,
+    absent
+      .x_forwarded_host()
+      .expect("absent X-Forwarded-Host should be accepted")
+  );
+  assert_eq!(
+    None,
+    absent
+      .x_forwarded_proto()
+      .expect("absent X-Forwarded-Proto should be accepted")
+  );
+
+  let malformed = parse_request(concat!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\n",
+    "X-Forwarded-For: client.example\r\n",
+    "X-Forwarded-Host: https://example.test\r\n",
+    "X-Forwarded-Proto: https://\r\n\r\n"
+  ));
+  assert!(malformed.x_forwarded_for().is_err());
+  assert!(malformed.x_forwarded_host().is_err());
+  assert!(malformed.x_forwarded_proto().is_err());
+  assert_eq!(Some("client.example"), malformed.header("X-Forwarded-For"));
+  assert_eq!(
+    Some("https://example.test"),
+    malformed.header("X-Forwarded-Host")
+  );
+  assert_eq!(Some("https://"), malformed.header("X-Forwarded-Proto"));
+}
+
+#[test]
 fn request_te_and_prefer_parse_bounded_metadata_without_enabling_behavior() {
   let request = parse_request(concat!(
     "GET /metadata HTTP/1.1\r\n",

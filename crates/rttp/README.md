@@ -489,6 +489,27 @@ metadata only: RTTP does not detect or break loops, reject requests because an
 identifier is already present, insert a local CDN identifier, forward the
 field automatically, or treat `CDN-Loop` as hop-by-hop.
 
+## Bounded X-Forwarded compatibility metadata
+
+`HttpClient::x_forwarded_for()`, `x_forwarded_host()`, and
+`x_forwarded_proto()` validate and emit bounded `X-Forwarded-For`,
+`X-Forwarded-Host`, and `X-Forwarded-Proto` request metadata through the
+shared protocol types. `Request` and `HttpRequest` parse the same
+representations, return `Ok(None)` when absent, and preserve raw headers on
+parse errors.
+
+`XForwardedFor` preserves ordered IP node values and `unknown`;
+`XForwardedHost` preserves ordered host authorities; and `XForwardedProto`
+preserves ordered URI scheme tokens. Each field family is bounded to 64 KiB
+per field value, 64 KiB for the combined raw field set including `", "`
+separator overhead, 64 KiB for serialized output, and 256 members. Repeated
+fields are combined in wire order.
+
+These helpers expose compatibility metadata only. RTTP does not trust,
+rewrite, or enforce forwarded identity, select a client address, change
+routing, redirect, upgrade, or choose a trusted proxy set. Applications that
+use these fields must choose and enforce their own trusted proxies.
+
 ## Bounded HTTP/1.1 Allow behavior
 
 Server-side `Allow` helpers expose response declaration and method-list parsing
@@ -1186,6 +1207,7 @@ scheduling, or async accept loops.
 | WebSocket handshake metadata | `HttpClient::sec_websocket_key` validates and emits one bounded `Sec-WebSocket-Key` request field through the shared protocol type, and `Request::sec_websocket_key`/`HttpRequest::sec_websocket_key` parse received fields into the same representation while preserving raw headers on errors; server responses can derive `Sec-WebSocket-Accept` with the RFC GUID plus SHA-1/base64 transform, and clients can parse and verify the response against a validated key; typed debug output redacts key and accept material | No HTTP upgrade, random nonce generation, WebSocket frames, or handshake policy |
 | W3C Trace Context | `HttpClient::traceparent`/`tracestate` validate and emit bounded W3C Trace Context request metadata, and `Request::traceparent`/`tracestate` plus `HttpRequest` helpers parse received fields while preserving raw headers on errors and redacting propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |
 | W3C Baggage | `HttpClient::baggage` validates and emits bounded W3C Baggage request metadata, and `Request::baggage` plus `HttpRequest` helpers parse received fields while preserving raw headers on errors and redacting member and property values from typed debug output | No application-data interpretation, request-context storage, tracing backend, span model, or automatic propagation |
+| X-Forwarded compatibility metadata | `HttpClient::x_forwarded_for`/`x_forwarded_host`/`x_forwarded_proto` emit bounded compatibility request metadata; `Request` and `HttpRequest` helpers parse ordered node, authority, and scheme values while preserving raw headers on errors | No forwarded identity trust, client address selection, routing rewrite, scheme rewrite, redirect, upgrade, enforcement, or trusted-proxy selection; applications must choose trusted proxies |
 | CDN-Loop | `HttpClient::cdn_loop` validates and emits bounded RFC 8586 `CDN-Loop` request metadata, combining an existing same-name field with the new member in wire order, and `Request::cdn_loop` plus `HttpRequest` helpers parse received fields into `HttpCdnLoop` while preserving raw headers on errors | No CDN identifier insertion, loop detection or rejection, automatic forwarding, or hop-by-hop handling |
 | No-Vary-Search | `NoVarySearch`, `HttpNoVarySearch`, `Response::no_vary_search`, `HttpResponse::with_no_vary_search`, and `HttpResponse::no_vary_search` parse and declare bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
 | Allow | `HttpAllowedMethods`, `HttpResponse::with_allow`, and `HttpResponse::allow` declare and parse bounded `Allow` method-list metadata | No route dispatch, automatic `405` generation, `OPTIONS` policy, fallback method selection, retry/replay, or status-code policy engine |

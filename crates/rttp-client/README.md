@@ -139,6 +139,27 @@ The helper only declares forwarding metadata: RTTP does not insert a local CDN
 identifier, append the field on every outbound request, reject requests
 because an identifier is already present, or treat `CDN-Loop` as hop-by-hop.
 
+## Bounded X-Forwarded compatibility metadata
+
+`HttpClient::x_forwarded_for(value)`, `x_forwarded_host(value)`, and
+`x_forwarded_proto(value)` validate and emit bounded `X-Forwarded-For`,
+`X-Forwarded-Host`, and `X-Forwarded-Proto` request metadata through the
+shared protocol types. Repeated helper calls combine existing same-name fields
+with the new values in wire order before a socket is opened.
+
+`X-Forwarded-For` accepts ordered IP node values and `unknown`,
+`X-Forwarded-Host` accepts ordered host authorities, and `X-Forwarded-Proto`
+accepts ordered URI scheme tokens. Each field family is bounded to 64 KiB per
+field value, 64 KiB for the combined raw field set including `", "` separator
+overhead, 64 KiB for serialized output, and 256 members. Malformed values,
+empty members, control-byte injection, and bound violations are rejected
+before connecting.
+
+These helpers only emit caller-supplied compatibility metadata. RTTP does not
+trust, rewrite, or enforce forwarded identity, select a client address, change
+routing, redirect, upgrade, or choose a trusted proxy set. Applications that
+use these fields must choose and enforce their own trusted proxies.
+
 ## Bounded HTTP/1.1 byte ranges
 
 `HttpClient` includes helpers for the single-range `bytes` forms RTTP keeps

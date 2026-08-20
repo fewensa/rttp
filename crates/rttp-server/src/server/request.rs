@@ -135,6 +135,18 @@ pub use rttp_protocol::want_repr_digest::{
   WantReprDigest as HttpWantReprDigest, WantReprDigestEntry as HttpWantReprDigestEntry,
   WantReprDigestParseError as HttpWantReprDigestParseError,
 };
+pub use rttp_protocol::x_forwarded_for::{
+  XForwardedFor as HttpXForwardedFor, XForwardedForNode as HttpXForwardedForNode,
+  XForwardedForNodeKind as HttpXForwardedForNodeKind,
+  XForwardedForParseError as HttpXForwardedForParseError,
+};
+pub use rttp_protocol::x_forwarded_host::{
+  XForwardedHost as HttpXForwardedHost, XForwardedHostParseError as HttpXForwardedHostParseError,
+};
+pub use rttp_protocol::x_forwarded_proto::{
+  XForwardedProto as HttpXForwardedProto,
+  XForwardedProtoParseError as HttpXForwardedProtoParseError,
+};
 
 pub(crate) const MAX_REQUEST_HEAD_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
@@ -800,6 +812,40 @@ impl Request {
       return Ok(None);
     }
     HttpCdnLoop::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `X-Forwarded-For` request metadata without applying a
+  /// trusted-proxy policy, deriving identity, or rewriting request addresses.
+  pub fn x_forwarded_for(&self) -> Result<Option<HttpXForwardedFor>, HttpXForwardedForParseError> {
+    let values: Vec<&str> = self.headers_named("X-Forwarded-For").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpXForwardedFor::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `X-Forwarded-Host` request metadata without applying a
+  /// trusted-proxy policy, changing routing, or rewriting request authority.
+  pub fn x_forwarded_host(
+    &self,
+  ) -> Result<Option<HttpXForwardedHost>, HttpXForwardedHostParseError> {
+    let values: Vec<&str> = self.headers_named("X-Forwarded-Host").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpXForwardedHost::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `X-Forwarded-Proto` request metadata without applying a
+  /// trusted-proxy policy, upgrading, redirecting, or rewriting schemes.
+  pub fn x_forwarded_proto(
+    &self,
+  ) -> Result<Option<HttpXForwardedProto>, HttpXForwardedProtoParseError> {
+    let values: Vec<&str> = self.headers_named("X-Forwarded-Proto").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpXForwardedProto::parse_values(values).map(Some)
   }
 
   pub fn vary_selection(&self, vary: &HttpVary) -> HttpVarySelection {
@@ -2788,6 +2834,55 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpCdnLoop::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `X-Forwarded-For` request metadata without applying a
+  /// trusted-proxy policy, deriving identity, or rewriting request addresses.
+  pub fn x_forwarded_for(&self) -> Result<Option<HttpXForwardedFor>, HttpXForwardedForParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("X-Forwarded-For"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpXForwardedFor::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `X-Forwarded-Host` request metadata without applying a
+  /// trusted-proxy policy, changing routing, or rewriting request authority.
+  pub fn x_forwarded_host(
+    &self,
+  ) -> Result<Option<HttpXForwardedHost>, HttpXForwardedHostParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("X-Forwarded-Host"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpXForwardedHost::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `X-Forwarded-Proto` request metadata without applying a
+  /// trusted-proxy policy, upgrading, redirecting, or rewriting schemes.
+  pub fn x_forwarded_proto(
+    &self,
+  ) -> Result<Option<HttpXForwardedProto>, HttpXForwardedProtoParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("X-Forwarded-Proto"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpXForwardedProto::parse_values(values).map(Some)
   }
 
   pub fn vary_selection(&self, vary: &HttpVary) -> HttpVarySelection {
