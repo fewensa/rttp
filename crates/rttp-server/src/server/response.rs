@@ -166,6 +166,10 @@ pub use rttp_protocol::sec_websocket_accept::{
   SecWebSocketAccept as HttpSecWebSocketAccept,
   SecWebSocketAcceptParseError as HttpSecWebSocketAcceptParseError,
 };
+pub use rttp_protocol::sec_websocket_extensions::{
+  SecWebSocketExtensions as HttpSecWebSocketExtensions,
+  SecWebSocketExtensionsParseError as HttpSecWebSocketExtensionsParseError,
+};
 pub use rttp_protocol::sec_websocket_protocol::{
   SecWebSocketProtocol as HttpSecWebSocketProtocol,
   SecWebSocketProtocolParseError as HttpSecWebSocketProtocolParseError,
@@ -1549,6 +1553,26 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Validates and replaces `Sec-WebSocket-Extensions` response metadata
+  /// without activating compression, negotiating extensions, emitting
+  /// `Connection` or `Upgrade`, or switching protocols. The value is one
+  /// selected extension member, not an offer list; applications own the
+  /// selection decision.
+  pub fn with_sec_websocket_extensions(
+    mut self,
+    value: impl AsRef<str>,
+  ) -> Result<Self, HttpSecWebSocketExtensionsParseError> {
+    let extensions = HttpSecWebSocketExtensions::parse_selection(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("Sec-WebSocket-Extensions"));
+    self.headers.push(HttpHeader::new(
+      "Sec-WebSocket-Extensions",
+      extensions.header_value(),
+    ));
+    Ok(self)
+  }
+
   /// Validates and replaces `Supports-Loading-Mode` response metadata without
   /// applying prerender or fenced-frame loading policy.
   pub fn with_supports_loading_mode<I, H>(
@@ -2710,6 +2734,25 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpSecWebSocketProtocol::parse_selection_values(values).map(Some)
+  }
+
+  /// Returns attached `Sec-WebSocket-Extensions` response metadata as a
+  /// selection singleton without activating compression, negotiating
+  /// extensions, or switching protocols. A multi-extension value returns a
+  /// parser error while raw headers remain available.
+  pub fn sec_websocket_extensions(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketExtensions>, HttpSecWebSocketExtensionsParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Extensions"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketExtensions::parse_selection_values(values).map(Some)
   }
 
   /// Returns attached `Supports-Loading-Mode` response metadata without

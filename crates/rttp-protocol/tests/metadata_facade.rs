@@ -68,6 +68,9 @@ use rttp_protocol::reporting_endpoints::ReportingEndpoints;
 use rttp_protocol::save_data::SaveData;
 use rttp_protocol::sec_gpc::SecGpc;
 use rttp_protocol::sec_websocket_accept::SecWebSocketAccept;
+use rttp_protocol::sec_websocket_extensions::{
+  SecWebSocketExtensions, SecWebSocketExtensionsParseError,
+};
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
 use rttp_protocol::sec_websocket_protocol::{SecWebSocketProtocol, SecWebSocketProtocolParseError};
 use rttp_protocol::sec_websocket_version::SecWebSocketVersion;
@@ -164,6 +167,15 @@ fn protocol_exports_representative_bounded_metadata_types() {
     SecWebSocketProtocol::from_selection("chat").expect("Sec-WebSocket-Protocol should select");
   let _: SecWebSocketProtocolParseError = SecWebSocketProtocol::parse_selection("chat, superchat")
     .expect_err("multi-token Sec-WebSocket-Protocol selection should be rejected");
+  let sec_websocket_extensions =
+    SecWebSocketExtensions::parse(r#"permessage-deflate; client_max_window_bits; mode="safe""#)
+      .expect("Sec-WebSocket-Extensions offers should parse");
+  let sec_websocket_extensions_selection =
+    SecWebSocketExtensions::parse_selection("permessage-deflate; server_max_window_bits=15")
+      .expect("Sec-WebSocket-Extensions selection should parse");
+  let _: SecWebSocketExtensionsParseError =
+    SecWebSocketExtensions::parse_selection("permessage-deflate, x-test")
+      .expect_err("multi-extension Sec-WebSocket-Extensions selection should be rejected");
   let if_modified_since = IfModifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
     .expect("If-Modified-Since should parse");
   let if_schedule_tag_match =
@@ -414,6 +426,21 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(sec_websocket_protocol.protocols(), ["chat", "superchat"]);
   assert!(sec_websocket_protocol.contains("chat"));
   assert_eq!(sec_websocket_protocol.header_value(), "chat, superchat");
+  assert_eq!(
+    sec_websocket_extensions.header_value(),
+    r#"permessage-deflate; client_max_window_bits; mode="safe""#
+  );
+  assert_eq!(
+    sec_websocket_extensions.extensions()[0].token(),
+    "permessage-deflate"
+  );
+  assert_eq!(
+    sec_websocket_extensions_selection
+      .selected()
+      .expect("selected extension")
+      .token(),
+    "permessage-deflate"
+  );
   assert_eq!(sec_websocket_protocol_selection.selected(), Some("chat"));
   assert_eq!(sec_websocket_protocol_selection.header_value(), "chat");
   assert_eq!(

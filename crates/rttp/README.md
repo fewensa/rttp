@@ -568,6 +568,28 @@ WebSocket handshake, emit `Connection: Upgrade`, choose an application
 subprotocol, or switch protocols. Applications own the selection decision;
 RTTP never picks a token from the offer list.
 
+## Bounded Sec-WebSocket-Extensions request and response metadata
+
+`HttpClient::sec_websocket_extensions(value)` validates and emits
+`Sec-WebSocket-Extensions` request metadata as ordered extension offers
+through the shared `rttp_protocol` `SecWebSocketExtensions` type, replacing
+any existing same-name field before a socket is opened. `Request::sec_websocket_extensions()`
+and `HttpRequest::sec_websocket_extensions()` parse received fields into the
+same `HttpSecWebSocketExtensions` representation, returning `Ok(None)` when
+absent. `HttpResponse::with_sec_websocket_extensions(value)` declares
+validated response metadata for one selected extension without adding
+`Connection` or `Upgrade`, and `HttpResponse::sec_websocket_extensions()`
+plus client `Response::sec_websocket_extensions()` parse attached or received
+fields as a selection singleton. The canonical representation validates
+extension tokens, ordered parameters, token and quoted-string parameter
+values, duplicates, member count, and total size while preserving raw headers
+on parse errors.
+
+These helpers declare and observe metadata only. RTTP does not perform a
+WebSocket handshake, emit `Connection: Upgrade`, activate compression,
+negotiate extensions, or switch protocols. Applications own all extension
+behavior.
+
 ## Bounded W3C Trace Context request metadata
 
 `HttpClient::traceparent()` and `HttpClient::tracestate()` validate and emit
@@ -1361,6 +1383,7 @@ scheduling, or async accept loops.
 | WebSocket handshake metadata | `HttpClient::sec_websocket_key` validates and emits one bounded `Sec-WebSocket-Key` request field through the shared protocol type, and `Request::sec_websocket_key`/`HttpRequest::sec_websocket_key` parse received fields into the same representation while preserving raw headers on errors; server responses can derive `Sec-WebSocket-Accept` with the RFC GUID plus SHA-1/base64 transform, and clients can parse and verify the response against a validated key; typed debug output redacts key and accept material | No HTTP upgrade, random nonce generation, WebSocket frames, or handshake policy |
 | Sec-WebSocket-Version | `HttpClient::sec_websocket_version`, `Request::sec_websocket_version`/`HttpRequest::sec_websocket_version`, `HttpResponse::with_sec_websocket_version`/`sec_websocket_version`, and client `Response::sec_websocket_version` share the bounded protocol version-list representation, requiring canonical descending order and preserving raw headers on errors | No WebSocket handshake, `Connection: Upgrade` emission, `Sec-WebSocket-Accept` computation, version negotiation, protocol switch, or frames |
 | Sec-WebSocket-Protocol | `HttpClient::sec_websocket_protocol`, `Request::sec_websocket_protocol`/`HttpRequest::sec_websocket_protocol`, `HttpResponse::with_sec_websocket_protocol`/`sec_websocket_protocol`, and client `Response::sec_websocket_protocol` share the bounded protocol token representation: request offers preserve preference order while response values are selection singletons, with case-sensitive duplicates and raw headers preserved on errors | No WebSocket handshake, `Connection: Upgrade` emission, automatic subprotocol choice, protocol switch, or frames |
+| Sec-WebSocket-Extensions | `HttpClient::sec_websocket_extensions`, `Request::sec_websocket_extensions`/`HttpRequest::sec_websocket_extensions`, `HttpResponse::with_sec_websocket_extensions`/`sec_websocket_extensions`, and client `Response::sec_websocket_extensions` share the bounded protocol extension-list representation: request offers preserve extension and parameter order while response values are one-extension selection singletons, with duplicates and raw headers preserved on errors | No WebSocket handshake, `Connection: Upgrade` emission, compression activation, extension negotiation, protocol switch, or frames |
 | W3C Trace Context | `HttpClient::traceparent`/`tracestate` validate and emit bounded W3C Trace Context request metadata, and `Request::traceparent`/`tracestate` plus `HttpRequest` helpers parse received fields while preserving raw headers on errors and redacting propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |
 | W3C Baggage | `HttpClient::baggage` validates and emits bounded W3C Baggage request metadata, and `Request::baggage` plus `HttpRequest` helpers parse received fields while preserving raw headers on errors and redacting member and property values from typed debug output | No application-data interpretation, request-context storage, tracing backend, span model, or automatic propagation |
 | X-Forwarded compatibility metadata | `HttpClient::x_forwarded_for`/`x_forwarded_host`/`x_forwarded_proto` emit bounded compatibility request metadata; `Request` and `HttpRequest` helpers parse ordered node, authority, and scheme values while preserving raw headers on errors | No forwarded identity trust, client address selection, routing rewrite, scheme rewrite, redirect, upgrade, enforcement, or trusted-proxy selection; applications must choose trusted proxies |

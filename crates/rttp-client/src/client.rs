@@ -35,6 +35,7 @@ use rttp_protocol::pragma::Pragma;
 use rttp_protocol::priority::Priority;
 use rttp_protocol::save_data::SaveData;
 use rttp_protocol::sec_gpc::SecGpc;
+use rttp_protocol::sec_websocket_extensions::SecWebSocketExtensions;
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
 use rttp_protocol::sec_websocket_protocol::SecWebSocketProtocol;
 use rttp_protocol::sec_websocket_version::SecWebSocketVersion;
@@ -991,6 +992,24 @@ impl HttpClient {
     Ok(self.header(Header::new(
       "Sec-WebSocket-Protocol",
       sec_websocket_protocol.header_value(),
+    )))
+  }
+
+  /// Set bounded `Sec-WebSocket-Extensions` request metadata as ordered
+  /// offers.
+  ///
+  /// This validates RFC 6455 extension tokens, ordered parameters,
+  /// token/quoted-string parameter values, duplicates, member count, and size
+  /// bounds before connecting and replaces any existing
+  /// `Sec-WebSocket-Extensions` field. It does not activate compression,
+  /// negotiate extensions, emit `Connection: Upgrade`, or switch protocols.
+  /// Use `header` directly for unusual values.
+  pub fn sec_websocket_extensions<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let sec_websocket_extensions = SecWebSocketExtensions::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Sec-WebSocket-Extensions",
+      sec_websocket_extensions.header_value(),
     )))
   }
 

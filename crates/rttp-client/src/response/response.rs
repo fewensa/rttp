@@ -73,6 +73,7 @@ use rttp_protocol::range::ContentRange;
 use rttp_protocol::referrer_policy::ReferrerPolicy;
 use rttp_protocol::reporting_endpoints::ReportingEndpoints;
 use rttp_protocol::sec_websocket_accept::SecWebSocketAccept;
+use rttp_protocol::sec_websocket_extensions::SecWebSocketExtensions;
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
 use rttp_protocol::sec_websocket_protocol::SecWebSocketProtocol;
 use rttp_protocol::sec_websocket_version::SecWebSocketVersion;
@@ -794,6 +795,20 @@ impl Response {
       return Ok(None);
     }
     SecWebSocketProtocol::parse_selection_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `Sec-WebSocket-Extensions` response metadata as a
+  /// selection singleton without activating compression, negotiating
+  /// extensions, or switching protocols. A multi-extension value returns a
+  /// parse error while raw headers remain available.
+  pub fn sec_websocket_extensions(&self) -> error::Result<Option<SecWebSocketExtensions>> {
+    let values = self.header_values("sec-websocket-extensions");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    SecWebSocketExtensions::parse_selection_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

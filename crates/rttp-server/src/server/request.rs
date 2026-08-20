@@ -96,6 +96,13 @@ pub use rttp_protocol::save_data::{
   SaveData as HttpSaveData, SaveDataParseError as HttpSaveDataParseError,
 };
 pub use rttp_protocol::sec_gpc::{SecGpc as HttpSecGpc, SecGpcParseError as HttpSecGpcParseError};
+pub use rttp_protocol::sec_websocket_extensions::{
+  SecWebSocketExtension as HttpSecWebSocketExtension,
+  SecWebSocketExtensionParameter as HttpSecWebSocketExtensionParameter,
+  SecWebSocketExtensionParameterValue as HttpSecWebSocketExtensionParameterValue,
+  SecWebSocketExtensions as HttpSecWebSocketExtensions,
+  SecWebSocketExtensionsParseError as HttpSecWebSocketExtensionsParseError,
+};
 pub use rttp_protocol::sec_websocket_key::{
   SecWebSocketKey as HttpSecWebSocketKey,
   SecWebSocketKeyParseError as HttpSecWebSocketKeyParseError,
@@ -675,6 +682,20 @@ impl Request {
       return Ok(None);
     }
     HttpSecWebSocketProtocol::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `Sec-WebSocket-Extensions` request metadata as ordered
+  /// offers without activating compression, negotiating extensions, or
+  /// switching protocols. Malformed fields return a parser error while raw
+  /// headers remain available.
+  pub fn sec_websocket_extensions(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketExtensions>, HttpSecWebSocketExtensionsParseError> {
+    let values: Vec<&str> = self.headers_named("Sec-WebSocket-Extensions").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketExtensions::parse_values(values).map(Some)
   }
 
   /// Parses received W3C `traceparent` request metadata without creating
@@ -2587,6 +2608,25 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpSecWebSocketProtocol::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `Sec-WebSocket-Extensions` request metadata as ordered
+  /// offers without activating compression, negotiating extensions, or
+  /// switching protocols. Malformed fields return a parser error while raw
+  /// headers remain available.
+  pub fn sec_websocket_extensions(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketExtensions>, HttpSecWebSocketExtensionsParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Extensions"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketExtensions::parse_values(values).map(Some)
   }
 
   /// Parses received W3C `traceparent` request metadata without creating

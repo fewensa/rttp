@@ -2708,6 +2708,133 @@ fn sec_websocket_protocol_helpers_preserve_raw_metadata_and_report_parse_errors(
 }
 
 #[test]
+fn sec_websocket_extensions_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::new(101, "Switching Protocols")
+    .header("Sec-WebSocket-Extensions", "legacy")
+    .header("sec-websocket-extensions", "x-test")
+    .with_sec_websocket_extensions(r#"permessage-deflate; client_no_context_takeover; mode="safe""#)
+    .expect("Sec-WebSocket-Extensions should be accepted");
+
+  let extensions = response
+    .sec_websocket_extensions()
+    .expect("Sec-WebSocket-Extensions should parse")
+    .expect("Sec-WebSocket-Extensions should be present");
+  let selected = extensions.selected().expect("selected extension");
+  assert_eq!("permessage-deflate", selected.token());
+  assert_eq!(2, selected.parameters().len());
+  assert_eq!(
+    r#"permessage-deflate; client_no_context_takeover; mode="safe""#,
+    extensions.header_value()
+  );
+  assert_eq!(
+    vec![(
+      "Sec-WebSocket-Extensions",
+      r#"permessage-deflate; client_no_context_takeover; mode="safe""#
+    )],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+  assert!(response
+    .headers
+    .iter()
+    .all(|header| !header.name.eq_ignore_ascii_case("Connection")
+      && !header.name.eq_ignore_ascii_case("Upgrade")));
+}
+
+#[test]
+fn sec_websocket_extensions_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::new(101, "Switching Protocols")
+    .header("Sec-WebSocket-Extensions", "permessage-deflate")
+    .header("sec-websocket-extensions", "x-test");
+  assert!(
+    raw.sec_websocket_extensions().is_err(),
+    "combined response fields must still be a selection singleton"
+  );
+  assert_eq!(
+    vec![
+      ("Sec-WebSocket-Extensions", "permessage-deflate"),
+      ("sec-websocket-extensions", "x-test"),
+    ],
+    raw
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let singleton =
+    HttpResponse::new(101, "Switching Protocols").header("Sec-WebSocket-Extensions", "x-test");
+  let extensions = singleton
+    .sec_websocket_extensions()
+    .expect("raw Sec-WebSocket-Extensions should parse")
+    .expect("Sec-WebSocket-Extensions should be present");
+  assert_eq!("x-test", extensions.header_value());
+  assert_eq!(
+    "x-test",
+    extensions.selected().expect("selected extension").token()
+  );
+
+  for value in [
+    "",
+    "permessage-deflate, x-test",
+    "permessage deflate",
+    "permessage-deflate; p=",
+    "permessage-deflate; p=1; p=2",
+    "permessage-deflate\r\nX-Injected: 1",
+  ] {
+    let malformed = HttpResponse {
+      version: "HTTP/1.1".to_string(),
+      status_code: 101,
+      reason: "Switching Protocols".to_string(),
+      headers: vec![HttpHeader::new("Sec-WebSocket-Extensions", value)],
+      trailers: Vec::new(),
+      body: Vec::new(),
+    };
+    assert!(
+      malformed.sec_websocket_extensions().is_err(),
+      "should reject {value:?}"
+    );
+    assert!(
+      HttpResponse::new(101, "Switching Protocols")
+        .with_sec_websocket_extensions(value)
+        .is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      Some(value),
+      malformed
+        .headers
+        .iter()
+        .find(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Extensions"))
+        .map(|header| header.value.as_str())
+    );
+  }
+
+  let legacy =
+    HttpResponse::new(101, "Switching Protocols").header("Sec-WebSocket-Extensions", "legacy");
+  let error = legacy
+    .clone()
+    .with_sec_websocket_extensions("permessage-deflate, x-test")
+    .expect_err("multi-extension selection should be rejected");
+  assert!(error.to_string().contains("Sec-WebSocket-Extensions"));
+  assert_eq!(
+    Some("legacy"),
+    legacy
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Extensions"))
+      .map(|header| header.value.as_str()),
+    "a failed builder must leave the response unchanged"
+  );
+  assert!(HttpResponse::new(101, "Switching Protocols")
+    .with_sec_websocket_extensions("a".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
 fn document_policy_report_only_helpers_validate_replace_and_parse_response_metadata() {
   let response = HttpResponse::ok([])
     .header("Document-Policy-Report-Only", "oversized-images=1.0")

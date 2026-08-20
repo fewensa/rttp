@@ -1096,6 +1096,18 @@ These helpers declare and observe metadata only: RTTP does not perform a
 WebSocket handshake, emit `Connection: Upgrade`, choose an application
 subprotocol, or switch protocols. Applications own the selection decision.
 
+`HttpClient::sec_websocket_extensions()` validates and emits
+`Sec-WebSocket-Extensions` request metadata as ordered extension offers
+through the shared protocol `SecWebSocketExtensions` type, replacing any
+existing same-name field before a socket is opened. The canonical
+representation validates extension tokens, ordered parameters, token and
+quoted-string parameter values, duplicate extension tokens, duplicate
+parameter names, member counts, and total size. Server request helpers parse
+received offers, and `HttpResponse::with_sec_websocket_extensions()` plus
+client/server response accessors parse one selected extension member. These
+helpers declare and observe metadata only: RTTP does not activate compression,
+negotiate extensions, emit `Connection: Upgrade`, or switch protocols.
+
 `HttpClient::traceparent()` and `HttpClient::tracestate()` validate and emit
 bounded W3C Trace Context request metadata through shared protocol types,
 replacing existing same-name fields before a socket is opened.
@@ -1515,6 +1527,7 @@ gain additional HTTP/2 header-block handling.
 | WebSocket handshake metadata | Client `sec_websocket_key` emits bounded singleton `Sec-WebSocket-Key` request metadata through the shared protocol type, replacing an existing same-name field; server `Request::sec_websocket_key()` and `HttpRequest::sec_websocket_key()` parse typed received values while preserving raw headers on errors; server responses can derive `Sec-WebSocket-Accept` with the RFC GUID plus SHA-1/base64 transform; client responses can parse and verify it against a validated key; key and accept material is redacted from typed debug output | No HTTP upgrade, random nonce generation, WebSocket frames, or handshake policy |
 | Sec-WebSocket-Version | Client `sec_websocket_version` emits bounded `Sec-WebSocket-Version` request metadata through the shared protocol type; server `Request`/`HttpRequest` helpers parse received fields; `HttpResponse::with_sec_websocket_version`/`sec_websocket_version` and client `Response::sec_websocket_version` declare or parse rejection-response version lists while preserving raw headers on errors | No WebSocket handshake, `Connection: Upgrade` emission, `Sec-WebSocket-Accept` computation, version negotiation, protocol switch, or frames |
 | Sec-WebSocket-Protocol | Client `sec_websocket_protocol` emits bounded `Sec-WebSocket-Protocol` offer metadata in preference order through the shared protocol type; server `Request`/`HttpRequest` helpers parse received offers; `HttpResponse::with_sec_websocket_protocol`/`sec_websocket_protocol` and client `Response::sec_websocket_protocol` declare or parse selection singletons while preserving raw headers on errors | No WebSocket handshake, `Connection: Upgrade` emission, automatic subprotocol choice, protocol switch, or frames |
+| Sec-WebSocket-Extensions | Client `sec_websocket_extensions` emits bounded ordered `Sec-WebSocket-Extensions` offer metadata through the shared protocol type; server `Request`/`HttpRequest` helpers parse received offers; `HttpResponse::with_sec_websocket_extensions`/`sec_websocket_extensions` and client `Response::sec_websocket_extensions` declare or parse one-extension selection singletons while preserving raw headers on errors | No WebSocket handshake, `Connection: Upgrade` emission, compression activation, extension negotiation, protocol switch, or frames |
 | Pragma | Client `pragma`/`pragma_no_cache` and `Response::pragma` share the bounded protocol `Pragma` representation with server `Request::pragma`, `HttpRequest::pragma`, `HttpResponse::with_pragma`, and `HttpResponse::pragma` across client construction, server request access, server response construction, and client response access, combining fields in wire order and preserving raw headers on errors | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |
 | W3C Trace Context | Client `traceparent`/`tracestate` validate and emit bounded W3C Trace Context request metadata through shared protocol types; server `Request`/`HttpRequest` helpers parse received fields, preserve raw headers on errors, preserve tracestate ordering, and redact propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |
 | W3C Baggage | Client `baggage` validates and emits bounded W3C Baggage request metadata through the shared protocol type; server `Request`/`HttpRequest` helpers parse received fields, preserve raw headers on errors, preserve member order, and redact member and property values from typed debug output | No application-data interpretation, request-context storage, tracing backend, span model, or automatic propagation |
@@ -2486,6 +2499,27 @@ the combined raw or canonical serialized field set to 64 KiB, and members to
 `Connection: Upgrade` or `Upgrade: websocket`, choose an application
 subprotocol, or switch protocols; applications own the selection decision.
 
+### Bounded Sec-WebSocket-Extensions metadata
+
+Server-side `Sec-WebSocket-Extensions` helpers expose request offers and
+response selection metadata without activating compression, negotiating
+extensions, or switching protocols. `Request::sec_websocket_extensions()` and
+`HttpRequest::sec_websocket_extensions()` parse received fields into
+`HttpSecWebSocketExtensions` as ordered offers. The representation validates
+extension tokens, ordered parameters, token and quoted-string parameter
+values, duplicate extension tokens, duplicate parameter names, member count,
+and total size. `HttpResponse::with_sec_websocket_extensions(value)` validates
+one selected extension member and replaces any existing
+`Sec-WebSocket-Extensions` response fields with one canonical value, while
+`HttpResponse::sec_websocket_extensions()` parses attached raw fields as a
+selection singleton.
+
+The helpers are bounded and metadata-only. Field values are limited to 64 KiB,
+the combined raw or canonical serialized field set to 64 KiB, and extension
+members to 32 per header set. They do not perform a WebSocket handshake, emit
+`Connection: Upgrade` or `Upgrade: websocket`, activate compression, negotiate
+extensions, or switch protocols; applications own all extension behavior.
+
 ### Bounded Speculation-Rules response metadata
 
 `HttpResponse::with_speculation_rules(value)` validates and replaces any raw
@@ -2672,6 +2706,7 @@ TLS or async accept loops.
 | WebSocket handshake metadata | `Request::sec_websocket_key` and `HttpRequest::sec_websocket_key` parse bounded singleton `Sec-WebSocket-Key` request metadata through the shared protocol type and preserve raw values on errors; `HttpResponse` can derive and parse bounded singleton `Sec-WebSocket-Accept` metadata from a validated key using the RFC GUID plus SHA-1/base64 transform; typed debug output redacts key and accept material | No HTTP upgrade, random nonce generation, WebSocket frames, or handshake policy |
 | Sec-WebSocket-Version | `HttpSecWebSocketVersion`, `Request::sec_websocket_version`, `HttpRequest::sec_websocket_version`, `HttpResponse::with_sec_websocket_version`, and `HttpResponse::sec_websocket_version` parse and declare bounded version-list metadata through the shared protocol type, requiring canonical descending order, replacing raw duplicates on declaration, and preserving raw headers on parse failures | No WebSocket handshake, `Connection: Upgrade` emission, `Sec-WebSocket-Accept` computation, version negotiation, protocol switch, or frames |
 | Sec-WebSocket-Protocol | `HttpSecWebSocketProtocol`, `Request::sec_websocket_protocol`, `HttpRequest::sec_websocket_protocol`, `HttpResponse::with_sec_websocket_protocol`, and `HttpResponse::sec_websocket_protocol` parse and declare bounded protocol-token metadata through the shared protocol type: request offers preserve preference order while response values are selection singletons, with case-sensitive duplicates rejected and raw headers preserved on parse failures | No WebSocket handshake, `Connection: Upgrade` emission, automatic subprotocol choice, protocol switch, or frames |
+| Sec-WebSocket-Extensions | `HttpSecWebSocketExtensions`, `Request::sec_websocket_extensions`, `HttpRequest::sec_websocket_extensions`, `HttpResponse::with_sec_websocket_extensions`, and `HttpResponse::sec_websocket_extensions` parse and declare bounded extension-list metadata through the shared protocol type: request offers preserve extension and parameter order while response values are one-extension selection singletons, with duplicates rejected and raw headers preserved on parse failures | No WebSocket handshake, `Connection: Upgrade` emission, compression activation, extension negotiation, protocol switch, or frames |
 | Pragma | `HttpPragma`, `Request::pragma`, `HttpRequest::pragma`, `HttpResponse::with_pragma`, and `HttpResponse::pragma` share the bounded protocol `Pragma` representation for server request access and server response construction, combining fields in wire order and preserving raw headers on errors | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |
 | W3C Trace Context | `Request::traceparent`/`tracestate` and `HttpRequest` helpers parse bounded W3C Trace Context request metadata, preserve raw values on errors, preserve tracestate ordering, and redact propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |
 | W3C Baggage | `Request::baggage` and `HttpRequest::baggage` parse bounded W3C Baggage request metadata, preserve raw values on errors, preserve member order, and redact member and property values from typed debug output | No application-data interpretation, request-context storage, tracing backend, span model, or automatic propagation |
