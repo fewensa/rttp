@@ -773,6 +773,11 @@ fn validate_value(value: &str) -> Result<(), HttpCookieParseError> {
   if value.len() > MAX_COOKIE_VALUE_BYTES {
     return Err(HttpCookieParseError::new("cookie value is too large"));
   }
+  if value.bytes().any(is_invalid_control_byte) {
+    return Err(HttpCookieParseError::new(
+      "cookie header contains a control byte",
+    ));
+  }
   Ok(())
 }
 

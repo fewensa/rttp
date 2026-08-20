@@ -121,6 +121,38 @@ fn cookie_rejects_malformed_quoted_and_standard_attribute_values() {
 }
 
 #[test]
+fn cookie_builder_rejects_control_bytes_in_values_and_attributes() {
+  for value in ["b\r\nX-Injected: 1", "b\u{1}c", "b\u{7f}c"] {
+    let error = HttpSetCookie::new("session", value)
+      .expect_err("builder should reject control bytes in cookie values");
+    assert_eq!("cookie header contains a control byte", error.to_string());
+    assert!(!format!("{error:?}").contains(value));
+  }
+
+  for builder in [
+    HttpSetCookie::new("a", "b")
+      .expect("base cookie should be valid")
+      .with_expires("Wed, 21 Oct 2015 07:28:00 GMT\r\nX-Expires: 1"),
+    HttpSetCookie::new("a", "b")
+      .expect("base cookie should be valid")
+      .with_domain("example.com\r\nX-Domain: 1"),
+    HttpSetCookie::new("a", "b")
+      .expect("base cookie should be valid")
+      .with_path("/x\r\nX-Path: 1"),
+    HttpSetCookie::new("a", "b")
+      .expect("base cookie should be valid")
+      .with_priority("High\r\nX-Priority: 1"),
+    HttpSetCookie::new("a", "b")
+      .expect("base cookie should be valid")
+      .with_extension("Ext", Some("v\r\nX-Ext: 1")),
+  ] {
+    let error = builder.expect_err("builder should reject control bytes in attributes");
+    assert_eq!("cookie header contains a control byte", error.to_string());
+    assert!(!format!("{error:?}").contains("X-"));
+  }
+}
+
+#[test]
 fn cookie_rejects_oversized_values_attribute_counts_and_aggregate_fields() {
   let oversized_value = format!("session={}", "a".repeat(MAX_COOKIE_VALUE_BYTES + 1));
   assert!(HttpSetCookie::parse(&oversized_value).is_err());
