@@ -29,6 +29,7 @@ fn package_includes_protocol_metadata_facade_test() {
     "tests/if_unmodified_since.rs",
     "tests/trace_context.rs",
     "tests/baggage.rs",
+    "tests/cdn_loop.rs",
     "tests/expect.rs",
     "tests/package_list.rs",
     "tests/metadata_facade.rs",
@@ -46,6 +47,7 @@ fn package_includes_protocol_metadata_facade_test() {
     "tests/alt_used.rs",
     "tests/origin_trial.rs",
     "tests/sec_gpc.rs",
+    "tests/sec_websocket_key.rs",
     "tests/service_worker_allowed.rs",
   ] {
     assert!(

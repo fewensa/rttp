@@ -3249,6 +3249,117 @@ fn request_idempotency_key_is_optional_bounded_and_preserves_invalid_headers() {
 }
 
 #[test]
+fn request_sec_websocket_key_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .sec_websocket_key()
+      .expect("missing value should be valid")
+  );
+
+  for value in [
+    "dGhlIHNhbXBsZSBub25jZQ==",
+    "AAAAAAAAAAAAAAAAAAAAAA==",
+    " \t+/z9/v8AAQIDBAUGBwgJCg==\t ",
+  ] {
+    let valid = Request::from_raw_frame(
+      format!(
+        "GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Key: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should parse");
+    let parsed = valid
+      .sec_websocket_key()
+      .expect("value should parse")
+      .expect("Sec-WebSocket-Key should be present");
+    assert_eq!(value.trim_matches([' ', '\t']), parsed.as_str());
+    assert_eq!(value.trim_matches([' ', '\t']), parsed.header_value());
+  }
+  let redacted = Request::from_raw_frame(
+    b"GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+  )
+  .expect("request should parse")
+  .sec_websocket_key()
+  .expect("value should parse")
+  .expect("Sec-WebSocket-Key should be present");
+  assert!(!format!("{redacted:?}").contains("dGhlIHNhbXBsZSBub25jZQ=="));
+
+  for value in ["", "the sample nonce", "dGhlIHNhbXBsZSBub25jZQ"] {
+    let request = Request::from_raw_frame(
+      format!(
+        "GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Key: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should retain malformed metadata");
+    assert!(request.sec_websocket_key().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Sec-WebSocket-Key"));
+  }
+
+  let obs_text = Request::from_raw_frame(
+    b"GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\xC3\xA9\r\n\r\n",
+  )
+  .expect("request should retain obs-text metadata");
+  assert!(obs_text.sec_websocket_key().is_err());
+  assert!(obs_text.header("Sec-WebSocket-Key").is_some());
+
+  let oversized = "A".repeat(64 * 1024 + 1);
+  let oversized_request = Request {
+    method: "GET".to_string(),
+    target: "/chat".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("Sec-WebSocket-Key".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.sec_websocket_key().is_err());
+  assert_eq!(
+    Some(oversized.as_str()),
+    oversized_request.header("Sec-WebSocket-Key")
+  );
+
+  let injected_request = Request {
+    method: "GET".to_string(),
+    target: "/chat".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      (
+        "Sec-WebSocket-Key".to_string(),
+        "dGhlIHNhbXBsZSBub25jZQ==\r\nX-Injected: 1".to_string(),
+      ),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(injected_request.sec_websocket_key().is_err());
+  assert_eq!(
+    Some("dGhlIHNhbXBsZSBub25jZQ==\r\nX-Injected: 1"),
+    injected_request.header("Sec-WebSocket-Key")
+  );
+
+  let duplicate = Request::from_raw_frame(
+    b"GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nsec-websocket-key: AAAAAAAAAAAAAAAAAAAAAA==\r\n\r\n",
+  )
+  .expect("request should retain duplicate metadata");
+  assert!(duplicate.sec_websocket_key().is_err());
+  assert_eq!(
+    Some("dGhlIHNhbXBsZSBub25jZQ=="),
+    duplicate.header("Sec-WebSocket-Key")
+  );
+}
+
+#[test]
 fn request_trace_context_is_optional_bounded_and_preserves_invalid_headers() {
   let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
     .expect("request should parse");
@@ -4221,6 +4332,48 @@ hello\r\n\
     assert!(header_debug.contains("Idempotency-Key"));
     assert!(header_debug.contains("[REDACTED]"));
     assert!(!header_debug.contains("charge-2026-08-19-9f3c"));
+  }
+
+  #[test]
+  fn sec_websocket_key_debug_redacts_values_in_request_and_http_request() {
+    let raw = concat!(
+      "GET /chat HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n",
+      "\r\n"
+    );
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+    let request = Request::read_next_from(&mut reader)
+      .expect("request should parse")
+      .expect("request should be present");
+
+    let sec_websocket_key = request
+      .sec_websocket_key()
+      .expect("Sec-WebSocket-Key should parse")
+      .expect("Sec-WebSocket-Key should be present");
+    assert_eq!(
+      "dGhlIHNhbXBsZSBub25jZQ==",
+      sec_websocket_key.as_str()
+    );
+    assert!(!format!("{sec_websocket_key:?}").contains("dGhlIHNhbXBsZSBub25jZQ=="));
+    let request_debug = format!("{request:?}");
+    assert!(request_debug.contains("Sec-WebSocket-Key"));
+    assert!(request_debug.contains("[REDACTED]"));
+    assert!(!request_debug.contains("dGhlIHNhbXBsZSBub25jZQ=="));
+
+    let http_request = HttpRequest::parse(raw.as_bytes()).expect("request should parse");
+    let http_request_debug = format!("{http_request:?}");
+    assert!(http_request_debug.contains("Sec-WebSocket-Key"));
+    assert!(http_request_debug.contains("[REDACTED]"));
+    assert!(!http_request_debug.contains("dGhlIHNhbXBsZSBub25jZQ=="));
+
+    let header_debug = format!(
+      "{:?}",
+      HttpHeader::new("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+    );
+    assert!(header_debug.contains("Sec-WebSocket-Key"));
+    assert!(header_debug.contains("[REDACTED]"));
+    assert!(!header_debug.contains("dGhlIHNhbXBsZSBub25jZQ=="));
   }
 
   #[test]

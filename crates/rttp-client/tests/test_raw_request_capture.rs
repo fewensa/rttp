@@ -587,6 +587,7 @@ fn facade_debug_redacts_sensitive_header_values() {
     .header(("Proxy-Authorization", "Basic cHJveHk6c2VjcmV0"))
     .header(("Cookie", "session=private"))
     .header(("Idempotency-Key", "charge-2026-08-19-9f3c"))
+    .header(("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ=="))
     .header(("Accept", "application/json"));
 
   let debug = format!("{client:?}");
@@ -594,6 +595,7 @@ fn facade_debug_redacts_sensitive_header_values() {
   assert!(debug.contains("Proxy-Authorization"));
   assert!(debug.contains("Cookie"));
   assert!(debug.contains("Idempotency-Key"));
+  assert!(debug.contains("Sec-WebSocket-Key"));
   assert!(debug.contains("Accept"));
   assert!(debug.contains("application/json"));
   assert!(debug.contains("[REDACTED]"));
@@ -602,6 +604,7 @@ fn facade_debug_redacts_sensitive_header_values() {
     "cHJveHk6c2VjcmV0",
     "session=private",
     "charge-2026-08-19-9f3c",
+    "dGhlIHNhbXBsZSBub25jZQ==",
   ] {
     assert!(!debug.contains(secret));
   }
@@ -1947,6 +1950,106 @@ fn forwarded_helper_rejects_duplicate_or_excessive_metadata_before_connecting() 
 }
 
 #[test]
+fn cdn_loop_helper_emits_bounded_forwarding_metadata() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/asset", base_url))
+      .cdn_loop(r#"foo123.foocdn.example, barcdn.example; trace="abcdef""#)
+      .expect("first CDN-Loop value should be accepted")
+      .cdn_loop(r#"AnotherCDN; abc=123; def="456""#)
+      .expect("second CDN-Loop value should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+
+  assert_eq!(
+    Some("foo123.foocdn.example, barcdn.example; trace=abcdef, AnotherCDN; abc=123; def=456"),
+    header_value(&request_text(&request), "CDN-Loop")
+  );
+}
+
+#[test]
+fn cdn_loop_helper_rejects_malformed_or_excessive_metadata_before_connecting() {
+  for value in [
+    "not valid",
+    "cdn; trace",
+    "cdn; trace=1; TRACE=2",
+    "cdn,",
+    "cdn\r\nX-Injected: 1",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/asset", base_url))
+        .cdn_loop(value)
+        .expect_err("invalid CDN-Loop metadata should be rejected");
+
+      assert!(error.is_builder());
+    });
+
+    assert!(
+      request.is_empty(),
+      "invalid CDN-Loop input should not open a socket"
+    );
+  }
+
+  let excessive = (0..257)
+    .map(|index| format!("cdn{index}.example"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .cdn_loop(excessive.as_str())
+      .expect_err("too many CDN-Loop members should be rejected");
+
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "excessive CDN-Loop input should not open a socket"
+  );
+
+  let oversized = format!("cdn; trace=\"{}\"", "a".repeat(64 * 1024));
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .cdn_loop(oversized.as_str())
+      .expect_err("oversized CDN-Loop metadata should be rejected");
+
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "oversized CDN-Loop input should not open a socket"
+  );
+
+  let first = "a".repeat(64 * 1024 - 4);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/asset", base_url))
+      .cdn_loop(first.as_str())
+      .expect("a bounded first CDN-Loop value should be accepted")
+      .cdn_loop("other.example")
+      .expect_err("combined CDN-Loop metadata should remain bounded");
+
+    assert!(error.is_builder());
+  });
+  assert!(
+    request.is_empty(),
+    "oversized combined CDN-Loop output should not open a socket"
+  );
+}
+
+#[test]
 fn manual_range_header_remains_available_as_escape_hatch() {
   let request = capture_request(|base_url| {
     client()
@@ -2234,6 +2337,121 @@ fn raw_idempotency_key_header_remains_available_as_escape_hatch() {
   assert_eq!(
     Some("opaque custom value"),
     header_value(&request, "Idempotency-Key")
+  );
+}
+
+#[test]
+fn sec_websocket_key_helper_emits_canonical_metadata() {
+  for (value, expected) in [
+    ("dGhlIHNhbXBsZSBub25jZQ==", "dGhlIHNhbXBsZSBub25jZQ=="),
+    ("AAAAAAAAAAAAAAAAAAAAAA==", "AAAAAAAAAAAAAAAAAAAAAA=="),
+    (" \t+/z9/v8AAQIDBAUGBwgJCg==\t ", "+/z9/v8AAQIDBAUGBwgJCg=="),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .get()
+        .url(format!("{}/chat", base_url))
+        .sec_websocket_key(value)
+        .expect("sec websocket key should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+    assert_eq!(Some(expected), header_value(&request, "Sec-WebSocket-Key"));
+  }
+}
+
+#[test]
+fn sec_websocket_key_helper_replaces_existing_fields() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/chat", base_url))
+      .header(("Sec-WebSocket-Key", "legacy-key"))
+      .sec_websocket_key("dGhlIHNhbXBsZSBub25jZQ==")
+      .expect("sec websocket key should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("dGhlIHNhbXBsZSBub25jZQ=="),
+    header_value(&request, "Sec-WebSocket-Key")
+  );
+  assert!(
+    !request.contains("legacy-key"),
+    "the typed helper must replace an existing same-name field"
+  );
+}
+
+#[test]
+fn sec_websocket_key_helper_rejects_invalid_values_before_connecting() {
+  for value in [
+    "",
+    " ",
+    "the sample nonce",
+    "dGhlIHNhbXBsZSBub25jZQ==\r\nX-Injected: 1",
+    "dGhlIHNhbXBsZSBub25jZQ==\rX: y",
+    "dGhlIHNhbXBsZSBub25jZQ==\nX: y",
+    "dGhlIHNhbXBsZSBub25jZQ==\0value",
+    "dGhlIHNhbXBsZSBub25jZQ==\u{7f}value",
+    "dGhlIHNhbXBsZSBub25jZQ",
+    "_z9/v8AAQIDBAUGBwgJCg==",
+    "AAAAAAAAAAAAAAAAAAAA",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/chat", base_url))
+        .sec_websocket_key(value)
+        .expect_err("invalid sec websocket key should be rejected");
+      assert!(error.is_builder());
+      if !value.trim().is_empty() {
+        assert!(!error.to_string().contains(value));
+      }
+    });
+    assert!(
+      request.is_empty(),
+      "invalid sec websocket key must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn sec_websocket_key_helper_rejects_oversized_values_before_connecting() {
+  let oversized = "A".repeat(64 * 1024 + 1);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/chat", base_url))
+      .sec_websocket_key(oversized.as_str())
+      .expect_err("oversized sec websocket key should be rejected");
+    assert!(error.is_builder());
+    assert!(!error.to_string().contains(&oversized[..64]));
+  });
+  assert!(
+    request.is_empty(),
+    "oversized sec websocket key must not open a socket"
+  );
+}
+
+#[test]
+fn raw_sec_websocket_key_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/chat", base_url))
+      .header(("Sec-WebSocket-Key", "opaque custom value"))
+      .emit()
+      .expect("manual Sec-WebSocket-Key header should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("opaque custom value"),
+    header_value(&request, "Sec-WebSocket-Key")
   );
 }
 

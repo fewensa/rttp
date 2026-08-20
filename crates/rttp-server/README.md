@@ -696,6 +696,24 @@ continue to expose the original raw field. The key is redacted from typed
 These helpers parse request metadata only. They do not retry requests, store
 keys, compare keys across requests, or apply application idempotency policy.
 
+## Sec-WebSocket-Key request metadata
+
+Handlers can call `Request::sec_websocket_key()` and
+`HttpRequest::sec_websocket_key()` to observe bounded typed
+`Sec-WebSocket-Key` request metadata through the shared protocol
+`HttpSecWebSocketKey` type. Absent fields return `Ok(None)`. A recognized
+value is a singleton RFC 4648 section 4 base64 encoding of exactly 16 nonce
+bytes with optional surrounding SP or HTAB, bounded to 64 KiB. `as_str()`
+returns the stored encoded nonce and `header_value()` emits it unchanged.
+Malformed, URL-safe or unpadded, wrong-decoded-length, oversized, duplicate,
+or control-byte values return a parser error while `Request::header()` and
+`HttpRequest::header()` continue to expose the original raw field. The nonce
+is redacted from typed `Debug`.
+
+These helpers parse request metadata only. They do not perform an HTTP
+upgrade, compute `Sec-WebSocket-Accept`, generate a random nonce, or
+implement WebSocket frames.
+
 ## Pragma request and response metadata
 
 Handlers can call `Request::pragma()` and `HttpRequest::pragma()` to observe
@@ -749,6 +767,26 @@ accessors. Member and property values are redacted from typed `Debug`. These
 helpers parse request metadata only; they do not interpret application data,
 store request context, select a tracing backend, or automatically propagate
 baggage.
+
+## CDN-Loop request metadata
+
+Handlers can call `Request::cdn_loop()` and the matching `HttpRequest` helper
+to observe bounded RFC 8586 `CDN-Loop` request metadata through the shared
+protocol `HttpCdnLoop` type. Absent fields return `Ok(None)`. Malformed,
+oversized, duplicate-parameter, or over-limit values return parser errors
+while `Request::header()` and `HttpRequest::header()` continue to expose the
+original raw fields.
+
+`HttpCdnLoop` preserves ordered members with an opaque CDN identifier
+(`uri-host` with optional port or an RFC 7230 token pseudonym) and optional
+HTTP parameter accessors. Each field value, the combined raw field set
+including `", "` separator overhead, and the combined serialized value are
+bounded to 64 KiB, the combined member count is bounded to 256, and each
+member is bounded to 32 parameters. Repeated `CDN-Loop` fields are combined in
+wire order, and repeated CDN identifiers are valid loop-visible metadata.
+These helpers expose loop metadata only; they do not detect or break loops,
+reject requests because an identifier is already present, or forward the
+field automatically.
 
 ## Conditional HTTP-date request metadata
 

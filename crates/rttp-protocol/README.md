@@ -552,6 +552,31 @@ compute freshness, evaluate surrogate keys, revalidate automatically, enforce
 shared-cache policy, retry, replay, redirect, or choose response-acceptance
 behavior.
 
+## CDN-Loop
+
+`cdn_loop` parses one or more RFC 8586 `CDN-Loop` request field values into
+ordered `cdn-info` members, each with an opaque CDN identifier and optional
+HTTP parameters. An identifier is a `uri-host` with optional port (including
+bracketed IP-literals) or an RFC 7230 token pseudonym, and its accepted wire
+spelling is preserved. Each field value is bounded to 64 KiB, combined field
+values are bounded to 64 KiB including `", "` separator overhead, the combined
+serialized value is bounded to 64 KiB, the combined member count is bounded to
+256, and each member is bounded to 32 parameters. Parameter names are stored
+lowercase and matched case-insensitively; duplicate parameter names on one
+member are rejected. Quoted parameter values are unquoted, and token values
+are retained verbatim.
+
+Repeated `CDN-Loop` fields are concatenated in wire order into one list.
+Repeated CDN identifiers are valid loop-visible metadata. Empty members,
+leading or trailing commas, valueless parameters, malformed identifiers,
+control bytes other than HTAB, and bound violations are rejected. A present
+field set that yields no member is an error.
+
+The parser only reports bounded loop metadata. It does not detect or break
+loops, reject requests because an identifier is already present, insert a
+local CDN identifier, forward the field automatically, or treat
+`CDN-Loop` as hop-by-hop.
+
 ## Authentication-Info
 
 `authentication_info` parses `#auth-param` lists from `Authentication-Info`
@@ -791,6 +816,24 @@ signal and is returned in canonical wire form. Surrounding SP and HTAB are
 trimmed as optional whitespace. Unknown tokens, lists, parameterized values,
 empty values, control bytes, and other unparsable input are errors.
 This parser does not infer consent, tracking, legal, or serving policy.
+
+## Sec-WebSocket-Key
+
+`sec_websocket_key` parses a singleton HTTP `Sec-WebSocket-Key` request field
+as a base64-encoded handshake nonce. Each field value is bounded to 64 KiB,
+and a second field is rejected after every supplied field is bound-checked.
+Surrounding SP and HTAB are trimmed as optional whitespace. The stored value
+is the OWS-trimmed RFC 4648 section 4 base64 text, returned by `as_str()` and
+`header_value()`; the RFC 6455 example
+`dGhlIHNhbXBsZSBub25jZQ==` decodes to the 16-byte sample nonce. Empty values,
+interior whitespace, non-base64 input, URL-safe or unpadded encodings,
+decoded nonces whose length is not exactly 16 bytes, duplicate fields,
+forbidden ASCII control bytes (including CR, LF, NUL, and obs-text), and
+oversized values are errors. The nonce is redacted from typed `Debug`, and
+parse errors describe only the header and validation category. This parser
+reports declared request metadata only; it does not perform an HTTP upgrade,
+compute `Sec-WebSocket-Accept`, generate a random nonce, or implement
+WebSocket frames.
 
 ## Upgrade-Insecure-Requests
 

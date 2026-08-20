@@ -15,6 +15,7 @@ use rttp_protocol::access_control_request_method::AccessControlRequestMethod;
 use rttp_protocol::access_control_request_private_network::AccessControlRequestPrivateNetwork;
 use rttp_protocol::authorization::Authorization;
 use rttp_protocol::baggage::Baggage;
+use rttp_protocol::cdn_loop::{CdnLoop, MAX_CDN_LOOP_VALUE_BYTES};
 use rttp_protocol::depth::Depth;
 use rttp_protocol::expect::Expect;
 use rttp_protocol::fetch_metadata::{
@@ -30,6 +31,7 @@ use rttp_protocol::pragma::Pragma;
 use rttp_protocol::priority::Priority;
 use rttp_protocol::save_data::SaveData;
 use rttp_protocol::sec_gpc::SecGpc;
+use rttp_protocol::sec_websocket_key::SecWebSocketKey;
 use rttp_protocol::signature::Signature;
 use rttp_protocol::signature_input::SignatureInput;
 use rttp_protocol::te::{Te, MAX_TE_CODINGS, MAX_TE_VALUE_BYTES};
@@ -639,6 +641,34 @@ impl HttpClient {
     Ok(self)
   }
 
+  /// Append bounded RFC 8586 `CDN-Loop` request metadata.
+  ///
+  /// This validates and preserves CDN identifiers and optional parameters,
+  /// combining with any existing validated `CDN-Loop` field before a socket
+  /// is opened. It only emits caller-supplied metadata: it does not invent a
+  /// local CDN identifier, append on every request, or treat a repeated
+  /// identifier as a transport failure.
+  pub fn cdn_loop<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let cdn_loop = CdnLoop::parse(value.as_ref())
+      .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+    let headers = self.request.headers_mut();
+    if let Some(header) = headers
+      .iter_mut()
+      .find(|header| header.name().eq_ignore_ascii_case("CDN-Loop"))
+    {
+      let combined = CdnLoop::parse_values([header.value().as_str(), value.as_ref()])
+        .map_err(|parse_error| error::builder_with_message(parse_error.to_string()))?;
+      let value = bounded_cdn_loop_header_value(combined)?;
+      header.replace(Header::new("CDN-Loop", value));
+    } else {
+      headers.push(Header::new(
+        "CDN-Loop",
+        bounded_cdn_loop_header_value(cdn_loop)?,
+      ));
+    }
+    Ok(self)
+  }
+
   /// Set a single bounded byte range request header, `Range: bytes=start-end`.
   pub fn range(&mut self, start: u64, end: u64) -> error::Result<&mut Self> {
     if start > end {
@@ -723,6 +753,23 @@ impl HttpClient {
     Ok(self.header(Header::new(
       "Idempotency-Key",
       idempotency_key.header_value(),
+    )))
+  }
+
+  /// Set a bounded `Sec-WebSocket-Key` request header as typed nonce metadata.
+  ///
+  /// The value must be one RFC 4648 section 4 base64 encoding of exactly 16
+  /// nonce bytes, and is limited to 64 KiB. CR, LF, NUL, other control bytes,
+  /// and obs-text are rejected before a socket is opened. This only validates
+  /// and emits the header; it does not perform an HTTP upgrade, compute
+  /// `Sec-WebSocket-Accept`, generate a random nonce, or implement WebSocket
+  /// frames. Use `header` directly for unusual values.
+  pub fn sec_websocket_key<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let sec_websocket_key = SecWebSocketKey::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new(
+      "Sec-WebSocket-Key",
+      sec_websocket_key.header_value(),
     )))
   }
 
@@ -1543,6 +1590,16 @@ fn bounded_forwarded_header_value(forwarded: Forwarded) -> error::Result<String>
   if value.len() > MAX_FORWARDED_VALUE_BYTES {
     return Err(error::builder_with_message(
       "Forwarded header value is too large",
+    ));
+  }
+  Ok(value)
+}
+
+fn bounded_cdn_loop_header_value(cdn_loop: CdnLoop) -> error::Result<String> {
+  let value = cdn_loop.header_value();
+  if value.len() > MAX_CDN_LOOP_VALUE_BYTES {
+    return Err(error::builder_with_message(
+      "CDN-Loop header value is too large",
     ));
   }
   Ok(value)

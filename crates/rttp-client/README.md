@@ -70,6 +70,21 @@ requests, or apply application idempotency policy. The key is redacted from
 typed `Debug` and builder error text. Callers needing an unusual value can
 retain full raw-header control with `header(("Idempotency-Key", "..."))`.
 
+## Bounded Sec-WebSocket-Key metadata
+
+`HttpClient::sec_websocket_key(value)` sets a `Sec-WebSocket-Key` request
+header for application-generated handshake nonces through the shared protocol
+`SecWebSocketKey` type. The helper accepts a singleton RFC 4648 section 4
+base64 encoding of exactly 16 nonce bytes, trims HTTP OWS, and rejects empty,
+interior-whitespace, non-base64, URL-safe or unpadded, wrong-decoded-length,
+control-byte (including CR/LF/NUL and obs-text), duplicate, and oversized
+values before a socket is opened. It validates and emits the trimmed encoded
+nonce unchanged: RTTP does not perform an HTTP upgrade, compute
+`Sec-WebSocket-Accept`, generate a random nonce, or implement WebSocket
+frames. The nonce is redacted from typed `Debug` and builder error text.
+Callers needing an unusual value can retain full raw-header control with
+`header(("Sec-WebSocket-Key", "..."))`.
+
 ## Bounded W3C Trace Context metadata
 
 `HttpClient::traceparent(value)` and `HttpClient::tracestate(value)` validate
@@ -100,6 +115,21 @@ Baggage fields are redacted from typed `Debug` and builder error text. These
 helpers only declare request metadata: RTTP does not store request context,
 select a tracing backend, or automatically propagate baggage between
 requests.
+
+## Bounded CDN-Loop forwarding metadata
+
+`HttpClient::cdn_loop(value)` validates and emits RFC 8586 `CDN-Loop` request
+metadata through the shared protocol `CdnLoop` type, combining any existing
+`CDN-Loop` field with the new member in wire order before a socket is opened.
+Each field value, the combined raw field set including `", "` separator
+overhead, and the combined serialized value are bounded to 64 KiB, the
+combined member count is bounded to 256, and each member is bounded to 32
+parameters. Malformed identifiers, valueless or duplicate parameters, empty
+members, and bound violations are rejected before connecting.
+
+The helper only declares forwarding metadata: RTTP does not insert a local CDN
+identifier, append the field on every outbound request, reject requests
+because an identifier is already present, or treat `CDN-Loop` as hop-by-hop.
 
 ## Bounded HTTP/1.1 byte ranges
 
@@ -1176,9 +1206,11 @@ header-block model.
 | Max-Forwards | `max_forwards` emits bounded singleton `Max-Forwards` request metadata through the shared protocol type | No hop decrement, proxy routing, TRACE/OPTIONS selection, retry, or forwarding policy |
 | Depth | `depth` emits bounded singleton WebDAV `Depth` request metadata through the shared protocol type, normalizing `infinity` to lowercase and replacing an existing same-name field | No resource traversal, WebDAV method selection, method-policy enforcement, retry, or forwarding policy |
 | Idempotency-Key | `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
+| Sec-WebSocket-Key | `sec_websocket_key` emits bounded singleton `Sec-WebSocket-Key` request metadata through the shared protocol type, replacing an existing same-name field and redacting the nonce from typed debug output | No HTTP upgrade, `Sec-WebSocket-Accept` computation, random nonce generation, WebSocket frames, or handshake policy |
 | Pragma | `pragma` and `pragma_no_cache` emit bounded RFC 9111 `Pragma` request metadata through the shared protocol type, combining and replacing existing same-name fields | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |
 | W3C Trace Context | `traceparent` and `tracestate` validate and emit bounded W3C Trace Context request metadata through shared protocol types, replacing existing same-name fields and redacting propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |
 | W3C Baggage | `baggage` validates and emits bounded W3C Baggage request metadata through the shared protocol type, replacing an existing same-name field and redacting member and property values from typed debug output | No application-data interpretation, request-context storage, tracing backend, span model, or automatic propagation |
+| CDN-Loop | `cdn_loop` validates and emits bounded RFC 8586 `CDN-Loop` request metadata through the shared protocol type, combining an existing same-name field with the new member in wire order and rejecting malformed or oversized values before connecting | No CDN identifier insertion, loop detection or rejection, automatic forwarding, or hop-by-hop handling |
 | Preflight request metadata | `origin`, `access_control_request_method`, `access_control_request_headers`, and `access_control_request_private_network` emit bounded `Origin`, `Access-Control-Request-Method`, `Access-Control-Request-Headers`, and `Access-Control-Request-Private-Network` request metadata and reject invalid input before connecting | No automatic preflight decision, `Access-Control-Allow-*` response parsing, CORS policy, or Private Network Access policy |
 | Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_content_digest()`, `HttpRequest::want_content_digest()`, `Request::want_repr_digest()`, and `HttpRequest::want_repr_digest()` parse received preference fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |
 | Accept-Charset | `accept_charset` and `accept_charset_with_q` format bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |

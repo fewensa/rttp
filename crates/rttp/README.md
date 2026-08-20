@@ -411,6 +411,25 @@ when the typed parser reports an error.
 These helpers declare and observe request metadata only. RTTP does not
 traverse resources, select WebDAV methods, or enforce method policy.
 
+## Bounded Sec-WebSocket-Key request metadata
+
+`HttpClient::sec_websocket_key(value)` validates and emits one
+`Sec-WebSocket-Key` request field through the shared `rttp_protocol`
+`SecWebSocketKey` type, replacing any existing same-name field before a socket
+is opened. `Request::sec_websocket_key()` and `HttpRequest::sec_websocket_key()`
+parse received fields into the same `HttpSecWebSocketKey` representation,
+returning `Ok(None)` when absent. A recognized value is a singleton RFC 4648
+section 4 base64 encoding of exactly 16 nonce bytes bounded to 64 KiB with
+optional surrounding SP or HTAB; empty, interior-whitespace, non-base64,
+URL-safe or unpadded, wrong-decoded-length, control-byte (including CR/LF/NUL
+and obs-text), duplicate, and oversized values are rejected. The nonce is
+redacted from typed `Debug`, and raw request headers remain available when the
+typed parser reports an error.
+
+These helpers declare and observe request metadata only. RTTP does not perform
+an HTTP upgrade, compute `Sec-WebSocket-Accept`, generate a random nonce, or
+implement WebSocket frames.
+
 ## Bounded W3C Trace Context request metadata
 
 `HttpClient::traceparent()` and `HttpClient::tracestate()` validate and emit
@@ -443,6 +462,25 @@ count, per-member size, key/value/property grammar, and duplicate keys. Typed
 request metadata only: RTTP does not interpret application baggage data,
 store request context, select a tracing backend, or automatically propagate
 baggage.
+
+## Bounded CDN-Loop request metadata
+
+`HttpClient::cdn_loop()` validates and emits bounded RFC 8586 `CDN-Loop`
+request metadata through the shared `rttp_protocol` `CdnLoop` type, combining
+any existing `CDN-Loop` field with the new member in wire order before a
+socket is opened. `Request::cdn_loop()` / `HttpRequest::cdn_loop()` parse
+received fields into `HttpCdnLoop`, returning `Ok(None)` when absent and
+preserving raw headers on parse errors.
+
+`CdnLoop` validates opaque CDN identifiers (`uri-host` with optional port or
+an RFC 7230 token pseudonym), optional HTTP parameters, and bounds: 64 KiB per
+field value, per combined raw field set including `", "` separator overhead,
+and per combined serialized value, 256 combined members, and 32
+parameters per member. Duplicate parameter names are rejected; repeated CDN
+identifiers are valid loop-visible metadata. These helpers expose loop
+metadata only: RTTP does not detect or break loops, reject requests because an
+identifier is already present, insert a local CDN identifier, forward the
+field automatically, or treat `CDN-Loop` as hop-by-hop.
 
 ## Bounded HTTP/1.1 Allow behavior
 
@@ -1138,8 +1176,10 @@ scheduling, or async accept loops.
 | Authentication metadata | `Request::authorization`/`proxy_authorization` and `HttpRequest::authorization`/`proxy_authorization` expose one bounded opaque credential field, `Response::www_authenticate` parses bounded client response challenges, and `HttpResponse::with_www_authenticate`/`www_authenticate` declare and parse bounded `WWW-Authenticate` challenges | No credential validation, realm selection, automatic client challenge, retry, or authentication/authorization enforcement |
 | Idempotency-Key | `HttpClient::idempotency_key` validates and emits one bounded opaque `Idempotency-Key` request field through the shared protocol type, and `Request::idempotency_key`/`HttpRequest::idempotency_key` parse received fields into the same representation while preserving raw headers on errors and redacting the key from typed debug output | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | Depth | `HttpClient::depth` validates and emits bounded singleton WebDAV `Depth` request metadata through the shared protocol type, and `Request::depth`/`HttpRequest::depth` parse received fields into the same representation while preserving raw headers on errors | No resource traversal, WebDAV method selection, method-policy enforcement, retry, or forwarding policy |
+| Sec-WebSocket-Key | `HttpClient::sec_websocket_key` validates and emits one bounded `Sec-WebSocket-Key` request field through the shared protocol type, and `Request::sec_websocket_key`/`HttpRequest::sec_websocket_key` parse received fields into the same representation while preserving raw headers on errors and redacting the nonce from typed debug output | No HTTP upgrade, `Sec-WebSocket-Accept` computation, random nonce generation, WebSocket frames, or handshake policy |
 | W3C Trace Context | `HttpClient::traceparent`/`tracestate` validate and emit bounded W3C Trace Context request metadata, and `Request::traceparent`/`tracestate` plus `HttpRequest` helpers parse received fields while preserving raw headers on errors and redacting propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |
 | W3C Baggage | `HttpClient::baggage` validates and emits bounded W3C Baggage request metadata, and `Request::baggage` plus `HttpRequest` helpers parse received fields while preserving raw headers on errors and redacting member and property values from typed debug output | No application-data interpretation, request-context storage, tracing backend, span model, or automatic propagation |
+| CDN-Loop | `HttpClient::cdn_loop` validates and emits bounded RFC 8586 `CDN-Loop` request metadata, combining an existing same-name field with the new member in wire order, and `Request::cdn_loop` plus `HttpRequest` helpers parse received fields into `HttpCdnLoop` while preserving raw headers on errors | No CDN identifier insertion, loop detection or rejection, automatic forwarding, or hop-by-hop handling |
 | No-Vary-Search | `NoVarySearch`, `HttpNoVarySearch`, `Response::no_vary_search`, `HttpResponse::with_no_vary_search`, and `HttpResponse::no_vary_search` parse and declare bounded Structured Fields response metadata for query-parameter variance declarations | No cache storage, cache-key matching, URL normalization, navigation behavior, request replay, or shared-cache policy enforcement |
 | Allow | `HttpAllowedMethods`, `HttpResponse::with_allow`, and `HttpResponse::allow` declare and parse bounded `Allow` method-list metadata | No route dispatch, automatic `405` generation, `OPTIONS` policy, fallback method selection, retry/replay, or status-code policy engine |
 | Client Hints | `HttpAcceptCh`/`HttpCriticalCh`, `HttpResponse::with_accept_ch`/`with_critical_ch`, and `accept_ch`/`critical_ch` declare and parse bounded Client Hints opt-in metadata; `Response::accept_ch` and `critical_ch` expose it to clients | No browser opt-in state, request-header generation, automatic retry, persistence, or Client Hints policy |

@@ -2771,6 +2771,116 @@ fn server_forwarded_helper_rejects_malformed_values_without_losing_raw_headers()
 }
 
 #[test]
+fn sync_client_and_server_exchange_cdn_loop_metadata_without_policy() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind CDN-Loop metadata server");
+  let addr = server.local_addr().expect("CDN-Loop metadata server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let cdn_loop = request
+          .cdn_loop()
+          .expect("CDN-Loop should parse")
+          .expect("CDN-Loop should be present");
+        observed_tx
+          .send((
+            request.header("CDN-Loop").map(str::to_string),
+            cdn_loop
+              .members()
+              .iter()
+              .map(|member| {
+                (
+                  member.identifier().to_string(),
+                  member.parameter("trace").map(str::to_string),
+                )
+              })
+              .collect::<Vec<_>>(),
+          ))
+          .expect("send observed CDN-Loop metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve CDN-Loop metadata request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/cdn-loop-metadata"))
+    .cdn_loop(r#"foo123.foocdn.example, barcdn.example; trace="abcdef""#)
+    .expect("first CDN-Loop value should be accepted")
+    .cdn_loop(r#"AnotherCDN; abc=123; def="456""#)
+    .expect("second CDN-Loop value should be accepted")
+    .emit()
+    .expect("CDN-Loop metadata request should succeed");
+
+  assert_eq!("OK", response.body().string().expect("response body"));
+  let (raw_header, cdn_loop) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe CDN-Loop metadata");
+  assert_eq!(
+    Some(
+      "foo123.foocdn.example, barcdn.example; trace=abcdef, AnotherCDN; abc=123; def=456"
+        .to_string()
+    ),
+    raw_header
+  );
+  assert_eq!(
+    vec![
+      ("foo123.foocdn.example".to_string(), None),
+      ("barcdn.example".to_string(), Some("abcdef".to_string())),
+      ("AnotherCDN".to_string(), None),
+    ],
+    cdn_loop
+  );
+  handle.join().expect("CDN-Loop metadata server thread");
+}
+
+#[test]
+fn server_cdn_loop_helper_rejects_malformed_values_without_losing_raw_headers() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind malformed CDN-Loop metadata server");
+  let addr = server
+    .local_addr()
+    .expect("malformed CDN-Loop metadata server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send((
+            request.header("CDN-Loop").map(str::to_string),
+            request.header("Host").map(str::to_string),
+            request.cdn_loop().is_err(),
+          ))
+          .expect("send malformed CDN-Loop observation");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve malformed CDN-Loop request");
+  });
+
+  let mut stream = TcpStream::connect(addr).expect("connect malformed CDN-Loop request");
+  stream
+    .write_all(
+      b"GET /matrix/malformed-cdn-loop HTTP/1.1\r\nHost: example.test\r\nCDN-Loop: edge.example; trace\r\nConnection: close\r\n\r\n",
+    )
+    .expect("write malformed CDN-Loop request");
+
+  assert_eq!(
+    (
+      Some("edge.example; trace".to_string()),
+      Some("example.test".to_string()),
+      true,
+    ),
+    observed_rx
+      .recv_timeout(Duration::from_secs(1))
+      .expect("server should observe malformed CDN-Loop metadata"),
+  );
+  handle
+    .join()
+    .expect("malformed CDN-Loop metadata server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_bounded_authentication_metadata() {
   let server =
     rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind authentication server");
@@ -2911,6 +3021,52 @@ fn sync_client_and_server_exchange_bounded_depth_metadata_without_policy() {
   assert_eq!(Some("infinity".to_string()), raw);
   assert_eq!(207, response.code());
   handle.join().expect("Depth server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_bounded_sec_websocket_key_metadata_without_handshake() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind sec websocket key server");
+  let addr = server.local_addr().expect("sec websocket key server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request
+            .sec_websocket_key()
+            .expect("Sec-WebSocket-Key should parse")
+            .map(|key| key.as_str().to_string()),
+          request.header("Sec-WebSocket-Key").map(str::to_string),
+          request.header("Upgrade").map(str::to_string),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed sec websocket key metadata");
+        HttpResponse::new(200, "OK")
+      })
+      .expect("serve sec websocket key request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/chat"))
+    .sec_websocket_key("dGhlIHNhbXBsZSBub25jZQ==")
+    .expect("Sec-WebSocket-Key should be accepted")
+    .emit()
+    .expect("sec websocket key response should parse");
+
+  let (typed, raw, upgrade) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe sec websocket key metadata");
+  assert_eq!(Some("dGhlIHNhbXBsZSBub25jZQ==".to_string()), typed);
+  assert_eq!(Some("dGhlIHNhbXBsZSBub25jZQ==".to_string()), raw);
+  assert_eq!(
+    None, upgrade,
+    "typed Sec-WebSocket-Key metadata must not set Connection: Upgrade or an Upgrade field"
+  );
+  assert_eq!(200, response.code());
+  handle.join().expect("sec websocket key server thread");
 }
 
 #[test]
