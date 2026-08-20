@@ -27,6 +27,7 @@ use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
 use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedderPolicyReportOnly;
 use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::cross_origin_opener_policy_report_only::CrossOriginOpenerPolicyReportOnly;
+use rttp_protocol::dav::{Dav, DavClass, DavParseError};
 use rttp_protocol::deprecation::Deprecation;
 use rttp_protocol::depth::Depth;
 use rttp_protocol::destination::Destination;
@@ -87,6 +88,22 @@ use rttp_protocol::x_forwarded_for::{XForwardedFor, XForwardedForParseError};
 use rttp_protocol::x_forwarded_host::{XForwardedHost, XForwardedHostParseError};
 use rttp_protocol::x_forwarded_proto::{XForwardedProto, XForwardedProtoParseError};
 use rttp_protocol::x_frame_options::XFrameOptions;
+
+#[test]
+fn protocol_exports_dav_response_metadata() {
+  let dav =
+    Dav::parse("1, 2, extended-mkcol, <https://dav.example.test/ns>").expect("DAV should parse");
+  assert_eq!(
+    &[
+      DavClass::One,
+      DavClass::Two,
+      DavClass::ExtensionToken("extended-mkcol".to_string()),
+      DavClass::CodedUrl("https://dav.example.test/ns".to_string()),
+    ],
+    dav.classes()
+  );
+  let _: DavParseError = Dav::parse("1, 1").expect_err("duplicate DAV class should be rejected");
+}
 
 #[test]
 fn protocol_exports_representative_bounded_metadata_types() {

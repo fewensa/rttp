@@ -80,6 +80,17 @@ canonical metadata value: RTTP does not create locks, refresh locks, or select
 an application timeout. Callers needing an unusual value can retain full
 raw-header control with `header(("Timeout", "..."))`.
 
+## Bounded WebDAV DAV response metadata
+
+`Response::dav()` parses WebDAV `DAV` response fields through the shared
+protocol `Dav` type. The helper preserves wire order across repeated fields,
+accepts standard classes `1`, `2`, and `3`, extension tokens, and
+`<absolute-URI>` Coded-URLs, and rejects malformed, duplicate, oversized,
+aggregate-oversized, or over-32-member values while raw response headers remain
+available through the ordinary header accessors. It exposes response metadata
+only: RTTP does not infer, negotiate, or enforce WebDAV feature support from
+the header.
+
 ## Bounded Idempotency-Key metadata
 
 `HttpClient::idempotency_key(value)` sets an `Idempotency-Key` request header

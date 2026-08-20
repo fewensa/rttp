@@ -90,6 +90,9 @@ pub use rttp_protocol::cross_origin_resource_policy::{
   CrossOriginResourcePolicy as HttpCrossOriginResourcePolicy,
   CrossOriginResourcePolicyParseError as HttpCrossOriginResourcePolicyParseError,
 };
+pub use rttp_protocol::dav::{
+  Dav as HttpDav, DavClass as HttpDavClass, DavParseError as HttpDavParseError,
+};
 pub use rttp_protocol::deprecation::{
   Deprecation as HttpDeprecation, DeprecationParseError as HttpDeprecationParseError,
 };
@@ -1114,6 +1117,21 @@ impl HttpResponse {
     self
       .headers
       .push(HttpHeader::new("Allow", allow.header_value()));
+    Ok(self)
+  }
+
+  /// Replaces `DAV` response metadata with bounded WebDAV compliance classes.
+  ///
+  /// This declares metadata only; it does not infer or enforce WebDAV feature
+  /// support.
+  pub fn with_dav(mut self, value: impl AsRef<str>) -> Result<Self, HttpDavParseError> {
+    let dav = HttpDav::parse(value)?;
+    self
+      .headers
+      .retain(|header| !header.name.eq_ignore_ascii_case("DAV"));
+    self
+      .headers
+      .push(HttpHeader::new("DAV", dav.header_value()));
     Ok(self)
   }
 
@@ -2210,6 +2228,21 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpAllowedMethods::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `DAV` response metadata without inferring or enforcing
+  /// WebDAV feature support.
+  pub fn dav(&self) -> Result<Option<HttpDav>, HttpDavParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("DAV"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDav::parse_values(values).map(Some)
   }
 
   /// Parses attached HTTP/1 `Connection` header metadata without changing
