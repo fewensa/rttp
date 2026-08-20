@@ -4,7 +4,8 @@ use std::io::Read;
 use crate::config::DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES;
 use crate::error;
 use crate::response::ResponseBody;
-use crate::types::{Cookie, Header, RoUrl, ToUrl};
+use crate::types::{is_sensitive_debug_header, Cookie, Header, RoUrl, ToUrl};
+use rttp_protocol::cookie::HttpSetCookie;
 use url::Url;
 
 static CR: u8 = b'\r';
@@ -126,12 +127,31 @@ impl RawResponse {
     text.push_str(&self.body.string()?);
     Ok(text)
   }
+
+  fn debug_string(&self) -> error::Result<String> {
+    let mut text = String::new();
+    text.push_str(&format!(
+      "{} {} {}\r\n",
+      self.version, self.code, self.reason
+    ));
+    self.headers.iter().for_each(|h| {
+      let value = if is_sensitive_debug_header(h.name()) {
+        "[REDACTED]"
+      } else {
+        h.value()
+      };
+      text.push_str(&format!("{}: {}\r\n", h.name(), value));
+    });
+    text.push_str("\r\n");
+    text.push_str(&self.body.string()?);
+    Ok(text)
+  }
 }
 
 impl fmt::Debug for RawResponse {
   #[inline]
   fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    match self.string() {
+    match self.debug_string() {
       Ok(text) => fmt::Debug::fmt(&text, formatter),
       Err(e) => fmt::Debug::fmt(&e, formatter),
     }
@@ -242,7 +262,8 @@ impl Parser {
     let cookies: Vec<Cookie> = headers
       .iter()
       .filter(|header| header.name().eq_ignore_ascii_case("set-cookie"))
-      .filter_map(|header| Cookie::parse(header.value()).ok())
+      .filter_map(|header| HttpSetCookie::parse(header.value()).ok())
+      .map(|cookie| Cookie::from_set_cookie(&cookie))
       .collect();
 
     response.headers(headers);

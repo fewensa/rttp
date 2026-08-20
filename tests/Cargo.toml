@@ -23,3 +23,11 @@ path = "http11_client_server_matrix.rs"
 [[test]]
 name = "http2_client_server_roundtrip"
 path = "http2_client_server_roundtrip.rs"
+
+[[test]]
+name = "websocket_handshake_metadata_matrix"
+path = "websocket_handshake_metadata_matrix.rs"
+
+[[test]]
+name = "transparent_negotiation_metadata_matrix"
+path = "transparent_negotiation_metadata_matrix.rs"

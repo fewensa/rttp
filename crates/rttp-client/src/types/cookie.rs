@@ -1,6 +1,8 @@
 use std::fmt;
 use std::time::SystemTime;
 
+use rttp_protocol::cookie::HttpSetCookie;
+
 use crate::error;
 
 #[derive(Clone)]
@@ -10,6 +12,7 @@ pub struct Cookie {
   expires: Option<SystemTime>,
   path: Option<String>,
   domain: Option<String>,
+  max_age: Option<u64>,
   secure: bool,
   http_only: bool,
   persistent: bool,
@@ -50,7 +53,7 @@ impl Cookie {
   }
 
   pub fn string(&self) -> String {
-    let mut text = format!("{}={}", self.name, self.value,);
+    let mut text = format!("{}={}", self.name, serialize_cookie_value(&self.value),);
     if let Some(path) = &self.path {
       text.push_str(&format!("; path={}", path));
     }
@@ -61,6 +64,8 @@ impl Cookie {
       if let Some(expires) = self.expires {
         let http_date = httpdate::fmt_http_date(expires);
         text.push_str(&format!("; expires={}", http_date));
+      } else if let Some(max_age) = self.max_age {
+        text.push_str(&format!("; max-age={}", max_age));
       } else {
         text.push_str("; max-age=0")
       }
@@ -81,7 +86,48 @@ impl Cookie {
   }
 }
 
+fn serialize_cookie_value(value: &str) -> String {
+  if value.bytes().all(is_cookie_octet) {
+    return value.to_owned();
+  }
+  if value.bytes().all(is_generated_quoted_cookie_value_byte) {
+    return format!("\"{}\"", value);
+  }
+  value.to_owned()
+}
+
+fn is_cookie_octet(byte: u8) -> bool {
+  matches!(byte, 0x21 | 0x23..=0x2b | 0x2d..=0x3a | 0x3c..=0x5b | 0x5d..=0x7e)
+}
+
+fn is_generated_quoted_cookie_value_byte(byte: u8) -> bool {
+  matches!(byte, 0x20..=0x7e) && byte != b'"' && byte != b'\\'
+}
+
 impl Cookie {
+  pub(crate) fn from_set_cookie(cookie: &HttpSetCookie) -> Self {
+    let expires = cookie
+      .expires()
+      .and_then(|value| httpdate::parse_http_date(&value.replace('-', " ")).ok());
+    let host_only = cookie.extension_attributes().any(|attribute| {
+      attribute.name().eq_ignore_ascii_case("hostonly")
+        || attribute.name().eq_ignore_ascii_case("host_only")
+    });
+    Self {
+      name: cookie.name().to_owned(),
+      value: cookie.value().to_owned(),
+      expires,
+      path: cookie.path().map(str::to_owned),
+      domain: cookie.domain().map(str::to_owned),
+      max_age: cookie.max_age(),
+      secure: cookie.secure(),
+      http_only: cookie.http_only(),
+      persistent: expires.is_some() || cookie.max_age().is_some(),
+      host_only,
+      same_site: cookie.same_site().map(|value| value.as_str().to_owned()),
+    }
+  }
+
   pub fn builder() -> CookieBuilder {
     CookieBuilder::new()
   }
@@ -173,14 +219,27 @@ impl Cookie {
 impl fmt::Debug for Cookie {
   #[inline]
   fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    fmt::Debug::fmt(&self.string(), formatter)
+    formatter
+      .debug_struct("Cookie")
+      .field("name", &self.name)
+      .field("value", &"[REDACTED]")
+      .field("expires", &self.expires.as_ref().map(|_| "[REDACTED]"))
+      .field("path", &self.path.as_ref().map(|_| "[REDACTED]"))
+      .field("domain", &self.domain.as_ref().map(|_| "[REDACTED]"))
+      .field("max_age", &self.max_age)
+      .field("secure", &self.secure)
+      .field("http_only", &self.http_only)
+      .field("persistent", &self.persistent)
+      .field("host_only", &self.host_only)
+      .field("same_site", &self.same_site)
+      .finish()
   }
 }
 
 impl fmt::Display for Cookie {
   #[inline]
   fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    fmt::Debug::fmt(&self.string(), formatter)
+    fmt::Debug::fmt(self, formatter)
   }
 }
 
@@ -222,6 +281,7 @@ impl CookieBuilder {
         expires: None,
         path: None,
         domain: None,
+        max_age: None,
         secure: false,
         http_only: false,
         persistent: false,

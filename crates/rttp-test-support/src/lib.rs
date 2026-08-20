@@ -873,6 +873,65 @@ pub mod age_expires {
   }
 }
 
+pub mod response_http_date {
+  pub const UNIX_SECONDS: u64 = 784_111_777;
+  pub const IMF_FIXDATE: &str = "Sun, 06 Nov 1994 08:49:37 GMT";
+  pub const OBSOLETE_RFC_850: &str = "Sunday, 06-Nov-94 08:49:37 GMT";
+  pub const ASCTIME: &str = "Sun Nov  6 08:49:37 1994";
+
+  pub struct ValidCase {
+    pub name: &'static str,
+    pub value: &'static str,
+    pub unix_seconds: u64,
+  }
+
+  pub struct InvalidCase {
+    pub name: &'static str,
+    pub value: &'static str,
+  }
+
+  const VALID_CASES: &[ValidCase] = &[
+    ValidCase {
+      name: "HTTP-date IMF-fixdate",
+      value: IMF_FIXDATE,
+      unix_seconds: UNIX_SECONDS,
+    },
+    ValidCase {
+      name: "HTTP-date obsolete RFC 850 date",
+      value: OBSOLETE_RFC_850,
+      unix_seconds: UNIX_SECONDS,
+    },
+    ValidCase {
+      name: "HTTP-date asctime date",
+      value: ASCTIME,
+      unix_seconds: UNIX_SECONDS,
+    },
+  ];
+
+  const INVALID_CASES: &[InvalidCase] = &[
+    InvalidCase {
+      name: "HTTP-date empty value",
+      value: "",
+    },
+    InvalidCase {
+      name: "HTTP-date non-date value",
+      value: "not a date",
+    },
+    InvalidCase {
+      name: "HTTP-date unsupported timezone",
+      value: "Sun, 06 Nov 1994 08:49:37 PST",
+    },
+  ];
+
+  pub fn valid_cases() -> &'static [ValidCase] {
+    VALID_CASES
+  }
+
+  pub fn invalid_cases() -> &'static [InvalidCase] {
+    INVALID_CASES
+  }
+}
+
 pub mod retry_after {
   pub const RETRY_AFTER_UNIX_SECONDS: u64 = 784_111_777;
   pub const RETRY_AFTER_IMF_FIXDATE: &str = "Sun, 06 Nov 1994 08:49:37 GMT";

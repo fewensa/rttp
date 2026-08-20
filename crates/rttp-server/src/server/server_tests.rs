@@ -351,6 +351,314 @@ fn request_save_data_parses_request_metadata_without_policy() {
 }
 
 #[test]
+fn request_dnt_parses_tracking_preference_metadata_without_policy() {
+  let absent_raw = "GET /catalog HTTP/1.1\r\nHost: example.test\r\n\r\n";
+  let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
+  let absent = Request::read_next_from(&mut absent_reader)
+    .expect("absent request should parse")
+    .expect("absent request should be present");
+  assert_eq!(
+    None,
+    absent.dnt().expect("missing DNT should be accepted")
+  );
+  assert_eq!(None, absent.header("DNT"));
+
+  for (value, expected) in [("0", "0"), ("1", "1")] {
+    let valid_raw = format!(
+      "GET /catalog HTTP/1.1\r\nHost: example.test\r\nDNT: {value}\r\n\r\n"
+    );
+    let mut valid_reader = BufReader::new(Cursor::new(valid_raw.as_bytes()));
+    let valid = Request::read_next_from(&mut valid_reader)
+      .expect("valid request should parse")
+      .expect("valid request should be present");
+    assert_eq!(
+      expected,
+      valid
+        .dnt()
+        .expect("DNT should parse")
+        .expect("DNT should be present")
+        .header_value()
+    );
+  }
+
+  let malformed_raw = concat!(
+    "GET /catalog HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "DNT: ?1\r\n",
+    "\r\n"
+  );
+  let mut malformed_reader = BufReader::new(Cursor::new(malformed_raw.as_bytes()));
+  let malformed = Request::read_next_from(&mut malformed_reader)
+    .expect("malformed metadata should not reject the request frame")
+    .expect("malformed request should be present");
+  assert!(malformed.dnt().is_err());
+  assert_eq!(Some("?1"), malformed.header("DNT"));
+
+  let duplicate_raw = concat!(
+    "GET /catalog HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "DNT: 1\r\n",
+    "dnt: 0\r\n",
+    "\r\n"
+  );
+  let mut duplicate_reader = BufReader::new(Cursor::new(duplicate_raw.as_bytes()));
+  let duplicate = Request::read_next_from(&mut duplicate_reader)
+    .expect("duplicate metadata should not reject the request frame")
+    .expect("duplicate request should be present");
+  assert!(duplicate.dnt().is_err());
+  assert_eq!(Some("1"), duplicate.header("DNT"));
+}
+
+#[test]
+fn request_sec_gpc_parses_request_metadata_without_policy() {
+  let absent_raw = "GET /privacy HTTP/1.1\r\nHost: example.test\r\n\r\n";
+  let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
+  let absent = Request::read_next_from(&mut absent_reader)
+    .expect("absent request should parse")
+    .expect("absent request should be present");
+  assert_eq!(None, absent.sec_gpc().expect("missing Sec-GPC should be accepted"));
+  assert_eq!(None, absent.header("Sec-GPC"));
+
+  let valid_raw = concat!(
+    "GET /privacy HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Sec-GPC: 1\r\n",
+    "\r\n"
+  );
+  let mut valid_reader = BufReader::new(Cursor::new(valid_raw.as_bytes()));
+  let valid = Request::read_next_from(&mut valid_reader)
+    .expect("valid request should parse")
+    .expect("valid request should be present");
+  assert_eq!(
+    "1",
+    valid
+      .sec_gpc()
+      .expect("Sec-GPC should parse")
+      .expect("Sec-GPC should be present")
+      .header_value()
+  );
+
+  let malformed_raw = concat!(
+    "GET /privacy HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Sec-GPC: 0\r\n",
+    "\r\n"
+  );
+  let mut malformed_reader = BufReader::new(Cursor::new(malformed_raw.as_bytes()));
+  let malformed = Request::read_next_from(&mut malformed_reader)
+    .expect("malformed metadata should not reject the request frame")
+    .expect("malformed request should be present");
+  assert!(malformed.sec_gpc().is_err());
+  assert_eq!(Some("0"), malformed.header("Sec-GPC"));
+
+  let duplicate_raw = concat!(
+    "GET /privacy HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Sec-GPC: 1\r\n",
+    "sec-gpc: 1\r\n",
+    "\r\n"
+  );
+  let mut duplicate_reader = BufReader::new(Cursor::new(duplicate_raw.as_bytes()));
+  let duplicate = Request::read_next_from(&mut duplicate_reader)
+    .expect("duplicate metadata should not reject the request frame")
+    .expect("duplicate request should be present");
+  assert!(duplicate.sec_gpc().is_err());
+  assert_eq!(Some("1"), duplicate.header("Sec-GPC"));
+
+  let oversized_value = "1".repeat(rttp_protocol::sec_gpc::MAX_SEC_GPC_VALUE_BYTES + 1);
+  let oversized = HttpRequest {
+    method: "GET".to_string(),
+    path: "/privacy".to_string(),
+    query: None,
+    version: "HTTP/1.1".to_string(),
+    headers: vec![HttpHeader::new("Sec-GPC", oversized_value)],
+    body: Vec::new(),
+    content_length: None,
+  };
+  assert!(oversized.sec_gpc().is_err());
+  assert!(oversized.header("Sec-GPC").is_some());
+}
+
+#[test]
+fn request_pragma_parses_request_metadata_without_policy() {
+  let absent_raw = "GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n";
+  let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
+  let absent = Request::read_next_from(&mut absent_reader)
+    .expect("absent request should parse")
+    .expect("absent request should be present");
+  assert_eq!(
+    None,
+    absent
+      .pragma()
+      .expect("missing Pragma should be accepted")
+  );
+  assert_eq!(None, absent.header("Pragma"));
+
+  let valid_raw = concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Pragma: no-cache\r\n",
+    "Pragma: community=private, example=\"quoted, value\"\r\n",
+    "\r\n"
+  );
+  let mut valid_reader = BufReader::new(Cursor::new(valid_raw.as_bytes()));
+  let valid = Request::read_next_from(&mut valid_reader)
+    .expect("valid request should parse")
+    .expect("valid request should be present");
+  let pragma = valid
+    .pragma()
+    .expect("Pragma should parse")
+    .expect("Pragma should be present");
+  assert!(pragma.no_cache());
+  assert_eq!(2, pragma.extensions().len());
+  assert_eq!("community", pragma.extensions()[0].name());
+  assert_eq!(Some("private"), pragma.extensions()[0].value());
+  assert_eq!(
+    "no-cache, community=private, example=\"quoted, value\"",
+    pragma.header_value()
+  );
+
+  let malformed_raw = concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Pragma: no-cache=\r\n",
+    "\r\n"
+  );
+  let mut malformed_reader = BufReader::new(Cursor::new(malformed_raw.as_bytes()));
+  let malformed = Request::read_next_from(&mut malformed_reader)
+    .expect("malformed metadata should not reject the request frame")
+    .expect("malformed request should be present");
+  assert!(malformed.pragma().is_err());
+  assert_eq!(Some("no-cache="), malformed.header("Pragma"));
+
+  let duplicate_raw = concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Pragma: no-cache\r\n",
+    "pragma: no-cache\r\n",
+    "\r\n"
+  );
+  let mut duplicate_reader = BufReader::new(Cursor::new(duplicate_raw.as_bytes()));
+  let duplicate = Request::read_next_from(&mut duplicate_reader)
+    .expect("duplicate metadata should not reject the request frame")
+    .expect("duplicate request should be present");
+  assert!(duplicate.pragma().is_err());
+  assert_eq!(Some("no-cache"), duplicate.header("Pragma"));
+
+  let oversized_value = "x".repeat(rttp_protocol::pragma::MAX_PRAGMA_VALUE_BYTES + 1);
+  let oversized = HttpRequest {
+    method: "GET".to_string(),
+    path: "/asset".to_string(),
+    query: None,
+    version: "HTTP/1.1".to_string(),
+    headers: vec![HttpHeader::new("Pragma", oversized_value)],
+    body: Vec::new(),
+    content_length: None,
+  };
+  assert!(oversized.pragma().is_err());
+  assert!(oversized.header("Pragma").is_some());
+
+  let first = "a".repeat(rttp_protocol::pragma::MAX_PRAGMA_VALUE_BYTES / 2);
+  let second = "b".repeat(rttp_protocol::pragma::MAX_PRAGMA_VALUE_BYTES / 2);
+  let combined = HttpRequest {
+    method: "GET".to_string(),
+    path: "/asset".to_string(),
+    query: None,
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      HttpHeader::new("Pragma", first),
+      HttpHeader::new("Pragma", second),
+    ],
+    body: Vec::new(),
+    content_length: None,
+  };
+  assert!(combined.pragma().is_err());
+  assert!(combined.header("Pragma").is_some());
+}
+
+#[test]
+fn request_upgrade_insecure_requests_parses_request_metadata_without_policy() {
+  let absent_raw = "GET /page HTTP/1.1\r\nHost: example.test\r\n\r\n";
+  let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
+  let absent = Request::read_next_from(&mut absent_reader)
+    .expect("absent request should parse")
+    .expect("absent request should be present");
+  assert_eq!(
+    None,
+    absent
+      .upgrade_insecure_requests()
+      .expect("missing Upgrade-Insecure-Requests should be accepted")
+  );
+  assert_eq!(None, absent.header("Upgrade-Insecure-Requests"));
+
+  let valid_raw = concat!(
+    "GET /page HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Upgrade-Insecure-Requests: 1\r\n",
+    "\r\n"
+  );
+  let mut valid_reader = BufReader::new(Cursor::new(valid_raw.as_bytes()));
+  let valid = Request::read_next_from(&mut valid_reader)
+    .expect("valid request should parse")
+    .expect("valid request should be present");
+  assert_eq!(
+    "1",
+    valid
+      .upgrade_insecure_requests()
+      .expect("Upgrade-Insecure-Requests should parse")
+      .expect("Upgrade-Insecure-Requests should be present")
+      .header_value()
+  );
+
+  let malformed_raw = concat!(
+    "GET /page HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Upgrade-Insecure-Requests: 0\r\n",
+    "\r\n"
+  );
+  let mut malformed_reader = BufReader::new(Cursor::new(malformed_raw.as_bytes()));
+  let malformed = Request::read_next_from(&mut malformed_reader)
+    .expect("malformed metadata should not reject the request frame")
+    .expect("malformed request should be present");
+  assert!(malformed.upgrade_insecure_requests().is_err());
+  assert_eq!(Some("0"), malformed.header("Upgrade-Insecure-Requests"));
+
+  let duplicate_raw = concat!(
+    "GET /page HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Upgrade-Insecure-Requests: 1\r\n",
+    "upgrade-insecure-requests: 1\r\n",
+    "\r\n"
+  );
+  let mut duplicate_reader = BufReader::new(Cursor::new(duplicate_raw.as_bytes()));
+  let duplicate = Request::read_next_from(&mut duplicate_reader)
+    .expect("duplicate metadata should not reject the request frame")
+    .expect("duplicate request should be present");
+  assert!(duplicate.upgrade_insecure_requests().is_err());
+  assert_eq!(Some("1"), duplicate.header("Upgrade-Insecure-Requests"));
+
+  let oversized = "1".repeat(64 * 1024 + 1);
+  let oversized_request = Request {
+    method: "GET".to_string(),
+    target: "/page".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("Upgrade-Insecure-Requests".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.upgrade_insecure_requests().is_err());
+  assert_eq!(
+    Some(oversized.as_str()),
+    oversized_request.header("Upgrade-Insecure-Requests")
+  );
+}
+
+#[test]
 fn request_representation_metadata_parses_without_applying_policy() {
   let absent_raw = "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n";
   let mut absent_reader = BufReader::new(Cursor::new(absent_raw.as_bytes()));
@@ -384,6 +692,7 @@ fn request_representation_metadata_parses_without_applying_policy() {
     "content-encoding: zstd\r\n",
     "Content-Language: fr-CA, es-419\r\n",
     "content-language: en\r\n",
+    "Accept-Charset: utf-8\r\n",
     "Accept-Encoding: gzip\r\n",
     "Accept-Language: en\r\n",
     "Content-Length: 4\r\n",
@@ -414,6 +723,11 @@ fn request_representation_metadata_parses_without_applying_policy() {
     .expect("Content-Language should be present");
   assert_eq!(vec!["fr-CA", "es-419", "en"], languages.languages());
 
+  let accept_charset = valid
+    .accept_charset()
+    .expect("Accept-Charset should parse")
+    .expect("Accept-Charset should be present");
+  assert_eq!("utf-8", accept_charset.charsets()[0].charset());
   let accept_encoding = valid
     .accept_encoding()
     .expect("Accept-Encoding should parse")
@@ -425,6 +739,58 @@ fn request_representation_metadata_parses_without_applying_policy() {
     .expect("Accept-Language should be present");
   assert_eq!(vec!["en"], accept_language.ranges());
   assert_eq!(b"body", valid.body());
+}
+
+#[test]
+fn request_accept_charset_parses_ranges_without_selecting_a_charset() {
+  let request = Request::from_raw_frame(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Accept-Charset: utf-8, iso-8859-1;q=0.5\r\n",
+    "accept-charset: *; q=0\r\n",
+    "Content-Length: 4\r\n",
+    "\r\n",
+    "body"
+  ).as_bytes())
+  .expect("request should parse");
+
+  let charsets = request
+    .accept_charset()
+    .expect("Accept-Charset should parse")
+    .expect("Accept-Charset should be present");
+  assert_eq!(3, charsets.len());
+  assert_eq!("utf-8", charsets.charsets()[0].charset());
+  assert_eq!(1000, charsets.charsets()[0].quality());
+  assert_eq!("iso-8859-1", charsets.charsets()[1].charset());
+  assert_eq!(500, charsets.charsets()[1].quality());
+  assert_eq!("*", charsets.charsets()[2].charset());
+  assert_eq!(0, charsets.charsets()[2].quality());
+  assert_eq!(b"body", request.body());
+}
+
+#[test]
+fn request_accept_charset_preserves_absent_and_malformed_headers() {
+  let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .accept_charset()
+      .expect("absent Accept-Charset should be accepted")
+  );
+
+  let malformed = Request::from_raw_frame(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Accept-Charset: utf-8, UTF-8\r\n",
+    "Content-Length: 4\r\n",
+    "\r\n",
+    "body"
+  ).as_bytes())
+  .expect("malformed Accept-Charset should not reject raw request parsing");
+  assert_eq!(Some("utf-8, UTF-8"), malformed.header("Accept-Charset"));
+  assert!(malformed.accept_charset().is_err());
+  assert_eq!(b"body", malformed.body());
 }
 
 #[test]
@@ -1038,6 +1404,276 @@ fn etag_response_helper_rejects_malformed_duplicate_and_oversized_raw_headers() 
 }
 
 #[test]
+fn delta_base_response_helpers_validate_replace_and_parse_singleton_metadata() {
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .delta_base()
+      .expect("absent Delta-Base should parse")
+  );
+
+  let response = HttpResponse::ok([])
+    .header("Delta-Base", "\"old\"")
+    .header("delta-base", "W/\"older\"")
+    .with_delta_base(HttpDeltaBase::new(HttpEntityTag::weak("asset-v7")));
+  assert_eq!(
+    Some(HttpDeltaBase::new(HttpEntityTag::weak("asset-v7"))),
+    response.delta_base().expect("Delta-Base should parse")
+  );
+  assert_eq!(
+    vec![("Delta-Base", "W/\"asset-v7\"")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let strong = HttpResponse::ok([]).header("Delta-Base", "\"asset-v7\"");
+  assert_eq!(
+    Some(HttpDeltaBase::new(HttpEntityTag::strong("asset-v7"))),
+    strong.delta_base().expect("strong Delta-Base should parse")
+  );
+}
+
+#[test]
+fn delta_base_response_helper_rejects_malformed_duplicate_and_oversized_raw_headers() {
+  for value in ["abc", "W/abc", "\"bad space\"", "\"one\", \"two\""] {
+    let response = HttpResponse::ok([]).header("Delta-Base", value);
+    assert!(
+      response.delta_base().is_err(),
+      "Delta-Base should reject {value:?}"
+    );
+    assert_eq!(
+      vec![("Delta-Base", value)],
+      response
+        .headers
+        .iter()
+        .map(|header| (header.name.as_str(), header.value.as_str()))
+        .collect::<Vec<_>>()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("Delta-Base", "\"one\"")
+    .header("delta-base", "W/\"two\"");
+  assert!(duplicate.delta_base().is_err());
+  assert_eq!(
+    vec![("Delta-Base", "\"one\""), ("delta-base", "W/\"two\"")],
+    duplicate
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let oversized = format!("\"{}\"", "a".repeat(64 * 1024));
+  let response = HttpResponse::ok([]).header("Delta-Base", &oversized);
+  assert!(response.delta_base().is_err());
+  assert_eq!(
+    vec![("Delta-Base", oversized.as_str())],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn schedule_tag_response_helpers_validate_replace_and_parse_singleton_metadata() {
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .schedule_tag()
+      .expect("absent Schedule-Tag should parse")
+  );
+
+  let schedule_tag = HttpScheduleTag::parse("W/\"sched-17\"")
+    .expect("weak Schedule-Tag should parse");
+  let response = HttpResponse::ok([])
+    .header("Schedule-Tag", "\"old\"")
+    .header("schedule-tag", "W/\"older\"")
+    .with_schedule_tag(schedule_tag.clone());
+  assert_eq!(
+    Some(schedule_tag),
+    response
+      .schedule_tag()
+      .expect("Schedule-Tag should parse")
+  );
+  assert_eq!(
+    vec![("Schedule-Tag", "W/\"sched-17\"")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let strong = HttpResponse::ok([]).header("Schedule-Tag", "\"sched-17\"");
+  assert_eq!(
+    Some(HttpScheduleTag::parse("\"sched-17\"").expect("Schedule-Tag should parse")),
+    strong
+      .schedule_tag()
+      .expect("strong Schedule-Tag should parse")
+  );
+}
+
+#[test]
+fn schedule_tag_response_helper_rejects_malformed_duplicate_and_oversized_raw_headers() {
+  for value in ["abc", "W/abc", "\"bad space\"", "\"bad\"value\""] {
+    let response = HttpResponse::ok([]).header("Schedule-Tag", value);
+    assert!(
+      response.schedule_tag().is_err(),
+      "Schedule-Tag should reject {value:?}"
+    );
+    assert_eq!(
+      vec![("Schedule-Tag", value)],
+      response
+        .headers
+        .iter()
+        .map(|header| (header.name.as_str(), header.value.as_str()))
+        .collect::<Vec<_>>()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("Schedule-Tag", "\"one\"")
+    .header("schedule-tag", "W/\"two\"");
+  assert!(duplicate.schedule_tag().is_err());
+  assert_eq!(
+    vec![("Schedule-Tag", "\"one\""), ("schedule-tag", "W/\"two\"")],
+    duplicate
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let oversized = format!("\"{}\"", "a".repeat(64 * 1024));
+  let response = HttpResponse::ok([]).header("Schedule-Tag", &oversized);
+  assert!(response.schedule_tag().is_err());
+  assert_eq!(
+    vec![("Schedule-Tag", oversized.as_str())],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn service_worker_allowed_response_helpers_validate_replace_and_parse_singleton_metadata() {
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .service_worker_allowed()
+      .expect("absent Service-Worker-Allowed should parse")
+  );
+
+  let response = HttpResponse::ok([])
+    .header("Service-Worker-Allowed", "/old")
+    .header("service-worker-allowed", "/older")
+    .with_service_worker_allowed(" / ")
+    .expect("valid Service-Worker-Allowed should be accepted");
+  assert_eq!(
+    "/",
+    response
+      .service_worker_allowed()
+      .expect("Service-Worker-Allowed should parse")
+      .expect("Service-Worker-Allowed should be present")
+      .as_str()
+  );
+  assert_eq!(
+    vec![("Service-Worker-Allowed", "/")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let attached = HttpResponse::ok([]).header("Service-Worker-Allowed", "../scope");
+  assert_eq!(
+    "../scope",
+    attached
+      .service_worker_allowed()
+      .expect("Service-Worker-Allowed should parse")
+      .expect("Service-Worker-Allowed should be present")
+      .as_str()
+  );
+}
+
+#[test]
+fn service_worker_allowed_response_helper_rejects_malformed_duplicate_and_oversized_raw_headers() {
+  for value in [
+    "",
+    " ",
+    "/bad path",
+    "/bad%zz",
+    "http://example.test/scope",
+    "//example.test/scope",
+    "/safe\u{7f}",
+  ] {
+    assert!(
+      HttpResponse::ok([])
+        .with_service_worker_allowed(value)
+        .is_err(),
+      "Service-Worker-Allowed helper should reject {value:?}"
+    );
+
+    let response = HttpResponse::ok([]).header("Service-Worker-Allowed", value);
+    assert!(
+      response.service_worker_allowed().is_err(),
+      "Service-Worker-Allowed parser should reject {value:?}"
+    );
+    assert_eq!(
+      vec![("Service-Worker-Allowed", value)],
+      response
+        .headers
+        .iter()
+        .map(|header| (header.name.as_str(), header.value.as_str()))
+        .collect::<Vec<_>>()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("Service-Worker-Allowed", "/")
+    .header("service-worker-allowed", "/app/");
+  assert!(duplicate.service_worker_allowed().is_err());
+  assert_eq!(
+    vec![
+      ("Service-Worker-Allowed", "/"),
+      ("service-worker-allowed", "/app/")
+    ],
+    duplicate
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let oversized = format!("/{}", "a".repeat(64 * 1024));
+  assert!(
+    HttpResponse::ok([])
+      .with_service_worker_allowed(&oversized)
+      .is_err(),
+    "Service-Worker-Allowed helper should reject oversized values"
+  );
+  let response = HttpResponse::ok([]).header("Service-Worker-Allowed", &oversized);
+  assert!(response.service_worker_allowed().is_err());
+  assert_eq!(
+    vec![("Service-Worker-Allowed", oversized.as_str())],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
 fn access_control_allow_methods_helpers_validate_replace_and_parse_response_metadata() {
   let response = HttpResponse::ok([])
     .header("Access-Control-Allow-Methods", "DELETE")
@@ -1424,6 +2060,81 @@ fn cross_origin_embedder_policy_report_only_helpers_preserve_raw_metadata_and_re
 }
 
 #[test]
+fn content_security_policy_report_only_helpers_preserve_order_and_raw_headers() {
+  let raw = HttpResponse::ok([])
+    .header("Content-Security-Policy-Report-Only", "default-src 'self'")
+    .header("content-security-policy-report-only", "object-src 'none'");
+
+  let metadata = raw
+    .content_security_policy_report_only()
+    .expect("Content-Security-Policy-Report-Only should parse")
+    .expect("Content-Security-Policy-Report-Only should be present");
+
+  assert_eq!(metadata.as_str(), "default-src 'self'");
+  assert_eq!(
+    metadata.header_values(),
+    ["default-src 'self'", "object-src 'none'"]
+  );
+  assert_eq!(
+    Some("default-src 'self'"),
+    raw
+      .headers
+      .iter()
+      .find(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Content-Security-Policy-Report-Only")
+      })
+      .map(|header| header.value.as_str())
+  );
+
+  let replaced = raw
+    .with_content_security_policy_report_only("script-src 'none'")
+    .expect("Content-Security-Policy-Report-Only should be accepted");
+  assert_eq!(
+    ["script-src 'none'"],
+    replaced
+      .content_security_policy_report_only()
+      .expect("Content-Security-Policy-Report-Only should parse")
+      .expect("Content-Security-Policy-Report-Only should be present")
+      .header_values()
+  );
+  assert_eq!(
+    vec![("Content-Security-Policy-Report-Only", "script-src 'none'")],
+    replaced
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let malformed =
+    HttpResponse::ok([]).header("Content-Security-Policy-Report-Only", "default-src 'self'\u{7f}");
+  assert!(malformed.content_security_policy_report_only().is_err());
+  assert_eq!(
+    Some("default-src 'self'\u{7f}"),
+    malformed
+      .headers
+      .iter()
+      .find(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Content-Security-Policy-Report-Only")
+      })
+      .map(|header| header.value.as_str())
+  );
+  assert!(HttpResponse::ok([])
+    .with_content_security_policy_report_only("default-src\r\nblocked")
+    .is_err());
+
+  let mut too_many = HttpResponse::ok([]);
+  for _ in 0..=rttp_protocol::content_security_policy_report_only::MAX_CONTENT_SECURITY_POLICY_REPORT_ONLY_FIELDS {
+    too_many = too_many.header("Content-Security-Policy-Report-Only", "default-src 'self'");
+  }
+  assert!(too_many.content_security_policy_report_only().is_err());
+}
+
+#[test]
 fn cross_origin_opener_policy_helpers_validate_replace_and_parse_response_metadata() {
   let response = HttpResponse::ok([])
     .header("Cross-Origin-Opener-Policy", "unsafe-none")
@@ -1504,6 +2215,109 @@ fn cross_origin_opener_policy_helpers_preserve_raw_metadata_and_report_parse_err
   assert!(duplicate.cross_origin_opener_policy().is_err());
   assert!(HttpResponse::ok([])
     .with_cross_origin_opener_policy("x".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
+fn cross_origin_opener_policy_report_only_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Cross-Origin-Opener-Policy-Report-Only", "unsafe-none")
+    .header("cross-origin-opener-policy-report-only", "same-origin")
+    .with_cross_origin_opener_policy_report_only(r#"same-origin; report-to="coop""#)
+    .expect("Cross-Origin-Opener-Policy-Report-Only should be accepted");
+
+  let policy = response
+    .cross_origin_opener_policy_report_only()
+    .expect("Cross-Origin-Opener-Policy-Report-Only should parse")
+    .expect("Cross-Origin-Opener-Policy-Report-Only should be present");
+  assert_eq!(HttpCrossOriginOpenerPolicy::SameOrigin, policy.policy());
+  assert_eq!(Some("coop"), policy.report_to());
+  assert_eq!(r#"same-origin; report-to="coop""#, policy.header_value());
+  assert_eq!(
+    vec![(
+      "Cross-Origin-Opener-Policy-Report-Only",
+      r#"same-origin; report-to="coop""#
+    )],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn cross_origin_opener_policy_report_only_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::ok([]).header(
+    "Cross-Origin-Opener-Policy-Report-Only",
+    r#"noopener-allow-popups; report-to="coop""#,
+  );
+  let policy = raw
+    .cross_origin_opener_policy_report_only()
+    .expect("raw report-only COOP should parse")
+    .expect("Cross-Origin-Opener-Policy-Report-Only should be present");
+  assert_eq!(
+    HttpCrossOriginOpenerPolicy::NoopenerAllowPopups,
+    policy.policy()
+  );
+  assert_eq!(Some("coop"), policy.report_to());
+  assert_eq!(
+    Some(r#"noopener-allow-popups; report-to="coop""#),
+    raw
+      .headers
+      .iter()
+      .find(|header| {
+        header
+          .name
+          .eq_ignore_ascii_case("Cross-Origin-Opener-Policy-Report-Only")
+      })
+      .map(|header| header.value.as_str())
+  );
+
+  let malformed =
+    HttpResponse::ok([]).header("Cross-Origin-Opener-Policy-Report-Only", "same origin");
+  assert!(malformed
+    .cross_origin_opener_policy_report_only()
+    .is_err());
+  assert!(HttpResponse::ok([])
+    .with_cross_origin_opener_policy_report_only("same origin")
+    .is_err());
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .cross_origin_opener_policy_report_only()
+      .expect("absent Cross-Origin-Opener-Policy-Report-Only should parse")
+  );
+  for value in [
+    "unsafe-none",
+    "same-origin-allow-popups",
+    "same-origin",
+    "noopener-allow-popups",
+  ] {
+    let metadata = HttpResponse::ok([])
+      .with_cross_origin_opener_policy_report_only(value)
+      .expect("valid Cross-Origin-Opener-Policy-Report-Only should be accepted")
+      .cross_origin_opener_policy_report_only()
+      .expect("Cross-Origin-Opener-Policy-Report-Only should parse")
+      .expect("Cross-Origin-Opener-Policy-Report-Only should be present");
+    assert_eq!(value, metadata.header_value());
+    assert_eq!(
+      HttpCrossOriginOpenerPolicy::parse(value).expect("canonical COOP should parse"),
+      metadata.policy()
+    );
+  }
+
+  let duplicate = HttpResponse::ok([])
+    .header("Cross-Origin-Opener-Policy-Report-Only", "same-origin")
+    .header(
+      "cross-origin-opener-policy-report-only",
+      "noopener-allow-popups",
+    );
+  assert!(duplicate
+    .cross_origin_opener_policy_report_only()
+    .is_err());
+  assert!(HttpResponse::ok([])
+    .with_cross_origin_opener_policy_report_only("x".repeat(64 * 1024 + 1))
     .is_err());
 }
 
@@ -1746,6 +2560,708 @@ fn x_frame_options_helpers_preserve_raw_metadata_and_report_parse_errors() {
   assert!(duplicate.x_frame_options().is_err());
   assert!(HttpResponse::ok([])
     .with_x_frame_options("x".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
+fn permissions_policy_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Permissions-Policy", "geolocation=(self)")
+    .header("permissions-policy", "camera=()")
+    .with_permissions_policy(r#"geolocation=(self "https://maps.example.test"), camera=()"#)
+    .expect("Permissions-Policy should be accepted");
+
+  let policy = response
+    .permissions_policy()
+    .expect("Permissions-Policy should parse")
+    .expect("Permissions-Policy should be present");
+  assert_eq!(
+    r#"geolocation=(self "https://maps.example.test"), camera=()"#,
+    policy.header_value()
+  );
+  assert_eq!(2, policy.directives().len());
+  assert!(policy.directive("camera").unwrap().allowlist().is_empty());
+  assert_eq!(
+    vec![("Permissions-Policy", r#"geolocation=(self "https://maps.example.test"), camera=()"#)],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn permissions_policy_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::ok([]).header(
+    "Permissions-Policy",
+    r#"geolocation=(self "https://maps.example.test");report-to="rp""#,
+  );
+  let policy = raw
+    .permissions_policy()
+    .expect("raw Permissions-Policy should parse")
+    .expect("Permissions-Policy should be present");
+  assert_eq!(
+    r#"geolocation=(self "https://maps.example.test")"#,
+    policy.header_value()
+  );
+  assert_eq!(
+    Some(r#"geolocation=(self "https://maps.example.test");report-to="rp""#),
+    raw
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Permissions-Policy"))
+      .map(|header| header.value.as_str())
+  );
+
+  for value in [
+    "",
+    "geolocation=src",
+    "geolocation=('none')",
+    "geolocation=*;unknown=1",
+    "geolocation=(* \"https://example.test\")",
+    "geolocation=5",
+  ] {
+    let malformed = HttpResponse::ok([]).header("Permissions-Policy", value);
+    assert!(malformed.permissions_policy().is_err(), "should reject {value:?}");
+    assert!(
+      HttpResponse::ok([])
+        .with_permissions_policy(value)
+        .is_err(),
+      "should reject {value:?}"
+    );
+  }
+
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .permissions_policy()
+      .expect("absent Permissions-Policy should parse")
+  );
+
+  let duplicate = HttpResponse::ok([])
+    .header("Permissions-Policy", "geolocation=(self)")
+    .header("permissions-policy", "geolocation=(self)");
+  assert!(duplicate.permissions_policy().is_err());
+  assert!(HttpResponse::ok([])
+    .with_permissions_policy(
+      format!("geolocation=(\"{}\")", "https://example.test/".repeat(64 * 1024))
+    )
+    .is_err());
+}
+
+#[test]
+fn document_policy_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Document-Policy", "oversized-images=1.0")
+    .header("document-policy", "unsized-media=?0")
+    .with_document_policy("oversized-images=2.0, unsized-media=?0, *;report-to=default")
+    .expect("Document-Policy should be accepted");
+
+  let policy = response
+    .document_policy()
+    .expect("Document-Policy should parse")
+    .expect("Document-Policy should be present");
+  assert_eq!(
+    "oversized-images=2.0, unsized-media=?0, *;report-to=default",
+    policy.header_value()
+  );
+  assert_eq!(3, policy.directives().len());
+  assert_eq!(
+    Some("default"),
+    policy.directive("*").unwrap().report_to()
+  );
+  assert_eq!(
+    vec![("Document-Policy", "oversized-images=2.0, unsized-media=?0, *;report-to=default")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn document_policy_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::ok([]).header("Document-Policy", "oversized-images=2.0");
+  let policy = raw
+    .document_policy()
+    .expect("raw Document-Policy should parse")
+    .expect("Document-Policy should be present");
+  assert_eq!("oversized-images=2.0", policy.header_value());
+  assert_eq!(
+    Some("oversized-images=2.0"),
+    raw
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Document-Policy"))
+      .map(|header| header.value.as_str())
+  );
+
+  for value in [
+    "",
+    "=()",
+    "=1.2345",
+    "unsized-media=src;foo=bar",
+    "oversized-images=1;report-to=first;report-to=second",
+    "oversized-images=1.0, oversized-images=2.0",
+  ] {
+    let malformed = HttpResponse::ok([]).header("Document-Policy", value);
+    assert!(malformed.document_policy().is_err(), "should reject {value:?}");
+    assert!(malformed.status_code == 200 && malformed.body.is_empty());
+    assert_eq!(
+      Some(value),
+      malformed
+        .headers
+        .iter()
+        .find(|header| header.name.eq_ignore_ascii_case("Document-Policy"))
+        .map(|header| header.value.as_str())
+    );
+    assert!(
+      HttpResponse::ok([])
+        .with_document_policy(value)
+        .is_err(),
+      "should reject {value:?}"
+    );
+  }
+
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .document_policy()
+      .expect("absent Document-Policy should parse")
+  );
+
+  let duplicate = HttpResponse::ok([])
+    .header("Document-Policy", "oversized-images=1.0")
+    .header("document-policy", "oversized-images=2.0");
+  assert!(duplicate.document_policy().is_err());
+  assert!(HttpResponse::ok([])
+    .with_document_policy("x".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
+fn sec_websocket_version_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::new(400, "Bad Request")
+    .header("Sec-WebSocket-Version", "12")
+    .header("sec-websocket-version", "8")
+    .with_sec_websocket_version(["13"])
+    .expect("Sec-WebSocket-Version should be accepted");
+
+  let versions = response
+    .sec_websocket_version()
+    .expect("Sec-WebSocket-Version should parse")
+    .expect("Sec-WebSocket-Version should be present");
+  assert_eq!("13", versions.header_value());
+  assert_eq!(versions.versions(), ["13"]);
+  assert!(versions.contains("13"));
+  assert_eq!(
+    vec![("Sec-WebSocket-Version", "13")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+  assert!(response
+    .headers
+    .iter()
+    .all(|header| !header.name.eq_ignore_ascii_case("Connection")
+      && !header.name.eq_ignore_ascii_case("Upgrade")));
+}
+
+#[test]
+fn sec_websocket_version_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::new(400, "Bad Request")
+    .header("Sec-WebSocket-Version", "13")
+    .header("sec-websocket-version", "8, 7");
+  let versions = raw
+    .sec_websocket_version()
+    .expect("raw Sec-WebSocket-Version should parse")
+    .expect("Sec-WebSocket-Version should be present");
+  assert_eq!("13, 8, 7", versions.header_value());
+
+  for value in ["", "v13", "013", "8, 13", "13, 13", "300"] {
+    let malformed = HttpResponse::new(400, "Bad Request").header("Sec-WebSocket-Version", value);
+    assert!(
+      malformed.sec_websocket_version().is_err(),
+      "should reject {value:?}"
+    );
+    assert!(
+      HttpResponse::new(400, "Bad Request")
+        .with_sec_websocket_version([value])
+        .is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      Some(value),
+      malformed
+        .headers
+        .iter()
+        .find(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Version"))
+        .map(|header| header.value.as_str())
+    );
+  }
+
+  assert!(HttpResponse::new(400, "Bad Request")
+    .with_sec_websocket_version(["13", "13"])
+    .is_err());
+  assert!(HttpResponse::new(400, "Bad Request")
+    .with_sec_websocket_version(["8", "13"])
+    .is_err());
+  assert!(HttpResponse::new(400, "Bad Request")
+    .with_sec_websocket_version(["1".repeat(64 * 1024 + 1)])
+    .is_err());
+}
+
+#[test]
+fn sec_websocket_protocol_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::new(400, "Bad Request")
+    .header("Sec-WebSocket-Protocol", "chat")
+    .header("sec-websocket-protocol", "superchat")
+    .with_sec_websocket_protocol("graphql-transport-ws")
+    .expect("Sec-WebSocket-Protocol should be accepted");
+
+  let protocol = response
+    .sec_websocket_protocol()
+    .expect("Sec-WebSocket-Protocol should parse")
+    .expect("Sec-WebSocket-Protocol should be present");
+  assert_eq!("graphql-transport-ws", protocol.header_value());
+  assert_eq!(protocol.protocols(), ["graphql-transport-ws"]);
+  assert_eq!(protocol.selected(), Some("graphql-transport-ws"));
+  assert!(protocol.contains("graphql-transport-ws"));
+  assert_eq!(
+    vec![("Sec-WebSocket-Protocol", "graphql-transport-ws")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+  assert!(response
+    .headers
+    .iter()
+    .all(|header| !header.name.eq_ignore_ascii_case("Connection")
+      && !header.name.eq_ignore_ascii_case("Upgrade")));
+}
+
+#[test]
+fn sec_websocket_protocol_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::new(400, "Bad Request")
+    .header("Sec-WebSocket-Protocol", "chat")
+    .header("sec-websocket-protocol", "superchat");
+  assert!(
+    raw.sec_websocket_protocol().is_err(),
+    "combined response fields must still be a selection singleton"
+  );
+  assert_eq!(
+    vec![
+      ("Sec-WebSocket-Protocol", "chat"),
+      ("sec-websocket-protocol", "superchat"),
+    ],
+    raw
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let singleton = HttpResponse::new(400, "Bad Request").header("Sec-WebSocket-Protocol", "chat");
+  let protocol = singleton
+    .sec_websocket_protocol()
+    .expect("raw Sec-WebSocket-Protocol should parse")
+    .expect("Sec-WebSocket-Protocol should be present");
+  assert_eq!("chat", protocol.header_value());
+  assert_eq!(protocol.selected(), Some("chat"));
+
+  for value in ["", "chat, superchat", "not a token", "chat\r\nX-Injected: 1"] {
+    // Construct the raw message directly: `HttpResponse::header` asserts on CR/LF values,
+    // but the injected value must survive so the typed accessor can reject it.
+    let malformed = HttpResponse {
+      version: "HTTP/1.1".to_string(),
+      status_code: 400,
+      reason: "Bad Request".to_string(),
+      headers: vec![HttpHeader::new("Sec-WebSocket-Protocol", value)],
+      trailers: Vec::new(),
+      body: Vec::new(),
+    };
+    assert!(
+      malformed.sec_websocket_protocol().is_err(),
+      "should reject {value:?}"
+    );
+    assert!(
+      HttpResponse::new(400, "Bad Request")
+        .with_sec_websocket_protocol(value)
+        .is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      Some(value),
+      malformed
+        .headers
+        .iter()
+        .find(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Protocol"))
+        .map(|header| header.value.as_str())
+    );
+  }
+
+  let legacy = HttpResponse::new(400, "Bad Request").header("Sec-WebSocket-Protocol", "legacy");
+  let error = legacy
+    .clone()
+    .with_sec_websocket_protocol("chat, superchat")
+    .expect_err("multi-token selection should be rejected");
+  assert!(error.to_string().contains("Sec-WebSocket-Protocol"));
+  assert_eq!(
+    Some("legacy"),
+    legacy
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Protocol"))
+      .map(|header| header.value.as_str()),
+    "a failed builder must leave the response unchanged"
+  );
+  assert!(HttpResponse::new(400, "Bad Request")
+    .with_sec_websocket_protocol("a".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
+fn sec_websocket_extensions_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::new(101, "Switching Protocols")
+    .header("Sec-WebSocket-Extensions", "legacy")
+    .header("sec-websocket-extensions", "x-test")
+    .with_sec_websocket_extensions(r#"permessage-deflate; client_no_context_takeover; mode="safe""#)
+    .expect("Sec-WebSocket-Extensions should be accepted");
+
+  let extensions = response
+    .sec_websocket_extensions()
+    .expect("Sec-WebSocket-Extensions should parse")
+    .expect("Sec-WebSocket-Extensions should be present");
+  let selected = extensions.selected().expect("selected extension");
+  assert_eq!("permessage-deflate", selected.token());
+  assert_eq!(2, selected.parameters().len());
+  assert_eq!(
+    r#"permessage-deflate; client_no_context_takeover; mode="safe""#,
+    extensions.header_value()
+  );
+  assert_eq!(
+    vec![(
+      "Sec-WebSocket-Extensions",
+      r#"permessage-deflate; client_no_context_takeover; mode="safe""#
+    )],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+  assert!(response
+    .headers
+    .iter()
+    .all(|header| !header.name.eq_ignore_ascii_case("Connection")
+      && !header.name.eq_ignore_ascii_case("Upgrade")));
+}
+
+#[test]
+fn sec_websocket_extensions_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::new(101, "Switching Protocols")
+    .header("Sec-WebSocket-Extensions", "permessage-deflate")
+    .header("sec-websocket-extensions", "x-test");
+  assert!(
+    raw.sec_websocket_extensions().is_err(),
+    "combined response fields must still be a selection singleton"
+  );
+  assert_eq!(
+    vec![
+      ("Sec-WebSocket-Extensions", "permessage-deflate"),
+      ("sec-websocket-extensions", "x-test"),
+    ],
+    raw
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let singleton =
+    HttpResponse::new(101, "Switching Protocols").header("Sec-WebSocket-Extensions", "x-test");
+  let extensions = singleton
+    .sec_websocket_extensions()
+    .expect("raw Sec-WebSocket-Extensions should parse")
+    .expect("Sec-WebSocket-Extensions should be present");
+  assert_eq!("x-test", extensions.header_value());
+  assert_eq!(
+    "x-test",
+    extensions.selected().expect("selected extension").token()
+  );
+
+  for value in [
+    "",
+    "permessage-deflate, x-test",
+    "permessage deflate",
+    "permessage-deflate; p=",
+    "permessage-deflate; p=1; p=2",
+    "permessage-deflate\r\nX-Injected: 1",
+  ] {
+    let malformed = HttpResponse {
+      version: "HTTP/1.1".to_string(),
+      status_code: 101,
+      reason: "Switching Protocols".to_string(),
+      headers: vec![HttpHeader::new("Sec-WebSocket-Extensions", value)],
+      trailers: Vec::new(),
+      body: Vec::new(),
+    };
+    assert!(
+      malformed.sec_websocket_extensions().is_err(),
+      "should reject {value:?}"
+    );
+    assert!(
+      HttpResponse::new(101, "Switching Protocols")
+        .with_sec_websocket_extensions(value)
+        .is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      Some(value),
+      malformed
+        .headers
+        .iter()
+        .find(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Extensions"))
+        .map(|header| header.value.as_str())
+    );
+  }
+
+  let legacy =
+    HttpResponse::new(101, "Switching Protocols").header("Sec-WebSocket-Extensions", "legacy");
+  let error = legacy
+    .clone()
+    .with_sec_websocket_extensions("permessage-deflate, x-test")
+    .expect_err("multi-extension selection should be rejected");
+  assert!(error.to_string().contains("Sec-WebSocket-Extensions"));
+  assert_eq!(
+    Some("legacy"),
+    legacy
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Extensions"))
+      .map(|header| header.value.as_str()),
+    "a failed builder must leave the response unchanged"
+  );
+  assert!(HttpResponse::new(101, "Switching Protocols")
+    .with_sec_websocket_extensions("a".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
+fn document_policy_report_only_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Document-Policy-Report-Only", "oversized-images=1.0")
+    .header("document-policy-report-only", "unsized-media=?0")
+    .with_document_policy_report_only(
+      "oversized-images=2.0, unsized-media=?0, *;report-to=default",
+    )
+    .expect("Document-Policy-Report-Only should be accepted");
+
+  let policy = response
+    .document_policy_report_only()
+    .expect("Document-Policy-Report-Only should parse")
+    .expect("Document-Policy-Report-Only should be present");
+  assert_eq!(
+    "oversized-images=2.0, unsized-media=?0, *;report-to=default",
+    policy.header_value()
+  );
+  assert_eq!(3, policy.directives().len());
+  assert_eq!(
+    Some("default"),
+    policy.directive("*").unwrap().report_to()
+  );
+  assert_eq!(
+    vec![(
+      "Document-Policy-Report-Only",
+      "oversized-images=2.0, unsized-media=?0, *;report-to=default"
+    )],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn document_policy_report_only_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::ok([]).header("Document-Policy-Report-Only", "oversized-images=2.0");
+  let policy = raw
+    .document_policy_report_only()
+    .expect("raw Document-Policy-Report-Only should parse")
+    .expect("Document-Policy-Report-Only should be present");
+  assert_eq!("oversized-images=2.0", policy.header_value());
+  assert_eq!(
+    Some("oversized-images=2.0"),
+    raw
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Document-Policy-Report-Only"))
+      .map(|header| header.value.as_str())
+  );
+
+  for value in [
+    "",
+    "=()",
+    "=1.2345",
+    "unsized-media=src;foo=bar",
+    "oversized-images=1;report-to=first;report-to=second",
+    "oversized-images=1.0, oversized-images=2.0",
+  ] {
+    let malformed = HttpResponse::ok([]).header("Document-Policy-Report-Only", value);
+    assert!(
+      malformed.document_policy_report_only().is_err(),
+      "should reject {value:?}"
+    );
+    assert!(malformed.status_code == 200 && malformed.body.is_empty());
+    assert_eq!(
+      Some(value),
+      malformed
+        .headers
+        .iter()
+        .find(|header| header.name.eq_ignore_ascii_case("Document-Policy-Report-Only"))
+        .map(|header| header.value.as_str())
+    );
+    assert!(
+      HttpResponse::ok([])
+        .with_document_policy_report_only(value)
+        .is_err(),
+      "should reject {value:?}"
+    );
+  }
+
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .document_policy_report_only()
+      .expect("absent Document-Policy-Report-Only should parse")
+  );
+
+  let duplicate = HttpResponse::ok([])
+    .header("Document-Policy-Report-Only", "oversized-images=1.0")
+    .header("document-policy-report-only", "oversized-images=2.0");
+  assert!(duplicate.document_policy_report_only().is_err());
+  assert!(HttpResponse::ok([])
+    .with_document_policy_report_only("x".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
+fn supports_loading_mode_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::ok([])
+    .header("Supports-Loading-Mode", "fenced-frame")
+    .header("supports-loading-mode", "credentialed-prerender")
+    .with_supports_loading_mode(["fenced-frame", "credentialed-prerender"])
+    .expect("Supports-Loading-Mode should be accepted");
+
+  let modes = response
+    .supports_loading_mode()
+    .expect("Supports-Loading-Mode should parse")
+    .expect("Supports-Loading-Mode should be present");
+  assert_eq!(
+    "fenced-frame, credentialed-prerender",
+    modes.header_value()
+  );
+  assert_eq!(modes.tokens(), ["fenced-frame", "credentialed-prerender"]);
+  assert!(modes.contains_fenced_frame());
+  assert!(modes.contains_credentialed_prerender());
+  assert_eq!(
+    vec![(
+      "Supports-Loading-Mode",
+      "fenced-frame, credentialed-prerender"
+    )],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn supports_loading_mode_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::ok([])
+    .header("Supports-Loading-Mode", "fenced-frame")
+    .header("supports-loading-mode", "credentialed-prerender");
+  let modes = raw
+    .supports_loading_mode()
+    .expect("raw Supports-Loading-Mode should parse")
+    .expect("Supports-Loading-Mode should be present");
+  assert_eq!(
+    "fenced-frame, credentialed-prerender",
+    modes.header_value()
+  );
+  assert_eq!(
+    vec!["fenced-frame", "credentialed-prerender"],
+    raw
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Supports-Loading-Mode"))
+      .map(|header| header.value.as_str())
+      .collect::<Vec<_>>()
+  );
+
+  for value in [
+    "",
+    "fenced-frame credentialed-prerender",
+    "fenced-frame,,credentialed-prerender",
+    "?1",
+    "\"fenced-frame\"",
+    "(fenced-frame)",
+    "fenced-frame;foo=bar",
+    "fenced-frame, fenced-frame",
+  ] {
+    let malformed = HttpResponse::ok([]).header("Supports-Loading-Mode", value);
+    assert!(
+      malformed.supports_loading_mode().is_err(),
+      "should reject {value:?}"
+    );
+    assert!(
+      HttpResponse::ok([])
+        .with_supports_loading_mode([value])
+        .is_err(),
+      "should reject {value:?}"
+    );
+  }
+
+  assert_eq!(
+    None,
+    HttpResponse::ok([])
+      .supports_loading_mode()
+      .expect("absent Supports-Loading-Mode should parse")
+  );
+
+  let duplicate = HttpResponse::ok([])
+    .header("Supports-Loading-Mode", "fenced-frame")
+    .header("supports-loading-mode", "Fenced-Frame");
+  assert!(duplicate.supports_loading_mode().is_err());
+  assert!(HttpResponse::ok([])
+    .with_supports_loading_mode(["fenced-frame", "FENCED-FRAME"])
+    .is_err());
+  assert!(HttpResponse::ok([])
+    .with_supports_loading_mode([format!("fenced-frame{}", "x".repeat(64 * 1024))])
+    .is_err());
+
+  let extension = HttpResponse::ok([])
+    .with_supports_loading_mode(["vendor/mode", "vendor:mode"])
+    .expect("Structured Fields tokens with ':' and '/' should be accepted");
+  let modes = extension
+    .supports_loading_mode()
+    .expect("Supports-Loading-Mode should parse")
+    .expect("Supports-Loading-Mode should be present");
+  assert_eq!(modes.tokens(), ["vendor/mode", "vendor:mode"]);
+  assert_eq!(modes.header_value(), "vendor/mode, vendor:mode");
+
+  let over_first = format!("a{}", "x".repeat(32_767));
+  let over_second = format!("b{}", "x".repeat(32_767));
+  assert!(HttpResponse::ok([])
+    .with_supports_loading_mode([&over_first, &over_second])
     .is_err());
 }
 
@@ -2197,6 +3713,1075 @@ fn request_max_forwards_is_optional_bounded_and_preserves_invalid_headers() {
 }
 
 #[test]
+fn request_depth_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"PROPFIND / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(None, absent.depth().expect("missing value should be valid"));
+
+  for (value, expected) in [
+    ("0", HttpDepth::Zero),
+    ("1", HttpDepth::One),
+    ("infinity", HttpDepth::Infinity),
+    ("INFINITY", HttpDepth::Infinity),
+  ] {
+    let valid = Request::from_raw_frame(
+      format!("PROPFIND / HTTP/1.1\r\nHost: example.test\r\nDepth: {value}\r\n\r\n").as_bytes(),
+    )
+    .expect("request should parse");
+    let parsed = valid
+      .depth()
+      .expect("value should parse")
+      .expect("Depth should be present");
+    assert_eq!(expected, parsed);
+    assert_eq!(expected.header_value(), parsed.header_value());
+  }
+
+  for value in ["", "2", "-1", "1.0", "0, 1", "infinite"] {
+    let request = Request::from_raw_frame(
+      format!("PROPFIND / HTTP/1.1\r\nHost: example.test\r\nDepth: {value}\r\n\r\n").as_bytes(),
+    )
+    .expect("request should retain malformed metadata");
+    assert!(request.depth().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Depth"));
+  }
+
+  let oversized = "0".repeat(64 * 1024 + 1);
+  let oversized_request = Request {
+    method: "PROPFIND".to_string(),
+    target: "/".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("Depth".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.depth().is_err());
+  assert_eq!(Some(oversized.as_str()), oversized_request.header("Depth"));
+
+  let duplicate = Request::from_raw_frame(
+    b"PROPFIND / HTTP/1.1\r\nHost: example.test\r\nDepth: 0\r\ndepth: 1\r\n\r\n",
+  )
+  .expect("request should retain duplicate metadata");
+  assert!(duplicate.depth().is_err());
+  assert_eq!(Some("0"), duplicate.header("Depth"));
+}
+
+#[test]
+fn request_lock_token_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"UNLOCK / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent.lock_token().expect("missing value should be valid")
+  );
+
+  for value in [
+    "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+    "<http://example.test/locks/1>",
+    "<urn:uuid:6e7bc004-2445-45a3-8d16-392b33764f00>",
+  ] {
+    let valid = Request::from_raw_frame(
+      format!("UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nLock-Token: {value}\r\n\r\n")
+        .as_bytes(),
+    )
+    .expect("request should parse");
+    let parsed = valid
+      .lock_token()
+      .expect("value should parse")
+      .expect("Lock-Token should be present");
+    assert_eq!(value, parsed.as_str());
+    assert_eq!(value, parsed.header_value());
+  }
+  let redacted = Request::from_raw_frame(
+    b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nLock-Token: <opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\r\n\r\n",
+  )
+  .expect("request should parse")
+  .lock_token()
+  .expect("value should parse")
+  .expect("Lock-Token should be present");
+  assert!(!format!("{redacted:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
+
+  for value in ["", "<>", "<relative>", "</locks/1>"] {
+    let request = Request::from_raw_frame(
+      format!("UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nLock-Token: {value}\r\n\r\n")
+        .as_bytes(),
+    )
+    .expect("request should retain malformed metadata");
+    assert!(request.lock_token().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Lock-Token"));
+  }
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_request = Request {
+    method: "UNLOCK".to_string(),
+    target: "/resource".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("Lock-Token".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.lock_token().is_err());
+  assert_eq!(
+    Some(oversized.as_str()),
+    oversized_request.header("Lock-Token")
+  );
+
+  let injected_request = Request {
+    method: "UNLOCK".to_string(),
+    target: "/resource".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      (
+        "Lock-Token".to_string(),
+        "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\r\nX-Injected: 1".to_string(),
+      ),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(injected_request.lock_token().is_err());
+  assert_eq!(
+    Some("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\r\nX-Injected: 1"),
+    injected_request.header("Lock-Token")
+  );
+
+  let duplicate = Request::from_raw_frame(
+    b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nLock-Token: <opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\r\nlock-token: <http://example.test/locks/2>\r\n\r\n",
+  )
+  .expect("request should retain duplicate metadata");
+  assert!(duplicate.lock_token().is_err());
+  assert_eq!(
+    Some("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>"),
+    duplicate.header("Lock-Token")
+  );
+}
+
+#[test]
+fn request_if_header_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"UNLOCK / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent.if_header().expect("missing value should be valid")
+  );
+
+  for (value, expected) in [
+    (
+      "(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)",
+      "(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)",
+    ),
+    (
+      "<http://example.test/src> (<opaquelocktoken:11111111-1111-1111-1111-111111111111>) \
+       </dst> (Not <DAV:no-lock>)",
+      "<http://example.test/src> (<opaquelocktoken:11111111-1111-1111-1111-111111111111>) \
+       </dst> (Not <DAV:no-lock>)",
+    ),
+    (
+      " \t(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) \t(Not  [W/\"etag-one\"])",
+      "(<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>) (Not [W/\"etag-one\"])",
+    ),
+  ] {
+    let valid = Request::from_raw_frame(
+      format!("UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: {value}\r\n\r\n").as_bytes(),
+    )
+    .expect("request should parse");
+    let parsed = valid
+      .if_header()
+      .expect("value should parse")
+      .expect("If should be present");
+    assert_eq!(expected, parsed.header_value());
+  }
+  let redacted = Request::from_raw_frame(
+    b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: (<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)\r\n\r\n",
+  )
+  .expect("request should parse")
+  .if_header()
+  .expect("value should parse")
+  .expect("If should be present");
+  assert!(!format!("{redacted:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
+
+  for value in ["", "()", "(junk)", "(</relative>)", "<relative> (<a:b>)"] {
+    let request = Request::from_raw_frame(
+      format!("UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: {value}\r\n\r\n").as_bytes(),
+    )
+    .expect("request should retain malformed metadata");
+    assert!(request.if_header().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("If"));
+  }
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_request = Request {
+    method: "UNLOCK".to_string(),
+    target: "/resource".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("If".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.if_header().is_err());
+  assert_eq!(
+    Some(oversized.as_str()),
+    oversized_request.header("If")
+  );
+
+  let injected_request = Request {
+    method: "UNLOCK".to_string(),
+    target: "/resource".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      (
+        "If".to_string(),
+        "(<a:b>)\r\nX-Injected: 1".to_string(),
+      ),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(injected_request.if_header().is_err());
+  assert_eq!(
+    Some("(<a:b>)\r\nX-Injected: 1"),
+    injected_request.header("If")
+  );
+
+  let duplicate = Request::from_raw_frame(
+    b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: (<a:b>)\r\nif: (<b:c>)\r\n\r\n",
+  )
+  .expect("request should retain duplicate metadata");
+  assert!(duplicate.if_header().is_err());
+  assert_eq!(Some("(<a:b>)"), duplicate.header("If"));
+}
+
+#[test]
+fn request_if_metadata_does_not_drive_conditional_evaluation() {
+  let request = Request::from_raw_frame(
+    b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nIf: (<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>)\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert!(request.if_header().expect("If should parse").is_some());
+  assert_eq!(
+    HttpConditionalRequestOutcome::Proceed,
+    request.evaluate_conditional(&HttpConditionalMetadata::default()),
+    "the WebDAV If header must not drive HTTP conditional evaluation"
+  );
+}
+
+#[test]
+fn request_timeout_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"LOCK / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent.timeout().expect("missing value should be valid")
+  );
+
+  let valid = Request::from_raw_frame(
+    b"LOCK / HTTP/1.1\r\nHost: example.test\r\nTimeout: Second-60, Infinite\r\n\r\n",
+  )
+  .expect("request should parse");
+  let parsed = valid
+    .timeout()
+    .expect("value should parse")
+    .expect("Timeout should be present");
+  assert_eq!(
+    &[HttpTimeoutType::Second(60), HttpTimeoutType::Infinite],
+    parsed.members()
+  );
+  assert_eq!("second-60, infinite", parsed.header_value());
+
+  for value in [
+    "",
+    "Second-",
+    "Second--1",
+    "Second-1.0",
+    "Second-18446744073709551616",
+    "Second-60, second-60",
+    "Infinite, infinite",
+  ] {
+    let request = Request::from_raw_frame(
+      format!("LOCK / HTTP/1.1\r\nHost: example.test\r\nTimeout: {value}\r\n\r\n").as_bytes(),
+    )
+    .expect("request should retain malformed metadata");
+    assert!(request.timeout().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Timeout"));
+  }
+
+  let oversized = format!("{}Second-1", " ".repeat(64 * 1024 + 1));
+  let oversized_request = Request {
+    method: "LOCK".to_string(),
+    target: "/".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("Timeout".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.timeout().is_err());
+  assert_eq!(Some(oversized.as_str()), oversized_request.header("Timeout"));
+
+  let split = Request::from_raw_frame(
+    b"LOCK / HTTP/1.1\r\nHost: example.test\r\nTimeout: Second-60\r\ntimeout: Infinite\r\n\r\n",
+  )
+  .expect("request should retain split metadata");
+  let split_timeout = split
+    .timeout()
+    .expect("split Timeout should parse")
+    .expect("Timeout should be present");
+  assert_eq!(
+    &[HttpTimeoutType::Second(60), HttpTimeoutType::Infinite],
+    split_timeout.members()
+  );
+}
+
+#[test]
+fn request_if_schedule_tag_match_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent =
+    Request::from_raw_frame(b"PUT / HTTP/1.1\r\nHost: cal.example.test\r\n\r\n")
+      .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .if_schedule_tag_match()
+      .expect("missing value should be valid")
+  );
+
+  for (value, expected) in [
+    ("\"sched-17\"", "\"sched-17\""),
+    ("W/\"sched-17\"", "W/\"sched-17\""),
+    (" \"sched-17\" ", "\"sched-17\""),
+  ] {
+    let valid = Request::from_raw_frame(
+      format!(
+        "PUT /calendars/alice/inbox/invite.ics HTTP/1.1\r\nHost: cal.example.test\r\nIf-Schedule-Tag-Match: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should parse");
+    let parsed = valid
+      .if_schedule_tag_match()
+      .expect("value should parse")
+      .expect("If-Schedule-Tag-Match should be present");
+    assert_eq!(expected, parsed.header_value());
+  }
+
+  for value in ["", "*", "\"unterminated", "\"one\", \"two\"", "sched-17"] {
+    let request = Request::from_raw_frame(
+      format!(
+        "PUT /calendars/alice/inbox/invite.ics HTTP/1.1\r\nHost: cal.example.test\r\nIf-Schedule-Tag-Match: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should retain malformed metadata");
+    assert!(
+      request.if_schedule_tag_match().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(Some(value), request.header("If-Schedule-Tag-Match"));
+  }
+
+  let oversized = format!("\"{}\"", "a".repeat(64 * 1024 - 1));
+  let oversized_request = Request {
+    method: "PUT".to_string(),
+    target: "/calendars/alice/inbox/invite.ics".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "cal.example.test".to_string()),
+      ("If-Schedule-Tag-Match".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.if_schedule_tag_match().is_err());
+  assert_eq!(
+    Some(oversized.as_str()),
+    oversized_request.header("If-Schedule-Tag-Match")
+  );
+
+  let duplicate = Request::from_raw_frame(
+    b"PUT /calendars/alice/inbox/invite.ics HTTP/1.1\r\nHost: cal.example.test\r\nIf-Schedule-Tag-Match: \"sched-16\"\r\nif-schedule-tag-match: \"sched-17\"\r\n\r\n",
+  )
+  .expect("request should retain duplicate metadata");
+  assert!(duplicate.if_schedule_tag_match().is_err());
+  assert_eq!(
+    Some("\"sched-16\""),
+    duplicate.header("If-Schedule-Tag-Match")
+  );
+}
+
+#[test]
+fn request_overwrite_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"COPY / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(None, absent.overwrite().expect("missing value should be valid"));
+
+  for (value, expected) in [("T", HttpOverwrite::T), ("F", HttpOverwrite::F)] {
+    let valid = Request::from_raw_frame(
+      format!("COPY / HTTP/1.1\r\nHost: example.test\r\nOverwrite: {value}\r\n\r\n").as_bytes(),
+    )
+    .expect("request should parse");
+    let parsed = valid
+      .overwrite()
+      .expect("value should parse")
+      .expect("Overwrite should be present");
+    assert_eq!(expected, parsed);
+    assert_eq!(expected.header_value(), parsed.header_value());
+  }
+
+  for value in ["", "t", "f", "true", "false", "T, F", "0", "1", "TF"] {
+    let request = Request::from_raw_frame(
+      format!("COPY / HTTP/1.1\r\nHost: example.test\r\nOverwrite: {value}\r\n\r\n").as_bytes(),
+    )
+    .expect("request should retain malformed metadata");
+    assert!(request.overwrite().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Overwrite"));
+  }
+
+  let oversized = "T".repeat(64 * 1024 + 1);
+  let oversized_request = Request {
+    method: "COPY".to_string(),
+    target: "/".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("Overwrite".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.overwrite().is_err());
+  assert_eq!(Some(oversized.as_str()), oversized_request.header("Overwrite"));
+
+  let duplicate = Request::from_raw_frame(
+    b"COPY / HTTP/1.1\r\nHost: example.test\r\nOverwrite: T\r\noverwrite: F\r\n\r\n",
+  )
+  .expect("request should retain duplicate metadata");
+  assert!(duplicate.overwrite().is_err());
+  assert_eq!(Some("T"), duplicate.header("Overwrite"));
+}
+
+#[test]
+fn request_idempotency_key_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .idempotency_key()
+      .expect("missing value should be valid")
+  );
+
+  for value in [
+    "charge-2026-08-19-9f3c",
+    "urn:uuid:6e7bc004-2445-45a3-8d16-392b33764f00",
+    "A",
+  ] {
+    let valid = Request::from_raw_frame(
+      format!(
+        "POST /charges HTTP/1.1\r\nHost: example.test\r\nIdempotency-Key: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should parse");
+    let parsed = valid
+      .idempotency_key()
+      .expect("value should parse")
+      .expect("Idempotency-Key should be present");
+    assert_eq!(value, parsed.as_str());
+    assert_eq!(value, parsed.header_value());
+  }
+  let redacted = Request::from_raw_frame(
+    b"POST /charges HTTP/1.1\r\nHost: example.test\r\nIdempotency-Key: charge-2026-08-19-9f3c\r\n\r\n",
+  )
+  .expect("request should parse")
+  .idempotency_key()
+  .expect("value should parse")
+  .expect("Idempotency-Key should be present");
+  assert!(!format!("{redacted:?}").contains("charge-2026-08-19-9f3c"));
+
+  for value in ["", "key with space"] {
+    let request = Request::from_raw_frame(
+      format!(
+        "POST /charges HTTP/1.1\r\nHost: example.test\r\nIdempotency-Key: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should retain malformed metadata");
+    assert!(request.idempotency_key().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Idempotency-Key"));
+  }
+
+  let obs_text = Request::from_raw_frame(
+    b"POST /charges HTTP/1.1\r\nHost: example.test\r\nIdempotency-Key: key\xC3\xA9\r\n\r\n",
+  )
+  .expect("request should retain obs-text metadata");
+  assert!(obs_text.idempotency_key().is_err());
+  assert!(obs_text.header("Idempotency-Key").is_some());
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_request = Request {
+    method: "POST".to_string(),
+    target: "/charges".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("Idempotency-Key".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.idempotency_key().is_err());
+  assert_eq!(
+    Some(oversized.as_str()),
+    oversized_request.header("Idempotency-Key")
+  );
+
+  let injected_request = Request {
+    method: "POST".to_string(),
+    target: "/charges".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      (
+        "Idempotency-Key".to_string(),
+        "key\r\nX-Injected: 1".to_string(),
+      ),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(injected_request.idempotency_key().is_err());
+  assert_eq!(
+    Some("key\r\nX-Injected: 1"),
+    injected_request.header("Idempotency-Key")
+  );
+
+  let duplicate = Request::from_raw_frame(
+    b"POST /charges HTTP/1.1\r\nHost: example.test\r\nIdempotency-Key: first\r\nidempotency-key: second\r\n\r\n",
+  )
+  .expect("request should retain duplicate metadata");
+  assert!(duplicate.idempotency_key().is_err());
+  assert_eq!(Some("first"), duplicate.header("Idempotency-Key"));
+}
+
+#[test]
+fn request_sec_websocket_version_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .sec_websocket_version()
+      .expect("missing value should be valid")
+  );
+
+  for value in ["13", " \t13\t ", "13, 8, 7"] {
+    let valid = Request::from_raw_frame(
+      format!(
+        "GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Version: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should parse");
+    let parsed = valid
+      .sec_websocket_version()
+      .expect("value should parse")
+      .expect("Sec-WebSocket-Version should be present");
+    assert_eq!(
+      value
+        .split(',')
+        .map(|member| member.trim_matches([' ', '\t']))
+        .collect::<Vec<_>>()
+        .join(", "),
+      parsed.header_value()
+    );
+    assert!(parsed.contains("13"));
+  }
+
+  for value in ["", "v13", "013", "8, 13", "13, 13", "300"] {
+    let request = Request::from_raw_frame(
+      format!(
+        "GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Version: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should retain malformed metadata");
+    assert!(
+      request.sec_websocket_version().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(Some(value), request.header("Sec-WebSocket-Version"));
+  }
+
+  let oversized = "1".repeat(64 * 1024 + 1);
+  let oversized_request = Request {
+    method: "GET".to_string(),
+    target: "/chat".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("Sec-WebSocket-Version".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.sec_websocket_version().is_err());
+  assert_eq!(
+    Some(oversized.as_str()),
+    oversized_request.header("Sec-WebSocket-Version")
+  );
+
+  let unordered = Request::from_raw_frame(
+    b"GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Version: 13\r\nsec-websocket-version: 8, 13\r\n\r\n",
+  )
+  .expect("request should retain unordered metadata");
+  assert!(unordered.sec_websocket_version().is_err());
+  assert_eq!(Some("13"), unordered.header("Sec-WebSocket-Version"));
+}
+
+#[test]
+fn request_sec_websocket_protocol_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .sec_websocket_protocol()
+      .expect("missing value should be valid")
+  );
+
+  for value in ["chat", " \tchat\t ", "chat, superchat, graphql-ws"] {
+    let valid = Request::from_raw_frame(
+      format!(
+        "GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Protocol: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should parse");
+    let parsed = valid
+      .sec_websocket_protocol()
+      .expect("value should parse")
+      .expect("Sec-WebSocket-Protocol should be present");
+    assert_eq!(
+      value
+        .split(',')
+        .map(|member| member.trim_matches([' ', '\t']))
+        .collect::<Vec<_>>()
+        .join(", "),
+      parsed.header_value()
+    );
+    assert!(parsed.contains("chat"));
+  }
+
+  let multi_token = Request::from_raw_frame(
+    b"GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Protocol: chat, superchat\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert_eq!(
+    None,
+    multi_token
+      .sec_websocket_protocol()
+      .expect("offers should parse")
+      .expect("offers should be present")
+      .selected(),
+    "a multi-token offer is not a selection"
+  );
+
+  let combined = Request::from_raw_frame(
+    b"GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Protocol: chat\r\nsec-websocket-protocol: superchat, graphql-ws\r\n\r\n",
+  )
+  .expect("request should parse");
+  let parsed = combined
+    .sec_websocket_protocol()
+    .expect("combined fields should parse")
+    .expect("Sec-WebSocket-Protocol should be present");
+  assert_eq!("chat, superchat, graphql-ws", parsed.header_value());
+
+  for value in ["", ",", "chat,", "not a token", "chat;foo", "chat/1", "chat, chat"] {
+    let request = Request::from_raw_frame(
+      format!(
+        "GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Protocol: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should retain malformed metadata");
+    assert!(
+      request.sec_websocket_protocol().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(Some(value), request.header("Sec-WebSocket-Protocol"));
+  }
+
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let oversized_request = Request {
+    method: "GET".to_string(),
+    target: "/chat".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("Sec-WebSocket-Protocol".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.sec_websocket_protocol().is_err());
+  assert_eq!(
+    Some(oversized.as_str()),
+    oversized_request.header("Sec-WebSocket-Protocol")
+  );
+
+  let duplicate = Request::from_raw_frame(
+    b"GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Protocol: chat\r\nsec-websocket-protocol: chat\r\n\r\n",
+  )
+  .expect("request should retain duplicate metadata");
+  assert!(duplicate.sec_websocket_protocol().is_err());
+  assert_eq!(Some("chat"), duplicate.header("Sec-WebSocket-Protocol"));
+}
+
+#[test]
+fn request_sec_websocket_key_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .sec_websocket_key()
+      .expect("missing value should be valid")
+  );
+
+  for value in [
+    "dGhlIHNhbXBsZSBub25jZQ==",
+    "AAAAAAAAAAAAAAAAAAAAAA==",
+    " \t+/z9/v8AAQIDBAUGBwgJCg==\t ",
+  ] {
+    let valid = Request::from_raw_frame(
+      format!(
+        "GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Key: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should parse");
+    let parsed = valid
+      .sec_websocket_key()
+      .expect("value should parse")
+      .expect("Sec-WebSocket-Key should be present");
+    assert_eq!(value.trim_matches([' ', '\t']), parsed.as_str());
+    assert_eq!(value.trim_matches([' ', '\t']), parsed.header_value());
+  }
+  let redacted = Request::from_raw_frame(
+    b"GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+  )
+  .expect("request should parse")
+  .sec_websocket_key()
+  .expect("value should parse")
+  .expect("Sec-WebSocket-Key should be present");
+  assert!(!format!("{redacted:?}").contains("dGhlIHNhbXBsZSBub25jZQ=="));
+
+  for value in ["", "the sample nonce", "dGhlIHNhbXBsZSBub25jZQ"] {
+    let request = Request::from_raw_frame(
+      format!(
+        "GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Key: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should retain malformed metadata");
+    assert!(request.sec_websocket_key().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Sec-WebSocket-Key"));
+  }
+
+  let obs_text = Request::from_raw_frame(
+    b"GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\xC3\xA9\r\n\r\n",
+  )
+  .expect("request should retain obs-text metadata");
+  assert!(obs_text.sec_websocket_key().is_err());
+  assert!(obs_text.header("Sec-WebSocket-Key").is_some());
+
+  let oversized = "A".repeat(64 * 1024 + 1);
+  let oversized_request = Request {
+    method: "GET".to_string(),
+    target: "/chat".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("Sec-WebSocket-Key".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.sec_websocket_key().is_err());
+  assert_eq!(
+    Some(oversized.as_str()),
+    oversized_request.header("Sec-WebSocket-Key")
+  );
+
+  let injected_request = Request {
+    method: "GET".to_string(),
+    target: "/chat".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      (
+        "Sec-WebSocket-Key".to_string(),
+        "dGhlIHNhbXBsZSBub25jZQ==\r\nX-Injected: 1".to_string(),
+      ),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(injected_request.sec_websocket_key().is_err());
+  assert_eq!(
+    Some("dGhlIHNhbXBsZSBub25jZQ==\r\nX-Injected: 1"),
+    injected_request.header("Sec-WebSocket-Key")
+  );
+
+  let duplicate = Request::from_raw_frame(
+    b"GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nsec-websocket-key: AAAAAAAAAAAAAAAAAAAAAA==\r\n\r\n",
+  )
+  .expect("request should retain duplicate metadata");
+  assert!(duplicate.sec_websocket_key().is_err());
+  assert_eq!(
+    Some("dGhlIHNhbXBsZSBub25jZQ=="),
+    duplicate.header("Sec-WebSocket-Key")
+  );
+}
+
+#[test]
+fn response_sec_websocket_accept_can_parse_and_derive_from_validated_key() {
+  let key = rttp_protocol::sec_websocket_key::SecWebSocketKey::parse(
+    "dGhlIHNhbXBsZSBub25jZQ==",
+  )
+  .expect("Sec-WebSocket-Key should parse");
+
+  let response = HttpResponse::new(101, "Switching Protocols")
+    .header("Sec-WebSocket-Accept", "legacy")
+    .with_sec_websocket_accept_for_key(&key);
+  let accept = response
+    .sec_websocket_accept()
+    .expect("Sec-WebSocket-Accept should parse")
+    .expect("Sec-WebSocket-Accept should be present");
+
+  assert_eq!("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", accept.as_str());
+  assert!(accept.verify_key(&key));
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert!(serialized.contains("\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n"));
+  assert!(!serialized.contains("\r\nSec-WebSocket-Accept: legacy\r\n"));
+  assert!(!format!("{accept:?}").contains("dGhlIHNhbXBsZSBub25jZQ=="));
+  assert!(!format!("{accept:?}").contains("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
+
+  let manual = HttpResponse::new(101, "Switching Protocols")
+    .with_sec_websocket_accept(" \ts3pPLMBiTxaQ9kYGzzhZRbK+xOo=\t ")
+    .expect("manual Sec-WebSocket-Accept should parse");
+  assert_eq!(
+    "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=",
+    manual
+      .sec_websocket_accept()
+      .expect("manual accept should parse")
+      .expect("manual accept should be present")
+      .header_value()
+  );
+}
+
+#[test]
+fn response_sec_websocket_accept_preserves_invalid_raw_headers() {
+  let duplicate = HttpResponse::new(101, "Switching Protocols")
+    .header("Sec-WebSocket-Accept", "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=")
+    .header("sec-websocket-accept", "AAAAAAAAAAAAAAAAAAAAAAAAAAA=");
+  assert!(duplicate.sec_websocket_accept().is_err());
+
+  let oversized = "A".repeat(64 * 1024 + 1);
+  let oversized_response =
+    HttpResponse::new(101, "Switching Protocols").header("Sec-WebSocket-Accept", oversized);
+  let error = oversized_response
+    .sec_websocket_accept()
+    .expect_err("oversized Sec-WebSocket-Accept should fail");
+  let message = error.to_string();
+  assert!(message.contains("Sec-WebSocket-Accept"));
+  assert!(!message.contains("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
+}
+
+#[test]
+fn response_lock_token_can_replace_and_parse_metadata() {
+  let response = HttpResponse::new(200, "OK")
+    .header("Lock-Token", "<http://example.test/locks/legacy>")
+    .with_lock_token(" \t<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\t ")
+    .expect("Lock-Token should parse");
+  let token = response
+    .lock_token()
+    .expect("Lock-Token should parse")
+    .expect("Lock-Token should be present");
+
+  assert_eq!(
+    "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+    token.as_str()
+  );
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert!(serialized.contains(
+    "\r\nLock-Token: <opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\r\n"
+  ));
+  assert!(!serialized.contains("\r\nLock-Token: <http://example.test/locks/legacy>\r\n"));
+  assert!(!format!("{token:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
+}
+
+#[test]
+fn response_lock_token_preserves_invalid_raw_headers() {
+  let duplicate = HttpResponse::new(200, "OK")
+    .header(
+      "Lock-Token",
+      "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+    )
+    .header("lock-token", "<http://example.test/locks/2>");
+  assert!(duplicate.lock_token().is_err());
+
+  let oversized = "x".repeat(64 * 1024 + 1);
+  let oversized_response = HttpResponse::new(200, "OK").header("Lock-Token", oversized);
+  let error = oversized_response
+    .lock_token()
+    .expect_err("oversized Lock-Token should fail");
+  let message = error.to_string();
+  assert!(message.contains("Lock-Token"));
+  assert!(!message.contains("550e8400-e29b-41d4-a716-446655440000"));
+
+  let rejected = HttpResponse::ok([])
+    .with_lock_token("<relative>")
+    .expect_err("malformed Lock-Token should fail");
+  assert!(!rejected.to_string().contains("relative"));
+}
+
+#[test]
+fn request_trace_context_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(None, absent.traceparent().expect("missing traceparent"));
+  assert_eq!(None, absent.tracestate().expect("missing tracestate"));
+
+  let request = Request::from_raw_frame(
+    b"GET /trace HTTP/1.1\r\nHost: example.test\r\ntraceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\r\ntracestate: rojo=00f067aa0ba902b7\r\ntracestate: congo=t61rcWkgMzE\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let traceparent = request
+    .traceparent()
+    .expect("traceparent should parse")
+    .expect("traceparent should be present");
+  assert_eq!("00", traceparent.version());
+  assert_eq!("4bf92f3577b34da6a3ce929d0e0e4736", traceparent.trace_id());
+  assert!(traceparent.sampled());
+  let tracestate = request
+    .tracestate()
+    .expect("tracestate should parse")
+    .expect("tracestate should be present");
+  assert_eq!(2, tracestate.members().len());
+  assert_eq!("rojo", tracestate.members()[0].key());
+  assert_eq!(
+    Some("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"),
+    request.header("traceparent")
+  );
+
+  let invalid = Request::from_raw_frame(
+    b"GET /trace HTTP/1.1\r\nHost: example.test\r\ntraceparent: 00-00000000000000000000000000000000-00f067aa0ba902b7-01\r\ntracestate: rojo=1,rojo=2\r\n\r\n",
+  )
+  .expect("request should retain invalid trace context metadata");
+  assert!(invalid.traceparent().is_err());
+  assert!(invalid.tracestate().is_err());
+  assert_eq!(
+    Some("00-00000000000000000000000000000000-00f067aa0ba902b7-01"),
+    invalid.header("traceparent")
+  );
+  assert_eq!(Some("rojo=1,rojo=2"), invalid.header("tracestate"));
+
+  let duplicate = Request::from_raw_frame(
+    b"GET /trace HTTP/1.1\r\nHost: example.test\r\ntraceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\r\nTraceparent: 00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-00\r\n\r\n",
+  )
+  .expect("request should retain duplicate traceparent metadata");
+  assert!(duplicate.traceparent().is_err());
+}
+
+#[test]
+fn request_baggage_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(None, absent.baggage().expect("missing baggage"));
+
+  let request = Request::from_raw_frame(
+    b"GET /baggage HTTP/1.1\r\nHost: example.test\r\nbaggage: tenant=acme;source=gateway\r\nbaggage: release=2026-08-19\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let baggage = request
+    .baggage()
+    .expect("baggage should parse")
+    .expect("baggage should be present");
+  assert_eq!(2, baggage.members().len());
+  assert_eq!("tenant", baggage.members()[0].key());
+  assert_eq!("acme", baggage.members()[0].value());
+  assert_eq!("source", baggage.members()[0].properties()[0].key());
+  assert_eq!("release", baggage.members()[1].key());
+  assert_eq!(
+    Some("tenant=acme;source=gateway"),
+    request.header("baggage")
+  );
+
+  let invalid = Request::from_raw_frame(
+    b"GET /baggage HTTP/1.1\r\nHost: example.test\r\nbaggage: tenant=secret,tenant=other\r\n\r\n",
+  )
+  .expect("request should retain invalid baggage metadata");
+  assert!(invalid.baggage().is_err());
+  assert_eq!(
+    Some("tenant=secret,tenant=other"),
+    invalid.header("baggage")
+  );
+
+  let oversized = Request::from_raw_frame(
+    format!(
+      "GET /baggage HTTP/1.1\r\nHost: example.test\r\nbaggage: k={}\r\n\r\n",
+      "v".repeat(8193)
+    )
+    .as_bytes(),
+  )
+  .expect("request should retain oversized baggage metadata");
+  assert!(oversized.baggage().is_err());
+  assert!(oversized.header("baggage").is_some());
+}
+
+#[test]
 fn request_cookies_are_bounded_and_preserve_pairs() {
   let request = Request::from_raw_frame(
     b"GET / HTTP/1.1\r\nHost: example.test\r\nCookie: session=abc; theme=dark\r\nCookie: flag=\r\n\r\n",
@@ -2236,6 +4821,157 @@ fn request_exposes_bounded_range_and_conditional_metadata() {
   assert!(matches!(request.if_range(), Ok(Some(HttpIfRange::Date(_)))));
   assert_eq!(Ok(Some(HttpIfNoneMatch::Any)), request.if_none_match());
   assert!(matches!(request.if_modified_since(), Ok(Some(_))));
+  assert!(matches!(request.if_unmodified_since(), Ok(None)));
+}
+
+#[test]
+fn request_conditional_http_date_metadata_is_optional_bounded_and_rejects_invalid_headers() {
+  let absent = Request::from_raw_frame(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(None, absent.if_modified_since().expect("absent should be valid"));
+  assert_eq!(None, absent.if_unmodified_since().expect("absent should be valid"));
+
+  let modified = Request::from_raw_frame(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nIf-Modified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert_eq!(
+    "Sun, 06 Nov 1994 08:49:37 GMT",
+    modified
+      .if_modified_since()
+      .expect("If-Modified-Since should parse")
+      .expect("If-Modified-Since should be present")
+      .header_value()
+  );
+
+  let unmodified = Request::from_raw_frame(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nIf-Unmodified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert_eq!(
+    "Sun, 06 Nov 1994 08:49:37 GMT",
+    unmodified
+      .if_unmodified_since()
+      .expect("If-Unmodified-Since should parse")
+      .expect("If-Unmodified-Since should be present")
+      .header_value()
+  );
+
+  for value in ["not-a-date", "", "08:49:37 06 Nov 1994"] {
+    let request = Request::from_raw_frame(
+      format!(
+        "GET /asset HTTP/1.1\r\nHost: example.test\r\nIf-Modified-Since: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should parse");
+    assert!(request.if_modified_since().is_err());
+    assert_eq!(Some(value), request.header("If-Modified-Since"));
+  }
+
+  let oversized = "0".repeat(64 * 1024 + 1);
+  let oversized_request = Request {
+    method: "GET".to_string(),
+    target: "/".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("If-Modified-Since".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.if_modified_since().is_err());
+  assert_eq!(
+    Some(oversized.as_str()),
+    oversized_request.header("If-Modified-Since")
+  );
+
+  let duplicate = Request::from_raw_frame(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nIf-Unmodified-Since: Sun, 06 Nov 1994 08:49:37 GMT\r\nif-unmodified-since: Sun, 06 Nov 1994 08:49:38 GMT\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert!(duplicate.if_unmodified_since().is_err());
+  assert_eq!(
+    None,
+    duplicate.if_modified_since().expect("absent should be valid")
+  );
+}
+
+#[test]
+fn request_accept_datetime_metadata_is_optional_bounded_and_rejects_invalid_headers() {
+  let absent = Request::from_raw_frame(b"GET /asset HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent.accept_datetime().expect("absent should be valid")
+  );
+
+  for value in [
+    "Sun, 06 Nov 1994 08:49:37 GMT",
+    "Sunday, 06-Nov-94 08:49:37 GMT",
+    "Sun Nov  6 08:49:37 1994",
+  ] {
+    let request = Request::from_raw_frame(
+      format!("GET /asset HTTP/1.1\r\nHost: example.test\r\nAccept-Datetime: {value}\r\n\r\n")
+        .as_bytes(),
+    )
+    .expect("request should parse");
+    let parsed = request
+      .accept_datetime()
+      .expect("Accept-Datetime should parse")
+      .expect("Accept-Datetime should be present");
+    assert_eq!("Sun, 06 Nov 1994 08:49:37 GMT", parsed.header_value());
+    assert_eq!(
+      Some(value),
+      request.header("Accept-Datetime"),
+      "the raw field must remain available"
+    );
+  }
+
+  for value in ["not-a-date", "", "08:49:37 06 Nov 1994"] {
+    let request = Request::from_raw_frame(
+      format!(
+        "GET /asset HTTP/1.1\r\nHost: example.test\r\nAccept-Datetime: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should parse");
+    assert!(request.accept_datetime().is_err());
+    assert_eq!(Some(value), request.header("Accept-Datetime"));
+  }
+
+  let oversized = "0".repeat(64 * 1024 + 1);
+  let oversized_request = Request {
+    method: "GET".to_string(),
+    target: "/".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("Accept-Datetime".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.accept_datetime().is_err());
+  assert_eq!(
+    Some(oversized.as_str()),
+    oversized_request.header("Accept-Datetime")
+  );
+
+  let duplicate = Request::from_raw_frame(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nAccept-Datetime: Sun, 06 Nov 1994 08:49:37 GMT\r\naccept-datetime: Sun, 06 Nov 1994 08:49:38 GMT\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert!(duplicate.accept_datetime().is_err());
+  assert_eq!(
+    None,
+    duplicate.if_modified_since().expect("absent should be valid")
+  );
 }
 
   #[test]
@@ -2834,6 +5570,100 @@ hello\r\n\
       .expect("Proxy-Authorization should be present");
     assert_eq!("Basic", proxy_authorization.scheme());
     assert_eq!("cHJveHk6c2VjcmV0", proxy_authorization.credentials());
+    assert!(!format!("{proxy_authorization:?}").contains("cHJveHk6c2VjcmV0"));
+    let request_debug = format!("{request:?}");
+    assert!(request_debug.contains("Authorization"));
+    assert!(request_debug.contains("Proxy-Authorization"));
+    assert!(request_debug.contains("[REDACTED]"));
+    assert!(!request_debug.contains("origin-token"));
+    assert!(!request_debug.contains("cHJveHk6c2VjcmV0"));
+
+    let http_request = HttpRequest::parse(raw.as_bytes()).expect("request should parse");
+    let http_request_debug = format!("{http_request:?}");
+    assert!(http_request_debug.contains("Authorization"));
+    assert!(http_request_debug.contains("Proxy-Authorization"));
+    assert!(http_request_debug.contains("[REDACTED]"));
+    assert!(!http_request_debug.contains("origin-token"));
+    assert!(!http_request_debug.contains("cHJveHk6c2VjcmV0"));
+
+    let cookie_header_debug = format!("{:?}", HttpHeader::new("Cookie", "session=private"));
+    assert!(cookie_header_debug.contains("Cookie"));
+    assert!(cookie_header_debug.contains("[REDACTED]"));
+    assert!(!cookie_header_debug.contains("session=private"));
+
+    let trace_raw = concat!(
+      "GET /trace HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\r\n",
+      "tracestate: rojo=00f067aa0ba902b7\r\n",
+      "\r\n"
+    );
+    let trace_request =
+      Request::from_raw_frame(trace_raw.as_bytes()).expect("trace request should parse");
+    let traceparent = trace_request
+      .traceparent()
+      .expect("traceparent should parse")
+      .expect("traceparent should be present");
+    let tracestate = trace_request
+      .tracestate()
+      .expect("tracestate should parse")
+      .expect("tracestate should be present");
+    assert_eq!("4bf92f3577b34da6a3ce929d0e0e4736", traceparent.trace_id());
+    assert_eq!("00f067aa0ba902b7", tracestate.members()[0].value());
+    let trace_debug = format!(
+      "{trace_request:?} {:?} {:?}",
+      traceparent,
+      tracestate.members()[0]
+    );
+    assert!(!trace_debug.contains("4bf92f3577b34da6a3ce929d0e0e4736"));
+    assert!(!trace_debug.contains("00f067aa0ba902b7"));
+
+    let trace_http_request =
+      HttpRequest::parse(trace_raw.as_bytes()).expect("trace HttpRequest should parse");
+    let trace_http_request_debug = format!("{trace_http_request:?}");
+    assert!(!trace_http_request_debug.contains("4bf92f3577b34da6a3ce929d0e0e4736"));
+    assert!(!trace_http_request_debug.contains("00f067aa0ba902b7"));
+    let trace_header_debug = format!(
+      "{:?} {:?}",
+      HttpHeader::new(
+        "traceparent",
+        "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+      ),
+      HttpHeader::new("tracestate", "rojo=00f067aa0ba902b7")
+    );
+    assert!(trace_header_debug.contains("[REDACTED]"));
+    assert!(!trace_header_debug.contains("4bf92f3577b34da6a3ce929d0e0e4736"));
+    assert!(!trace_header_debug.contains("00f067aa0ba902b7"));
+
+    let baggage_raw = concat!(
+      "GET /baggage HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "baggage: tenant=acme-secret;source=gateway\r\n",
+      "\r\n"
+    );
+    let baggage_request =
+      Request::from_raw_frame(baggage_raw.as_bytes()).expect("baggage request should parse");
+    let baggage = baggage_request
+      .baggage()
+      .expect("baggage should parse")
+      .expect("baggage should be present");
+    assert_eq!("acme-secret", baggage.members()[0].value());
+    let baggage_debug = format!(
+      "{baggage_request:?} {:?} {:?}",
+      baggage,
+      baggage.members()[0]
+    );
+    assert!(!baggage_debug.contains("acme-secret"));
+    assert!(!baggage_debug.contains("gateway"));
+
+    let baggage_http_request =
+      HttpRequest::parse(baggage_raw.as_bytes()).expect("baggage HttpRequest should parse");
+    let baggage_http_request_debug = format!("{baggage_http_request:?}");
+    assert!(!baggage_http_request_debug.contains("acme-secret"));
+    assert!(!baggage_http_request_debug.contains("gateway"));
+    let baggage_header_debug = format!("{:?}", HttpHeader::new("baggage", "tenant=acme-secret"));
+    assert!(baggage_header_debug.contains("[REDACTED]"));
+    assert!(!baggage_header_debug.contains("acme-secret"));
 
     let response = HttpResponse::new(401, "Unauthorized")
       .header("WWW-Authenticate", "Broken")
@@ -2860,10 +5690,143 @@ hello\r\n\
     )
     .expect("request should parse");
     assert!(malformed.proxy_authorization().is_err());
+    assert!(HttpProxyAuthorization::parse("Basic proxy\rsecret").is_err());
     assert_eq!(
       Some("invalid"),
       malformed.header("Proxy-Authorization")
     );
+  }
+
+  #[test]
+  fn idempotency_key_debug_redacts_values_in_request_and_http_request() {
+    let raw = concat!(
+      "POST /charges HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Idempotency-Key: charge-2026-08-19-9f3c\r\n",
+      "\r\n"
+    );
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+    let request = Request::read_next_from(&mut reader)
+      .expect("request should parse")
+      .expect("request should be present");
+
+    let idempotency_key = request
+      .idempotency_key()
+      .expect("Idempotency-Key should parse")
+      .expect("Idempotency-Key should be present");
+    assert_eq!("charge-2026-08-19-9f3c", idempotency_key.as_str());
+    assert!(!format!("{idempotency_key:?}").contains("charge-2026-08-19-9f3c"));
+    let request_debug = format!("{request:?}");
+    assert!(request_debug.contains("Idempotency-Key"));
+    assert!(request_debug.contains("[REDACTED]"));
+    assert!(!request_debug.contains("charge-2026-08-19-9f3c"));
+
+    let http_request = HttpRequest::parse(raw.as_bytes()).expect("request should parse");
+    let http_request_debug = format!("{http_request:?}");
+    assert!(http_request_debug.contains("Idempotency-Key"));
+    assert!(http_request_debug.contains("[REDACTED]"));
+    assert!(!http_request_debug.contains("charge-2026-08-19-9f3c"));
+
+    let header_debug =
+      format!("{:?}", HttpHeader::new("Idempotency-Key", "charge-2026-08-19-9f3c"));
+    assert!(header_debug.contains("Idempotency-Key"));
+    assert!(header_debug.contains("[REDACTED]"));
+    assert!(!header_debug.contains("charge-2026-08-19-9f3c"));
+  }
+
+  #[test]
+  fn lock_token_debug_redacts_values_in_request_and_http_request() {
+    let raw = concat!(
+      "UNLOCK /resource HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Lock-Token: <opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\r\n",
+      "\r\n"
+    );
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+    let request = Request::read_next_from(&mut reader)
+      .expect("request should parse")
+      .expect("request should be present");
+
+    let lock_token = request
+      .lock_token()
+      .expect("Lock-Token should parse")
+      .expect("Lock-Token should be present");
+    assert_eq!(
+      "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+      lock_token.as_str()
+    );
+    assert!(!format!("{lock_token:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
+    let request_debug = format!("{request:?}");
+    assert!(request_debug.contains("Lock-Token"));
+    assert!(request_debug.contains("[REDACTED]"));
+    assert!(!request_debug.contains("550e8400-e29b-41d4-a716-446655440000"));
+
+    let http_request = HttpRequest::parse(raw.as_bytes()).expect("request should parse");
+    let http_request_debug = format!("{http_request:?}");
+    assert!(http_request_debug.contains("Lock-Token"));
+    assert!(http_request_debug.contains("[REDACTED]"));
+    assert!(!http_request_debug.contains("550e8400-e29b-41d4-a716-446655440000"));
+
+    let header_debug = format!(
+      "{:?}",
+      HttpHeader::new(
+        "Lock-Token",
+        "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>"
+      )
+    );
+    assert!(header_debug.contains("Lock-Token"));
+    assert!(header_debug.contains("[REDACTED]"));
+    assert!(!header_debug.contains("550e8400-e29b-41d4-a716-446655440000"));
+  }
+
+  #[test]
+  fn sec_websocket_key_debug_redacts_values_in_request_and_http_request() {
+    let raw = concat!(
+      "GET /chat HTTP/1.1\r\n",
+      "Host: example.test\r\n",
+      "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n",
+      "\r\n"
+    );
+    let mut reader = BufReader::new(Cursor::new(raw.as_bytes()));
+    let request = Request::read_next_from(&mut reader)
+      .expect("request should parse")
+      .expect("request should be present");
+
+    let sec_websocket_key = request
+      .sec_websocket_key()
+      .expect("Sec-WebSocket-Key should parse")
+      .expect("Sec-WebSocket-Key should be present");
+    assert_eq!(
+      "dGhlIHNhbXBsZSBub25jZQ==",
+      sec_websocket_key.as_str()
+    );
+    assert!(!format!("{sec_websocket_key:?}").contains("dGhlIHNhbXBsZSBub25jZQ=="));
+    let request_debug = format!("{request:?}");
+    assert!(request_debug.contains("Sec-WebSocket-Key"));
+    assert!(request_debug.contains("[REDACTED]"));
+    assert!(!request_debug.contains("dGhlIHNhbXBsZSBub25jZQ=="));
+
+    let http_request = HttpRequest::parse(raw.as_bytes()).expect("request should parse");
+    let http_request_debug = format!("{http_request:?}");
+    assert!(http_request_debug.contains("Sec-WebSocket-Key"));
+    assert!(http_request_debug.contains("[REDACTED]"));
+    assert!(!http_request_debug.contains("dGhlIHNhbXBsZSBub25jZQ=="));
+
+    let header_debug = format!(
+      "{:?}",
+      HttpHeader::new("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+    );
+    assert!(header_debug.contains("Sec-WebSocket-Key"));
+    assert!(header_debug.contains("[REDACTED]"));
+    assert!(!header_debug.contains("dGhlIHNhbXBsZSBub25jZQ=="));
+
+    let accept_header_debug = format!(
+      "{:?}",
+      HttpHeader::new("Sec-WebSocket-Accept", "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=")
+    );
+    assert!(accept_header_debug.contains("Sec-WebSocket-Accept"));
+    assert!(accept_header_debug.contains("[REDACTED]"));
+    assert!(!accept_header_debug.contains("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
   }
 
   #[test]
@@ -2893,6 +5856,235 @@ hello\r\n\
       .expect("clear should parse")
       .expect("clear should be present")
       .is_clear());
+  }
+
+  #[test]
+  fn alternates_helpers_validate_replace_and_parse_response_metadata() {
+    let response = HttpResponse::ok([])
+      .header("Alternates", r#"{ "/stale" 1 }"#)
+      .header("alternates", r#"{ "/older" 0.1 }"#)
+      .with_alternates(
+        r#"{ "/resource.en.html" 1.0 {type text/html} {language en} {length 1234} }, { "/resource.fr.html" 0.8 {type "text/html; charset=utf-8"} {language fr} }"#,
+      )
+      .expect("Alternates should be accepted");
+    let alternates = response
+      .alternates()
+      .expect("response Alternates should parse")
+      .expect("response Alternates should be present");
+
+    assert_eq!(2, alternates.len());
+    assert_eq!("/resource.en.html", alternates.variants()[0].uri());
+    assert_eq!("1.0", alternates.variants()[0].quality());
+    assert_eq!(Some("text/html"), alternates.variants()[0].attribute("type"));
+    assert_eq!(Some("fr"), alternates.variants()[1].attribute("language"));
+    let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+    assert_eq!(1, serialized.matches("\r\nAlternates: ").count());
+    assert!(serialized.contains("\r\nAlternates: { \"/resource.en.html\" 1.0"));
+    assert!(!serialized.contains("/stale"));
+    assert!(!serialized.contains("/older"));
+
+    let malformed = HttpResponse::ok([]).header("Alternates", r#"{ "/broken" 1.001 }"#);
+    assert!(malformed.alternates().is_err());
+    assert!(String::from_utf8(malformed.to_bytes())
+      .expect("response should serialize")
+      .contains("\r\nAlternates: { \"/broken\" 1.001 }\r\n"));
+
+    let absent = HttpResponse::ok([]);
+    assert_eq!(None, absent.alternates().expect("absent Alternates is Ok(None)"));
+  }
+
+  #[test]
+  fn alternates_builder_rejects_normalized_values_over_field_limit() {
+    let tight_value = (0..256)
+      .map(|index| {
+        let padding = "a".repeat(234 + usize::from(index < 113));
+        format!(r#"{{ "/v{index}" 1 {{note {padding}}}}}"#)
+      })
+      .collect::<Vec<_>>()
+      .join(",");
+
+    assert!(tight_value.len() <= 64 * 1024);
+    assert!(HttpAlternates::parse(&tight_value).is_ok());
+    assert!(HttpResponse::ok([])
+      .with_alternates(&tight_value)
+      .is_err());
+  }
+
+  #[test]
+  fn tcn_helpers_validate_replace_and_parse_response_metadata() {
+    let response = HttpResponse::ok([])
+      .header("TCN", "list")
+      .with_tcn("Choice, keep")
+      .expect("TCN should be accepted");
+    let tcn = response
+      .tcn()
+      .expect("response TCN should parse")
+      .expect("response TCN should be present");
+
+    assert_eq!(
+      &[HttpTcnDirective::Choice, HttpTcnDirective::Keep],
+      tcn.members()
+    );
+    assert_eq!("choice, keep", tcn.header_value());
+    let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+    assert_eq!(1, serialized.matches("\r\nTCN: ").count());
+    assert!(serialized.contains("\r\nTCN: choice, keep\r\n"));
+    assert!(!serialized.contains("\r\nTCN: list\r\n"));
+
+    let duplicate_fields = HttpResponse::ok([])
+      .header("TCN", "list")
+      .header("tcn", "choice");
+    assert!(duplicate_fields.tcn().is_err());
+    assert!(String::from_utf8(duplicate_fields.to_bytes())
+      .expect("response should serialize")
+      .contains("\r\nTCN: list\r\n"));
+
+    let malformed = HttpResponse::ok([]).header("TCN", "variant");
+    assert!(malformed.tcn().is_err());
+    assert!(String::from_utf8(malformed.to_bytes())
+      .expect("response should serialize")
+      .contains("\r\nTCN: variant\r\n"));
+
+    let absent = HttpResponse::ok([]);
+    assert_eq!(None, absent.tcn().expect("absent TCN is Ok(None)"));
+    assert!(HttpResponse::ok([]).with_tcn("list, LIST").is_err());
+
+    let oversized = format!("list{}", "x".repeat(64 * 1024));
+    assert!(HttpResponse::ok([]).with_tcn(&oversized).is_err());
+  }
+
+  #[test]
+  fn set_cookie_helpers_append_and_parse_response_metadata() {
+    let session = HttpSetCookie::new("session", "abc def")
+      .expect("session cookie should be valid")
+      .with_path("/")
+      .expect("path should be accepted")
+      .with_http_only()
+      .expect("HttpOnly should be accepted")
+      .with_same_site(HttpSameSite::Lax)
+      .expect("SameSite should be accepted");
+    let csrf = HttpSetCookie::new("csrf", "token")
+      .expect("csrf cookie should be valid")
+      .with_path("/form")
+      .expect("path should be accepted")
+      .with_max_age(60)
+      .expect("Max-Age should be accepted")
+      .with_extension("Foo", Some("bar"))
+      .expect("extension should be accepted");
+    let response = HttpResponse::ok([])
+      .header("Set-Cookie", "theme=dark")
+      .with_set_cookie(session)
+      .with_set_cookie(csrf);
+    let cookies = response
+      .set_cookies()
+      .expect("response Set-Cookie should parse")
+      .expect("response Set-Cookie should be present");
+
+    assert_eq!(3, cookies.len());
+    assert_eq!(
+      &[
+        "theme=dark",
+        r#"session="abc def"; Path=/; HttpOnly; SameSite=Lax"#,
+        "csrf=token; Path=/form; Max-Age=60; Foo=bar",
+      ],
+      cookies.header_values().as_slice()
+    );
+    let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+    assert_eq!(3, serialized.matches("\r\nSet-Cookie: ").count());
+    assert!(serialized.contains("\r\nSet-Cookie: theme=dark\r\n"));
+
+    let malformed = HttpResponse::ok([]).header("Set-Cookie", "session=super-secret; Path=/; path=/other");
+    assert!(malformed.set_cookies().is_err());
+    assert!(String::from_utf8(malformed.to_bytes())
+      .expect("response should serialize")
+      .contains("\r\nSet-Cookie: session=super-secret; Path=/; path=/other\r\n"));
+
+    let absent = HttpResponse::ok([]);
+    assert_eq!(
+      None,
+      absent.set_cookies().expect("absent Set-Cookie is Ok(None)")
+    );
+    let cookie_debug = format!(
+      "{:?}",
+      HttpSetCookie::parse(r#"session="abc def""#).expect("cookie should parse")
+    );
+    assert!(cookie_debug.contains("[REDACTED]"));
+    assert!(!cookie_debug.contains("abc def"));
+  }
+
+  #[test]
+  fn origin_trial_helpers_declare_parse_and_redact_response_metadata() {
+    let response = HttpResponse::ok([])
+      .header("Origin-Trial", "stale-token")
+      .with_origin_trials(["secret-token-one", "secret-token-two"])
+      .expect("Origin-Trial should be accepted");
+    let origin_trials = response
+      .origin_trials()
+      .expect("response Origin-Trial should parse")
+      .expect("response Origin-Trial should be present");
+
+    assert_eq!(
+      origin_trials.tokens(),
+      ["secret-token-one", "secret-token-two"]
+    );
+    let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+    assert_eq!(2, serialized.matches("\r\nOrigin-Trial: ").count());
+    assert!(serialized.contains("\r\nOrigin-Trial: secret-token-one\r\n"));
+    assert!(!serialized.contains("stale-token"));
+
+    let response_debug = format!("{response:?}");
+    assert!(response_debug.contains("Origin-Trial"));
+    assert!(response_debug.contains("[REDACTED]"));
+    assert!(!response_debug.contains("secret-token-one"));
+    assert!(!format!("{origin_trials:?}").contains("secret-token-one"));
+
+    let header_debug = format!("{:?}", HttpHeader::new("Origin-Trial", "secret-token-one"));
+    assert!(header_debug.contains("Origin-Trial"));
+    assert!(header_debug.contains("[REDACTED]"));
+    assert!(!header_debug.contains("secret-token-one"));
+
+    let malformed = HttpResponse::ok([]).header("Origin-Trial", "token\twith-tab");
+    assert!(malformed.origin_trials().is_err());
+    assert!(String::from_utf8(malformed.to_bytes())
+      .expect("response should serialize")
+      .contains("\r\nOrigin-Trial: token\twith-tab\r\n"));
+  }
+
+  #[test]
+  fn speculation_rules_helpers_declare_parse_and_redact_response_metadata() {
+    let value = "https://example.test/speculation-rules.json";
+    let response = HttpResponse::ok([])
+      .header("Speculation-Rules", "https://example.test/stale.json")
+      .with_speculation_rules(value)
+      .expect("Speculation-Rules should be accepted");
+    let rules = response
+      .speculation_rules()
+      .expect("response Speculation-Rules should parse")
+      .expect("response Speculation-Rules should be present");
+
+    assert_eq!(rules.as_str(), value);
+    assert_eq!(rules.header_value(), value);
+    let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+    assert_eq!(1, serialized.matches("\r\nSpeculation-Rules: ").count());
+    assert!(serialized.contains(&format!("\r\nSpeculation-Rules: {value}\r\n")));
+    assert!(!serialized.contains("stale.json"));
+
+    let response_debug = format!("{response:?}");
+    assert!(response_debug.contains("Speculation-Rules"));
+    assert!(response_debug.contains("[REDACTED]"));
+    assert!(!response_debug.contains(value));
+    assert!(!format!("{rules:?}").contains(value));
+
+    let duplicate = HttpResponse::ok([])
+      .header("Speculation-Rules", "https://example.test/one.json")
+      .header("speculation-rules", "https://example.test/two.json");
+    assert!(duplicate.speculation_rules().is_err());
+
+    let malformed = HttpResponse::ok([]).header("Speculation-Rules", "");
+    assert!(malformed.speculation_rules().is_err());
+    assert!(HttpResponse::ok([])
+      .with_speculation_rules("https://example.test/rules.json\r\nX-Injected: 1")
+      .is_err());
   }
 
   #[test]
