@@ -93,6 +93,18 @@ compare the validator to stored calendar state, inspect calendars, or apply
 scheduling policy. Callers needing an unusual value can retain full raw-header
 control with `header(("If-Schedule-Tag-Match", "..."))`.
 
+## Bounded WebDAV Overwrite metadata
+
+`HttpClient::overwrite(value)` sets a WebDAV `Overwrite` request header
+through the shared protocol `Overwrite` type. The helper accepts the
+singleton tokens `T` and `F`, trims HTTP OWS, and rejects empty, lowercase,
+comma-list, oversized (over 64 KiB), duplicate, and control-byte values
+before a socket is opened. It only validates and emits the canonical metadata
+value: RTTP does not overwrite destination resources, apply the RFC 4918
+default `T` when the header is absent, or enforce WebDAV policy. Callers
+needing an unusual value can retain full raw-header control with
+`header(("Overwrite", "..."))`.
+
 ## Bounded WebDAV DAV response metadata
 
 `Response::dav()` parses WebDAV `DAV` response fields through the shared
@@ -1372,6 +1384,7 @@ header-block model.
 | Destination | `destination` emits bounded singleton WebDAV `Destination` request metadata through the shared protocol type, preserving one absolute URI and replacing an existing same-name field | No destination resolution, URI normalization, authorization, COPY/MOVE execution, or application resource policy |
 | Timeout | `timeout` emits bounded ordered WebDAV `Timeout` request metadata through the shared protocol type, normalizing `Second-n`/`Infinite` alternatives to lowercase and replacing an existing same-name field | No lock creation, lock refresh, application-timeout selection, retry, or forwarding policy |
 | If-Schedule-Tag-Match | `if_schedule_tag_match` emits bounded singleton `If-Schedule-Tag-Match` request metadata through the shared protocol type, reusing the shared `EntityTag` representation for strong and weak validators and replacing an existing same-name field | No schedule-tag comparison, calendar inspection, scheduling policy, retry, or status-policy behavior |
+| Overwrite | `overwrite` emits bounded singleton WebDAV `Overwrite` request metadata through the shared protocol type, accepting only the tokens `T` and `F` and replacing an existing same-name field | No destination overwrite, RFC 4918 default-`T` synthesis, resource policy, COPY/MOVE execution, retry, or forwarding policy |
 | Idempotency-Key | `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | WebSocket handshake metadata | `sec_websocket_key` emits bounded singleton `Sec-WebSocket-Key` request metadata through the shared protocol type, replacing an existing same-name field and redacting the nonce from typed debug output; `Response::sec_websocket_accept` parses bounded singleton response metadata and `verify_sec_websocket_accept` checks the RFC GUID plus SHA-1/base64 derivation against a validated key | No HTTP upgrade, random nonce generation, WebSocket frames, or handshake policy |
 | Sec-WebSocket-Version | `sec_websocket_version` emits bounded `Sec-WebSocket-Version` request metadata through the shared protocol type, replacing an existing same-name field, and `Response::sec_websocket_version` parses received fields including rejection-response version lists | No WebSocket handshake, `Connection: Upgrade` emission, `Sec-WebSocket-Accept` computation, version negotiation, protocol switch, or frames |

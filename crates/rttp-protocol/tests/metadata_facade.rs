@@ -55,6 +55,7 @@ use rttp_protocol::nel::Nel;
 use rttp_protocol::no_vary_search::{NoVarySearch, NoVarySearchParams};
 use rttp_protocol::origin::Origin;
 use rttp_protocol::origin_trial::OriginTrials;
+use rttp_protocol::overwrite::{Overwrite, OverwriteParseError};
 use rttp_protocol::permissions_policy::PermissionsPolicy;
 use rttp_protocol::pragma::{Pragma, PragmaParseError};
 use rttp_protocol::prefer::{Prefer, PreferenceApplied, PreferenceKind};
@@ -144,6 +145,9 @@ fn protocol_exports_representative_bounded_metadata_types() {
     .expect("Destination should parse");
   let depth = Depth::parse("infinity").expect("Depth should parse");
   let timeout = Timeout::parse("Second-60, Infinite").expect("Timeout should parse");
+  let overwrite = Overwrite::parse("F").expect("Overwrite should parse");
+  let _: OverwriteParseError =
+    Overwrite::parse("t").expect_err("lowercase Overwrite should be rejected");
   let idempotency_key = IdempotencyKey::parse("charge-2026-08-19-9f3c")
     .expect("Idempotency-Key request metadata should parse");
   let sec_websocket_key = SecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==")
@@ -384,6 +388,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
     timeout.members()
   );
   assert_eq!("second-60, infinite", timeout.header_value());
+  assert_eq!(Overwrite::F, overwrite);
+  assert_eq!("F", overwrite.header_value());
   assert_eq!(idempotency_key.as_str(), "charge-2026-08-19-9f3c");
   assert_eq!(idempotency_key.header_value(), "charge-2026-08-19-9f3c");
   assert!(!format!("{idempotency_key:?}").contains("charge-2026-08-19-9f3c"));

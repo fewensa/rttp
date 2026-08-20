@@ -173,6 +173,18 @@ duplicates, too many members, oversized input, and forbidden ASCII control
 bytes are errors. This parser reports declared request metadata only; it does
 not create locks, refresh locks, or select an application timeout.
 
+## Overwrite
+
+`overwrite` parses a singleton WebDAV `Overwrite` request field as the token
+`T` or `F`. Each field value is bounded to 64 KiB. A second field is rejected
+after every supplied field is bound-checked. Surrounding SP and HTAB are
+trimmed as optional whitespace; the tokens are matched case-sensitively.
+Empty values, lowercase or other tokens, comma-lists, oversized values, and
+forbidden ASCII control bytes are errors. `header_value()` emits the accepted
+token unchanged. This parser reports declared request metadata only; it does
+not overwrite destination resources, apply the RFC 4918 default `T` when the
+field is absent, or enforce WebDAV policy.
+
 ## Idempotency-Key
 
 `idempotency_key` parses a singleton HTTP `Idempotency-Key` request field as

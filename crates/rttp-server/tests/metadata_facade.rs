@@ -23,25 +23,26 @@ use rttp_server::server::{
   HttpIfModifiedSinceParseError, HttpIfScheduleTagMatch, HttpIfScheduleTagMatchParseError,
   HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError, HttpKeepAlive, HttpMaxForwards,
   HttpMaxForwardsParseError, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNoVarySearch,
-  HttpNoVarySearchParams, HttpOriginTrialParseError, HttpOriginTrials, HttpPermissionsPolicy,
-  HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
-  HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective,
-  HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus,
-  HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
-  HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSecGpc, HttpSecGpcParseError,
-  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketKey,
-  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
-  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
-  HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
-  HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
-  HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
-  HttpSpeculationRules, HttpSpeculationRulesParseError, HttpSupportsLoadingMode,
-  HttpSupportsLoadingModeParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType,
-  HttpTraceParent, HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember,
-  HttpTraceStateParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
-  HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
-  HttpVia, HttpViaMember, HttpViaParseError, HttpWantContentDigest, HttpWantReprDigest,
-  HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
+  HttpNoVarySearchParams, HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite,
+  HttpOverwriteParseError, HttpPermissionsPolicy, HttpPermissionsPolicyAllowlist,
+  HttpPermissionsPolicyAllowlistMember, HttpPermissionsPolicyDirective,
+  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective, HttpPragmaParseError,
+  HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError,
+  HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpResponse, HttpSaveData,
+  HttpSaveDataParseError, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept,
+  HttpSecWebSocketAcceptParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
+  HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
+  HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
+  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
+  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
+  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
+  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTimeout, HttpTimeoutParseError,
+  HttpTimeoutType, HttpTraceParent, HttpTraceParentParseError, HttpTraceState,
+  HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
+  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpVia, HttpViaMember,
+  HttpViaParseError, HttpWantContentDigest, HttpWantReprDigest, HttpXForwardedFor,
+  HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
   HttpXForwardedProto, HttpXForwardedProtoParseError, SecFetchDest, SecFetchMode, SecFetchSite,
   SecFetchUser, SecPurpose,
 };
@@ -165,6 +166,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpTimeout::parse("Second-60, Infinite").expect("Timeout should parse");
   let timeout_error: Result<HttpTimeout, HttpTimeoutParseError> =
     HttpTimeout::parse("Second-60, second-60");
+  let overwrite: HttpOverwrite = HttpOverwrite::parse("F").expect("Overwrite should parse");
+  let overwrite_error: Result<HttpOverwrite, HttpOverwriteParseError> = HttpOverwrite::parse("t");
   let expectations: HttpExpectations =
     HttpExpectations::parse("100-continue, preview").expect("Expect should parse");
   let expectations_error: Result<HttpExpectations, HttpExpectParseError> =
@@ -405,6 +408,9 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   );
   assert_eq!("second-60, infinite", timeout.header_value());
   assert!(timeout_error.is_err());
+  assert_eq!(HttpOverwrite::F, overwrite);
+  assert_eq!("F", overwrite.header_value());
+  assert!(overwrite_error.is_err());
   assert!(expectations.expects_continue());
   assert_eq!(["preview"], expectations.unsupported());
   assert_eq!(expectations.header_value(), "100-continue, preview");
@@ -1193,6 +1199,51 @@ fn request_facade_parses_if_schedule_tag_match_metadata_without_policy() {
   assert!(
     HttpIfScheduleTagMatch::parse(format!("\"{}\"", "a".repeat(64 * 1024 - 1))).is_err(),
     "oversized If-Schedule-Tag-Match values must fail closed"
+  );
+}
+
+#[test]
+fn request_facade_parses_overwrite_metadata_without_policy() {
+  let request = HttpRequest::parse(
+    b"COPY /documents/source.txt HTTP/1.1\r\nHost: example.test\r\nOverwrite: F\r\n\r\n",
+  )
+  .expect("request should parse");
+  let overwrite: HttpOverwrite = request
+    .overwrite()
+    .expect("Overwrite should parse")
+    .expect("Overwrite should be present");
+
+  assert_eq!(HttpOverwrite::F, overwrite);
+  assert_eq!("F", overwrite.header_value());
+  assert_eq!(Some("F"), request.header("Overwrite"));
+
+  let absent =
+    HttpRequest::parse(b"COPY /documents/source.txt HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .overwrite()
+      .expect("missing Overwrite should be accepted")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"COPY /documents/source.txt HTTP/1.1\r\nHost: example.test\r\nOverwrite: true\r\n\r\n",
+  )
+  .expect("malformed Overwrite request should still parse");
+  assert!(malformed.overwrite().is_err());
+  assert_eq!(Some("true"), malformed.header("Overwrite"));
+
+  let duplicate = HttpRequest::parse(
+    b"COPY /documents/source.txt HTTP/1.1\r\nHost: example.test\r\nOverwrite: T\r\noverwrite: F\r\n\r\n",
+  )
+  .expect("duplicate Overwrite request should still parse");
+  assert!(duplicate.overwrite().is_err());
+  assert_eq!(Some("T"), duplicate.header("Overwrite"));
+
+  assert!(
+    HttpOverwrite::parse("T".repeat(64 * 1024 + 1)).is_err(),
+    "oversized Overwrite values must fail closed"
   );
 }
 
