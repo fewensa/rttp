@@ -7,16 +7,16 @@ use rttp::server::{
   HttpContentRangeParseError, HttpCrossOriginEmbedderPolicy,
   HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
   HttpCrossOriginOpenerPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeprecation,
-  HttpDeprecationParseError, HttpDepth, HttpDepthParseError, HttpEntityTag, HttpExpectations,
-  HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfUnmodifiedSince,
-  HttpMaxForwards, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNel,
-  HttpOriginTrialParseError, HttpOriginTrials, HttpPermissionsPolicy,
-  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization,
-  HttpProxyStatus, HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse,
-  HttpSaveData, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept,
-  HttpSecWebSocketAcceptParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
-  HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
-  HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
+  HttpDeprecationParseError, HttpDepth, HttpDepthParseError, HttpDestination,
+  HttpDestinationParseError, HttpEntityTag, HttpExpectations, HttpIdempotencyKey,
+  HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfUnmodifiedSince, HttpMaxForwards,
+  HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNel, HttpOriginTrialParseError,
+  HttpOriginTrials, HttpPermissionsPolicy, HttpPermissionsPolicyParseError, HttpPragma,
+  HttpPragmaParseError, HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError,
+  HttpRequestAcceptCharsets, HttpResponse, HttpSaveData, HttpSecGpc, HttpSecGpcParseError,
+  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketKey,
+  HttpSecWebSocketKeyParseError, HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError,
+  HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
   HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
   HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
   HttpSpeculationRules, HttpSpeculationRulesParseError, HttpSunsetParseError,
@@ -133,6 +133,11 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp_client::response::Deprecation::parse("?1").expect("Deprecation should parse");
   let _: rttp::DeprecationParseError = rttp_client::response::Deprecation::parse("true")
     .expect_err("historical Deprecation token should be rejected");
+  let destination: rttp::Destination =
+    rttp::Destination::parse("https://dav.example.test/archive/report.txt")
+      .expect("Destination should parse");
+  let _: rttp::DestinationParseError =
+    rttp::Destination::parse("/relative").expect_err("relative Destination should be rejected");
   let depth: rttp::Depth = rttp::Depth::parse("infinity").expect("Depth should parse");
   let _: rttp::DepthParseError =
     rttp::Depth::parse("2").expect_err("malformed Depth should be rejected");
@@ -347,6 +352,14 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(content_dpr.header_value(), "1.5");
   assert_eq!(deprecation, rttp::Deprecation::Boolean(true));
   assert_eq!(deprecation.header_value(), "?1");
+  assert_eq!(
+    destination.as_str(),
+    "https://dav.example.test/archive/report.txt"
+  );
+  assert_eq!(
+    destination.header_value(),
+    "https://dav.example.test/archive/report.txt"
+  );
   assert_eq!(rttp::Depth::Infinity, depth);
   assert_eq!("infinity", depth.header_value());
   assert_eq!("192.0.2.60", x_forwarded_for.nodes()[0].value());
@@ -911,6 +924,70 @@ fn compatibility_facade_roundtrips_depth_request_metadata_without_policy() {
 
 #[test]
 #[cfg(feature = "client")]
+fn compatibility_facade_roundtrips_destination_request_metadata_without_policy() {
+  let (addr, handle) = spawn_representation_metadata_response_server(
+    b"HTTP/1.1 201 Created\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  );
+  let response = rttp::Http::client()
+    .method("COPY")
+    .url(format!("http://{addr}/documents/source.txt"))
+    .destination(" https://dav.example.test/archive/source.txt ")
+    .expect("Destination should be accepted")
+    .emit()
+    .expect("client request should complete");
+  let captured_request = handle
+    .join()
+    .expect("Destination capture server should join");
+  let captured_request_text =
+    String::from_utf8(captured_request.clone()).expect("request should be utf-8");
+
+  assert_eq!(
+    Some("https://dav.example.test/archive/source.txt"),
+    header_value(&captured_request_text, "Destination")
+  );
+  assert_eq!(201, response.code());
+
+  let server_request =
+    rttp::server::HttpRequest::parse(&captured_request).expect("server request should parse");
+  let destination: HttpDestination = server_request
+    .destination()
+    .expect("server Destination should parse")
+    .expect("server Destination should be present");
+
+  assert_eq!(
+    "https://dav.example.test/archive/source.txt",
+    destination.as_str()
+  );
+  assert_eq!(
+    "https://dav.example.test/archive/source.txt",
+    destination.header_value()
+  );
+
+  let malformed = rttp::server::HttpRequest::parse(
+    b"COPY /documents/source.txt HTTP/1.1\r\nHost: example.test\r\nDestination: /relative\r\n\r\n",
+  )
+  .expect("malformed Destination request should still parse");
+  assert!(malformed.destination().is_err());
+  assert_eq!(Some("/relative"), malformed.header("Destination"));
+
+  let duplicate = rttp::server::HttpRequest::parse(
+    b"COPY /documents/source.txt HTTP/1.1\r\nHost: example.test\r\nDestination: https://dav.example.test/one\r\ndestination: https://dav.example.test/two\r\n\r\n",
+  )
+  .expect("duplicate Destination request should still parse");
+  assert!(duplicate.destination().is_err());
+  assert_eq!(
+    Some("https://dav.example.test/one"),
+    duplicate.header("Destination")
+  );
+
+  assert!(
+    rttp::Destination::parse("a".repeat(64 * 1024 + 1)).is_err(),
+    "oversized Destination values must fail closed"
+  );
+}
+
+#[test]
+#[cfg(feature = "client")]
 fn client_accept_encoding_helpers_parse_through_shared_server_type() {
   let (addr, handle) = spawn_representation_metadata_response_server(
     b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
@@ -1011,6 +1088,11 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
       .expect("Proxy-Authorization should parse");
   let max_forwards: HttpMaxForwards =
     HttpMaxForwards::parse("0").expect("Max-Forwards should parse");
+  let destination: HttpDestination =
+    HttpDestination::parse("https://dav.example.test/archive/report.txt")
+      .expect("Destination should parse");
+  let destination_error: Result<HttpDestination, HttpDestinationParseError> =
+    HttpDestination::parse("/relative");
   let depth: HttpDepth = HttpDepth::parse("infinity").expect("Depth should parse");
   let depth_error: Result<HttpDepth, HttpDepthParseError> = HttpDepth::parse("2");
   let expectations: HttpExpectations =
@@ -1149,6 +1231,15 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(proxy_authorization.header_value(), "Basic cHJveHk6c2VjcmV0");
   assert_eq!(max_forwards.value(), 0);
   assert_eq!(max_forwards.header_value(), "0");
+  assert_eq!(
+    destination.as_str(),
+    "https://dav.example.test/archive/report.txt"
+  );
+  assert_eq!(
+    destination.header_value(),
+    "https://dav.example.test/archive/report.txt"
+  );
+  assert!(destination_error.is_err());
   assert_eq!(HttpDepth::Infinity, depth);
   assert_eq!("infinity", depth.header_value());
   assert!(depth_error.is_err());
