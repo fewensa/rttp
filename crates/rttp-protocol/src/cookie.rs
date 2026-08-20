@@ -453,6 +453,9 @@ impl HttpSetCookie {
   ) -> Result<Self, HttpCookieParseError> {
     if let Some(value) = value {
       validate_value(value)?;
+      if value.bytes().any(is_invalid_generated_quoted_value_byte) {
+        return Err(HttpCookieParseError::new("invalid Set-Cookie attribute"));
+      }
       validate_standard_attribute(kind, Some(value))?;
     } else {
       validate_standard_attribute(kind, None)?;
@@ -862,6 +865,10 @@ mod tests {
     assert!(HttpSetCookie::new("session", "abc")
       .unwrap()
       .with_extension("Ext", Some("v\"w"))
+      .is_err());
+    assert!(HttpSetCookie::new("session", "abc")
+      .unwrap()
+      .with_path("/x\"y")
       .is_err());
   }
 }
