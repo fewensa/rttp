@@ -100,6 +100,18 @@ fn alternates_unescapes_quoted_attribute_values_and_reescapes_on_format() {
 }
 
 #[test]
+fn alternates_escaped_non_ascii_quoted_pairs_do_not_panic() {
+  let invalid_uri = std::panic::catch_unwind(|| Alternates::parse(r#"{ "/\é" 1 }"#))
+    .expect("escaped non-ASCII quoted-pair in URI must not panic");
+  assert!(invalid_uri.is_err());
+
+  let attribute = std::panic::catch_unwind(|| Alternates::parse(r#"{ "/ok" 1 {note "\é"} }"#))
+    .expect("escaped non-ASCII quoted-pair in attribute must not panic")
+    .expect("escaped non-ASCII attribute value should parse");
+  assert_eq!(Some("é"), attribute.variants()[0].attribute("note"));
+}
+
+#[test]
 fn alternates_keeps_uris_as_raw_unresolved_text() {
   let alternates = Alternates::parse_values([
     r#"{ "HTTPS://EXAMPLE.TEST:443/A%2fB" 1 }"#,

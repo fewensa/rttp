@@ -395,13 +395,23 @@ fn parse_quoted_string(value: &str, position: &mut usize) -> Result<String, Alte
   let mut escaped = false;
   while let Some(&byte) = value.as_bytes().get(*position) {
     if escaped {
-      *position += 1;
       if !(byte == b'\t' || (0x20..=0x7e).contains(&byte) || byte >= 0x80) {
         return Err(AlternatesParseError::new(
           "invalid Alternates quoted-string",
         ));
       }
-      parsed.push(byte as char);
+      if byte >= 0x80 {
+        let Some(character) = value[*position..].chars().next() else {
+          return Err(AlternatesParseError::new(
+            "invalid Alternates quoted-string",
+          ));
+        };
+        parsed.push(character);
+        *position += character.len_utf8();
+      } else {
+        parsed.push(byte as char);
+        *position += 1;
+      }
       escaped = false;
       unescaped_start = *position;
     } else if byte == b'\\' {
