@@ -8,13 +8,14 @@ use rttp_server::server::{
   HttpAccessControlRequestPrivateNetworkParseError, HttpAltUsed, HttpAltUsedParseError,
   HttpAuthorization, HttpAuthorizationParseError, HttpBaggage, HttpBaggageMember,
   HttpBaggageParseError, HttpBaggageProperty, HttpCacheStatus, HttpCacheStatusParseError,
-  HttpCdnCacheControl, HttpConditionalMetadata, HttpConnection, HttpConnectionParseError,
-  HttpContentDisposition, HttpContentDispositionParseError, HttpContentDpr,
-  HttpContentDprParseError, HttpContentLength, HttpContentLocation, HttpContentLocationParseError,
-  HttpContentRange, HttpContentRangeParseError, HttpContentSecurityPolicyReportOnly,
-  HttpContentSecurityPolicyReportOnlyParseError, HttpCrossOriginEmbedderPolicyReportOnly,
-  HttpCrossOriginOpenerPolicy, HttpCrossOriginOpenerPolicyReportOnly,
-  HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpDocumentPolicy,
+  HttpCdnCacheControl, HttpCdnLoop, HttpCdnLoopMember, HttpCdnLoopParseError,
+  HttpConditionalMetadata, HttpConnection, HttpConnectionParseError, HttpContentDisposition,
+  HttpContentDispositionParseError, HttpContentDpr, HttpContentDprParseError, HttpContentLength,
+  HttpContentLocation, HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
+  HttpContentSecurityPolicyReportOnly, HttpContentSecurityPolicyReportOnlyParseError,
+  HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
+  HttpCrossOriginOpenerPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeprecation,
+  HttpDeprecationParseError, HttpDepth, HttpDepthParseError, HttpDocumentPolicy,
   HttpDocumentPolicyDirective, HttpDocumentPolicyParseError, HttpDocumentPolicyValue,
   HttpEntityTag, HttpExpectParseError, HttpExpectations, HttpHost, HttpIdempotencyKey,
   HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfModifiedSinceParseError,
@@ -115,6 +116,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpMaxForwards::parse("0").expect("Max-Forwards should parse");
   let max_forwards_error: Result<HttpMaxForwards, HttpMaxForwardsParseError> =
     HttpMaxForwards::parse("4294967296");
+  let depth: HttpDepth = HttpDepth::parse("infinity").expect("Depth should parse");
+  let depth_error: Result<HttpDepth, HttpDepthParseError> = HttpDepth::parse("2");
   let expectations: HttpExpectations =
     HttpExpectations::parse("100-continue, preview").expect("Expect should parse");
   let expectations_error: Result<HttpExpectations, HttpExpectParseError> =
@@ -141,6 +144,11 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let cdn_cache_control: HttpCdnCacheControl =
     HttpCdnCacheControl::parse("max-age=600, cdn-example=\"a, b\"")
       .expect("CDN-Cache-Control should parse");
+  let cdn_loop: HttpCdnLoop =
+    HttpCdnLoop::parse(r#"foo123.foocdn.example, barcdn.example; trace="abcdef""#)
+      .expect("CDN-Loop should parse");
+  let _: HttpCdnLoopParseError =
+    HttpCdnLoop::parse("cdn; trace").expect_err("valueless CDN-Loop parameter should be rejected");
   let content_range = HttpContentRange::parse("bytes */10").expect("Content-Range should parse");
   let content_range_error: Result<HttpContentRange, HttpContentRangeParseError> =
     HttpContentRange::parse("bytes */*");
@@ -286,6 +294,9 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(max_forwards.value(), 0);
   assert_eq!(max_forwards.header_value(), "0");
   assert!(max_forwards_error.is_err());
+  assert_eq!(HttpDepth::Infinity, depth);
+  assert_eq!("infinity", depth.header_value());
+  assert!(depth_error.is_err());
   assert!(expectations.expects_continue());
   assert_eq!(["preview"], expectations.unsupported());
   assert_eq!(expectations.header_value(), "100-continue, preview");
@@ -308,6 +319,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(cache_status.members()[0].ttl(), Some(1100));
   assert_eq!(cdn_cache_control.directives()[1].name(), "cdn-example");
   assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
+  assert_eq!(cdn_loop.members()[0].identifier(), "foo123.foocdn.example");
+  assert_eq!(cdn_loop.members()[1].parameter("trace"), Some("abcdef"));
   assert_eq!(report_only_policy.header_value(), "require-corp");
   assert_eq!(
     HttpCrossOriginOpenerPolicy::SameOrigin,
@@ -838,6 +851,42 @@ fn request_facade_parses_max_forwards_metadata() {
 }
 
 #[test]
+fn request_facade_parses_depth_metadata_without_policy() {
+  let request = HttpRequest::parse(
+    b"PROPFIND /collection HTTP/1.1\r\nHost: example.test\r\nDepth: INFINITY\r\n\r\n",
+  )
+  .expect("request should parse");
+  let depth: HttpDepth = request
+    .depth()
+    .expect("Depth should parse")
+    .expect("Depth should be present");
+
+  assert_eq!(HttpDepth::Infinity, depth);
+  assert_eq!("infinity", depth.header_value());
+  assert_eq!(Some("INFINITY"), request.header("Depth"));
+
+  let absent = HttpRequest::parse(b"PROPFIND /collection HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent.depth().expect("missing Depth should be accepted")
+  );
+
+  let malformed =
+    HttpRequest::parse(b"PROPFIND /collection HTTP/1.1\r\nHost: example.test\r\nDepth: 2\r\n\r\n")
+      .expect("request should parse");
+  assert!(malformed.depth().is_err());
+  assert_eq!(Some("2"), malformed.header("Depth"));
+
+  let duplicate = HttpRequest::parse(
+    b"PROPFIND /collection HTTP/1.1\r\nHost: example.test\r\nDepth: 0\r\ndepth: 1\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert!(duplicate.depth().is_err());
+  assert_eq!(Some("0"), duplicate.header("Depth"));
+}
+
+#[test]
 fn request_facade_parses_expect_metadata() {
   let request = HttpRequest::parse(
     b"POST /upload HTTP/1.1\r\nHost: example.test\r\nExpect: 100-continue\r\nExpect: preview=sha256; chunk=1\r\n\r\n",
@@ -1014,6 +1063,40 @@ fn request_facade_parses_baggage_metadata_without_policy() {
   let baggage_error: Result<HttpBaggage, HttpBaggageParseError> =
     HttpBaggage::parse("tenant=1,tenant=2");
   assert!(baggage_error.is_err());
+}
+
+#[test]
+fn request_facade_parses_cdn_loop_metadata_without_policy() {
+  let request = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nCDN-Loop: foo123.foocdn.example, barcdn.example; trace=\"abcdef\"\r\nCDN-Loop: AnotherCDN; abc=123\r\n\r\n",
+  )
+  .expect("request should parse");
+
+  let cdn_loop: HttpCdnLoop = request
+    .cdn_loop()
+    .expect("CDN-Loop should parse")
+    .expect("CDN-Loop should be present");
+  let member: &HttpCdnLoopMember = &cdn_loop.members()[1];
+
+  assert_eq!(3, cdn_loop.len());
+  assert_eq!("foo123.foocdn.example", cdn_loop.members()[0].identifier());
+  assert_eq!(Some("abcdef"), member.parameter("trace"));
+  assert_eq!("AnotherCDN", cdn_loop.members()[2].identifier());
+
+  let absent = HttpRequest::parse(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(None, absent.cdn_loop().expect("missing CDN-Loop"));
+
+  let malformed = HttpRequest::parse(
+    b"GET /asset HTTP/1.1\r\nHost: example.test\r\nCDN-Loop: cdn; trace\r\n\r\n",
+  )
+  .expect("malformed metadata should not reject raw request parsing");
+  assert!(malformed.cdn_loop().is_err());
+  assert_eq!(Some("cdn; trace"), malformed.header("CDN-Loop"));
+
+  let cdn_loop_error: Result<HttpCdnLoop, HttpCdnLoopParseError> =
+    HttpCdnLoop::parse("cdn; trace=1; TRACE=2");
+  assert!(cdn_loop_error.is_err());
 }
 
 #[test]

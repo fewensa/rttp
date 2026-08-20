@@ -121,6 +121,18 @@ canonical decimal form. This parser reports declared metadata only; it does
 not decrement the hop count, route through proxies, select TRACE or OPTIONS,
 or apply forwarding policy.
 
+## Depth
+
+`depth` parses a singleton WebDAV `Depth` request field as one of `0`, `1`,
+or `infinity`. Each field value is bounded to 64 KiB. A second field is
+rejected after every supplied field is bound-checked. Surrounding SP and HTAB
+are trimmed as optional whitespace, and `infinity` is accepted
+case-insensitively but emitted in lowercase. Empty values, unsupported depth
+tokens, comma-lists, oversized values, and forbidden ASCII control bytes are
+errors. `header_value()` emits the canonical singleton value. This parser
+reports declared request metadata only; it does not traverse resources,
+select WebDAV methods, or enforce method policy.
+
 ## Idempotency-Key
 
 `idempotency_key` parses a singleton HTTP `Idempotency-Key` request field as
@@ -539,6 +551,31 @@ The parser only reports bounded wire metadata. It does not create a CDN cache,
 compute freshness, evaluate surrogate keys, revalidate automatically, enforce
 shared-cache policy, retry, replay, redirect, or choose response-acceptance
 behavior.
+
+## CDN-Loop
+
+`cdn_loop` parses one or more RFC 8586 `CDN-Loop` request field values into
+ordered `cdn-info` members, each with an opaque CDN identifier and optional
+HTTP parameters. An identifier is a `uri-host` with optional port (including
+bracketed IP-literals) or an RFC 7230 token pseudonym, and its accepted wire
+spelling is preserved. Each field value is bounded to 64 KiB, combined field
+values are bounded to 64 KiB including `", "` separator overhead, the combined
+serialized value is bounded to 64 KiB, the combined member count is bounded to
+256, and each member is bounded to 32 parameters. Parameter names are stored
+lowercase and matched case-insensitively; duplicate parameter names on one
+member are rejected. Quoted parameter values are unquoted, and token values
+are retained verbatim.
+
+Repeated `CDN-Loop` fields are concatenated in wire order into one list.
+Repeated CDN identifiers are valid loop-visible metadata. Empty members,
+leading or trailing commas, valueless parameters, malformed identifiers,
+control bytes other than HTAB, and bound violations are rejected. A present
+field set that yields no member is an error.
+
+The parser only reports bounded loop metadata. It does not detect or break
+loops, reject requests because an identifier is already present, insert a
+local CDN identifier, forward the field automatically, or treat
+`CDN-Loop` as hop-by-hop.
 
 ## Authentication-Info
 

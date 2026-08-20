@@ -12,6 +12,7 @@ use rttp_protocol::authorization::{Authorization, ProxyAuthorization};
 use rttp_protocol::baggage::Baggage;
 use rttp_protocol::cache_status::CacheStatus;
 use rttp_protocol::cdn_cache_control::CdnCacheControl;
+use rttp_protocol::cdn_loop::{CdnLoop, CdnLoopParseError};
 use rttp_protocol::client_hints::{AcceptCh, CriticalCh};
 use rttp_protocol::connection::Connection;
 use rttp_protocol::content_disposition::ContentDisposition;
@@ -27,6 +28,7 @@ use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedder
 use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::cross_origin_opener_policy_report_only::CrossOriginOpenerPolicyReportOnly;
 use rttp_protocol::deprecation::Deprecation;
+use rttp_protocol::depth::Depth;
 use rttp_protocol::document_policy::{DocumentPolicy, DocumentPolicyParseError};
 use rttp_protocol::entity_tag::{EntityTag, IfMatch};
 use rttp_protocol::expect::Expect;
@@ -108,6 +110,7 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let keep_alive = KeepAlive::parse("timeout=5, max=100").expect("Keep-Alive should parse");
   let location = Location::parse("../login?next=%2Fdashboard").expect("Location should parse");
   let max_forwards = MaxForwards::parse("0").expect("Max-Forwards should parse");
+  let depth = Depth::parse("infinity").expect("Depth should parse");
   let idempotency_key = IdempotencyKey::parse("charge-2026-08-19-9f3c")
     .expect("Idempotency-Key request metadata should parse");
   let sec_websocket_key = SecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==")
@@ -194,6 +197,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
     CacheStatus::parse("OriginCache; hit; ttl=1100").expect("Cache-Status should parse");
   let cdn_cache_control =
     CdnCacheControl::parse("max-age=600, cdn-example=\"a, b\"").expect("CDN metadata should parse");
+  let cdn_loop = CdnLoop::parse(r#"foo123.foocdn.example, barcdn.example; trace="abcdef""#)
+    .expect("CDN-Loop request metadata should parse");
+  let _: CdnLoopParseError =
+    CdnLoop::parse("cdn; trace").expect_err("valueless CDN-Loop parameter should be rejected");
   let accept_charset =
     AcceptCharset::parse("utf-8, iso-8859-1;q=0.5, *;q=0").expect("Accept-Charset should parse");
   let accept_encoding =
@@ -284,6 +291,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(location.as_str(), "../login?next=%2Fdashboard");
   assert_eq!(max_forwards.value(), 0);
   assert_eq!(max_forwards.header_value(), "0");
+  assert_eq!(Depth::Infinity, depth);
+  assert_eq!("infinity", depth.header_value());
   assert_eq!(idempotency_key.as_str(), "charge-2026-08-19-9f3c");
   assert_eq!(idempotency_key.header_value(), "charge-2026-08-19-9f3c");
   assert!(!format!("{idempotency_key:?}").contains("charge-2026-08-19-9f3c"));
@@ -406,6 +415,8 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(cache_status.members()[0].ttl(), Some(1100));
   assert_eq!(cdn_cache_control.directives()[1].name(), "cdn-example");
   assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
+  assert_eq!(cdn_loop.members()[0].identifier(), "foo123.foocdn.example");
+  assert_eq!(cdn_loop.members()[1].parameter("trace"), Some("abcdef"));
   assert_eq!(accept_charset.charsets()[0].charset(), "utf-8");
   assert_eq!(accept_charset.charsets()[0].quality(), 1000);
   assert_eq!(accept_charset.charsets()[1].charset(), "iso-8859-1");

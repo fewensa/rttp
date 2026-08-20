@@ -6,7 +6,7 @@ use rttp::server::{
   HttpAccessControlRequestMethod, HttpAllowedMethods, HttpAltUsed, HttpAuthorization,
   HttpByteRange, HttpByteRangeError, HttpClearSiteData, HttpConditionalMetadata,
   HttpContentDisposition, HttpContentLanguages, HttpContentRange, HttpContentSecurityPolicy,
-  HttpContentSecurityPolicyReportOnly, HttpContentType, HttpCriticalCh, HttpDeprecation,
+  HttpContentSecurityPolicyReportOnly, HttpContentType, HttpCriticalCh, HttpDeprecation, HttpDepth,
   HttpDocumentPolicy, HttpEntityTag, HttpExpectations, HttpHost, HttpIfNoneMatch, HttpIfRange,
   HttpIfRangeRequestOutcome, HttpLinkValues, HttpMementoDatetime, HttpNel, HttpOriginTrials,
   HttpPermissionsPolicy, HttpProxyStatus, HttpProxyStatusBareItem, HttpReferrerPolicy,
@@ -1308,6 +1308,49 @@ fn request_max_forwards_is_optional_and_rejects_invalid_metadata() {
 }
 
 #[test]
+fn request_depth_is_optional_and_rejects_invalid_metadata() {
+  let absent = parse_request("PROPFIND / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(None, absent.depth().expect("missing Depth should be valid"));
+
+  for (value, expected) in [
+    ("0", HttpDepth::Zero),
+    ("1", HttpDepth::One),
+    ("infinity", HttpDepth::Infinity),
+    ("INFINITY", HttpDepth::Infinity),
+  ] {
+    let valid = parse_request(&format!(
+      "PROPFIND / HTTP/1.1\r\nHost: example.test\r\nDepth: {value}\r\n\r\n"
+    ));
+    let parsed = valid
+      .depth()
+      .expect("value should parse")
+      .expect("Depth should be present");
+    assert_eq!(expected, parsed);
+    assert_eq!(expected.header_value(), parsed.header_value());
+  }
+
+  for value in ["", "2", "-1", "1.0", "0, 1", "infinite"] {
+    let request = parse_request(&format!(
+      "PROPFIND / HTTP/1.1\r\nHost: example.test\r\nDepth: {value}\r\n\r\n"
+    ));
+    assert!(request.depth().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Depth"));
+  }
+
+  assert!(rttp::server::HttpDepth::parse("0".repeat(64 * 1024 + 1)).is_err());
+
+  let duplicate = parse_request(concat!(
+    "PROPFIND / HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Depth: 0\r\n",
+    "depth: 1\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.depth().is_err());
+  assert_eq!(Some("0"), duplicate.header("Depth"));
+}
+
+#[test]
 fn request_pragma_parses_bounded_metadata_without_cache_policy() {
   let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
   assert_eq!(
@@ -1552,6 +1595,81 @@ fn request_baggage_is_optional_and_rejects_invalid_metadata() {
     Some("tenant=secret,tenant=other"),
     malformed.header("baggage")
   );
+}
+
+#[test]
+fn request_cdn_loop_parses_standard_members_and_parameters() {
+  let request = parse_request(concat!(
+    "GET /asset HTTP/1.1\r\n",
+    "Host: internal.test\r\n",
+    "CDN-Loop: foo123.foocdn.example, barcdn.example; trace=\"abcdef\"\r\n",
+    "CDN-Loop: AnotherCDN; abc=123; def=\"456\"\r\n",
+    "\r\n"
+  ));
+
+  let cdn_loop = request
+    .cdn_loop()
+    .expect("CDN-Loop should parse")
+    .expect("CDN-Loop should be present");
+
+  assert_eq!(3, cdn_loop.len());
+  assert_eq!("foo123.foocdn.example", cdn_loop.members()[0].identifier());
+  assert!(cdn_loop.members()[0].parameters().is_empty());
+  assert_eq!("barcdn.example", cdn_loop.members()[1].identifier());
+  assert_eq!(Some("abcdef"), cdn_loop.members()[1].parameter("trace"));
+  assert_eq!("AnotherCDN", cdn_loop.members()[2].identifier());
+  assert_eq!(Some("123"), cdn_loop.members()[2].parameter("abc"));
+  assert_eq!(Some("456"), cdn_loop.members()[2].parameter("def"));
+  assert_eq!(
+    "foo123.foocdn.example, barcdn.example; trace=abcdef, AnotherCDN; abc=123; def=456",
+    cdn_loop.header_value()
+  );
+}
+
+#[test]
+fn request_cdn_loop_is_optional_and_rejects_invalid_metadata() {
+  assert_eq!(
+    None,
+    parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+      .cdn_loop()
+      .expect("absent CDN-Loop should be accepted")
+  );
+
+  let duplicate = parse_request(concat!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\n",
+    "CDN-Loop: cdn; trace=1; TRACE=2\r\n\r\n"
+  ));
+  assert!(duplicate.cdn_loop().is_err());
+  assert_eq!(Some("cdn; trace=1; TRACE=2"), duplicate.header("CDN-Loop"));
+
+  let malformed = parse_request(concat!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\n",
+    "CDN-Loop: cdn; trace\r\n\r\n"
+  ));
+  assert!(malformed.cdn_loop().is_err());
+  assert_eq!(Some("cdn; trace"), malformed.header("CDN-Loop"));
+
+  let excessive = (0..257)
+    .map(|index| format!("cdn{index}.example"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let request = parse_request(&format!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\nCDN-Loop: {excessive}\r\n\r\n"
+  ));
+  assert!(request.cdn_loop().is_err());
+  assert_eq!(Some(excessive.as_str()), request.header("CDN-Loop"));
+
+  let repeated = parse_request(concat!(
+    "GET / HTTP/1.1\r\nHost: example.test\r\n",
+    "CDN-Loop: edge.example, edge.example; hop=1\r\n\r\n"
+  ));
+  let repeated = repeated
+    .cdn_loop()
+    .expect("repeated CDN identifiers should parse")
+    .expect("CDN-Loop should be present");
+  assert_eq!(2, repeated.len());
+  assert_eq!("edge.example", repeated.members()[0].identifier());
+  assert_eq!("edge.example", repeated.members()[1].identifier());
 }
 
 #[test]

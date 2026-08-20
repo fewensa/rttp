@@ -31,11 +31,16 @@ pub use rttp_protocol::baggage::{
   Baggage as HttpBaggage, BaggageMember as HttpBaggageMember,
   BaggageParseError as HttpBaggageParseError, BaggageProperty as HttpBaggageProperty,
 };
+pub use rttp_protocol::cdn_loop::{
+  CdnLoop as HttpCdnLoop, CdnLoopMember as HttpCdnLoopMember,
+  CdnLoopParameter as HttpCdnLoopParameter, CdnLoopParseError as HttpCdnLoopParseError,
+};
 pub use rttp_protocol::connection::{
   Connection as HttpConnection, ConnectionParseError as HttpConnectionParseError,
 };
 pub use rttp_protocol::content_length::HttpContentLength;
 pub use rttp_protocol::cookie::{HttpCookiePair, HttpCookieParseError, HttpCookies};
+pub use rttp_protocol::depth::{Depth as HttpDepth, DepthParseError as HttpDepthParseError};
 pub use rttp_protocol::entity_tag::{
   EntityTag as HttpEntityTag, EntityTagParseError as HttpEntityTagParseError,
 };
@@ -512,6 +517,16 @@ impl Request {
     HttpMaxForwards::parse_values(values).map(Some)
   }
 
+  /// Parses received WebDAV `Depth` request metadata without traversing
+  /// resources or enforcing method policy.
+  pub fn depth(&self) -> Result<Option<HttpDepth>, HttpDepthParseError> {
+    let values: Vec<&str> = self.headers_named("Depth").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDepth::parse_values(values).map(Some)
+  }
+
   /// Parses exactly one opaque, bounded `Idempotency-Key` field as typed
   /// metadata. Duplicate fields are rejected to avoid ambiguous keys. This
   /// accessor does not retry requests, store keys, or apply idempotency
@@ -774,6 +789,16 @@ impl Request {
       return Ok(None);
     }
     HttpForwarded::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded RFC 8586 `CDN-Loop` request metadata without detecting
+  /// loops, rejecting the request, or inserting a local CDN identifier.
+  pub fn cdn_loop(&self) -> Result<Option<HttpCdnLoop>, HttpCdnLoopParseError> {
+    let values: Vec<&str> = self.headers_named("CDN-Loop").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpCdnLoop::parse_values(values).map(Some)
   }
 
   pub fn vary_selection(&self, vary: &HttpVary) -> HttpVarySelection {
@@ -2230,6 +2255,21 @@ impl HttpRequest {
     HttpMaxForwards::parse_values(values).map(Some)
   }
 
+  /// Parses received WebDAV `Depth` request metadata without traversing
+  /// resources or enforcing method policy.
+  pub fn depth(&self) -> Result<Option<HttpDepth>, HttpDepthParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Depth"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDepth::parse_values(values).map(Some)
+  }
+
   /// Parses exactly one opaque, bounded `Idempotency-Key` field as typed
   /// metadata. Duplicate fields are rejected to avoid ambiguous keys. This
   /// accessor does not retry requests, store keys, or apply idempotency
@@ -2732,6 +2772,21 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpForwarded::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded RFC 8586 `CDN-Loop` request metadata without detecting
+  /// loops, rejecting the request, or inserting a local CDN identifier.
+  pub fn cdn_loop(&self) -> Result<Option<HttpCdnLoop>, HttpCdnLoopParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("CDN-Loop"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpCdnLoop::parse_values(values).map(Some)
   }
 
   pub fn vary_selection(&self, vary: &HttpVary) -> HttpVarySelection {
