@@ -49,6 +49,24 @@ handler-owned policy; it does not create or manage a CDN cache, compute
 freshness, evaluate surrogate keys, revalidate automatically, enforce
 shared-cache policy, retry, replay, redirect, or choose status behavior.
 
+## Response Surrogate-Control metadata
+
+`HttpResponse::with_surrogate_control()` validates and replaces
+`Surrogate-Control` response metadata through the shared protocol
+`HttpSurrogateControl` type. `HttpResponse::surrogate_control()` parses
+attached raw response fields on demand while preserving the raw headers on
+parse errors.
+
+Validation accepts directive names, optional token values, and well-formed
+quoted extension values. It rejects malformed syntax, duplicate directive
+names case-insensitively across fields, more than 256 directives, values larger
+than 64 KiB, and aggregate parsed header sets larger than 64 KiB.
+
+The helper only exposes metadata for handler-owned policy. It does not create
+or manage a CDN cache, compute freshness, evaluate surrogate keys, translate
+directives into `Cache-Control`, revalidate automatically, enforce shared-cache
+policy, retry, replay, redirect, or choose status behavior.
+
 ## Response Content-Security-Policy-Report-Only metadata
 
 `HttpResponse::with_content_security_policy_report_only(value)` validates and

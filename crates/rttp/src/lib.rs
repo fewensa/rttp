@@ -35,10 +35,11 @@ pub use rttp_client::response::{
   SecWebSocketProtocol, SecWebSocketProtocolParseError, SecWebSocketVersion,
   SecWebSocketVersionParseError, ServiceWorkerAllowed, ServiceWorkerAllowedParseError,
   SpeculationRules, SpeculationRulesParseError, StrictTransportSecurity,
-  StrictTransportSecurityParseError, SupportsLoadingMode, SupportsLoadingModeParseError, Upgrade,
-  UpgradeParseError, WantContentDigest, WantReprDigest, WwwAuthenticate, WwwAuthenticateChallenge,
-  WwwAuthenticateParameter, WwwAuthenticateParseError, XContentTypeOptions,
-  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  StrictTransportSecurityParseError, SupportsLoadingMode, SupportsLoadingModeParseError,
+  SurrogateControl, SurrogateControlParseError, Upgrade, UpgradeParseError, WantContentDigest,
+  WantReprDigest, WwwAuthenticate, WwwAuthenticateChallenge, WwwAuthenticateParameter,
+  WwwAuthenticateParseError, XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions,
+  XFrameOptionsParseError,
 };
 #[cfg(feature = "client")]
 pub use rttp_client::{

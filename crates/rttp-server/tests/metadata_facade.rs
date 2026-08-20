@@ -38,12 +38,13 @@ use rttp_server::server::{
   HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
   HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
   HttpSpeculationRules, HttpSpeculationRulesParseError, HttpSupportsLoadingMode,
-  HttpSupportsLoadingModeParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType,
-  HttpTraceParent, HttpTraceParentParseError, HttpTraceState, HttpTraceStateMember,
-  HttpTraceStateParseError, HttpTransferEncoding, HttpTransferEncodingParseError, HttpUpgrade,
-  HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
-  HttpVia, HttpViaMember, HttpViaParseError, HttpWantContentDigest, HttpWantReprDigest,
-  HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
+  HttpSupportsLoadingModeParseError, HttpSurrogateControl, HttpSurrogateControlParseError,
+  HttpTimeout, HttpTimeoutParseError, HttpTimeoutType, HttpTraceParent, HttpTraceParentParseError,
+  HttpTraceState, HttpTraceStateMember, HttpTraceStateParseError, HttpTransferEncoding,
+  HttpTransferEncodingParseError, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpVia, HttpViaMember,
+  HttpViaParseError, HttpWantContentDigest, HttpWantReprDigest, HttpXForwardedFor,
+  HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
   HttpXForwardedProto, HttpXForwardedProtoParseError, SecFetchDest, SecFetchMode, SecFetchSite,
   SecFetchUser, SecPurpose,
 };
@@ -215,6 +216,11 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   let cdn_cache_control: HttpCdnCacheControl =
     HttpCdnCacheControl::parse("max-age=600, cdn-example=\"a, b\"")
       .expect("CDN-Cache-Control should parse");
+  let surrogate_control: HttpSurrogateControl =
+    HttpSurrogateControl::parse("max-age=600, content=\"ESI/1.0\"")
+      .expect("Surrogate-Control should parse");
+  let _: HttpSurrogateControlParseError = HttpSurrogateControl::parse("max-age=60, Max-Age=120")
+    .expect_err("duplicate Surrogate-Control directive should be rejected");
   let cdn_loop: HttpCdnLoop =
     HttpCdnLoop::parse(r#"foo123.foocdn.example, barcdn.example; trace="abcdef""#)
       .expect("CDN-Loop should parse");
@@ -470,6 +476,8 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(cache_status.members()[0].ttl(), Some(1100));
   assert_eq!(cdn_cache_control.directives()[1].name(), "cdn-example");
   assert_eq!(cdn_cache_control.directives()[1].value(), Some("a, b"));
+  assert_eq!(surrogate_control.directives()[1].name(), "content");
+  assert_eq!(surrogate_control.directives()[1].value(), Some("ESI/1.0"));
   assert_eq!(cdn_loop.members()[0].identifier(), "foo123.foocdn.example");
   assert_eq!(cdn_loop.members()[1].parameter("trace"), Some("abcdef"));
   assert_eq!("192.0.2.60", x_forwarded_for.nodes()[0].value());
@@ -796,6 +804,48 @@ fn response_facade_parses_cdn_cache_control_and_absent_metadata() {
   let absent = HttpResponse::ok("");
   assert!(absent
     .cdn_cache_control()
+    .expect("missing header should be valid")
+    .is_none());
+}
+
+#[test]
+fn response_facade_declares_and_parses_surrogate_control_without_policy() {
+  let response = HttpResponse::ok("")
+    .header("Cache-Control", "max-age=1")
+    .header("Surrogate-Control", "legacy=1")
+    .with_surrogate_control("max-age=600, content=\"ESI/1.0\"")
+    .expect("valid Surrogate-Control should be accepted");
+
+  let metadata = response
+    .surrogate_control()
+    .expect("Surrogate-Control should parse")
+    .expect("Surrogate-Control should be present");
+
+  assert_eq!(metadata.len(), 2);
+  assert_eq!(metadata.directives()[0].name(), "max-age");
+  assert_eq!(metadata.directives()[0].value(), Some("600"));
+  assert_eq!(metadata.directives()[1].value(), Some("ESI/1.0"));
+  assert_eq!(
+    response
+      .cache_control()
+      .expect("Cache-Control should remain parseable")
+      .expect("Cache-Control should remain present")
+      .max_age(),
+    Some(1)
+  );
+  let rendered = String::from_utf8(response.to_bytes()).expect("response should serialize");
+  assert!(rendered.contains("\r\nSurrogate-Control: max-age=600, content=\"ESI/1.0\"\r\n"));
+  assert!(!rendered.contains("\r\nSurrogate-Control: legacy=1\r\n"));
+
+  let duplicate = HttpResponse::ok("").header("Surrogate-Control", "max-age=60, Max-Age=120");
+  assert!(duplicate.surrogate_control().is_err());
+  assert!(HttpResponse::ok("")
+    .with_surrogate_control("max-age=60, Max-Age=120")
+    .is_err());
+
+  let absent = HttpResponse::ok("");
+  assert!(absent
+    .surrogate_control()
     .expect("missing header should be valid")
     .is_none());
 }

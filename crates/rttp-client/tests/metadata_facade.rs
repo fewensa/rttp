@@ -22,11 +22,11 @@ use rttp_client::response::{
   SecWebSocketProtocol, SecWebSocketProtocolParseError, SecWebSocketVersion,
   SecWebSocketVersionParseError, ServerTiming, Signature, SignatureInput, SignatureInputParseError,
   SignatureParseError, SpeculationRules, SpeculationRulesParseError, StrictTransportSecurity,
-  StrictTransportSecurityParseError, SupportsLoadingMode, SupportsLoadingModeParseError, Trailer,
-  TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError,
-  Via, ViaParseError, WantContentDigest, WantReprDigest, Warning, WwwAuthenticate,
-  WwwAuthenticateParseError, XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions,
-  XFrameOptionsParseError,
+  StrictTransportSecurityParseError, SupportsLoadingMode, SupportsLoadingModeParseError,
+  SurrogateControl, SurrogateControlParseError, Trailer, TransferEncoding,
+  TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError, Via, ViaParseError,
+  WantContentDigest, WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError,
+  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentDisposition, ContentDispositionParseError, ContentLocation,
@@ -76,6 +76,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     CacheStatus::parse("OriginCache; hit; ttl=1100").expect("Cache-Status should parse");
   let _: CacheStatusParseError = CacheStatus::parse("OriginCache; hit=yes")
     .expect_err("invalid Cache-Status should be rejected");
+  let surrogate_control = SurrogateControl::parse("max-age=600, content=\"ESI/1.0\"")
+    .expect("Surrogate-Control should parse");
+  let _: SurrogateControlParseError = SurrogateControl::parse("max-age=60, Max-Age=120")
+    .expect_err("duplicate Surrogate-Control directive should be rejected");
   let expose_headers = AccessControlExposeHeaders::parse("X-Request-Id")
     .expect("Access-Control-Expose-Headers should parse");
   let clear_site_data =
@@ -350,6 +354,8 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     "OriginCache"
   );
   assert_eq!(cache_status.members()[0].ttl(), Some(1100));
+  assert_eq!(surrogate_control.directives()[1].name(), "content");
+  assert_eq!(surrogate_control.directives()[1].value(), Some("ESI/1.0"));
   assert_eq!(expose_headers.field_names(), ["x-request-id"]);
   assert_eq!(content_length.len(), 123);
   assert_eq!(clear_site_data.directives().len(), 1);
