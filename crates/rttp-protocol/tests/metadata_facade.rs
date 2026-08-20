@@ -25,6 +25,7 @@ use rttp_protocol::content_location::ContentLocation;
 use rttp_protocol::content_security_policy::ContentSecurityPolicy;
 use rttp_protocol::content_security_policy_report_only::ContentSecurityPolicyReportOnly;
 use rttp_protocol::content_type::ContentType;
+use rttp_protocol::cookie::{HttpSameSite, HttpSetCookie, HttpSetCookies};
 use rttp_protocol::cross_origin_embedder_policy::CrossOriginEmbedderPolicy;
 use rttp_protocol::cross_origin_embedder_policy_report_only::CrossOriginEmbedderPolicyReportOnly;
 use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
@@ -309,6 +310,14 @@ fn protocol_exports_representative_bounded_metadata_types() {
     Negotiate::parse("trans, 1.0, feature-x=preview, *").expect("Negotiate should parse");
   let tcn = Tcn::parse("list, choice").expect("TCN should parse");
   let _: TcnParseError = Tcn::parse("list, LIST").expect_err("duplicate TCN should be rejected");
+  let set_cookie = HttpSetCookie::parse(r#"session="abc def"; Path=/; SameSite=Lax; Foo=bar"#)
+    .expect("Set-Cookie should parse");
+  let _: HttpSameSite = set_cookie.same_site().expect("SameSite should parse");
+  let _: HttpSetCookies = HttpSetCookies::parse_values([set_cookie.header_value().as_str()])
+    .expect("Set-Cookie collection should parse");
+  let _: rttp_protocol::cookie::HttpCookieParseError =
+    HttpSetCookie::parse("session=abc; Path=/; path=/other")
+      .expect_err("duplicate Set-Cookie attributes should be rejected");
   let baggage =
     Baggage::parse("tenant=acme;source=gateway,release=2026-08-19").expect("baggage should parse");
   let traceparent = TraceParent::parse("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")

@@ -5627,6 +5627,65 @@ hello\r\n\
   }
 
   #[test]
+  fn set_cookie_helpers_append_and_parse_response_metadata() {
+    let session = HttpSetCookie::new("session", "abc def")
+      .expect("session cookie should be valid")
+      .with_path("/")
+      .expect("path should be accepted")
+      .with_http_only()
+      .expect("HttpOnly should be accepted")
+      .with_same_site(HttpSameSite::Lax)
+      .expect("SameSite should be accepted");
+    let csrf = HttpSetCookie::new("csrf", "token")
+      .expect("csrf cookie should be valid")
+      .with_path("/form")
+      .expect("path should be accepted")
+      .with_max_age(60)
+      .expect("Max-Age should be accepted")
+      .with_extension("Foo", Some("bar"))
+      .expect("extension should be accepted");
+    let response = HttpResponse::ok([])
+      .header("Set-Cookie", "theme=dark")
+      .with_set_cookie(session)
+      .with_set_cookie(csrf);
+    let cookies = response
+      .set_cookies()
+      .expect("response Set-Cookie should parse")
+      .expect("response Set-Cookie should be present");
+
+    assert_eq!(3, cookies.len());
+    assert_eq!(
+      &[
+        "theme=dark",
+        r#"session="abc def"; Path=/; HttpOnly; SameSite=Lax"#,
+        "csrf=token; Path=/form; Max-Age=60; Foo=bar",
+      ],
+      cookies.header_values().as_slice()
+    );
+    let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+    assert_eq!(3, serialized.matches("\r\nSet-Cookie: ").count());
+    assert!(serialized.contains("\r\nSet-Cookie: theme=dark\r\n"));
+
+    let malformed = HttpResponse::ok([]).header("Set-Cookie", "session=super-secret; Path=/; path=/other");
+    assert!(malformed.set_cookies().is_err());
+    assert!(String::from_utf8(malformed.to_bytes())
+      .expect("response should serialize")
+      .contains("\r\nSet-Cookie: session=super-secret; Path=/; path=/other\r\n"));
+
+    let absent = HttpResponse::ok([]);
+    assert_eq!(
+      None,
+      absent.set_cookies().expect("absent Set-Cookie is Ok(None)")
+    );
+    let cookie_debug = format!(
+      "{:?}",
+      HttpSetCookie::parse(r#"session="abc def""#).expect("cookie should parse")
+    );
+    assert!(cookie_debug.contains("[REDACTED]"));
+    assert!(!cookie_debug.contains("abc def"));
+  }
+
+  #[test]
   fn origin_trial_helpers_declare_parse_and_redact_response_metadata() {
     let response = HttpResponse::ok([])
       .header("Origin-Trial", "stale-token")

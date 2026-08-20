@@ -168,6 +168,21 @@ members, oversized values, and control-byte injection return
 These helpers expose response metadata only. They do not select variants,
 synthesize `Alternates`, update `Vary`, or change cache behavior.
 
+## Set-Cookie response metadata
+
+`HttpResponse::with_set_cookie(cookie)` appends one bounded `Set-Cookie` field
+through the shared `rttp-protocol` primitive without replacing other
+`Set-Cookie` fields. `HttpResponse::set_cookies()` parses attached raw
+`Set-Cookie` metadata without changing the response. Valid metadata preserves
+multiple field lines, quoted cookie-value state, standard and extension
+attributes, and original raw headers. Duplicate attributes, malformed fields,
+and over-limit values return `HttpCookieParseError` while raw response
+headers remain available. Typed debug output redacts cookie values.
+
+These helpers expose response metadata only. They do not implement a cookie
+jar, persistence, domain/path matching, expiry enforcement, SameSite or
+partitioning policy, or automatic request `Cookie` emission.
+
 ## Accept-Encoding request metadata
 
 Handlers can call `Request::accept_encoding()` and

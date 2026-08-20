@@ -72,6 +72,9 @@ pub use rttp_protocol::content_security_policy_report_only::{
   ContentSecurityPolicyReportOnlyParseError as HttpContentSecurityPolicyReportOnlyParseError,
 };
 pub use rttp_protocol::content_type::ContentTypeParseError as HttpContentTypeParseError;
+pub use rttp_protocol::cookie::{
+  HttpSameSite, HttpSetCookie, HttpSetCookieAttribute, HttpSetCookieAttributeKind, HttpSetCookies,
+};
 pub use rttp_protocol::cross_origin_embedder_policy::{
   CrossOriginEmbedderPolicy as HttpCrossOriginEmbedderPolicy,
   CrossOriginEmbedderPolicyParseError as HttpCrossOriginEmbedderPolicyParseError,
@@ -1812,6 +1815,15 @@ impl HttpResponse {
     Ok(self)
   }
 
+  /// Appends one bounded `Set-Cookie` field without replacing other cookie
+  /// fields or applying cookie-jar or persistence policy.
+  pub fn with_set_cookie(mut self, cookie: HttpSetCookie) -> Self {
+    self
+      .headers
+      .push(HttpHeader::new("Set-Cookie", cookie.header_value()));
+    self
+  }
+
   /// Validates and replaces `TCN` response metadata without selecting a
   /// variant or changing cache behavior.
   pub fn with_tcn(mut self, value: impl AsRef<str>) -> Result<Self, HttpTcnParseError> {
@@ -3064,6 +3076,21 @@ impl HttpResponse {
       return Ok(None);
     }
     HttpAlternates::parse_values(values).map(Some)
+  }
+
+  /// Parses attached `Set-Cookie` metadata without changing raw headers or
+  /// applying cookie-jar or persistence policy.
+  pub fn set_cookies(&self) -> Result<Option<HttpSetCookies>, HttpCookieParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Set-Cookie"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSetCookies::parse_values(values).map(Some)
   }
 
   /// Parses attached `TCN` metadata without changing raw headers, selecting a

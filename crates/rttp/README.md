@@ -1072,6 +1072,24 @@ These helpers are metadata-only: RTTP does not select a variant, synthesize
 `Alternates` or `Vary`, apply transparent content negotiation, or change cache
 behavior from `TCN`.
 
+## Bounded Set-Cookie response metadata
+
+`HttpSetCookie` and `HttpSetCookies` are the shared protocol representation
+for bounded response `Set-Cookie` metadata. Client responses can call
+`Response::set_cookies()` to parse attached fields, and server responses can
+call `HttpResponse::with_set_cookie(cookie)` or `HttpResponse::set_cookies()`
+to declare or observe the same metadata. Valid metadata preserves multiple
+field lines and raw headers, retains quoted cookie-value state, exposes
+standard and extension attributes, and rejects duplicate attributes
+case-insensitively. Per-value, per-field, count, and aggregate-size bounds are
+enforced by the protocol type. Typed debug and error output redacts cookie
+values. Raw `header("Set-Cookie", value)` remains an escape hatch.
+
+These helpers are metadata-only: RTTP does not implement a cookie jar,
+persistence, domain/path matching, expiry enforcement, SameSite or
+partitioning policy, redirect cookie handling, or automatic request `Cookie`
+emission.
+
 ## Bounded Origin-Trial response metadata
 
 `OriginTrials` and `HttpOriginTrials` share the protocol parser for bounded
@@ -1492,6 +1510,7 @@ scheduling, or async accept loops.
 | A-IM | `HttpClient::a_im`/`a_im_with_q`/`a_im_value` emit bounded `A-IM` request metadata through the shared protocol type, and `Request::a_im`/`HttpRequest::a_im` parse received fields into `HttpAIm` while preserving raw headers on errors | No automatic delta-encoding selection, application, compression, or response transformation |
 | Negotiate | `HttpClient::negotiate` emits bounded RFC 2295 `Negotiate` request metadata through the shared protocol type, and `Request::negotiate`/`HttpRequest::negotiate` parse received fields into `HttpNegotiate` while preserving raw headers on errors | No variant selection, transparent content negotiation, `Alternates`/`TCN` synthesis, or automatic cache selection |
 | TCN | `Response::tcn()` and `HttpResponse::with_tcn()`/`tcn()` share bounded RFC 2295 `TCN` response metadata through `Tcn`/`HttpTcn` while preserving raw headers on accessor errors | No variant selection, `Alternates`/`Vary` synthesis, transparent content negotiation, or cache behavior |
+| Set-Cookie | `Response::set_cookies()` and `HttpResponse::with_set_cookie()`/`set_cookies()` share bounded protocol `Set-Cookie` response metadata, preserve multiple field lines and raw headers, redact cookie values from typed debug and errors, and reject duplicate attributes | No cookie jar, persistence, domain/path matching, expiry enforcement, SameSite or partitioning policy, or automatic request `Cookie` emission |
 | Accept-Encoding | `HttpRequestAcceptEncodings`, `Request::accept_encoding`, and `HttpRequest::accept_encoding` parse bounded `Accept-Encoding` request metadata through the shared `rttp-protocol` type | No compression, decompression, content negotiation, retries, or transport changes |
 | Sec-GPC | `HttpClient::sec_gpc`, `Request::sec_gpc`, and `HttpRequest::sec_gpc` share the bounded protocol `Sec-GPC` `1`-signal representation and preserve raw values on errors | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
 | Pragma | `HttpClient::pragma`/`pragma_no_cache`, `Request::pragma`, `HttpRequest::pragma`, `HttpResponse::with_pragma`, and `HttpResponse::pragma` share the bounded protocol `Pragma` representation across client construction, server access, server response declaration, and client response access, combining fields in wire order and preserving raw headers on errors | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |

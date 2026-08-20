@@ -1392,8 +1392,8 @@ impl Response {
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }
 
-  /// Parses response `Set-Cookie` fields as bounded opaque metadata without
-  /// creating a cookie jar or applying storage and matching policy.
+  /// Parses response `Set-Cookie` fields through the shared protocol type
+  /// without creating a cookie jar or applying storage and matching policy.
   pub fn set_cookies(&self) -> error::Result<Option<HttpSetCookies>> {
     let values = self.header_values("set-cookie");
     if values.is_empty() {
@@ -1480,6 +1480,8 @@ impl Response {
     self.trailer(name).map(|header| header.value())
   }
 
+  /// Legacy compatibility view derived from protocol `Set-Cookie` metadata.
+  /// Prefer `set_cookies()` for the canonical representation.
   pub fn cookies(&self) -> &Vec<Cookie> {
     self.raw.cookies_get()
   }

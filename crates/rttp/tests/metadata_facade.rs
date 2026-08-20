@@ -6,7 +6,7 @@ use rttp::server::{
   HttpBaggageParseError, HttpBaggageProperty, HttpCdnLoop, HttpCdnLoopParseError,
   HttpConditionalMetadata, HttpContentDpr, HttpContentDprParseError, HttpContentLocation,
   HttpContentLocationParseError, HttpContentRange, HttpContentRangeParseError,
-  HttpCrossOriginEmbedderPolicy, HttpCrossOriginEmbedderPolicyReportOnly,
+  HttpCookieParseError, HttpCrossOriginEmbedderPolicy, HttpCrossOriginEmbedderPolicyReportOnly,
   HttpCrossOriginOpenerPolicy, HttpCrossOriginOpenerPolicyReportOnly,
   HttpCrossOriginResourcePolicy, HttpDeprecation, HttpDeprecationParseError, HttpDepth,
   HttpDepthParseError, HttpDestination, HttpDestinationParseError, HttpEntityTag, HttpExpectations,
@@ -16,20 +16,20 @@ use rttp::server::{
   HttpNegotiateDirective, HttpNegotiateParseError, HttpNel, HttpOriginTrialParseError,
   HttpOriginTrials, HttpOverwrite, HttpPermissionsPolicy, HttpPermissionsPolicyParseError,
   HttpPragma, HttpPragmaParseError, HttpProxyAuthorization, HttpProxyStatus,
-  HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse, HttpSaveData,
+  HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse, HttpSameSite, HttpSaveData,
   HttpScheduleTag, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept,
   HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
   HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
   HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
   HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
-  HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem, HttpSignatureInputComponent,
-  HttpSignatureInputEntry, HttpSignatureInputParameter, HttpSignatureInputParseError,
-  HttpSignatureParseError, HttpSpeculationRules, HttpSpeculationRulesParseError,
-  HttpSunsetParseError, HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTcn,
-  HttpTcnDirective, HttpTcnParseError, HttpTimeout, HttpTimeoutParseError, HttpTimeoutType,
-  HttpUpgrade, HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError,
-  HttpUpgradeParseError, HttpVia, HttpViaParseError, HttpXForwardedFor,
-  HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
+  HttpSetCookie, HttpSetCookies, HttpSignature, HttpSignatureInput, HttpSignatureInputBareItem,
+  HttpSignatureInputComponent, HttpSignatureInputEntry, HttpSignatureInputParameter,
+  HttpSignatureInputParseError, HttpSignatureParseError, HttpSpeculationRules,
+  HttpSpeculationRulesParseError, HttpSunsetParseError, HttpSupportsLoadingMode,
+  HttpSupportsLoadingModeParseError, HttpTcn, HttpTcnDirective, HttpTcnParseError, HttpTimeout,
+  HttpTimeoutParseError, HttpTimeoutType, HttpUpgrade, HttpUpgradeInsecureRequests,
+  HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError, HttpVia, HttpViaParseError,
+  HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
   HttpXForwardedProto, HttpXForwardedProtoParseError,
 };
 use std::io::Write;
@@ -384,6 +384,16 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::TcnParseError =
     rttp::Tcn::parse("list, LIST").expect_err("duplicate TCN should be rejected");
   let _: &rttp::TcnDirective = &tcn.members()[0];
+  let set_cookie: rttp::HttpSetCookie =
+    rttp::HttpSetCookie::parse(r#"session="abc def"; Path=/; SameSite=Lax; Foo=bar"#)
+      .expect("Set-Cookie should parse");
+  let _: rttp::HttpSameSite = set_cookie.same_site().expect("SameSite should parse");
+  let _: rttp::HttpSetCookies =
+    rttp::HttpSetCookies::parse_values([set_cookie.header_value().as_str()])
+      .expect("Set-Cookie collection should parse");
+  let _: rttp::HttpCookieParseError =
+    rttp::HttpSetCookie::parse("session=abc; Path=/; path=/other")
+      .expect_err("duplicate Set-Cookie attributes should be rejected");
   let baggage: rttp::Baggage =
     rttp_client::Baggage::parse("tenant=acme;source=gateway").expect("baggage should parse");
   let _: rttp::BaggageParseError = rttp_client::Baggage::parse("tenant=1,tenant=2")
@@ -1596,6 +1606,14 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   let _: HttpTcnParseError =
     HttpTcn::parse("list, LIST").expect_err("duplicate TCN should be rejected");
   let _: HttpTcnDirective = tcn.members()[0].clone();
+  let set_cookie: HttpSetCookie =
+    HttpSetCookie::parse(r#"session="abc def"; Path=/; SameSite=Lax; Foo=bar"#)
+      .expect("Set-Cookie should parse");
+  let _: HttpSameSite = set_cookie.same_site().expect("SameSite should parse");
+  let _: HttpSetCookies = HttpSetCookies::parse_values([set_cookie.header_value().as_str()])
+    .expect("Set-Cookie collection should parse");
+  let _: HttpCookieParseError = HttpSetCookie::parse("session=abc; Path=/; path=/other")
+    .expect_err("duplicate Set-Cookie attributes should be rejected");
   let accept_charsets: HttpRequestAcceptCharsets =
     HttpRequestAcceptCharsets::parse("utf-8, iso-8859-1;q=0.5")
       .expect("Accept-Charset should parse");
@@ -2084,4 +2102,81 @@ fn via_compatibility_facade_exports_client_type() {
   assert_eq!("edge-a", via.members()[0].received_by());
   let member: rttp::ViaMember = via.members()[1].clone();
   assert_eq!(Some("HTTP"), member.protocol_name());
+}
+
+#[test]
+fn set_cookie_facade_reuses_protocol_type_across_server_and_client() {
+  let session = HttpSetCookie::new("session", "abc def")
+    .expect("session cookie should be valid")
+    .with_path("/")
+    .expect("path should be accepted")
+    .with_http_only()
+    .expect("HttpOnly should be accepted")
+    .with_same_site(HttpSameSite::Lax)
+    .expect("SameSite should be accepted")
+    .with_priority("High")
+    .expect("Priority should be accepted")
+    .with_partitioned()
+    .expect("Partitioned should be accepted");
+  let csrf = HttpSetCookie::new("csrf", "token")
+    .expect("csrf cookie should be valid")
+    .with_path("/form")
+    .expect("path should be accepted")
+    .with_max_age(60)
+    .expect("Max-Age should be accepted")
+    .with_extension("Foo", Some("bar"))
+    .expect("extension should be accepted");
+  let response = HttpResponse::ok("ok")
+    .with_set_cookie(session)
+    .with_set_cookie(csrf);
+  let server_cookies = response
+    .set_cookies()
+    .expect("server Set-Cookie should parse")
+    .expect("server Set-Cookie should be present");
+  let serialized = String::from_utf8(response.to_bytes()).expect("response should serialize");
+
+  assert_eq!(2, serialized.matches("\r\nSet-Cookie: ").count());
+  assert_eq!(
+    server_cookies,
+    HttpSetCookies::parse_values([
+      r#"session="abc def"; Path=/; HttpOnly; SameSite=Lax; Priority=High; Partitioned"#,
+      "csrf=token; Path=/form; Max-Age=60; Foo=bar",
+    ])
+    .expect("protocol collection should parse")
+  );
+  assert!(!format!("{server_cookies:?}").contains("abc def"));
+  assert!(!format!("{server_cookies:?}").contains("token"));
+
+  let malformed =
+    HttpResponse::ok("ok").header("Set-Cookie", "session=super-secret; Path=/; path=/other");
+  assert!(malformed.set_cookies().is_err());
+  assert!(String::from_utf8(malformed.to_bytes())
+    .expect("response should serialize")
+    .contains("\r\nSet-Cookie: session=super-secret; Path=/; path=/other\r\n"));
+
+  #[cfg(feature = "client")]
+  {
+    let client_response = rttp_client::response::Response::new(
+      rttp_client::types::RoUrl::with("http://example.test/"),
+      serialized.into_bytes(),
+    )
+    .expect("client should parse the server response");
+    let client_cookies = client_response
+      .set_cookies()
+      .expect("client Set-Cookie should parse")
+      .expect("client Set-Cookie should be present");
+    assert_eq!(server_cookies, client_cookies);
+    assert_eq!(
+      vec![
+        r#"session="abc def"; Path=/; HttpOnly; SameSite=Lax; Priority=High; Partitioned"#,
+        "csrf=token; Path=/form; Max-Age=60; Foo=bar"
+      ],
+      client_response
+        .header_values("set-cookie")
+        .iter()
+        .map(|value| value.as_str())
+        .collect::<Vec<_>>()
+    );
+    assert!(!format!("{client_cookies:?}").contains("abc def"));
+  }
 }

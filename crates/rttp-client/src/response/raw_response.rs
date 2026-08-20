@@ -5,6 +5,7 @@ use crate::config::DEFAULT_MAX_BUFFERED_RESPONSE_BODY_BYTES;
 use crate::error;
 use crate::response::ResponseBody;
 use crate::types::{is_sensitive_debug_header, Cookie, Header, RoUrl, ToUrl};
+use rttp_protocol::cookie::HttpSetCookie;
 use url::Url;
 
 static CR: u8 = b'\r';
@@ -261,7 +262,8 @@ impl Parser {
     let cookies: Vec<Cookie> = headers
       .iter()
       .filter(|header| header.name().eq_ignore_ascii_case("set-cookie"))
-      .filter_map(|header| Cookie::parse(header.value()).ok())
+      .filter_map(|header| HttpSetCookie::parse(header.value()).ok())
+      .map(|cookie| Cookie::from_set_cookie(&cookie))
       .collect();
 
     response.headers(headers);

@@ -1,6 +1,8 @@
 use std::fmt;
 use std::time::SystemTime;
 
+use rttp_protocol::cookie::HttpSetCookie;
+
 use crate::error;
 
 #[derive(Clone)]
@@ -82,6 +84,28 @@ impl Cookie {
 }
 
 impl Cookie {
+  pub(crate) fn from_set_cookie(cookie: &HttpSetCookie) -> Self {
+    let expires = cookie
+      .expires()
+      .and_then(|value| httpdate::parse_http_date(&value.replace('-', " ")).ok());
+    let host_only = cookie.extension_attributes().any(|attribute| {
+      attribute.name().eq_ignore_ascii_case("hostonly")
+        || attribute.name().eq_ignore_ascii_case("host_only")
+    });
+    Self {
+      name: cookie.name().to_owned(),
+      value: cookie.value().to_owned(),
+      expires,
+      path: cookie.path().map(str::to_owned),
+      domain: cookie.domain().map(str::to_owned),
+      secure: cookie.secure(),
+      http_only: cookie.http_only(),
+      persistent: expires.is_some() || cookie.max_age().is_some(),
+      host_only,
+      same_site: cookie.same_site().map(|value| value.as_str().to_owned()),
+    }
+  }
+
   pub fn builder() -> CookieBuilder {
     CookieBuilder::new()
   }
@@ -173,7 +197,19 @@ impl Cookie {
 impl fmt::Debug for Cookie {
   #[inline]
   fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    fmt::Debug::fmt(&self.string(), formatter)
+    formatter
+      .debug_struct("Cookie")
+      .field("name", &self.name)
+      .field("value", &"[REDACTED]")
+      .field("expires", &self.expires.as_ref().map(|_| "[REDACTED]"))
+      .field("path", &self.path.as_ref().map(|_| "[REDACTED]"))
+      .field("domain", &self.domain.as_ref().map(|_| "[REDACTED]"))
+      .field("secure", &self.secure)
+      .field("http_only", &self.http_only)
+      .field("persistent", &self.persistent)
+      .field("host_only", &self.host_only)
+      .field("same_site", &self.same_site)
+      .finish()
   }
 }
 
