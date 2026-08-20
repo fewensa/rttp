@@ -241,6 +241,7 @@ fn is_sensitive_debug_header(name: &str) -> bool {
   name.eq_ignore_ascii_case("authorization")
     || name.eq_ignore_ascii_case("cookie")
     || name.eq_ignore_ascii_case("idempotency-key")
+    || name.eq_ignore_ascii_case("lock-token")
     || name.eq_ignore_ascii_case("proxy-authorization")
     || name.eq_ignore_ascii_case("sec-websocket-accept")
     || name.eq_ignore_ascii_case("sec-websocket-key")
@@ -267,6 +268,10 @@ mod tests {
     request
       .headers_mut()
       .push(Header::new("Idempotency-Key", "charge-2026-08-19-9f3c"));
+    request.headers_mut().push(Header::new(
+      "Lock-Token",
+      "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+    ));
     request
       .headers_mut()
       .push(Header::new("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ=="));
@@ -288,6 +293,7 @@ mod tests {
     assert!(debug.contains("Authorization"));
     assert!(debug.contains("Proxy-Authorization"));
     assert!(debug.contains("Idempotency-Key"));
+    assert!(debug.contains("Lock-Token"));
     assert!(debug.contains("Sec-WebSocket-Key"));
     assert!(debug.contains("traceparent"));
     assert!(debug.contains("tracestate"));
@@ -296,6 +302,7 @@ mod tests {
     assert!(!debug.contains("origin-secret-token"));
     assert!(!debug.contains("cHJveHktc2VjcmV0"));
     assert!(!debug.contains("charge-2026-08-19-9f3c"));
+    assert!(!debug.contains("550e8400-e29b-41d4-a716-446655440000"));
     assert!(!debug.contains("dGhlIHNhbXBsZSBub25jZQ=="));
     assert!(!debug.contains("4bf92f3577b34da6a3ce929d0e0e4736"));
     assert!(!debug.contains("00f067aa0ba902b7"));

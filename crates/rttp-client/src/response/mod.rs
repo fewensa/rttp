@@ -118,6 +118,7 @@ pub use rttp_protocol::entity_tag::{EntityTag, EntityTagParseError};
 pub use rttp_protocol::keep_alive::{KeepAlive, KeepAliveExtension, KeepAliveParseError};
 pub use rttp_protocol::link::{LinkParameter, LinkParseError, LinkValue, LinkValues};
 pub use rttp_protocol::location::{Location, LocationParseError};
+pub use rttp_protocol::lock_token::{LockToken, LockTokenParseError};
 pub use rttp_protocol::memento_datetime::{MementoDatetime, MementoDatetimeParseError};
 pub use rttp_protocol::no_vary_search::{
   NoVarySearch, NoVarySearchExtension, NoVarySearchParams, NoVarySearchParseError,

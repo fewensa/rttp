@@ -442,6 +442,25 @@ field is absent, or enforce WebDAV policy.
 These helpers declare and observe request metadata only. RTTP does not
 traverse resources, select WebDAV methods, or enforce method policy.
 
+## Bounded WebDAV Lock-Token metadata
+
+`HttpClient::lock_token(value)` validates and emits one WebDAV `Lock-Token`
+request field through the shared `rttp_protocol` `LockToken` type, replacing
+any existing same-name field before a socket is opened.
+`Request::lock_token()` and `HttpRequest::lock_token()` parse received fields
+into the same `HttpLockToken` representation, returning `Ok(None)` when
+absent. `HttpResponse::with_lock_token(value)` validates and replaces one
+response field, and `HttpResponse::lock_token()` plus `Response::lock_token()`
+parse retained response headers. A recognized value is exactly one
+angle-bracketed absolute URI bounded to 64 KiB with optional surrounding SP
+or HTAB; empty, unbracketed, relative, comma-list, extra-bracket, duplicate,
+oversized, and control-byte values are rejected while raw headers remain
+available when the typed parser reports an error. The token is redacted from
+typed `Debug`.
+
+These helpers declare and observe metadata only. RTTP does not create,
+refresh, release, persist, compare ownership of, or enforce WebDAV locks.
+
 ## Bounded WebDAV Destination request metadata
 
 `HttpClient::destination(value)` validates and emits one WebDAV
@@ -1337,6 +1356,7 @@ scheduling, or async accept loops.
 | Authentication metadata | `Request::authorization`/`proxy_authorization` and `HttpRequest::authorization`/`proxy_authorization` expose one bounded opaque credential field, `Response::www_authenticate` parses bounded client response challenges, and `HttpResponse::with_www_authenticate`/`www_authenticate` declare and parse bounded `WWW-Authenticate` challenges | No credential validation, realm selection, automatic client challenge, retry, or authentication/authorization enforcement |
 | Idempotency-Key | `HttpClient::idempotency_key` validates and emits one bounded opaque `Idempotency-Key` request field through the shared protocol type, and `Request::idempotency_key`/`HttpRequest::idempotency_key` parse received fields into the same representation while preserving raw headers on errors and redacting the key from typed debug output | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | Depth | `HttpClient::depth` validates and emits bounded singleton WebDAV `Depth` request metadata through the shared protocol type, and `Request::depth`/`HttpRequest::depth` parse received fields into the same representation while preserving raw headers on errors | No resource traversal, WebDAV method selection, method-policy enforcement, retry, or forwarding policy |
+| Lock-Token | `HttpClient::lock_token` validates and emits one bounded WebDAV `Lock-Token` request field through the shared protocol type, `Request::lock_token`/`HttpRequest::lock_token` parse received request fields, and `HttpResponse::with_lock_token`/`lock_token` plus `Response::lock_token` declare or parse response fields while preserving raw headers on errors and redacting the token from typed debug output | No lock creation, refresh, release, persistence, ownership comparison, or WebDAV lock policy |
 | Destination | `HttpClient::destination` validates and emits bounded singleton WebDAV `Destination` request metadata through the shared protocol type, and `Request::destination`/`HttpRequest::destination` parse received fields into the same representation while preserving raw headers on errors | No destination resolution, URI normalization, authorization, COPY/MOVE execution, or application resource policy |
 | Timeout | `HttpClient::timeout` validates and emits bounded ordered WebDAV `Timeout` request metadata through the shared protocol type, and `Request::timeout`/`HttpRequest::timeout` parse received fields into the same representation while preserving raw headers on errors | No lock creation, lock refresh, application-timeout selection, retry, or forwarding policy |
 | Overwrite | `HttpClient::overwrite` validates and emits bounded singleton WebDAV `Overwrite` request metadata through the shared protocol type, accepting only the tokens `T` and `F`, and `Request::overwrite`/`HttpRequest::overwrite` parse received fields into the same representation while preserving raw headers on errors | No destination overwrite, RFC 4918 default-`T` synthesis, resource policy, COPY/MOVE execution, retry, or forwarding policy |

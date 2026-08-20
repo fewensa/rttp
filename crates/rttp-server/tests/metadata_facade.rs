@@ -21,15 +21,16 @@ use rttp_server::server::{
   HttpDocumentPolicyValue, HttpEntityTag, HttpExpectParseError, HttpExpectations, HttpHost,
   HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince,
   HttpIfModifiedSinceParseError, HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError,
-  HttpKeepAlive, HttpMaxForwards, HttpMaxForwardsParseError, HttpMementoDatetime,
-  HttpMementoDatetimeParseError, HttpNoVarySearch, HttpNoVarySearchParams,
-  HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpOverwriteParseError,
-  HttpPermissionsPolicy, HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
-  HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective,
-  HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus,
-  HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
-  HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSecGpc, HttpSecGpcParseError,
-  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
+  HttpKeepAlive, HttpLockToken, HttpLockTokenParseError, HttpMaxForwards,
+  HttpMaxForwardsParseError, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNoVarySearch,
+  HttpNoVarySearchParams, HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite,
+  HttpOverwriteParseError, HttpPermissionsPolicy, HttpPermissionsPolicyAllowlist,
+  HttpPermissionsPolicyAllowlistMember, HttpPermissionsPolicyDirective,
+  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective, HttpPragmaParseError,
+  HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError,
+  HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpResponse, HttpSaveData,
+  HttpSaveDataParseError, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept,
+  HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
   HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
   HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
   HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
@@ -162,6 +163,11 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpMaxForwards::parse("4294967296");
   let depth: HttpDepth = HttpDepth::parse("infinity").expect("Depth should parse");
   let depth_error: Result<HttpDepth, HttpDepthParseError> = HttpDepth::parse("2");
+  let lock_token: HttpLockToken =
+    HttpLockToken::parse("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>")
+      .expect("Lock-Token should parse");
+  let lock_token_error: Result<HttpLockToken, HttpLockTokenParseError> =
+    HttpLockToken::parse("<relative>");
   let timeout: HttpTimeout =
     HttpTimeout::parse("Second-60, Infinite").expect("Timeout should parse");
   let timeout_error: Result<HttpTimeout, HttpTimeoutParseError> =
@@ -402,6 +408,12 @@ fn server_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(HttpDepth::Infinity, depth);
   assert_eq!("infinity", depth.header_value());
   assert!(depth_error.is_err());
+  assert_eq!(
+    "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+    lock_token.as_str()
+  );
+  assert!(!format!("{lock_token:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
+  assert!(lock_token_error.is_err());
   assert_eq!(
     &[HttpTimeoutType::Second(60), HttpTimeoutType::Infinite],
     timeout.members()
@@ -1029,6 +1041,33 @@ fn response_facade_builds_and_parses_sec_websocket_accept_metadata() {
 }
 
 #[test]
+fn response_facade_builds_and_parses_lock_token_metadata() {
+  let response = HttpResponse::new(200, "OK")
+    .header("Lock-Token", "<http://example.test/locks/legacy>")
+    .with_lock_token("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>")
+    .expect("Lock-Token should be accepted");
+
+  let lock_token = response
+    .lock_token()
+    .expect("Lock-Token should parse")
+    .expect("Lock-Token should be present");
+
+  assert_eq!(
+    "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+    lock_token.as_str()
+  );
+  assert!(!format!("{lock_token:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
+  let _: Result<HttpLockToken, HttpLockTokenParseError> = HttpLockToken::parse("<relative>");
+
+  let mut serialized = Vec::new();
+  response.write_to(&mut serialized).expect("response writes");
+  let serialized = String::from_utf8(serialized).expect("response is utf8");
+  assert!(serialized
+    .contains("\r\nLock-Token: <opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\r\n"));
+  assert!(!serialized.contains("\r\nLock-Token: <http://example.test/locks/legacy>\r\n"));
+}
+
+#[test]
 fn request_facade_parses_host_authority() {
   let request = HttpRequest::parse(b"GET /asset HTTP/1.1\r\nHost: example.test:8443\r\n\r\n")
     .expect("request should parse");
@@ -1093,6 +1132,58 @@ fn request_facade_parses_depth_metadata_without_policy() {
   .expect("request should parse");
   assert!(duplicate.depth().is_err());
   assert_eq!(Some("0"), duplicate.header("Depth"));
+}
+
+#[test]
+fn request_facade_parses_lock_token_metadata_without_policy() {
+  let request = HttpRequest::parse(
+    b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nLock-Token: <opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\r\n\r\n",
+  )
+  .expect("request should parse");
+  let lock_token: HttpLockToken = request
+    .lock_token()
+    .expect("Lock-Token should parse")
+    .expect("Lock-Token should be present");
+
+  assert_eq!(
+    "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+    lock_token.as_str()
+  );
+  assert_eq!(
+    "<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>",
+    lock_token.header_value()
+  );
+  assert!(!format!("{lock_token:?}").contains("550e8400-e29b-41d4-a716-446655440000"));
+  assert_eq!(
+    Some("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>"),
+    request.header("Lock-Token")
+  );
+
+  let absent = HttpRequest::parse(b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .lock_token()
+      .expect("missing Lock-Token should be accepted")
+  );
+
+  let malformed = HttpRequest::parse(
+    b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nLock-Token: <relative>\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert!(malformed.lock_token().is_err());
+  assert_eq!(Some("<relative>"), malformed.header("Lock-Token"));
+
+  let duplicate = HttpRequest::parse(
+    b"UNLOCK /resource HTTP/1.1\r\nHost: example.test\r\nLock-Token: <opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\r\nlock-token: <http://example.test/locks/2>\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert!(duplicate.lock_token().is_err());
+  assert_eq!(
+    Some("<opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>"),
+    duplicate.header("Lock-Token")
+  );
 }
 
 #[test]

@@ -133,6 +133,22 @@ errors. `header_value()` emits the canonical singleton value. This parser
 reports declared request metadata only; it does not traverse resources,
 select WebDAV methods, or enforce method policy.
 
+## Lock-Token
+
+`lock_token` parses a singleton WebDAV `Lock-Token` request or response field
+as exactly one angle-bracketed absolute URI. Each field value is bounded to
+64 KiB. A second field is rejected after every supplied field is
+bound-checked. Surrounding SP and HTAB are trimmed as optional whitespace.
+The stored value is the OWS-trimmed coded URL, including `<` and `>`. Empty
+values, missing or extra angle brackets, comma lists, relative URIs, nested
+brackets, trailing data, oversized values, and forbidden ASCII control bytes
+(including CR, LF, NUL, and obs-text) are errors. The URI inside the brackets
+must parse as an absolute URI. The token is redacted from typed `Debug`, and
+parse errors describe only the header and validation category. `as_str()`
+returns the stored coded URL and `header_value()` emits it unchanged. This
+parser reports declared metadata only; it does not create, refresh, release,
+persist, compare ownership of, or enforce WebDAV locks.
+
 ## DAV
 
 `dav` parses one or more WebDAV `DAV` response fields into an ordered list of
