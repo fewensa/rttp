@@ -63,6 +63,7 @@ use rttp_protocol::deprecation::Deprecation;
 use rttp_protocol::document_policy::DocumentPolicy;
 use rttp_protocol::document_policy_report_only::DocumentPolicyReportOnly;
 use rttp_protocol::entity_tag::{EntityTag, EntityTagParseError};
+use rttp_protocol::im::Im;
 use rttp_protocol::link::LinkValues;
 use rttp_protocol::location::Location;
 use rttp_protocol::lock_token::LockToken;
@@ -497,6 +498,18 @@ impl Response {
       return Ok(None);
     }
     AcceptRanges::parse_values(values.into_iter().map(String::as_str))
+      .map(Some)
+      .map_err(|parse_error| error::bad_response(parse_error.to_string()))
+  }
+
+  /// Parses bounded `IM` response metadata without decoding or applying
+  /// instance manipulations.
+  pub fn im(&self) -> error::Result<Option<Im>> {
+    let values = self.header_values("im");
+    if values.is_empty() {
+      return Ok(None);
+    }
+    Im::parse_values(values.into_iter().map(String::as_str))
       .map(Some)
       .map_err(|parse_error| error::bad_response(parse_error.to_string()))
   }

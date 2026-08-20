@@ -1413,6 +1413,65 @@ fn client_a_im_helpers_parse_through_shared_server_type() {
 
 #[test]
 #[cfg(feature = "client")]
+fn compatibility_facade_roundtrips_im_response_metadata() {
+  let server_response = HttpResponse::ok(r#"{"ok":true}"#)
+    .header("IM", "legacy")
+    .with_im(["diffe", "gzip;profile=compact"])
+    .expect("IM should be accepted");
+
+  assert_eq!(
+    server_response
+      .im()
+      .expect("server IM should parse")
+      .expect("server IM should be present")
+      .header_value(),
+    "diffe, gzip;profile=compact"
+  );
+
+  let mut serialized_response = Vec::new();
+  server_response
+    .write_to(&mut serialized_response)
+    .expect("server response should serialize");
+  let response_text =
+    String::from_utf8(serialized_response.clone()).expect("server response should be utf-8");
+  assert_eq!(
+    Some("diffe, gzip;profile=compact"),
+    header_value(&response_text, "IM")
+  );
+  assert!(!response_text.contains("\r\nIM: legacy\r\n"));
+  assert_eq!(1, response_text.matches("\r\nIM: ").count());
+
+  let (addr, handle) = spawn_representation_metadata_response_server(serialized_response);
+  let client_response = rttp::Http::client()
+    .get()
+    .url(format!("http://{addr}/asset"))
+    .emit()
+    .expect("client request should complete");
+  handle.join().expect("IM capture server should join");
+
+  let im: rttp::Im = client_response
+    .im()
+    .expect("client IM should parse")
+    .expect("client IM should be present");
+  assert_eq!(im.len(), 2);
+  assert_eq!(im.members()[0].token(), "diffe");
+  assert_eq!(im.members()[1].token(), "gzip");
+  assert_eq!(Some("compact"), im.members()[1].parameters()[0].value());
+  assert_eq!(im.header_value(), "diffe, gzip;profile=compact");
+  assert_eq!(r#"{"ok":true}"#, client_response.body().string().unwrap());
+
+  let _: rttp::ImParseError =
+    rttp::Im::parse("diffe, DIFFE").expect_err("duplicate IM members must fail closed");
+  let _: rttp::ImParseError =
+    rttp::Im::parse("gzip;q=0.3").expect_err("IM q-parameters must fail closed");
+  assert!(
+    rttp::Im::parse("x".repeat(64 * 1024 + 1)).is_err(),
+    "oversized IM values must fail closed"
+  );
+}
+
+#[test]
+#[cfg(feature = "client")]
 fn client_accept_encoding_helpers_parse_through_shared_server_type() {
   let (addr, handle) = spawn_representation_metadata_response_server(
     b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),

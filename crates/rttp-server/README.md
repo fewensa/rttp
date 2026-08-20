@@ -136,6 +136,24 @@ continue to expose the original request.
 These helpers parse request metadata only. They do not select a preferred
 instance manipulation or apply delta encodings.
 
+## IM response metadata
+
+`HttpResponse::with_im(members)` validates an ordered list of
+instance-manipulation tokens, replaces any existing raw `IM` fields with one
+validated `IM` header, and returns a parse error for invalid, duplicate,
+empty, oversized, or over-limit members. `HttpResponse::im()` parses attached
+raw `IM` fields in wire order into `HttpIm`, the shared protocol parser also
+used by the client facade, and returns `Ok(None)` when the header is absent.
+Each entry exposes `token()` and ordered `parameters()`. Each field value and
+the combined raw field set are limited to 64 KiB, the combined list is
+limited to 32 members, and each member is limited to 16 parameters. The `q`
+parameter name is rejected because it is reserved for A-IM. Malformed,
+duplicate, or over-limit values return `HttpImParseError` while `HttpResponse`
+raw headers continue to expose the original fields.
+
+These helpers only declare and inspect response metadata. They do not decode
+or apply instance manipulations and do not change the response status.
+
 ## Accept-Encoding request metadata
 
 Handlers can call `Request::accept_encoding()` and

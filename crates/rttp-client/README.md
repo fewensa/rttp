@@ -828,6 +828,26 @@ than 32 members before a connection is opened.
 These helpers declare request metadata only. They do not select a preferred
 instance manipulation or apply delta encodings.
 
+## Bounded IM response metadata
+
+`Response::im()` parses one or more response `IM` header fields into `Im`
+metadata, the shared protocol parser also used by the server facade. It
+returns `Ok(None)` when the header is absent. Present values expose ordered
+`members()` with `token()` and `parameters()` per member and `header_value()`
+for serialization.
+
+The helper is bounded and validation-oriented. Each header field value is
+limited to 64 KiB, the parsed header set is limited to 32 members, and each
+member is limited to 16 parameters. Empty members, invalid tokens or
+parameters, the reserved `q` parameter name, duplicates across all parsed
+header fields, and oversized or over-limit values return an error while the
+original response remains usable: raw `IM` fields stay available through
+`Response::header_value()`, `Response::header_values()`, and the other
+response metadata helpers.
+
+RTTP does not decode, invert, or apply instance manipulations, and it does
+not require or synthesize the `226 IM Used` status.
+
 ## Bounded Accept-Encoding request metadata
 
 `rttp-protocol` owns the shared `Accept-Encoding` primitive. Client helpers
@@ -1452,6 +1472,7 @@ header-block model.
 | Digest preferences | `want_content_digest`, `want_content_digest_with_q`, `want_repr_digest`, and `want_repr_digest_with_q` emit bounded `Want-Content-Digest` and `Want-Repr-Digest` request metadata; server `Request::want_content_digest()`, `HttpRequest::want_content_digest()`, `Request::want_repr_digest()`, and `HttpRequest::want_repr_digest()` parse received preference fields | No algorithm selection, digest computation, response body hash validation, retries, or signing |
 | Accept-Charset | `accept_charset` and `accept_charset_with_q` format bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |
 | A-IM | `a_im`, `a_im_with_q`, and `a_im_value` format bounded `A-IM` request metadata through the shared `rttp-protocol` type | No automatic delta-encoding selection, application, compression, or response transformation |
+| IM | `Response::im` parses bounded ordered `IM` response metadata through the shared `rttp-protocol` type while preserving raw headers on parse errors | No instance-manipulation decoding, inversion, or application, and no `226 IM Used` status policy |
 | Accept-Encoding | `accept_encoding`, `accept_encoding_with_q`, and gzip/deflate/br/identity helpers format bounded `Accept-Encoding` request metadata through the shared `rttp-protocol` type | No compression, decompression, content negotiation, retries, or transport changes |
 | HTTP message signatures | `signature` and `signature_input` emit bounded RFC 9421 request metadata; `Response::signature()` and `signature_input()` parse received fields | No signing, verification, key lookup, covered-component canonicalization, or cryptographic policy |
 | Upgrade and tunnel handoff | `CONNECT` returns the tunnel socket after a successful `200`; `upgrade()` returns the socket after `101 Switching Protocols` and skips interim `1xx` responses | Upgraded protocols are handed to the caller and are not parsed by `rttp_client` |

@@ -21,16 +21,17 @@ use rttp_server::server::{
   HttpDocumentPolicyValue, HttpEntityTag, HttpExpectParseError, HttpExpectations, HttpHost,
   HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince,
   HttpIfModifiedSinceParseError, HttpIfScheduleTagMatch, HttpIfScheduleTagMatchParseError,
-  HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError, HttpKeepAlive, HttpLockToken,
-  HttpLockTokenParseError, HttpMaxForwards, HttpMaxForwardsParseError, HttpMementoDatetime,
-  HttpMementoDatetimeParseError, HttpNoVarySearch, HttpNoVarySearchParams,
-  HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite, HttpOverwriteParseError,
-  HttpPermissionsPolicy, HttpPermissionsPolicyAllowlist, HttpPermissionsPolicyAllowlistMember,
-  HttpPermissionsPolicyDirective, HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective,
-  HttpPragmaParseError, HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus,
-  HttpProxyStatusParseError, HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings,
-  HttpResponse, HttpSaveData, HttpSaveDataParseError, HttpSecGpc, HttpSecGpcParseError,
-  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
+  HttpIfUnmodifiedSince, HttpIfUnmodifiedSinceParseError, HttpIm, HttpImMember, HttpImParameter,
+  HttpImParseError, HttpKeepAlive, HttpLockToken, HttpLockTokenParseError, HttpMaxForwards,
+  HttpMaxForwardsParseError, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNoVarySearch,
+  HttpNoVarySearchParams, HttpOriginTrialParseError, HttpOriginTrials, HttpOverwrite,
+  HttpOverwriteParseError, HttpPermissionsPolicy, HttpPermissionsPolicyAllowlist,
+  HttpPermissionsPolicyAllowlistMember, HttpPermissionsPolicyDirective,
+  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaDirective, HttpPragmaParseError,
+  HttpPreferenceKind, HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError,
+  HttpRequest, HttpRequestAcceptCharsets, HttpRequestAcceptEncodings, HttpResponse, HttpSaveData,
+  HttpSaveDataParseError, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept,
+  HttpSecWebSocketAcceptParseError, HttpSecWebSocketExtensions,
   HttpSecWebSocketExtensionsParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
   HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError, HttpSecWebSocketVersion,
   HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed, HttpServiceWorkerAllowedParseError,
@@ -92,6 +93,11 @@ fn server_facade_exports_representative_bounded_metadata_types() {
     HttpAIm::parse("diffe, DIFFE").expect_err("duplicate A-IM should be rejected");
   let _: &[HttpAImMember] = a_im.members();
   let _: Option<&HttpAImParameter> = a_im.members()[1].parameters().first();
+  let im: HttpIm = HttpIm::parse("diffe, gzip;profile=compact").expect("IM should parse");
+  let _: HttpImParseError =
+    HttpIm::parse("diffe, DIFFE").expect_err("duplicate IM should be rejected");
+  let _: &[HttpImMember] = im.members();
+  let _: Option<&HttpImParameter> = im.members()[1].parameters().first();
   let accept_charsets: HttpRequestAcceptCharsets =
     HttpRequestAcceptCharsets::parse("utf-8, iso-8859-1;q=0.5, *;q=0")
       .expect("Accept-Charset should parse");
@@ -1156,6 +1162,79 @@ fn response_facade_builds_and_parses_lock_token_metadata() {
   assert!(serialized
     .contains("\r\nLock-Token: <opaquelocktoken:550e8400-e29b-41d4-a716-446655440000>\r\n"));
   assert!(!serialized.contains("\r\nLock-Token: <http://example.test/locks/legacy>\r\n"));
+}
+
+#[test]
+fn response_facade_builds_and_parses_im_metadata() {
+  let response = HttpResponse::ok("")
+    .header("IM", "legacy")
+    .with_im(["diffe", "gzip;profile=compact"])
+    .expect("IM metadata should be accepted");
+
+  let im = response
+    .im()
+    .expect("IM metadata should parse")
+    .expect("IM metadata should be present");
+
+  assert_eq!(im.len(), 2);
+  assert_eq!("diffe", im.members()[0].token());
+  assert_eq!("gzip", im.members()[1].token());
+  assert_eq!(Some("compact"), im.members()[1].parameters()[0].value());
+  assert_eq!("diffe, gzip;profile=compact", im.header_value());
+
+  let mut serialized = Vec::new();
+  response.write_to(&mut serialized).expect("response writes");
+  let serialized = String::from_utf8(serialized).expect("response is utf8");
+  assert!(serialized.contains("\r\nIM: diffe, gzip;profile=compact\r\n"));
+  assert!(!serialized.contains("\r\nIM: legacy\r\n"));
+
+  let absent = HttpResponse::ok("");
+  assert_eq!(
+    absent.im().expect("absent IM metadata should not error"),
+    None
+  );
+
+  let multi_field = HttpResponse::ok("")
+    .header("IM", "diffe")
+    .header("IM", "gzip;profile=compact, identity");
+  let multi = multi_field
+    .im()
+    .expect("multi-field IM metadata should parse")
+    .expect("multi-field IM metadata should be present");
+  assert_eq!(
+    multi.header_value(),
+    "diffe, gzip;profile=compact, identity"
+  );
+
+  let unchanged = HttpResponse::ok("").header("IM", "diffe");
+  assert!(unchanged.clone().with_im(["diffe", "DIFFE"]).is_err());
+  assert_eq!(
+    "diffe",
+    unchanged
+      .im()
+      .expect("original IM should still parse")
+      .expect("original IM should be present")
+      .header_value()
+  );
+
+  let duplicate = HttpResponse::ok("").header("IM", "diffe, DIFFE");
+  assert!(duplicate.im().is_err());
+  let duplicate_rendered =
+    String::from_utf8(duplicate.to_bytes()).expect("response should serialize");
+  assert!(duplicate_rendered.contains("\r\nIM: diffe, DIFFE\r\n"));
+
+  let oversized = format!("x{}", "a".repeat(64 * 1024));
+  let invalid = HttpResponse::ok("").header("IM", oversized);
+  assert!(invalid.im().is_err());
+  let invalid_rendered = String::from_utf8(invalid.to_bytes()).expect("response should serialize");
+  assert!(invalid_rendered.contains("\r\nIM: "));
+
+  let too_many = (0..=32)
+    .map(|index| format!("c{index}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  let over_limit = HttpResponse::ok("").header("IM", too_many);
+  assert!(over_limit.im().is_err());
 }
 
 #[test]

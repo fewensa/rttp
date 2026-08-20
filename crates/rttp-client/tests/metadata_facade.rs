@@ -11,21 +11,22 @@ use rttp_client::response::{
   CrossOriginEmbedderPolicyReportOnly, CrossOriginOpenerPolicy, CrossOriginOpenerPolicyReportOnly,
   CrossOriginResourcePolicy, Digest, DocumentPolicy, DocumentPolicyParseError,
   DocumentPolicyReportOnly, DocumentPolicyReportOnlyParseError, DocumentPolicyReportOnlyValue,
-  DocumentPolicyValue, EntityTag, HttpClearSiteData, HttpContentLength, KeepAlive, LinkValues,
-  Location, LocationParseError, LockToken, LockTokenParseError, MementoDatetime,
-  MementoDatetimeParseError, Nel, NoVarySearch, NoVarySearchParams, NoVarySearchParseError,
-  OriginTrialParseError, OriginTrials, PermissionsPolicy, PermissionsPolicyParseError, Pragma,
-  PragmaParseError, PreferenceApplied, Priority, ProxyAuthenticate, ProxyAuthenticateParseError,
-  ProxyAuthenticationInfo, ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError,
-  ReferrerPolicy, ReferrerPolicyToken, SecWebSocketAccept, SecWebSocketAcceptParseError,
-  SecWebSocketExtensions, SecWebSocketExtensionsParseError, SecWebSocketProtocol,
-  SecWebSocketProtocolParseError, SecWebSocketVersion, SecWebSocketVersionParseError, ServerTiming,
-  Signature, SignatureInput, SignatureInputParseError, SignatureParseError, SpeculationRules,
-  SpeculationRulesParseError, StrictTransportSecurity, StrictTransportSecurityParseError,
-  SupportsLoadingMode, SupportsLoadingModeParseError, Trailer, TransferEncoding,
-  TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError, Via, ViaParseError,
-  WantContentDigest, WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError,
-  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
+  DocumentPolicyValue, EntityTag, HttpClearSiteData, HttpContentLength, Im, ImMember, ImParameter,
+  ImParseError, KeepAlive, LinkValues, Location, LocationParseError, LockToken,
+  LockTokenParseError, MementoDatetime, MementoDatetimeParseError, Nel, NoVarySearch,
+  NoVarySearchParams, NoVarySearchParseError, OriginTrialParseError, OriginTrials,
+  PermissionsPolicy, PermissionsPolicyParseError, Pragma, PragmaParseError, PreferenceApplied,
+  Priority, ProxyAuthenticate, ProxyAuthenticateParseError, ProxyAuthenticationInfo,
+  ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError, ReferrerPolicy,
+  ReferrerPolicyToken, SecWebSocketAccept, SecWebSocketAcceptParseError, SecWebSocketExtensions,
+  SecWebSocketExtensionsParseError, SecWebSocketProtocol, SecWebSocketProtocolParseError,
+  SecWebSocketVersion, SecWebSocketVersionParseError, ServerTiming, Signature, SignatureInput,
+  SignatureInputParseError, SignatureParseError, SpeculationRules, SpeculationRulesParseError,
+  StrictTransportSecurity, StrictTransportSecurityParseError, SupportsLoadingMode,
+  SupportsLoadingModeParseError, Trailer, TransferEncoding, TransferEncodingParseError, Upgrade,
+  UpgradeParseError, Vary, VaryParseError, Via, ViaParseError, WantContentDigest, WantReprDigest,
+  Warning, WwwAuthenticate, WwwAuthenticateParseError, XContentTypeOptions,
+  XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentDisposition, ContentDispositionParseError, ContentLocation,
@@ -170,6 +171,10 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let _: AImParseError = AIm::parse("diffe, DIFFE").expect_err("duplicate A-IM should be rejected");
   let _: &[AImMember] = a_im.members();
   let _: Option<&AImParameter> = a_im.members()[1].parameters().first();
+  let im: Im = Im::parse("diffe, gzip;profile=compact").expect("IM should parse");
+  let _: ImParseError = Im::parse("diffe, DIFFE").expect_err("duplicate IM should be rejected");
+  let _: &[ImMember] = im.members();
+  let _: Option<&ImParameter> = im.members()[1].parameters().first();
   let want_repr_digest =
     WantReprDigest::parse("sha-256=10").expect("Want-Repr-Digest should parse");
   let priority = Priority::parse("u=1, i").expect("Priority should parse");
@@ -428,6 +433,9 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(a_im.members()[0].token(), "diffe");
   assert_eq!(a_im.members()[1].quality(), 300);
   assert_eq!(a_im.header_value(), "diffe, gzip;q=0.3;profile=compact");
+  assert_eq!(im.members()[0].token(), "diffe");
+  assert_eq!(im.members()[1].parameters()[0].name(), "profile");
+  assert_eq!(im.header_value(), "diffe, gzip;profile=compact");
   assert_eq!(want_repr_digest.entries()[0].preference(), 10);
   assert_eq!(priority.urgency(), Some(1));
   assert_eq!(signature_input.members()[0].label(), "sig1");

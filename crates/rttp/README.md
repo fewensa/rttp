@@ -785,6 +785,25 @@ not remove existing headers.
 These helpers declare and parse request metadata only. They do not select a
 preferred instance manipulation or apply delta encodings.
 
+## Bounded IM response metadata
+
+`HttpResponse::with_im(members)` validates an ordered list of
+instance-manipulation tokens, replaces any existing raw `IM` fields with one
+validated `IM` header, and returns a parse error for invalid, duplicate,
+empty, oversized, or over-limit members. `HttpResponse::im()` and client
+`Response::im()` parse attached `IM` fields in wire order into the shared
+`rttp-protocol` `Im` type (`HttpIm` on the server), and return `Ok(None)`
+when the header is absent. Present values expose `members()` with `token()`
+and `parameters()` per member. Each field value and the combined raw field
+set are limited to 64 KiB, the combined list is limited to 32 members, and
+each member is limited to 16 parameters. The `q` parameter name is rejected
+because it is reserved for A-IM. Malformed, duplicate, or over-limit values
+return an error while raw `IM` fields remain observable as ordinary headers.
+
+These helpers only declare and inspect response metadata. They do not decode
+or apply instance manipulations and do not require or synthesize the
+`226 IM Used` status.
+
 ## Bounded Accept-Encoding request metadata
 
 Server-side `Accept-Encoding` helpers expose request metadata through the
@@ -1418,6 +1437,7 @@ scheduling, or async accept loops.
 | Content-Language | `HttpContentLanguages`, `Request::content_language`, `HttpRequest::content_language`, `HttpResponse::with_content_language`, and `HttpResponse::content_language` parse or declare bounded `Content-Language` metadata | No automatic language negotiation, route selection, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
 | Accept-Charset | `HttpRequestAcceptCharsets`, `Request::accept_charset`, and `HttpRequest::accept_charset` parse bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |
 | A-IM | `HttpClient::a_im`/`a_im_with_q`/`a_im_value` emit bounded `A-IM` request metadata through the shared protocol type, and `Request::a_im`/`HttpRequest::a_im` parse received fields into `HttpAIm` while preserving raw headers on errors | No automatic delta-encoding selection, application, compression, or response transformation |
+| IM | `HttpResponse::with_im` declares one validated `IM` header replacing raw duplicates, `HttpResponse::im` and client `Response::im` parse attached `IM` fields into the shared protocol `Im` type while preserving raw headers on errors | No instance-manipulation decoding, inversion, or application, and no `226 IM Used` status policy |
 | Accept-Encoding | `HttpRequestAcceptEncodings`, `Request::accept_encoding`, and `HttpRequest::accept_encoding` parse bounded `Accept-Encoding` request metadata through the shared `rttp-protocol` type | No compression, decompression, content negotiation, retries, or transport changes |
 | Sec-GPC | `HttpClient::sec_gpc`, `Request::sec_gpc`, and `HttpRequest::sec_gpc` share the bounded protocol `Sec-GPC` `1`-signal representation and preserve raw values on errors | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
 | Pragma | `HttpClient::pragma`/`pragma_no_cache`, `Request::pragma`, `HttpRequest::pragma`, `HttpResponse::with_pragma`, and `HttpResponse::pragma` share the bounded protocol `Pragma` representation across client construction, server access, server response declaration, and client response access, combining fields in wire order and preserving raw headers on errors | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |
