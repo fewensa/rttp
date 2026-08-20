@@ -49,6 +49,30 @@ type is the shared authority for token, q-value, parameter, duplicate,
 member-count, and size validation. It reports declared request metadata only;
 it does not select a preferred instance manipulation or apply delta encodings.
 
+## Negotiate
+
+`negotiate` parses one or more RFC 2295 `Negotiate` field values into an
+ordered list of negotiate-directives. Each field value is bounded to 64 KiB,
+the combined raw field set is bounded to 64 KiB, and the combined member
+count is bounded to 32. The valueless `trans`, `vlist`, and `guess-small`
+flags match case-insensitively and emit lowercase; `*` matches exactly.
+`rvsa-version` is `1*DIGIT "." 1*DIGIT`, parsed into `u64` major and minor
+parts with overflow rejected and leading zeros normalized away, so `01.00`
+equals `1.0`. Extensions are RFC 9110 `token` or `token=token` pairs whose
+spelling is preserved; a known flag, `*`, or version-shaped name rejects a
+`=value`. Duplicate directives are rejected: at most one of each flag and
+`*`, one occurrence of each numeric version pair, and one extension per name
+compared case-insensitively, so `1.0, 2.5` is valid while `trans, TRANS` and
+`feature-x=a, FEATURE-X=b` are not. Empty members, empty or trailing comma
+lists, invalid tokens, forbidden ASCII control bytes other than HTAB,
+oversized values, oversized combined input, too many members, and a present
+header set that yields no member are errors. `header_value()` joins members
+with `", "` and emits canonical flags, versions, and accepted extension
+spelling. This type is the shared authority for token, version, feature
+value, duplicate, member-count, and size validation. It reports declared
+request metadata only; it does not select a variant, run transparent content
+negotiation, or change cache selection.
+
 ## Accept-Encoding
 
 `accept_encoding` parses one or more RFC 9110 `Accept-Encoding` field values

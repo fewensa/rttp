@@ -30,6 +30,7 @@ use rttp_protocol::if_schedule_tag_match::IfScheduleTagMatch;
 use rttp_protocol::if_unmodified_since::IfUnmodifiedSince;
 use rttp_protocol::lock_token::LockToken;
 use rttp_protocol::max_forwards::MaxForwards;
+use rttp_protocol::negotiate::Negotiate;
 use rttp_protocol::origin::Origin;
 use rttp_protocol::overwrite::Overwrite;
 use rttp_protocol::pragma::Pragma;
@@ -876,6 +877,21 @@ impl HttpClient {
     let timeout = Timeout::parse(value.as_ref())
       .map_err(|error| error::builder_with_message(error.to_string()))?;
     Ok(self.header(Header::new("Timeout", timeout.header_value())))
+  }
+
+  /// Set bounded RFC 2295 `Negotiate` request metadata.
+  ///
+  /// The value must be an ordered list of `trans`, `vlist`, `guess-small`,
+  /// `*`, `major.minor` remote variant selection algorithm versions, and
+  /// `token[=token]` extension directives. Members are normalized, duplicate
+  /// directives are rejected, and size and count bounds are enforced before
+  /// connecting. This only validates and emits the header; it does not select
+  /// a variant, run transparent content negotiation, or change cache
+  /// selection. Use `header` directly for unusual values.
+  pub fn negotiate<S: AsRef<str>>(&mut self, value: S) -> error::Result<&mut Self> {
+    let negotiate = Negotiate::parse(value.as_ref())
+      .map_err(|error| error::builder_with_message(error.to_string()))?;
+    Ok(self.header(Header::new("Negotiate", negotiate.header_value())))
   }
 
   /// Set bounded `If-Schedule-Tag-Match` request metadata.

@@ -794,6 +794,33 @@ not remove existing headers.
 These helpers declare and parse request metadata only. They do not select a
 preferred instance manipulation or apply delta encodings.
 
+## Bounded Negotiate request metadata
+
+`HttpClient::negotiate(value)` emits one bounded RFC 2295 `Negotiate` request
+field through the shared `rttp-protocol` primitive, replacing any existing
+same-name field before a socket is opened. Server-side `Request::negotiate()`
+and `HttpRequest::negotiate()` parse all received `Negotiate` fields in wire
+order into `HttpNegotiate` and return `Ok(None)` when the header is absent.
+Each `HttpNegotiateDirective` is a `trans`, `vlist`, `guess-small`, or `*`
+flag, a `major.minor` remote variant selection algorithm version, or a
+`token[=token]` extension. The shared protocol type is the authority for
+token, version, feature value, duplicate, member-count, and size validation.
+
+Parsing is bounded and validation-oriented. Each `Negotiate` field value and
+the combined raw field set are limited to 64 KiB, and the combined list is
+limited to 32 members. Flags match case-insensitively and emit lowercase,
+versions are normalized to `major.minor`, and duplicate directives are
+rejected: at most one of each flag and `*`, one occurrence of each version
+pair, and one extension per case-insensitive name. Empty members, malformed
+tokens, valued flags or versions, duplicates across one or more
+helper-parsed header fields, oversized values, and too many members return
+`HttpNegotiateParseError` from the helper. Raw
+`Request::header("Negotiate", ...)` values remain preserved exactly as
+ordinary headers; helper parse errors do not remove existing headers.
+
+These helpers declare and parse request metadata only. They do not select a
+variant, run transparent content negotiation, or change cache selection.
+
 ## Bounded Accept-Encoding request metadata
 
 Server-side `Accept-Encoding` helpers expose request metadata through the
@@ -1447,6 +1474,7 @@ scheduling, or async accept loops.
 | Content-Language | `HttpContentLanguages`, `Request::content_language`, `HttpRequest::content_language`, `HttpResponse::with_content_language`, and `HttpResponse::content_language` parse or declare bounded `Content-Language` metadata | No automatic language negotiation, route selection, locale fallback, variant matching, cache policy, retry, replay, redirect, or status-policy behavior |
 | Accept-Charset | `HttpRequestAcceptCharsets`, `Request::accept_charset`, and `HttpRequest::accept_charset` parse bounded `Accept-Charset` request metadata through the shared `rttp-protocol` type | No content negotiation, charset transcoding, body decoding, MIME sniffing, or response selection |
 | A-IM | `HttpClient::a_im`/`a_im_with_q`/`a_im_value` emit bounded `A-IM` request metadata through the shared protocol type, and `Request::a_im`/`HttpRequest::a_im` parse received fields into `HttpAIm` while preserving raw headers on errors | No automatic delta-encoding selection, application, compression, or response transformation |
+| Negotiate | `HttpClient::negotiate` emits bounded RFC 2295 `Negotiate` request metadata through the shared protocol type, and `Request::negotiate`/`HttpRequest::negotiate` parse received fields into `HttpNegotiate` while preserving raw headers on errors | No variant selection, transparent content negotiation, `Alternates`/`TCN` synthesis, or automatic cache selection |
 | Accept-Encoding | `HttpRequestAcceptEncodings`, `Request::accept_encoding`, and `HttpRequest::accept_encoding` parse bounded `Accept-Encoding` request metadata through the shared `rttp-protocol` type | No compression, decompression, content negotiation, retries, or transport changes |
 | Sec-GPC | `HttpClient::sec_gpc`, `Request::sec_gpc`, and `HttpRequest::sec_gpc` share the bounded protocol `Sec-GPC` `1`-signal representation and preserve raw values on errors | No consent inference, tracking-policy enforcement, legal policy, serving policy, retries, or browser state |
 | Pragma | `HttpClient::pragma`/`pragma_no_cache`, `Request::pragma`, `HttpRequest::pragma`, `HttpResponse::with_pragma`, and `HttpResponse::pragma` share the bounded protocol `Pragma` representation across client construction, server access, server response declaration, and client response access, combining fields in wire order and preserving raw headers on errors | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |
