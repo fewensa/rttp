@@ -17,14 +17,14 @@ use rttp_client::response::{
   PermissionsPolicy, PermissionsPolicyParseError, Pragma, PragmaParseError, PreferenceApplied,
   Priority, ProxyAuthenticate, ProxyAuthenticateParseError, ProxyAuthenticationInfo,
   ProxyAuthenticationInfoParseError, ProxyStatus, ProxyStatusParseError, ReferrerPolicy,
-  ReferrerPolicyToken, SecWebSocketAccept, SecWebSocketAcceptParseError, SecWebSocketVersion,
-  SecWebSocketVersionParseError, ServerTiming, Signature, SignatureInput, SignatureInputParseError,
-  SignatureParseError, SpeculationRules, SpeculationRulesParseError, StrictTransportSecurity,
-  StrictTransportSecurityParseError, SupportsLoadingMode, SupportsLoadingModeParseError, Trailer,
-  TransferEncoding, TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError,
-  Via, ViaParseError, WantContentDigest, WantReprDigest, Warning, WwwAuthenticate,
-  WwwAuthenticateParseError, XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions,
-  XFrameOptionsParseError,
+  ReferrerPolicyToken, SecWebSocketAccept, SecWebSocketAcceptParseError, SecWebSocketProtocol,
+  SecWebSocketProtocolParseError, SecWebSocketVersion, SecWebSocketVersionParseError, ServerTiming,
+  Signature, SignatureInput, SignatureInputParseError, SignatureParseError, SpeculationRules,
+  SpeculationRulesParseError, StrictTransportSecurity, StrictTransportSecurityParseError,
+  SupportsLoadingMode, SupportsLoadingModeParseError, Trailer, TransferEncoding,
+  TransferEncodingParseError, Upgrade, UpgradeParseError, Vary, VaryParseError, Via, ViaParseError,
+  WantContentDigest, WantReprDigest, Warning, WwwAuthenticate, WwwAuthenticateParseError,
+  XContentTypeOptions, XContentTypeOptionsParseError, XFrameOptions, XFrameOptionsParseError,
 };
 use rttp_client::response::{
   ContentDigest, ContentDisposition, ContentDispositionParseError, ContentLocation,
@@ -32,9 +32,10 @@ use rttp_client::response::{
   ServiceWorkerAllowedParseError,
 };
 use rttp_client::{
-  Baggage, BaggageMember, BaggageParseError, BaggageProperty, Depth, DepthParseError, HttpClient,
-  SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecGpc, SecGpcParseError, SecPurpose,
-  TraceParent, TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError,
+  Baggage, BaggageMember, BaggageParseError, BaggageProperty, Depth, DepthParseError, Destination,
+  DestinationParseError, HttpClient, SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser,
+  SecGpc, SecGpcParseError, SecPurpose, Timeout, TimeoutParseError, TimeoutType, TraceParent,
+  TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError,
   UpgradeInsecureRequests, UpgradeInsecureRequestsParseError, Via as ClientVia,
   ViaParseError as ClientViaParseError, XForwardedFor, XForwardedForParseError, XForwardedHost,
   XForwardedHostParseError, XForwardedProto, XForwardedProtoParseError,
@@ -94,8 +95,15 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   let _: ContentDprParseError =
     ContentDpr::parse("0").expect_err("zero Content-DPR should be rejected");
   let deprecation = Deprecation::parse("?1").expect("Deprecation should parse");
+  let destination = Destination::parse("https://dav.example.test/archive/report.txt")
+    .expect("Destination should parse");
+  let _: DestinationParseError =
+    Destination::parse("/relative").expect_err("relative Destination should be rejected");
   let depth = Depth::parse("infinity").expect("Depth should parse");
   let _: DepthParseError = Depth::parse("2").expect_err("malformed Depth should be rejected");
+  let timeout = Timeout::parse("Second-60, Infinite").expect("Timeout should parse");
+  let _: TimeoutParseError =
+    Timeout::parse("Second-60, second-60").expect_err("duplicate Timeout should be rejected");
   let x_forwarded_for =
     XForwardedFor::parse("192.0.2.60, unknown").expect("X-Forwarded-For should parse");
   let _: XForwardedForParseError =
@@ -187,6 +195,12 @@ fn response_facade_exports_representative_bounded_metadata_types() {
     SecWebSocketVersion::parse("13").expect("Sec-WebSocket-Version should parse");
   let _: SecWebSocketVersionParseError =
     SecWebSocketVersion::parse("8, 13").expect_err("unordered versions should be rejected");
+  let sec_websocket_protocol = SecWebSocketProtocol::parse("chat, superchat")
+    .expect("Sec-WebSocket-Protocol offers should parse");
+  let _: SecWebSocketProtocolParseError = SecWebSocketProtocol::parse_selection("chat, superchat")
+    .expect_err("multi-token selection should be rejected");
+  let sec_websocket_protocol_selection = SecWebSocketProtocol::from_selection("graphql-ws")
+    .expect("Sec-WebSocket-Protocol should select");
   let warning = Warning::parse(r#"110 - "Response is Stale""#).expect("Warning should parse");
   let nel =
     Nel::parse(r#"{"report_to":"network-errors","max_age":2592000}"#).expect("NEL should parse");
@@ -324,6 +338,14 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(content_dpr.header_value(), "1.5");
   assert_eq!(deprecation, Deprecation::Boolean(true));
   assert_eq!(deprecation.header_value(), "?1");
+  assert_eq!(
+    destination.as_str(),
+    "https://dav.example.test/archive/report.txt"
+  );
+  assert_eq!(
+    destination.header_value(),
+    "https://dav.example.test/archive/report.txt"
+  );
   assert_eq!(Depth::Infinity, depth);
   assert_eq!("infinity", depth.header_value());
   assert_eq!("192.0.2.60", x_forwarded_for.nodes()[0].value());
@@ -331,6 +353,11 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(["https".to_string()], x_forwarded_proto.schemes());
   assert_eq!("edge-a", via.members()[0].received_by());
   assert_eq!(Some("HTTP"), via.members()[1].protocol_name());
+  assert_eq!(
+    &[TimeoutType::Second(60), TimeoutType::Infinite],
+    timeout.members()
+  );
+  assert_eq!("second-60, infinite", timeout.header_value());
   assert_eq!(
     content_security_policy.header_value(),
     "default-src 'self'; object-src 'none'"
@@ -409,6 +436,13 @@ fn response_facade_exports_representative_bounded_metadata_types() {
   assert_eq!(sec_websocket_version.versions(), ["13"]);
   assert!(sec_websocket_version.contains("13"));
   assert_eq!(sec_websocket_version.header_value(), "13");
+  assert_eq!(sec_websocket_protocol.protocols(), ["chat", "superchat"]);
+  assert!(sec_websocket_protocol.contains("chat"));
+  assert_eq!(sec_websocket_protocol.header_value(), "chat, superchat");
+  assert_eq!(
+    sec_websocket_protocol_selection.selected(),
+    Some("graphql-ws")
+  );
   assert_eq!(warning.items()[0].code(), 110);
   assert_eq!(nel.max_age(), 2592000);
   assert_eq!(nel.report_to(), Some("network-errors"));
@@ -848,6 +882,49 @@ fn response_facade_parses_sec_websocket_version_metadata() {
   assert_eq!(versions.header_value(), "13, 8, 7");
   assert_eq!(response.header_value("Connection"), None);
   assert_eq!(response.header_value("Upgrade"), None);
+}
+
+#[test]
+fn response_facade_parses_sec_websocket_protocol_selection_metadata() {
+  let response = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 101 Switching Protocols\r\n",
+      "Sec-WebSocket-Protocol: graphql-transport-ws\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+
+  let protocol: SecWebSocketProtocol = response
+    .sec_websocket_protocol()
+    .expect("Sec-WebSocket-Protocol should parse")
+    .expect("Sec-WebSocket-Protocol should be present");
+
+  assert_eq!(protocol.protocols(), ["graphql-transport-ws"]);
+  assert_eq!(protocol.selected(), Some("graphql-transport-ws"));
+  assert_eq!(protocol.header_value(), "graphql-transport-ws");
+  assert_eq!(response.header_value("Connection"), None);
+  assert_eq!(response.header_value("Upgrade"), None);
+
+  let multi_token = rttp_client::response::Response::new(
+    rttp_client::types::RoUrl::with("http://example.test/"),
+    concat!(
+      "HTTP/1.1 101 Switching Protocols\r\n",
+      "Sec-WebSocket-Protocol: chat, superchat\r\n",
+      "\r\n"
+    )
+    .as_bytes()
+    .to_vec(),
+  )
+  .expect("response should parse");
+  assert!(multi_token.sec_websocket_protocol().is_err());
+  assert_eq!(
+    multi_token.header_value("Sec-WebSocket-Protocol"),
+    Some(&"chat, superchat".to_string())
+  );
 }
 
 #[test]

@@ -2389,6 +2389,101 @@ fn depth_helper_replaces_existing_fields() {
 }
 
 #[test]
+fn destination_helper_emits_canonical_webdav_metadata() {
+  for (value, expected) in [
+    (
+      "https://dav.example.test/archive/report.txt",
+      "https://dav.example.test/archive/report.txt",
+    ),
+    (
+      "http://example.test/collection/%E2%82%AC?copy=1",
+      "http://example.test/collection/%E2%82%AC?copy=1",
+    ),
+    (
+      " \thttps://dav.example.test/archive/report.txt\t ",
+      "https://dav.example.test/archive/report.txt",
+    ),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .method("COPY")
+        .url(format!("{}/documents/source.txt", base_url))
+        .destination(value)
+        .expect("Destination should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+    assert_eq!(Some(expected), header_value(&request, "Destination"));
+  }
+}
+
+#[test]
+fn destination_helper_replaces_existing_fields() {
+  let request = capture_request(|base_url| {
+    client()
+      .method("COPY")
+      .url(format!("{}/documents/source.txt", base_url))
+      .header(("Destination", "https://dav.example.test/old.txt"))
+      .destination("https://dav.example.test/archive/report.txt")
+      .expect("Destination should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("https://dav.example.test/archive/report.txt"),
+    header_value(&request, "Destination")
+  );
+}
+
+#[test]
+fn destination_helper_rejects_invalid_values_before_connecting() {
+  for value in [
+    "",
+    "/relative",
+    "../path",
+    "//example.test/path",
+    "https://example.test/a b",
+    "https://example.test/%zz",
+    "https://example.test/a\r\nX: y",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .method("COPY")
+        .url(format!("{}/documents/source.txt", base_url))
+        .destination(value)
+        .expect_err("invalid Destination should be rejected");
+
+      assert!(error.is_builder());
+    });
+
+    assert!(
+      request.is_empty(),
+      "invalid Destination helper input should not open a socket"
+    );
+  }
+
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .method("COPY")
+      .url(format!("{}/documents/source.txt", base_url))
+      .destination(oversized.as_str())
+      .expect_err("oversized Destination should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized Destination helper input should not open a socket"
+  );
+}
+
+#[test]
 fn depth_helper_rejects_invalid_values_before_connecting() {
   for value in ["", "2", "-1", "1.0", "0, 1", "infinite", "1\r\nX: y"] {
     let request = capture_optional_request(|base_url| {
@@ -2424,6 +2519,107 @@ fn depth_helper_rejects_invalid_values_before_connecting() {
     request.is_empty(),
     "oversized Depth helper input should not open a socket"
   );
+}
+
+#[test]
+fn timeout_helper_emits_canonical_webdav_metadata() {
+  for (value, expected) in [
+    ("Second-60", "second-60"),
+    ("Infinite", "infinite"),
+    (
+      " Second-60,\tInfinite, second-120 ",
+      "second-60, infinite, second-120",
+    ),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .method("LOCK")
+        .url(format!("{}/collection", base_url))
+        .timeout(value)
+        .expect("Timeout should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+    assert_eq!(Some(expected), header_value(&request, "Timeout"));
+  }
+}
+
+#[test]
+fn timeout_helper_replaces_existing_fields() {
+  let request = capture_request(|base_url| {
+    client()
+      .method("LOCK")
+      .url(format!("{}/collection", base_url))
+      .header(("Timeout", "Second-30"))
+      .timeout("Infinite")
+      .expect("Timeout should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(Some("infinite"), header_value(&request, "Timeout"));
+}
+
+#[test]
+fn timeout_helper_rejects_invalid_values_before_connecting() {
+  for value in [
+    "",
+    "Second-",
+    "Second--1",
+    "Second-1.0",
+    "Second-18446744073709551616",
+    "Second-60, second-60",
+    "Second-1\r\nX: y",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .method("LOCK")
+        .url(format!("{}/collection", base_url))
+        .timeout(value)
+        .expect_err("invalid Timeout should be rejected");
+
+      assert!(error.is_builder());
+    });
+
+    assert!(
+      request.is_empty(),
+      "invalid Timeout helper input should not open a socket"
+    );
+  }
+
+  let oversized = format!("{}Second-1", " ".repeat(64 * 1024 + 1));
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .method("LOCK")
+      .url(format!("{}/collection", base_url))
+      .timeout(oversized.as_str())
+      .expect_err("oversized Timeout should be rejected");
+
+    assert!(error.is_builder());
+  });
+
+  assert!(
+    request.is_empty(),
+    "oversized Timeout helper input should not open a socket"
+  );
+}
+
+#[test]
+fn manual_timeout_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .method("LOCK")
+      .url(format!("{}/collection", base_url))
+      .header(("Timeout", "unusual-value"))
+      .emit()
+      .expect("manual Timeout header should succeed");
+  });
+  let request = request_text(&request);
+
+  assert_eq!(Some("unusual-value"), header_value(&request, "Timeout"));
 }
 
 #[test]
@@ -2769,6 +2965,147 @@ fn raw_sec_websocket_version_header_remains_available_as_escape_hatch() {
   assert_eq!(
     Some("opaque custom value"),
     header_value(&request, "Sec-WebSocket-Version")
+  );
+}
+
+#[test]
+fn sec_websocket_protocol_helper_emits_canonical_metadata() {
+  for (value, expected) in [
+    ("chat", "chat"),
+    (" \tchat\t ", "chat"),
+    ("chat, superchat", "chat, superchat"),
+    (
+      " \tchat\t , superchat , graphql-ws\t ",
+      "chat, superchat, graphql-ws",
+    ),
+  ] {
+    let request = capture_request(|base_url| {
+      client()
+        .get()
+        .url(format!("{}/chat", base_url))
+        .sec_websocket_protocol(value)
+        .expect("sec websocket protocol should be accepted")
+        .emit()
+        .expect("request should succeed");
+    });
+    let request = request_text(&request);
+    assert_eq!(
+      Some(expected),
+      header_value(&request, "Sec-WebSocket-Protocol")
+    );
+    assert_eq!(None, header_value(&request, "Upgrade"));
+    assert_ne!(
+      Some("Upgrade"),
+      header_value(&request, "Connection"),
+      "typed Sec-WebSocket-Protocol must not emit Connection: Upgrade"
+    );
+  }
+}
+
+#[test]
+fn sec_websocket_protocol_helper_replaces_existing_fields() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/chat", base_url))
+      .header(("Sec-WebSocket-Protocol", "legacy"))
+      .sec_websocket_protocol("chat, superchat")
+      .expect("sec websocket protocol should be accepted")
+      .emit()
+      .expect("request should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("chat, superchat"),
+    header_value(&request, "Sec-WebSocket-Protocol")
+  );
+  assert_eq!(
+    1,
+    request
+      .lines()
+      .filter(|line| line
+        .to_ascii_lowercase()
+        .starts_with("sec-websocket-protocol:"))
+      .count(),
+    "the typed helper must replace an existing same-name field"
+  );
+  assert_eq!(None, header_value(&request, "Upgrade"));
+  assert_ne!(
+    Some("Upgrade"),
+    header_value(&request, "Connection"),
+    "typed Sec-WebSocket-Protocol must not emit Connection: Upgrade"
+  );
+}
+
+#[test]
+fn sec_websocket_protocol_helper_rejects_invalid_values_before_connecting() {
+  for value in [
+    "",
+    " ",
+    ",",
+    "chat,",
+    "chat,,superchat",
+    "not a token",
+    "chat;foo",
+    "chat/1",
+    "chat, chat",
+    "chat\r\nX-Injected: 1",
+    "chat\0value",
+    "chat\u{7f}value",
+    "chat\u{80}value",
+  ] {
+    let request = capture_optional_request(|base_url| {
+      let mut client = client();
+      let error = client
+        .get()
+        .url(format!("{}/chat", base_url))
+        .sec_websocket_protocol(value)
+        .expect_err("invalid sec websocket protocol should be rejected");
+      assert!(error.is_builder());
+      if !value.trim().is_empty() {
+        assert!(!error.to_string().contains(value));
+      }
+    });
+    assert!(
+      request.is_empty(),
+      "invalid sec websocket protocol must not open a socket"
+    );
+  }
+}
+
+#[test]
+fn sec_websocket_protocol_helper_rejects_oversized_values_before_connecting() {
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let request = capture_optional_request(|base_url| {
+    let mut client = client();
+    let error = client
+      .get()
+      .url(format!("{}/chat", base_url))
+      .sec_websocket_protocol(oversized.as_str())
+      .expect_err("oversized sec websocket protocol should be rejected");
+    assert!(error.is_builder());
+    assert!(!error.to_string().contains(&oversized[..64]));
+  });
+  assert!(
+    request.is_empty(),
+    "oversized sec websocket protocol must not open a socket"
+  );
+}
+
+#[test]
+fn raw_sec_websocket_protocol_header_remains_available_as_escape_hatch() {
+  let request = capture_request(|base_url| {
+    client()
+      .get()
+      .url(format!("{}/chat", base_url))
+      .header(("Sec-WebSocket-Protocol", "opaque custom value"))
+      .emit()
+      .expect("manual Sec-WebSocket-Protocol header should succeed");
+  });
+  let request = request_text(&request);
+  assert_eq!(
+    Some("opaque custom value"),
+    header_value(&request, "Sec-WebSocket-Protocol")
   );
 }
 

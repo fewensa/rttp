@@ -7,23 +7,25 @@ use rttp::server::{
   HttpContentRangeParseError, HttpCrossOriginEmbedderPolicy,
   HttpCrossOriginEmbedderPolicyReportOnly, HttpCrossOriginOpenerPolicy,
   HttpCrossOriginOpenerPolicyReportOnly, HttpCrossOriginResourcePolicy, HttpDeprecation,
-  HttpDeprecationParseError, HttpDepth, HttpDepthParseError, HttpEntityTag, HttpExpectations,
-  HttpIdempotencyKey, HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfUnmodifiedSince,
-  HttpMaxForwards, HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNel,
-  HttpOriginTrialParseError, HttpOriginTrials, HttpPermissionsPolicy,
-  HttpPermissionsPolicyParseError, HttpPragma, HttpPragmaParseError, HttpProxyAuthorization,
-  HttpProxyStatus, HttpProxyStatusParseError, HttpRequestAcceptCharsets, HttpResponse,
-  HttpSaveData, HttpSecGpc, HttpSecGpcParseError, HttpSecWebSocketAccept,
-  HttpSecWebSocketAcceptParseError, HttpSecWebSocketKey, HttpSecWebSocketKeyParseError,
+  HttpDeprecationParseError, HttpDepth, HttpDepthParseError, HttpDestination,
+  HttpDestinationParseError, HttpEntityTag, HttpExpectations, HttpIdempotencyKey,
+  HttpIdempotencyKeyParseError, HttpIfModifiedSince, HttpIfUnmodifiedSince, HttpMaxForwards,
+  HttpMementoDatetime, HttpMementoDatetimeParseError, HttpNel, HttpOriginTrialParseError,
+  HttpOriginTrials, HttpPermissionsPolicy, HttpPermissionsPolicyParseError, HttpPragma,
+  HttpPragmaParseError, HttpProxyAuthorization, HttpProxyStatus, HttpProxyStatusParseError,
+  HttpRequestAcceptCharsets, HttpResponse, HttpSaveData, HttpSecGpc, HttpSecGpcParseError,
+  HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError, HttpSecWebSocketKey,
+  HttpSecWebSocketKeyParseError, HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError,
   HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError, HttpServiceWorkerAllowed,
   HttpServiceWorkerAllowedParseError, HttpSignature, HttpSignatureInput,
   HttpSignatureInputBareItem, HttpSignatureInputComponent, HttpSignatureInputEntry,
   HttpSignatureInputParameter, HttpSignatureInputParseError, HttpSignatureParseError,
   HttpSpeculationRules, HttpSpeculationRulesParseError, HttpSunsetParseError,
-  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpUpgrade,
-  HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError, HttpUpgradeParseError,
-  HttpVia, HttpViaParseError, HttpXForwardedFor, HttpXForwardedForParseError, HttpXForwardedHost,
-  HttpXForwardedHostParseError, HttpXForwardedProto, HttpXForwardedProtoParseError,
+  HttpSupportsLoadingMode, HttpSupportsLoadingModeParseError, HttpTimeout, HttpTimeoutParseError,
+  HttpTimeoutType, HttpUpgrade, HttpUpgradeInsecureRequests, HttpUpgradeInsecureRequestsParseError,
+  HttpUpgradeParseError, HttpVia, HttpViaParseError, HttpXForwardedFor,
+  HttpXForwardedForParseError, HttpXForwardedHost, HttpXForwardedHostParseError,
+  HttpXForwardedProto, HttpXForwardedProtoParseError,
 };
 use std::io::Write;
 use std::net::SocketAddr;
@@ -133,9 +135,18 @@ fn compatibility_facade_exports_client_metadata_types() {
     rttp_client::response::Deprecation::parse("?1").expect("Deprecation should parse");
   let _: rttp::DeprecationParseError = rttp_client::response::Deprecation::parse("true")
     .expect_err("historical Deprecation token should be rejected");
+  let destination: rttp::Destination =
+    rttp::Destination::parse("https://dav.example.test/archive/report.txt")
+      .expect("Destination should parse");
+  let _: rttp::DestinationParseError =
+    rttp::Destination::parse("/relative").expect_err("relative Destination should be rejected");
   let depth: rttp::Depth = rttp::Depth::parse("infinity").expect("Depth should parse");
   let _: rttp::DepthParseError =
     rttp::Depth::parse("2").expect_err("malformed Depth should be rejected");
+  let timeout: rttp::Timeout =
+    rttp::Timeout::parse("Second-60, Infinite").expect("Timeout should parse");
+  let _: rttp::TimeoutParseError =
+    rttp::Timeout::parse("Second-60, second-60").expect_err("duplicate Timeout should be rejected");
   let x_forwarded_for: rttp::XForwardedFor =
     rttp::XForwardedFor::parse("192.0.2.60, unknown").expect("X-Forwarded-For should parse");
   let _: rttp::XForwardedForParseError =
@@ -297,6 +308,15 @@ fn compatibility_facade_exports_client_metadata_types() {
   let _: rttp::SecWebSocketVersionParseError =
     rttp_client::response::SecWebSocketVersion::parse("8, 13")
       .expect_err("unordered Sec-WebSocket-Version should be rejected");
+  let sec_websocket_protocol: rttp::SecWebSocketProtocol =
+    rttp_client::response::SecWebSocketProtocol::parse("chat, superchat")
+      .expect("Sec-WebSocket-Protocol offers should parse");
+  let _: rttp::SecWebSocketProtocolParseError =
+    rttp_client::response::SecWebSocketProtocol::parse_selection("chat, superchat")
+      .expect_err("multi-token Sec-WebSocket-Protocol selection should be rejected");
+  let sec_websocket_protocol_selection: rttp::SecWebSocketProtocol =
+    rttp_client::response::SecWebSocketProtocol::from_selection("graphql-ws")
+      .expect("Sec-WebSocket-Protocol should select");
   let fetch_site: rttp::SecFetchSite =
     rttp_client::SecFetchSite::parse("same-origin").expect("Sec-Fetch-Site should parse");
   let sec_purpose: rttp::SecPurpose =
@@ -351,6 +371,14 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(content_dpr.header_value(), "1.5");
   assert_eq!(deprecation, rttp::Deprecation::Boolean(true));
   assert_eq!(deprecation.header_value(), "?1");
+  assert_eq!(
+    destination.as_str(),
+    "https://dav.example.test/archive/report.txt"
+  );
+  assert_eq!(
+    destination.header_value(),
+    "https://dav.example.test/archive/report.txt"
+  );
   assert_eq!(rttp::Depth::Infinity, depth);
   assert_eq!("infinity", depth.header_value());
   assert_eq!("192.0.2.60", x_forwarded_for.nodes()[0].value());
@@ -358,6 +386,11 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(["https".to_string()], x_forwarded_proto.schemes());
   assert_eq!("edge-a", via.members()[0].received_by());
   assert_eq!(Some("HTTP"), via.members()[1].protocol_name());
+  assert_eq!(
+    &[rttp::TimeoutType::Second(60), rttp::TimeoutType::Infinite],
+    timeout.members()
+  );
+  assert_eq!("second-60, infinite", timeout.header_value());
   assert_eq!(
     memento_datetime.header_value(),
     "Sun, 06 Nov 1994 08:49:37 GMT"
@@ -469,6 +502,13 @@ fn compatibility_facade_exports_client_metadata_types() {
   assert_eq!(sec_websocket_version.versions(), ["13"]);
   assert!(sec_websocket_version.contains("13"));
   assert_eq!(sec_websocket_version.header_value(), "13");
+  assert_eq!(sec_websocket_protocol.protocols(), ["chat", "superchat"]);
+  assert!(sec_websocket_protocol.contains("chat"));
+  assert_eq!(sec_websocket_protocol.header_value(), "chat, superchat");
+  assert_eq!(
+    sec_websocket_protocol_selection.selected(),
+    Some("graphql-ws")
+  );
   assert_eq!("tenant", baggage_member.key());
   assert_eq!("source", baggage_property.key());
   assert_eq!(fetch_site.header_value(), "same-origin");
@@ -917,6 +957,132 @@ fn compatibility_facade_roundtrips_depth_request_metadata_without_policy() {
 
 #[test]
 #[cfg(feature = "client")]
+fn compatibility_facade_roundtrips_timeout_request_metadata_without_policy() {
+  let (addr, handle) = spawn_representation_metadata_response_server(
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  );
+  let response = rttp::Http::client()
+    .method("LOCK")
+    .url(format!("http://{addr}/collection"))
+    .timeout("Second-60, Infinite")
+    .expect("Timeout should be accepted")
+    .emit()
+    .expect("client request should complete");
+  let captured_request = handle.join().expect("Timeout capture server should join");
+  let captured_request_text =
+    String::from_utf8(captured_request.clone()).expect("request should be utf-8");
+
+  assert_eq!(
+    Some("second-60, infinite"),
+    header_value(&captured_request_text, "Timeout")
+  );
+  assert_eq!(200, response.code());
+
+  let server_request =
+    rttp::server::HttpRequest::parse(&captured_request).expect("server request should parse");
+  let timeout: HttpTimeout = server_request
+    .timeout()
+    .expect("server Timeout should parse")
+    .expect("server Timeout should be present");
+
+  assert_eq!(
+    &[HttpTimeoutType::Second(60), HttpTimeoutType::Infinite],
+    timeout.members()
+  );
+  assert_eq!("second-60, infinite", timeout.header_value());
+
+  let malformed = rttp::server::HttpRequest::parse(
+    b"LOCK /collection HTTP/1.1\r\nHost: example.test\r\nTimeout: Second-\r\n\r\n",
+  )
+  .expect("malformed Timeout request should still parse");
+  assert!(malformed.timeout().is_err());
+  assert_eq!(Some("Second-"), malformed.header("Timeout"));
+
+  let overflow = rttp::server::HttpRequest::parse(
+    b"LOCK /collection HTTP/1.1\r\nHost: example.test\r\nTimeout: Second-18446744073709551616\r\n\r\n",
+  )
+  .expect("overflow Timeout request should still parse");
+  assert!(overflow.timeout().is_err());
+
+  let duplicate = rttp::server::HttpRequest::parse(
+    b"LOCK /collection HTTP/1.1\r\nHost: example.test\r\nTimeout: Second-60\r\ntimeout: second-60\r\n\r\n",
+  )
+  .expect("duplicate Timeout request should still parse");
+  assert!(duplicate.timeout().is_err());
+  assert_eq!(Some("Second-60"), duplicate.header("Timeout"));
+
+  assert!(
+    rttp::Timeout::parse(format!("{}Second-1", " ".repeat(64 * 1024 + 1))).is_err(),
+    "oversized Timeout values must fail closed"
+  );
+}
+
+#[test]
+#[cfg(feature = "client")]
+fn compatibility_facade_roundtrips_destination_request_metadata_without_policy() {
+  let (addr, handle) = spawn_representation_metadata_response_server(
+    b"HTTP/1.1 201 Created\r\nContent-Length: 0\r\n\r\n".to_vec(),
+  );
+  let response = rttp::Http::client()
+    .method("COPY")
+    .url(format!("http://{addr}/documents/source.txt"))
+    .destination(" https://dav.example.test/archive/source.txt ")
+    .expect("Destination should be accepted")
+    .emit()
+    .expect("client request should complete");
+  let captured_request = handle
+    .join()
+    .expect("Destination capture server should join");
+  let captured_request_text =
+    String::from_utf8(captured_request.clone()).expect("request should be utf-8");
+
+  assert_eq!(
+    Some("https://dav.example.test/archive/source.txt"),
+    header_value(&captured_request_text, "Destination")
+  );
+  assert_eq!(201, response.code());
+
+  let server_request =
+    rttp::server::HttpRequest::parse(&captured_request).expect("server request should parse");
+  let destination: HttpDestination = server_request
+    .destination()
+    .expect("server Destination should parse")
+    .expect("server Destination should be present");
+
+  assert_eq!(
+    "https://dav.example.test/archive/source.txt",
+    destination.as_str()
+  );
+  assert_eq!(
+    "https://dav.example.test/archive/source.txt",
+    destination.header_value()
+  );
+
+  let malformed = rttp::server::HttpRequest::parse(
+    b"COPY /documents/source.txt HTTP/1.1\r\nHost: example.test\r\nDestination: /relative\r\n\r\n",
+  )
+  .expect("malformed Destination request should still parse");
+  assert!(malformed.destination().is_err());
+  assert_eq!(Some("/relative"), malformed.header("Destination"));
+
+  let duplicate = rttp::server::HttpRequest::parse(
+    b"COPY /documents/source.txt HTTP/1.1\r\nHost: example.test\r\nDestination: https://dav.example.test/one\r\ndestination: https://dav.example.test/two\r\n\r\n",
+  )
+  .expect("duplicate Destination request should still parse");
+  assert!(duplicate.destination().is_err());
+  assert_eq!(
+    Some("https://dav.example.test/one"),
+    duplicate.header("Destination")
+  );
+
+  assert!(
+    rttp::Destination::parse("a".repeat(64 * 1024 + 1)).is_err(),
+    "oversized Destination values must fail closed"
+  );
+}
+
+#[test]
+#[cfg(feature = "client")]
 fn client_accept_encoding_helpers_parse_through_shared_server_type() {
   let (addr, handle) = spawn_representation_metadata_response_server(
     b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec(),
@@ -1017,8 +1183,17 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
       .expect("Proxy-Authorization should parse");
   let max_forwards: HttpMaxForwards =
     HttpMaxForwards::parse("0").expect("Max-Forwards should parse");
+  let destination: HttpDestination =
+    HttpDestination::parse("https://dav.example.test/archive/report.txt")
+      .expect("Destination should parse");
+  let destination_error: Result<HttpDestination, HttpDestinationParseError> =
+    HttpDestination::parse("/relative");
   let depth: HttpDepth = HttpDepth::parse("infinity").expect("Depth should parse");
   let depth_error: Result<HttpDepth, HttpDepthParseError> = HttpDepth::parse("2");
+  let timeout: HttpTimeout =
+    HttpTimeout::parse("Second-60, Infinite").expect("Timeout should parse");
+  let timeout_error: Result<HttpTimeout, HttpTimeoutParseError> =
+    HttpTimeout::parse("Second-60, second-60");
   let expectations: HttpExpectations =
     HttpExpectations::parse("100-continue, preview").expect("Expect should parse");
   let idempotency_key: HttpIdempotencyKey =
@@ -1027,6 +1202,9 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpSecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==").expect("Sec-WebSocket-Key should parse");
   let sec_websocket_version: HttpSecWebSocketVersion =
     HttpSecWebSocketVersion::parse("13").expect("Sec-WebSocket-Version should parse");
+  let sec_websocket_protocol: HttpSecWebSocketProtocol =
+    HttpSecWebSocketProtocol::parse("chat, superchat")
+      .expect("Sec-WebSocket-Protocol offers should parse");
   let sec_websocket_accept = HttpSecWebSocketAccept::derive_from_key(&sec_websocket_key);
   let baggage: HttpBaggage =
     HttpBaggage::parse("tenant=acme;source=gateway").expect("baggage should parse");
@@ -1061,6 +1239,8 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
     HttpSecWebSocketKey::parse("the sample nonce");
   let _: Result<HttpSecWebSocketVersion, HttpSecWebSocketVersionParseError> =
     HttpSecWebSocketVersion::parse("8, 13");
+  let _: Result<HttpSecWebSocketProtocol, HttpSecWebSocketProtocolParseError> =
+    HttpSecWebSocketProtocol::parse_selection("chat, superchat");
   let _: Result<HttpSecWebSocketAccept, HttpSecWebSocketAcceptParseError> =
     HttpSecWebSocketAccept::parse("the accept value");
   let if_modified_since: HttpIfModifiedSince =
@@ -1159,9 +1339,24 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(proxy_authorization.header_value(), "Basic cHJveHk6c2VjcmV0");
   assert_eq!(max_forwards.value(), 0);
   assert_eq!(max_forwards.header_value(), "0");
+  assert_eq!(
+    destination.as_str(),
+    "https://dav.example.test/archive/report.txt"
+  );
+  assert_eq!(
+    destination.header_value(),
+    "https://dav.example.test/archive/report.txt"
+  );
+  assert!(destination_error.is_err());
   assert_eq!(HttpDepth::Infinity, depth);
   assert_eq!("infinity", depth.header_value());
   assert!(depth_error.is_err());
+  assert_eq!(
+    &[HttpTimeoutType::Second(60), HttpTimeoutType::Infinite],
+    timeout.members()
+  );
+  assert_eq!("second-60, infinite", timeout.header_value());
+  assert!(timeout_error.is_err());
   assert!(expectations.expects_continue());
   assert_eq!(["preview"], expectations.unsupported());
   assert_eq!(expectations.header_value(), "100-continue, preview");
@@ -1174,6 +1369,10 @@ fn compatibility_facade_keeps_server_metadata_in_the_server_module() {
   assert_eq!(sec_websocket_version.versions(), ["13"]);
   assert!(sec_websocket_version.contains("13"));
   assert_eq!(sec_websocket_version.header_value(), "13");
+  assert_eq!(sec_websocket_protocol.protocols(), ["chat", "superchat"]);
+  assert!(sec_websocket_protocol.contains("chat"));
+  assert_eq!(sec_websocket_protocol.header_value(), "chat, superchat");
+  assert_eq!(sec_websocket_protocol.selected(), None);
   assert_eq!(
     "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=",
     sec_websocket_accept.as_str()

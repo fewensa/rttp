@@ -13,7 +13,7 @@ use rttp::server::{
   HttpReferrerPolicy, HttpReportingEndpoints, HttpRequest, HttpRequestAcceptCharsets,
   HttpRequestAcceptEncodings, HttpRequestCacheControl, HttpRequestTe, HttpResponse,
   HttpResponseCacheControl, HttpResponseContentEncodings, HttpRetryAfter, HttpServerTiming,
-  HttpVary, HttpVia,
+  HttpTimeoutType, HttpVary, HttpVia,
 };
 
 #[test]
@@ -1402,6 +1402,63 @@ fn request_depth_is_optional_and_rejects_invalid_metadata() {
 }
 
 #[test]
+fn request_timeout_is_optional_and_rejects_invalid_metadata() {
+  let absent = parse_request("LOCK / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent.timeout().expect("missing Timeout should be valid")
+  );
+
+  let valid =
+    parse_request("LOCK / HTTP/1.1\r\nHost: example.test\r\nTimeout: Second-60, Infinite\r\n\r\n");
+  let timeout = valid
+    .timeout()
+    .expect("Timeout should parse")
+    .expect("Timeout should be present");
+  assert_eq!(
+    &[HttpTimeoutType::Second(60), HttpTimeoutType::Infinite],
+    timeout.members()
+  );
+  assert_eq!("second-60, infinite", timeout.header_value());
+
+  for value in [
+    "",
+    "Second-",
+    "Second--1",
+    "Second-1.0",
+    "Second-18446744073709551616",
+    "Second-60, second-60",
+    "Infinite, infinite",
+  ] {
+    let request = parse_request(&format!(
+      "LOCK / HTTP/1.1\r\nHost: example.test\r\nTimeout: {value}\r\n\r\n"
+    ));
+    assert!(request.timeout().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Timeout"));
+  }
+
+  assert!(
+    rttp::server::HttpTimeout::parse(format!("{}Second-1", " ".repeat(64 * 1024 + 1))).is_err()
+  );
+
+  let split = parse_request(concat!(
+    "LOCK / HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Timeout: Second-60\r\n",
+    "timeout: Infinite\r\n",
+    "\r\n"
+  ));
+  let split_timeout = split
+    .timeout()
+    .expect("split Timeout should parse")
+    .expect("Timeout should be present");
+  assert_eq!(
+    &[HttpTimeoutType::Second(60), HttpTimeoutType::Infinite],
+    split_timeout.members()
+  );
+}
+
+#[test]
 fn request_pragma_parses_bounded_metadata_without_cache_policy() {
   let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
   assert_eq!(
@@ -1567,6 +1624,68 @@ fn request_sec_websocket_version_is_optional_and_rejects_invalid_metadata() {
   ));
   assert!(duplicate.sec_websocket_version().is_err());
   assert_eq!(Some("13"), duplicate.header("Sec-WebSocket-Version"));
+}
+
+#[test]
+fn request_sec_websocket_protocol_is_optional_and_rejects_invalid_metadata() {
+  let absent = parse_request("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  assert_eq!(
+    None,
+    absent
+      .sec_websocket_protocol()
+      .expect("missing Sec-WebSocket-Protocol should be valid")
+  );
+
+  for value in ["chat", "chat, superchat"] {
+    let valid = parse_request(&format!(
+      "GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Protocol: {value}\r\n\r\n"
+    ));
+    let parsed = valid
+      .sec_websocket_protocol()
+      .expect("value should parse")
+      .expect("Sec-WebSocket-Protocol should be present");
+    assert_eq!(value, parsed.header_value());
+    assert!(parsed.contains("chat"));
+  }
+
+  let multi_token = parse_request(concat!(
+    "GET /chat HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Sec-WebSocket-Protocol: chat, superchat\r\n",
+    "\r\n"
+  ));
+  assert_eq!(
+    None,
+    multi_token
+      .sec_websocket_protocol()
+      .expect("offers should parse")
+      .expect("offers should be present")
+      .selected(),
+    "a multi-token offer is not a selection"
+  );
+
+  for value in ["", ",", "not a token", "chat;foo", "chat, chat"] {
+    let request = parse_request(&format!(
+      "GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Protocol: {value}\r\n\r\n"
+    ));
+    assert!(
+      request.sec_websocket_protocol().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(Some(value), request.header("Sec-WebSocket-Protocol"));
+  }
+
+  assert!(rttp::server::HttpSecWebSocketProtocol::parse("a".repeat(64 * 1024 + 1)).is_err());
+
+  let duplicate = parse_request(concat!(
+    "GET /chat HTTP/1.1\r\n",
+    "Host: example.test\r\n",
+    "Sec-WebSocket-Protocol: chat\r\n",
+    "sec-websocket-protocol: chat\r\n",
+    "\r\n"
+  ));
+  assert!(duplicate.sec_websocket_protocol().is_err());
+  assert_eq!(Some("chat"), duplicate.header("Sec-WebSocket-Protocol"));
 }
 
 #[test]

@@ -29,6 +29,7 @@ use rttp_protocol::cross_origin_opener_policy::CrossOriginOpenerPolicy;
 use rttp_protocol::cross_origin_opener_policy_report_only::CrossOriginOpenerPolicyReportOnly;
 use rttp_protocol::deprecation::Deprecation;
 use rttp_protocol::depth::Depth;
+use rttp_protocol::destination::Destination;
 use rttp_protocol::document_policy::{DocumentPolicy, DocumentPolicyParseError};
 use rttp_protocol::document_policy_report_only::{
   DocumentPolicyReportOnly, DocumentPolicyReportOnlyParseError,
@@ -64,6 +65,7 @@ use rttp_protocol::save_data::SaveData;
 use rttp_protocol::sec_gpc::SecGpc;
 use rttp_protocol::sec_websocket_accept::SecWebSocketAccept;
 use rttp_protocol::sec_websocket_key::SecWebSocketKey;
+use rttp_protocol::sec_websocket_protocol::{SecWebSocketProtocol, SecWebSocketProtocolParseError};
 use rttp_protocol::sec_websocket_version::SecWebSocketVersion;
 use rttp_protocol::service_worker_allowed::ServiceWorkerAllowed;
 use rttp_protocol::signature::{Signature, SignatureParseError};
@@ -71,6 +73,7 @@ use rttp_protocol::signature_input::{SignatureInput, SignatureInputParseError};
 use rttp_protocol::strict_transport_security::StrictTransportSecurity;
 use rttp_protocol::supports_loading_mode::SupportsLoadingMode;
 use rttp_protocol::te::Te;
+use rttp_protocol::timeout::{Timeout, TimeoutType};
 use rttp_protocol::timing_allow_origin::TimingAllowOrigin;
 use rttp_protocol::trace_context::{TraceParent, TraceState};
 use rttp_protocol::transfer_encoding::TransferEncoding;
@@ -119,7 +122,10 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let keep_alive = KeepAlive::parse("timeout=5, max=100").expect("Keep-Alive should parse");
   let location = Location::parse("../login?next=%2Fdashboard").expect("Location should parse");
   let max_forwards = MaxForwards::parse("0").expect("Max-Forwards should parse");
+  let destination = Destination::parse("https://dav.example.test/archive/report.txt")
+    .expect("Destination should parse");
   let depth = Depth::parse("infinity").expect("Depth should parse");
+  let timeout = Timeout::parse("Second-60, Infinite").expect("Timeout should parse");
   let idempotency_key = IdempotencyKey::parse("charge-2026-08-19-9f3c")
     .expect("Idempotency-Key request metadata should parse");
   let sec_websocket_key = SecWebSocketKey::parse("dGhlIHNhbXBsZSBub25jZQ==")
@@ -127,6 +133,12 @@ fn protocol_exports_representative_bounded_metadata_types() {
   let sec_websocket_version =
     SecWebSocketVersion::parse("13").expect("Sec-WebSocket-Version metadata should parse");
   let sec_websocket_accept = SecWebSocketAccept::derive_from_key(&sec_websocket_key);
+  let sec_websocket_protocol = SecWebSocketProtocol::parse("chat, superchat")
+    .expect("Sec-WebSocket-Protocol offers should parse");
+  let sec_websocket_protocol_selection =
+    SecWebSocketProtocol::from_selection("chat").expect("Sec-WebSocket-Protocol should select");
+  let _: SecWebSocketProtocolParseError = SecWebSocketProtocol::parse_selection("chat, superchat")
+    .expect_err("multi-token Sec-WebSocket-Protocol selection should be rejected");
   let if_modified_since = IfModifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
     .expect("If-Modified-Since should parse");
   let if_unmodified_since = IfUnmodifiedSince::parse("Sun, 06 Nov 1994 08:49:37 GMT")
@@ -335,8 +347,21 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(location.as_str(), "../login?next=%2Fdashboard");
   assert_eq!(max_forwards.value(), 0);
   assert_eq!(max_forwards.header_value(), "0");
+  assert_eq!(
+    destination.as_str(),
+    "https://dav.example.test/archive/report.txt"
+  );
+  assert_eq!(
+    destination.header_value(),
+    "https://dav.example.test/archive/report.txt"
+  );
   assert_eq!(Depth::Infinity, depth);
   assert_eq!("infinity", depth.header_value());
+  assert_eq!(
+    &[TimeoutType::Second(60), TimeoutType::Infinite],
+    timeout.members()
+  );
+  assert_eq!("second-60, infinite", timeout.header_value());
   assert_eq!(idempotency_key.as_str(), "charge-2026-08-19-9f3c");
   assert_eq!(idempotency_key.header_value(), "charge-2026-08-19-9f3c");
   assert!(!format!("{idempotency_key:?}").contains("charge-2026-08-19-9f3c"));
@@ -346,6 +371,11 @@ fn protocol_exports_representative_bounded_metadata_types() {
   assert_eq!(sec_websocket_version.versions(), ["13"]);
   assert!(sec_websocket_version.contains("13"));
   assert_eq!(sec_websocket_version.header_value(), "13");
+  assert_eq!(sec_websocket_protocol.protocols(), ["chat", "superchat"]);
+  assert!(sec_websocket_protocol.contains("chat"));
+  assert_eq!(sec_websocket_protocol.header_value(), "chat, superchat");
+  assert_eq!(sec_websocket_protocol_selection.selected(), Some("chat"));
+  assert_eq!(sec_websocket_protocol_selection.header_value(), "chat");
   assert_eq!(
     sec_websocket_accept.as_str(),
     "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="

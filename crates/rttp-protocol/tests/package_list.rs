@@ -24,6 +24,8 @@ fn package_includes_protocol_metadata_facade_test() {
     "tests/location.rs",
     "tests/max_forwards.rs",
     "tests/depth.rs",
+    "tests/destination.rs",
+    "tests/timeout.rs",
     "tests/idempotency_key.rs",
     "tests/if_modified_since.rs",
     "tests/if_unmodified_since.rs",
@@ -54,6 +56,7 @@ fn package_includes_protocol_metadata_facade_test() {
     "tests/sec_gpc.rs",
     "tests/sec_websocket_accept.rs",
     "tests/sec_websocket_key.rs",
+    "tests/sec_websocket_protocol.rs",
     "tests/sec_websocket_version.rs",
     "tests/service_worker_allowed.rs",
   ] {

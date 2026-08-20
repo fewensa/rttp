@@ -41,6 +41,9 @@ pub use rttp_protocol::connection::{
 pub use rttp_protocol::content_length::HttpContentLength;
 pub use rttp_protocol::cookie::{HttpCookiePair, HttpCookieParseError, HttpCookies};
 pub use rttp_protocol::depth::{Depth as HttpDepth, DepthParseError as HttpDepthParseError};
+pub use rttp_protocol::destination::{
+  Destination as HttpDestination, DestinationParseError as HttpDestinationParseError,
+};
 pub use rttp_protocol::entity_tag::{
   EntityTag as HttpEntityTag, EntityTagParseError as HttpEntityTagParseError,
 };
@@ -87,6 +90,10 @@ pub use rttp_protocol::sec_websocket_key::{
   SecWebSocketKey as HttpSecWebSocketKey,
   SecWebSocketKeyParseError as HttpSecWebSocketKeyParseError,
 };
+pub use rttp_protocol::sec_websocket_protocol::{
+  SecWebSocketProtocol as HttpSecWebSocketProtocol,
+  SecWebSocketProtocolParseError as HttpSecWebSocketProtocolParseError,
+};
 pub use rttp_protocol::sec_websocket_version::{
   SecWebSocketVersion as HttpSecWebSocketVersion,
   SecWebSocketVersionParseError as HttpSecWebSocketVersionParseError,
@@ -111,6 +118,10 @@ pub use rttp_protocol::signature_input::{
 };
 pub use rttp_protocol::te::{
   Te as HttpRequestTe, TeCoding as HttpTe, TeParseError as HttpTeParseError,
+};
+pub use rttp_protocol::timeout::{
+  Timeout as HttpTimeout, TimeoutParseError as HttpTimeoutParseError,
+  TimeoutType as HttpTimeoutType,
 };
 pub use rttp_protocol::trace_context::{
   TraceParent as HttpTraceParent, TraceParentParseError as HttpTraceParentParseError,
@@ -547,6 +558,26 @@ impl Request {
     HttpDepth::parse_values(values).map(Some)
   }
 
+  /// Parses received WebDAV `Destination` request metadata without resolving,
+  /// authorizing, or moving application resources.
+  pub fn destination(&self) -> Result<Option<HttpDestination>, HttpDestinationParseError> {
+    let values: Vec<&str> = self.headers_named("Destination").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDestination::parse_values(values).map(Some)
+  }
+
+  /// Parses received WebDAV `Timeout` request metadata without creating locks,
+  /// refreshing locks, or selecting an application timeout.
+  pub fn timeout(&self) -> Result<Option<HttpTimeout>, HttpTimeoutParseError> {
+    let values: Vec<&str> = self.headers_named("Timeout").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpTimeout::parse_values(values).map(Some)
+  }
+
   /// Parses exactly one opaque, bounded `Idempotency-Key` field as typed
   /// metadata. Duplicate fields are rejected to avoid ambiguous keys. This
   /// accessor does not retry requests, store keys, or apply idempotency
@@ -586,6 +617,20 @@ impl Request {
       return Ok(None);
     }
     HttpSecWebSocketVersion::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `Sec-WebSocket-Protocol` request metadata as offers in
+  /// preference order without choosing an application subprotocol or
+  /// switching protocols. Malformed fields return a parser error while raw
+  /// headers remain available.
+  pub fn sec_websocket_protocol(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketProtocol>, HttpSecWebSocketProtocolParseError> {
+    let values: Vec<&str> = self.headers_named("Sec-WebSocket-Protocol").collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketProtocol::parse_values(values).map(Some)
   }
 
   /// Parses received W3C `traceparent` request metadata without creating
@@ -2347,6 +2392,36 @@ impl HttpRequest {
     HttpDepth::parse_values(values).map(Some)
   }
 
+  /// Parses received WebDAV `Destination` request metadata without resolving,
+  /// authorizing, or moving application resources.
+  pub fn destination(&self) -> Result<Option<HttpDestination>, HttpDestinationParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Destination"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpDestination::parse_values(values).map(Some)
+  }
+
+  /// Parses received WebDAV `Timeout` request metadata without creating locks,
+  /// refreshing locks, or selecting an application timeout.
+  pub fn timeout(&self) -> Result<Option<HttpTimeout>, HttpTimeoutParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Timeout"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpTimeout::parse_values(values).map(Some)
+  }
+
   /// Parses exactly one opaque, bounded `Idempotency-Key` field as typed
   /// metadata. Duplicate fields are rejected to avoid ambiguous keys. This
   /// accessor does not retry requests, store keys, or apply idempotency
@@ -2401,6 +2476,25 @@ impl HttpRequest {
       return Ok(None);
     }
     HttpSecWebSocketVersion::parse_values(values).map(Some)
+  }
+
+  /// Parses bounded `Sec-WebSocket-Protocol` request metadata as offers in
+  /// preference order without choosing an application subprotocol or
+  /// switching protocols. Malformed fields return a parser error while raw
+  /// headers remain available.
+  pub fn sec_websocket_protocol(
+    &self,
+  ) -> Result<Option<HttpSecWebSocketProtocol>, HttpSecWebSocketProtocolParseError> {
+    let values: Vec<&str> = self
+      .headers
+      .iter()
+      .filter(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Protocol"))
+      .map(|header| header.value.as_str())
+      .collect();
+    if values.is_empty() {
+      return Ok(None);
+    }
+    HttpSecWebSocketProtocol::parse_values(values).map(Some)
   }
 
   /// Parses received W3C `traceparent` request metadata without creating

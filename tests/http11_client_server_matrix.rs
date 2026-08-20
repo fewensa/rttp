@@ -121,6 +121,44 @@ struct ObservedAcceptCharsetMetadata {
   raw: Option<String>,
 }
 
+#[derive(Debug, PartialEq)]
+struct ObservedTimeoutMetadata {
+  raw: Option<String>,
+  typed: Result<Option<String>, String>,
+}
+
+fn observe_timeout_metadata(request: &Request) -> ObservedTimeoutMetadata {
+  ObservedTimeoutMetadata {
+    raw: request.header("Timeout").map(str::to_owned),
+    typed: request
+      .timeout()
+      .map(|timeout| timeout.map(|timeout| timeout.header_value()))
+      .map_err(|error| error.to_string()),
+  }
+}
+
+fn spawn_timeout_observer() -> (
+  std::net::SocketAddr,
+  mpsc::Receiver<ObservedTimeoutMetadata>,
+  thread::JoinHandle<()>,
+) {
+  let server = rttp::Http::server("127.0.0.1:0").expect("bind Timeout facade server");
+  let addr = server.local_addr().expect("Timeout facade addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        observed_tx
+          .send(observe_timeout_metadata(&request))
+          .expect("send observed Timeout metadata");
+        HttpResponse::ok("OK")
+      })
+      .expect("serve Timeout facade request");
+  });
+
+  (addr, observed_rx, handle)
+}
+
 fn observe_accept_charset_metadata(request: &Request) -> ObservedAcceptCharsetMetadata {
   ObservedAcceptCharsetMetadata {
     ranges: request
@@ -159,6 +197,31 @@ fn spawn_facade_accept_charset_observer() -> (
   });
 
   (addr, observed_rx, handle)
+}
+
+#[test]
+fn http11_client_and_server_exchange_timeout_metadata_without_policy() {
+  let (addr, observed_rx, handle) = spawn_timeout_observer();
+
+  let response = client()
+    .method("LOCK")
+    .url(format!("http://{addr}/collection"))
+    .timeout("Second-60, Infinite")
+    .expect("Timeout should be accepted")
+    .emit()
+    .expect("request should complete");
+
+  assert_eq!(200, response.code());
+  assert_eq!(
+    ObservedTimeoutMetadata {
+      raw: Some("second-60, infinite".to_string()),
+      typed: Ok(Some("second-60, infinite".to_string())),
+    },
+    observed_rx
+      .recv_timeout(Duration::from_secs(5))
+      .expect("observe Timeout metadata")
+  );
+  handle.join().expect("Timeout observer thread");
 }
 
 fn spawn_facade_accept_language_observer() -> (
@@ -3174,6 +3237,53 @@ fn sync_client_and_server_exchange_bounded_depth_metadata_without_policy() {
 }
 
 #[test]
+fn sync_client_and_server_exchange_bounded_destination_metadata_without_policy() {
+  let server =
+    rttp_server::server::HttpServer::bind("127.0.0.1:0").expect("bind Destination server");
+  let addr = server.local_addr().expect("Destination server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = (
+          request
+            .destination()
+            .expect("Destination should parse")
+            .map(|destination| destination.header_value()),
+          request.header("Destination").map(str::to_string),
+        );
+        observed_tx
+          .send(observed)
+          .expect("send observed Destination metadata");
+        HttpResponse::new(201, "Created")
+      })
+      .expect("serve Destination request");
+  });
+
+  let response = client()
+    .method("COPY")
+    .url(format!("http://{addr}/documents/source.txt"))
+    .destination("https://dav.example.test/archive/source.txt")
+    .expect("Destination should be accepted")
+    .emit()
+    .expect("Destination response should parse");
+
+  let (typed, raw) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe Destination metadata");
+  assert_eq!(
+    Some("https://dav.example.test/archive/source.txt".to_string()),
+    typed
+  );
+  assert_eq!(
+    Some("https://dav.example.test/archive/source.txt".to_string()),
+    raw
+  );
+  assert_eq!(201, response.code());
+  handle.join().expect("Destination server thread");
+}
+
+#[test]
 fn sync_client_and_server_exchange_bounded_sec_websocket_version_metadata_without_upgrade() {
   let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
     .expect("bind sec websocket version server");
@@ -3240,6 +3350,82 @@ fn sync_client_and_server_exchange_bounded_sec_websocket_version_metadata_withou
     "rejection Sec-WebSocket-Version must not emit Connection: Upgrade"
   );
   handle.join().expect("sec websocket version server thread");
+}
+
+#[test]
+fn sync_client_and_server_exchange_bounded_sec_websocket_protocol_metadata_without_upgrade() {
+  let server = rttp_server::server::HttpServer::bind("127.0.0.1:0")
+    .expect("bind sec websocket protocol server");
+  let addr = server
+    .local_addr()
+    .expect("sec websocket protocol server addr");
+  let (observed_tx, observed_rx) = mpsc::channel();
+  let handle = thread::spawn(move || {
+    server
+      .accept_one(|request| {
+        let observed = {
+          let offers = request
+            .sec_websocket_protocol()
+            .expect("Sec-WebSocket-Protocol should parse");
+          (
+            offers.as_ref().map(|offers| offers.header_value()),
+            offers.as_ref().map(|offers| offers.protocols().to_vec()),
+            request.header("Sec-WebSocket-Protocol").map(str::to_string),
+            request.header("Upgrade").map(str::to_string),
+            request.header("Connection").map(str::to_string),
+          )
+        };
+        observed_tx
+          .send(observed)
+          .expect("send observed sec websocket protocol metadata");
+        HttpResponse::new(101, "Switching Protocols")
+          .with_sec_websocket_protocol("chat")
+          .expect("selected Sec-WebSocket-Protocol should be accepted")
+      })
+      .expect("serve sec websocket protocol request");
+  });
+
+  let response = client()
+    .get()
+    .url(format!("http://{addr}/matrix/chat"))
+    .sec_websocket_protocol("chat, superchat")
+    .expect("Sec-WebSocket-Protocol should be accepted")
+    .emit()
+    .expect("sec websocket protocol response should parse");
+
+  let (typed, protocols, raw, upgrade, connection) = observed_rx
+    .recv_timeout(Duration::from_secs(1))
+    .expect("server should observe sec websocket protocol metadata");
+  assert_eq!(Some("chat, superchat".to_string()), typed);
+  assert_eq!(
+    Some(vec!["chat".to_string(), "superchat".to_string()]),
+    protocols
+  );
+  assert_eq!(Some("chat, superchat".to_string()), raw);
+  assert_eq!(
+    None, upgrade,
+    "typed Sec-WebSocket-Protocol metadata must not set an Upgrade field"
+  );
+  assert_ne!(
+    Some("Upgrade".to_string()),
+    connection,
+    "typed Sec-WebSocket-Protocol metadata must not set Connection: Upgrade"
+  );
+  assert_eq!(101, response.code());
+  let selected = response
+    .sec_websocket_protocol()
+    .expect("selected Sec-WebSocket-Protocol should parse")
+    .expect("selected Sec-WebSocket-Protocol should be present");
+  assert_eq!(selected.protocols(), ["chat"]);
+  assert_eq!(selected.selected(), Some("chat"));
+  assert_eq!(selected.header_value(), "chat");
+  assert_eq!(response.header_value("Upgrade"), None);
+  assert_ne!(
+    response.header_value("Connection").map(String::as_str),
+    Some("Upgrade"),
+    "selected Sec-WebSocket-Protocol must not emit Connection: Upgrade"
+  );
+  handle.join().expect("sec websocket protocol server thread");
 }
 
 #[test]

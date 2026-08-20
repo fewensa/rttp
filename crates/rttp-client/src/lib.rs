@@ -131,13 +131,18 @@ pub use self::connection::{
 pub use self::connection::{ConnectionReader, ResponseBodyReader, StreamingResponse};
 pub use rttp_protocol::baggage::{Baggage, BaggageMember, BaggageParseError, BaggageProperty};
 pub use rttp_protocol::depth::{Depth, DepthParseError};
+pub use rttp_protocol::destination::{Destination, DestinationParseError};
 pub use rttp_protocol::fetch_metadata::{
   SecFetchDest, SecFetchMode, SecFetchSite, SecFetchUser, SecPurpose,
 };
 pub use rttp_protocol::sec_gpc::{SecGpc, SecGpcParseError};
+pub use rttp_protocol::sec_websocket_protocol::{
+  SecWebSocketProtocol, SecWebSocketProtocolParseError,
+};
 pub use rttp_protocol::sec_websocket_version::{
   SecWebSocketVersion, SecWebSocketVersionParseError,
 };
+pub use rttp_protocol::timeout::{Timeout, TimeoutParseError, TimeoutType};
 pub use rttp_protocol::trace_context::{
   TraceParent, TraceParentParseError, TraceState, TraceStateMember, TraceStateParseError,
 };

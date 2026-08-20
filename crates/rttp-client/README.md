@@ -57,6 +57,29 @@ emits the canonical metadata value: RTTP does not traverse resources, select
 WebDAV methods, or enforce method policy. Callers needing an unusual value
 can retain full raw-header control with `header(("Depth", "..."))`.
 
+## Bounded WebDAV Destination metadata
+
+`HttpClient::destination(value)` sets a WebDAV `Destination` request header
+through the shared protocol `Destination` type. The helper accepts one
+absolute URI, trims HTTP OWS, preserves the trimmed URI string, and rejects
+empty, relative, scheme-relative, malformed, oversized (over 64 KiB),
+duplicate, injection, and control-byte values before a socket is opened. It
+only validates and emits the preserved metadata value: RTTP does not resolve
+the destination, normalize URI components, authorize access, select WebDAV
+methods, or copy or move resources. Callers needing an unusual value can
+retain full raw-header control with `header(("Destination", "..."))`.
+
+## Bounded WebDAV Timeout metadata
+
+`HttpClient::timeout(value)` sets a WebDAV `Timeout` request header through
+the shared protocol `Timeout` type. The helper accepts ordered `Second-n` and
+`Infinite` alternatives, trims HTTP OWS, normalizes members to lowercase, and
+rejects malformed, overflowing, duplicate, oversized, too-many-member, and
+control-byte values before a socket is opened. It only validates and emits the
+canonical metadata value: RTTP does not create locks, refresh locks, or select
+an application timeout. Callers needing an unusual value can retain full
+raw-header control with `header(("Timeout", "..."))`.
+
 ## Bounded Idempotency-Key metadata
 
 `HttpClient::idempotency_key(value)` sets an `Idempotency-Key` request header
@@ -110,6 +133,26 @@ RTTP does not perform a WebSocket handshake, emit `Connection: Upgrade`,
 compute `Sec-WebSocket-Accept`, negotiate versions, or switch protocols.
 Callers needing an unusual value can retain full raw-header control with
 `header(("Sec-WebSocket-Version", "..."))`.
+
+## Bounded Sec-WebSocket-Protocol metadata
+
+`HttpClient::sec_websocket_protocol(value)` sets a `Sec-WebSocket-Protocol`
+request header through the shared protocol `SecWebSocketProtocol` type. The
+helper accepts one or more RFC 6455 section 11.3.4 `token` offers such as
+`chat, superchat, graphql-ws` in client preference order, trims HTTP OWS,
+preserves token spelling, and rejects empty members, malformed tokens,
+parameters, slashes, case-sensitive duplicates, over-limit member counts,
+control-byte (including CR/LF/NUL and obs-text), and oversized values before
+a socket is opened. It replaces any existing same-name field with the
+canonical comma-separated value. `Response::sec_websocket_protocol()` parses
+the same representation on received responses as a selection singleton: a
+successful handshake carries exactly one token, and a multi-token value
+returns a parse error while raw headers remain available. These helpers only
+declare or parse metadata: RTTP does not perform a WebSocket handshake, emit
+`Connection: Upgrade`, choose an application subprotocol, or switch
+protocols. Applications own the selection decision. Callers needing an
+unusual value can retain full raw-header control with
+`header(("Sec-WebSocket-Protocol", "..."))`.
 
 ## Bounded W3C Trace Context metadata
 
@@ -1302,9 +1345,12 @@ header-block model.
 | Upgrade-Insecure-Requests | `upgrade_insecure_requests` emits bounded singleton `Upgrade-Insecure-Requests: 1` request metadata | No URL rewriting, redirecting, Content-Security-Policy enforcement, HSTS, or automatic scheme selection |
 | Max-Forwards | `max_forwards` emits bounded singleton `Max-Forwards` request metadata through the shared protocol type | No hop decrement, proxy routing, TRACE/OPTIONS selection, retry, or forwarding policy |
 | Depth | `depth` emits bounded singleton WebDAV `Depth` request metadata through the shared protocol type, normalizing `infinity` to lowercase and replacing an existing same-name field | No resource traversal, WebDAV method selection, method-policy enforcement, retry, or forwarding policy |
+| Destination | `destination` emits bounded singleton WebDAV `Destination` request metadata through the shared protocol type, preserving one absolute URI and replacing an existing same-name field | No destination resolution, URI normalization, authorization, COPY/MOVE execution, or application resource policy |
+| Timeout | `timeout` emits bounded ordered WebDAV `Timeout` request metadata through the shared protocol type, normalizing `Second-n`/`Infinite` alternatives to lowercase and replacing an existing same-name field | No lock creation, lock refresh, application-timeout selection, retry, or forwarding policy |
 | Idempotency-Key | `idempotency_key` emits bounded singleton opaque `Idempotency-Key` request metadata through the shared protocol type, replacing an existing same-name field | No retry, replay, key storage or comparison, deduplication store, or application idempotency policy |
 | WebSocket handshake metadata | `sec_websocket_key` emits bounded singleton `Sec-WebSocket-Key` request metadata through the shared protocol type, replacing an existing same-name field and redacting the nonce from typed debug output; `Response::sec_websocket_accept` parses bounded singleton response metadata and `verify_sec_websocket_accept` checks the RFC GUID plus SHA-1/base64 derivation against a validated key | No HTTP upgrade, random nonce generation, WebSocket frames, or handshake policy |
 | Sec-WebSocket-Version | `sec_websocket_version` emits bounded `Sec-WebSocket-Version` request metadata through the shared protocol type, replacing an existing same-name field, and `Response::sec_websocket_version` parses received fields including rejection-response version lists | No WebSocket handshake, `Connection: Upgrade` emission, `Sec-WebSocket-Accept` computation, version negotiation, protocol switch, or frames |
+| Sec-WebSocket-Protocol | `sec_websocket_protocol` emits bounded `Sec-WebSocket-Protocol` offer metadata in preference order through the shared protocol type, replacing an existing same-name field, and `Response::sec_websocket_protocol` parses received fields as a selection singleton | No WebSocket handshake, `Connection: Upgrade` emission, automatic subprotocol choice, protocol switch, or frames |
 | Pragma | `pragma` and `pragma_no_cache` emit bounded RFC 9111 `Pragma` request metadata through the shared protocol type, combining and replacing existing same-name fields | No translation into `Cache-Control`, cache storage, freshness checks, revalidation, or cache/intermediary policy |
 | W3C Trace Context | `traceparent` and `tracestate` validate and emit bounded W3C Trace Context request metadata through shared protocol types, replacing existing same-name fields and redacting propagation values from typed debug output | No trace-id creation, sampling decision, tracing backend, span model, or automatic propagation |
 | W3C Baggage | `baggage` validates and emits bounded W3C Baggage request metadata through the shared protocol type, replacing an existing same-name field and redacting member and property values from typed debug output | No application-data interpretation, request-context storage, tracing backend, span model, or automatic propagation |

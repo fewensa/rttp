@@ -2597,6 +2597,117 @@ fn sec_websocket_version_helpers_preserve_raw_metadata_and_report_parse_errors()
 }
 
 #[test]
+fn sec_websocket_protocol_helpers_validate_replace_and_parse_response_metadata() {
+  let response = HttpResponse::new(400, "Bad Request")
+    .header("Sec-WebSocket-Protocol", "chat")
+    .header("sec-websocket-protocol", "superchat")
+    .with_sec_websocket_protocol("graphql-transport-ws")
+    .expect("Sec-WebSocket-Protocol should be accepted");
+
+  let protocol = response
+    .sec_websocket_protocol()
+    .expect("Sec-WebSocket-Protocol should parse")
+    .expect("Sec-WebSocket-Protocol should be present");
+  assert_eq!("graphql-transport-ws", protocol.header_value());
+  assert_eq!(protocol.protocols(), ["graphql-transport-ws"]);
+  assert_eq!(protocol.selected(), Some("graphql-transport-ws"));
+  assert!(protocol.contains("graphql-transport-ws"));
+  assert_eq!(
+    vec![("Sec-WebSocket-Protocol", "graphql-transport-ws")],
+    response
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+  assert!(response
+    .headers
+    .iter()
+    .all(|header| !header.name.eq_ignore_ascii_case("Connection")
+      && !header.name.eq_ignore_ascii_case("Upgrade")));
+}
+
+#[test]
+fn sec_websocket_protocol_helpers_preserve_raw_metadata_and_report_parse_errors() {
+  let raw = HttpResponse::new(400, "Bad Request")
+    .header("Sec-WebSocket-Protocol", "chat")
+    .header("sec-websocket-protocol", "superchat");
+  assert!(
+    raw.sec_websocket_protocol().is_err(),
+    "combined response fields must still be a selection singleton"
+  );
+  assert_eq!(
+    vec![
+      ("Sec-WebSocket-Protocol", "chat"),
+      ("sec-websocket-protocol", "superchat"),
+    ],
+    raw
+      .headers
+      .iter()
+      .map(|header| (header.name.as_str(), header.value.as_str()))
+      .collect::<Vec<_>>()
+  );
+
+  let singleton = HttpResponse::new(400, "Bad Request").header("Sec-WebSocket-Protocol", "chat");
+  let protocol = singleton
+    .sec_websocket_protocol()
+    .expect("raw Sec-WebSocket-Protocol should parse")
+    .expect("Sec-WebSocket-Protocol should be present");
+  assert_eq!("chat", protocol.header_value());
+  assert_eq!(protocol.selected(), Some("chat"));
+
+  for value in ["", "chat, superchat", "not a token", "chat\r\nX-Injected: 1"] {
+    // Construct the raw message directly: `HttpResponse::header` asserts on CR/LF values,
+    // but the injected value must survive so the typed accessor can reject it.
+    let malformed = HttpResponse {
+      version: "HTTP/1.1".to_string(),
+      status_code: 400,
+      reason: "Bad Request".to_string(),
+      headers: vec![HttpHeader::new("Sec-WebSocket-Protocol", value)],
+      trailers: Vec::new(),
+      body: Vec::new(),
+    };
+    assert!(
+      malformed.sec_websocket_protocol().is_err(),
+      "should reject {value:?}"
+    );
+    assert!(
+      HttpResponse::new(400, "Bad Request")
+        .with_sec_websocket_protocol(value)
+        .is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(
+      Some(value),
+      malformed
+        .headers
+        .iter()
+        .find(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Protocol"))
+        .map(|header| header.value.as_str())
+    );
+  }
+
+  let legacy = HttpResponse::new(400, "Bad Request").header("Sec-WebSocket-Protocol", "legacy");
+  let error = legacy
+    .clone()
+    .with_sec_websocket_protocol("chat, superchat")
+    .expect_err("multi-token selection should be rejected");
+  assert!(error.to_string().contains("Sec-WebSocket-Protocol"));
+  assert_eq!(
+    Some("legacy"),
+    legacy
+      .headers
+      .iter()
+      .find(|header| header.name.eq_ignore_ascii_case("Sec-WebSocket-Protocol"))
+      .map(|header| header.value.as_str()),
+    "a failed builder must leave the response unchanged"
+  );
+  assert!(HttpResponse::new(400, "Bad Request")
+    .with_sec_websocket_protocol("a".repeat(64 * 1024 + 1))
+    .is_err());
+}
+
+#[test]
 fn document_policy_report_only_helpers_validate_replace_and_parse_response_metadata() {
   let response = HttpResponse::ok([])
     .header("Document-Policy-Report-Only", "oversized-images=1.0")
@@ -3314,6 +3425,77 @@ fn request_depth_is_optional_bounded_and_preserves_invalid_headers() {
 }
 
 #[test]
+fn request_timeout_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"LOCK / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent.timeout().expect("missing value should be valid")
+  );
+
+  let valid = Request::from_raw_frame(
+    b"LOCK / HTTP/1.1\r\nHost: example.test\r\nTimeout: Second-60, Infinite\r\n\r\n",
+  )
+  .expect("request should parse");
+  let parsed = valid
+    .timeout()
+    .expect("value should parse")
+    .expect("Timeout should be present");
+  assert_eq!(
+    &[HttpTimeoutType::Second(60), HttpTimeoutType::Infinite],
+    parsed.members()
+  );
+  assert_eq!("second-60, infinite", parsed.header_value());
+
+  for value in [
+    "",
+    "Second-",
+    "Second--1",
+    "Second-1.0",
+    "Second-18446744073709551616",
+    "Second-60, second-60",
+    "Infinite, infinite",
+  ] {
+    let request = Request::from_raw_frame(
+      format!("LOCK / HTTP/1.1\r\nHost: example.test\r\nTimeout: {value}\r\n\r\n").as_bytes(),
+    )
+    .expect("request should retain malformed metadata");
+    assert!(request.timeout().is_err(), "should reject {value:?}");
+    assert_eq!(Some(value), request.header("Timeout"));
+  }
+
+  let oversized = format!("{}Second-1", " ".repeat(64 * 1024 + 1));
+  let oversized_request = Request {
+    method: "LOCK".to_string(),
+    target: "/".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("Timeout".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.timeout().is_err());
+  assert_eq!(Some(oversized.as_str()), oversized_request.header("Timeout"));
+
+  let split = Request::from_raw_frame(
+    b"LOCK / HTTP/1.1\r\nHost: example.test\r\nTimeout: Second-60\r\ntimeout: Infinite\r\n\r\n",
+  )
+  .expect("request should retain split metadata");
+  let split_timeout = split
+    .timeout()
+    .expect("split Timeout should parse")
+    .expect("Timeout should be present");
+  assert_eq!(
+    &[HttpTimeoutType::Second(60), HttpTimeoutType::Infinite],
+    split_timeout.members()
+  );
+}
+
+#[test]
 fn request_idempotency_key_is_optional_bounded_and_preserves_invalid_headers() {
   let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
     .expect("request should parse");
@@ -3496,6 +3678,107 @@ fn request_sec_websocket_version_is_optional_bounded_and_preserves_invalid_heade
   .expect("request should retain unordered metadata");
   assert!(unordered.sec_websocket_version().is_err());
   assert_eq!(Some("13"), unordered.header("Sec-WebSocket-Version"));
+}
+
+#[test]
+fn request_sec_websocket_protocol_is_optional_bounded_and_preserves_invalid_headers() {
+  let absent = Request::from_raw_frame(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+    .expect("request should parse");
+  assert_eq!(
+    None,
+    absent
+      .sec_websocket_protocol()
+      .expect("missing value should be valid")
+  );
+
+  for value in ["chat", " \tchat\t ", "chat, superchat, graphql-ws"] {
+    let valid = Request::from_raw_frame(
+      format!(
+        "GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Protocol: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should parse");
+    let parsed = valid
+      .sec_websocket_protocol()
+      .expect("value should parse")
+      .expect("Sec-WebSocket-Protocol should be present");
+    assert_eq!(
+      value
+        .split(',')
+        .map(|member| member.trim_matches([' ', '\t']))
+        .collect::<Vec<_>>()
+        .join(", "),
+      parsed.header_value()
+    );
+    assert!(parsed.contains("chat"));
+  }
+
+  let multi_token = Request::from_raw_frame(
+    b"GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Protocol: chat, superchat\r\n\r\n",
+  )
+  .expect("request should parse");
+  assert_eq!(
+    None,
+    multi_token
+      .sec_websocket_protocol()
+      .expect("offers should parse")
+      .expect("offers should be present")
+      .selected(),
+    "a multi-token offer is not a selection"
+  );
+
+  let combined = Request::from_raw_frame(
+    b"GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Protocol: chat\r\nsec-websocket-protocol: superchat, graphql-ws\r\n\r\n",
+  )
+  .expect("request should parse");
+  let parsed = combined
+    .sec_websocket_protocol()
+    .expect("combined fields should parse")
+    .expect("Sec-WebSocket-Protocol should be present");
+  assert_eq!("chat, superchat, graphql-ws", parsed.header_value());
+
+  for value in ["", ",", "chat,", "not a token", "chat;foo", "chat/1", "chat, chat"] {
+    let request = Request::from_raw_frame(
+      format!(
+        "GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Protocol: {value}\r\n\r\n"
+      )
+      .as_bytes(),
+    )
+    .expect("request should retain malformed metadata");
+    assert!(
+      request.sec_websocket_protocol().is_err(),
+      "should reject {value:?}"
+    );
+    assert_eq!(Some(value), request.header("Sec-WebSocket-Protocol"));
+  }
+
+  let oversized = "a".repeat(64 * 1024 + 1);
+  let oversized_request = Request {
+    method: "GET".to_string(),
+    target: "/chat".to_string(),
+    version: "HTTP/1.1".to_string(),
+    headers: vec![
+      ("Host".to_string(), "example.test".to_string()),
+      ("Sec-WebSocket-Protocol".to_string(), oversized.clone()),
+    ],
+    trailers: Vec::new(),
+    body: Vec::new(),
+    content_length: None,
+    extended_connect_protocol: None,
+  };
+  assert!(oversized_request.sec_websocket_protocol().is_err());
+  assert_eq!(
+    Some(oversized.as_str()),
+    oversized_request.header("Sec-WebSocket-Protocol")
+  );
+
+  let duplicate = Request::from_raw_frame(
+    b"GET /chat HTTP/1.1\r\nHost: example.test\r\nSec-WebSocket-Protocol: chat\r\nsec-websocket-protocol: chat\r\n\r\n",
+  )
+  .expect("request should retain duplicate metadata");
+  assert!(duplicate.sec_websocket_protocol().is_err());
+  assert_eq!(Some("chat"), duplicate.header("Sec-WebSocket-Protocol"));
 }
 
 #[test]
